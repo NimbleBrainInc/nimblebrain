@@ -1,4 +1,9 @@
-import { recordLlmUsage, toolCallsTotal, toolPromotionsTotal } from "../api/metrics.ts";
+import {
+  recordBundleCrash,
+  recordLlmUsage,
+  toolCallsTotal,
+  toolPromotionsTotal,
+} from "../api/metrics.ts";
 import { log } from "../cli/log.ts";
 import type { EngineEvent, EventSink } from "../engine/types.ts";
 import type { TokenUsage } from "../usage/types.ts";
@@ -53,6 +58,18 @@ export class MetricsEventSink implements EventSink {
       }
       case "run.done":
       case "run.error": {
+        // The HealthMonitor reports bundle/connector liveness via `run.error`
+        // with a nested `event` discriminator (bundle.crashed / restarting /
+        // dead / recovered) and no runId. `bundle.crashed` is the canonical
+        // crash signal: the lifecycle's own `bundle.crashed` event *type* is
+        // emitted only by `recordCrash`, which currently has no callers, so
+        // counting here is 1:1 with a real detection and can't double-count.
+        // (If `recordCrash` is ever wired as the canonical emit, move the count
+        // there and drop it here.) Counts once per HealthMonitor sweep a source
+        // is found down — the per-sweep cadence the alert thresholds on.
+        if (type === "run.error" && data.event === "bundle.crashed") {
+          recordBundleCrash(data.source as string | undefined, data.remote === true);
+        }
         this.finalizeRun(data.runId as string | undefined);
         break;
       }

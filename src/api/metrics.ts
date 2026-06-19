@@ -134,6 +134,49 @@ export const artifactResolutionsTotal = new Counter({
   registers: [metricsRegistry],
 });
 
+/**
+ * Remote/local MCP bundle (connector) crashes detected by the HealthMonitor
+ * liveness loop, by connector and transport kind. A "crash" here is one
+ * HealthMonitor sweep finding a source down (transport gone) that was NOT
+ * deliberately stopped — so a connector that stays down increments once per
+ * sweep (~30s) until it recovers or escalates to dead. That per-sweep cadence
+ * is exactly the alertable signal: a sustained nonzero rate for one connector
+ * is a real liveness problem the host would otherwise only learn about from a
+ * user noticing failed tool calls.
+ *
+ * `connector` is the source name, sanitized to a bounded charset (see
+ * recordBundleCrash) so a malformed/unbounded name can't explode cardinality.
+ * `remote` separates remote (HTTP/SSE) connectors from local stdio bundles.
+ * No tenant/workspace label — one pod per tenant, so the scrape namespace
+ * attributes it (same rationale as nb_artifact_resolutions_total).
+ */
+export const bundleCrashedTotal = new Counter({
+  name: "nb_bundle_crashed_total",
+  help: "MCP bundle/connector crashes detected by the health monitor, by connector and transport kind.",
+  labelNames: ["connector", "remote"] as const,
+  registers: [metricsRegistry],
+});
+
+/**
+ * Connector/source names allowed through as a metric label unmodified. The
+ * curated connector ids are lower kebab/dot tokens (e.g. `com-dropbox-mcp`,
+ * `synapse-crm`), so this is generous; anything else buckets to "other" in
+ * recordBundleCrash so an unexpectedly-shaped name can't mint an unbounded
+ * series.
+ */
+const SAFE_CONNECTOR = /^[a-z0-9_.-]+$/;
+
+/**
+ * Record one health-monitor-detected bundle crash. `connector` is the source
+ * name (sanitized to a bounded label); `remote` is true for HTTP/SSE connectors
+ * and false for local stdio bundles. Defensive: a missing/empty/odd name
+ * buckets to "other".
+ */
+export function recordBundleCrash(connector: string | undefined, remote: boolean): void {
+  const safe = connector && SAFE_CONNECTOR.test(connector) ? connector : "other";
+  bundleCrashedTotal.inc({ connector: safe, remote: remote ? "true" : "false" });
+}
+
 /** Token usage subset needed for metrics — a structural slice of `TokenUsage`. */
 interface UsageForMetrics {
   inputTokens: number;
