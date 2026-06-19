@@ -92,6 +92,48 @@ export const llmCallsTotal = new Counter({
   registers: [metricsRegistry],
 });
 
+/**
+ * LLM request latency in seconds — the wall-clock of one provider round-trip
+ * (streaming included), observed on the main agentic loop's `llm.done`. Drives
+ * the p99-latency alert. Buckets run long (to 120s): an agentic call with a
+ * large context and tool streaming sits far right of an HTTP histogram, so the
+ * 0.005–10s bucket set used for `http_request_duration_seconds` would clip the
+ * tail the alert cares about. Forked fast-slot calls (compaction / title /
+ * briefing) are not observed here — they emit no `llm.done` and record usage at
+ * their own call sites (same boundary as the token counters).
+ *
+ * Completed-calls SLI: only successful calls (`llm.done`) are sampled. A call
+ * that fails terminally records no latency sample — it bumps `nb_llm_errors_total`
+ * instead — so this is "p99 of completed calls" and the latency alert is
+ * intentionally blind to slow-then-failed calls. That degradation surfaces via
+ * the error rate, not here; keeping failures out preserves the success-latency
+ * semantics (no `outcome` label needed).
+ */
+export const llmRequestDurationSeconds = new Histogram({
+  name: "nb_llm_request_duration_seconds",
+  help: "LLM request latency in seconds, by call source and model.",
+  labelNames: ["source", "model"] as const,
+  buckets: [0.25, 0.5, 1, 2, 5, 10, 20, 30, 45, 60, 90, 120],
+  registers: [metricsRegistry],
+});
+
+/**
+ * LLM calls that failed terminally — the provider call threw and the engine's
+ * in-call retry (3 attempts with backoff) was exhausted, or a context overflow
+ * could not be recovered. User-initiated cancellations (abort signal) are NOT
+ * counted — they aren't provider failures. Pairs with `nb_llm_calls_total`
+ * (which counts successes) to form the error rate `errors / (errors + calls)`
+ * the alert thresholds on. No error dimension, to keep cardinality bounded; a
+ * bounded `kind` (rate_limit / timeout / server) can be added later if triage
+ * needs it.
+ */
+export const llmErrorsTotal = new Counter({
+  name: "nb_llm_errors_total",
+  help: "LLM calls that failed terminally (provider error after retries), by source and model.",
+  labelNames: ["source", "model"] as const,
+  registers: [metricsRegistry],
+});
+
 /** Tool executions, by outcome. */
 export const toolCallsTotal = new Counter({
   name: "nb_tool_calls_total",

@@ -104,6 +104,14 @@ export type EngineEventType =
   | "tool.promoted"
   | "tool.released"
   | "llm.done"
+  /**
+   * A provider LLM call failed terminally — the call threw and the in-call
+   * retry was exhausted (or a context overflow could not be recovered).
+   * NOT emitted for user-initiated cancellations (abort). Payload: { runId,
+   * model }. Observe-only signal for the LLM error-rate metric; the error
+   * itself still propagates and ends the run as `run.error`.
+   */
+  | "llm.error"
   | "run.done"
   | "run.error"
   | "skills.loaded"
