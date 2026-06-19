@@ -101,6 +101,13 @@ export const llmCallsTotal = new Counter({
  * tail the alert cares about. Forked fast-slot calls (compaction / title /
  * briefing) are not observed here — they emit no `llm.done` and record usage at
  * their own call sites (same boundary as the token counters).
+ *
+ * Completed-calls SLI: only successful calls (`llm.done`) are sampled. A call
+ * that fails terminally records no latency sample — it bumps `nb_llm_errors_total`
+ * instead — so this is "p99 of completed calls" and the latency alert is
+ * intentionally blind to slow-then-failed calls. That degradation surfaces via
+ * the error rate, not here; keeping failures out preserves the success-latency
+ * semantics (no `outcome` label needed).
  */
 export const llmRequestDurationSeconds = new Histogram({
   name: "nb_llm_request_duration_seconds",
