@@ -1287,6 +1287,13 @@ export class BundleLifecycleManager {
       source,
     });
 
+    // Arm interactive OAuth for THIS user-initiated start only. The provider is
+    // long-lived (HealthMonitor reuses it for liveness reconnects on the same
+    // source); leaving it armed would let a background reconnect drive a browser
+    // flow that blocks for the full flow TTL and times out. Disarm once this
+    // start settles (`.finally` below).
+    provider.setInteractiveAuthAllowed(true);
+
     // Background start. The provider's callback resolves `authUrlPromise`
     // when interactive auth is required. If start() succeeds without ever
     // hitting interactive (headless / pre-authenticated), we transition to
@@ -1331,6 +1338,11 @@ export class BundleLifecycleManager {
         if (!capturedAuthUrl) {
           rejectAuthUrl(err instanceof Error ? err : new Error(msg));
         }
+      })
+      .finally(() => {
+        // Disarm interactive auth — subsequent (background) reconnects of this
+        // long-lived source must NOT drive a browser flow.
+        provider.setInteractiveAuthAllowed(false);
       });
 
     // Race the auth URL signal against a hard timeout. 15s is generous —

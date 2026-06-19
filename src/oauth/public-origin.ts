@@ -26,11 +26,12 @@
  *      `https://{NB_PLATFORM_HOST}`. This is the normal path — the chart
  *      forwards these as facts; the policy ("custom domain wins") lives here,
  *      not in Helm templating.
- *   3. `NB_API_URL` — legacy migration fallback. Older deployments set only
- *      this. Centralizing the read here (and nowhere else — see
- *      `scripts/check-public-origin.ts`) lets us delete it cleanly once every
- *      tenant ships the facts.
- *   4. `http://localhost:27247` — dev default (no auth gate, `dev:worktree`).
+ *   3. `http://localhost:27247` — dev default (no auth gate, `dev:worktree`).
+ *
+ * The former `NB_API_URL` legacy fallback has been removed: the chart always
+ * forwards `NB_PLATFORM_HOST` (from `ingress.host`), so step 2 always resolves
+ * for any deployed tenant. `scripts/check-public-origin.ts` keeps `NB_API_URL`
+ * (and `NB_WEB_URL`) from creeping back as ad-hoc origin reads elsewhere.
  *
  * **Why config-derived, never request-derived.** The origin must NOT come from
  * the inbound `Host` / `X-Forwarded-Host` header. A header-derived `redirect_uri`
@@ -52,19 +53,14 @@ const PUBLIC_ORIGIN_ENV = "NB_PUBLIC_ORIGIN";
 const PLATFORM_HOST_ENV = "NB_PLATFORM_HOST";
 const CUSTOM_DOMAIN_ENV = "NB_CUSTOM_DOMAIN";
 const CUSTOM_DOMAIN_CANONICAL_ENV = "NB_CUSTOM_DOMAIN_CANONICAL";
-/**
- * Legacy origin var. This module is the ONLY sanctioned reader —
- * `check:public-origin` rejects `process.env.NB_API_URL` / `NB_WEB_URL`
- * anywhere else so the derivation can't re-fragment.
- */
-const LEGACY_API_URL_ENV = "NB_API_URL";
 
 /**
  * User-facing SPA origin for post-callback returns. In production the API and
  * the SPA share one origin (Caddy proxies `/v1/*` to the API), so this equals
  * `publicOrigin()`. In dev they split — API on :27247, SPA on :27246 — and
  * `src/cli/dev.ts` sets `NB_WEB_URL` so a connector return lands on the SPA,
- * not a JSON error page on the API port. Sanctioned reader, same as above.
+ * not a JSON error page on the API port. This module is the only sanctioned
+ * reader of `NB_WEB_URL` — `check:public-origin` rejects it elsewhere.
  */
 const WEB_URL_ENV = "NB_WEB_URL";
 
@@ -147,11 +143,9 @@ function computePublicOrigin(): string {
   const derivedHost = customDomain && canonical ? customDomain : platformHost;
   if (derivedHost) return assertOrigin(`https://${derivedHost}`, "derived");
 
-  // 3. Legacy fallback during migration (older deploys set only NB_API_URL).
-  const legacy = process.env[LEGACY_API_URL_ENV]?.trim();
-  if (legacy) return assertOrigin(legacy, LEGACY_API_URL_ENV);
-
-  // 4. Dev default.
+  // 3. Dev default. (The former `NB_API_URL` legacy fallback was removed — the
+  // chart always forwards `NB_PLATFORM_HOST`, so step 2 always resolves for any
+  // deployed tenant.)
   return DEV_ORIGIN;
 }
 

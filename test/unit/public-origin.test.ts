@@ -64,12 +64,12 @@ describe("publicOrigin — derivation policy", () => {
     expect(publicOrigin()).toBe("https://auth.customer.com");
   });
 
-  it("falls back to legacy NB_API_URL when no host facts are present", () => {
+  it("ignores legacy NB_API_URL — the fallback was removed (no host facts → dev origin)", () => {
     process.env.NB_API_URL = "https://legacy.platform.nimblebrain.ai";
-    expect(publicOrigin()).toBe("https://legacy.platform.nimblebrain.ai");
+    expect(publicOrigin()).toBe("http://localhost:27247");
   });
 
-  it("prefers derived host facts over a legacy NB_API_URL", () => {
+  it("ignores NB_API_URL even when set alongside host facts (derived host wins)", () => {
     process.env.NB_PLATFORM_HOST = "acme.platform.nimblebrain.ai";
     process.env.NB_CUSTOM_DOMAIN = "ai.acme.com";
     process.env.NB_API_URL = "https://stale.platform.nimblebrain.ai";
@@ -112,9 +112,9 @@ describe("publicOrigin — fail-closed assertions", () => {
     expect(publicOrigin()).toBe("https://brain.acme.com");
   });
 
-  it("tolerates sloppy trailing slashes from legacy NB_API_URL", () => {
-    process.env.NB_API_URL = "https://legacy.platform.nimblebrain.ai//";
-    expect(publicOrigin()).toBe("https://legacy.platform.nimblebrain.ai");
+  it("tolerates sloppy trailing slashes on an explicit NB_PUBLIC_ORIGIN", () => {
+    process.env.NB_PUBLIC_ORIGIN = "https://brain.acme.com//";
+    expect(publicOrigin()).toBe("https://brain.acme.com");
   });
 });
 

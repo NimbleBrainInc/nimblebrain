@@ -37,8 +37,8 @@ describe("workspaceConnectorsUrl", () => {
   });
 
   it("uses webOrigin: NB_WEB_URL wins over the derived/legacy origin", () => {
-    // No NB_WEB_URL → webOrigin() falls through to publicOrigin() (legacy NB_API_URL here).
-    process.env.NB_API_URL = "https://api.example.com";
+    // No NB_WEB_URL → webOrigin() falls through to publicOrigin() (derived host).
+    process.env.NB_PLATFORM_HOST = "api.example.com";
     expect(workspaceConnectorsUrl("ws_x")).toBe("https://api.example.com/w/x/settings/connectors");
     // NB_WEB_URL set → the user-facing SPA origin wins (the dev API/SPA-port split).
     process.env.NB_WEB_URL = "https://web.example.com";

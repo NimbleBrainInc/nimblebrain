@@ -194,6 +194,8 @@ describe("WorkspaceOAuthProvider — authorize redirect probe (interactive)", ()
         headlessAuthProbe: true,
         onInteractiveAuthRequired: (url) => callbackUrls.push(url),
       });
+      // Interactive branch is gated to user-initiated flows; arm it here.
+      p.setInteractiveAuthAllowed(true);
       const state = p.state();
       authUrl.searchParams.set("state", state);
 
@@ -241,6 +243,8 @@ describe("WorkspaceOAuthProvider — authorize redirect probe (interactive)", ()
           captured = url;
         },
       });
+      // Interactive branch is gated to user-initiated flows; arm it here.
+      p.setInteractiveAuthAllowed(true);
       const state = p.state();
       authUrl.searchParams.set("state", state);
 

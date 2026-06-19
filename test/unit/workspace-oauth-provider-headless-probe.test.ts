@@ -21,7 +21,7 @@ function makeProvider(
   headlessAuthProbe: boolean,
   onInteractiveAuthRequired: (url: string) => void,
 ): WorkspaceOAuthProvider {
-  return new WorkspaceOAuthProvider({
+  const provider = new WorkspaceOAuthProvider({
     owner: { type: "workspace", wsId: "ws_test" },
     serverName: "granola-test",
     workDir,
@@ -30,6 +30,11 @@ function makeProvider(
     headlessAuthProbe,
     onInteractiveAuthRequired,
   });
+  // These tests exercise the probe / interactive branch, which is now gated to
+  // user-initiated flows. Arm it so the branch is reachable (background starts
+  // short-circuit to reauth_required — covered separately).
+  provider.setInteractiveAuthAllowed(true);
+  return provider;
 }
 
 describe("WorkspaceOAuthProvider — redirect-probe is gated on headlessAuthProbe", () => {
