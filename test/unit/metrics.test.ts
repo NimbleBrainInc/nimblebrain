@@ -1,16 +1,19 @@
-import { describe, expect, it, spyOn } from "bun:test";
+import { afterAll, describe, expect, it, spyOn } from "bun:test";
 import { log } from "../../src/cli/log.ts";
 import { MAX_TRACKED_RUNS, MetricsEventSink } from "../../src/adapters/metrics-events.ts";
 import type { Counter } from "prom-client";
 import {
   bundleCrashedTotal,
+  bundleUnhealthy,
   llmCallsTotal,
   llmTokensTotal,
   recordBundleCrash,
   recordLlmUsage,
+  registerBundleHealthGauge,
   toolCallsTotal,
   toolPromotionsTotal,
 } from "../../src/api/metrics.ts";
+import type { BundleHealth } from "../../src/tools/health-monitor.ts";
 
 // Read one label-series value off a counter. Tests use deltas (read → act →
 // read) rather than reset(), so they're robust to the shared process-global
@@ -153,9 +156,9 @@ describe("MetricsEventSink", () => {
 });
 
 describe("bundle crash metric", () => {
-  it("test_run_error_bundle_crashed_increments_counter_with_connector_and_remote", async () => {
+  it("test_run_error_bundle_crashed_increments_counter_with_source_and_remote", async () => {
     const sink = new MetricsEventSink();
-    const labels = { connector: "com-dropbox-mcp", remote: "true" };
+    const labels = { source: "com-dropbox-mcp", remote: "true" };
     const before = await read(bundleCrashedTotal, labels);
     // Mirrors HealthMonitor's emission: run.error with a nested bundle.crashed
     // event, a `source` name, and `remote: true`. No runId.
@@ -168,7 +171,7 @@ describe("bundle crash metric", () => {
 
   it("test_local_source_bundle_crashed_records_remote_false", async () => {
     const sink = new MetricsEventSink();
-    const labels = { connector: "synapse-crm", remote: "false" };
+    const labels = { source: "synapse-crm", remote: "false" };
     const before = await read(bundleCrashedTotal, labels);
     // A local stdio bundle: HealthMonitor omits the `remote` field entirely.
     sink.emit({
@@ -192,12 +195,76 @@ describe("bundle crash metric", () => {
     expect((await readTotal(bundleCrashedTotal)) - before).toBe(0);
   });
 
-  it("test_unsafe_connector_name_buckets_to_other", async () => {
-    const labels = { connector: "other", remote: "false" };
+  it("test_unsafe_source_name_buckets_to_other", async () => {
+    const labels = { source: "other", remote: "false" };
     const before = await read(bundleCrashedTotal, labels);
     recordBundleCrash("Weird Name!! /etc", false);
     recordBundleCrash(undefined, false);
     recordBundleCrash("", false);
     expect((await read(bundleCrashedTotal, labels)) - before).toBe(3);
+  });
+});
+
+describe("bundle unhealthy gauge", () => {
+  // Read one `nb_bundle_unhealthy` series; `.get()` triggers the collect
+  // callback. Returns undefined when the series is absent (collect resets each
+  // scrape, so a recovered source disappears entirely rather than going to 0).
+  async function readGauge(source: string): Promise<number | undefined> {
+    const metric = await bundleUnhealthy.get();
+    for (const s of metric.values) {
+      if (s.labels.source === source) return s.value;
+    }
+    return undefined;
+  }
+
+  const status = (...records: Array<Partial<BundleHealth> & { name: string; state: BundleHealth["state"] }>): BundleHealth[] =>
+    records.map((r) => ({ uptime: null, restartCount: 0, ...r }));
+
+  // Leave the gauge inert for other test files sharing the process-global
+  // registry (a full-registry scrape elsewhere would otherwise invoke our
+  // collect with a stale provider).
+  afterAll(() => registerBundleHealthGauge(() => []));
+
+  it("test_bundle_unhealthy_gauge_reports_1_for_dead_source", async () => {
+    registerBundleHealthGauge(() => status({ name: "com-dropbox-mcp", state: "dead" }));
+    expect(await readGauge("com-dropbox-mcp")).toBe(1);
+  });
+
+  it("test_bundle_unhealthy_gauge_absent_for_healthy_source", async () => {
+    registerBundleHealthGauge(() => status({ name: "synapse-crm", state: "healthy" }));
+    expect(await readGauge("synapse-crm")).toBeUndefined();
+  });
+
+  it("test_bundle_unhealthy_gauge_excludes_restarting_source", async () => {
+    // `restarting` is transient (≤ MAX_RESTARTS attempts) — only terminal `dead`
+    // should assert the down signal.
+    registerBundleHealthGauge(() => status({ name: "ai-granola-mcp", state: "restarting" }));
+    expect(await readGauge("ai-granola-mcp")).toBeUndefined();
+  });
+
+  it("test_bundle_unhealthy_gauge_resolves_when_source_recovers", async () => {
+    registerBundleHealthGauge(() => status({ name: "com-dropbox-mcp", state: "dead" }));
+    expect(await readGauge("com-dropbox-mcp")).toBe(1);
+    // Source recovers → collect resets → series disappears → alert can resolve.
+    registerBundleHealthGauge(() => status({ name: "com-dropbox-mcp", state: "healthy" }));
+    expect(await readGauge("com-dropbox-mcp")).toBeUndefined();
+  });
+
+  it("test_bundle_unhealthy_gauge_separate_series_per_source", async () => {
+    registerBundleHealthGauge(() =>
+      status(
+        { name: "com-dropbox-mcp", state: "dead" },
+        { name: "ai-granola-mcp", state: "dead" },
+        { name: "synapse-crm", state: "healthy" },
+      ),
+    );
+    expect(await readGauge("com-dropbox-mcp")).toBe(1);
+    expect(await readGauge("ai-granola-mcp")).toBe(1);
+    expect(await readGauge("synapse-crm")).toBeUndefined();
+  });
+
+  it("test_bundle_unhealthy_gauge_unsafe_source_buckets_to_other", async () => {
+    registerBundleHealthGauge(() => status({ name: "Weird Name!! /etc", state: "dead" }));
+    expect(await readGauge("other")).toBe(1);
   });
 });

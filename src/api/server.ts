@@ -20,6 +20,7 @@ import { resolveAuthMode } from "./auth-middleware.ts";
 import { ConversationEventManager } from "./conversation-events.ts";
 import { deriveDataChangedTarget, SseEventManager } from "./events.ts";
 import { McpServerHost } from "./mcp-server.ts";
+import { registerBundleHealthGauge } from "./metrics.ts";
 import { LoginRateLimiter, RequestRateLimiter } from "./rate-limiter.ts";
 import { InMemorySessionRegistry, type SessionRegistry } from "./session-store/index.ts";
 import type { AppContext } from "./types.ts";
@@ -87,6 +88,11 @@ export function startServer(options: ServerOptions): ServerHandle {
   const mcpSources = runtime.mcpSources();
   const healthMonitor = new HealthMonitor(mcpSources, runtime.getEventSink());
   healthMonitor.start();
+  // Expose currently-down bundles as the `nb_bundle_unhealthy` gauge (read
+  // through this provider at scrape time). The gauge stays asserted for the
+  // whole outage, unlike the crash counter which goes flat once a source is
+  // dead-terminal — so the down-alert resolves only on recovery.
+  registerBundleHealthGauge(() => healthMonitor.getStatus());
 
   // Connection credential re-validation (a disjoint concern from HealthMonitor's
   // transport liveness): poll providers whose upstream account can lapse without

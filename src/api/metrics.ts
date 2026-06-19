@@ -15,7 +15,8 @@
  * timing-sensitive tests). Default process metrics are opt-in via
  * enableDefaultMetrics(), called once at server start.
  */
-import { Counter, collectDefaultMetrics, Histogram, Registry } from "prom-client";
+import { Counter, collectDefaultMetrics, Gauge, Histogram, Registry } from "prom-client";
+import type { BundleHealth } from "../tools/health-monitor.ts";
 
 export const metricsRegistry = new Registry();
 
@@ -144,37 +145,98 @@ export const artifactResolutionsTotal = new Counter({
  * is a real liveness problem the host would otherwise only learn about from a
  * user noticing failed tool calls.
  *
- * `connector` is the source name, sanitized to a bounded charset (see
+ * `source` is the MCP source name, sanitized to a bounded charset (see
  * recordBundleCrash) so a malformed/unbounded name can't explode cardinality.
  * `remote` separates remote (HTTP/SSE) connectors from local stdio bundles.
  * No tenant/workspace label — one pod per tenant, so the scrape namespace
  * attributes it (same rationale as nb_artifact_resolutions_total).
+ *
+ * This is a crash-RATE signal (good for dashboards / spotting active
+ * crash-looping). It is NOT the right primitive for "is this connector down
+ * right now": the HealthMonitor stops emitting once a source exhausts its
+ * restarts and is marked dead-terminal, so the counter goes flat while the
+ * connector stays down. Use `nb_bundle_unhealthy` (below) for down-alerting.
  */
 export const bundleCrashedTotal = new Counter({
   name: "nb_bundle_crashed_total",
-  help: "MCP bundle/connector crashes detected by the health monitor, by connector and transport kind.",
-  labelNames: ["connector", "remote"] as const,
+  help: "MCP bundle/connector crashes detected by the health monitor, by source and transport kind.",
+  labelNames: ["source", "remote"] as const,
   registers: [metricsRegistry],
 });
 
 /**
- * Connector/source names allowed through as a metric label unmodified. The
- * curated connector ids are lower kebab/dot tokens (e.g. `com-dropbox-mcp`,
- * `synapse-crm`), so this is generous; anything else buckets to "other" in
- * recordBundleCrash so an unexpectedly-shaped name can't mint an unbounded
- * series.
+ * MCP source names allowed through as a metric label unmodified. The curated
+ * connector ids are lower kebab/dot tokens (e.g. `com-dropbox-mcp`,
+ * `synapse-crm`), so this is generous; anything else buckets to "other" so an
+ * unexpectedly-shaped name can't mint an unbounded series.
  */
-const SAFE_CONNECTOR = /^[a-z0-9_.-]+$/;
+const SAFE_SOURCE = /^[a-z0-9_.-]+$/;
 
 /**
- * Record one health-monitor-detected bundle crash. `connector` is the source
+ * Record one health-monitor-detected bundle crash. `source` is the MCP source
  * name (sanitized to a bounded label); `remote` is true for HTTP/SSE connectors
  * and false for local stdio bundles. Defensive: a missing/empty/odd name
  * buckets to "other".
  */
-export function recordBundleCrash(connector: string | undefined, remote: boolean): void {
-  const safe = connector && SAFE_CONNECTOR.test(connector) ? connector : "other";
-  bundleCrashedTotal.inc({ connector: safe, remote: remote ? "true" : "false" });
+export function recordBundleCrash(source: string | undefined, remote: boolean): void {
+  const safe = source && SAFE_SOURCE.test(source) ? source : "other";
+  bundleCrashedTotal.inc({ source: safe, remote: remote ? "true" : "false" });
+}
+
+/**
+ * Gauge: which MCP bundles/connectors are currently DOWN — HealthMonitor state
+ * `dead` — by source. `1` = down.
+ *
+ * Why a gauge, not the `nb_bundle_crashed_total` counter: a down source emits a
+ * crash event each ~30s HealthMonitor sweep only until it exhausts its restarts
+ * (`MAX_RESTARTS`), at which point it's marked `dead` and the monitor stops
+ * touching it ("dead is terminal"). So the counter records a short burst then
+ * goes flat — an `increase()`-based alert would auto-resolve minutes into a
+ * multi-day outage. This gauge instead stays asserted for the entire outage and
+ * clears only when the source recovers, so `== 1 for: Nm` is a correct
+ * "connector has been down for N minutes" signal.
+ *
+ * Excludes `restarting` (transient: at most `MAX_RESTARTS` attempts over a few
+ * minutes before the source is either healthy again or `dead`). Driven at
+ * scrape time from the live HealthMonitor via {@link registerBundleHealthGauge};
+ * the collect callback resets first, so a recovered source's series disappears.
+ *
+ * No tenant/workspace label — one pod per tenant, scrape namespace attributes it.
+ */
+export const bundleUnhealthy = new Gauge({
+  name: "nb_bundle_unhealthy",
+  help: 'MCP bundles currently down (HealthMonitor state "dead"), by source. 1 = down.',
+  labelNames: ["source"] as const,
+  registers: [metricsRegistry],
+  collect() {
+    // Runs at scrape time (prom-client invokes this in `.get()`). Reset so a
+    // source that has since recovered drops out of the series entirely (the
+    // gauge is absent for healthy sources), letting the alert resolve.
+    this.reset();
+    const status = healthStatusProvider?.() ?? [];
+    for (const b of status) {
+      if (b.state !== "dead") continue;
+      const safe = b.name && SAFE_SOURCE.test(b.name) ? b.name : "other";
+      this.set({ source: safe }, 1);
+    }
+  },
+});
+
+/**
+ * Live HealthMonitor status provider read by the `nb_bundle_unhealthy` gauge's
+ * collect callback. `null` until wired (e.g. local dev with no server start, or
+ * a test that hasn't registered one), in which case the gauge reports nothing.
+ */
+let healthStatusProvider: (() => BundleHealth[]) | null = null;
+
+/**
+ * Wire the `nb_bundle_unhealthy` gauge to a live HealthMonitor. Call once at
+ * server start, right after the HealthMonitor is constructed, with
+ * `() => healthMonitor.getStatus()`. Last registration wins (so tests can swap
+ * in a stub); the gauge reads through this provider at every scrape.
+ */
+export function registerBundleHealthGauge(getStatus: () => BundleHealth[]): void {
+  healthStatusProvider = getStatus;
 }
 
 /** Token usage subset needed for metrics — a structural slice of `TokenUsage`. */
