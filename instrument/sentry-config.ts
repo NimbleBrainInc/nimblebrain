@@ -19,29 +19,45 @@ export interface ResolvedSentryConfig {
 }
 
 /**
- * Decide whether (and how) to start Sentry from the process environment.
+ * The explicit on/off switch — mirrors the web client's `enabled` flag.
  *
- * Returns `null` — a silent no-op — unless `SENTRY_DSN` is set. That is the
- * OSS / local-dev / test default and every tenant with Sentry disabled: the
- * chart only emits `SENTRY_*` env when `runtime.config.sentry.enabled` is true,
- * so an absent DSN is the off switch and the SDK is never even imported.
+ * True only when `NB_SENTRY_ENABLED` is `"true"` (case-insensitive, trimmed).
+ * Enablement is NEVER inferred from DSN presence: an operator turns Sentry on
+ * deliberately, and a stray/blank DSN can't silently flip it either way. Absent
+ * ⇒ off — the OSS / local-dev / test default (and any tenant with the chart's
+ * `runtime.config.sentry.enabled: false`), so the SDK is never even imported.
  *
- * `release` falls back to the image's build identity (`NB_VERSION`, then
- * `NB_BUILD_SHA`) so events group by deploy without extra config.
- * `tracesSampleRate` defaults to 0 (errors only) and ignores invalid/negative
- * input — performance tracing stays owned by the kernel's OTLP→Tempo pipeline.
+ * These are `NB_SENTRY_*` (our knobs, matching the web client), NOT Sentry's
+ * standard `SENTRY_*`: the preload reads and applies them explicitly, so they
+ * belong in our namespace — and using them means an ambient `SENTRY_DSN` (e.g.
+ * a dev's shell export for another project) can't auto-init the SDK behind us.
+ */
+export function sentryEnabled(env: Record<string, string | undefined>): boolean {
+  return env.NB_SENTRY_ENABLED?.trim().toLowerCase() === "true";
+}
+
+/**
+ * Parse and validate the Sentry settings from the environment. Returns `null`
+ * only when no `NB_SENTRY_DSN` is configured — the *enable* decision is separate
+ * and explicit (see {@link sentryEnabled}); this just shapes the endpoint
+ * config once the operator has opted in.
+ *
+ * `release` is the runtime's existing build identity (`NB_VERSION`, then
+ * `NB_BUILD_SHA` — the same values `/v1/health` reports), so events group by
+ * deploy with no extra var. `tracesSampleRate` defaults to 0 (errors only) and
+ * ignores invalid/negative input — performance tracing stays owned by the
+ * kernel's OTLP→Tempo pipeline.
  */
 export function resolveSentryConfig(
   env: Record<string, string | undefined>,
 ): ResolvedSentryConfig | null {
-  const dsn = env.SENTRY_DSN?.trim();
+  const dsn = env.NB_SENTRY_DSN?.trim();
   if (!dsn) return null;
 
-  const environment = env.SENTRY_ENVIRONMENT?.trim() || undefined;
-  const release =
-    env.SENTRY_RELEASE?.trim() || env.NB_VERSION?.trim() || env.NB_BUILD_SHA?.trim() || undefined;
+  const environment = env.NB_SENTRY_ENV?.trim() || undefined;
+  const release = env.NB_VERSION?.trim() || env.NB_BUILD_SHA?.trim() || undefined;
 
-  const parsed = Number(env.SENTRY_TRACES_SAMPLE_RATE);
+  const parsed = Number(env.NB_SENTRY_TRACES_SAMPLE_RATE);
   const tracesSampleRate = Number.isFinite(parsed) && parsed >= 0 ? parsed : 0;
 
   return { dsn, environment, release, tracesSampleRate };

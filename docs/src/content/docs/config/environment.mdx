@@ -99,14 +99,16 @@ Vendor-neutral. Trace ids always exist for log correlation; export only happens 
 
 ### Error reporting (Sentry)
 
-Optional, additive error capture on top of OpenTelemetry. Off unless `SENTRY_DSN` is set (the SDK is loaded only then), initialized as an out-of-kernel preload that does **not** take over OTel tracing. Per-tenant via the chart (`runtime.config.sentry.enabled`). See [Observability → Error reporting](/deploy/observability/#error-reporting-sentry-optional).
+Optional, additive error capture on top of OpenTelemetry. Off unless `NB_SENTRY_ENABLED=true` (the SDK is loaded only then — never inferred from DSN presence), initialized as an out-of-kernel preload that does **not** take over OTel tracing. `NB_SENTRY_*` are our own knobs (mirroring the web client), not Sentry's auto-read `SENTRY_*`. Per-tenant via the chart (`runtime.config.sentry.enabled`). See [Observability → Error reporting](/deploy/observability/#error-reporting-sentry-optional).
 
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
-| `SENTRY_DSN` | No | — | Project DSN. Unset ⇒ disabled, SDK not loaded. |
-| `SENTRY_ENVIRONMENT` | No | — | Environment tag (e.g. `staging`, `production`); one project discriminated by this tag. |
-| `SENTRY_RELEASE` | No | `NB_VERSION` → `NB_BUILD_SHA` | Release for grouping by deploy; falls back to the image build identity. |
-| `SENTRY_TRACES_SAMPLE_RATE` | No | `0` | Sentry performance tracing. `0` = errors only (recommended; leaves tracing to OTel). |
+| `NB_SENTRY_ENABLED` | No | `false` | Explicit on/off switch. Must be `true` to enable; never inferred from the DSN. |
+| `NB_SENTRY_DSN` | No | — | Project DSN (required when enabled). |
+| `NB_SENTRY_ENV` | No | — | Environment tag (e.g. `staging`, `production`); one project discriminated by this tag. |
+| `NB_SENTRY_TRACES_SAMPLE_RATE` | No | `0` | Sentry performance tracing. `0` = errors only (recommended; leaves tracing to OTel). |
+
+Release is taken from the runtime's existing `NB_VERSION` → `NB_BUILD_SHA` (no separate Sentry release var).
 
 ### Telemetry
 

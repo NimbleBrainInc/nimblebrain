@@ -11,11 +11,13 @@
  *   deployment glue, so it lives here (outside `src/`), exactly as `@sentry/react`
  *   lives only in `web/`. The kernel never couples to it.
  *
- * No-op by default: with no `SENTRY_DSN` the SDK is never imported (see
- * `resolveSentryConfig`), so OSS checkouts, local dev, and tests pay nothing.
- * The chart only emits `SENTRY_*` env when `runtime.config.sentry.enabled` is
- * true, and a tenant opts out by flipping that flag — so config is per-tenant,
- * mirroring the web client.
+ * Off by default and switched explicitly: `NB_SENTRY_ENABLED=true` is the gate
+ * (mirrors the web client's `enabled` flag), never inferred from DSN presence.
+ * When it's off the SDK is never imported, so OSS checkouts, local dev, and
+ * tests pay nothing. The chart sets `NB_SENTRY_ENABLED` per tenant from
+ * `runtime.config.sentry.enabled`, so a tenant opts in/out by that flag. Vars
+ * are `NB_SENTRY_*` (our knobs, like the web client), not Sentry's auto-read
+ * `SENTRY_*` — the preload is the sole, explicit control point.
  *
  * Coexistence with the kernel's OTel: `skipOpenTelemetrySetup: true` keeps
  * Sentry from registering its own global TracerProvider. The kernel owns the
@@ -30,22 +32,27 @@
  * is stamped here; per-request `workspace_id` / opaque `user_id` are added by
  * the kernel where the verified identity is in scope.
  */
-import { resolveSentryConfig, scrubEvent } from "./sentry-config.ts";
+import { resolveSentryConfig, scrubEvent, sentryEnabled } from "./sentry-config.ts";
 
-const config = resolveSentryConfig(process.env);
+if (sentryEnabled(process.env)) {
+  const config = resolveSentryConfig(process.env);
+  if (config) {
+    const Sentry = await import("@sentry/bun");
+    Sentry.init({
+      dsn: config.dsn,
+      environment: config.environment,
+      release: config.release,
+      tracesSampleRate: config.tracesSampleRate,
+      sendDefaultPii: false,
+      skipOpenTelemetrySetup: true,
+      beforeSend: scrubEvent,
+    });
 
-if (config) {
-  const Sentry = await import("@sentry/bun");
-  Sentry.init({
-    dsn: config.dsn,
-    environment: config.environment,
-    release: config.release,
-    tracesSampleRate: config.tracesSampleRate,
-    sendDefaultPii: false,
-    skipOpenTelemetrySetup: true,
-    beforeSend: scrubEvent,
-  });
-
-  const tenantId = process.env.NB_TENANT_ID?.trim();
-  if (tenantId) Sentry.setTag("tenant_id", tenantId);
+    const tenantId = process.env.NB_TENANT_ID?.trim();
+    if (tenantId) Sentry.setTag("tenant_id", tenantId);
+  } else {
+    // Explicitly enabled but no endpoint — surface the misconfig rather than
+    // silently staying off. (Not in src/, so the no-raw-console rule is N/A.)
+    console.warn("[sentry] NB_SENTRY_ENABLED is set but NB_SENTRY_DSN is empty — error reporting is disabled.");
+  }
 }

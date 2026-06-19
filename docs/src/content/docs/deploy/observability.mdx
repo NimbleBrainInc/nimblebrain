@@ -73,23 +73,26 @@ Identity comes only from the verified request context, never the wire, and never
 
 The OpenTelemetry pipeline above is the system of record for traces and logs. Sentry is an **optional, additive** error sink on top of it — turn it on when you want uncaught exceptions and unhandled promise rejections grouped, deduplicated, and alertable with full stack traces, without scraping logs for them.
 
-It is **off by default**. Set `SENTRY_DSN` to enable it; leave it unset and the SDK is never even loaded (the OSS, local-dev, and test default). In multi-tenant deployments the platform chart gates it on `runtime.config.sentry.enabled` per tenant and injects the `SENTRY_*` env, so one tenant can run with Sentry on and another with it off — exactly like the web client.
+It is **off by default and switched explicitly** — set `NB_SENTRY_ENABLED=true` (with `NB_SENTRY_DSN`) to turn it on. Enablement is never inferred from DSN presence, so a stray `SENTRY_DSN` in the environment can't silently wire a process into Sentry. When off, the SDK is never even loaded (the OSS, local-dev, and test default). In multi-tenant deployments the chart sets `NB_SENTRY_ENABLED` per tenant from `runtime.config.sentry.enabled`, so one tenant can run with Sentry on and another off. These `NB_SENTRY_*` vars mirror the web client — our own knobs, not Sentry's auto-read `SENTRY_*`.
 
 ```yaml title="docker-compose.yml (platform service)"
 environment:
-  - SENTRY_DSN=https://<key>@<org>.ingest.sentry.io/<project>
-  - SENTRY_ENVIRONMENT=production
+  - NB_SENTRY_ENABLED=true
+  - NB_SENTRY_DSN=https://<key>@<org>.ingest.sentry.io/<project>
+  - NB_SENTRY_ENV=production
 ```
 
 | Variable | Default | Purpose |
 |---|---|---|
-| `SENTRY_DSN` | unset | The project DSN. Unset = disabled, SDK not loaded |
-| `SENTRY_ENVIRONMENT` | unset | Environment tag (e.g. `staging`, `production`) — one project, discriminated by this tag |
-| `SENTRY_RELEASE` | `NB_VERSION` → `NB_BUILD_SHA` | Release for grouping by deploy; falls back to the image's build identity |
-| `SENTRY_TRACES_SAMPLE_RATE` | `0` | Sentry performance tracing. `0` = errors only (recommended) |
+| `NB_SENTRY_ENABLED` | `false` | Explicit on/off switch. Must be `true` to enable — never inferred from the DSN |
+| `NB_SENTRY_DSN` | unset | The project DSN (required when enabled) |
+| `NB_SENTRY_ENV` | unset | Environment tag (e.g. `staging`, `production`) — one project, discriminated by this tag |
+| `NB_SENTRY_TRACES_SAMPLE_RATE` | `0` | Sentry performance tracing. `0` = errors only (recommended) |
+
+Release is the runtime's existing `NB_VERSION` → `NB_BUILD_SHA` build identity (the same values `/v1/health` reports), so events group by deploy with no extra var.
 
 <Aside type="note">
-Sentry here is initialized as an out-of-kernel preload and does **not** take over OpenTelemetry — the runtime keeps owning the global tracer provider, so your OTLP → Tempo/Grafana traces are untouched. Sentry captures errors; OTel owns tracing. Performance tracing (`SENTRY_TRACES_SAMPLE_RATE > 0`) drives Sentry's own transactions independently and is off by default.
+Sentry here is initialized as an out-of-kernel preload and does **not** take over OpenTelemetry — the runtime keeps owning the global tracer provider, so your OTLP → Tempo/Grafana traces are untouched. Sentry captures errors; OTel owns tracing. Performance tracing (`NB_SENTRY_TRACES_SAMPLE_RATE > 0`) drives Sentry's own transactions independently and is off by default.
 </Aside>
 
 <Aside type="caution">

@@ -1,22 +1,38 @@
 import type { ErrorEvent } from "@sentry/bun";
 import { describe, expect, it } from "bun:test";
-import { resolveSentryConfig, scrubEvent } from "../../instrument/sentry-config.ts";
+import { resolveSentryConfig, scrubEvent, sentryEnabled } from "../../instrument/sentry-config.ts";
+
+describe("sentryEnabled", () => {
+  it("is the explicit switch — true only when NB_SENTRY_ENABLED is 'true'", () => {
+    expect(sentryEnabled({ NB_SENTRY_ENABLED: "true" })).toBe(true);
+    expect(sentryEnabled({ NB_SENTRY_ENABLED: "TRUE" })).toBe(true);
+    expect(sentryEnabled({ NB_SENTRY_ENABLED: "  true  " })).toBe(true);
+  });
+
+  it("is off when absent (OSS/dev/test default), false, or anything non-'true'", () => {
+    expect(sentryEnabled({})).toBe(false);
+    expect(sentryEnabled({ NB_SENTRY_ENABLED: "false" })).toBe(false);
+    expect(sentryEnabled({ NB_SENTRY_ENABLED: "1" })).toBe(false);
+    expect(sentryEnabled({ NB_SENTRY_ENABLED: "" })).toBe(false);
+  });
+
+  it("is NOT inferred from DSN presence — a DSN alone never enables", () => {
+    expect(sentryEnabled({ NB_SENTRY_DSN: "https://k@o1.ingest.us.sentry.io/2" })).toBe(false);
+  });
+});
 
 describe("resolveSentryConfig", () => {
-  it("is a no-op (null) when SENTRY_DSN is absent — the OSS/dev/test default", () => {
+  it("returns null when NB_SENTRY_DSN is absent, blank, or whitespace", () => {
     expect(resolveSentryConfig({})).toBeNull();
+    expect(resolveSentryConfig({ NB_SENTRY_DSN: "" })).toBeNull();
+    expect(resolveSentryConfig({ NB_SENTRY_DSN: "   " })).toBeNull();
   });
 
-  it("is a no-op when SENTRY_DSN is blank or whitespace", () => {
-    expect(resolveSentryConfig({ SENTRY_DSN: "" })).toBeNull();
-    expect(resolveSentryConfig({ SENTRY_DSN: "   " })).toBeNull();
-  });
-
-  it("resolves dsn, environment, and release when configured", () => {
+  it("resolves dsn and environment when configured", () => {
     const cfg = resolveSentryConfig({
-      SENTRY_DSN: "https://abc@o1.ingest.us.sentry.io/2",
-      SENTRY_ENVIRONMENT: "production",
-      SENTRY_RELEASE: "1.2.3",
+      NB_SENTRY_DSN: "https://abc@o1.ingest.us.sentry.io/2",
+      NB_SENTRY_ENV: "production",
+      NB_VERSION: "1.2.3",
     });
     expect(cfg).toEqual({
       dsn: "https://abc@o1.ingest.us.sentry.io/2",
@@ -26,27 +42,31 @@ describe("resolveSentryConfig", () => {
     });
   });
 
-  it("falls back release to NB_VERSION then NB_BUILD_SHA", () => {
-    expect(resolveSentryConfig({ SENTRY_DSN: "d", NB_VERSION: "v9" })?.release).toBe("v9");
-    expect(resolveSentryConfig({ SENTRY_DSN: "d", NB_BUILD_SHA: "deadbee" })?.release).toBe(
+  it("derives release from NB_VERSION, then NB_BUILD_SHA", () => {
+    expect(resolveSentryConfig({ NB_SENTRY_DSN: "d", NB_VERSION: "v9" })?.release).toBe("v9");
+    expect(resolveSentryConfig({ NB_SENTRY_DSN: "d", NB_BUILD_SHA: "deadbee" })?.release).toBe(
       "deadbee",
     );
-    // SENTRY_RELEASE wins over the build-identity fallbacks.
+    // NB_VERSION wins over NB_BUILD_SHA when both are present.
     expect(
-      resolveSentryConfig({ SENTRY_DSN: "d", SENTRY_RELEASE: "r", NB_VERSION: "v9" })?.release,
-    ).toBe("r");
+      resolveSentryConfig({ NB_SENTRY_DSN: "d", NB_VERSION: "v9", NB_BUILD_SHA: "deadbee" })
+        ?.release,
+    ).toBe("v9");
   });
 
   it("defaults tracesSampleRate to 0 (errors only) and rejects invalid/negative input", () => {
-    expect(resolveSentryConfig({ SENTRY_DSN: "d" })?.tracesSampleRate).toBe(0);
+    expect(resolveSentryConfig({ NB_SENTRY_DSN: "d" })?.tracesSampleRate).toBe(0);
     expect(
-      resolveSentryConfig({ SENTRY_DSN: "d", SENTRY_TRACES_SAMPLE_RATE: "nope" })?.tracesSampleRate,
+      resolveSentryConfig({ NB_SENTRY_DSN: "d", NB_SENTRY_TRACES_SAMPLE_RATE: "nope" })
+        ?.tracesSampleRate,
     ).toBe(0);
     expect(
-      resolveSentryConfig({ SENTRY_DSN: "d", SENTRY_TRACES_SAMPLE_RATE: "-1" })?.tracesSampleRate,
+      resolveSentryConfig({ NB_SENTRY_DSN: "d", NB_SENTRY_TRACES_SAMPLE_RATE: "-1" })
+        ?.tracesSampleRate,
     ).toBe(0);
     expect(
-      resolveSentryConfig({ SENTRY_DSN: "d", SENTRY_TRACES_SAMPLE_RATE: "0.1" })?.tracesSampleRate,
+      resolveSentryConfig({ NB_SENTRY_DSN: "d", NB_SENTRY_TRACES_SAMPLE_RATE: "0.1" })
+        ?.tracesSampleRate,
     ).toBe(0.1);
   });
 });
