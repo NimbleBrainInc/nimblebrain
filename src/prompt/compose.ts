@@ -688,9 +688,12 @@ function formatWorkspaceContext(ws: WorkspaceContext): string {
   const lines = ["## Workspace", ""];
   lines.push(`- ID: ${sanitizeLineField(ws.id)}`);
   if (ws.name) lines.push(`- Name: ${sanitizeLineField(ws.name)}`);
-  lines.push("");
   lines.push(
     "Your active tools are this workspace's — its apps plus the platform tools. Tools in the user's OTHER workspaces, and their personal tools (e.g. email), are NOT loaded right now. Find any tool across all of the user's workspaces with `nb__search`; matches are added to your tools on demand. Don't assume a tool is missing — search first.",
+  );
+  lines.push("");
+  lines.push(
+    "If you cannot satisfy a request because the data or context belongs to another workspace, do not automatically switch or assume paths. Instead, use the `list_workspaces` tool to find the correct workspace and propose a switch (e.g., 'I don't have that here. Want me to switch to <workspace>?'). Only the user can approve a workspace switch.",
   );
   lines.push("");
   lines.push(IDENTITY_SCOPE_NOTE);
@@ -711,6 +714,8 @@ function formatNoWorkspaceContext(): string {
     "The user is at their identity-level home — **not in any single workspace**. There is no current workspace. If the user asks which workspace they're in, tell them they're at their home view, not a specific one.",
     "",
     "Your active tools are the platform tools and the user's own (conversations, personal). Tools that belong to a specific workspace are NOT loaded here. Find any tool across all of the user's workspaces with `nb__search`; matches are added to your tools on demand. Don't assume a tool is missing — search first.",
+    "",
+    "If you cannot satisfy a request because the data or context belongs to another workspace, do not automatically switch or assume paths. Instead, use the `list_workspaces` tool to find the correct workspace and propose a switch (e.g., 'I don't have that here. Want me to switch to <workspace>?'). Only the user can approve a workspace switch.",
     "",
     IDENTITY_SCOPE_NOTE,
   ].join("\n");

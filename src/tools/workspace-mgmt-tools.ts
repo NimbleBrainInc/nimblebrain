@@ -825,3 +825,45 @@ async function handleListMembers(
     isError: false,
   };
 }
+
+export function createListWorkspacesTool(ctx: ManageWorkspacesContext): InProcessTool {
+  return {
+    name: "list_workspaces",
+    description:
+      "List the names and IDs of all workspaces you belong to. Use this to discover available workspaces when you cannot satisfy a request in the current one and want to propose a workspace switch to the user. Do NOT expose internal metadata.",
+    inputSchema: {
+      type: "object",
+      properties: {},
+    },
+    handler: async (): Promise<ToolResult> => {
+      const identity = ctx.getIdentity();
+      if (!identity) {
+        return {
+          content: textContent("Authentication required."),
+          isError: true,
+        };
+      }
+      try {
+        const workspaces = await ctx.workspaceStore.getWorkspacesForUser(identity.id);
+        const result = workspaces.map((ws) => ({
+          id: ws.id,
+          name: ws.name,
+          ...(ws.about ? { description: ws.about } : {}),
+        }));
+
+        return {
+          content: textContent(`Found ${result.length} workspace(s).`),
+          structuredContent: { workspaces: result },
+          isError: false,
+        };
+      } catch (err) {
+        return {
+          content: textContent(
+            `Failed to list workspaces: ${err instanceof Error ? err.message : String(err)}`,
+          ),
+          isError: true,
+        };
+      }
+    },
+  };
+}

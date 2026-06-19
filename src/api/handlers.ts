@@ -901,7 +901,35 @@ export async function handleReadResource(
       if (err instanceof ArtifactNotFoundError) {
         // High-signal: the host emitted this link and now can't resolve it —
         // most often a cross-workspace reference RLS-denied at the data plane.
-        // The 404 is otherwise silent; this counter is the fleet-level signal.
+        // If we can resolve it in another accessible workspace, we return a
+        // 403 cross_workspace_artifact so the client can propose a switch.
+        const identity = options?.identity;
+        if (identity) {
+          const userWorkspaces = await runtime
+            .getWorkspaceStore()
+            .getWorkspacesForUser(identity.id);
+          for (const otherWs of userWorkspaces) {
+            if (otherWs.id === ws) continue;
+            try {
+              // We only care if it resolves, we don't need the content bytes
+              await getArtifactResolver().read(uri, otherWs.id);
+              artifactResolutionsTotal.inc({ result: "cross_workspace" });
+              return apiError(
+                403,
+                "cross_workspace_artifact",
+                `This artifact lives in workspace ${otherWs.name}. Open it there?`,
+                {
+                  uri,
+                  workspaceId: otherWs.id,
+                  workspaceName: otherWs.name,
+                },
+              );
+            } catch {
+              // Not in this workspace either, continue
+            }
+          }
+        }
+
         artifactResolutionsTotal.inc({ result: "not_found" });
         return apiError(404, "resource_not_found", `Resource "${uri}" not found`, { uri });
       }

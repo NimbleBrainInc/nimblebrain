@@ -25,6 +25,7 @@ import { createManageRegistriesTool } from "./registry-tools.ts";
 import { rankToolSearchResults } from "./search-ranking.ts";
 import { createManageUsersTool, type ManageUsersContext } from "./user-tools.ts";
 import {
+  createListWorkspacesTool,
   createManageWorkspacesTool,
   type ManageMembersContext,
   type ManageWorkspacesContext,
@@ -271,6 +272,7 @@ export async function createSystemTools(
       ...(manageMembersCtx ? { userStore: manageMembersCtx.userStore } : {}),
     };
     systemToolDefs.push(createManageWorkspacesTool(mergedCtx));
+    systemToolDefs.push(createListWorkspacesTool(manageWorkspacesCtx));
   }
 
   // Connectors tool. Single surface for all connectors — the install

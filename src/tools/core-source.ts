@@ -802,8 +802,8 @@ export function createCoreToolDefs(runtime: Runtime): InProcessTool[] {
           return { content: textContent("uri is required"), isError: true };
         }
         const uri = raw.startsWith("artifact://") ? raw : `artifact://${raw}`;
+        const wsId = runtime.requireWorkspaceId();
         try {
-          const wsId = runtime.requireWorkspaceId();
           const result = await getArtifactResolver().read(uri, wsId);
           const text = result.contents
             .map((c) =>
@@ -827,6 +827,29 @@ export function createCoreToolDefs(runtime: Runtime): InProcessTool[] {
           }
           if (err instanceof ArtifactNotFoundError) {
             artifactResolutionsTotal.inc({ result: "not_found" });
+
+            const identity = runtime.getCurrentIdentity();
+            if (identity) {
+              const userWorkspaces = await runtime
+                .getWorkspaceStore()
+                .getWorkspacesForUser(identity.id);
+              for (const ws of userWorkspaces) {
+                if (ws.id === wsId) continue;
+                try {
+                  // We only care if it resolves, we don't need the content
+                  await getArtifactResolver().read(uri, ws.id);
+                  return {
+                    content: textContent(
+                      `This artifact lives in workspace ${ws.name}. Open it there?`,
+                    ),
+                    isError: true,
+                  };
+                } catch {
+                  // Not in this workspace either, continue
+                }
+              }
+            }
+
             return {
               content: textContent(
                 `Artifact "${uri}" not found in this workspace (it may not exist, or belong to another workspace).`,
