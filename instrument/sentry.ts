@@ -26,13 +26,17 @@
  * (`tracesSampleRate > 0`) drives Sentry's own transactions and is off by
  * default — turning it on does not disturb the Grafana trace pipeline.
  *
- * Trust boundary: `sendDefaultPii: false` plus `beforeSend: scrubEvent` keep
- * request headers/cookies, bodies, and query strings out of events. Only the
+ * Trust boundary (mirrors `web/src/sentry.ts`): `sendDefaultPii: false` plus
+ * `beforeSend: scrubEvent` keep request headers/cookies, bodies, and query
+ * strings out of the event envelope, and `beforeBreadcrumb: scrubBreadcrumb`
+ * scrubs the breadcrumb trail (drops `console` crumbs, strips URL query
+ * strings) — the default integrations breadcrumb `console.*` and outbound
+ * LLM/MCP/OAuth requests, which can carry prompts and tokens. Only the
  * deployment-constant `tenant_id` (from `NB_TENANT_ID`, never a request header)
  * is stamped here; per-request `workspace_id` / opaque `user_id` are added by
  * the kernel where the verified identity is in scope.
  */
-import { resolveSentryConfig, scrubEvent, sentryEnabled } from "./sentry-config.ts";
+import { resolveSentryConfig, scrubBreadcrumb, scrubEvent, sentryEnabled } from "./sentry-config.ts";
 
 if (sentryEnabled(process.env)) {
   const config = resolveSentryConfig(process.env);
@@ -46,6 +50,7 @@ if (sentryEnabled(process.env)) {
       sendDefaultPii: false,
       skipOpenTelemetrySetup: true,
       beforeSend: scrubEvent,
+      beforeBreadcrumb: scrubBreadcrumb,
     });
 
     const tenantId = process.env.NB_TENANT_ID?.trim();

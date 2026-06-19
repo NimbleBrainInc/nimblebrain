@@ -1,6 +1,11 @@
-import type { ErrorEvent } from "@sentry/bun";
+import type { Breadcrumb, ErrorEvent } from "@sentry/bun";
 import { describe, expect, it } from "bun:test";
-import { resolveSentryConfig, scrubEvent, sentryEnabled } from "../../instrument/sentry-config.ts";
+import {
+  resolveSentryConfig,
+  scrubBreadcrumb,
+  scrubEvent,
+  sentryEnabled,
+} from "../../instrument/sentry-config.ts";
 
 describe("sentryEnabled", () => {
   it("is the explicit switch — true only when NB_SENTRY_ENABLED is 'true'", () => {
@@ -68,6 +73,36 @@ describe("resolveSentryConfig", () => {
       resolveSentryConfig({ NB_SENTRY_DSN: "d", NB_SENTRY_TRACES_SAMPLE_RATE: "0.1" })
         ?.tracesSampleRate,
     ).toBe(0.1);
+    // Above the documented 0–1 contract falls back to 0 (Sentry treats >1 as
+    // always-sample; reject rather than silently enable full tracing).
+    expect(
+      resolveSentryConfig({ NB_SENTRY_DSN: "d", NB_SENTRY_TRACES_SAMPLE_RATE: "5" })
+        ?.tracesSampleRate,
+    ).toBe(0);
+    expect(
+      resolveSentryConfig({ NB_SENTRY_DSN: "d", NB_SENTRY_TRACES_SAMPLE_RATE: "1" })
+        ?.tracesSampleRate,
+    ).toBe(1);
+  });
+});
+
+describe("scrubBreadcrumb", () => {
+  it("drops console-category breadcrumbs (dependency logs can carry prompts/PII)", () => {
+    const crumb = { category: "console", message: "prompt: secret" } as Breadcrumb;
+    expect(scrubBreadcrumb(crumb)).toBeNull();
+  });
+
+  it("strips query strings from breadcrumb URLs, keeping the path", () => {
+    const crumb = {
+      category: "http",
+      data: { url: "https://api.anthropic.com/v1/messages?token=sk-abc&id=ws_1" },
+    } as unknown as Breadcrumb;
+    expect(scrubBreadcrumb(crumb)?.data?.url).toBe("https://api.anthropic.com/v1/messages");
+  });
+
+  it("keeps non-console crumbs without a URL untouched", () => {
+    const crumb = { category: "navigation", data: { from: "/a", to: "/b" } } as unknown as Breadcrumb;
+    expect(scrubBreadcrumb(crumb)).toEqual(crumb);
   });
 });
 

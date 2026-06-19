@@ -8,7 +8,7 @@
  * under `src/`. Sentry is additive, opt-in deployment glue (mirrors how
  * `@sentry/react` lives only in `web/`). See `instrument/sentry.ts`.
  */
-import type { ErrorEvent } from "@sentry/bun";
+import type { Breadcrumb, ErrorEvent } from "@sentry/bun";
 
 /** Resolved, validated backend Sentry settings. */
 export interface ResolvedSentryConfig {
@@ -45,8 +45,8 @@ export function sentryEnabled(env: Record<string, string | undefined>): boolean 
  * `release` is the runtime's existing build identity (`NB_VERSION`, then
  * `NB_BUILD_SHA` — the same values `/v1/health` reports), so events group by
  * deploy with no extra var. `tracesSampleRate` defaults to 0 (errors only) and
- * ignores invalid/negative input — performance tracing stays owned by the
- * kernel's OTLP→Tempo pipeline.
+ * ignores anything outside the documented 0–1 range — performance tracing stays
+ * owned by the kernel's OTLP→Tempo pipeline.
  */
 export function resolveSentryConfig(
   env: Record<string, string | undefined>,
@@ -58,7 +58,7 @@ export function resolveSentryConfig(
   const release = env.NB_VERSION?.trim() || env.NB_BUILD_SHA?.trim() || undefined;
 
   const parsed = Number(env.NB_SENTRY_TRACES_SAMPLE_RATE);
-  const tracesSampleRate = Number.isFinite(parsed) && parsed >= 0 ? parsed : 0;
+  const tracesSampleRate = Number.isFinite(parsed) && parsed >= 0 && parsed <= 1 ? parsed : 0;
 
   return { dsn, environment, release, tracesSampleRate };
 }
@@ -81,4 +81,28 @@ export function scrubEvent(event: ErrorEvent): ErrorEvent {
     event.user = event.user.id ? { id: event.user.id } : {};
   }
   return event;
+}
+
+/**
+ * Scrub the breadcrumb trail attached to events — the other PII channel, and
+ * the more dangerous one on the backend. `@sentry/bun`'s default integrations
+ * (`consoleIntegration`, `httpIntegration`, `nativeNodeFetchIntegration`) turn
+ * every `console.*` line and every outbound request into a breadcrumb, and the
+ * runtime's outbound traffic is LLM / MCP / OAuth calls. Mirrors the web
+ * client's `beforeBreadcrumb` (`web/src/sentry.ts`):
+ *
+ * - Drop `console`-category crumbs entirely — dependency logs (the AI SDK, MCP
+ *   libs, …) aren't bound by `check:no-raw-console` and can carry prompts / PII.
+ * - Strip query strings from any crumb URL — they can carry tokens, ids, and
+ *   prompts. The path is left intact (endpoint, not content; within the same
+ *   trust boundary as the tagged ids).
+ */
+export function scrubBreadcrumb(crumb: Breadcrumb): Breadcrumb | null {
+  if (crumb.category === "console") return null;
+  const url = crumb.data?.url;
+  if (typeof url === "string") {
+    const q = url.indexOf("?");
+    if (q >= 0 && crumb.data) crumb.data.url = url.slice(0, q);
+  }
+  return crumb;
 }

@@ -96,7 +96,7 @@ Sentry here is initialized as an out-of-kernel preload and does **not** take ove
 </Aside>
 
 <Aside type="caution">
-The same trust boundary as traces and logs applies: `sendDefaultPii` is off and events are scrubbed before send — no request headers or cookies (auth tokens), no request bodies, no query strings (which can carry prompts and ids). Only the boot-time `tenant_id` is tagged; per-request `workspace_id` / opaque `user_id` are added from the verified identity. Never widen this to capture request content.
+The same trust boundary as traces and logs applies: `sendDefaultPii` is off and events are scrubbed before send — no request headers or cookies (auth tokens), no request bodies, no query strings (which can carry prompts and ids). The breadcrumb trail is scrubbed the same way: `console` breadcrumbs are dropped (dependency logs can carry prompts) and URL query strings are stripped from request breadcrumbs (outbound LLM/MCP/OAuth calls). Only the boot-time `tenant_id` is tagged; per-request `workspace_id` / opaque `user_id` are added from the verified identity. Never widen this to capture request content.
 </Aside>
 
 ## Prometheus metrics
