@@ -128,6 +128,13 @@ describe("scrubEvent", () => {
     expect(out.request?.url).toBe("https://x/y");
   });
 
+  it("strips a query string embedded in request.url (symmetric with breadcrumbs)", () => {
+    const event = {
+      request: { url: "https://api/v1/x?token=sk-abc&id=ws_1" },
+    } as unknown as ErrorEvent;
+    expect(scrubEvent(event).request?.url).toBe("https://api/v1/x");
+  });
+
   it("reduces user to the opaque id, dropping email/username/ip", () => {
     const event = {
       user: { id: "u_1", email: "a@b.co", username: "alice", ip_address: "1.2.3.4" },

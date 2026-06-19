@@ -79,6 +79,14 @@ export function scrubEvent(event: ErrorEvent): ErrorEvent {
     event.request.headers = undefined;
     event.request.data = undefined;
     event.request.query_string = undefined;
+    // Also strip a query string embedded in the URL itself — an integration may
+    // populate request.url as path+query, and query_string above only covers the
+    // separate field. Keeps scrubEvent symmetric with scrubBreadcrumb.
+    const url = event.request.url;
+    if (typeof url === "string") {
+      const q = url.indexOf("?");
+      if (q >= 0) event.request.url = url.slice(0, q);
+    }
   }
   if (event.user) {
     event.user = event.user.id ? { id: event.user.id } : {};

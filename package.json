@@ -81,9 +81,9 @@
     "check": "bunx tsc --noEmit",
     "check:web": "cd web && bunx tsc --noEmit",
     "check:theme": "cd web && bun run check:theme",
-    "lint": "bunx @biomejs/biome check src/",
-    "format": "bunx @biomejs/biome format --write src/ web/src/",
-    "format:check": "bunx @biomejs/biome format src/ web/src/",
+    "lint": "bunx @biomejs/biome check src/ instrument/",
+    "format": "bunx @biomejs/biome format --write src/ web/src/ instrument/",
+    "format:check": "bunx @biomejs/biome format src/ web/src/ instrument/",
     "sync-models": "bun run src/model/sync-models.ts"
   },
   "devDependencies": {

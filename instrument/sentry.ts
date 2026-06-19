@@ -42,7 +42,12 @@
  * which Sentry doesn't ingest. A neutral kernel→Sentry scope seam could bridge
  * it later; today it's tenant-level only.
  */
-import { resolveSentryConfig, scrubBreadcrumb, scrubEvent, sentryEnabled } from "./sentry-config.ts";
+import {
+  resolveSentryConfig,
+  scrubBreadcrumb,
+  scrubEvent,
+  sentryEnabled,
+} from "./sentry-config.ts";
 
 if (sentryEnabled(process.env)) {
   const config = resolveSentryConfig(process.env);
@@ -64,6 +69,8 @@ if (sentryEnabled(process.env)) {
   } else {
     // Explicitly enabled but no endpoint — surface the misconfig rather than
     // silently staying off. (Not in src/, so the no-raw-console rule is N/A.)
-    console.warn("[sentry] NB_SENTRY_ENABLED is set but NB_SENTRY_DSN is empty — error reporting is disabled.");
+    console.warn(
+      "[sentry] NB_SENTRY_ENABLED is set but NB_SENTRY_DSN is empty — error reporting is disabled.",
+    );
   }
 }
