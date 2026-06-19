@@ -97,6 +97,17 @@ Vendor-neutral. Trace ids always exist for log correlation; export only happens 
 | `NB_LOG_FORMAT` | No | pretty | Set to `json` for structured JSON logs auto-enriched with `service`, `tenant_id`, `correlation_id` (the active trace id), and identity. Set by the chart in production. |
 | `NB_DEBUG` | No | — | Namespace-scoped hot-path debug logging (e.g. `NB_DEBUG=mcp,sse`). Read once at process start. |
 
+### Error reporting (Sentry)
+
+Optional, additive error capture on top of OpenTelemetry. Off unless `SENTRY_DSN` is set (the SDK is loaded only then), initialized as an out-of-kernel preload that does **not** take over OTel tracing. Per-tenant via the chart (`runtime.config.sentry.enabled`). See [Observability → Error reporting](/deploy/observability/#error-reporting-sentry-optional).
+
+| Variable | Required | Default | Description |
+|----------|----------|---------|-------------|
+| `SENTRY_DSN` | No | — | Project DSN. Unset ⇒ disabled, SDK not loaded. |
+| `SENTRY_ENVIRONMENT` | No | — | Environment tag (e.g. `staging`, `production`); one project discriminated by this tag. |
+| `SENTRY_RELEASE` | No | `NB_VERSION` → `NB_BUILD_SHA` | Release for grouping by deploy; falls back to the image build identity. |
+| `SENTRY_TRACES_SAMPLE_RATE` | No | `0` | Sentry performance tracing. `0` = errors only (recommended; leaves tracing to OTel). |
+
 ### Telemetry
 
 | Variable | Required | Default | Description |

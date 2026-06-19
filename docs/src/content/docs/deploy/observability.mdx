@@ -69,6 +69,33 @@ Each JSON line is auto-enriched with:
 
 Identity comes only from the verified request context, never the wire, and never includes the human display name. Logs stay on stderr, so Kubernetes captures them alongside stdout and stdout stays clean for JSON-RPC and piped output.
 
+## Error reporting (Sentry, optional)
+
+The OpenTelemetry pipeline above is the system of record for traces and logs. Sentry is an **optional, additive** error sink on top of it — turn it on when you want uncaught exceptions and unhandled promise rejections grouped, deduplicated, and alertable with full stack traces, without scraping logs for them.
+
+It is **off by default**. Set `SENTRY_DSN` to enable it; leave it unset and the SDK is never even loaded (the OSS, local-dev, and test default). In multi-tenant deployments the platform chart gates it on `runtime.config.sentry.enabled` per tenant and injects the `SENTRY_*` env, so one tenant can run with Sentry on and another with it off — exactly like the web client.
+
+```yaml title="docker-compose.yml (platform service)"
+environment:
+  - SENTRY_DSN=https://<key>@<org>.ingest.sentry.io/<project>
+  - SENTRY_ENVIRONMENT=production
+```
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `SENTRY_DSN` | unset | The project DSN. Unset = disabled, SDK not loaded |
+| `SENTRY_ENVIRONMENT` | unset | Environment tag (e.g. `staging`, `production`) — one project, discriminated by this tag |
+| `SENTRY_RELEASE` | `NB_VERSION` → `NB_BUILD_SHA` | Release for grouping by deploy; falls back to the image's build identity |
+| `SENTRY_TRACES_SAMPLE_RATE` | `0` | Sentry performance tracing. `0` = errors only (recommended) |
+
+<Aside type="note">
+Sentry here is initialized as an out-of-kernel preload and does **not** take over OpenTelemetry — the runtime keeps owning the global tracer provider, so your OTLP → Tempo/Grafana traces are untouched. Sentry captures errors; OTel owns tracing. Performance tracing (`SENTRY_TRACES_SAMPLE_RATE > 0`) drives Sentry's own transactions independently and is off by default.
+</Aside>
+
+<Aside type="caution">
+The same trust boundary as traces and logs applies: `sendDefaultPii` is off and events are scrubbed before send — no request headers or cookies (auth tokens), no request bodies, no query strings (which can carry prompts and ids). Only the boot-time `tenant_id` is tagged; per-request `workspace_id` / opaque `user_id` are added from the verified identity. Never widen this to capture request content.
+</Aside>
+
 ## Prometheus metrics
 
 The runtime exposes a Prometheus exposition endpoint at the bare path `GET /metrics`:

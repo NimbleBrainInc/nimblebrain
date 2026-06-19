@@ -35,6 +35,11 @@ RUN bun install --frozen-lockfile --production --ignore-scripts
 
 COPY --chown=1000:1000 src/ src/
 COPY --chown=1000:1000 scripts/ scripts/
+# Out-of-kernel Sentry preload + its bunfig wiring. bunfig.toml must sit at the
+# WORKDIR (the runtime's cwd) so Bun applies `preload` to `bun run src/cli/...`.
+# Inert without SENTRY_DSN; the kernel under src/ stays Sentry-free.
+COPY --chown=1000:1000 bunfig.toml ./
+COPY --chown=1000:1000 instrument/ instrument/
 
 # Build the built-in bundle UIs (home, conversations, files, automations,
 # usage) — each is its own single-file Vite app and must build in the container

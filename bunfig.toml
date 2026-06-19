@@ -1,0 +1,9 @@
+# Run the Sentry preload before any entry point. Bun honors `preload` for
+# `bun run <file>`, `bun <file>`, and `bun test`, so this covers the chart's
+# `bun run src/cli/index.ts serve` command override, `bun start`, and local dev
+# from one place — it can't be forgotten by a launcher that doesn't pass a flag.
+#
+# The preload is a no-op unless SENTRY_DSN is set (see instrument/sentry.ts), so
+# OSS/dev/test never load the SDK. Sentry must stay OUT of the kernel (`src/`);
+# this file and `instrument/` are the sanctioned out-of-kernel seam.
+preload = ["./instrument/sentry.ts"]
