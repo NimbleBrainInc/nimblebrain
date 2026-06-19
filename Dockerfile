@@ -37,7 +37,7 @@ COPY --chown=1000:1000 src/ src/
 COPY --chown=1000:1000 scripts/ scripts/
 # Out-of-kernel Sentry preload + its bunfig wiring. bunfig.toml must sit at the
 # WORKDIR (the runtime's cwd) so Bun applies `preload` to `bun run src/cli/...`.
-# Inert without SENTRY_DSN; the kernel under src/ stays Sentry-free.
+# Inert unless NB_SENTRY_ENABLED=true; the kernel under src/ stays Sentry-free.
 COPY --chown=1000:1000 bunfig.toml ./
 COPY --chown=1000:1000 instrument/ instrument/
 
