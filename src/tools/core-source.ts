@@ -828,7 +828,7 @@ export function createCoreToolDefs(runtime: Runtime): InProcessTool[] {
           if (err instanceof ArtifactNotFoundError) {
             artifactResolutionsTotal.inc({ result: "not_found" });
 
-            const identity = runtime.getCurrentIdentity();
+            const identity = runtime.getCurrentIdentity?.();
             if (identity) {
               const userWorkspaces = await runtime
                 .getWorkspaceStore()
