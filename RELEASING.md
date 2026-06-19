@@ -83,8 +83,12 @@ gh release view "$TAG" --json tagName,isPrerelease,url
 
 ### 4b. GHCR platform image
 
+The canonical runtime image is `nimblebrain-runtime`; `nimblebrain` is a
+transitional alias carrying the same digest (verify it too until the alias is
+retired).
+
 ```bash
-gh api "/orgs/NimbleBrainInc/packages/container/nimblebrain/versions" \
+gh api "/orgs/NimbleBrainInc/packages/container/nimblebrain-runtime/versions" \
   --jq ".[] | select(.metadata.container.tags | contains([\"$TAG\"])) | {tags: .metadata.container.tags, created: .created_at}"
 ```
 
@@ -109,7 +113,8 @@ From a shell where you are NOT logged in to GHCR:
 
 ```bash
 docker logout ghcr.io 2>/dev/null
-docker pull "ghcr.io/nimblebraininc/nimblebrain:$TAG"
+docker pull "ghcr.io/nimblebraininc/nimblebrain-runtime:$TAG"
+docker pull "ghcr.io/nimblebraininc/nimblebrain:$TAG"   # transitional alias
 docker pull "ghcr.io/nimblebraininc/nimblebrain-web:$TAG"
 ```
 
@@ -123,9 +128,10 @@ When a *new* image name is first published to GHCR (not a new version of an exis
 
 This is needed exactly once per image name, then never again.
 
-Current image names (already public as of v0.4.0-beta.2):
-- https://github.com/orgs/NimbleBrainInc/packages/container/nimblebrain/settings
-- https://github.com/orgs/NimbleBrainInc/packages/container/nimblebrain-web/settings
+Current image names:
+- https://github.com/orgs/NimbleBrainInc/packages/container/nimblebrain-runtime/settings — **NEW** (canonical runtime name); flip to public on its first release
+- https://github.com/orgs/NimbleBrainInc/packages/container/nimblebrain/settings — already public (transitional alias)
+- https://github.com/orgs/NimbleBrainInc/packages/container/nimblebrain-web/settings — already public
 
 To flip: visit the settings URL → "Danger Zone" section → "Change visibility" → Public → confirm.
 
@@ -145,21 +151,21 @@ git push origin ":refs/tags/$TAG"
 # 2. Delete the GitHub Release (also deletes the remote tag if still present)
 gh release delete "$TAG" --yes --cleanup-tag
 
-# 3. Delete the GHCR package versions for both images.
+# 3. Delete the GHCR package versions for every image.
 #    First, list IDs of versions that carry this tag:
-gh api "/orgs/NimbleBrainInc/packages/container/nimblebrain/versions" \
+gh api "/orgs/NimbleBrainInc/packages/container/nimblebrain-runtime/versions" \
   --jq ".[] | select(.metadata.container.tags | contains([\"$TAG\"])) | .id"
 # Then for each ID:
-gh api -X DELETE "/orgs/NimbleBrainInc/packages/container/nimblebrain/versions/<id>"
-# Repeat the two commands above with nimblebrain-web in place of nimblebrain.
+gh api -X DELETE "/orgs/NimbleBrainInc/packages/container/nimblebrain-runtime/versions/<id>"
+# Repeat the two commands above for `nimblebrain` (the alias) and `nimblebrain-web`.
 
 # 4. Delete ECR images for the botched tag (requires AWS CLI + credentials):
 aws ecr batch-delete-image \
-  --repository-name nimblebrain/agent-platform \
+  --repository-name nimblebrain/nimblebrain-runtime \
   --image-ids "imageTag=$TAG" \
   --region us-east-1
 aws ecr batch-delete-image \
-  --repository-name nimblebrain/agent-web \
+  --repository-name nimblebrain/nimblebrain-web \
   --image-ids "imageTag=$TAG" \
   --region us-east-1
 ```
@@ -178,12 +184,13 @@ Artifact map:
 
 | Registry | Repo | Tags on every release | Extra tags for stable only |
 |---|---|---|---|
-| GHCR (public) | `ghcr.io/nimblebraininc/nimblebrain` | `$TAG`, short-sha | `latest` |
+| GHCR (public) | `ghcr.io/nimblebraininc/nimblebrain-runtime` | `$TAG`, short-sha | `latest` |
+| GHCR (public) | `ghcr.io/nimblebraininc/nimblebrain` (transitional alias) | `$TAG`, short-sha | `latest` |
 | GHCR (public) | `ghcr.io/nimblebraininc/nimblebrain-web` | `$TAG`, short-sha | `latest` |
-| ECR (private) | `nimblebrain/agent-platform` | `$TAG`, short-sha | — |
-| ECR (private) | `nimblebrain/agent-web` | `$TAG`, short-sha | — |
+| ECR (private) | `nimblebrain/nimblebrain-runtime` | `$TAG`, short-sha | — |
+| ECR (private) | `nimblebrain/nimblebrain-web` | `$TAG`, short-sha | — |
 
-ECR repositories have immutable tags enabled — `:latest` is deliberately not pushed there; deploys pin to version or sha. The ECR repo names (`agent-platform`, `agent-web`) are a legacy naming artifact — a rename to match GHCR is planned but not scheduled.
+ECR repositories have immutable tags enabled — `:latest` is deliberately not pushed there; deploys pin to version or sha. ECR and GHCR repo names now match (`nimblebrain-runtime`, `nimblebrain-web`). `ghcr.io/nimblebraininc/nimblebrain` is a transitional alias for the runtime image kept so existing OSS pulls don't break; drop it once consumers have moved.
 
 ## 8. Out of scope for this runbook
 

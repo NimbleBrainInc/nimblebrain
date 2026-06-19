@@ -1,6 +1,6 @@
 services:
   platform:
-    image: ghcr.io/nimblebraininc/nimblebrain:latest
+    image: ghcr.io/nimblebraininc/nimblebrain-runtime:latest
     build: .
     restart: unless-stopped
     volumes:
