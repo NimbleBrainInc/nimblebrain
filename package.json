@@ -81,9 +81,9 @@
     "check": "bunx tsc --noEmit",
     "check:web": "cd web && bunx tsc --noEmit",
     "check:theme": "cd web && bun run check:theme",
-    "lint": "bunx @biomejs/biome check src/",
-    "format": "bunx @biomejs/biome format --write src/ web/src/",
-    "format:check": "bunx @biomejs/biome format src/ web/src/",
+    "lint": "bunx @biomejs/biome check src/ instrument/",
+    "format": "bunx @biomejs/biome format --write src/ web/src/ instrument/",
+    "format:check": "bunx @biomejs/biome format src/ web/src/ instrument/",
     "sync-models": "bun run src/model/sync-models.ts"
   },
   "devDependencies": {
@@ -111,6 +111,7 @@
     "@opentelemetry/sdk-trace-base": "2.8.0",
     "@opentelemetry/sdk-trace-node": "2.8.0",
     "@opentelemetry/semantic-conventions": "1.41.1",
+    "@sentry/bun": "^10.58.0",
     "@sinclair/typebox": "^0.34.49",
     "@workos-inc/node": "^8.12.1",
     "ai": "^6.0.138",

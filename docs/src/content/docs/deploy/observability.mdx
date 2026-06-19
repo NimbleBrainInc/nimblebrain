@@ -69,6 +69,36 @@ Each JSON line is auto-enriched with:
 
 Identity comes only from the verified request context, never the wire, and never includes the human display name. Logs stay on stderr, so Kubernetes captures them alongside stdout and stdout stays clean for JSON-RPC and piped output.
 
+## Error reporting (Sentry, optional)
+
+The OpenTelemetry pipeline above is the system of record for traces and logs. Sentry is an **optional, additive** error sink on top of it — turn it on when you want uncaught exceptions and unhandled promise rejections grouped, deduplicated, and alertable with full stack traces, without scraping logs for them.
+
+It is **off by default and switched explicitly** — set `NB_SENTRY_ENABLED=true` (with `NB_SENTRY_DSN`) to turn it on. Enablement is never inferred from DSN presence, so a stray `SENTRY_DSN` in the environment can't silently wire a process into Sentry. When off, the SDK is never even loaded (the OSS, local-dev, and test default). In multi-tenant deployments the chart sets `NB_SENTRY_ENABLED` per tenant from `runtime.config.sentry.enabled`, so one tenant can run with Sentry on and another off. These `NB_SENTRY_*` vars mirror the web client — our own knobs, not Sentry's auto-read `SENTRY_*`.
+
+```yaml title="docker-compose.yml (platform service)"
+environment:
+  - NB_SENTRY_ENABLED=true
+  - NB_SENTRY_DSN=https://<key>@<org>.ingest.sentry.io/<project>
+  - NB_SENTRY_ENV=production
+```
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `NB_SENTRY_ENABLED` | `false` | Explicit on/off switch. Must be `true` to enable — never inferred from the DSN |
+| `NB_SENTRY_DSN` | unset | The project DSN (required when enabled) |
+| `NB_SENTRY_ENV` | unset | Environment tag (e.g. `staging`, `production`) — one project, discriminated by this tag |
+| `NB_SENTRY_TRACES_SAMPLE_RATE` | `0` | Sentry performance tracing. `0` = errors only (recommended) |
+
+Release is the runtime's existing `NB_VERSION` → `NB_BUILD_SHA` build identity (the same values `/v1/health` reports), so events group by deploy with no extra var.
+
+<Aside type="note">
+Sentry here is initialized as an out-of-kernel preload and does **not** take over OpenTelemetry — the runtime keeps owning the global tracer provider, so your OTLP → Tempo/Grafana traces are untouched. Sentry captures errors; OTel owns tracing. Performance tracing (`NB_SENTRY_TRACES_SAMPLE_RATE > 0`) drives Sentry's own transactions independently and is off by default.
+</Aside>
+
+<Aside type="caution">
+The same trust boundary as traces and logs applies: `sendDefaultPii` is off and events are scrubbed before send — no request headers or cookies (auth tokens), no request bodies, no query strings (which can carry prompts and ids). The breadcrumb trail is scrubbed the same way: `console` breadcrumbs are dropped (dependency logs can carry prompts) and URL query strings are stripped from request breadcrumbs (outbound LLM/MCP/OAuth calls). The only identity on a backend event is the boot-time `tenant_id` tag — unlike the web client, the runtime does **not** attach per-request `workspace_id` / `user_id` (the kernel can't import Sentry, so that identity stays on the OTel spans). Never widen this to capture request content.
+</Aside>
+
 ## Prometheus metrics
 
 The runtime exposes a Prometheus exposition endpoint at the bare path `GET /metrics`:
