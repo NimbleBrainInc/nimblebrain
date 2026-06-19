@@ -653,6 +653,18 @@ export class AgentEngine {
               callMessages = sanitizeMessages(runTransform(overflowAttempt));
               continue;
             }
+            // Terminal LLM failure: the call threw, in-call retry is exhausted,
+            // and it's neither a recoverable overflow nor a user cancellation.
+            // Emit the observe-only error fact (for the LLM error-rate metric)
+            // before re-throwing — the error still propagates and ends the run.
+            // Aborts are excluded: a cancellation isn't a provider failure and
+            // must not inflate the error rate.
+            if (!config.signal?.aborted) {
+              this.events.emit({
+                type: "llm.error",
+                data: { runId, model: config.model },
+              });
+            }
             throw err;
           }
         }

@@ -1,4 +1,6 @@
 import {
+  llmErrorsTotal,
+  llmRequestDurationSeconds,
   recordBundleCrash,
   recordLlmUsage,
   toolCallsTotal,
@@ -39,8 +41,21 @@ export class MetricsEventSink implements EventSink {
     const { type, data } = event;
     switch (type) {
       case "llm.done": {
+        const model = (data.model as string) ?? "unknown";
         const usage = data.usage as TokenUsage | undefined;
-        if (usage) recordLlmUsage("main", (data.model as string) ?? "unknown", usage);
+        if (usage) recordLlmUsage("main", model, usage);
+        // Per-call latency for the p99 alert. `llmMs` is set on every llm.done
+        // (engine measures it around the provider call); guard the type anyway.
+        const llmMs = data.llmMs;
+        if (typeof llmMs === "number") {
+          llmRequestDurationSeconds.observe({ source: "main", model }, llmMs / 1000);
+        }
+        break;
+      }
+      case "llm.error": {
+        // Terminal provider failure after retries (aborts excluded upstream).
+        // Pairs with nb_llm_calls_total to form the error rate.
+        llmErrorsTotal.inc({ source: "main", model: (data.model as string) ?? "unknown" });
         break;
       }
       case "tool.done": {

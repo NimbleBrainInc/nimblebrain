@@ -6,6 +6,8 @@ import {
   bundleCrashedTotal,
   bundleUnhealthy,
   llmCallsTotal,
+  llmErrorsTotal,
+  llmRequestDurationSeconds,
   llmTokensTotal,
   recordBundleCrash,
   recordLlmUsage,
@@ -266,5 +268,62 @@ describe("bundle unhealthy gauge", () => {
   it("test_bundle_unhealthy_gauge_unsafe_source_buckets_to_other", async () => {
     registerBundleHealthGauge(() => status({ name: "Weird Name!! /etc", state: "dead" }));
     expect(await readGauge("other")).toBe(1);
+  });
+});
+
+describe("LLM latency + error metrics", () => {
+  // Read a histogram's _sum / _count for a label-series. prom-client emits the
+  // aggregate as sibling series named `<name>_sum` / `<name>_count`.
+  async function readHistogram(
+    suffix: "sum" | "count",
+    labels: Record<string, string>,
+  ): Promise<number> {
+    const metric = await llmRequestDurationSeconds.get();
+    const want = `nb_llm_request_duration_seconds_${suffix}`;
+    for (const s of metric.values) {
+      if (
+        // biome-ignore lint/suspicious/noExplicitAny: prom-client value shape.
+        (s as any).metricName === want &&
+        Object.entries(labels).every(([k, v]) => s.labels[k] === v)
+      ) {
+        return s.value;
+      }
+    }
+    return 0;
+  }
+
+  it("test_llm_done_observes_latency_histogram_seconds", async () => {
+    const sink = new MetricsEventSink();
+    const labels = { source: "main", model: "tm-latency" };
+    const beforeCount = await readHistogram("count", labels);
+    const beforeSum = await readHistogram("sum", labels);
+    // 2400ms call → 2.4s observed.
+    sink.emit({ type: "llm.done", data: { runId: "r1", model: "tm-latency", llmMs: 2400 } });
+    expect((await readHistogram("count", labels)) - beforeCount).toBe(1);
+    expect((await readHistogram("sum", labels)) - beforeSum).toBeCloseTo(2.4, 5);
+  });
+
+  it("test_llm_done_without_llmMs_does_not_observe", async () => {
+    const sink = new MetricsEventSink();
+    const labels = { source: "main", model: "tm-no-ms" };
+    const before = await readHistogram("count", labels);
+    // A malformed llm.done missing llmMs must not record a 0s (or NaN) sample.
+    sink.emit({ type: "llm.done", data: { runId: "r1", model: "tm-no-ms" } });
+    expect((await readHistogram("count", labels)) - before).toBe(0);
+  });
+
+  it("test_llm_error_increments_errors_counter_with_model", async () => {
+    const sink = new MetricsEventSink();
+    const labels = { source: "main", model: "tm-err" };
+    const before = await read(llmErrorsTotal, labels);
+    sink.emit({ type: "llm.error", data: { runId: "r1", model: "tm-err" } });
+    expect((await read(llmErrorsTotal, labels)) - before).toBe(1);
+  });
+
+  it("test_llm_done_does_not_increment_error_counter", async () => {
+    const sink = new MetricsEventSink();
+    const before = await readTotal(llmErrorsTotal);
+    sink.emit({ type: "llm.done", data: { runId: "r1", model: "tm-err", llmMs: 100 } });
+    expect((await readTotal(llmErrorsTotal)) - before).toBe(0);
   });
 });
