@@ -120,6 +120,8 @@ jobs:
     permissions:
       id-token: write
       contents: read
+    outputs:
+      sha: ${{ steps.tag.outputs.sha }}
     steps:
       - uses: actions/checkout@v6
       # buildx (docker-container driver) is required for the GitHub Actions
@@ -151,3 +153,56 @@ jobs:
           file: web/Dockerfile
           cache-scope: web
           tags: ${{ steps.ecr.outputs.registry }}/nimblebrain/nimblebrain-web:${{ steps.tag.outputs.sha }}
+
+  # Roll the staging "edge" channel onto this build. Fires a single
+  # repository_dispatch into the private deploy-config repo, whose bump workflow
+  # rewrites the edge image tag in git; Argo then auto-syncs every staging tenant.
+  # GitOps stays intact — the image ref is recorded in git, not pushed to the
+  # cluster from here. Production is NOT touched (it promotes deliberately by tag).
+  #
+  # Fully optional: if the App isn't configured (vars/secrets unset) the job
+  # no-ops, so forks and pre-setup CI stay green. Config:
+  #   vars.STAGING_DEPLOY_REPO       — deploy-config repo name (same org)
+  #   vars.EDGE_BUMP_APP_ID          — GitHub App id (Contents: write on that repo)
+  #   secrets.EDGE_BUMP_APP_KEY      — that App's private key
+  roll-staging-edge:
+    name: Roll staging edge channel
+    needs: build-and-push
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    # Authenticates with a minted App token, never GITHUB_TOKEN — needs no grants.
+    permissions: {}
+    steps:
+      - name: Check edge-bump config
+        id: cfg
+        env:
+          APP_ID: ${{ vars.EDGE_BUMP_APP_ID }}
+          REPO: ${{ vars.STAGING_DEPLOY_REPO }}
+          KEY: ${{ secrets.EDGE_BUMP_APP_KEY }}
+        run: |
+          if [ -n "$APP_ID" ] && [ -n "$REPO" ] && [ -n "$KEY" ]; then
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "edge-bump not fully configured (need EDGE_BUMP_APP_ID + STAGING_DEPLOY_REPO vars + EDGE_BUMP_APP_KEY secret) — skipping"
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Mint deploy-repo token
+        if: steps.cfg.outputs.enabled == 'true'
+        id: token
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ vars.EDGE_BUMP_APP_ID }}
+          private-key: ${{ secrets.EDGE_BUMP_APP_KEY }}
+          owner: ${{ github.repository_owner }}
+          repositories: ${{ vars.STAGING_DEPLOY_REPO }}
+      - name: Fire edge bump
+        if: steps.cfg.outputs.enabled == 'true'
+        env:
+          GH_TOKEN: ${{ steps.token.outputs.token }}
+        run: |
+          # -f (raw string), NOT -F: -F type-coerces all-digit values to JSON
+          # numbers, which mangles all-digit SHAs (esp. leading-zero). A SHA is an
+          # opaque string.
+          gh api "repos/${{ github.repository_owner }}/${{ vars.STAGING_DEPLOY_REPO }}/dispatches" \
+            -f event_type=runtime-image-pushed \
+            -f "client_payload[sha]=${{ needs.build-and-push.outputs.sha }}"
