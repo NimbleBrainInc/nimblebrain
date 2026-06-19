@@ -509,7 +509,7 @@ docker compose up
 
 Images are published to GHCR on every release:
 
-- `ghcr.io/nimblebraininc/nimblebrain` — runtime (Bun + Python 3.13 + Node 22 + mpak)
+- `ghcr.io/nimblebraininc/nimblebrain-runtime` — runtime (Bun + Python 3.13 + Node 22 + mpak). Also published as `ghcr.io/nimblebraininc/nimblebrain` (transitional alias).
 - `ghcr.io/nimblebraininc/nimblebrain-web` — Caddy serving the SPA, proxying `/v1/*` to the platform
 
 Each release is tagged with the version (e.g. `v1.2.3`) and the short git SHA. Stable releases also move `:latest` forward; pre-releases (e.g. `v0.4.0-beta.1`) do not. Pin to a version tag in production. Pass `--build` to `docker compose` to build from source instead.

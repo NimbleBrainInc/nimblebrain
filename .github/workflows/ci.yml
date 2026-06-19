@@ -143,11 +143,11 @@ jobs:
           file: Dockerfile
           cache-scope: platform
           build-args: BUILD_SHA=${{ steps.tag.outputs.sha }}
-          tags: ${{ steps.ecr.outputs.registry }}/nimblebrain/agent-platform:${{ steps.tag.outputs.sha }}
+          tags: ${{ steps.ecr.outputs.registry }}/nimblebrain/nimblebrain-runtime:${{ steps.tag.outputs.sha }}
       - name: Build and push web image
         uses: ./.github/actions/build-push-image
         with:
           context: web
           file: web/Dockerfile
           cache-scope: web
-          tags: ${{ steps.ecr.outputs.registry }}/nimblebrain/agent-web:${{ steps.tag.outputs.sha }}
+          tags: ${{ steps.ecr.outputs.registry }}/nimblebrain/nimblebrain-web:${{ steps.tag.outputs.sha }}
