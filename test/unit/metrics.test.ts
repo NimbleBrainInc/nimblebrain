@@ -3,8 +3,10 @@ import { log } from "../../src/cli/log.ts";
 import { MAX_TRACKED_RUNS, MetricsEventSink } from "../../src/adapters/metrics-events.ts";
 import type { Counter } from "prom-client";
 import {
+  bundleCrashedTotal,
   llmCallsTotal,
   llmTokensTotal,
+  recordBundleCrash,
   recordLlmUsage,
   toolCallsTotal,
   toolPromotionsTotal,
@@ -20,6 +22,13 @@ async function read(counter: Counter<any>, labels: Record<string, string> = {}):
     if (Object.entries(labels).every(([k, v]) => s.labels[k] === v)) return s.value;
   }
   return 0;
+}
+
+// Sum across every label-series of a counter — for asserting "nothing changed".
+// biome-ignore lint/suspicious/noExplicitAny: same as read().
+async function readTotal(counter: Counter<any>): Promise<number> {
+  const metric = await counter.get();
+  return metric.values.reduce((acc, s) => acc + s.value, 0);
 }
 
 describe("recordLlmUsage", () => {
@@ -140,5 +149,55 @@ describe("MetricsEventSink", () => {
     const sink = new MetricsEventSink();
     // Must not throw on an unrelated event.
     expect(() => sink.emit({ type: "run.start", data: { runId: "r1" } })).not.toThrow();
+  });
+});
+
+describe("bundle crash metric", () => {
+  it("test_run_error_bundle_crashed_increments_counter_with_connector_and_remote", async () => {
+    const sink = new MetricsEventSink();
+    const labels = { connector: "com-dropbox-mcp", remote: "true" };
+    const before = await read(bundleCrashedTotal, labels);
+    // Mirrors HealthMonitor's emission: run.error with a nested bundle.crashed
+    // event, a `source` name, and `remote: true`. No runId.
+    sink.emit({
+      type: "run.error",
+      data: { source: "com-dropbox-mcp", event: "bundle.crashed", remote: true },
+    });
+    expect((await read(bundleCrashedTotal, labels)) - before).toBe(1);
+  });
+
+  it("test_local_source_bundle_crashed_records_remote_false", async () => {
+    const sink = new MetricsEventSink();
+    const labels = { connector: "synapse-crm", remote: "false" };
+    const before = await read(bundleCrashedTotal, labels);
+    // A local stdio bundle: HealthMonitor omits the `remote` field entirely.
+    sink.emit({
+      type: "run.error",
+      data: { source: "synapse-crm", event: "bundle.crashed" },
+    });
+    expect((await read(bundleCrashedTotal, labels)) - before).toBe(1);
+  });
+
+  it("test_run_error_without_bundle_crashed_does_not_increment", async () => {
+    const sink = new MetricsEventSink();
+    const before = await readTotal(bundleCrashedTotal);
+    // An ordinary run error and a normal run completion must not touch the
+    // crash counter — only the nested bundle.crashed discriminator counts.
+    sink.emit({ type: "run.error", data: { runId: "r1" } });
+    sink.emit({ type: "run.done", data: { runId: "r2" } });
+    sink.emit({
+      type: "run.error",
+      data: { source: "com-dropbox-mcp", event: "bundle.restarting", remote: true },
+    });
+    expect((await readTotal(bundleCrashedTotal)) - before).toBe(0);
+  });
+
+  it("test_unsafe_connector_name_buckets_to_other", async () => {
+    const labels = { connector: "other", remote: "false" };
+    const before = await read(bundleCrashedTotal, labels);
+    recordBundleCrash("Weird Name!! /etc", false);
+    recordBundleCrash(undefined, false);
+    recordBundleCrash("", false);
+    expect((await read(bundleCrashedTotal, labels)) - before).toBe(3);
   });
 });
