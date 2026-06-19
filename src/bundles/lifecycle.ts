@@ -1287,6 +1287,16 @@ export class BundleLifecycleManager {
       source,
     });
 
+    // Arm interactive OAuth for THIS user-initiated start only. The
+    // `interactiveAuthAllowed` flag gates whether a start may drive a browser
+    // flow vs. fail fast to `reauth_required`; only a user-initiated reconnect
+    // (a human is waiting) should arm it. Disarm once this start settles
+    // (`.finally` below) so the flag never leaks into a later background start
+    // on the same provider — defensive hygiene: this fresh source isn't in the
+    // HealthMonitor boot snapshot, but a provider that ever is must never carry
+    // a stale armed flag into a liveness reconnect.
+    provider.setInteractiveAuthAllowed(true);
+
     // Background start. The provider's callback resolves `authUrlPromise`
     // when interactive auth is required. If start() succeeds without ever
     // hitting interactive (headless / pre-authenticated), we transition to
@@ -1331,6 +1341,11 @@ export class BundleLifecycleManager {
         if (!capturedAuthUrl) {
           rejectAuthUrl(err instanceof Error ? err : new Error(msg));
         }
+      })
+      .finally(() => {
+        // Disarm interactive auth — subsequent (background) reconnects of this
+        // long-lived source must NOT drive a browser flow.
+        provider.setInteractiveAuthAllowed(false);
       });
 
     // Race the auth URL signal against a hard timeout. 15s is generous —

@@ -181,28 +181,45 @@ describe("composioUserId", () => {
 });
 
 describe("composioCallbackUrl", () => {
-  const origApi = process.env.NB_API_URL;
+  const ENV_KEYS = [
+    "NB_PUBLIC_ORIGIN",
+    "NB_PLATFORM_HOST",
+    "NB_CUSTOM_DOMAIN",
+    "NB_CUSTOM_DOMAIN_CANONICAL",
+    "NB_API_URL",
+  ] as const;
+  let savedEnv: Record<string, string | undefined>;
+  beforeEach(() => {
+    savedEnv = {};
+    for (const k of ENV_KEYS) {
+      savedEnv[k] = process.env[k];
+      delete process.env[k];
+    }
+  });
   afterEach(() => {
-    if (origApi === undefined) delete process.env.NB_API_URL;
-    else process.env.NB_API_URL = origApi;
+    for (const k of ENV_KEYS) {
+      if (savedEnv[k] === undefined) delete process.env[k];
+      else process.env[k] = savedEnv[k];
+    }
   });
 
-  test("uses NB_API_URL when set", () => {
+  test("derives from the tenant public origin (platform host)", () => {
+    process.env.NB_PLATFORM_HOST = "platform.example.test";
+    expect(composioCallbackUrl()).toBe("https://platform.example.test/v1/composio-auth/callback");
+  });
+
+  test("derives from the custom domain when canonical", () => {
+    process.env.NB_PLATFORM_HOST = "platform.example.test";
+    process.env.NB_CUSTOM_DOMAIN = "brain.example.test";
+    expect(composioCallbackUrl()).toBe("https://brain.example.test/v1/composio-auth/callback");
+  });
+
+  test("ignores legacy NB_API_URL (fallback removed) — falls back to localhost", () => {
     process.env.NB_API_URL = "https://platform.example.test";
-    expect(composioCallbackUrl()).toBe(
-      "https://platform.example.test/v1/composio-auth/callback",
-    );
-  });
-
-  test("trims trailing slashes", () => {
-    process.env.NB_API_URL = "https://platform.example.test//";
-    expect(composioCallbackUrl()).toBe(
-      "https://platform.example.test/v1/composio-auth/callback",
-    );
+    expect(composioCallbackUrl()).toBe("http://localhost:27247/v1/composio-auth/callback");
   });
 
   test("falls back to localhost when unset", () => {
-    delete process.env.NB_API_URL;
     expect(composioCallbackUrl()).toBe("http://localhost:27247/v1/composio-auth/callback");
   });
 });

@@ -4,14 +4,18 @@ import { _resetBouncerModeForTest } from "../../../src/oauth/bouncer-config.ts";
 import { mcpAuthCallbackUrl } from "../../../src/oauth/mcp-callback-url.ts";
 
 // The single source of truth for the OAuth redirect_uri. Every provider
-// path (initiate, boot-start, revocation) resolves through this, so the
-// DCR drift check never fires on our own inconsistency. These cases pin
-// that contract: bouncer mode wins; otherwise NB_API_URL; otherwise the
-// localhost dev default.
+// path (initiate, boot-start, revocation) resolves through this. These cases
+// pin that contract: bouncer mode wins; otherwise the tenant public origin
+// (`publicOrigin()`, derived from the host facts); otherwise the localhost
+// dev default.
 const ENV_KEYS = [
   "NB_OAUTH_BOUNCER_CALLBACK_URL",
   "NB_OAUTH_BOUNCER_TENANT_KEY",
   "NB_TENANT_ID",
+  "NB_PUBLIC_ORIGIN",
+  "NB_PLATFORM_HOST",
+  "NB_CUSTOM_DOMAIN",
+  "NB_CUSTOM_DOMAIN_CANONICAL",
   "NB_API_URL",
 ] as const;
 
@@ -38,25 +42,26 @@ describe("mcpAuthCallbackUrl — single callback-URL authority", () => {
     process.env.NB_OAUTH_BOUNCER_CALLBACK_URL = bouncerCallback;
     process.env.NB_OAUTH_BOUNCER_TENANT_KEY = randomBytes(32).toString("base64");
     process.env.NB_TENANT_ID = "tenant-a";
-    // Even with a tenant-direct NB_API_URL set, bouncer wins — this is the
-    // exact prod config where boot-start used to diverge onto NB_API_URL.
-    process.env.NB_API_URL = "https://hq.platform.nimblebrain.ai";
+    // Even with a tenant-direct public origin set, bouncer wins — this is the
+    // exact prod config where boot-start used to diverge onto the tenant host.
+    process.env.NB_PLATFORM_HOST = "hq.platform.nimblebrain.ai";
     _resetBouncerModeForTest();
 
     expect(mcpAuthCallbackUrl()).toBe(bouncerCallback);
   });
 
-  it("falls back to NB_API_URL when not in bouncer mode", () => {
-    process.env.NB_API_URL = "https://hq.platform.nimblebrain.ai";
+  it("falls back to the tenant public origin when not in bouncer mode", () => {
+    process.env.NB_PLATFORM_HOST = "hq.platform.nimblebrain.ai";
     expect(mcpAuthCallbackUrl()).toBe("https://hq.platform.nimblebrain.ai/v1/mcp-auth/callback");
   });
 
-  it("trims a trailing slash on NB_API_URL so the path isn't doubled", () => {
-    process.env.NB_API_URL = "https://hq.platform.nimblebrain.ai/";
-    expect(mcpAuthCallbackUrl()).toBe("https://hq.platform.nimblebrain.ai/v1/mcp-auth/callback");
+  it("derives from the custom domain when canonical, even outside bouncer mode", () => {
+    process.env.NB_PLATFORM_HOST = "hq.platform.nimblebrain.ai";
+    process.env.NB_CUSTOM_DOMAIN = "brain.hq.com";
+    expect(mcpAuthCallbackUrl()).toBe("https://brain.hq.com/v1/mcp-auth/callback");
   });
 
-  it("defaults to the localhost dev callback when neither bouncer nor NB_API_URL is set", () => {
+  it("defaults to the localhost dev callback when neither bouncer nor host facts are set", () => {
     expect(mcpAuthCallbackUrl()).toBe("http://localhost:27247/v1/mcp-auth/callback");
   });
 });

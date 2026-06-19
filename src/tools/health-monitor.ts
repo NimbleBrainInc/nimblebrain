@@ -106,6 +106,22 @@ export class HealthMonitor {
       return;
     }
 
+    // A source that was deliberately stopped via `stop()` (a teardown /
+    // disconnect — e.g. a user-initiated `startAuth` tears the boot source out
+    // of the registry and builds a fresh provider+source) is terminal for the
+    // monitor. This `records` set is a one-time boot snapshot and is never
+    // re-seeded, so the stopped instance lingers here as an orphan. Reconnecting
+    // it would run its STALE provider's refresh, whose failure makes the SDK
+    // delete the SHARED on-disk credentials (tokens/client/identity in the same
+    // wsId/serverName dir) the fresh flow depends on, and flip the connection to
+    // `reauth_required` over a live `pending_auth`. Mark it dead and leave it
+    // alone. A self-dropped transport (idle close, network blip) leaves
+    // `isStopped()` false and still reconnects below.
+    if (record.source.isStopped()) {
+      record.state = "dead";
+      return;
+    }
+
     const remote = isRemoteSource(record.source);
 
     // Source is down — emit crashed event

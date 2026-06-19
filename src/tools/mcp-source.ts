@@ -289,6 +289,15 @@ export class McpSource implements ToolSource {
    * graceful stops would surface as spurious crash events to listeners.
    */
   private stopping = false;
+  /**
+   * Set true ONLY by a deliberate `stop()` (teardown / disconnect), reset by
+   * `start()`. Distinct from `stopping`, which `cleanupOnStartFailure()` also
+   * sets to suppress crash noise on a failed start: a failed start is
+   * retryable, a deliberate teardown is not. `HealthMonitor` reads this (via
+   * {@link isStopped}) to leave a deliberately-stopped, registry-removed source
+   * terminal instead of reconnecting an orphaned instance.
+   */
+  private stopped = false;
 
   /**
    * Listeners notified when this source's enumerable tool set may have
@@ -341,10 +350,11 @@ export class McpSource implements ToolSource {
     // a dead instance's tail into the new instance's crash report.
     this.stderrTail = [];
     this.stderrLineBuf = "";
-    // Clear deliberate-teardown flag so a restart re-enables crash detection
+    // Clear deliberate-teardown flags so a restart re-enables crash detection
     // on the new transport. Set in `stop()` to suppress onclose-emitted
     // `source.crashed` events during graceful teardown.
     this.stopping = false;
+    this.stopped = false;
 
     if (this.mode.type === "stdio") {
       const stdioTransport = new StdioClientTransport({
@@ -860,6 +870,17 @@ export class McpSource implements ToolSource {
     return this.transport !== null && this.client !== null && !this.dead;
   }
 
+  /**
+   * Whether this source was deliberately stopped via `stop()` (teardown /
+   * disconnect) and not since restarted. `HealthMonitor` uses this to avoid
+   * reconnecting an orphaned, registry-removed instance — see the field doc on
+   * {@link stopped}. A self-dropped transport (idle close, network blip) leaves
+   * this false, so it still reconnects.
+   */
+  isStopped(): boolean {
+    return this.stopped;
+  }
+
   /** Time (ms) since the source was last started, or null if never started. */
   uptime(): number | null {
     if (this.startedAt === null) return null;
@@ -876,6 +897,9 @@ export class McpSource implements ToolSource {
     // `stopping` field. Without this, every graceful stop would emit a
     // `source.crashed` event when `transport.close()` triggers onclose.
     this.stopping = true;
+    // Distinct durable marker for "deliberately stopped" (vs the failed-start
+    // `stopping` that `cleanupOnStartFailure` also sets). Cleared by `start()`.
+    this.stopped = true;
     // Abort any in-flight streams so their drainers unblock and the handle
     // map can be cleared without leaking outstanding `awaitToolTaskResult`
     // callers. Each drainer will reject its terminalDeferred, which is

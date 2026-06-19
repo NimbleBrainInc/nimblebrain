@@ -89,18 +89,17 @@ describe("WorkspaceOAuthProvider — file I/O roundtrips", () => {
     expect(await p2.clientInformation()).toBeDefined();
   });
 
-  it("clientInformation discards a cached client whose redirect_uri doesn't match the current callback", async () => {
-    // Simulate the operational case: a DCR client was registered when
-    // NB_API_URL was the dev default (or wrong), then the operator set
-    // NB_API_URL on the deploy and the provider's callbackUrl flipped.
-    // Returning the stale client.json would send the AS a redirect_uri
-    // the registered client doesn't allow, surfacing as
-    // `Invalid redirect_uri for OAuth client` after the user has
-    // already clicked Connect.
+  it("clientInformation honors a drifted client on the silent path, re-registers only on user-initiated reauth", async () => {
+    // A DCR client was registered when the callback host was X; the canonical
+    // host later drifted to Y. The registration is durable identity — silent
+    // refresh reuses its client_id (no redirect_uri sent) — so a BACKGROUND read
+    // must NOT discard it. Discarding orphaned the refresh token and forced a
+    // headless interactive flow that timed out (the bundle.crashed loop). Only a
+    // user-initiated interactive reauth re-registers against the current host.
     const stalePath = "http://localhost:27247/v1/mcp-auth/callback";
     const livePath = "https://hq.platform.nimblebrain.ai/v1/mcp-auth/callback";
 
-    // Provider 1 writes a client with the stale redirect_uri.
+    // Provider 1 registers a client against the (soon-to-be-stale) redirect_uri.
     const p1 = new WorkspaceOAuthProvider({
       owner: { type: "workspace", wsId: "ws_test" },
       serverName: "drift-srv",
@@ -110,26 +109,27 @@ describe("WorkspaceOAuthProvider — file I/O roundtrips", () => {
     await p1.saveClientInformation({ client_id: "cid-stale", redirect_uris: [stalePath] });
     expect(await p1.clientInformation()).toBeDefined();
 
-    // Provider 2 (fresh process, current deploy) reads the same dir
-    // but with the live callback URL. The cached client is stale —
-    // expect undefined so the SDK re-registers.
+    // Provider 2 (fresh process, current deploy, BACKGROUND/silent context): the
+    // host drifted, but the stored client is HONORED so refresh keeps working —
+    // returned, and left on disk.
     const p2 = new WorkspaceOAuthProvider({
       owner: { type: "workspace", wsId: "ws_test" },
       serverName: "drift-srv",
       workDir,
       callbackUrl: livePath,
     });
-    expect(await p2.clientInformation()).toBeUndefined();
+    expect((await p2.clientInformation())?.client_id).toBe("cid-stale");
 
-    // And the on-disk client.json should be gone — drift detection
-    // unlinks it so a subsequent saveClientInformation writes a fresh
-    // record matching the current redirect URI.
+    // Provider 3 with interactive armed (a user clicked Reconnect): the drift IS
+    // resolved by re-registering against the current host — drop the stale client
+    // and return undefined so the SDK runs a fresh DCR.
     const p3 = new WorkspaceOAuthProvider({
       owner: { type: "workspace", wsId: "ws_test" },
       serverName: "drift-srv",
       workDir,
       callbackUrl: livePath,
     });
+    p3.setInteractiveAuthAllowed(true);
     expect(await p3.clientInformation()).toBeUndefined();
   });
 
@@ -505,7 +505,9 @@ describe("WorkspaceOAuthProvider — Track A: pre-registered client + scopes + e
       try {
         await p.redirectToAuthorization(authUrl);
       } catch {
-        // expected — UnauthorizedError on interactive branch
+        // expected to throw — with interactiveAuthAllowed defaulting false this
+        // is BackgroundReauthRequiredError; either way our params are appended
+        // to the fetched URL before the gate, which is what this asserts below.
       }
       // The URL passed to fetch (after our params were appended) should
       // contain access_type and prompt.

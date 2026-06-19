@@ -44,6 +44,29 @@ export class InteractiveOAuthNotSupportedError extends Error {
 }
 
 /**
+ * Thrown by `redirectToAuthorization` when the authorization server demands an
+ * INTERACTIVE (browser) round-trip but this start attempt is NOT user-initiated
+ * — i.e. a boot source's auto-start or one of its `HealthMonitor` liveness
+ * reconnects (both reuse the boot provider with the flag unarmed). No human is
+ * waiting, so registering an `oauth-flow-registry` flow would only block
+ * `start()` on `awaitPendingFlow()` for the full 15-minute flow TTL and then
+ * fail — the headless-reconnect crash loop this fix removes. The provider
+ * instead flips the connection to `reauth_required` (via `notifyAuthLost`) and
+ * throws this so `start()` fails fast. The UI's Reconnect runs `startAuth`,
+ * which builds a fresh provider and arms interactive auth for that one attempt.
+ */
+export class BackgroundReauthRequiredError extends Error {
+  constructor(public readonly serverName: string) {
+    super(
+      `[workspace-oauth-provider] ${serverName} needs interactive reauthorization, but no ` +
+        `user-initiated flow is active — surfacing reauth_required instead of blocking a ` +
+        `background start on a browser flow no one will complete.`,
+    );
+    this.name = "BackgroundReauthRequiredError";
+  }
+}
+
+/**
  * Discriminated union identifying who "owns" an OAuth connection — the
  * thing whose tokens these are. Two top-level shapes:
  *
@@ -565,6 +588,25 @@ export class WorkspaceOAuthProvider implements OAuthClientProvider {
   /** De-dupe guard: a flurry of in-flight tool calls can each throw
    *  UnauthorizedError; the connection should flip to reauth_required once. */
   private authLostNotified = false;
+  /**
+   * Whether this provider may drive an INTERACTIVE (browser) OAuth flow on the
+   * current start attempt — a per-attempt signal, not construction-time.
+   *
+   * Two provider lifecycles exist, and the flag's default (false) is the safe
+   * one for both:
+   *   - A BOOT source reuses one provider instance across its initial
+   *     auto-start AND every later `HealthMonitor` liveness reconnect. All of
+   *     those are background — the flag is never armed — so an interactive
+   *     requirement flips to `reauth_required` and fails fast instead of
+   *     blocking on a browser flow no one will complete.
+   *   - A USER-INITIATED `startAuth` builds a FRESH provider+source (teardown +
+   *     rebuild) and arms the flag (via {@link setInteractiveAuthAllowed}) for
+   *     that one start only, disarming when it settles.
+   *
+   * So the only path that ever drives interactive auth is an explicit user
+   * reconnect; see {@link BackgroundReauthRequiredError}.
+   */
+  private interactiveAuthAllowed = false;
   private readonly staticClient?: WorkspaceOAuthProviderOptions["staticClient"];
   private readonly scopes?: string[];
   private readonly additionalAuthorizationParams?: Record<string, string>;
@@ -730,8 +772,26 @@ export class WorkspaceOAuthProvider implements OAuthClientProvider {
 
   // ── OAuthClientProvider interface ─────────────────────────────────
 
+  /**
+   * Arm/disarm interactive (browser) OAuth for the NEXT start attempt. Called
+   * by the lifecycle: armed for a user-initiated `startAuth`, disarmed once that
+   * start settles. See {@link interactiveAuthAllowed}.
+   */
+  setInteractiveAuthAllowed(allowed: boolean): void {
+    this.interactiveAuthAllowed = allowed;
+  }
+
   get redirectUrl(): string {
-    return this.callbackUrl;
+    // A registered DCR client is bound to the redirect_uri it was registered
+    // with — the AS rejects any other value at /authorize. Honor the stored
+    // registration (durable identity) and fall back to the freshly-computed
+    // callback only when there is no stored client yet (a fresh DCR registers
+    // the current host). Refresh-token grants don't send a redirect_uri at all,
+    // so this only matters on the interactive authorization_code path — where,
+    // for the cases that actually reach it, the stored value equals callbackUrl
+    // (a host-drifted client is re-registered for the current host before its
+    // interactive flow runs; see `clientInformation`).
+    return this.cachedClientInfo?.redirect_uris?.[0] ?? this.callbackUrl;
   }
 
   get clientMetadata(): OAuthClientMetadata {
@@ -805,36 +865,56 @@ export class WorkspaceOAuthProvider implements OAuthClientProvider {
       };
       return info;
     }
-    if (this.cachedClientInfo) {
-      if (this.isClientInfoUsable(this.cachedClientInfo)) return this.cachedClientInfo;
-      // Cached entry has stale redirect_uri (e.g. NB_API_URL changed
-      // between registration and now). Drop it so we re-register fresh
-      // below, then on disk so future reads agree.
-      this.cachedClientInfo = null;
-      await this.unlinkIfExists(this.dataDir, "client.json");
-    }
-    // DCR client info is workspace-shared regardless of scope — every
-    // member of the workspace authenticates as the same NimbleBrain
-    // OAuth client.
-    const data = await this.readJson<OAuthClientInformationFull>(this.dataDir, "client.json");
-    if (data && this.isClientInfoUsable(data)) {
-      this.cachedClientInfo = data;
-      return data;
-    }
-    if (data && !this.isClientInfoUsable(data)) {
-      // Drift detection: the platform's redirect_uri (derived from
-      // NB_API_URL) doesn't match what was registered with the
-      // authorization server when this client was DCR'd. Returning the
-      // stale entry here means the next /authorize sends a redirect_uri
-      // the AS doesn't recognize, surfacing as `invalid_redirect_uri`
-      // long after the user has clicked Connect. Drop the entry and
-      // let the SDK trigger a fresh DCR call with the current URI.
-      log.warn(
-        `[oauth] ${this.serverName} cached DCR client redirect_uri drift detected (registered=${
-          data.redirect_uris?.[0] ?? "<none>"
-        }, current=${this.callbackUrl}) — discarding cached client.json so the next flow re-registers`,
-      );
-      await this.unlinkIfExists(this.dataDir, "client.json");
+    // Candidate registration: prefer the in-memory cache, else read disk. The
+    // SAME decision applies to both — a cached client can itself be a
+    // previously-honored DRIFTED client (set on the silent/background path
+    // below), so the cached path must run the drift/interactive decision too,
+    // not blindly return it. (DCR client info is workspace-shared regardless of
+    // scope: every member authenticates as the same NimbleBrain OAuth client.)
+    const data =
+      this.cachedClientInfo ??
+      (await this.readJson<OAuthClientInformationFull>(this.dataDir, "client.json"));
+    if (data) {
+      if (!this.hasUsableRedirectUris(data)) {
+        // Structurally corrupt (missing / empty / non-array redirect_uris):
+        // unusable at /authorize. Drop it so the SDK re-registers.
+        log.warn(
+          `[oauth] ${this.serverName} stored client has no usable redirect_uris — discarding so the next flow re-registers`,
+        );
+        this.cachedClientInfo = null;
+        await this.unlinkIfExists(this.dataDir, "client.json");
+      } else if (this.redirectUriMatchesCurrent(data) || !this.interactiveAuthAllowed) {
+        // The registration matches the current host, OR this is a background /
+        // silent context (refresh, boot, liveness reconnect). Honor the stored
+        // registration — it's immutable identity, and refresh reuses the
+        // `client_id` without a redirect_uri, so a host that has since drifted
+        // is irrelevant to keeping the connection alive.
+        if (!this.redirectUriMatchesCurrent(data)) {
+          log.debug(
+            "mcp",
+            `[oauth] ${this.serverName} honoring registered redirect_uri ${
+              data.redirect_uris?.[0]
+            } (current callback ${this.callbackUrl}) — registration is immutable; refresh reuses client_id`,
+          );
+        }
+        this.cachedClientInfo = data;
+        return data;
+      } else {
+        // Drift on a USER-INITIATED interactive flow: a human is reconnecting
+        // and the canonical host changed since this client was registered.
+        // Re-register against the current host so the next /authorize's
+        // redirect_uri matches the NEW registration AND the session cookie (set
+        // on the current host) travels back on the callback leg. The deliberate,
+        // consented re-registration the architecture calls for — not the silent
+        // discard-on-every-read that caused the crash loop.
+        log.warn(
+          `[oauth] ${this.serverName} redirect_uri drift on user-initiated reauth (registered=${
+            data.redirect_uris?.[0] ?? "<none>"
+          }, current=${this.callbackUrl}) — re-registering for the current host`,
+        );
+        this.cachedClientInfo = null;
+        await this.unlinkIfExists(this.dataDir, "client.json");
+      }
     }
     // No usable client info on disk → SDK will DCR. Coalesce concurrent
     // callers so only ONE DCR happens; second caller awaits the first's
@@ -884,21 +964,40 @@ export class WorkspaceOAuthProvider implements OAuthClientProvider {
   }
 
   /**
-   * Drift check for a DCR `client.json`. Returns true when the
-   * registered `redirect_uris` includes the current callbackUrl —
-   * i.e. the AS will accept what we send at /authorize and /token.
-   * Returns false when the registration is stale (the canonical
-   * NB_API_URL-changed-between-deploys case), so callers know to
-   * re-register rather than serve a doomed flow.
+   * Structural validity of a stored DCR `client.json`: it must carry at least
+   * one `redirect_uri` to be usable at /authorize. A missing / empty / non-array
+   * value is corrupt on-disk state — unusable, so the caller re-registers.
    *
-   * Conservative: a missing or non-array `redirect_uris` is treated
-   * as drift (force re-register). That handles broken on-disk state
-   * the same as known drift.
+   * This intentionally does NOT compare against the current `callbackUrl`: a
+   * host that drifted from the registered value is NOT a reason to discard a
+   * valid registration. Silent refresh reuses the `client_id` without sending a
+   * redirect_uri, so a drifted client stays fully usable for keeping the
+   * connection alive. Host-drift handling lives in `clientInformation` (honor on
+   * the silent/background path; re-register only on a user-initiated interactive
+   * reauth). See {@link redirectUriMatchesCurrent}.
    */
-  private isClientInfoUsable(info: OAuthClientInformationFull): boolean {
+  private hasUsableRedirectUris(info: OAuthClientInformationFull): boolean {
+    const uris = info.redirect_uris;
+    return Array.isArray(uris) && uris.length > 0;
+  }
+
+  /**
+   * Whether the stored client's registered `redirect_uri` matches this
+   * provider's current `callbackUrl`, compared canonically (trailing slash,
+   * default port, host case tolerated). Detects host drift — used for logging
+   * and to decide whether a USER-INITIATED interactive reauth must re-register
+   * against the current host.
+   */
+  private redirectUriMatchesCurrent(info: OAuthClientInformationFull): boolean {
     const uris = info.redirect_uris;
     if (!Array.isArray(uris) || uris.length === 0) return false;
-    return uris.includes(this.callbackUrl);
+    return uris.some((u) => {
+      try {
+        return canonicalEndpoint(new URL(u)) === this.canonicalCallback;
+      } catch {
+        return false;
+      }
+    });
   }
 
   async saveClientInformation(info: OAuthClientInformationFull): Promise<void> {
@@ -1307,6 +1406,30 @@ export class WorkspaceOAuthProvider implements OAuthClientProvider {
       }
     }
 
+    // Background/liveness gate. If this start attempt is NOT user-initiated
+    // (boot auto-start or a HealthMonitor liveness reconnect), there is no user
+    // to complete a browser flow. Registering an `oauth-flow-registry` flow here
+    // would block `start()` on `awaitPendingFlow()` for the full 15-minute flow
+    // TTL and then fail — the headless-reconnect crash loop. Flip the connection
+    // to `reauth_required` (one-shot via `notifyAuthLost`) and fail fast; the
+    // UI's Reconnect runs `startAuth`, which arms interactive for that attempt.
+    if (!this.interactiveAuthAllowed) {
+      log.debug(
+        "mcp",
+        `[oauth] ${this.serverName} interactive auth required but no user-initiated flow active — surfacing reauth_required (no headless block)`,
+      );
+      this.notifyAuthLost();
+      const err = new BackgroundReauthRequiredError(this.serverName);
+      // Settle the pending flow so any concurrently-coalesced auth() chain
+      // awaiting `awaitPendingFlow()` rejects too instead of hanging. The extra
+      // `.catch` swallows the no-awaiter case (the common one: start() fails
+      // fast on this error and never calls awaitPendingFlow), so the deliberate
+      // rejection can't surface as an unhandled rejection.
+      this.pendingFlow.promise.catch(() => {});
+      d?.reject(err);
+      throw err;
+    }
+
     // Interactive branch: real browser redirect required. Register the
     // flow with `oauth-flow-registry` so the HTTP callback route can
     // resolve it once the user completes the authorization. Replace the
@@ -1594,12 +1717,17 @@ export class WorkspaceOAuthProvider implements OAuthClientProvider {
     // Always clear local state regardless of upstream revocation result.
     // `all` is broader than the literal "tokens" the method name implies,
     // and intentional: leaving the cached DCR `client.json` behind across
-    // a disconnect/reconnect is the well-trodden bug path. If `NB_API_URL`
-    // changes between a disconnect and the next reconnect, the AS still
-    // has the old `redirect_uri` registered to the cached `client_id`,
-    // and the next /authorize comes back as `Invalid redirect_uri`.
-    // Re-registering on reconnect costs one DCR roundtrip — cheap insurance
-    // against a confusing prod failure mode.
+    // a deliberate disconnect/reconnect is the well-trodden bug path. If the
+    // tenant's canonical origin changes between a disconnect and the next
+    // reconnect (e.g. a custom domain is added so `publicOrigin()` /
+    // `NB_PLATFORM_HOST` resolves to a different host), the AS still has the
+    // old `redirect_uri` registered to the cached `client_id`, and the next
+    // /authorize comes back as `Invalid redirect_uri`. Re-registering on the
+    // next reconnect costs one DCR roundtrip — cheap insurance against a
+    // confusing prod failure mode. (Note: this is the *deliberate disconnect*
+    // path; a passive host drift does NOT discard the client — see
+    // `clientInformation`, which honors the stored registration on the
+    // silent/background path and only re-registers on user-initiated reauth.)
     await this.invalidateCredentials("all");
     result.deletedLocal = true;
     return result;

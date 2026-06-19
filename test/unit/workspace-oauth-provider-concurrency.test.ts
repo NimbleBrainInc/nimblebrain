@@ -37,13 +37,17 @@ function makeProvider(
   workDir: string,
   onInteractiveAuthRequired?: (url: string) => void,
 ): WorkspaceOAuthProvider {
-  return new WorkspaceOAuthProvider({
+  const provider = new WorkspaceOAuthProvider({
     owner: { type: "workspace", wsId: "ws_test" },
     serverName: "test-srv",
     workDir,
     callbackUrl: CALLBACK,
     ...(onInteractiveAuthRequired ? { onInteractiveAuthRequired } : {}),
   });
+  // The redirectToAuthorization coalesce tests exercise the interactive branch,
+  // now gated to user-initiated flows. Arm it so the branch is reachable.
+  provider.setInteractiveAuthAllowed(true);
+  return provider;
 }
 
 function pkceChallenge(verifier: string): string {
