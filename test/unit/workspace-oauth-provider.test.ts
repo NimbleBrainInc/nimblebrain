@@ -505,7 +505,9 @@ describe("WorkspaceOAuthProvider — Track A: pre-registered client + scopes + e
       try {
         await p.redirectToAuthorization(authUrl);
       } catch {
-        // expected — UnauthorizedError on interactive branch
+        // expected to throw — with interactiveAuthAllowed defaulting false this
+        // is BackgroundReauthRequiredError; either way our params are appended
+        // to the fetched URL before the gate, which is what this asserts below.
       }
       // The URL passed to fetch (after our params were appended) should
       // contain access_type and prompt.

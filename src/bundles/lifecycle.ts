@@ -1287,11 +1287,14 @@ export class BundleLifecycleManager {
       source,
     });
 
-    // Arm interactive OAuth for THIS user-initiated start only. The provider is
-    // long-lived (HealthMonitor reuses it for liveness reconnects on the same
-    // source); leaving it armed would let a background reconnect drive a browser
-    // flow that blocks for the full flow TTL and times out. Disarm once this
-    // start settles (`.finally` below).
+    // Arm interactive OAuth for THIS user-initiated start only. The
+    // `interactiveAuthAllowed` flag gates whether a start may drive a browser
+    // flow vs. fail fast to `reauth_required`; only a user-initiated reconnect
+    // (a human is waiting) should arm it. Disarm once this start settles
+    // (`.finally` below) so the flag never leaks into a later background start
+    // on the same provider — defensive hygiene: this fresh source isn't in the
+    // HealthMonitor boot snapshot, but a provider that ever is must never carry
+    // a stale armed flag into a liveness reconnect.
     provider.setInteractiveAuthAllowed(true);
 
     // Background start. The provider's callback resolves `authUrlPromise`
