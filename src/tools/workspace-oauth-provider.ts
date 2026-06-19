@@ -1717,12 +1717,17 @@ export class WorkspaceOAuthProvider implements OAuthClientProvider {
     // Always clear local state regardless of upstream revocation result.
     // `all` is broader than the literal "tokens" the method name implies,
     // and intentional: leaving the cached DCR `client.json` behind across
-    // a disconnect/reconnect is the well-trodden bug path. If `NB_API_URL`
-    // changes between a disconnect and the next reconnect, the AS still
-    // has the old `redirect_uri` registered to the cached `client_id`,
-    // and the next /authorize comes back as `Invalid redirect_uri`.
-    // Re-registering on reconnect costs one DCR roundtrip — cheap insurance
-    // against a confusing prod failure mode.
+    // a deliberate disconnect/reconnect is the well-trodden bug path. If the
+    // tenant's canonical origin changes between a disconnect and the next
+    // reconnect (e.g. a custom domain is added so `publicOrigin()` /
+    // `NB_PLATFORM_HOST` resolves to a different host), the AS still has the
+    // old `redirect_uri` registered to the cached `client_id`, and the next
+    // /authorize comes back as `Invalid redirect_uri`. Re-registering on the
+    // next reconnect costs one DCR roundtrip — cheap insurance against a
+    // confusing prod failure mode. (Note: this is the *deliberate disconnect*
+    // path; a passive host drift does NOT discard the client — see
+    // `clientInformation`, which honors the stored registration on the
+    // silent/background path and only re-registers on user-initiated reauth.)
     await this.invalidateCredentials("all");
     result.deletedLocal = true;
     return result;
