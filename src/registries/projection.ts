@@ -16,7 +16,7 @@
  * never invoke these directly.
  */
 
-import { hostMetaToUiMeta } from "../bundles/defaults.ts";
+import { hostMetaToUiMeta, sanitizePlacements } from "../bundles/defaults.ts";
 import type { BundleUiMeta } from "../bundles/types.ts";
 import {
   getNimbleBrainConnectorMeta,
@@ -165,10 +165,13 @@ export function serverDetailToCatalogEntry(s: ServerDetail): ConnectorCatalogEnt
   const meta = getNimbleBrainConnectorMeta(s);
   const ui = hostMetaToUiMeta(getNimbleBrainHostMeta(s));
   // The "interactive" chip is cosmetic catalog metadata (no runtime behavior). Derive
-  // it from whether the connector actually renders UI: an explicit connector flag OR
-  // the presence of host placements. A placed app is interactive by definition, so the
-  // badge can't drift to false while a ui:// app ships (as it had for People).
-  const interactive = meta?.interactive === true || (ui?.placements?.length ?? 0) > 0;
+  // it from whether the connector renders a VALID UI: an explicit connector flag OR a
+  // placement that survives `sanitizePlacements` (the same check registration uses).
+  // Deriving from sanitized placements means a sole spoofed/foreign-authority placement
+  // — which is dropped at registration and renders nothing — doesn't light the chip.
+  // A placed app is interactive by definition, so the badge can't drift to false while
+  // a ui:// app ships (as it had for People).
+  const interactive = meta?.interactive === true || sanitizePlacements(ui?.placements).length > 0;
   return {
     id: s.name,
     name: s.title ?? s.name,

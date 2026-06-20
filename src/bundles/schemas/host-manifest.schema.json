@@ -5,11 +5,11 @@
   "description": "Schema for the `ai.nimblebrain/host` MCP `_meta` extension — how an MCP server declares its UI integration (placements, briefing) in the NimbleBrain host shell. Carried in the server's descriptor `_meta`: an MCPB manifest (bundles) or a ServerDetail (fleet connectors). The `ui://` app resources themselves are standard MCP Apps; this extension only declares where they are placed.",
   "type": "object",
   "required": ["host_version"],
-  "additionalProperties": false,
+  "additionalProperties": true,
   "properties": {
     "host_version": {
-      "enum": ["1.0", "1.1"],
-      "description": "Host manifest schema version. 1.1 adds host_capabilities."
+      "type": "string",
+      "description": "Host extension contract version. Known values: \"1.0\", \"1.1\" (1.1 adds host_capabilities). FORWARD-COMPATIBLE: an unknown version is NOT rejected — the host parses the fields it understands and ignores the rest (see the tolerance lock in the host-placement spec). host_capabilities requires version >= \"1.1\"."
     },
     "host_capabilities": {
       "type": "object",
@@ -49,14 +49,6 @@
     },
     "briefing": {
       "$ref": "#/$defs/BriefingBlock"
-    }
-  },
-  "if": {
-    "required": ["host_capabilities"]
-  },
-  "then": {
-    "properties": {
-      "host_version": { "const": "1.1" }
     }
   },
   "$defs": {

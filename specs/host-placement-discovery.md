@@ -92,6 +92,14 @@ This contract is copied by every fleet server and by third parties. Host toleran
 
 These let the contract evolve without a flag day between old/new hosts and servers.
 
+**The schema enforces this** (not just the runtime). The published `v1` schema is deliberately tolerant where the contract evolves and strict only where a typo is dangerous:
+
+- root `additionalProperties: true` — unknown top‑level keys validate (and are ignored at runtime);
+- `host_version` is an open `string`, not a closed enum — a newer version validates;
+- **but** the `host_capabilities` requirement sub‑object stays `additionalProperties: false` — a typo there (`requierd: true`) would silently downgrade a security gate, so it is rejected at install.
+
+So both consumers agree: the **mpak install gate** (which validates against this schema) and the **fleet path** (which doesn't gate, only sanitizes) are now *both* tolerant of unknown versions/keys. The earlier strict `enum` + root `additionalProperties: false` + the `host_capabilities ⇒ host_version "1.1"` `if/then` were removed to honor this lock; the version↔capability rule is now advisory (documented), not a hard gate. The one *narrowing* — dropping the `settings` object — is non‑breaking precisely because of root tolerance: a bundle still declaring `settings` validates (the key is ignored) rather than failing install.
+
 ## Composition with the standard tool→widget path
 
 Unchanged and orthogonal. A server may declare, on a **tool**, `_meta.ui.resourceUri` (the SEP‑1865 tool‑output widget) **and** a sidebar app via this placement. We add the placement dimension; we do not touch the standard tool link.

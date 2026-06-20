@@ -29,16 +29,25 @@ describe("host-manifest schema", () => {
     expect(result.valid).toBe(true);
   });
 
-  it("rejects a v1.0 manifest that declares host_capabilities", () => {
-    const result = validateHostMeta({
-      "ai.nimblebrain/host": {
-        host_version: "1.0",
-        host_capabilities: { "ai.nimblebrain/host-resources": { required: true } },
-      },
-    });
-    expect(result.valid).toBe(false);
-    // The mismatched-version error mentions host_version.
-    expect(result.errors.join(" ")).toMatch(/host_version/);
+  it("tolerance lock: unknown host_version + unknown top-level keys validate (forward-compat)", () => {
+    // The published v1 contract must not hard-fail a newer version or a future field —
+    // the host parses what it understands and ignores the rest. (Root is
+    // additionalProperties:true and host_version is an open string.)
+    expect(
+      validateHostMeta({
+        "ai.nimblebrain/host": { host_version: "1.2", name: "X", some_future_key: { a: 1 } },
+      }).valid,
+    ).toBe(true);
+    // The version↔capability pairing is advisory now (the if/then was dropped), so
+    // host_capabilities on a 1.0 label no longer fails schema validation.
+    expect(
+      validateHostMeta({
+        "ai.nimblebrain/host": {
+          host_version: "1.0",
+          host_capabilities: { "ai.nimblebrain/host-resources": { required: true } },
+        },
+      }).valid,
+    ).toBe(true);
   });
 
   it("rejects a host_capabilities entry with unknown fields", () => {
