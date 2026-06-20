@@ -21,6 +21,7 @@ import type { BundleUiMeta } from "../bundles/types.ts";
 import {
   getNimbleBrainConnectorMeta,
   getNimbleBrainHostMeta,
+  type NimbleBrainConnectorMeta,
   type ServerDetail,
 } from "../connectors/server-detail.ts";
 import { validateAdditionalAuthorizationParams } from "../util/oauth-params.ts";
@@ -30,6 +31,47 @@ import type { DirectoryEntry, RegistryType } from "./types.ts";
 export interface ProjectionContext {
   registryId: string;
   registryType: RegistryType;
+}
+
+/**
+ * The auth/connection fields the directory (`deriveInstall`'s remote-oauth
+ * action) and the catalog (`serverDetailToCatalogEntry`) BOTH derive from
+ * the `_meta["ai.nimblebrain/connector"]` extension, derived exactly once.
+ *
+ * These two projections render the same `ServerDetail` for different
+ * surfaces (Browse/install vs. Configure) and MUST agree on these fields —
+ * they diverged once (#462) and nothing structural stopped it. Spreading
+ * this single result into both call sites makes drift impossible: there is
+ * one derivation, so the directory and the catalog can never disagree on
+ * `auth` / scopes / params / operatorSetup / composio / providerAuth.
+ *
+ * The catalog-only fields (`tags`, `interactive`, `docsUrl`) are NOT here:
+ * they don't belong on the directory entry's `install` action (the
+ * directory carries `tags` at the row's top level, not inside `install`),
+ * so they stay inline at the catalog call site.
+ *
+ * `auth` always resolves (defaulting to `"dcr"`); the rest are present only
+ * when the meta carries them, matching the `...(meta?.X ? { X } : {})`
+ * shape both sites previously inlined.
+ */
+function connectorMetaAuthFields(meta: NimbleBrainConnectorMeta | undefined): {
+  auth: "dcr" | "static" | "composio" | "provider";
+  requiredScopes?: string[];
+  additionalAuthorizationParams?: Record<string, string>;
+  operatorSetup?: { portalUrl: string; hint: string; clientSecretKey: string };
+  composio?: { toolkit: string; authConfigEnv: string; tools?: string[] };
+  providerAuth?: { provider: string; config: Record<string, unknown> };
+} {
+  return {
+    auth: meta?.auth ?? "dcr",
+    ...(meta?.requiredScopes ? { requiredScopes: meta.requiredScopes } : {}),
+    ...(meta?.additionalAuthorizationParams
+      ? { additionalAuthorizationParams: meta.additionalAuthorizationParams }
+      : {}),
+    ...(meta?.operatorSetup ? { operatorSetup: meta.operatorSetup } : {}),
+    ...(meta?.composio ? { composio: meta.composio } : {}),
+    ...(meta?.providerAuth ? { providerAuth: meta.providerAuth } : {}),
+  };
 }
 
 /**
@@ -82,19 +124,11 @@ function deriveInstall(s: ServerDetail): DirectoryEntry["install"] | null {
   }
   const remote = s.remotes?.[0];
   if (remote && (remote.type === "streamable-http" || remote.type === "sse")) {
-    const meta = getNimbleBrainConnectorMeta(s);
     return {
       kind: "remote-oauth",
       url: remote.url,
       transportType: remote.type,
-      auth: meta?.auth ?? "dcr",
-      ...(meta?.requiredScopes ? { requiredScopes: meta.requiredScopes } : {}),
-      ...(meta?.additionalAuthorizationParams
-        ? { additionalAuthorizationParams: meta.additionalAuthorizationParams }
-        : {}),
-      ...(meta?.operatorSetup ? { operatorSetup: meta.operatorSetup } : {}),
-      ...(meta?.composio ? { composio: meta.composio } : {}),
-      ...(meta?.providerAuth ? { providerAuth: meta.providerAuth } : {}),
+      ...connectorMetaAuthFields(getNimbleBrainConnectorMeta(s)),
     };
   }
   return null;
@@ -178,14 +212,7 @@ export function serverDetailToCatalogEntry(s: ServerDetail): ConnectorCatalogEnt
     description: s.description,
     ...(iconUrl ? { iconUrl } : {}),
     url: remote.url,
-    auth: meta?.auth ?? "dcr",
-    ...(meta?.requiredScopes ? { requiredScopes: meta.requiredScopes } : {}),
-    ...(meta?.additionalAuthorizationParams
-      ? { additionalAuthorizationParams: meta.additionalAuthorizationParams }
-      : {}),
-    ...(meta?.operatorSetup ? { operatorSetup: meta.operatorSetup } : {}),
-    ...(meta?.composio ? { composio: meta.composio } : {}),
-    ...(meta?.providerAuth ? { providerAuth: meta.providerAuth } : {}),
+    ...connectorMetaAuthFields(meta),
     ...(meta?.tags ? { tags: meta.tags } : {}),
     ...(interactive ? { interactive: true } : {}),
     ...(meta?.docsUrl ? { docsUrl: meta.docsUrl } : {}),

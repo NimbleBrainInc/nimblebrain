@@ -285,3 +285,128 @@ describe("serverDetailToCatalogEntry", () => {
     expect(e?.providerAuth).toEqual({ provider: "minted", config: { audience: "mcp-fleet" } });
   });
 });
+
+describe("directory and catalog projections agree on shared meta auth fields", () => {
+  // Regression guard for #464 (and the #462 divergence it prevents): the
+  // Browse/install path (`projectServerDetailToDirectoryEntry(...).install`)
+  // and the Configure/catalog path (`serverDetailToCatalogEntry(...)`)
+  // derive the SAME `_meta`-sourced auth fields. They are now a single
+  // helper; if a future change re-forks the derivation, these assertions
+  // fail in CI before the surfaces can drift.
+
+  test("a static-auth entry yields identical auth/scopes/params/operatorSetup on both paths", () => {
+    const s = detail({
+      remotes: [{ type: "streamable-http", url: "https://example.com/mcp" }],
+      _meta: {
+        "ai.nimblebrain/connector": {
+          auth: "static",
+          requiredScopes: ["read", "write"],
+          additionalAuthorizationParams: { access_type: "offline", prompt: "consent" },
+          operatorSetup: {
+            portalUrl: "https://example.com/portal",
+            hint: "Create app",
+            clientSecretKey: "x.client_secret",
+          },
+        },
+      },
+    });
+
+    const dir = projectServerDetailToDirectoryEntry(s, CTX);
+    const cat = serverDetailToCatalogEntry(s);
+    expect(dir?.install.kind).toBe("remote-oauth");
+    expect(cat).not.toBeNull();
+    if (dir?.install.kind !== "remote-oauth" || !cat) {
+      throw new Error("expected a remote-oauth directory install and a catalog entry");
+    }
+
+    expect(dir.install.auth).toBe(cat.auth);
+    expect(dir.install.requiredScopes).toEqual(cat.requiredScopes);
+    expect(dir.install.additionalAuthorizationParams).toEqual(cat.additionalAuthorizationParams);
+    expect(dir.install.operatorSetup).toEqual(cat.operatorSetup);
+    // Concrete values, so the assertion fails loudly if BOTH paths regress together.
+    expect(cat.auth).toBe("static");
+    expect(cat.requiredScopes).toEqual(["read", "write"]);
+    expect(cat.additionalAuthorizationParams).toEqual({
+      access_type: "offline",
+      prompt: "consent",
+    });
+    expect(cat.operatorSetup?.clientSecretKey).toBe("x.client_secret");
+  });
+
+  test("a provider-auth entry carries identical providerAuth on both paths", () => {
+    const s = detail({
+      remotes: [{ type: "streamable-http", url: "http://mcp-web.mcp-shared.svc/mcp" }],
+      _meta: {
+        "ai.nimblebrain/connector": {
+          auth: "provider",
+          requiredScopes: ["mcp:invoke"],
+          providerAuth: {
+            provider: "minted",
+            config: { audience: "mcp-fleet", scope: "mcp:invoke" },
+          },
+        },
+      },
+    });
+
+    const dir = projectServerDetailToDirectoryEntry(s, CTX);
+    const cat = serverDetailToCatalogEntry(s);
+    if (dir?.install.kind !== "remote-oauth" || !cat) {
+      throw new Error("expected a remote-oauth directory install and a catalog entry");
+    }
+
+    expect(dir.install.auth).toBe(cat.auth);
+    expect(dir.install.providerAuth).toEqual(cat.providerAuth);
+    expect(dir.install.requiredScopes).toEqual(cat.requiredScopes);
+    expect(cat.auth).toBe("provider");
+    expect(cat.providerAuth).toEqual({
+      provider: "minted",
+      config: { audience: "mcp-fleet", scope: "mcp:invoke" },
+    });
+  });
+
+  test("a composio entry carries identical composio config on both paths", () => {
+    const s = detail({
+      remotes: [{ type: "streamable-http", url: "https://example.com/mcp" }],
+      _meta: {
+        "ai.nimblebrain/connector": {
+          auth: "composio",
+          composio: { toolkit: "gmail", authConfigEnv: "GMAIL_AC", tools: ["send", "list"] },
+        },
+      },
+    });
+
+    const dir = projectServerDetailToDirectoryEntry(s, CTX);
+    const cat = serverDetailToCatalogEntry(s);
+    if (dir?.install.kind !== "remote-oauth" || !cat) {
+      throw new Error("expected a remote-oauth directory install and a catalog entry");
+    }
+
+    expect(dir.install.auth).toBe(cat.auth);
+    expect(dir.install.composio).toEqual(cat.composio);
+    expect(cat.auth).toBe("composio");
+    expect(cat.composio).toEqual({
+      toolkit: "gmail",
+      authConfigEnv: "GMAIL_AC",
+      tools: ["send", "list"],
+    });
+  });
+
+  test("absent meta defaults both paths to dcr with no auth extras", () => {
+    const s = detail({
+      remotes: [{ type: "streamable-http", url: "https://example.com/mcp" }],
+    });
+
+    const dir = projectServerDetailToDirectoryEntry(s, CTX);
+    const cat = serverDetailToCatalogEntry(s);
+    if (dir?.install.kind !== "remote-oauth" || !cat) {
+      throw new Error("expected a remote-oauth directory install and a catalog entry");
+    }
+
+    expect(dir.install.auth).toBe("dcr");
+    expect(cat.auth).toBe("dcr");
+    expect(dir.install.requiredScopes).toBeUndefined();
+    expect(cat.requiredScopes).toBeUndefined();
+    expect(dir.install.providerAuth).toBeUndefined();
+    expect(cat.providerAuth).toBeUndefined();
+  });
+});
