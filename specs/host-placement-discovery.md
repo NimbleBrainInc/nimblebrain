@@ -76,7 +76,7 @@ The single new mechanic: `installRemote` extracts `_meta["ai.nimblebrain/host"]`
 
 Server‑declared chrome is untrusted; each placement is validated **before** registering, dropped individually on failure (connector still works tools‑only):
 
-1. **Own‑resource only.** `resourceUri` MUST be `ui://<thisServer>/*` — a server places only its own resources, never another's or a host surface.
+1. **`ui://` well‑formed + one authority per declaration.** `resourceUri` MUST be a well‑formed `ui://<authority>/<path>` (no other schemes, no traversal), and all placements in one declaration MUST share a single `ui://` authority (the first valid one wins). This is *internal consistency*, **not** a binding to the server's identity — the runtime can't equality‑check the `ui://` authority (e.g. `people`) against the slugified server id (`ai-nimblebrain-people-mcp`). It does not stop a connector from declaring a *sole* foreign authority — but that is **not** a host‑surface takeover: rendering resolves a placement's resource from its **own** `serverName` (serverName‑scoped iframe), so a connector only ever renders its own content. The residual is cosmetic (a granted connector could occupy a slot with an arbitrary label, rendering its own content).
 2. **Well‑formed slot** per the taxonomy. Unknown slot → drop that placement.
 3. **Bounded display strings.** `name`/`label`/`icon` length‑bounded, rendered as text, never HTML‑interpolated into chrome.
 4. **Render gated on grant.** Declaration ≠ surfacing. The `PlacementRegistry` is workspace‑scoped; a fleet connector's placement renders only for a workspace that has been *granted* the connector (catalog + `platformConnectors` + consent). No new grant authority.

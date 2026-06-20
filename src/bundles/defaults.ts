@@ -61,9 +61,19 @@ export function hostMetaToUiMeta(hostMeta: HostManifestMeta | undefined): Bundle
  *  - `resourceUri` MUST be a well-formed `ui://<authority>/<path>` — rejects other
  *    schemes (no pointing host chrome at http/file/etc.), empty authority/path,
  *    and path traversal.
- *  - all placements MUST share ONE `ui://` authority — a server declares only its
- *    own UI namespace, never a second app's (anti-spoofing). First valid authority
- *    wins; placements referencing a different one are dropped.
+ *  - all placements MUST share ONE `ui://` authority (internal consistency): the
+ *    first valid authority wins, others are dropped. This is NOT a binding to the
+ *    server's identity — the function has no server name here, and the `ui://`
+ *    authority (e.g. `people`) differs from the slugified server id
+ *    (`ai-nimblebrain-people-mcp`) anyway, so they can't be equality-checked. It
+ *    only stops a single declaration from MIXING authorities; it does NOT stop a
+ *    connector from declaring a *sole* foreign authority (e.g. `ui://home/...`).
+ *    That is not a host-surface takeover: rendering resolves a placement's
+ *    resource from its OWN `serverName` (SlotRenderer → `getResources(serverName,
+ *    …)`, serverName-scoped iframe), so a connector only ever renders its own
+ *    content. Residual is cosmetic (a granted connector could occupy a slot with
+ *    an arbitrary label, rendering its own content). (Order-dependent: a junk
+ *    authority listed first drops the legit ones — harmless for the same reason.)
  *  - `slot` MUST be a non-empty string (unknown slots pass — the shell drops slots
  *    it doesn't render; not fatal here).
  *  - `label`/`icon` are bounded; overlong values are truncated, not fatal.
@@ -82,7 +92,7 @@ export function sanitizePlacements(
     const [, auth, path] = m;
     if (!auth || !path || path.includes("..")) continue;
     if (authority === null) authority = auth;
-    else if (auth !== authority) continue; // anti-spoof: one server, one ui authority
+    else if (auth !== authority) continue; // internal consistency: one authority per declaration
     const safe: PlacementDeclaration = { slot: p.slot, resourceUri: p.resourceUri };
     if (typeof p.priority === "number") safe.priority = p.priority;
     if (typeof p.label === "string") safe.label = p.label.slice(0, PLACEMENT_STRING_MAX);

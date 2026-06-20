@@ -1,6 +1,7 @@
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { mcpAuthCallbackUrl } from "../api/routes/mcp-auth.ts";
+import { sanitizePlacements } from "../bundles/defaults.ts";
 import { getMpak } from "../bundles/mpak.ts";
 import { deriveServerName, slugifyServerName } from "../bundles/paths.ts";
 import { startBundleSource } from "../bundles/startup.ts";
@@ -643,9 +644,10 @@ async function handleListInstalled(
       } catch {
         // ignore
       }
+      // Derive from SANITIZED placements (consistent with the catalog projection),
+      // so a sole spoofed placement doesn't light the chip while rendering nothing.
       const interactive =
-        cat?.interactive === true ||
-        (Array.isArray(instance.ui?.placements) && instance.ui.placements.length > 0);
+        cat?.interactive === true || sanitizePlacements(instance.ui?.placements).length > 0;
 
       // Resolve brand icon once: prefer the static catalog match (remote
       // bundles), fall back to the mpak-by-package-name lookup (stdio).
