@@ -2067,7 +2067,6 @@ function extractUiMeta(manifest: BundleManifest): BundleUiMeta | null {
   return hostMetaToUiMeta(hostMeta);
 }
 
-
 /** Extract briefing metadata from _meta["ai.nimblebrain/host"].briefing. */
 function extractBriefing(manifest: BundleManifest): BriefingBlock | null {
   const hostMeta = manifest._meta?.["ai.nimblebrain/host"] as HostManifestMeta | undefined;
