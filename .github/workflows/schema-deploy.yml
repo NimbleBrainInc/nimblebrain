@@ -1,20 +1,29 @@
-name: Deploy Config Schema
+name: Deploy Schemas
 
-# Publishes src/config/nimblebrain-config.schema.json to schemas.nimblebrain.ai
-# (S3 + CloudFront invalidation) on push to main when the schema changes. This
-# repo is the canonical source for the config schema; the published URL is just
-# the artifact editors and external validators fetch via `$schema`.
+# Publishes this repo's canonical JSON schemas to schemas.nimblebrain.ai
+# (S3 + CloudFront invalidation) on push to main when a schema changes. This
+# repo is the canonical source; the published URLs are just the artifacts
+# editors and external validators fetch via `$schema` / `$id`.
+#
+#   - src/config/nimblebrain-config.schema.json -> /v1/nimblebrain-config.schema.json
+#   - src/bundles/schemas/host-manifest.schema.json -> /v1/nimblebrain-host.schema.json
+#     (the `ai.nimblebrain/host` _meta extension — how an MCP server declares
+#      its UI placement in the host shell; the same file the install gate
+#      validates against locally.)
 #
 # Auth: GitHub OIDC -> the `github-actions-schemas-deploy` IAM role (defined in
 # infra/terraform/shared). No long-lived AWS keys. The role's S3 write is scoped
-# to this one object key, so it cannot touch the server schema that shares the
-# bucket. Repo vars: SCHEMAS_DEPLOY_ROLE_ARN, SCHEMAS_CF_DISTRIBUTION_ID.
+# per object key, so it cannot touch the server schema that shares the bucket.
+# NOTE: the role must be granted EACH S3 key below — adding a new schema here
+# requires granting its `v1/<name>.schema.json` key on the role (infra change),
+# or the upload step 403s. Repo vars: SCHEMAS_DEPLOY_ROLE_ARN, SCHEMAS_CF_DISTRIBUTION_ID.
 
 on:
   push:
     branches: [main]
     paths:
       - 'src/config/nimblebrain-config.schema.json'
+      - 'src/bundles/schemas/host-manifest.schema.json'
       - '.github/workflows/schema-deploy.yml'
   workflow_dispatch:
 
@@ -27,13 +36,18 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  SCHEMA_FILE: src/config/nimblebrain-config.schema.json
-  S3_KEY: v1/nimblebrain-config.schema.json
   BUCKET: schemas.nimblebrain.ai
 
 jobs:
   deploy:
     runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - file: src/config/nimblebrain-config.schema.json
+            key: v1/nimblebrain-config.schema.json
+          - file: src/bundles/schemas/host-manifest.schema.json
+            key: v1/nimblebrain-host.schema.json
     steps:
       - uses: actions/checkout@v6
 
@@ -44,10 +58,10 @@ jobs:
 
       - name: Upload schema to S3
         # Short, revalidating TTL — NOT immutable. The /v1/ path evolves
-        # additively (new optional flags), so consumers must be able to pick up
+        # additively (new optional fields), so consumers must be able to pick up
         # changes; immutable caching here is what stranded the schema before.
         run: |
-          aws s3 cp "$SCHEMA_FILE" "s3://$BUCKET/$S3_KEY" \
+          aws s3 cp "${{ matrix.file }}" "s3://$BUCKET/${{ matrix.key }}" \
             --content-type "application/schema+json" \
             --cache-control "public, max-age=300, must-revalidate"
 
@@ -55,4 +69,4 @@ jobs:
         run: |
           aws cloudfront create-invalidation \
             --distribution-id "${{ vars.SCHEMAS_CF_DISTRIBUTION_ID }}" \
-            --paths "/$S3_KEY"
+            --paths "/${{ matrix.key }}"

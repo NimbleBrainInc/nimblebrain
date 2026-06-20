@@ -1,14 +1,15 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
-  "title": "NimbleBrain Host Manifest Extension",
-  "description": "Schema for _meta[\"ai.nimblebrain/host\"] in MCPB manifests.",
+  "$id": "https://schemas.nimblebrain.ai/v1/nimblebrain-host.schema.json",
+  "title": "NimbleBrain Host Extension",
+  "description": "Schema for the `ai.nimblebrain/host` MCP `_meta` extension — how an MCP server declares its UI integration (placements, briefing) in the NimbleBrain host shell. Carried in the server's descriptor `_meta`: an MCPB manifest (bundles) or a ServerDetail (fleet connectors). The `ui://` app resources themselves are standard MCP Apps; this extension only declares where they are placed.",
   "type": "object",
   "required": ["host_version"],
-  "additionalProperties": false,
+  "additionalProperties": true,
   "properties": {
     "host_version": {
-      "enum": ["1.0", "1.1"],
-      "description": "Host manifest schema version. 1.1 adds host_capabilities."
+      "type": "string",
+      "description": "Host extension contract version. Known values: \"1.0\", \"1.1\" (1.1 adds host_capabilities). FORWARD-COMPATIBLE: an unknown version is NOT rejected — the host parses the fields it understands and ignores the rest (see the tolerance lock in the host-placement spec). host_capabilities requires version >= \"1.1\"."
     },
     "host_capabilities": {
       "type": "object",
@@ -27,18 +28,7 @@
     },
     "category": {
       "type": "string",
-      "enum": [
-        "sales",
-        "marketing",
-        "operations",
-        "research",
-        "finance",
-        "hr",
-        "engineering",
-        "support",
-        "custom"
-      ],
-      "description": "App category for grouping and briefing prioritization."
+      "description": "RESERVED — not currently consumed by the host (grouping/briefing prioritization is not yet wired to it). Free-form string, tolerated for back-compat; do not rely on it. Slated for removal — see nimblebrain#503."
     },
     "placements": {
       "type": "array",
@@ -57,40 +47,8 @@
       },
       "description": "Primary view resource URI."
     },
-    "settings": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": ["id", "label", "icon", "resourceUri"],
-      "properties": {
-        "id": {
-          "type": "string",
-          "description": "Unique section ID across all bundles."
-        },
-        "label": {
-          "type": "string",
-          "description": "Tab label in the settings UI."
-        },
-        "icon": {
-          "type": "string",
-          "description": "Lucide icon name for the settings tab."
-        },
-        "resourceUri": {
-          "type": "string",
-          "description": "ui:// URI that renders the settings section HTML."
-        }
-      },
-      "description": "Settings section contributed by this bundle."
-    },
     "briefing": {
       "$ref": "#/$defs/BriefingBlock"
-    }
-  },
-  "if": {
-    "required": ["host_capabilities"]
-  },
-  "then": {
-    "properties": {
-      "host_version": { "const": "1.1" }
     }
   },
   "$defs": {
@@ -113,7 +71,7 @@
       "properties": {
         "slot": {
           "type": "string",
-          "description": "Shell slot to fill (e.g., \"sidebar\", \"sidebar.apps\", \"sidebar.bottom\", \"main\")."
+          "description": "Shell slot to fill: \"sidebar\" (core nav), \"sidebar.<group>\" (named group, e.g. \"sidebar.apps\"), \"sidebar.bottom\" (pinned), \"settings\" (a settings section — declare settings as a placement, not a separate object), or \"main\" (page content). Unknown slots are dropped by the host, never fatal."
         },
         "resourceUri": {
           "type": "string",

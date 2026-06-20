@@ -8,6 +8,7 @@ import { NoopEventSink } from "../adapters/noop-events.ts";
 import { WorkspaceLogSink } from "../adapters/workspace-log-sink.ts";
 import { recordLlmUsage } from "../api/metrics.ts";
 import type { AutomationDomainContext } from "../bundles/automations/src/domain.ts";
+import { sanitizePlacements } from "../bundles/defaults.ts";
 import { BundleLifecycleManager } from "../bundles/lifecycle.ts";
 import { deriveServerName } from "../bundles/paths.ts";
 import { setConnectionRunningHandler } from "../bundles/pending-auth-buffer.ts";
@@ -918,7 +919,12 @@ export class Runtime {
 
       const instance = lifecycle.getInstance(sn, wsId);
       if (instance?.ui?.placements && instance.ui.placements.length > 0) {
-        placementRegistry.register(sn, instance.ui.placements, wsId);
+        // Sanitize at boot too — not just at install. Placements persist RAW on
+        // the BundleRef (`instance.ui` is the unfiltered host meta), so a spoof
+        // that `registerPlacements` dropped at install time would otherwise
+        // re-register verbatim here on every restart. Same fail-closed guard.
+        const safe = sanitizePlacements(instance.ui.placements);
+        if (safe.length > 0) placementRegistry.register(sn, safe, wsId);
       }
     }
 

@@ -24,6 +24,7 @@ import {
   summarizeConnectionState,
   WORKSPACE_PRINCIPAL_ID,
 } from "./connection.ts";
+import { hostMetaToUiMeta, sanitizePlacements } from "./defaults.ts";
 import { getMpak } from "./mpak.ts";
 import { hasPersistedWorkspaceOAuthTokens } from "./oauth-tokens.ts";
 import { defaultWorkDir, deriveServerName, resolveBundleDataDirForRef } from "./paths.ts";
@@ -1688,12 +1689,18 @@ export class BundleLifecycleManager {
    * Register placements from a bundle's UI metadata in the PlacementRegistry.
    * Scoped to `wsId` so two workspaces installing the same bundle get separate
    * nav entries and uninstalling one doesn't wipe the other's.
+   *
+   * Placements are validated and sanitized first (`sanitizePlacements`): a
+   * server's declared chrome is untrusted input even when sourced from the
+   * operator catalog, so an invalid placement is dropped individually
+   * (fail-closed, per-placement) rather than failing the whole install.
    */
   private registerPlacements(serverName: string, ui: BundleUiMeta | null, wsId: string): void {
     if (!this.placementRegistry || !ui) return;
 
-    if (ui.placements && ui.placements.length > 0) {
-      this.placementRegistry.register(serverName, ui.placements, wsId);
+    const safe = sanitizePlacements(ui.placements);
+    if (safe.length > 0) {
+      this.placementRegistry.register(serverName, safe, wsId);
     }
   }
 
@@ -2057,15 +2064,7 @@ function createInstance(
 /** Extract UI metadata from _meta["ai.nimblebrain/host"]. */
 function extractUiMeta(manifest: BundleManifest): BundleUiMeta | null {
   const hostMeta = manifest._meta?.["ai.nimblebrain/host"] as HostManifestMeta | undefined;
-  if (!hostMeta?.name) return null;
-  const meta: BundleUiMeta = {
-    name: hostMeta.name,
-    icon: hostMeta.icon ?? "",
-  };
-  if (hostMeta.placements && hostMeta.placements.length > 0) {
-    meta.placements = hostMeta.placements;
-  }
-  return meta;
+  return hostMetaToUiMeta(hostMeta);
 }
 
 /** Extract briefing metadata from _meta["ai.nimblebrain/host"].briefing. */
