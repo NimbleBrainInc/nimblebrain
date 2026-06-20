@@ -24,7 +24,7 @@ import {
   summarizeConnectionState,
   WORKSPACE_PRINCIPAL_ID,
 } from "./connection.ts";
-import { hostMetaToUiMeta } from "./defaults.ts";
+import { hostMetaToUiMeta, sanitizePlacements } from "./defaults.ts";
 import { getMpak } from "./mpak.ts";
 import { hasPersistedWorkspaceOAuthTokens } from "./oauth-tokens.ts";
 import { defaultWorkDir, deriveServerName, resolveBundleDataDirForRef } from "./paths.ts";
@@ -38,7 +38,6 @@ import type {
   BundleState,
   BundleUiMeta,
   HostManifestMeta,
-  PlacementDeclaration,
   RemoteTransportConfig,
 } from "./types.ts";
 
@@ -2068,52 +2067,6 @@ function extractUiMeta(manifest: BundleManifest): BundleUiMeta | null {
   return hostMetaToUiMeta(hostMeta);
 }
 
-/** Max length for untrusted host-meta display strings (label/icon). */
-const PLACEMENT_STRING_MAX = 128;
-
-/**
- * Validate + sanitize server-declared placements before they reach the
- * PlacementRegistry. A server's chrome is untrusted (it is declared by the
- * MCP server, even when carried in the operator catalog), so we fail closed
- * per-placement: an invalid one is dropped, the rest survive, and a fully
- * bad set just yields no placements (the connector still works tools-only).
- *
- * Rules:
- *  - `resourceUri` MUST be a well-formed `ui://<authority>/<path>` — rejects
- *    other schemes (a server can't point host chrome at http/file/etc.), empty
- *    authority/path, and path traversal.
- *  - all placements MUST share ONE `ui://` authority — a server declares only
- *    its own UI namespace, never a second app's (anti-spoofing). The first
- *    valid authority wins; placements referencing a different one are dropped.
- *  - `slot` MUST be a non-empty string (unknown slots are allowed through — the
- *    shell drops slots it doesn't render; that is not fatal here).
- *  - `label`/`icon` are bounded; overlong values are truncated, not fatal.
- */
-export function sanitizePlacements(
-  placements: PlacementDeclaration[] | undefined,
-): PlacementDeclaration[] {
-  if (!placements || placements.length === 0) return [];
-  let authority: string | null = null;
-  const out: PlacementDeclaration[] = [];
-  for (const p of placements) {
-    if (!p || typeof p.slot !== "string" || p.slot.trim() === "") continue;
-    if (typeof p.resourceUri !== "string") continue;
-    const m = /^ui:\/\/([^/]+)\/(.+)$/.exec(p.resourceUri);
-    if (!m) continue;
-    const [, auth, path] = m;
-    if (!auth || !path || path.includes("..")) continue;
-    if (authority === null) authority = auth;
-    else if (auth !== authority) continue; // anti-spoof: one server, one ui authority
-    const safe: PlacementDeclaration = { slot: p.slot, resourceUri: p.resourceUri };
-    if (typeof p.priority === "number") safe.priority = p.priority;
-    if (typeof p.label === "string") safe.label = p.label.slice(0, PLACEMENT_STRING_MAX);
-    if (typeof p.icon === "string") safe.icon = p.icon.slice(0, PLACEMENT_STRING_MAX);
-    if (typeof p.route === "string") safe.route = p.route;
-    if (p.size === "compact" || p.size === "full" || p.size === "auto") safe.size = p.size;
-    out.push(safe);
-  }
-  return out;
-}
 
 /** Extract briefing metadata from _meta["ai.nimblebrain/host"].briefing. */
 function extractBriefing(manifest: BundleManifest): BriefingBlock | null {

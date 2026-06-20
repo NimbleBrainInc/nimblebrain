@@ -1,4 +1,13 @@
-import type { BundleRef, BundleUiMeta, HostManifestMeta, LocalBundleMeta } from "./types.ts";
+import type {
+  BundleRef,
+  BundleUiMeta,
+  HostManifestMeta,
+  LocalBundleMeta,
+  PlacementDeclaration,
+} from "./types.ts";
+
+/** Max length for untrusted display strings on a placement (label/icon). */
+const PLACEMENT_STRING_MAX = 128;
 
 /**
  * Bundles included by default as MCP subprocesses.
@@ -38,6 +47,51 @@ export function hostMetaToUiMeta(hostMeta: HostManifestMeta | undefined): Bundle
     ui.placements = hostMeta.placements;
   }
   return ui;
+}
+
+/**
+ * Validate + sanitize server-declared placements. A server's declared chrome is
+ * untrusted input even when sourced from the operator catalog, so this runs at
+ * EVERY registration site — both the install handlers (`registerPlacements`) and
+ * the boot path (`runtime.ts`), so a spoof can't slip in on restart. Fail-closed
+ * per-placement: an invalid one is dropped, the rest survive, a fully bad set
+ * yields none (the connector still works tools-only).
+ *
+ * Rules:
+ *  - `resourceUri` MUST be a well-formed `ui://<authority>/<path>` — rejects other
+ *    schemes (no pointing host chrome at http/file/etc.), empty authority/path,
+ *    and path traversal.
+ *  - all placements MUST share ONE `ui://` authority — a server declares only its
+ *    own UI namespace, never a second app's (anti-spoofing). First valid authority
+ *    wins; placements referencing a different one are dropped.
+ *  - `slot` MUST be a non-empty string (unknown slots pass — the shell drops slots
+ *    it doesn't render; not fatal here).
+ *  - `label`/`icon` are bounded; overlong values are truncated, not fatal.
+ */
+export function sanitizePlacements(
+  placements: PlacementDeclaration[] | undefined,
+): PlacementDeclaration[] {
+  if (!placements || placements.length === 0) return [];
+  let authority: string | null = null;
+  const out: PlacementDeclaration[] = [];
+  for (const p of placements) {
+    if (!p || typeof p.slot !== "string" || p.slot.trim() === "") continue;
+    if (typeof p.resourceUri !== "string") continue;
+    const m = /^ui:\/\/([^/]+)\/(.+)$/.exec(p.resourceUri);
+    if (!m) continue;
+    const [, auth, path] = m;
+    if (!auth || !path || path.includes("..")) continue;
+    if (authority === null) authority = auth;
+    else if (auth !== authority) continue; // anti-spoof: one server, one ui authority
+    const safe: PlacementDeclaration = { slot: p.slot, resourceUri: p.resourceUri };
+    if (typeof p.priority === "number") safe.priority = p.priority;
+    if (typeof p.label === "string") safe.label = p.label.slice(0, PLACEMENT_STRING_MAX);
+    if (typeof p.icon === "string") safe.icon = p.icon.slice(0, PLACEMENT_STRING_MAX);
+    if (typeof p.route === "string") safe.route = p.route;
+    if (p.size === "compact" || p.size === "full" || p.size === "auto") safe.size = p.size;
+    out.push(safe);
+  }
+  return out;
 }
 
 /**

@@ -1,7 +1,9 @@
 import { describe, expect, test } from "bun:test";
-import { sanitizePlacements } from "../../src/bundles/lifecycle.ts";
+import { sanitizePlacements } from "../../src/bundles/defaults.ts";
+import type { PlacementDeclaration } from "../../src/bundles/types.ts";
 import type { ServerDetail } from "../../src/connectors/server-detail.ts";
 import { serverDetailToCatalogEntry } from "../../src/registries/projection.ts";
+import { PlacementRegistry } from "../../src/runtime/placement-registry.ts";
 
 // A fleet connector ServerDetail with a host-placement _meta block, mirroring
 // the operator catalog (platform.yaml) bridge shape for People.
@@ -89,6 +91,47 @@ describe("serverDetailToCatalogEntry — interactive badge is derived, not trust
 
   test("explicit interactive:true with no placements → interactive (tool-widget case)", () => {
     expect(serverDetailToCatalogEntry(detail(undefined, true))?.interactive).toBe(true);
+  });
+});
+
+describe("registration sanitizes before the registry (install AND boot paths)", () => {
+  // Both registration sites — install (lifecycle.registerPlacements) and boot
+  // (runtime.ts workspace loop) — must sanitize before PlacementRegistry.register.
+  // The earlier gap: placements persist RAW on the BundleRef, so a spoof dropped
+  // at install would re-register verbatim at boot. This pins the shared contract:
+  // sanitize → register → read-back never lets a foreign authority through.
+  function registerLikeRuntime(reg: PlacementRegistry, server: string, raw: PlacementDeclaration[], wsId: string) {
+    const safe = sanitizePlacements(raw);
+    if (safe.length > 0) reg.register(server, safe, wsId);
+  }
+
+  test("a foreign-authority spoof never reaches the registry; the legit placement does", () => {
+    const reg = new PlacementRegistry();
+    // People's RAW host meta carries its own app + a spoof at another authority.
+    registerLikeRuntime(
+      reg,
+      "ai.nimblebrain.people/mcp",
+      [
+        { slot: "sidebar.apps", resourceUri: "ui://people/main", label: "People" },
+        { slot: "sidebar", resourceUri: "ui://home/dashboard", label: "Home (spoof)" },
+      ],
+      "ws_hq",
+    );
+    const entries = reg.forWorkspace("ws_hq");
+    expect(entries.map((e) => e.resourceUri)).toEqual(["ui://people/main"]);
+    // the spoof at ui://home/* is absent — could not shadow a host surface
+    expect(entries.some((e) => e.resourceUri.startsWith("ui://home/"))).toBe(false);
+  });
+
+  test("an all-malformed set registers nothing (connector still works tools-only)", () => {
+    const reg = new PlacementRegistry();
+    registerLikeRuntime(
+      reg,
+      "ai.nimblebrain.people/mcp",
+      [{ slot: "main", resourceUri: "https://evil/x" }, { slot: "main", resourceUri: "ui://" }],
+      "ws_hq",
+    );
+    expect(reg.forWorkspace("ws_hq")).toEqual([]);
   });
 });
 
