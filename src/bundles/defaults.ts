@@ -25,15 +25,29 @@ export function mergeBundles(userBundles: BundleRef[], noDefaults?: boolean): Bu
 }
 
 /**
+ * Map a host `_meta["ai.nimblebrain/host"]` block to the runtime's `BundleUiMeta`.
+ * The single source of truth for this projection — used by every install path
+ * (mpak manifest, local manifest, and the fleet-connector `ServerDetail._meta`),
+ * so "an MCP server is an MCP server" holds at the `_meta` interface. Returns
+ * null unless a `name` is present (the host needs a label to surface anything).
+ */
+export function hostMetaToUiMeta(hostMeta: HostManifestMeta | undefined): BundleUiMeta | null {
+  if (!hostMeta?.name) return null;
+  const ui: BundleUiMeta = { name: hostMeta.name, icon: hostMeta.icon ?? "" };
+  if (hostMeta.placements && hostMeta.placements.length > 0) {
+    ui.placements = hostMeta.placements;
+  }
+  return ui;
+}
+
+/**
  * Extract LocalBundleMeta from a raw manifest object.
  * Used by both the mpak and local bundle startup paths.
  */
 export function extractBundleMeta(manifest: Record<string, unknown>): LocalBundleMeta {
   const meta = manifest._meta as Record<string, unknown> | undefined;
   const hostMeta = meta?.["ai.nimblebrain/host"] as HostManifestMeta | undefined;
-  const ui: BundleUiMeta | null = hostMeta?.name
-    ? { name: hostMeta.name, icon: hostMeta.icon ?? "", placements: hostMeta.placements }
-    : null;
+  const ui = hostMetaToUiMeta(hostMeta);
   const upjackMeta = meta?.["ai.nimblebrain/upjack"] as { namespace?: string } | undefined;
   const isUpjack = upjackMeta != null;
   return {

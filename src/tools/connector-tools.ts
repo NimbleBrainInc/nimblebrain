@@ -1012,6 +1012,13 @@ async function handleInstallRemoteOAuth(
     action = { ...action, url: trusted.url, providerAuth: trusted.providerAuth };
   }
 
+  // Host UI placement (sidebar app, etc.) is SERVER-authored metadata. Resolve
+  // it from the operator-trusted catalog by id — never the caller-supplied
+  // entry — so a forged entry can't inject host chrome. Cached by the directory
+  // facade. Undefined when the id isn't a known catalog connector or it declares
+  // no UI. Placements are re-validated at registration (`sanitizePlacements`).
+  const trustedUi = (await ctx.runtime.getConnectorDirectory().catalogById(entry.id))?.ui;
+
   // serverName is the slugified canonical reverse-DNS form — opaque,
   // URL-safe, filesystem-safe, collision-free by construction. See
   // `slugifyServerName` for the rule. mpak install path mirrors this.
@@ -1156,6 +1163,10 @@ async function handleInstallRemoteOAuth(
       // boot-time state derivation can probe the right `connection.json`
       // path under `credentials/composio/<connectorId>/`.
       ...(action.auth === "composio" ? { composio: { connectorId: entry.id } } : {}),
+      // Host UI placement from the operator-trusted catalog (see `trustedUi`).
+      // Persisted on the ref so the placement survives restarts; the lifecycle
+      // registers + re-validates it via `startBundleSource` → `instance.ui`.
+      ...(trustedUi ? { ui: trustedUi } : {}),
     };
   }
 

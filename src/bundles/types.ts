@@ -268,15 +268,13 @@ export interface HostManifestMeta {
   host_version: "1.0" | "1.1";
   name?: string;
   icon?: string;
+  /**
+   * RESERVED — not consumed by the host (grouping/briefing prioritization is
+   * not wired to it). Tolerated for back-compat; slated for removal (nimblebrain#503).
+   */
   category?: string;
   placements?: PlacementDeclaration[];
   primaryView?: { resourceUri: string };
-  settings?: {
-    id: string;
-    label: string;
-    icon: string;
-    resourceUri: string;
-  };
   briefing?: BriefingBlock;
   /**
    * NimbleBrain host capabilities this bundle requires or prefers. Keys are

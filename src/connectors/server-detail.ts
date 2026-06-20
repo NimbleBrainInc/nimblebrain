@@ -21,6 +21,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import Ajv, { type ValidateFunction } from "ajv";
 import addFormats from "ajv-formats";
+import type { HostManifestMeta } from "../bundles/types.ts";
 
 /** Optional sized icon. Upstream Icon definition. */
 export interface Icon {
@@ -189,6 +190,7 @@ export interface ServerDetail {
   remotes?: RemoteTransport[];
   _meta?: Record<string, unknown> & {
     "ai.nimblebrain/connector"?: NimbleBrainConnectorMeta;
+    "ai.nimblebrain/host"?: HostManifestMeta;
   };
 }
 
@@ -198,6 +200,19 @@ export const NIMBLEBRAIN_CONNECTOR_META_KEY = "ai.nimblebrain/connector";
 /** Convenience accessor with the right type narrowing. */
 export function getNimbleBrainConnectorMeta(s: ServerDetail): NimbleBrainConnectorMeta | undefined {
   return s._meta?.[NIMBLEBRAIN_CONNECTOR_META_KEY] as NimbleBrainConnectorMeta | undefined;
+}
+
+/**
+ * Reverse-DNS namespace key for the host-integration `_meta` extension —
+ * how a server declares its UI placement in the NimbleBrain host shell.
+ * Same key whether the descriptor is an MCPB manifest (bundles) or a
+ * `ServerDetail` (fleet connectors). See schemas.nimblebrain.ai/v1/nimblebrain-host.schema.json.
+ */
+export const NIMBLEBRAIN_HOST_META_KEY = "ai.nimblebrain/host";
+
+/** Convenience accessor for the host-integration extension. */
+export function getNimbleBrainHostMeta(s: ServerDetail): HostManifestMeta | undefined {
+  return s._meta?.[NIMBLEBRAIN_HOST_META_KEY] as HostManifestMeta | undefined;
 }
 
 // ── ajv validator (compiled once at module load) ────────────────────

@@ -16,7 +16,13 @@
  * never invoke these directly.
  */
 
-import { getNimbleBrainConnectorMeta, type ServerDetail } from "../connectors/server-detail.ts";
+import { hostMetaToUiMeta } from "../bundles/defaults.ts";
+import type { BundleUiMeta } from "../bundles/types.ts";
+import {
+  getNimbleBrainConnectorMeta,
+  getNimbleBrainHostMeta,
+  type ServerDetail,
+} from "../connectors/server-detail.ts";
 import { validateAdditionalAuthorizationParams } from "../util/oauth-params.ts";
 import { isHttpUrl } from "../util/url.ts";
 import type { DirectoryEntry, RegistryType } from "./types.ts";
@@ -135,6 +141,14 @@ export interface ConnectorCatalogEntry {
   tags?: string[];
   interactive?: boolean;
   docsUrl?: string;
+  /**
+   * Host UI integration (sidebar placement, etc.) declared by the server in
+   * `ServerDetail._meta["ai.nimblebrain/host"]`. Server-authored, carried here
+   * from the operator-trusted catalog so the install path can register the
+   * connector's placements without trusting the caller-supplied entry. Absent
+   * for connectors that declare no UI.
+   */
+  ui?: BundleUiMeta;
 }
 
 /**
@@ -149,6 +163,12 @@ export function serverDetailToCatalogEntry(s: ServerDetail): ConnectorCatalogEnt
   if (!remote) return null;
   const iconUrl = s.icons?.[0]?.src;
   const meta = getNimbleBrainConnectorMeta(s);
+  const ui = hostMetaToUiMeta(getNimbleBrainHostMeta(s));
+  // The "interactive" chip is cosmetic catalog metadata (no runtime behavior). Derive
+  // it from whether the connector actually renders UI: an explicit connector flag OR
+  // the presence of host placements. A placed app is interactive by definition, so the
+  // badge can't drift to false while a ui:// app ships (as it had for People).
+  const interactive = meta?.interactive === true || (ui?.placements?.length ?? 0) > 0;
   return {
     id: s.name,
     name: s.title ?? s.name,
@@ -164,8 +184,9 @@ export function serverDetailToCatalogEntry(s: ServerDetail): ConnectorCatalogEnt
     ...(meta?.composio ? { composio: meta.composio } : {}),
     ...(meta?.providerAuth ? { providerAuth: meta.providerAuth } : {}),
     ...(meta?.tags ? { tags: meta.tags } : {}),
-    ...(typeof meta?.interactive === "boolean" ? { interactive: meta.interactive } : {}),
+    ...(interactive ? { interactive: true } : {}),
     ...(meta?.docsUrl ? { docsUrl: meta.docsUrl } : {}),
+    ...(ui ? { ui } : {}),
   };
 }
 

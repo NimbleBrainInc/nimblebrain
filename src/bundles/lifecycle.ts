@@ -24,6 +24,7 @@ import {
   summarizeConnectionState,
   WORKSPACE_PRINCIPAL_ID,
 } from "./connection.ts";
+import { hostMetaToUiMeta } from "./defaults.ts";
 import { getMpak } from "./mpak.ts";
 import { hasPersistedWorkspaceOAuthTokens } from "./oauth-tokens.ts";
 import { defaultWorkDir, deriveServerName, resolveBundleDataDirForRef } from "./paths.ts";
@@ -37,6 +38,7 @@ import type {
   BundleState,
   BundleUiMeta,
   HostManifestMeta,
+  PlacementDeclaration,
   RemoteTransportConfig,
 } from "./types.ts";
 
@@ -1688,12 +1690,18 @@ export class BundleLifecycleManager {
    * Register placements from a bundle's UI metadata in the PlacementRegistry.
    * Scoped to `wsId` so two workspaces installing the same bundle get separate
    * nav entries and uninstalling one doesn't wipe the other's.
+   *
+   * Placements are validated and sanitized first (`sanitizePlacements`): a
+   * server's declared chrome is untrusted input even when sourced from the
+   * operator catalog, so an invalid placement is dropped individually
+   * (fail-closed, per-placement) rather than failing the whole install.
    */
   private registerPlacements(serverName: string, ui: BundleUiMeta | null, wsId: string): void {
     if (!this.placementRegistry || !ui) return;
 
-    if (ui.placements && ui.placements.length > 0) {
-      this.placementRegistry.register(serverName, ui.placements, wsId);
+    const safe = sanitizePlacements(ui.placements);
+    if (safe.length > 0) {
+      this.placementRegistry.register(serverName, safe, wsId);
     }
   }
 
@@ -2057,15 +2065,54 @@ function createInstance(
 /** Extract UI metadata from _meta["ai.nimblebrain/host"]. */
 function extractUiMeta(manifest: BundleManifest): BundleUiMeta | null {
   const hostMeta = manifest._meta?.["ai.nimblebrain/host"] as HostManifestMeta | undefined;
-  if (!hostMeta?.name) return null;
-  const meta: BundleUiMeta = {
-    name: hostMeta.name,
-    icon: hostMeta.icon ?? "",
-  };
-  if (hostMeta.placements && hostMeta.placements.length > 0) {
-    meta.placements = hostMeta.placements;
+  return hostMetaToUiMeta(hostMeta);
+}
+
+/** Max length for untrusted host-meta display strings (label/icon). */
+const PLACEMENT_STRING_MAX = 128;
+
+/**
+ * Validate + sanitize server-declared placements before they reach the
+ * PlacementRegistry. A server's chrome is untrusted (it is declared by the
+ * MCP server, even when carried in the operator catalog), so we fail closed
+ * per-placement: an invalid one is dropped, the rest survive, and a fully
+ * bad set just yields no placements (the connector still works tools-only).
+ *
+ * Rules:
+ *  - `resourceUri` MUST be a well-formed `ui://<authority>/<path>` — rejects
+ *    other schemes (a server can't point host chrome at http/file/etc.), empty
+ *    authority/path, and path traversal.
+ *  - all placements MUST share ONE `ui://` authority — a server declares only
+ *    its own UI namespace, never a second app's (anti-spoofing). The first
+ *    valid authority wins; placements referencing a different one are dropped.
+ *  - `slot` MUST be a non-empty string (unknown slots are allowed through — the
+ *    shell drops slots it doesn't render; that is not fatal here).
+ *  - `label`/`icon` are bounded; overlong values are truncated, not fatal.
+ */
+export function sanitizePlacements(
+  placements: PlacementDeclaration[] | undefined,
+): PlacementDeclaration[] {
+  if (!placements || placements.length === 0) return [];
+  let authority: string | null = null;
+  const out: PlacementDeclaration[] = [];
+  for (const p of placements) {
+    if (!p || typeof p.slot !== "string" || p.slot.trim() === "") continue;
+    if (typeof p.resourceUri !== "string") continue;
+    const m = /^ui:\/\/([^/]+)\/(.+)$/.exec(p.resourceUri);
+    if (!m) continue;
+    const [, auth, path] = m;
+    if (!auth || !path || path.includes("..")) continue;
+    if (authority === null) authority = auth;
+    else if (auth !== authority) continue; // anti-spoof: one server, one ui authority
+    const safe: PlacementDeclaration = { slot: p.slot, resourceUri: p.resourceUri };
+    if (typeof p.priority === "number") safe.priority = p.priority;
+    if (typeof p.label === "string") safe.label = p.label.slice(0, PLACEMENT_STRING_MAX);
+    if (typeof p.icon === "string") safe.icon = p.icon.slice(0, PLACEMENT_STRING_MAX);
+    if (typeof p.route === "string") safe.route = p.route;
+    if (p.size === "compact" || p.size === "full" || p.size === "auto") safe.size = p.size;
+    out.push(safe);
   }
-  return meta;
+  return out;
 }
 
 /** Extract briefing metadata from _meta["ai.nimblebrain/host"].briefing. */
