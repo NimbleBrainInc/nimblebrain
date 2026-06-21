@@ -82,12 +82,18 @@ jobs:
           # (package.json-style versions have no `v` prefix).
           PKG_VERSION=${VERSION#v}
 
+          # ECR gets the :VERSION tag ONLY. The :SHA tag in ECR is owned by the
+          # edge pipeline (it pushes nimblebrain-{runtime,web}:<sha> on every main
+          # build for the staging edge channel), and ECR tags are immutable — so a
+          # release re-pushing :SHA collides ("tag already exists ... immutable").
+          # GHCR keeps both :VERSION and :SHA (GHCR is mutable + edge doesn't push
+          # there); the runbook's dual-addressability check (§4b) reads GHCR.
+          #
           # GHCR runtime is `nimblebrain-runtime` (canonical, matches ECR + web
           # naming); `nimblebrain` is kept as a transitional alias so existing
           # OSS pulls don't break. Drop the alias once consumers have moved.
           platform_tags=(
             "$REG/nimblebrain/nimblebrain-runtime:$VERSION"
-            "$REG/nimblebrain/nimblebrain-runtime:$SHA"
             "ghcr.io/nimblebraininc/nimblebrain-runtime:$VERSION"
             "ghcr.io/nimblebraininc/nimblebrain-runtime:$SHA"
             "ghcr.io/nimblebraininc/nimblebrain:$VERSION"
@@ -95,7 +101,6 @@ jobs:
           )
           web_tags=(
             "$REG/nimblebrain/nimblebrain-web:$VERSION"
-            "$REG/nimblebrain/nimblebrain-web:$SHA"
             "ghcr.io/nimblebraininc/nimblebrain-web:$VERSION"
             "ghcr.io/nimblebraininc/nimblebrain-web:$SHA"
           )
