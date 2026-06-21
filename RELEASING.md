@@ -187,8 +187,8 @@ Artifact map:
 | GHCR (public) | `ghcr.io/nimblebraininc/nimblebrain-runtime` | `$TAG`, short-sha | `latest` |
 | GHCR (public) | `ghcr.io/nimblebraininc/nimblebrain` (transitional alias) | `$TAG`, short-sha | `latest` |
 | GHCR (public) | `ghcr.io/nimblebraininc/nimblebrain-web` | `$TAG`, short-sha | `latest` |
-| ECR (private) | `nimblebrain/nimblebrain-runtime` | `$TAG`, short-sha | — |
-| ECR (private) | `nimblebrain/nimblebrain-web` | `$TAG`, short-sha | — |
+| ECR (private) | `nimblebrain/nimblebrain-runtime` | `$TAG` | — |
+| ECR (private) | `nimblebrain/nimblebrain-web` | `$TAG` | — |
 
 ECR repositories have immutable tags enabled — `:latest` is deliberately not pushed there; deploys pin to version or sha. ECR and GHCR repo names now match (`nimblebrain-runtime`, `nimblebrain-web`). `ghcr.io/nimblebraininc/nimblebrain` is a transitional alias for the runtime image kept so existing OSS pulls don't break; drop it once consumers have moved.
 
