@@ -31,6 +31,11 @@ jobs:
         run: bun install
       - name: Install web dependencies
         run: cd web && bun install
+      - name: Install bundle dependencies
+        # verify:test-unit runs test:bundles, which `bun test`s inside each
+        # src/bundles/*/ui package — those need their own deps (dompurify, etc.).
+        # Mirrors ci.yml; without it test:bundles fails "Cannot find package".
+        run: bun run install:bundles
       - name: Verify (static)
         run: bun run verify:static
       - name: Verify (unit + web tests)
