@@ -1558,7 +1558,7 @@ export class Runtime {
     // Budget + telemetry size counts every segment: the volatile head still
     // consumes context even though it now rides the latest user message instead
     // of the cached system block (the prepend happens after telemetry, below).
-    const systemPrompt = volatileHead ? `${stableSystem}\n\n${volatileHead}` : stableSystem;
+    const systemPrompt = foldVolatileHead(stableSystem, volatileHead);
 
     // Workspace model overrides are in the RequestContext — read via getModelSlot()
 
@@ -1681,10 +1681,7 @@ export class Runtime {
     // `systemPrompt`; the prepend runs after it, so history isn't double-counted.
     // Falls back to folding the head into the system string when there's no user
     // message to carry it (keeps the content, forgoes the cache win).
-    let engineSystem = stableSystem;
-    if (volatileHead && !prependRuntimeContextToLastUserMessage(messages, volatileHead)) {
-      engineSystem = `${stableSystem}\n\n${volatileHead}`;
-    }
+    const engineSystem = resolveEngineSystem(messages, stableSystem, volatileHead);
 
     const engineConfig: EngineConfig = {
       model: resolvedModelString,
@@ -2094,7 +2091,7 @@ export class Runtime {
       layer3Entries,
       "task",
     );
-    const systemPrompt = volatileHead ? `${stableSystem}\n\n${volatileHead}` : stableSystem;
+    const systemPrompt = foldVolatileHead(stableSystem, volatileHead);
 
     // Model resolution — mirrors chat (alias slot + qualification).
     let resolvedModelString = request.model ?? this.getDefaultModel();
@@ -2189,10 +2186,7 @@ export class Runtime {
     // `systemPrompt`; the prepend runs after it, so history isn't double-counted.
     // Falls back to folding the head into the system string when there's no user
     // message to carry it (keeps the content, forgoes the cache win).
-    let engineSystem = stableSystem;
-    if (volatileHead && !prependRuntimeContextToLastUserMessage(messages, volatileHead)) {
-      engineSystem = `${stableSystem}\n\n${volatileHead}`;
-    }
+    const engineSystem = resolveEngineSystem(messages, stableSystem, volatileHead);
 
     const engineConfig: EngineConfig = {
       model: resolvedModelString,
@@ -4088,6 +4082,33 @@ function prependRuntimeContextToLastUserMessage(
     return true;
   }
   return false;
+}
+
+/**
+ * Fold the volatile head back into the system string with the canonical
+ * separator. The single source of truth for that separator: the budget/telemetry
+ * sizing and the engine-side fallback both go through here, so the two can never
+ * drift (a mismatch would desync the token estimate from the prompt sent).
+ */
+function foldVolatileHead(stableSystem: string, volatileHead: string): string {
+  return volatileHead ? `${stableSystem}\n\n${volatileHead}` : stableSystem;
+}
+
+/**
+ * Resolve the system string handed to the engine: prepend the volatile head to
+ * the latest user message (keeping it out of the 1h-cached prefix) and return
+ * the stable system unchanged; if there's no user message to carry it, fold the
+ * head back into the system string so nothing is dropped. Mutates `messages`.
+ */
+function resolveEngineSystem(
+  messages: LanguageModelV3Message[],
+  stableSystem: string,
+  volatileHead: string,
+): string {
+  if (volatileHead && !prependRuntimeContextToLastUserMessage(messages, volatileHead)) {
+    return foldVolatileHead(stableSystem, volatileHead);
+  }
+  return stableSystem;
 }
 
 export function buildContextAssembledPayload(input: {
