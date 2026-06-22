@@ -61,7 +61,8 @@ export const httpRequestDurationSeconds = new Histogram({
 // Domain metrics — LLM tokens, calls, tool execution, and tool promotion.
 //
 // All labels are bounded: `direction` (input/output), `kind` (fresh/cache_read/
-// cache_write/text), `source` (main + the forked fast-slot calls), `model`
+// cache_write/text), `ttl` (none/1h/5m — the cache-write TTL tier; `none` for
+// non-write kinds), `source` (main + the forked fast-slot calls), `model`
 // (the catalog set — bounded by deployment config today; if custom model ids
 // ever become user-settable, this label would need capping), `ok`
 // (true/false). No tool names or ids — those would be client-unbounded and
@@ -75,12 +76,18 @@ export const httpRequestDurationSeconds = new Histogram({
 /**
  * LLM tokens processed. `kind` splits input into fresh / cache_read / cache_write
  * (the cache-cost story: a large `cache_read` next to small `fresh` is the
- * cheap-re-read pattern; a spike in `cache_write` is a prefix re-write).
+ * cheap-re-read pattern; a spike in `cache_write` is a prefix re-write). For
+ * `cache_write`, `ttl` tiers the write by breakpoint stability: `1h` = the stable
+ * prefix (system + tools), `5m` = the rolling history (see `model/cache-policy.ts`).
+ * A high `cache_write{ttl="1h"}` rate is the smoking gun for a system-prompt prefix
+ * rewritten every turn. `ttl="none"` on
+ * non-write kinds. `sum`ing `kind="cache_write"` without grouping by `ttl` still
+ * yields the total, so existing queries are unaffected.
  */
 export const llmTokensTotal = new Counter({
   name: "nb_llm_tokens_total",
-  help: "LLM tokens processed, by direction, cache kind, call source, and model.",
-  labelNames: ["direction", "kind", "source", "model"] as const,
+  help: "LLM tokens processed, by direction, cache kind, cache-write TTL tier, call source, and model.",
+  labelNames: ["direction", "kind", "ttl", "source", "model"] as const,
   registers: [metricsRegistry],
 });
 
@@ -287,6 +294,12 @@ interface UsageForMetrics {
   outputTokens: number;
   cacheReadTokens?: number;
   cacheWriteTokens?: number;
+  /**
+   * 1-hour-TTL portion of `cacheWriteTokens` (the stable system+tools prefix).
+   * Absent = no split reported; treated as all-1h (mirrors `usage/cost.ts`) so
+   * 1h-tier thrash is never undercounted. The 5-minute remainder is derived.
+   */
+  cacheWrite1hTokens?: number;
 }
 
 /**
@@ -310,13 +323,33 @@ export function recordLlmUsage(
   const cacheRead = usage.cacheReadTokens ?? 0;
   const cacheWrite = usage.cacheWriteTokens ?? 0;
   const fresh = Math.max(usage.inputTokens - cacheRead - cacheWrite, 0);
+  // TTL split mirrors `usage/cost.ts`: an absent 1h figure means "no split
+  // reported", treated as all-1h (the conservative tier) so 1h thrash is never
+  // undercounted. The 5-minute remainder is derived.
+  const cacheWrite1h = Math.min(usage.cacheWrite1hTokens ?? cacheWrite, cacheWrite);
+  const cacheWrite5m = Math.max(cacheWrite - cacheWrite1h, 0);
 
   llmCallsTotal.inc({ source, model });
-  if (fresh > 0) llmTokensTotal.inc({ direction: "input", kind: "fresh", source, model }, fresh);
+  if (fresh > 0)
+    llmTokensTotal.inc({ direction: "input", kind: "fresh", ttl: "none", source, model }, fresh);
   if (cacheRead > 0)
-    llmTokensTotal.inc({ direction: "input", kind: "cache_read", source, model }, cacheRead);
-  if (cacheWrite > 0)
-    llmTokensTotal.inc({ direction: "input", kind: "cache_write", source, model }, cacheWrite);
+    llmTokensTotal.inc(
+      { direction: "input", kind: "cache_read", ttl: "none", source, model },
+      cacheRead,
+    );
+  if (cacheWrite1h > 0)
+    llmTokensTotal.inc(
+      { direction: "input", kind: "cache_write", ttl: "1h", source, model },
+      cacheWrite1h,
+    );
+  if (cacheWrite5m > 0)
+    llmTokensTotal.inc(
+      { direction: "input", kind: "cache_write", ttl: "5m", source, model },
+      cacheWrite5m,
+    );
   if (usage.outputTokens > 0)
-    llmTokensTotal.inc({ direction: "output", kind: "text", source, model }, usage.outputTokens);
+    llmTokensTotal.inc(
+      { direction: "output", kind: "text", ttl: "none", source, model },
+      usage.outputTokens,
+    );
 }
