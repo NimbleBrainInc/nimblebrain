@@ -21,12 +21,14 @@ const SEPARATOR = "\n\n---\n\n";
 export interface TracedLayer {
   kind: TracedLayerKind;
   /**
-   * Volatility tier. `volatile` layers (current date, app/focused-app state,
-   * matched skill) change per turn and are evicted from the cached system
-   * prefix onto the latest user message; `stable` layers form the cached
-   * system prefix. See `composeSystemSegments`.
+   * Cache tier. `volatile` layers (current date, app/focused-app state, matched
+   * skill) change per turn and ride the latest user message. `frozen` layers
+   * (identity, core skills) are stable per process/model; `workspace` layers
+   * (scoped skills, overlays, apps) change on workspace switch / connector
+   * install. Frozen + workspace form the cached system prefix, split into two
+   * segments by `composeSystemSegments`.
    */
-  segment: "stable" | "volatile";
+  segment: "frozen" | "workspace" | "volatile";
   /**
    * Stable identifier. Filesystem path for file-backed layers; `nb:<slug>`
    * for runtime-derived layers; `instructions://<scope>` for overlays.
@@ -96,10 +98,19 @@ export interface ComposedPrompt {
  * message so a per-turn change no longer rewrites the cached system prefix.
  * `volatileHead` is "" when there is no volatile content.
  *
- * `layers` and `totalTokens` mirror `ComposedPrompt` (the full set, both tiers).
+ * `stableSystem` (= `frozen` + `workspaceStable`) is kept for sizing/back-compat;
+ * cache-policy splits the two segments into separate cached system messages on
+ * the first iteration of a run, then fuses them thereafter.
+ *
+ * `layers` and `totalTokens` mirror `ComposedPrompt` (the full set, all tiers).
  */
 export interface ComposedSegments {
+  /** Frozen + workspace, joined — the full cached system prefix (sizing/back-compat). */
   stableSystem: string;
+  /** Frozen segment (identity, core skills) — stable per process/model. */
+  frozen: string;
+  /** Workspace segment (scoped skills, overlays, apps) — stable per workspace. */
+  workspaceStable: string;
   volatileHead: string;
   layers: TracedLayer[];
   totalTokens: number;
@@ -111,6 +122,15 @@ const VOLATILE_KINDS: ReadonlySet<TracedLayerKind> = new Set([
   "app_state",
   "focused_app",
   "matched_skill",
+]);
+
+/** Layer kinds stable per process/model — the frozen cache segment (A). The
+ * remaining stable kinds (scoped skills, overlays, apps) are the workspace
+ * segment (B), which changes on workspace switch / connector install. */
+const FROZEN_KINDS: ReadonlySet<TracedLayerKind> = new Set([
+  "task_identity",
+  "default_identity",
+  "core_skill",
 ]);
 
 /**
@@ -549,11 +569,15 @@ export function composeSystemPromptTraced(
     });
   }
 
-  // Stamp the volatility tier from the layer kind (single source of truth for
-  // the stable/volatile classification — see `composeSystemSegments`).
+  // Stamp the cache tier from the layer kind (single source of truth for the
+  // frozen/workspace/volatile classification — see `composeSystemSegments`).
   const tagged: TracedLayer[] = layers.map((l) => ({
     ...l,
-    segment: VOLATILE_KINDS.has(l.kind) ? "volatile" : "stable",
+    segment: VOLATILE_KINDS.has(l.kind)
+      ? "volatile"
+      : FROZEN_KINDS.has(l.kind)
+        ? "frozen"
+        : "workspace",
   }));
   const text = tagged.map((l) => l.text).join(SEPARATOR);
   const totalTokens = tagged.reduce((sum, l) => sum + l.tokens, 0);
@@ -595,10 +619,19 @@ export function composeSystemSegments(
     layer3Skills,
     mode,
   );
-  const stableSystem = composed.layers
-    .filter((l) => l.segment === "stable")
+  const frozen = composed.layers
+    .filter((l) => l.segment === "frozen")
     .map((l) => l.text)
     .join(SEPARATOR);
+  const workspaceStable = composed.layers
+    .filter((l) => l.segment === "workspace")
+    .map((l) => l.text)
+    .join(SEPARATOR);
+  // The full cached prefix, kept for sizing/back-compat. Byte-identical to
+  // joining all non-volatile layers in order, since frozen layers always
+  // precede workspace layers. cache-policy splits frozen|workspace into two
+  // cached system messages on the first iteration; fuses to this string after.
+  const stableSystem = [frozen, workspaceStable].filter((s) => s.length > 0).join(SEPARATOR);
   const volatileBody = composed.layers
     .filter((l) => l.segment === "volatile")
     .map((l) => l.text)
@@ -612,6 +645,8 @@ export function composeSystemSegments(
       : "";
   return {
     stableSystem,
+    frozen,
+    workspaceStable,
     volatileHead,
     layers: composed.layers,
     totalTokens: composed.totalTokens,

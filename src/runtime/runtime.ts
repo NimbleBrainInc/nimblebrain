@@ -1543,7 +1543,7 @@ export class Runtime {
       reason: s.reason,
     }));
 
-    const { stableSystem, volatileHead } = composeSystemSegments(
+    const { stableSystem, frozen, workspaceStable, volatileHead } = composeSystemSegments(
       requestContextSkills,
       skill,
       apps,
@@ -1804,7 +1804,17 @@ export class Runtime {
     // identity is in scope; the llm.call and tool.dispatch spans nest under it.
     const result = await runWithRequestContext(reqCtx, () =>
       withSpan("agent.turn", { "llm.model": model, ...requestIdentityAttrs() }, () =>
-        engine.run(engineConfig, engineSystem, messages, tools),
+        // Pass the frozen/workspace split for the prompt cache, but only when the
+        // volatile head was prepended to a user message (engineSystem === stableSystem).
+        // If it was folded back into engineSystem (no user message), the split would
+        // drop it, so fall back to the single system string.
+        engine.run(
+          engineConfig,
+          engineSystem,
+          messages,
+          tools,
+          engineSystem === stableSystem ? { frozen, workspaceStable } : undefined,
+        ),
       ),
     );
 
@@ -2078,7 +2088,7 @@ export class Runtime {
     }));
 
     // Compose with mode: "task" — prepends TASK_IDENTITY before core skills.
-    const { stableSystem, volatileHead } = composeSystemSegments(
+    const { stableSystem, frozen, workspaceStable, volatileHead } = composeSystemSegments(
       requestContextSkills,
       null, // no matched skill (task mode doesn't match on prompt)
       apps,
@@ -2290,7 +2300,17 @@ export class Runtime {
     let result: EngineResult;
     try {
       result = await runWithRequestContext(reqCtx, () =>
-        engine.run(engineConfig, engineSystem, messages, tools),
+        // Pass the frozen/workspace split for the prompt cache, but only when the
+        // volatile head was prepended to a user message (engineSystem === stableSystem).
+        // If it was folded back into engineSystem (no user message), the split would
+        // drop it, so fall back to the single system string.
+        engine.run(
+          engineConfig,
+          engineSystem,
+          messages,
+          tools,
+          engineSystem === stableSystem ? { frozen, workspaceStable } : undefined,
+        ),
       );
     } catch (err) {
       // Non-abort errors are genuine failures — rethrow so the caller

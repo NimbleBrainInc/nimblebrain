@@ -61,22 +61,42 @@ function full() {
 }
 
 describe("composeSystemSegments", () => {
-  it("routes each layer to the correct volatility tier", () => {
+  it("routes each layer to the correct cache tier (frozen/workspace/volatile)", () => {
     const { layers } = full();
     const seg = (kind: string) => layers.find((l) => l.kind === kind)?.segment;
-    // Stable prefix — cached.
-    expect(seg("core_skill")).toBe("stable");
-    expect(seg("user_context_skill")).toBe("stable");
-    expect(seg("user_prefs")).toBe("stable");
-    expect(seg("workspace_context")).toBe("stable");
-    expect(seg("workspace_overlay")).toBe("stable");
-    expect(seg("layer3_skills")).toBe("stable");
-    expect(seg("apps")).toBe("stable");
+    // Frozen — stable per process/model.
+    expect(seg("core_skill")).toBe("frozen");
+    // Workspace — stable per workspace (scoped skills, identity prefs, overlays, apps).
+    expect(seg("user_context_skill")).toBe("workspace");
+    expect(seg("user_prefs")).toBe("workspace");
+    expect(seg("workspace_context")).toBe("workspace");
+    expect(seg("workspace_overlay")).toBe("workspace");
+    expect(seg("layer3_skills")).toBe("workspace");
+    expect(seg("apps")).toBe("workspace");
     // Volatile head — evicted onto the latest user message.
     expect(seg("current_date")).toBe("volatile");
     expect(seg("app_state")).toBe("volatile");
     expect(seg("focused_app")).toBe("volatile");
     expect(seg("matched_skill")).toBe("volatile");
+  });
+
+  it("splits the cached prefix into frozen (identity/core) + workspaceStable (skills/overlays/apps)", () => {
+    const { frozen, workspaceStable, stableSystem } = full();
+    // Frozen = identity + core skills only.
+    expect(frozen).toContain("I am Nira.");
+    expect(frozen).not.toContain("## Installed Apps");
+    expect(frozen).not.toContain("## User");
+    expect(frozen).not.toContain("L3 body.");
+    // Workspace = scoped skills / identity prefs / overlays / apps.
+    expect(workspaceStable).toContain("## Installed Apps");
+    expect(workspaceStable).toContain("## User");
+    expect(workspaceStable).toContain("L3 body.");
+    expect(workspaceStable).not.toContain("I am Nira.");
+    // stableSystem is the byte-identical fusion (frozen + SEPARATOR + workspaceStable).
+    expect(stableSystem).toBe(`${frozen}\n\n---\n\n${workspaceStable}`);
+    // No volatile content leaked into either cached segment.
+    expect(frozen).not.toContain("<runtime-context>");
+    expect(workspaceStable).not.toContain("## Current Date");
   });
 
   it("stableSystem holds only stable layers (no volatile content, identity before apps)", () => {
@@ -116,7 +136,7 @@ describe("composeSystemSegments", () => {
   it("is non-lossy: every layer's text lands in its own segment", () => {
     const segs = full();
     for (const layer of segs.layers) {
-      const where = layer.segment === "stable" ? segs.stableSystem : segs.volatileHead;
+      const where = layer.segment === "volatile" ? segs.volatileHead : segs.stableSystem;
       expect(where).toContain(layer.text);
     }
     expect(segs.stableSystem.length).toBeGreaterThan(0);

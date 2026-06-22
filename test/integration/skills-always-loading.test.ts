@@ -33,7 +33,7 @@ import { extractText } from "../../src/engine/content-helpers.ts";
 import { DEV_IDENTITY } from "../../src/identity/providers/dev.ts";
 import { runWithRequestContext } from "../../src/runtime/request-context.ts";
 import { Runtime } from "../../src/runtime/runtime.ts";
-import { createMockModel } from "../helpers/mock-model.ts";
+import { capturedSystemText, createMockModel } from "../helpers/mock-model.ts";
 import { TEST_WORKSPACE_ID, provisionTestWorkspace } from "../helpers/test-workspace.ts";
 
 const DERIVED_SKILL_NAME = "user-orbital-protocol";
@@ -48,11 +48,9 @@ let getSystem: () => string;
 function createCapturingModel(): { model: LanguageModelV3; getSystem: () => string } {
   let captured = "";
   const model = createMockModel((options) => {
-    const systemMsg = options.prompt.find((m) => m.role === "system");
-    if (systemMsg && typeof systemMsg.content === "string") {
-      if (!systemMsg.content.includes("Generate a 3-6 word title")) {
-        captured = systemMsg.content;
-      }
+    const sys = capturedSystemText(options.prompt);
+    if (!sys.includes("Generate a 3-6 word title")) {
+      captured = sys;
     }
     return { content: [{ type: "text", text: "ok" }], inputTokens: 10, outputTokens: 5 };
   });

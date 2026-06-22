@@ -50,6 +50,22 @@ export function runtimeContextHead(prompt: LanguageModelV3CallOptions["prompt"])
 }
 
 /**
+ * Capture the full system text the model received: all system messages joined
+ * (the cache policy may split the cached system into a frozen + workspace pair on
+ * the first iteration of a run, under the Anthropic provider), plus the
+ * `<runtime-context>` head the runtime prepends to the latest user message
+ * (volatile tier). Tests asserting on "what the model sees" should use this
+ * rather than reading a single system message.
+ */
+export function capturedSystemText(prompt: LanguageModelV3CallOptions["prompt"]): string {
+  const system = prompt
+    .filter((m) => m.role === "system")
+    .map((m) => (typeof m.content === "string" ? m.content : ""))
+    .join("\n\n");
+  return system + runtimeContextHead(prompt);
+}
+
+/**
  * Creates a LanguageModelV3 from a function that returns MockModelResponse.
  * This makes it easy to port old ModelPort-style mocks.
  *

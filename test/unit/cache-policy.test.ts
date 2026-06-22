@@ -295,3 +295,90 @@ describe("applyCachePolicy — edge cases", () => {
     expect(hasCache(prompt[0])).toBe(true);
   });
 });
+
+describe("applyCachePolicy — frozen/workspace system split (PR-2)", () => {
+  const SEGMENTS = { frozen: "FROZEN identity", workspaceStable: "WORKSPACE skills" };
+  const FUSED = "FROZEN identity\n\n---\n\nWORKSPACE skills";
+  const sysContent = (m: LanguageModelV3Message | undefined): string =>
+    (m as { content: string } | undefined)?.content ?? "";
+
+  test("first iteration (no anchor): two consecutive leading 1h system messages", () => {
+    const { prompt } = applyCachePolicy({
+      provider: "anthropic",
+      systemPrompt: FUSED,
+      systemSegments: SEGMENTS,
+      messages: [userMsg("go")],
+      tools: TOOLS,
+    });
+    // first AND consecutive — required to avoid the mid-conversation-system beta.
+    expect(prompt[0]!.role).toBe("system");
+    expect(prompt[1]!.role).toBe("system");
+    expect(sysContent(prompt[0])).toBe(SEGMENTS.frozen);
+    expect(sysContent(prompt[1])).toBe(SEGMENTS.workspaceStable);
+    expect(ttlOf(prompt[0])).toBe("1h");
+    expect(ttlOf(prompt[1])).toBe("1h");
+  });
+
+  test("split mode uses exactly 4 breakpoints (tools + frozen + workspace + tail)", () => {
+    const { prompt, tools } = applyCachePolicy({
+      provider: "anthropic",
+      systemPrompt: FUSED,
+      systemSegments: SEGMENTS,
+      messages: [userMsg("go")],
+      tools: TOOLS,
+    });
+    const total = breakpointIdxs(prompt).length + tools.filter((t) => hasCache(t)).length;
+    expect(total).toBe(4);
+  });
+
+  test("once the step-anchor exists (iteration 2+), fuses to ONE system message", () => {
+    const history = [userMsg("go")];
+    appendStep(history, 0, 3); // an assistant step → step-anchor exists
+    const { prompt, tools } = applyCachePolicy({
+      provider: "anthropic",
+      systemPrompt: FUSED,
+      systemSegments: SEGMENTS,
+      messages: history,
+      tools: TOOLS,
+    });
+    const systemMsgs = prompt.filter((m) => m.role === "system");
+    expect(systemMsgs).toHaveLength(1);
+    expect(sysContent(systemMsgs[0])).toBe(FUSED);
+    const total = breakpointIdxs(prompt).length + tools.filter((t) => hasCache(t)).length;
+    expect(total).toBeLessThanOrEqual(4); // tools + system + anchor + tail
+  });
+
+  test("empty workspace segment collapses to one system message", () => {
+    const { prompt } = applyCachePolicy({
+      provider: "anthropic",
+      systemPrompt: "FROZEN identity",
+      systemSegments: { frozen: "FROZEN identity", workspaceStable: "" },
+      messages: [userMsg("go")],
+      tools: TOOLS,
+    });
+    expect(prompt.filter((m) => m.role === "system")).toHaveLength(1);
+    expect(sysContent(prompt[0])).toBe("FROZEN identity");
+  });
+
+  test("no systemSegments → unchanged single fused system message", () => {
+    const { prompt } = applyCachePolicy({
+      provider: "anthropic",
+      systemPrompt: "sys",
+      messages: [userMsg("go")],
+      tools: TOOLS,
+    });
+    expect(prompt.filter((m) => m.role === "system")).toHaveLength(1);
+  });
+
+  test("passthrough (non-Anthropic) ignores systemSegments", () => {
+    const { prompt } = applyCachePolicy({
+      provider: "openai",
+      systemPrompt: FUSED,
+      systemSegments: SEGMENTS,
+      messages: [userMsg("go")],
+      tools: TOOLS,
+    });
+    expect(prompt.filter((m) => m.role === "system")).toHaveLength(1);
+    expect(breakpointIdxs(prompt)).toEqual([]);
+  });
+});

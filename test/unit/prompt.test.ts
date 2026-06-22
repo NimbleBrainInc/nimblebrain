@@ -932,7 +932,7 @@ describe("composeSystemPromptTraced", () => {
     expect(traced.layers.length).toBeGreaterThan(0);
     for (const layer of traced.layers) {
       expect(knownKinds.has(layer.kind)).toBe(true);
-      expect(["stable", "volatile"]).toContain(layer.segment);
+      expect(["frozen", "workspace", "volatile"]).toContain(layer.segment);
       expect(layer.id.length).toBeGreaterThan(0);
       expect(layer.source.length).toBeGreaterThan(0);
       expect(layer.text.length).toBeGreaterThan(0);

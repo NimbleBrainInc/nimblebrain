@@ -373,7 +373,7 @@ async function composeHistorical(
 
     layers.push({
       kind: "layer3_skills",
-      segment: "stable",
+      segment: "workspace",
       id: "nb:layer3-skills",
       source: `layer 3 skills as of run ${runId}`,
       text: bodyRows.join("\n"),

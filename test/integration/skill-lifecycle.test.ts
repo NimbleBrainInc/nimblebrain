@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { Runtime } from "../../src/runtime/runtime.ts";
 import { runWithRequestContext } from "../../src/runtime/request-context.ts";
 import type { LanguageModelV3 } from "@ai-sdk/provider";
-import { createMockModel, runtimeContextHead } from "../helpers/mock-model.ts";
+import { capturedSystemText, createMockModel } from "../helpers/mock-model.ts";
 import { extractText } from "../../src/engine/content-helpers.ts";
 import { TEST_WORKSPACE_ID, provisionTestWorkspace } from "../helpers/test-workspace.ts";
 
@@ -19,12 +19,10 @@ afterAll(() => {
 function createCapturingModel(): { model: LanguageModelV3; getSystem: () => string } {
 	let capturedSystem = "";
 	const model = createMockModel((options) => {
-		const systemMsg = options.prompt.find((m) => m.role === "system");
-		if (systemMsg && typeof systemMsg.content === "string") {
-			// Skip auto-title calls (they have a short, distinctive system prompt)
-			if (!systemMsg.content.includes("Generate a 3-6 word title")) {
-				capturedSystem = systemMsg.content + runtimeContextHead(options.prompt);
-			}
+		const sys = capturedSystemText(options.prompt);
+		// Skip auto-title calls (they have a short, distinctive system prompt)
+		if (!sys.includes("Generate a 3-6 word title")) {
+			capturedSystem = sys;
 		}
 		return {
 			content: [{ type: "text", text: "ok" }],

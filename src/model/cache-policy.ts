@@ -44,7 +44,12 @@ import type {
  *               across most turns, but not frozen: tripped/promoted tools can
  *               change the set mid-run, which busts this breakpoint (a cache
  *               miss on tools + everything after — degraded, never incorrect).
- *   2. system  — the system prompt
+ *   2. system  — the system prompt. On the first iteration of a run (no anchor
+ *               yet) this splits into TWO breakpoints — frozen identity +
+ *               workspace-stable — so a workspace switch / connector install
+ *               rewrites only the latter, not frozen identity. From iteration 2
+ *               it fuses back to one so the step-anchor (3) keeps its slot. See
+ *               `anthropicStrategy`.
  *   3. anchor  — last message of the previous step (= prior request's tail)
  *   4. tail    — the current last message (cached for the NEXT turn to read)
  */
@@ -78,6 +83,16 @@ export interface CachePolicyInput {
   provider: string;
   /** System prompt text (sent as the prompt's leading system message). */
   systemPrompt: string;
+  /**
+   * Optional split of `systemPrompt` into the frozen (identity/core) and
+   * workspace-stable (scoped skills/overlays/apps) cache segments. When present,
+   * the Anthropic strategy emits them as two consecutive cached system messages
+   * on the first iteration of a run (so the frozen segment stays warm across
+   * workspace switches), and fuses them back to `systemPrompt` once the rolling
+   * step-anchor exists. Absent for non-Anthropic providers, transformed prompts,
+   * and plain callers — those use the single `systemPrompt` system message.
+   */
+  systemSegments?: { frozen: string; workspaceStable: string };
   /** Conversation messages (post windowing/replay transforms). */
   messages: LanguageModelV3Message[];
   /** The model's tool definitions for this call. */
@@ -150,21 +165,38 @@ const passthroughStrategy: CacheStrategy = ({ systemPrompt, messages, tools }) =
 });
 
 /**
- * Anthropic strategy: place up to four explicit `cache_control` breakpoints,
- * TTL-tiered by stability — tools (1, 1h) + system (2, 1h) on the stable
- * prefix; rolling step-anchor (3, 5m) + tail (4, 5m) on the churning history.
- * See the module header for the TTL rationale and why the step-anchor is the
- * load-bearing breakpoint.
+ * Anthropic strategy: up to four explicit `cache_control` breakpoints, TTL-tiered
+ * by stability. The system block has two modes (see the module header):
+ *
+ *  - **Split** (first iteration of a run — no step-anchor yet) when
+ *    `systemSegments` is provided: frozen (identity/core, 1h) + workspace-stable
+ *    (scoped skills/overlays/apps, 1h) go as TWO consecutive leading system
+ *    messages, so a workspace switch / connector install rewrites only the
+ *    workspace segment, not frozen identity. Budget: tools + frozen + workspace +
+ *    tail = 4.
+ *  - **Fused** (iterations 2..N where the anchor exists, or no `systemSegments`):
+ *    one system message (1h) so the rolling step-anchor (5m) keeps its slot.
+ *    Budget: tools + system + anchor + tail = 4.
+ *
+ * Never exceeds Anthropic's hard max of 4 breakpoints (a 5th is silently dropped).
  */
-const anthropicStrategy: CacheStrategy = ({ systemPrompt, messages, tools }) => {
-  // (2) system breakpoint — stable, 1-hour.
-  const cachedSystem = withCacheControl(systemMessageOf(systemPrompt), CACHE_CONTROL_1H);
+const anthropicStrategy: CacheStrategy = ({ systemPrompt, systemSegments, messages, tools }) => {
+  const tailIdx = messages.length - 1;
+  const anchorIdx = stepAnchorIndex(messages);
+
+  // System message(s) — 1-hour. Split into frozen + workspace only on the first
+  // iteration (no anchor), where the breakpoint budget allows it; fuse otherwise
+  // so the load-bearing step-anchor keeps its slot. Empty segments are dropped.
+  const cachedSystem: LanguageModelV3Message[] =
+    systemSegments && anchorIdx < 0
+      ? [systemSegments.frozen, systemSegments.workspaceStable]
+          .filter((s) => s.length > 0)
+          .map((s) => withCacheControl(systemMessageOf(s), CACHE_CONTROL_1H))
+      : [withCacheControl(systemMessageOf(systemPrompt), CACHE_CONTROL_1H)];
 
   // (3) rolling step-anchor + (4) tail — churning, 5-minute. The two indices
   // can coincide when the history is a single message; dedupe so we never
-  // double-annotate.
-  const tailIdx = messages.length - 1;
-  const anchorIdx = stepAnchorIndex(messages);
+  // double-annotate. In split mode there is no anchor, so only the tail.
   const breakpointIdxs = new Set<number>();
   if (tailIdx >= 0) breakpointIdxs.add(tailIdx);
   if (anchorIdx >= 0 && anchorIdx !== tailIdx) breakpointIdxs.add(anchorIdx);
@@ -186,7 +218,7 @@ const anthropicStrategy: CacheStrategy = ({ systemPrompt, messages, tools }) => 
             : t,
         );
 
-  return { prompt: [cachedSystem, ...cachedMessages], tools: cachedTools };
+  return { prompt: [...cachedSystem, ...cachedMessages], tools: cachedTools };
 };
 
 /**

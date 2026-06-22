@@ -227,6 +227,12 @@ export class AgentEngine {
     systemPrompt: string,
     messages: LanguageModelV3Message[],
     tools: ToolSchema[],
+    // Optional frozen/workspace split of `systemPrompt` for the prompt cache.
+    // When provided (and the provider is Anthropic), the cache policy emits the
+    // two segments as separate cached system messages on the first iteration so
+    // the frozen identity stays warm across workspace switches. `systemPrompt`
+    // remains the source of truth for sizing and the fused (iteration 2+) path.
+    systemSegments?: { frozen: string; workspaceStable: string },
   ): Promise<EngineResult> {
     // Never mutate the caller's array
     const history = [...messages];
@@ -569,6 +575,10 @@ export class AgentEngine {
           const { prompt: cachedPrompt, tools: cachedTools } = applyCachePolicy({
             provider: callProvider,
             systemPrompt: callPrompt,
+            // The frozen/workspace split is byte-consistent with `systemPrompt`
+            // only when no transformPrompt hook rewrote it; otherwise fall back
+            // to the single (transformed) system message.
+            systemSegments: config.hooks?.transformPrompt ? undefined : systemSegments,
             messages: msgs,
             tools: modelTools,
           });
