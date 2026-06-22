@@ -1383,11 +1383,14 @@ describe("Tier 3: Boundary Probes — known injection patterns", () => {
       expect(result).not.toContain("— undefined");
     });
 
-    it("empty prefs still produce User section with date", () => {
+    it("empty prefs emit the date as its own section, no empty User section", () => {
       const prefs: UserPrefs = { displayName: "", timezone: "", locale: "en-US" };
       const result = composeSystemPrompt([], null, undefined, undefined, undefined, prefs);
-      expect(result).toContain("## User");
+      // The date is always present, now in its own (volatile) section.
+      expect(result).toContain("## Current Date");
       expect(result).toContain("- Today's date:");
+      // No identity fields → no empty `## User` heading.
+      expect(result).not.toContain("## User");
     });
 
     it("no Participants section is ever emitted (removed in Stage 1)", () => {

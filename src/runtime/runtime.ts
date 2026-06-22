@@ -2,7 +2,11 @@ import { copyFileSync, existsSync, mkdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import type { LanguageModelV3, LanguageModelV3Message } from "@ai-sdk/provider";
+import type {
+  LanguageModelV3,
+  LanguageModelV3Message,
+  LanguageModelV3TextPart,
+} from "@ai-sdk/provider";
 import { MetricsEventSink } from "../adapters/metrics-events.ts";
 import { NoopEventSink } from "../adapters/noop-events.ts";
 import { WorkspaceLogSink } from "../adapters/workspace-log-sink.ts";
@@ -81,7 +85,7 @@ import type {
   Layer3SkillEntry,
   PromptAppInfo,
 } from "../prompt/compose.ts";
-import { composeSystemPrompt } from "../prompt/compose.ts";
+import { composeSystemSegments } from "../prompt/compose.ts";
 import { ConnectorDirectory } from "../registries/directory.ts";
 import { RegistryStore, warnIfCuratedCatalogEmpty } from "../registries/registry-store.ts";
 import { synthesizeBundleSkill } from "../skills/bundle-skills.ts";
@@ -1539,7 +1543,7 @@ export class Runtime {
       reason: s.reason,
     }));
 
-    const systemPrompt = composeSystemPrompt(
+    const { stableSystem, volatileHead } = composeSystemSegments(
       requestContextSkills,
       skill,
       apps,
@@ -1551,6 +1555,10 @@ export class Runtime {
       liveOverlays,
       layer3Entries,
     );
+    // Budget + telemetry size counts every segment: the volatile head still
+    // consumes context even though it now rides the latest user message instead
+    // of the cached system block (the prepend happens after telemetry, below).
+    const systemPrompt = volatileHead ? `${stableSystem}\n\n${volatileHead}` : stableSystem;
 
     // Workspace model overrides are in the RequestContext — read via getModelSlot()
 
@@ -1666,6 +1674,17 @@ export class Runtime {
       messages,
       skillsLoaded,
     });
+
+    // Evict the volatile head onto the latest user message so a per-turn change
+    // (date, app/focused-app state, matched skill) no longer rewrites the
+    // 1h-cached system prefix. Telemetry above counts every segment via
+    // `systemPrompt`; the prepend runs after it, so history isn't double-counted.
+    // Falls back to folding the head into the system string when there's no user
+    // message to carry it (keeps the content, forgoes the cache win).
+    let engineSystem = stableSystem;
+    if (volatileHead && !prependRuntimeContextToLastUserMessage(messages, volatileHead)) {
+      engineSystem = `${stableSystem}\n\n${volatileHead}`;
+    }
 
     const engineConfig: EngineConfig = {
       model: resolvedModelString,
@@ -1788,7 +1807,7 @@ export class Runtime {
     // identity is in scope; the llm.call and tool.dispatch spans nest under it.
     const result = await runWithRequestContext(reqCtx, () =>
       withSpan("agent.turn", { "llm.model": model, ...requestIdentityAttrs() }, () =>
-        engine.run(engineConfig, systemPrompt, messages, tools),
+        engine.run(engineConfig, engineSystem, messages, tools),
       ),
     );
 
@@ -2062,7 +2081,7 @@ export class Runtime {
     }));
 
     // Compose with mode: "task" — prepends TASK_IDENTITY before core skills.
-    const systemPrompt = composeSystemPrompt(
+    const { stableSystem, volatileHead } = composeSystemSegments(
       requestContextSkills,
       null, // no matched skill (task mode doesn't match on prompt)
       apps,
@@ -2075,6 +2094,7 @@ export class Runtime {
       layer3Entries,
       "task",
     );
+    const systemPrompt = volatileHead ? `${stableSystem}\n\n${volatileHead}` : stableSystem;
 
     // Model resolution — mirrors chat (alias slot + qualification).
     let resolvedModelString = request.model ?? this.getDefaultModel();
@@ -2162,6 +2182,17 @@ export class Runtime {
       messages,
       skillsLoaded,
     });
+
+    // Evict the volatile head onto the latest user message so a per-turn change
+    // (date, app/focused-app state, matched skill) no longer rewrites the
+    // 1h-cached system prefix. Telemetry above counts every segment via
+    // `systemPrompt`; the prepend runs after it, so history isn't double-counted.
+    // Falls back to folding the head into the system string when there's no user
+    // message to carry it (keeps the content, forgoes the cache win).
+    let engineSystem = stableSystem;
+    if (volatileHead && !prependRuntimeContextToLastUserMessage(messages, volatileHead)) {
+      engineSystem = `${stableSystem}\n\n${volatileHead}`;
+    }
 
     const engineConfig: EngineConfig = {
       model: resolvedModelString,
@@ -2265,7 +2296,7 @@ export class Runtime {
     let result: EngineResult;
     try {
       result = await runWithRequestContext(reqCtx, () =>
-        engine.run(engineConfig, systemPrompt, messages, tools),
+        engine.run(engineConfig, engineSystem, messages, tools),
       );
     } catch (err) {
       // Non-abort errors are genuine failures — rethrow so the caller
@@ -4036,6 +4067,29 @@ function stampDerivedScope(workDir: string, skill: Skill): Skill {
  * and `estimateMessageTokens`. Direct test access keeps the regression
  * verifiable without spinning a full Runtime.
  */
+/**
+ * Prepend the volatile "runtime context" head (current date, app/focused-app
+ * state, matched skill) to the latest user message as a leading text part. This
+ * keeps per-turn-volatile content OUT of the 1h-cached system block (where any
+ * change rewrites the whole prefix at the premium write rate) and on the message
+ * stream, which rides the rolling cache instead. Mutates `messages` in place.
+ * Returns false when there's no user message to carry it (the caller then folds
+ * the head back into the system string so nothing is dropped).
+ */
+function prependRuntimeContextToLastUserMessage(
+  messages: LanguageModelV3Message[],
+  volatileHead: string,
+): boolean {
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const m = messages[i];
+    if (!m || m.role !== "user") continue;
+    const headPart: LanguageModelV3TextPart = { type: "text", text: volatileHead };
+    messages[i] = { ...m, content: [headPart, ...m.content] };
+    return true;
+  }
+  return false;
+}
+
 export function buildContextAssembledPayload(input: {
   systemPrompt: string;
   activeTools: ToolSchema[];
