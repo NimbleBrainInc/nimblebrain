@@ -165,10 +165,18 @@ jobs:
   #   vars.STAGING_DEPLOY_REPO       — deploy-config repo name (same org)
   #   vars.EDGE_BUMP_APP_ID          — GitHub App id (Contents: write on that repo)
   #   secrets.EDGE_BUMP_APP_KEY      — that App's private key
+  #
+  # `if`: key off the build actually succeeding — which already implies push-to-main,
+  # since build-and-push's own `if` gates on that. The `!cancelled()` is load-bearing,
+  # not decoration: with no status function, GitHub adds an implicit success() over
+  # `needs`. build-and-push's needs are non-path-filtered verify jobs today, so they
+  # never skip and a bare `if` happens to work — but the day anyone path-filters them
+  # (so a job can SKIP on an unrelated change), that implicit gate would silently skip
+  # THIS job and freeze the edge roll with no error. Correct-either-way guard.
   roll-staging-edge:
     name: Roll staging edge channel
     needs: build-and-push
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    if: ${{ !cancelled() && needs.build-and-push.result == 'success' }}
     runs-on: ubuntu-latest
     # Authenticates with a minted App token, never GITHUB_TOKEN — needs no grants.
     permissions: {}
