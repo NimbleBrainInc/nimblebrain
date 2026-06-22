@@ -39,10 +39,11 @@ async function readTotal(counter: Counter<any>): Promise<number> {
 describe("recordLlmUsage", () => {
   it("splits input into fresh/cache_read/cache_write and counts output + calls", async () => {
     const base = { source: "compaction", model: "tm-record" };
-    const fresh = { direction: "input", kind: "fresh", ...base };
-    const cr = { direction: "input", kind: "cache_read", ...base };
-    const cw = { direction: "input", kind: "cache_write", ...base };
-    const out = { direction: "output", kind: "text", ...base };
+    const fresh = { direction: "input", kind: "fresh", ttl: "none", ...base };
+    const cr = { direction: "input", kind: "cache_read", ttl: "none", ...base };
+    // 300 writes with no 1h split reported → all-1h (the conservative tier).
+    const cw = { direction: "input", kind: "cache_write", ttl: "1h", ...base };
+    const out = { direction: "output", kind: "text", ttl: "none", ...base };
 
     const before = {
       fresh: await read(llmTokensTotal, fresh),
@@ -65,6 +66,25 @@ describe("recordLlmUsage", () => {
     expect((await read(llmTokensTotal, cw)) - before.cw).toBe(300);
     expect((await read(llmTokensTotal, out)) - before.out).toBe(50);
     expect((await read(llmCallsTotal, base)) - before.calls).toBe(1);
+  });
+
+  it("tiers cache_write into 1h/5m when the engine reports the 1h portion", async () => {
+    const base = { source: "main", model: "tm-ttl" };
+    const cw1h = { direction: "input", kind: "cache_write", ttl: "1h", ...base };
+    const cw5m = { direction: "input", kind: "cache_write", ttl: "5m", ...base };
+    const before = { h: await read(llmTokensTotal, cw1h), m: await read(llmTokensTotal, cw5m) };
+
+    // 500 cache writes, 200 on the 1h (stable-prefix) tier → 300 are the 5m remainder.
+    recordLlmUsage("main", "tm-ttl", {
+      inputTokens: 500,
+      outputTokens: 0,
+      cacheReadTokens: 0,
+      cacheWriteTokens: 500,
+      cacheWrite1hTokens: 200,
+    });
+
+    expect((await read(llmTokensTotal, cw1h)) - before.h).toBe(200);
+    expect((await read(llmTokensTotal, cw5m)) - before.m).toBe(300);
   });
 });
 
