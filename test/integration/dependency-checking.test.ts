@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { Runtime } from "../../src/runtime/runtime.ts";
 import { deriveServerName } from "../../src/bundles/paths.ts";
 import type { LanguageModelV3 } from "@ai-sdk/provider";
-import { createMockModel } from "../helpers/mock-model.ts";
+import { createMockModel, runtimeContextHead } from "../helpers/mock-model.ts";
 import { TEST_WORKSPACE_ID, provisionTestWorkspace } from "../helpers/test-workspace.ts";
 
 const testDir = join(tmpdir(), `nimblebrain-depcheck-${Date.now()}`);
@@ -22,7 +22,7 @@ function createCapturingModel(): { model: LanguageModelV3; getSystem: () => stri
     if (systemMsg && typeof systemMsg.content === "string") {
       // Skip auto-title calls (they have a short, distinctive system prompt)
       if (!systemMsg.content.includes("Generate a 3-6 word title")) {
-        capturedSystem = systemMsg.content;
+        capturedSystem = systemMsg.content + runtimeContextHead(options.prompt);
       }
     }
     return {

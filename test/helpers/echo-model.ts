@@ -64,8 +64,12 @@ export function createEchoModel(options?: EchoModelOptions): LanguageModelV3 {
     for (let i = messages.length - 1; i >= 0; i--) {
       const msg = messages[i];
       if (msg.role === "user") {
+        // Echo the user's authored text. The runtime prepends a
+        // `<runtime-context>` head (current date / app state / matched skill) as
+        // the first text part of the latest user message; a real model answers
+        // the user's actual question, not the injected context, so skip it.
         for (const part of msg.content) {
-          if (part.type === "text") {
+          if (part.type === "text" && !part.text.startsWith("<runtime-context>")) {
             return part.text;
           }
         }

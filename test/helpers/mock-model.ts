@@ -27,6 +27,29 @@ export interface MockModelResponse {
 export type MockCallFn = (options: LanguageModelV3CallOptions) => MockModelResponse | Promise<MockModelResponse>;
 
 /**
+ * Extract the `<runtime-context>` head the runtime prepends to the latest user
+ * message. PR-1 (volatility-tiered composition) moves per-turn-volatile content
+ * — current date, app/focused-app state, matched skill — out of the cached
+ * system block onto this head. Tests that assert on "what the model sees" append
+ * it to the captured system message. Returns "" when no head is present.
+ */
+export function runtimeContextHead(prompt: LanguageModelV3CallOptions["prompt"]): string {
+  for (let i = prompt.length - 1; i >= 0; i--) {
+    const m = prompt[i];
+    if (m.role !== "user") continue;
+    if (Array.isArray(m.content)) {
+      for (const part of m.content) {
+        if (part.type === "text" && part.text.startsWith("<runtime-context>")) {
+          return `\n\n${part.text}`;
+        }
+      }
+    }
+    return "";
+  }
+  return "";
+}
+
+/**
  * Creates a LanguageModelV3 from a function that returns MockModelResponse.
  * This makes it easy to port old ModelPort-style mocks.
  *
