@@ -472,11 +472,14 @@ describe("composeSystemPrompt — user preferences", () => {
     expect(result).toContain("- Locale: de-DE");
   });
 
-  it("user section always includes today's date even when prefs are empty", () => {
+  it("date is always emitted as its own section even when prefs are empty", () => {
     const prefs: UserPrefs = { displayName: "", timezone: "", locale: "en-US" };
     const result = composeSystemPrompt([], null, undefined, undefined, undefined, prefs);
-    expect(result).toContain("## User");
+    // The date moved out of `## User` into its own (volatile) `## Current Date`
+    // section; with no identity fields there is no `## User` heading at all.
+    expect(result).toContain("## Current Date");
     expect(result).toContain("- Today's date:");
+    expect(result).not.toContain("## User");
     expect(result).not.toContain("- Name:");
     expect(result).not.toContain("- Timezone:");
   });
@@ -882,9 +885,11 @@ describe("composeSystemPromptTraced", () => {
     // row to a source.
     const knownKinds = new Set<string>([
       "default_identity",
+      "task_identity",
       "core_skill",
       "user_context_skill",
       "user_prefs",
+      "current_date",
       "participants",
       "workspace_context",
       "org_overlay",
@@ -927,6 +932,7 @@ describe("composeSystemPromptTraced", () => {
     expect(traced.layers.length).toBeGreaterThan(0);
     for (const layer of traced.layers) {
       expect(knownKinds.has(layer.kind)).toBe(true);
+      expect(["stable", "volatile"]).toContain(layer.segment);
       expect(layer.id.length).toBeGreaterThan(0);
       expect(layer.source.length).toBeGreaterThan(0);
       expect(layer.text.length).toBeGreaterThan(0);

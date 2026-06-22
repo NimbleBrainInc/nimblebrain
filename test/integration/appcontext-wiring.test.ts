@@ -3,7 +3,7 @@ import { Runtime } from "../../src/runtime/runtime.ts";
 import type { ToolSource } from "../../src/tools/types.ts";
 import type { ToolResult } from "../../src/engine/types.ts";
 import { textContent } from "../../src/engine/content-helpers.ts";
-import { createMockModel } from "../helpers/mock-model.ts";
+import { createMockModel, runtimeContextHead } from "../helpers/mock-model.ts";
 import { makeTestWorkDir } from "../helpers/test-workdir.ts";
 import { TEST_WORKSPACE_ID, provisionTestWorkspace } from "../helpers/test-workspace.ts";
 
@@ -15,7 +15,7 @@ function createCapturingModel() {
 		if (systemMsg && typeof systemMsg.content === "string") {
 			// Skip auto-title calls
 			if (!systemMsg.content.includes("Generate a 3-6 word title")) {
-				capturedSystem = systemMsg.content;
+				capturedSystem = systemMsg.content + runtimeContextHead(options.prompt);
 			}
 		}
 		return {

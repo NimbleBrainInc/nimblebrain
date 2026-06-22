@@ -21,6 +21,13 @@ const SEPARATOR = "\n\n---\n\n";
 export interface TracedLayer {
   kind: TracedLayerKind;
   /**
+   * Volatility tier. `volatile` layers (current date, app/focused-app state,
+   * matched skill) change per turn and are evicted from the cached system
+   * prefix onto the latest user message; `stable` layers form the cached
+   * system prefix. See `composeSystemSegments`.
+   */
+  segment: "stable" | "volatile";
+  /**
    * Stable identifier. Filesystem path for file-backed layers; `nb:<slug>`
    * for runtime-derived layers; `instructions://<scope>` for overlays.
    */
@@ -50,6 +57,7 @@ export type TracedLayerKind =
   | "core_skill"
   | "user_context_skill"
   | "user_prefs"
+  | "current_date"
   | "workspace_context"
   | "org_overlay"
   | "workspace_overlay"
@@ -77,6 +85,33 @@ export interface ComposedPrompt {
   layers: TracedLayer[];
   totalTokens: number;
 }
+
+/**
+ * Volatility-tiered system composition.
+ *
+ * `stableSystem` is the cacheable system prefix (identity, scoped skills,
+ * overlays, apps). `volatileHead` is the per-turn-volatile content (current
+ * date, app/focused-app state, matched skill) wrapped in a single
+ * `<runtime-context>` block — the runtime prepends it to the latest user
+ * message so a per-turn change no longer rewrites the cached system prefix.
+ * `volatileHead` is "" when there is no volatile content.
+ *
+ * `layers` and `totalTokens` mirror `ComposedPrompt` (the full set, both tiers).
+ */
+export interface ComposedSegments {
+  stableSystem: string;
+  volatileHead: string;
+  layers: TracedLayer[];
+  totalTokens: number;
+}
+
+/** Layer kinds that change per turn — evicted from the cached system block. */
+const VOLATILE_KINDS: ReadonlySet<TracedLayerKind> = new Set([
+  "current_date",
+  "app_state",
+  "focused_app",
+  "matched_skill",
+]);
 
 /**
  * Strip newlines and control characters from single-line fields.
@@ -264,7 +299,7 @@ export function composeSystemPromptTraced(
   layer3Skills?: Layer3SkillEntry[],
   mode: ComposeMode = "chat",
 ): ComposedPrompt {
-  const layers: TracedLayer[] = [];
+  const layers: Array<Omit<TracedLayer, "segment">> = [];
 
   // Layer 0a (task mode only): TASK_IDENTITY contract. Prepended before
   // any core skill so the framing is read first. The runtime owns this
@@ -335,15 +370,30 @@ export function composeSystemPromptTraced(
     }
   }
 
-  // Layer 1.5: User preferences (name, timezone, locale) + current date.
-  // Always emitted — ensures the model knows "today" even with no prefs.
-  const prefsText = formatUserPrefs(userPrefs);
+  // Layer 1.5a: User identity (name, timezone, locale) — STABLE, stays in the
+  // cached system prefix. Skipped when no identity fields are set (no empty
+  // `## User` heading).
+  const identityText = formatUserIdentity(userPrefs);
+  if (identityText) {
+    layers.push({
+      kind: "user_prefs",
+      id: "nb:user-prefs",
+      source: "runtime — user identity",
+      text: identityText,
+      tokens: approxTokens(identityText),
+    });
+  }
+
+  // Layer 1.5b: Current date — VOLATILE (changes every turn). Its own layer so
+  // it rides the latest user message instead of busting the 1h-cached system
+  // block. Always emitted so the model knows "today".
+  const dateText = formatCurrentDate(userPrefs);
   layers.push({
-    kind: "user_prefs",
-    id: "nb:user-prefs",
-    source: "runtime — user preferences + current date",
-    text: prefsText,
-    tokens: approxTokens(prefsText),
+    kind: "current_date",
+    id: "nb:current-date",
+    source: "runtime — current date",
+    text: dateText,
+    tokens: approxTokens(dateText),
   });
 
   // Layer 1.6: Participants section — removed in Stage 1 (single-owner
@@ -499,9 +549,73 @@ export function composeSystemPromptTraced(
     });
   }
 
-  const text = layers.map((l) => l.text).join(SEPARATOR);
-  const totalTokens = layers.reduce((sum, l) => sum + l.tokens, 0);
-  return { text, layers, totalTokens };
+  // Stamp the volatility tier from the layer kind (single source of truth for
+  // the stable/volatile classification — see `composeSystemSegments`).
+  const tagged: TracedLayer[] = layers.map((l) => ({
+    ...l,
+    segment: VOLATILE_KINDS.has(l.kind) ? "volatile" : "stable",
+  }));
+  const text = tagged.map((l) => l.text).join(SEPARATOR);
+  const totalTokens = tagged.reduce((sum, l) => sum + l.tokens, 0);
+  return { text, layers: tagged, totalTokens };
+}
+
+/**
+ * Volatility-tiered variant of `composeSystemPromptTraced`.
+ *
+ * Same composition (delegates to the traced builder — single source of truth
+ * for layer order and classification), but splits the result into the cacheable
+ * `stableSystem` prefix and the per-turn `volatileHead`. The runtime sends
+ * `stableSystem` as the system block (so a per-turn change no longer rewrites
+ * the 1h-cached prefix) and prepends `volatileHead` to the latest user message.
+ */
+export function composeSystemSegments(
+  contextSkills: Skill[],
+  matchedSkill?: Skill | null,
+  apps?: PromptAppInfo[],
+  focusedApp?: FocusedAppInfo,
+  appState?: AppStateInfo,
+  userPrefs?: UserPrefs,
+  hasProxiedTools?: boolean,
+  workspaceContext?: WorkspaceContext,
+  overlays?: OverlayLayers,
+  layer3Skills?: Layer3SkillEntry[],
+  mode: ComposeMode = "chat",
+): ComposedSegments {
+  const composed = composeSystemPromptTraced(
+    contextSkills,
+    matchedSkill,
+    apps,
+    focusedApp,
+    appState,
+    userPrefs,
+    hasProxiedTools,
+    workspaceContext,
+    overlays,
+    layer3Skills,
+    mode,
+  );
+  const stableSystem = composed.layers
+    .filter((l) => l.segment === "stable")
+    .map((l) => l.text)
+    .join(SEPARATOR);
+  const volatileBody = composed.layers
+    .filter((l) => l.segment === "volatile")
+    .map((l) => l.text)
+    .join(SEPARATOR);
+  // Contain the volatile head so the model reads it as runtime-injected context,
+  // not user authorship. Escape any forged closing tag, same discipline as the
+  // per-block tags (which keep their own escapes inside `volatileBody`).
+  const volatileHead =
+    volatileBody.length > 0
+      ? `<runtime-context>\n${volatileBody.replaceAll("</runtime-context>", "&lt;/runtime-context>")}\n</runtime-context>`
+      : "";
+  return {
+    stableSystem,
+    volatileHead,
+    layers: composed.layers,
+    totalTokens: composed.totalTokens,
+  };
 }
 
 /**
@@ -716,12 +830,27 @@ function formatNoWorkspaceContext(): string {
   ].join("\n");
 }
 
-function formatUserPrefs(prefs?: UserPrefs): string {
+/**
+ * User identity (name / timezone / locale) — STABLE across a session, so it
+ * lives in the cached system prefix. Returns "" when no identity fields are set
+ * (the caller then emits no `## User` section).
+ */
+function formatUserIdentity(prefs?: UserPrefs): string {
   const lines: string[] = [];
   if (prefs?.displayName) lines.push(`- Name: ${sanitizeLineField(prefs.displayName)}`);
   if (prefs?.timezone) lines.push(`- Timezone: ${sanitizeLineField(prefs.timezone)}`);
+  if (prefs?.locale && prefs.locale !== "en-US")
+    lines.push(`- Locale: ${sanitizeLineField(prefs.locale)}`);
+  if (lines.length === 0) return "";
+  return `## User\n\n${lines.join("\n")}`;
+}
 
-  // Always include current date so the model knows "today"
+/**
+ * Current date — VOLATILE (changes every turn), so it rides the latest user
+ * message rather than the cached system block. Always emitted so the model
+ * knows "today"; formatted in the user's timezone when it's valid.
+ */
+function formatCurrentDate(prefs?: UserPrefs): string {
   const now = new Date();
   const dateOpts: Intl.DateTimeFormatOptions = {
     weekday: "long",
@@ -739,9 +868,5 @@ function formatUserPrefs(prefs?: UserPrefs): string {
     }
   }
   const formatted = now.toLocaleDateString("en-US", dateOpts);
-  lines.push(`- Today's date: ${formatted}`);
-
-  if (prefs?.locale && prefs.locale !== "en-US")
-    lines.push(`- Locale: ${sanitizeLineField(prefs.locale)}`);
-  return `## User\n\n${lines.join("\n")}`;
+  return `## Current Date\n\n- Today's date: ${formatted}`;
 }
