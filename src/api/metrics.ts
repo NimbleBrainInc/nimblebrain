@@ -80,7 +80,7 @@ export const httpRequestDurationSeconds = new Histogram({
  * `cache_write`, `ttl` tiers the write by breakpoint stability: `1h` = the stable
  * prefix (system + tools), `5m` = the rolling history (see `model/cache-policy.ts`).
  * A high `cache_write{ttl="1h"}` rate is the smoking gun for a system-prompt prefix
- * rewritten every turn (see hq research/SPEC-skill-system.md §3.2). `ttl="none"` on
+ * rewritten every turn. `ttl="none"` on
  * non-write kinds. `sum`ing `kind="cache_write"` without grouping by `ttl` still
  * yields the total, so existing queries are unaffected.
  */
