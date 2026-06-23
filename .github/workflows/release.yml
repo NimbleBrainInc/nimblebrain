@@ -158,3 +158,53 @@ jobs:
         with:
           generate_release_notes: true
           prerelease: ${{ contains(github.ref_name, '-') }}
+
+  # Promote the agent's STABLE channel to prod: dispatch the deploy-config repo's
+  # prod-promote receiver (target: agent), which records the prod stable image; the
+  # auto-sync per-tenant ApplicationSet then rolls every `stable` tenant.
+  # Mirrors ci.yml's roll-staging-edge — same App-token gating, the prod-promote App
+  # instead. GA only: pre-releases publish the image but never touch the stable channel.
+  # Fully optional: if the App vars/secrets are unset (forks, pre-setup CI) the job
+  # no-ops, so forks stay green. (NB_VERSION is baked at build, so the release rebuilds
+  # rather than promote-by-retag; the image this dispatch points prod at is the one
+  # build-and-push just pushed.)
+  promote-to-prod:
+    name: Promote to prod (stable channel)
+    needs: build-and-push
+    if: ${{ !contains(github.ref_name, '-') }}
+    runs-on: ubuntu-latest
+    permissions: {}
+    steps:
+      - name: Check prod-promote config
+        id: cfg
+        env:
+          APP_ID: ${{ vars.PROD_PROMOTE_APP_ID }}
+          REPO: ${{ vars.STAGING_DEPLOY_REPO }}
+          KEY: ${{ secrets.PROD_PROMOTE_APP_KEY }}
+        run: |
+          if [ -n "$APP_ID" ] && [ -n "$REPO" ] && [ -n "$KEY" ]; then
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "prod-promote not configured (need PROD_PROMOTE_APP_ID + STAGING_DEPLOY_REPO vars + PROD_PROMOTE_APP_KEY secret) — skipping"
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Mint prod-promote token
+        if: steps.cfg.outputs.enabled == 'true'
+        id: token
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ vars.PROD_PROMOTE_APP_ID }}
+          private-key: ${{ secrets.PROD_PROMOTE_APP_KEY }}
+          owner: ${{ github.repository_owner }}
+          repositories: ${{ vars.STAGING_DEPLOY_REPO }}
+      - name: Dispatch prod-image-promoted (target agent)
+        if: steps.cfg.outputs.enabled == 'true'
+        env:
+          GH_TOKEN: ${{ steps.token.outputs.token }}
+        run: |
+          # -f (raw string), NOT -F: -F coerces all-digit payloads to JSON numbers.
+          gh api "repos/${{ github.repository_owner }}/${{ vars.STAGING_DEPLOY_REPO }}/dispatches" \
+            -f event_type=prod-image-promoted \
+            -f "client_payload[target]=agent" \
+            -f "client_payload[version]=${{ github.ref_name }}"
+          echo "dispatched prod-image-promoted: target=agent version=${{ github.ref_name }}"
