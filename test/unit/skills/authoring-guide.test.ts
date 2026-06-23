@@ -6,10 +6,13 @@
  * relies on, and keeps its top-level structure stable across edits.
  */
 
+import { readdirSync, readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, test } from "bun:test";
+import matter from "gray-matter";
 import { parseSkillFile } from "../../../src/skills/loader.ts";
+import { validateFrontmatter } from "../../../src/skills/schemas/skill-manifest.ts";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const GUIDE_PATH = resolve(__dirname, "../../../src/skills/builtin/authoring-guide.md");
@@ -67,4 +70,46 @@ describe("authoring-guide Layer 1 skill", () => {
     }
     expect(bulletCount).toBeGreaterThanOrEqual(5);
   });
+
+  test("the worked frontmatter example actually validates against the canonical schema", () => {
+    const skill = parseSkillFile(GUIDE_PATH);
+    if (!skill) throw new Error("parseSkillFile returned null");
+    // Extract the first ```yaml fenced block (the worked example) and validate it.
+    const block = skill.body.match(/```yaml\n([\s\S]*?)```/);
+    if (!block) throw new Error("no ```yaml example block found in the guide body");
+    const example = matter(block[1] as string);
+    const result = validateFrontmatter(example.data);
+    if (!result.ok) {
+      throw new Error(`worked example frontmatter is invalid: ${result.errors.join("; ")}`);
+    }
+    expect(result.ok).toBe(true);
+  });
+});
+
+describe("vendored skill bodies use the current schema (no removed fields)", () => {
+  // Guards the class of bug where a schema cutover migrates frontmatter + code
+  // but leaves the agent-facing instructional BODY teaching the old shape.
+  const SKILL_DIRS = [
+    resolve(__dirname, "../../../src/skills/core"),
+    resolve(__dirname, "../../../src/skills/builtin"),
+  ];
+  const LEGACY_TOKENS: Array<[string, RegExp]> = [
+    ["type: skill|context", /\btype:\s*(skill|context)\b/],
+    ["tool_affined", /tool_affined/],
+    ["applies-to-tools", /applies[-_]to[-_]tools/],
+    ["loading_strategy (snake_case)", /loading_strategy/],
+    ["overrides block", /^\s*overrides:/m],
+  ];
+  for (const dir of SKILL_DIRS) {
+    for (const file of readdirSync(dir).filter((n) => n.endsWith(".md"))) {
+      test(`${file} body names no removed schema fields`, () => {
+        const body = matter(readFileSync(resolve(dir, file), "utf-8")).content;
+        for (const [label, re] of LEGACY_TOKENS) {
+          if (re.test(body)) {
+            throw new Error(`${file} still references removed schema field: ${label}`);
+          }
+        }
+      });
+    }
+  }
 });

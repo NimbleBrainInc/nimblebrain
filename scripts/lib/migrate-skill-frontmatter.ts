@@ -153,6 +153,11 @@ export function migrateSkillContent(raw: string): MigrationResult {
   const parsed = matter(raw);
   const data = isRecord(parsed.data) ? (parsed.data as Record<string, unknown>) : {};
 
+  // Not a skill file (e.g. a stray NOTES.md under a skills/ tree with no or
+  // foreign frontmatter): skip rather than write junk `name: ""` frontmatter.
+  const name = typeof data.name === "string" ? data.name.trim() : "";
+  if (!name) return { content: raw, changed: false };
+
   const alreadyCanonical =
     isRecord(data.metadata) && isRecord(data.metadata.nimblebrain) && !hasLegacyShape(data);
   if (alreadyCanonical) return { content: raw, changed: false };

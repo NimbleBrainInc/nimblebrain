@@ -175,4 +175,11 @@ describe("migrateSkillContent", () => {
     const { changed } = migrateSkillContent(canonical);
     expect(changed).toBe(false);
   });
+
+  test("a non-skill markdown file (no `name`) is left untouched", () => {
+    const notASkill = "---\ntitle: Scratch notes\n---\n\nsome notes\n";
+    const { content, changed } = migrateSkillContent(notASkill);
+    expect(changed).toBe(false);
+    expect(content).toBe(notASkill);
+  });
 });

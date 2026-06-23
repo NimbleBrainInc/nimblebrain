@@ -1,6 +1,6 @@
 ---
 name: skill-authoring
-description: Teaches the agent how to create well-structured user skills. Use when creating, modifying, customizing, deleting, or managing a skill, behavior, trigger, keyword, priority, or allowed-tools.
+description: Teaches the agent how to create well-structured user skills. Use when creating, modifying, customizing, deleting, or managing a skill, behavior, trigger, priority, or allowed-tools.
 metadata:
   nimblebrain:
     loading-strategy: dynamic
@@ -24,94 +24,86 @@ customizations, use the `nb__skills` tool surface:
 - `skills__create` — write a new skill at org/workspace/user scope
 - `skills__update` — patch manifest fields and/or replace the body
 - `skills__delete` — remove a skill (snapshots to `_versions/` first)
-- `skills__activate` / `skills__deactivate` — flip status without
-  deleting the file
-- `skills__list` / `skills__read` — inspect what exists before changing
-  anything
+- `skills__activate` / `skills__deactivate` — flip status without deleting
+- `skills__list` / `skills__read` — inspect what exists before changing anything
 
-Always read with `skills__list` before mutating so you know which
-existing skills you're working with. Follow the guidelines below.
+Always `skills__list` before mutating so you know what you're working with.
+Follow the guidelines below.
 
-## Choosing Type
+## Choosing how it loads — `loading-strategy`
 
-- **context** (always active): For global behavior changes that apply to every
-  message. Examples: language preference, response format, tone. Set priority
-  11-30 for high-authority rules, 50-80 for soft preferences.
-- **skill** (triggered): For domain-specific behavior that should only activate
-  when relevant. Examples: compliance review, research mode, code review. Must
-  have triggers and/or keywords.
+- **`always`** (in context every turn): for global rules that apply to every
+  message — language preference, response format, tone. Keep it short.
+  Priority 11–30 for high-authority rules, 50–80 for soft preferences.
+- **`dynamic`** (loaded only when relevant): for domain behavior — compliance
+  review, research mode, code review. A dynamic skill activates from its
+  **description** (the model picks it out of the catalog), and optionally via
+  `tool-affinity` (when specific tools are active) or `triggers` (an exact
+  phrase).
 
-## Writing Good Triggers
+## Write the description to be found
 
-Triggers are exact substring matches. They should be:
-- Specific enough to avoid false positives: "compliance review" not "review"
-- Natural phrases users actually type: "check compliance" not "initiate
-  compliance verification"
-- 2-4 triggers per skill is typical
+A dynamic skill is activated mainly by its **description** — the model reads
+it in the catalog and decides whether to pull the skill in. So the
+description must state **what the skill does and when to use it**, including
+the words a user would actually say (e.g. "Extract text from PDFs, fill
+forms, merge files. Use when the user mentions PDFs, forms, or document
+extraction."). A thin description means the skill is never reached for.
 
-Avoid: single common words ("data", "help", "check"), verb-only triggers
-("review", "search"), triggers that overlap with other skills.
+## Triggers (optional — for must-fire)
 
-## Writing Good Keywords
+`triggers` are exact substring phrases for deterministic activation: when a
+skill MUST load and you can't rely on the model noticing the catalog (e.g. a
+compliance rule). Good triggers are:
+- Specific enough to avoid false positives: "compliance review", not "review"
+- Natural phrases users actually type
+- 2–4 per skill
 
-Keywords require 2+ hits to activate. They should be:
-- Domain-specific terms: "compliance", "regulation", "policy", "audit"
-- 5-10 keywords per skill is typical
-- Include synonyms: "policy" AND "regulation" AND "rule"
+## Writing the body
 
-Avoid: generic terms that appear in many domains.
+- Instructions TO the agent, not descriptions about it
+- Imperative voice: "Always cite section numbers", not "The agent should cite"
+- Specific about format: "Use bullet points with bold headers"
+- Compose: don't restate identity (soul) or tool discovery (bootstrap)
+- Stay under ~500 words — the body competes for context window space
 
-## Writing the Body
+## Tools the skill calls — `allowed-tools`
 
-The body is injected into the system prompt. It should:
-- Be instructions TO the agent, not descriptions ABOUT the agent
-- Use imperative voice: "Always cite section numbers" not "The agent should cite"
-- Be specific about format: "Use bullet points with bold headers"
-- Compose well: do not restate identity (soul.md) or tool discovery (bootstrap.md)
-- Stay under 500 words — the body competes for context window space
+To scope a skill to specific tools, set `allowed-tools` (a space-separated
+list of tools it may call, e.g. `policy_search__find`). This is distinct from
+`tool-affinity`, which decides *when the skill loads*. Before creating,
+`nb__search` with scope `tools` to confirm the tools exist; if they're
+missing, tell the user to install the providing app from the Apps section of
+settings.
 
-## Tool Dependencies
+## Choosing the scope
 
-If the skill needs specific tools:
-- Set allowed_tools to scope tool visibility: ["policy_search__*"]
-- Set requires_bundles to declare dependencies: ["@acme/policy-search"]
-- Before creating, use nb__search with scope "tools" to verify tools exist
-- If tools are missing, tell the user and point them to the Apps section of settings to install the bundle that provides them
+Each `skills__create` writes to one tier — pick by reach:
 
-## Choosing the Right Scope
+- **org** — every conversation in every workspace. Org-wide voice / policy. Org admin only.
+- **workspace** — the active workspace only. Default for domain workflows. Workspace admin.
+- **user** — your own conversations only. Personal preferences. Self-write only.
 
-Each `skills__create` call writes to one of three tiers; pick by reach:
+## Priority guidelines
 
-- **org** — applies to every conversation in every workspace.
-  Reserve for org-wide voice / policy. Org admin only.
-- **workspace** — applies inside the active workspace only. Default for
-  domain-specific workflows. Workspace admin (membership in that
-  workspace required).
-- **user** — applies to your own conversations only. Personal
-  preferences. Self-write only.
+- 0–10: RESERVED for core skills. Never use.
+- 11–20: High-authority (language, accessibility)
+- 21–40: Medium (formatting, tone)
+- 41–60: Standard (default 50)
+- 61–99: Low-priority / fallback
 
-## Priority Guidelines
+## What skills cannot do
 
-- 0-10: RESERVED for core skills. Never use.
-- 11-20: High-authority user context (language, accessibility)
-- 21-40: Medium-authority user context (formatting, tone)
-- 41-60: Standard skills (default: 50)
-- 61-80: Low-priority preferences
-- 81-99: Fallback/catch-all skills
+- Change runtime config (maxIterations, model) — that's `nimblebrain.json`.
+- Create tools — that needs an MCP server bundle.
+- Override core identity (soul) — they layer on top.
 
-## What Skills Cannot Do
+## Confirming with the user
 
-- Cannot change runtime config (maxIterations, model). Direct to nimblebrain.json.
-- Cannot create tools. Users need an MCP server bundle for custom tools.
-- Cannot override core identity (soul.md). They layer on top.
+Before creating or editing a skill, show:
+1. The skill name and how it loads (`always`, or `dynamic` + any triggers / tool-affinity)
+2. A summary of the behavioral change
+3. Any tool scoping (`allowed-tools`)
+4. Ask for confirmation
 
-## Confirming with the User
-
-Before creating or editing a skill, always show:
-1. The skill name and type
-2. Triggers and keywords (if type: skill)
-3. A summary of the behavioral change
-4. Any tool dependencies
-5. Ask for confirmation
-
-After creation, suggest a test phrase the user can try.
+After creation, suggest a test phrase (for a trigger) or note how it will be picked up.
