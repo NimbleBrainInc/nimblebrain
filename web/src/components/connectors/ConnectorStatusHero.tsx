@@ -2,11 +2,12 @@ import { useMemo, useState } from "react";
 import {
   type DirectoryEntry,
   disconnectConnector,
+  type InstalledConnector,
   initiateComposioOAuth,
   initiateMcpOAuth,
-  type InstalledConnector,
 } from "../../api/client";
 import { BundleCredentialsModal } from "./BundleCredentialsModal";
+import { ComposioApiKeyModal } from "./ComposioApiKeyModal";
 import { ConnectorIcon } from "./ConnectorIcon";
 import { OperatorSetupModal } from "./OperatorSetupModal";
 
@@ -49,6 +50,7 @@ export function ConnectorStatusHero({
   const [error, setError] = useState<string | null>(null);
   const [bundleModalOpen, setBundleModalOpen] = useState(false);
   const [operatorModalOpen, setOperatorModalOpen] = useState(false);
+  const [apiKeyModalOpen, setApiKeyModalOpen] = useState(false);
 
   const cat = installed.catalog;
   const name = cat?.name ?? installed.serverName;
@@ -110,6 +112,13 @@ export function ConnectorStatusHero({
       return;
     }
     if (action.kind === "oauth") {
+      // API-key Composio connectors have no redirect — collect the declared
+      // fields in a modal and call connect_api_key (rotation is admin-gated
+      // server-side). Branch before the OAuth dispatch below.
+      if (cat?.auth === "composio" && cat.composio?.authScheme === "API_KEY") {
+        setApiKeyModalOpen(true);
+        return;
+      }
       setActing(true);
       try {
         // Composio-backed connectors route through their own
@@ -208,6 +217,19 @@ export function ConnectorStatusHero({
           onClose={() => setOperatorModalOpen(false)}
           onSaved={() => {
             setOperatorModalOpen(false);
+            onChanged();
+          }}
+        />
+      )}
+      {apiKeyModalOpen && cat && (
+        <ComposioApiKeyModal
+          catalogId={cat.id}
+          connectorName={name}
+          fields={cat.composio?.fields ?? []}
+          open={apiKeyModalOpen}
+          onClose={() => setApiKeyModalOpen(false)}
+          onConnected={() => {
+            setApiKeyModalOpen(false);
             onChanged();
           }}
         />

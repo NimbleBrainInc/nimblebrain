@@ -109,6 +109,29 @@ The full procedure to add (say) Slack to a Composio-backed deployment:
 4. **Catalog YAML**: add a `auth: composio` entry with `composio.toolkit: slack` and `composio.authConfigEnv: COMPOSIO_SLACK_AUTH_CONFIG_ID`. Curate `composio.tools` aggressively — Slack publishes 100+ tools, and the agent's first-turn tool search will spend tens of thousands of tokens listing them all if you let it. See [Connectors Catalog → auth: composio](/config/connectors-catalog/#2-add-the-yaml-entry).
 5. **Roll the deployment**: bump the platform image (or restart pods). The new env var and catalog entry are picked up on next start.
 
+## API-key toolkits (no OAuth)
+
+Some toolkits in Composio's directory authenticate by **API key**, not OAuth (PostHog, among others). There's no vendor OAuth app and no consent redirect: when a user connects, they paste the toolkit's API key (plus any region/host) into a short form, the platform hands it to Composio, and only the opaque `connectedAccountId` is persisted. **The platform never stores the key.** It's the same trust posture as the OAuth path — Composio custodies the credential.
+
+Setup differs from the OAuth procedure above in three ways:
+
+### 1. Create the auth config with the API_KEY scheme
+
+In the Composio dashboard → **Authentication management → Create Auth Config**, pick the toolkit and choose the **API Key** auth scheme. There is **no** "use your own developer credentials" step — API-key toolkits have no OAuth client. Save and copy the `ac_…` id, then wire it into the pod as `COMPOSIO_<TOOLKIT>_AUTH_CONFIG_ID` exactly as for OAuth toolkits. (It is **not** a secret on its own — inert without `COMPOSIO_API_KEY`.)
+
+### 2. Declare authScheme + fields in the catalog
+
+The catalog entry sets `authScheme: API_KEY` and lists the `fields` the connect form collects from the user. See [Connectors Catalog → auth: composio with API keys](/config/connectors-catalog/#auth-composio-with-api-keys) for the YAML shape.
+
+### 3. Verify field keys and tool slugs against Composio
+
+Composio exposes **three** slightly different slug namespaces — the REST tool catalog, the connection-initiation fields, and the tool-router session filter — so two values must be confirmed against Composio's own naming rather than guessed:
+
+- **`fields[].key`** must be the connection-initiation field name. Confirm with `getConnectedAccountInitiationFields("<toolkit>", "API_KEY")` (or the toolkit's auth page on composio.dev). It is often not the obvious name — e.g. PostHog's key field is `generic_api_key` (not `api_key`) plus a `subdomain`.
+- **`tools[]`** must be the tool-router `config.tools` names, which differ from the REST catalog (`GET /api/v3/tools`). The authoritative check is to **install the connector with your candidate list**: session-create returns `400 Invalid tool slugs in config.tools: …` naming every wrong one. Iterate until it installs clean. (A no-filter install's exposed tool list is a *third* namespace — also not authoritative for the filter.)
+
+Everything else — `COMPOSIO_API_KEY`, env wiring, the `[composio] integration: configured` startup check, the egress allowlist — is identical to the OAuth setup above.
+
 ## Disconnect / revocation semantics
 
 When a user clicks Disconnect on a Composio-backed connector:
@@ -118,7 +141,7 @@ When a user clicks Disconnect on a Composio-backed connector:
 3. The bundle's MCP source is stopped and removed from the registry.
 4. Bundle state transitions to `not_authenticated`. The UI shows **Connect** again.
 
-Reconnect after disconnect runs a fresh OAuth flow at the vendor — there's no adopt-existing shortcut because the upstream account was deleted in step 1.
+Reconnect after disconnect runs a fresh OAuth flow at the vendor — there's no adopt-existing shortcut because the upstream account was deleted in step 1. For **API-key** toolkits there's no OAuth flow: reconnect re-opens the key form. Re-connecting an already-connected API-key toolkit (key rotation) replaces and revokes the prior Composio account and is gated to workspace admins, since it swaps the credential every member's agent runs under.
 
 ## Migrating off Composio (per toolkit)
 
@@ -147,6 +170,8 @@ The catalog `name` (`com.google/gmail`) stays stable across the migration. Compo
 | Install returns "Installed … click Connect to retry" | Eager source-start failed (transient upstream / network). The install itself succeeded — workspace.json has the entry, the bundle just couldn't kick its tool list. | Click **Connect** on the connector. If retries keep failing, check pod logs for `[bundles] <serverName> start failed:` |
 | Connect returns 502 `composio_adopt_source_start_failed` | The adopt-existing path matched a Composio account but couldn't bring the local MCP source online. No partial state was persisted. | Click **Disconnect** then **Connect** to run a fresh OAuth flow. Investigate pod logs if it persists. |
 | Install fails with `400 Invalid auth config IDs` from Composio | `COMPOSIO_<TOOLKIT>_AUTH_CONFIG_ID` points at an `ac_…` that doesn't exist in the Composio dashboard | Confirm the id in `platform.composio.dev → Auth Configs`; update your secret; refresh the in-pod value; roll the deployment |
+| Install fails with `400 Invalid tool slugs in config.tools: …` (API-key toolkit) | The `tools` allowlist uses REST-catalog names, not the tool-router `config.tools` namespace | Replace the named slugs with their tool-router equivalents and reinstall to re-validate — see [API-key toolkits](#api-key-toolkits-no-oauth) |
+| Connect form rejects a field or the connection 401s on first tool call (API-key toolkit) | A `fields[].key` doesn't match Composio's connection-initiation field name (e.g. `api_key` vs `generic_api_key`), or the wrong key type was entered | Verify keys via `getConnectedAccountInitiationFields`; confirm the user pasted the correct key type (e.g. PostHog needs a `phx_` personal key, not a `phc_` project key) |
 | Agent returns "model returned an error" on first tool call | Tool allowlist missing or too broad — `nb__search` returns hundreds of tool descriptions and blows past the input-token cap | Add or tighten `composio.tools` in the catalog entry; reinstall |
 | Composio API errors after deploy | API key not propagated through the secret pipeline | `kubectl exec` (or equivalent) into the pod and check `printenv COMPOSIO_API_KEY` |
 | Multiple connected accounts piling up in the Composio dashboard | Legacy state from before the adopt-existing path landed. New connects auto-dedup against the active account. | Manual cleanup in the Composio dashboard for old duplicates |

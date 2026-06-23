@@ -60,6 +60,11 @@ const setupConnectorOperator = mock(async () => ({
   catalogId: "io.asana/mcp",
   clientId: "cid-rotated",
 }));
+const connectComposioApiKey = mock(async () => ({
+  connected: true,
+  serverName: "com-posthog-analytics",
+  status: "ACTIVE",
+}));
 
 // Spread the preload's real-module snapshot (see web/test/setup.ts) so this
 // whole-module mock exposes every api/client export; only these five are
@@ -72,6 +77,7 @@ mock.module("../api/client", () => ({
   clearBundleUserConfig,
   setBundleUserConfig,
   setupConnectorOperator,
+  connectComposioApiKey,
 }));
 
 const React = await import("react");
@@ -80,8 +86,9 @@ const { act } = await import("react");
 
 const { OAuthConnectionSection } = await import("../components/connectors/OAuthConnectionSection");
 const { OperatorOAuthSection } = await import("../components/connectors/OperatorOAuthSection");
+const { ComposioApiKeyModal } = await import("../components/connectors/ComposioApiKeyModal");
 
-import type { InstalledConnector } from "../api/client";
+import type { ComposioField, InstalledConnector } from "../api/client";
 
 // ── Mount helper (mirrors ResourceLinkView.test.tsx) ────────────────
 
@@ -130,6 +137,7 @@ beforeEach(() => {
   clearBundleUserConfig.mockClear();
   setBundleUserConfig.mockClear();
   setupConnectorOperator.mockClear();
+  connectComposioApiKey.mockClear();
 });
 
 // ── InstalledConnector fixtures ─────────────────────────────────────
@@ -562,5 +570,94 @@ describe("ConnectorStatusHero", () => {
       />,
     );
     expect(findButton(mounted.container, "Connect")).not.toBeNull();
+  });
+});
+
+// ── ComposioApiKeyModal — API-key connect form ──────────────────────
+
+const POSTHOG_FIELDS: ComposioField[] = [
+  { key: "generic_api_key", title: "Personal API Key", sensitive: true, required: true },
+  { key: "subdomain", title: "Region", required: true },
+];
+
+function setInputValue(input: HTMLInputElement, value: string): void {
+  const WindowEvent = (globalThis as unknown as { window: { Event: typeof Event } }).window.Event;
+  const setVal = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set;
+  setVal?.call(input, value);
+  input.dispatchEvent(new WindowEvent("input", { bubbles: true }));
+}
+
+describe("ComposioApiKeyModal", () => {
+  test("renders the declared fields; sensitive field is a password input", async () => {
+    mounted = await mount(
+      <ComposioApiKeyModal
+        catalogId="com.posthog/analytics"
+        connectorName="PostHog"
+        fields={POSTHOG_FIELDS}
+        open={true}
+        onClose={() => {}}
+        onConnected={() => {}}
+      />,
+    );
+    expect(mounted.container.textContent).toContain("Connect PostHog");
+    expect(mounted.container.textContent).toContain("Personal API Key");
+    expect(mounted.container.textContent).toContain("Region");
+    const inputs = Array.from(mounted.container.getElementsByTagName("input"));
+    expect(inputs.length).toBe(2);
+    expect(inputs[0]?.type).toBe("password"); // generic_api_key (sensitive)
+    expect(inputs[1]?.type).toBe("text"); // subdomain
+  });
+
+  test("a missing required field blocks submit (no connect call, shows error)", async () => {
+    mounted = await mount(
+      <ComposioApiKeyModal
+        catalogId="com.posthog/analytics"
+        connectorName="PostHog"
+        fields={POSTHOG_FIELDS}
+        open={true}
+        onClose={() => {}}
+        onConnected={() => {}}
+      />,
+    );
+    await act(async () => {
+      findButton(mounted!.container, "Connect")?.click();
+    });
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(connectComposioApiKey).not.toHaveBeenCalled();
+    expect(mounted.container.textContent).toContain("required");
+  });
+
+  test("filled fields submit → connectComposioApiKey(catalogId, values) + onConnected", async () => {
+    const onConnected = mock(() => {});
+    mounted = await mount(
+      <ComposioApiKeyModal
+        catalogId="com.posthog/analytics"
+        connectorName="PostHog"
+        fields={POSTHOG_FIELDS}
+        open={true}
+        onClose={() => {}}
+        onConnected={onConnected}
+      />,
+    );
+    const inputs = Array.from(mounted.container.getElementsByTagName("input"));
+    await act(async () => {
+      setInputValue(inputs[0]!, "phx_secret");
+      setInputValue(inputs[1]!, "us");
+    });
+    await act(async () => {
+      findButton(mounted!.container, "Connect")?.click();
+    });
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(connectComposioApiKey).toHaveBeenCalledTimes(1);
+    expect(connectComposioApiKey.mock.calls[0]).toEqual([
+      "com.posthog/analytics",
+      { generic_api_key: "phx_secret", subdomain: "us" },
+    ]);
+    expect(onConnected).toHaveBeenCalledTimes(1);
   });
 });
