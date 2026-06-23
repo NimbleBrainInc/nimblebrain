@@ -1,5 +1,6 @@
 import type { McpUiResourceMeta } from "@modelcontextprotocol/ext-apps";
 import type { ToolInput } from "../_generated/platform-schemas/catalog";
+import { addAuthBreadcrumb, captureLogout, setSentryWorkspace } from "../sentry";
 import type {
   ApiError,
   BootstrapResponse,
@@ -9,7 +10,6 @@ import type {
   PlacementEntry,
   ToolCallResult,
 } from "../types";
-import { addAuthBreadcrumb, captureLogout, setSentryWorkspace } from "../sentry";
 import { createFetchWithRefresh } from "./fetch-with-refresh";
 
 // ---------------------------------------------------------------------------
@@ -576,6 +576,31 @@ export async function initiateComposioOAuth(
  * Connectors catalog entry — one card on Settings → Connectors.
  * Mirrors the server-side `ConnectorCatalogEntry` shape.
  */
+/**
+ * One field collected from the user when connecting a non-redirect
+ * (API-key) Composio connector. `key` is the Composio connection-field
+ * name, sent verbatim; the value is handed to Composio at connect time
+ * and never persisted by the platform. `sensitive` → render password.
+ */
+export interface ComposioField {
+  key: string;
+  title: string;
+  description?: string;
+  sensitive?: boolean;
+  required?: boolean;
+  placeholder?: string;
+}
+
+/** Composio connector config carried on catalog + directory entries. */
+export interface ComposioConfig {
+  toolkit: string;
+  authConfigEnv: string;
+  tools?: string[];
+  /** Defaults to OAUTH2 (the redirect flow). API_KEY connectors collect `fields`. */
+  authScheme?: "OAUTH2" | "API_KEY";
+  fields?: ComposioField[];
+}
+
 export interface ConnectorCatalogEntry {
   id: string;
   name: string;
@@ -588,7 +613,7 @@ export interface ConnectorCatalogEntry {
   additionalAuthorizationParams?: Record<string, string>;
   operatorSetup?: { portalUrl: string; hint: string; clientSecretKey: string };
   /** Composio-backed connectors: toolkit slug + auth-config env var + optional tool allowlist. */
-  composio?: { toolkit: string; authConfigEnv: string; tools?: string[] };
+  composio?: ComposioConfig;
   tags?: string[];
   /** When true, the connector exposes a UI surface — render the "Interactive" badge. */
   interactive?: boolean;
@@ -888,7 +913,7 @@ export interface DirectoryEntry {
         requiredScopes?: string[];
         additionalAuthorizationParams?: Record<string, string>;
         operatorSetup?: { portalUrl: string; hint: string; clientSecretKey: string };
-        composio?: { toolkit: string; authConfigEnv: string; tools?: string[] };
+        composio?: ComposioConfig;
       }
     | { kind: "mpak-bundle"; package: string }
     | { kind: "direct-url"; url: string };
@@ -921,6 +946,25 @@ export async function setupConnectorOperator(
     clientSecret,
   });
   return unwrapStructured(result, "setup_operator");
+}
+
+/**
+ * Connect a non-redirect (API-key) Composio connector. Collects the
+ * connector's declared `fields` (e.g. generic_api_key, subdomain) and
+ * hands them to Composio at connect time; the platform persists only the
+ * opaque connectedAccountId. A first connect is member-level; re-connect
+ * (rotation, when a connection already exists) is ws_admin gated server-side.
+ */
+export async function connectComposioApiKey(
+  catalogId: string,
+  fields: Record<string, string>,
+): Promise<{ connected: boolean; serverName: string; status: string }> {
+  const result = await callTool("nb", "manage_connectors", {
+    action: "connect_api_key",
+    catalogId,
+    fields,
+  });
+  return unwrapStructured(result, "connect_api_key");
 }
 
 /**

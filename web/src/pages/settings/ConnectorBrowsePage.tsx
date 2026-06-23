@@ -3,12 +3,13 @@ import { Link, useNavigate, useParams } from "react-router-dom";
 import {
   type DirectoryEntry,
   getInstalledConnectors,
-  installConnector,
   type InstalledConnector,
   initiateComposioOAuth,
   initiateMcpOAuth,
+  installConnector,
   listDirectory,
 } from "../../api/client";
+import { ComposioApiKeyModal } from "../../components/connectors/ComposioApiKeyModal";
 import { ConnectorIcon } from "../../components/connectors/ConnectorIcon";
 import { OperatorSetupModal } from "../../components/connectors/OperatorSetupModal";
 import { roleAtLeast, useScopedRole } from "../../hooks/useScopedRole";
@@ -31,6 +32,13 @@ export function ConnectorBrowsePage() {
   const [busyId, setBusyId] = useState<string | null>(null);
   const [query, setQuery] = useState("");
   const [setupModalEntry, setSetupModalEntry] = useState<DirectoryEntry | null>(null);
+  // API-key Composio connector: after install we collect the key fields in a
+  // modal (no OAuth redirect), then call connect_api_key. Holds the entry +
+  // its installed serverName so success can route to Configure.
+  const [apiKeyModal, setApiKeyModal] = useState<{
+    entry: DirectoryEntry;
+    serverName: string;
+  } | null>(null);
 
   const role = useScopedRole();
   const isWsAdmin = roleAtLeast(role, "ws_admin");
@@ -136,6 +144,14 @@ export function ConnectorBrowsePage() {
           navigate(`${configureBasePath}/${result.serverName}`);
           return;
         }
+        // API-key Composio connectors have no OAuth redirect — collect the
+        // declared fields in a modal and call connect_api_key. The install
+        // above already created the bundle ref the connect step needs.
+        if (entry.install.auth === "composio" && entry.install.composio?.authScheme === "API_KEY") {
+          setApiKeyModal({ entry, serverName: result.serverName });
+          setBusyId(null);
+          return;
+        }
         // Composio-backed connectors route through their own initiate
         // endpoint (keyed on catalog id, not server name). Everything
         // else (dcr + static) stays on /v1/mcp-auth.
@@ -226,6 +242,21 @@ export function ConnectorBrowsePage() {
           onSaved={() => {
             setSetupModalEntry(null);
             fetchDirectory();
+          }}
+        />
+      )}
+
+      {apiKeyModal && apiKeyModal.entry.install.kind === "remote-oauth" && (
+        <ComposioApiKeyModal
+          catalogId={apiKeyModal.entry.id}
+          connectorName={apiKeyModal.entry.name}
+          fields={apiKeyModal.entry.install.composio?.fields ?? []}
+          open={true}
+          onClose={() => setApiKeyModal(null)}
+          onConnected={() => {
+            const serverName = apiKeyModal.serverName;
+            setApiKeyModal(null);
+            navigate(`${configureBasePath}/${serverName}`);
           }}
         />
       )}
