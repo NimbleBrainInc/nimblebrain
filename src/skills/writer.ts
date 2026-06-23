@@ -70,9 +70,11 @@ function manifestToFrontmatter(manifest: SkillManifest): Record<string, unknown>
 
 /**
  * Atomically write a file: write to a `.tmp` sibling, then rename over
- * the target. If the rename fails the original file is untouched.
+ * the target. If the rename fails the original file is untouched. Exported so
+ * the one-time frontmatter migration (`scripts/migrate-skill-frontmatter.ts`)
+ * rewrites tenant skill files atomically through the same path.
  */
-function atomicWriteFile(filePath: string, content: string): void {
+export function atomicWriteFile(filePath: string, content: string): void {
   const tmpPath = `${filePath}.tmp`;
   writeFileSync(tmpPath, content, "utf-8");
   renameSync(tmpPath, filePath);
@@ -140,6 +142,12 @@ export function updateSkill(
   // Merge provided keys over the existing manifest (Partial → absent keys keep
   // their existing value). `name` rename is handled by the caller (file move).
   const merged: SkillManifest = { ...existing.manifest, ...partialManifest };
+
+  // Bump provenance.updated-at on every edit, preserving origin/created-by/
+  // created-at. Without this the stamped timestamp would lie (never change).
+  if (merged.provenance) {
+    merged.provenance = { ...merged.provenance, updatedAt: new Date().toISOString() };
+  }
 
   const body = newBody !== undefined ? newBody : existing.body;
   writeSkill(dir, name, merged, body);

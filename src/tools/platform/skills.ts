@@ -116,13 +116,12 @@ const SKILLS_UPDATE_DESCRIPTION =
   "current version to `_versions/` before writing. Bundle (Layer 1) skills are not editable.";
 
 // Tool input schemas live in `./schemas/skills.ts` — see the catalog at
-// `./schemas/catalog.ts`. Operator/advanced fields (`allowedTools`,
-// `requiresBundles`, `loadingStrategy`, `appliesToTools`, `overrides`,
-// `derivedFrom`) are intentionally absent from the LLM-facing schema (see
-// SCHEMA_PRINCIPLES at the bottom of this file). They live on the type
-// and the on-disk format; if a future change makes them load-bearing for
-// agent authoring, add them to the schemas/skills.ts module deliberately
-// with a description.
+// `./schemas/catalog.ts`. The LLM-facing create/update input is a `Pick` of
+// the canonical manifest: `name`, `description`, `allowed-tools`, and the
+// authorable NimbleBrain fields (`loading-strategy`, `priority`, `status`,
+// `tool-affinity`, `triggers`). `provenance` and `scope` are NOT authorable —
+// the writer stamps `provenance` and the loader stamps `scope` from the
+// directory tier.
 
 const SKILLS_DELETE_DESCRIPTION =
   "Delete a Layer 3 skill. The `id` is the filesystem path returned by `skills__list`. " +

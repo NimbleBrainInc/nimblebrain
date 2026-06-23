@@ -110,9 +110,20 @@ export function migrateFrontmatterToManifest(legacy: Record<string, unknown>): S
   const allowedTools = asStringArray(legacy["allowed-tools"] ?? legacy.allowedTools);
   const author = typeof meta.author === "string" ? meta.author : undefined;
 
+  // Fold legacy `keywords` into the description rather than dropping them — the
+  // catalog/retrieval activation signal must survive the cutover (the standard
+  // keeps "when to use" terms in the description). Idempotent: a migrated file
+  // is canonical (no `keywords`), so it's never re-folded.
+  const keywords = asStringArray(meta.keywords);
+  const baseDescription = String(legacy.description ?? "");
+  const description =
+    keywords && keywords.length > 0
+      ? `${baseDescription} Use when the user mentions: ${keywords.join(", ")}.`.trim()
+      : baseDescription;
+
   return {
     name: String(legacy.name ?? ""),
-    description: String(legacy.description ?? ""),
+    description,
     loadingStrategy,
     priority,
     status,

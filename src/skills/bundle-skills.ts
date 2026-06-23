@@ -22,7 +22,7 @@
  *   This adapter closes the gap. At chat-build time, for each MCP source in
  *   the active workspace registry, we probe for `skill://<name>/usage` and
  *   wrap any returned body in a synthetic `Skill` with
- *   `loadingStrategy: "tool_affined"` and `appliesToTools: ["<name>__*"]`.
+ *   `loadingStrategy: "dynamic"` and `toolAffinity: ["<name>__*"]`.
  *   The skill then flows through the standard `selectLayer3Skills` path: if
  *   any `<name>__*` tool is in the active toolset, the skill loads.
  *

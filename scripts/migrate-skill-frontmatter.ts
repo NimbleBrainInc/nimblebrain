@@ -24,9 +24,10 @@
  * `scripts/lib/migrate-skill-frontmatter.ts`; this wrapper only walks the tree.
  */
 
-import { readFileSync, writeFileSync } from "node:fs";
-import { relative, resolve } from "node:path";
+import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { join, relative, resolve } from "node:path";
 import { Glob } from "bun";
+import { atomicWriteFile } from "../src/skills/writer.ts";
 import { migrateSkillContent } from "./lib/migrate-skill-frontmatter.ts";
 
 interface Outcome {
@@ -49,7 +50,7 @@ function migrateDir(root: string, write: boolean): Outcome[] {
         outcomes.push({ path: rel, status: "unchanged" });
         continue;
       }
-      if (write) writeFileSync(abs, content, "utf-8");
+      if (write) atomicWriteFile(abs, content);
       outcomes.push({ path: rel, status: "changed" });
     } catch (err) {
       outcomes.push({
@@ -62,6 +63,44 @@ function migrateDir(root: string, write: boolean): Outcome[] {
   return outcomes;
 }
 
+/**
+ * `.migration-lock` — a PID file at the work-dir root, held for the duration of a
+ * `--write` run, per the platform migration convention (CHANGELOG / AGENTS.md):
+ * concurrent writers refuse to start instead of racing the same SKILL.md files.
+ * A stale lock (holder PID no longer alive) is reclaimed.
+ */
+function pidAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function acquireLock(root: string): string {
+  const lockPath = join(root, ".migration-lock");
+  if (existsSync(lockPath)) {
+    const heldBy = Number(readFileSync(lockPath, "utf-8").trim());
+    if (heldBy && pidAlive(heldBy)) {
+      throw new Error(
+        `.migration-lock at ${root} is held by PID ${heldBy} — another migration is running; refusing to start.`,
+      );
+    }
+    // Stale lock (holder gone) — reclaim it.
+  }
+  writeFileSync(lockPath, String(process.pid), "utf-8");
+  return lockPath;
+}
+
+function releaseLock(lockPath: string): void {
+  try {
+    rmSync(lockPath, { force: true });
+  } catch {
+    // Best-effort release; a stale lock is reclaimed on the next run.
+  }
+}
+
 function main(): void {
   const args = process.argv.slice(2);
   const write = args.includes("--write");
@@ -69,7 +108,16 @@ function main(): void {
   if (roots.length === 0) roots.push(process.cwd());
 
   const all: Outcome[] = [];
-  for (const root of roots) all.push(...migrateDir(resolve(root), write));
+  for (const root of roots) {
+    const resolved = resolve(root);
+    // Lock only the destructive path; concurrent dry-runs are read-only and safe.
+    const lock = write ? acquireLock(resolved) : null;
+    try {
+      all.push(...migrateDir(resolved, write));
+    } finally {
+      if (lock) releaseLock(lock);
+    }
+  }
 
   const changed = all.filter((o) => o.status === "changed");
   const errors = all.filter((o) => o.status === "error");

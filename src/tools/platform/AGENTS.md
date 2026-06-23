@@ -92,12 +92,13 @@ EXCLUDE from the LLM-facing schema:
 
 - Source-of-truth fields the runtime sets (`source`, `bundleName`,
   `ownerId`, `workspaceId`, `createdAt`).
-- Literal-tool-name affinity strings (`allowedTools`, `appliesToTools`).
-  These are leaky abstractions — they couple your tool to bundle
-  identities that change. If affinity matters, use a semantic-match
-  strategy (description embeddings, keyword triggers in metadata).
-- "Designed-but-not-enforced" placeholders (`overrides`, `derivedFrom`).
-  If a feature isn't shipping, the schema doesn't list it.
+- Literal-tool-name affinity strings (e.g. `tool-affinity` globs). Usually
+  leaky — they couple a tool's input to bundle identities that change.
+  (The skills tool is the deliberate exception: a skill author genuinely
+  chooses *when* a skill loads, so `tool-affinity` is authorable there.)
+- "Designed-but-not-enforced" placeholder fields. If a feature isn't
+  shipping, the schema doesn't list it. (The skill cutover removed
+  `overrides` / `derived-from` for exactly this reason.)
 - Versioning metadata the writer fills in (`version` defaulting to
   `1.0.0`) — make it optional.
 
@@ -131,7 +132,7 @@ enforced the schema before dispatch.
 ```ts
 interface CreateInput {
   scope: WritableScope;
-  manifest: { name: string; description: string; type: SkillType; ... };
+  manifest: { name: string; description: string; loadingStrategy: SkillLoadingStrategy; ... };
   body: string;
 }
 
@@ -303,7 +304,7 @@ passed, production stayed broken. Match the production type strictly.
 | `name` at root, `description` in manifest | Splits identity; model packs everything into one place and gets it wrong |
 | `allowedTools: string[]` | Leaky abstraction — couples skill/automation identity to bundle names that change |
 | `source`, `bundleName`, `ownerId` in input schema | Runtime fields the LLM has no business setting |
-| `overrides`, `derivedFrom` (designed-but-not-enforced) | Confuses callers; schema lies about what's load-bearing |
+| Designed-but-not-enforced placeholder fields | Confuses callers; schema lies about what's load-bearing |
 | Multiple casings accepted in handler | Hides the contract; one casing won, document it |
 | Defensive `validateAutomationFields(args)` after schema validation | Validator already ran; redundant code that drifts from the schema |
 | Storing config in `manifest` AND a flat field at root | Two sources of truth; one will get out of sync |

@@ -79,7 +79,7 @@ describe("migrateFrontmatterToManifest", () => {
     ).toBe("disabled");
   });
 
-  test("drops version, type, requires-bundles, keywords, and scope", () => {
+  test("drops version, type, requires-bundles, and scope; folds keywords into description", () => {
     const m = migrateFrontmatterToManifest({
       name: "a",
       description: "d",
@@ -87,13 +87,16 @@ describe("migrateFrontmatterToManifest", () => {
       version: "1.0.0",
       scope: "org",
       "requires-bundles": ["@nonexistent/bundle"],
-      metadata: { keywords: ["k1"], version: "2.0.0" },
+      metadata: { keywords: ["k1", "k2"], version: "2.0.0" },
     });
     expect(m.version).toBeUndefined();
     expect((m as Record<string, unknown>).type).toBeUndefined();
     expect((m as Record<string, unknown>)["requires-bundles"]).toBeUndefined();
     // scope is stamped from the directory tier at load, never persisted.
     expect(m.scope).toBeUndefined();
+    // keywords are NOT dropped — they fold into the description (activation signal).
+    expect(m.description).toContain("k1");
+    expect(m.description).toContain("k2");
   });
 });
 

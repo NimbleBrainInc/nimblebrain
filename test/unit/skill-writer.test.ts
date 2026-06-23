@@ -193,3 +193,24 @@ describe("atomic write safety", () => {
     expect(existsSync(join(dir, "safe.md.tmp"))).toBe(false);
   });
 });
+
+describe("updateSkill provenance", () => {
+  test("bumps updated-at while preserving created-at / created-by / origin", () => {
+    const old = "2020-01-01T00:00:00.000Z";
+    writeSkill(
+      dir,
+      "prov",
+      sampleManifest({
+        name: "prov",
+        provenance: { origin: "chat", createdBy: "usr_x", createdAt: old, updatedAt: old },
+      }),
+      "body",
+    );
+    updateSkill(dir, "prov", { description: "edited" });
+    const after = readSkill(dir, "prov");
+    expect(after?.manifest.provenance?.createdAt).toBe(old); // preserved
+    expect(after?.manifest.provenance?.createdBy).toBe("usr_x"); // preserved
+    expect(after?.manifest.provenance?.origin).toBe("chat"); // preserved
+    expect(after?.manifest.provenance?.updatedAt).not.toBe(old); // bumped to now
+  });
+});
