@@ -104,18 +104,6 @@ describe("selectLayer3Skills — `always` strategy", () => {
   });
 });
 
-describe("selectLayer3Skills — strategy-less context (PR-2c de-dup)", () => {
-  test("a type:context skill with no loadingStrategy is NOT selected", () => {
-    // Post-PR-2c the loader no longer synthesizes `always` for `type: context`;
-    // those skills inject via compose Layer 0/1, not Layer 3, so the selector
-    // must skip them (no strategy) — preventing the latent double-injection.
-    const skill = makeSkill({ name: "ctx-no-strategy" }); // type:context, no strategy
-    expect(skill.manifest.loadingStrategy).toBeUndefined();
-    const result = selectLayer3Skills({ skills: [skill], activeTools: ["any__tool"] });
-    expect(result).toHaveLength(0);
-  });
-});
-
 describe("selectLayer3Skills — `tool_affined` strategy", () => {
   test("matching tool → included, reason names matched pattern", () => {
     const skill = makeSkill({

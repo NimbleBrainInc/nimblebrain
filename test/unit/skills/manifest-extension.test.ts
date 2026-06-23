@@ -127,19 +127,16 @@ applies-to-tools:
     expect(skill.manifest.loadingStrategy).toBe("tool_affined");
   });
 
-  test("loading-strategy is undefined for type:context with no applies-to-tools (PR-2c)", () => {
-    // PR-2c: the loader no longer synthesizes `always` for context skills —
-    // they compose via the Layer 0/1 path (`activeContextSkills()`) regardless
-    // of strategy, so no strategy is stamped here.
+  test("loading-strategy defaults to always for type:context with no applies-to-tools", () => {
     const skill = parse(`---
-name: context-no-strategy
+name: context-always
 description: x
 version: 1.0.0
 type: context
 priority: 25
 ---
 `);
-    expect(skill.manifest.loadingStrategy).toBeUndefined();
+    expect(skill.manifest.loadingStrategy).toBe("always");
   });
 
   test("loading-strategy is undefined for type:skill with no applies-to-tools", () => {
@@ -170,7 +167,7 @@ priority: 50
 });
 
 describe("Phase 2 manifest fields — invalid values fall through", () => {
-  test("invalid loading-strategy logs a warning and falls through to inference", () => {
+  test("invalid loading-strategy logs a warning and falls back to the default", () => {
     const skill = parse(`---
 name: bogus-strategy
 description: x
@@ -180,10 +177,8 @@ priority: 25
 loading-strategy: bogus
 ---
 `);
-    // Invalid strategy is ignored, then inference applies. PR-2c: type:context
-    // with no applies-to-tools synthesizes nothing → undefined (it composes via
-    // the Layer 0/1 path).
-    expect(skill.manifest.loadingStrategy).toBeUndefined();
+    // type: context with no applies-to-tools → default = always
+    expect(skill.manifest.loadingStrategy).toBe("always");
   });
 
   test("invalid status falls back to active", () => {

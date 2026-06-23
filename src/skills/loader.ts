@@ -274,14 +274,8 @@ export function parseSkillContent(
   // `loading-strategy` resolution:
   //   1. Use the value if it's a recognized strategy.
   //   2. Else if applies-to-tools is set → tool_affined.
-  //   3. Else undefined.
-  // Note: `type: context` is deliberately NOT defaulted to `always` here.
-  // Context skills already inject via the compose Layer 0/1 path
-  // (`activeContextSkills()`), which renders every `type: context` body
-  // regardless of `loadingStrategy`. Synthesizing `always` only pulled them
-  // into the Layer-3 selector too, causing a latent double-injection (PR-2c).
-  // A deliberate always-on Layer-3 skill must set `loading-strategy: always`
-  // explicitly. Legacy `type: skill` keeps using SkillMatcher.
+  //   3. Else if type === "context" → always.
+  //   4. Else undefined (legacy `type: skill` keeps using SkillMatcher).
   const rawLoadingStrategy =
     data["loading-strategy"] ?? data.loading_strategy ?? data.loadingStrategy;
   let loadingStrategy: SkillLoadingStrategy | undefined;
@@ -294,8 +288,12 @@ export function parseSkillContent(
       );
     }
   }
-  if (!loadingStrategy && appliesToTools && appliesToTools.length > 0) {
-    loadingStrategy = "tool_affined";
+  if (!loadingStrategy) {
+    if (appliesToTools && appliesToTools.length > 0) {
+      loadingStrategy = "tool_affined";
+    } else if (type === "context") {
+      loadingStrategy = "always";
+    }
   }
 
   // `status` defaults to "active" when missing or invalid. Legacy
