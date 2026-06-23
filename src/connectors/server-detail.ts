@@ -96,6 +96,62 @@ export interface Package {
 }
 
 /**
+ * A single field collected from the connecting user for a non-redirect
+ * Composio auth scheme (API key, bearer token, basic auth) — the form the
+ * platform renders in place of the OAuth consent bounce.
+ *
+ * `key` is the **Composio connection-initiation field name** — the key that
+ * lands in the connected account's `val` when the platform calls
+ * `connectedAccounts.initiate`. It must match what Composio expects for the
+ * toolkit + scheme (verify via the SDK's `getConnectedAccountInitiationFields`
+ * or the toolkit's auth page on composio.dev). Example for PostHog: `api_key`
+ * + `subdomain`.
+ *
+ * This is NOT a NimbleBrain-side credential. The value is handed to Composio
+ * at connect time and never persisted by the platform — the same trust
+ * posture as the OAuth path, which keeps only the opaque `connectedAccountId`.
+ */
+export interface ComposioConnectField {
+  key: string;
+  title: string;
+  description?: string;
+  /** Hide the value in the UI and redact it from logs (passwords, API keys). */
+  sensitive?: boolean;
+  required?: boolean;
+  placeholder?: string;
+}
+
+/**
+ * Composio connector config. Single source of truth for the shape carried in
+ * the connector `_meta` and threaded verbatim through the install action and
+ * directory entry (previously duplicated inline across three files).
+ *
+ * - `toolkit`: Composio's slug for the upstream (`gmail`, `posthog`, …).
+ *   Passed as the `authConfigs` key to `composio.create(...)` at install and
+ *   used as the directory name for the per-workspace `connection.json`.
+ * - `authConfigEnv`: name of the env var holding Composio's `auth_config_id`
+ *   (e.g. `ac_…`). The catalog is OSS and shared across deployments; the
+ *   actual id varies per Composio account, hence the indirection.
+ * - `tools`: optional allowlist of Composio tool slugs to expose. Required in
+ *   practice for any toolkit with more than ~20 tools (the agent's tool-search
+ *   dumps every match's full description into context otherwise).
+ * - `authScheme`: how the user connects. Defaults to `OAUTH2` (the redirect
+ *   flow) when omitted — the historical behavior, so existing entries are
+ *   unchanged. `API_KEY` (and other non-redirect schemes) skip the OAuth
+ *   dance: the platform collects `fields` from the user, hands them to
+ *   Composio at connect time, and persists only the `connectedAccountId`.
+ * - `fields`: required for non-redirect `authScheme`s — what to collect from
+ *   the connecting user. Omitted/empty for `OAUTH2`.
+ */
+export interface ComposioConnectorConfig {
+  toolkit: string;
+  authConfigEnv: string;
+  tools?: string[];
+  authScheme?: "OAUTH2" | "API_KEY";
+  fields?: ComposioConnectField[];
+}
+
+/**
  * NimbleBrain-specific extension carried inside `ServerDetail._meta`
  * under the key `ai.nimblebrain/connector`. Holds the platform-specific
  * fields that don't fit upstream slots: OAuth flow type, operator-setup
@@ -128,35 +184,14 @@ export interface NimbleBrainConnectorMeta {
     clientSecretKey: string;
   };
   /**
-   * Required for `auth: "composio"`. Names the toolkit at Composio
-   * and the env var holding the operator-controlled auth-config id.
+   * Required for `auth: "composio"`. See {@link ComposioConnectorConfig}
+   * for the full shape (toolkit, authConfigEnv, tools, authScheme, fields).
    *
-   * - `toolkit`: Composio's slug for the upstream (`gmail`, `slack`,
-   *   `hubspot`, …). Passed as the `authConfigs` key when calling
-   *   `composio.create(userId, { authConfigs: { [toolkit]: ac_… } })`
-   *   at install time, and used as the directory name for the
-   *   per-workspace `connection.json`.
-   * - `authConfigEnv`: name of the env var holding Composio's
-   *   `auth_config_id` (e.g. `ac_…`). The catalog file is OSS and
-   *   shared across deployments; the actual id varies per Composio
-   *   account, hence the indirection.
-   *
-   * The MCP URL and headers are obtained from Composio's session API
-   * at install time — operators do not pre-create an MCP server
-   * config or specify a server id.
-   *
-   * `tools` is an optional allowlist of Composio tool slugs to expose
-   * on the MCP endpoint. Required in practice for any toolkit with
-   * more than ~20 tools: without it the agent's tool-discovery search
-   * dumps every matching tool's full description into the context
-   * (Outlook = 282 tools, ~225K tokens). Curate per connector to a
-   * working set. Omit / leave empty for small toolkits.
+   * The MCP URL and headers are obtained from Composio's session API at
+   * install time — operators do not pre-create an MCP server config or
+   * specify a server id.
    */
-  composio?: {
-    toolkit: string;
-    authConfigEnv: string;
-    tools?: string[];
-  };
+  composio?: ComposioConnectorConfig;
   /**
    * Required for `auth: "provider"`. Names the credential provider and its
    * opaque config — e.g. `{ provider: "minted", config: { audience, scope } }`.

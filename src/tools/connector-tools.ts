@@ -1,6 +1,12 @@
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { mcpAuthCallbackUrl } from "../api/routes/mcp-auth.ts";
+import {
+  type ComposioConnection,
+  readComposioConnection,
+  saveComposioConnection,
+} from "../bundles/composio-connection.ts";
+import { WORKSPACE_PRINCIPAL_ID } from "../bundles/connection.ts";
 import { sanitizePlacements } from "../bundles/defaults.ts";
 import { getMpak } from "../bundles/mpak.ts";
 import { deriveServerName, slugifyServerName } from "../bundles/paths.ts";
@@ -8,7 +14,12 @@ import { startBundleSource } from "../bundles/startup.ts";
 import type { BundleManifest, BundleRef, RemoteTransportConfig } from "../bundles/types.ts";
 import { installBundleInWorkspace } from "../bundles/workspace-ops.ts";
 import { log } from "../cli/log.ts";
-import { composioUserId, createComposioSession } from "../composio/sdk.ts";
+import {
+  composioUserId,
+  connectComposioApiKey,
+  createComposioSession,
+  deleteComposioConnectedAccount,
+} from "../composio/sdk.ts";
 import type { UserConfigFieldDef } from "../config/workspace-credentials.ts";
 import { textContent } from "../engine/content-helpers.ts";
 import type { ToolResult } from "../engine/types.ts";
@@ -205,6 +216,7 @@ export function createManageConnectorsTool(ctx: ManageConnectorsContext): InProc
             "list_tools",
             "list_tools_with_permissions",
             "install",
+            "connect_api_key",
             "disconnect",
             "uninstall",
             "get_permissions",
@@ -219,7 +231,8 @@ export function createManageConnectorsTool(ctx: ManageConnectorsContext): InProc
         },
         catalogId: {
           type: "string",
-          description: "Catalog entry id (required for setup_operator, remove_operator_setup).",
+          description:
+            "Catalog entry id (required for setup_operator, remove_operator_setup, connect_api_key).",
         },
         entry: {
           type: "object",
@@ -259,7 +272,7 @@ export function createManageConnectorsTool(ctx: ManageConnectorsContext): InProc
         fields: {
           type: "object",
           description:
-            "For set_user_config: map of bundle user_config field name → string value. Empty string clears that field. Omitted fields are unchanged. Unknown field names are rejected (default-deny).",
+            "For set_user_config: map of bundle user_config field name → string value. Empty string clears that field. Omitted fields are unchanged. Unknown field names are rejected (default-deny). For connect_api_key: map of the connector's declared Composio field key → value (e.g. api_key, subdomain); handed to Composio and never persisted by the platform.",
           additionalProperties: { type: "string" },
         },
       },
@@ -311,6 +324,14 @@ export function createManageConnectorsTool(ctx: ManageConnectorsContext): InProc
             // what closes the "Bundle not installed" scope mismatch (an
             // install seeded under one workspace, then read under another).
             input.wsId === undefined ? (wsId ?? undefined) : String(input.wsId),
+          );
+        case "connect_api_key":
+          return handleConnectApiKey(
+            ctx,
+            wsId,
+            identity,
+            String(input.catalogId ?? ""),
+            (input.fields as Record<string, unknown>) ?? {},
           );
         case "disconnect":
           return handleDisconnect(
@@ -865,6 +886,196 @@ async function handleInstall(
     case "direct-url":
       return errResult("direct-url install is not yet supported.");
   }
+}
+
+/**
+ * `connect_api_key` — authenticate an already-installed Composio connector
+ * whose toolkit uses a non-redirect (API-key) auth scheme. The API-key sibling
+ * of the OAuth `/v1/composio-auth/initiate` route: there is no browser
+ * redirect, so it's a tool action, not a route (no state cookie, no callback —
+ * the two reasons that path stays a route). The web shell renders a form from
+ * the connector's declared `composio.fields` and submits the values here.
+ *
+ * Trust posture (mirrors the OAuth path):
+ *  - The connector, its field declarations, and its auth-config env all come
+ *    from the SERVER-trusted catalog (`catalogById`), never the caller. The
+ *    only caller input is the connectorId and the field *values*.
+ *  - Field values are handed to Composio and NEVER persisted by the platform —
+ *    `connection.json` keeps only the opaque `connectedAccountId`, exactly like
+ *    the OAuth path. We don't custody the user's key.
+ *  - Membership-gated: the workspace-scoped tool routing already authorized the
+ *    caller as a member of `wsId` (the same level as the OAuth connect route's
+ *    `requireWorkspace`). Install — which widens the workspace surface — is
+ *    admin-gated; completing auth on an installed connector is member-level.
+ */
+async function handleConnectApiKey(
+  ctx: ManageConnectorsContext,
+  wsId: string | null,
+  identity: UserIdentity | null,
+  catalogId: string,
+  rawFields: Record<string, unknown>,
+): Promise<ToolResult> {
+  if (!identity) return errResult("Authentication required.");
+  if (!wsId) return errResult("wsId is required for connect_api_key.");
+  if (!catalogId) return errResult("catalogId is required for connect_api_key.");
+
+  const ws = await ctx.runtime.getWorkspaceStore().get(wsId);
+  if (!ws) return errResult(`Workspace "${wsId}" not found.`);
+
+  const entry = await ctx.runtime.getConnectorDirectory().catalogById(catalogId);
+  if (!entry) return errResult(`Connector "${catalogId}" not in catalog.`);
+  if (entry.auth !== "composio" || !entry.composio) {
+    return errResult(`Connector "${catalogId}" is not Composio-backed (auth=${entry.auth}).`);
+  }
+  if (entry.composio.authScheme !== "API_KEY") {
+    return errResult(
+      `Connector "${catalogId}" does not use API-key auth (authScheme=${
+        entry.composio.authScheme ?? "OAUTH2"
+      }). Use the OAuth connect flow instead.`,
+    );
+  }
+
+  // Validate submitted values against the declared fields: every required field
+  // present and non-empty; unknown keys rejected (default-deny, same posture as
+  // set_user_config). Only declared keys are forwarded to Composio.
+  const declared = entry.composio.fields ?? [];
+  if (declared.length === 0) {
+    return errResult(`Connector "${catalogId}" declares no API-key fields to collect.`);
+  }
+  const declaredKeys = new Set(declared.map((f) => f.key));
+  for (const key of Object.keys(rawFields)) {
+    if (!declaredKeys.has(key)) {
+      return errResult(`Unknown field "${key}" for connector "${catalogId}".`);
+    }
+  }
+  const values: Record<string, string> = {};
+  for (const field of declared) {
+    const raw = rawFields[field.key];
+    const value = typeof raw === "string" ? raw.trim() : "";
+    if (!value) {
+      if (field.required !== false) {
+        return errResult(`Field "${field.key}" (${field.title}) is required.`);
+      }
+      continue;
+    }
+    values[field.key] = value;
+  }
+
+  // Operator config — same indirection as the OAuth path. Missing keys are a
+  // deploy-time error; surface a clear (non-secret) message.
+  const apiKey = process.env.COMPOSIO_API_KEY?.trim();
+  if (!apiKey) {
+    return errResult(
+      `"${entry.name}" requires COMPOSIO_API_KEY in the platform env. ` +
+        "Set the platform-wide Composio API key and restart the API.",
+    );
+  }
+  const authConfigId = process.env[entry.composio.authConfigEnv]?.trim();
+  if (!authConfigId) {
+    return errResult(
+      `"${entry.name}" requires ${entry.composio.authConfigEnv} in the platform env. ` +
+        "Create the API_KEY auth config in the Composio dashboard and set the env var.",
+    );
+  }
+
+  const serverName = slugifyServerName(catalogId);
+  const userId = composioUserId(wsId);
+  const lifecycle = ctx.runtime.getLifecycle();
+  const workDir = ctx.runtime.getWorkDir();
+
+  // Capture any prior connected account up front: it both gates the rotation
+  // case below and is the id we revoke after a successful replace. We can't
+  // adopt-existing like the OAuth path — an API-key re-submit may carry a
+  // rotated key, so the old account is REPLACED, not reused.
+  const prior = await readComposioConnection(workDir, wsId, catalogId);
+
+  // Authz: a FIRST connect (no prior) is member-level, matching the OAuth
+  // connect route. But a RE-CONNECT/rotation replaces and revokes the shared
+  // credential every member's agent runs under — destructive like `disconnect`,
+  // which is admin-gated. So gate only the rotation case on workspace admin.
+  if (prior?.connectedAccountId && !isWorkspaceAdmin(ws, identity)) {
+    return {
+      content: textContent(
+        "Workspace admin role required to replace an already-connected connector's credential.",
+      ),
+      structuredContent: { error: "permission_denied" },
+      isError: true,
+    };
+  }
+
+  // Bring the MCP source online BEFORE persisting connection.json — the same
+  // ordering invariant as the OAuth adopt path (a failure here leaves no
+  // connection.json behind, so boot-state derivation stays honest). A connector
+  // that hasn't been installed has no ref yet, so this doubles as the
+  // "install first" guard.
+  try {
+    await lifecycle.ensureSourceRegistered(serverName, wsId, workDir);
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    log.warn(`[connect_api_key] source registration failed for ${catalogId} in ${wsId}: ${msg}`);
+    // Two distinct causes share this branch: the connector isn't installed (no
+    // ref) vs. it IS installed but the MCP source transiently failed to start.
+    // Distinguish on whether a ref exists so the message points at the right
+    // fix (mirrors the OAuth adopt path's two messages).
+    const isInstalled =
+      Array.isArray(ws.bundles) && ws.bundles.some((b) => b.serverName === serverName);
+    return errResult(
+      isInstalled
+        ? `Connector "${catalogId}" is installed but its MCP source could not start. ` +
+            "Try Disconnect, then Connect again."
+        : `Connector "${catalogId}" must be installed before connecting. ` +
+            "Install it, then submit the API key.",
+    );
+  }
+
+  // Hand the key(s) to Composio and verify the connection reaches ACTIVE. On
+  // failure the SDK helper deletes the half-created account; surface a generic
+  // message and never echo the submitted values.
+  let connected: { connectedAccountId: string; status: string };
+  try {
+    connected = await connectComposioApiKey({ apiKey, userId, authConfigId, fields: values });
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    log.warn(`[connect_api_key] Composio connect failed for ${catalogId} in ${wsId}: ${msg}`);
+    return errResult(
+      "Could not connect with the provided credentials. Check the key (and any " +
+        "region / subdomain) and try again.",
+    );
+  }
+
+  const connection: ComposioConnection = {
+    connectedAccountId: connected.connectedAccountId,
+    toolkit: entry.composio.toolkit,
+    userId,
+    connectedAt: new Date().toISOString(),
+    status: connected.status,
+  };
+  await saveComposioConnection(workDir, wsId, catalogId, connection);
+  lifecycle.recordConnectionStateChange(serverName, wsId, WORKSPACE_PRINCIPAL_ID, "running");
+
+  // Rotation cleanup: revoke the account we just replaced so a rotated-away key
+  // stops being authorized at Composio and orphans don't accumulate. Runs after
+  // the new account is persisted, so the old one is only dropped once its
+  // replacement is live. Best-effort — deleteComposioConnectedAccount never
+  // throws; on failure the prior key may linger at Composio until removed there.
+  if (prior?.connectedAccountId && prior.connectedAccountId !== connected.connectedAccountId) {
+    const revoked = await deleteComposioConnectedAccount({
+      apiKey,
+      connectedAccountId: prior.connectedAccountId,
+    });
+    if (!revoked) {
+      log.warn(
+        `[connect_api_key] could not revoke the replaced Composio account for ${catalogId} ` +
+          `in ${wsId}; the prior key may remain authorized until removed at Composio`,
+      );
+    }
+  }
+
+  return {
+    content: textContent(`Connected ${entry.name}.`),
+    structuredContent: { connected: true, serverName, status: connected.status },
+    isError: false,
+  };
 }
 
 /**

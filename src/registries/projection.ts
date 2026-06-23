@@ -19,6 +19,7 @@
 import { hostMetaToUiMeta, sanitizePlacements } from "../bundles/defaults.ts";
 import type { BundleUiMeta } from "../bundles/types.ts";
 import {
+  type ComposioConnectorConfig,
   getNimbleBrainConnectorMeta,
   getNimbleBrainHostMeta,
   type NimbleBrainConnectorMeta,
@@ -59,7 +60,7 @@ function connectorMetaAuthFields(meta: NimbleBrainConnectorMeta | undefined): {
   requiredScopes?: string[];
   additionalAuthorizationParams?: Record<string, string>;
   operatorSetup?: { portalUrl: string; hint: string; clientSecretKey: string };
-  composio?: { toolkit: string; authConfigEnv: string; tools?: string[] };
+  composio?: ComposioConnectorConfig;
   providerAuth?: { provider: string; config: Record<string, unknown> };
 } {
   return {
@@ -164,7 +165,7 @@ export interface ConnectorCatalogEntry {
    * time and to look up the toolkit slug when persisting
    * `connection.json`. Absent on dcr/static entries.
    */
-  composio?: { toolkit: string; authConfigEnv: string; tools?: string[] };
+  composio?: ComposioConnectorConfig;
   /**
    * Required for `auth: "provider"` entries: the credential provider name + its
    * opaque config (e.g. `{ provider: "minted", config: { audience, scope } }`).
