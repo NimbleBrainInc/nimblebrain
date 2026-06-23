@@ -37,7 +37,10 @@ on:
         default: false
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event.inputs.tag || github.ref }}
+  # Normalize across triggers: ref_name is `v0.5.1` on a tag push, matching the
+  # workflow_dispatch `tag` input — so a tag-push and a manual dispatch of the same
+  # version share one group and can't race on the immutable ECR :vX.Y.Z.
+  group: ${{ github.workflow }}-${{ github.event.inputs.tag || github.ref_name }}
   cancel-in-progress: false
 
 permissions:
