@@ -312,10 +312,20 @@ export async function connectComposioApiKey(opts: {
     }),
   )) as unknown as {
     id?: unknown;
+    connectedAccountId?: unknown;
     waitForConnection: (timeoutMs?: number) => Promise<{ id?: unknown; status?: unknown }>;
   };
 
-  const initiatedId = typeof connRequest.id === "string" ? connRequest.id : "";
+  // `initiate` populates `.id`, but mirror the OAuth sibling's
+  // `id ?? connectedAccountId` fallback so the failure-cleanup delete below
+  // can't be silently skipped (leaking a dangling account) if a future SDK
+  // shape returns the id under `connectedAccountId` instead.
+  const initiatedId =
+    typeof connRequest.id === "string" && connRequest.id.length > 0
+      ? connRequest.id
+      : typeof connRequest.connectedAccountId === "string"
+        ? connRequest.connectedAccountId
+        : "";
 
   try {
     const account = await withTimeout("connectedAccounts.waitForConnection(apikey)", () =>

@@ -70,7 +70,9 @@ mock.module("@composio/core", () => ({
 }));
 
 import { NoopEventSink } from "../../src/adapters/noop-events.ts";
+import { readComposioConnection } from "../../src/bundles/composio-connection.ts";
 import { BundleLifecycleManager } from "../../src/bundles/lifecycle.ts";
+import { slugifyServerName } from "../../src/bundles/paths.ts";
 import { _resetComposioConfigForTest, connectComposioApiKey } from "../../src/composio/sdk.ts";
 import type { UserIdentity } from "../../src/identity/provider.ts";
 import { ConnectorDirectory } from "../../src/registries/directory.ts";
@@ -346,5 +348,201 @@ describe("manage_connectors.connect_api_key", () => {
     expect(r.isError).toBe(true);
     expect(JSON.stringify(r)).toContain("COMPOSIO_API_KEY");
     expect(apiKeyCalls.initiateArgs.length).toBe(0);
+  });
+});
+
+// ── connect_api_key lifecycle tail (stubbed lifecycle) ──────────────
+//
+// The validation describe above runs against a real lifecycle with no
+// workspace registry, so a happy-path call dead-ends at the install-first
+// guard. To cover the tail (the success path + the post-validation branches),
+// stub `getLifecycle()` the same way composio-auth.test.ts stubs its ctx: a
+// no-op (or erroring) `ensureSourceRegistered` and a recording
+// `recordConnectionStateChange`. The `@composio/core` mock drives the connect
+// result.
+
+interface StubCalls {
+  recordConnectionStateChange: {
+    lastCall: { serverName: string; wsId: string; principalId: string; state: string } | null;
+    callCount: number;
+  };
+}
+
+const POSTHOG_ENTRY = {
+  id: POSTHOG_ID,
+  name: "PostHog",
+  description: "Product analytics (via Composio)",
+  url: "https://backend.composio.dev/v3/mcp",
+  auth: "composio" as const,
+  composio: {
+    toolkit: "posthog",
+    authConfigEnv: "COMPOSIO_POSTHOG_AUTH_CONFIG_ID",
+    authScheme: "API_KEY" as const,
+    fields: [
+      { key: "api_key", title: "API Key", sensitive: true, required: true },
+      { key: "subdomain", title: "Region", required: true },
+    ],
+  },
+};
+
+function stubCtx(opts: {
+  workDir: string;
+  wsId: string;
+  entry: unknown | null;
+  ensureSourceRegisteredError?: Error;
+}): ManageConnectorsContext & { __calls: StubCalls } {
+  const calls: StubCalls = { recordConnectionStateChange: { lastCall: null, callCount: 0 } };
+  const lifecycle = {
+    async ensureSourceRegistered(): Promise<void> {
+      if (opts.ensureSourceRegisteredError) throw opts.ensureSourceRegisteredError;
+    },
+    recordConnectionStateChange(
+      serverName: string,
+      wsId: string,
+      principalId: string,
+      state: string,
+    ): void {
+      calls.recordConnectionStateChange.lastCall = { serverName, wsId, principalId, state };
+      calls.recordConnectionStateChange.callCount++;
+    },
+  };
+  const runtime = {
+    getWorkDir: () => opts.workDir,
+    getWorkspaceStore: () => ({
+      get: async () => ({
+        id: opts.wsId,
+        name: "Test",
+        members: [{ userId: ADMIN.id, role: "admin" }],
+      }),
+    }),
+    getConnectorDirectory: () => ({
+      catalogById: async (id: string) =>
+        opts.entry && (opts.entry as { id: string }).id === id ? opts.entry : null,
+    }),
+    getLifecycle: () => lifecycle,
+  } as unknown as Runtime;
+  return {
+    runtime,
+    getIdentity: () => ADMIN,
+    getWorkspaceId: () => opts.wsId,
+    __calls: calls,
+  } as unknown as ManageConnectorsContext & { __calls: StubCalls };
+}
+
+describe("manage_connectors.connect_api_key — lifecycle tail", () => {
+  const WS = "ws_test";
+  let workDir: string;
+
+  beforeEach(() => {
+    workDir = mkdtempSync(join(tmpdir(), "nb-ph-connect-"));
+  });
+  afterEach(() => {
+    rmSync(workDir, { recursive: true, force: true });
+  });
+
+  test("happy path writes connection.json and records running state", async () => {
+    process.env.COMPOSIO_API_KEY = "k_test";
+    process.env.COMPOSIO_POSTHOG_AUTH_CONFIG_ID = "ac_posthog";
+    _resetComposioConfigForTest();
+    apiKeyCalls.initiateImpl = () => ({
+      id: "ca_ph",
+      waitForConnection: async () => ({ id: "ca_ph", status: "ACTIVE" }),
+    });
+
+    const ctx = stubCtx({ workDir, wsId: WS, entry: POSTHOG_ENTRY });
+    const r = await createManageConnectorsTool(ctx).handler({
+      action: "connect_api_key",
+      catalogId: POSTHOG_ID,
+      fields: { api_key: "phx_secret", subdomain: "us" },
+    });
+
+    expect(r.isError).toBe(false);
+    expect((r.structuredContent as { connected?: boolean })?.connected).toBe(true);
+
+    // connection.json persisted with the verified account + toolkit + status.
+    const conn = await readComposioConnection(workDir, WS, POSTHOG_ID);
+    expect(conn?.connectedAccountId).toBe("ca_ph");
+    expect(conn?.toolkit).toBe("posthog");
+    expect(conn?.status).toBe("ACTIVE");
+    // The submitted key is never written to disk.
+    expect(JSON.stringify(conn)).not.toContain("phx_secret");
+
+    // Bundle flipped to running via the shared tail.
+    expect(ctx.__calls.recordConnectionStateChange.callCount).toBe(1);
+    expect(ctx.__calls.recordConnectionStateChange.lastCall).toEqual({
+      serverName: slugifyServerName(POSTHOG_ID),
+      wsId: WS,
+      principalId: "_workspace",
+      state: "running",
+    });
+  });
+
+  test("ensureSourceRegistered failure → install-first message, no persistence", async () => {
+    process.env.COMPOSIO_API_KEY = "k_test";
+    process.env.COMPOSIO_POSTHOG_AUTH_CONFIG_ID = "ac_posthog";
+    _resetComposioConfigForTest();
+
+    const ctx = stubCtx({
+      workDir,
+      wsId: WS,
+      entry: POSTHOG_ENTRY,
+      ensureSourceRegisteredError: new Error("no ref in workspace.json"),
+    });
+    const r = await createManageConnectorsTool(ctx).handler({
+      action: "connect_api_key",
+      catalogId: POSTHOG_ID,
+      fields: { api_key: "phx_secret", subdomain: "us" },
+    });
+
+    expect(r.isError).toBe(true);
+    expect(JSON.stringify(r)).toContain("installed");
+    // ensureSourceRegistered runs before the Composio connect, so nothing was
+    // created and nothing persisted.
+    expect(apiKeyCalls.initiateArgs.length).toBe(0);
+    expect(await readComposioConnection(workDir, WS, POSTHOG_ID)).toBeFalsy();
+    expect(ctx.__calls.recordConnectionStateChange.callCount).toBe(0);
+  });
+
+  test("auth-config env unset → operator-config error (after field validation)", async () => {
+    process.env.COMPOSIO_API_KEY = "k_test";
+    delete process.env.COMPOSIO_POSTHOG_AUTH_CONFIG_ID;
+    _resetComposioConfigForTest();
+
+    const ctx = stubCtx({ workDir, wsId: WS, entry: POSTHOG_ENTRY });
+    const r = await createManageConnectorsTool(ctx).handler({
+      action: "connect_api_key",
+      catalogId: POSTHOG_ID,
+      fields: { api_key: "phx_secret", subdomain: "us" },
+    });
+
+    expect(r.isError).toBe(true);
+    expect(JSON.stringify(r)).toContain("COMPOSIO_POSTHOG_AUTH_CONFIG_ID");
+    expect(apiKeyCalls.initiateArgs.length).toBe(0);
+  });
+
+  test("Composio connect failure → generic message, no persistence, account cleaned up", async () => {
+    process.env.COMPOSIO_API_KEY = "k_test";
+    process.env.COMPOSIO_POSTHOG_AUTH_CONFIG_ID = "ac_posthog";
+    _resetComposioConfigForTest();
+    apiKeyCalls.initiateImpl = () => ({
+      id: "ca_bad",
+      waitForConnection: async () => {
+        throw new Error("Connection request failed with status: FAILED");
+      },
+    });
+
+    const ctx = stubCtx({ workDir, wsId: WS, entry: POSTHOG_ENTRY });
+    const r = await createManageConnectorsTool(ctx).handler({
+      action: "connect_api_key",
+      catalogId: POSTHOG_ID,
+      fields: { api_key: "bad-key", subdomain: "us" },
+    });
+
+    expect(r.isError).toBe(true);
+    expect(JSON.stringify(r)).toContain("Could not connect");
+    expect(await readComposioConnection(workDir, WS, POSTHOG_ID)).toBeFalsy();
+    expect(ctx.__calls.recordConnectionStateChange.callCount).toBe(0);
+    // The SDK helper cleaned up the dangling connected account.
+    expect(apiKeyCalls.deletedIds).toContain("ca_bad");
   });
 });
