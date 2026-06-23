@@ -202,7 +202,7 @@ jobs:
         env:
           GH_TOKEN: ${{ steps.token.outputs.token }}
         run: |
-          # -f (raw string), NOT -F: -F coerces all-digit payloads to JSON numbers.
+          # -f keeps client_payload values as raw strings (target + version are strings).
           gh api "repos/${{ github.repository_owner }}/${{ vars.DEPLOY_CONFIG_REPO }}/dispatches" \
             -f event_type=prod-image-promoted \
             -f "client_payload[target]=agent" \
