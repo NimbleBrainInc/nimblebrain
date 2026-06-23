@@ -171,6 +171,33 @@ NimbleBrain-specific fields under `_meta["ai.nimblebrain/connector"]`:
 | `interactive` | no | Sets the "Interactive" badge. |
 | `docsUrl` | no | Connector-specific docs link surfaced on the Configure page. Must be http(s). |
 
+### Offline access & refresh tokens
+
+Long-running agents and scheduled automations need a connector to **refresh** its own access token. Most vendors return a `refresh_token` from the authorization-code exchange by default, or when you request the standard `offline_access` scope via `requiredScopes`. A few gate it behind a **non-standard authorize-URL param** — without it the vendor issues only a short-lived access token and **no refresh token**, so the connection dies at every access-token expiry and has to be reconnected by hand (a daily automation then fails almost every run).
+
+Set the param via `additionalAuthorizationParams`:
+
+| Vendor | Param |
+|--------|-------|
+| Dropbox | `token_access_type: offline` |
+| Google (native OAuth) | `access_type: offline` + `prompt: consent` |
+
+```yaml
+    _meta:
+      ai.nimblebrain/connector:
+        auth: static
+        additionalAuthorizationParams:
+          token_access_type: offline
+        requiredScopes:
+          - files.metadata.read
+```
+
+The param is added to the authorize request only, so existing connections do **not** retroactively gain a refresh token — users must **reconnect once** after the catalog change ships.
+
+<Aside type="tip">
+  The runtime warns at connect time when a token exchange returns no refresh token: `[oauth] <connector> token exchange returned NO refresh_token …`. If you see that line — or a connector that repeatedly asks to reconnect — it's almost always a missing offline-access param.
+</Aside>
+
 ### 3. Register the OAuth redirect URI
 
 The vendor's OAuth app must allow this exact callback URL:
