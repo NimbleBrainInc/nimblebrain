@@ -1013,9 +1013,18 @@ async function handleConnectApiKey(
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     log.warn(`[connect_api_key] source registration failed for ${catalogId} in ${wsId}: ${msg}`);
+    // Two distinct causes share this branch: the connector isn't installed (no
+    // ref) vs. it IS installed but the MCP source transiently failed to start.
+    // Distinguish on whether a ref exists so the message points at the right
+    // fix (mirrors the OAuth adopt path's two messages).
+    const isInstalled =
+      Array.isArray(ws.bundles) && ws.bundles.some((b) => b.serverName === serverName);
     return errResult(
-      `Connector "${catalogId}" must be installed before connecting. ` +
-        "Install it, then submit the API key.",
+      isInstalled
+        ? `Connector "${catalogId}" is installed but its MCP source could not start. ` +
+            "Try Disconnect, then Connect again."
+        : `Connector "${catalogId}" must be installed before connecting. ` +
+            "Install it, then submit the API key.",
     );
   }
 

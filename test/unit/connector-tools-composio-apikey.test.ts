@@ -424,6 +424,7 @@ function stubCtx(opts: {
   ensureSourceRegisteredError?: Error;
   identity?: UserIdentity;
   role?: "admin" | "member";
+  bundles?: Array<{ serverName: string }>;
 }): ManageConnectorsContext & { __calls: StubCalls } {
   const identity = opts.identity ?? ADMIN;
   const role = opts.role ?? "admin";
@@ -449,6 +450,7 @@ function stubCtx(opts: {
         id: opts.wsId,
         name: "Test",
         members: [{ userId: identity.id, role }],
+        bundles: opts.bundles ?? [],
       }),
     }),
     getConnectorDirectory: () => ({
@@ -532,11 +534,37 @@ describe("manage_connectors.connect_api_key — lifecycle tail", () => {
 
     expect(r.isError).toBe(true);
     expect(JSON.stringify(r)).toContain("installed");
+    expect(JSON.stringify(r)).toContain("must be installed");
     // ensureSourceRegistered runs before the Composio connect, so nothing was
     // created and nothing persisted.
     expect(apiKeyCalls.initiateArgs.length).toBe(0);
     expect(await readComposioConnection(workDir, WS, POSTHOG_ID)).toBeFalsy();
     expect(ctx.__calls.recordConnectionStateChange.callCount).toBe(0);
+  });
+
+  test("source-start failure on an INSTALLED connector → 'could not start', not 'install first'", async () => {
+    process.env.COMPOSIO_API_KEY = "k_test";
+    process.env.COMPOSIO_POSTHOG_AUTH_CONFIG_ID = "ac_posthog";
+    _resetComposioConfigForTest();
+
+    // The connector IS installed (a ref exists) but the source transiently fails.
+    const ctx = stubCtx({
+      workDir,
+      wsId: WS,
+      entry: POSTHOG_ENTRY,
+      bundles: [{ serverName: slugifyServerName(POSTHOG_ID) }],
+      ensureSourceRegisteredError: new Error("transport handshake failed"),
+    });
+    const r = await createManageConnectorsTool(ctx).handler({
+      action: "connect_api_key",
+      catalogId: POSTHOG_ID,
+      fields: { api_key: "phx_secret", subdomain: "us" },
+    });
+
+    expect(r.isError).toBe(true);
+    expect(JSON.stringify(r)).toContain("could not start");
+    expect(JSON.stringify(r)).not.toContain("must be installed");
+    expect(apiKeyCalls.initiateArgs.length).toBe(0);
   });
 
   test("auth-config env unset → operator-config error (after field validation)", async () => {
