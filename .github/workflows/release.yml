@@ -179,13 +179,13 @@ jobs:
         id: cfg
         env:
           APP_ID: ${{ vars.PROD_PROMOTE_APP_ID }}
-          REPO: ${{ vars.STAGING_DEPLOY_REPO }}
+          REPO: ${{ vars.DEPLOY_CONFIG_REPO }}
           KEY: ${{ secrets.PROD_PROMOTE_APP_KEY }}
         run: |
           if [ -n "$APP_ID" ] && [ -n "$REPO" ] && [ -n "$KEY" ]; then
             echo "enabled=true" >> "$GITHUB_OUTPUT"
           else
-            echo "prod-promote not configured (need PROD_PROMOTE_APP_ID + STAGING_DEPLOY_REPO vars + PROD_PROMOTE_APP_KEY secret) — skipping"
+            echo "prod-promote not configured (need PROD_PROMOTE_APP_ID + DEPLOY_CONFIG_REPO vars + PROD_PROMOTE_APP_KEY secret) — skipping"
             echo "enabled=false" >> "$GITHUB_OUTPUT"
           fi
       - name: Mint prod-promote token
@@ -196,14 +196,14 @@ jobs:
           app-id: ${{ vars.PROD_PROMOTE_APP_ID }}
           private-key: ${{ secrets.PROD_PROMOTE_APP_KEY }}
           owner: ${{ github.repository_owner }}
-          repositories: ${{ vars.STAGING_DEPLOY_REPO }}
+          repositories: ${{ vars.DEPLOY_CONFIG_REPO }}
       - name: Dispatch prod-image-promoted (target agent)
         if: steps.cfg.outputs.enabled == 'true'
         env:
           GH_TOKEN: ${{ steps.token.outputs.token }}
         run: |
           # -f (raw string), NOT -F: -F coerces all-digit payloads to JSON numbers.
-          gh api "repos/${{ github.repository_owner }}/${{ vars.STAGING_DEPLOY_REPO }}/dispatches" \
+          gh api "repos/${{ github.repository_owner }}/${{ vars.DEPLOY_CONFIG_REPO }}/dispatches" \
             -f event_type=prod-image-promoted \
             -f "client_payload[target]=agent" \
             -f "client_payload[version]=${{ github.ref_name }}"
