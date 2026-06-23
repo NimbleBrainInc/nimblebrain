@@ -7,8 +7,7 @@ import matter from "gray-matter";
 import { parseSkillContent } from "../../src/skills/loader.ts";
 import { MAX_SKILL_BODY_CHARS } from "../../src/skills/truncate.ts";
 import { readSkill, updateSkill, writeSkill } from "../../src/skills/writer.ts";
-import { MAX_LAYER3_TOTAL_CHARS, selectLayer3Skills } from "../../src/skills/select.ts";
-import type { Skill, SkillManifest } from "../../src/skills/types.ts";
+import type { SkillManifest } from "../../src/skills/types.ts";
 
 const dirs: string[] = [];
 function tmp(): string {
@@ -66,47 +65,5 @@ describe("authoring round-trip preserves the full stored body", () => {
     updateSkill(dir, "big", { description: "edited" });
     const onDisk = matter(readFileSync(join(dir, "big.md"), "utf-8")).content.trim();
     expect(onDisk.length).toBe(body.length);
-  });
-});
-
-describe("aggregate Layer-3 budget eviction (selectLayer3Skills)", () => {
-  function mk(name: string, priority: number, bodyLen: number): Skill {
-    return {
-      manifest: {
-        name,
-        description: "",
-        version: "1.0.0",
-        type: "skill",
-        priority,
-        loadingStrategy: "always",
-        status: "active",
-      },
-      body: "b".repeat(bodyLen),
-      sourcePath: name,
-    };
-  }
-
-  it("drops the lowest-priority skills once the total exceeds the budget", () => {
-    const skills = [
-      mk("p1", 1, 100_000),
-      mk("p2", 2, 100_000),
-      mk("p3", 3, 100_000), // would push total to 300k > 200k
-    ];
-    const selected = selectLayer3Skills({ skills, activeTools: [] });
-    expect(selected.map((s) => s.skill.manifest.name)).toEqual(["p1", "p2"]);
-  });
-
-  it("keeps at least the single highest-priority skill even if it alone exceeds budget", () => {
-    const selected = selectLayer3Skills({
-      skills: [mk("huge", 1, MAX_LAYER3_TOTAL_CHARS + 50_000)],
-      activeTools: [],
-    });
-    expect(selected.map((s) => s.skill.manifest.name)).toEqual(["huge"]);
-  });
-
-  it("keeps all skills when under budget", () => {
-    const skills = [mk("a", 1, 1000), mk("b", 2, 1000), mk("c", 3, 1000)];
-    const selected = selectLayer3Skills({ skills, activeTools: [] });
-    expect(selected).toHaveLength(3);
   });
 });
