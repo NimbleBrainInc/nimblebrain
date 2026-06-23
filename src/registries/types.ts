@@ -33,7 +33,7 @@
  *     (advanced; bypasses curation).
  */
 
-import type { ServerDetail } from "../connectors/server-detail.ts";
+import type { ComposioConnectorConfig, ServerDetail } from "../connectors/server-detail.ts";
 
 /** Stable registry kind, used for source-type-driven dispatch. */
 export type RegistryType = "static" | "mpak" | "mcp" | "custom-url";
@@ -133,9 +133,9 @@ export interface RemoteOAuthInstall {
   /**
    * Required for `auth: "composio"`. Names the Composio toolkit and
    * the env var holding the auth-config id. See
-   * `NimbleBrainConnectorMeta.composio` for the canonical shape.
+   * {@link ComposioConnectorConfig} for the canonical shape.
    */
-  composio?: { toolkit: string; authConfigEnv: string; tools?: string[] };
+  composio?: ComposioConnectorConfig;
   /**
    * Required for `auth: "provider"`. Names the credential provider and its
    * opaque config (e.g. `{ provider: "minted", config: { audience, scope } }`).

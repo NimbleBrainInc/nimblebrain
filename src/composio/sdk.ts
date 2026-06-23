@@ -34,7 +34,7 @@
  *     short-circuits when `COMPOSIO_API_KEY` is unset.
  */
 
-import { Composio } from "@composio/core";
+import { AuthScheme, Composio } from "@composio/core";
 import { log } from "../cli/log.ts";
 import { getBouncerMode } from "../oauth/bouncer-config.ts";
 import { publicOrigin } from "../oauth/public-origin.ts";
@@ -51,6 +51,16 @@ export const COMPOSIO_CALLBACK_PATH = "/api/v3.1/toolkits/auth/callback";
 
 /** Max time a single Composio SDK call may run before we abort. */
 const COMPOSIO_TIMEOUT_MS = 10_000;
+
+/**
+ * Verification budget for an API-key connect. `waitForConnection` polls the
+ * freshly-created connected account until it reaches ACTIVE (or throws on a
+ * terminal FAILED/EXPIRED). Non-redirect schemes normally resolve on the
+ * first poll, so a few seconds is ample. Kept below `COMPOSIO_TIMEOUT_MS` (the
+ * outer per-call backstop) so the SDK's own typed timeout/failure error
+ * surfaces first instead of our generic abort.
+ */
+const COMPOSIO_APIKEY_VERIFY_MS = 8_000;
 
 // ── Config validation ────────────────────────────────────────────────
 
@@ -262,6 +272,72 @@ export async function initiateComposioConnection(opts: {
     throw new Error("Composio initiate: missing connected_account_id on connection request");
   }
   return { redirectUrl, connectedAccountId };
+}
+
+/**
+ * Connect a Composio toolkit that authenticates by API key (or another
+ * non-redirect scheme) for `userId`. Unlike {@link initiateComposioConnection}
+ * there is no browser redirect: the user's key — plus any toolkit-specific
+ * fields like PostHog's `subdomain` — is handed to Composio, which custodies
+ * it. The platform persists only the opaque `connectedAccountId`, exactly the
+ * trust posture of the OAuth path's `connection.json` (we never hold the key).
+ *
+ * `initiate` is the correct AND non-deprecated call here: the 2026-07-03 sunset
+ * that pushes Composio-managed OAuth to `link()` explicitly excludes non-OAuth
+ * schemes (API key / bearer / basic). For an API-key auth config Composio
+ * returns a connected account with no `redirectUrl`; `waitForConnection` then
+ * polls it to ACTIVE (or throws on a terminal FAILED/EXPIRED) — that poll is
+ * our verification that the credential is usable. (Composio marks some API-key
+ * accounts ACTIVE without a live upstream check, so a bad key may still only
+ * surface on first tool call; `ConnectionRevalidator` catches that later.)
+ *
+ * On verification failure the half-created connected account is deleted
+ * best-effort so a retry starts clean and the dangling record doesn't trip
+ * Composio's `allowMultiple` guard. `fields` values live only for the duration
+ * of this call — they're never returned, logged, or persisted.
+ */
+export async function connectComposioApiKey(opts: {
+  apiKey: string;
+  userId: string;
+  authConfigId: string;
+  fields: Record<string, string>;
+}): Promise<{ connectedAccountId: string; status: string }> {
+  const composio = composioClient(opts.apiKey);
+  // SDK types the `config` as a broad ConnectionData union; `AuthScheme.APIKey`
+  // builds the API_KEY-shaped member ({ authScheme, val: { status, ...fields } }).
+  const connRequest = (await withTimeout("connectedAccounts.initiate(apikey)", () =>
+    composio.connectedAccounts.initiate(opts.userId, opts.authConfigId, {
+      config: AuthScheme.APIKey(opts.fields),
+      allowMultiple: true,
+    }),
+  )) as unknown as {
+    id?: unknown;
+    waitForConnection: (timeoutMs?: number) => Promise<{ id?: unknown; status?: unknown }>;
+  };
+
+  const initiatedId = typeof connRequest.id === "string" ? connRequest.id : "";
+
+  try {
+    const account = await withTimeout("connectedAccounts.waitForConnection(apikey)", () =>
+      connRequest.waitForConnection(COMPOSIO_APIKEY_VERIFY_MS),
+    );
+    const id = typeof account.id === "string" && account.id.length > 0 ? account.id : initiatedId;
+    if (!id) {
+      throw new Error("Composio API-key connect: missing connected_account_id");
+    }
+    const status = typeof account.status === "string" ? account.status : "ACTIVE";
+    return { connectedAccountId: id, status };
+  } catch (err) {
+    // Verification failed (bad/insufficient key), timed out, or the account is
+    // stuck non-ACTIVE — drop the dangling record so the next attempt is clean.
+    if (initiatedId) {
+      await deleteComposioConnectedAccount({
+        apiKey: opts.apiKey,
+        connectedAccountId: initiatedId,
+      });
+    }
+    throw err;
+  }
 }
 
 /**
