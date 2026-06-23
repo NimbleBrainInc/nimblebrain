@@ -25,6 +25,7 @@ import { EventSourcedConversationStore } from "../../../../src/conversation/even
 import type { EngineEvent, EventSink } from "../../../../src/engine/types.ts";
 import { parseSkillContent } from "../../../../src/skills/loader.ts";
 import { selectLayer3Skills } from "../../../../src/skills/select.ts";
+import { MAX_SKILL_BODY_CHARS } from "../../../../src/skills/truncate.ts";
 import { McpSource } from "../../../../src/tools/mcp-source.ts";
 import { createSkillsSource } from "../../../../src/tools/platform/skills.ts";
 import { WorkspaceContext } from "../../../../src/workspace/context.ts";
@@ -619,6 +620,33 @@ describe("skills__read — stale-id regression", () => {
     expect(text).toMatch(/skills__list/);
     expect(text).not.toMatch(/permission denied/i);
     expect(text).not.toMatch(/org admin/i);
+  });
+});
+
+describe("skills__read — full body (no prompt-cap leak)", () => {
+  test("returns the full stored body for a skill larger than the prompt cap", async () => {
+    const src = await buildSource();
+    const client = src.getClient()!;
+    const body = `${"x".repeat(MAX_SKILL_BODY_CHARS * 2)}\nEND_MARKER_KEEP_ME`;
+    await client.callTool({
+      name: "create",
+      arguments: {
+        scope: "org",
+        manifest: { name: "oversized", description: "test", type: "skill" },
+        body,
+      },
+    });
+    const result = await client.callTool({
+      name: "read",
+      arguments: { id: join(workDir, "skills", "oversized.md") },
+    });
+    expect(result.isError).toBeFalsy();
+    const text = (result.content as Array<{ text: string }>).map((c) => c.text).join("");
+    // The end marker survives only if the read did NOT truncate to the prompt cap.
+    // skills__read must return the full stored body, or a read-then-rewrite via
+    // skills__update would silently lose user-authored content.
+    expect(text).toContain("END_MARKER_KEEP_ME");
+    expect(text.length).toBeGreaterThan(MAX_SKILL_BODY_CHARS);
   });
 });
 

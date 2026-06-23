@@ -501,7 +501,8 @@ function auditL3Skill(entry: SkillsLoadedEvent["skills"][number]): L3SkillAudit 
 function bodyFromSkillFile(path: string): string | null {
   try {
     const raw = readFileSync(path, "utf-8");
-    return parseSkillContent(raw, path)?.body ?? null;
+    // The audit reproduces the rendered prompt, so cap to match the prompt-load body.
+    return parseSkillContent(raw, path, { cap: true })?.body ?? null;
   } catch {
     return null;
   }

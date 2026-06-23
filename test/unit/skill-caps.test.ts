@@ -4,7 +4,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import matter from "gray-matter";
-import { parseSkillContent } from "../../src/skills/loader.ts";
+import { loadScopedSkills, parseSkillContent } from "../../src/skills/loader.ts";
 import { MAX_SKILL_BODY_CHARS } from "../../src/skills/truncate.ts";
 import { readSkill, updateSkill, writeSkill } from "../../src/skills/writer.ts";
 import type { SkillManifest } from "../../src/skills/types.ts";
@@ -23,19 +23,39 @@ function rawSkill(name: string, body: string): string {
   return `---\nname: ${name}\ndescription: d\nversion: 1.0.0\n---\n${body}`;
 }
 
-describe("per-skill body cap (parseSkillContent)", () => {
-  it("caps the body for the prompt-load path (default)", () => {
+describe("per-skill body cap", () => {
+  const bigManifest: SkillManifest = {
+    name: "big",
+    description: "d",
+    version: "1.0.0",
+    type: "skill",
+    priority: 50,
+    status: "active",
+  };
+
+  it("returns the FULL body by default (read/inspect/round-trip safe)", () => {
+    // The default is the path skills__read and writer.readSkill take — it must
+    // NOT truncate, or an agent that reads-then-rewrites loses user content.
     const big = "x".repeat(MAX_SKILL_BODY_CHARS * 2);
-    const skill = parseSkillContent(rawSkill("big", big), "big.md");
-    expect(skill).not.toBeNull();
+    expect(parseSkillContent(rawSkill("big", big), "big.md")!.body.length).toBe(big.length);
+    expect(parseSkillContent(rawSkill("big", big), "big.md", { cap: false })!.body.length).toBe(
+      big.length,
+    );
+  });
+
+  it("caps only when cap:true is requested", () => {
+    const big = "x".repeat(MAX_SKILL_BODY_CHARS * 2);
+    const skill = parseSkillContent(rawSkill("big", big), "big.md", { cap: true });
     expect(skill!.body.length).toBeLessThanOrEqual(MAX_SKILL_BODY_CHARS);
   });
 
-  it("returns the FULL body when cap is disabled (authoring round-trip)", () => {
+  it("the prompt-load path (loadScopedSkills) caps the body", () => {
+    const dir = tmp();
     const big = "x".repeat(MAX_SKILL_BODY_CHARS * 2);
-    const skill = parseSkillContent(rawSkill("big", big), "big.md", { cap: false });
-    expect(skill).not.toBeNull();
-    expect(skill!.body.length).toBe(big.length);
+    writeSkill(dir, "big", bigManifest, big);
+    const [loaded] = loadScopedSkills(dir, "workspace");
+    expect(loaded).toBeDefined();
+    expect(loaded!.body.length).toBeLessThanOrEqual(MAX_SKILL_BODY_CHARS);
   });
 });
 
