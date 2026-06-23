@@ -7,7 +7,7 @@ import {
   mapFrontmatterToManifest,
   type SkillFrontmatter,
   validateFrontmatter,
-} from "../../../src/skills/manifest-schema.ts";
+} from "../../../src/skills/schemas/skill-manifest.ts";
 
 describe("validateFrontmatter", () => {
   test("accepts a minimal pristine-standard skill", () => {

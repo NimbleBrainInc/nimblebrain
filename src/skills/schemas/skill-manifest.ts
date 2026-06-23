@@ -167,6 +167,7 @@ export function mapFrontmatterToManifest(
 ): SkillManifest {
   const nb = fm.metadata?.nimblebrain;
   const allowed = fm["allowed-tools"]?.trim();
+  const provenance = mapProvenance(nb?.provenance);
   return {
     name: fm.name,
     description: fm.description,
@@ -180,7 +181,7 @@ export function mapFrontmatterToManifest(
     ...(fm.compatibility ? { compatibility: fm.compatibility } : {}),
     ...(fm.metadata?.author ? { author: fm.metadata.author } : {}),
     ...(fm.metadata?.version ? { version: fm.metadata.version } : {}),
-    ...(mapProvenance(nb?.provenance) ? { provenance: mapProvenance(nb?.provenance) } : {}),
+    ...(provenance ? { provenance } : {}),
     ...(stamped.scope ? { scope: stamped.scope } : {}),
   };
 }
