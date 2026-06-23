@@ -1,19 +1,19 @@
 ---
 name: skill-authoring
-description: Teaches the agent how to create well-structured user skills
-type: skill
-priority: 50
+description: Teaches the agent how to create well-structured user skills. Use when creating, modifying, customizing, deleting, or managing a skill, behavior, trigger, keyword, priority, or allowed-tools.
 metadata:
-  triggers:
-    - "create a skill"
-    - "new skill"
-    - "modify skill"
-    - "manage skill"
-    - "edit skill"
-    - "delete skill"
-    - "skills__create"
-    - "skills__update"
-  keywords: [skill, behavior, customize, authoring, context, trigger, keyword, priority, allowed-tools]
+  nimblebrain:
+    loading-strategy: dynamic
+    priority: 50
+    triggers:
+      - "create a skill"
+      - "new skill"
+      - "modify skill"
+      - "manage skill"
+      - "edit skill"
+      - "delete skill"
+      - "skills__create"
+      - "skills__update"
 ---
 
 # Skill Authoring Guide

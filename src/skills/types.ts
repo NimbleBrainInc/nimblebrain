@@ -1,62 +1,19 @@
-export type SkillType = "context" | "skill";
-
 /**
- * Phase 2 — Layer 3 visibility additions.
- *
- * `scope` is stamped at load time by `loadScopedSkills` based on the source
- * directory. `loadingStrategy` and `appliesToTools` drive the Phase 2 Layer 3
- * selection (`always` + `tool_affined`); `retrieval` and `explicit` are
- * accepted for forward-compatibility and parsed without enforcement.
- *
- * `overrides` and `derivedFrom` are designed-but-not-enforced: future phases
- * (3 for overrides, 4 for derived-from / authoring) interpret them. Today the
- * loader parses them so a manifest authored against the full schema round-
- * trips cleanly when those features land.
+ * Skill runtime types. The manifest shape is the canonical one defined in
+ * `schemas/skill-manifest.ts` (the single source of truth, validated on load);
+ * this module re-exports it and adds the `Skill` wrapper (manifest + body +
+ * sourcePath) the loader and consumers use.
  */
-export type SkillScope = "org" | "workspace" | "user" | "bundle";
-export type SkillLoadingStrategy = "always" | "tool_affined" | "retrieval" | "explicit";
-/**
- * Skill enablement state. Collapsed from the legacy 4-value enum
- * (`active | draft | disabled | archived`) to a binary that matches the
- * UI's single On/Off toggle. The loader normalizes any legacy `draft`
- * or `archived` value to `disabled` on read so existing files keep
- * loading without a migration.
- */
-export type SkillStatus = "active" | "disabled";
 
-export interface SkillOverride {
-  bundle?: string;
-  skill?: string;
-  reason: string;
-}
+export type {
+  SkillLoadingStrategy,
+  SkillManifest,
+  SkillProvenance,
+  SkillScope,
+  SkillStatus,
+} from "./schemas/skill-manifest.ts";
 
-export interface SkillManifest {
-  name: string;
-  description: string;
-  version: string;
-  type: SkillType;
-  priority: number;
-  allowedTools?: string[];
-  requiresBundles?: string[];
-  metadata?: SkillMetadata;
-  // ---- Phase 2 additions (all optional) -----------------------------------
-  scope?: SkillScope;
-  loadingStrategy?: SkillLoadingStrategy;
-  appliesToTools?: string[];
-  status?: SkillStatus;
-  overrides?: SkillOverride[];
-  derivedFrom?: string;
-}
-
-export interface SkillMetadata {
-  keywords: string[];
-  triggers: string[];
-  category?: string;
-  tags?: string[];
-  author?: string;
-  created_at?: string;
-  source?: string;
-}
+import type { SkillManifest } from "./schemas/skill-manifest.ts";
 
 export interface Skill {
   manifest: SkillManifest;

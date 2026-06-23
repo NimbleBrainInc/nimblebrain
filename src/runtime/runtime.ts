@@ -14,7 +14,6 @@ import { recordLlmUsage } from "../api/metrics.ts";
 import type { AutomationDomainContext } from "../bundles/automations/src/domain.ts";
 import { sanitizePlacements } from "../bundles/defaults.ts";
 import { BundleLifecycleManager } from "../bundles/lifecycle.ts";
-import { deriveServerName } from "../bundles/paths.ts";
 import { setConnectionRunningHandler } from "../bundles/pending-auth-buffer.ts";
 import type { BundleMcpDeps } from "../bundles/startup.ts";
 import type { AppInfo, BundleInstance, PlacementDeclaration } from "../bundles/types.ts";
@@ -1321,33 +1320,7 @@ export class Runtime {
       partitionSkillsByRole(conversationPool);
     const requestMatcher = new SkillMatcher();
     requestMatcher.load(poolCapability);
-    let skill = requestMatcher.match(request.message);
-
-    // Dependency checking: warn if a matched skill requires bundles that aren't installed
-    // anywhere the identity can reach. Pre-Stage-2 this checked only the
-    // request's wsId; post-T006 we look across every workspace the identity
-    // has access to (the same set the aggregator builds its tool list from).
-    if (skill?.manifest.requiresBundles?.length) {
-      const accessibleWorkspaces = await this._workspaceStore.getWorkspacesForUser(ownerId);
-      const missing: string[] = [];
-      for (const bundleName of skill.manifest.requiresBundles) {
-        const serverName = deriveServerName(bundleName);
-        const installedSomewhere = accessibleWorkspaces.some((ws) =>
-          this.lifecycle?.getInstance(serverName, ws.id),
-        );
-        if (!installedSomewhere) {
-          missing.push(bundleName);
-        }
-      }
-      if (missing.length > 0) {
-        skill = {
-          ...skill,
-          body:
-            skill.body +
-            `\n\n⚠️ Missing dependencies: ${missing.join(", ")}. Some capabilities may be unavailable. Install the missing apps from the Apps catalog in settings.`,
-        };
-      }
-    }
+    const skill = requestMatcher.match(request.message);
 
     // The workspace BRIEFING (apps + workspace overlay + "## Workspace" block
     // + workspace persona) reflects the workspace the chat is FOCUSED on —
@@ -4192,9 +4165,9 @@ export function makeIdentitySkill(body: string): Skill {
     manifest: {
       name: "identity-override",
       description: "Workspace identity override",
-      version: "1.0.0",
-      type: "context",
+      loadingStrategy: "always",
       priority: 1,
+      status: "active",
     },
     body,
     sourcePath: "",

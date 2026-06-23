@@ -1,27 +1,10 @@
 ---
 name: capabilities
 description: System tools for discovering and managing capabilities
-version: 1.0.0
-type: context
-priority: 10
 metadata:
-  keywords: [install, search, tool, bundle, skill, mpak, capability, server, connect, configure, setup, reconfigure, version, status, health, conversation, history, recall, remember, discussed]
-  triggers:
-    - "install a"
-    - "add a tool"
-    - "search mpak"
-    - "what tools"
-    - "what can you do"
-    - "what servers"
-    - "find a server"
-    - "configure"
-    - "reconfigure"
-    - "what version"
-    - "version of"
-    - "bundle status"
-    - "is it working"
-  category: system
-  tags: [system, capabilities, mpak]
+  nimblebrain:
+    loading-strategy: always
+    priority: 10
 ---
 
 # Capability Management

@@ -6,7 +6,7 @@ import { type Static } from "@sinclair/typebox";
 export declare const SkillsListInput: import("@sinclair/typebox").TObject<{
     scope: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"user" | "bundle" | "org" | "workspace">>;
     layer: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<3 | 1>>;
-    type: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
+    loading_strategy: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"always" | "dynamic">>;
     tool_affinity: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
     status: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"active" | "disabled">>;
     modified_since: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
@@ -32,16 +32,12 @@ export declare const SkillsCreateInput: import("@sinclair/typebox").TObject<{
     manifest: import("@sinclair/typebox").TObject<{
         name: import("@sinclair/typebox").TString;
         description: import("@sinclair/typebox").TString;
-        type: import("@sinclair/typebox").TUnsafe<"skill" | "context">;
+        loadingStrategy: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"always" | "dynamic">>;
         priority: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TNumber>;
         status: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"active" | "disabled">>;
-        version: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
-        metadata: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TObject<{
-            keywords: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TArray<import("@sinclair/typebox").TString>>;
-            triggers: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TArray<import("@sinclair/typebox").TString>>;
-            category: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
-            tags: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TArray<import("@sinclair/typebox").TString>>;
-        }>>;
+        toolAffinity: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TArray<import("@sinclair/typebox").TString>>;
+        triggers: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TArray<import("@sinclair/typebox").TString>>;
+        allowedTools: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TArray<import("@sinclair/typebox").TString>>;
     }>;
     body: import("@sinclair/typebox").TString;
 }>;
@@ -50,16 +46,12 @@ export declare const SkillsUpdateInput: import("@sinclair/typebox").TObject<{
     id: import("@sinclair/typebox").TString;
     manifest: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TObject<{
         description: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
-        type: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"skill" | "context">>;
+        loadingStrategy: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"always" | "dynamic">>;
         priority: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TNumber>;
         status: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"active" | "disabled">>;
-        version: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
-        metadata: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TObject<{
-            keywords: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TArray<import("@sinclair/typebox").TString>>;
-            triggers: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TArray<import("@sinclair/typebox").TString>>;
-            category: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
-            tags: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TArray<import("@sinclair/typebox").TString>>;
-        }>>;
+        toolAffinity: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TArray<import("@sinclair/typebox").TString>>;
+        triggers: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TArray<import("@sinclair/typebox").TString>>;
+        allowedTools: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TArray<import("@sinclair/typebox").TString>>;
     }>>;
     body: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
 }>;
@@ -102,13 +94,13 @@ export interface SkillSummary {
     layer: SkillLayer;
     scope: SkillScope;
     status: SkillStatus;
-    type?: string;
     tokens: number;
     source: SkillSource;
     description?: string;
     modifiedAt?: string;
     loadingStrategy?: string;
-    appliesToTools?: string[];
+    toolAffinity?: string[];
+    triggers?: string[];
     priority?: number;
     /**
      * Computed loading visibility: whether any loader path reaches this skill
@@ -138,17 +130,11 @@ export interface SkillDetail {
     metadata: {
         name: string;
         description?: string;
-        type?: string;
         priority?: number;
         loadingStrategy?: string;
-        appliesToTools?: string[];
+        toolAffinity?: string[];
+        triggers?: string[];
         status?: string;
-        overrides?: Array<{
-            bundle?: string;
-            skill?: string;
-            reason: string;
-        }>;
-        derivedFrom?: string;
     };
     modifiedAt?: string;
 }

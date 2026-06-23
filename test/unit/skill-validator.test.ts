@@ -99,7 +99,7 @@ describe("validateSkill", () => {
       const result = validateSkill("has spaces", validManifest, validBody);
       expect(result.valid).toBe(false);
       expect(result.errors).toContainEqual(
-        expect.stringContaining("alphanumeric characters, hyphens, and underscores"),
+        expect.stringContaining("lowercase alphanumerics and hyphens"),
       );
     });
 
@@ -107,7 +107,7 @@ describe("validateSkill", () => {
       const result = validateSkill("has.dots", validManifest, validBody);
       expect(result.valid).toBe(false);
       expect(result.errors).toContainEqual(
-        expect.stringContaining("alphanumeric characters, hyphens, and underscores"),
+        expect.stringContaining("lowercase alphanumerics and hyphens"),
       );
     });
   });

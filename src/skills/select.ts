@@ -14,15 +14,11 @@ import { bareToolName } from "../tools/namespace.ts";
 import type { Skill } from "./types.ts";
 
 /**
- * Phase 2 values for how a skill ended up in the selected set.
- *
- * Phase 6 will add `"retrieval"`; Phase 7 will add `"explicit"`.
- *
- * Note: the loading-strategy NAME is `tool_affined` (manifest field), but the
- * `loadedBy` value emitted on the `skills.loaded` event is `tool_affinity`.
- * That's deliberate per the spec event shape.
+ * How a skill ended up in the Layer-3 selected set. Layer 3 is the conditional
+ * channel for `dynamic` skills; today the only mechanism is tool-affinity.
+ * (`always` skills compose into the context channel, not here.)
  */
-export type LoadedBy = "always" | "tool_affinity";
+export type LoadedBy = "tool_affinity";
 
 export interface SelectedSkill {
   skill: Skill;
@@ -83,17 +79,13 @@ export function toolMatches(toolName: string, pattern: string): boolean {
 }
 
 /**
- * Select Layer 3 skills for the current turn based on each skill's
- * `loadingStrategy` and the active tool set.
+ * Select Layer 3 skills for the current turn: `dynamic` skills whose
+ * `toolAffinity` globs match a tool in the active set. `always` skills are NOT
+ * here — they compose into the context channel (Layer 0/1) by role. A `dynamic`
+ * skill with no `toolAffinity` is catalog-only (model-activated; not selected
+ * here until the catalog ships). Disabled skills are skipped.
  *
- * Phase 2: implements `always` and `tool_affined` only.
- *  - Skills with `status !== "active"` are skipped.
- *  - Skills with no `loadingStrategy` are skipped (they remain on the legacy
- *    `SkillMatcher` path — they're not Layer 3 candidates yet).
- *  - Future strategies (`retrieval`, `explicit`) are skipped silently.
- *
- * Returned skills are sorted by `manifest.priority` ascending (lowest number =
- * highest priority).
+ * Returned sorted by `manifest.priority` ascending (lowest = highest priority).
  */
 export function selectLayer3Skills(input: SelectInput): SelectedSkill[] {
   const selected: SelectedSkill[] = [];
@@ -101,46 +93,22 @@ export function selectLayer3Skills(input: SelectInput): SelectedSkill[] {
   for (const skill of input.skills) {
     const { manifest } = skill;
 
-    if (manifest.status !== undefined && manifest.status !== "active") {
-      continue;
-    }
+    if (manifest.status !== "active") continue;
+    if (manifest.loadingStrategy !== "dynamic") continue;
 
-    const strategy = manifest.loadingStrategy;
-    if (strategy === undefined) {
-      continue;
-    }
+    const patterns = manifest.toolAffinity;
+    if (!patterns || patterns.length === 0) continue;
 
-    if (strategy === "always") {
-      selected.push({
-        skill,
-        loadedBy: "always",
-        reason: "loading_strategy: always",
-      });
-      continue;
-    }
+    const matched = patterns.filter((pattern) =>
+      input.activeTools.some((tool) => toolMatches(tool, pattern)),
+    );
+    if (matched.length === 0) continue;
 
-    if (strategy === "tool_affined") {
-      const patterns = manifest.appliesToTools;
-      if (!patterns || patterns.length === 0) {
-        continue;
-      }
-      const matched: string[] = [];
-      for (const pattern of patterns) {
-        if (input.activeTools.some((tool) => toolMatches(tool, pattern))) {
-          matched.push(pattern);
-        }
-      }
-      if (matched.length === 0) {
-        continue;
-      }
-      selected.push({
-        skill,
-        loadedBy: "tool_affinity",
-        reason: `applies_to_tools matched ${matched.join(", ")}`,
-      });
-    }
-
-    // `retrieval` and `explicit` strategies — Phase 6/7. Silently skip.
+    selected.push({
+      skill,
+      loadedBy: "tool_affinity",
+      reason: `tool-affinity matched ${matched.join(", ")}`,
+    });
   }
 
   selected.sort((a, b) => a.skill.manifest.priority - b.skill.manifest.priority);
@@ -149,26 +117,24 @@ export function selectLayer3Skills(input: SelectInput): SelectedSkill[] {
 
 /**
  * Partition a conversation skill pool by ROLE — the single composition-routing
- * authority. A skill's `type` decides its channel, by construction:
+ * authority. A skill's `loading-strategy` decides its channel, by construction:
  *
- *  - `context` → always-on identity/voice content. Goes to the context channel
+ *  - `always` → always-on identity/voice content. Goes to the context channel
  *    (Layer 0/1), rendered from every tier (core/builtin/org + workspace + user),
- *    sorted by priority. Disabled context skills are dropped here (the always-on
+ *    sorted by priority. Disabled skills are dropped here (the always-on
  *    channel has no per-turn status gate of its own).
- *  - everything else (`skill`) → capability content for the conditional channels:
- *    tool-affinity Layer 3 (`selectLayer3Skills`) and the keyword matcher.
+ *  - `dynamic` → capability content for the conditional channels: tool-affinity
+ *    Layer 3 (`selectLayer3Skills`) and the trigger matcher.
  *
- * The two sets are DISJOINT by `type`, so a skill can never enter two channels —
- * there is no overlap to de-duplicate downstream. Role placement replaces the
- * old "context skills also default to `always` and get selected into Layer 3"
- * conflation that required after-the-fact filtering.
+ * The two sets are DISJOINT by `loading-strategy`, so a skill can never enter
+ * two channels — there is no overlap to de-duplicate downstream.
  */
 export function partitionSkillsByRole(pool: Skill[]): { context: Skill[]; capability: Skill[] } {
   const context: Skill[] = [];
   const capability: Skill[] = [];
   for (const s of pool) {
-    if (s.manifest.type === "context") {
-      if (s.manifest.status === undefined || s.manifest.status === "active") context.push(s);
+    if (s.manifest.loadingStrategy === "always") {
+      if (s.manifest.status === "active") context.push(s);
     } else {
       capability.push(s);
     }

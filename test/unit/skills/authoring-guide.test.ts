@@ -25,14 +25,12 @@ describe("authoring-guide Layer 1 skill", () => {
     if (!skill) throw new Error("parseSkillFile returned null");
 
     expect(skill.manifest.name).toBe("authoring-guide");
-    // `type: skill` (capability role): loads on tool-affinity (skills__*), NOT as
-    // always-on context. Routed to Layer 3 by `partitionSkillsByRole`.
-    expect(skill.manifest.type).toBe("skill");
+    // Capability skill: dynamic + tool-affinity (skills__*), routed to Layer 3.
+    // (`scope` is stamped at load, not present when parsing the file directly.)
+    expect(skill.manifest.loadingStrategy).toBe("dynamic");
     expect(skill.manifest.priority).toBe(25);
-    expect(skill.manifest.scope).toBe("bundle");
-    expect(skill.manifest.loadingStrategy).toBe("tool_affined");
-    expect(skill.manifest.appliesToTools).toBeDefined();
-    expect(skill.manifest.appliesToTools).toContain("skills__*");
+    expect(skill.manifest.toolAffinity).toBeDefined();
+    expect(skill.manifest.toolAffinity).toContain("skills__*");
   });
 
   test("body is non-empty and exceeds the minimum operational size", () => {

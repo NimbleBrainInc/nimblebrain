@@ -101,11 +101,41 @@ class FakeRuntime {
 
 function writeSkill(path: string, frontmatter: Record<string, unknown>, body: string): Skill {
   // Author with a tiny YAML serializer (one-pass) so tests stay hermetic.
-  const yaml = serializeYaml(frontmatter);
+  const yaml = serializeYaml(toNestedFrontmatter(frontmatter));
   writeFileSync(path, `---\n${yaml}---\n\n${body}\n`);
   const parsed = parseSkillFile(path);
   if (!parsed) throw new Error(`Failed to parse fixture skill at ${path}`);
   return parsed;
+}
+
+/**
+ * Translate the legacy flat fixture shape (top-level `type`/`priority`/
+ * `applies-to-tools`/…) into the canonical on-disk shape: standard fields
+ * top-level, NimbleBrain config nested under `metadata.nimblebrain.*`. Lets the
+ * existing fixtures keep their terse flat form while exercising the new loader.
+ */
+function toNestedFrontmatter(flat: Record<string, unknown>): Record<string, unknown> {
+  const fm: Record<string, unknown> = { name: flat.name, description: flat.description };
+  if (flat.license) fm.license = flat.license;
+  if (flat.compatibility) fm.compatibility = flat.compatibility;
+  const allowed = flat["allowed-tools"] ?? flat.allowedTools;
+  if (Array.isArray(allowed)) fm["allowed-tools"] = allowed.join(" ");
+  else if (typeof allowed === "string") fm["allowed-tools"] = allowed;
+
+  const nb: Record<string, unknown> = {};
+  let ls = flat["loading-strategy"] ?? flat.loading_strategy ?? flat.loadingStrategy;
+  if (ls === "tool_affined") ls = "dynamic";
+  if (!ls) ls = flat.type === "context" ? "always" : "dynamic";
+  nb["loading-strategy"] = ls;
+  if (flat.priority !== undefined) nb.priority = flat.priority;
+  if (flat.status !== undefined) nb.status = flat.status;
+  const aff = flat["applies-to-tools"] ?? flat.applies_to_tools ?? flat.appliesToTools;
+  if (Array.isArray(aff) && aff.length > 0) nb["tool-affinity"] = aff;
+  const meta = (flat.metadata ?? {}) as Record<string, unknown>;
+  const triggers = flat.triggers ?? meta.triggers;
+  if (Array.isArray(triggers) && triggers.length > 0) nb.triggers = triggers;
+  fm.metadata = { nimblebrain: nb };
+  return fm;
 }
 
 function serializeYaml(o: Record<string, unknown>): string {

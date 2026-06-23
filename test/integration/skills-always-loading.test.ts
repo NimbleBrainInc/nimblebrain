@@ -99,30 +99,29 @@ afterAll(async () => {
   if (existsSync(testDir)) rmSync(testDir, { recursive: true });
 });
 
-describe("created strategy-less skill loads (auto-derived always)", () => {
-  it("composes a created trigger-less user `type: skill` into an unrelated chat", async () => {
+describe("created strategy-less skill is catalog-only (not auto-loaded)", () => {
+  it("does NOT compose a created trigger-less, affinity-less user skill into an unrelated chat", async () => {
     const create = await callToolAsDev("skills__create", {
       scope: "user",
       manifest: {
         name: DERIVED_SKILL_NAME,
         description: "Orbital docking how-to",
-        type: "skill",
         priority: 50,
       },
       body: DERIVED_BODY,
     });
     expect(create.isError).toBe(false);
 
-    // A message with no relation to the skill. On `main` this body never
-    // appears (no strategy ⇒ Layer-3 skips it, no triggers ⇒ matcher skips it).
+    // No triggers, no tool-affinity → catalog-only (#4): it loads only via the
+    // catalog (P3), never auto-injected. The handler does NOT bump it to `always`.
     await runtime.chat({ workspaceId: TEST_WORKSPACE_ID, message: "what is 2 + 2?" });
-    expect(getSystem()).toContain(DERIVED_BODY);
+    expect(getSystem()).not.toContain(DERIVED_BODY);
   });
 
-  it("persists `loading-strategy: always` to the created file (self-describing)", () => {
+  it("persists `loading-strategy: dynamic` (catalog-only) to the created file", () => {
     const path = join(testDir, "users", DEV_IDENTITY.id, "skills", `${DERIVED_SKILL_NAME}.md`);
     expect(existsSync(path)).toBe(true);
-    expect(readFileSync(path, "utf-8")).toContain("loading-strategy: always");
+    expect(readFileSync(path, "utf-8")).toContain("loading-strategy: dynamic");
   });
 });
 
@@ -137,9 +136,10 @@ describe("dead-state visibility", () => {
       `---
 name: ${DEAD_SKILL_NAME}
 description: Stranded note
-version: 1.0.0
-type: skill
-priority: 50
+metadata:
+  nimblebrain:
+    loading-strategy: dynamic
+    priority: 50
 ---
 
 This skill can never load.
@@ -177,7 +177,7 @@ describe("disabled org context rule stops injecting", () => {
   it("injects an active org `type: context` rule into an unrelated chat", async () => {
     const create = await callToolAsDev("skills__create", {
       scope: "org",
-      manifest: { name: RULE_NAME, description: "House rule", type: "context", priority: 50 },
+      manifest: { name: RULE_NAME, description: "House rule", loadingStrategy: "always", priority: 50 },
       body: RULE_BODY,
     });
     expect(create.isError).toBe(false);

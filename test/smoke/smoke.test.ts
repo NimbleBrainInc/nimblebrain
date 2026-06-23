@@ -368,10 +368,10 @@ describe("Smoke: Skill matching", () => {
       `---
 name: diagnostics
 description: System diagnostics
-version: 1.0.0
 metadata:
-  keywords: [health, status, diagnostic, check]
-  triggers: ["check health", "run diagnostics"]
+  nimblebrain:
+    loading-strategy: dynamic
+    triggers: ["check health", "run diagnostics"]
 ---
 
 You are a system diagnostics agent.

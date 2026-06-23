@@ -123,7 +123,7 @@ export function skillList(configPath?: string, json?: boolean): void {
   if (json) {
     const output = [...context, ...skills].map((s) => ({
       name: s.manifest.name,
-      type: s.manifest.type,
+      loadingStrategy: s.manifest.loadingStrategy,
       priority: s.manifest.priority,
       source: s.sourcePath,
       description: s.manifest.description,
@@ -132,13 +132,13 @@ export function skillList(configPath?: string, json?: boolean): void {
     return;
   }
 
-  console.log("NAME              TYPE      PRIORITY  SOURCE");
+  console.log("NAME              LOADING   PRIORITY  SOURCE");
   for (const s of [...context, ...skills]) {
     const name = s.manifest.name.padEnd(18);
-    const type = s.manifest.type.padEnd(10);
+    const loading = s.manifest.loadingStrategy.padEnd(10);
     const priority = String(s.manifest.priority).padEnd(10);
     const source = s.sourcePath;
-    console.log(`${name}${type}${priority}${source}`);
+    console.log(`${name}${loading}${priority}${source}`);
   }
 }
 
@@ -158,7 +158,7 @@ export function skillInfo(name: string, configPath?: string): void {
     return;
   }
   console.log(`Name: ${skill.manifest.name}`);
-  console.log(`Type: ${skill.manifest.type}`);
+  console.log(`Loading: ${skill.manifest.loadingStrategy}`);
   console.log(`Priority: ${skill.manifest.priority}`);
   console.log(`Description: ${skill.manifest.description}`);
   console.log(`Source: ${skill.sourcePath}`);
@@ -185,7 +185,7 @@ export function status(configPath?: string, json?: boolean): void {
       bundles,
       skills: all.map((s) => ({
         name: s.manifest.name,
-        type: s.manifest.type,
+        loadingStrategy: s.manifest.loadingStrategy,
         priority: s.manifest.priority,
         source: s.sourcePath,
         description: s.manifest.description,

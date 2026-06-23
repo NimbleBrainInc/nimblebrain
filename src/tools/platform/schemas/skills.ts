@@ -11,34 +11,28 @@ const ScopeWritable = StringEnum(["org", "workspace", "user"] as const, {
   description: "Tier to write the skill into. Bundle (Layer 1) is not writable.",
 });
 
-const SkillType = StringEnum(["skill", "context"] as const, {
-  description: "`skill` for procedural how-to content; `context` for declarative facts.",
-});
-
 const SkillStatus = StringEnum(["active", "disabled"] as const, {
   description: "`active` to load, `disabled` to suppress. Default `active`.",
 });
 
-const SkillManifestMetadata = Type.Object({
-  keywords: Type.Optional(Type.Array(Type.String())),
-  triggers: Type.Optional(Type.Array(Type.String())),
-  category: Type.Optional(Type.String()),
-  tags: Type.Optional(Type.Array(Type.String())),
+const LoadingStrategy = StringEnum(["always", "dynamic"] as const, {
+  description:
+    "`always` = always-on context (Layer 0/1); `dynamic` = on-demand (loads via tool-affinity, triggers, or the catalog). Default `dynamic`.",
 });
 
-// Manifest fields shared by create + update. `name` is required for create
-// (rebuilt below with explicit `required`); update is a partial of these
-// minus name (renames are not patchable — see skills.ts comment at the
-// SKILL_UPDATE_MANIFEST_PROPERTIES site).
+// LLM-facing manifest fields shared by create + update — a flat `Pick` of the
+// canonical schema (`schemas/skill-manifest.ts`). Operator/stamped fields
+// (`scope`, `provenance`) are excluded per `tools/platform/CLAUDE.md §1.4`; the
+// handler maps these to the nested on-disk `metadata.nimblebrain.*` shape.
 const ManifestFields = {
   name: Type.String({
-    pattern: "^[a-zA-Z0-9_-]+$",
-    description: "Becomes the filename. Alphanumeric, dash, underscore.",
+    pattern: "^[a-z0-9]+(-[a-z0-9]+)*$",
+    description: "Becomes the filename. Lowercase letters, numbers, single hyphens.",
   }),
   description: Type.String({
-    description: "What the skill does. Surfaced to the agent during Layer 3 selection.",
+    description: "What the skill does AND when to use it (the catalog activation signal).",
   }),
-  type: SkillType,
+  loadingStrategy: Type.Optional(LoadingStrategy),
   priority: Type.Optional(
     Type.Number({
       minimum: 0,
@@ -47,8 +41,20 @@ const ManifestFields = {
     }),
   ),
   status: Type.Optional(SkillStatus),
-  version: Type.Optional(Type.String({ description: "Semver. Default 1.0.0." })),
-  metadata: Type.Optional(SkillManifestMetadata),
+  toolAffinity: Type.Optional(
+    Type.Array(Type.String(), {
+      description:
+        "Tool-name globs (e.g. `gmail__*`); a dynamic skill auto-loads when one is active.",
+    }),
+  ),
+  triggers: Type.Optional(
+    Type.Array(Type.String(), {
+      description: "Exact phrases that deterministically activate a dynamic skill.",
+    }),
+  ),
+  allowedTools: Type.Optional(
+    Type.Array(Type.String(), { description: "Tools the skill is permitted to call." }),
+  ),
 };
 
 // ── Tool input schemas ───────────────────────────────────────────────────
@@ -60,12 +66,14 @@ export const SkillsListInput = Type.Object({
       description: "Filter to Layer 1 (vendored) or Layer 3 (orchestration) skills.",
     }),
   ),
-  type: Type.Optional(
-    Type.String({ description: "Filter by manifest `type` (e.g. `context`, `skill`)." }),
+  loading_strategy: Type.Optional(
+    StringEnum(["always", "dynamic"] as const, {
+      description: "Filter by loading strategy (`always` or `dynamic`).",
+    }),
   ),
   tool_affinity: Type.Optional(
     Type.String({
-      description: "A tool name; returns only skills whose `applies_to_tools` glob matches it.",
+      description: "A tool name; returns only skills whose `tool-affinity` glob matches it.",
     }),
   ),
   status: Type.Optional(
@@ -118,7 +126,7 @@ export const SkillsCreateInput = Type.Object(
   {
     scope: ScopeWritable,
     manifest: Type.Object(ManifestFields, {
-      required: ["name", "description", "type"],
+      required: ["name", "description"],
       description: "YAML frontmatter for the skill file. Identity + selection metadata.",
     }),
     body: Type.String({
@@ -135,11 +143,12 @@ export type SkillsCreateInput = Static<typeof SkillsCreateInput>;
 // create where description+type are required.
 const UpdateManifestFields = {
   description: Type.Optional(ManifestFields.description),
-  type: Type.Optional(ManifestFields.type),
+  loadingStrategy: ManifestFields.loadingStrategy,
   priority: ManifestFields.priority,
   status: ManifestFields.status,
-  version: ManifestFields.version,
-  metadata: ManifestFields.metadata,
+  toolAffinity: ManifestFields.toolAffinity,
+  triggers: ManifestFields.triggers,
+  allowedTools: ManifestFields.allowedTools,
 };
 
 export const SkillsUpdateInput = Type.Object(
@@ -215,13 +224,13 @@ export interface SkillSummary {
   layer: SkillLayer;
   scope: SkillScope;
   status: SkillStatus;
-  type?: string;
   tokens: number;
   source: SkillSource;
   description?: string;
   modifiedAt?: string;
   loadingStrategy?: string;
-  appliesToTools?: string[];
+  toolAffinity?: string[];
+  triggers?: string[];
   priority?: number;
   /**
    * Computed loading visibility: whether any loader path reaches this skill
@@ -250,13 +259,11 @@ export interface SkillDetail {
   metadata: {
     name: string;
     description?: string;
-    type?: string;
     priority?: number;
     loadingStrategy?: string;
-    appliesToTools?: string[];
+    toolAffinity?: string[];
+    triggers?: string[];
     status?: string;
-    overrides?: Array<{ bundle?: string; skill?: string; reason: string }>;
-    derivedFrom?: string;
   };
   modifiedAt?: string;
 }
@@ -274,6 +281,8 @@ export interface ActiveSkillEntry {
   layer: 3;
   scope: SkillScope;
   tokens: number;
+  // Historical `skills.loaded` events may carry `always` (pre-cutover runs);
+  // new selections only ever emit `tool_affinity`.
   loadedBy: "always" | "tool_affinity";
   reason: string;
 }

@@ -428,7 +428,7 @@ export function createSkillsSource(runtime: Runtime, eventSink: EventSink): McpS
 interface ListInput {
   scope?: string;
   layer?: number;
-  type?: string;
+  loading_strategy?: "always" | "dynamic";
   tool_affinity?: string;
   status?: string;
   modified_since?: string;
@@ -450,16 +450,14 @@ function skillToListed(skill: Skill): ListedSkill {
     name: m.name,
     layer: 3,
     scope: m.scope ?? "org",
-    status: m.status ?? "active",
-    type: m.type,
+    status: m.status,
     tokens: approxTokens(skill.body),
     source: path ? { path } : {},
     ...(m.description ? { description: m.description } : {}),
     ...(path ? { modifiedAt: readSkillMtime(path) } : {}),
-    ...(m.loadingStrategy ? { loadingStrategy: m.loadingStrategy } : {}),
-    ...(m.appliesToTools && m.appliesToTools.length > 0
-      ? { appliesToTools: m.appliesToTools }
-      : {}),
+    loadingStrategy: m.loadingStrategy,
+    ...(m.toolAffinity && m.toolAffinity.length > 0 ? { toolAffinity: m.toolAffinity } : {}),
+    ...(m.triggers && m.triggers.length > 0 ? { triggers: m.triggers } : {}),
     priority: m.priority,
     loading: { wouldLoad: mechanism !== "none", mechanism },
   };
@@ -530,17 +528,17 @@ async function listSkills(
           name: skill.manifest.name,
           layer: 1,
           scope: "bundle",
-          status: skill.manifest.status ?? "active",
-          type: skill.manifest.type,
+          status: skill.manifest.status,
           tokens,
           source: { uri: AUTHORING_GUIDE_URI, path: authoringGuidePath, bundle: "nb__skills" },
           ...(skill.manifest.description ? { description: skill.manifest.description } : {}),
           modifiedAt: readSkillMtime(authoringGuidePath),
-          ...(skill.manifest.loadingStrategy
-            ? { loadingStrategy: skill.manifest.loadingStrategy }
+          loadingStrategy: skill.manifest.loadingStrategy,
+          ...(skill.manifest.toolAffinity && skill.manifest.toolAffinity.length > 0
+            ? { toolAffinity: skill.manifest.toolAffinity }
             : {}),
-          ...(skill.manifest.appliesToTools && skill.manifest.appliesToTools.length > 0
-            ? { appliesToTools: skill.manifest.appliesToTools }
+          ...(skill.manifest.triggers && skill.manifest.triggers.length > 0
+            ? { triggers: skill.manifest.triggers }
             : {}),
           priority: skill.manifest.priority,
           loading: { wouldLoad: mechanism !== "none", mechanism },
@@ -552,7 +550,7 @@ async function listSkills(
   // Apply scalar filters
   return out.filter((s) => {
     if (filter.scope && s.scope !== filter.scope) return false;
-    if (filter.type && s.type !== filter.type) return false;
+    if (filter.loading_strategy && s.loadingStrategy !== filter.loading_strategy) return false;
     if (filter.status && s.status !== filter.status) return false;
     if (filter.modified_since && s.modifiedAt) {
       if (s.modifiedAt < filter.modified_since) return false;
@@ -564,7 +562,7 @@ async function listSkills(
       // than every wildcard skill.
       const target = filter.tool_affinity.trim();
       if (target.length === 0) return false;
-      const patterns = s.appliesToTools ?? [];
+      const patterns = s.toolAffinity ?? [];
       if (patterns.length === 0) return false;
       if (!patterns.some((p) => toolMatches(target, p))) return false;
     }
@@ -773,15 +771,11 @@ function buildReadResult(
     metadata: {
       name: m.name,
       ...(m.description ? { description: m.description } : {}),
-      type: m.type,
       priority: m.priority,
-      ...(m.loadingStrategy ? { loadingStrategy: m.loadingStrategy } : {}),
-      ...(m.appliesToTools && m.appliesToTools.length > 0
-        ? { appliesToTools: m.appliesToTools }
-        : {}),
-      status: m.status ?? "active",
-      ...(m.overrides && m.overrides.length > 0 ? { overrides: m.overrides } : {}),
-      ...(m.derivedFrom ? { derivedFrom: m.derivedFrom } : {}),
+      loadingStrategy: m.loadingStrategy,
+      ...(m.toolAffinity && m.toolAffinity.length > 0 ? { toolAffinity: m.toolAffinity } : {}),
+      ...(m.triggers && m.triggers.length > 0 ? { triggers: m.triggers } : {}),
+      status: m.status,
     },
     ...(base.modifiedAt ? { modifiedAt: base.modifiedAt } : {}),
   };
@@ -1021,7 +1015,7 @@ function summarizeList(skills: ListedSkill[]): string {
   // tags, status if not active, and a truncated description.
   const lines = skills.map((s) => {
     const tags: string[] = [`L${s.layer}`, s.scope];
-    if (s.type) tags.push(s.type);
+    if (s.loadingStrategy) tags.push(s.loadingStrategy);
     if (s.priority != null) tags.push(`p${s.priority}`);
     if (s.status && s.status !== "active") tags.push(s.status);
     const meta = `(${tags.join(" ")})`;
@@ -1037,7 +1031,12 @@ function summarizeList(skills: ListedSkill[]): string {
 function summarizeRead(skill: ReadResult): string {
   const m = skill.metadata;
   const parts = [`${m.name} (L${skill.layer} ${skill.scope})`];
-  if (m.loadingStrategy) parts.push(`loads: ${m.loadingStrategy}`);
+  // `loads:` reports the resolved MECHANISM (always / tool_affinity / trigger /
+  // none) — how the skill actually reaches the prompt — not the raw
+  // `loadingStrategy` field (which renderRead prints separately below). A
+  // `dynamic` skill with tool-affinity loads via `tool_affinity`; one with
+  // neither signal is `none` (catalog-only, inert until the catalog ships).
+  if (m.loadingStrategy) parts.push(`loads: ${resolveLoadingMechanism(m)}`);
   return parts.join(" · ");
 }
 
@@ -1059,20 +1058,14 @@ function renderRead(skill: ReadResult): string {
   const m = skill.metadata;
   const fields = [summarizeRead(skill), `id: ${skill.id}`, `source: ${skill.source}`];
   if (m.description) fields.push(`description: ${m.description}`);
-  if (m.type) fields.push(`type: ${m.type}`);
+  if (m.loadingStrategy) fields.push(`loading-strategy: ${m.loadingStrategy}`);
   if (m.priority != null) fields.push(`priority: ${m.priority}`);
   // `status` always renders — `buildReadResult` defaults it to "active", so
   // the description's promise of a `status` field holds for every skill
   // (an audit's first question is "active or disabled?").
   if (m.status) fields.push(`status: ${m.status}`);
-  if (m.appliesToTools?.length) fields.push(`applies_to_tools: ${m.appliesToTools.join(", ")}`);
-  if (m.derivedFrom) fields.push(`derived_from: ${m.derivedFrom}`);
-  if (m.overrides?.length) {
-    const overrides = m.overrides
-      .map((o) => `${o.bundle ?? "?"}/${o.skill ?? "?"} — ${o.reason}`)
-      .join("; ");
-    fields.push(`overrides: ${overrides}`);
-  }
+  if (m.toolAffinity?.length) fields.push(`tool-affinity: ${m.toolAffinity.join(", ")}`);
+  if (m.triggers?.length) fields.push(`triggers: ${m.triggers.join(", ")}`);
   if (skill.modifiedAt) fields.push(`modified: ${skill.modifiedAt}`);
   return `${fields.join("\n")}\n\n---\n\n${skill.content}`;
 }
@@ -1453,46 +1446,39 @@ async function createSkill(
     return errorResult(new Error(`Skill "${name}" already exists in ${scope} scope`));
   }
 
-  // Fill in defaults the schema doesn't enforce so the on-disk
-  // SkillManifest is complete. The LLM-facing schema treats metadata
-  // sub-fields (keywords, triggers, etc.) as optional; the domain type
-  // expects keywords and triggers as arrays. Normalize at the boundary
-  // by defaulting to empty arrays when the caller omitted them.
+  // Build the runtime manifest from the flat LLM-facing input and stamp
+  // provenance (never author-supplied — see schema). The writer maps this to
+  // the nested on-disk `metadata.nimblebrain.*` shape.
+  const ctx = getRequestContext();
+  const createdBy = runtime.getCurrentIdentity()?.id;
+  const now = new Date().toISOString();
   const fullManifest: SkillManifest = {
     name,
     description: manifest.description,
-    type: manifest.type,
+    loadingStrategy: manifest.loadingStrategy ?? "dynamic",
     priority: manifest.priority ?? 50,
-    version: manifest.version ?? "1.0.0",
-    ...(manifest.status ? { status: manifest.status } : {}),
-    ...(manifest.metadata
-      ? {
-          metadata: {
-            keywords: manifest.metadata.keywords ?? [],
-            triggers: manifest.metadata.triggers ?? [],
-            ...(manifest.metadata.category !== undefined
-              ? { category: manifest.metadata.category }
-              : {}),
-            ...(manifest.metadata.tags !== undefined ? { tags: manifest.metadata.tags } : {}),
-          },
-        }
+    status: manifest.status ?? "active",
+    ...(manifest.toolAffinity && manifest.toolAffinity.length > 0
+      ? { toolAffinity: manifest.toolAffinity }
       : {}),
+    ...(manifest.triggers && manifest.triggers.length > 0 ? { triggers: manifest.triggers } : {}),
+    ...(manifest.allowedTools && manifest.allowedTools.length > 0
+      ? { allowedTools: manifest.allowedTools }
+      : {}),
+    provenance: {
+      origin: ctx?.conversationId ? "chat" : "admin",
+      ...(ctx?.conversationId ? { conversationId: ctx.conversationId } : {}),
+      ...(createdBy ? { createdBy } : {}),
+      createdAt: now,
+      updatedAt: now,
+    },
   };
 
-  // Derive a loading strategy when the skill would otherwise be dead.
-  // The LLM-facing schema deliberately omits `loading-strategy` /
-  // `applies-to-tools` (tools/platform/CLAUDE.md §1.4), so a tool-created
-  // `type: skill` with no triggers/keywords reaches no loader path. Resolve
-  // the mechanism via the shared predicate and, only for that dead case,
-  // stamp `loading-strategy: always` so the file is self-describing and the
-  // skill composes via Layer 3. Skills that resolve to trigger/tool_affinity
-  // (and `type: context`, which is always-by-type) are left untouched — they
-  // already load and writing a strategy would pull a trigger skill off the
-  // matcher path.
+  // A `dynamic` skill with neither tool-affinity nor triggers is catalog-only:
+  // it won't auto-load until the catalog ships (P3). We honor that rather than
+  // silently bumping it to `always` — the author can add a trigger/tool-affinity,
+  // or set `loading-strategy: always`, to make it load now.
   const mechanism = resolveLoadingMechanism(fullManifest);
-  if (mechanism === "none" && fullManifest.type === "skill") {
-    fullManifest.loadingStrategy = "always";
-  }
 
   const validation = validateSkill(name, fullManifest, body);
   if (!validation.valid) {
@@ -1503,23 +1489,20 @@ async function createSkill(
   await reloadBootSkills(runtime);
   eventSink.emit({
     type: "skill.created",
-    data: { id: target, name, scope, type: fullManifest.type },
+    data: { id: target, name, scope },
   });
 
-  // Report the resolved mechanism so the author sees how (and whether) the
-  // skill will load. `fullManifest.loadingStrategy` is set only for the
-  // derived-always case; everything else rides its native path.
-  const writtenStrategy = fullManifest.loadingStrategy;
-  const loadsClause = writtenStrategy
-    ? "loads: always — no triggers or tool affinity were provided"
-    : `loads: ${mechanism}`;
+  const loadsNote =
+    mechanism === "none"
+      ? "catalog-only — won't auto-load yet; add a trigger or tool-affinity, or set loading-strategy: always"
+      : mechanism;
   return {
-    content: textContent(`Created ${scope} skill "${name}" → ${target} (${loadsClause})`),
+    content: textContent(`Created ${scope} skill "${name}" → ${target} (loads: ${loadsNote})`),
     structuredContent: {
       id: target,
       name,
       scope,
-      ...(writtenStrategy ? { loadingStrategy: writtenStrategy } : {}),
+      loadingStrategy: fullManifest.loadingStrategy,
     },
     isError: false,
   };
@@ -1594,22 +1577,12 @@ async function updateSkillHandler(
   const partial: Partial<SkillManifest> | undefined = patch
     ? {
         ...(patch.description !== undefined ? { description: patch.description } : {}),
-        ...(patch.type !== undefined ? { type: patch.type } : {}),
+        ...(patch.loadingStrategy !== undefined ? { loadingStrategy: patch.loadingStrategy } : {}),
         ...(patch.priority !== undefined ? { priority: patch.priority } : {}),
         ...(patch.status !== undefined ? { status: patch.status } : {}),
-        ...(patch.version !== undefined ? { version: patch.version } : {}),
-        ...(patch.metadata !== undefined
-          ? {
-              metadata: {
-                keywords: patch.metadata.keywords ?? [],
-                triggers: patch.metadata.triggers ?? [],
-                ...(patch.metadata.category !== undefined
-                  ? { category: patch.metadata.category }
-                  : {}),
-                ...(patch.metadata.tags !== undefined ? { tags: patch.metadata.tags } : {}),
-              },
-            }
-          : {}),
+        ...(patch.toolAffinity !== undefined ? { toolAffinity: patch.toolAffinity } : {}),
+        ...(patch.triggers !== undefined ? { triggers: patch.triggers } : {}),
+        ...(patch.allowedTools !== undefined ? { allowedTools: patch.allowedTools } : {}),
       }
     : undefined;
   updateSkill(dir, name, partial, body);

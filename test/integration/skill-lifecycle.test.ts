@@ -1,5 +1,5 @@
 import { describe, expect, it, afterAll } from "bun:test";
-import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { Runtime } from "../../src/runtime/runtime.ts";
@@ -70,18 +70,15 @@ describe("skill lifecycle (end-to-end)", () => {
 		});
 		await provisionTestWorkspace(runtime);
 
-		// 1. Create an org-tier skill via skills__create
+		// 1. Create an org-tier dynamic skill (trigger-matchable) via skills__create
 		const createResult = await callTool(runtime, "skills__create", {
 			scope: "org",
 			manifest: {
 				name: "test-greeter",
 				description: "Greets people warmly",
-				type: "skill",
+				loadingStrategy: "dynamic",
 				priority: 50,
-				metadata: {
-					triggers: ["greet someone", "say hello"],
-					keywords: ["hello", "greet", "welcome", "hi"],
-				},
+				triggers: ["greet someone", "say hello"],
 			},
 			body: "You are a warm and friendly greeter. Always say hello enthusiastically.",
 		});
@@ -126,13 +123,13 @@ describe("skill lifecycle (end-to-end)", () => {
 		});
 		await provisionTestWorkspace(runtime);
 
-		// Create a context skill with priority 20 (above core threshold of 10)
+		// Create an always-on context skill with priority 20 (above core threshold of 10)
 		const createResult = await callTool(runtime, "skills__create", {
 			scope: "org",
 			manifest: {
 				name: "team-context",
 				description: "Team-specific context",
-				type: "context",
+				loadingStrategy: "always",
 				priority: 20,
 			},
 			body: "You are working for Acme Corp. Always mention the company name.",
@@ -154,66 +151,6 @@ describe("skill lifecycle (end-to-end)", () => {
 
 		await runtime.chat({ workspaceId: TEST_WORKSPACE_ID, message: "anything at all" });
 		expect(getSystem()).not.toContain("Acme Corp");
-
-		await runtime.shutdown();
-	});
-
-	it("dependency warning when required bundle is missing", async () => {
-		const workDir = join(testDir, "dep-warning");
-		const { model, getSystem } = createCapturingModel();
-
-		const runtime = await Runtime.start({
-			model: { provider: "custom", adapter: model },
-			noDefaultBundles: true,
-			workDir,
-			logging: { disabled: true },
-			telemetry: { enabled: false },
-		});
-		await provisionTestWorkspace(runtime);
-
-		// `requires-bundles` is an operator-only field — not authorable via
-		// the LLM-facing schema. To exercise the dependency-warning path,
-		// write the skill file directly with the YAML frontmatter the
-		// loader expects. Mirrors the on-disk format produced by the
-		// writer for any other field.
-		const skillsDir = join(workDir, "skills");
-		mkdirSync(skillsDir, { recursive: true });
-		const skillPath = join(skillsDir, "dep-skill.md");
-		writeFileSync(
-			skillPath,
-			[
-				"---",
-				"name: dep-skill",
-				'description: "Skill with missing dependency"',
-				"type: skill",
-				"priority: 50",
-				'version: "1.0.0"',
-				"requires-bundles:",
-				'  - "@nonexistent/bundle"',
-				"metadata:",
-				"  triggers:",
-				'    - "process data"',
-				"  keywords:",
-				"    - process",
-				"    - data",
-				"    - analyze",
-				"---",
-				"You are a data processor.",
-				"",
-			].join("\n"),
-		);
-		// Force a reload so the runtime picks up the new file before
-		// dispatch (mirrors what skills__create does internally).
-		await runtime.reloadSkills();
-
-		// Trigger the skill and verify the dependency warning appears
-		await runtime.chat({ workspaceId: TEST_WORKSPACE_ID, message: "process data for me" });
-		expect(getSystem()).toContain("You are a data processor");
-		expect(getSystem()).toContain("Missing dependencies");
-		expect(getSystem()).toContain("@nonexistent/bundle");
-
-		// Clean up
-		await callTool(runtime, "skills__delete", { id: skillPath });
 
 		await runtime.shutdown();
 	});
@@ -273,7 +210,7 @@ describe("skill lifecycle (end-to-end)", () => {
 			manifest: {
 				name: "row-fixture",
 				description: "Fixture for list-rows test",
-				type: "skill",
+				loadingStrategy: "dynamic",
 				priority: 50,
 			},
 			body: "Body.",
@@ -310,12 +247,9 @@ describe("skill lifecycle (end-to-end)", () => {
 			manifest: {
 				name: "bad-priority",
 				description: "Should be rejected",
-				type: "skill",
+				loadingStrategy: "dynamic",
 				priority: 5,
-				metadata: {
-					triggers: ["bad priority"],
-					keywords: ["bad", "priority"],
-				},
+				triggers: ["bad priority"],
 			},
 			body: "This should never be saved.",
 		});

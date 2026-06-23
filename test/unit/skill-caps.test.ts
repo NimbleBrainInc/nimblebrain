@@ -20,15 +20,14 @@ afterAll(() => {
 });
 
 function rawSkill(name: string, body: string): string {
-  return `---\nname: ${name}\ndescription: d\nversion: 1.0.0\n---\n${body}`;
+  return `---\nname: ${name}\ndescription: d\n---\n${body}`;
 }
 
 describe("per-skill body cap", () => {
   const bigManifest: SkillManifest = {
     name: "big",
     description: "d",
-    version: "1.0.0",
-    type: "skill",
+    loadingStrategy: "dynamic",
     priority: 50,
     status: "active",
   };
@@ -63,8 +62,7 @@ describe("authoring round-trip preserves the full stored body", () => {
   const manifest: SkillManifest = {
     name: "big",
     description: "d",
-    version: "1.0.0",
-    type: "skill",
+    loadingStrategy: "dynamic",
     priority: 50,
     status: "active",
   };

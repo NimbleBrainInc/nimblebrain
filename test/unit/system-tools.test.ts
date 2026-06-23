@@ -682,12 +682,12 @@ describe("ConfirmationGate", () => {
 
 describe("status tool — scope: skills", () => {
 	const coreSkill: Skill = {
-		manifest: { name: "soul", description: "Identity", version: "1.0.0", type: "context", priority: 0 },
+		manifest: { name: "soul", description: "Identity", loadingStrategy: "always", priority: 0, status: "active" },
 		body: "You are helpful.",
 		sourcePath: "/src/skills/core/soul.md",
 	};
 	const userContextSkill: Skill = {
-		manifest: { name: "spanish", description: "Respond in Spanish", version: "1.0.0", type: "context", priority: 20 },
+		manifest: { name: "spanish", description: "Respond in Spanish", loadingStrategy: "always", priority: 20, status: "active" },
 		body: "Always respond in Spanish.",
 		sourcePath: "/home/.nimblebrain/skills/spanish.md",
 	};
@@ -695,11 +695,10 @@ describe("status tool — scope: skills", () => {
 		manifest: {
 			name: "compliance",
 			description: "Compliance reviewer",
-			version: "1.0.0",
-			type: "skill",
+			loadingStrategy: "dynamic",
 			priority: 50,
-			requiresBundles: ["@acme/policy-search"],
-			metadata: { keywords: ["compliance"], triggers: ["check compliance"], },
+			status: "active",
+			triggers: ["check compliance"],
 		},
 		body: "Check policy docs first.",
 		sourcePath: "/home/.nimblebrain/skills/compliance.md",
@@ -752,55 +751,27 @@ describe("status tool — scope: skills", () => {
 		expect(extractText(result.content)).toContain("priority 20");
 	});
 
-	it("shows per-request Layer-3 workspace/user skills (regression: status read a boot cache)", async () => {
+	it("shows workspace/user context skills (regression: status read a boot cache)", async () => {
+		// A workspace-tier `always` skill composes into the context channel and is
+		// surfaced via describeRequestSkills().context — not the Layer-3 set.
 		const workspaceSkill: Skill = {
 			manifest: {
 				name: "team-voice",
 				description: "Team voice rules",
-				version: "1.0.0",
-				type: "context",
+				loadingStrategy: "always",
 				priority: 30,
+				status: "active",
 				scope: "workspace",
 			},
 			body: "Match the team voice.",
 			sourcePath: "/home/.nimblebrain/workspaces/ws_test/skills/team-voice.md",
 		};
-		const source = await makeStatusSource({ context: [coreSkill], matchable: [] }, undefined, [
-			{ skill: workspaceSkill, loadedBy: "always", reason: "loading_strategy: always" },
-		]);
+		const source = await makeStatusSource({ context: [coreSkill, workspaceSkill], matchable: [] });
 		const result = await source.execute("status", { scope: "skills" });
 		expect(result.isError).toBe(false);
 		const text = extractText(result.content);
-		expect(text).toContain("Workspace & User Skills (always loaded)");
+		expect(text).toContain("User Context Skills (always active)");
 		expect(text).toContain("team-voice");
-		expect(text).toContain("workspace");
-	});
-
-	it("lists a skill present in both boot context and the Layer-3 set exactly once", async () => {
-		// A boot-context skill (non-core) whose name also surfaces in the
-		// per-request Layer-3 set must render once — under the Layer-3 section,
-		// not duplicated in "User Context". Guards the userContext dedup branch.
-		const dup: Skill = {
-			manifest: {
-				name: "dual-listed",
-				description: "Appears in both sources",
-				version: "1.0.0",
-				type: "context",
-				priority: 25,
-				scope: "workspace",
-			},
-			body: "Body.",
-			sourcePath: "/home/.nimblebrain/workspaces/ws_test/skills/dual-listed.md",
-		};
-		const source = await makeStatusSource({ context: [coreSkill, dup], matchable: [] }, undefined, [
-			{ skill: dup, loadedBy: "always", reason: "loading_strategy: always" },
-		]);
-		const result = await source.execute("status", { scope: "skills" });
-		expect(result.isError).toBe(false);
-		const text = extractText(result.content);
-		expect(text.split("dual-listed").length - 1).toBe(1);
-		expect(text).toContain("Workspace & User Skills (always loaded)");
-		expect(text).not.toContain("User Context");
 	});
 
 	it("shows a core skill that also enters the Layer-3 set once, under Core", async () => {
@@ -842,19 +813,6 @@ describe("status tool — scope: skills", () => {
 		expect(result.isError).toBe(true);
 	});
 
-	it("shows dependency as installed when bundle exists", async () => {
-		const lifecycle = { getInstance: (name: string, _wsId: string) => name === "policy-search" ? { status: "running" } : null };
-		const source = await makeStatusSource({ context: [], matchable: [matchableSkill] }, lifecycle);
-		const result = await source.execute("status", { scope: "skills" });
-		expect(extractText(result.content)).toContain("@acme/policy-search (installed)");
-	});
-
-	it("shows dependency as missing when bundle not installed", async () => {
-		const lifecycle = { getInstance: () => null };
-		const source = await makeStatusSource({ context: [], matchable: [matchableSkill] }, lifecycle);
-		const result = await source.execute("status", { scope: "skills" });
-		expect(extractText(result.content)).toContain("@acme/policy-search (missing)");
-	});
 });
 
 // ---------------------------------------------------------------------------

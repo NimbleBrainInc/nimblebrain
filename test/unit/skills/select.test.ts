@@ -1,9 +1,9 @@
 /**
- * Phase 2 — Layer 3 selection tests.
+ * Layer 3 selection + role partition.
  *
- * `selectLayer3Skills` is a pure function: skill list + active tools →
- * selected skills with reason metadata. These tests construct real `Skill`
- * fixtures (no mocking) and assert observable selection + ordering behavior.
+ * `selectLayer3Skills` is a pure function: `dynamic` skills + active tools →
+ * the tool-affinity-matched subset. `always` skills are NOT selected here —
+ * they compose into the context channel (see `partitionSkillsByRole`).
  */
 
 import { describe, expect, test } from "bun:test";
@@ -12,19 +12,14 @@ import {
   selectLayer3Skills,
   toolMatches,
 } from "../../../src/skills/select.ts";
-import type {
-  Skill,
-  SkillLoadingStrategy,
-  SkillStatus,
-  SkillType,
-} from "../../../src/skills/types.ts";
+import type { Skill, SkillLoadingStrategy, SkillStatus } from "../../../src/skills/types.ts";
 
 interface SkillFixtureOptions {
   name: string;
-  type?: SkillType;
   priority?: number;
   loadingStrategy?: SkillLoadingStrategy;
-  appliesToTools?: string[];
+  toolAffinity?: string[];
+  triggers?: string[];
   status?: SkillStatus;
   sourcePath?: string;
 }
@@ -34,12 +29,11 @@ function makeSkill(opts: SkillFixtureOptions): Skill {
     manifest: {
       name: opts.name,
       description: `${opts.name} description`,
-      version: "1.0.0",
-      type: opts.type ?? "context",
+      loadingStrategy: opts.loadingStrategy ?? "dynamic",
       priority: opts.priority ?? 50,
-      loadingStrategy: opts.loadingStrategy,
-      appliesToTools: opts.appliesToTools,
-      status: opts.status,
+      status: opts.status ?? "active",
+      ...(opts.toolAffinity ? { toolAffinity: opts.toolAffinity } : {}),
+      ...(opts.triggers ? { triggers: opts.triggers } : {}),
     },
     body: `# ${opts.name}\n`,
     sourcePath: opts.sourcePath ?? `/virtual/${opts.name}.md`,
@@ -66,9 +60,15 @@ describe("toolMatches", () => {
   });
 
   test("exact pattern matches only its exact name", () => {
-    expect(toolMatches("synapse-collateral__patch_source", "synapse-collateral__patch_source")).toBe(true);
-    expect(toolMatches("synapse-collateral__patch_sources", "synapse-collateral__patch_source")).toBe(false);
-    expect(toolMatches("synapse-collateral__set_source", "synapse-collateral__patch_source")).toBe(false);
+    expect(toolMatches("synapse-collateral__patch_source", "synapse-collateral__patch_source")).toBe(
+      true,
+    );
+    expect(toolMatches("synapse-collateral__patch_sources", "synapse-collateral__patch_source")).toBe(
+      false,
+    );
+    expect(toolMatches("synapse-collateral__set_source", "synapse-collateral__patch_source")).toBe(
+      false,
+    );
   });
 
   test("empty pattern returns false", () => {
@@ -77,47 +77,12 @@ describe("toolMatches", () => {
   });
 });
 
-describe("selectLayer3Skills — `always` strategy", () => {
-  test("active + always → included with `loadedBy: \"always\"`", () => {
-    const skill = makeSkill({
-      name: "voice-rules",
-      loadingStrategy: "always",
-      status: "active",
-    });
-    const result = selectLayer3Skills({ skills: [skill], activeTools: [] });
-    expect(result).toHaveLength(1);
-    expect(result[0]?.loadedBy).toBe("always");
-    expect(result[0]?.reason).toBe("loading_strategy: always");
-    expect(result[0]?.skill).toBe(skill);
-  });
-
-  test("disabled status → not included", () => {
-    const skill = makeSkill({
-      name: "disabled-skill",
-      loadingStrategy: "always",
-      status: "disabled",
-    });
-    const result = selectLayer3Skills({ skills: [skill], activeTools: [] });
-    expect(result).toHaveLength(0);
-  });
-
-  test("undefined status is treated as active", () => {
-    const skill = makeSkill({
-      name: "no-status",
-      loadingStrategy: "always",
-    });
-    const result = selectLayer3Skills({ skills: [skill], activeTools: [] });
-    expect(result).toHaveLength(1);
-  });
-});
-
-describe("selectLayer3Skills — `tool_affined` strategy", () => {
+describe("selectLayer3Skills — dynamic + tool-affinity", () => {
   test("matching tool → included, reason names matched pattern", () => {
     const skill = makeSkill({
       name: "collateral-helper",
-      loadingStrategy: "tool_affined",
-      appliesToTools: ["synapse-collateral__*"],
-      status: "active",
+      loadingStrategy: "dynamic",
+      toolAffinity: ["synapse-collateral__*"],
     });
     const result = selectLayer3Skills({
       skills: [skill],
@@ -125,203 +90,113 @@ describe("selectLayer3Skills — `tool_affined` strategy", () => {
     });
     expect(result).toHaveLength(1);
     expect(result[0]?.loadedBy).toBe("tool_affinity");
-    expect(result[0]?.reason).toBe("applies_to_tools matched synapse-collateral__*");
+    expect(result[0]?.reason).toBe("tool-affinity matched synapse-collateral__*");
   });
 
   test("multiple matched patterns are joined in reason", () => {
     const skill = makeSkill({
       name: "multi-match",
-      loadingStrategy: "tool_affined",
-      appliesToTools: ["synapse-collateral__*", "*__patch_source", "unrelated__*"],
-      status: "active",
+      loadingStrategy: "dynamic",
+      toolAffinity: ["synapse-collateral__*", "*__patch_source", "unrelated__*"],
     });
     const result = selectLayer3Skills({
       skills: [skill],
       activeTools: ["synapse-collateral__patch_source"],
     });
     expect(result).toHaveLength(1);
-    expect(result[0]?.reason).toBe(
-      "applies_to_tools matched synapse-collateral__*, *__patch_source",
-    );
+    expect(result[0]?.reason).toBe("tool-affinity matched synapse-collateral__*, *__patch_source");
   });
 
   test("no matching tool → not included", () => {
     const skill = makeSkill({
       name: "collateral-helper",
-      loadingStrategy: "tool_affined",
-      appliesToTools: ["synapse-collateral__*"],
-      status: "active",
+      loadingStrategy: "dynamic",
+      toolAffinity: ["synapse-collateral__*"],
     });
-    const result = selectLayer3Skills({
-      skills: [skill],
-      activeTools: ["synapse-crm__contact"],
-    });
+    const result = selectLayer3Skills({ skills: [skill], activeTools: ["synapse-crm__contact"] });
     expect(result).toHaveLength(0);
   });
 
-  test("empty appliesToTools → not included, no error", () => {
-    const empty = makeSkill({
-      name: "empty",
-      loadingStrategy: "tool_affined",
-      appliesToTools: [],
-      status: "active",
-    });
-    const missing = makeSkill({
-      name: "missing",
-      loadingStrategy: "tool_affined",
-      status: "active",
-    });
-    const result = selectLayer3Skills({
-      skills: [empty, missing],
-      activeTools: ["synapse-collateral__patch_source"],
-    });
+  test("dynamic with no tool-affinity → catalog-only, not selected", () => {
+    const skill = makeSkill({ name: "catalog-only", loadingStrategy: "dynamic" });
+    const result = selectLayer3Skills({ skills: [skill], activeTools: ["foo__bar"] });
     expect(result).toHaveLength(0);
   });
 
-  test("`*` pattern matches any active tool when activeTools is non-empty", () => {
+  test("`always` skills are NOT selected here (they compose into the context channel)", () => {
+    const skill = makeSkill({ name: "voice", loadingStrategy: "always" });
+    const result = selectLayer3Skills({ skills: [skill], activeTools: ["foo__bar"] });
+    expect(result).toHaveLength(0);
+  });
+
+  test("disabled dynamic skill → not included", () => {
     const skill = makeSkill({
-      name: "wildcard",
-      loadingStrategy: "tool_affined",
-      appliesToTools: ["*"],
-      status: "active",
+      name: "off",
+      loadingStrategy: "dynamic",
+      toolAffinity: ["foo__*"],
+      status: "disabled",
     });
-    const result = selectLayer3Skills({
-      skills: [skill],
-      activeTools: ["synapse-crm__contact"],
-    });
-    expect(result).toHaveLength(1);
-    expect(result[0]?.loadedBy).toBe("tool_affinity");
-  });
-
-  test("`*` pattern with empty activeTools does NOT match", () => {
-    const skill = makeSkill({
-      name: "wildcard",
-      loadingStrategy: "tool_affined",
-      appliesToTools: ["*"],
-      status: "active",
-    });
-    const result = selectLayer3Skills({ skills: [skill], activeTools: [] });
-    expect(result).toHaveLength(0);
-  });
-});
-
-describe("selectLayer3Skills — strategy resolution", () => {
-  test("skill without loadingStrategy is skipped (legacy path)", () => {
-    const skill = makeSkill({ name: "legacy" });
-    const result = selectLayer3Skills({
-      skills: [skill],
-      activeTools: ["foo__bar"],
-    });
+    const result = selectLayer3Skills({ skills: [skill], activeTools: ["foo__bar"] });
     expect(result).toHaveLength(0);
   });
 
-  test("retrieval strategy is silently skipped (Phase 6)", () => {
-    const skill = makeSkill({
-      name: "future-retrieval",
-      loadingStrategy: "retrieval",
-      status: "active",
-    });
-    expect(() =>
-      selectLayer3Skills({ skills: [skill], activeTools: [] }),
-    ).not.toThrow();
-    const result = selectLayer3Skills({ skills: [skill], activeTools: [] });
-    expect(result).toHaveLength(0);
+  test("`*` matches any active tool when non-empty; not when empty", () => {
+    const skill = makeSkill({ name: "wild", loadingStrategy: "dynamic", toolAffinity: ["*"] });
+    expect(
+      selectLayer3Skills({ skills: [skill], activeTools: ["synapse-crm__contact"] }),
+    ).toHaveLength(1);
+    expect(selectLayer3Skills({ skills: [skill], activeTools: [] })).toHaveLength(0);
   });
 
-  test("explicit strategy is silently skipped (Phase 7)", () => {
-    const skill = makeSkill({
-      name: "future-explicit",
-      loadingStrategy: "explicit",
-      status: "active",
-    });
-    expect(() =>
-      selectLayer3Skills({ skills: [skill], activeTools: [] }),
-    ).not.toThrow();
-    const result = selectLayer3Skills({ skills: [skill], activeTools: [] });
-    expect(result).toHaveLength(0);
+  test("included skills are sorted by priority ascending", () => {
+    const skills = [50, 15, 99, 20].map((p) =>
+      makeSkill({ name: `p${p}`, loadingStrategy: "dynamic", toolAffinity: ["*"], priority: p }),
+    );
+    const result = selectLayer3Skills({ skills, activeTools: ["x__y"] });
+    expect(result.map((s) => s.skill.manifest.name)).toEqual(["p15", "p20", "p50", "p99"]);
   });
-});
 
-describe("selectLayer3Skills — mixed input + ordering", () => {
-  test("mixed list of 5 skills produces expected included set", () => {
+  test("mixed pool: only dynamic + matching affinity is selected", () => {
     const skills: Skill[] = [
-      // included (always, active)
-      makeSkill({
-        name: "always-active",
-        loadingStrategy: "always",
-        status: "active",
-        priority: 30,
-      }),
-      // excluded (always, disabled)
-      makeSkill({
-        name: "always-disabled",
-        loadingStrategy: "always",
-        status: "disabled",
-        priority: 20,
-      }),
-      // included (tool_affined, matches)
+      makeSkill({ name: "always-active", loadingStrategy: "always", priority: 30 }),
       makeSkill({
         name: "tool-match",
-        loadingStrategy: "tool_affined",
-        appliesToTools: ["synapse-collateral__*"],
-        status: "active",
+        loadingStrategy: "dynamic",
+        toolAffinity: ["synapse-collateral__*"],
         priority: 40,
       }),
-      // excluded (tool_affined, no match)
       makeSkill({
         name: "tool-nomatch",
-        loadingStrategy: "tool_affined",
-        appliesToTools: ["synapse-crm__*"],
-        status: "active",
+        loadingStrategy: "dynamic",
+        toolAffinity: ["synapse-crm__*"],
         priority: 25,
       }),
-      // excluded (no strategy)
-      makeSkill({
-        name: "no-strategy",
-        priority: 15,
-      }),
+      makeSkill({ name: "catalog-only", loadingStrategy: "dynamic", priority: 15 }),
     ];
     const result = selectLayer3Skills({
       skills,
       activeTools: ["synapse-collateral__patch_source"],
     });
-    const names = result.map((s) => s.skill.manifest.name);
-    expect(names).toEqual(["always-active", "tool-match"]);
-  });
-
-  test("included skills are returned sorted by priority ascending", () => {
-    const skills: Skill[] = [
-      makeSkill({ name: "p50", loadingStrategy: "always", status: "active", priority: 50 }),
-      makeSkill({ name: "p15", loadingStrategy: "always", status: "active", priority: 15 }),
-      makeSkill({ name: "p99", loadingStrategy: "always", status: "active", priority: 99 }),
-      makeSkill({ name: "p20", loadingStrategy: "always", status: "active", priority: 20 }),
-    ];
-    const result = selectLayer3Skills({ skills, activeTools: [] });
-    expect(result.map((s) => s.skill.manifest.name)).toEqual([
-      "p15",
-      "p20",
-      "p50",
-      "p99",
-    ]);
+    expect(result.map((s) => s.skill.manifest.name)).toEqual(["tool-match"]);
   });
 });
 
 describe("partitionSkillsByRole", () => {
-  test("routes by `type`: context → context channel, skill → capability channel", () => {
+  test("routes by loading-strategy: always → context, dynamic → capability", () => {
     const pool: Skill[] = [
-      makeSkill({ name: "soul", type: "context", priority: 0 }),
-      makeSkill({ name: "tool-helper", type: "skill", loadingStrategy: "tool_affined" }),
-      makeSkill({ name: "voice", type: "context", priority: 30 }),
+      makeSkill({ name: "soul", loadingStrategy: "always", priority: 0 }),
+      makeSkill({ name: "tool-helper", loadingStrategy: "dynamic", toolAffinity: ["x__*"] }),
+      makeSkill({ name: "voice", loadingStrategy: "always", priority: 30 }),
     ];
     const { context, capability } = partitionSkillsByRole(pool);
     expect(context.map((s) => s.manifest.name)).toEqual(["soul", "voice"]);
     expect(capability.map((s) => s.manifest.name)).toEqual(["tool-helper"]);
   });
 
-  test("the two sets are disjoint — no skill appears in both (no de-dup needed)", () => {
+  test("the two sets are disjoint — no skill appears in both", () => {
     const pool: Skill[] = [
-      makeSkill({ name: "ctx", type: "context" }),
-      makeSkill({ name: "cap", type: "skill" }),
+      makeSkill({ name: "ctx", loadingStrategy: "always" }),
+      makeSkill({ name: "cap", loadingStrategy: "dynamic" }),
     ];
     const { context, capability } = partitionSkillsByRole(pool);
     const ctxNames = new Set(context.map((s) => s.manifest.name));
@@ -329,11 +204,9 @@ describe("partitionSkillsByRole", () => {
   });
 
   test("context channel is sorted by priority ascending", () => {
-    const pool: Skill[] = [
-      makeSkill({ name: "p50", type: "context", priority: 50 }),
-      makeSkill({ name: "p0", type: "context", priority: 0 }),
-      makeSkill({ name: "p20", type: "context", priority: 20 }),
-    ];
+    const pool: Skill[] = [50, 0, 20].map((p) =>
+      makeSkill({ name: `p${p}`, loadingStrategy: "always", priority: p }),
+    );
     expect(partitionSkillsByRole(pool).context.map((s) => s.manifest.name)).toEqual([
       "p0",
       "p20",
@@ -341,26 +214,19 @@ describe("partitionSkillsByRole", () => {
     ]);
   });
 
-  test("disabled context skills are dropped from the always-on channel", () => {
+  test("disabled always skills are dropped from the context channel", () => {
     const pool: Skill[] = [
-      makeSkill({ name: "active-ctx", type: "context", status: "active" }),
-      makeSkill({ name: "off-ctx", type: "context", status: "disabled" }),
-      makeSkill({ name: "no-status-ctx", type: "context" }),
+      makeSkill({ name: "active-ctx", loadingStrategy: "always", status: "active" }),
+      makeSkill({ name: "off-ctx", loadingStrategy: "always", status: "disabled" }),
     ];
-    expect(partitionSkillsByRole(pool).context.map((s) => s.manifest.name).sort()).toEqual([
-      "active-ctx",
-      "no-status-ctx",
-    ]);
+    expect(partitionSkillsByRole(pool).context.map((s) => s.manifest.name)).toEqual(["active-ctx"]);
   });
 
-  test("a workspace/user-tier context skill (non-boot sourcePath) still routes to context", () => {
-    // The guarantee: workspace/user context skills reach the prompt via the
-    // context channel regardless of where on disk they live — they are NOT
-    // gated to the boot-time set.
+  test("a workspace/user-tier always skill (non-boot sourcePath) still routes to context", () => {
     const pool: Skill[] = [
       makeSkill({
         name: "ws-rule",
-        type: "context",
+        loadingStrategy: "always",
         sourcePath: "/work/workspaces/ws_x/skills/ws-rule.md",
       }),
     ];

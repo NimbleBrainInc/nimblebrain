@@ -1,6 +1,5 @@
 import { NoopEventSink } from "../adapters/noop-events.ts";
 import type { BundleLifecycleManager } from "../bundles/lifecycle.ts";
-import { deriveServerName } from "../bundles/paths.ts";
 import type { BundleManifest } from "../bundles/types.ts";
 import { isToolEnabled, type ResolvedFeatures } from "../config/features.ts";
 import type { ConfirmationGate } from "../config/privilege.ts";
@@ -55,7 +54,10 @@ export async function createSystemTools(
   // `nb__manage_app`. The tool was removed; keep the positional slot stable
   // (the file's reserved-slot convention) so every call site's arity holds.
   _gate?: ConfirmationGate,
-  lifecycle?: BundleLifecycleManager,
+  // Reserved slot — was the lifecycle manager for skill `requires-bundles`
+  // dependency checks (removed in the manifest cutover). Keep the positional
+  // slot stable so call-site arity holds.
+  _lifecycle?: BundleLifecycleManager,
   delegateCtx?: DelegateContext,
   // skillDir + reloadSkills were here for the legacy `nb__manage_skill`
   // tool. Mutation now lives in the dedicated `nb__skills` source — keep
@@ -250,7 +252,7 @@ export async function createSystemTools(
       },
     },
     createReadResourceTool(getRegistry),
-    createStatusTool(getRegistry, getSkills, lifecycle, runtime),
+    createStatusTool(getRegistry, getSkills, runtime),
   ];
 
   if (delegateCtx) {
@@ -411,7 +413,6 @@ function createReadResourceTool(getRegistry: () => ToolRegistry): InProcessTool 
 function createStatusTool(
   getRegistry: () => ToolRegistry,
   getSkills?: GetSkillsFn,
-  lifecycle?: BundleLifecycleManager,
   runtime?: Runtime,
 ): InProcessTool {
   return {
@@ -447,7 +448,7 @@ function createStatusTool(
           if (!runtime || !wsId) {
             return { content: textContent("Skill status not available."), isError: false };
           }
-          return await handleSkillStatus(runtime, getSkills, lifecycle, nameQuery, wsId);
+          return await handleSkillStatus(runtime, getSkills, nameQuery, wsId);
         }
 
         if (scope === "config") {
@@ -515,7 +516,6 @@ async function handleBundleStatus(
 async function handleSkillStatus(
   runtime: Runtime,
   getSkills: GetSkillsFn | undefined,
-  lifecycle: BundleLifecycleManager | undefined,
   nameQuery: string | null,
   wsId: string,
 ): Promise<ToolResult> {
@@ -540,7 +540,7 @@ async function handleSkillStatus(
         isError: true,
       };
     }
-    return { content: textContent(formatSkillDetail(skill, lifecycle, wsId)), isError: false };
+    return { content: textContent(formatSkillDetail(skill)), isError: false };
   }
 
   // Overview: categorize all skills
@@ -555,9 +555,9 @@ async function handleSkillStatus(
   // the Layer-3 sections — Core is authoritative. Deduped BY NAME (not by a
   // `/skills/core/` path marker), so a non-core skill that merely lives under
   // a `core/` subfolder keeps its own name and is never wrongly hidden.
-  const layer3Visible = layer3.filter((s) => !coreNames.has(s.skill.manifest.name));
-  const alwaysLoaded = layer3Visible.filter((s) => s.loadedBy === "always");
-  const toolAffined = layer3Visible.filter((s) => s.loadedBy === "tool_affinity");
+  // Layer 3 is the conditional channel: only tool-affinity skills load here.
+  // `always` skills compose into the context channel (shown in the sections above).
+  const toolAffined = layer3.filter((s) => !coreNames.has(s.skill.manifest.name));
   const sections: string[] = [];
 
   if (coreContext.length > 0) {
@@ -570,11 +570,6 @@ async function handleSkillStatus(
     for (const s of userContext) lines.push(formatSkillSummary(s));
     sections.push(lines.join("\n"));
   }
-  if (alwaysLoaded.length > 0) {
-    const lines = ["## Workspace & User Skills (always loaded)"];
-    for (const s of alwaysLoaded) lines.push(formatLayer3Summary(s));
-    sections.push(lines.join("\n"));
-  }
   if (toolAffined.length > 0) {
     const lines = ["## Tool-Affined Skills (active)"];
     for (const s of toolAffined) lines.push(formatLayer3Summary(s));
@@ -582,7 +577,7 @@ async function handleSkillStatus(
   }
   if (matchable.length > 0) {
     const lines = ["## Matchable Skills (triggered)"];
-    for (const s of matchable) lines.push(formatMatchableSummary(s, lifecycle, wsId));
+    for (const s of matchable) lines.push(formatMatchableSummary(s));
     sections.push(lines.join("\n"));
   }
 
@@ -655,7 +650,7 @@ async function handleOverviewStatus(
 
 function formatSkillSummary(skill: Skill): string {
   const m = skill.manifest;
-  return `- ${m.name} (${m.type}, priority ${m.priority}) — ${m.description || "(no description)"}`;
+  return `- ${m.name} (${m.loadingStrategy}, priority ${m.priority}) — ${m.description || "(no description)"}`;
 }
 
 /** Summary line for a per-request Layer-3 skill, including why it loaded. */
@@ -665,65 +660,34 @@ function formatLayer3Summary(selected: SelectedSkill): string {
   return `- ${m.name} (${scope}, priority ${m.priority}) — ${m.description || "(no description)"}\n  Loaded: ${selected.reason}`;
 }
 
-function formatMatchableSummary(
-  skill: Skill,
-  lifecycle: BundleLifecycleManager | undefined,
-  wsId: string,
-): string {
+function formatMatchableSummary(skill: Skill): string {
   const m = skill.manifest;
   const lines = [
-    `- ${m.name} (${m.type}, priority ${m.priority}) — ${m.description || "(no description)"}`,
+    `- ${m.name} (${m.loadingStrategy}, priority ${m.priority}) — ${m.description || "(no description)"}`,
   ];
-  const triggers = m.metadata?.triggers ?? [];
+  const triggers = m.triggers ?? [];
   if (triggers.length > 0) {
     lines.push(`  Triggers: ${triggers.map((t) => `"${t}"`).join(", ")}`);
-  }
-  const deps = m.requiresBundles;
-  if (deps && deps.length > 0) {
-    const depStatuses = deps.map((dep) => {
-      const serverName = deriveServerName(dep);
-      const installed = lifecycle?.getInstance(serverName, wsId) != null;
-      return `${dep} (${installed ? "installed" : "missing"})`;
-    });
-    lines.push(`  Dependencies: ${depStatuses.join(", ")}`);
   }
   return lines.join("\n");
 }
 
-function formatSkillDetail(
-  skill: Skill,
-  lifecycle: BundleLifecycleManager | undefined,
-  wsId: string,
-): string {
+function formatSkillDetail(skill: Skill): string {
   const m = skill.manifest;
   const isCore = skill.sourcePath.includes(CORE_SKILL_MARKER);
   const lines = [
-    `**${m.name}** (${m.type}${isCore ? ", core — immutable" : ""})`,
+    `**${m.name}** (${m.loadingStrategy}${isCore ? ", core — immutable" : ""})`,
     `Description: ${m.description || "(none)"}`,
-    `Version: ${m.version}`,
     `Priority: ${m.priority}`,
     `Source: ${skill.sourcePath}`,
   ];
-
+  if (m.version) lines.push(`Version: ${m.version}`);
   if (m.allowedTools && m.allowedTools.length > 0)
     lines.push(`Allowed tools: ${m.allowedTools.join(", ")}`);
-  if (m.metadata?.triggers && m.metadata.triggers.length > 0)
-    lines.push(`Triggers: ${m.metadata.triggers.map((t) => `"${t}"`).join(", ")}`);
-  if (m.metadata?.keywords && m.metadata.keywords.length > 0)
-    lines.push(`Keywords: ${m.metadata.keywords.join(", ")}`);
-  if (m.metadata?.category) lines.push(`Category: ${m.metadata.category}`);
-  if (m.metadata?.tags && m.metadata.tags.length > 0)
-    lines.push(`Tags: ${m.metadata.tags.join(", ")}`);
-
-  const deps = m.requiresBundles;
-  if (deps && deps.length > 0) {
-    const depStatuses = deps.map((dep) => {
-      const serverName = deriveServerName(dep);
-      const installed = lifecycle?.getInstance(serverName, wsId) != null;
-      return `${dep} (${installed ? "installed" : "missing"})`;
-    });
-    lines.push(`Dependencies: ${depStatuses.join(", ")}`);
-  }
+  if (m.toolAffinity && m.toolAffinity.length > 0)
+    lines.push(`Tool affinity: ${m.toolAffinity.join(", ")}`);
+  if (m.triggers && m.triggers.length > 0)
+    lines.push(`Triggers: ${m.triggers.map((t) => `"${t}"`).join(", ")}`);
 
   lines.push("", "---", "", skill.body);
 

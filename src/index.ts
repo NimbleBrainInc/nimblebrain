@@ -74,7 +74,7 @@ export { composeSystemPrompt } from "./prompt/index.ts";
 export type { ChatRequest, ChatResult, RuntimeConfig, TurnUsage } from "./runtime/index.ts";
 // Runtime
 export { Runtime } from "./runtime/index.ts";
-export type { Skill, SkillManifest, SkillMetadata } from "./skills/index.ts";
+export type { Skill, SkillManifest } from "./skills/index.ts";
 // Skills
 export { loadSkillDir, parseSkillContent, parseSkillFile, SkillMatcher } from "./skills/index.ts";
 export type { InProcessTool, Tool, ToolSource } from "./tools/index.ts";
