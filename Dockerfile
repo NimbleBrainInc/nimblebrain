@@ -66,10 +66,14 @@ USER 1000
 
 VOLUME /data
 
+# NB_BUILD_SHA is BAKED — a genuine build fact (which commit produced these
+# bytes), and correct even after the image is promoted-by-retag to a release tag.
+# NB_VERSION is deliberately NOT baked: it's injected at deploy time via the
+# NB_VERSION env, so the same image can be retagged :<sha> -> :vX.Y.Z and shipped
+# byte-for-byte with no rebuild (see release.yml). When NB_VERSION is unset (local
+# `docker run` / compose) the runtime falls back to package.json.
 ARG BUILD_SHA=""
 ENV NB_BUILD_SHA=$BUILD_SHA
-ARG VERSION=""
-ENV NB_VERSION=$VERSION
 ENV NB_WORK_DIR=/data
 ENV NB_HOST=0.0.0.0
 

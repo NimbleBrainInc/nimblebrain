@@ -1,56 +1,63 @@
 name: Release
 
+# Release the agent runtime + web on a `v*` tag.
+#
+# PROMOTE-BY-RETAG, not rebuild. The tagged commit already merged to main, so
+# ci.yml already built + pushed the staging-verified runtime/web `:<sha>` images to
+# ECR and the staging edge channel ran them. A release therefore RE-TAGS those exact
+# manifests as `:vX.Y.Z` — so prod runs byte-for-byte what staging proved, and
+# releases stop rebuilding (and re-running verify: ci.yml already gated this commit;
+# the source-image-exists guard below is the proof it did).
+#
+#   ECR  (prod deploy)        : retag :<sha> -> :vX.Y.Z (runtime + web) via put-image.
+#   GHCR (public OSS pulls)   : copy the same ECR :<sha> manifests to the GHCR tags
+#                               via `buildx imagetools create` — edge never pushes
+#                               GHCR, so the release distributes there, still no
+#                               rebuild. GA also moves `:latest`.
+#
+# The running version is NOT baked into the image — the deployment injects NB_VERSION
+# via env at deploy time, which is what makes the retag byte-for-byte. Then
+# promote-to-prod dispatches the deploy-config receiver to roll the prod stable channel.
+#
+# Guards: the target ECR repo must be IMMUTABLE, and the `:<sha>` source must exist
+# (if not, the commit never rode staging-edge — fail loud; re-run via
+# workflow_dispatch with rebuild=true for an EMERGENCY rebuild).
+
 on:
   push:
     tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag, e.g. v0.5.1"
+        required: true
+      rebuild:
+        description: "EMERGENCY: rebuild from source instead of promoting the staging-verified image (only for a tag off a commit that never rode staging)"
+        type: boolean
+        default: false
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.inputs.tag || github.ref }}
+  cancel-in-progress: false
 
 permissions:
-  contents: write
-  id-token: write
-  packages: write
-
-# Single source of truth for the bun toolchain version (matches ci.yml).
-# Pinned (not `latest`) for deterministic builds; bump here to upgrade.
-env:
-  BUN_VERSION: "1.3.14"
+  contents: read
 
 jobs:
-  # Each step below runs a `bun run verify:*` subscript; package.json is the
-  # source of truth for what "verify" means. Do not inline individual check
-  # steps here — add them to the matching subscript so local `bun run verify`
-  # stays in parity. (Matches the ci.yml convention.)
-  verify:
-    name: Verify
+  release:
+    name: Promote release images
     runs-on: ubuntu-latest
+    permissions:
+      id-token: write   # AWS OIDC (ECR)
+      contents: read
+      packages: write   # GHCR push
     steps:
+      # Check out the tagged commit (the `ref` covers both triggers). Shallow, same
+      # as ci.yml's build — so `git rev-parse --short HEAD` yields the same 7-char
+      # SHA ci.yml tagged the edge image with.
       - uses: actions/checkout@v6
-      - uses: oven-sh/setup-bun@v2
         with:
-          bun-version: ${{ env.BUN_VERSION }}
-      - name: Install dependencies
-        run: bun install
-      - name: Install web dependencies
-        run: cd web && bun install
-      - name: Install bundle dependencies
-        # verify:test-unit runs test:bundles, which `bun test`s inside each
-        # src/bundles/*/ui package — those need their own deps (dompurify, etc.).
-        # Mirrors ci.yml; without it test:bundles fails "Cannot find package".
-        run: bun run install:bundles
-      - name: Verify (static)
-        run: bun run verify:static
-      - name: Verify (unit + web tests)
-        run: bun run verify:test-unit
-      - name: Integration tests
-        run: bun run test:integration
-
-  build-and-push:
-    name: Build & Push
-    needs: verify
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v6
-      # buildx (docker-container driver) is required for the GitHub Actions
-      # layer cache used by ./.github/actions/build-push-image.
+          ref: ${{ github.event.inputs.tag || github.ref }}
       - uses: docker/setup-buildx-action@v3
       - uses: aws-actions/configure-aws-credentials@v6
         with:
@@ -64,114 +71,188 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      # Compute the full tag list per image up front. `:latest` (GHCR only —
-      # ECR has immutable tags and can't reuse it) is appended for stable
-      # releases. SemVer pre-release tags always contain a hyphen
-      # (v0.4.0-beta.1, v1.0.0-rc.1); GA tags don't — so the hyphen test keeps
-      # `:latest` pointing at the most recent GA release. Building `:latest`
-      # into the push (rather than a post-build `docker tag`) is also required
-      # by the buildx docker-container driver, which never loads the image into
-      # the local daemon for a subsequent retag.
-      - name: Set image tags
-        id: tags
+      - name: Resolve version + source SHA
+        id: r
         run: |
-          VERSION=${GITHUB_REF_NAME}
-          SHA=$(git rev-parse --short HEAD)
-          REG=${{ steps.ecr.outputs.registry }}
-          # Strip the leading `v` for injection into the running binary
-          # (package.json-style versions have no `v` prefix).
-          PKG_VERSION=${VERSION#v}
+          set -euo pipefail
+          VERSION="${{ github.event.inputs.tag || github.ref_name }}"
+          # Require vX.Y.Z (optional -prerelease / +build). A garbage version would
+          # burn an immutable tag, so reject it before anything is written.
+          if ! [[ "$VERSION" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([-+.][0-9A-Za-z.-]+)?$ ]]; then
+            echo "::error::Tag '$VERSION' is not vX.Y.Z (with optional -prerelease)"; exit 1
+          fi
+          SHA="$(git rev-parse --short HEAD)"
+          # Pre-release semver tags contain a hyphen (v0.5.0-rc.1); GA tags don't.
+          # Only GA moves GHCR :latest.
+          case "$VERSION" in *-*) PRERELEASE=true ;; *) PRERELEASE=false ;; esac
+          {
+            echo "version=$VERSION"
+            echo "sha=$SHA"
+            echo "prerelease=$PRERELEASE"
+          } >> "$GITHUB_OUTPUT"
 
-          # ECR gets the :VERSION tag ONLY. The :SHA tag in ECR is owned by the
-          # edge pipeline (it pushes nimblebrain-{runtime,web}:<sha> on every main
-          # build for the staging edge channel), and ECR tags are immutable — so a
-          # release re-pushing :SHA collides ("tag already exists ... immutable").
-          # GHCR keeps both :VERSION and :SHA (GHCR is mutable + edge doesn't push
-          # there); the runbook's dual-addressability check (§4b) reads GHCR.
-          #
-          # GHCR runtime is `nimblebrain-runtime` (canonical, matches ECR + web
-          # naming); `nimblebrain` is kept as a transitional alias so existing
-          # OSS pulls don't break. Drop the alias once consumers have moved.
-          platform_tags=(
+      # ── EMERGENCY rebuild path (workflow_dispatch + rebuild=true) ──────────────
+      # Build from source instead of promoting the staging-verified image. Loud on
+      # purpose — prod won't be byte-for-byte. Pushes the same ECR + GHCR tag set the
+      # normal path produces. NB_VERSION is still NOT baked (it's deploy-injected), so
+      # a rebuilt image behaves identically to a retagged one at runtime.
+      - name: Compute rebuild tags (EMERGENCY)
+        if: ${{ github.event.inputs.rebuild == 'true' }}
+        id: rb
+        env:
+          REG: ${{ steps.ecr.outputs.registry }}
+          VERSION: ${{ steps.r.outputs.version }}
+          SHA: ${{ steps.r.outputs.sha }}
+          PRERELEASE: ${{ steps.r.outputs.prerelease }}
+        run: |
+          set -euo pipefail
+          runtime=(
             "$REG/nimblebrain/nimblebrain-runtime:$VERSION"
             "ghcr.io/nimblebraininc/nimblebrain-runtime:$VERSION"
             "ghcr.io/nimblebraininc/nimblebrain-runtime:$SHA"
             "ghcr.io/nimblebraininc/nimblebrain:$VERSION"
             "ghcr.io/nimblebraininc/nimblebrain:$SHA"
           )
-          web_tags=(
+          web=(
             "$REG/nimblebrain/nimblebrain-web:$VERSION"
             "ghcr.io/nimblebraininc/nimblebrain-web:$VERSION"
             "ghcr.io/nimblebraininc/nimblebrain-web:$SHA"
           )
-
-          # Stable releases (no hyphen in the semver tag) also move GHCR :latest.
-          case "$VERSION" in
-            *-*) ;;  # pre-release: leave :latest alone
-            *)
-              platform_tags+=("ghcr.io/nimblebraininc/nimblebrain-runtime:latest")
-              platform_tags+=("ghcr.io/nimblebraininc/nimblebrain:latest")
-              web_tags+=("ghcr.io/nimblebraininc/nimblebrain-web:latest")
-              ;;
-          esac
-
+          if [ "$PRERELEASE" = "false" ]; then
+            runtime+=("ghcr.io/nimblebraininc/nimblebrain-runtime:latest" "ghcr.io/nimblebraininc/nimblebrain:latest")
+            web+=("ghcr.io/nimblebraininc/nimblebrain-web:latest")
+          fi
           {
-            echo "sha=$SHA"
-            echo "pkg_version=$PKG_VERSION"
-            echo "platform_tags<<TAGS_EOF"
-            printf '%s\n' "${platform_tags[@]}"
-            echo "TAGS_EOF"
-            echo "web_tags<<TAGS_EOF"
-            printf '%s\n' "${web_tags[@]}"
-            echo "TAGS_EOF"
+            echo "runtime_tags<<EOF"; printf '%s\n' "${runtime[@]}"; echo "EOF"
+            echo "web_tags<<EOF";     printf '%s\n' "${web[@]}";     echo "EOF"
           } >> "$GITHUB_OUTPUT"
-
-      - name: Build and push platform image
+      - name: Rebuild + push runtime (EMERGENCY)
+        if: ${{ github.event.inputs.rebuild == 'true' }}
         uses: ./.github/actions/build-push-image
         with:
           context: .
           file: Dockerfile
           cache-scope: platform
-          build-args: |
-            BUILD_SHA=${{ steps.tags.outputs.sha }}
-            VERSION=${{ steps.tags.outputs.pkg_version }}
-          tags: ${{ steps.tags.outputs.platform_tags }}
-
-      - name: Build and push web image
+          build-args: BUILD_SHA=${{ steps.r.outputs.sha }}
+          tags: ${{ steps.rb.outputs.runtime_tags }}
+      - name: Rebuild + push web (EMERGENCY)
+        if: ${{ github.event.inputs.rebuild == 'true' }}
         uses: ./.github/actions/build-push-image
         with:
           context: web
           file: web/Dockerfile
           cache-scope: web
-          tags: ${{ steps.tags.outputs.web_tags }}
+          tags: ${{ steps.rb.outputs.web_tags }}
+      - name: Flag emergency rebuild
+        if: ${{ github.event.inputs.rebuild == 'true' }}
+        run: echo "::warning::REBUILT runtime+web for ${{ steps.r.outputs.version }} from source — NOT the staging-verified image. Prod will not be byte-for-byte what staging proved."
+
+      # ── Normal path: promote-by-retag ─────────────────────────────────────────
+      # ECR: retag the staging-verified :<sha> manifest -> :vX.Y.Z for runtime + web,
+      # with three guards (immutable repo / source exists / idempotent).
+      - name: Promote-by-retag in ECR (runtime + web)
+        if: ${{ github.event.inputs.rebuild != 'true' }}
+        env:
+          VERSION: ${{ steps.r.outputs.version }}
+          SRC: ${{ steps.r.outputs.sha }}
+        run: |
+          set -euo pipefail
+          for REPO in nimblebrain/nimblebrain-runtime nimblebrain/nimblebrain-web; do
+            DST="$VERSION"
+
+            # Guard 1: the byte-for-byte promise needs an immutable repo.
+            MUT="$(aws ecr describe-repositories --repository-names "$REPO" --query 'repositories[0].imageTagMutability' --output text)"
+            [ "$MUT" = "IMMUTABLE" ] || { echo "::error::ECR repo $REPO is $MUT, not IMMUTABLE — refusing to promote-by-retag"; exit 1; }
+
+            # Guard 2: the staging-built source image must exist (ci.yml builds it on
+            # main; staging-edge runs it). Absent → this tag is off a commit that
+            # never rode staging.
+            MAN="$(aws ecr batch-get-image --repository-name "$REPO" --image-ids imageTag="$SRC" --query 'images[0].imageManifest' --output text 2>/dev/null || true)"
+            if [ -z "$MAN" ] || [ "$MAN" = "None" ]; then
+              echo "::error::No staging-built image $REPO:$SRC for this commit — it never rode staging-edge. To release anyway, re-run via 'Run workflow' with rebuild=true (and know prod won't be byte-for-byte)."
+              exit 1
+            fi
+
+            # Idempotent: if DST exists, succeed iff it's the same digest we'd promote
+            # (a re-run); fail if it's a DIFFERENT image (re-releasing a version is not
+            # allowed).
+            DSTDIG="$(aws ecr describe-images --repository-name "$REPO" --image-ids imageTag="$DST" --query 'imageDetails[0].imageDigest' --output text 2>/dev/null || true)"
+            if [ -n "$DSTDIG" ] && [ "$DSTDIG" != "None" ]; then
+              SRCDIG="$(aws ecr describe-images --repository-name "$REPO" --image-ids imageTag="$SRC" --query 'imageDetails[0].imageDigest' --output text)"
+              [ "$DSTDIG" = "$SRCDIG" ] && echo "already promoted ($REPO:$DST == $SRC) — nothing to retag" \
+                || { echo "::error::$REPO:$DST already exists with a DIFFERENT digest — refusing to re-release a version"; exit 1; }
+            else
+              aws ecr put-image --repository-name "$REPO" --image-tag "$DST" --image-manifest "$MAN" >/dev/null
+              echo "promoted $REPO:$SRC -> $REPO:$DST (no rebuild)"
+            fi
+          done
+
+      # GHCR: edge never pushes there, so distribute the OSS image by copying the same
+      # ECR :<sha> manifest to the GHCR tags (cross-registry, no rebuild). GA moves
+      # :latest. `nimblebrain` (unscoped) is the transitional alias for the runtime.
+      - name: Distribute to GHCR (imagetools copy, no rebuild)
+        if: ${{ github.event.inputs.rebuild != 'true' }}
+        env:
+          REG: ${{ steps.ecr.outputs.registry }}
+          VERSION: ${{ steps.r.outputs.version }}
+          SHA: ${{ steps.r.outputs.sha }}
+          PRERELEASE: ${{ steps.r.outputs.prerelease }}
+        run: |
+          set -euo pipefail
+          runtime_src="$REG/nimblebrain/nimblebrain-runtime:$SHA"
+          web_src="$REG/nimblebrain/nimblebrain-web:$SHA"
+
+          runtime_tags=(
+            "ghcr.io/nimblebraininc/nimblebrain-runtime:$VERSION"
+            "ghcr.io/nimblebraininc/nimblebrain-runtime:$SHA"
+            "ghcr.io/nimblebraininc/nimblebrain:$VERSION"
+            "ghcr.io/nimblebraininc/nimblebrain:$SHA"
+          )
+          web_tags=(
+            "ghcr.io/nimblebraininc/nimblebrain-web:$VERSION"
+            "ghcr.io/nimblebraininc/nimblebrain-web:$SHA"
+          )
+          if [ "$PRERELEASE" = "false" ]; then
+            runtime_tags+=("ghcr.io/nimblebraininc/nimblebrain-runtime:latest" "ghcr.io/nimblebraininc/nimblebrain:latest")
+            web_tags+=("ghcr.io/nimblebraininc/nimblebrain-web:latest")
+          fi
+
+          rt_args=(); for t in "${runtime_tags[@]}"; do rt_args+=(-t "$t"); done
+          web_args=(); for t in "${web_tags[@]}"; do web_args+=(-t "$t"); done
+          docker buildx imagetools create "${rt_args[@]}" "$runtime_src"
+          docker buildx imagetools create "${web_args[@]}" "$web_src"
+          echo "distributed runtime+web $SHA to GHCR as $VERSION"
 
   github-release:
     name: GitHub Release
-    needs: build-and-push
+    needs: release
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@v6
         with:
+          ref: ${{ github.event.inputs.tag || github.ref }}
           fetch-depth: 0
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v3
         with:
+          tag_name: ${{ github.event.inputs.tag || github.ref_name }}
           generate_release_notes: true
-          prerelease: ${{ contains(github.ref_name, '-') }}
+          prerelease: ${{ contains(github.event.inputs.tag || github.ref_name, '-') }}
 
   # Promote the agent's STABLE channel to prod: dispatch the deploy-config repo's
-  # prod-promote receiver (target: agent), which records the prod stable image; the
-  # auto-sync per-tenant ApplicationSet then rolls every `stable` tenant.
-  # Mirrors ci.yml's roll-staging-edge — same App-token gating, the prod-promote App
-  # instead. GA only: pre-releases publish the image but never touch the stable channel.
+  # prod-promote receiver (target: agent), which records the prod stable image tag;
+  # the auto-sync per-tenant ApplicationSet then rolls every `stable` tenant. Mirrors
+  # ci.yml's roll-staging-edge — same App-token gating, the prod-promote App instead.
+  # GA only: pre-releases publish the image but never touch the stable channel.
   # Fully optional: if the App vars/secrets are unset (forks, pre-setup CI) the job
-  # no-ops, so forks stay green. (NB_VERSION is baked at build, so the release rebuilds
-  # rather than promote-by-retag; the image this dispatch points prod at is the one
-  # build-and-push just pushed.)
+  # no-ops, so forks stay green. The image this points prod at is the byte-for-byte
+  # staging-verified one the `release` job just retagged.
   promote-to-prod:
     name: Promote to prod (stable channel)
-    needs: build-and-push
-    if: ${{ !contains(github.ref_name, '-') }}
+    needs: release
+    if: ${{ !contains(github.event.inputs.tag || github.ref_name, '-') }}
     runs-on: ubuntu-latest
     permissions: {}
     steps:
@@ -201,10 +282,11 @@ jobs:
         if: steps.cfg.outputs.enabled == 'true'
         env:
           GH_TOKEN: ${{ steps.token.outputs.token }}
+          VERSION: ${{ github.event.inputs.tag || github.ref_name }}
         run: |
           # -f keeps client_payload values as raw strings (target + version are strings).
           gh api "repos/${{ github.repository_owner }}/${{ vars.DEPLOY_CONFIG_REPO }}/dispatches" \
             -f event_type=prod-image-promoted \
             -f "client_payload[target]=agent" \
-            -f "client_payload[version]=${{ github.ref_name }}"
-          echo "dispatched prod-image-promoted: target=agent version=${{ github.ref_name }}"
+            -f "client_payload[version]=$VERSION"
+          echo "dispatched prod-image-promoted: target=agent version=$VERSION"
