@@ -1,0 +1,112 @@
+import { describe, expect, it, afterAll } from "bun:test";
+import { mkdtempSync, rmSync } from "node:fs";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
+import matter from "gray-matter";
+import { parseSkillContent } from "../../src/skills/loader.ts";
+import { MAX_SKILL_BODY_CHARS } from "../../src/skills/truncate.ts";
+import { readSkill, updateSkill, writeSkill } from "../../src/skills/writer.ts";
+import { MAX_LAYER3_TOTAL_CHARS, selectLayer3Skills } from "../../src/skills/select.ts";
+import type { Skill, SkillManifest } from "../../src/skills/types.ts";
+
+const dirs: string[] = [];
+function tmp(): string {
+  const d = mkdtempSync(join(tmpdir(), "skill-caps-"));
+  dirs.push(d);
+  return d;
+}
+afterAll(() => {
+  for (const d of dirs) rmSync(d, { recursive: true, force: true });
+});
+
+function rawSkill(name: string, body: string): string {
+  return `---\nname: ${name}\ndescription: d\nversion: 1.0.0\n---\n${body}`;
+}
+
+describe("per-skill body cap (parseSkillContent)", () => {
+  it("caps the body for the prompt-load path (default)", () => {
+    const big = "x".repeat(MAX_SKILL_BODY_CHARS * 2);
+    const skill = parseSkillContent(rawSkill("big", big), "big.md");
+    expect(skill).not.toBeNull();
+    expect(skill!.body.length).toBeLessThanOrEqual(MAX_SKILL_BODY_CHARS);
+  });
+
+  it("returns the FULL body when cap is disabled (authoring round-trip)", () => {
+    const big = "x".repeat(MAX_SKILL_BODY_CHARS * 2);
+    const skill = parseSkillContent(rawSkill("big", big), "big.md", { cap: false });
+    expect(skill).not.toBeNull();
+    expect(skill!.body.length).toBe(big.length);
+  });
+});
+
+describe("authoring round-trip preserves the full stored body", () => {
+  const manifest: SkillManifest = {
+    name: "big",
+    description: "d",
+    version: "1.0.0",
+    type: "skill",
+    priority: 50,
+    status: "active",
+  };
+
+  it("readSkill returns the full body even when over the prompt cap", () => {
+    const dir = tmp();
+    const body = "y".repeat(MAX_SKILL_BODY_CHARS * 2);
+    writeSkill(dir, "big", manifest, body);
+    const read = readSkill(dir, "big");
+    expect(read!.body.length).toBe(body.length);
+  });
+
+  it("a frontmatter-only updateSkill does NOT truncate the stored body", () => {
+    const dir = tmp();
+    const body = "z".repeat(MAX_SKILL_BODY_CHARS * 2);
+    writeSkill(dir, "big", manifest, body);
+    // Edit only the description (no new body) — the body must survive intact.
+    updateSkill(dir, "big", { description: "edited" });
+    const onDisk = matter(readFileSync(join(dir, "big.md"), "utf-8")).content.trim();
+    expect(onDisk.length).toBe(body.length);
+  });
+});
+
+describe("aggregate Layer-3 budget eviction (selectLayer3Skills)", () => {
+  function mk(name: string, priority: number, bodyLen: number): Skill {
+    return {
+      manifest: {
+        name,
+        description: "",
+        version: "1.0.0",
+        type: "skill",
+        priority,
+        loadingStrategy: "always",
+        status: "active",
+      },
+      body: "b".repeat(bodyLen),
+      sourcePath: name,
+    };
+  }
+
+  it("drops the lowest-priority skills once the total exceeds the budget", () => {
+    const skills = [
+      mk("p1", 1, 100_000),
+      mk("p2", 2, 100_000),
+      mk("p3", 3, 100_000), // would push total to 300k > 200k
+    ];
+    const selected = selectLayer3Skills({ skills, activeTools: [] });
+    expect(selected.map((s) => s.skill.manifest.name)).toEqual(["p1", "p2"]);
+  });
+
+  it("keeps at least the single highest-priority skill even if it alone exceeds budget", () => {
+    const selected = selectLayer3Skills({
+      skills: [mk("huge", 1, MAX_LAYER3_TOTAL_CHARS + 50_000)],
+      activeTools: [],
+    });
+    expect(selected.map((s) => s.skill.manifest.name)).toEqual(["huge"]);
+  });
+
+  it("keeps all skills when under budget", () => {
+    const skills = [mk("a", 1, 1000), mk("b", 2, 1000), mk("c", 3, 1000)];
+    const selected = selectLayer3Skills({ skills, activeTools: [] });
+    expect(selected).toHaveLength(3);
+  });
+});

@@ -19,6 +19,17 @@
  * Pure function. No I/O. Stable output for stable inputs.
  */
 
+/**
+ * Per-skill body ceiling (chars), applied when a skill body is loaded for the
+ * PROMPT (heading-aware via `truncateMarkdownToBudget`). A backstop so one
+ * oversized skill can't blow the context budget — ~12000 chars ≈ 3000 tokens;
+ * all vendored skills are well under it. Applied at parse for the prompt-load
+ * path; the authoring round-trip (`writer.readSkill` / `listSkills`) bypasses it
+ * (`{ cap: false }`) so editing never truncates the stored file. Also caps the
+ * bundle `skill://<name>/usage` body. Tune against a measured baseline.
+ */
+export const MAX_SKILL_BODY_CHARS = 12_000;
+
 export interface TruncateResult {
   body: string;
   truncated: boolean;

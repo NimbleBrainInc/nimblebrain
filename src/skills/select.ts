@@ -14,6 +14,15 @@ import { bareToolName } from "../tools/namespace.ts";
 import type { Skill } from "./types.ts";
 
 /**
+ * Aggregate ceiling (chars) on all selected Layer-3 skill bodies for a turn — a
+ * backstop so skills can't crowd conversation history out of the context window.
+ * Deliberately HIGH (not an active limit at current sizes); tune against a
+ * measured baseline. Enforced in `selectLayer3Skills` by dropping the
+ * lowest-priority skills once the running total would exceed it.
+ */
+export const MAX_LAYER3_TOTAL_CHARS = 200_000;
+
+/**
  * Phase 2 values for how a skill ended up in the selected set.
  *
  * Phase 6 will add `"retrieval"`; Phase 7 will add `"explicit"`.
@@ -144,5 +153,18 @@ export function selectLayer3Skills(input: SelectInput): SelectedSkill[] {
   }
 
   selected.sort((a, b) => a.skill.manifest.priority - b.skill.manifest.priority);
-  return selected;
+
+  // Aggregate Layer-3 budget: keep skills in priority order (highest first) and
+  // stop once the running total of body chars would exceed the ceiling — drops
+  // the lowest-priority tail. Always keep at least the single highest-priority
+  // skill, even if it alone exceeds the budget (it's already per-skill capped).
+  const budgeted: SelectedSkill[] = [];
+  let totalChars = 0;
+  for (const s of selected) {
+    const next = totalChars + s.skill.body.length;
+    if (next > MAX_LAYER3_TOTAL_CHARS && budgeted.length > 0) break;
+    budgeted.push(s);
+    totalChars = next;
+  }
+  return budgeted;
 }

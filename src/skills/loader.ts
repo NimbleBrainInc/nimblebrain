@@ -3,6 +3,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import matter from "gray-matter";
 import { log } from "../cli/log.ts";
+import { MAX_SKILL_BODY_CHARS, truncateMarkdownToBudget } from "./truncate.ts";
 import type {
   Skill,
   SkillLoadingStrategy,
@@ -217,7 +218,11 @@ export function readSkillMtime(path: string): string {
 }
 
 /** Parse SKILL.md content string. Exported for testing. */
-export function parseSkillContent(raw: string, sourcePath: string): Skill | null {
+export function parseSkillContent(
+  raw: string,
+  sourcePath: string,
+  opts?: { cap?: boolean },
+): Skill | null {
   const { data, content } = matter(raw);
 
   const name = data.name;
@@ -352,7 +357,13 @@ export function parseSkillContent(raw: string, sourcePath: string): Skill | null
     ...(derivedFrom ? { derivedFrom } : {}),
   };
 
-  return { manifest, body: content.trim(), sourcePath };
+  // Cap the body for the prompt-load path (default). The authoring round-trip
+  // (writer.readSkill / listSkills) passes `cap: false` so edits preserve the
+  // full stored file rather than persisting a truncated copy.
+  const trimmed = content.trim();
+  const body =
+    (opts?.cap ?? true) ? truncateMarkdownToBudget(trimmed, MAX_SKILL_BODY_CHARS).body : trimmed;
+  return { manifest, body, sourcePath };
 }
 
 /** Partition skills into context (sorted by priority) and matchable skills. */
