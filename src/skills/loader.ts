@@ -285,11 +285,15 @@ export function parseSkillContent(
     data["applies-to-tools"] ?? data.applies_to_tools ?? data.appliesToTools,
   );
 
-  // `loading-strategy` resolution:
+  // `loading-strategy` resolution. `type` (role) and `loading-strategy` (when)
+  // are orthogonal: strategy is a CAPABILITY-skill concept. A `type: context`
+  // skill is always-on by role — it carries no strategy and is routed to the
+  // context channel (Layer 0/1) by `partitionSkillsByRole`, never selected into
+  // Layer 3. Resolution:
   //   1. Use the value if it's a recognized strategy.
   //   2. Else if applies-to-tools is set → tool_affined.
-  //   3. Else if type === "context" → always.
-  //   4. Else undefined (legacy `type: skill` keeps using SkillMatcher).
+  //   3. Else undefined (legacy `type: skill` keeps using SkillMatcher; a
+  //      `type: context` skill stays undefined — role, not strategy, places it).
   const rawLoadingStrategy =
     data["loading-strategy"] ?? data.loading_strategy ?? data.loadingStrategy;
   let loadingStrategy: SkillLoadingStrategy | undefined;
@@ -302,12 +306,8 @@ export function parseSkillContent(
       );
     }
   }
-  if (!loadingStrategy) {
-    if (appliesToTools && appliesToTools.length > 0) {
-      loadingStrategy = "tool_affined";
-    } else if (type === "context") {
-      loadingStrategy = "always";
-    }
+  if (!loadingStrategy && appliesToTools && appliesToTools.length > 0) {
+    loadingStrategy = "tool_affined";
   }
 
   // `status` defaults to "active" when missing or invalid. Legacy

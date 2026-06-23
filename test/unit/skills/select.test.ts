@@ -7,19 +7,26 @@
  */
 
 import { describe, expect, test } from "bun:test";
-import { selectLayer3Skills, toolMatches } from "../../../src/skills/select.ts";
+import {
+  partitionSkillsByRole,
+  selectLayer3Skills,
+  toolMatches,
+} from "../../../src/skills/select.ts";
 import type {
   Skill,
   SkillLoadingStrategy,
   SkillStatus,
+  SkillType,
 } from "../../../src/skills/types.ts";
 
 interface SkillFixtureOptions {
   name: string;
+  type?: SkillType;
   priority?: number;
   loadingStrategy?: SkillLoadingStrategy;
   appliesToTools?: string[];
   status?: SkillStatus;
+  sourcePath?: string;
 }
 
 function makeSkill(opts: SkillFixtureOptions): Skill {
@@ -28,14 +35,14 @@ function makeSkill(opts: SkillFixtureOptions): Skill {
       name: opts.name,
       description: `${opts.name} description`,
       version: "1.0.0",
-      type: "context",
+      type: opts.type ?? "context",
       priority: opts.priority ?? 50,
       loadingStrategy: opts.loadingStrategy,
       appliesToTools: opts.appliesToTools,
       status: opts.status,
     },
     body: `# ${opts.name}\n`,
-    sourcePath: `/virtual/${opts.name}.md`,
+    sourcePath: opts.sourcePath ?? `/virtual/${opts.name}.md`,
   };
 }
 
@@ -296,5 +303,69 @@ describe("selectLayer3Skills — mixed input + ordering", () => {
       "p50",
       "p99",
     ]);
+  });
+});
+
+describe("partitionSkillsByRole", () => {
+  test("routes by `type`: context → context channel, skill → capability channel", () => {
+    const pool: Skill[] = [
+      makeSkill({ name: "soul", type: "context", priority: 0 }),
+      makeSkill({ name: "tool-helper", type: "skill", loadingStrategy: "tool_affined" }),
+      makeSkill({ name: "voice", type: "context", priority: 30 }),
+    ];
+    const { context, capability } = partitionSkillsByRole(pool);
+    expect(context.map((s) => s.manifest.name)).toEqual(["soul", "voice"]);
+    expect(capability.map((s) => s.manifest.name)).toEqual(["tool-helper"]);
+  });
+
+  test("the two sets are disjoint — no skill appears in both (no de-dup needed)", () => {
+    const pool: Skill[] = [
+      makeSkill({ name: "ctx", type: "context" }),
+      makeSkill({ name: "cap", type: "skill" }),
+    ];
+    const { context, capability } = partitionSkillsByRole(pool);
+    const ctxNames = new Set(context.map((s) => s.manifest.name));
+    expect(capability.some((s) => ctxNames.has(s.manifest.name))).toBe(false);
+  });
+
+  test("context channel is sorted by priority ascending", () => {
+    const pool: Skill[] = [
+      makeSkill({ name: "p50", type: "context", priority: 50 }),
+      makeSkill({ name: "p0", type: "context", priority: 0 }),
+      makeSkill({ name: "p20", type: "context", priority: 20 }),
+    ];
+    expect(partitionSkillsByRole(pool).context.map((s) => s.manifest.name)).toEqual([
+      "p0",
+      "p20",
+      "p50",
+    ]);
+  });
+
+  test("disabled context skills are dropped from the always-on channel", () => {
+    const pool: Skill[] = [
+      makeSkill({ name: "active-ctx", type: "context", status: "active" }),
+      makeSkill({ name: "off-ctx", type: "context", status: "disabled" }),
+      makeSkill({ name: "no-status-ctx", type: "context" }),
+    ];
+    expect(partitionSkillsByRole(pool).context.map((s) => s.manifest.name).sort()).toEqual([
+      "active-ctx",
+      "no-status-ctx",
+    ]);
+  });
+
+  test("a workspace/user-tier context skill (non-boot sourcePath) still routes to context", () => {
+    // The guarantee: workspace/user context skills reach the prompt via the
+    // context channel regardless of where on disk they live — they are NOT
+    // gated to the boot-time set.
+    const pool: Skill[] = [
+      makeSkill({
+        name: "ws-rule",
+        type: "context",
+        sourcePath: "/work/workspaces/ws_x/skills/ws-rule.md",
+      }),
+    ];
+    const { context, capability } = partitionSkillsByRole(pool);
+    expect(context.map((s) => s.manifest.name)).toEqual(["ws-rule"]);
+    expect(capability).toHaveLength(0);
   });
 });

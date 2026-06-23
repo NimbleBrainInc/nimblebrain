@@ -25,7 +25,9 @@ describe("authoring-guide Layer 1 skill", () => {
     if (!skill) throw new Error("parseSkillFile returned null");
 
     expect(skill.manifest.name).toBe("authoring-guide");
-    expect(skill.manifest.type).toBe("context");
+    // `type: skill` (capability role): loads on tool-affinity (skills__*), NOT as
+    // always-on context. Routed to Layer 3 by `partitionSkillsByRole`.
+    expect(skill.manifest.type).toBe("skill");
     expect(skill.manifest.priority).toBe(25);
     expect(skill.manifest.scope).toBe("bundle");
     expect(skill.manifest.loadingStrategy).toBe("tool_affined");

@@ -85,7 +85,9 @@ describe("skills read tools — end-to-end", () => {
         'name: voice-rules',
         'description: Voice rules',
         'version: "1.0.0"',
-        "type: context",
+        // `type: skill` (capability role) → loads into Layer 3 (`skills.loaded`/
+        // loading_log), where this test asserts. `always` keeps it deterministic.
+        "type: skill",
         "priority: 25",
         "loading-strategy: always",
         "---",

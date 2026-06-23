@@ -98,7 +98,7 @@ import {
   partitionSkills,
 } from "../skills/loader.ts";
 import { SkillMatcher } from "../skills/matcher.ts";
-import { type SelectedSkill, selectLayer3Skills } from "../skills/select.ts";
+import { partitionSkillsByRole, type SelectedSkill, selectLayer3Skills } from "../skills/select.ts";
 import { approxTokens } from "../skills/tokens.ts";
 import { MAX_SKILL_BODY_CHARS, truncateMarkdownToBudget } from "../skills/truncate.ts";
 import type { Skill } from "../skills/types.ts";
@@ -1312,9 +1312,15 @@ export class Runtime {
     // hoisted from its later definition site for this reason; keep it a single
     // definition (the layer-3 call reuses it).
     const userId = requestIdentity.id;
-    const layer3Pool = this.loadConversationSkills(focusedWsId ?? sessionWsId, userId);
+    // Partition the conversation pool by ROLE once: `context` skills (every tier)
+    // compose into the always-on Layer 0/1 channel; `capability` skills feed the
+    // conditional channels (keyword matcher + tool-affinity Layer 3). Disjoint by
+    // `type`, so nothing is injected twice — no downstream de-dup.
+    const conversationPool = this.loadConversationSkills(focusedWsId ?? sessionWsId, userId);
+    const { context: poolContext, capability: poolCapability } =
+      partitionSkillsByRole(conversationPool);
     const requestMatcher = new SkillMatcher();
-    requestMatcher.load(layer3Pool);
+    requestMatcher.load(poolCapability);
     let skill = requestMatcher.match(request.message);
 
     // Dependency checking: warn if a matched skill requires bundles that aren't installed
@@ -1499,7 +1505,9 @@ export class Runtime {
     const identityOverride = activeWorkspace?.identity
       ? makeIdentitySkill(activeWorkspace.identity)
       : null;
-    const contextBase = this.activeContextSkills();
+    // Always-on context channel: the `type: context` skills across every tier
+    // (core/builtin/org + workspace + user), not just the boot-time set.
+    const contextBase = poolContext;
     const requestContextSkills = identityOverride
       ? [...contextBase, identityOverride]
       : contextBase;
@@ -1529,7 +1537,7 @@ export class Runtime {
       ownerId,
       userId,
       activeToolNames: tools.map((t) => t.name),
-      layer3Pool,
+      capabilityPool: poolCapability,
       ...(request.appContext?.serverName
         ? { appContextServerName: request.appContext.serverName }
         : {}),
@@ -2041,10 +2049,6 @@ export class Runtime {
     const identityOverride = activeWorkspace?.identity
       ? makeIdentitySkill(activeWorkspace.identity)
       : null;
-    const contextBase = this.activeContextSkills();
-    const requestContextSkills = identityOverride
-      ? [...contextBase, identityOverride]
-      : contextBase;
 
     // Layer 3 selection — bundle workflow guidance still applies based on
     // the active tool set. No `appContextServerName` (tasks don't have
@@ -2057,12 +2061,20 @@ export class Runtime {
     // every `loading_strategy: always` skill in that workspace before
     // this parity fix.
     const userId = requestIdentity.id;
-    const layer3Pool = this.loadConversationSkills(focusedWsId ?? sessionWsId, userId);
+    // Partition by role (same as `_chatInner`): context → Layer 0/1; capability
+    // → conditional Layer 3. Disjoint by `type`, so no skill injects twice.
+    const conversationPool = this.loadConversationSkills(focusedWsId ?? sessionWsId, userId);
+    const { context: poolContext, capability: poolCapability } =
+      partitionSkillsByRole(conversationPool);
+    const contextBase = poolContext;
+    const requestContextSkills = identityOverride
+      ? [...contextBase, identityOverride]
+      : contextBase;
     const accessibleForSkills = await this._workspaceStore.getWorkspacesForUser(ownerId);
     const bundleSkills = (
       await Promise.all(accessibleForSkills.map((ws) => this.loadBundleSkills(ws.id, {})))
     ).flat();
-    const mergedLayer3Pool: Skill[] = [...layer3Pool, ...bundleSkills];
+    const mergedLayer3Pool: Skill[] = [...poolCapability, ...bundleSkills];
     const activeToolNames = tools.map((t) => t.name);
     const selectedLayer3 = selectLayer3Skills({
       skills: mergedLayer3Pool,
@@ -3453,23 +3465,17 @@ export class Runtime {
   }
 
   /**
-   * Boot-time context skills with any toggled Off (`status: "disabled"`)
-   * removed — the canonical always-on context channel.
+   * BOOT-TIME context skills (org/core/builtin) with any toggled Off
+   * (`status: "disabled"`) removed. Audit/management helper only.
    *
-   * `compose` injects every context-skill body verbatim (Layer 0 / Layer 1)
-   * with NO status check; the disable filter otherwise lives only on the
-   * Layer-3 path (`selectLayer3Skills`, `select.ts`). Without this, a context
-   * rule (e.g. an org "rule" authored as `type: "context"`) toggled Off in the
-   * UI keeps being injected — it rides this channel while being correctly
-   * dropped from the Layer-3 `skills.loaded` set. Mirrors `select.ts`'s keep-
-   * predicate exactly. `reloadSkills()` refreshes `this.contextSkills` on every
-   * skills-tool mutation, so the toggle is reflected here on the next turn.
-   *
-   * EVERY surface that mirrors prompt composition must read through here, not
-   * `getContextSkills()`, or status and composition diverge — the failure
-   * {@link selectRequestLayer3} exists to prevent. Today that's the two
-   * `composeSystemPrompt` call sites, `describeRequestSkills` (`nb__status`),
-   * and `composeLive` (`compose_effective_context`).
+   * NOTE: the prompt composition path no longer reads this. Compose routes by
+   * ROLE via `partitionSkillsByRole(loadConversationSkills(...))`, whose
+   * `context` set spans EVERY tier (boot + workspace + user) and applies the
+   * same active-status filter. This method is the boot-only subset — use it for
+   * surfaces that only need the static vendored/org set, not for anything that
+   * must mirror what the prompt actually contains (use the partitioned pool).
+   * `reloadSkills()` refreshes `this.contextSkills` on every skills-tool
+   * mutation, so the toggle is reflected here on the next turn.
    */
   activeContextSkills(): Skill[] {
     return this.contextSkills.filter(
@@ -3570,14 +3576,18 @@ export class Runtime {
     /** Skip a server's usage skill when its `<app-guide>` is already injected. */
     appContextServerName?: string;
     /**
-     * Precomputed conversation-skill pool (org + workspace + user). When the
-     * caller already built it for the per-request matcher, thread it through
-     * so the disk read isn't repeated. Omitted callers (e.g.
-     * `describeRequestSkills`) load it internally — behavior unchanged.
+     * Precomputed CAPABILITY skills (`type: skill`) from the conversation pool —
+     * the output of `partitionSkillsByRole(...).capability`. When the caller
+     * already partitioned for the per-request matcher / context channel, thread
+     * it through so the disk read isn't repeated. Omitted callers (e.g.
+     * `describeRequestSkills`) load + partition internally. Context skills are
+     * NOT in this set — they compose into Layer 0/1 by role, never Layer 3.
      */
-    layer3Pool?: Skill[];
+    capabilityPool?: Skill[];
   }): Promise<SelectedSkill[]> {
-    const layer3Pool = params.layer3Pool ?? this.loadConversationSkills(params.wsId, params.userId);
+    const capabilityPool =
+      params.capabilityPool ??
+      partitionSkillsByRole(this.loadConversationSkills(params.wsId, params.userId)).capability;
     const accessibleForSkills = await this._workspaceStore.getWorkspacesForUser(params.ownerId);
     const bundleSkills = (
       await Promise.all(
@@ -3591,7 +3601,7 @@ export class Runtime {
       )
     ).flat();
     return selectLayer3Skills({
-      skills: [...layer3Pool, ...bundleSkills],
+      skills: [...capabilityPool, ...bundleSkills],
       activeTools: params.activeToolNames,
     });
   }
@@ -3618,11 +3628,22 @@ export class Runtime {
     const userId = identity?.id ?? ownerId;
     const registry = await this.ensureWorkspaceRegistry(wsId);
     const activeToolNames = (await registry.availableTools()).map((t) => t.name);
-    const layer3 = await this.selectRequestLayer3({ wsId, ownerId, userId, activeToolNames });
-    // Filtered, not raw `this.contextSkills`: the status surface must match what
-    // compose actually injects, or a rule toggled Off still prints as "always
-    // active" here — the divergence this reporter's own design exists to kill.
-    return { context: this.activeContextSkills(), layer3 };
+    // Partition the same way compose does, so the status surface matches the
+    // prompt exactly: `context` (every tier, active only) is the Layer 0/1 set;
+    // `capability` feeds Layer 3. Reading the raw boot-time `this.contextSkills`
+    // would both miss workspace/user-tier context skills and show toggled-Off
+    // rules as active — the divergence this reporter exists to kill.
+    const { context, capability } = partitionSkillsByRole(
+      this.loadConversationSkills(wsId, userId),
+    );
+    const layer3 = await this.selectRequestLayer3({
+      wsId,
+      ownerId,
+      userId,
+      activeToolNames,
+      capabilityPool: capability,
+    });
+    return { context, layer3 };
   }
 
   /** Get the path to the nimblebrain.json config file (Helm-managed seed). */

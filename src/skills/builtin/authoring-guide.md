@@ -2,7 +2,7 @@
 name: authoring-guide
 description: Guide for authoring NimbleBrain platform Layer 3 skills (voice, workflow, personal, tool routing). Vendored Layer 1 content shipped with the nb__skills bundle.
 version: 1.0.0
-type: context
+type: skill
 priority: 25
 scope: bundle
 loading-strategy: tool_affined

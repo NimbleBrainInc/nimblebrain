@@ -127,16 +127,18 @@ applies-to-tools:
     expect(skill.manifest.loadingStrategy).toBe("tool_affined");
   });
 
-  test("loading-strategy defaults to always for type:context with no applies-to-tools", () => {
+  test("loading-strategy is undefined for type:context (role places it, not strategy)", () => {
     const skill = parse(`---
-name: context-always
+name: context-role
 description: x
 version: 1.0.0
 type: context
 priority: 25
 ---
 `);
-    expect(skill.manifest.loadingStrategy).toBe("always");
+    // `type: context` is always-on by ROLE — it carries no loading-strategy and
+    // is routed to Layer 0/1 by `partitionSkillsByRole`, never into Layer 3.
+    expect(skill.manifest.loadingStrategy).toBeUndefined();
   });
 
   test("loading-strategy is undefined for type:skill with no applies-to-tools", () => {
@@ -177,8 +179,9 @@ priority: 25
 loading-strategy: bogus
 ---
 `);
-    // type: context with no applies-to-tools → default = always
-    expect(skill.manifest.loadingStrategy).toBe("always");
+    // Invalid strategy is dropped; `type: context` has no default strategy
+    // (role, not strategy, routes it to Layer 0/1) → undefined.
+    expect(skill.manifest.loadingStrategy).toBeUndefined();
   });
 
   test("invalid status falls back to active", () => {
