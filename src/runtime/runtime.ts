@@ -2599,7 +2599,13 @@ export class Runtime {
         // so we don't slice mid-sentence (production case: a "rules" appendix
         // at the end of a SKILL.md was lost mid-rule, breaking the model's
         // tool-selection logic).
-        body = truncateMarkdownToBudget(content, MAX_SKILL_BODY_CHARS).body;
+        const capped = truncateMarkdownToBudget(content, MAX_SKILL_BODY_CHARS);
+        body = capped.body;
+        if (capped.truncated) {
+          log.warn(
+            `[skill] bundle usage skill truncated to ${MAX_SKILL_BODY_CHARS} chars (${capped.sectionsOmitted} section(s) omitted) — ${serverName}`,
+          );
+        }
       }
     } catch {
       // Resource doesn't exist or read failed — fall through to negative cache.

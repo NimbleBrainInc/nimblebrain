@@ -363,8 +363,16 @@ export function parseSkillContent(
   // (writer.readSkill / listSkills) passes `cap: false` so edits preserve the
   // full stored file rather than persisting a truncated copy.
   const trimmed = content.trim();
-  const body =
-    (opts?.cap ?? true) ? truncateMarkdownToBudget(trimmed, MAX_SKILL_BODY_CHARS).body : trimmed;
+  let body = trimmed;
+  if (opts?.cap ?? true) {
+    const capped = truncateMarkdownToBudget(trimmed, MAX_SKILL_BODY_CHARS);
+    body = capped.body;
+    if (capped.truncated) {
+      log.warn(
+        `[skill] body truncated to ${MAX_SKILL_BODY_CHARS} chars (${capped.sectionsOmitted} section(s) omitted) in ${sourcePath} — trim the skill or move depth into references/`,
+      );
+    }
+  }
   return { manifest, body, sourcePath };
 }
 
