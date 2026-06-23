@@ -141,6 +141,14 @@ const ADMIN: UserIdentity = {
   preferences: {},
 };
 
+const MEMBER: UserIdentity = {
+  id: "usr_member",
+  email: "member@test",
+  displayName: "Member",
+  orgRole: "member",
+  preferences: {},
+};
+
 interface Harness {
   workDir: string;
   wsId: string;
@@ -286,6 +294,27 @@ describe("connectComposioApiKey", () => {
     // The half-created account is cleaned up so a retry starts clean.
     expect(apiKeyCalls.deletedIds).toContain("ca_bad");
   });
+
+  test("rejects (and cleans up) a non-ACTIVE resolve", async () => {
+    process.env.COMPOSIO_API_KEY = "k_test";
+    _resetComposioConfigForTest();
+    // A defensive guard against an SDK contract change: waitForConnection
+    // resolving with a non-ACTIVE status must not be treated as success.
+    apiKeyCalls.initiateImpl = () => ({
+      id: "ca_pending",
+      waitForConnection: async () => ({ id: "ca_pending", status: "INITIATED" }),
+    });
+
+    await expect(
+      connectComposioApiKey({
+        apiKey: "k_test",
+        userId: "u1",
+        authConfigId: "ac_x",
+        fields: { api_key: "k" },
+      }),
+    ).rejects.toThrow(/did not reach ACTIVE/);
+    expect(apiKeyCalls.deletedIds).toContain("ca_pending");
+  });
 });
 
 // ── manage_connectors.connect_api_key (validation + trust) ──────────
@@ -393,7 +422,11 @@ function stubCtx(opts: {
   wsId: string;
   entry: unknown | null;
   ensureSourceRegisteredError?: Error;
+  identity?: UserIdentity;
+  role?: "admin" | "member";
 }): ManageConnectorsContext & { __calls: StubCalls } {
+  const identity = opts.identity ?? ADMIN;
+  const role = opts.role ?? "admin";
   const calls: StubCalls = { recordConnectionStateChange: { lastCall: null, callCount: 0 } };
   const lifecycle = {
     async ensureSourceRegistered(): Promise<void> {
@@ -415,7 +448,7 @@ function stubCtx(opts: {
       get: async () => ({
         id: opts.wsId,
         name: "Test",
-        members: [{ userId: ADMIN.id, role: "admin" }],
+        members: [{ userId: identity.id, role }],
       }),
     }),
     getConnectorDirectory: () => ({
@@ -426,7 +459,7 @@ function stubCtx(opts: {
   } as unknown as Runtime;
   return {
     runtime,
-    getIdentity: () => ADMIN,
+    getIdentity: () => identity,
     getWorkspaceId: () => opts.wsId,
     __calls: calls,
   } as unknown as ManageConnectorsContext & { __calls: StubCalls };
@@ -584,5 +617,37 @@ describe("manage_connectors.connect_api_key — lifecycle tail", () => {
     // de-authorized). The new account is NOT deleted.
     expect(apiKeyCalls.deletedIds).toContain("ca_old");
     expect(apiKeyCalls.deletedIds).not.toContain("ca_new");
+  });
+
+  test("rotation is admin-gated: a non-admin member can't replace the credential", async () => {
+    process.env.COMPOSIO_API_KEY = "k_test";
+    process.env.COMPOSIO_POSTHOG_AUTH_CONFIG_ID = "ac_posthog";
+    _resetComposioConfigForTest();
+
+    // A connector is already connected...
+    await saveComposioConnection(workDir, WS, POSTHOG_ID, {
+      connectedAccountId: "ca_old",
+      toolkit: "posthog",
+      userId: "u",
+      connectedAt: "2026-01-01T00:00:00Z",
+      status: "ACTIVE",
+    });
+
+    // ...and a non-admin member tries to rotate it.
+    const ctx = stubCtx({ workDir, wsId: WS, entry: POSTHOG_ENTRY, identity: MEMBER, role: "member" });
+    const r = await createManageConnectorsTool(ctx).handler({
+      action: "connect_api_key",
+      catalogId: POSTHOG_ID,
+      fields: { api_key: "phx_member", subdomain: "us" },
+    });
+
+    expect(r.isError).toBe(true);
+    expect((r.structuredContent as { error?: string })?.error).toBe("permission_denied");
+    // Nothing happened: no new connect, the old account survives, state unchanged.
+    expect(apiKeyCalls.initiateArgs.length).toBe(0);
+    expect(apiKeyCalls.deletedIds).not.toContain("ca_old");
+    const conn = await readComposioConnection(workDir, WS, POSTHOG_ID);
+    expect(conn?.connectedAccountId).toBe("ca_old");
+    expect(ctx.__calls.recordConnectionStateChange.callCount).toBe(0);
   });
 });

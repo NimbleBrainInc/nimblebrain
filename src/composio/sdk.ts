@@ -335,7 +335,18 @@ export async function connectComposioApiKey(opts: {
     if (!id) {
       throw new Error("Composio API-key connect: missing connected_account_id");
     }
-    const status = typeof account.status === "string" ? account.status : "ACTIVE";
+    // `waitForConnection` resolves only at ACTIVE (it throws on
+    // FAILED/EXPIRED/timeout), but assert it explicitly so this helper's
+    // postcondition — and the caller's subsequent "running" flip — can't drift
+    // from the boot-state gate (which keys on status === "ACTIVE") if the SDK's
+    // resolve contract ever changes. A non-ACTIVE resolve falls into the catch
+    // below and deletes the half-created account.
+    const status = typeof account.status === "string" ? account.status : "";
+    if (status !== "ACTIVE") {
+      throw new Error(
+        `Composio API-key connect: account ${id} did not reach ACTIVE (status=${status || "unknown"})`,
+      );
+    }
     return { connectedAccountId: id, status };
   } catch (err) {
     // Verification failed (bad/insufficient key), timed out, or the account is

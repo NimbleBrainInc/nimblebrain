@@ -983,6 +983,26 @@ async function handleConnectApiKey(
   const lifecycle = ctx.runtime.getLifecycle();
   const workDir = ctx.runtime.getWorkDir();
 
+  // Capture any prior connected account up front: it both gates the rotation
+  // case below and is the id we revoke after a successful replace. We can't
+  // adopt-existing like the OAuth path — an API-key re-submit may carry a
+  // rotated key, so the old account is REPLACED, not reused.
+  const prior = await readComposioConnection(workDir, wsId, catalogId);
+
+  // Authz: a FIRST connect (no prior) is member-level, matching the OAuth
+  // connect route. But a RE-CONNECT/rotation replaces and revokes the shared
+  // credential every member's agent runs under — destructive like `disconnect`,
+  // which is admin-gated. So gate only the rotation case on workspace admin.
+  if (prior?.connectedAccountId && !isWorkspaceAdmin(ws, identity)) {
+    return {
+      content: textContent(
+        "Workspace admin role required to replace an already-connected connector's credential.",
+      ),
+      structuredContent: { error: "permission_denied" },
+      isError: true,
+    };
+  }
+
   // Bring the MCP source online BEFORE persisting connection.json — the same
   // ordering invariant as the OAuth adopt path (a failure here leaves no
   // connection.json behind, so boot-state derivation stays honest). A connector
@@ -998,13 +1018,6 @@ async function handleConnectApiKey(
         "Install it, then submit the API key.",
     );
   }
-
-  // Capture any prior connected account before minting a new one. We can't
-  // adopt-existing like the OAuth path — an API-key re-submit may carry a
-  // rotated key, so the old account must be REPLACED, not reused. The revoke
-  // happens only after the new connect succeeds and persists (below), so a
-  // failed rotation leaves the working account intact.
-  const prior = await readComposioConnection(workDir, wsId, catalogId);
 
   // Hand the key(s) to Composio and verify the connection reaches ACTIVE. On
   // failure the SDK helper deletes the half-created account; surface a generic
