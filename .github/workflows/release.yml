@@ -78,7 +78,7 @@ jobs:
           VERSION="${{ github.event.inputs.tag || github.ref_name }}"
           # Require vX.Y.Z (optional -prerelease / +build). A garbage version would
           # burn an immutable tag, so reject it before anything is written.
-          if ! [[ "$VERSION" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([-+.][0-9A-Za-z.-]+)?$ ]]; then
+          if ! [[ "$VERSION" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([-+][0-9A-Za-z.-]+)?$ ]]; then
             echo "::error::Tag '$VERSION' is not vX.Y.Z (with optional -prerelease)"; exit 1
           fi
           SHA="$(git rev-parse --short HEAD)"
@@ -157,9 +157,17 @@ jobs:
           SRC: ${{ steps.r.outputs.sha }}
         run: |
           set -euo pipefail
-          for REPO in nimblebrain/nimblebrain-runtime nimblebrain/nimblebrain-web; do
-            DST="$VERSION"
+          REPOS=(nimblebrain/nimblebrain-runtime nimblebrain/nimblebrain-web)
+          declare -A MAN ACTION
 
+          # Two passes so the retag is all-or-nothing across BOTH images: validate
+          # every repo's guards FIRST, then mutate. Otherwise a missing web :<sha>
+          # (runtime built green but the web build failed on that ci.yml run) would
+          # leave runtime:vX.Y.Z already retagged while web errors out — a wedged,
+          # immutable, half-promoted version that even rebuild=true can't recover.
+          #
+          # Pass 1 — validate guards for every repo, mutate nothing.
+          for REPO in "${REPOS[@]}"; do
             # Guard 1: the byte-for-byte promise needs an immutable repo.
             MUT="$(aws ecr describe-repositories --repository-names "$REPO" --query 'repositories[0].imageTagMutability' --output text)"
             [ "$MUT" = "IMMUTABLE" ] || { echo "::error::ECR repo $REPO is $MUT, not IMMUTABLE — refusing to promote-by-retag"; exit 1; }
@@ -167,23 +175,33 @@ jobs:
             # Guard 2: the staging-built source image must exist (ci.yml builds it on
             # main; staging-edge runs it). Absent → this tag is off a commit that
             # never rode staging.
-            MAN="$(aws ecr batch-get-image --repository-name "$REPO" --image-ids imageTag="$SRC" --query 'images[0].imageManifest' --output text 2>/dev/null || true)"
-            if [ -z "$MAN" ] || [ "$MAN" = "None" ]; then
+            m="$(aws ecr batch-get-image --repository-name "$REPO" --image-ids imageTag="$SRC" --query 'images[0].imageManifest' --output text 2>/dev/null || true)"
+            if [ -z "$m" ] || [ "$m" = "None" ]; then
               echo "::error::No staging-built image $REPO:$SRC for this commit — it never rode staging-edge. To release anyway, re-run via 'Run workflow' with rebuild=true (and know prod won't be byte-for-byte)."
               exit 1
             fi
+            MAN[$REPO]="$m"
 
-            # Idempotent: if DST exists, succeed iff it's the same digest we'd promote
-            # (a re-run); fail if it's a DIFFERENT image (re-releasing a version is not
-            # allowed).
-            DSTDIG="$(aws ecr describe-images --repository-name "$REPO" --image-ids imageTag="$DST" --query 'imageDetails[0].imageDigest' --output text 2>/dev/null || true)"
+            # Idempotent: if VERSION exists, this run is a re-run iff it's the same
+            # digest we'd promote (→ skip); a DIFFERENT digest means someone is
+            # re-releasing a version, which is not allowed (→ fail).
+            DSTDIG="$(aws ecr describe-images --repository-name "$REPO" --image-ids imageTag="$VERSION" --query 'imageDetails[0].imageDigest' --output text 2>/dev/null || true)"
             if [ -n "$DSTDIG" ] && [ "$DSTDIG" != "None" ]; then
               SRCDIG="$(aws ecr describe-images --repository-name "$REPO" --image-ids imageTag="$SRC" --query 'imageDetails[0].imageDigest' --output text)"
-              [ "$DSTDIG" = "$SRCDIG" ] && echo "already promoted ($REPO:$DST == $SRC) — nothing to retag" \
-                || { echo "::error::$REPO:$DST already exists with a DIFFERENT digest — refusing to re-release a version"; exit 1; }
+              if [ "$DSTDIG" = "$SRCDIG" ]; then ACTION[$REPO]=skip; \
+                else echo "::error::$REPO:$VERSION already exists with a DIFFERENT digest — refusing to re-release a version"; exit 1; fi
             else
-              aws ecr put-image --repository-name "$REPO" --image-tag "$DST" --image-manifest "$MAN" >/dev/null
-              echo "promoted $REPO:$SRC -> $REPO:$DST (no rebuild)"
+              ACTION[$REPO]=promote
+            fi
+          done
+
+          # Pass 2 — every repo passed; now retag.
+          for REPO in "${REPOS[@]}"; do
+            if [ "${ACTION[$REPO]}" = "skip" ]; then
+              echo "already promoted ($REPO:$VERSION == $SRC) — nothing to retag"
+            else
+              aws ecr put-image --repository-name "$REPO" --image-tag "$VERSION" --image-manifest "${MAN[$REPO]}" >/dev/null
+              echo "promoted $REPO:$SRC -> $REPO:$VERSION (no rebuild)"
             fi
           done
 

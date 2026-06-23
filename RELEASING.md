@@ -21,7 +21,7 @@ v0.4.0-beta.1 → v0.4.0-beta.2 → v0.4.0-rc.1 → v0.4.0
 
 If a release is botched, bump to the next number rather than re-tagging — §6.
 
-**`package.json` is a sentinel — do not bump.** It is pinned to `"version": "0.0.0-dev"` and stays there forever. Released artifacts get the real version injected at build time from the git tag (Dockerfile `VERSION` build arg → `NB_VERSION` env). Local dev builds without `NB_VERSION` fall through to `pkg.version` and self-report `0.0.0-dev`, which is intentionally clearly-not-a-release. Bumping this field per release would re-introduce the drift bug PR #73 fixed.
+**`package.json` is a sentinel — do not bump.** It is pinned to `"version": "0.0.0-dev"` and stays there forever. The image is version-agnostic — the version is injected at **deploy time** via the `NB_VERSION` env (the platform chart sets it from the image tag), which is what lets a release promote the staging-verified image by retag instead of rebuilding. Builds without `NB_VERSION` (local dev, non-deployed) fall through to `pkg.version` and self-report `0.0.0-dev`, which is intentionally clearly-not-a-release. Bumping this field per release would re-introduce the drift bug PR #73 fixed.
 
 ## 2. Prerequisites
 
@@ -174,11 +174,11 @@ Then fix the underlying issue on `main` and cut the **next** pre-release number 
 
 ## 7. Workflow reference
 
-`.github/workflows/release.yml` fires on any `v*` tag push and runs three jobs:
+`.github/workflows/release.yml` fires on any `v*` tag push (and `workflow_dispatch` with a `tag` input + an EMERGENCY `rebuild` toggle) and runs three jobs:
 
-1. **Verify** — runs the same `verify:*` subscripts as CI, plus `test:integration`
-2. **Build & Push** — builds platform + web images, pushes to ECR and GHCR; for stable-only, also promotes `:latest` on GHCR
-3. **GitHub Release** — creates a release with auto-generated notes; `prerelease` flag mirrors the hyphen rule
+1. **Promote release images** — **promote-by-retag, not rebuild.** `ci.yml` already built and pushed the staging-verified runtime + web `:<sha>` images to ECR on merge; this re-tags those exact manifests to `:vX.Y.Z` via `aws ecr put-image` (guarded: target repo must be IMMUTABLE, the `:<sha>` source must exist, and a re-run is idempotent — same digest skips, a different digest fails). It then copies the same `:<sha>` manifests to the GHCR tags with `docker buildx imagetools create` (edge never pushes GHCR), and for stable releases moves `:latest`. There is no Verify or rebuild step — `ci.yml` already gated the commit, and the source-image-exists guard proves it. The `workflow_dispatch` `rebuild=true` escape hatch rebuilds from source instead (loud warning: prod won't be byte-for-byte) — only for a tag off a commit that never rode staging.
+2. **GitHub Release** — creates a release with auto-generated notes; `prerelease` flag mirrors the hyphen rule
+3. **Promote to prod (stable channel)** — GA only; dispatches the deploy-config receiver to record the new prod stable image tag, which the auto-sync per-tenant ApplicationSet then rolls. No-ops when the prod-promote App isn't configured (forks/pre-setup CI).
 
 Artifact map:
 
