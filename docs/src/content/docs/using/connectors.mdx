@@ -36,13 +36,13 @@ Connectors authenticate in one of three ways. As an end user you rarely need to 
 |------|---------------|-------------|
 | **dcr** | Dynamic Client Registration. The platform registers an OAuth client with the vendor on the fly. | Click **Install**, sign in. No setup. |
 | **static** | The vendor requires a pre-registered OAuth app. A workspace admin configures the app's client ID and secret once. | An admin clicks **Set up** first; after that, everyone connects with **Install**. |
-| **composio** | The service is brokered through Composio, a managed-connector provider. | Click **Install**, sign in through Composio's flow. Requires the platform operator to have configured Composio. |
+| **composio** | The service is brokered through Composio, a managed-connector provider. | Click **Install**. OAuth toolkits send you through the vendor's sign-in; API-key toolkits open a short form where you paste the service's API key (and any region/host it needs). Requires the platform operator to have configured Composio. |
 
 For a **static**-auth connector that hasn't been set up yet, non-admins see "Operator setup required" until an admin completes the one-time **Set up** step.
 
 ## Where your secrets live
 
-Tokens and credentials for a connector are stored in the workspace, at `workspaces/<wsId>/credentials/` on the platform — never echoed back to the UI. For **static**-auth connectors, the admin-configured OAuth client ID is recorded on the workspace; the client secret goes into the same credential store and is never returned in any API response. For **composio** connectors, the platform-wide Composio API key lives in the platform environment, not in the workspace.
+Tokens and credentials for a connector are stored in the workspace, at `workspaces/<wsId>/credentials/` on the platform — never echoed back to the UI. For **static**-auth connectors, the admin-configured OAuth client ID is recorded on the workspace; the client secret goes into the same credential store and is never returned in any API response. For **composio** connectors, the platform-wide Composio API key lives in the platform environment, not in the workspace. For an API-key Composio toolkit, the key you paste into the connect form is sent to Composio and **never stored by the platform** — only an opaque account pointer is kept.
 
 Because credentials are workspace-scoped, connecting a service in one workspace never exposes it to another. See [Credentials](/config/credentials/) for the full storage model.
 

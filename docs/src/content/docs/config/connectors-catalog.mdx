@@ -166,10 +166,39 @@ NimbleBrain-specific fields under `_meta["ai.nimblebrain/connector"]`:
 | `requiredScopes` | no | List of OAuth scope strings. |
 | `additionalAuthorizationParams` | no | Extra authorize-URL params (e.g. Google's `access_type: offline`). Reserved keys (`client_id`, `state`, `redirect_uri`, `response_type`, `code_challenge`, `code_challenge_method`, `scope`, etc.) are rejected. |
 | `operatorSetup` | required when `auth: static` | `{ portalUrl, hint, clientSecretKey }`. |
-| `composio` | required when `auth: composio` | `{ toolkit, authConfigEnv, tools? }`. `tools` is an optional allowlist of upstream tool names — strongly recommended to keep agent context bounded. |
+| `composio` | required when `auth: composio` | `{ toolkit, authConfigEnv, tools?, authScheme?, fields? }`. `tools` is an optional allowlist of upstream tool names — strongly recommended to keep agent context bounded. `authScheme` defaults to `OAUTH2` (the redirect flow); set it to `API_KEY` for toolkits that authenticate by key (see below). `fields` is required for `API_KEY` — the inputs collected from the user at connect. |
 | `tags` | no | Strings used for filter / search in the Browse page. |
 | `interactive` | no | Sets the "Interactive" badge. |
 | `docsUrl` | no | Connector-specific docs link surfaced on the Configure page. Must be http(s). |
+
+### auth: composio with API keys
+
+Some Composio toolkits authenticate by **API key** rather than OAuth. They skip the redirect: the user pastes the key (and any region/host) into a form, the platform hands it to Composio at connect time, and only an opaque account pointer is persisted — never the key.
+
+Set `authScheme: API_KEY` and declare the `fields` to collect:
+
+```yaml
+    _meta:
+      ai.nimblebrain/connector:
+        auth: composio
+        composio:
+          toolkit: posthog
+          authConfigEnv: COMPOSIO_POSTHOG_AUTH_CONFIG_ID
+          authScheme: API_KEY        # default is OAUTH2 (the redirect flow)
+          fields:
+            - key: generic_api_key   # MUST match Composio's connection field name
+              title: Personal API Key
+              sensitive: true        # rendered as a password input
+              required: true         # required unless explicitly false
+            - key: subdomain
+              title: Region / subdomain
+              required: true
+          tools:
+            - POSTHOG_CREATE_QUERY_IN_PROJECT_BY_ID
+            # ...curated allowlist
+```
+
+Each `fields[].key` is sent to Composio verbatim, so it **must** match the toolkit's connection-initiation field name — which is often **not** what the REST tool catalog suggests (e.g. PostHog's key field is `generic_api_key`, not `api_key`). The same namespace caveat applies to `tools` slugs. The operator runbook for creating the `API_KEY` auth config and verifying field keys + tool slugs is in [Composio Aggregator Setup → API-key toolkits](/deploy/composio/#api-key-toolkits-no-oauth).
 
 ### Offline access & refresh tokens
 
