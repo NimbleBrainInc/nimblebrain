@@ -1,8 +1,11 @@
 ---
 name: automation-authoring
 description: Teaches the agent how to create and manage scheduled automations
-type: context
-priority: 16
+type: skill
+priority: 50
+loading-strategy: tool_affined
+applies-to-tools:
+  - automations__*
 ---
 
 # Automation Management

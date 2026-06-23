@@ -51,7 +51,7 @@ import { getRequestContext } from "../../runtime/request-context.ts";
 import { makeIdentitySkill, type Runtime } from "../../runtime/runtime.ts";
 import { hashSkillBody } from "../../runtime/skills-loaded-payload.ts";
 import { parseSkillContent } from "../../skills/loader.ts";
-import { selectLayer3Skills } from "../../skills/select.ts";
+import { partitionSkillsByRole, selectLayer3Skills } from "../../skills/select.ts";
 import type { InProcessTool } from "../in-process-app.ts";
 import { defineInProcessApp } from "../in-process-app.ts";
 import type { McpSource } from "../mcp-source.ts";
@@ -210,12 +210,16 @@ async function composeLive(runtime: Runtime, convId: string): Promise<ComposeRes
   const ws = await runtime.getWorkspaceStore().get(wsId);
   const workspaceContext: WorkspaceContext = ws ? { id: ws.id, name: ws.name } : { id: wsId };
   const identityOverride = ws?.identity ? makeIdentitySkill(ws.identity) : null;
-  // `activeContextSkills`, not the raw getter: this trace must equal what
-  // `runtime.chat()` composes, which filters disabled context skills. Reading
-  // the raw cache here would report a toggled-Off rule as present in the prompt.
-  const requestContextSkills = identityOverride
-    ? [...runtime.activeContextSkills(), identityOverride]
-    : runtime.activeContextSkills();
+  // Partition the conversation pool by ROLE, exactly as `runtime.chat()` does:
+  // `context` (every tier, active only) → Layer 0/1; `capability` → Layer 3.
+  // This trace must equal what chat composes — including workspace/user-tier
+  // context skills, which the boot-only `activeContextSkills()` would miss, and
+  // it filters disabled context skills the same way.
+  const userId = identity?.id ?? null;
+  const { context: poolContext, capability: poolCapability } = partitionSkillsByRole(
+    runtime.loadConversationSkills(wsId, userId),
+  );
+  const requestContextSkills = identityOverride ? [...poolContext, identityOverride] : poolContext;
 
   // Gather inputs in parallel where possible.
   const [apps, overlays] = await Promise.all([
@@ -242,10 +246,8 @@ async function composeLive(runtime: Runtime, convId: string): Promise<ComposeRes
   const { direct: directTools, proxied } = surfaceTools(allTools, null, {});
   const activeToolNames = directTools.map((t) => t.name);
 
-  const userId = identity?.id ?? null;
-  const layer3Pool = runtime.loadConversationSkills(wsId, userId);
   const selectedLayer3 = selectLayer3Skills({
-    skills: layer3Pool,
+    skills: poolCapability,
     activeTools: activeToolNames,
   });
   const layer3Entries: Layer3SkillEntry[] = selectedLayer3.map((s) => ({

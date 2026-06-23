@@ -146,3 +146,33 @@ export function selectLayer3Skills(input: SelectInput): SelectedSkill[] {
   selected.sort((a, b) => a.skill.manifest.priority - b.skill.manifest.priority);
   return selected;
 }
+
+/**
+ * Partition a conversation skill pool by ROLE — the single composition-routing
+ * authority. A skill's `type` decides its channel, by construction:
+ *
+ *  - `context` → always-on identity/voice content. Goes to the context channel
+ *    (Layer 0/1), rendered from every tier (core/builtin/org + workspace + user),
+ *    sorted by priority. Disabled context skills are dropped here (the always-on
+ *    channel has no per-turn status gate of its own).
+ *  - everything else (`skill`) → capability content for the conditional channels:
+ *    tool-affinity Layer 3 (`selectLayer3Skills`) and the keyword matcher.
+ *
+ * The two sets are DISJOINT by `type`, so a skill can never enter two channels —
+ * there is no overlap to de-duplicate downstream. Role placement replaces the
+ * old "context skills also default to `always` and get selected into Layer 3"
+ * conflation that required after-the-fact filtering.
+ */
+export function partitionSkillsByRole(pool: Skill[]): { context: Skill[]; capability: Skill[] } {
+  const context: Skill[] = [];
+  const capability: Skill[] = [];
+  for (const s of pool) {
+    if (s.manifest.type === "context") {
+      if (s.manifest.status === undefined || s.manifest.status === "active") context.push(s);
+    } else {
+      capability.push(s);
+    }
+  }
+  context.sort((a, b) => a.manifest.priority - b.manifest.priority);
+  return { context, capability };
+}

@@ -1,20 +1,20 @@
 /**
- * Regression test for Layer 3 workspace-tier skill loading.
+ * Regression test for workspace-tier skill loading from the FOCUSED workspace.
  *
- * A skill at `{workDir}/workspaces/<focusedWsId>/skills/` with
- * `loading_strategy: always` must reach the `skills.loaded` event when a
- * chat is focused on that workspace, regardless of which workspace is the
- * session (personal) workspace.
- *
- * Why this test exists: Stage 2 (#272) wired Layer 3 selection to read
+ * Why this test exists: Stage 2 (#272) wired skill selection to read
  * workspace-tier skills from the session (personal) workspace instead of
- * the focused workspace. The result was that any workspace-tier skill in
- * a non-personal workspace — the typical place for team-wide voice rules,
- * org schema notes, etc. — silently disappeared from agent context. The
- * fix passes `focusedWsId ?? sessionWsId` into `loadConversationSkills`.
+ * the focused workspace, so any workspace-tier skill in a non-personal
+ * workspace silently disappeared from agent context. The fix passes
+ * `focusedWsId ?? sessionWsId` into `loadConversationSkills`.
  *
- * Failure mode the test pins: load the focused-workspace skill and assert
- * it lands in the recorded `skills.loaded` skills array.
+ * The focused-vs-personal guarantee applies to BOTH composition channels,
+ * which this file covers:
+ *   - Capability skills (`type: skill`) → Layer 3 (`skills.loaded`).
+ *   - Context skills (`type: context`) → the always-on context channel,
+ *     surfaced via `describeRequestSkills().context`.
+ * Channel ROUTING itself (role → channel) is unit-tested in
+ * `partitionSkillsByRole`; here we pin the focused-workspace + end-to-end
+ * behavior for each channel.
  */
 
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
@@ -46,15 +46,16 @@ beforeAll(async () => {
   });
   await provisionTestWorkspace(runtime);
 
-  // Plant a workspace-tier `loading_strategy: always` skill in the FOCUSED
-  // (shared) workspace — not the personal workspace. The session workspace
+  // Plant a workspace-tier capability skill (`type: skill` + `always`) in the
+  // FOCUSED (shared) workspace — not the personal one. The session workspace
   // (personalWorkspaceIdFor(DEV_IDENTITY.id)) is a different dir on disk;
-  // before the fix, Layer 3 read from there and never saw this file.
+  // before the fix, selection read from there and never saw this file.
+  // `type: skill` (capability role) routes it to Layer 3 (`skills.loaded`).
   const sharedSkillsDir = join(testDir, "workspaces", TEST_WORKSPACE_ID, "skills");
   mkdirSync(sharedSkillsDir, { recursive: true });
   writeFileSync(
     join(sharedSkillsDir, `${SHARED_SKILL_NAME}.md`),
-    `---\nname: ${SHARED_SKILL_NAME}\ndescription: Team voice rules\nversion: 1.0.0\ntype: context\npriority: 30\nloading_strategy: always\n---\n\n${SHARED_SKILL_BODY}\n`,
+    `---\nname: ${SHARED_SKILL_NAME}\ndescription: Team workflow rules\nversion: 1.0.0\ntype: skill\npriority: 30\nloading_strategy: always\n---\n\n${SHARED_SKILL_BODY}\n`,
   );
 });
 
@@ -119,6 +120,25 @@ describe("Layer 3 — workspace-tier `loading_strategy: always` skills", () => {
     expect(entry).toBeDefined();
     expect(entry?.skill.manifest.scope).toBe("workspace");
     expect(entry?.loadedBy).toBe("always");
+  });
+
+  it("composes a workspace-tier `type: context` skill into the context channel, not Layer 3", async () => {
+    // Companion to the Layer-3 cases above. An always-on workspace CONTEXT skill
+    // reaches the prompt via the context channel (Layer 0/1), surfaced by
+    // describeRequestSkills().context — NOT the Layer-3 set. This is the
+    // kill-always regression guard at the integration level: a workspace context
+    // skill must NOT be silently dropped now that it no longer rides Layer 3.
+    const ctxName = "shared-context-rule";
+    const dir = join(testDir, "workspaces", TEST_WORKSPACE_ID, "skills");
+    writeFileSync(
+      join(dir, `${ctxName}.md`),
+      `---\nname: ${ctxName}\ndescription: Team voice\nversion: 1.0.0\ntype: context\npriority: 30\n---\n\nMatch the user's voice.\n`,
+    );
+
+    const { context, layer3 } = await runtime.describeRequestSkills(TEST_WORKSPACE_ID);
+    expect(context.some((s) => s.manifest.name === ctxName)).toBe(true);
+    expect(context.find((s) => s.manifest.name === ctxName)?.manifest.scope).toBe("workspace");
+    expect(layer3.some((s) => s.skill.manifest.name === ctxName)).toBe(false);
   });
 
   it("does NOT load the focused workspace's skill when chatting from home (no focus)", async () => {
