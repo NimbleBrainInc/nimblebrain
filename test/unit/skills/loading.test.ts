@@ -40,6 +40,17 @@ function makeManifest(opts: ManifestOptions = {}): SkillManifest {
 }
 
 describe("resolveLoadingMechanism", () => {
+  test("a type:context with no strategy reports `always` (composes via Layer 0/1, PR-2c)", () => {
+    // The loader no longer synthesizes `always` for context skills, but they
+    // still compose via the Layer 0/1 path (`activeContextSkills()`), so the
+    // mechanism is still reported as `always` — decoupled from the loader's
+    // strategy field.
+    const m = makeManifest({ type: "context" });
+    expect(m.loadingStrategy).toBeUndefined();
+    expect(resolveLoadingMechanism(m)).toBe("always");
+    expect(wouldLoad(m)).toBe(true);
+  });
+
   test("a type:skill with no strategy, triggers, keywords, or affinity is dead", () => {
     const m = makeManifest({ type: "skill" });
     expect(resolveLoadingMechanism(m)).toBe("none");

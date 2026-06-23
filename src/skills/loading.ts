@@ -10,8 +10,12 @@
  *     visible instead of silently inert.
  *
  * The precedence below mirrors the real loader/selector/matcher behavior:
- *   - `loader.ts` resolves `loadingStrategy` (explicit → applies-to-tools →
- *     `type: context` ⇒ always).
+ *   - `loader.ts` resolves `loadingStrategy` (explicit → applies-to-tools).
+ *     It no longer synthesizes `always` for `type: context` (PR-2c); those
+ *     skills compose via the Layer 0/1 path (`activeContextSkills()`)
+ *     regardless of strategy, so this predicate still reports `"always"` for
+ *     them below — describing how they COMPOSE, decoupled from the loader's
+ *     strategy field.
  *   - `select.ts` (Layer 3) loads `always` and `tool_affined`; it *silently
  *     skips* `retrieval` / `explicit` (Phase 6/7, not yet enforced) and any
  *     skill with no strategy.
@@ -51,7 +55,9 @@ export function resolveLoadingMechanism(manifest: SkillManifest): SkillLoadingMe
     return "tool_affinity";
   }
 
-  // 3. Context skills always compose (loader infers `always`).
+  // 3. Context skills always compose via the Layer 0/1 path
+  //    (`activeContextSkills()`), regardless of `loadingStrategy` — so report
+  //    `"always"` even though the loader no longer synthesizes it (PR-2c).
   if (manifest.type === "context") return "always";
 
   // 4. A `type: skill` with triggers/keywords rides the legacy matcher.
