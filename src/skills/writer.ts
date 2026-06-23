@@ -122,7 +122,9 @@ export function readSkill(dir: string, name: string): Skill | null {
   if (!existsSync(filePath)) return null;
   try {
     const raw = readFileSync(filePath, "utf-8");
-    return parseSkillContent(raw, filePath);
+    // Authoring round-trip: read the FULL stored body (no prompt cap) so an
+    // edit never persists a truncated copy.
+    return parseSkillContent(raw, filePath, { cap: false });
   } catch {
     return null;
   }
@@ -194,7 +196,7 @@ export function listSkills(dir: string): Skill[] {
       const filePath = join(dir, entry.name);
       try {
         const raw = readFileSync(filePath, "utf-8");
-        const skill = parseSkillContent(raw, filePath);
+        const skill = parseSkillContent(raw, filePath, { cap: false });
         if (skill) skills.push(skill);
       } catch {
         // Skip unparseable files

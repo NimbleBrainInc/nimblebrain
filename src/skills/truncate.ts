@@ -19,6 +19,24 @@
  * Pure function. No I/O. Stable output for stable inputs.
  */
 
+/**
+ * Per-skill body ceiling (chars), applied when a skill body is rendered into the
+ * PROMPT (heading-aware via `truncateMarkdownToBudget`). ~12000 chars ≈ 3000 tokens.
+ *
+ * Threat model: this backstops UNVETTED user/workspace Layer-3 skills, which were
+ * injected into the prompt uncapped before this change — a single oversized one
+ * could blow the context budget. Vendored core/builtin skills are trusted and well
+ * under the cap; they are not the reason it exists. That "user skills are
+ * untrusted" framing is also why the per-skill cap is kept while the aggregate
+ * Layer-3 budget was deferred as inert-ahead-of-need.
+ *
+ * Applied ONLY on the prompt-load path (`parseSkillFileGuarded` passes
+ * `{ cap: true }`); every read/inspect/round-trip caller gets the full stored
+ * body by default, so editing never persists a truncated file. Also caps the
+ * bundle `skill://<name>/usage` body. Tune against a measured baseline.
+ */
+export const MAX_SKILL_BODY_CHARS = 12_000;
+
 export interface TruncateResult {
   body: string;
   truncated: boolean;

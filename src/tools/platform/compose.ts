@@ -501,7 +501,11 @@ function auditL3Skill(entry: SkillsLoadedEvent["skills"][number]): L3SkillAudit 
 function bodyFromSkillFile(path: string): string | null {
   try {
     const raw = readFileSync(path, "utf-8");
-    return parseSkillContent(raw, path)?.body ?? null;
+    // Cap to match the emission-time `contentHash`, NOT the stored body: Layer-3
+    // bodies are hashed AFTER the prompt-load cap (skills-loaded-payload.ts), so
+    // re-hashing the full body here would false-report drift on every skill over
+    // the cap and snapshot recovery would never match.
+    return parseSkillContent(raw, path, { cap: true })?.body ?? null;
   } catch {
     return null;
   }

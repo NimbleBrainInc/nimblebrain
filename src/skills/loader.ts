@@ -3,6 +3,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import matter from "gray-matter";
 import { log } from "../cli/log.ts";
+import { MAX_SKILL_BODY_CHARS, truncateMarkdownToBudget } from "./truncate.ts";
 import type {
   Skill,
   SkillLoadingStrategy,
@@ -91,7 +92,10 @@ function readSkillDirEntries(dir: string, label: string, depth: number): Dirent[
  */
 function parseSkillFileGuarded(path: string): Skill | null {
   try {
-    return parseSkillFile(path);
+    // Prompt-load path: the SOLE place the per-skill body cap is applied.
+    // Read/inspect callers (skills__read, writer, debug audit) get the full
+    // body by default, so no read door can silently truncate stored content.
+    return parseSkillFile(path, { cap: true });
   } catch (err) {
     const code = (err as NodeJS.ErrnoException)?.code ?? "unknown";
     log.error(`[skill] Skipping unreadable skill file "${path}" (${code})`, { path, code });
@@ -197,10 +201,14 @@ function collectScopedSkills(dir: string, scope: SkillScope, out: Skill[], depth
   }
 }
 
-/** Parse a single SKILL.md file into a Skill object. Returns null if invalid. */
-export function parseSkillFile(path: string): Skill | null {
+/**
+ * Parse a single SKILL.md file into a Skill object. Returns null if invalid.
+ * `opts.cap` defaults to false (full body); only the prompt-load path
+ * (`parseSkillFileGuarded`) passes `{ cap: true }`.
+ */
+export function parseSkillFile(path: string, opts?: { cap?: boolean }): Skill | null {
   const raw = readFileSync(path, "utf-8");
-  return parseSkillContent(raw, path);
+  return parseSkillContent(raw, path, opts);
 }
 
 /**
@@ -216,8 +224,19 @@ export function readSkillMtime(path: string): string {
   }
 }
 
+/**
+ * Paths already warned about body truncation — dedup so an oversized skill warns
+ * once per process, not once per chat turn (`loadConversationSkills` re-parses
+ * the live workspace/user dirs on every turn).
+ */
+const warnedTruncatedPaths = new Set<string>();
+
 /** Parse SKILL.md content string. Exported for testing. */
-export function parseSkillContent(raw: string, sourcePath: string): Skill | null {
+export function parseSkillContent(
+  raw: string,
+  sourcePath: string,
+  opts?: { cap?: boolean },
+): Skill | null {
   const { data, content } = matter(raw);
 
   const name = data.name;
@@ -352,7 +371,28 @@ export function parseSkillContent(raw: string, sourcePath: string): Skill | null
     ...(derivedFrom ? { derivedFrom } : {}),
   };
 
-  return { manifest, body: content.trim(), sourcePath };
+  // Body cap applies ONLY when explicitly requested (`cap: true`). The sole
+  // caller that asks is the prompt-load path (`parseSkillFileGuarded`); the
+  // default is the FULL body, so read/inspect/round-trip callers (skills__read,
+  // writer.readSkill / listSkills) never see — or persist — a truncated copy of
+  // user-authored content.
+  const trimmed = content.trim();
+  let body = trimmed;
+  if (opts?.cap === true) {
+    const capped = truncateMarkdownToBudget(trimmed, MAX_SKILL_BODY_CHARS);
+    body = capped.body;
+    if (capped.truncated && !warnedTruncatedPaths.has(sourcePath)) {
+      warnedTruncatedPaths.add(sourcePath);
+      const omitted =
+        capped.sectionsOmitted > 0
+          ? ` (${capped.sectionsOmitted} section${capped.sectionsOmitted === 1 ? "" : "s"} omitted)`
+          : "";
+      log.warn(
+        `[skill] body capped to ${MAX_SKILL_BODY_CHARS} chars${omitted} in ${sourcePath} — trim the skill or move depth into references/`,
+      );
+    }
+  }
+  return { manifest, body, sourcePath };
 }
 
 /** Partition skills into context (sorted by priority) and matchable skills. */
