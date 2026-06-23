@@ -1,7 +1,11 @@
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { mcpAuthCallbackUrl } from "../api/routes/mcp-auth.ts";
-import { type ComposioConnection, saveComposioConnection } from "../bundles/composio-connection.ts";
+import {
+  type ComposioConnection,
+  readComposioConnection,
+  saveComposioConnection,
+} from "../bundles/composio-connection.ts";
 import { WORKSPACE_PRINCIPAL_ID } from "../bundles/connection.ts";
 import { sanitizePlacements } from "../bundles/defaults.ts";
 import { getMpak } from "../bundles/mpak.ts";
@@ -10,7 +14,12 @@ import { startBundleSource } from "../bundles/startup.ts";
 import type { BundleManifest, BundleRef, RemoteTransportConfig } from "../bundles/types.ts";
 import { installBundleInWorkspace } from "../bundles/workspace-ops.ts";
 import { log } from "../cli/log.ts";
-import { composioUserId, connectComposioApiKey, createComposioSession } from "../composio/sdk.ts";
+import {
+  composioUserId,
+  connectComposioApiKey,
+  createComposioSession,
+  deleteComposioConnectedAccount,
+} from "../composio/sdk.ts";
 import type { UserConfigFieldDef } from "../config/workspace-credentials.ts";
 import { textContent } from "../engine/content-helpers.ts";
 import type { ToolResult } from "../engine/types.ts";
@@ -990,6 +999,13 @@ async function handleConnectApiKey(
     );
   }
 
+  // Capture any prior connected account before minting a new one. We can't
+  // adopt-existing like the OAuth path — an API-key re-submit may carry a
+  // rotated key, so the old account must be REPLACED, not reused. The revoke
+  // happens only after the new connect succeeds and persists (below), so a
+  // failed rotation leaves the working account intact.
+  const prior = await readComposioConnection(workDir, wsId, catalogId);
+
   // Hand the key(s) to Composio and verify the connection reaches ACTIVE. On
   // failure the SDK helper deletes the half-created account; surface a generic
   // message and never echo the submitted values.
@@ -1014,6 +1030,24 @@ async function handleConnectApiKey(
   };
   await saveComposioConnection(workDir, wsId, catalogId, connection);
   lifecycle.recordConnectionStateChange(serverName, wsId, WORKSPACE_PRINCIPAL_ID, "running");
+
+  // Rotation cleanup: revoke the account we just replaced so a rotated-away key
+  // stops being authorized at Composio and orphans don't accumulate. Runs after
+  // the new account is persisted, so the old one is only dropped once its
+  // replacement is live. Best-effort — deleteComposioConnectedAccount never
+  // throws; on failure the prior key may linger at Composio until removed there.
+  if (prior?.connectedAccountId && prior.connectedAccountId !== connected.connectedAccountId) {
+    const revoked = await deleteComposioConnectedAccount({
+      apiKey,
+      connectedAccountId: prior.connectedAccountId,
+    });
+    if (!revoked) {
+      log.warn(
+        `[connect_api_key] could not revoke the replaced Composio account for ${catalogId} ` +
+          `in ${wsId}; the prior key may remain authorized until removed at Composio`,
+      );
+    }
+  }
 
   return {
     content: textContent(`Connected ${entry.name}.`),

@@ -70,7 +70,10 @@ mock.module("@composio/core", () => ({
 }));
 
 import { NoopEventSink } from "../../src/adapters/noop-events.ts";
-import { readComposioConnection } from "../../src/bundles/composio-connection.ts";
+import {
+  readComposioConnection,
+  saveComposioConnection,
+} from "../../src/bundles/composio-connection.ts";
 import { BundleLifecycleManager } from "../../src/bundles/lifecycle.ts";
 import { slugifyServerName } from "../../src/bundles/paths.ts";
 import { _resetComposioConfigForTest, connectComposioApiKey } from "../../src/composio/sdk.ts";
@@ -544,5 +547,42 @@ describe("manage_connectors.connect_api_key — lifecycle tail", () => {
     expect(ctx.__calls.recordConnectionStateChange.callCount).toBe(0);
     // The SDK helper cleaned up the dangling connected account.
     expect(apiKeyCalls.deletedIds).toContain("ca_bad");
+  });
+
+  test("re-connect (key rotation) revokes the previously-connected account", async () => {
+    process.env.COMPOSIO_API_KEY = "k_test";
+    process.env.COMPOSIO_POSTHOG_AUTH_CONFIG_ID = "ac_posthog";
+    _resetComposioConfigForTest();
+
+    // Pre-seed a prior, already-connected account.
+    await saveComposioConnection(workDir, WS, POSTHOG_ID, {
+      connectedAccountId: "ca_old",
+      toolkit: "posthog",
+      userId: "u",
+      connectedAt: "2026-01-01T00:00:00Z",
+      status: "ACTIVE",
+    });
+
+    // The rotated submit mints a fresh account.
+    apiKeyCalls.initiateImpl = () => ({
+      id: "ca_new",
+      waitForConnection: async () => ({ id: "ca_new", status: "ACTIVE" }),
+    });
+
+    const ctx = stubCtx({ workDir, wsId: WS, entry: POSTHOG_ENTRY });
+    const r = await createManageConnectorsTool(ctx).handler({
+      action: "connect_api_key",
+      catalogId: POSTHOG_ID,
+      fields: { api_key: "phx_rotated", subdomain: "us" },
+    });
+
+    expect(r.isError).toBe(false);
+    // connection.json now points at the new account...
+    const conn = await readComposioConnection(workDir, WS, POSTHOG_ID);
+    expect(conn?.connectedAccountId).toBe("ca_new");
+    // ...and the replaced account was revoked at Composio (no orphan, old key
+    // de-authorized). The new account is NOT deleted.
+    expect(apiKeyCalls.deletedIds).toContain("ca_old");
+    expect(apiKeyCalls.deletedIds).not.toContain("ca_new");
   });
 });
