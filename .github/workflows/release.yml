@@ -61,7 +61,7 @@ jobs:
       - uses: actions/checkout@v6
         with:
           ref: ${{ github.event.inputs.tag || github.ref }}
-      - uses: docker/setup-buildx-action@v3
+      - uses: docker/setup-buildx-action@v4
       - uses: aws-actions/configure-aws-credentials@v6
         with:
           role-to-assume: ${{ vars.AWS_ROLE_ARN }}
@@ -293,7 +293,7 @@ jobs:
       - name: Mint prod-promote token
         if: steps.cfg.outputs.enabled == 'true'
         id: token
-        uses: actions/create-github-app-token@v2
+        uses: actions/create-github-app-token@v3
         with:
           app-id: ${{ vars.PROD_PROMOTE_APP_ID }}
           private-key: ${{ secrets.PROD_PROMOTE_APP_KEY }}

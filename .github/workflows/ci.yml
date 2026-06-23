@@ -128,7 +128,7 @@ jobs:
       # layer cache used by ./.github/actions/build-push-image. The cache
       # restores the base layers (apt deps, node, bun, mpak) that don't change
       # between commits, so a warm build skips them.
-      - uses: docker/setup-buildx-action@v3
+      - uses: docker/setup-buildx-action@v4
       - uses: aws-actions/configure-aws-credentials@v6
         with:
           role-to-assume: ${{ vars.AWS_ROLE_ARN }}
@@ -189,7 +189,7 @@ jobs:
       - name: Mint deploy-repo token
         if: steps.cfg.outputs.enabled == 'true'
         id: token
-        uses: actions/create-github-app-token@v2
+        uses: actions/create-github-app-token@v3
         with:
           app-id: ${{ vars.EDGE_BUMP_APP_ID }}
           private-key: ${{ secrets.EDGE_BUMP_APP_KEY }}
