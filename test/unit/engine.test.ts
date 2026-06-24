@@ -3680,3 +3680,170 @@ describe("malformed tool call input", () => {
     });
   });
 });
+
+describe("AgentEngine — connector-skill surface-once (P4)", () => {
+  const GMAIL_CANDIDATE = {
+    name: "composio/gmail",
+    body: "Confirm the recipient before calling gmail__send.",
+    scope: "connector",
+    toolAffinity: ["gmail__*"],
+  };
+
+  /** Capture every `connector.skill.injected` event the engine emits. */
+  function injectionSink(): { sink: EventSink; injected: EngineEvent[] } {
+    const injected: EngineEvent[] = [];
+    const sink: EventSink = {
+      emit(event) {
+        if (event.type === "connector.skill.injected") injected.push(event);
+      },
+    };
+    return { sink, injected };
+  }
+
+  /** A model that calls the given tools on iteration 1, then stops. */
+  function toolThenStop(
+    calls: Array<{ id: string; name: string }>,
+  ): ReturnType<typeof createMockModel> {
+    let n = 0;
+    return createMockModel(() => {
+      n++;
+      if (n === 1) {
+        return {
+          content: calls.map((c) => ({
+            type: "tool-call" as const,
+            toolCallId: c.id,
+            toolName: c.name,
+            input: "{}",
+          })),
+        };
+      }
+      return { content: [{ type: "text", text: "done" }] };
+    });
+  }
+
+  const sendTool: ToolSchema = {
+    name: "gmail__send",
+    description: "Send an email",
+    inputSchema: {},
+  };
+  const okHandler = () => ({ content: textContent("ok"), isError: false });
+
+  it("emits one connector.skill.injected on the first matching tool call", async () => {
+    const { sink, injected } = injectionSink();
+    const engine = makeEngine(
+      toolThenStop([{ id: "c1", name: "gmail__send" }]),
+      { schemas: [sendTool], handler: okHandler },
+      sink,
+    );
+
+    await engine.run(
+      { ...defaultConfig, connectorSkillCandidates: [GMAIL_CANDIDATE] },
+      "",
+      [{ role: "user", content: [{ type: "text", text: "send mail" }] }],
+      [sendTool],
+    );
+
+    expect(injected).toHaveLength(1);
+    expect(injected[0]!.data["skillName"]).toBe("composio/gmail");
+    expect(injected[0]!.data["toolName"]).toBe("gmail__send");
+    expect(injected[0]!.data["skillBody"]).toBe(GMAIL_CANDIDATE.body);
+    expect(injected[0]!.data["scope"]).toBe("connector");
+  });
+
+  it("does not inject when the called tool matches no candidate affinity", async () => {
+    const { sink, injected } = injectionSink();
+    const otherTool: ToolSchema = { name: "calendar__list", description: "List", inputSchema: {} };
+    const engine = makeEngine(
+      toolThenStop([{ id: "c1", name: "calendar__list" }]),
+      { schemas: [otherTool], handler: okHandler },
+      sink,
+    );
+
+    await engine.run(
+      { ...defaultConfig, connectorSkillCandidates: [GMAIL_CANDIDATE] },
+      "",
+      [{ role: "user", content: [{ type: "text", text: "list events" }] }],
+      [otherTool],
+    );
+
+    expect(injected).toHaveLength(0);
+  });
+
+  it("does not re-inject when history already carries the synthetic marker (cross-run dedup)", async () => {
+    const { sink, injected } = injectionSink();
+    const engine = makeEngine(
+      toolThenStop([{ id: "c1", name: "gmail__send" }]),
+      { schemas: [sendTool], handler: okHandler },
+      sink,
+    );
+
+    // A prior turn's reconstructed synthetic message rides the incoming
+    // history. Typed as a bare provider message; the engine reads `.metadata`
+    // through a cast, mirroring the runtime where these are StoredMessages.
+    const priorInjection = {
+      role: "assistant",
+      content: [{ type: "text", text: "<connector-skill>...</connector-skill>" }],
+      metadata: { synthetic: "connector_skill_injected", skill: "composio/gmail" },
+    } as unknown as LanguageModelV3Message;
+
+    await engine.run(
+      { ...defaultConfig, connectorSkillCandidates: [GMAIL_CANDIDATE] },
+      "",
+      [
+        { role: "user", content: [{ type: "text", text: "send mail" }] },
+        priorInjection,
+        { role: "user", content: [{ type: "text", text: "send another" }] },
+      ],
+      [sendTool],
+    );
+
+    expect(injected).toHaveLength(0);
+  });
+
+  it("injects once when two matching tools are called in the same run (per-run dedup)", async () => {
+    const { sink, injected } = injectionSink();
+    const draftTool: ToolSchema = {
+      name: "gmail__draft",
+      description: "Draft an email",
+      inputSchema: {},
+    };
+    const engine = makeEngine(
+      toolThenStop([
+        { id: "c1", name: "gmail__send" },
+        { id: "c2", name: "gmail__draft" },
+      ]),
+      {
+        schemas: [sendTool, draftTool],
+        handler: okHandler,
+      },
+      sink,
+    );
+
+    await engine.run(
+      { ...defaultConfig, connectorSkillCandidates: [GMAIL_CANDIDATE] },
+      "",
+      [{ role: "user", content: [{ type: "text", text: "send and draft" }] }],
+      [sendTool, draftTool],
+    );
+
+    expect(injected).toHaveLength(1);
+  });
+
+  it("is inert when no candidates are configured", async () => {
+    const { sink, injected } = injectionSink();
+    const engine = makeEngine(
+      toolThenStop([{ id: "c1", name: "gmail__send" }]),
+      { schemas: [sendTool], handler: okHandler },
+      sink,
+    );
+
+    await engine.run(
+      defaultConfig,
+      "",
+      [{ role: "user", content: [{ type: "text", text: "send mail" }] }],
+      [sendTool],
+    );
+
+    expect(injected).toHaveLength(0);
+  });
+});

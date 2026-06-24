@@ -14,6 +14,7 @@ import { applyCachePolicy } from "../model/cache-policy.ts";
 import { getProviderFromModel, supportsEnabledThinking } from "../model/catalog.ts";
 import { normalizeForReplay } from "../model/inbound-fit.ts";
 import { callModel, type StreamResult } from "../model/stream.ts";
+import { toolMatches } from "../skills/select.ts";
 import { coerceInputForSchema } from "../tools/coerce-input.ts";
 import { bareToolName } from "../tools/namespace.ts";
 import { validateToolInput } from "../tools/validate-input.ts";
@@ -30,17 +31,18 @@ import { isContextOverflowError } from "./context-overflow.ts";
 import { withRetry } from "./retry.ts";
 import { createRunSupervisor } from "./supervisor.ts";
 import { toolSchemaForLlm } from "./tool-schema-for-llm.ts";
-import type {
-  EngineConfig,
-  EngineResult,
-  EventSink,
-  FinishReason,
-  ResolvedThinking,
-  StopReason,
-  ToolCallRecord,
-  ToolResult,
-  ToolRouter,
-  ToolSchema,
+import {
+  CONNECTOR_SKILL_SYNTHETIC,
+  type EngineConfig,
+  type EngineResult,
+  type EventSink,
+  type FinishReason,
+  type ResolvedThinking,
+  type StopReason,
+  type ToolCallRecord,
+  type ToolResult,
+  type ToolRouter,
+  type ToolSchema,
 } from "./types.ts";
 
 /**
@@ -231,6 +233,24 @@ export class AgentEngine {
     // Never mutate the caller's array
     const history = [...messages];
     const maxIter = Math.min(config.maxIterations, MAX_ITERATIONS);
+
+    // Connector-skill overlays (P4): curated guidance surfaced ONCE into the
+    // conversation history on the first matching tool call — never into the
+    // cached system prefix. Seed the dedup set from incoming history so an
+    // overlay surfaced on a prior turn (a reconstructed synthetic message)
+    // isn't re-injected; the set also dedups multiple matching calls within
+    // this run. `messages` carries `metadata` at runtime (reconstructed
+    // `StoredMessage`s) though its static type is the bare provider message.
+    const connectorSkillCandidates = config.connectorSkillCandidates ?? [];
+    const injectedConnectorSkills = new Set<string>();
+    if (connectorSkillCandidates.length > 0) {
+      for (const m of history) {
+        const meta = (m as { metadata?: { synthetic?: string; skill?: string | null } }).metadata;
+        if (meta?.synthetic === CONNECTOR_SKILL_SYNTHETIC && typeof meta.skill === "string") {
+          injectedConnectorSkills.add(meta.skill);
+        }
+      }
+    }
 
     let iteration = 0;
     const cumulativeUsage: TokenUsage = emptyUsage();
@@ -860,6 +880,33 @@ export class AgentEngine {
                 input: gatedCall.input,
               },
             });
+
+            // Surface-once connector-skill overlays (P4). On the first call to
+            // a tool whose name a candidate's tool-affinity matches, emit
+            // `connector.skill.injected` — the reconstructor turns it into a
+            // synthetic history message that rides the cached history from the
+            // next turn (never the system prefix). Deduped across runs (the set
+            // is seeded from history above) and within this run (the set).
+            // Synchronous between the has-check and the add — no await — so
+            // parallel tool calls in this `Promise.all` mapper can't both pass
+            // the check and double-inject the same overlay.
+            if (connectorSkillCandidates.length > 0) {
+              for (const candidate of connectorSkillCandidates) {
+                if (injectedConnectorSkills.has(candidate.name)) continue;
+                if (!candidate.toolAffinity.some((p) => toolMatches(gatedCall.name, p))) continue;
+                injectedConnectorSkills.add(candidate.name);
+                this.events.emit({
+                  type: "connector.skill.injected",
+                  data: {
+                    runId,
+                    toolName: gatedCall.name,
+                    skillName: candidate.name,
+                    skillBody: candidate.body,
+                    scope: candidate.scope,
+                  },
+                });
+              }
+            }
 
             const start = performance.now();
             let result: ToolResult | undefined;

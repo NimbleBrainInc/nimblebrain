@@ -8,10 +8,13 @@
 
 import type { LanguageModelV3Content, LanguageModelV3ReasoningPart } from "@ai-sdk/provider";
 import { boundToolResultForModel } from "../engine/content-helpers.ts";
+import { CONNECTOR_SKILL_SYNTHETIC } from "../engine/types.ts";
 import { normalizeForReplay } from "../model/inbound-fit.ts";
+import { formatConnectorSkillBlock } from "../prompt/compose.ts";
 import { estimateCost } from "../usage/cost.ts";
 import { compactionSummaryMessages } from "./compaction.ts";
 import type {
+  ConnectorSkillInjectedEvent,
   ConversationEvent,
   HistoryCompactedEvent,
   LlmResponseEvent,
@@ -199,6 +202,10 @@ function buildMessagesFromEvents(events: readonly ConversationEvent[]): StoredMe
       const runLlmResponses: LlmResponseEvent[] = [];
       const runToolDones: Map<string, ToolDoneEvent> = new Map();
       const runToolInputs: Map<string, unknown> = new Map();
+      // Connector overlays surfaced during this run (P4). Reconstructed into
+      // synthetic assistant messages appended after the run's real turns, so
+      // the guidance rides the cached, append-only history from here on.
+      const runConnectorSkills: ConnectorSkillInjectedEvent[] = [];
 
       while (i < events.length) {
         const inner = events[i];
@@ -236,6 +243,8 @@ function buildMessagesFromEvents(events: readonly ConversationEvent[]): StoredMe
           if (inner.input !== undefined) {
             runToolInputs.set(inner.id, inner.input);
           }
+        } else if (inner.type === "connector.skill.injected") {
+          runConnectorSkills.push(inner);
         }
         // tool.progress and other events are skipped for reconstruction
 
@@ -409,6 +418,24 @@ function buildMessagesFromEvents(events: readonly ConversationEvent[]): StoredMe
           metadata: baseMetadata(),
         };
         messages.push(assistantMsg);
+      }
+
+      // Connector overlays surfaced during this run (P4). Append after the
+      // run's real turns as synthetic assistant messages — the Anthropic
+      // provider merges them into the preceding assistant block, and a user
+      // turn always follows on replay, so they never become a trailing
+      // prefill. The `<connector-skill>` containment is the per-prompt
+      // injection defense; `metadata.synthetic`/`skill` let the engine detect
+      // an already-surfaced overlay and never re-inject it.
+      for (const cs of runConnectorSkills) {
+        messages.push({
+          role: "assistant",
+          content: [
+            { type: "text", text: formatConnectorSkillBlock(cs.skillName, cs.scope, cs.skillBody) },
+          ],
+          timestamp: cs.ts,
+          metadata: { synthetic: CONNECTOR_SKILL_SYNTHETIC, skill: cs.skillName },
+        });
       }
 
       continue;
