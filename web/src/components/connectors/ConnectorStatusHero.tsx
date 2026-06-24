@@ -84,6 +84,18 @@ export function ConnectorStatusHero({
 
   const action = resolveAction(installed, !!directoryEntry);
 
+  // Connector version, two axes: the running serverInfo.version (handshakeVersion —
+  // what's actually connected) takes precedence over the declared catalog/manifest
+  // version (installed.version; "remote" is the placeholder for a remote bundle that
+  // declares none, not a real version). When both exist and differ, the declared one
+  // is surfaced as a small drift note rather than silently hidden.
+  const declaredVersion = installed.version !== "remote" ? installed.version : undefined;
+  const shownVersion = installed.handshakeVersion ?? declaredVersion;
+  const versionDrift =
+    installed.handshakeVersion && declaredVersion && installed.handshakeVersion !== declaredVersion
+      ? declaredVersion
+      : undefined;
+
   const onPrimary = async () => {
     if (!action) return;
     setError(null);
@@ -159,10 +171,17 @@ export function ConnectorStatusHero({
               </span>
             )}
           </div>
-          {/* Version for stdio bundles (registry/local). Remote connectors have
-              no meaningful bundle version (`installed.version === "remote"`). */}
-          {installed.type !== "remote" && installed.version && (
-            <p className="text-xs text-muted-foreground font-mono mt-0.5">v{installed.version}</p>
+          {/* Version: running serverInfo.version primary, declared (catalog/manifest)
+              version shown only when it drifts from what's running. Covers remote
+              connectors (fleet, Composio, OAuth) — which report a handshake version
+              but carry no meaningful bundle version — as well as local bundles. */}
+          {shownVersion && (
+            <p className="text-xs text-muted-foreground font-mono mt-0.5">
+              v{shownVersion}
+              {versionDrift && (
+                <span className="ml-2 text-muted-foreground/70">catalog v{versionDrift}</span>
+              )}
+            </p>
           )}
           {cat?.description && (
             <p className="text-sm text-muted-foreground mt-1">{cat.description}</p>

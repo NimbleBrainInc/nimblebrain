@@ -33,6 +33,7 @@ import { canWriteWorkspaceScoped } from "../workspace/authz.ts";
 import type { Workspace } from "../workspace/types.ts";
 import { FileCredentialStore } from "./credential-store.ts";
 import type { InProcessTool } from "./in-process-app.ts";
+import { McpSource } from "./mcp-source.ts";
 
 /**
  * `manage_connectors` tool — single surface for the Connectors UI
@@ -517,6 +518,14 @@ async function handleListInstalled(
     serverName: string;
     bundleName: string;
     version: string;
+    /**
+     * The version the running server reports in its MCP `initialize` handshake
+     * (serverInfo.version), sanitized. Distinct from `version`, which is the
+     * catalog/manifest's *declared* version: this is what's actually connected.
+     * Untrusted (the server sets it) and display-only. Absent when the source is
+     * stopped or the server reports none.
+     */
+    handshakeVersion?: string;
     type: "remote" | "local";
     state: string;
     // Stage 2: only workspace-scope connectors exist. Personal connectors
@@ -657,11 +666,18 @@ async function handleListInstalled(
         cat = catalogById.get(composioConnectorId);
       }
 
-      // Tool count + interactive — best-effort (a stopped source returns []).
+      // Tool count + reported version — best-effort (a stopped source returns []
+      // and has no version). Both read from the same live source. getReportedVersion
+      // is McpSource-specific (not on the ToolSource interface), reached by the
+      // same `instanceof` narrowing the system-prompt composer uses for instructions.
       let toolCount = 0;
+      let handshakeVersion: string | undefined;
       try {
         const src = registry.getSource(instance.serverName);
-        if (src) toolCount = (await src.tools()).length;
+        if (src) {
+          toolCount = (await src.tools()).length;
+          if (src instanceof McpSource) handshakeVersion = src.getReportedVersion();
+        }
       } catch {
         // ignore
       }
@@ -680,6 +696,7 @@ async function handleListInstalled(
         serverName: instance.serverName,
         bundleName: instance.bundleName,
         version: instance.version,
+        ...(handshakeVersion ? { handshakeVersion } : {}),
         type: isRemote ? "remote" : "local",
         state: instance.state,
         // Provisional — overwritten by deriveConnectorStatus below
