@@ -250,11 +250,18 @@ describe("SkillsBrowser with surface='workspace' (workspace settings tab)", () =
     // an admin authoring into the wrong scope.
     expect(createCall!.args.scope).toBe("workspace");
     expect((createCall!.args.manifest as { name?: string }).name).toBe("new-ws-rule");
-    // Description field is never authored from the UI.
-    expect((createCall!.args.manifest as { description?: string }).description).toBe("");
-    // Type defaults to "context" so the loader picks `loading_strategy:
-    // always` for short prose rules.
-    expect((createCall!.args.manifest as { type?: string }).type).toBe("context");
+    // The typed title doubles as the on-disk description (required non-empty)
+    // and the row label; for an always-on rule it's a label, not an activation
+    // signal.
+    expect((createCall!.args.manifest as { description?: string }).description).toBe("new-ws-rule");
+    // A rule is always-on: the UI sends loadingStrategy explicitly so the skill
+    // actually loads. The server default ("dynamic") with no triggers/affinity
+    // would be catalog-only — it would never load.
+    expect((createCall!.args.manifest as { loadingStrategy?: string }).loadingStrategy).toBe(
+      "always",
+    );
+    // The removed `type` field is no longer sent.
+    expect((createCall!.args.manifest as { type?: string }).type).toBeUndefined();
   });
 
   test("initial skills.list fetch is unfiltered by scope", async () => {
@@ -322,10 +329,10 @@ describe("SkillsBrowser with surface='workspace' (workspace settings tab)", () =
     expect(manifest.description).toBeUndefined();
     expect(manifest.type).toBeUndefined();
     expect(manifest.name).toBeUndefined();
-    // `loadingStrategy` is intentionally absent from the LLM-facing
-    // schema (schemas/skills.ts ManifestFields). Sending it would be
-    // a silent no-op (validator strips it) and was misleading in the
-    // UI as a "When to load" override. The dropdown is gone.
+    // loadingStrategy is set once at create ("always") and is not part of an
+    // edit — a rule is always-on by definition, and update only patches the
+    // fields the user explicitly touched (priority, body). Sending it here
+    // would be a redundant no-op.
     expect(manifest.loadingStrategy).toBeUndefined();
   });
 

@@ -30,6 +30,8 @@ const ManifestFields = {
     description: "Becomes the filename. Lowercase letters, numbers, single hyphens.",
   }),
   description: Type.String({
+    minLength: 1,
+    maxLength: 1024,
     description: "What the skill does AND when to use it (the catalog activation signal).",
   }),
   loadingStrategy: Type.Optional(LoadingStrategy),
@@ -140,7 +142,7 @@ export type SkillsCreateInput = Static<typeof SkillsCreateInput>;
 // Update: partial of ManifestFields minus `name` — renames are not patchable
 // via update (the name is the filename; the path-derived id would drift).
 // All fields optional (omitted fields keep their current values), unlike
-// create where description+type are required.
+// create where name + description are required.
 const UpdateManifestFields = {
   description: Type.Optional(ManifestFields.description),
   loadingStrategy: ManifestFields.loadingStrategy,

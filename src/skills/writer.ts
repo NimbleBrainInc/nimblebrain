@@ -10,7 +10,24 @@ import {
 import { join } from "node:path";
 import matter from "gray-matter";
 import { parseSkillContent } from "./loader.ts";
+import { validateFrontmatter } from "./schemas/skill-manifest.ts";
 import type { Skill, SkillManifest } from "./types.ts";
+
+/**
+ * Thrown when a manifest would serialize to frontmatter the loader rejects.
+ * `writeSkill` validates against the canonical schema BEFORE touching disk, so
+ * a skill that can't be loaded is never written — closing the orphan class
+ * where a create "fails" yet leaves an unparseable file behind.
+ */
+export class SkillFrontmatterValidationError extends Error {
+  constructor(
+    readonly skillName: string,
+    readonly errors: string[],
+  ) {
+    super(`Cannot write skill "${skillName}": ${errors.join("; ")}`);
+    this.name = "SkillFrontmatterValidationError";
+  }
+}
 
 // ---------------------------------------------------------------------------
 // Skill file CRUD — atomic persistence for skill markdown files.
@@ -100,6 +117,13 @@ export function serializeSkill(manifest: SkillManifest, body: string): string {
  * Creates the directory if it doesn't exist. Uses atomic write.
  */
 export function writeSkill(dir: string, name: string, manifest: SkillManifest, body: string): void {
+  // Validate the exact on-disk shape against the canonical schema — the SAME
+  // check the loader runs (`validateFrontmatter`) — before writing. If the
+  // skill wouldn't load, it isn't written: no orphaned, unparseable file.
+  const validation = validateFrontmatter(manifestToFrontmatter(manifest));
+  if (!validation.ok) {
+    throw new SkillFrontmatterValidationError(name, validation.errors);
+  }
   mkdirSync(dir, { recursive: true });
   const filePath = join(dir, `${name}.md`);
   const content = serializeSkill(manifest, body);
