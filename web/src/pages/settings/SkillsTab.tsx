@@ -900,12 +900,10 @@ function EditView({
               // edit the title is immutable and description is left untouched.
               description: name.trim(),
               body: body.trim(),
-              // Only forward priority when the user explicitly opened
-              // Advanced (or when editing a rule that already had a
-              // priority set on disk). For fresh creates with Advanced
-              // never opened, omit so the server's default (50) lands —
-              // sending `priority: 50` ourselves would be redundant.
-              ...(advancedOpen || existing?.metadata.priority !== undefined ? { priority } : {}),
+              // Always send priority: on a new rule it's the default (50),
+              // on an edit it's the rule's current value (so a body-only edit
+              // writes it back unchanged). handleSubmit clamps it to 11–99.
+              priority,
             })
           }
           disabled={!valid || pending}
