@@ -43,6 +43,7 @@ import {
 import { AgentEngine } from "../engine/engine.ts";
 import { estimateMessageTokens, estimateToolDescriptionTokens } from "../engine/token-estimate.ts";
 import type {
+  ConnectorSkillCandidate,
   ContextAssembledPayload,
   ContextAssembledSource,
   EngineConfig,
@@ -88,6 +89,10 @@ import { composeSystemSegments } from "../prompt/compose.ts";
 import { ConnectorDirectory } from "../registries/directory.ts";
 import { RegistryStore, warnIfCuratedCatalogEmpty } from "../registries/registry-store.ts";
 import { synthesizeBundleSkill } from "../skills/bundle-skills.ts";
+import {
+  CONNECTOR_SKILLS_SUBDIR,
+  readConnectorSkillCandidates,
+} from "../skills/connector-skill-store.ts";
 import {
   loadBuiltinSkills,
   loadCoreSkills,
@@ -1680,6 +1685,10 @@ export class Runtime {
         skillsLoaded,
         contextAssembled,
       },
+      // Connector-skill overlays (P4) for the FOCUSED workspace — surfaced once
+      // into history by the engine on a matching connector tool call, never
+      // into the system prefix. Same workspace scoping as the layer-3 pool.
+      connectorSkillCandidates: this.loadConnectorSkillCandidates(focusedWsId ?? sessionWsId),
       // Cancellation: thread the caller's signal into the engine. The
       // engine checks it between iterations and forwards it down to every
       // tool call. Without this, callers racing the chat against a
@@ -2182,6 +2191,9 @@ export class Runtime {
       maxToolResultSize: this.config.maxToolResultSize,
       hooks: perRequestHooks,
       runMetadata: { skillsLoaded, contextAssembled },
+      // Connector-skill overlays (P4) — same focused-workspace scoping as the
+      // layer-3 pool; surfaced once into history, never the system prefix.
+      connectorSkillCandidates: this.loadConnectorSkillCandidates(focusedWsId ?? sessionWsId),
       ...(request.signal ? { signal: request.signal } : {}),
     };
 
@@ -3517,6 +3529,23 @@ export class Runtime {
     }
 
     return mergeScopedSkills(orgPool, workspacePool, userPool);
+  }
+
+  /**
+   * Connector-skill overlay candidates for a turn (P4) — curated connector
+   * guidance materialized into the FOCUSED workspace's `connector-skills/`
+   * store (a sibling of `skills/`). Returned as the engine's lightweight
+   * candidate shape and handed to `engine.run` via
+   * `EngineConfig.connectorSkillCandidates`, where the surface-once hook
+   * matches them by tool-affinity. They are deliberately NOT merged into
+   * `loadConversationSkills` — that pool composes into the system prompt /
+   * Layer-3, and connector overlays must only ever ride the conversation
+   * history. Empty when nothing was materialized (feature off, or no overlay
+   * curated for the workspace's connectors).
+   */
+  loadConnectorSkillCandidates(wsId: string): ConnectorSkillCandidate[] {
+    const dir = this.getWorkspaceContext(wsId).getDataPath(CONNECTOR_SKILLS_SUBDIR);
+    return readConnectorSkillCandidates(dir);
   }
 
   /**

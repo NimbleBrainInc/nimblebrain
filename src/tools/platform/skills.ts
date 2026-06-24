@@ -508,6 +508,12 @@ async function listSkills(
       if (skill.sourcePath && layer1SourcePaths.has(resolve(skill.sourcePath))) {
         continue;
       }
+      // Connector-skill overlays (P4) are surface-once-into-history candidates,
+      // not authored skills — they live in a separate `connector-skills/` store
+      // that `loadConversationSkills` never reads. Filter on the provenance
+      // origin as defense-in-depth so an overlay can never leak into the
+      // authored-skill listing even if a future change merges the pools.
+      if (skill.manifest.provenance?.origin === "connector") continue;
       out.push(skillToListed(skill));
     }
   }
