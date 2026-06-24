@@ -457,6 +457,11 @@ export class Runtime {
       mpakHome,
     );
     lifecycle.setPlacementRegistry(placementRegistry);
+    // Connector-skill cleanup on uninstall resolves the `connector-skills/`
+    // store from this same workDir that install + the per-turn loader use, so
+    // an operator `workDir` in nimblebrain.json (NB_WORK_DIR unset) cleans up
+    // correctly rather than looking under ~/.nimblebrain.
+    lifecycle.setWorkDir(resolveWorkDir(config));
 
     // Host-resources subsystem. One resolver + one rate-limit shared
     // across every bundle spawned through this runtime, parameterized

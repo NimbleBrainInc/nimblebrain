@@ -4,6 +4,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { NoopEventSink } from "../../../src/adapters/noop-events.ts";
 import { BundleLifecycleManager } from "../../../src/bundles/lifecycle.ts";
+import { defaultWorkDir } from "../../../src/bundles/paths.ts";
+import type { ToolRegistry } from "../../../src/tools/registry.ts";
 import { CONNECTOR_SKILLS_SUBDIR } from "../../../src/skills/connector-skill-store.ts";
 import { WorkspaceContext } from "../../../src/workspace/context.ts";
 
@@ -114,5 +116,29 @@ describe("BundleLifecycleManager.syncBoundSkills (P4)", () => {
     expect(existsSync(join(connectorSkillsDir(wd), "gmail"))).toBe(false);
     // Idempotent.
     expect(() => m.removeBoundSkills("gmail", WS_ID, wd)).not.toThrow();
+  });
+
+  it("uninstall cleans up overlays under the wired workDir, not defaultWorkDir()", async () => {
+    // Regression: `uninstall` step-4d resolved the connector-skills dir from
+    // `defaultWorkDir()` while install/load use the runtime's resolved workDir.
+    // Under an operator `workDir` in nimblebrain.json (NB_WORK_DIR unset) the
+    // two diverge and uninstall removed nothing. The Runtime wires the resolved
+    // workDir via `setWorkDir`; this drives the REAL uninstall path with a
+    // workDir that is provably ≠ defaultWorkDir().
+    process.env.CONNECTOR_SKILLS_ENABLED = "true";
+    const wd = workDir();
+    expect(wd).not.toBe(defaultWorkDir()); // the divergence the bug needed
+
+    const m = manager({ [gmailUrl]: { status: 200, body: OVERLAY } });
+    m.setWorkDir(wd);
+    await m.syncBoundSkills("composio/gmail", "gmail", WS_ID, wd);
+    expect(existsSync(join(connectorSkillsDir(wd), "gmail"))).toBe(true);
+
+    // Real uninstall path (no instance/config/registry source needed — step 4d
+    // runs regardless and uses the wired workDir).
+    const registry = { hasSource: () => false } as unknown as ToolRegistry;
+    await m.uninstall("gmail", registry, WS_ID);
+
+    expect(existsSync(join(connectorSkillsDir(wd), "gmail"))).toBe(false);
   });
 });

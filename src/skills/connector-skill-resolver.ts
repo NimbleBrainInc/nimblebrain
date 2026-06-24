@@ -81,7 +81,10 @@ export async function resolveOverlay(
 
   // Cache key spans (identity, repo, version) so a version bump or repo change
   // re-resolves rather than serving stale content. The body's own sha is
-  // recorded inside the cache entry for provenance.
+  // recorded inside the cache entry for provenance. NOTE: this assumes pinned
+  // versions are immutable — moving a tag (e.g. re-pointing `v0.1.0`) under a
+  // fixed key serves the cached body until the cache dir is cleared. Bump the
+  // version to roll forward; don't re-point a tag.
   const cacheKey = sha256Hex(`${identity}@${repo}@${version}`);
   const cachePath = join(opts.cacheDir, `${cacheKey}.json`);
 

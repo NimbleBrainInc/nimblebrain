@@ -200,6 +200,19 @@ export class BundleLifecycleManager {
    */
   private connectorSkillFetch: typeof fetch = fetch;
 
+  /**
+   * The runtime's resolved work directory (`resolveWorkDir(config)`), wired by
+   * Runtime after construction. Connector-skill cleanup on uninstall must use
+   * THIS — not `defaultWorkDir()` — so it matches where install
+   * (`runtime.getWorkDir()`) and the per-turn loader (`WorkspaceContext`)
+   * resolve the `connector-skills/` store: those honor `config.workDir`, while
+   * `defaultWorkDir()` only reads `NB_WORK_DIR`/`~/.nimblebrain`. The two
+   * diverge when an operator sets `workDir` in `nimblebrain.json` with
+   * `NB_WORK_DIR` unset. Null in minimal/test runtimes that don't wire it →
+   * falls back to `defaultWorkDir()` (where the two coincide).
+   */
+  private resolvedWorkDir: string | null = null;
+
   constructor(
     private eventSink: EventSink,
     private configPath: string | undefined,
@@ -210,6 +223,11 @@ export class BundleLifecycleManager {
   /** Inject the fetch used for connector-skill overlay resolution (tests). */
   setConnectorSkillFetch(fetchImpl: typeof fetch): void {
     this.connectorSkillFetch = fetchImpl;
+  }
+
+  /** Wire the runtime's resolved work directory (called by Runtime after construction). */
+  setWorkDir(workDir: string): void {
+    this.resolvedWorkDir = workDir;
   }
 
   /** Set the PlacementRegistry (called by Runtime after construction). */
@@ -783,7 +801,14 @@ export class BundleLifecycleManager {
     // Step 4d — Remove materialized connector-skill overlays (P4). Keyed on
     // serverName so it cleans up even when the instance was already lost; the
     // `skillsLock` on the dropped BundleRef goes with the config entry above.
-    this.removeBoundSkills(serverName, instance?.wsId ?? wsId, defaultWorkDir());
+    // Uses the runtime's resolved workDir (NOT `defaultWorkDir()`) so it
+    // targets the same `connector-skills/` store install/load wrote to under a
+    // `nimblebrain.json` `workDir`. See `resolvedWorkDir`.
+    this.removeBoundSkills(
+      serverName,
+      instance?.wsId ?? wsId,
+      this.resolvedWorkDir ?? defaultWorkDir(),
+    );
 
     // Step 5 — Emit event (data NOT deleted — step 6)
     this.eventSink.emit({
