@@ -232,7 +232,7 @@ async function composeLive(runtime: Runtime, convId: string): Promise<ComposeRes
   //   1. Read the workspace registry's full tool list.
   //   2. Filter by `isToolVisibleToRole(toolName, identity?.orgRole)` —
   //      runtime.chat skips tools the caller's role can't see, and L3
-  //      `tool_affined` skills match against that filtered set.
+  //      tool-affinity skills match against that filtered set.
   //   3. Run `surfaceTools` to split the result into `direct` (in the
   //      LLM's tool list) and `proxied` (discoverable via `nb__search`).
   //      The apps section's prompt body changes based on

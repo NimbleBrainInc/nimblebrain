@@ -79,7 +79,7 @@ describe("migrateFrontmatterToManifest", () => {
     ).toBe("disabled");
   });
 
-  test("drops version, type, requires-bundles, and scope; folds keywords into description", () => {
+  test("preserves version; drops type, requires-bundles, and scope; folds keywords into description", () => {
     const m = migrateFrontmatterToManifest({
       name: "a",
       description: "d",
@@ -89,7 +89,8 @@ describe("migrateFrontmatterToManifest", () => {
       "requires-bundles": ["@nonexistent/bundle"],
       metadata: { keywords: ["k1", "k2"], version: "2.0.0" },
     });
-    expect(m.version).toBeUndefined();
+    // version is a canonical conventional field — carried across (top-level wins).
+    expect(m.version).toBe("1.0.0");
     expect((m as Record<string, unknown>).type).toBeUndefined();
     expect((m as Record<string, unknown>)["requires-bundles"]).toBeUndefined();
     // scope is stamped from the directory tier at load, never persisted.
@@ -145,7 +146,8 @@ describe("migrateSkillContent", () => {
     expect(m.status).toBe("active");
     expect(m.toolAffinity).toEqual(["nb__*"]);
     expect(m.triggers).toEqual(["do the thing"]);
-    expect(m.version).toBeUndefined();
+    // version round-trips through the canonical path (metadata.version).
+    expect(m.version).toBe("1.0.0");
   });
 
   test("preserves the body verbatim", () => {

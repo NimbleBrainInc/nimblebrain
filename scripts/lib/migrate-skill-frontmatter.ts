@@ -20,11 +20,13 @@
  *   - `applies-to-tools`              → `metadata.nimblebrain.tool-affinity`
  *   - `metadata.triggers`            → `metadata.nimblebrain.triggers`
  *   - `status` (if present)           → `metadata.nimblebrain.status`
+ *   - top-level/`meta` `version`      → `metadata.version` (canonical conventional)
  *
- * DROPPED (deliberately, matching the cutover): `type`, `version` (removed from
- * the model), `requires-bundles` (bundles are sunset), `metadata.keywords`
- * (folded into description at authoring time), and top-level `scope` (stamped
- * from the directory tier at load, never persisted).
+ * DROPPED (deliberately, matching the cutover): `type` (replaced by
+ * `loading-strategy`), `requires-bundles` (bundles are sunset), `metadata.keywords`
+ * (folded into description at authoring time), top-level `scope` (stamped from the
+ * directory tier at load, never persisted), and any non-canonical `metadata.*`
+ * keys the runtime doesn't model (e.g. `tags`, `category`).
  *
  * Serialization is delegated to the writer's `serializeSkill` so a migrated
  * file is byte-identical to one freshly written through `skills__create`.
@@ -110,6 +112,11 @@ export function migrateFrontmatterToManifest(legacy: Record<string, unknown>): S
   const triggers = asStringArray(meta.triggers);
   const allowedTools = asStringArray(legacy["allowed-tools"] ?? legacy.allowedTools);
   const author = typeof meta.author === "string" ? meta.author : undefined;
+  // `version` is a canonical conventional field (`metadata.version`) the runtime
+  // models and round-trips through create — so carry it across rather than drop
+  // it. Legacy authored it top-level; the canonical home is `metadata.version`.
+  const versionRaw = legacy.version ?? meta.version;
+  const version = typeof versionRaw === "string" ? versionRaw : undefined;
 
   // Fold legacy `keywords` into the description rather than dropping them — the
   // catalog/retrieval activation signal must survive the cutover (the standard
@@ -139,6 +146,7 @@ export function migrateFrontmatterToManifest(legacy: Record<string, unknown>): S
       ? { compatibility: legacy.compatibility }
       : {}),
     ...(author ? { author } : {}),
+    ...(version ? { version } : {}),
   };
 }
 

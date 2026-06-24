@@ -49,7 +49,7 @@ export interface BundleSkillInput {
 
 /**
  * Synthesize a Layer 3 `Skill` from a bundle-exposed `skill://<name>/usage`
- * resource. The skill is `tool_affined` to `<serverName>__*`, so it loads
+ * resource. The skill is `dynamic` with tool-affinity `<serverName>__*`, so it loads
  * whenever the bundle's tools are in the active toolset.
  *
  * Pure function — no I/O, no caching. The caller (runtime) handles fetch +

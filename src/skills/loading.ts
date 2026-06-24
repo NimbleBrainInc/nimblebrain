@@ -38,7 +38,7 @@ export type LoadingSignals = {
  *
  * Note the value names differ from `SkillLoadingStrategy` deliberately:
  * `"tool_affinity"` matches the `loadedBy` event vocabulary in `select.ts`
- * (the strategy is `tool_affined`; the load reason is `tool_affinity`), and
+ * (the strategy is `dynamic`; the load reason is `tool_affinity`), and
  * `"trigger"` is the matcher path which has no strategy enum at all.
  */
 export type SkillLoadingMechanism = "always" | "tool_affinity" | "trigger" | "none";
