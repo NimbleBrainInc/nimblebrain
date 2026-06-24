@@ -194,10 +194,17 @@ export function readTenantIdentityFromEnv(env: NodeJS.ProcessEnv = process.env):
 export function resolveAuthorizerTokenUrl(
   opts: { tokenUrl?: string; issuer?: string } = {},
 ): string | undefined {
-  const explicit = opts.tokenUrl ?? process.env.NB_FLEET_AUTHORIZER_TOKEN_URL;
-  if (explicit) return explicit;
-  const issuer = opts.issuer ?? process.env.NB_FLEET_AUTHORIZER_ISSUER;
-  return issuer ? new URL("/token", issuer).toString() : undefined;
+  // Per-connection config (opts) is more specific than global env, so it wins
+  // OUTRIGHT — a connection pinned to its own authorizer via `config.issuer` /
+  // `config.tokenUrl` is never silently redirected to the global endpoint once
+  // Item 2 sets NB_FLEET_AUTHORIZER_TOKEN_URL. Within each tier, an explicit
+  // endpoint beats the issuer-derived one.
+  if (opts.tokenUrl) return opts.tokenUrl;
+  if (opts.issuer) return new URL("/token", opts.issuer).toString();
+  const envTokenUrl = process.env.NB_FLEET_AUTHORIZER_TOKEN_URL;
+  if (envTokenUrl) return envTokenUrl;
+  const envIssuer = process.env.NB_FLEET_AUTHORIZER_ISSUER;
+  return envIssuer ? new URL("/token", envIssuer).toString() : undefined;
 }
 
 export interface MintServiceTokenOptions {
@@ -312,7 +319,7 @@ export interface TokenRequest {
 /**
  * Expiry-aware, single-flight cache over `mintServiceToken`. One instance backs
  * all tenant-key connections in a runtime: it dedupes concurrent mints for the
- * same `(issuer, workspace, audience, scope)` and re-mints just before expiry
+ * same `(tokenUrl, tid, workspace, audience, scope)` and re-mints just before expiry
  * (or on demand after a 401).
  *
  * Identity (`tid` + key) is read once from the env at construction and reused —

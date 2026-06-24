@@ -414,4 +414,23 @@ describe("resolveAuthorizerTokenUrl (issuer/endpoint decoupling)", () => {
       expect(resolveAuthorizerTokenUrl()).toBeUndefined(),
     );
   });
+
+  it("per-connection config wins over global env (a pinned authorizer is never silently redirected)", () => {
+    withEnv(
+      {
+        NB_FLEET_AUTHORIZER_TOKEN_URL: "http://global-authorizer.svc/token",
+        NB_FLEET_AUTHORIZER_ISSUER: "http://global-authorizer.svc",
+      },
+      () => {
+        // A connection pinned via config.issuer must beat the global TOKEN_URL env...
+        expect(resolveAuthorizerTokenUrl({ issuer: "http://pinned.example" })).toBe(
+          "http://pinned.example/token",
+        );
+        // ...and an explicit config.tokenUrl likewise.
+        expect(resolveAuthorizerTokenUrl({ tokenUrl: "http://pinned.example/token" })).toBe(
+          "http://pinned.example/token",
+        );
+      },
+    );
+  });
 });
