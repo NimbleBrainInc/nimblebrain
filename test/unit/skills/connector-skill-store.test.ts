@@ -68,6 +68,28 @@ describe("materializeConnectorSkill", () => {
     });
     expect(res).toBeNull();
   });
+
+  it("returns null on a valid-frontmatter but empty-body overlay (no dedup-defeating no-op)", () => {
+    const root = tmp();
+    const emptyBody = `---
+name: gmail-usage
+description: Gmail connector guidance
+metadata:
+  nimblebrain:
+    loading-strategy: dynamic
+---
+
+`;
+    const res = materializeConnectorSkill({
+      connectorSkillsDir: root,
+      serverName: "gmail",
+      overlayBody: emptyBody,
+      source: "connector:composio/gmail@v0.1.0",
+      now: "2026-01-01T00:00:00.000Z",
+    });
+    expect(res).toBeNull();
+    expect(existsSync(join(root, "gmail"))).toBe(false);
+  });
 });
 
 describe("readConnectorSkillCandidates", () => {

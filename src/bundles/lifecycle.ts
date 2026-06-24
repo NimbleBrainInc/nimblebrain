@@ -194,7 +194,7 @@ export class BundleLifecycleManager {
   private getBundleMcpDeps: ((wsId: string) => BundleMcpDeps) | null = null;
 
   /**
-   * Fetch used to resolve curated connector-skill overlays (P4). Defaults to
+   * Fetch used to resolve curated connector-skill overlays. Defaults to
    * global `fetch`; tests inject a fixture via {@link setConnectorSkillFetch}
    * so overlay binding stays hermetic (no network).
    */
@@ -285,7 +285,7 @@ export class BundleLifecycleManager {
     return this.instances.delete(`${serverName}|${wsId}`);
   }
 
-  // ---- Connector-skill binding (P4) -------------------------------------
+  // ---- Connector-skill binding -------------------------------------
 
   /**
    * Resolve and materialize the curated overlay bound to a connector identity,
@@ -344,7 +344,7 @@ export class BundleLifecycleManager {
   }
 
   /**
-   * Remove every materialized connector overlay bound to a server (P4). Called
+   * Remove every materialized connector overlay bound to a server. Called
    * on uninstall; the `BundleRef.skillsLock` itself is dropped with the bundle
    * entry. Best-effort — a missing store is a no-op.
    */
@@ -798,7 +798,7 @@ export class BundleLifecycleManager {
       }
     }
 
-    // Step 4d — Remove materialized connector-skill overlays (P4). Keyed on
+    // Step 4d — Remove materialized connector-skill overlays. Keyed on
     // serverName so it cleans up even when the instance was already lost; the
     // `skillsLock` on the dropped BundleRef goes with the config entry above.
     // Uses the runtime's resolved workDir (NOT `defaultWorkDir()`) so it

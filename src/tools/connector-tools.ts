@@ -481,7 +481,7 @@ async function handleListDirectory(
 }
 
 /**
- * `list_bound_skills` — the curated connector-skill overlays (P4) materialized
+ * `list_bound_skills` — the curated connector-skill overlays materialized
  * in this workspace, with their bound server + provenance source. These are
  * surface-once-into-history candidates, not authored skills, so they don't
  * appear in `skills__list`; this is how an operator sees what's bound.
@@ -1513,7 +1513,7 @@ async function handleInstallRemoteOAuth(
     staticOAuthClient = client;
   }
   const ref = buildRef(composioWiring, staticOAuthClient);
-  // Bind the curated connector-skill overlay (P4), if one is curated for this
+  // Bind the curated connector-skill overlay, if one is curated for this
   // connector's identity. Best-effort + non-fatal (see `syncBoundSkills`): the
   // returned lock rides the persisted ref so uninstall cleans it up and the
   // dedupe path knows the connector has an overlay. The overlay materializes

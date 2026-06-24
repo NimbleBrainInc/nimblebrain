@@ -1,5 +1,5 @@
 /**
- * Operator config for connector-skill overlays (P4). Env-driven, resolved where
+ * Operator config for connector-skill overlays. Env-driven, resolved where
  * the lifecycle/loader needs it. Pure + injectable so the policy is
  * unit-testable without touching `process.env`.
  *

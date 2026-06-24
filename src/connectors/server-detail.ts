@@ -251,7 +251,7 @@ export function getNimbleBrainHostMeta(s: ServerDetail): HostManifestMeta | unde
 }
 
 /**
- * The connector-skill identity rule (P4), over the two values that determine it.
+ * The connector-skill identity rule, over the two values that determine it.
  * For a Composio connector the identity is `composio/<toolkit>` (the toolkit
  * slug is stable across deployments, unlike the per-account auth config id);
  * otherwise it is the server name. Shared by {@link connectorSkillIdentity}
@@ -267,7 +267,7 @@ export function connectorSkillIdentityFrom(
 }
 
 /**
- * Stable identity used to look up a curated connector-skill overlay (P4) in the
+ * Stable identity used to look up a curated connector-skill overlay in the
  * public overlay repo, laid out as `<identity>/SKILL.md`. See
  * {@link connectorSkillIdentityFrom} for the rule. `name` is required on
  * `ServerDetail`, so a usable identity is always derivable.

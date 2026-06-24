@@ -202,7 +202,7 @@ function buildMessagesFromEvents(events: readonly ConversationEvent[]): StoredMe
       const runLlmResponses: LlmResponseEvent[] = [];
       const runToolDones: Map<string, ToolDoneEvent> = new Map();
       const runToolInputs: Map<string, unknown> = new Map();
-      // Connector overlays surfaced during this run (P4). Reconstructed into
+      // Connector overlays surfaced during this run. Reconstructed into
       // synthetic assistant messages appended after the run's real turns, so
       // the guidance rides the cached, append-only history from here on.
       const runConnectorSkills: ConnectorSkillInjectedEvent[] = [];
@@ -420,13 +420,21 @@ function buildMessagesFromEvents(events: readonly ConversationEvent[]): StoredMe
         messages.push(assistantMsg);
       }
 
-      // Connector overlays surfaced during this run (P4). Append after the
+      // Connector overlays surfaced during this run. Append after the
       // run's real turns as synthetic assistant messages — the Anthropic
       // provider merges them into the preceding assistant block, and a user
       // turn always follows on replay, so they never become a trailing
       // prefill. The `<connector-skill>` containment is the per-prompt
       // injection defense; `metadata.synthetic`/`skill` let the engine detect
       // an already-surfaced overlay and never re-inject it.
+      //
+      // Provider note: this produces two consecutive assistant messages (the
+      // run's final assistant text, then this one). Anthropic — the default,
+      // tested provider, and the only one overlays ship enabled-for — merges
+      // consecutive same-role messages, so the pair coalesces cleanly. A
+      // non-Anthropic provider whose SDK conversion does NOT merge could reject
+      // the pair; verify provider-side coalescing before enabling overlays on
+      // a non-Anthropic default.
       for (const cs of runConnectorSkills) {
         messages.push({
           role: "assistant",

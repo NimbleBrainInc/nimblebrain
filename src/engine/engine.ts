@@ -234,7 +234,7 @@ export class AgentEngine {
     const history = [...messages];
     const maxIter = Math.min(config.maxIterations, MAX_ITERATIONS);
 
-    // Connector-skill overlays (P4): curated guidance surfaced ONCE into the
+    // Connector-skill overlays: curated guidance surfaced ONCE into the
     // conversation history on the first matching tool call — never into the
     // cached system prefix. The dedup set is seeded primarily from
     // `alreadyInjectedConnectorSkills`, which the runtime computes from the
@@ -884,7 +884,7 @@ export class AgentEngine {
               },
             });
 
-            // Surface-once connector-skill overlays (P4). On the first call to
+            // Surface-once connector-skill overlays. On the first call to
             // a tool whose name a candidate's tool-affinity matches, emit
             // `connector.skill.injected` — the reconstructor turns it into a
             // synthetic history message that rides the cached history from the

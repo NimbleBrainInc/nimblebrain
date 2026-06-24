@@ -43,7 +43,7 @@ import { WORKSPACE_ID_RE } from "./workspace-store.ts";
  *   - `credentials`    — per-bundle credentials, OAuth tokens, secrets
  *   - `conversations`    — JSONL message persistence
  *   - `skills`           — workspace-installed (authored) skills
- *   - `connector-skills` — materialized connector overlays (P4); a SIBLING of
+ *   - `connector-skills` — materialized connector overlays; a SIBLING of
  *     `skills/`, never read by the authored-skill loader
  *   - `files`            — uploaded files / file context
  *

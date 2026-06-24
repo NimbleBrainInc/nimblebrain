@@ -1,5 +1,5 @@
 /**
- * Connector-skill candidate store (P4).
+ * Connector-skill candidate store.
  *
  * Curated connector overlays are materialized into a workspace-local
  * `connector-skills/<server>/<skill>.md` store that is a SIBLING of the
@@ -64,6 +64,12 @@ export function materializeConnectorSkill(args: {
   const serverDir = join(args.connectorSkillsDir, args.serverName);
   const parsed = parseSkillContent(args.overlayBody, join(serverDir, "overlay.md"), { cap: false });
   if (!parsed) return null;
+  // An empty body has nothing to surface. Treat it as "no overlay" (like an
+  // unparseable one) — symmetric with the event store dropping an empty
+  // `connector.skill.injected`. Materializing it would let the engine emit on
+  // every matching call (the store drops each, so no dedup marker is ever
+  // written), re-emitting forever.
+  if (!parsed.body.trim()) return null;
 
   const skillName = parsed.manifest.name;
   const manifest: SkillManifest = {
@@ -106,6 +112,10 @@ export function readConnectorSkillCandidates(
       if (!entry.isFile() || !entry.name.toLowerCase().endsWith(".md")) continue;
       const skill = parseSkillFile(join(serverDir, entry.name), { cap: false });
       if (!skill) continue;
+      // Skip empty-body overlays — nothing to surface, and emitting on them
+      // would never dedup (the store drops the empty event). Defense for any
+      // empty file that predates the materialize-time guard.
+      if (!skill.body.trim()) continue;
       const affinity = skill.manifest.toolAffinity?.length
         ? skill.manifest.toolAffinity
         : [`${server.name}__*`];

@@ -1,5 +1,5 @@
 /**
- * Connector-skill overlay resolver (P4, v1).
+ * Connector-skill overlay resolver.
  *
  * Connector "overlays" are short usage-guidance skills that NimbleBrain curates
  * for connectors we don't control (Composio + other third-party MCP servers).

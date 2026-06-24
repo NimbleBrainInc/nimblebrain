@@ -459,7 +459,7 @@ export interface HistoryCompactedEvent {
 
 /**
  * A curated connector-skill overlay surfaced into the conversation for the
- * first time (P4), triggered by a matching connector tool call during a run.
+ * first time, triggered by a matching connector tool call during a run.
  * The reconstructor turns this event into a synthetic assistant message whose
  * body is the overlay wrapped in `<connector-skill>` containment, carrying
  * `metadata.synthetic = "connector_skill_injected"` + `metadata.skill` so the

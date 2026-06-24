@@ -794,7 +794,7 @@ function formatLayer3SkillsSection(entries: Layer3SkillEntry[]): string | null {
 
 /**
  * Wrap a connector-skill overlay body for surfacing into the conversation
- * history (P4). Unlike Layer-3 skills, a connector overlay NEVER enters the
+ * history. Unlike Layer-3 skills, a connector overlay NEVER enters the
  * cached system prefix — it becomes the body of a synthetic assistant message
  * the reconstructor emits on the first matching connector tool call, so the
  * guidance rides the append-only history rather than re-varying the prompt

@@ -75,7 +75,7 @@ export interface RemoteTransportConfig {
 }
 
 /**
- * One materialized connector-skill overlay bound to a bundle (P4). Recorded on
+ * One materialized connector-skill overlay bound to a bundle. Recorded on
  * the bundle's `BundleRef.skillsLock` at install so the dedupe path can tell a
  * bundle HAS a curated overlay (skip its `skill://usage`), and so the binding
  * is auditable. Cleanup on uninstall is keyed on `serverName` (it removes the
@@ -108,7 +108,7 @@ export type BundleRef =
       allowedEnv?: string[];
       trustScore?: number | null;
       ui?: BundleUiMeta | null;
-      /** Materialized connector-skill overlays bound to this bundle (P4). */
+      /** Materialized connector-skill overlays bound to this bundle. */
       skillsLock?: ConnectorSkillLockEntry[];
     }
   | {
@@ -118,7 +118,7 @@ export type BundleRef =
       allowedEnv?: string[];
       trustScore?: number | null;
       ui?: BundleUiMeta | null;
-      /** Materialized connector-skill overlays bound to this bundle (P4). */
+      /** Materialized connector-skill overlays bound to this bundle. */
       skillsLock?: ConnectorSkillLockEntry[];
     }
   | {
@@ -127,7 +127,7 @@ export type BundleRef =
       transport?: RemoteTransportConfig;
       trustScore?: number | null;
       ui?: BundleUiMeta | null;
-      /** Materialized connector-skill overlays bound to this bundle (P4). */
+      /** Materialized connector-skill overlays bound to this bundle. */
       skillsLock?: ConnectorSkillLockEntry[];
       /**
        * OAuth identity scope for this URL bundle. `"workspace"` is the

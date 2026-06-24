@@ -1693,7 +1693,7 @@ export class Runtime {
         skillsLoaded,
         contextAssembled,
       },
-      // Connector-skill overlays (P4) for the FOCUSED workspace — surfaced once
+      // Connector-skill overlays for the FOCUSED workspace — surfaced once
       // into history by the engine on a matching connector tool call, never
       // into the system prefix. Same workspace scoping as the layer-3 pool.
       connectorSkillCandidates: this.loadConnectorSkillCandidates(focusedWsId ?? sessionWsId),
@@ -2206,7 +2206,7 @@ export class Runtime {
       maxToolResultSize: this.config.maxToolResultSize,
       hooks: perRequestHooks,
       runMetadata: { skillsLoaded, contextAssembled },
-      // Connector-skill overlays (P4) — same focused-workspace scoping as the
+      // Connector-skill overlays — same focused-workspace scoping as the
       // layer-3 pool; surfaced once into history, never the system prefix.
       connectorSkillCandidates: this.loadConnectorSkillCandidates(focusedWsId ?? sessionWsId),
       // Computed from the UN-rehydrated history — rehydrate strips the synthetic
@@ -2676,7 +2676,7 @@ export class Runtime {
     // safely would make the situation worse, not better. Trust is enforced at
     // install time. See `formatFocusedAppSection` for the matching policy on
     // the `<app-guide>` path.
-    // Servers with a materialized connector overlay (P4): skip synthesizing
+    // Servers with a materialized connector overlay: skip synthesizing
     // their `skill://<server>/usage` guidance — the curated overlay supersedes
     // it (and would otherwise double the guidance under two framings). A bundle
     // "has an overlay" iff its persisted ref carries a non-empty `skillsLock`.
@@ -3565,7 +3565,7 @@ export class Runtime {
   }
 
   /**
-   * Connector-skill overlay candidates for a turn (P4) — curated connector
+   * Connector-skill overlay candidates for a turn — curated connector
    * guidance materialized into the FOCUSED workspace's `connector-skills/`
    * store (a sibling of `skills/`). Returned as the engine's lightweight
    * candidate shape and handed to `engine.run` via
@@ -3582,13 +3582,19 @@ export class Runtime {
   }
 
   /**
-   * Names of connector overlays already surfaced in this conversation (P4),
+   * Names of connector overlays already surfaced in this conversation,
    * read from the reconstructed history's synthetic-message markers. MUST be
    * called on the UN-rehydrated history (`compactedHistory ?? history`):
    * `rehydrateUserResources` strips message `metadata`, so the marker is gone
    * from the rehydrated `messages` the engine receives. Passed to the engine as
    * `alreadyInjectedConnectorSkills` so a bound overlay is surfaced once across
    * the whole conversation, not re-injected every turn its tools are used.
+   *
+   * Compaction interaction (intended): reading from `compactedHistory ?? history`
+   * means that once compaction folds the synthetic marker into a summary, the
+   * overlay is no longer "already injected" and re-surfaces once on the next
+   * matching tool call — re-establishing the guidance after the verbatim block
+   * was summarized away. The cost is bounded (one re-injection per compaction).
    */
   private collectInjectedConnectorSkills(messages: StoredMessage[]): string[] {
     const names = new Set<string>();

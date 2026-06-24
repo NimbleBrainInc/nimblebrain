@@ -6,7 +6,7 @@ export type { ContentBlock, TextContent };
 
 /**
  * Metadata marker stamped on the synthetic message the reconstructor builds
- * from a `connector.skill.injected` event (P4). The engine reads it on replay
+ * from a `connector.skill.injected` event. The engine reads it on replay
  * (`history.some(m => m.metadata?.synthetic === CONNECTOR_SKILL_SYNTHETIC)`) to
  * detect an already-surfaced connector overlay and never re-inject it. Lives
  * here — the dependency-safe shared home — because both the engine (producer of
@@ -128,7 +128,7 @@ export type EngineEventType =
   | "skills.loaded"
   /**
    * A curated connector-skill overlay was surfaced into the conversation for
-   * the first time, triggered by a matching connector tool call (P4). The
+   * the first time, triggered by a matching connector tool call. The
    * reconstructor turns this into a synthetic assistant message carrying the
    * skill body, so the guidance rides the cached, append-only history from the
    * next turn on instead of re-entering the system prefix every turn. Emitted
@@ -276,7 +276,7 @@ export interface EngineConfig {
    */
   runMetadata?: RunMetadata;
   /**
-   * Connector-skill overlay candidates for this run (P4). Curated usage
+   * Connector-skill overlay candidates for this run. Curated usage
    * guidance for connectors the platform doesn't control, loaded as
    * `scope: connector` and surfaced ONCE into the conversation history on the
    * first matching tool call — never into the cached system prefix. The engine
@@ -289,7 +289,7 @@ export interface EngineConfig {
   connectorSkillCandidates?: ConnectorSkillCandidate[];
   /**
    * Names of connector overlays already surfaced earlier in this conversation,
-   * so the engine never re-injects them (P4 cross-run dedup). The runtime
+   * so the engine never re-injects them (cross-run dedup). The runtime
    * computes this from the UN-rehydrated reconstructed history: the synthetic
    * marker lives in message `metadata`, which `rehydrateUserResources` strips
    * before the engine sees the messages, so the engine's own history scan can't
@@ -313,7 +313,7 @@ export interface EngineConfig {
 
 /**
  * A connector-skill overlay considered for surface-once-into-history during a
- * run (P4). The runtime loads these from the workspace's `connector-skills/`
+ * run. The runtime loads these from the workspace's `connector-skills/`
  * candidate store (NOT `/skills`) and hands them to the engine via
  * {@link EngineConfig.connectorSkillCandidates}. They are NEVER composed into
  * the system prompt — the engine surfaces a matched candidate into the
