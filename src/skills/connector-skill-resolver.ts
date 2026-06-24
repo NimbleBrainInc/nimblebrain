@@ -23,16 +23,10 @@
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
-
-/**
- * Default curated overlay repo coordinates. Pinned — bump deliberately.
- *
- * TODO(connector-skills): surface these via `nimblebrain.json` config + an
- * enable flag once the public `NimbleBrainInc/connector-skills` repo is seeded.
- * Kept here as the single pinned default until the config wiring lands.
- */
-export const CONNECTOR_SKILLS_REPO = "NimbleBrainInc/connector-skills";
-export const CONNECTOR_SKILLS_VERSION = "v0.1.0";
+import {
+  CONNECTOR_SKILLS_REPO_DEFAULT,
+  CONNECTOR_SKILLS_VERSION_DEFAULT,
+} from "../config/connector-skills.ts";
 
 export interface ResolvedOverlay {
   /** The SKILL.md body, verbatim. */
@@ -44,9 +38,9 @@ export interface ResolvedOverlay {
 export interface ResolveOverlayOptions {
   /** Directory for the content-addressed cache (e.g. `{workDir}/cache/connector-skills`). */
   cacheDir: string;
-  /** owner/repo of the curated overlay repo. Defaults to {@link CONNECTOR_SKILLS_REPO}. */
+  /** owner/repo of the curated overlay repo. Defaults to {@link CONNECTOR_SKILLS_REPO_DEFAULT}. */
   repo?: string;
-  /** Pinned git tag/sha. Defaults to {@link CONNECTOR_SKILLS_VERSION}. */
+  /** Pinned git tag/sha. Defaults to {@link CONNECTOR_SKILLS_VERSION_DEFAULT}. */
   version?: string;
   /** Injectable fetch — defaults to global `fetch`. Tests pass a fixture. */
   fetchImpl?: typeof fetch;
@@ -80,8 +74,8 @@ export async function resolveOverlay(
   identity: string,
   opts: ResolveOverlayOptions,
 ): Promise<ResolvedOverlay | null> {
-  const repo = opts.repo ?? CONNECTOR_SKILLS_REPO;
-  const version = opts.version ?? CONNECTOR_SKILLS_VERSION;
+  const repo = opts.repo ?? CONNECTOR_SKILLS_REPO_DEFAULT;
+  const version = opts.version ?? CONNECTOR_SKILLS_VERSION_DEFAULT;
   const fetchImpl = opts.fetchImpl ?? fetch;
   const timeoutMs = opts.timeoutMs ?? 15_000;
 

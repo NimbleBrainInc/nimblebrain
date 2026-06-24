@@ -74,6 +74,7 @@ function manifestToFrontmatter(manifest: SkillManifest): Record<string, unknown>
     if (p.createdBy) prov["created-by"] = p.createdBy;
     if (p.createdAt) prov["created-at"] = p.createdAt;
     if (p.updatedAt) prov["updated-at"] = p.updatedAt;
+    if (p.source) prov.source = p.source;
     nb.provenance = prov;
   }
 

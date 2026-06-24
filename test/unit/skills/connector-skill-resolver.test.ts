@@ -4,11 +4,10 @@ import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
-  CONNECTOR_SKILLS_REPO,
-  CONNECTOR_SKILLS_VERSION,
-  overlayUrl,
-  resolveOverlay,
-} from "../../../src/skills/connector-skill-resolver.ts";
+  CONNECTOR_SKILLS_REPO_DEFAULT,
+  CONNECTOR_SKILLS_VERSION_DEFAULT,
+} from "../../../src/config/connector-skills.ts";
+import { overlayUrl, resolveOverlay } from "../../../src/skills/connector-skill-resolver.ts";
 
 const sha = (s: string) => createHash("sha256").update(s, "utf8").digest("hex");
 
@@ -159,7 +158,7 @@ describe("resolveOverlay", () => {
   });
 
   test("exposes pinned default repo/version constants", () => {
-    expect(CONNECTOR_SKILLS_REPO).toMatch(/\//);
-    expect(CONNECTOR_SKILLS_VERSION).toMatch(/^v\d/);
+    expect(CONNECTOR_SKILLS_REPO_DEFAULT).toMatch(/\//);
+    expect(CONNECTOR_SKILLS_VERSION_DEFAULT).toMatch(/^v\d/);
   });
 });
