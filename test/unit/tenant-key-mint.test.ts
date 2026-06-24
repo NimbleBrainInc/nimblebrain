@@ -6,6 +6,7 @@ import {
   MintError,
   mintServiceToken,
   readTenantIdentityFromEnv,
+  resolveAuthorizerTokenUrl,
   ServiceTokenCache,
   type TenantIdentity,
 } from "../../src/oauth/tenant-key-mint.ts";
@@ -217,7 +218,7 @@ describe("mintServiceToken", () => {
   it("mints a token and computes absolute expiry from expires_in", async () => {
     const { fetchImpl } = fakeAuthorizer({ expiresIn: 300, now: () => 1000 });
     const tok = await mintServiceToken({
-      issuer: "https://authz.test",
+      tokenUrl: "https://authz.test/token",
       workspace: "ws_smoke",
       audience: "artifacts",
       scope: "artifacts:write",
@@ -245,7 +246,7 @@ describe("mintServiceToken", () => {
 });
 
 describe("ServiceTokenCache", () => {
-  const req = { issuer: "https://authz.test", workspace: "ws_smoke", audience: "artifacts", scope: "artifacts:write" };
+  const req = { tokenUrl: "https://authz.test/token", workspace: "ws_smoke", audience: "artifacts", scope: "artifacts:write" };
 
   it("serves a cached token until the renew skew, then re-mints", async () => {
     let clock = 1000;
@@ -297,7 +298,7 @@ describe("ServiceTokenCache", () => {
 });
 
 describe("createMintingFetch", () => {
-  const req = { issuer: "https://authz.test", workspace: "ws_smoke", audience: "artifacts", scope: "artifacts:write" };
+  const req = { tokenUrl: "https://authz.test/token", workspace: "ws_smoke", audience: "artifacts", scope: "artifacts:write" };
 
   it("attaches a freshly-minted bearer to each outbound request", async () => {
     const authz = fakeAuthorizer({ now: () => 1000 });
@@ -347,5 +348,70 @@ describe("createMintingFetch", () => {
     const res = await f("https://artifacts.test/v1/artifacts");
     expect(res.status).toBe(500);
     expect(serviceCalls).toBe(1); // 500 is surfaced, not retried
+  });
+});
+
+describe("resolveAuthorizerTokenUrl (issuer/endpoint decoupling)", () => {
+  const ENV = ["NB_FLEET_AUTHORIZER_TOKEN_URL", "NB_FLEET_AUTHORIZER_ISSUER"] as const;
+  function withEnv(
+    vals: Partial<Record<(typeof ENV)[number], string | undefined>>,
+    fn: () => void,
+  ): void {
+    const saved = Object.fromEntries(ENV.map((k) => [k, process.env[k]]));
+    try {
+      for (const k of ENV) {
+        const v = vals[k];
+        if (v === undefined) delete process.env[k];
+        else process.env[k] = v;
+      }
+      fn();
+    } finally {
+      for (const k of ENV) {
+        if (saved[k] === undefined) delete process.env[k];
+        else process.env[k] = saved[k] as string;
+      }
+    }
+  }
+
+  it("uses an explicit tokenUrl verbatim, ignoring the issuer (location != identity)", () => {
+    // The whole point: a moved endpoint never disturbs the `iss` identity.
+    expect(
+      resolveAuthorizerTokenUrl({
+        tokenUrl: "http://mcp-authorizer.auth.svc/token",
+        issuer: "http://mcp-authorizer.mcp-shared.svc",
+      }),
+    ).toBe("http://mcp-authorizer.auth.svc/token");
+  });
+
+  it("derives `${issuer}/token` when no explicit tokenUrl (legacy fallback)", () => {
+    expect(resolveAuthorizerTokenUrl({ issuer: "http://mcp-authorizer.mcp-shared.svc" })).toBe(
+      "http://mcp-authorizer.mcp-shared.svc/token",
+    );
+  });
+
+  it("prefers NB_FLEET_AUTHORIZER_TOKEN_URL over the issuer-derived endpoint", () => {
+    withEnv(
+      {
+        NB_FLEET_AUTHORIZER_TOKEN_URL: "http://mcp-authorizer.auth.svc/token",
+        NB_FLEET_AUTHORIZER_ISSUER: "http://mcp-authorizer.mcp-shared.svc",
+      },
+      () => expect(resolveAuthorizerTokenUrl()).toBe("http://mcp-authorizer.auth.svc/token"),
+    );
+  });
+
+  it("falls back to `${NB_FLEET_AUTHORIZER_ISSUER}/token` when the token-url var is unset", () => {
+    withEnv(
+      {
+        NB_FLEET_AUTHORIZER_TOKEN_URL: undefined,
+        NB_FLEET_AUTHORIZER_ISSUER: "http://mcp-authorizer.mcp-shared.svc",
+      },
+      () => expect(resolveAuthorizerTokenUrl()).toBe("http://mcp-authorizer.mcp-shared.svc/token"),
+    );
+  });
+
+  it("returns undefined when neither is configured", () => {
+    withEnv({ NB_FLEET_AUTHORIZER_TOKEN_URL: undefined, NB_FLEET_AUTHORIZER_ISSUER: undefined }, () =>
+      expect(resolveAuthorizerTokenUrl()).toBeUndefined(),
+    );
   });
 });

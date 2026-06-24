@@ -181,10 +181,32 @@ export function readTenantIdentityFromEnv(env: NodeJS.ProcessEnv = process.env):
   return { tid, tenantKey };
 }
 
+/**
+ * Resolve the authorizer's token endpoint (the POST target) — decoupled from the
+ * `iss` identity. An explicit `tokenUrl` wins (a per-connection override, or
+ * `NB_FLEET_AUTHORIZER_TOKEN_URL`); otherwise it is derived from the legacy,
+ * identity-overloaded issuer as `${issuer}/token` for backward-compat. Because the
+ * mint never inspects `iss` (only verifiers do), the endpoint can move
+ * (namespace/cluster) with ZERO token-contract change — set the new var and the
+ * POST target moves while `iss` stays put. Returns `undefined` when neither is
+ * configured; the caller decides whether that is an error.
+ */
+export function resolveAuthorizerTokenUrl(
+  opts: { tokenUrl?: string; issuer?: string } = {},
+): string | undefined {
+  const explicit = opts.tokenUrl ?? process.env.NB_FLEET_AUTHORIZER_TOKEN_URL;
+  if (explicit) return explicit;
+  const issuer = opts.issuer ?? process.env.NB_FLEET_AUTHORIZER_ISSUER;
+  return issuer ? new URL("/token", issuer).toString() : undefined;
+}
+
 export interface MintServiceTokenOptions {
-  /** Authorizer issuer, e.g. `https://mcp-authorizer.mcp-shared.svc`. The mint
-   *  POST goes to `${issuer}/token`. */
-  issuer: string;
+  /** The authorizer's token endpoint, e.g. `http://mcp-authorizer.mcp-shared.svc/token`.
+   *  This is the physical POST target — deployment plumbing, NOT the `iss` identity.
+   *  The mint never inspects `iss` (only verifiers do), so location and identity are
+   *  decoupled: the endpoint can move (namespace/cluster) without any token-contract
+   *  change. Resolve via `resolveAuthorizerTokenUrl()`. */
+  tokenUrl: string;
   workspace: string;
   audience: string;
   scope: string;
@@ -210,7 +232,7 @@ export async function mintServiceToken(opts: MintServiceTokenOptions): Promise<S
     now: nowSeconds,
   });
 
-  const tokenUrl = new URL("/token", opts.issuer).toString();
+  const tokenUrl = opts.tokenUrl;
   const body = new URLSearchParams({ grant_type: TENANT_KEY_GRANT, tenant_assertion: wire });
   const doFetch = opts.fetchImpl ?? fetch;
 
@@ -260,17 +282,17 @@ export async function mintServiceToken(opts: MintServiceTokenOptions): Promise<S
   return { accessToken: json.access_token, expiresAt: nowSeconds + json.expires_in };
 }
 
-/** Cache key — one minted token per distinct `(issuer, tid, workspace, audience,
+/** Cache key — one minted token per distinct `(tokenUrl, tid, workspace, audience,
  *  scope)`. tid is included so a key-rotation that changes identity can't serve a
- *  stale token. */
+ *  stale token; tokenUrl namespaces by authorizer endpoint. */
 function cacheKey(
-  issuer: string,
+  tokenUrl: string,
   tid: string,
   workspace: string,
   audience: string,
   scope: string,
 ): string {
-  return [issuer, tid, workspace, audience, scope].join("|");
+  return [tokenUrl, tid, workspace, audience, scope].join("|");
 }
 
 interface CacheSlot {
@@ -280,7 +302,8 @@ interface CacheSlot {
 }
 
 export interface TokenRequest {
-  issuer: string;
+  /** Authorizer token endpoint (POST target), not the `iss` identity. */
+  tokenUrl: string;
   workspace: string;
   audience: string;
   scope: string;
@@ -314,7 +337,7 @@ export class ServiceTokenCache {
    * fresh. `forceRefresh` discards any cached token first — the 401-retry path.
    */
   async getToken(req: TokenRequest, opts: { forceRefresh?: boolean } = {}): Promise<string> {
-    const key = cacheKey(req.issuer, this.identity.tid, req.workspace, req.audience, req.scope);
+    const key = cacheKey(req.tokenUrl, this.identity.tid, req.workspace, req.audience, req.scope);
     const slot = this.slots.get(key) ?? {};
 
     if (opts.forceRefresh) {
@@ -330,7 +353,7 @@ export class ServiceTokenCache {
     }
 
     const inflight = mintServiceToken({
-      issuer: req.issuer,
+      tokenUrl: req.tokenUrl,
       workspace: req.workspace,
       audience: req.audience,
       scope: req.scope,
@@ -367,8 +390,8 @@ export function getDefaultServiceTokenCache(): ServiceTokenCache {
 
 export interface MintingFetchOptions {
   cache: ServiceTokenCache;
-  /** Authorizer issuer the cache mints against. */
-  issuer: string;
+  /** Authorizer token endpoint the cache mints against (POST target, not `iss`). */
+  tokenUrl: string;
   workspace: string;
   audience: string;
   scope: string;
@@ -389,7 +412,7 @@ export interface MintingFetchOptions {
 export function createMintingFetch(opts: MintingFetchOptions): typeof fetch {
   const base = opts.baseFetch ?? fetch;
   const req: TokenRequest = {
-    issuer: opts.issuer,
+    tokenUrl: opts.tokenUrl,
     workspace: opts.workspace,
     audience: opts.audience,
     scope: opts.scope,
