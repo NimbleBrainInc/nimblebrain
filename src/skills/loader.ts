@@ -255,8 +255,15 @@ export function parseSkillContent(
 }
 
 /**
- * Partition skills by ROLE: `always` = the context channel (Layer 0/1, sorted by
- * priority); `dynamic` = matchable/conditional (tool-affinity Layer 3 + matcher).
+ * Boot-time partition of the *raw* skill cache by role: `always` = the context
+ * channel (Layer 0/1, sorted by priority); `dynamic` = matchable/conditional
+ * (tool-affinity Layer 3 + matcher).
+ *
+ * NOTE — do not confuse with `partitionSkillsByRole` in `select.ts`. This one
+ * runs once at boot over the full on-disk set and intentionally keeps *disabled*
+ * `always` skills in the `context` cache (no per-turn status gate).
+ * `partitionSkillsByRole` is the per-conversation router and DOES drop disabled
+ * skills. Same split, different lifecycle — pick by call site (boot vs. turn).
  */
 export function partitionSkills(skills: Skill[]): { context: Skill[]; skills: Skill[] } {
   const context = skills

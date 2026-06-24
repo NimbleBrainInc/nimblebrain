@@ -127,6 +127,10 @@ export function selectLayer3Skills(input: SelectInput): SelectedSkill[] {
  *
  * The two sets are DISJOINT by `loading-strategy`, so a skill can never enter
  * two channels — there is no overlap to de-duplicate downstream.
+ *
+ * NOTE — this is the PER-CONVERSATION router (drops disabled skills). Its
+ * boot-time counterpart is `partitionSkills` in `loader.ts`, which partitions
+ * the raw cache once and keeps disabled `always` skills. Pick by call site.
  */
 export function partitionSkillsByRole(pool: Skill[]): { context: Skill[]; capability: Skill[] } {
   const context: Skill[] = [];

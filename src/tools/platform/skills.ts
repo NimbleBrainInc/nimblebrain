@@ -74,8 +74,8 @@ const AUTHORING_GUIDE_URI = "skill://skills/authoring-guide";
 
 const SKILLS_LIST_DESCRIPTION =
   "List Layer 3 skills (cross-bundle agent orchestration content) and Layer 1 vendored bundle skills. " +
-  "Filter by `scope` (org | workspace | user | bundle), `layer` (1 | 3), `type` (context | skill), " +
-  "`tool_affinity` (a tool name; returns skills whose `applies_to_tools` glob matches it), " +
+  "Filter by `scope` (org | workspace | user | bundle), `layer` (1 | 3), `loading_strategy` (always | dynamic), " +
+  "`tool_affinity` (a tool name; returns skills whose `tool-affinity` glob matches it), " +
   "`status` (active | disabled), or `modified_since` (ISO 8601). " +
   "Returns id, name, layer, scope, status, token count, and source metadata for each skill. " +
   "Use this to answer 'what skills do I have?' or 'what's available for the active tool set?'";
@@ -83,7 +83,7 @@ const SKILLS_LIST_DESCRIPTION =
 const SKILLS_READ_DESCRIPTION =
   "Read one skill by id. The `id` is either a filesystem path (returned by `skills__list`) " +
   "or a bundle skill:// URI. Returns the full markdown body plus parsed manifest fields (name, " +
-  "description, type, priority, scope, layer, loading_strategy, applies_to_tools, status). " +
+  "description, loading_strategy, priority, scope, layer, tool_affinity, triggers, status). " +
   "Always call `skills__list` first to discover ids — bare names and scope-prefixed forms " +
   "(e.g. `org/foo`) are NOT valid input.";
 
