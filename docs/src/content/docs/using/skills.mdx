@@ -1,73 +1,62 @@
 ---
 title: Skills
-description: Customize agent behavior with markdown skill files that compose system prompts and filter tools.
+description: Customize agent behavior with markdown skill files that compose the system prompt and load on demand.
 ---
 
 import { Steps, Tabs, TabItem, Aside } from '@astrojs/starlight/components';
 
-Skills are markdown files with YAML frontmatter that control how the agent responds. A skill can inject a system prompt, filter which tools are available, and require specific bundles to be installed.
+Skills are markdown files with YAML frontmatter that customize how the agent behaves. A skill can be **always-on** (part of every prompt) or **dynamic** (loaded on demand when it's relevant).
 
-## How skills work
+## How a skill loads — `loading-strategy`
 
-When you send a message, the skill matcher runs against it:
+Every skill declares one loading strategy:
+
+| Strategy | Behavior |
+|----------|----------|
+| `always` | Always composed into the system prompt. For identity, voice, and durable cross-cutting rules. Keep it short — it costs context on every turn. |
+| `dynamic` | Loaded on demand. For task / domain skills. Enters context through one of the activation signals below. |
+
+A `dynamic` skill activates through any of:
 
 <Steps>
 
-1. **Phase 1: Triggers** — substring match against trigger phrases. First hit wins.
-2. **Phase 2: Keywords** — count keyword hits in your message. Minimum 2 hits to qualify. Highest count wins.
-3. The matched skill's markdown body is injected into the system prompt.
-4. If the skill has `allowed-tools`, only those tools (plus system tools) are surfaced.
+1. **Its `description`** — the model sees every skill's name + description in a catalog and activates the relevant one. This is the default path, so write the description to say *what the skill does and when to use it* (include the words a user would say). Always available — no extra field needed.
+2. **`tool-affinity`** — auto-activates when a tool in the active set matches one of its globs. For skills bound to specific tools.
+3. **`triggers`** — auto-activates on an exact phrase, for deterministic "must-fire" cases (e.g. a compliance rule that must load whenever a regulated action is named).
 </Steps>
 
-If no skill matches, the agent uses the default system prompt with all tools available.
-
-## Two types
-
-| Type | Behavior | Priority range |
-|------|----------|---------------|
-| `context` | Always injected into the system prompt, regardless of matching. Sorted by priority (lower = first). | Typically 1-10 |
-| `skill` | Only injected when matched against the user's message via triggers or keywords. | Typically 50 |
-
-Context skills provide background knowledge. Skill-type skills provide task-specific instructions and tool scoping.
+A dynamic skill with no `tool-affinity` and no `triggers` loads only when the model activates it on its description.
 
 ## Skill file format
 
-A skill file is a markdown file (`.md`) with YAML frontmatter:
+A skill is a markdown file (`.md`) with YAML frontmatter. Standard fields are top-level; NimbleBrain configuration nests under `metadata.nimblebrain`:
 
 ```markdown
 ---
 name: meeting-notes
-description: Summarize and search meeting notes from Granola
-version: 1.0.0
-type: skill
-priority: 50
-allowed-tools:
-  - granola__*
-requires-bundles:
-  - "@nimblebraininc/granola"
+description: >
+  Summarize and search meeting notes from Granola. Use when the user mentions
+  meetings, notes, agendas, minutes, or standups.
+allowed-tools: granola__search_meetings granola__get_meeting
 metadata:
-  keywords:
-    - meeting
-    - notes
-    - agenda
-    - minutes
-    - standup
-  triggers:
-    - summarize my meetings
-    - meeting notes
-  category: productivity
-  tags:
-    - meetings
-    - granola
   author: mat
+  version: "1.0"
+  nimblebrain:
+    loading-strategy: dynamic
+    priority: 50
+    tool-affinity:
+      - granola__*
+    triggers:
+      - summarize my meetings
+      - meeting notes
 ---
 
 You are a meeting notes assistant. Use the Granola tools to search and
 summarize meeting transcripts.
 
 When asked about meetings:
-1. Search for relevant meetings using granola__search_meetings
-2. Retrieve full transcripts with granola__get_meeting
+1. Search with granola__search_meetings
+2. Retrieve transcripts with granola__get_meeting
 3. Summarize the key discussion points, decisions, and action items
 
 Format action items as a checklist.
@@ -75,33 +64,28 @@ Format action items as a checklist.
 
 ## Frontmatter fields
 
+**Standard (top-level):**
+
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
-| `name` | string | Yes | Unique skill identifier |
-| `description` | string | No | Human-readable description |
-| `version` | string | No | Semantic version. Defaults to `0.0.0`. |
-| `type` | `context` \| `skill` | No | Defaults to `skill` if omitted. |
-| `priority` | number | No | Sort order for context skills (lower = first). Defaults to `50`. |
-| `allowed-tools` | string[] | No | Glob patterns for tools this skill can access (e.g., `granola__*`). When set, only matching tools plus `nb__*` system tools are surfaced. |
-| `requires-bundles` | string[] | No | Bundle names that must be installed for this skill to work. |
-| `metadata.keywords` | string[] | No | Words matched in phase 2 (case-insensitive substring). Minimum 2 must hit. |
-| `metadata.triggers` | string[] | No | Phrases matched in phase 1 (case-insensitive substring). First hit wins. |
-| `metadata.category` | string | No | Organizational category |
-| `metadata.tags` | string[] | No | Organizational tags |
-| `metadata.author` | string | No | Author name |
+| `name` | string | Yes | Lowercase letters, digits, and single hyphens (e.g. `meeting-notes`); ≤64 chars; matches the filename. |
+| `description` | string | Yes | What the skill does **and when to use it** — the activation signal for dynamic skills, so include the words a user would say. ≤1024 chars. |
+| `license` | string | No | License name or reference to a bundled license file. |
+| `allowed-tools` | string | No | Space-separated globs for tools this skill may **call** (e.g. `granola__*`). |
+| `metadata.author` / `metadata.version` | string | No | Conventional metadata. |
 
-## The matching algorithm
+**NimbleBrain (`metadata.nimblebrain.*`):**
 
-The matcher operates in two phases on `type: "skill"` skills only (context skills are excluded from matching).
-
-**Phase 1 — Triggers:**
-Loop through all skills. For each skill, check if any of its trigger phrases appear as a substring in the message (case-insensitive). The first trigger that matches wins. No further skills are checked.
-
-**Phase 2 — Keywords:**
-If no trigger matched, loop through all skills. For each, count how many of its keywords appear as substrings in the message (case-insensitive). A skill needs at least 2 keyword hits to qualify. The skill with the most hits wins.
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `loading-strategy` | `always` \| `dynamic` | Yes | How the skill loads (see above). |
+| `priority` | number | No | Selection / ordering priority, 11–99 (0–10 reserved for core). Default 50. |
+| `status` | `active` \| `disabled` | No | Default `active`. |
+| `tool-affinity` | string[] | No | Globs; a `dynamic` skill auto-loads when a matching tool is active (e.g. `granola__*`). |
+| `triggers` | string[] | No | Exact phrases; a `dynamic` skill auto-loads on a case-insensitive substring match. |
 
 <Aside type="note">
-  The algorithm is deliberately simple — no weights, no ML, no normalization. A skill with 3 keywords hitting 2 qualifies the same way as a skill with 10 keywords hitting 3. The absolute hit count is what matters.
+  `tool-affinity` (when a skill loads) is different from `allowed-tools` (which tools a skill may call).
 </Aside>
 
 ## Where skills are loaded from
@@ -122,7 +106,7 @@ Skills are loaded from multiple locations, in order:
 }
 ```
 
-Files must have a `.md` extension. Loading is non-recursive (only top-level files in each directory).
+Files must have a `.md` extension.
 
 ## Listing skills
 
@@ -130,9 +114,9 @@ Files must have a `.md` extension. Loading is non-recursive (only top-level file
 nb skill list
 ```
 ```
-NAME              TYPE      PRIORITY  SOURCE
-bootstrap         context   1         src/skills/core/bootstrap.md
-meeting-notes     skill     50        /home/user/.nimblebrain/skills/meeting-notes.md
+NAME              STRATEGY  PRIORITY  SOURCE
+capabilities      always    10        src/skills/core/bootstrap.md
+meeting-notes     dynamic   50        /home/user/.nimblebrain/skills/meeting-notes.md
 ```
 
 For JSON output:
@@ -145,19 +129,6 @@ Get details on a specific skill:
 
 ```bash
 nb skill info meeting-notes
-```
-```
-Name: meeting-notes
-Type: skill
-Priority: 50
-Description: Summarize and search meeting notes from Granola
-Source: /home/user/.nimblebrain/skills/meeting-notes.md
-Allowed tools: granola__*
-
---- Body ---
-You are a meeting notes assistant. Use the Granola tools to search and
-summarize meeting transcripts.
-...
 ```
 
 ## Creating a custom skill
@@ -176,20 +147,17 @@ summarize meeting transcripts.
    cat > ~/.nimblebrain/skills/code-review.md << 'EOF'
    ---
    name: code-review
-   description: Review code for bugs and improvements
-   type: skill
-   priority: 50
-   allowed-tools:
-     - bash__*
+   description: >
+     Review code for bugs, security issues, and style. Use when the user asks
+     to review code, check a diff, or look for bugs.
+   allowed-tools: bash__run
    metadata:
-     keywords:
-       - review
-       - code
-       - bug
-       - refactor
-     triggers:
-       - review this code
-       - code review
+     nimblebrain:
+       loading-strategy: dynamic
+       priority: 50
+       triggers:
+         - review this code
+         - code review
    ---
 
    You are a code reviewer. When asked to review code:
@@ -215,5 +183,5 @@ summarize meeting transcripts.
 ## What's next
 
 - [Chat](/using/chat) — see skills in action during conversations
-- [Managing Apps](/using/managing-apps) — ensure required bundles are installed
+- [Managing Apps](/using/managing-apps) — install the bundles a skill's tools come from
 - [Configuration: nimblebrain.json](/config/nimblebrain-json) — full config reference including `skillDirs`

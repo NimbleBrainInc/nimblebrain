@@ -35,9 +35,9 @@ const ManifestFields = {
   loadingStrategy: Type.Optional(LoadingStrategy),
   priority: Type.Optional(
     Type.Number({
-      minimum: 0,
-      maximum: 100,
-      description: "Selection priority. 11–99 for non-core. Default 50.",
+      minimum: 11,
+      maximum: 99,
+      description: "Selection priority. 11–99 for non-core (0–10 reserved for core). Default 50.",
     }),
   ),
   status: Type.Optional(SkillStatus),

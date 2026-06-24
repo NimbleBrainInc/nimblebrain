@@ -34,10 +34,10 @@ nb skill list
 ```
 
 ```
-NAME              TYPE      PRIORITY  SOURCE
-bootstrap         context   100       src/skills/core/bootstrap.md
-code-review       skill     50        ./skills/code-review.md
-summarize         skill     50        ./skills/summarize.md
+NAME              STRATEGY  PRIORITY  SOURCE
+capabilities      always    10        src/skills/core/bootstrap.md
+code-review       dynamic   50        ./skills/code-review.md
+summarize         dynamic   50        ./skills/summarize.md
 ```
 
 Skills are loaded from two sources:
@@ -51,7 +51,7 @@ nb skill list --json
 ```
 
 ```json
-[{"name":"bootstrap","type":"context","priority":100,"source":"src/skills/core/bootstrap.md","description":"Teaches the agent about meta-tools and mpak"},{"name":"code-review","type":"skill","priority":50,"source":"./skills/code-review.md","description":"Review code for quality and correctness"}]
+[{"name":"capabilities","loadingStrategy":"always","priority":10,"source":"src/skills/core/bootstrap.md","description":"Teaches the agent about meta-tools and mpak"},{"name":"code-review","loadingStrategy":"dynamic","priority":50,"source":"./skills/code-review.md","description":"Review code for quality and correctness"}]
 ```
 
 ## Inspecting a skill
@@ -63,9 +63,9 @@ nb skill info bootstrap
 ```
 
 ```
-Name: bootstrap
-Type: context
-Priority: 100
+Name: capabilities
+Strategy: always
+Priority: 10
 Description: Teaches the agent about meta-tools and mpak
 Source: src/skills/core/bootstrap.md
 
@@ -76,7 +76,7 @@ You have access to system tools that let you manage your own capabilities:
 - **nb__status** — Platform status; use `scope: "bundles"` for per-app health or `scope: "skills"` for loaded skills
 ```
 
-The output includes the skill's metadata (name, type, priority, description, source path) and the first 500 characters of its body.
+The output includes the skill's metadata (name, loading-strategy, priority, description, source path) and the first 500 characters of its body.
 
 If an `allowed-tools` list is defined, it also appears:
 
@@ -86,7 +86,7 @@ nb skill info code-review
 
 ```
 Name: code-review
-Type: skill
+Strategy: dynamic
 Priority: 50
 Description: Review code for quality and correctness
 Source: ./skills/code-review.md

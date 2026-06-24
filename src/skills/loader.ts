@@ -210,7 +210,22 @@ export function parseSkillContent(
   // transform lives; `scope` is stamped afterwards by `collectScopedSkills`.
   const result = validateFrontmatter(data);
   if (!result.ok) {
-    log.warn(`[skill] invalid frontmatter in ${sourcePath} — skipped: ${result.errors.join("; ")}`);
+    // Turn a silent skip into an actionable instruction when the file is still
+    // in the pre-cutover format (legacy top-level fields) — the operator likely
+    // deployed without running the one-time migration.
+    const looksLegacy = [
+      "type",
+      "requires-bundles",
+      "applies-to-tools",
+      "loading-strategy",
+      "loading_strategy",
+    ].some((k) => k in data);
+    const hint = looksLegacy
+      ? " — legacy format detected; run `bun run migrate:skill-frontmatter`"
+      : "";
+    log.warn(
+      `[skill] invalid frontmatter in ${sourcePath} — skipped: ${result.errors.join("; ")}${hint}`,
+    );
     return null;
   }
   const manifest = mapFrontmatterToManifest(result.value);

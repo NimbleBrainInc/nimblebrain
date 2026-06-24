@@ -1,13 +1,12 @@
 /**
- * Phase 2 — Layer 3 skill selection.
+ * Layer 3 skill selection (the conditional channel).
  *
  * Pure function over (skills, activeTools) → selected skills with reason
- * metadata. Implements the `always` and `tool_affined` loading strategies.
- * Future strategies (`retrieval`, `explicit`) are accepted as input without
- * throwing, but produce no output in Phase 2.
+ * metadata. Selects `dynamic` skills whose `tool-affinity` globs match an active
+ * tool. `always` skills compose into the context channel (Layer 0/1), not here;
+ * a `dynamic` skill with no tool-affinity is catalog-only (model-activated).
  *
- * No filesystem access, no event emission, no global state — designed to be
- * trivially composed into the runtime by Task 006.
+ * No filesystem access, no event emission, no global state.
  */
 
 import { bareToolName } from "../tools/namespace.ts";
@@ -35,7 +34,7 @@ export interface SelectInput {
 }
 
 /**
- * Match a tool name against an `applies_to_tools` glob pattern.
+ * Match a tool name against a `tool-affinity` glob pattern.
  *
  * Supported patterns:
  *  - `*` — matches anything

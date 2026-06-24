@@ -45,7 +45,14 @@ function migrateDir(root: string, write: boolean): Outcome[] {
     const rel = relative(root, abs);
     try {
       const raw = readFileSync(abs, "utf-8");
-      const { content, changed } = migrateSkillContent(raw);
+      const { content, changed, error } = migrateSkillContent(raw);
+      if (error) {
+        // Migrated output would fail the loader's validation (e.g. a legacy name
+        // the strict pattern rejects) — surface it loudly instead of writing a
+        // file the runtime then silently skips.
+        outcomes.push({ path: rel, status: "error", detail: error });
+        continue;
+      }
       if (!changed) {
         outcomes.push({ path: rel, status: "unchanged" });
         continue;

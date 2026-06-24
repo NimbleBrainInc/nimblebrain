@@ -31,6 +31,7 @@ import { getRequestContext } from "../../runtime/request-context.ts";
 import type { Runtime } from "../../runtime/runtime.ts";
 import { parseSkillFile, readSkillMtime } from "../../skills/loader.ts";
 import { resolveLoadingMechanism } from "../../skills/loading.ts";
+import { SKILL_NAME_PATTERN } from "../../skills/schemas/skill-manifest.ts";
 import { toolMatches } from "../../skills/select.ts";
 import { approxTokens } from "../../skills/tokens.ts";
 import type { Skill, SkillManifest } from "../../skills/types.ts";
@@ -1210,10 +1211,15 @@ function scopeDir(runtime: Runtime, scope: WritableScope): string {
  * and-braces against tools whose JSON-schema gate is bypassed (e.g.
  * external MCP clients that don't validate enums).
  */
-const VALID_NAME_RE = /^[a-zA-Z0-9_-]+$/;
+// Early path-traversal guard (runs before the target path is built + the
+// permission check). Uses the canonical pattern so it's consistent with the
+// schema's `validateSkill` — one source of truth, not a looser superset.
+const VALID_NAME_RE = new RegExp(SKILL_NAME_PATTERN);
 function assertValidName(name: string): void {
   if (!VALID_NAME_RE.test(name)) {
-    throw new Error(`Invalid skill name "${name}" — letters, digits, dash, underscore only`);
+    throw new Error(
+      `Invalid skill name "${name}" — lowercase letters, digits, and single hyphens only (no leading/trailing/consecutive hyphen)`,
+    );
   }
 }
 

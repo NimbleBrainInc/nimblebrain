@@ -39,6 +39,7 @@ import type {
   SkillManifest,
   SkillStatus,
 } from "../../src/skills/schemas/skill-manifest.ts";
+import { validateFrontmatter } from "../../src/skills/schemas/skill-manifest.ts";
 import { serializeSkill } from "../../src/skills/writer.ts";
 
 /** Top-level keys that only ever appear in the legacy shape. */
@@ -116,10 +117,13 @@ export function migrateFrontmatterToManifest(legacy: Record<string, unknown>): S
   // is canonical (no `keywords`), so it's never re-folded.
   const keywords = asStringArray(meta.keywords);
   const baseDescription = String(legacy.description ?? "");
-  const description =
+  const folded =
     keywords && keywords.length > 0
       ? `${baseDescription} Use when the user mentions: ${keywords.join(", ")}.`.trim()
       : baseDescription;
+  // Clamp to the schema's 1024 description cap so folding keywords can't push a
+  // migrated skill past validation (the loader would otherwise skip it).
+  const description = folded.length > 1024 ? `${folded.slice(0, 1021)}...` : folded;
 
   return {
     name: String(legacy.name ?? ""),
@@ -152,6 +156,14 @@ function hasLegacyShape(data: Record<string, unknown>): boolean {
 export interface MigrationResult {
   content: string;
   changed: boolean;
+  /**
+   * Set when the migrated output would FAIL the loader's strict
+   * `validateFrontmatter` (e.g. a non-conforming legacy name like `My_Skill`,
+   * an empty description). The caller reports this as an error so a silent-skip
+   * at load becomes a loud, actionable migration failure. `content` is the
+   * original (unwritten) text when `error` is set.
+   */
+  error?: string;
 }
 
 /**
@@ -176,5 +188,15 @@ export function migrateSkillContent(raw: string): MigrationResult {
   const manifest = migrateFrontmatterToManifest(data);
   // `serializeSkill` re-wraps the body with leading/trailing newlines, so feed
   // it the trimmed body to avoid accumulating blank lines on repeated runs.
-  return { content: serializeSkill(manifest, parsed.content.trim()), changed: true };
+  const content = serializeSkill(manifest, parsed.content.trim());
+
+  // Validate the OUTPUT against the same schema the loader enforces. The loader
+  // fails soft (skip + warn), so without this a file that can't be loaded would
+  // be reported "migrated" and then silently vanish from prompts. Surface it as
+  // an error (e.g. a legacy name like `My_Skill` that the strict pattern rejects).
+  const check = validateFrontmatter(matter(content).data);
+  if (!check.ok) {
+    return { content: raw, changed: false, error: check.errors.join("; ") };
+  }
+  return { content, changed: true };
 }

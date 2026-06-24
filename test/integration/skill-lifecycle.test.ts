@@ -254,8 +254,9 @@ describe("skill lifecycle (end-to-end)", () => {
 			body: "This should never be saved.",
 		});
 		expect(createResult.isError).toBe(true);
-		// Handler runs validateSkill, which enforces the 11-99 range.
-		expect(createResult.content).toContain("Priority must be between 11 and 99");
+		// Rejected up front by the input schema (priority minimum 11) — earlier than
+		// the handler's validateSkill, and consistent with the canonical bound.
+		expect(createResult.content).toContain("must be >= 11");
 
 		// Verify no file was created
 		const skillFilePath = join(workDir, "skills", "bad-priority.md");

@@ -185,4 +185,31 @@ describe("migrateSkillContent", () => {
     expect(changed).toBe(false);
     expect(content).toBe(notASkill);
   });
+
+  test("errors (not silently migrates) when the output would fail validation — bad name", () => {
+    // Legacy loader did no name validation; `My_Skill` loaded fine. The strict
+    // canonical pattern rejects it, so the loader would skip it post-migrate.
+    const legacy = "---\nname: My_Skill\ndescription: A skill\ntype: context\n---\n\nbody\n";
+    const { changed, error } = migrateSkillContent(legacy);
+    expect(changed).toBe(false);
+    expect(error).toBeDefined();
+  });
+
+  test("clamps a keyword-folded description to the 1024 cap", () => {
+    const manyKeywords = Array.from({ length: 400 }, (_, i) => `keyword${i}`);
+    const legacy = [
+      "---",
+      "name: big",
+      "description: short base",
+      "type: skill",
+      "metadata:",
+      `  keywords: [${manyKeywords.join(", ")}]`,
+      "---",
+      "",
+      "body",
+    ].join("\n");
+    const { content, error } = migrateSkillContent(legacy);
+    expect(error).toBeUndefined(); // clamp keeps it valid
+    expect(String(matter(content).data.description).length).toBeLessThanOrEqual(1024);
+  });
 });
