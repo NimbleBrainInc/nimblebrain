@@ -28,6 +28,7 @@ import { ServiceTokenCache, type TenantIdentity } from "../../src/oauth/tenant-k
 
 const TID = "tenant-a";
 const ISSUER = "https://authorizer.test";
+const TOKEN_URL = `${ISSUER}/token`;
 const DATA_PLANE = "https://artifacts.test";
 
 // A 32-byte tenant key (the cache validates length, not content, when the
@@ -154,7 +155,7 @@ function makeResolver(
   const dataPlaneFetch = makeDataPlaneFetch(rows, presigned);
   const cache = new ServiceTokenCache({ identity: IDENTITY, fetchImpl: dataPlaneFetch });
   const client = new ArtifactReadClient({
-    config: { baseUrl: DATA_PLANE, issuer: ISSUER },
+    config: { baseUrl: DATA_PLANE, tokenUrl: TOKEN_URL },
     cache,
     fetchImpl: dataPlaneFetch,
   });
@@ -277,7 +278,7 @@ function makeReadClient(
   const dataPlaneFetch = makeDataPlaneFetch(rows, presigned);
   const cache = new ServiceTokenCache({ identity: IDENTITY, fetchImpl: dataPlaneFetch });
   return new ArtifactReadClient({
-    config: { baseUrl: DATA_PLANE, issuer: ISSUER },
+    config: { baseUrl: DATA_PLANE, tokenUrl: TOKEN_URL },
     cache,
     fetchImpl: dataPlaneFetch,
   });
@@ -382,7 +383,7 @@ function makeListFetch(byWorkspace: Record<string, ListRow[]>): typeof fetch {
 function makeListClient(byWorkspace: Record<string, ListRow[]>): ArtifactReadClient {
   const fetchImpl = makeListFetch(byWorkspace);
   const cache = new ServiceTokenCache({ identity: IDENTITY, fetchImpl });
-  return new ArtifactReadClient({ config: { baseUrl: DATA_PLANE, issuer: ISSUER }, cache, fetchImpl });
+  return new ArtifactReadClient({ config: { baseUrl: DATA_PLANE, tokenUrl: TOKEN_URL }, cache, fetchImpl });
 }
 
 describe("ArtifactReadClient.list — discovery as the viewing user", () => {
@@ -474,7 +475,7 @@ describe("ArtifactReadClient.list — discovery as the viewing user", () => {
     }) as typeof fetch;
     const cache = new ServiceTokenCache({ identity: IDENTITY, fetchImpl });
     const client = new ArtifactReadClient({
-      config: { baseUrl: DATA_PLANE, issuer: ISSUER },
+      config: { baseUrl: DATA_PLANE, tokenUrl: TOKEN_URL },
       cache,
       fetchImpl,
     });

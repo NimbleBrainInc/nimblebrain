@@ -4,7 +4,11 @@ import {
   type TransportCredential,
   type TransportCredentialProvider,
 } from "../tools/credential-provider.ts";
-import { createMintingFetch, getDefaultServiceTokenCache } from "./tenant-key-mint.ts";
+import {
+  createMintingFetch,
+  getDefaultServiceTokenCache,
+  resolveAuthorizerTokenUrl,
+} from "./tenant-key-mint.ts";
 
 /** The provider name a catalog/source auth config selects: `{ type: "provider";
  *  provider: "minted"; config: { audience, scope, issuer? } }`. */
@@ -19,9 +23,11 @@ export const MINTED_PROVIDER = "minted";
  * read path uses it too), but `remote-transport.ts` reaches it only through this
  * registered provider, never by import.
  *
- * `config`: `{ audience: string; scope: string; issuer?: string }`. `issuer`
- * defaults to `NB_FLEET_AUTHORIZER_ISSUER`. Workspace comes from the connection
- * (the dimension the token is scoped to), NOT from config.
+ * `config`: `{ audience: string; scope: string; tokenUrl?: string; issuer?: string }`.
+ * The authorizer token endpoint resolves via `resolveAuthorizerTokenUrl`: an explicit
+ * `tokenUrl` (config or `NB_FLEET_AUTHORIZER_TOKEN_URL`) wins, else `${issuer}/token`
+ * from `NB_FLEET_AUTHORIZER_ISSUER` (legacy fallback). Workspace comes from the
+ * connection (the dimension the token is scoped to), NOT from config.
  */
 export const mintedCredentialProvider: TransportCredentialProvider = {
   credentialFor(
@@ -38,12 +44,13 @@ export const mintedCredentialProvider: TransportCredentialProvider = {
         "minted transport credential requires a config object ({ audience, scope }); got a `provider` auth with no `config`",
       );
     }
-    const issuer =
-      (typeof config.issuer === "string" && config.issuer) ||
-      process.env.NB_FLEET_AUTHORIZER_ISSUER;
-    if (!issuer) {
+    const tokenUrl = resolveAuthorizerTokenUrl({
+      tokenUrl: typeof config.tokenUrl === "string" ? config.tokenUrl : undefined,
+      issuer: typeof config.issuer === "string" ? config.issuer : undefined,
+    });
+    if (!tokenUrl) {
       throw new Error(
-        "minted transport credential requires NB_FLEET_AUTHORIZER_ISSUER (the mcp-authorizer issuer)",
+        "minted transport credential requires the authorizer token endpoint (set NB_FLEET_AUTHORIZER_TOKEN_URL, or NB_FLEET_AUTHORIZER_ISSUER for the legacy `${issuer}/token` fallback)",
       );
     }
     const { audience, scope } = config;
@@ -55,7 +62,7 @@ export const mintedCredentialProvider: TransportCredentialProvider = {
     }
     const fetch = createMintingFetch({
       cache: getDefaultServiceTokenCache(),
-      issuer,
+      tokenUrl,
       workspace: workspaceId,
       audience,
       scope,

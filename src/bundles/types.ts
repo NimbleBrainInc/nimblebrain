@@ -56,8 +56,12 @@ export interface RemoteTransportConfig {
      * its `config` are opaque to the kernel — for a catalog connector they come
      * from the operator-published catalog entry, never tenant input. The
      * built-in `"minted"` provider mints a short-lived, workspace-scoped service
-     * token against the fleet authorizer (config: `{ audience, scope, issuer? }`)
-     * and re-mints on expiry. No interactive OAuth, no static secret. The
+     * token against the fleet authorizer (config:
+     * `{ audience, scope, tokenUrl?, issuer? }`) and re-mints on expiry. The
+     * endpoint resolves via `resolveAuthorizerTokenUrl`: `tokenUrl` is an explicit
+     * per-connection endpoint override; `issuer` is the legacy identity from which
+     * `${issuer}/token` is derived. Per-connection config wins over the global env.
+     * No interactive OAuth, no static secret. The
      * workspace dimension is the connection's own workspace.
      */
     | { type: "provider"; provider: string; config: Record<string, unknown> };

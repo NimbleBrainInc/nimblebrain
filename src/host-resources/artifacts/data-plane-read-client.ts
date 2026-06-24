@@ -1,6 +1,7 @@
 import {
   createMintingFetch,
   getDefaultServiceTokenCache,
+  resolveAuthorizerTokenUrl,
   type ServiceTokenCache,
 } from "../../oauth/tenant-key-mint.ts";
 
@@ -78,8 +79,8 @@ export class ArtifactReadError extends Error {
 export interface ArtifactDataPlaneConfig {
   /** Base URL of the artifacts data-plane service (the read API root). */
   baseUrl: string;
-  /** mcp-authorizer issuer the tenant-key exchange mints against. */
-  issuer: string;
+  /** Authorizer token endpoint (POST target) the tenant-key exchange mints against. */
+  tokenUrl: string;
 }
 
 /**
@@ -97,13 +98,16 @@ export function readArtifactDataPlaneConfigFromEnv(
       "NB_ARTIFACTS_DATA_PLANE_URL is not set; cannot resolve artifact:// references",
     );
   }
-  const issuer = env.NB_FLEET_AUTHORIZER_ISSUER;
-  if (!issuer) {
+  const tokenUrl = resolveAuthorizerTokenUrl({
+    tokenUrl: env.NB_FLEET_AUTHORIZER_TOKEN_URL,
+    issuer: env.NB_FLEET_AUTHORIZER_ISSUER,
+  });
+  if (!tokenUrl) {
     throw new ArtifactReadError(
-      "NB_FLEET_AUTHORIZER_ISSUER is not set; cannot mint an artifacts read token",
+      "authorizer token endpoint is not set; cannot mint an artifacts read token (set NB_FLEET_AUTHORIZER_TOKEN_URL, or NB_FLEET_AUTHORIZER_ISSUER for the legacy `${issuer}/token` fallback)",
     );
   }
-  return { baseUrl, issuer };
+  return { baseUrl, tokenUrl };
 }
 
 export interface ArtifactReadClientOptions {
@@ -216,7 +220,7 @@ export class ArtifactReadClient {
     // identity-only, scoped to (tenant, workspace, aud=artifacts, read).
     const authedFetch = createMintingFetch({
       cache: this.cache,
-      issuer: this.config.issuer,
+      tokenUrl: this.config.tokenUrl,
       workspace: workspaceId,
       audience: ARTIFACTS_AUDIENCE,
       scope: ARTIFACTS_READ_SCOPE,
@@ -332,7 +336,7 @@ export class ArtifactReadClient {
     }
     const authedFetch = createMintingFetch({
       cache: this.cache,
-      issuer: this.config.issuer,
+      tokenUrl: this.config.tokenUrl,
       workspace: workspaceId,
       audience: ARTIFACTS_AUDIENCE,
       scope: ARTIFACTS_READ_SCOPE,
