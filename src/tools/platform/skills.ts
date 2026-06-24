@@ -1490,7 +1490,15 @@ async function createSkill(
     return errorResult(new Error(`Validation failed — ${validation.errors.join("; ")}`));
   }
 
-  writeSkill(dir, name, fullManifest, body);
+  // The writer canonically validates before touching disk and throws if the
+  // manifest wouldn't load — surface that as a clean tool error, no file left
+  // behind. (validateSkill above already covered name/priority/override; this
+  // catches the on-disk schema shape, e.g. an empty description.)
+  try {
+    writeSkill(dir, name, fullManifest, body);
+  } catch (err) {
+    return errorResult(err instanceof Error ? err : new Error(String(err)));
+  }
   await reloadBootSkills(runtime);
   eventSink.emit({
     type: "skill.created",
@@ -1590,7 +1598,13 @@ async function updateSkillHandler(
         ...(patch.allowedTools !== undefined ? { allowedTools: patch.allowedTools } : {}),
       }
     : undefined;
-  updateSkill(dir, name, partial, body);
+  // Merged result is canonically validated by the writer before write; a patch
+  // that would make the skill unloadable fails cleanly, leaving the file as-is.
+  try {
+    updateSkill(dir, name, partial, body);
+  } catch (err) {
+    return errorResult(err instanceof Error ? err : new Error(String(err)));
+  }
   await reloadBootSkills(runtime);
 
   eventSink.emit({ type: "skill.updated", data: { id, name, scope } });

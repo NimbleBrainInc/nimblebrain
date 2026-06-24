@@ -130,6 +130,15 @@ describe("ProfileSkillsTab (the /profile/skills surface)", () => {
     expect(createCall).toBeDefined();
     expect(createCall!.args.scope).toBe("user");
     expect((createCall!.args.manifest as { name?: string }).name).toBe("personal-voice");
-    expect((createCall!.args.manifest as { type?: string }).type).toBe("context");
+    // Title → on-disk description (required non-empty) + row label.
+    expect((createCall!.args.manifest as { description?: string }).description).toBe(
+      "personal-voice",
+    );
+    // Rules are always-on; sent explicitly so the skill actually loads.
+    expect((createCall!.args.manifest as { loadingStrategy?: string }).loadingStrategy).toBe(
+      "always",
+    );
+    // The removed `type` field is no longer sent.
+    expect((createCall!.args.manifest as { type?: string }).type).toBeUndefined();
   });
 });

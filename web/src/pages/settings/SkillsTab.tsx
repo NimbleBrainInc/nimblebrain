@@ -166,31 +166,31 @@ export function SkillsBrowser(props: SkillsBrowserProps) {
   );
 
   const handleSubmit = useCallback(
-    async (patch: { name: string; body: string; priority?: number }) => {
-      // CRITICAL: update is a partial patch — any field present in the
-      // manifest is written to disk and overwrites the prior value.
-      // So we MUST NOT include description, type, or name on update:
-      //   - description: "" would wipe an author-curated description
-      //     authored via CLI / markdown / OrgSkillsTab. Also breaks
-      //     this very PR's `rowLabel`, which uses description as the
-      //     row's display text — every edit would erase its own label.
-      //   - type would coerce a procedural skill into a context skill,
-      //     changing Layer-3 loading inference.
-      //   - name is immutable (it's the filename); sending it is at
-      //     best a no-op, at worst a silent rename attempt.
-      // For NEW rules, the create handler needs all three set because
-      // the file doesn't exist yet — and the loader's auto-inference
-      // (type=context + no applies-to-tools → always) is the right
-      // default for the prose rules this UI authors.
+    async (patch: { name: string; description: string; body: string; priority?: number }) => {
+      // A "rule" is an always-on skill: prose the agent reads every turn.
+      // Create writes the full manifest; update is a partial patch.
       //
-      // `loadingStrategy` is NOT plumbed through either path. It's
-      // intentionally absent from the LLM-facing schema
-      // (schemas/skills.ts ManifestFields; cited rationale at
-      // skills.ts:116). Even if we sent it, the validator would
-      // strip it and the writer would never see it. The previous
-      // "When to load" dropdown was decorative — removed.
+      // On UPDATE we send only the fields this editor owns (priority, body),
+      // and deliberately omit description and name:
+      //   - description doubles as the row label (`rowLabel`); it's set from
+      //     the title at create and left alone. Patching it to "" would wipe
+      //     a label authored here or a richer description set via CLI/chat.
+      //   - name is the filename — immutable; sending it is a no-op at best,
+      //     a silent rename attempt at worst.
+      //
+      // On CREATE we set the three fields that make a rule actually load:
+      //   - loadingStrategy: "always" — a rule is in context every turn. The
+      //     server default ("dynamic") with no triggers/tool-affinity is
+      //     catalog-only, i.e. it never loads; always-on is the point of a
+      //     rule. Always-on skills ride the stable cached prompt prefix.
+      //   - description: the human title (also the row label). The on-disk
+      //     schema requires it non-empty; for an always-on rule it's a label,
+      //     not an activation signal, so the title is the honest value.
+      //   - priority (when set): clamped to the schema's 11–99 band.
       const advancedOverrides = {
-        ...(patch.priority !== undefined ? { priority: patch.priority } : {}),
+        ...(patch.priority !== undefined
+          ? { priority: Math.min(99, Math.max(11, patch.priority)) }
+          : {}),
       };
       if (editingId) {
         await runMutation(
@@ -204,8 +204,8 @@ export function SkillsBrowser(props: SkillsBrowserProps) {
       } else {
         const createManifest = {
           name: patch.name,
-          description: "",
-          type: "context",
+          description: patch.description,
+          loadingStrategy: "always",
           ...advancedOverrides,
         };
         await runMutation(
@@ -420,6 +420,26 @@ function rowLabel(skill: ListedSkill): string {
   return skill.name;
 }
 
+/**
+ * Human one-liner for how a rule reaches the prompt — surfaced in the expanded
+ * view so the loading behavior is visible, not hidden in frontmatter. Rules
+ * authored here are always-on; inherited/dynamic skills show their mechanism.
+ */
+function loadingLabel(skill: ListedSkill): string {
+  switch (skill.loading?.mechanism) {
+    case "always":
+      return "Always on";
+    case "tool_affinity":
+      return "Loads when a matching tool is active";
+    case "trigger":
+      return "Loads on a trigger phrase";
+    case "none":
+      return "Won't auto-load yet";
+    default:
+      return skill.loadingStrategy === "always" ? "Always on" : "On demand";
+  }
+}
+
 function Rule({
   skill,
   expanded,
@@ -494,11 +514,11 @@ function Rule({
                   {detail.content}
                 </Streamdown>
               </div>
-              {!labelIsName && (
-                <div className="flex flex-wrap items-baseline gap-x-4 gap-y-1 mt-3 text-xs text-muted-foreground">
-                  <span className="font-mono">{skill.name}</span>
-                </div>
-              )}
+              <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1 mt-3 text-xs text-muted-foreground">
+                <span>{loadingLabel(skill)}</span>
+                {skill.priority != null && <span>· priority {skill.priority}</span>}
+                {!labelIsName && <span className="font-mono">· {skill.name}</span>}
+              </div>
               {!inherited && (
                 <div className="flex gap-4 mt-3">
                   <Button
@@ -723,15 +743,15 @@ function EditView({
   pending: boolean;
   error: string | null;
   onCancel: () => void;
-  onSubmit: (patch: { name: string; body: string; priority?: number }) => void;
+  onSubmit: (patch: { name: string; description: string; body: string; priority?: number }) => void;
 }) {
   const isNew = existing === null && !loading;
   const [name, setName] = useState(existing?.metadata.name ?? "");
   const [body, setBody] = useState(existing?.content ?? "");
-  // Priority is the only Advanced field that actually persists —
-  // `loadingStrategy` is intentionally absent from the LLM-facing
-  // schema (schemas/skills.ts) so any value sent here is dropped at
-  // the validator. Don't expose a decorative control.
+  // Priority is the only knob this editor exposes. loadingStrategy is fixed
+  // to "always" for every rule (set in handleSubmit), so there's no control
+  // for it — a rule is, by definition, always on. Dynamic skills (triggers /
+  // tool-affinity) are authored by the agent or CLI, not here.
   const [advancedOpen, setAdvancedOpen] = useState(false);
   const [priority, setPriority] = useState<number>(existing?.metadata.priority ?? 50);
 
@@ -848,14 +868,14 @@ function EditView({
                     <input
                       id="priority"
                       type="number"
-                      min={1}
-                      max={100}
+                      min={11}
+                      max={99}
                       value={priority}
                       onChange={(e) => setPriority(parseInt(e.target.value, 10) || 50)}
                       className="text-sm bg-background border-b border-border pb-1 w-20 outline-none focus:border-foreground"
                     />
                     <span className="text-xs text-muted-foreground">
-                      lower = read first (default 50)
+                      11–99, lower = read first (default 50)
                     </span>
                   </div>
                 </div>
@@ -875,6 +895,10 @@ function EditView({
             valid &&
             onSubmit({
               name: slug,
+              // The typed title is the human label → on-disk `description`
+              // (required non-empty). `name` is its slug (the filename). On
+              // edit the title is immutable and description is left untouched.
+              description: name.trim(),
               body: body.trim(),
               // Only forward priority when the user explicitly opened
               // Advanced (or when editing a rule that already had a

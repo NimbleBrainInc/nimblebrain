@@ -2,7 +2,14 @@ import { describe, test, expect, beforeEach, afterEach } from "bun:test";
 import { mkdtempSync, rmSync, existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { writeSkill, readSkill, updateSkill, deleteSkill, listSkills } from "../../src/skills/writer.ts";
+import {
+  writeSkill,
+  readSkill,
+  updateSkill,
+  deleteSkill,
+  listSkills,
+  SkillFrontmatterValidationError,
+} from "../../src/skills/writer.ts";
 import { parseSkillContent } from "../../src/skills/loader.ts";
 import type { SkillManifest } from "../../src/skills/types.ts";
 
@@ -66,6 +73,17 @@ describe("writeSkill", () => {
 
     const raw = readFileSync(join(dir, "empty-arrays.md"), "utf-8");
     expect(raw).not.toContain("allowed-tools");
+  });
+
+  test("refuses to write a manifest the loader would reject — no orphan file", () => {
+    // Empty description fails the canonical schema (minLength 1). The write
+    // must throw BEFORE touching disk, so a "failed" create leaves nothing
+    // behind for a retry to collide with.
+    const manifest = sampleManifest({ name: "orphan", description: "" });
+    expect(() => writeSkill(dir, "orphan", manifest, "body")).toThrow(
+      SkillFrontmatterValidationError,
+    );
+    expect(existsSync(join(dir, "orphan.md"))).toBe(false);
   });
 });
 
