@@ -91,6 +91,8 @@ import { RegistryStore, warnIfCuratedCatalogEmpty } from "../registries/registry
 import { synthesizeBundleSkill } from "../skills/bundle-skills.ts";
 import {
   CONNECTOR_SKILLS_SUBDIR,
+  type ConnectorOverlayInfo,
+  listConnectorOverlays,
   readConnectorSkillCandidates,
 } from "../skills/connector-skill-store.ts";
 import {
@@ -2654,9 +2656,20 @@ export class Runtime {
     // safely would make the situation worse, not better. Trust is enforced at
     // install time. See `formatFocusedAppSection` for the matching policy on
     // the `<app-guide>` path.
+    // Servers with a materialized connector overlay (P4): skip synthesizing
+    // their `skill://<server>/usage` guidance — the curated overlay supersedes
+    // it (and would otherwise double the guidance under two framings). A bundle
+    // "has an overlay" iff its persisted ref carries a non-empty `skillsLock`.
+    const overlaidServers = new Set(
+      this.getBundleInstancesForWorkspace(wsId)
+        .filter((i) => i.ref && "skillsLock" in i.ref && (i.ref.skillsLock?.length ?? 0) > 0)
+        .map((i) => i.serverName),
+    );
+
     const candidates: string[] = [];
     for (const source of registry.getSources()) {
       if (source.name === options.appContextServerName) continue;
+      if (overlaidServers.has(source.name)) continue;
       const inner = source instanceof SharedSourceRef ? source.unwrap() : source;
       if (!(inner instanceof McpSource)) continue;
       candidates.push(source.name);
@@ -3546,6 +3559,17 @@ export class Runtime {
   loadConnectorSkillCandidates(wsId: string): ConnectorSkillCandidate[] {
     const dir = this.getWorkspaceContext(wsId).getDataPath(CONNECTOR_SKILLS_SUBDIR);
     return readConnectorSkillCandidates(dir);
+  }
+
+  /**
+   * Materialized connector overlays in a workspace, with provenance — backs
+   * `manage_connectors list_bound_skills`. Distinct from
+   * {@link loadConnectorSkillCandidates} (the engine's lightweight pool): this
+   * carries the bound server + source ref for an operator-facing listing.
+   */
+  listConnectorOverlays(wsId: string): ConnectorOverlayInfo[] {
+    const dir = this.getWorkspaceContext(wsId).getDataPath(CONNECTOR_SKILLS_SUBDIR);
+    return listConnectorOverlays(dir);
   }
 
   /**

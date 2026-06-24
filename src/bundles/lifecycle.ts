@@ -3,10 +3,17 @@ import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { log } from "../cli/log.ts";
 import { cleanupComposioBundle } from "../composio/sdk.ts";
+import { resolveConnectorSkillsConfig } from "../config/connector-skills.ts";
 import type { EventSink } from "../engine/types.ts";
 import { fleetIssuerOption } from "../oauth/fleet-assertion.ts";
 import { mcpAuthCallbackUrl } from "../oauth/mcp-callback-url.ts";
 import type { PlacementRegistry } from "../runtime/placement-registry.ts";
+import { resolveOverlay } from "../skills/connector-skill-resolver.ts";
+import {
+  CONNECTOR_SKILLS_SUBDIR,
+  materializeConnectorSkill,
+  removeConnectorSkillsForServer,
+} from "../skills/connector-skill-store.ts";
 import { FileCredentialStore } from "../tools/credential-store.ts";
 import { McpSource } from "../tools/mcp-source.ts";
 import type { ToolRegistry } from "../tools/registry.ts";
@@ -37,6 +44,7 @@ import type {
   BundleRef,
   BundleState,
   BundleUiMeta,
+  ConnectorSkillLockEntry,
   HostManifestMeta,
   RemoteTransportConfig,
 } from "./types.ts";
@@ -185,12 +193,24 @@ export class BundleLifecycleManager {
    */
   private getBundleMcpDeps: ((wsId: string) => BundleMcpDeps) | null = null;
 
+  /**
+   * Fetch used to resolve curated connector-skill overlays (P4). Defaults to
+   * global `fetch`; tests inject a fixture via {@link setConnectorSkillFetch}
+   * so overlay binding stays hermetic (no network).
+   */
+  private connectorSkillFetch: typeof fetch = fetch;
+
   constructor(
     private eventSink: EventSink,
     private configPath: string | undefined,
     private allowInsecureRemotes = false,
     private mpakHome: string = join(homedir(), ".mpak"),
   ) {}
+
+  /** Inject the fetch used for connector-skill overlay resolution (tests). */
+  setConnectorSkillFetch(fetchImpl: typeof fetch): void {
+    this.connectorSkillFetch = fetchImpl;
+  }
 
   /** Set the PlacementRegistry (called by Runtime after construction). */
   setPlacementRegistry(pr: PlacementRegistry): void {
@@ -245,6 +265,84 @@ export class BundleLifecycleManager {
   /** Remove an instance from tracking (workspace-scoped). */
   removeInstance(serverName: string, wsId: string): boolean {
     return this.instances.delete(`${serverName}|${wsId}`);
+  }
+
+  // ---- Connector-skill binding (P4) -------------------------------------
+
+  /**
+   * Resolve and materialize the curated overlay bound to a connector identity,
+   * if one is curated. Called at install time; the returned lock entries are
+   * recorded on the bundle's `BundleRef.skillsLock` so uninstall can clean up
+   * and the dedupe path knows the connector has an overlay.
+   *
+   * Best-effort and NON-FATAL: a disabled feature, a missing overlay (404), an
+   * unparseable overlay, or any fetch/IO error returns `[]` and never throws —
+   * the connector install must not fail because its optional guidance couldn't
+   * be fetched. The overlay materializes into the workspace's `connector-skills/`
+   * store and is surfaced into the conversation only on first matching tool call.
+   */
+  async syncBoundSkills(
+    identity: string,
+    serverName: string,
+    wsId: string,
+    workDir: string,
+  ): Promise<ConnectorSkillLockEntry[]> {
+    const config = resolveConnectorSkillsConfig();
+    if (!config.enabled) return [];
+    try {
+      const cacheDir = join(workDir, "cache", "connector-skills");
+      const resolved = await resolveOverlay(identity, {
+        cacheDir,
+        repo: config.repo,
+        version: config.version,
+        fetchImpl: this.connectorSkillFetch,
+      });
+      if (!resolved) return []; // No overlay curated for this connector — no-op.
+
+      const connectorSkillsDir = new WorkspaceContext({ wsId, workDir }).getDataPath(
+        CONNECTOR_SKILLS_SUBDIR,
+      );
+      const materialized = materializeConnectorSkill({
+        connectorSkillsDir,
+        serverName,
+        overlayBody: resolved.body,
+        source: `connector:${identity}@${config.version}`,
+        now: new Date().toISOString(),
+      });
+      if (!materialized) return [];
+
+      log.debug("mcp", `[connector-skills] bound overlay "${identity}" → ${serverName} (${wsId})`);
+      return [{ identity, version: config.version, sha: resolved.sha, path: materialized.path }];
+    } catch (err) {
+      // Non-fatal: the connector is installed regardless. Surface the reason so
+      // an operator can see why an expected overlay didn't bind.
+      log.warn(
+        `[connector-skills] failed to bind overlay "${identity}" for ${serverName}: ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      );
+      return [];
+    }
+  }
+
+  /**
+   * Remove every materialized connector overlay bound to a server (P4). Called
+   * on uninstall; the `BundleRef.skillsLock` itself is dropped with the bundle
+   * entry. Best-effort — a missing store is a no-op.
+   */
+  removeBoundSkills(serverName: string, wsId: string, workDir: string): void {
+    try {
+      const connectorSkillsDir = new WorkspaceContext({ wsId, workDir }).getDataPath(
+        CONNECTOR_SKILLS_SUBDIR,
+      );
+      removeConnectorSkillsForServer(connectorSkillsDir, serverName);
+    } catch (err) {
+      log.warn(
+        `[connector-skills] failed to remove overlays for ${serverName}: ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      );
+    }
   }
 
   // ---- Install -----------------------------------------------------------
@@ -681,6 +779,11 @@ export class BundleLifecycleManager {
         }
       }
     }
+
+    // Step 4d — Remove materialized connector-skill overlays (P4). Keyed on
+    // serverName so it cleans up even when the instance was already lost; the
+    // `skillsLock` on the dropped BundleRef goes with the config entry above.
+    this.removeBoundSkills(serverName, instance?.wsId ?? wsId, defaultWorkDir());
 
     // Step 5 — Emit event (data NOT deleted — step 6)
     this.eventSink.emit({

@@ -74,6 +74,23 @@ export interface RemoteTransportConfig {
   sessionId?: string;
 }
 
+/**
+ * One materialized connector-skill overlay bound to a bundle (P4). Recorded on
+ * the bundle's `BundleRef.skillsLock` at install so uninstall/upgrade can find
+ * and remove the materialized file, the dedupe path can tell a bundle HAS a
+ * curated overlay, and a re-resolve can verify integrity against the pinned sha.
+ */
+export interface ConnectorSkillLockEntry {
+  /** Overlay identity used for the lookup (e.g. `composio/gmail`). */
+  identity: string;
+  /** Pinned overlay-repo version the overlay was fetched at. */
+  version: string;
+  /** sha256 (hex) of the fetched overlay body — tamper-evidence / re-resolve integrity. */
+  sha: string;
+  /** Path to the materialized skill file, for removal on uninstall / version bump. */
+  path: string;
+}
+
 /** Reference to a bundle — by name (mpak cache), local path, or remote URL. */
 export type BundleRef =
   | {
@@ -90,6 +107,8 @@ export type BundleRef =
       allowedEnv?: string[];
       trustScore?: number | null;
       ui?: BundleUiMeta | null;
+      /** Materialized connector-skill overlays bound to this bundle (P4). */
+      skillsLock?: ConnectorSkillLockEntry[];
     }
   | {
       path: string;
@@ -98,6 +117,8 @@ export type BundleRef =
       allowedEnv?: string[];
       trustScore?: number | null;
       ui?: BundleUiMeta | null;
+      /** Materialized connector-skill overlays bound to this bundle (P4). */
+      skillsLock?: ConnectorSkillLockEntry[];
     }
   | {
       url: string;
@@ -105,6 +126,8 @@ export type BundleRef =
       transport?: RemoteTransportConfig;
       trustScore?: number | null;
       ui?: BundleUiMeta | null;
+      /** Materialized connector-skill overlays bound to this bundle (P4). */
+      skillsLock?: ConnectorSkillLockEntry[];
       /**
        * OAuth identity scope for this URL bundle. `"workspace"` is the
        * only legal value: one identity per `(workspace, server)`, shared

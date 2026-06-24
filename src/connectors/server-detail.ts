@@ -251,18 +251,32 @@ export function getNimbleBrainHostMeta(s: ServerDetail): HostManifestMeta | unde
 }
 
 /**
+ * The connector-skill identity rule (P4), over the two values that determine it.
+ * For a Composio connector the identity is `composio/<toolkit>` (the toolkit
+ * slug is stable across deployments, unlike the per-account auth config id);
+ * otherwise it is the server name. Shared by {@link connectorSkillIdentity}
+ * (ServerDetail callers) and the install path (which has the toolkit + server
+ * name directly, not a ServerDetail).
+ */
+export function connectorSkillIdentityFrom(
+  composioToolkit: string | undefined,
+  serverName: string,
+): string {
+  const toolkit = composioToolkit?.trim();
+  return toolkit ? `composio/${toolkit}` : serverName;
+}
+
+/**
  * Stable identity used to look up a curated connector-skill overlay (P4) in the
- * public overlay repo, laid out as `<identity>/SKILL.md`.
- *
- * For Composio connectors the identity is `composio/<toolkit>` (e.g.
- * `composio/gmail`): the toolkit slug is stable across deployments, unlike the
- * per-account auth config id. For any other connector it is the server name.
- * `name` is required on `ServerDetail`, so a usable identity is always derivable.
+ * public overlay repo, laid out as `<identity>/SKILL.md`. See
+ * {@link connectorSkillIdentityFrom} for the rule. `name` is required on
+ * `ServerDetail`, so a usable identity is always derivable.
  */
 export function connectorSkillIdentity(detail: ServerDetail): string {
-  const toolkit = getNimbleBrainConnectorMeta(detail)?.composio?.toolkit?.trim();
-  if (toolkit) return `composio/${toolkit}`;
-  return detail.name;
+  return connectorSkillIdentityFrom(
+    getNimbleBrainConnectorMeta(detail)?.composio?.toolkit,
+    detail.name,
+  );
 }
 
 // ── ajv validator (compiled once at module load) ────────────────────

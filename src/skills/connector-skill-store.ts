@@ -141,6 +141,48 @@ export function removeConnectorSkillsForServer(
   }
 }
 
+/** One materialized overlay, as surfaced by `manage_connectors list_bound_skills`. */
+export interface ConnectorOverlayInfo {
+  /** Bound server (the install's tool-namespace prefix). */
+  server: string;
+  /** Skill name (file basename). */
+  name: string;
+  /** Overlay description from frontmatter, when present. */
+  description?: string;
+  /** Provenance source ref, e.g. `connector:composio/gmail@v0.1.0`. */
+  source?: string;
+  /** Absolute path to the materialized file. */
+  path: string;
+}
+
+/**
+ * Enumerate every materialized overlay under `connectorSkillsDir` with its
+ * provenance, for the `list_bound_skills` surface. Returns `[]` for a missing
+ * dir; a file that fails to parse is skipped.
+ */
+export function listConnectorOverlays(connectorSkillsDir: string): ConnectorOverlayInfo[] {
+  if (!existsSync(connectorSkillsDir)) return [];
+  const out: ConnectorOverlayInfo[] = [];
+  for (const server of safeReadDir(connectorSkillsDir)) {
+    if (!server.isDirectory()) continue;
+    const serverDir = join(connectorSkillsDir, server.name);
+    for (const entry of safeReadDir(serverDir)) {
+      if (!entry.isFile() || !entry.name.toLowerCase().endsWith(".md")) continue;
+      const path = join(serverDir, entry.name);
+      const skill = parseSkillFile(path, { cap: false });
+      if (!skill) continue;
+      out.push({
+        server: server.name,
+        name: skill.manifest.name,
+        ...(skill.manifest.description ? { description: skill.manifest.description } : {}),
+        ...(skill.manifest.provenance?.source ? { source: skill.manifest.provenance.source } : {}),
+        path,
+      });
+    }
+  }
+  return out;
+}
+
 function safeReadDir(dir: string) {
   try {
     return readdirSync(dir, { withFileTypes: true });
