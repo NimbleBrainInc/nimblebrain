@@ -236,13 +236,16 @@ export class AgentEngine {
 
     // Connector-skill overlays (P4): curated guidance surfaced ONCE into the
     // conversation history on the first matching tool call — never into the
-    // cached system prefix. Seed the dedup set from incoming history so an
-    // overlay surfaced on a prior turn (a reconstructed synthetic message)
-    // isn't re-injected; the set also dedups multiple matching calls within
-    // this run. `messages` carries `metadata` at runtime (reconstructed
-    // `StoredMessage`s) though its static type is the bare provider message.
+    // cached system prefix. The dedup set is seeded primarily from
+    // `alreadyInjectedConnectorSkills`, which the runtime computes from the
+    // UN-rehydrated history: `rehydrateUserResources` strips message `metadata`
+    // (where the synthetic marker lives) before the engine sees the messages,
+    // so scanning `history` here can't be the sole source on the real chat
+    // path. The scan is kept as a fallback for callers that pass
+    // metadata-bearing messages directly (the engine+store integration test).
+    // The set also dedups multiple matching calls within this run.
     const connectorSkillCandidates = config.connectorSkillCandidates ?? [];
-    const injectedConnectorSkills = new Set<string>();
+    const injectedConnectorSkills = new Set<string>(config.alreadyInjectedConnectorSkills ?? []);
     if (connectorSkillCandidates.length > 0) {
       for (const m of history) {
         const meta = (m as { metadata?: { synthetic?: string; skill?: string | null } }).metadata;

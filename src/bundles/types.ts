@@ -76,18 +76,19 @@ export interface RemoteTransportConfig {
 
 /**
  * One materialized connector-skill overlay bound to a bundle (P4). Recorded on
- * the bundle's `BundleRef.skillsLock` at install so uninstall/upgrade can find
- * and remove the materialized file, the dedupe path can tell a bundle HAS a
- * curated overlay, and a re-resolve can verify integrity against the pinned sha.
+ * the bundle's `BundleRef.skillsLock` at install so the dedupe path can tell a
+ * bundle HAS a curated overlay (skip its `skill://usage`), and so the binding
+ * is auditable. Cleanup on uninstall is keyed on `serverName` (it removes the
+ * whole `connector-skills/<server>/` dir), not on these entries.
  */
 export interface ConnectorSkillLockEntry {
   /** Overlay identity used for the lookup (e.g. `composio/gmail`). */
   identity: string;
   /** Pinned overlay-repo version the overlay was fetched at. */
   version: string;
-  /** sha256 (hex) of the fetched overlay body — tamper-evidence / re-resolve integrity. */
+  /** sha256 (hex) of the fetched overlay body — tamper-evidence. */
   sha: string;
-  /** Path to the materialized skill file, for removal on uninstall / version bump. */
+  /** Materialized skill file location — recorded for traceability / debugging. */
   path: string;
 }
 

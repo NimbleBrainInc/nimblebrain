@@ -287,6 +287,16 @@ export interface EngineConfig {
    * turn on. Empty / absent = the feature is off for this run.
    */
   connectorSkillCandidates?: ConnectorSkillCandidate[];
+  /**
+   * Names of connector overlays already surfaced earlier in this conversation,
+   * so the engine never re-injects them (P4 cross-run dedup). The runtime
+   * computes this from the UN-rehydrated reconstructed history: the synthetic
+   * marker lives in message `metadata`, which `rehydrateUserResources` strips
+   * before the engine sees the messages, so the engine's own history scan can't
+   * be the sole source on the real chat path. The scan remains a fallback for
+   * callers that pass metadata-bearing messages directly (the engine+store test).
+   */
+  alreadyInjectedConnectorSkills?: string[];
   toolPromotion?: {
     isToolEligible(tool: ToolSchema): boolean;
     registerControls(controls: ToolPromotionControls): () => void;

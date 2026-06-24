@@ -3,9 +3,10 @@ import { afterAll, afterEach, beforeEach, describe, expect, it } from "bun:test"
 import { existsSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { extractText } from "../../src/engine/content-helpers.ts";
+import { extractText, textContent } from "../../src/engine/content-helpers.ts";
 import { runWithRequestContext } from "../../src/runtime/request-context.ts";
 import { Runtime } from "../../src/runtime/runtime.ts";
+import { makeInProcessSource } from "../helpers/in-process-source.ts";
 import { createMockModel } from "../helpers/mock-model.ts";
 import { provisionTestWorkspace, TEST_WORKSPACE_ID } from "../helpers/test-workspace.ts";
 
@@ -38,17 +39,16 @@ metadata:
 Confirm the recipient before calling gmail__send.
 `;
 
-const GMAIL_URL =
-  "https://raw.githubusercontent.com/NimbleBrainInc/connector-skills/v0.1.0/composio/gmail/SKILL.md";
-
 function fixtureModel(): LanguageModelV3 {
   return createMockModel(() => ({ content: [{ type: "text", text: "ok" }] }));
 }
 
 function fixtureFetch(): typeof fetch {
+  // Serve the fixture overlay for any curated `<identity>/SKILL.md` lookup; 404
+  // otherwise. Hermetic — never touches the network.
   return (async (url: string | URL | Request) => {
     const u = typeof url === "string" ? url : url.toString();
-    return u === GMAIL_URL
+    return u.endsWith("/SKILL.md")
       ? new Response(OVERLAY, { status: 200 })
       : new Response("", { status: 404 });
   }) as unknown as typeof fetch;
@@ -133,6 +133,85 @@ describe("connector-skill binding lifecycle (runtime wiring)", () => {
     expect(runtime.loadConnectorSkillCandidates(TEST_WORKSPACE_ID)).toEqual([]);
     expect(runtime.listConnectorOverlays(TEST_WORKSPACE_ID)).toEqual([]);
 
+    await runtime.shutdown();
+  });
+
+  it("surfaces a bound overlay exactly once across turns on the real chat path", async () => {
+    // Regression: cross-run dedup keys on the synthetic message's `metadata`
+    // marker, but `rehydrateUserResources` strips metadata from non-user
+    // messages before the engine sees them — so the engine's history scan
+    // alone re-injected every turn. The runtime now computes the
+    // already-injected set from the UN-rehydrated history and passes it via
+    // `alreadyInjectedConnectorSkills`. This drives TWO real `runtime.chat`
+    // turns (each calling a matching connector tool) and asserts the
+    // `connector.skill.injected` event fired exactly once — it fired twice
+    // before the fix.
+    const workDir = join(testDir, "dedup-chat");
+
+    // Stateful tool-calling model: at each turn's first step it calls the
+    // registered `mytool` tool (found by name in the active set, so it works
+    // whether the active name is bare or `ws_<id>-`-namespaced); after the
+    // tool result it answers with text.
+    let counter = 0;
+    const model = createMockModel((opts) => {
+      const last = opts.prompt[opts.prompt.length - 1];
+      if (last?.role === "tool") return { content: [{ type: "text", text: "done" }] };
+      const tool = (opts.tools ?? []).find((t) => t.name.includes("mytool__"));
+      if (!tool) return { content: [{ type: "text", text: "no tool" }] };
+      counter += 1;
+      return {
+        content: [{ type: "tool-call", toolCallId: `c${counter}`, toolName: tool.name, input: "{}" }],
+      };
+    });
+
+    const runtime = await Runtime.start({
+      model: { provider: "custom", adapter: model },
+      noDefaultBundles: true,
+      workDir,
+      logging: { disabled: true },
+      telemetry: { enabled: false },
+    });
+    await provisionTestWorkspace(runtime);
+
+    // Real, executable tool so the call routes + succeeds (injection fires
+    // before execution either way, but a clean run keeps the test honest).
+    const source = await makeInProcessSource("mytool", [
+      {
+        name: "ping",
+        description: "Ping",
+        inputSchema: { type: "object", properties: {} },
+        handler: async () => ({ content: textContent("pong"), isError: false }),
+      },
+    ]);
+    runtime.getRegistryForWorkspace(TEST_WORKSPACE_ID).addSource(source);
+
+    // Bind a curated overlay for server "mytool" (tool-affinity `mytool__*`).
+    runtime.getLifecycle().setConnectorSkillFetch(fixtureFetch());
+    const lock = await runtime
+      .getLifecycle()
+      .syncBoundSkills("composio/mytool", "mytool", TEST_WORKSPACE_ID, runtime.getWorkDir());
+    expect(lock).toHaveLength(1);
+
+    const t1 = await runtime.chat({
+      workspaceId: TEST_WORKSPACE_ID,
+      message: "go",
+      allowedTools: ["mytool__ping"],
+    });
+    const t2 = await runtime.chat({
+      workspaceId: TEST_WORKSPACE_ID,
+      conversationId: t1.conversationId,
+      message: "again",
+      allowedTools: ["mytool__ping"],
+    });
+    expect(t2.conversationId).toBe(t1.conversationId);
+
+    const store = runtime.findConversationStore();
+    const events = await store.readEvents(t1.conversationId);
+    const injected = events.filter((e) => e.type === "connector.skill.injected");
+    // Exactly once across both turns — re-injection (length 2) is the bug.
+    expect(injected).toHaveLength(1);
+
+    await source.stop().catch(() => {});
     await runtime.shutdown();
   });
 });

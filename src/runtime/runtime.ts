@@ -56,6 +56,7 @@ import type {
   ToolRouter,
   ToolSchema,
 } from "../engine/types.ts";
+import { CONNECTOR_SKILL_SYNTHETIC } from "../engine/types.ts";
 import { rehydrateUserResources } from "../files/rehydrate.ts";
 import { createFileStore, type FileStore } from "../files/store.ts";
 import { DEFAULT_FILE_CONFIG, type FileConfig } from "../files/types.ts";
@@ -1696,6 +1697,13 @@ export class Runtime {
       // into history by the engine on a matching connector tool call, never
       // into the system prefix. Same workspace scoping as the layer-3 pool.
       connectorSkillCandidates: this.loadConnectorSkillCandidates(focusedWsId ?? sessionWsId),
+      // Computed from the UN-rehydrated history — rehydrate strips the synthetic
+      // marker's metadata, so the engine can't recover the already-injected set
+      // from the messages it receives. This is what makes surface-ONCE hold
+      // across turns on the real chat path.
+      alreadyInjectedConnectorSkills: this.collectInjectedConnectorSkills(
+        compactedHistory ?? history,
+      ),
       // Cancellation: thread the caller's signal into the engine. The
       // engine checks it between iterations and forwards it down to every
       // tool call. Without this, callers racing the chat against a
@@ -2201,6 +2209,13 @@ export class Runtime {
       // Connector-skill overlays (P4) — same focused-workspace scoping as the
       // layer-3 pool; surfaced once into history, never the system prefix.
       connectorSkillCandidates: this.loadConnectorSkillCandidates(focusedWsId ?? sessionWsId),
+      // Computed from the UN-rehydrated history — rehydrate strips the synthetic
+      // marker's metadata, so the engine can't recover the already-injected set
+      // from the messages it receives. This is what makes surface-ONCE hold
+      // across turns on the real chat path.
+      alreadyInjectedConnectorSkills: this.collectInjectedConnectorSkills(
+        compactedHistory ?? history,
+      ),
       ...(request.signal ? { signal: request.signal } : {}),
     };
 
@@ -3564,6 +3579,26 @@ export class Runtime {
   loadConnectorSkillCandidates(wsId: string): ConnectorSkillCandidate[] {
     const dir = this.getWorkspaceContext(wsId).getDataPath(CONNECTOR_SKILLS_SUBDIR);
     return readConnectorSkillCandidates(dir);
+  }
+
+  /**
+   * Names of connector overlays already surfaced in this conversation (P4),
+   * read from the reconstructed history's synthetic-message markers. MUST be
+   * called on the UN-rehydrated history (`compactedHistory ?? history`):
+   * `rehydrateUserResources` strips message `metadata`, so the marker is gone
+   * from the rehydrated `messages` the engine receives. Passed to the engine as
+   * `alreadyInjectedConnectorSkills` so a bound overlay is surfaced once across
+   * the whole conversation, not re-injected every turn its tools are used.
+   */
+  private collectInjectedConnectorSkills(messages: StoredMessage[]): string[] {
+    const names = new Set<string>();
+    for (const m of messages) {
+      const meta = m.metadata;
+      if (meta?.synthetic === CONNECTOR_SKILL_SYNTHETIC && typeof meta.skill === "string") {
+        names.add(meta.skill);
+      }
+    }
+    return [...names];
   }
 
   /**
