@@ -15,7 +15,10 @@ const OVERRIDE_PATTERNS = [
   "disregard all",
 ];
 
-const VALID_NAME_RE = /^[a-zA-Z0-9_-]+$/;
+// Agent Skills standard: lowercase alphanumerics + single hyphens, no
+// leading/trailing/consecutive hyphen. Tightened from the legacy
+// `[a-zA-Z0-9_-]+` so authored names stay portable across standard agents.
+const VALID_NAME_RE = /^[a-z0-9]+(-[a-z0-9]+)*$/;
 
 export function validateSkill(
   name: string,
@@ -27,7 +30,9 @@ export function validateSkill(
 
   // Validate name is a valid filename
   if (!VALID_NAME_RE.test(name)) {
-    errors.push("Skill name must contain only alphanumeric characters, hyphens, and underscores");
+    errors.push(
+      "Skill name must be lowercase alphanumerics and hyphens (no leading/trailing/consecutive hyphen)",
+    );
   }
 
   // Check reserved names

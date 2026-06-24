@@ -152,7 +152,7 @@ describe("compose_effective_context — live mode", () => {
     const skillBody = "Always answer in plain English. Avoid em-dashes.";
     writeFileSync(
       join(workDir, "skills", "voice-rules.md"),
-      `---\nname: voice-rules\ndescription: Voice\nversion: 1.0.0\ntype: context\npriority: 30\nloading_strategy: always\n---\n\n${skillBody}\n`,
+      `---\nname: voice-rules\ndescription: Voice\nmetadata:\n  nimblebrain:\n    loading-strategy: always\n    priority: 30\n---\n\n${skillBody}\n`,
     );
     await runtime.reloadSkills();
 
@@ -290,12 +290,13 @@ describe("compose_effective_context — historical mode", () => {
     mkdirSync(join(workDir, "skills"), { recursive: true });
     const skillBody = "Use patch_source for all revisions.";
     const skillPath = join(workDir, "skills", "collateral-rules.md");
-    // `type: skill` (capability role) so it lands in Layer 3, where this tool
-    // audits skill hashes — `type: context` would route to the always-on Layer
-    // 0/1 channel instead. `always` keeps selection deterministic in the test.
+    // dynamic + tool-affinity (capability role) so it lands in Layer 3, where
+    // this tool audits skill hashes — `loading-strategy: always` would route to
+    // the always-on Layer 0/1 channel instead. `nb__*` always matches a surfaced
+    // tool, so the skill is selected deterministically in the test.
     writeFileSync(
       skillPath,
-      `---\nname: collateral-rules\ndescription: Routing\nversion: 1.0.0\ntype: skill\npriority: 30\nloading_strategy: always\n---\n\n${skillBody}\n`,
+      `---\nname: collateral-rules\ndescription: Routing\nmetadata:\n  nimblebrain:\n    loading-strategy: dynamic\n    priority: 30\n    tool-affinity: ['nb__*']\n---\n\n${skillBody}\n`,
     );
     await runtime.reloadSkills();
 
@@ -342,7 +343,7 @@ describe("compose_effective_context — historical mode", () => {
     const skillPath = join(workDir, "skills", "drift-rules.md");
     writeFileSync(
       skillPath,
-      `---\nname: drift-rules\ndescription: Test\nversion: 1.0.0\ntype: skill\npriority: 30\nloading_strategy: always\n---\n\n${originalBody}\n`,
+      `---\nname: drift-rules\ndescription: Test\nmetadata:\n  nimblebrain:\n    loading-strategy: dynamic\n    priority: 30\n    tool-affinity: ['nb__*']\n---\n\n${originalBody}\n`,
     );
     await runtime.reloadSkills();
 
@@ -359,7 +360,7 @@ describe("compose_effective_context — historical mode", () => {
     const editedBody = "Edited rule: use set_source instead.";
     writeFileSync(
       skillPath,
-      `---\nname: drift-rules\ndescription: Test\nversion: 1.0.0\ntype: skill\npriority: 30\nloading_strategy: always\n---\n\n${editedBody}\n`,
+      `---\nname: drift-rules\ndescription: Test\nmetadata:\n  nimblebrain:\n    loading-strategy: dynamic\n    priority: 30\n    tool-affinity: ['nb__*']\n---\n\n${editedBody}\n`,
     );
     await runtime.reloadSkills();
 
@@ -398,7 +399,7 @@ describe("compose_effective_context — historical mode", () => {
     const originalBody = "Recoverable rule: vintage instruction.";
     const skillPath = join(workDir, "skills", "recoverable.md");
     const frontmatter =
-      "---\nname: recoverable\ndescription: Test\nversion: 1.0.0\ntype: skill\npriority: 30\nloading_strategy: always\n---\n";
+      "---\nname: recoverable\ndescription: Test\nmetadata:\n  nimblebrain:\n    loading-strategy: dynamic\n    priority: 30\n    tool-affinity: ['nb__*']\n---\n";
     writeFileSync(skillPath, `${frontmatter}\n${originalBody}\n`);
     await runtime.reloadSkills();
 
@@ -463,11 +464,11 @@ describe("compose_effective_context — bundle filter", () => {
     mkdirSync(crmDir, { recursive: true });
     writeFileSync(
       join(collateralDir, "rules.md"),
-      `---\nname: collateral-rules\ndescription: CR\nversion: 1.0.0\ntype: skill\npriority: 30\nloading_strategy: always\n---\n\nCollateral content.\n`,
+      `---\nname: collateral-rules\ndescription: CR\nmetadata:\n  nimblebrain:\n    loading-strategy: dynamic\n    priority: 30\n    tool-affinity: ['nb__*']\n---\n\nCollateral content.\n`,
     );
     writeFileSync(
       join(crmDir, "rules.md"),
-      `---\nname: crm-rules\ndescription: CR\nversion: 1.0.0\ntype: skill\npriority: 30\nloading_strategy: always\n---\n\nCRM content.\n`,
+      `---\nname: crm-rules\ndescription: CR\nmetadata:\n  nimblebrain:\n    loading-strategy: dynamic\n    priority: 30\n    tool-affinity: ['nb__*']\n---\n\nCRM content.\n`,
     );
     await runtime.reloadSkills();
 

@@ -14,7 +14,6 @@ import { recordLlmUsage } from "../api/metrics.ts";
 import type { AutomationDomainContext } from "../bundles/automations/src/domain.ts";
 import { sanitizePlacements } from "../bundles/defaults.ts";
 import { BundleLifecycleManager } from "../bundles/lifecycle.ts";
-import { deriveServerName } from "../bundles/paths.ts";
 import { setConnectionRunningHandler } from "../bundles/pending-auth-buffer.ts";
 import type { BundleMcpDeps } from "../bundles/startup.ts";
 import type { AppInfo, BundleInstance, PlacementDeclaration } from "../bundles/types.ts";
@@ -1321,33 +1320,7 @@ export class Runtime {
       partitionSkillsByRole(conversationPool);
     const requestMatcher = new SkillMatcher();
     requestMatcher.load(poolCapability);
-    let skill = requestMatcher.match(request.message);
-
-    // Dependency checking: warn if a matched skill requires bundles that aren't installed
-    // anywhere the identity can reach. Pre-Stage-2 this checked only the
-    // request's wsId; post-T006 we look across every workspace the identity
-    // has access to (the same set the aggregator builds its tool list from).
-    if (skill?.manifest.requiresBundles?.length) {
-      const accessibleWorkspaces = await this._workspaceStore.getWorkspacesForUser(ownerId);
-      const missing: string[] = [];
-      for (const bundleName of skill.manifest.requiresBundles) {
-        const serverName = deriveServerName(bundleName);
-        const installedSomewhere = accessibleWorkspaces.some((ws) =>
-          this.lifecycle?.getInstance(serverName, ws.id),
-        );
-        if (!installedSomewhere) {
-          missing.push(bundleName);
-        }
-      }
-      if (missing.length > 0) {
-        skill = {
-          ...skill,
-          body:
-            skill.body +
-            `\n\n⚠️ Missing dependencies: ${missing.join(", ")}. Some capabilities may be unavailable. Install the missing apps from the Apps catalog in settings.`,
-        };
-      }
-    }
+    const skill = requestMatcher.match(request.message);
 
     // The workspace BRIEFING (apps + workspace overlay + "## Workspace" block
     // + workspace persona) reflects the workspace the chat is FOCUSED on —
@@ -1512,11 +1485,11 @@ export class Runtime {
       ? [...contextBase, identityOverride]
       : contextBase;
 
-    // Layer 3 selection — pick skills with `loading_strategy: always` and
-    // `tool_affined` strategies based on the active tool set. The merged pool
+    // Layer 3 selection — pick `always` and `dynamic` (tool-affinity) skills
+    // based on the active tool set. The merged pool
     // includes platform / workspace / user tier skills (user > workspace >
     // platform on name collisions). Bundle-exposed `skill://<name>/usage`
-    // resources are synthesized into the pool as `tool_affined` skills so a
+    // resources are synthesized into the pool as `dynamic` tool-affinity skills so a
     // workspace-level chat picks them up whenever the bundle's tools are
     // surfaced — no `appContext` scoping required (the prior path only fired
     // under `appContext`, missing cross-app workflows).
@@ -2639,7 +2612,7 @@ export class Runtime {
   /**
    * Probe every MCP source in `wsId`'s registry for a `skill://<name>/usage`
    * resource and synthesize a Layer 3 `Skill` for any that responds. Each
-   * synthesized skill is `tool_affined` to `<name>__*`, so it loads via the
+   * synthesized skill is `dynamic` with tool-affinity `<name>__*`, so it loads via the
    * standard `selectLayer3Skills` path whenever the bundle's tools are in
    * the active toolset — no `appContext` required.
    *
@@ -3562,7 +3535,7 @@ export class Runtime {
    * in a shared workspace whose tools land in the cross-workspace tool list
    * must also surface its workflow guidance, else the model gets the namespaced
    * tool name with no instructions. `selectLayer3Skills` then filters to the
-   * `always` and `tool_affined` strategies against `activeToolNames`.
+   * `dynamic` (tool-affinity) strategy against `activeToolNames`.
    */
   async selectRequestLayer3(params: {
     /** Focused workspace (or session/personal in home mode) for workspace-tier skills. */
@@ -4192,9 +4165,9 @@ export function makeIdentitySkill(body: string): Skill {
     manifest: {
       name: "identity-override",
       description: "Workspace identity override",
-      version: "1.0.0",
-      type: "context",
+      loadingStrategy: "always",
       priority: 1,
+      status: "active",
     },
     body,
     sourcePath: "",

@@ -84,12 +84,14 @@ describe("skills read tools — end-to-end", () => {
         "---",
         'name: voice-rules',
         'description: Voice rules',
-        'version: "1.0.0"',
-        // `type: skill` (capability role) → loads into Layer 3 (`skills.loaded`/
-        // loading_log), where this test asserts. `always` keeps it deterministic.
-        "type: skill",
-        "priority: 25",
-        "loading-strategy: always",
+        // dynamic + tool-affinity (nb__* is always surfaced) → loads into Layer 3
+        // (skills.loaded / loading_log / active_for), where this test asserts.
+        "metadata:",
+        "  nimblebrain:",
+        "    loading-strategy: dynamic",
+        "    priority: 25",
+        "    tool-affinity:",
+        '      - "nb__*"',
         "---",
         "",
         "Speak plainly. Avoid filler.",
@@ -158,7 +160,7 @@ describe("skills read tools — end-to-end", () => {
       };
       expect(readSC.scope).toBe("workspace");
       expect(readSC.metadata.name).toBe("voice-rules");
-      expect(readSC.metadata.loadingStrategy).toBe("always");
+      expect(readSC.metadata.loadingStrategy).toBe("dynamic");
       expect(readSC.content).toContain("Speak plainly");
 
       // Regression (skills__read body-in-content): the engine surfaces only
@@ -169,7 +171,7 @@ describe("skills read tools — end-to-end", () => {
       // what the engine feeds the model.
       expect(read.content).toContain("Speak plainly");
       expect(read.content).toContain("voice-rules");
-      expect(read.content).toContain("loads: always");
+      expect(read.content).toContain("loads: tool_affinity");
 
       // skills__active_for — the most recent skills.loaded for the conv must
       // include voice-rules (loading_strategy: always).
@@ -188,7 +190,7 @@ describe("skills read tools — end-to-end", () => {
       const activeIds = activeList.map((s) => s.id);
       expect(activeIds.some((id) => id.endsWith("voice.md"))).toBe(true);
       const voiceLoaded = activeList.find((s) => s.id.endsWith("voice.md"))!;
-      expect(voiceLoaded.loadedBy).toBe("always");
+      expect(voiceLoaded.loadedBy).toBe("tool_affinity");
       expect(voiceLoaded.scope).toBe("workspace");
 
       // skills__loading_log — at least one entry for this conversation.

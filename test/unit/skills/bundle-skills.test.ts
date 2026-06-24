@@ -18,11 +18,10 @@ describe("synthesizeBundleSkill", () => {
       body: "# How to use Collateral\n\nBody.",
     });
     expect(skill.manifest.name).toBe("bundle:synapse-collateral");
-    expect(skill.manifest.loadingStrategy).toBe("tool_affined");
-    expect(skill.manifest.appliesToTools).toEqual(["synapse-collateral__*"]);
+    expect(skill.manifest.loadingStrategy).toBe("dynamic");
+    expect(skill.manifest.toolAffinity).toEqual(["synapse-collateral__*"]);
     expect(skill.manifest.scope).toBe("bundle");
     expect(skill.manifest.status).toBe("active");
-    expect(skill.manifest.type).toBe("skill");
     expect(skill.sourcePath).toBe("skill://synapse-collateral/usage");
     expect(skill.body).toContain("How to use Collateral");
   });

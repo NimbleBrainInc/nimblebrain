@@ -1,40 +1,26 @@
 import type { Skill } from "./types.ts";
 
 /**
- * Two-phase skill matcher.
+ * Trigger-phrase skill matcher.
  *
- * Phase 1: Trigger phrases -- substring match, first hit wins.
- *          Triggers are high-confidence explicit patterns.
+ * Substring match on a skill's `triggers`, first hit wins. Triggers are
+ * high-confidence explicit phrases for deterministic ("must-fire") activation —
+ * e.g. a compliance skill that must load whenever the user names a regulated
+ * action, rather than relying on the model noticing the catalog. Topic/keyword
+ * matching is no longer a separate signal: the standard folds keywords into the
+ * `description`, and the model activates from the catalog on that (P3).
  *
- * Phase 2: Keywords -- absolute hit count (not ratio), best match wins.
- *          Requires at least MIN_KEYWORD_HITS to qualify.
- *
- * No weights, no normalization, no tuning. A skill with 3 keywords
- * hitting 2 and a skill with 10 keywords hitting 3 both qualify.
- *
- * Only type: "skill" skills are loaded; context skills are excluded.
- *
- * Disabled skills (`status: "disabled"` — toggled Off in the UI) are also
- * excluded here. A matched skill is injected straight into the prompt's
- * Layer-4 (`<skill-instructions>`) by the runtime without any further status
- * check, so this is the only place the matched-skill channel honors the
- * toggle. Mirrors the Layer-3 filter in `select.ts` (`selectLayer3Skills`).
+ * Only `dynamic` skills are matchable; `always` skills compose into the context
+ * channel. Disabled skills (`status: "disabled"`) are excluded — a matched skill
+ * is injected into Layer 4 (`<skill-instructions>`) without a further status
+ * check, so this is the only place the matched-skill channel honors the toggle.
  */
-
-const MIN_KEYWORD_HITS = 2;
-
 export class SkillMatcher {
   private skills: Skill[] = [];
 
   load(skills: Skill[]): void {
-    // Allowlist on status (active/undefined), matching `select.ts` and
-    // `Runtime.activeContextSkills` exactly — not a `!== "disabled"` denylist,
-    // which would silently leak a future third status (e.g. "archived") into
-    // Layer-4 while the other two channels dropped it.
     this.skills = skills.filter(
-      (s) =>
-        s.manifest.type === "skill" &&
-        (s.manifest.status === undefined || s.manifest.status === "active"),
+      (s) => s.manifest.loadingStrategy === "dynamic" && s.manifest.status === "active",
     );
   }
 
@@ -48,9 +34,9 @@ export class SkillMatcher {
 
     const messageLower = message.toLowerCase();
 
-    // Phase 1: Trigger match (substring, first hit wins)
+    // Trigger match (substring, first hit wins).
     for (const skill of this.skills) {
-      const triggers = skill.manifest.metadata?.triggers ?? [];
+      const triggers = skill.manifest.triggers ?? [];
       for (const trigger of triggers) {
         if (messageLower.includes(trigger.toLowerCase())) {
           return skill;
@@ -58,20 +44,6 @@ export class SkillMatcher {
       }
     }
 
-    // Phase 2: Keyword match (absolute count, best wins)
-    let bestSkill: Skill | null = null;
-    let bestHits = 0;
-
-    for (const skill of this.skills) {
-      const keywords = skill.manifest.metadata?.keywords ?? [];
-      const hits = keywords.filter((kw) => messageLower.includes(kw.toLowerCase())).length;
-
-      if (hits >= MIN_KEYWORD_HITS && hits > bestHits) {
-        bestHits = hits;
-        bestSkill = skill;
-      }
-    }
-
-    return bestSkill;
+    return null;
   }
 }

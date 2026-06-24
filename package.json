@@ -84,7 +84,8 @@
     "lint": "bunx @biomejs/biome check src/ instrument/",
     "format": "bunx @biomejs/biome format --write src/ web/src/ instrument/",
     "format:check": "bunx @biomejs/biome format src/ web/src/ instrument/",
-    "sync-models": "bun run src/model/sync-models.ts"
+    "sync-models": "bun run src/model/sync-models.ts",
+    "migrate:skill-frontmatter": "bun run scripts/migrate-skill-frontmatter.ts"
   },
   "devDependencies": {
     "@biomejs/biome": "^2.4.10",

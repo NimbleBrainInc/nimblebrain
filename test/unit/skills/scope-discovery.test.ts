@@ -40,9 +40,10 @@ afterEach(() => {
 
 function writeSkillFile(path: string, name: string, type: "context" | "skill" = "skill"): void {
   mkdirSync(path.replace(/\/[^/]+$/, ""), { recursive: true });
+  const loadingStrategy = type === "context" ? "always" : "dynamic";
   writeFileSync(
     path,
-    `---\nname: ${name}\ndescription: ${name}\nversion: 1.0.0\ntype: ${type}\npriority: 50\n---\nBody for ${name}.\n`,
+    `---\nname: ${name}\ndescription: ${name}\nmetadata:\n  nimblebrain:\n    loading-strategy: ${loadingStrategy}\n    priority: 50\n---\nBody for ${name}.\n`,
     "utf-8",
   );
 }
@@ -67,18 +68,19 @@ describe("loadScopedSkills — stamping", () => {
     }
   });
 
-  test("frontmatter scope is overwritten by the dir-stamped scope", () => {
+  test("a legacy frontmatter with stray top-level keys is rejected (fail-soft skip)", () => {
+    // `scope`/`type`/`version` are no longer top-level fields (scope is
+    // dir-stamped; the rest moved under metadata.nimblebrain). The strict schema
+    // rejects them, so an unmigrated file is skipped — not crashed — until
+    // `migrate:skill-frontmatter` rewrites it.
     const dir = join(root, "stamp-precedence");
     mkdirSync(dir, { recursive: true });
     writeFileSync(
-      join(dir, "claims-bundle.md"),
-      `---\nname: claims-bundle\ndescription: x\nversion: 1.0.0\ntype: skill\npriority: 50\nscope: bundle\n---\nBody.\n`,
+      join(dir, "legacy.md"),
+      `---\nname: legacy\ndescription: x\ntype: skill\npriority: 50\nscope: bundle\n---\nBody.\n`,
       "utf-8",
     );
-
-    const skills = loadScopedSkills(dir, "user");
-    expect(skills).toHaveLength(1);
-    expect(skills[0]!.manifest.scope).toBe("user");
+    expect(loadScopedSkills(dir, "user")).toHaveLength(0);
   });
 });
 
@@ -153,8 +155,7 @@ function makeSkill(name: string, scope: "org" | "workspace" | "user", body = "")
     manifest: {
       name,
       description: name,
-      version: "1.0.0",
-      type: "skill",
+      loadingStrategy: "dynamic",
       priority: 50,
       scope,
       status: "active",

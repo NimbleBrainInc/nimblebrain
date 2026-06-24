@@ -47,12 +47,12 @@ function writeTriggerSkill(dir: string, name: string, trigger: string): void {
     `---
 name: ${name}
 description: Trigger skill for ${name}
-version: 1.0.0
-type: skill
-priority: 50
 metadata:
-  triggers:
-    - "${trigger}"
+  nimblebrain:
+    loading-strategy: dynamic
+    priority: 50
+    triggers:
+      - "${trigger}"
 ---
 
 Body for ${name}.

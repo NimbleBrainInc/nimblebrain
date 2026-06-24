@@ -57,13 +57,20 @@ export const NimblebrainSkillMetaSchema = Type.Object(
   { additionalProperties: false },
 );
 
+/**
+ * Canonical skill-name pattern (Agent Skills standard): lowercase alphanumerics
+ * and single hyphens, no leading/trailing/consecutive hyphen. The ONE source —
+ * the schema and the tool's early name guard both use it.
+ */
+export const SKILL_NAME_PATTERN = "^[a-z0-9]+(-[a-z0-9]+)*$";
+
 /** Full on-disk SKILL.md frontmatter (standard fields + our nested extension). */
 export const SkillFrontmatterSchema = Type.Object(
   {
     // Standard, top-level. `name`: standard rules (lowercase + hyphens, ≤64,
     // no leading/trailing/consecutive hyphen) — also must match the dir name,
     // enforced by the loader since the pattern can't express it.
-    name: Type.String({ pattern: "^[a-z0-9]+(-[a-z0-9]+)*$", maxLength: 64 }),
+    name: Type.String({ pattern: SKILL_NAME_PATTERN, maxLength: 64 }),
     description: Type.String({ minLength: 1, maxLength: 1024 }),
     license: Type.Optional(Type.String()),
     compatibility: Type.Optional(Type.String({ maxLength: 500 })),

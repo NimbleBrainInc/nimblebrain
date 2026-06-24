@@ -20,70 +20,61 @@ import type { Skill, SkillManifest } from "./types.ts";
 // ---------------------------------------------------------------------------
 
 /**
- * Convert a SkillManifest into a kebab-case YAML-friendly plain object
- * that round-trips through gray-matter / parseSkillContent.
+ * Convert a SkillManifest into the canonical on-disk frontmatter shape:
+ * standard fields top-level (`name`, `description`, `license`, `compatibility`,
+ * `allowed-tools` as a space-separated string, `metadata.{author,version}`),
+ * with NimbleBrain runtime config nested under `metadata.nimblebrain.*` (kebab).
+ * `scope` is NOT written — it's stamped at load from the directory tier.
+ * Round-trips through gray-matter / `parseSkillContent`.
  */
 function manifestToFrontmatter(manifest: SkillManifest): Record<string, unknown> {
   const fm: Record<string, unknown> = {
     name: manifest.name,
     description: manifest.description,
-    version: manifest.version,
-    type: manifest.type,
-    priority: manifest.priority,
   };
-
-  // Only emit arrays when they have entries (matches loader: empty → [])
+  if (manifest.license) fm.license = manifest.license;
+  if (manifest.compatibility) fm.compatibility = manifest.compatibility;
+  // Standard `allowed-tools` is a space-separated string.
   if (manifest.allowedTools && manifest.allowedTools.length > 0) {
-    fm["allowed-tools"] = manifest.allowedTools;
-  }
-  if (manifest.requiresBundles && manifest.requiresBundles.length > 0) {
-    fm["requires-bundles"] = manifest.requiresBundles;
+    fm["allowed-tools"] = manifest.allowedTools.join(" ");
   }
 
-  // ---- Phase 2 fields — emit only when populated -------------------------
-  if (manifest.scope) fm.scope = manifest.scope;
-  if (manifest.loadingStrategy) fm["loading-strategy"] = manifest.loadingStrategy;
-  if (manifest.appliesToTools && manifest.appliesToTools.length > 0) {
-    fm["applies-to-tools"] = manifest.appliesToTools;
+  const nb: Record<string, unknown> = {
+    "loading-strategy": manifest.loadingStrategy,
+    priority: manifest.priority,
+    status: manifest.status,
+  };
+  if (manifest.toolAffinity && manifest.toolAffinity.length > 0) {
+    nb["tool-affinity"] = manifest.toolAffinity;
   }
-  // status is always populated by the loader (default "active"); only emit
-  // when it deviates from the default to keep round-trips minimal.
-  if (manifest.status && manifest.status !== "active") {
-    fm.status = manifest.status;
+  if (manifest.triggers && manifest.triggers.length > 0) {
+    nb.triggers = manifest.triggers;
   }
-  if (manifest.overrides && manifest.overrides.length > 0) {
-    fm.overrides = manifest.overrides.map((o) => {
-      const out: Record<string, unknown> = { reason: o.reason };
-      if (o.bundle) out.bundle = o.bundle;
-      if (o.skill) out.skill = o.skill;
-      return out;
-    });
+  if (manifest.provenance) {
+    const p = manifest.provenance;
+    const prov: Record<string, unknown> = { origin: p.origin };
+    if (p.conversationId) prov["conversation-id"] = p.conversationId;
+    if (p.createdBy) prov["created-by"] = p.createdBy;
+    if (p.createdAt) prov["created-at"] = p.createdAt;
+    if (p.updatedAt) prov["updated-at"] = p.updatedAt;
+    nb.provenance = prov;
   }
-  if (manifest.derivedFrom) fm["derived-from"] = manifest.derivedFrom;
 
-  if (manifest.metadata) {
-    const meta: Record<string, unknown> = {};
-    if (manifest.metadata.keywords.length > 0) meta.keywords = manifest.metadata.keywords;
-    if (manifest.metadata.triggers.length > 0) meta.triggers = manifest.metadata.triggers;
-    if (manifest.metadata.category) meta.category = manifest.metadata.category;
-    if (manifest.metadata.tags && manifest.metadata.tags.length > 0)
-      meta.tags = manifest.metadata.tags;
-    if (manifest.metadata.author) meta.author = manifest.metadata.author;
-    if (manifest.metadata.created_at) meta.created_at = manifest.metadata.created_at;
-    if (manifest.metadata.source) meta.source = manifest.metadata.source;
-    if (Object.keys(meta).length > 0) {
-      fm.metadata = meta;
-    }
-  }
+  const metadata: Record<string, unknown> = { nimblebrain: nb };
+  if (manifest.author) metadata.author = manifest.author;
+  if (manifest.version) metadata.version = manifest.version;
+  fm.metadata = metadata;
 
   return fm;
 }
 
 /**
  * Atomically write a file: write to a `.tmp` sibling, then rename over
- * the target. If the rename fails the original file is untouched.
+ * the target. If the rename fails the original file is untouched. Exported so
+ * the one-time frontmatter migration (`scripts/migrate-skill-frontmatter.ts`)
+ * rewrites tenant skill files atomically through the same path.
  */
-function atomicWriteFile(filePath: string, content: string): void {
+export function atomicWriteFile(filePath: string, content: string): void {
   const tmpPath = `${filePath}.tmp`;
   writeFileSync(tmpPath, content, "utf-8");
   renameSync(tmpPath, filePath);
@@ -91,9 +82,11 @@ function atomicWriteFile(filePath: string, content: string): void {
 
 /**
  * Serialize a manifest + body into a complete skill markdown string
- * (YAML frontmatter + body).
+ * (YAML frontmatter + body). Exported so the one-time frontmatter migration
+ * (`scripts/migrate-skill-frontmatter.ts`) emits byte-identical canonical
+ * output to a freshly-written skill — no second serializer to drift.
  */
-function serializeSkill(manifest: SkillManifest, body: string): string {
+export function serializeSkill(manifest: SkillManifest, body: string): string {
   const fm = manifestToFrontmatter(manifest);
   return matter.stringify(`\n${body}\n`, fm);
 }
@@ -146,27 +139,14 @@ export function updateSkill(
     throw new Error(`Skill "${name}" not found in ${dir}`);
   }
 
-  const merged: SkillManifest = { ...existing.manifest };
+  // Merge provided keys over the existing manifest (Partial → absent keys keep
+  // their existing value). `name` rename is handled by the caller (file move).
+  const merged: SkillManifest = { ...existing.manifest, ...partialManifest };
 
-  if (partialManifest) {
-    if (partialManifest.name !== undefined) merged.name = partialManifest.name;
-    if (partialManifest.description !== undefined) merged.description = partialManifest.description;
-    if (partialManifest.version !== undefined) merged.version = partialManifest.version;
-    if (partialManifest.type !== undefined) merged.type = partialManifest.type;
-    if (partialManifest.priority !== undefined) merged.priority = partialManifest.priority;
-    if (partialManifest.allowedTools !== undefined)
-      merged.allowedTools = partialManifest.allowedTools;
-    if (partialManifest.requiresBundles !== undefined)
-      merged.requiresBundles = partialManifest.requiresBundles;
-    if (partialManifest.metadata !== undefined) merged.metadata = partialManifest.metadata;
-    if (partialManifest.scope !== undefined) merged.scope = partialManifest.scope;
-    if (partialManifest.loadingStrategy !== undefined)
-      merged.loadingStrategy = partialManifest.loadingStrategy;
-    if (partialManifest.appliesToTools !== undefined)
-      merged.appliesToTools = partialManifest.appliesToTools;
-    if (partialManifest.status !== undefined) merged.status = partialManifest.status;
-    if (partialManifest.overrides !== undefined) merged.overrides = partialManifest.overrides;
-    if (partialManifest.derivedFrom !== undefined) merged.derivedFrom = partialManifest.derivedFrom;
+  // Bump provenance.updated-at on every edit, preserving origin/created-by/
+  // created-at. Without this the stamped timestamp would lie (never change).
+  if (merged.provenance) {
+    merged.provenance = { ...merged.provenance, updatedAt: new Date().toISOString() };
   }
 
   const body = newBody !== undefined ? newBody : existing.body;

@@ -45,7 +45,7 @@ interface PrivilegeEntry {
 const PRIVILEGE_CANDIDATES: PrivilegeEntry[] = [
   {
     // Creates land in the prompt as soon as they're written (always-load
-    // skills) or on the next applicable turn (tool_affined). Gating
+    // skills) or on the next applicable turn (dynamic tool-affinity). Gating
     // matches the description-as-policy line "confirm before creating
     // platform-/workspace-scope skills" so the agent doesn't spawn
     // org-wide context unilaterally. Web-UI calls bypass the engine

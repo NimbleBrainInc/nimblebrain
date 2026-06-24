@@ -19,9 +19,7 @@ export type {
   Skill,
   SkillLoadingStrategy,
   SkillManifest,
-  SkillMetadata,
-  SkillOverride,
+  SkillProvenance,
   SkillScope,
   SkillStatus,
-  SkillType,
 } from "./types.ts";

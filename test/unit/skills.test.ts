@@ -8,18 +8,13 @@ import type { Skill } from "../../src/skills/types.ts";
 
 const VALID_SKILL = `---
 name: lead-finder
-description: Find and qualify leads
-version: 1.0.0
-type: skill
-priority: 50
-allowed-tools:
-  - "leadgen__*"
-  - "hunter__find_email"
+description: Find and qualify leads. Use for lead, prospect, pipeline, qualify.
+allowed-tools: "leadgen__* hunter__find_email"
 metadata:
-  keywords: [lead, prospect, pipeline, qualify]
-  triggers: ["find leads", "search prospects", "qualify lead"]
-  category: sales
-  tags: [crm, outreach]
+  nimblebrain:
+    loading-strategy: dynamic
+    priority: 50
+    triggers: ["find leads", "search prospects", "qualify lead"]
 ---
 
 # Lead Finder
@@ -34,12 +29,10 @@ You are a lead qualification expert. When the user asks to find leads:
 const MINIMAL_SKILL = `---
 name: simple
 description: A simple skill
-version: 0.1.0
-type: skill
-priority: 50
 metadata:
-  keywords: [hello]
-  triggers: []
+  nimblebrain:
+    loading-strategy: dynamic
+    priority: 50
 ---
 
 Just say hello.
@@ -53,14 +46,11 @@ describe("parseSkillContent", () => {
 
       expect(skill).not.toBeNull();
       expect(skill!.manifest.name).toBe("lead-finder");
-      expect(skill!.manifest.description).toBe("Find and qualify leads");
-      expect(skill!.manifest.version).toBe("1.0.0");
-      expect(skill!.manifest.type).toBe("skill");
+      expect(skill!.manifest.description).toContain("Find and qualify leads");
+      expect(skill!.manifest.loadingStrategy).toBe("dynamic");
       expect(skill!.manifest.priority).toBe(50);
       expect(skill!.manifest.allowedTools).toEqual(["leadgen__*", "hunter__find_email"]);
-      expect(skill!.manifest.metadata!.keywords).toEqual(["lead", "prospect", "pipeline", "qualify"]);
-      expect(skill!.manifest.metadata!.triggers).toEqual(["find leads", "search prospects", "qualify lead"]);
-      expect(skill!.manifest.metadata!.category).toBe("sales");
+      expect(skill!.manifest.triggers).toEqual(["find leads", "search prospects", "qualify lead"]);
       expect(skill!.body).toContain("lead qualification expert");
       expect(skill!.sourcePath).toBe("/test/lead-finder.md");
     } finally {
@@ -74,10 +64,8 @@ describe("parseSkillContent", () => {
       const skill = parseSkillContent(MINIMAL_SKILL, "/test/simple.md");
       expect(skill).not.toBeNull();
       expect(skill!.manifest.name).toBe("simple");
-      expect(skill!.manifest.type).toBe("skill");
+      expect(skill!.manifest.loadingStrategy).toBe("dynamic");
       expect(skill!.manifest.priority).toBe(50);
-      expect(skill!.manifest.allowedTools).toEqual([]);
-      expect(skill!.manifest.metadata!.triggers).toEqual([]);
       expect(skill!.body).toBe("Just say hello.");
     } finally {
       spy.mockRestore();
@@ -112,132 +100,11 @@ Body.
     expect(parseSkillContent(emptyName, "/test")).toBeNull();
   });
 
-  it("defaults type to 'skill' with warning when missing", () => {
-    const noType = `---
-name: no-type
-description: No type field
-version: 1.0.0
-priority: 50
-metadata:
-  keywords: [test]
-  triggers: []
----
-Body.
-`;
-    const spy = spyOn(console, "error").mockImplementation(() => {});
+  it("rejects legacy top-level fields (fail-soft skip until migrated)", () => {
+    const spy = spyOn(console, "warn").mockImplementation(() => {});
     try {
-      const skill = parseSkillContent(noType, "/test/no-type.md");
-      expect(skill).not.toBeNull();
-      expect(skill!.manifest.type).toBe("skill");
-      const warnings = spy.mock.calls.map((c) => c[0] as string);
-      expect(warnings.some((w) => w.includes("missing type"))).toBe(true);
-    } finally {
-      spy.mockRestore();
-    }
-  });
-
-  it("defaults priority to 50 with warning when missing", () => {
-    const noPriority = `---
-name: no-priority
-description: No priority field
-version: 1.0.0
-type: skill
-metadata:
-  keywords: [test]
-  triggers: []
----
-Body.
-`;
-    const spy = spyOn(console, "error").mockImplementation(() => {});
-    try {
-      const skill = parseSkillContent(noPriority, "/test/no-priority.md");
-      expect(skill).not.toBeNull();
-      expect(skill!.manifest.priority).toBe(50);
-      const warnings = spy.mock.calls.map((c) => c[0] as string);
-      expect(warnings.some((w) => w.includes("missing priority"))).toBe(true);
-    } finally {
-      spy.mockRestore();
-    }
-  });
-
-  it("parses requires-bundles into requiresBundles", () => {
-    const withBundles = `---
-name: policy-skill
-description: Policy lookup
-version: 1.0.0
-type: skill
-priority: 50
-requires-bundles:
-  - "@acme/policy-search"
-  - "@acme/compliance"
-metadata:
-  keywords: [policy]
-  triggers: []
----
-Look up policies.
-`;
-    const spy = spyOn(console, "error").mockImplementation(() => {});
-    try {
-      const skill = parseSkillContent(withBundles, "/test/policy.md");
-      expect(skill).not.toBeNull();
-      expect(skill!.manifest.requiresBundles).toEqual(["@acme/policy-search", "@acme/compliance"]);
-    } finally {
-      spy.mockRestore();
-    }
-  });
-
-  it("returns requiresBundles undefined when not present", () => {
-    const spy = spyOn(console, "error").mockImplementation(() => {});
-    try {
-      const skill = parseSkillContent(VALID_SKILL, "/test/lead-finder.md");
-      expect(skill).not.toBeNull();
-      expect(skill!.manifest.requiresBundles).toBeUndefined();
-    } finally {
-      spy.mockRestore();
-    }
-  });
-
-  it("parses metadata.created_at and metadata.source", () => {
-    const withExtMeta = `---
-name: custom-skill
-description: Custom skill
-version: 1.0.0
-type: skill
-priority: 50
-metadata:
-  keywords: [custom]
-  triggers: []
-  created_at: "2026-03-24T22:00:00Z"
-  source: user
----
-Custom body.
-`;
-    const spy = spyOn(console, "error").mockImplementation(() => {});
-    try {
-      const skill = parseSkillContent(withExtMeta, "/test/custom.md");
-      expect(skill).not.toBeNull();
-      expect(skill!.manifest.metadata!.created_at).toBe("2026-03-24T22:00:00Z");
-      expect(skill!.manifest.metadata!.source).toBe("user");
-    } finally {
-      spy.mockRestore();
-    }
-  });
-
-  it("sets metadata to undefined when not present", () => {
-    const noMeta = `---
-name: no-meta
-description: No metadata
-version: 1.0.0
-type: context
-priority: 0
----
-Body.
-`;
-    const spy = spyOn(console, "error").mockImplementation(() => {});
-    try {
-      const skill = parseSkillContent(noMeta, "/test/no-meta.md");
-      expect(skill).not.toBeNull();
-      expect(skill!.manifest.metadata).toBeUndefined();
+      const legacy = `---\nname: legacy\ndescription: x\ntype: skill\npriority: 50\n---\nBody.\n`;
+      expect(parseSkillContent(legacy, "/test/legacy.md")).toBeNull();
     } finally {
       spy.mockRestore();
     }
@@ -245,9 +112,16 @@ Body.
 });
 
 describe("partitionSkills", () => {
+  // Test alias: legacy `context`/`skill` map to the new always/dynamic strategy.
   function makeSkill(name: string, type: "context" | "skill", priority: number): Skill {
     return {
-      manifest: { name, description: "", version: "1.0.0", type, priority },
+      manifest: {
+        name,
+        description: "",
+        loadingStrategy: type === "context" ? "always" : "dynamic",
+        priority,
+        status: "active",
+      },
       body: `Body for ${name}`,
       sourcePath: `/test/${name}.md`,
     };
@@ -332,14 +206,14 @@ describe("loadSkillDir", () => {
 });
 
 describe("SkillMatcher", () => {
+  // Trigger-only matcher: `dynamic` skills, matched on top-level `triggers`.
   function makeSkill(overrides: Partial<Skill["manifest"]> & { name: string }): Skill {
     return {
       manifest: {
         description: "",
-        version: "1.0.0",
-        type: "skill",
+        loadingStrategy: "dynamic",
         priority: 50,
-        metadata: { keywords: [], triggers: [] },
+        status: "active",
         ...overrides,
       },
       body: "Test prompt",
@@ -347,16 +221,9 @@ describe("SkillMatcher", () => {
     };
   }
 
-  // --- Phase 1: Trigger matching ---
-
   it("matches on trigger phrase (substring)", () => {
     const matcher = new SkillMatcher();
-    matcher.load([
-      makeSkill({
-        name: "lead-finder",
-        metadata: { keywords: [], triggers: ["find leads", "search prospects"] },
-      }),
-    ]);
+    matcher.load([makeSkill({ name: "lead-finder", triggers: ["find leads", "search prospects"] })]);
 
     expect(matcher.match("can you find leads for me?")?.manifest.name).toBe("lead-finder");
     expect(matcher.match("search prospects in the pipeline")?.manifest.name).toBe("lead-finder");
@@ -365,14 +232,8 @@ describe("SkillMatcher", () => {
   it("trigger match wins immediately (first hit)", () => {
     const matcher = new SkillMatcher();
     matcher.load([
-      makeSkill({
-        name: "skill-a",
-        metadata: { keywords: [], triggers: ["do thing A"] },
-      }),
-      makeSkill({
-        name: "skill-b",
-        metadata: { keywords: ["thing", "stuff", "more"], triggers: [] },
-      }),
+      makeSkill({ name: "skill-a", triggers: ["do thing A"] }),
+      makeSkill({ name: "skill-b", triggers: ["other"] }),
     ]);
 
     expect(matcher.match("please do thing A now")?.manifest.name).toBe("skill-a");
@@ -380,136 +241,48 @@ describe("SkillMatcher", () => {
 
   it("is case insensitive for triggers", () => {
     const matcher = new SkillMatcher();
-    matcher.load([
-      makeSkill({
-        name: "test",
-        metadata: { keywords: [], triggers: ["Find Leads"] },
-      }),
-    ]);
+    matcher.load([makeSkill({ name: "test", triggers: ["Find Leads"] })]);
 
     expect(matcher.match("FIND LEADS please")?.manifest.name).toBe("test");
   });
 
-  // --- Phase 2: Keyword matching ---
-
-  it("matches on keywords (requires >= 2 hits)", () => {
-    const matcher = new SkillMatcher();
-    matcher.load([
-      makeSkill({
-        name: "lead-finder",
-        metadata: { keywords: ["lead", "prospect", "pipeline"], triggers: [] },
-      }),
-    ]);
-
-    expect(matcher.match("find a lead and prospect")?.manifest.name).toBe("lead-finder");
-  });
-
-  it("does not match on single keyword hit", () => {
-    const matcher = new SkillMatcher();
-    matcher.load([
-      makeSkill({
-        name: "lead-finder",
-        metadata: { keywords: ["lead", "prospect"], triggers: [] },
-      }),
-    ]);
-
-    expect(matcher.match("find a lead")).toBeNull();
-  });
-
   // --- Status filter (toggled Off must not reach the matched-skill channel) ---
 
-  it("excludes disabled skills from trigger and keyword matching", () => {
+  it("excludes disabled skills from trigger matching", () => {
     const matcher = new SkillMatcher();
     matcher.load([
-      makeSkill({
-        name: "disabled-rule",
-        status: "disabled",
-        metadata: { keywords: ["lead", "prospect"], triggers: ["find leads"] },
-      }),
-      makeSkill({
-        name: "active-rule",
-        status: "active",
-        metadata: { keywords: [], triggers: ["search prospects"] },
-      }),
+      makeSkill({ name: "disabled-rule", status: "disabled", triggers: ["find leads"] }),
+      makeSkill({ name: "active-rule", status: "active", triggers: ["search prospects"] }),
     ]);
 
-    // A disabled skill matched here would be injected straight into the
-    // prompt's Layer-4, bypassing the Off toggle — neither its trigger nor
-    // its keywords may match.
+    // A disabled skill matched here would be injected straight into Layer-4,
+    // bypassing the Off toggle — its trigger must not match.
     expect(matcher.match("find leads for me")).toBeNull();
-    expect(matcher.match("a lead and a prospect")).toBeNull();
-    // Active siblings still match normally.
     expect(matcher.match("search prospects now")?.manifest.name).toBe("active-rule");
   });
 
-  it("picks skill with most keyword hits", () => {
-    const matcher = new SkillMatcher();
-    matcher.load([
-      makeSkill({
-        name: "weak",
-        metadata: { keywords: ["a", "b"], triggers: [] },
-      }),
-      makeSkill({
-        name: "strong",
-        metadata: { keywords: ["a", "b", "c"], triggers: [] },
-      }),
-    ]);
+  // --- Role filtering (always skills compose into the context channel) ---
 
-    expect(matcher.match("a b c d")?.manifest.name).toBe("strong");
-  });
-
-  it("works with many keywords (no ratio penalty)", () => {
-    const matcher = new SkillMatcher();
-    matcher.load([
-      makeSkill({
-        name: "broad-skill",
-        metadata: {
-          keywords: ["install", "server", "tool", "bundle", "skill", "connect", "search", "mpak"],
-          triggers: [],
-        },
-      }),
-    ]);
-
-    expect(matcher.match("install a tool for me")?.manifest.name).toBe("broad-skill");
-  });
-
-  it("is case insensitive for keywords", () => {
-    const matcher = new SkillMatcher();
-    matcher.load([
-      makeSkill({
-        name: "test",
-        metadata: { keywords: ["Lead", "Prospect"], triggers: [] },
-      }),
-    ]);
-
-    expect(matcher.match("find a LEAD and PROSPECT")?.manifest.name).toBe("test");
-  });
-
-  // --- Context skill filtering ---
-
-  it("excludes context skills from matching", () => {
+  it("excludes always (context) skills from matching", () => {
     const matcher = new SkillMatcher();
     matcher.load([
       {
         manifest: {
           name: "soul",
           description: "Identity",
-          version: "1.0.0",
-          type: "context",
+          loadingStrategy: "always",
           priority: 0,
+          status: "active",
+          triggers: ["soul"],
         },
         body: "Identity body",
         sourcePath: "/test",
       },
-      makeSkill({
-        name: "lead-finder",
-        metadata: { keywords: ["lead", "prospect"], triggers: ["find leads"] },
-      }),
+      makeSkill({ name: "lead-finder", triggers: ["find leads"] }),
     ]);
 
-    // Context skill should not be matched
-    expect(matcher.match("tell me about your soul identity")?.manifest.name).not.toBe("soul");
-    // Regular skill still matches
+    // An always skill is never matchable, even with a trigger.
+    expect(matcher.match("tell me about your soul")?.manifest.name).not.toBe("soul");
     expect(matcher.match("find leads for me")?.manifest.name).toBe("lead-finder");
   });
 
@@ -517,12 +290,7 @@ describe("SkillMatcher", () => {
 
   it("returns null when no skill matches", () => {
     const matcher = new SkillMatcher();
-    matcher.load([
-      makeSkill({
-        name: "lead-finder",
-        metadata: { keywords: ["lead"], triggers: ["find leads"] },
-      }),
-    ]);
+    matcher.load([makeSkill({ name: "lead-finder", triggers: ["find leads"] })]);
 
     expect(matcher.match("what's the weather?")).toBeNull();
   });
@@ -532,20 +300,10 @@ describe("SkillMatcher", () => {
     expect(matcher.match("anything")).toBeNull();
   });
 
-  it("trigger takes priority over keyword match on different skill", () => {
+  it("returns null for a dynamic skill with no triggers (catalog-only)", () => {
     const matcher = new SkillMatcher();
-    matcher.load([
-      makeSkill({
-        name: "trigger-skill",
-        metadata: { keywords: [], triggers: ["help me"] },
-      }),
-      makeSkill({
-        name: "keyword-skill",
-        metadata: { keywords: ["help", "assist", "support"], triggers: [] },
-      }),
-    ]);
-
-    expect(matcher.match("help me with support")?.manifest.name).toBe("trigger-skill");
+    matcher.load([makeSkill({ name: "catalog-only" })]);
+    expect(matcher.match("anything at all")).toBeNull();
   });
 });
 
@@ -570,36 +328,21 @@ describe("loadCoreSkills", () => {
     }
   });
 
-  it("capabilities has type context", () => {
-    const spy = spyOn(console, "error").mockImplementation(() => {});
-    try {
-      const skills = loadCoreSkills();
-      const bs = skills.find((s) => s.manifest.name === "capabilities")!;
-
-      expect(bs.manifest.type).toBe("context");
-      expect(bs.manifest.priority).toBe(10);
-      expect(bs.manifest.metadata!.keywords).toContain("install");
-      expect(bs.manifest.metadata!.keywords).toContain("mpak");
-      expect(bs.manifest.metadata!.triggers).toContain("what can you do");
-      expect(bs.body).toContain("nb__search");
-      expect(bs.body).toContain("nb__manage_tools");
-    } finally {
-      spy.mockRestore();
-    }
+  it("capabilities is always-on (context channel)", () => {
+    const skills = loadCoreSkills();
+    const bs = skills.find((s) => s.manifest.name === "capabilities")!;
+    expect(bs.manifest.loadingStrategy).toBe("always");
+    expect(bs.manifest.priority).toBe(10);
+    expect(bs.body).toContain("nb__search");
+    expect(bs.body).toContain("nb__manage_tools");
   });
 
-  it("soul has type context with priority 0", () => {
-    const spy = spyOn(console, "error").mockImplementation(() => {});
-    try {
-      const skills = loadCoreSkills();
-      const soul = skills.find((s) => s.manifest.name === "soul")!;
-
-      expect(soul.manifest.type).toBe("context");
-      expect(soul.manifest.priority).toBe(0);
-      expect(soul.body).toContain("NimbleBrain");
-    } finally {
-      spy.mockRestore();
-    }
+  it("soul is always-on with priority 0", () => {
+    const skills = loadCoreSkills();
+    const soul = skills.find((s) => s.manifest.name === "soul")!;
+    expect(soul.manifest.loadingStrategy).toBe("always");
+    expect(soul.manifest.priority).toBe(0);
+    expect(soul.body).toContain("NimbleBrain");
   });
 
   it("no filesystem skill (bash is opt-in)", () => {

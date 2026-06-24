@@ -351,9 +351,9 @@ describe("runtime.executeTask", () => {
     mkdirSync(sharedSkillsDir, { recursive: true });
     writeFileSync(
       join(sharedSkillsDir, `${SKILL_NAME}.md`),
-      // `type: skill` (capability role) → Layer 3, where this asserts task/chat
-      // parity for focused-workspace skill loading. `always` keeps it deterministic.
-      `---\nname: ${SKILL_NAME}\ndescription: workflow for the shared workspace\nversion: 1.0.0\ntype: skill\npriority: 30\nloading_strategy: always\n---\n\nAlways answer in plain English.\n`,
+      // dynamic + tool-affinity (nb__* is always surfaced) → Layer 3, where this
+      // asserts task/chat parity for focused-workspace skill loading.
+      `---\nname: ${SKILL_NAME}\ndescription: workflow for the shared workspace\nmetadata:\n  nimblebrain:\n    loading-strategy: dynamic\n    tool-affinity: ["nb__*"]\n    priority: 30\n---\n\nAlways answer in plain English.\n`,
     );
 
     const result = await runtime.executeTask({
@@ -374,6 +374,6 @@ describe("runtime.executeTask", () => {
     const entry = payload.skills.find((s) => s.id === expectedPath);
     expect(entry).toBeDefined();
     expect(entry?.scope).toBe("workspace");
-    expect(entry?.loadedBy).toBe("always");
+    expect(entry?.loadedBy).toBe("tool_affinity");
   });
 });

@@ -186,10 +186,10 @@ describe("Runtime", () => {
       `---
 name: greeter
 description: Greets people
-version: 1.0.0
 metadata:
-  keywords: [hello, greet, hi, hey]
-  triggers: ["say hello", "greet someone"]
+  nimblebrain:
+    loading-strategy: dynamic
+    triggers: ["say hello", "greet someone"]
 ---
 
 You are a friendly greeter. Always respond with enthusiasm!
@@ -219,9 +219,10 @@ You are a friendly greeter. Always respond with enthusiasm!
       `---
 name: identity
 description: Agent identity
-version: 1.0.0
-type: context
-priority: 0
+metadata:
+  nimblebrain:
+    loading-strategy: always
+    priority: 0
 ---
 
 I am Nira, your AI assistant. You work at Acme Corp.
@@ -287,10 +288,10 @@ I am Nira, your AI assistant. You work at Acme Corp.
       `---
 name: greeter
 description: Greets
-version: 1.0.0
 metadata:
-  keywords: [hello, greet, hi]
-  triggers: ["say hello"]
+  nimblebrain:
+    loading-strategy: dynamic
+    triggers: ["say hello"]
 ---
 Greet with enthusiasm!
 `,

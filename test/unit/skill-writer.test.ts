@@ -20,14 +20,11 @@ function sampleManifest(overrides?: Partial<SkillManifest>): SkillManifest {
   return {
     name: "test-skill",
     description: "A test skill",
-    version: "1.0.0",
-    type: "skill",
+    loadingStrategy: "dynamic",
     priority: 50,
+    status: "active",
     allowedTools: ["bash__*", "nb__*"],
-    metadata: {
-      keywords: ["test", "example"],
-      triggers: ["run test"],
-    },
+    triggers: ["run test"],
     ...overrides,
   };
 }
@@ -47,12 +44,10 @@ describe("writeSkill", () => {
     expect(parsed).not.toBeNull();
     expect(parsed!.manifest.name).toBe(manifest.name);
     expect(parsed!.manifest.description).toBe(manifest.description);
-    expect(parsed!.manifest.version).toBe(manifest.version);
-    expect(parsed!.manifest.type).toBe(manifest.type);
+    expect(parsed!.manifest.loadingStrategy).toBe(manifest.loadingStrategy);
     expect(parsed!.manifest.priority).toBe(manifest.priority);
     expect(parsed!.manifest.allowedTools).toEqual(manifest.allowedTools);
-    expect(parsed!.manifest.metadata?.keywords).toEqual(manifest.metadata!.keywords);
-    expect(parsed!.manifest.metadata?.triggers).toEqual(manifest.metadata!.triggers);
+    expect(parsed!.manifest.triggers).toEqual(manifest.triggers);
     expect(parsed!.body).toBe(body);
   });
 
@@ -62,24 +57,10 @@ describe("writeSkill", () => {
     expect(existsSync(join(nested, "deep.md"))).toBe(true);
   });
 
-  test("handles requiresBundles field", () => {
-    const manifest = sampleManifest({
-      requiresBundles: ["@nimblebraininc/bash", "@nimblebraininc/echo"],
-    });
-    writeSkill(dir, "with-bundles", manifest, "body");
-
-    const skill = readSkill(dir, "with-bundles");
-    expect(skill).not.toBeNull();
-    expect(skill!.manifest.requiresBundles).toEqual([
-      "@nimblebraininc/bash",
-      "@nimblebraininc/echo",
-    ]);
-  });
-
   test("omits empty arrays from frontmatter", () => {
     const manifest = sampleManifest({
       allowedTools: [],
-      metadata: { keywords: [], triggers: [] },
+      triggers: [],
     });
     writeSkill(dir, "empty-arrays", manifest, "body");
 
@@ -114,8 +95,7 @@ describe("updateSkill", () => {
     expect(skill!.manifest.description).toBe("Updated description");
     // Other fields preserved
     expect(skill!.manifest.name).toBe("test-skill");
-    expect(skill!.manifest.version).toBe("1.0.0");
-    expect(skill!.manifest.type).toBe("skill");
+    expect(skill!.manifest.loadingStrategy).toBe("dynamic");
     expect(skill!.manifest.priority).toBe(50);
     expect(skill!.manifest.allowedTools).toEqual(["bash__*", "nb__*"]);
     expect(skill!.body).toBe("original body");
@@ -211,5 +191,26 @@ describe("atomic write safety", () => {
 
     // Verify no .tmp file is left behind
     expect(existsSync(join(dir, "safe.md.tmp"))).toBe(false);
+  });
+});
+
+describe("updateSkill provenance", () => {
+  test("bumps updated-at while preserving created-at / created-by / origin", () => {
+    const old = "2020-01-01T00:00:00.000Z";
+    writeSkill(
+      dir,
+      "prov",
+      sampleManifest({
+        name: "prov",
+        provenance: { origin: "chat", createdBy: "usr_x", createdAt: old, updatedAt: old },
+      }),
+      "body",
+    );
+    updateSkill(dir, "prov", { description: "edited" });
+    const after = readSkill(dir, "prov");
+    expect(after?.manifest.provenance?.createdAt).toBe(old); // preserved
+    expect(after?.manifest.provenance?.createdBy).toBe("usr_x"); // preserved
+    expect(after?.manifest.provenance?.origin).toBe("chat"); // preserved
+    expect(after?.manifest.provenance?.updatedAt).not.toBe(old); // bumped to now
   });
 });

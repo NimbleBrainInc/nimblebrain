@@ -141,7 +141,7 @@ async function buildSource(): Promise<McpSource> {
 
 function readManifestField(path: string, key: string): string | undefined {
   const raw = readFileSync(path, "utf-8");
-  const match = raw.match(new RegExp(`^${key}:\\s*(.+)$`, "m"));
+  const match = raw.match(new RegExp(`^\\s*${key}:\\s*(.+)$`, "m"));
   return match?.[1]?.trim().replace(/^"(.*)"$/, "$1");
 }
 
@@ -313,7 +313,7 @@ describe("skills — workspace-scope write gate", () => {
     mkdirSync(join(workDir, "workspaces", WS, "skills"), { recursive: true });
     writeFileSync(
       skillPath,
-      "---\nname: readable\ndescription: test\ntype: skill\n---\nbody\n",
+      "---\nname: readable\ndescription: test\n---\nbody\n",
       "utf-8",
     );
     const src = await buildSource();
@@ -347,49 +347,39 @@ describe("skills — workspace-scope write gate", () => {
 
 // ── create-time loading-strategy derivation (issue #391) ───────────────────
 
-describe("skills__create — loading-strategy derivation", () => {
-  test("type: skill with no triggers/keywords gets loading-strategy: always and is Layer-3 selectable", async () => {
+describe("skills__create — loading-strategy", () => {
+  test("defaults to dynamic; with no triggers/affinity it is catalog-only (not Layer-3 selected)", async () => {
     const src = await buildSource();
     const client = src.getClient()!;
     const result = await client.callTool({
       name: "create",
       arguments: {
         scope: "org",
-        manifest: { name: "dead-otherwise", description: "would be inert", type: "skill" },
+        manifest: { name: "catalog-only", description: "no signals yet" },
         body: "Do the thing.",
       },
     });
     expect(result.isError).toBeFalsy();
 
-    const path = join(workDir, "skills", "dead-otherwise.md");
+    const path = join(workDir, "skills", "catalog-only.md");
     const parsed = parseSkillContent(readFileSync(path, "utf-8"), path);
     expect(parsed).not.toBeNull();
-    expect(parsed?.manifest.loadingStrategy).toBe("always");
+    expect(parsed?.manifest.loadingStrategy).toBe("dynamic");
 
-    // The derived strategy makes it reachable by the Layer-3 selector.
+    // No tool-affinity → NOT reachable by the Layer-3 selector (catalog-only,
+    // honoring #4 — the handler does not silently bump it to `always`).
     const selected = selectLayer3Skills({ skills: [parsed!], activeTools: [] });
-    expect(selected.map((s) => s.skill.manifest.name)).toContain("dead-otherwise");
-
-    // structuredContent advertises the derived strategy.
-    expect(
-      (result as { structuredContent?: { loadingStrategy?: string } }).structuredContent
-        ?.loadingStrategy,
-    ).toBe("always");
+    expect(selected.map((s) => s.skill.manifest.name)).not.toContain("catalog-only");
   });
 
-  test("type: skill WITH triggers does NOT get a loading-strategy (rides the matcher)", async () => {
+  test("dynamic + triggers loads via the matcher", async () => {
     const src = await buildSource();
     const client = src.getClient()!;
     const result = await client.callTool({
       name: "create",
       arguments: {
         scope: "org",
-        manifest: {
-          name: "trigger-skill",
-          description: "matches on triggers",
-          type: "skill",
-          metadata: { triggers: ["deploy", "ship"] },
-        },
+        manifest: { name: "trigger-skill", description: "matches on triggers", triggers: ["deploy", "ship"] },
         body: "Deploy guidance.",
       },
     });
@@ -397,55 +387,41 @@ describe("skills__create — loading-strategy derivation", () => {
 
     const path = join(workDir, "skills", "trigger-skill.md");
     const parsed = parseSkillContent(readFileSync(path, "utf-8"), path);
-    expect(parsed?.manifest.loadingStrategy).toBeUndefined();
-
-    expect(
-      (result as { structuredContent?: { loadingStrategy?: string } }).structuredContent
-        ?.loadingStrategy,
-    ).toBeUndefined();
+    expect(parsed?.manifest.loadingStrategy).toBe("dynamic");
+    expect(parsed?.manifest.triggers).toEqual(["deploy", "ship"]);
   });
 
-  test("type: context is unchanged — no injected loading-strategy: always", async () => {
+  test("loading-strategy: always composes into the context channel", async () => {
     const src = await buildSource();
     const client = src.getClient()!;
     const result = await client.callTool({
       name: "create",
       arguments: {
         scope: "org",
-        manifest: { name: "ctx-skill", description: "always-by-type", type: "context" },
+        manifest: { name: "ctx-skill", description: "always-on", loadingStrategy: "always" },
         body: "Always-on context.",
       },
     });
     expect(result.isError).toBeFalsy();
 
     const path = join(workDir, "skills", "ctx-skill.md");
-    // `type: context` is always-by-type; the handler must not stamp a redundant
-    // strategy, so the on-disk frontmatter stays free of `loading-strategy`.
-    // (The loader *infers* `always` for context at parse time, so the parsed
-    // manifest would show `always` — the meaningful assertion is that the
-    // handler didn't write the key to disk.)
-    expect(readManifestField(path, "loading-strategy")).toBeUndefined();
-
-    expect(
-      (result as { structuredContent?: { loadingStrategy?: string } }).structuredContent
-        ?.loadingStrategy,
-    ).toBeUndefined();
+    const parsed = parseSkillContent(readFileSync(path, "utf-8"), path);
+    expect(parsed?.manifest.loadingStrategy).toBe("always");
   });
 
-  test("success message names the resolved loading mechanism", async () => {
+  test("success message flags a catalog-only skill", async () => {
     const src = await buildSource();
     const client = src.getClient()!;
     const result = await client.callTool({
       name: "create",
       arguments: {
         scope: "org",
-        manifest: { name: "named-mechanism", description: "x", type: "skill" },
+        manifest: { name: "named-mechanism", description: "x" },
         body: "y",
       },
     });
     const text = (result.content as Array<{ text: string }>)[0]?.text ?? "";
-    expect(text).toMatch(/loads: always/);
-    expect(text).toMatch(/no triggers or tool affinity/i);
+    expect(text).toMatch(/catalog-only/);
   });
 });
 
@@ -707,10 +683,8 @@ describe("skills__activate / skills__deactivate", () => {
 
     const on = await client.callTool({ name: "activate", arguments: { id } });
     expect(on.isError).toBeFalsy();
-    // status: active is the default; the writer suppresses default emission,
-    // so the field disappears after activate. Re-read confirms no `status:`
-    // line on disk and the loader will fill in "active".
-    expect(readManifestField(id, "status")).toBeUndefined();
+    // The writer emits status explicitly under metadata.nimblebrain.
+    expect(readManifestField(id, "status")).toBe("active");
   });
 });
 
@@ -831,9 +805,10 @@ describe("cross-workspace access — regression", () => {
         "---",
         "name: team-skill",
         'description: "team rules"',
-        'version: "1.0.0"',
-        "type: skill",
-        "priority: 50",
+        "metadata:",
+        "  nimblebrain:",
+        "    loading-strategy: dynamic",
+        "    priority: 50",
         "---",
         "team body",
         "",

@@ -415,7 +415,7 @@ describe("CLI commands", () => {
 		expect(text).toContain("http://example.com/mcp (remote)");
 	});
 
-	it("skillList shows loaded skills with type and priority", () => {
+	it("skillList shows loaded skills with loading-strategy and priority", () => {
 		const output: string[] = [];
 		const originalLog = console.log;
 		const errSpy = spyOn(console, "error").mockImplementation(() => {});
@@ -428,7 +428,7 @@ describe("CLI commands", () => {
 		}
 
 		const text = output.join("\n");
-		expect(text).toContain("context");
+		expect(text).toContain("always");
 		expect(text).toContain("soul");
 	});
 

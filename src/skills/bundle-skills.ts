@@ -22,7 +22,7 @@
  *   This adapter closes the gap. At chat-build time, for each MCP source in
  *   the active workspace registry, we probe for `skill://<name>/usage` and
  *   wrap any returned body in a synthetic `Skill` with
- *   `loadingStrategy: "tool_affined"` and `appliesToTools: ["<name>__*"]`.
+ *   `loadingStrategy: "dynamic"` and `toolAffinity: ["<name>__*"]`.
  *   The skill then flows through the standard `selectLayer3Skills` path: if
  *   any `<name>__*` tool is in the active toolset, the skill loads.
  *
@@ -49,7 +49,7 @@ export interface BundleSkillInput {
 
 /**
  * Synthesize a Layer 3 `Skill` from a bundle-exposed `skill://<name>/usage`
- * resource. The skill is `tool_affined` to `<serverName>__*`, so it loads
+ * resource. The skill is `dynamic` with tool-affinity `<serverName>__*`, so it loads
  * whenever the bundle's tools are in the active toolset.
  *
  * Pure function — no I/O, no caching. The caller (runtime) handles fetch +
@@ -70,12 +70,10 @@ export function synthesizeBundleSkill(input: BundleSkillInput): Skill {
     manifest: {
       name: `bundle:${serverName}`,
       description: `Workflow guidance from the ${serverName} bundle`,
-      version: "1.0.0",
-      type: "skill",
       priority: BUNDLE_SKILL_PRIORITY,
       scope: BUNDLE_SKILL_SCOPE,
-      loadingStrategy: "tool_affined",
-      appliesToTools: [`${serverName}__*`],
+      loadingStrategy: "dynamic",
+      toolAffinity: [`${serverName}__*`],
       status: "active",
     },
     body,

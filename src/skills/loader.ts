@@ -3,48 +3,13 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import matter from "gray-matter";
 import { log } from "../cli/log.ts";
+import { mapFrontmatterToManifest, validateFrontmatter } from "./schemas/skill-manifest.ts";
 import { MAX_SKILL_BODY_CHARS, truncateMarkdownToBudget } from "./truncate.ts";
-import type {
-  Skill,
-  SkillLoadingStrategy,
-  SkillManifest,
-  SkillMetadata,
-  SkillOverride,
-  SkillScope,
-  SkillStatus,
-  SkillType,
-} from "./types.ts";
+import type { Skill, SkillScope } from "./types.ts";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const BUILTIN_DIR = join(__dirname, "builtin");
 const CORE_DIR = join(__dirname, "core");
-
-const VALID_TYPES = new Set(["context", "skill"]);
-const VALID_LOADING_STRATEGIES = new Set<SkillLoadingStrategy>([
-  "always",
-  "tool_affined",
-  "retrieval",
-  "explicit",
-]);
-const VALID_STATUSES = new Set<SkillStatus>(["active", "disabled"]);
-/**
- * Status rename — the legacy 4-value enum collapsed to a binary.
- * `draft` and `archived` files keep loading; their value normalises
- * to `disabled`. The writer never emits the legacy labels.
- */
-const STATUS_ALIASES: Record<string, SkillStatus> = {
-  draft: "disabled",
-  archived: "disabled",
-};
-const VALID_SCOPES = new Set<SkillScope>(["org", "workspace", "user", "bundle"]);
-/**
- * Scope rename — `platform` was the original Phase-2 label for the
- * org-wide tier. We accept it as a back-compat alias on read so any
- * skill file still on disk with `scope: platform` keeps loading; the
- * value is normalised to `org` in the manifest, and the writer always
- * emits the new label.
- */
-const SCOPE_ALIASES: Record<string, SkillScope> = { platform: "org" };
 
 /** Subdirectories that the multi-scope loader must skip. */
 const RESERVED_SUBDIR_PREFIX = "_";
@@ -239,137 +204,31 @@ export function parseSkillContent(
 ): Skill | null {
   const { data, content } = matter(raw);
 
-  const name = data.name;
-  if (typeof name !== "string" || !name) return null;
-
-  // Parse type with default + warning
-  let type: SkillType = "skill";
-  if (data.type && VALID_TYPES.has(data.type)) {
-    type = data.type as SkillType;
-  } else if (data.type) {
-    log.error(
-      `[skill] Warning: invalid type "${data.type}" in ${sourcePath}, defaulting to "skill"`,
+  // Strict-validate the frontmatter against the canonical schema; fail-soft per
+  // skill (skip + warn, never throw — mirrors `parseSkillFileGuarded`). The
+  // mapper is the ONE place the on-disk (nested/kebab) → runtime (flat/camel)
+  // transform lives; `scope` is stamped afterwards by `collectScopedSkills`.
+  const result = validateFrontmatter(data);
+  if (!result.ok) {
+    // Turn a silent skip into an actionable instruction when the file is still
+    // in the pre-cutover format (legacy top-level fields) — the operator likely
+    // deployed without running the one-time migration.
+    const looksLegacy = [
+      "type",
+      "requires-bundles",
+      "applies-to-tools",
+      "loading-strategy",
+      "loading_strategy",
+    ].some((k) => k in data);
+    const hint = looksLegacy
+      ? " — legacy format detected; run `bun run migrate:skill-frontmatter`"
+      : "";
+    log.warn(
+      `[skill] invalid frontmatter in ${sourcePath} — skipped: ${result.errors.join("; ")}${hint}`,
     );
-  } else {
-    log.error(`[skill] Warning: missing type in ${sourcePath}, defaulting to "skill"`);
+    return null;
   }
-
-  // Parse priority with default + warning
-  let priority = 50;
-  if (typeof data.priority === "number") {
-    priority = data.priority;
-  } else if (data.priority !== undefined) {
-    log.error(`[skill] Warning: invalid priority in ${sourcePath}, defaulting to 50`);
-  } else {
-    log.error(`[skill] Warning: missing priority in ${sourcePath}, defaulting to 50`);
-  }
-
-  const rawMeta = data.metadata;
-  const metadata: SkillMetadata | undefined = rawMeta
-    ? {
-        keywords: toStringArray(rawMeta.keywords),
-        triggers: toStringArray(rawMeta.triggers),
-        category: rawMeta.category as string | undefined,
-        tags: toStringArray(rawMeta.tags),
-        author: rawMeta.author as string | undefined,
-        created_at: rawMeta.created_at as string | undefined,
-        source: rawMeta.source as string | undefined,
-      }
-    : undefined;
-
-  // ---- Phase 2 fields -----------------------------------------------------
-
-  // `applies-to-tools` accepts both kebab and snake case; only emit when
-  // we actually got a non-empty array.
-  const appliesToTools = toOptionalStringArray(
-    data["applies-to-tools"] ?? data.applies_to_tools ?? data.appliesToTools,
-  );
-
-  // `loading-strategy` resolution. `type` (role) and `loading-strategy` (when)
-  // are orthogonal: strategy is a CAPABILITY-skill concept. A `type: context`
-  // skill is always-on by role — it carries no strategy and is routed to the
-  // context channel (Layer 0/1) by `partitionSkillsByRole`, never selected into
-  // Layer 3. Resolution:
-  //   1. Use the value if it's a recognized strategy.
-  //   2. Else if applies-to-tools is set → tool_affined.
-  //   3. Else undefined (legacy `type: skill` keeps using SkillMatcher; a
-  //      `type: context` skill stays undefined — role, not strategy, places it).
-  const rawLoadingStrategy =
-    data["loading-strategy"] ?? data.loading_strategy ?? data.loadingStrategy;
-  let loadingStrategy: SkillLoadingStrategy | undefined;
-  if (typeof rawLoadingStrategy === "string") {
-    if (VALID_LOADING_STRATEGIES.has(rawLoadingStrategy as SkillLoadingStrategy)) {
-      loadingStrategy = rawLoadingStrategy as SkillLoadingStrategy;
-    } else {
-      log.error(
-        `[skill] Warning: invalid loading-strategy "${rawLoadingStrategy}" in ${sourcePath}, falling back to default`,
-      );
-    }
-  }
-  if (!loadingStrategy && appliesToTools && appliesToTools.length > 0) {
-    loadingStrategy = "tool_affined";
-  }
-
-  // `status` defaults to "active" when missing or invalid. Legacy
-  // values (`draft`, `archived`) normalise to `disabled` silently so
-  // existing files keep loading without a migration.
-  let status: SkillStatus = "active";
-  if (typeof data.status === "string") {
-    // `Object.hasOwn` is the prototype-safe lookup; bare `obj[k]`
-    // would return `Object.prototype.toString` (truthy) for a value
-    // of `data.status === "toString"`. Same below for SCOPE_ALIASES.
-    const aliased = Object.hasOwn(STATUS_ALIASES, data.status)
-      ? STATUS_ALIASES[data.status]
-      : undefined;
-    if (aliased) {
-      status = aliased;
-    } else if (VALID_STATUSES.has(data.status as SkillStatus)) {
-      status = data.status as SkillStatus;
-    } else {
-      log.error(
-        `[skill] Warning: invalid status "${data.status}" in ${sourcePath}, defaulting to "active"`,
-      );
-    }
-  }
-
-  // `scope` from frontmatter is honored only if it's a known value. The
-  // multi-scope loader (`loadScopedSkills`) overwrites this based on the
-  // source dir; parsing it here lets standalone authoring tools round-trip
-  // the field without losing it.
-  let scope: SkillScope | undefined;
-  if (typeof data.scope === "string") {
-    const aliased = Object.hasOwn(SCOPE_ALIASES, data.scope)
-      ? SCOPE_ALIASES[data.scope]
-      : undefined;
-    if (aliased) {
-      scope = aliased;
-    } else if (VALID_SCOPES.has(data.scope as SkillScope)) {
-      scope = data.scope as SkillScope;
-    } else {
-      log.error(`[skill] Warning: invalid scope "${data.scope}" in ${sourcePath}, ignoring`);
-    }
-  }
-
-  const overrides = parseOverrides(data.overrides);
-  const derivedFromRaw = data["derived-from"] ?? data.derived_from ?? data.derivedFrom;
-  const derivedFrom = typeof derivedFromRaw === "string" ? derivedFromRaw : undefined;
-
-  const manifest: SkillManifest = {
-    name,
-    description: (data.description as string) ?? "",
-    version: (data.version as string) ?? "0.0.0",
-    type,
-    priority,
-    allowedTools: toStringArray(data["allowed-tools"]),
-    requiresBundles: toOptionalStringArray(data["requires-bundles"]),
-    metadata,
-    ...(scope ? { scope } : {}),
-    ...(loadingStrategy ? { loadingStrategy } : {}),
-    ...(appliesToTools && appliesToTools.length > 0 ? { appliesToTools } : {}),
-    status,
-    ...(overrides && overrides.length > 0 ? { overrides } : {}),
-    ...(derivedFrom ? { derivedFrom } : {}),
-  };
+  const manifest = mapFrontmatterToManifest(result.value);
 
   // Body cap applies ONLY when explicitly requested (`cap: true`). The sole
   // caller that asks is the prompt-load path (`parseSkillFileGuarded`); the
@@ -395,36 +254,21 @@ export function parseSkillContent(
   return { manifest, body, sourcePath };
 }
 
-/** Partition skills into context (sorted by priority) and matchable skills. */
+/**
+ * Boot-time partition of the *raw* skill cache by role: `always` = the context
+ * channel (Layer 0/1, sorted by priority); `dynamic` = matchable/conditional
+ * (tool-affinity Layer 3 + matcher).
+ *
+ * NOTE — do not confuse with `partitionSkillsByRole` in `select.ts`. This one
+ * runs once at boot over the full on-disk set and intentionally keeps *disabled*
+ * `always` skills in the `context` cache (no per-turn status gate).
+ * `partitionSkillsByRole` is the per-conversation router and DOES drop disabled
+ * skills. Same split, different lifecycle — pick by call site (boot vs. turn).
+ */
 export function partitionSkills(skills: Skill[]): { context: Skill[]; skills: Skill[] } {
   const context = skills
-    .filter((s) => s.manifest.type === "context")
+    .filter((s) => s.manifest.loadingStrategy === "always")
     .sort((a, b) => a.manifest.priority - b.manifest.priority);
-  const matchable = skills.filter((s) => s.manifest.type === "skill");
+  const matchable = skills.filter((s) => s.manifest.loadingStrategy === "dynamic");
   return { context, skills: matchable };
-}
-
-function toStringArray(value: unknown): string[] {
-  if (Array.isArray(value)) return value.filter((v): v is string => typeof v === "string");
-  return [];
-}
-
-function toOptionalStringArray(value: unknown): string[] | undefined {
-  if (Array.isArray(value)) return value.filter((v): v is string => typeof v === "string");
-  return undefined;
-}
-
-function parseOverrides(value: unknown): SkillOverride[] | undefined {
-  if (!Array.isArray(value)) return undefined;
-  const overrides: SkillOverride[] = [];
-  for (const entry of value) {
-    if (!entry || typeof entry !== "object") continue;
-    const e = entry as Record<string, unknown>;
-    const reason = typeof e.reason === "string" ? e.reason : "";
-    const override: SkillOverride = { reason };
-    if (typeof e.bundle === "string") override.bundle = e.bundle;
-    if (typeof e.skill === "string") override.skill = e.skill;
-    overrides.push(override);
-  }
-  return overrides.length > 0 ? overrides : undefined;
 }

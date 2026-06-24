@@ -46,16 +46,16 @@ beforeAll(async () => {
   });
   await provisionTestWorkspace(runtime);
 
-  // Plant a workspace-tier capability skill (`type: skill` + `always`) in the
+  // Plant a workspace-tier capability skill (dynamic + tool-affinity) in the
   // FOCUSED (shared) workspace — not the personal one. The session workspace
   // (personalWorkspaceIdFor(DEV_IDENTITY.id)) is a different dir on disk;
   // before the fix, selection read from there and never saw this file.
-  // `type: skill` (capability role) routes it to Layer 3 (`skills.loaded`).
+  // dynamic + tool-affinity (nb__* is always surfaced) routes it to Layer 3.
   const sharedSkillsDir = join(testDir, "workspaces", TEST_WORKSPACE_ID, "skills");
   mkdirSync(sharedSkillsDir, { recursive: true });
   writeFileSync(
     join(sharedSkillsDir, `${SHARED_SKILL_NAME}.md`),
-    `---\nname: ${SHARED_SKILL_NAME}\ndescription: Team workflow rules\nversion: 1.0.0\ntype: skill\npriority: 30\nloading_strategy: always\n---\n\n${SHARED_SKILL_BODY}\n`,
+    `---\nname: ${SHARED_SKILL_NAME}\ndescription: Team workflow rules\nmetadata:\n  nimblebrain:\n    loading-strategy: dynamic\n    tool-affinity: ["nb__*"]\n    priority: 30\n---\n\n${SHARED_SKILL_BODY}\n`,
   );
 });
 
@@ -105,7 +105,7 @@ describe("Layer 3 — workspace-tier `loading_strategy: always` skills", () => {
     const entry = payload.skills.find((s) => s.id === expectedPath);
     expect(entry).toBeDefined();
     expect(entry?.scope).toBe("workspace");
-    expect(entry?.loadedBy).toBe("always");
+    expect(entry?.loadedBy).toBe("tool_affinity");
   });
 
   it("reports the focused workspace's `always` skill on the status surface (describeRequestSkills)", async () => {
@@ -119,7 +119,7 @@ describe("Layer 3 — workspace-tier `loading_strategy: always` skills", () => {
     const entry = layer3.find((s) => s.skill.manifest.name === SHARED_SKILL_NAME);
     expect(entry).toBeDefined();
     expect(entry?.skill.manifest.scope).toBe("workspace");
-    expect(entry?.loadedBy).toBe("always");
+    expect(entry?.loadedBy).toBe("tool_affinity");
   });
 
   it("composes a workspace-tier `type: context` skill into the context channel, not Layer 3", async () => {
@@ -132,7 +132,7 @@ describe("Layer 3 — workspace-tier `loading_strategy: always` skills", () => {
     const dir = join(testDir, "workspaces", TEST_WORKSPACE_ID, "skills");
     writeFileSync(
       join(dir, `${ctxName}.md`),
-      `---\nname: ${ctxName}\ndescription: Team voice\nversion: 1.0.0\ntype: context\npriority: 30\n---\n\nMatch the user's voice.\n`,
+      `---\nname: ${ctxName}\ndescription: Team voice\nmetadata:\n  nimblebrain:\n    loading-strategy: always\n    priority: 30\n---\n\nMatch the user's voice.\n`,
     );
 
     const { context, layer3 } = await runtime.describeRequestSkills(TEST_WORKSPACE_ID);

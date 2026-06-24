@@ -152,54 +152,45 @@ Skills are Markdown files with YAML frontmatter. They control what the agent kno
 ```markdown title="research.md"
 ---
 name: research
-description: Deep research on a topic
-version: "1.0"
-type: skill
-priority: 5
-allowed-tools:
-  - "websearch__*"
-  - "nb__search"
+description: >
+  Deep research on a topic — search the web, gather sources, and synthesize a
+  report. Use when the user asks to research, investigate, or analyze a topic.
+allowed-tools: websearch__search nb__search
 metadata:
-  triggers:
-    - "research this"
-    - "deep dive"
-  keywords:
-    - research
-    - investigate
-    - analyze
-    - sources
-    - findings
+  nimblebrain:
+    loading-strategy: dynamic
+    priority: 50
+    triggers:
+      - "research this"
+      - "deep dive"
 ---
 
 You are a research agent. Search the web, gather multiple sources,
 and synthesize findings into a structured report.
 ```
 
-### Two types
+### How a skill loads — `loading-strategy`
 
-| Type | Priority | Behavior |
-|------|----------|----------|
-| `context` | ≤ 10 | Always included in the system prompt, regardless of what the user says |
-| `skill` | Any | Matched against each user message. Only the best match is used. |
+| `loading-strategy` | Priority | Behavior |
+|--------------------|----------|----------|
+| `always` | 0–10 (core) or 11–99 | Always composed into the system prompt — identity, voice, durable rules. |
+| `dynamic` | 11–99 | Loaded on demand, via the activation signals below. |
 
-### Two-phase matching
+### How dynamic skills activate
 
-When a user sends a message, skills of type `skill` are matched in two phases:
+A `dynamic` skill enters context through any of:
 
-**Phase 1 — Triggers.** Each skill's `triggers` list is checked for a substring match against the message. First hit wins. Triggers are high-confidence explicit patterns.
-
-**Phase 2 — Keywords.** If no trigger matched, each skill's `keywords` are counted against the message. A skill needs at least 2 keyword hits to qualify. The skill with the most hits wins.
+- **Description** — its name + description sit in a catalog; the model activates the relevant one (so the description must say *what it does and when to use it*).
+- **Tool-affinity** — auto-activates when a tool in the active set matches one of its `tool-affinity` globs.
+- **Triggers** — auto-activates on an exact phrase, for deterministic must-fire cases.
 
 ```
 User: "research this topic and analyze the sources"
                     │
-        Phase 1: triggers
-        "research this" ── match! ──► research skill selected
+        trigger "research this" ── match! ──► research skill activates
 ```
 
-A matched skill:
-- Injects its markdown body into the system prompt
-- Filters available tools to those matching its `allowed-tools` globs
+An activated skill injects its markdown body into the system prompt; `allowed-tools` (if set) scopes which tools it may call.
 
 ### Skill directories
 
