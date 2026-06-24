@@ -357,15 +357,22 @@ export function composeSystemPromptTraced(
     });
   }
 
-  // Layer 1: User context bodies (priority > 10, type: context, always-on).
+  // Layer 1: User context bodies (priority > 10, loading-strategy: always).
+  // These are tenant-authored — org/workspace/user "rules" from the settings
+  // UI — so each body is wrapped in <context-skill> containment with its
+  // closing tag escaped, the same prompt-injection discipline as <layer3-skill>
+  // and <app-*>. (Core identity skills, priority ≤ threshold, are vendored and
+  // render raw in Layer 0 above.)
   for (const ctx of userContext) {
     if (ctx.body) {
+      const safe = ctx.body.replaceAll("</context-skill>", "&lt;/context-skill>");
+      const text = `<context-skill>\n${safe}\n</context-skill>`;
       layers.push({
         kind: "user_context_skill",
         id: ctx.sourcePath || `nb:user-context:${ctx.manifest.name}`,
         source: ctx.sourcePath || `user context skill "${ctx.manifest.name}"`,
-        text: ctx.body,
-        tokens: approxTokens(ctx.body),
+        text,
+        tokens: approxTokens(text),
       });
     }
   }

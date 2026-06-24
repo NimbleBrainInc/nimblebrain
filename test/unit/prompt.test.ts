@@ -102,7 +102,16 @@ describe("composeSystemPrompt", () => {
     const b = makeContextSkill("b", 10, "Second.");
     const c = makeContextSkill("c", 20, "Third.");
     const result = composeSystemPrompt([a, b, c]);
-    expect(result).toContain("First.\n\n---\n\nSecond.\n\n---\n\nThird.");
+    // Core-band skills (priority ≤ threshold) render raw; the user-context
+    // skill (priority > threshold) is wrapped in <context-skill> containment.
+    // Either way, order follows the caller's pre-sorted input.
+    const firstIdx = result.indexOf("First.");
+    const secondIdx = result.indexOf("Second.");
+    const thirdIdx = result.indexOf("Third.");
+    expect(firstIdx).toBeGreaterThanOrEqual(0);
+    expect(secondIdx).toBeGreaterThan(firstIdx);
+    expect(thirdIdx).toBeGreaterThan(secondIdx);
+    expect(result).toContain("<context-skill>\nThird.\n</context-skill>");
   });
 });
 
