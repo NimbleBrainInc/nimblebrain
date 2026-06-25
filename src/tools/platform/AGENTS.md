@@ -188,7 +188,7 @@ export async function handleRun(
   ctx: ToolContext,
 ): Promise<AutomationsRunOutput> { ... }
 
-// src/cli/commands/automation.ts — consumer imports the same name
+// a consumer module imports the same contract type
 import type { AutomationsRunOutput } from "../../tools/platform/schemas/automations.ts";
 const data = (await callTool(runtime, "automations__run", { name })) as AutomationsRunOutput;
 if ("status" in data && data.status === "dispatched") { ... } else if ("run" in data) { ... }

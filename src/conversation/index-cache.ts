@@ -1,7 +1,7 @@
 import { readdirSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
-import { log } from "../cli/log.ts";
+import { log } from "../observability/log.ts";
 import { estimateCost } from "../usage/cost.ts";
 import type { TokenUsage } from "../usage/types.ts";
 import type {

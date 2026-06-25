@@ -1,5 +1,5 @@
 import { Hono } from "hono";
-import { log } from "../cli/log.ts";
+import { log } from "../observability/log.ts";
 import { WorkspaceResolutionError } from "./auth-middleware.ts";
 import { enableDefaultMetrics } from "./metrics.ts";
 import { corsMiddleware } from "./middleware/cors.ts";

@@ -3,7 +3,7 @@ title: Conversations
 description: Persistence, history, resuming, and storage for NimbleBrain conversations.
 ---
 
-import { Steps, Tabs, TabItem, Aside } from '@astrojs/starlight/components';
+import { Aside } from '@astrojs/starlight/components';
 
 NimbleBrain automatically persists every conversation. Each conversation is stored as a JSONL file owned by the user who created it, and you can resume, rename, fork, and delete conversations through the web UI or CLI.
 
@@ -84,18 +84,7 @@ You can link directly to a conversation by sharing its URL. When you open the li
 
 ## Resuming a conversation
 
-<Tabs>
-  <TabItem label="Web UI">
-    Select a conversation from the sidebar list. The full message history loads, and new messages continue the conversation.
-  </TabItem>
-  <TabItem label="CLI">
-    ```bash
-    nb --resume conv_a1b2c3d4e5f67890
-    ```
-
-    This loads the conversation history and continues from where you left off.
-  </TabItem>
-</Tabs>
+Select a conversation from the sidebar list in the web UI. The full message history loads, and new messages continue the conversation. Through the API, pass `conversationId` in the chat request body to continue an existing conversation.
 
 ## Auto-titling
 

@@ -159,8 +159,8 @@ export type BundleRef =
        * returns the static client; `saveClientInformation()` is a no-op.
        * `clientSecret` is NEVER inline — it's a reference into the
        * credential store, resolved per-request so the secret doesn't sit
-       * in workspace.json. Operators set the secret via
-       * `nb credential set <wsId> <key> <value>`.
+       * in workspace.json. Operators configure the secret in the web UI
+       * (the workspace's Connections settings).
        *
        * Omit for vendors that DO support DCR (Granola, Notion). DCR is the
        * default path; static config is the opt-in.
@@ -212,7 +212,7 @@ export interface OAuthClientConfig {
   clientId: string;
   /**
    * Reference to the client secret in the workspace credential store.
-   * Operator seeds the value via `nb credential set <wsId> <key> <value>`.
+   * Configured in the web UI (the workspace's Connections settings).
    * Omit for public PKCE-only clients (rare for pre-registered).
    */
   clientSecret?: { ref: "credential"; key: string };

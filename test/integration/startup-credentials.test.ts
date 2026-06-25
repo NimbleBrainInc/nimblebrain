@@ -4,7 +4,7 @@
  * and hands whatever it finds to `mpak.prepareServer({ userConfig })`;
  * the SDK then tries the bundle's declared `mcp_config.env` aliases
  * and manifest defaults before throwing `MpakConfigError`. The host
- * translates that to a `nb config set -w <wsId>` hint.
+ * translates that to an operator hint (env var(s) / web UI Connections settings).
  *
  * These tests seed the mpak bundle cache on disk with a hand-authored
  * manifest and exercise three paths:
@@ -13,7 +13,7 @@
  *   - Env path:    credentials in the env var declared by the bundle's
  *                  own mcp_config.env mapping → bundle starts.
  *   - Failure:     no credentials anywhere → throws a friendly
- *                  MpakConfigError with the nb config set hint.
+ *                  MpakConfigError with the operator hint.
  *
  * The bundle itself is a minimal CommonJS MCP server that exposes a single
  * tool and echoes the credential env var the manifest declares.
@@ -262,10 +262,10 @@ describe("startBundleSource — credential resolution", () => {
         );
 
         // The resolver's error should mention both the field and the
-        // remediation command — this is the replacement for the original
+        // remediation path — this is the replacement for the original
         // user bug where mpak's opaque MpakConfigError was surfaced instead.
         await expect(call).rejects.toThrow(/api_key|API key/i);
-        await expect(call).rejects.toThrow(/nb config set/);
+        await expect(call).rejects.toThrow(/Connections settings/);
         await expect(call).rejects.toThrow(WS_ID);
 
         // The failed startup must not leave the source in the registry.

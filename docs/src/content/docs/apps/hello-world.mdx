@@ -9,7 +9,7 @@ This guide walks through building a complete MCP app with:
 - A Python MCP server with tools
 - A React UI with Synapse for typed tool calls and data sync
 - Vite for single-file HTML bundling
-- Hot-reload development with `nb dev --app`
+- Hot-reload development with `bun run dev --app`
 
 The result works in NimbleBrain (full Synapse features), Claude Desktop (tools only), and any MCP client.
 
@@ -315,7 +315,7 @@ The Synapse Vite plugin reads `../manifest.json`, starts the MCP server automati
 ### Full platform (NimbleBrain)
 
 ```bash
-nb dev --app ./ui
+bun run dev --app ./ui
 ```
 
 Same as above but inside the full NimbleBrain platform — data sync, agent interactions, multi-app navigation.

@@ -1,7 +1,6 @@
 import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
-import { log } from "../cli/log.ts";
 import {
   friendlyMpakConfigError,
   type UserConfigFieldDef,
@@ -15,6 +14,7 @@ import {
 } from "../host-resources/index.ts";
 import { fleetIssuerOption } from "../oauth/fleet-assertion.ts";
 import { mcpAuthCallbackUrl } from "../oauth/mcp-callback-url.ts";
+import { log } from "../observability/log.ts";
 import { FileCredentialStore } from "../tools/credential-store.ts";
 import { type BundleMcpContext, McpSource } from "../tools/mcp-source.ts";
 import type { ToolRegistry } from "../tools/registry.ts";
@@ -366,7 +366,7 @@ export async function startBundleSource(
           if (!wrapped) {
             throw new Error(
               `[bundles] OAuth client_secret not found at credential key "${ref.oauthClient.clientSecret.key}" — ` +
-                `run \`nb credential set ${wsId} ${ref.oauthClient.clientSecret.key} <value>\` to seed it`,
+                `configure it in the workspace's Connections settings (web UI)`,
             );
           }
           resolvedSecret = wrapped.reveal();
@@ -651,8 +651,8 @@ export async function startBundleSource(
     // mcp_config.env aliases (so a bundle with
     // `"NEWSAPI_API_KEY": "${user_config.api_key}"` is satisfied by a host
     // NEWSAPI_API_KEY export) and manifest defaults. Any still-missing
-    // required field surfaces as MpakConfigError, which we translate to
-    // the familiar `nb config set -w <wsId>` hint.
+    // required field surfaces as MpakConfigError, which we translate to an
+    // operator hint pointing at the env var(s) / workspace Connections settings.
     const userConfig = await wsContext.getCredentialStore().resolveUserConfig({
       bundleName: ref.name,
       userConfigSchema: cachedManifest?.user_config,

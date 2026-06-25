@@ -53,7 +53,7 @@
  * Subsequent calls hit the cache and don't re-validate.
  */
 
-import { log } from "../cli/log.ts";
+import { log } from "../observability/log.ts";
 import { ALLOWED_TID_PATTERN, isUniformByte } from "./envelope.ts";
 
 export interface BouncerMode {

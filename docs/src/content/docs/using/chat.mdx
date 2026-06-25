@@ -1,44 +1,25 @@
 ---
 title: Chat
-description: Talk to the NimbleBrain agent through the web UI or CLI.
+description: Talk to the NimbleBrain agent through the web UI.
 ---
 
-import { Steps, Tabs, TabItem, Aside } from '@astrojs/starlight/components';
+import { Aside } from '@astrojs/starlight/components';
 
 You interact with NimbleBrain by chatting with an agent that has access to all the tools provided by your installed apps. The agent processes your message, decides which tools to call, executes them, and streams the response back to you.
 
-## Two interfaces
+## The chat panel
 
-NimbleBrain offers two ways to chat: a web UI for browser-based interaction and a terminal TUI for command-line workflows.
+You chat with NimbleBrain in the browser. Type a message in the input field at the bottom and press **Enter** to send. For multi-line messages, use **Shift+Enter** to add a new line.
 
-<Tabs>
-  <TabItem label="Web UI">
-    The chat panel is where you talk to the agent in the browser. Type a message in the input field at the bottom and press **Enter** to send. For multi-line messages, use **Shift+Enter** to add a new line.
+During a response, you see streaming states:
 
-    During a response, you see streaming states:
+- **Thinking** — the agent is processing your message and deciding what to do
+- **Streaming** — text is arriving from the model in real time
+- **Working** — a tool call is in progress
 
-    - **Thinking** — the agent is processing your message and deciding what to do
-    - **Streaming** — text is arriving from the model in real time
-    - **Working** — a tool call is in progress
+Tool calls appear inline as expandable cards. Each shows the tool name, which app it belongs to, and whether it succeeded or failed. Expand a card to see what the tool returned.
 
-    Tool calls appear inline as expandable cards. Each shows the tool name, which app it belongs to, and whether it succeeded or failed. Expand a card to see what the tool returned.
-  </TabItem>
-  <TabItem label="CLI TUI">
-    Start the interactive TUI:
-
-    ```bash
-    nb
-    ```
-
-    Or with a specific config:
-
-    ```bash
-    nb --config ./nimblebrain.json
-    ```
-
-    The TUI renders in your terminal using Ink (React for terminals). Streaming text and tool-call status update in real time.
-  </TabItem>
-</Tabs>
+External MCP clients (Claude Desktop, Cursor, and others) can also drive the agent over the `/mcp` endpoint. See [Connect via MCP](/connect/mcp-endpoint/) and [External Clients](/connect/external-clients/).
 
 ## Chat panel modes
 
@@ -52,27 +33,9 @@ In the web UI, the chat panel has three modes:
 
 Switch modes with the expand/collapse icons in the chat header or with keyboard shortcuts. See [Keyboard Shortcuts](/guide/shortcuts).
 
-## Headless mode
+## Programmatic access
 
-When stdin is piped, NimbleBrain automatically enters headless mode. It reads one message per line from stdin and writes responses to stdout:
-
-```bash
-echo "What apps are installed?" | nb
-```
-
-For structured output, use `--json`:
-
-```bash
-echo "List my apps" | nb --json
-```
-
-This returns a `ChatResult` JSON object with `response`, `conversationId`, `toolCalls`, token counts, and `stopReason`.
-
-The conversation ID carries across lines, so multi-turn conversations work:
-
-```bash
-printf "What is 2+2?\nNow multiply that by 10\n" | nb
-```
+To drive the agent from your own code or another tool, connect any MCP client to the `/mcp` endpoint instead of the chat UI. See [Connect via MCP](/connect/mcp-endpoint/) for the endpoint, authentication, and the tools it exposes.
 
 ## What the agent can do
 
@@ -134,13 +97,7 @@ Each assistant response shows a token-count breakdown — input and output token
 
 ## Resume a conversation
 
-You can resume a previous conversation in the CLI:
-
-```bash
-nb --resume conv_a1b2c3d4e5f67890
-```
-
-In the web UI, open a past conversation from the Conversations sidebar. See [Conversations](/using/conversations) for details on history and storage.
+Open a past conversation from the Conversations sidebar in the web UI. See [Conversations](/using/conversations) for details on history and storage.
 
 ## What's next
 

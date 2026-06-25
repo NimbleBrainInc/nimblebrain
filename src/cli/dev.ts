@@ -1,8 +1,8 @@
 import { existsSync, readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { type Subprocess, spawn } from "bun";
+import { log } from "../observability/log.ts";
 import { setAppDevMode } from "../runtime/dev-registry.ts";
-import { log } from "./log.ts";
 
 export interface DevOptions {
   port: number;
@@ -75,7 +75,7 @@ async function waitForHealth(port: number, opts: { timeoutMs: number }): Promise
 }
 
 /**
- * `nb dev` — supervised dual-process development mode.
+ * `bun run dev` — supervised dual-process development mode.
  *
  * Starts the API server with bun --watch (auto-restart on source changes)
  * and optionally the Vite web dev server. Both share a single terminal

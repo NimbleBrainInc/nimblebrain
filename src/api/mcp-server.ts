@@ -84,9 +84,9 @@ import {
   type Resource,
   type ServerCapabilities,
 } from "@modelcontextprotocol/sdk/types.js";
-import { log } from "../cli/log.ts";
 import { isToolEnabled, isToolVisibleToRole, type ResolvedFeatures } from "../config/features.ts";
 import type { UserIdentity } from "../identity/provider.ts";
+import { log } from "../observability/log.ts";
 import {
   routeToolCall,
   type ToolListAggregator,

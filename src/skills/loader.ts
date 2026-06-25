@@ -2,7 +2,7 @@ import { type Dirent, existsSync, readdirSync, readFileSync, statSync } from "no
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import matter from "gray-matter";
-import { log } from "../cli/log.ts";
+import { log } from "../observability/log.ts";
 import { mapFrontmatterToManifest, validateFrontmatter } from "./schemas/skill-manifest.ts";
 import { MAX_SKILL_BODY_CHARS, truncateMarkdownToBudget } from "./truncate.ts";
 import type { Skill, SkillScope } from "./types.ts";

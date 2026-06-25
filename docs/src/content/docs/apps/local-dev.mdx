@@ -10,8 +10,8 @@ import { Aside, Steps, Tabs, TabItem } from '@astrojs/starlight/components';
 | Workflow | What it gives you | When to use |
 |----------|-------------------|-------------|
 | **Synapse Preview** | Standalone preview with tool calls and HMR | Building a new app, iterating on UI |
-| **nb dev --app** | Full NimbleBrain platform with HMR | Testing data sync, agent interactions, multi-app |
-| **nb dev + reload** | Full platform, manual restart | Quick tool changes, no UI build step |
+| **bun run dev --app** | Full NimbleBrain platform with HMR | Testing data sync, agent interactions, multi-app |
+| **bun run dev + reload** | Full platform, manual restart | Quick tool changes, no UI build step |
 | **Tools only** | MCP server in Claude Desktop or any client | Testing tools without UI |
 
 ## Synapse Preview (recommended for UI development)
@@ -40,9 +40,9 @@ The Synapse Vite plugin (`synapseVite()` in your `vite.config.ts`) handles every
 | Dark/light theme toggle | Yes |
 | NimbleBrain theme tokens | Yes |
 | Console logging (chat, actions, state) | Yes |
-| Data sync (agent tool calls) | No — use `nb dev` |
-| Widget state persistence | No — use `nb dev` |
-| Multi-app navigation | No — use `nb dev` |
+| Data sync (agent tool calls) | No — use `bun run dev` |
+| Widget state persistence | No — use `bun run dev` |
+| Multi-app navigation | No — use `bun run dev` |
 
 ### Vite config
 
@@ -74,7 +74,7 @@ synapseVite({
 
 ## NimbleBrain dev mode
 
-### With UI hot-reload (`nb dev --app`)
+### With UI hot-reload (`bun run dev --app`)
 
 ```bash
 cd nimblebrain    # the platform repo
@@ -104,7 +104,7 @@ The platform loads your bundle from the `path` in the config. UI changes require
 <Steps>
 
 1. Rebuild the UI: `cd ui && npm run build`
-2. Reload the bundle: `nb reload`
+2. Restart the dev server so it reloads the bundle (`bun run dev` picks up source changes automatically)
 3. Hard-refresh the browser (`Cmd+Shift+R`)
 </Steps>
 
@@ -226,8 +226,9 @@ This means edits to files in `src/` are invisible to the running server — Pyth
 
 ```bash
 rm -rf deps/mcp_my_app
-nb reload
 ```
+
+Then restart the dev server so the change takes effect (`bun run dev` restarts the API on source changes).
 
 ## Debugging
 
