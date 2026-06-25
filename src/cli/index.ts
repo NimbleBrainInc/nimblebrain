@@ -25,12 +25,13 @@ async function main(): Promise<void> {
   const command = process.argv[2];
   const rest = process.argv.slice(3);
 
-  const telemetry = TelemetryManager.create({
-    workDir: join(homedir(), ".nimblebrain"),
-  });
-
-  try {
-    if (command === "serve") {
+  if (command === "serve") {
+    // Telemetry is created only here. `serve` is the long-running runtime that
+    // emits product usage. `dev` spawns its own `serve` child (which inits its
+    // own telemetry), so initializing it in the dev parent would print the
+    // first-run notice and write the anon-id file while capturing nothing.
+    const telemetry = TelemetryManager.create({ workDir: join(homedir(), ".nimblebrain") });
+    try {
       const { values } = parseArgs({
         args: rest,
         options: {
@@ -50,7 +51,17 @@ async function main(): Promise<void> {
         },
         telemetry,
       );
-    } else if (command === "dev") {
+    } catch (err) {
+      log.error(`Fatal: ${err}`);
+      await telemetry.shutdown();
+      process.exit(1);
+    }
+    await telemetry.shutdown();
+    return;
+  }
+
+  if (command === "dev") {
+    try {
       const { values } = parseArgs({
         args: rest,
         // strict:false so the `--no-web` negation token passes through; we read
@@ -72,18 +83,15 @@ async function main(): Promise<void> {
         app: values.app as string | undefined,
         appPort: values["app-port"] ? Number(values["app-port"]) : undefined,
       });
-    } else {
-      process.stderr.write(command ? `Unknown command: ${command}\n${USAGE}` : USAGE);
-      await telemetry.shutdown();
-      process.exit(command ? 2 : 0);
+    } catch (err) {
+      log.error(`Fatal: ${err}`);
+      process.exit(1);
     }
-  } catch (err) {
-    log.error(`Fatal: ${err}`);
-    await telemetry.shutdown();
-    process.exit(1);
+    return;
   }
 
-  await telemetry.shutdown();
+  process.stderr.write(command ? `Unknown command: ${command}\n${USAGE}` : USAGE);
+  process.exit(command ? 2 : 0);
 }
 
 main().catch((err) => {
