@@ -57,8 +57,8 @@ export function CopyableWorkspaceId({ workspaceId }: { workspaceId: string }) {
         </Button>
       </div>
       <p className="text-xs text-muted-foreground">
-        Use this ID as the <code className="text-[11px]">X-Workspace-Id</code> header when
-        connecting external MCP clients to this workspace.
+        Use this ID as the <code className="text-2xs">X-Workspace-Id</code> header when connecting
+        external MCP clients to this workspace.
       </p>
     </div>
   );

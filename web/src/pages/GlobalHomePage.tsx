@@ -44,7 +44,7 @@ export function GlobalHomePage() {
         </header>
 
         <section>
-          <h2 className="text-[11px] font-bold tracking-[0.08em] uppercase text-muted-foreground mb-3">
+          <h2 className="text-2xs font-bold tracking-[0.08em] uppercase text-muted-foreground mb-3">
             Your workspaces
           </h2>
           {wsCtx.loading ? (

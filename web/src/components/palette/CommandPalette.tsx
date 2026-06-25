@@ -221,12 +221,12 @@ export function CommandPalette({ onLogout }: { onLogout: () => void }) {
               placeholder="Search workspaces, apps, or run a command…"
               onChange={(e) => setQuery(e.target.value)}
               onKeyDown={onInputKeyDown}
-              className="flex-1 bg-transparent border-0 outline-none text-[15px] text-foreground placeholder:text-muted-foreground"
+              className="flex-1 bg-transparent border-0 outline-none text-base text-foreground placeholder:text-muted-foreground"
             />
             {scopeId && (
               <span
                 data-testid="palette-scope"
-                className="shrink-0 text-[10.5px] font-mono px-1.5 py-0.5 rounded bg-accent text-accent-foreground border border-border"
+                className="shrink-0 text-3xs font-mono px-1.5 py-0.5 rounded bg-accent text-accent-foreground border border-border"
               >
                 {SCOPE_LABEL[scopeId]}
               </span>
@@ -245,7 +245,7 @@ export function CommandPalette({ onLogout }: { onLogout: () => void }) {
             ) : (
               groups.map((group) => (
                 <div key={group.source.id} className="pb-1.5">
-                  <div className="px-2.5 pt-2 pb-1 text-[9.5px] font-mono uppercase tracking-[0.12em] text-muted-foreground">
+                  <div className="px-2.5 pt-2 pb-1 text-3xs font-mono uppercase tracking-[0.12em] text-muted-foreground">
                     {group.label}
                   </div>
                   {group.items.map((item) => {
@@ -277,7 +277,7 @@ export function CommandPalette({ onLogout }: { onLogout: () => void }) {
           </div>
 
           {/* Footer */}
-          <div className="flex items-center gap-3.5 px-3.5 py-2.5 border-t border-border bg-muted/40 text-[10.5px] font-mono text-muted-foreground">
+          <div className="flex items-center gap-3.5 px-3.5 py-2.5 border-t border-border bg-muted/40 text-3xs font-mono text-muted-foreground">
             <span>
               <Kbd>↑↓</Kbd> navigate
             </span>

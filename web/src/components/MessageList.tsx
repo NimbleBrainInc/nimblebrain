@@ -30,7 +30,7 @@ function UsageChip({ usage }: { usage: NonNullable<ChatMessage["usage"]> }) {
   if (cacheRead > 0) parts.push(`${formatTokens(cacheRead)} cached`);
 
   return (
-    <span className="inline-flex items-center gap-1 text-[10px] text-muted-foreground tabular-nums">
+    <span className="inline-flex items-center gap-1 text-3xs text-muted-foreground tabular-nums">
       <Zap style={{ width: 10, height: 10 }} className="opacity-70" />
       <span>{parts.join(" · ")}</span>
     </span>
@@ -334,7 +334,7 @@ export function MessageList({
                   >
                     {shouldShowSpeaker(msg, idx, messages, currentUserId) && (
                       <div
-                        className="flex items-center gap-1.5 mb-1 text-[11px] font-medium"
+                        className="flex items-center gap-1.5 mb-1 text-2xs font-medium"
                         style={{ color: participantColor(msg.userId!) }}
                       >
                         <span
@@ -346,10 +346,10 @@ export function MessageList({
                     )}
                     {contextPrefix && (
                       <details className="mb-1">
-                        <summary className="text-[10px] opacity-60 cursor-pointer select-none">
+                        <summary className="text-3xs opacity-60 cursor-pointer select-none">
                           App Context
                         </summary>
-                        <span className="block text-[10px] opacity-60 mt-0.5">{contextPrefix}</span>
+                        <span className="block text-3xs opacity-60 mt-0.5">{contextPrefix}</span>
                       </details>
                     )}
                     {msg.files && msg.files.length > 0 && (
@@ -447,7 +447,7 @@ export function MessageList({
                 >
                   <CopyButton content={displayContent} />
                   {showTimestamp && msg.timestamp && (
-                    <span className="text-[10px] text-muted-foreground">
+                    <span className="text-3xs text-muted-foreground">
                       {formatRelativeTime(msg.timestamp)}
                     </span>
                   )}

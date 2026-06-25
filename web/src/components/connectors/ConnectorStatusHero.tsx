@@ -166,7 +166,7 @@ export function ConnectorStatusHero({
           <div className="flex items-center gap-2 flex-wrap">
             <h1 className="text-xl font-semibold tracking-tight">{name}</h1>
             {installed.interactive && (
-              <span className="text-[10px] px-1.5 py-0.5 rounded bg-accent/40 text-accent-foreground font-medium">
+              <span className="text-3xs px-1.5 py-0.5 rounded bg-accent/40 text-accent-foreground font-medium">
                 Interactive
               </span>
             )}

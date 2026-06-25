@@ -145,7 +145,7 @@ export function ProfileTab() {
                 <Icon className={cn("w-5 h-5", selected ? "text-warm" : "text-muted-foreground")} />
                 <div>
                   <div className="text-sm font-medium">{opt.label}</div>
-                  <div className="text-[11px] leading-tight text-muted-foreground mt-0.5">
+                  <div className="text-2xs leading-tight text-muted-foreground mt-0.5">
                     {opt.description}
                   </div>
                 </div>

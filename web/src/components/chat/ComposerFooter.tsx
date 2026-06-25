@@ -94,7 +94,7 @@ function ToolsFromLine({ workspaces }: { workspaces: readonly WorkspaceInfo[] })
       data-state="ready"
       data-workspace-count={workspaces.length}
     >
-      <span className="uppercase tracking-wider text-[10px] font-semibold">Tools from</span>
+      <span className="uppercase tracking-wider text-3xs font-semibold">Tools from</span>
       {workspaces.map((ws) => (
         <Badge
           key={ws.id}

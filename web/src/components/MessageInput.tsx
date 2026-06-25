@@ -250,21 +250,21 @@ export function MessageInput({
       </div>
 
       {/* Shortcut hints — status copy lives on the BlockTimeline / LiveCursor, not here. */}
-      <div className="flex items-center justify-center gap-3 mt-2 text-[10px] text-muted-foreground">
+      <div className="flex items-center justify-center gap-3 mt-2 text-3xs text-muted-foreground">
         {onNewConversation && (
           <button
             type="button"
             onClick={onNewConversation}
             className="hover:text-foreground transition-colors"
           >
-            <kbd className="px-1 py-0.5 font-mono bg-muted rounded border border-border text-[10px]">
+            <kbd className="px-1 py-0.5 font-mono bg-muted rounded border border-border text-3xs">
               /clear
             </kbd>{" "}
             reset
           </button>
         )}
         <span>
-          <kbd className="px-1 py-0.5 font-mono bg-muted rounded border border-border text-[10px]">
+          <kbd className="px-1 py-0.5 font-mono bg-muted rounded border border-border text-3xs">
             ⌘K
           </kbd>{" "}
           close

@@ -80,10 +80,10 @@ function RegistryRow({
       <div className="flex-1 min-w-0">
         <div className="flex items-center gap-2">
           <span className="text-sm font-medium">{registry.name}</span>
-          <span className="text-[10px] px-1.5 py-0.5 rounded bg-muted text-muted-foreground">
+          <span className="text-3xs px-1.5 py-0.5 rounded bg-muted text-muted-foreground">
             {registry.type}
           </span>
-          {registry.locked && <span className="text-[10px] text-muted-foreground">locked</span>}
+          {registry.locked && <span className="text-3xs text-muted-foreground">locked</span>}
         </div>
         {supportsUrl && (
           <div className="mt-1 font-mono text-xs text-muted-foreground">

@@ -165,13 +165,13 @@ export function OperatorSetupModal({
               <span className="flex-1 min-w-0">
                 Add this redirect URI to the OAuth app's allowed redirect list:
                 <span className="mt-1 flex items-center gap-2">
-                  <code className="flex-1 min-w-0 truncate font-mono text-[11px] px-2 py-1 rounded border border-border bg-muted text-foreground">
+                  <code className="flex-1 min-w-0 truncate font-mono text-2xs px-2 py-1 rounded border border-border bg-muted text-foreground">
                     {redirectUri}
                   </code>
                   <button
                     type="button"
                     onClick={onCopyRedirectUri}
-                    className="text-[11px] px-2 py-1 rounded border border-border hover:bg-muted shrink-0"
+                    className="text-2xs px-2 py-1 rounded border border-border hover:bg-muted shrink-0"
                   >
                     {copied ? "Copied" : "Copy"}
                   </button>
