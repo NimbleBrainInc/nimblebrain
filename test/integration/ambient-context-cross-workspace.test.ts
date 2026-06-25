@@ -145,11 +145,13 @@ describe("Stage 2 T008 — ambient RequestContext.workspaceId matches the routed
     const sharedReg = await runtime.ensureWorkspaceRegistry(SHARED_WS_ID);
     sharedReg.addSource(probe.source);
 
-    // Run the chat. Session workspace is the user's personal — the
-    // outer `runWithRequestContext` sets `workspaceId = ws_user_<id>`.
-    // T008's inner wrap must override it to ws_helix at dispatch time.
+    // Run the chat FOCUSED on ws_helix. The ambient session scope is still
+    // the user's personal workspace (the session bridge `runWithRequestContext`
+    // sets `workspaceId = ws_user_<id>`); the per-call wrap must restamp to the
+    // routed ws_helix at dispatch time.
     await runtime.chat({
       identity: { id: TEST_USER_ID, displayName: TEST_USER_DISPLAY },
+      workspaceId: SHARED_WS_ID,
       message: "ambient context check",
     });
 

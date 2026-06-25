@@ -198,23 +198,16 @@ describe("runtime.executeTask", () => {
     expect(result.toolCalls[0]?.ok).toBe(true);
   });
 
-  it("with workspaceId omitted, the orchestrator dispatches a namespaced cross-workspace tool call", async () => {
+  it("with workspaceId omitted, a cross-workspace tool call is walled (bounded to the session workspace)", async () => {
     const probe = buildProbeSource();
     await probe.source.start();
 
-    // Pins the DISPATCH contract: when a task without a focused
-    // workspace issues a tool call namespaced to ws_shared_tasks, the
-    // orchestrator must route it to that workspace's source and execute
-    // it (the identity is a member, so authorization passes).
-    //
-    // What this test does NOT verify, and is documented on
-    // `TaskRequest.workspaceId`: that the model would DISCOVER probe__ping
-    // in its active tool list without `workspaceId`. It would not. With
-    // no focus, the active toolset is the personal-workspace tools +
-    // identity tools (same as chat at the identity-level home). The
-    // cross-workspace union is the search corpus reached via `nb__search`.
-    // Here the echo model is scripted to emit the namespaced call
-    // directly — the test pins what happens when one lands.
+    // The wall for the task path: an unscoped task is bounded to the session
+    // (personal) workspace. A call namespaced to ANOTHER workspace is denied
+    // even though the identity is a member of it — a task reaches exactly one
+    // workspace plus identity tools, never a cross-workspace union. The echo
+    // model is scripted to emit the namespaced cross-workspace call directly;
+    // the test pins that the wall refuses it.
     const namespacedPing = namespacedToolName(SHARED_WS_ID, "probe__ping");
     runtime = await bootRuntime({
       responses: [
@@ -237,13 +230,14 @@ describe("runtime.executeTask", () => {
     const result = await runtime.executeTask({
       prompt: "ping anywhere you can reach",
       identity: { id: TEST_USER_ID, displayName: TEST_USER_DISPLAY },
-      // No workspaceId — unscoped task; the orchestrator's per-call
-      // routing still resolves the namespaced tool to ws_shared_tasks.
+      // No workspaceId — unscoped task bounded to the session (personal) ws.
     });
 
     expect(result.toolCalls.length).toBeGreaterThan(0);
     expect(result.toolCalls[0]?.name).toBe(namespacedPing);
-    expect(result.toolCalls[0]?.ok).toBe(true);
+    // Walled: a task bounded to its session workspace cannot reach another.
+    expect(result.toolCalls[0]?.ok).toBe(false);
+    expect(result.toolCalls[0]?.output).toMatch(/not a member|denied|access|bounded/i);
   });
 
   it("returns partial usage + conversationId tagged 'aborted' when the run is aborted mid-flight", async () => {

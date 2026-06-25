@@ -136,7 +136,11 @@ describe("runtime.chat — orchestrator error taxonomy (T006)", () => {
     expect(tc.output).toContain("invalid tool name");
   });
 
-  it("`UnknownWorkspace` → reason='unknown_workspace'", async () => {
+  it("the wall denies a non-focused workspace (even a non-existent one) without leaking unknown_workspace", async () => {
+    // A session is bounded to its one workspace. A call to any other workspace
+    // is denied by the wall BEFORE existence is checked, so a bogus workspace
+    // name yields the same access-denied outcome as any other-workspace call —
+    // no information leak about whether the workspace exists.
     fixture = await createTwoWorkspaceFixture({
       modelResponses: [
         {
@@ -152,14 +156,17 @@ describe("runtime.chat — orchestrator error taxonomy (T006)", () => {
       ],
     });
     const result = await fixture.runtime.chat(
-      fixture.buildChatRequest({ message: "trigger unknown_workspace" }),
+      fixture.buildChatRequest({ message: "trigger wall denial" }),
     );
     const tc = result.toolCalls[0];
     expect(tc).toBeDefined();
     if (!tc) return;
     expect(tc.ok).toBe(false);
-    expect(tc.output).toContain("unknown workspace");
+    // Walled before existence is checked: the denial names the out-of-reach
+    // workspace, never "unknown workspace" (no existence leak).
+    expect(tc.output).toMatch(/not a member|denied|access/i);
     expect(tc.output).toContain("ws_does_not_exist");
+    expect(tc.output).not.toMatch(/unknown workspace/i);
   });
 
   it("`WorkspaceAccessDenied` → reason='workspace_access_denied'", async () => {

@@ -566,11 +566,15 @@ export class Runtime {
       get tools() {
         if (!rtHolder.rt) throw new Error("Runtime not initialized");
         const identity = getRequestContext()?.identity;
-        if (!identity) return rtHolder.rt.getRegistryForCurrentWorkspace();
+        const wsId = rtHolder.rt._currentWorkspaceId?.();
+        // Build the identity-bound router only when both an identity and a
+        // workspace are in scope; otherwise (CLI / dev) the bare workspace
+        // registry is what the caller expects.
+        if (!identity || !wsId) return rtHolder.rt.getRegistryForCurrentWorkspace();
         return new IdentityToolRouter({
           identityId: identity.id,
+          workspaceId: wsId,
           runtime: rtHolder.rt,
-          aggregator: rtHolder.rt.getToolListAggregator(),
         });
       },
       // Default initial active set: focused-workspace tools (namespaced
@@ -1761,6 +1765,7 @@ export class Runtime {
     const engineSink = new MultiEventSink(wrappedSinks);
     const identityToolRouter = this._buildIdentityToolRouter({
       identityId: ownerId,
+      workspaceId: toolsWsId,
       perCallWorkspaceMap,
     });
     const engine = new AgentEngine(resolvedModel, identityToolRouter, engineSink);
@@ -2290,6 +2295,7 @@ export class Runtime {
     const engineSink = new MultiEventSink(wrappedSinks);
     const identityToolRouter = this._buildIdentityToolRouter({
       identityId: ownerId,
+      workspaceId: toolsWsId,
       perCallWorkspaceMap,
     });
     const engine = new AgentEngine(resolvedModel, identityToolRouter, engineSink);
@@ -2389,13 +2395,14 @@ export class Runtime {
    */
   private _buildIdentityToolRouter(opts: {
     identityId: string;
+    workspaceId: string;
     perCallWorkspaceMap: Map<string, string>;
   }): ToolRouter {
-    const { identityId, perCallWorkspaceMap } = opts;
+    const { identityId, workspaceId, perCallWorkspaceMap } = opts;
     return new IdentityToolRouter({
       identityId,
+      workspaceId,
       runtime: this,
-      aggregator: this._toolListAggregator,
       onWorkspaceDispatch: (callId, wsId) => {
         perCallWorkspaceMap.set(callId, wsId);
       },
@@ -2946,31 +2953,53 @@ export class Runtime {
 
   /**
    * Tools the model can DISCOVER via a system-tool surface (`nb__search`
-   * scope:tools). Identity-scoped by design: in an identity-bound session
-   * the searchable set is the UNION of every workspace the identity can
-   * reach (the cross-workspace aggregator), not a single workspace.
+   * scope:tools). The corpus is the FOCUSED workspace only — that workspace's
+   * tools (namespaced `ws_<id>-<tool>`) plus the caller's identity tools. A
+   * session reaches exactly one workspace plus the user's identity tools;
+   * there is no cross-workspace discovery. `nb__search` dispatches as
+   * `ws_<focused>-nb__search`, so the per-call request scope here is already
+   * the focused workspace — we read it and list that registry.
    *
-   * Why this isn't `getRegistryForCurrentWorkspace().availableTools()`:
-   * the aggregator namespaces `nb__search` per workspace, so the model may
-   * invoke ANY workspace's copy of it. Each copy must see everything the
-   * identity can reach — otherwise a tool installed in one workspace is
-   * invisible to another workspace's search. (Concretely: a CRM installed
-   * in `ws_mat`, searched from the personal workspace's `nb__search`,
-   * returned "no CRM tools.") Entries are namespaced (`ws_<id>-<tool>`), so
-   * the model promotes/dispatches them through the orchestrator unchanged.
-   *
-   * Falls back to the current workspace's registry when no identity is in
+   * Falls back to the current workspace's registry when no workspace is in
    * scope (CLI / non-identity-bound dev paths).
    */
   async listDiscoverableTools(): Promise<readonly ToolSchema[]> {
-    const identity = getRequestContext()?.identity;
-    if (identity) {
-      // NamespacedToolDescriptor carries every ToolSchema field (name,
-      // description, inputSchema, annotations) plus wsId/toolName — so the
-      // union is assignable to ToolSchema[] for the search/eligibility path.
-      return this._toolListAggregator.aggregateToolList(identity.id);
+    const ctx = getRequestContext();
+    const wsId =
+      ctx?.scope.kind === "workspace" ? ctx.scope.workspaceId : this._currentWorkspaceId?.();
+    if (!wsId) {
+      return this.getRegistryForCurrentWorkspace().availableTools();
     }
-    return this.getRegistryForCurrentWorkspace().availableTools();
+    return this.listToolsForWorkspace(wsId);
+  }
+
+  /**
+   * The walled tool surface for a session bounded to `wsId`: that workspace's
+   * tools (namespaced `ws_<id>-<tool>`) plus the caller's identity tools
+   * (bare). The engine's reachable universe (`IdentityToolRouter.availableTools`)
+   * and the `nb__search` corpus (`listDiscoverableTools`) both read this — a
+   * session reaches exactly one workspace plus identity tools.
+   */
+  async listToolsForWorkspace(wsId: string): Promise<ToolSchema[]> {
+    const registry = await this.ensureWorkspaceRegistry(wsId);
+    const [wsTools, identityTools] = await Promise.all([
+      registry.availableTools(),
+      this.listIdentitySourceTools(),
+    ]);
+    return [
+      ...wsTools.map((t) => ({
+        name: namespacedToolName(wsId, t.name),
+        description: t.description,
+        inputSchema: t.inputSchema,
+        ...(t.annotations !== undefined ? { annotations: t.annotations } : {}),
+      })),
+      ...identityTools.map((t) => ({
+        name: t.name,
+        description: t.description,
+        inputSchema: t.inputSchema,
+        ...(t.annotations !== undefined ? { annotations: t.annotations } : {}),
+      })),
+    ];
   }
 
   /** Get the per-workspace registries map. */
