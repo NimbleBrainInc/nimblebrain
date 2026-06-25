@@ -3946,16 +3946,22 @@ export class Runtime {
   ): Promise<ResourceData | null> {
     if (!(source instanceof McpSource)) return null;
 
+    // This is the app-surface (resource-proxy) read path — its only callers are
+    // readAppResource / readIdentityAppResource serving a `ui://` resource for a
+    // mounted app. A failure here is anomalous, so opt into logging; discovery
+    // probes that read directly from a source stay silent.
+    const opts = { logFailures: true } as const;
+
     if (resourcePath.includes("://")) {
-      return source.readResource(resourcePath);
+      return source.readResource(resourcePath, opts);
     }
 
     const exactUri = `ui://${resourcePath}`;
     const namespacedUri = `ui://${appName}/${resourcePath}`;
 
-    const result = await source.readResource(exactUri);
+    const result = await source.readResource(exactUri, opts);
     if (result !== null) return result;
-    if (exactUri !== namespacedUri) return source.readResource(namespacedUri);
+    if (exactUri !== namespacedUri) return source.readResource(namespacedUri, opts);
     return null;
   }
 
