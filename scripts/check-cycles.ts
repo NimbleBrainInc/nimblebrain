@@ -42,7 +42,7 @@ function checkDir(dir: string, forbiddenPatterns: Array<{ pattern: RegExp; descr
       const line = lines[i]!;
       if (!line.includes("from ")) continue;
 
-      for (const { pattern, description } of forbiddenPatterns) {
+      for (const { pattern } of forbiddenPatterns) {
         if (pattern.test(line)) {
           violations.push({
             file: relPath,
