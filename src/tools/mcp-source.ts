@@ -1292,8 +1292,22 @@ export class McpSource implements ToolSource {
    * spec attaches ui metadata at the content level, so that's the load-bearing
    * source for iframe CSP / permissions / layout hints.
    */
-  async readResource(uri: string): Promise<ResourceData | null> {
-    if (!this.client) return null;
+  async readResource(uri: string, opts?: { logFailures?: boolean }): Promise<ResourceData | null> {
+    if (!this.client) {
+      // A torn-down client (a source degraded/crashed without re-creation)
+      // returns null HERE, before the catch below — the persistent silent-404
+      // shape this change exists to surface, and the most likely cause of a read
+      // that stays broken until a full runtime restart. Log it on the app-surface
+      // path; the probe path stays silent because a not-yet-started or tearing-down
+      // source legitimately has no client during composition.
+      if (opts?.logFailures) {
+        log.warn("[mcp] readResource: source has no active client connection", {
+          uri,
+          source: this.name,
+        });
+      }
+      return null;
+    }
     try {
       const result = await this.client.readResource({ uri });
       if (!result.contents || result.contents.length === 0) return null;
@@ -1312,8 +1326,25 @@ export class McpSource implements ToolSource {
         return { blob: bytes, mimeType: first.mimeType, meta };
       }
       return { text: JSON.stringify(first), meta };
-    } catch {
-      // Resource not found is expected (e.g., skill:// on servers that don't have one)
+    } catch (err) {
+      // A genuine MCP miss is expected and stays a silent null — e.g. a skill://
+      // or app://instructions probe against a server that has neither.
+      if (isMcpResourceMiss(err)) return null;
+      // Anything else — a torn transport, a dropped connection, a timeout — is a
+      // real failure, NOT a missing resource. The old bare `catch { return null }`
+      // masked every such failure as a 404 with no log to say why, so a degraded
+      // source was undiagnosable. Log it ONLY for app-surface reads (the resource
+      // proxy passes `logFailures`), where a failure is anomalous. Discovery
+      // probes stay silent, so a bundle that simply lacks a probed resource never
+      // spams — whatever non-standard error shape it returns. The null (404) is
+      // preserved either way; this only makes the anomalous case visible.
+      if (opts?.logFailures) {
+        log.warn("[mcp] readResource failed", {
+          uri,
+          source: this.name,
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
       return null;
     }
   }
@@ -1946,6 +1977,33 @@ export class McpSource implements ToolSource {
       return false;
     }
   }
+}
+
+/**
+ * Distinguish a genuine "the resource is not here" outcome from a transport /
+ * connection failure, for `readResource`'s catch.
+ *
+ * A JSON-RPC application error means the server received the request and
+ * answered — it is alive, the resource simply isn't (or isn't readable) there,
+ * and restarting the transport would not change the answer:
+ *   - `-32002` ResourceNotFound (the spec code; see host-resources/resolver.ts),
+ *   - `-32601` MethodNotFound (server advertises no resources capability),
+ *   - `-32602` InvalidParams (unknown / unsupported URI).
+ * Some servers signal a miss only in the message, so match that as a fallback.
+ *
+ * A torn transport (connection closed `-32000`, timeout, fetch failure) is none
+ * of these — it carries no application error code — so it returns `false` and
+ * must NOT be masked as a missing resource.
+ */
+export function isMcpResourceMiss(err: unknown): boolean {
+  if (err === null || typeof err !== "object") return false;
+  const code = (err as { code?: unknown }).code;
+  if (code === -32002 || code === -32601 || code === -32602) return true;
+  const message = (err as { message?: unknown }).message;
+  return (
+    typeof message === "string" &&
+    /resource not found|unknown resource|no such resource/i.test(message)
+  );
 }
 
 /** Type guard: does this unknown value match Tool.execution's shape? */
