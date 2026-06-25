@@ -189,7 +189,7 @@ describe("connector-skill binding lifecycle (runtime wiring)", () => {
     runtime.getLifecycle().setConnectorSkillFetch(fixtureFetch());
     const lock = await runtime
       .getLifecycle()
-      .syncBoundSkills("composio/mytool", "mytool", TEST_WORKSPACE_ID, runtime.getWorkDir());
+      .syncBoundSkills("mytool", "mytool", TEST_WORKSPACE_ID, runtime.getWorkDir());
     expect(lock).toHaveLength(1);
 
     const t1 = await runtime.chat({

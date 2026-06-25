@@ -5,7 +5,7 @@
  * for connectors we don't control (Composio + other third-party MCP servers).
  * They live in a public, curated repo keyed by connector identity:
  *
- *     <repo>/<identity>/SKILL.md      e.g.  connector-skills/composio/gmail/SKILL.md
+ *     <repo>/<identity>/SKILL.md      e.g.  connector-skills/gmail/SKILL.md
  *
  * This module fetches an overlay by identity from the repo at a PINNED version,
  * records its sha256 (provenance / tamper-evidence), and content-addresses the
@@ -65,7 +65,7 @@ export function overlayUrl(repo: string, version: string, identity: string): str
 
 /**
  * Resolve a curated connector-skill overlay by connector identity
- * (e.g. `"composio/gmail"`) from the public overlay repo at a pinned version.
+ * (e.g. `"gmail"`) from the public overlay repo at a pinned version.
  *
  * @returns the `{ body, sha }`, or `null` when no overlay is curated for this
  *   connector (HTTP 404). Throws on any other failure (fail-closed).
