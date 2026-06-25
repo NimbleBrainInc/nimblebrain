@@ -1,92 +1,87 @@
 #!/usr/bin/env bun
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { CommanderError } from "commander";
+import { parseArgs } from "node:util";
 import { initTracing } from "../observability/index.ts";
-import { TelemetryManager } from "../telemetry/manager.ts";
-import { createAutomationCommand } from "./commands/automation.ts";
-import { createBundleCommand } from "./commands/bundle.ts";
-import { createConfigCommand } from "./commands/config-cmd.ts";
-import { createCredentialCommand } from "./commands/credential.ts";
-import { registerDefaultAction } from "./commands/default.ts";
-import { createDevCommand } from "./commands/dev.ts";
-import { createReloadCommand } from "./commands/reload.ts";
-import { createServeCommand } from "./commands/serve.ts";
-import { createSkillCommand } from "./commands/skill.ts";
-import { createStatusCommand } from "./commands/status.ts";
-import { createTelemetryCommand } from "./commands/telemetry.ts";
-import { createUserCommand } from "./commands/user.ts";
 import { log } from "../observability/log.ts";
-import { createProgram, determineModeFromArgv } from "./program.ts";
+import { TelemetryManager } from "../telemetry/manager.ts";
+import { runDev } from "./dev.ts";
+import { runServe } from "./serve.ts";
 
-const KNOWN_COMMANDS = new Set([
-  "serve",
-  "dev",
-  "bundle",
-  "skill",
-  "config",
-  "status",
-  "reload",
-  "telemetry",
-  "automation",
-  "user",
-  "credential",
-  "creds",
-]);
+const USAGE = "Usage: nb <serve|dev> [options]\n";
 
-async function main() {
-  // Install vendor-neutral OTel tracing once, before any command runs. No-op
-  // (nothing exported) unless OTEL_EXPORTER_OTLP_ENDPOINT is set, so this is
-  // safe for CLI/TUI and OSS checkouts with no observability infra.
+/**
+ * Process entry point. Dispatches the two server-side commands the platform
+ * runs — `serve` (the managed-services HTTP server) and `dev` (the local
+ * watch/HMR loop). No interactive terminal client; the web shell and `/mcp`
+ * are the runtime's UIs. Kept at this path so the image/chart command
+ * (`bun run src/cli/index.ts serve`) is unchanged.
+ */
+async function main(): Promise<void> {
+  // Install vendor-neutral OTel tracing once, before anything runs. No-op
+  // (nothing exported) unless OTEL_EXPORTER_OTLP_ENDPOINT is set.
   initTracing();
 
-  // Pre-check for unknown subcommands (before Commander parses)
-  const firstArg = process.argv[2];
-  if (firstArg && !firstArg.startsWith("-") && !KNOWN_COMMANDS.has(firstArg)) {
-    process.stderr.write(`Unknown command: ${firstArg}\nRun 'nb --help' for usage.\n`);
-    process.exit(2);
-  }
-
-  const telemetryWorkDir = join(homedir(), ".nimblebrain");
+  const command = process.argv[2];
+  const rest = process.argv.slice(3);
 
   const telemetry = TelemetryManager.create({
-    workDir: telemetryWorkDir,
-    mode: determineModeFromArgv(),
+    workDir: join(homedir(), ".nimblebrain"),
+    mode: command === "serve" || command === "dev" ? command : undefined,
   });
 
-  const program = createProgram(telemetry);
-
-  // Register all subcommands
-  program.addCommand(createStatusCommand());
-  program.addCommand(createReloadCommand());
-  program.addCommand(createTelemetryCommand(telemetryWorkDir));
-  program.addCommand(createSkillCommand());
-  program.addCommand(createConfigCommand());
-  program.addCommand(createBundleCommand());
-  program.addCommand(createAutomationCommand());
-  program.addCommand(createServeCommand(telemetry));
-  program.addCommand(createDevCommand());
-  program.addCommand(createUserCommand());
-  program.addCommand(createCredentialCommand());
-
-  // Default action: TUI or headless (when no subcommand given)
-  registerDefaultAction(program, telemetry);
-
   try {
-    await program.parseAsync(process.argv);
-  } catch (err) {
-    if (err instanceof CommanderError) {
-      // exitOverride throws CommanderError instead of calling process.exit
-      // Exit code 0 = --help or --version (normal exit)
-      await telemetry.shutdown();
-      if (err.exitCode !== 0) {
-        process.exit(err.exitCode);
-      }
+    if (command === "serve") {
+      const { values } = parseArgs({
+        args: rest,
+        options: {
+          config: { type: "string", short: "c" },
+          model: { type: "string" },
+          port: { type: "string" },
+          debug: { type: "boolean" },
+        },
+        allowPositionals: false,
+      });
+      await runServe(
+        {
+          config: values.config,
+          model: values.model,
+          port: values.port ? Number(values.port) : undefined,
+          debug: values.debug ?? false,
+        },
+        telemetry,
+      );
+    } else if (command === "dev") {
+      const { values } = parseArgs({
+        args: rest,
+        // strict:false so the `--no-web` negation token passes through; we read
+        // it off argv directly since parseArgs has no boolean-negation support.
+        strict: false,
+        options: {
+          config: { type: "string", short: "c" },
+          port: { type: "string" },
+          app: { type: "string" },
+          "app-port": { type: "string" },
+          debug: { type: "boolean" },
+        },
+      });
+      await runDev({
+        port: values.port ? Number(values.port) : 27247,
+        noWeb: rest.includes("--no-web"),
+        config: values.config as string | undefined,
+        debug: (values.debug as boolean | undefined) ?? false,
+        app: values.app as string | undefined,
+        appPort: values["app-port"] ? Number(values["app-port"]) : undefined,
+      });
     } else {
-      log.error(`Fatal: ${err}`);
+      process.stderr.write(command ? `Unknown command: ${command}\n${USAGE}` : USAGE);
       await telemetry.shutdown();
-      process.exit(1);
+      process.exit(command ? 2 : 0);
     }
+  } catch (err) {
+    log.error(`Fatal: ${err}`);
+    await telemetry.shutdown();
+    process.exit(1);
   }
 
   await telemetry.shutdown();
