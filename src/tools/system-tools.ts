@@ -94,7 +94,7 @@ export async function createSystemTools(
     {
       name: "search",
       description:
-        "Search installed tools by keyword, or search the mpak registry for bundles to install.",
+        "Search installed tools by keyword (scope: tools) or the mpak registry for bundles to install (scope: registry). Returns matches as a list; to call a matched tool, activate it first with nb__manage_tools.",
       inputSchema: {
         type: "object",
         properties: {
@@ -218,35 +218,22 @@ export async function createSystemTools(
             _meta: { [NON_ADVANCING_META_KEY]: true },
           };
         const shown = matches.slice(0, 25);
-        // Auto-promote the top matches straight into the active set, so the
-        // model can call them on the NEXT turn without a separate
-        // nb__manage_tools round-trip — which would re-send the whole cached
-        // prefix for zero state the model couldn't infer. The prefix
-        // cache-write on the next call is irreducible either way (tool
-        // definitions are wire position 0; changing them busts the prefix);
-        // this just removes one model round-trip per discovery. addTool is
-        // idempotent, eligibility-guarded, and LRU-bounded, and no-ops when
-        // there's no active run.
-        const AUTO_PROMOTE_LIMIT = 3;
-        const promoted: string[] = [];
-        if (toolPromotionCtx) {
-          for (const t of shown.slice(0, AUTO_PROMOTE_LIMIT)) {
-            if (toolPromotionCtx.addTool(t.name).ok) promoted.push(t.name);
-          }
-        }
+        // Return matches as DATA only — search never mutates the active tool
+        // set. Tool definitions are wire position 0 (before system and
+        // history), so adding one rewrites the whole cached prefix on the next
+        // call. Promoting speculatively pays that rewrite for tools the model
+        // may never call; instead the model activates a tool it commits to
+        // using via nb__manage_tools — one append-only round-trip (reads the
+        // warm prefix, writes a small delta) in place of a speculative
+        // full-prefix rewrite. This result rides the message tail, the
+        // cache-safe channel.
         const suffix = matches.length > shown.length ? ` (showing top ${shown.length})` : "";
         const lines = [`Found ${matches.length} tool(s) for "${query}"${suffix}:\n`];
         for (const t of shown) lines.push(`- **${t.name}**: ${t.description}`);
-        if (promoted.length > 0) {
-          const subj = promoted.length === 1 ? "This tool is" : `The top ${promoted.length} are`;
-          const obj = promoted.length === 1 ? "it" : "them";
-          lines.push(
-            `\n${subj} now active — call ${obj} directly. Use nb__manage_tools only to activate a different match from the list above.`,
-          );
-        }
+        lines.push("\nTo call one, activate it with nb__manage_tools first.");
         return {
           content: textContent(lines.join("\n")),
-          structuredContent: { tools: shown.map((t) => ({ name: t.name })), promoted },
+          structuredContent: { tools: shown.map((t) => ({ name: t.name })) },
           isError: false,
         };
       },
