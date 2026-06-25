@@ -14,6 +14,7 @@ import { applyCachePolicy } from "../model/cache-policy.ts";
 import { getProviderFromModel, supportsEnabledThinking } from "../model/catalog.ts";
 import { normalizeForReplay } from "../model/inbound-fit.ts";
 import { callModel, type StreamResult } from "../model/stream.ts";
+import { applyToolDisclosure } from "../model/tool-disclosure.ts";
 import { toolMatches } from "../skills/select.ts";
 import { coerceInputForSchema } from "../tools/coerce-input.ts";
 import { bareToolName } from "../tools/namespace.ts";
@@ -580,6 +581,17 @@ export class AgentEngine {
         const callProviderOptions = buildThinkingProviderOptions(config.model, config.thinking);
 
         const callProvider = getProviderFromModel(config.model);
+        // Provider-scoped tool disclosure (sibling of cache-policy): decide
+        // which tools are sent and where the eager (cacheable) prefix ends.
+        // Passthrough today — send the active set; a later slice discloses the
+        // deferred union for providers that support it, so `deferredTools` is
+        // empty for now. `eagerCount` is threaded into the cache policy so the
+        // tools breakpoint lands on the last eager tool. See model/tool-disclosure.ts.
+        const disclosed = applyToolDisclosure({
+          provider: callProvider,
+          directTools: modelTools,
+          deferredTools: [],
+        });
         const callOnce = (msgs: LanguageModelV3Message[]) => {
           // Provider-scoped prompt-cache policy: places the rolling step-anchor
           // + tail breakpoints (Anthropic) so the growing prefix is read back,
@@ -593,7 +605,8 @@ export class AgentEngine {
             provider: callProvider,
             systemPrompt: callPrompt,
             messages: msgs,
-            tools: modelTools,
+            tools: disclosed.tools,
+            eagerToolCount: disclosed.eagerCount,
           });
           return withRetry(
             () =>

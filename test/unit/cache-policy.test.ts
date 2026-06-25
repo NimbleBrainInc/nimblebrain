@@ -127,6 +127,44 @@ describe("applyCachePolicy — Anthropic breakpoint placement", () => {
     for (const m of cachedMsgs) expect(ttlOf(m)).toBe("5m");
   });
 
+  test("eagerToolCount moves the tools breakpoint to the last eager tool", () => {
+    // TOOLS = [search, fetch, log]; mark only the first two eager (log is a
+    // deferred/volatile tool appended after the cacheable prefix).
+    const { tools } = applyCachePolicy({
+      provider: "anthropic",
+      systemPrompt: "sys",
+      messages: [userMsg("hi")],
+      tools: TOOLS,
+      eagerToolCount: 2,
+    });
+    expect(hasCache(tools[1])).toBe(true); // last eager tool carries the breakpoint
+    expect(ttlOf(tools[1])).toBe("1h");
+    expect(hasCache(tools[2])).toBe(false); // the deferred tool must NOT
+    expect(hasCache(tools[0])).toBe(false);
+  });
+
+  test("eagerToolCount omitted ⇒ breakpoint on the last tool (unchanged)", () => {
+    const { tools } = applyCachePolicy({
+      provider: "anthropic",
+      systemPrompt: "sys",
+      messages: [userMsg("hi")],
+      tools: TOOLS,
+    });
+    expect(hasCache(tools[tools.length - 1])).toBe(true);
+    expect(hasCache(tools[0])).toBe(false);
+  });
+
+  test("eagerToolCount 0 ⇒ no tools breakpoint", () => {
+    const { tools } = applyCachePolicy({
+      provider: "anthropic",
+      systemPrompt: "sys",
+      messages: [userMsg("hi")],
+      tools: TOOLS,
+      eagerToolCount: 0,
+    });
+    expect(tools.some((t) => hasCache(t))).toBe(false);
+  });
+
   test("tail breakpoint is on the last message", () => {
     const history = [userMsg("go")];
     appendStep(history, 0, 4);

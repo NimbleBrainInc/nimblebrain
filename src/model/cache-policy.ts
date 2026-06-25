@@ -82,6 +82,16 @@ export interface CachePolicyInput {
   messages: LanguageModelV3Message[];
   /** The model's tool definitions for this call. */
   tools: LanguageModelV3FunctionTool[];
+  /**
+   * Index past which tools are deferred/volatile and must NOT bear the tools
+   * cache breakpoint (from the disclosure result's `eagerCount`). The 1h tools
+   * breakpoint lands on the last EAGER tool — `tools[eagerToolCount - 1]` — so
+   * appending deferred or provider tools after the eager prefix can't bust the
+   * cached eager block (or the system + messages after it). Defaults to
+   * `tools.length`: with no disclosure the whole array is eager and the
+   * breakpoint sits on the last tool, exactly as before.
+   */
+  eagerToolCount?: number;
 }
 
 export interface CachePolicyResult {
@@ -156,7 +166,7 @@ const passthroughStrategy: CacheStrategy = ({ systemPrompt, messages, tools }) =
  * See the module header for the TTL rationale and why the step-anchor is the
  * load-bearing breakpoint.
  */
-const anthropicStrategy: CacheStrategy = ({ systemPrompt, messages, tools }) => {
+const anthropicStrategy: CacheStrategy = ({ systemPrompt, messages, tools, eagerToolCount }) => {
   // (2) system breakpoint — stable, 1-hour.
   const cachedSystem = withCacheControl(systemMessageOf(systemPrompt), CACHE_CONTROL_1H);
 
@@ -172,13 +182,20 @@ const anthropicStrategy: CacheStrategy = ({ systemPrompt, messages, tools }) => 
     breakpointIdxs.has(i) ? withCacheControl(m, CACHE_CONTROL_5M) : m,
   );
 
-  // (1) tools breakpoint on the last definition — caches the whole tools block
+  // (1) tools breakpoint on the last EAGER tool — caches the eager prefix
   // (position 0 in Anthropic's tools→system→messages order). Stable, 1-hour.
+  // Disclosure may append deferred/provider tools after the eager prefix
+  // (`tools[eagerToolCount..]`); those are the volatile suffix and must sit
+  // AFTER the breakpoint so the churning union can't bust the cached eager
+  // block. `eagerToolCount` defaults to `tools.length` — with no disclosure the
+  // breakpoint is the last tool, exactly as before. A count of 0 (no eager
+  // tools) places no tools breakpoint.
+  const eagerBreakpointIdx = (eagerToolCount ?? tools.length) - 1;
   const cachedTools =
-    tools.length === 0
+    eagerBreakpointIdx < 0
       ? tools
       : tools.map((t, i) =>
-          i === tools.length - 1
+          i === eagerBreakpointIdx
             ? ({
                 ...t,
                 providerOptions: { ...t.providerOptions, ...CACHE_CONTROL_1H },
