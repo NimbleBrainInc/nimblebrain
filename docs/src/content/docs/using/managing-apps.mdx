@@ -3,9 +3,9 @@ title: Managing Apps
 description: Start, stop, and monitor the lifecycle of installed MCP bundles.
 ---
 
-import { Steps, Tabs, TabItem, Aside } from '@astrojs/starlight/components';
+import { Aside } from '@astrojs/starlight/components';
 
-Once a bundle is installed, NimbleBrain tracks its lifecycle from startup through crashes and recovery. You can inspect bundles from the CLI, and control their lifecycle through the agent (the `manage_connectors` tool) or the web UI.
+Once a bundle is installed, NimbleBrain tracks its lifecycle from startup through crashes and recovery. You inspect bundles and control their lifecycle through the web UI and the agent (the `manage_connectors` tool).
 
 ## Bundle states
 
@@ -31,54 +31,11 @@ starting ──→ running ──→ crashed ──→ dead
   A `crashed` bundle transitions to `dead` after the health monitor exhausts its restart attempts. A `dead` bundle must be explicitly restarted — it will not recover on its own.
 </Aside>
 
-## Listing bundles
+## Listing bundles and checking health
 
-In the web UI, every installed app and its current status (running, starting, crashed) appears on the workspace **Settings → About** tab, alongside its version and tool count. From the CLI or API:
+In the web UI, every installed app and its current status (running, starting, crashed) appears on the workspace **Settings → About** tab, alongside its version and tool count. Each app's uptime and restart count are shown there too.
 
-<Tabs>
-  <TabItem label="CLI">
-    ```bash
-    nb bundle list
-    ```
-    ```
-    Configured bundles:
-
-      @nimblebraininc/ipinfo (named)
-      @nimblebraininc/granola (named)
-      ../mcp-servers/hello (local)
-    ```
-
-    For JSON output:
-
-    ```bash
-    nb bundle list --json
-    ```
-    ```json
-    [{"name":"@nimblebraininc/ipinfo"},{"name":"@nimblebraininc/granola"},{"path":"../mcp-servers/hello"}]
-    ```
-  </TabItem>
-</Tabs>
-
-## Checking health
-
-The `nb status` command shows live health data when the server is running:
-
-```bash
-nb status
-```
-```
-Bundles: 3 configured
-  @nimblebraininc/ipinfo
-  @nimblebraininc/granola
-  @nimblebraininc/postgres
-
-Skills: 2 loaded
-
-Bundle health:
-  ipinfo: running (uptime: 7200s, restarts: 0)
-  granola: running (uptime: 7200s, restarts: 0)
-  postgres: crashed (uptime: n/a, restarts: 3)
-```
+You can also ask the agent — "Which apps are installed and are they all running?" — and it reports the configured bundles and their live health.
 
 ## Starting and stopping bundles
 
@@ -100,7 +57,7 @@ Uninstall a bundle through the agent or the web UI:
 
 > "Uninstall the Granola app"
 
-The agent uses `manage_connectors` (the `uninstall` action). The `nb bundle remove` CLI command is a deprecated stub that exits with an error — see [nb bundle](/cli/bundle/).
+The agent uses `manage_connectors` (the `uninstall` action). There is no CLI command for this.
 
 Uninstalling a bundle:
 1. Checks the `protected` flag — rejects if protected
@@ -150,20 +107,11 @@ Local and remote bundles do not have trust scores (they report `null`).
 
 ## Credentials
 
-See [Credentials](/config/credentials/) for setting API keys and secrets. Short version: export the env var the bundle declares, or run `nb config set <bundle> <key>=<value> -w <wsId>`.
+See [Credentials](/config/credentials/) for setting API keys and secrets. Short version: export the env var the bundle declares, or set it from workspace settings in the web UI.
 
-## Hot-reloading
+## Applying config changes
 
-After changing `nimblebrain.json` (adding, removing, or modifying bundle entries), signal the running server to reload:
-
-```bash
-nb reload
-```
-```
-Reload signal sent. Running runtime will pick up changes.
-```
-
-This writes a timestamp to `~/.nimblebrain/.reload`. The running runtime watches for this sentinel and reloads bundles and skills without restarting the process.
+After changing `nimblebrain.json` (adding, removing, or modifying bundle entries), restart the server to pick up the changes. In development, `bun run dev` restarts the API automatically on source changes. On the managed platform, configuration changes are applied for you by the platform.
 
 ## What's next
 

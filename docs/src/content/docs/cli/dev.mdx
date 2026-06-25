@@ -1,16 +1,16 @@
 ---
-title: nb dev
+title: Dev mode
 description: Run NimbleBrain in development mode with file watching and HMR.
 ---
 
 import { Aside } from '@astrojs/starlight/components';
 
-`nb dev` starts a supervised dual-process development environment. It runs the API server with automatic restart on source changes and the Vite web dev server with hot module replacement -- all in a single terminal.
+`bun run dev` starts a supervised dual-process development environment. It runs the API server with automatic restart on source changes and the Vite web dev server with hot module replacement -- all in a single terminal.
 
 ## Usage
 
 ```
-nb dev [flags]
+bun run dev [flags]
 ```
 
 ## Flags
@@ -26,7 +26,7 @@ nb dev [flags]
 ## Starting dev mode
 
 ```bash
-nb dev
+bun run dev
 ```
 
 ```
@@ -43,9 +43,9 @@ Both processes share the terminal. Output is prefixed with `[api]` or `[web]` so
 
 ## Dual-process architecture
 
-`nb dev` runs two child processes:
+`bun run dev` runs two child processes:
 
-1. **API server** (`bun --watch`) -- runs `nb serve` with Bun's file watcher. When you change any source file, Bun automatically restarts the server.
+1. **API server** (`bun --watch`) -- runs `bun run src/cli/index.ts serve` with Bun's file watcher. When you change any source file, Bun automatically restarts the server.
 2. **Web dev server** (`bun run dev` in `web/`) -- runs the Vite development server with HMR. Changes to web client files are applied instantly in the browser without a full reload.
 
 Both processes are supervised. When you press Ctrl+C:
@@ -55,10 +55,10 @@ Both processes are supervised. When you press Ctrl+C:
 
 ## API-only mode
 
-If you only need the API server (no web client), skip the Vite process:
+If you only need the API server (no web client), skip the Vite process (bun forwards args after the script name):
 
 ```bash
-nb dev --no-web
+bun run dev --no-web
 ```
 
 ```
@@ -76,7 +76,7 @@ nb dev --no-web
 Override the API server port:
 
 ```bash
-nb dev --port 8080
+bun run dev --port 8080
 ```
 
 The web dev server port is controlled by `NB_WEB_PORT`. The standard npm scripts pre-configure all ports:
@@ -89,33 +89,33 @@ The web dev server port is controlled by `NB_WEB_PORT`. The standard npm scripts
 
 ## Developing an app
 
-To iterate on a Synapse/Upjack app with hot module replacement, point `nb dev` at the app directory with `--app`. The CLI reads the app's `manifest.json`, registers the app in dev mode, and starts a Vite dev server for it (default port `5173`):
+To iterate on a Synapse/Upjack app with hot module replacement, point `bun run dev` at the app directory with `--app`. The CLI reads the app's `manifest.json`, registers the app in dev mode, and starts a Vite dev server for it (default port `5173`):
 
 ```bash
-nb dev --app ../synapse-apps/synapse-crm
+bun run dev --app ../synapse-apps/synapse-crm
 ```
 
 Use `--app-port` to run the app's Vite server on a different port:
 
 ```bash
-nb dev --app ../synapse-apps/synapse-crm --app-port 5180
+bun run dev --app ../synapse-apps/synapse-crm --app-port 5180
 ```
 
-The app dev server runs alongside the API and web processes; its output is prefixed with `[app]`. If the app directory has no `manifest.json`, `nb dev` logs a warning and skips the app dev server.
+The app dev server runs alongside the API and web processes; its output is prefixed with `[app]`. If the app directory has no `manifest.json`, `bun run dev` logs a warning and skips the app dev server.
 
 ## Working directory
 
-`nb dev` spawns `nb serve` under the hood, so it uses the same default work directory: `~/.nimblebrain`. Development data (config, conversations, logs) lives there unless you point somewhere else.
+`bun run dev` starts the server (`bun run src/cli/index.ts serve`) under the hood, so it uses the same default work directory: `~/.nimblebrain`. Development data (config, conversations, logs) lives there unless you point somewhere else.
 
 Override the work directory by setting `NB_WORK_DIR` or passing `--config` to target a specific config file:
 
 ```bash
-NB_WORK_DIR=./my-project/.nimblebrain nb dev
+NB_WORK_DIR=./my-project/.nimblebrain bun run dev
 ```
 
 ## What happens when the web directory is missing
 
-If `web/package.json` does not exist, `nb dev` logs a warning and runs in API-only mode:
+If `web/package.json` does not exist, `bun run dev` logs a warning and runs in API-only mode:
 
 ```
 [dev] Starting API server with file watching...
@@ -126,6 +126,5 @@ If `web/package.json` does not exist, `nb dev` logs a warning and runs in API-on
 
 ## Related commands
 
-- [nb serve](/cli/serve/) -- production server (no file watching)
-- [nb reload](/cli/reload/) -- hot-reload config on a running server
+- [Running the server](/cli/serve/) -- production server (no file watching)
 - [CLI Overview](/cli/overview/) -- global flags and config resolution

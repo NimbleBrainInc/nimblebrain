@@ -6,7 +6,7 @@ import type {
   OAuthClientInformationFull,
   OAuthTokens,
 } from "@modelcontextprotocol/sdk/shared/auth.js";
-import { log } from "../../src/cli/log.ts";
+import { log } from "../../src/observability/log.ts";
 import { WorkspaceOAuthProvider } from "../../src/tools/workspace-oauth-provider.ts";
 import { WorkspaceContext } from "../../src/workspace/context.ts";
 

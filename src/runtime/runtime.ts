@@ -17,7 +17,6 @@ import { BundleLifecycleManager } from "../bundles/lifecycle.ts";
 import { setConnectionRunningHandler } from "../bundles/pending-auth-buffer.ts";
 import type { BundleMcpDeps } from "../bundles/startup.ts";
 import type { AppInfo, BundleInstance, PlacementDeclaration } from "../bundles/types.ts";
-import { log } from "../cli/log.ts";
 import { isToolVisibleToRole, type ResolvedFeatures, resolveFeatures } from "../config/features.ts";
 import { deriveOverridePath } from "../config/overrides.ts";
 import { createPrivilegeHook, NoopConfirmationGate } from "../config/privilege.ts";
@@ -74,6 +73,7 @@ import { getModelByString, getProviderFromModel } from "../model/catalog.ts";
 import { buildModelResolver, resolveModelString } from "../model/registry.ts";
 import { registerBuiltinCredentialProviders } from "../oauth/minted-credential-provider.ts";
 import { requestIdentityAttrs, withSpan } from "../observability/index.ts";
+import { log } from "../observability/log.ts";
 import { PermissionStore } from "../permissions/permission-store.ts";
 import type {
   AppStateInfo,
@@ -278,8 +278,8 @@ export class Runtime {
   private _workspaceSources: ToolSource[] = [];
   /**
    * Domain-context getter for the automations bundle. Set by the
-   * automations source factory; consumed by internal callers (CLI's
-   * `nb automation pause/resume`, bundle lifecycle's
+   * automations source factory; consumed by internal callers (the
+   * automations tool handlers and bundle lifecycle's
    * `installBundleSchedules` / `removeBundleAutomations`) that need the
    * full domain shape — including operator-only fields (`source`,
    * `bundleName`, `allowedTools`) — that the LLM-facing tool schema
@@ -394,7 +394,6 @@ export class Runtime {
     const telemetryManager = TelemetryManager.create({
       workDir: resolveWorkDir(config),
       enabled: config.telemetry?.enabled,
-      mode: "serve",
     });
 
     // Load identity stores early — before bundle startup

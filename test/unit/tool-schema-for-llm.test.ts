@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, spyOn } from "bun:test";
-import { log } from "../../src/cli/log.ts";
+import { log } from "../../src/observability/log.ts";
 import { toolSchemaForLlm } from "../../src/engine/tool-schema-for-llm.ts";
 
 /**

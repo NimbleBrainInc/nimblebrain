@@ -1,6 +1,6 @@
 import { randomBytes } from "node:crypto";
 import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
-import { log } from "../../src/cli/log.ts";
+import { log } from "../../src/observability/log.ts";
 import { _resetBouncerModeForTest, getBouncerMode } from "../../src/oauth/bouncer-config.ts";
 
 const ENV_VARS = [

@@ -2,7 +2,6 @@ import { readFileSync } from "node:fs";
 import { readFile, rename, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { artifactResolutionsTotal, recordLlmUsage } from "../api/metrics.ts";
-import { log } from "../cli/log.ts";
 import { textContent } from "../engine/content-helpers.ts";
 import type { ToolResult } from "../engine/types.ts";
 import {
@@ -14,6 +13,7 @@ import {
 } from "../host-resources/artifacts/index.ts";
 import { ORG_ADMIN_ROLES } from "../identity/types.ts";
 import { getAvailableModels, isModelAllowed } from "../model/catalog.ts";
+import { log } from "../observability/log.ts";
 import {
   getRequestContext,
   type RequestContext,

@@ -48,13 +48,6 @@ For API-only development (no web client):
 bun run dev:api
 ```
 
-### Option 3: CLI only (no web)
-
-```bash
-bun install
-bun run dev:tui    # Interactive TUI (Ink)
-```
-
 ## How It Works
 
 ```
@@ -279,36 +272,30 @@ Bundles, tool registries, and conversation data are scoped to a workspace. Every
 
 Two workspaces that install the same bundle spawn independent subprocesses with data directories under `<workDir>/workspaces/<wsId>/data/<bundle>/`, so their entity data never crosses. Sidebar placements, briefing facets, and the app list are filtered per workspace.
 
-### CLI Commands
+### Running the runtime
 
-```
-nb                          Interactive TUI (default) / headless pipe mode
-nb serve                    HTTP API server (production)
-nb dev                      Dev mode: API with file watching + web HMR
-nb bundle list|add|remove|search   Manage bundles
-nb skill list|info          Inspect skills
-nb config set|get|clear     Configure per-bundle credentials (requires `-w <wsId>`)
-nb status                   Workspace status
-nb reload                   Hot-reload bundles and config
-nb telemetry on|off|status|reset   Manage anonymous telemetry
-nb automation               Manage automation rules
+The runtime is launched with `bun` (there is no `nb` binary):
+
+```bash
+bun run start    # serve: HTTP API server (production)
+bun run dev      # dev mode: API with file watching + web HMR
 ```
 
-Run `nb --help` or `nb <command> --help` for full usage. If you haven't run `bun link`, use `bun run src/cli/index.ts` instead of `nb`.
+`bun run start` is `bun run src/cli/index.ts serve`; that explicit form (with `--config`, `--port`) is exactly what the container runs. Everything else — bundles, skills, credentials, automations, telemetry — is managed from the web UI and the agent's tools, not the CLI.
 
-### CLI Flags
+### Flags
+
+Pass flags after the command, e.g. `bun run start --port 8080` or `bun run dev --no-web`:
 
 | Flag | Scope | Purpose |
 |------|-------|---------|
-| `--config <path>` | Global | Config file (default: `./nimblebrain.json`) |
-| `--model <id>` | Global | Override default model |
-| `--workdir <path>` | Global | Override working directory |
-| `--debug` | Global | Enable debug event logging |
-| `--help` | Global | Print help and exit |
-| `--json` | Headless + subcommands | Structured JSON output |
-| `--resume <id>` | TUI/headless | Resume a previous conversation |
+| `--config <path>`, `-c` | serve, dev | Config file (default: `./nimblebrain.json`) |
+| `--model <id>` | serve | Override default model |
+| `--debug` | serve, dev | Enable debug event logging |
 | `--port <number>` | serve, dev | HTTP server port (default: 27247) |
 | `--no-web` | dev | Skip web dev server (API only) |
+
+The working directory is set via `NB_WORK_DIR` (see Environment Variables).
 
 ### Environment Variables
 
@@ -324,7 +311,7 @@ Run `nb --help` or `nb <command> --help` for full usage. If you haven't run `bun
 
 | Variable | Purpose |
 |----------|---------|
-| `NB_WORK_DIR` | Override working directory (takes precedence over config and `--workdir`) |
+| `NB_WORK_DIR` | Override working directory (takes precedence over config) |
 | `ALLOWED_ORIGINS` | Comma-separated allowed CORS origins (for cookie-based auth) |
 | `MCP_MAX_SESSIONS` | Max concurrent MCP sessions before LRU eviction kicks in (default: 100) |
 | `MCP_SESSION_TTL_SECONDS` | MCP session idle TTL in seconds; drives both transport-map sweep and registry TTL (default: 28800, i.e. 8h) |
@@ -344,22 +331,6 @@ Run `nb --help` or `nb <command> --help` for full usage. If you haven't run `bun
 | `NB_INTERNAL_TOKEN` | Shared secret for service-to-service calls (never forwarded to bundles) |
 | `POSTHOG_API_KEY` | PostHog key for anonymous product telemetry |
 | `NB_TELEMETRY_DISABLED` | Set to `1` to disable telemetry (also `DO_NOT_TRACK=1`) |
-
-## Headless / Pipe Mode
-
-When stdin is not a terminal (piped), the CLI runs in headless mode:
-
-```bash
-echo "What is 2 + 2?" | bun run dev:tui
-
-# Multi-turn (conversation carried across lines)
-printf "Hello\nWhat did I just say?\n" | bun run dev:tui
-
-# Structured JSON output
-echo "List files" | bun run dev:tui -- --json
-```
-
-Each line of stdin is one message. The conversation ID is carried across lines automatically. Responses go to stdout (plain text by default, JSON objects with `--json`). Logs go to stderr. EOF exits cleanly.
 
 ## Programmatic API
 
@@ -463,7 +434,7 @@ src/
 │   ├── structured-log-sink.ts   Per-conversation JSONL logs with cost
 │   ├── workspace-log-sink.ts    Workspace-level daily JSONL logs
 │   ├── console-events.ts        Stderr event logging
-│   ├── callback-events.ts       Callback-based events (Ink UI)
+│   ├── callback-events.ts       Callback-based events (in-process chat handler)
 │   ├── debug-events.ts          Verbose debug logging
 │   └── noop-events.ts           Silent event sink
 ├── files/                File context extraction
@@ -487,13 +458,11 @@ src/
 ├── telemetry/            Anonymous product telemetry
 │   ├── posthog-sink.ts   PostHog event mapping
 │   └── manager.ts        TelemetryManager (opt-in/out, anonymous ID)
-└── cli/                  Interactive + headless terminal interface
-    ├── index.ts          Entry point (Commander program assembly)
-    ├── config.ts         nimblebrain.json loading
-    ├── commands/         One file per command group
-    ├── dev.ts            nb dev dual-process supervisor
-    ├── app.tsx           Ink (React) UI component
-    └── markdown.tsx      Lightweight markdown renderer for Ink
+└── cli/                  Process entry: serve + dev launchers
+    ├── index.ts          Entry point (argv dispatch: serve | dev)
+    ├── serve.ts          HTTP API server boot
+    ├── dev.ts            dev-mode dual-process supervisor
+    └── config.ts         nimblebrain.json loading
 ```
 
 ## Deployment
@@ -558,7 +527,7 @@ When total tools ≤30, all are surfaced directly. Above 30 with no skill matche
 ### Conversation Storage
 
 - **`InMemoryConversationStore`** — default for programmatic use
-- **`JsonlConversationStore`** — default for CLI, files in `~/.nimblebrain/conversations/`. Line 1: `{ id, createdAt }` metadata. Lines 2+: `StoredMessage` objects.
+- **`JsonlConversationStore`** — default store, files in `~/.nimblebrain/conversations/`. Line 1: `{ id, createdAt }` metadata. Lines 2+: `StoredMessage` objects.
 - **`EventSourcedConversationStore`** — persists engine events as JSONL. Append-only after creation. Token totals, cost, and last model derived at read time from `llm.response` events via `deriveUsageMetrics()`. Supports multi-user conversations with ownership, visibility (private/shared), and participant management.
 
 User-uploaded files are persisted in the workspace `FileStore` and referenced from `user.message` events as MCP `resource_link` blocks (`{type:"resource_link", uri:"files://<id>", mimeType, name}`) — the conversation log never carries inline bytes. At the `model.doStream` boundary the runtime rehydrates image links to AI SDK V3 `file` parts with bytes loaded from the store, so vision content survives across multi-turn agent loops without inflating the JSONL. Files are also addressable as MCP resources at `files://<id>` (any client can fetch via `resources/read`).
@@ -738,7 +707,7 @@ These are non-negotiable patterns. Violating them causes production bugs:
 | Work directory | `~/.nimblebrain` |
 | HTTP port | 27247 |
 | HTTP host | `127.0.0.1` |
-| Conversation store (CLI) | JSONL in `~/.nimblebrain/conversations/` |
+| Conversation store | JSONL in `~/.nimblebrain/conversations/` |
 | Conversation store (programmatic) | In-memory |
 
 ### Dependencies
@@ -752,7 +721,6 @@ These are non-negotiable patterns. Violating them causes production bugs:
 | `@modelcontextprotocol/sdk` | MCP client (stdio transport) |
 | `ajv` + `ajv-formats` | JSON Schema validation for MCPB manifests |
 | `gray-matter` | YAML frontmatter parsing for skill files |
-| `ink` | React-based terminal UI |
 | `posthog-node` | Anonymous product telemetry (server-side) |
 | `posthog-js` | Anonymous product telemetry (web client) |
 | `hono` | HTTP framework (routing, middleware, typed context) |
@@ -763,7 +731,7 @@ These are non-negotiable patterns. Violating them causes production bugs:
 - **`WorkspaceLogSink`** — Workspace-level daily rolling JSONL logs. Only persists workspace events (bundle lifecycle, data/config changes, skill/file operations).
 - **`ConsoleEventSink`** — Human-readable stderr for development.
 - **`DebugEventSink`** — Verbose JSON dumps (`--debug`).
-- **`CallbackEventSink`** — Bridges events into React state (Ink UI).
+- **`CallbackEventSink`** — Bridges run events to the in-process chat handler (`POST /v1/chat`).
 - **`PostHogEventSink`** — Anonymous telemetry. No PII. Opt-out: `telemetry.enabled: false`, `NB_TELEMETRY_DISABLED=1`, or `DO_NOT_TRACK=1`.
 
 ## License

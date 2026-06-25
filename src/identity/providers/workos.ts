@@ -1,6 +1,6 @@
 import { GeneratePortalLinkIntent, WorkOS } from "@workos-inc/node";
-import { log } from "../../cli/log.ts";
 import { isAllowedOriginScheme, publicOrigin } from "../../oauth/public-origin.ts";
+import { log } from "../../observability/log.ts";
 import { ensureUserWorkspace } from "../../workspace/provisioning.ts";
 import type { WorkspaceStore } from "../../workspace/workspace-store.ts";
 import type { WorkosAuth } from "../instance.ts";

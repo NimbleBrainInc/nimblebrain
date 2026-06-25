@@ -1,7 +1,7 @@
 import mammoth from "mammoth";
 import { extractText as extractPdfText, getDocumentProxy } from "unpdf";
 import * as XLSX from "xlsx";
-import { log } from "../cli/log.ts";
+import { log } from "../observability/log.ts";
 import { isTextMime } from "./mime.ts";
 
 export interface ExtractedPdfPage {

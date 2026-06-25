@@ -4,7 +4,7 @@
  * `server.ts` provider-agnostic.
  */
 
-import { log } from "../../cli/log.ts";
+import { log } from "../../observability/log.ts";
 import { InMemorySessionRegistry } from "./memory.ts";
 import { RedisSessionRegistry } from "./redis.ts";
 import type { SessionRegistry } from "./types.ts";

@@ -1,7 +1,7 @@
-import { log } from "../cli/log.ts";
 import { estimateToolDescriptionTokens } from "../engine/token-estimate.ts";
 import type { ToolSchema } from "../engine/types.ts";
 import { getModelByString } from "../model/catalog.ts";
+import { log } from "../observability/log.ts";
 
 /**
  * Per-call safety margin reserved against the model's context window after

@@ -1,12 +1,12 @@
 import { existsSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
-import { log } from "../cli/log.ts";
 import { cleanupComposioBundle } from "../composio/sdk.ts";
 import { resolveConnectorSkillsConfig } from "../config/connector-skills.ts";
 import type { EventSink } from "../engine/types.ts";
 import { fleetIssuerOption } from "../oauth/fleet-assertion.ts";
 import { mcpAuthCallbackUrl } from "../oauth/mcp-callback-url.ts";
+import { log } from "../observability/log.ts";
 import type { PlacementRegistry } from "../runtime/placement-registry.ts";
 import { resolveOverlay } from "../skills/connector-skill-resolver.ts";
 import {
@@ -1316,7 +1316,7 @@ export class BundleLifecycleManager {
         if (!wrapped) {
           throw new Error(
             `[lifecycle] OAuth client_secret not found at credential key "${ref.oauthClient.clientSecret.key}" for ${serverName} — ` +
-              `run \`nb credential set ${wsId} ${ref.oauthClient.clientSecret.key} <value>\``,
+              `configure it in the workspace's Connections settings (web UI)`,
           );
         }
         resolvedSecret = wrapped.reveal();

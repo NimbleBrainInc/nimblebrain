@@ -17,7 +17,7 @@ import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { beforeAll, describe, expect, it, spyOn } from "bun:test";
-import { log } from "../../../src/cli/log.ts";
+import { log } from "../../../src/observability/log.ts";
 import type { WorkosAuth } from "../../../src/identity/instance.ts";
 import { WorkosIdentityProvider } from "../../../src/identity/providers/workos.ts";
 import { WorkspaceStore } from "../../../src/workspace/workspace-store.ts";

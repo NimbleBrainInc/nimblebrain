@@ -35,7 +35,7 @@
  * + the clustered RunBus; see the prerequisites in this package's `CLAUDE.md`.
  */
 
-import { log } from "../cli/log.ts";
+import { log } from "../observability/log.ts";
 import {
   bundleProviderId,
   type ConnectionHealthProbe,

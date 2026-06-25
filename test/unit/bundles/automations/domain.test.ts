@@ -1,12 +1,11 @@
 /**
  * Domain API regression tests.
  *
- * These tests guard against the QA-flagged silent breakage class: the
- * `nb automation pause/resume` CLI calling the LLM-facing tool with the
- * old flat shape `{ name, enabled }`. AJV with `strict: false` accepts
- * the extra root-level field without complaint, but the new handler
- * reads `args.manifest`, sees undefined, and returns `updated: false`
- * — silently no-op'ing while the CLI proudly prints "Paused".
+ * These tests guard against a silent breakage class: a caller invoking the
+ * LLM-facing tool with the old flat shape `{ name, enabled }`. AJV with
+ * `strict: false` accepts the extra root-level field without complaint, but
+ * the new handler reads `args.manifest`, sees undefined, and returns
+ * `updated: false` — silently no-op'ing while the caller assumes success.
  *
  * Fix: the CLI bypasses the LLM-facing tool and calls the domain API
  * directly. These tests pin that contract — `updateAutomation` flips

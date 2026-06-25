@@ -35,9 +35,9 @@
  */
 
 import { AuthScheme, Composio } from "@composio/core";
-import { log } from "../cli/log.ts";
 import { getBouncerMode } from "../oauth/bouncer-config.ts";
 import { publicOrigin } from "../oauth/public-origin.ts";
+import { log } from "../observability/log.ts";
 
 /** Default Composio API host. Overridable via `COMPOSIO_API_BASE_URL`. */
 export const COMPOSIO_API_BASE = "https://backend.composio.dev";

@@ -1,7 +1,7 @@
 /**
  * Dev mode registry — tracks which apps are being served from local Vite dev servers.
  *
- * When `nb dev --app <path>` is used, the specified app's resources are served
+ * When `bun run dev --app <path>` is used, the specified app's resources are served
  * from the Vite dev server instead of the bundle's static HTML.
  */
 

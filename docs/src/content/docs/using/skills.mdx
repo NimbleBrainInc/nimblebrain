@@ -115,7 +115,7 @@ Installing a connector can automatically apply a short **usage overlay** — cur
 Overlays differ from authored skills in two ways:
 
 - **Surfaced once into the conversation, not the system prompt.** An authored `dynamic` + `tool-affinity` skill composes into the system prompt for the turn. A connector overlay instead appears in the conversation history exactly once — on the first call to a matching tool — and then rides the (cached, append-only) history for the rest of the conversation. It's relevant (only when the connector's tools are actually used) and cache-friendly (it never re-varies the cached system prefix turn to turn). The tradeoff of this reactive model: the overlay surfaces *after* the first matching tool call and takes effect from the next turn, so guidance whose value is preemptive (e.g. "confirm before sending") does not gate that very first call. For hard preconditions, prefer an authored `always` skill or a tool-side guard.
-- **Stored separately.** Materialized overlays live in a `connector-skills/` store, distinct from authored `skills/`. They don't appear in `nb skill list` / `skills__list`; list them with the connector tool's `list_bound_skills` action instead.
+- **Stored separately.** Materialized overlays live in a `connector-skills/` store, distinct from authored `skills/`. They don't appear in the `skills__list` tool output; list them with the connector tool's `list_bound_skills` action instead.
 
 Resolution is **opt-in and fail-closed**: it runs only when `CONNECTOR_SKILLS_ENABLED=true`, fetches at a pinned repo version, records the fetched content hash, and treats a missing overlay (or any fetch error) as a no-op — a connector install never fails because its optional guidance couldn't be fetched. Override the repo / version with `CONNECTOR_SKILLS_REPO` and `CONNECTOR_SKILLS_VERSION`. When a connector has a curated overlay, the platform skips synthesizing the bundle's own `skill://usage` guidance so the model sees one set of instructions, not two.
 
@@ -123,26 +123,7 @@ Uninstalling the connector removes its materialized overlays.
 
 ## Listing skills
 
-```bash
-nb skill list
-```
-```
-NAME              STRATEGY  PRIORITY  SOURCE
-capabilities      always    10        src/skills/core/bootstrap.md
-meeting-notes     dynamic   50        /home/user/.nimblebrain/skills/meeting-notes.md
-```
-
-For JSON output:
-
-```bash
-nb skill list --json
-```
-
-Get details on a specific skill:
-
-```bash
-nb skill info meeting-notes
-```
+Ask the agent which skills are loaded — it uses the built-in `skills__list` tool to report each skill's name, loading strategy, priority, and source file. To see one skill's full definition, ask the agent for its details.
 
 ## Creating a custom skill
 
@@ -180,17 +161,9 @@ nb skill info meeting-notes
    EOF
    ```
 
-3. Verify it loaded:
+3. Restart the server to load the new skill. In development, `bun run dev` reloads on source changes.
 
-   ```bash
-   nb skill list
-   ```
-
-4. If the runtime is already running, reload:
-
-   ```bash
-   nb reload
-   ```
+4. Verify it loaded by asking the agent which skills are available (it uses the `skills__list` tool).
 </Steps>
 
 ## What's next

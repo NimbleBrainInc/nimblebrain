@@ -5,7 +5,7 @@
  * Run `bun run sync-models` to refresh.
  */
 
-import { log } from "../cli/log.ts";
+import { log } from "../observability/log.ts";
 import catalogData from "./catalog-data.json";
 
 // ============================================================================

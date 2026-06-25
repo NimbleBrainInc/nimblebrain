@@ -15,7 +15,7 @@ import {
   saveWorkspaceCredential,
   type UserConfigFieldDef,
 } from "../../src/config/workspace-credentials.ts";
-import { log } from "../../src/cli/log.ts";
+import { log } from "../../src/observability/log.ts";
 
 const BUNDLE = "@nimblebraininc/newsapi";
 const WS_A = "ws_alpha";
@@ -706,9 +706,9 @@ describe("resolveUserConfig — forcePrompt (TUI configure flow)", () => {
 });
 
 describe("friendlyMpakConfigError", () => {
-  test("translates MpakConfigError into nb config set hints", () => {
-    // No envAliases declared on these fields → only the `nb config set`
-    // lines appear, no `export` suggestions.
+  test("translates MpakConfigError into web-UI hints when no env alias is declared", () => {
+    // No envAliases declared on these fields → each points at the workspace's
+    // Connections settings (web UI), no `export` suggestions.
     const mpakError = new MpakConfigError("@scope/bundle", [
       { key: "api_key", title: "API Key", sensitive: true, envAliases: [] },
       { key: "workspace_id", title: "Workspace ID", sensitive: false, envAliases: [] },
@@ -719,11 +719,12 @@ describe("friendlyMpakConfigError", () => {
     expect(translated.message).toContain('"API Key"');
     expect(translated.message).toContain('"Workspace ID"');
     expect(translated.message).toContain("@scope/bundle");
+    expect(translated.message).toContain(`(workspace ${WS_A})`);
     expect(translated.message).toContain(
-      `nb config set @scope/bundle api_key=<value> -w ${WS_A}`,
+      `set "api_key" in the workspace's Connections settings (web UI)`,
     );
     expect(translated.message).toContain(
-      `nb config set @scope/bundle workspace_id=<value> -w ${WS_A}`,
+      `set "workspace_id" in the workspace's Connections settings (web UI)`,
     );
     expect(translated.message).not.toContain("export ");
   });
@@ -743,9 +744,6 @@ describe("friendlyMpakConfigError", () => {
     ]);
 
     const translated = friendlyMpakConfigError(mpakError, WS_A);
-    expect(translated.message).toContain(
-      `nb config set @scope/bundle api_key=<value> -w ${WS_A}`,
-    );
     expect(translated.message).toContain('export ANTHROPIC_API_KEY=<value>');
     expect(translated.message).toContain('export CLAUDE_API_KEY=<value>');
   });
@@ -769,9 +767,9 @@ describe("friendlyMpakConfigError", () => {
     const translated = friendlyMpakConfigError(mpakError, WS_A);
     // api_key has an export hint.
     expect(translated.message).toContain('export ANTHROPIC_API_KEY=<value>  # satisfies "api_key"');
-    // secret_only gets only its nb config set line.
+    // secret_only has no alias, so it points at the web UI.
     expect(translated.message).toContain(
-      `nb config set @scope/bundle secret_only=<value> -w ${WS_A}`,
+      `set "secret_only" in the workspace's Connections settings (web UI)`,
     );
     expect(translated.message).not.toContain('satisfies "secret_only"');
   });

@@ -2,7 +2,7 @@
 /**
  * Lint: operational code logs through the structured logger, not raw `console.*`.
  *
- * `src/cli/log.ts` is the one logger. In a deployed pod (`NB_LOG_FORMAT=json`) it
+ * `src/observability/log.ts` is the one logger. In a deployed pod (`NB_LOG_FORMAT=json`) it
  * emits structured JSON auto-enriched with `service` / `tenant_id` /
  * `correlation_id` (the active trace id) / identity, so logs pivot to traces and
  * are queryable per tenant in Loki. A raw `console.error` / `console.warn` /
@@ -13,10 +13,9 @@
  * outside the allowlist below. Comment lines (mentioning `console.log` in prose)
  * are ignored.
  *
- * Allowed (console is the right tool there): the logger itself, the CLI command
- * surfaces (`cli/commands.ts` + `cli/commands/**` — user-facing terminal
- * output), the console/debug EventSinks (their whole job is to print events),
- * the `sync-models` CLI script, and `briefing-debug`. A genuinely exceptional
+ * Allowed (console is the right tool there): the logger itself, the
+ * console/debug EventSinks (their whole job is to print events), the
+ * `sync-models` CLI script, and `briefing-debug`. A genuinely exceptional
  * call elsewhere needs a `// lint-ok:console` marker on the line above.
  *
  * Scope: `src/**\/*.ts`. Scripts and tests are out of scope.
@@ -33,17 +32,13 @@ const ALLOW_MARKER = "lint-ok:console";
 /** Files where raw `console.*` is the correct, sanctioned output. */
 const ALLOWED_FILES: ReadonlySet<string> = new Set<string>(
   [
-    "cli/log.ts",
-    "cli/commands.ts",
+    "observability/log.ts",
     "adapters/console-events.ts",
     "adapters/debug-events.ts",
     "model/sync-models.ts",
     "services/briefing-debug.ts",
   ].map((f) => f.split("/").join(sep)),
 );
-
-/** Directory prefixes where console output is sanctioned (CLI command surfaces). */
-const ALLOWED_DIR_PREFIXES: readonly string[] = [`cli${sep}commands${sep}`];
 
 const CONSOLE_CALL = /console\.(error|warn|log|info|debug)\s*\(/;
 
@@ -66,7 +61,6 @@ interface Violation {
 function scanFile(absPath: string, violations: Violation[]): void {
   const relPath = relative(SRC_ROOT, absPath);
   if (ALLOWED_FILES.has(relPath)) return;
-  if (ALLOWED_DIR_PREFIXES.some((p) => relPath.startsWith(p))) return;
   const lines = readFileSync(absPath, "utf-8").split("\n");
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i] ?? "";
@@ -98,7 +92,7 @@ async function main(): Promise<void> {
       console.error(`  ${v.file}:${v.line}`);
       console.error(`    ${v.snippet}\n`);
     }
-    console.error("Operational code must log through `log` from `src/cli/log.ts` so lines are");
+    console.error("Operational code must log through `log` from `src/observability/log.ts` so lines are");
     console.error("structured JSON with tenant_id + correlation_id in deployed pods. CLI command");
     console.error(`output is exempt; a rare exception needs a // ${ALLOW_MARKER} comment above.`);
     process.exit(1);

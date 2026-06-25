@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
-import { log } from "../cli/log.ts";
+import { log } from "../observability/log.ts";
 import { WorkspaceContext } from "../workspace/context.ts";
 import { resolveLocalBundle } from "./resolve.ts";
 import type { BundleRef } from "./types.ts";

@@ -1,7 +1,6 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { CallbackEventSink } from "../adapters/callback-events.ts";
-import { log } from "../cli/log.ts";
 import { isToolEnabled, isToolVisibleToRole, type ResolvedFeatures } from "../config/features.ts";
 import { CONVERSATION_ID_RE } from "../conversation/types.ts";
 import type { EngineEvent, EventSink } from "../engine/types.ts";
@@ -18,6 +17,7 @@ import {
 import type { IdentityProvider, UserIdentity } from "../identity/provider.ts";
 import { RefreshTokenError } from "../identity/provider.ts";
 import { DEV_IDENTITY } from "../identity/providers/dev.ts";
+import { log } from "../observability/log.ts";
 import {
   ConversationAccessDeniedError,
   ConversationCorruptedError,

@@ -7,7 +7,7 @@ import { createEchoModel } from "../helpers/echo-model.ts";
 import { createTestAuthAdapter } from "../helpers/test-auth-adapter.ts";
 import { startServer } from "../../src/api/server.ts";
 import type { ServerHandle } from "../../src/api/server.ts";
-import { log } from "../../src/cli/log.ts";
+import { log } from "../../src/observability/log.ts";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import type { ToolSource, Tool } from "../../src/tools/types.ts";

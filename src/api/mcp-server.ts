@@ -4,17 +4,15 @@
  * External MCP clients (Claude Code, Open WebUI, etc.) connect to /mcp and
  * access all installed tools through the standard MCP protocol.
  *
- * **Stage 2 (cross-workspace refactor): identity-bound sessions.** The
- * `/mcp` session no longer carries a workspace. `tools/list` returns the
- * **union of every tool the identity can call** across every workspace
- * they belong to, namespaced as `ws_<id>-<tool>` via T005's aggregator.
- * `tools/call` parses the namespace via `parseNamespacedToolName` (T002)
- * and routes via `routeToolCall` (T004); the workspace is derived from
- * the parsed name on every call, NOT from any session-level state. The
- * `X-Workspace-Id` header is ignored on `/mcp` (logged once per session
- * at debug, not an error) — per Q3 the bridge keeps its session alive
- * across a workspace switch in the web shell, and the switcher must not
- * influence routing.
+ * **Identity-bound sessions, no workspace.** A `/mcp` session carries no
+ * workspace, so `tools/list` returns ONLY the caller's identity tools
+ * (conversations, files, automations) — no workspace tools and no
+ * cross-workspace union. `tools/call` routes a bare `<source>__<tool>` through
+ * the identity door via `routeToolCall`; any `ws_<id>-...` name is refused
+ * (`WorkspaceToolUnavailable`). Workspace tools return when `/mcp` is reworked
+ * as a workspace-bound agent projection. The `X-Workspace-Id` header is ignored
+ * on `/mcp` (logged once per session at debug, not an error) so the bridge
+ * keeps its session alive across a web-shell workspace switch.
  *
  * Two-layer state architecture:
  *
@@ -84,9 +82,9 @@ import {
   type Resource,
   type ServerCapabilities,
 } from "@modelcontextprotocol/sdk/types.js";
-import { log } from "../cli/log.ts";
 import { isToolEnabled, isToolVisibleToRole, type ResolvedFeatures } from "../config/features.ts";
 import type { UserIdentity } from "../identity/provider.ts";
+import { log } from "../observability/log.ts";
 import {
   routeToolCall,
   UnknownIdentitySource,

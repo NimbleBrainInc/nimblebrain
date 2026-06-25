@@ -1,5 +1,5 @@
-import { log } from "../cli/log.ts";
 import type { EventSink } from "../engine/types.ts";
+import { log } from "../observability/log.ts";
 import type { McpSource } from "./mcp-source.ts";
 
 export type BundleState = "healthy" | "restarting" | "dead";

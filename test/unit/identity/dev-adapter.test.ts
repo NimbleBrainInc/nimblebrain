@@ -2,7 +2,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, test, spyOn } from "bun:test";
-import { log } from "../../../src/cli/log.ts";
+import { log } from "../../../src/observability/log.ts";
 import { DevIdentityProvider } from "../../../src/identity/providers/dev.ts";
 import { UserStore } from "../../../src/identity/user.ts";
 import { WorkspaceStore } from "../../../src/workspace/workspace-store.ts";

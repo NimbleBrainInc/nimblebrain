@@ -1,6 +1,6 @@
 import type { LanguageModelV3, SharedV3ProviderOptions } from "@ai-sdk/provider";
-import { log } from "../cli/log.ts";
 import { getModelByString, getProviderFromModel } from "../model/catalog.ts";
+import { log } from "../observability/log.ts";
 import { type TokenUsage, tokenUsageFromV3 } from "../usage/types.ts";
 import type { BriefingContext } from "./briefing-collector.ts";
 import { debugBriefing } from "./briefing-debug.ts";

@@ -25,7 +25,7 @@
  * mirrors the `SessionRegistry` pattern.
  */
 
-import { log as logger } from "../cli/log.ts";
+import { log as logger } from "../observability/log.ts";
 import { RunInProgressError } from "./errors.ts";
 
 export type RunStatus = "running" | "done" | "error" | "cancelled";
