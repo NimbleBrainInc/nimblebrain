@@ -7,10 +7,9 @@ const SYSTEM_TOOL_PREFIX = "nb__";
 
 /**
  * A tool is a system tool if its BARE name (post-namespace-strip) starts
- * with `nb__`. Stage 2's cross-workspace aggregator namespaces every
- * entry as `ws_<id>-nb__<tool>`, so a raw `name.startsWith("nb__")`
- * check silently classifies zero system tools — which empties the Tier-2
- * direct list and hands the model no tools at all.
+ * with `nb__`. Workspace tools are namespaced as `ws_<id>-nb__<tool>`, so a
+ * raw `name.startsWith("nb__")` check silently classifies zero system tools —
+ * which empties the Tier-2 direct list and hands the model no tools at all.
  */
 function isSystemTool(t: ToolSchema): boolean {
   return bareToolName(t.name).startsWith(SYSTEM_TOOL_PREFIX);
@@ -97,8 +96,8 @@ export function surfaceTools(
 }
 
 function matchToolPattern(toolName: string, pattern: string): boolean {
-  // Stage 2 (T006): tool names from the cross-workspace aggregator carry
-  // a `ws_<id>-` namespace prefix. Patterns coming from `skill.allowedTools`
+  // Namespaced tool names carry a `ws_<id>-` namespace prefix. Patterns
+  // coming from `skill.allowedTools`
   // / `request.allowedTools` / `focusedServerName` are typically authored
   // against the BARE form (`source__tool` or `source__*`) — that's the
   // shape skill manifests and the chat composer use. Match against both

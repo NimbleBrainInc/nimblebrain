@@ -223,16 +223,15 @@ export function createDelegateTool(ctx: DelegateContext): InProcessTool {
         //     active set. Used as the default when no globs are supplied,
         //     and as the match corpus for BARE globs (`source__*`).
         //
-        //   - `ctx.tools.availableTools()` — identity-wide union, namespaced.
-        //     Used as the match corpus for NAMESPACED globs (`ws_<id>-...`)
-        //     so an explicit cross-workspace request can reach across the
-        //     identity's full set.
+        //   - `ctx.tools.availableTools()` — the bound workspace's tools
+        //     (namespaced) plus identity tools. Used as the match corpus for
+        //     NAMESPACED globs (`ws_<id>-...`), which can only target the one
+        //     workspace the session is walled to; a glob naming another
+        //     workspace matches nothing here and is denied at dispatch.
         //
-        // Bare globs intentionally don't broaden to cross-workspace: a
-        // caller using `["crm__*"]` from workspace A expects the focused
-        // workspace's CRM, not every workspace's CRM. Namespaced globs are
-        // the opt-in for cross-workspace reach. Mixed glob lists work —
-        // each glob expands against its own corpus and the results union.
+        // Bare globs (`["crm__*"]`) match the bound workspace's CRM by its bare
+        // inner name. Mixed glob lists work — each glob expands against the same
+        // bounded corpus and the results union.
         const globs = toolGlobs ?? profile?.tools;
         const defaultTools = await ctx.defaultActiveTools();
         let childTools: ToolSchema[];

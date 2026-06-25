@@ -42,8 +42,9 @@ export interface TaskFnRequest {
   metadata?: Record<string, unknown>;
   /**
    * Focused workspace (optional). Set → tools scoped to that workspace
-   * + identity tools, briefing for that workspace. Omitted →
-   * cross-workspace reach, no focused-workspace briefing.
+   * + identity tools, briefing for that workspace. Omitted → the session
+   * (personal) workspace's tools + identity tools, no focused-workspace
+   * briefing. Either way the automation is walled to one workspace.
    */
   workspaceId?: string;
   /** Identity under which this automation runs. */

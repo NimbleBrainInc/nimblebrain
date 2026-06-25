@@ -1762,9 +1762,9 @@ async function parseChatBody(
   const parsed = body as ChatRequestBody;
 
   // The validated `X-Workspace-Id` (focused workspace) threads into
-  // `ChatRequest.workspaceId`: it drives the deterministic per-workspace
-  // briefing (apps + overlays), NOT the tool list (still the identity's
-  // cross-workspace union). See the `ChatRequest.workspaceId` doc comment.
+  // `ChatRequest.workspaceId`: it drives BOTH the deterministic per-workspace
+  // briefing (apps + overlays) AND the walled tool scope (that one workspace +
+  // identity tools). See the `ChatRequest.workspaceId` doc comment.
 
   return {
     message: parsed.message,

@@ -15,11 +15,11 @@ export function chatRoutes(ctx: AppContext) {
   const chatBodyLimit = bodyLimit(1_048_576, {
     multipart: ctx.runtime.getFilesConfig().maxTotalSize,
   });
-  // Stage 2: `/v1/chat` is identity-bound — the tool list comes from
-  // `aggregateToolList(identityId)` and each call routes via the
-  // orchestrator, not from a single session workspace. The optional
-  // workspace middleware validates the `X-Workspace-Id` header against
-  // membership (`400/403` on a malformed or cross-tenant header); its
+  // `/v1/chat` is identity-bound but walled to one workspace — the tool list
+  // comes from `listToolsForWorkspace(workspaceId)` (that workspace + identity
+  // tools) and each call routes via the orchestrator, which denies any other
+  // workspace. The optional workspace middleware validates the `X-Workspace-Id`
+  // header against membership (`400/403` on a malformed or cross-tenant header); its
   // value flows through `handleChat` into `ChatRequest.workspaceId` as the
   // *focused* workspace, scoping the prompt briefing (installed apps +
   // house rules). See `handlers.ts::parseChatBody`.

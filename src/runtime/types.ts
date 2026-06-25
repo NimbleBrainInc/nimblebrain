@@ -234,24 +234,22 @@ export interface ChatRequest {
    * section and the org/workspace instruction overlays reflect THIS
    * workspace, identical for every member (no per-user generation).
    *
-   * NOT tool scope. Tools remain the cross-workspace union
-   * (`aggregateToolList(identityId)`); re-introducing this field does not
-   * re-narrow tools to one workspace (what T006 removed). Absent → the
-   * chat isn't focused on a workspace (e.g. the future home control
-   * panel); for now it falls back to the personal workspace as a
-   * temporary bridge, NOT a claim that home == the personal workspace.
+   * It is ALSO the tool scope: a session is walled to this one workspace —
+   * its tools (namespaced) plus the caller's identity tools, via
+   * `listToolsForWorkspace(workspaceId)`. There is no cross-workspace union.
+   * Absent → the chat isn't focused on a workspace (e.g. the home control
+   * panel); it falls back to the personal workspace, which is then the room.
    */
   workspaceId?: string;
   /**
    * When set, the chat is scoped to a specific app.
    *
-   * Stage 2 (cross-workspace): the chat surface is identity-bound, not
-   * workspace-bound. Tools come from the cross-workspace aggregator
-   * (`orchestrator.aggregateToolList(identityId)`) and each tool call
-   * routes through the orchestrator's parsed-namespace path. The
-   * `workspaceId` field above is the *focused* workspace for the
-   * deterministic briefing (apps + overlays) only — it does NOT narrow
-   * the tool list. Per-call workspace attribution lives on the tool's
+   * The chat surface is identity-bound but WALLED to one workspace. Tools come
+   * from `listToolsForWorkspace(workspaceId)` (that workspace + identity tools)
+   * and each tool call routes through the orchestrator's parsed-namespace path,
+   * which denies any other workspace. The `workspaceId` field above is both the
+   * tool scope and the *focused* workspace for the deterministic briefing
+   * (apps + overlays). Per-call workspace attribution lives on the tool's
    * namespace prefix.
    */
   appContext?: AppContext;

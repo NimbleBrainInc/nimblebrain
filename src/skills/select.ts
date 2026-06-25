@@ -46,9 +46,8 @@ export interface SelectInput {
  * out of scope for Phase 2 — they fall through to exact-match, so they only
  * match the literal pattern string.
  *
- * Stage 2 (T006) — tool names from the cross-workspace aggregator carry a
- * `ws_<id>-` namespace prefix. Patterns in skill manifests and `appContext`-
- * driven affinity rules are typically authored against the BARE form
+ * Namespaced tool names carry a `ws_<id>-` prefix. Patterns in skill manifests
+ * and `appContext`-driven affinity rules are typically authored against the BARE form
  * (`<source>__*`). Match against both the full namespaced name AND the
  * bare inner form so legacy patterns keep working unchanged and
  * namespace-aware patterns (`ws_<id>-<source>__*`) also match precisely.

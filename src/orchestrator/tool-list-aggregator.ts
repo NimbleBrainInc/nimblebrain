@@ -1,12 +1,13 @@
 /**
  * Cross-workspace tool list aggregator.
  *
- * Public entry point for Stage 2 chat / `/mcp` sessions: given an
- * identity, return the union of every tool the identity can call,
- * namespaced via `namespacedToolName(wsId, t.name)`. The orchestrator
- * (T004) and the identity-bound runtime chat (T006) / `/mcp` session
- * (T007) consume this surface — each call returns the cached union
- * after the first lookup.
+ * Retained ONLY for the `/mcp` `tools/list` surface (`api/mcp-server.ts`):
+ * given an identity, return the union of every tool the identity can call,
+ * namespaced via `namespacedToolName(wsId, t.name)`. Each call returns the
+ * cached union after the first lookup. The chat and task surfaces no longer
+ * consume this — they are walled to one workspace and list via
+ * `Runtime.listToolsForWorkspace(workspaceId)`. Removed once `/mcp` is bound to
+ * a single workspace.
  *
  * Cache-shape contract (per task spec, audit-criteria item 1):
  *
