@@ -86,6 +86,8 @@
   "devDependencies": {
     "@biomejs/biome": "^2.4.10",
     "@types/bun": "latest",
+    "@types/react": "^19.2.14",
+    "@types/react-dom": "^19.2.3",
     "happy-dom": "^20.0.0"
   },
   "peerDependencies": {
@@ -118,6 +120,8 @@
     "mammoth": "^1.12.0",
     "posthog-node": "^5.28.5",
     "prom-client": "^15.1.3",
+    "react": "^19.2.4",
+    "react-dom": "^19.2.4",
     "sift": "^17.1.3",
     "unpdf": "^1.6.0",
     "xlsx": "^0.18.5"

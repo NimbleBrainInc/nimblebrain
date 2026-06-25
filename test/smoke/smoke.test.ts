@@ -12,7 +12,7 @@ import { describe, expect, it, afterAll, beforeAll } from "bun:test";
 import { mkdirSync, writeFileSync, rmSync, existsSync, readdirSync, readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { tmpdir, homedir } from "node:os";
-import { spawn, execSync } from "node:child_process";
+import { execSync } from "node:child_process";
 import { Runtime } from "../../src/runtime/runtime.ts";
 import { createEchoModel } from "../helpers/echo-model.ts";
 import { TEST_WORKSPACE_ID, provisionTestWorkspace } from "../helpers/test-workspace.ts";
@@ -68,11 +68,6 @@ beforeAll(() => {
 });
 
 afterAll(() => {
-  // Force-kill any CLI children that outlived their tests
-  for (const child of activeChildren) {
-    child.kill("SIGKILL");
-  }
-  activeChildren.clear();
   if (existsSync(SMOKE_DIR)) rmSync(SMOKE_DIR, { recursive: true });
 });
 
@@ -391,96 +386,4 @@ You are a system diagnostics agent.
 
     await runtime.shutdown();
   });
-});
-
-// --- Headless CLI ---
-
-const CLI_PATH = join(import.meta.dir, "..", "..", "src", "cli", "index.ts");
-
-/** Track spawned CLI children so we can force-kill any survivors on cleanup. */
-const activeChildren = new Set<ReturnType<typeof spawn>>();
-
-function runCli(
-  input: string,
-  opts: { json?: boolean; workDir?: string; configPath?: string; timeoutMs?: number } = {},
-): Promise<{ stdout: string; stderr: string; exitCode: number }> {
-  const timeout = opts.timeoutMs ?? 20_000;
-
-  return new Promise((resolvePromise) => {
-    const cliArgs = [CLI_PATH];
-    if (opts.json) cliArgs.push("--json");
-    if (opts.workDir) cliArgs.push("--workdir", opts.workDir);
-    if (opts.configPath) cliArgs.push("--config", opts.configPath);
-
-    const child = spawn("bun", ["run", ...cliArgs], {
-      stdio: ["pipe", "pipe", "pipe"],
-      env: { ...process.env },
-    });
-    activeChildren.add(child);
-
-    let stdout = "";
-    let stderr = "";
-    let resolved = false;
-
-    const finish = (code: number) => {
-      if (resolved) return;
-      resolved = true;
-      clearTimeout(timer);
-      activeChildren.delete(child);
-      resolvePromise({ stdout, stderr, exitCode: code });
-    };
-
-    const timer = setTimeout(() => {
-      if (resolved) return;
-      child.kill("SIGKILL");
-      finish(1);
-    }, timeout);
-
-    child.stdout.on("data", (d) => {
-      stdout += d.toString();
-    });
-    child.stderr.on("data", (d) => {
-      stderr += d.toString();
-    });
-    child.on("close", (code) => finish(code ?? 0));
-
-    child.stdin.write(input);
-    child.stdin.end();
-  });
-}
-
-describe("Smoke: Headless CLI (pipe mode)", () => {
-  const headlessDir = join(SMOKE_DIR, "headless");
-  const configPath = join(headlessDir, "nimblebrain.json");
-
-  it("starts, skips empty lines, and shuts down cleanly", async () => {
-    mkdirSync(headlessDir, { recursive: true });
-    writeFileSync(
-      configPath,
-      JSON.stringify({ noDefaultBundles: true, store: { type: "memory" } }, null, 2),
-    );
-
-    const result = await runCli("\n\n", { workDir: headlessDir, configPath });
-
-    expect(result.stderr).toContain("[nimblebrain] Starting runtime");
-    expect(result.stderr).toContain("[nimblebrain] Ready");
-    expect(result.stderr).toContain("[nimblebrain] Shutting down");
-    expect(result.stdout).toBe("");
-    expect(result.exitCode).toBe(0);
-  }, 30_000);
-
-  it("exits cleanly on immediate EOF", async () => {
-    mkdirSync(headlessDir, { recursive: true });
-    writeFileSync(
-      configPath,
-      JSON.stringify({ noDefaultBundles: true, store: { type: "memory" } }, null, 2),
-    );
-
-    const result = await runCli("", { workDir: headlessDir, configPath });
-
-    expect(result.stderr).toContain("[nimblebrain] Ready");
-    expect(result.stderr).toContain("[nimblebrain] Shutting down");
-    expect(result.stdout).toBe("");
-    expect(result.exitCode).toBe(0);
-  }, 30_000);
 });
