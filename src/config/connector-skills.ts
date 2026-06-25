@@ -20,7 +20,7 @@ type Env = Record<string, string | undefined>;
 export const CONNECTOR_SKILLS_REPO_DEFAULT = "NimbleBrainInc/connector-skills";
 
 /** Default pinned git tag/sha for the overlay repo. */
-export const CONNECTOR_SKILLS_VERSION_DEFAULT = "v0.1.0";
+export const CONNECTOR_SKILLS_VERSION_DEFAULT = "v0.2.0";
 
 export interface ConnectorSkillsConfig {
   /** Whether overlay resolution runs at all (opt-in). */

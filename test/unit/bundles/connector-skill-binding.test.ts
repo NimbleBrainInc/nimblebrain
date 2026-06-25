@@ -56,7 +56,7 @@ function manager(routes: Record<string, { status: number; body?: string }>): Bun
   return m;
 }
 
-const gmailUrl = "https://raw.githubusercontent.com/NimbleBrainInc/connector-skills/v0.1.0/composio/gmail/SKILL.md";
+const gmailUrl = "https://raw.githubusercontent.com/NimbleBrainInc/connector-skills/v0.2.0/gmail/SKILL.md";
 
 function connectorSkillsDir(wd: string): string {
   return new WorkspaceContext({ wsId: WS_ID, workDir: wd }).getDataPath(CONNECTOR_SKILLS_SUBDIR);
@@ -67,7 +67,7 @@ describe("BundleLifecycleManager.syncBoundSkills (P4)", () => {
     delete process.env.CONNECTOR_SKILLS_ENABLED;
     const wd = workDir();
     const m = manager({ [gmailUrl]: { status: 200, body: OVERLAY } });
-    const lock = await m.syncBoundSkills("composio/gmail", "gmail", WS_ID, wd);
+    const lock = await m.syncBoundSkills("gmail", "gmail", WS_ID, wd);
     expect(lock).toEqual([]);
     expect(existsSync(join(connectorSkillsDir(wd), "gmail"))).toBe(false);
   });
@@ -77,10 +77,10 @@ describe("BundleLifecycleManager.syncBoundSkills (P4)", () => {
     const wd = workDir();
     const m = manager({ [gmailUrl]: { status: 200, body: OVERLAY } });
 
-    const lock = await m.syncBoundSkills("composio/gmail", "gmail", WS_ID, wd);
+    const lock = await m.syncBoundSkills("gmail", "gmail", WS_ID, wd);
     expect(lock).toHaveLength(1);
-    expect(lock[0]!.identity).toBe("composio/gmail");
-    expect(lock[0]!.version).toBe("v0.1.0");
+    expect(lock[0]!.identity).toBe("gmail");
+    expect(lock[0]!.version).toBe("v0.2.0");
     expect(lock[0]!.sha).toMatch(/^[0-9a-f]{64}$/);
     expect(existsSync(lock[0]!.path)).toBe(true);
   });
@@ -89,7 +89,7 @@ describe("BundleLifecycleManager.syncBoundSkills (P4)", () => {
     process.env.CONNECTOR_SKILLS_ENABLED = "true";
     const wd = workDir();
     const m = manager({}); // every URL 404s
-    const lock = await m.syncBoundSkills("composio/unknown", "unknown", WS_ID, wd);
+    const lock = await m.syncBoundSkills("unknown", "unknown", WS_ID, wd);
     expect(lock).toEqual([]);
     expect(existsSync(join(connectorSkillsDir(wd), "unknown"))).toBe(false);
   });
@@ -101,7 +101,7 @@ describe("BundleLifecycleManager.syncBoundSkills (P4)", () => {
     m.setConnectorSkillFetch((() => {
       throw new Error("network down");
     }) as unknown as typeof fetch);
-    const lock = await m.syncBoundSkills("composio/gmail", "gmail", WS_ID, wd);
+    const lock = await m.syncBoundSkills("gmail", "gmail", WS_ID, wd);
     expect(lock).toEqual([]);
   });
 
@@ -109,7 +109,7 @@ describe("BundleLifecycleManager.syncBoundSkills (P4)", () => {
     process.env.CONNECTOR_SKILLS_ENABLED = "true";
     const wd = workDir();
     const m = manager({ [gmailUrl]: { status: 200, body: OVERLAY } });
-    await m.syncBoundSkills("composio/gmail", "gmail", WS_ID, wd);
+    await m.syncBoundSkills("gmail", "gmail", WS_ID, wd);
     expect(existsSync(join(connectorSkillsDir(wd), "gmail"))).toBe(true);
 
     m.removeBoundSkills("gmail", WS_ID, wd);
@@ -131,7 +131,7 @@ describe("BundleLifecycleManager.syncBoundSkills (P4)", () => {
 
     const m = manager({ [gmailUrl]: { status: 200, body: OVERLAY } });
     m.setWorkDir(wd);
-    await m.syncBoundSkills("composio/gmail", "gmail", WS_ID, wd);
+    await m.syncBoundSkills("gmail", "gmail", WS_ID, wd);
     expect(existsSync(join(connectorSkillsDir(wd), "gmail"))).toBe(true);
 
     // Real uninstall path (no instance/config/registry source needed — step 4d

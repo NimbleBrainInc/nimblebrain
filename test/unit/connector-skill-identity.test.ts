@@ -9,23 +9,22 @@ function detail(over: Partial<ServerDetail> = {}): ServerDetail {
 }
 
 describe("connectorSkillIdentity", () => {
-  it("derives composio/<toolkit> for Composio connectors", () => {
+  it("derives the flat toolkit slug for Composio connectors", () => {
     const d = detail({
       name: "Gmail (Composio)",
       _meta: {
         "ai.nimblebrain/connector": { auth: "composio", composio: { toolkit: "gmail", authConfigEnv: "AC" } },
       },
     });
-    expect(connectorSkillIdentity(d)).toBe("composio/gmail");
+    expect(connectorSkillIdentity(d)).toBe("gmail");
   });
 
-  it("falls back to the server name for non-Composio connectors", () => {
-    expect(connectorSkillIdentity(detail({ name: "io.github.acme/widget" }))).toBe(
-      "io.github.acme/widget",
-    );
+  it("derives the connector slug from the server name for non-Composio connectors", () => {
+    expect(connectorSkillIdentity(detail({ name: "com.notion/mcp" }))).toBe("notion");
+    expect(connectorSkillIdentity(detail({ name: "app.linear/mcp" }))).toBe("linear");
   });
 
-  it("falls back to the server name when the toolkit is blank", () => {
+  it("returns the name unchanged when there is no dotted prefix and no toolkit", () => {
     const d = detail({
       name: "weird",
       _meta: {

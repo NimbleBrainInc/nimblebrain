@@ -56,7 +56,7 @@ export function materializeConnectorSkill(args: {
   serverName: string;
   /** The raw fetched SKILL.md (frontmatter + body). */
   overlayBody: string;
-  /** Provenance source ref, e.g. `connector:composio/gmail@v0.1.0`. */
+  /** Provenance source ref, e.g. `connector:gmail@v0.2.0`. */
   source: string;
   /** ISO timestamp, injected for deterministic tests. */
   now: string;
@@ -159,7 +159,7 @@ export interface ConnectorOverlayInfo {
   name: string;
   /** Overlay description from frontmatter, when present. */
   description?: string;
-  /** Provenance source ref, e.g. `connector:composio/gmail@v0.1.0`. */
+  /** Provenance source ref, e.g. `connector:gmail@v0.2.0`. */
   source?: string;
   /** Absolute path to the materialized file. */
   path: string;
