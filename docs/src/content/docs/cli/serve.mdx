@@ -19,7 +19,6 @@ nb serve [flags]
 |------|-------------|---------|
 | `--port <number>` | Server port | `27247` |
 | `--config <path>` | Config file path | Auto-resolved (see [config resolution](/cli/overview/#config-resolution)) |
-| `--workdir <dir>` | Working directory | `~/.nimblebrain` |
 | `--model <name>` | Override default model | From config |
 | `--debug` | Verbose logging | Off |
 
@@ -88,15 +87,13 @@ Point to a specific config file:
 nb serve --config /etc/nimblebrain/nimblebrain.json
 ```
 
-Or set a custom working directory (the server looks for `nimblebrain.json` inside it):
+Or set a custom working directory with `NB_WORK_DIR` (the server looks for `nimblebrain.json` inside it):
 
 ```bash
-nb serve --workdir /opt/nimblebrain
+NB_WORK_DIR=/opt/nimblebrain nb serve
 ```
 
 ## Related commands
 
 - [nb dev](/cli/dev/) -- development mode with file watching and HMR
-- [nb status](/cli/status/) -- check workspace health
-- [nb reload](/cli/reload/) -- hot-reload config on a running server
 - [CLI Overview](/cli/overview/) -- global flags and config resolution

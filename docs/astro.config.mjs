@@ -26,6 +26,15 @@ export default defineConfig({
     '/guide/team': '/using/users/',
     '/guide/mcp-connect': '/connect/external-clients/',
     '/cli/user': '/cli/overview/',
+    '/cli/interactive': '/using/chat/',
+    '/cli/bundle': '/using/managing-apps/',
+    '/cli/skill': '/using/skills/',
+    '/cli/config': '/config/credentials/',
+    '/cli/credential': '/config/credentials/',
+    '/cli/status': '/cli/overview/',
+    '/cli/reload': '/cli/overview/',
+    '/cli/telemetry': '/using/telemetry/',
+    '/cli/automation': '/using/automations/',
   },
   integrations: [
     starlight({
@@ -145,17 +154,8 @@ export default defineConfig({
             icon: 'seti:shell',
             items: [
               { label: 'Overview', slug: 'cli/overview' },
-              { label: 'nb (Interactive)', slug: 'cli/interactive' },
               { label: 'nb serve', slug: 'cli/serve' },
               { label: 'nb dev', slug: 'cli/dev' },
-              { label: 'nb bundle', slug: 'cli/bundle' },
-              { label: 'nb skill', slug: 'cli/skill' },
-              { label: 'nb credential', slug: 'cli/credential' },
-              { label: 'nb config', slug: 'cli/config' },
-              { label: 'nb status', slug: 'cli/status' },
-              { label: 'nb reload', slug: 'cli/reload' },
-              { label: 'nb telemetry', slug: 'cli/telemetry' },
-              { label: 'nb automation', slug: 'cli/automation' },
             ],
           },
           {

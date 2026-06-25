@@ -63,31 +63,17 @@ The chat panel and app content work side by side. Ask the agent a question about
     }
     ```
 
-    After editing, run `nb reload` or restart the server.
+    After editing, restart the server. In dev mode, `nb dev` reloads on source changes.
 
     <Aside type="note">
-      The CLI `nb bundle add` / `nb bundle add --url` / `nb bundle remove` commands are deprecated stubs and exit with an error. Install through the Apps catalog or the agent instead; for local development, edit the config directly as shown above. `nb bundle list` and `nb bundle search` still work.
+      Bundles are not managed from the CLI. Install through the Apps catalog or the agent; for local development, edit the config directly as shown above.
     </Aside>
   </TabItem>
 </Tabs>
 
-## Browsing the registry from the CLI
+## Browsing the registry
 
-You can search and list bundles from the command line:
-
-```bash
-nb bundle search granola
-```
-```
-Searching mpak registry for "granola"...
-Run: mpak search "granola"
-```
-
-```bash
-nb bundle list
-```
-
-To actually install what you find, use the Apps catalog in the web UI or ask the agent.
+To find apps, open the **Apps catalog** in the web UI or ask the agent — it searches the directory with `nb__search` (`scope: "registry"`) and installs your choice via `manage_connectors`.
 
 ## Bundle types
 
@@ -105,7 +91,7 @@ Most bundles need API keys or tokens. In most cases, exporting the env var the b
 export ANTHROPIC_API_KEY=sk-ant-...
 ```
 
-For workspace-scoped values or when env vars aren't a good fit, use `nb config set -w <wsId>`. Stdio bundles that declare `user_config` fields surface them on the app's **Configure** page in the web UI. See [Credentials](/config/credentials/) for the full picture.
+For workspace-scoped values or when env vars aren't a good fit, set them from workspace settings in the web UI. Stdio bundles that declare `user_config` fields surface them on the app's **Configure** page. See [Credentials](/config/credentials/) for the full picture.
 
 ## Passing non-credential environment variables
 
@@ -129,24 +115,7 @@ Values in `env` merge with the bundle's own `mcp_config.env` and the filtered pr
 
 ## Verify the install
 
-After installing, check that the bundle is running:
-
-```bash
-nb status
-```
-```
-Bundles: 2 configured
-  @nimblebraininc/granola
-  @nimblebraininc/postgres
-
-Skills: 2 loaded
-
-Bundle health:
-  granola: running (uptime: 120s, restarts: 0)
-  postgres: running (uptime: 120s, restarts: 0)
-```
-
-In the web UI, installed apps and their status appear on the workspace **Settings → About** tab.
+After installing, installed apps and their health appear on the workspace **Settings → About** tab in the web UI. Apps that ship a UI also show up in the sidebar. You can also ask the agent which apps are installed and whether they're running.
 
 ## What's next
 

@@ -186,10 +186,10 @@ export NB_TELEMETRY_DISABLED=1
 export DO_NOT_TRACK=1
 ```
 
-`DO_NOT_TRACK` follows the [Console Do Not Track](https://consoledonottrack.com/) standard. You can also disable telemetry via `telemetry.enabled: false` in `nimblebrain.json` or `nb telemetry off`.
+`DO_NOT_TRACK` follows the [Console Do Not Track](https://consoledonottrack.com/) standard. You can also disable telemetry via `telemetry.enabled: false` in `nimblebrain.json`.
 
 <Aside type="tip">
-  Use `nb telemetry status` to check whether telemetry is currently active and which method disabled it.
+  Environment variables are checked before the config file, so `NB_TELEMETRY_DISABLED` or `DO_NOT_TRACK` turn telemetry off regardless of what `nimblebrain.json` says.
 </Aside>
 
 ## Precedence summary
@@ -203,7 +203,7 @@ When the same setting can be configured in multiple places, this is the resoluti
 | MCP session TTL | `MCP_SESSION_TTL_SECONDS` (beats all) | — | `sessionStore.ttlSeconds` | `28800` |
 | Public origin | `NB_PUBLIC_ORIGIN` | — | derived from host facts, else legacy `NB_API_URL` | `http://localhost:27247` |
 | Anthropic key | `ANTHROPIC_API_KEY` | — | `providers.anthropic.apiKey` | — |
-| Telemetry | `NB_TELEMETRY_DISABLED` / `DO_NOT_TRACK` | `nb telemetry off` | `telemetry.enabled` | Enabled |
+| Telemetry | `NB_TELEMETRY_DISABLED` / `DO_NOT_TRACK` | — | `telemetry.enabled` | Enabled |
 
 ## Example: production environment
 
