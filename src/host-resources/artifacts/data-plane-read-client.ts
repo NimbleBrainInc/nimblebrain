@@ -104,7 +104,7 @@ export function readArtifactDataPlaneConfigFromEnv(
   });
   if (!tokenUrl) {
     throw new ArtifactReadError(
-      "authorizer token endpoint is not set; cannot mint an artifacts read token (set NB_FLEET_AUTHORIZER_TOKEN_URL, or NB_FLEET_AUTHORIZER_ISSUER for the legacy `${issuer}/token` fallback)",
+      "authorizer token endpoint is not set; cannot mint an artifacts read token (set NB_FLEET_AUTHORIZER_TOKEN_URL, or NB_FLEET_AUTHORIZER_ISSUER for the legacy `<issuer>/token` fallback)",
     );
   }
   return { baseUrl, tokenUrl };
