@@ -109,7 +109,7 @@ export function WorkspaceSection({ collapsed = false }: WorkspaceSectionProps) {
     >
       {!collapsed && (
         <div className="flex items-center justify-between px-4 pt-1 pb-1">
-          <div className="text-[11px] font-bold tracking-[0.08em] text-sidebar-foreground/70 uppercase">
+          <div className="text-2xs font-bold tracking-[0.08em] text-sidebar-foreground/70 uppercase">
             Workspaces
           </div>
           <button
@@ -120,7 +120,7 @@ export function WorkspaceSection({ collapsed = false }: WorkspaceSectionProps) {
             data-testid="sidebar-workspace-add"
             className="p-1 rounded-md text-sidebar-foreground/60 hover:text-sidebar-foreground hover:bg-sidebar-foreground/10 transition-colors"
           >
-            <Plus style={{ width: 14, height: 14 }} />
+            <Plus className="size-3.5" />
           </button>
         </div>
       )}
@@ -207,7 +207,7 @@ function WorkspaceInlineApps({ workspaceId }: { workspaceId: string }) {
             data-app-route={p.route ?? ""}
             data-is-active={isActive ? "true" : "false"}
             className={cn(
-              "flex items-center gap-2 text-[13px] transition-colors rounded-md px-2 py-1",
+              "flex items-center gap-2 text-sm transition-colors rounded-md px-2 py-1",
               isActive
                 ? "bg-sidebar-foreground/10 text-sidebar-foreground"
                 : "text-sidebar-foreground/80 hover:bg-sidebar-foreground/5 hover:text-sidebar-foreground",
@@ -216,7 +216,7 @@ function WorkspaceInlineApps({ workspaceId }: { workspaceId: string }) {
             <ConnectorIcon
               name={label}
               iconUrl={iconFor(p.serverName)}
-              className="h-[18px] w-[18px] rounded-[5px] text-[9px]"
+              className="size-[18px] rounded-sm text-3xs"
             />
             <span className="flex-1 truncate">{label}</span>
           </Link>
@@ -226,9 +226,9 @@ function WorkspaceInlineApps({ workspaceId }: { workspaceId: string }) {
         <Link
           to={`/w/${slug}/`}
           data-testid="sidebar-workspace-view-all"
-          className="flex items-center gap-1.5 px-2 py-1 text-[12px] text-sidebar-foreground/55 hover:text-sidebar-foreground transition-colors"
+          className="flex items-center gap-1.5 px-2 py-1 text-xs text-sidebar-foreground/55 hover:text-sidebar-foreground transition-colors"
         >
-          <ArrowRight style={{ width: 12, height: 12 }} className="shrink-0" />
+          <ArrowRight className="size-3 shrink-0" />
           <span className="truncate">View all {apps.length} apps</span>
         </Link>
       )}
@@ -275,8 +275,8 @@ function WorkspaceItem({
       <span
         aria-hidden="true"
         data-testid="workspace-avatar"
-        className="shrink-0 flex items-center justify-center rounded-md text-white text-[10px] font-semibold"
-        style={{ width: 18, height: 18, backgroundColor: avatar.color }}
+        className="size-[18px] shrink-0 flex items-center justify-center rounded-md text-white text-3xs font-semibold"
+        style={{ backgroundColor: avatar.color }}
       >
         {avatar.letter}
       </span>

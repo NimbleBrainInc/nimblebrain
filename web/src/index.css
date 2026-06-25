@@ -16,6 +16,23 @@
     --font-heading: 'Erode', Georgia, serif;
     --font-mono: 'JetBrains Mono Variable', ui-monospace, SFMono-Regular, monospace;
 
+    /* Type scale — single-sourced from src/theme/palette.ts (typeScale),
+       emitted into :root by gen:theme. Gives `text-3xs`/`text-2xs` for the
+       dense shell (sidebar, counts, metadata) plus `text-xs`…`text-lg`
+       (Tailwind's defaults, now palette-backed). Prefer these over `text-[Npx]`. */
+    --text-3xs: var(--font-text-3xs-size);
+    --text-3xs--line-height: var(--font-text-3xs-line-height);
+    --text-2xs: var(--font-text-2xs-size);
+    --text-2xs--line-height: var(--font-text-2xs-line-height);
+    --text-xs: var(--font-text-xs-size);
+    --text-xs--line-height: var(--font-text-xs-line-height);
+    --text-sm: var(--font-text-sm-size);
+    --text-sm--line-height: var(--font-text-sm-line-height);
+    --text-base: var(--font-text-base-size);
+    --text-base--line-height: var(--font-text-base-line-height);
+    --text-lg: var(--font-text-lg-size);
+    --text-lg--line-height: var(--font-text-lg-line-height);
+
     --color-sidebar-ring: var(--sidebar-ring);
     --color-sidebar-border: var(--sidebar-border);
     --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);

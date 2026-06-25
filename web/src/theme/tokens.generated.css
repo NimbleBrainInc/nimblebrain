@@ -49,6 +49,28 @@
   --radius: 0.5rem;
   --sidebar-width: 240px;
   --sidebar-width-collapsed: 64px;
+  --font-weight-normal: 400;
+  --font-weight-medium: 500;
+  --font-weight-semibold: 600;
+  --font-weight-bold: 700;
+  --font-text-3xs-size: 0.625rem;
+  --font-text-3xs-line-height: 0.875rem;
+  --font-text-2xs-size: 0.6875rem;
+  --font-text-2xs-line-height: 1rem;
+  --font-text-xs-size: 0.75rem;
+  --font-text-xs-line-height: 1rem;
+  --font-text-sm-size: 0.875rem;
+  --font-text-sm-line-height: 1.25rem;
+  --font-text-base-size: 1rem;
+  --font-text-base-line-height: 1.5rem;
+  --font-text-lg-size: 1.125rem;
+  --font-text-lg-line-height: 1.75rem;
+  --font-heading-sm-size: 1.25rem;
+  --font-heading-sm-line-height: 1.75rem;
+  --font-heading-md-size: 1.5rem;
+  --font-heading-md-line-height: 2rem;
+  --font-heading-lg-size: 2rem;
+  --font-heading-lg-line-height: 2.5rem;
 }
 
 .dark {
