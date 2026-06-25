@@ -29,8 +29,8 @@
 
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { extname, join } from "node:path";
-import { log } from "../cli/log.ts";
 import { type ServerDetail, validateServerDetail } from "../connectors/server-detail.ts";
+import { log } from "../observability/log.ts";
 import type { ConnectorSource } from "./types.ts";
 
 export class StaticSource implements ConnectorSource {

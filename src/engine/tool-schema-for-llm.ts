@@ -1,4 +1,4 @@
-import { log } from "../cli/log.ts";
+import { log } from "../observability/log.ts";
 
 /**
  * Translate an MCP-spec tool inputSchema into the narrower shape every

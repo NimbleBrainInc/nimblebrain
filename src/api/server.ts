@@ -2,7 +2,6 @@ type BunServer = ReturnType<typeof Bun.serve>;
 
 import type { ConnectionHealthProbe } from "../bundles/connection-probe.ts";
 import { ConnectionRevalidator } from "../bundles/connection-revalidator.ts";
-import { log } from "../cli/log.ts";
 import { ComposioConnectionProbe } from "../composio/connection-probe.ts";
 import {
   composioMonitorEnabled,
@@ -13,6 +12,7 @@ import type { IdentityProvider } from "../identity/provider.ts";
 import { DevIdentityProvider } from "../identity/providers/dev.ts";
 import { canonicalOrigins, webOrigin } from "../oauth/public-origin.ts";
 import { shutdownTracing } from "../observability/index.ts";
+import { log } from "../observability/log.ts";
 import type { Runtime } from "../runtime/runtime.ts";
 import { HealthMonitor } from "../tools/health-monitor.ts";
 import { createApp } from "./app.ts";

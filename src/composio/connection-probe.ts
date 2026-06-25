@@ -21,7 +21,7 @@ import type {
   ProbeTarget,
 } from "../bundles/connection-probe.ts";
 import type { BundleRef } from "../bundles/types.ts";
-import { log } from "../cli/log.ts";
+import { log } from "../observability/log.ts";
 import type { ConnectorDirectory } from "../registries/directory.ts";
 import { composioUserId, findActiveComposioConnection } from "./sdk.ts";
 

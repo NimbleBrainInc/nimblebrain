@@ -1,6 +1,6 @@
-import { log } from "../cli/log.ts";
 import type { EventSink } from "../engine/types.ts";
 import type { IdentityProvider, UserIdentity } from "../identity/provider.ts";
+import { log } from "../observability/log.ts";
 import type { WorkspaceStore } from "../workspace/workspace-store.ts";
 import { constantTimeEqual, validateInternalToken } from "./auth-utils.ts";
 

@@ -2,7 +2,7 @@ import { SpanStatusCode } from "@opentelemetry/api";
 import { beforeAll, beforeEach, describe, expect, it } from "bun:test";
 import { InMemorySpanExporter, SimpleSpanProcessor } from "@opentelemetry/sdk-trace-base";
 import { NodeTracerProvider } from "@opentelemetry/sdk-trace-node";
-import { log } from "../../src/cli/log.ts";
+import { log } from "../../src/observability/log.ts";
 import type { UserIdentity } from "../../src/identity/provider.ts";
 import {
   currentTraceId,

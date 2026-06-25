@@ -1,5 +1,5 @@
-import { log } from "../cli/log.ts";
 import type { EngineEvent, EngineEventType, EventSink } from "../engine/types.ts";
+import { log } from "../observability/log.ts";
 import { bareToolName } from "../tools/namespace.ts";
 import type { WorkspaceStore } from "../workspace/workspace-store.ts";
 

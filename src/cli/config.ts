@@ -2,8 +2,8 @@ import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { getValidator } from "../config/index.ts";
 import { deriveOverridePath, mergeConfigs } from "../config/overrides.ts";
+import { log } from "../observability/log.ts";
 import type { RuntimeConfig } from "../runtime/types.ts";
-import { log } from "./log.ts";
 
 const DEFAULT_CONFIG_FILE = "nimblebrain.json";
 

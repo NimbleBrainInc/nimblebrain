@@ -18,7 +18,7 @@
  * loud and the session-miss log line tells operators what happened.
  */
 
-import { log } from "../../cli/log.ts";
+import { log } from "../../observability/log.ts";
 import type { SessionMeta, SessionRegistry } from "./types.ts";
 
 export interface RedisSessionRegistryOptions {

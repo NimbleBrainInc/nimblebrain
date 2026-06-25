@@ -3,14 +3,6 @@ import { mkdirSync, writeFileSync, readFileSync, rmSync, existsSync } from "node
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { loadConfig } from "../../src/cli/config.ts";
-import {
-	bundleList,
-	bundleAdd,
-	bundleAddRemote,
-	bundleRemove,
-	skillList,
-	status,
-} from "../../src/cli/commands.ts";
 
 const testDir = join(tmpdir(), `nimblebrain-cli-unit-${Date.now()}`);
 
@@ -314,146 +306,6 @@ describe("config validation", () => {
   });
 });
 
-describe("CLI commands", () => {
-	it("bundleList shows configured bundles", () => {
-		const configPath = writeTestConfig("cmd-list.json", {
-			bundles: [{ name: "@nimblebraininc/leadgen" }, { path: "./local" }],
-		});
-
-		const output: string[] = [];
-		const originalLog = console.log;
-		console.log = (...args: unknown[]) => output.push(args.join(" "));
-		try {
-			bundleList(configPath);
-		} finally {
-			console.log = originalLog;
-		}
-
-		expect(output.join("\n")).toContain("@nimblebraininc/leadgen");
-		expect(output.join("\n")).toContain("./local");
-	});
-
-	it("bundleList shows empty message when no bundles", () => {
-		const configPath = writeTestConfig("cmd-list-empty.json", { bundles: [] });
-
-		const output: string[] = [];
-		const originalLog = console.log;
-		console.log = (...args: unknown[]) => output.push(args.join(" "));
-		try {
-			bundleList(configPath);
-		} finally {
-			console.log = originalLog;
-		}
-
-		expect(output.join("\n")).toContain("No bundles configured.");
-	});
-
-	it("bundleAdd prints deprecation and exits", () => {
-		const output: string[] = [];
-		const originalError = console.error;
-		const originalExit = process.exit;
-		console.error = (...args: unknown[]) => output.push(args.join(" "));
-		process.exit = (() => { throw new Error("exit"); }) as never;
-		try {
-			bundleAdd("@test/new-bundle");
-		} catch { /* expected exit */ } finally {
-			console.error = originalError;
-			process.exit = originalExit;
-		}
-		expect(output.join("\n")).toContain("Instance-level bundles have been removed");
-	});
-
-	it("bundleRemove prints deprecation and exits", () => {
-		const output: string[] = [];
-		const originalError = console.error;
-		const originalExit = process.exit;
-		console.error = (...args: unknown[]) => output.push(args.join(" "));
-		process.exit = (() => { throw new Error("exit"); }) as never;
-		try {
-			bundleRemove("@test/bundle");
-		} catch { /* expected exit */ } finally {
-			console.error = originalError;
-			process.exit = originalExit;
-		}
-		expect(output.join("\n")).toContain("Instance-level bundles have been removed");
-	});
-
-	it("bundleAddRemote prints deprecation and exits", () => {
-		const output: string[] = [];
-		const originalError = console.error;
-		const originalExit = process.exit;
-		console.error = (...args: unknown[]) => output.push(args.join(" "));
-		process.exit = (() => { throw new Error("exit"); }) as never;
-		try {
-			bundleAddRemote("http://example.com/mcp", "my-remote");
-		} catch { /* expected exit */ } finally {
-			console.error = originalError;
-			process.exit = originalExit;
-		}
-		expect(output.join("\n")).toContain("Instance-level bundles have been removed");
-	});
-
-	it("bundleList shows remote bundles", () => {
-		const configPath = writeTestConfig("cmd-list-remote.json", {
-			bundles: [
-				{ name: "@test/local" },
-				{ url: "http://example.com/mcp", serverName: "my-remote" },
-			],
-		});
-
-		const output: string[] = [];
-		const originalLog = console.log;
-		console.log = (...args: unknown[]) => output.push(args.join(" "));
-		try {
-			bundleList(configPath);
-		} finally {
-			console.log = originalLog;
-		}
-
-		const text = output.join("\n");
-		expect(text).toContain("@test/local (named)");
-		expect(text).toContain("http://example.com/mcp (remote)");
-	});
-
-	it("skillList shows loaded skills with loading-strategy and priority", () => {
-		const output: string[] = [];
-		const originalLog = console.log;
-		const errSpy = spyOn(console, "error").mockImplementation(() => {});
-		console.log = (...args: unknown[]) => output.push(args.join(" "));
-		try {
-			skillList();
-		} finally {
-			console.log = originalLog;
-			errSpy.mockRestore();
-		}
-
-		const text = output.join("\n");
-		expect(text).toContain("always");
-		expect(text).toContain("soul");
-	});
-
-	it("status shows bundle and skill counts", async () => {
-		const configPath = writeTestConfig("cmd-status.json", {
-			bundles: [{ name: "@test/a" }, { name: "@test/b" }],
-		});
-
-		const output: string[] = [];
-		const originalLog = console.log;
-		const errSpy = spyOn(console, "error").mockImplementation(() => {});
-		console.log = (...args: unknown[]) => output.push(args.join(" "));
-		try {
-			await status(configPath);
-		} finally {
-			console.log = originalLog;
-			errSpy.mockRestore();
-		}
-
-		const text = output.join("\n");
-		expect(text).toContain("Bundles: 2 configured");
-		expect(text).toContain("Skills:");
-	});
-});
-
 describe("workdir resolution (§19.4)", () => {
 	it("defaultWorkDir fallback is used when config has no workDir", () => {
 		const cfgPath = writeTestConfig("no-workdir.json", {});
@@ -488,18 +340,16 @@ describe("workdir resolution (§19.4)", () => {
 });
 
 describe("package.json", () => {
-	it("bin entry is nb", async () => {
+	it("exposes no bin (the runtime is launched via bun, not an nb binary)", async () => {
 		const pkg = await Bun.file("package.json").json();
-		expect(pkg.bin).toHaveProperty("nb");
-		expect(pkg.bin.nb).toBe("./src/cli/index.ts");
+		expect(pkg.bin).toBeUndefined();
 	});
 
-	it("scripts include dev, dev:api, dev:web, dev:tui, start", async () => {
+	it("scripts include dev, dev:api, dev:web, start", async () => {
 		const pkg = await Bun.file("package.json").json();
 		expect(pkg.scripts).toHaveProperty("dev");
 		expect(pkg.scripts).toHaveProperty("dev:api");
 		expect(pkg.scripts).toHaveProperty("dev:web");
-		expect(pkg.scripts).toHaveProperty("dev:tui");
 		expect(pkg.scripts).toHaveProperty("start");
 	});
 });

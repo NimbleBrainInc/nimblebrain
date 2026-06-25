@@ -1,7 +1,6 @@
 import { createHash, timingSafeEqual } from "node:crypto";
 import { Hono } from "hono";
 import { WORKSPACE_PRINCIPAL_ID } from "../../bundles/connection.ts";
-import { log } from "../../cli/log.ts";
 import { getBouncerMode } from "../../oauth/bouncer-config.ts";
 import {
   ENVELOPE_VERSION,
@@ -10,6 +9,7 @@ import {
   verifyEnvelopeAsTenant,
 } from "../../oauth/envelope.ts";
 import { mcpAuthCallbackUrl } from "../../oauth/mcp-callback-url.ts";
+import { log } from "../../observability/log.ts";
 import { peekWorkspaceId, resolveWithCode } from "../../tools/oauth-flow-registry.ts";
 import { requireAuth } from "../middleware/auth.ts";
 import { requireWorkspace } from "../middleware/workspace.ts";

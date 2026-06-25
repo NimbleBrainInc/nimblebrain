@@ -97,7 +97,7 @@ src/
 ├── prompt/        System prompt composition (identity → core → apps → skill)
 ├── model/         LLM provider registry (AI SDK)
 ├── adapters/      EventSink implementations (logs, console, debug, telemetry)
-├── cli/           CLI (Commander.js) + TUI (Ink/React)
+├── cli/           Process entry: serve (HTTP API) + dev (watch/HMR) launchers
 └── files/         File context extraction
 web/               Vite + React + TypeScript SPA (separate package.json)
 ```
@@ -208,7 +208,7 @@ NB_DEBUG=sse,mcp   bun run dev    # SSE event flow + MCP
 
 `NB_DEBUG` is read once at process start. Changing it mid-session (e.g. `export NB_DEBUG=...` in the running shell) has no effect — restart the process for the new namespaces to take hold.
 
-Namespaces (`src/cli/log.ts`):
+Namespaces (`src/observability/log.ts`):
 
 | Namespace | Emits | Answers |
 |---|---|---|
@@ -216,7 +216,7 @@ Namespaces (`src/cli/log.ts`):
 | `sse` | Every `tool.progress` / `tool.done` entering the runtime sink wrap; every `data.changed` broadcast with client count | "Are progress events reaching the SSE layer?" "Are broadcasts happening, to how many clients?" |
 | `auth` | Identity-provider verify rejections at debug volume (the routine, self-healing reasons `no_token` / `token_expired`). Anomalous reasons — `org_mismatch`, `bad_signature`, `jwks_unavailable`, etc. — log at `warn` and need no flag. | "Why is a user being 401'd / involuntarily logged out?" |
 
-Add a namespace by calling `log.debug("ns", "message")` (from `src/cli/log.ts`). Keep this table and the `log.ts` doc comment in sync.
+Add a namespace by calling `log.debug("ns", "message")` (from `src/observability/log.ts`). Keep this table and the `log.ts` doc comment in sync.
 
 ### Bundle subprocess stderr (default-on)
 
@@ -244,7 +244,7 @@ Vendor-neutral OpenTelemetry lives in `src/observability/`. The runtime depends 
 
 - **Spans:** wrap work with `withSpan(name, attrs, fn)` (active-context, nests automatically) — never call the OTel API directly from feature code. Today's spans: `agent.turn` (engine run), `llm.call` (model stream), `tool.dispatch` (MCP dispatch), and the outer HTTP span (Hono middleware, continues an inbound `traceparent`). Add `requestIdentityAttrs()` to span attrs to stamp the verified identity.
 - **Propagation:** `injectTraceparent(headers)` on outbound calls that should extend the trace (service-token mint, authenticated remote-MCP fetch). No-op outside a span.
-- **Logs:** use `log.*(msg, fields?)` from `src/cli/log.ts` — never raw `console.*` in operational code (it bypasses the JSON/identity/correlation enrichment). With `NB_LOG_FORMAT=json` (set by the chart) lines are structured JSON auto-enriched with `service`, `tenant_id`, `trace_id` (the active OTel trace id — the field the Grafana Loki→Tempo pivot keys on), and identity; pretty dev output is unchanged. `NB_LOG_LEVEL` (default `info`) is the severity floor for info/warn/error; secret-keyed `fields` (a bare `token`, the `*_token` compounds, `secret`/`password`/`api_key`/`authorization`/`cookie`/`credential`) are auto-redacted before write, while LLM usage fields (`inputTokens`/`tokenCount`/…) are preserved. `check:no-raw-console` enforces the logger usage (CLI command surfaces and the console/debug EventSinks are exempt; a rare exception takes a `// lint-ok:console` marker).
+- **Logs:** use `log.*(msg, fields?)` from `src/observability/log.ts` — never raw `console.*` in operational code (it bypasses the JSON/identity/correlation enrichment). With `NB_LOG_FORMAT=json` (set by the chart) lines are structured JSON auto-enriched with `service`, `tenant_id`, `trace_id` (the active OTel trace id — the field the Grafana Loki→Tempo pivot keys on), and identity; pretty dev output is unchanged. `NB_LOG_LEVEL` (default `info`) is the severity floor for info/warn/error; secret-keyed `fields` (a bare `token`, the `*_token` compounds, `secret`/`password`/`api_key`/`authorization`/`cookie`/`credential`) are auto-redacted before write, while LLM usage fields (`inputTokens`/`tokenCount`/…) are preserved. `check:no-raw-console` enforces the logger usage (the console/debug EventSinks are exempt; a rare exception takes a `// lint-ok:console` marker).
 - **Trust rule — what may be stamped:** `tenant_id` is a boot-time Resource attribute from `NB_TENANT_ID`, never a request header. `user_id` / `workspace_id` / `conversation_id` come from the verified request context. **Never** stamp the display name, email, secrets, prompts, tool args/results, or file contents.
 - **Config:** `OTEL_EXPORTER_OTLP_ENDPOINT` enables export (unset = nothing exported, ids still exist for log correlation — so local dev and OSS checkouts need no infra). `NB_SERVICE_NAME` overrides the service name.
 - **OTel deps are exact-pinned to one release train** (stable `sdk-trace-*`/`resources` + the matching experimental exporter). Bump them together or export serialization breaks; the version-coherence test in `test/unit/observability.test.ts` guards it.

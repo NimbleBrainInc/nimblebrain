@@ -6,7 +6,6 @@ import {
 } from "../../bundles/composio-connection.ts";
 import { WORKSPACE_PRINCIPAL_ID } from "../../bundles/connection.ts";
 import { slugifyServerName } from "../../bundles/paths.ts";
-import { log } from "../../cli/log.ts";
 import {
   COMPOSIO_CALLBACK_PATH,
   composioCallbackUrl,
@@ -15,6 +14,7 @@ import {
   initiateComposioConnection,
   validateComposioConfig,
 } from "../../composio/sdk.ts";
+import { log } from "../../observability/log.ts";
 import { requireAuth } from "../middleware/auth.ts";
 import { requireWorkspace } from "../middleware/workspace.ts";
 import { type AppContext, type AppEnv, apiError } from "../types.ts";

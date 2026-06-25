@@ -46,49 +46,21 @@ Every weekday at 8am, summarize my unread email and post it to the
 
 The agent creates the automation for you, generating the schedule and the prompt. You can ask it to list, pause, resume, or delete automations the same way.
 
-You can also browse and manage automations from the **Automations** panel in the sidebar.
+## Managing automations
 
-## Managing automations from the CLI
-
-The `nb automation` command manages automations from the terminal. Every subcommand accepts a global `--json` flag for machine-readable output.
+Browse and manage automations from the **Automations** panel in the sidebar, or ask the agent in chat. Both surfaces let you:
 
 <Steps>
 
-1. **List automations:**
+1. **List automations** — name, enabled state, schedule, source, last run status, and next run time.
 
-   ```bash
-   nb automation list
-   ```
+2. **Inspect one automation** — its full definition (schedule, model, caps, prompt preview) and recent run history with per-run status, start time, iterations, and tool-call counts.
 
-   Shows a table of name, enabled state, schedule, source, last run status, and next run time.
+3. **Pause an automation** — disable it without deleting.
 
-2. **Inspect one automation:**
+4. **Resume a paused automation** — re-enable it on its existing schedule.
 
-   ```bash
-   nb automation status weekly-report
-   ```
-
-   Prints the full definition (schedule, model, caps, prompt preview) and recent run history with per-run status, start time, iterations, and tool-call counts.
-
-3. **Pause an automation** (disable it without deleting):
-
-   ```bash
-   nb automation pause weekly-report
-   ```
-
-4. **Resume a paused automation:**
-
-   ```bash
-   nb automation resume weekly-report
-   ```
-
-5. **Trigger an immediate run**, bypassing the schedule:
-
-   ```bash
-   nb automation run weekly-report
-   ```
-
-   Short runs return the full run record. Runs that take longer than about 30 seconds return a `dispatched` acknowledgement and continue in the background — poll `nb automation status <name>` to watch for completion.
+5. **Trigger an immediate run** — bypass the schedule and run now. Short runs return the full run record; runs that take longer than about 30 seconds continue in the background, and the panel updates when they finish.
 
 </Steps>
 
@@ -98,7 +70,7 @@ Pausing keeps the definition and its run history intact; the scheduler simply sk
 
 ## Run history
 
-Every run is recorded with its status, start and completion times, iteration count, tool calls, and any error. View it through `nb automation status <name>`, the Automations panel, or by asking the agent. If the runtime restarts while a run is in flight, the orphaned run is swept and marked failed so history stays accurate.
+Every run is recorded with its status, start and completion times, iteration count, tool calls, and any error. View it in the Automations panel or by asking the agent. If the runtime restarts while a run is in flight, the orphaned run is swept and marked failed so history stays accurate.
 
 ## What's next
 

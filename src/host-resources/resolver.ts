@@ -4,10 +4,10 @@ import {
   McpError,
   type ReadResourceResult,
 } from "@modelcontextprotocol/sdk/types.js";
-import { log } from "../cli/log.ts";
 import { isTextMime } from "../files/mime.ts";
 import type { FileStore } from "../files/store.ts";
 import { FILE_URI_SCHEME, fileIdToUri, uriToFileId } from "../files/uri.ts";
+import { log } from "../observability/log.ts";
 import { HOST_RESOURCES_MAX_READ_SIZE } from "./capability.ts";
 
 /**

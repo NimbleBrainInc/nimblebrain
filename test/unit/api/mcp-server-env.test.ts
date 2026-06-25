@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { parsePositiveIntEnv } from "../../../src/api/mcp-server.ts";
-import { log } from "../../../src/cli/log.ts";
+import { log } from "../../../src/observability/log.ts";
 
 const ENV_NAME = "__MCP_TEST_PARSE_INT__";
 
