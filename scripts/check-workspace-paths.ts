@@ -42,11 +42,9 @@ const ALLOW_MARKER = "lint-ok:workspace-path";
 // Files that legitimately define the workspace path layout. The lint
 // would otherwise flag the definitions it exists to protect.
 const ALLOWED_FILES = new Set(
-  [
-    "workspace/context.ts",
-    "workspace/workspace-store.ts",
-    "config/workspace-credentials.ts",
-  ].map((f) => f.split("/").join(sep)),
+  ["workspace/context.ts", "workspace/workspace-store.ts", "config/workspace-credentials.ts"].map(
+    (f) => f.split("/").join(sep),
+  ),
 );
 
 interface Violation {
@@ -169,9 +167,7 @@ async function main(): Promise<void> {
   }
 
   if (violations.length > 0) {
-    console.error(
-      `✗ Found ${violations.length} hand-built workspace-scoped path(s) in src/:\n`,
-    );
+    console.error(`✗ Found ${violations.length} hand-built workspace-scoped path(s) in src/:\n`);
     for (const v of violations) {
       console.error(`  ${v.file}:${v.line}:${v.column}`);
       console.error(`    ${v.snippet}\n`);
@@ -179,7 +175,9 @@ async function main(): Promise<void> {
     console.error(
       "Workspace-scoped paths must flow through WorkspaceContext (src/workspace/context.ts).",
     );
-    console.error("Use `ctx.getDataPath(scope, ...subpaths)` instead of `join(workDir, \"workspaces\", wsId, ...)`.");
+    console.error(
+      'Use `ctx.getDataPath(scope, ...subpaths)` instead of `join(workDir, "workspaces", wsId, ...)`.',
+    );
     console.error(
       `Legitimate exceptions (rare) require a // ${ALLOW_MARKER} comment on the line above the call.`,
     );

@@ -82,9 +82,7 @@ function asStringArray(v: unknown): string[] | undefined {
  */
 function resolveStrategy(rawStrategy: unknown, type: unknown): SkillLoadingStrategy {
   if (typeof rawStrategy === "string" && rawStrategy.trim().length > 0) {
-    return rawStrategy.trim().toLowerCase().replace(/_/g, "-") === "always"
-      ? "always"
-      : "dynamic";
+    return rawStrategy.trim().toLowerCase().replace(/_/g, "-") === "always" ? "always" : "dynamic";
   }
   return type === "context" ? "always" : "dynamic";
 }
@@ -142,9 +140,7 @@ export function migrateFrontmatterToManifest(legacy: Record<string, unknown>): S
     ...(triggers ? { triggers } : {}),
     ...(allowedTools ? { allowedTools } : {}),
     ...(typeof legacy.license === "string" ? { license: legacy.license } : {}),
-    ...(typeof legacy.compatibility === "string"
-      ? { compatibility: legacy.compatibility }
-      : {}),
+    ...(typeof legacy.compatibility === "string" ? { compatibility: legacy.compatibility } : {}),
     ...(author ? { author } : {}),
     ...(version ? { version } : {}),
   };

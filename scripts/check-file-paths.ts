@@ -36,7 +36,9 @@ const ALLOW_MARKER = "lint-ok:file-path";
 // `runtime.ts` owns FileStore construction: the `getFileStore` method (the
 // sanctioned identity-scoped constructor) and the host-resources resolver
 // closure both legitimately call `createFileStore`.
-const CREATE_STORE_ALLOWED_FILES = new Set(["runtime/runtime.ts"].map((f) => f.split("/").join(sep)));
+const CREATE_STORE_ALLOWED_FILES = new Set(
+  ["runtime/runtime.ts"].map((f) => f.split("/").join(sep)),
+);
 
 interface Violation {
   file: string;
@@ -80,8 +82,7 @@ export function isWorkspaceScopedFilesJoin(node: ts.CallExpression): boolean {
     isGetWorkspaceScopedDirCall(args[0]);
   if (!firstIsWsScoped) return false;
   return args.some(
-    (a) =>
-      (ts.isStringLiteral(a) || ts.isNoSubstitutionTemplateLiteral(a)) && a.text === "files",
+    (a) => (ts.isStringLiteral(a) || ts.isNoSubstitutionTemplateLiteral(a)) && a.text === "files",
   );
 }
 
@@ -158,14 +159,14 @@ async function main(): Promise<void> {
   }
 
   if (violations.length > 0) {
-    console.error(`✗ Found ${violations.length} workspace-scoped / unsanctioned file path(s) in src/:\n`);
+    console.error(
+      `✗ Found ${violations.length} workspace-scoped / unsanctioned file path(s) in src/:\n`,
+    );
     for (const v of violations) {
       console.error(`  ${v.file}:${v.line}:${v.column} — ${v.reason}`);
       console.error(`    ${v.snippet}\n`);
     }
-    console.error(
-      "Phase B: files are identity-owned at `{workDir}/users/{userId}/files/`.",
-    );
+    console.error("Phase B: files are identity-owned at `{workDir}/users/{userId}/files/`.");
     console.error("Build a store only via `runtime.getFileStore(userId)`.");
     console.error(
       `Legitimate exceptions (rare) require a // ${ALLOW_MARKER} comment on the line above.`,

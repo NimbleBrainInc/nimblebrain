@@ -161,9 +161,7 @@ function scanFile(absPath: string, violations: Violation[]): void {
 
   function record(node: ts.Node, reason: string): void {
     if (hasAllowMarker(node, sourceFile, src)) return;
-    const { line, character } = sourceFile.getLineAndCharacterOfPosition(
-      node.getStart(sourceFile),
-    );
+    const { line, character } = sourceFile.getLineAndCharacterOfPosition(node.getStart(sourceFile));
     violations.push({
       file: relative(ROOT, absPath),
       line: line + 1,
