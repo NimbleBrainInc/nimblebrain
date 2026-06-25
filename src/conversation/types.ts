@@ -173,10 +173,10 @@ export interface Conversation {
   /** User who owns this conversation. The single authorization principal. */
   ownerId: string;
   /**
-   * Workspace whose tools the chat in this conversation has access to
-   * at run time. Tool-scoping, not ownership — the conversation lives
-   * top-level regardless. May change across messages if Stage 2's
-   * multi-workspace tool aggregation lands.
+   * Workspace whose tools the chat in this conversation has access to at run
+   * time. The session is walled to this one workspace (plus the user's identity
+   * tools); there is no cross-workspace aggregation. Tool-scoping, not
+   * ownership — the conversation lives top-level regardless.
    */
   workspaceId?: string;
   /** Arbitrary caller-provided metadata. Stored in JSONL first line, never validated. */

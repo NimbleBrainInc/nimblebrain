@@ -132,50 +132,49 @@ async function createMcpClient(
 // Tests
 // ---------------------------------------------------------------------------
 describe("MCP Server Endpoint (/mcp)", () => {
-	it("client connects and lists tools", async () => {
+	it("client connects and lists identity tools", async () => {
 		const client = await createMcpClient();
 		try {
 			const result = await client.listTools();
-			expect(result.tools.length).toBeGreaterThan(0);
-
-			// Stage 2: tool names are namespaced as `ws_<id>/<source>__<tool>`.
-			const expectedName = `${TEST_WORKSPACE_ID}-fake__echo`;
-			const echoTool = result.tools.find((t) => t.name === expectedName);
-			expect(echoTool).toBeDefined();
-			expect(echoTool!.description).toBe("Echoes input back");
+			const names = result.tools.map((t) => t.name);
+			// /mcp is identity-bound: identity tools are listed, workspace tools are not.
+			expect(names).toContain("conversations__list");
+			expect(names).not.toContain(`${TEST_WORKSPACE_ID}-fake__echo`);
+			expect(names.every((n) => !n.startsWith("ws_"))).toBe(true);
 		} finally {
 			await client.close();
 		}
 	});
 
-	it("client calls a tool", async () => {
+	it("client calls an identity tool", async () => {
 		const client = await createMcpClient();
 		try {
 			const result = await client.callTool({
-				name: `${TEST_WORKSPACE_ID}-fake__echo`,
-				arguments: { text: "hello world" },
-			});
-			expect(result.isError).toBeFalsy();
-			expect(result.content).toEqual([
-				{ type: "text", text: "hello world" },
-			]);
-		} finally {
-			await client.close();
-		}
-	});
-
-	it("tool call with unknown tool returns error", async () => {
-		const client = await createMcpClient();
-		try {
-			// `fake__nonexistent` IS namespaced as a valid workspace + bad
-			// inner tool, so the source lookup succeeds (source "fake")
-			// but the inner tool is unknown. Source.execute should surface
-			// `isError: true`.
-			const result = await client.callTool({
-				name: `${TEST_WORKSPACE_ID}-fake__nonexistent`,
+				name: "conversations__list",
 				arguments: {},
 			});
-			expect(result.isError).toBe(true);
+			expect(result.isError).toBeFalsy();
+		} finally {
+			await client.close();
+		}
+	});
+
+	it("a workspace tool call is refused — /mcp has no workspace", async () => {
+		const client = await createMcpClient();
+		try {
+			// /mcp is identity-bound: any `ws_<id>-...` name is refused
+			// (WorkspaceToolUnavailable → -32602 workspace_access_denied),
+			// surfaced as a thrown JSON-RPC error.
+			let errorCode: number | undefined;
+			try {
+				await client.callTool({
+					name: `${TEST_WORKSPACE_ID}-fake__echo`,
+					arguments: {},
+				});
+			} catch (err) {
+				errorCode = (err as { code?: number }).code;
+			}
+			expect(errorCode).toBe(-32602);
 		} finally {
 			await client.close();
 		}

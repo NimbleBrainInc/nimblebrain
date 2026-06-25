@@ -112,6 +112,22 @@ export class CrossWorkspaceReachDenied extends WorkspaceAccessDenied {
 }
 
 /**
+ * Thrown when an identity-scoped session with NO workspace (e.g. a `/mcp`
+ * session, which is identity-bound and carries no workspace) attempts a
+ * workspace-scoped tool call. Workspace tools are unreachable on such a session
+ * — only the caller's identity tools (conversations / files / automations) are.
+ * Subclasses `WorkspaceAccessDenied` so the existing error mapping applies
+ * unchanged.
+ */
+export class WorkspaceToolUnavailable extends WorkspaceAccessDenied {
+  constructor(identityId: string, wsId: string) {
+    super(identityId, wsId);
+    this.name = "WorkspaceToolUnavailable";
+    this.message = `[orchestrator] this session is identity-scoped (no workspace); workspace tool "${wsId}" is not available`;
+  }
+}
+
+/**
  * Thrown when the inner tool name's source prefix isn't registered in
  * the target workspace's `ToolRegistry`. Surfaced separately from
  * `UnknownWorkspace` because the failure mode is different: the
@@ -173,16 +189,6 @@ export { UnknownNamespacedToolName };
  * satisfies this shape via three pre-existing accessors.
  */
 export interface OrchestratorRuntime {
-  /**
-   * Workspace-store surface. The orchestrator calls `get(wsId)` to
-   * confirm existence and `getWorkspacesForUser(userId)` to confirm
-   * membership. Returning a narrowed interface keeps stubs minimal.
-   */
-  getWorkspaceStore(): {
-    get(wsId: string): Promise<{ id: string } | null>;
-    getWorkspacesForUser(userId: string): Promise<Array<{ id: string }>>;
-  };
-
   /**
    * Fresh `WorkspaceContext` for `wsId`. The runtime constructs this
    * per call (no cache) so context-isolation is automatic — see the
@@ -320,27 +326,17 @@ export async function routeToolCall(opts: {
   }
   const wsId = scope.wsId;
 
-  if (workspaceId !== undefined) {
-    // Walled session: reach is bounded to the one workspace. A call to any
-    // other workspace is denied even for a member. Membership + existence were
-    // validated when the session / `X-Workspace-Id` was established, so there
-    // is no per-call store lookup or membership scan.
-    if (wsId !== workspaceId) {
-      throw new CrossWorkspaceReachDenied(identityId, wsId, workspaceId);
-    }
-  } else {
-    // Legacy `/mcp` path (no session workspace threaded yet): confirm the
-    // workspace exists and the identity is a member. `WorkspaceStore.get`
-    // returns `null` for both unknown id and ENOENT — both are "doesn't exist."
-    const workspaceStore = runtime.getWorkspaceStore();
-    const ws = await workspaceStore.get(wsId);
-    if (!ws) {
-      throw new UnknownWorkspace(wsId);
-    }
-    const accessible = await workspaceStore.getWorkspacesForUser(identityId);
-    if (!accessible.some((w) => w.id === wsId)) {
-      throw new WorkspaceAccessDenied(identityId, wsId);
-    }
+  if (workspaceId === undefined) {
+    // Identity-scoped session with no workspace (e.g. `/mcp`). Workspace tools
+    // are not reachable — only identity (bare) tools. Deny any workspace call.
+    throw new WorkspaceToolUnavailable(identityId, wsId);
+  }
+  // Walled session: reach is bounded to the one workspace. A call to any other
+  // workspace is denied even for a member. Membership + existence were validated
+  // when the session / `X-Workspace-Id` was established, so there is no per-call
+  // store lookup or membership scan.
+  if (wsId !== workspaceId) {
+    throw new CrossWorkspaceReachDenied(identityId, wsId, workspaceId);
   }
 
   // Step 4 — fresh context. Derived ONLY from the parsed wsId; we

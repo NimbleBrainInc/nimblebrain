@@ -89,7 +89,6 @@ import { isToolEnabled, isToolVisibleToRole, type ResolvedFeatures } from "../co
 import type { UserIdentity } from "../identity/provider.ts";
 import {
   routeToolCall,
-  type ToolListAggregator,
   UnknownIdentitySource,
   UnknownNamespacedToolName,
   UnknownToolSource,
@@ -178,12 +177,12 @@ interface TransportEntry {
 export interface McpServerHostOptions {
   registry: SessionRegistry;
   /**
-   * Runtime handle used by `tools/list` (via `getToolListAggregator`)
-   * and `tools/call` (via the orchestrator's `routeToolCall`). Optional
-   * for legacy unit tests that exercise only reclamation / session-miss
-   * paths and never hit a tool handler; production callers always pass
-   * the live runtime. When absent, `tools/list` returns an empty list and
-   * `tools/call` rejects with `-32601 method not supported`.
+   * Runtime handle used by `tools/list` (the caller's identity tools, via
+   * `listIdentitySourceTools`) and `tools/call` (via the orchestrator's
+   * `routeToolCall`). Optional for legacy unit tests that exercise only
+   * reclamation / session-miss paths and never hit a tool handler; production
+   * callers always pass the live runtime. When absent, `tools/list` returns an
+   * empty list and `tools/call` rejects with `-32601 method not supported`.
    */
   runtime?: Runtime;
   /**
@@ -604,11 +603,12 @@ export class McpServerHost {
  * Create a new MCP Server instance bound to a single identity-scoped
  * session. Each session gets its own Server + Transport pair.
  *
- * Stage 2 (cross-workspace refactor) makes `tools/list` return the union
- * across every workspace the identity can access (via the runtime's
- * `getToolListAggregator()`), and `tools/call` parses the namespaced name
- * and routes via `routeToolCall`. Workspace is derived from the parsed
- * name on every call — never from session-level state.
+ * `/mcp` sessions are identity-bound and carry no workspace: `tools/list`
+ * returns only the caller's identity tools (conversations / files /
+ * automations) — no workspace tools, no cross-workspace union. `tools/call`
+ * routes identity (bare) names via `routeToolCall`; a `ws_<id>-...` name is
+ * refused (`WorkspaceToolUnavailable`) until `/mcp` is reworked as a
+ * workspace-bound agent projection.
  *
  * When `runtime` is null (legacy unit-test path), tool handlers degrade
  * to safe no-ops: `tools/list` returns empty and `tools/call` rejects
@@ -650,22 +650,21 @@ function createServer(
 
   server.setRequestHandler(ListToolsRequestSchema, async () => {
     if (!runtime || !identityId) {
-      // Legacy unit-test path / unauthenticated dev path: no runtime
-      // means no aggregator. Empty list, not an error — the SDK requires
-      // a response.
+      // Unauthenticated / no-runtime path: empty list, not an error — the SDK
+      // requires a response.
       return { tools: [] };
     }
-    const aggregator: ToolListAggregator = runtime.getToolListAggregator();
-    const tools = await aggregator.aggregateToolList(identityId);
+    // `/mcp` sessions are identity-bound and carry no workspace, so they expose
+    // ONLY the caller's identity tools (conversations, files, automations) — no
+    // workspace tools and no cross-workspace union. Workspace tools return when
+    // `/mcp` is reworked as a workspace-bound agent projection; until then a
+    // `tools/call` on any `ws_<id>-...` name is refused (`WorkspaceToolUnavailable`).
+    const identityTools = await runtime.listIdentitySourceTools();
     const orgRole = sessionCtx.identity?.orgRole;
     return {
-      tools: tools
-        // Feature gating and role visibility apply to the bare (unnamespaced)
-        // tool name — that's what `isToolEnabled` / `isToolVisibleToRole`
-        // were built for. The aggregator carries the bare name alongside
-        // the canonical `ws_<id>-<name>` form so we don't have to re-parse.
-        .filter((t) => isToolEnabled(t.toolName, features))
-        .filter((t) => isToolVisibleToRole(t.toolName, orgRole))
+      tools: identityTools
+        .filter((t) => isToolEnabled(t.name, features))
+        .filter((t) => isToolVisibleToRole(t.name, orgRole))
         .map((t) => ({
           name: t.name,
           description: t.description,

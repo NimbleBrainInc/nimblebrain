@@ -1,85 +1,22 @@
 /**
- * Stage 2 — T006 acceptance criteria tests (Group B audit follow-ups).
+ * Orchestrator error-taxonomy tests.
  *
- * Two contracts pinned here that the cross-workspace E2E
- * (`cross-workspace-chat.test.ts`) doesn't observe directly:
- *
- *  1. **Aggregator disposal on `runtime.shutdown()`** — the runtime owns the
- *     cross-workspace tool-list aggregator and MUST dispose its FS watchers
- *     on shutdown. Without this, long-running test suites and production
- *     deployments leak `fs.watch` handles across the process lifetime.
- *     Verified by asserting `activeWatcherCount() === 0` after shutdown.
- *
- *  2. **Orchestrator error taxonomy** — the four orchestrator error classes
- *     (`UnknownNamespacedToolName`, `UnknownWorkspace`, `WorkspaceAccessDenied`,
- *     `UnknownToolSource`) each map to a distinct `data.reason` discriminator
- *     on the `isError: true` tool result that surfaces through `runtime.chat()`.
- *     Conflating them under one symptom hides real failure modes (Stage 1
- *     lesson 2). The discriminators are identical to the ones T007 uses for
- *     the `/mcp` JSON-RPC path so HTTP / MCP consumers can rely on a single
- *     vocabulary.
- *
- * These tests use the existing two-workspace fixture so the orchestrator's
- * routing path is the same one cross-workspace-chat exercises.
+ * Each orchestrator error class surfaces a distinct `data.reason` discriminator
+ * on the `isError: true` tool result that flows through `runtime.chat()`:
+ * `invalid_tool_name`, `workspace_access_denied` (the wall — a call to any
+ * workspace other than the session's is denied), and `unknown_tool_source`.
+ * Conflating them under one symptom hides real failure modes. These tests use
+ * the two-workspace fixture so the routing path matches production.
  */
 
 import { afterEach, describe, expect, it } from "bun:test";
 
-import { Runtime } from "../../../src/runtime/runtime.ts";
-import { createEchoModel } from "../../helpers/echo-model.ts";
-import { makeTestWorkDir } from "../../helpers/test-workdir.ts";
 import {
   createTwoWorkspaceFixture,
   type TwoWorkspaceFixture,
 } from "../../helpers/two-workspace-fixture.ts";
 
-// ── 1. Aggregator disposal ────────────────────────────────────────
-
-describe("runtime shutdown — tool-list aggregator disposal (T006)", () => {
-  it("aggregator's active watchers drop to zero after runtime.shutdown()", async () => {
-    // Boot a runtime, then aggregate tools so the aggregator's cache
-    // attaches per-workspace watchers under the hood.
-    const fixture = await createTwoWorkspaceFixture();
-    const aggregator = fixture.runtime.getToolListAggregator();
-    // First call primes the membership-stamp + per-workspace entries.
-    await aggregator.aggregateToolList(fixture.identity.id);
-    // Active watchers MAY be 0 with the in-memory test fixture (the
-    // cache attaches watchers lazily and only on directories that
-    // exist). What we want to pin is the disposal invariant: whatever
-    // the count is before shutdown, it MUST be 0 after.
-    const before = aggregator.activeWatcherCount();
-    expect(before).toBeGreaterThanOrEqual(0);
-
-    await fixture.cleanup();
-
-    // The aggregator is owned by the runtime; runtime.shutdown() (called
-    // from cleanup()) MUST dispose it. After shutdown the same handle
-    // still answers the count query — that's how the leak-free invariant
-    // is observable.
-    expect(aggregator.activeWatcherCount()).toBe(0);
-  });
-
-  it("aggregator dispose is idempotent across multiple shutdowns", async () => {
-    // Defense-in-depth: a future refactor that double-calls shutdown
-    // (e.g. graceful + force) must not double-throw.
-    const { workDir, cleanup } = makeTestWorkDir("t006-aggregator-dispose");
-    const runtime = await Runtime.start({
-      workDir,
-      model: { provider: "custom", adapter: createEchoModel() },
-      noDefaultBundles: true,
-      logging: { disabled: true },
-    });
-    const aggregator = runtime.getToolListAggregator();
-    await runtime.shutdown();
-    expect(aggregator.activeWatcherCount()).toBe(0);
-    // Second call must not throw.
-    await runtime.shutdown();
-    expect(aggregator.activeWatcherCount()).toBe(0);
-    cleanup();
-  });
-});
-
-// ── 2. Orchestrator error taxonomy mapping ────────────────────────
+// ── Orchestrator error taxonomy mapping ────────────────────────
 
 describe("runtime.chat — orchestrator error taxonomy (T006)", () => {
   let fixture: TwoWorkspaceFixture | null = null;

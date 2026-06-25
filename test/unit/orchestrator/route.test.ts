@@ -1,16 +1,16 @@
 /**
  * Unit tests for `src/orchestrator/route.ts`.
  *
- * Pins the per-call workspace routing contract for Stage 2 of the
- * cross-workspace refactor. Each test names the failure mode a naive
- * implementation might silently mask — matching the
- * `004-orchestrator-skeleton.md` "Tests Required" list 1:1.
+ * Pins the per-call routing contract under the workspace wall: a session is
+ * bounded to ONE workspace (passed as `workspaceId`). A workspace-scoped call
+ * to that workspace dispatches; a call to any other workspace is denied
+ * (`CrossWorkspaceReachDenied`); a workspace call on a session with no
+ * workspace (e.g. `/mcp`) is `WorkspaceToolUnavailable`. Identity (bare) calls
+ * route to the identity door regardless of workspace.
  *
- * Test surface is structural: a stub `OrchestratorRuntime` is built
- * per case, exercising the orchestrator without booting a real
- * `Runtime` or hitting the filesystem. The stub mirrors the
- * production runtime's three accessors (workspace store, workspace
- * context factory, per-workspace registry).
+ * Test surface is structural: a stub `OrchestratorRuntime` is built per case,
+ * exercising the orchestrator without booting a real `Runtime` or hitting the
+ * filesystem.
  */
 
 import { mkdtempSync, rmSync } from "node:fs";
@@ -19,28 +19,23 @@ import { join } from "node:path";
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 
-import {
-  UnknownIdentitySource,
-  routeToolCall,
-  UnknownToolSource,
-  UnknownWorkspace,
-  WorkspaceAccessDenied,
-  type OrchestratorRuntime,
-} from "../../../src/orchestrator/index.ts";
-import type { Tool, ToolSource } from "../../../src/tools/types.ts";
 import type { ToolResult } from "../../../src/engine/types.ts";
 import { IdentityContext } from "../../../src/identity/context.ts";
+import {
+  CrossWorkspaceReachDenied,
+  type OrchestratorRuntime,
+  routeToolCall,
+  UnknownIdentitySource,
+  UnknownToolSource,
+  WorkspaceAccessDenied,
+  WorkspaceToolUnavailable,
+} from "../../../src/orchestrator/index.ts";
+import type { Tool, ToolSource } from "../../../src/tools/types.ts";
 import { WorkspaceContext } from "../../../src/workspace/context.ts";
 import { personalWorkspaceIdFor } from "../../../src/workspace/workspace-store.ts";
 
 // ── Stub source ───────────────────────────────────────────────────
 
-/**
- * Minimal `ToolSource` that returns its constructor name on dispatch.
- * The orchestrator's tests never call `execute` — they assert which
- * source instance was returned — but the source still has to satisfy
- * the structural contract so TS accepts it.
- */
 function makeStubSource(name: string): ToolSource {
   return {
     name,
@@ -60,31 +55,18 @@ function makeStubSource(name: string): ToolSource {
 interface StubRuntimeOpts {
   /** Map of wsId → list of source instances registered in that workspace. */
   registries: Map<string, ToolSource[]>;
-  /** Map of userId → list of wsIds the identity belongs to. */
-  memberships: Map<string, string[]>;
-  /** Set of wsIds known to the store. */
-  existingWorkspaces: Set<string>;
   /** Working directory passed to constructed `WorkspaceContext` instances. */
   workDir: string;
   /** Kernel identity sources by name (conversations, …). The identity door. */
   identitySources?: Map<string, ToolSource>;
-  /**
-   * Optional self-heal hook. When set, it's exposed as
-   * `recoverWorkspaceSource` and the orchestrator calls it on a source
-   * miss. The behavior may mutate `registries` (push the now-recovered
-   * source into the workspace's array) and returns whether recovery
-   * succeeded. When omitted, the stub has no `recoverWorkspaceSource` —
-   * exercising the back-compat path where a miss is a hard error.
-   */
+  /** Optional self-heal hook exposed as `recoverWorkspaceSource`. */
   recoverWorkspaceSource?: (wsId: string, sourceName: string) => boolean | Promise<boolean>;
 }
 
 interface StubRuntime extends OrchestratorRuntime {
-  /** How many times `getWorkspaceContext` has been called — used to assert per-call freshness. */
-  contextCallCount(): number;
   /** Every `WorkspaceContext` returned, in call order — used to assert non-aliasing. */
-  emittedContexts(): WorkspaceContext[];
-  /** How many times `recoverWorkspaceSource` was invoked — asserts the self-heal fired exactly once. */
+  contextCallCount(): number;
+  /** How many times `recoverWorkspaceSource` was invoked. */
   recoverCallCount(): number;
 }
 
@@ -101,21 +83,9 @@ function makeStubRuntime(opts: StubRuntimeOpts): StubRuntime {
           },
         }
       : {}),
-    getWorkspaceStore() {
-      return {
-        async get(wsId: string) {
-          return opts.existingWorkspaces.has(wsId) ? { id: wsId } : null;
-        },
-        async getWorkspacesForUser(userId: string) {
-          const ids = opts.memberships.get(userId) ?? [];
-          return ids.map((id) => ({ id }));
-        },
-      };
-    },
     getWorkspaceContext(wsId: string) {
-      // Production behavior: fresh instance per call. The cache-
-      // isolation test relies on this. Construct directly rather than
-      // through any cache.
+      // Production behavior: fresh instance per call (the context-isolation
+      // test relies on this).
       const ctx = new WorkspaceContext({ wsId, workDir: opts.workDir });
       emitted.push(ctx);
       return ctx;
@@ -134,11 +104,11 @@ function makeStubRuntime(opts: StubRuntimeOpts): StubRuntime {
     getIdentityContext(identityId: string): IdentityContext {
       return new IdentityContext({ userId: identityId, workDir: opts.workDir });
     },
+    listToolsForWorkspace() {
+      return Promise.resolve([]);
+    },
     contextCallCount() {
       return emitted.length;
-    },
-    emittedContexts() {
-      return emitted;
     },
     recoverCallCount() {
       return recoverCalls;
@@ -149,6 +119,7 @@ function makeStubRuntime(opts: StubRuntimeOpts): StubRuntime {
 // ── Test scaffolding ──────────────────────────────────────────────
 
 const SHARED_WS = "ws_helix";
+const OTHER_WS = "ws_acme";
 const USER_ID = "u1";
 const PERSONAL_WS = personalWorkspaceIdFor(USER_ID); // ws_user_u1
 
@@ -172,8 +143,6 @@ function buildHappyRuntime(): StubRuntime {
       [SHARED_WS, [makeStubSource("crm")]],
       [PERSONAL_WS, [makeStubSource("gmail")]],
     ]),
-    memberships: new Map([[USER_ID, [SHARED_WS, PERSONAL_WS]]]),
-    existingWorkspaces: new Set([SHARED_WS, PERSONAL_WS]),
     workDir,
   });
 }
@@ -181,17 +150,14 @@ function buildHappyRuntime(): StubRuntime {
 // ── Tests ─────────────────────────────────────────────────────────
 
 describe("routeToolCall — happy path", () => {
-  // Pins: "routing flows end-to-end and produces a context whose
-  // wsId matches the parsed namespace." Naive failure: orchestrator
-  // hard-codes a workspace or reads from ambient state, returning a
-  // context that doesn't match the input.
+  // A call to the session's own workspace routes end-to-end and produces a
+  // context whose wsId matches the parsed namespace.
   test("returns a context whose wsId === parsed wsId and toolName stripped of prefix", async () => {
-    const runtime = buildHappyRuntime();
-
     const routed = await routeToolCall({
       identityId: USER_ID,
       namespacedName: `${SHARED_WS}-crm__search`,
-      runtime,
+      workspaceId: SHARED_WS,
+      runtime: buildHappyRuntime(),
     });
 
     expect(routed.context.workspaceId).toBe(SHARED_WS);
@@ -200,12 +166,11 @@ describe("routeToolCall — happy path", () => {
   });
 });
 
-describe("routeToolCall — strict invariant (Stage 1 lesson 3)", () => {
-  // Pins: un-namespaced names MUST throw rather than silently fall
-  // back to "the user's personal workspace." A defensive default
-  // would mask the failure mode where the LLM emits a bare tool
-  // name and the call lands somewhere unintended.
-  test("bare name routes to global (not the personal workspace) — fails closed pre-W3, builds no workspace context", async () => {
+describe("routeToolCall — strict invariant (no silent workspace fallback)", () => {
+  // A bare (un-namespaced) name routes to the identity door, NEVER to a
+  // workspace. `crm` is a workspace app, not a kernel identity source, so it's
+  // refused — and no WorkspaceContext is constructed.
+  test("bare workspace-app name → UnknownIdentitySource, no WorkspaceContext", async () => {
     const runtime = buildHappyRuntime();
 
     let thrown: unknown = null;
@@ -213,15 +178,12 @@ describe("routeToolCall — strict invariant (Stage 1 lesson 3)", () => {
       await routeToolCall({
         identityId: USER_ID,
         namespacedName: "crm__search",
+        workspaceId: SHARED_WS,
         runtime,
       });
     } catch (err) {
       thrown = err;
     }
-    // Bare name → identity scope. `crm` is a workspace app, NOT a kernel
-    // identity source, so it's refused with UnknownIdentitySource (a
-    // mis-namespaced workspace app). The invariant holds: a bare name is
-    // NEVER silently routed to a workspace — no WorkspaceContext constructed.
     expect(thrown).toBeInstanceOf(UnknownIdentitySource);
     expect(runtime.contextCallCount()).toBe(0);
   });
@@ -230,20 +192,18 @@ describe("routeToolCall — strict invariant (Stage 1 lesson 3)", () => {
     const convSource = makeStubSource("conversations");
     const runtime = makeStubRuntime({
       registries: new Map(),
-      memberships: new Map([[USER_ID, [PERSONAL_WS]]]),
-      existingWorkspaces: new Set([PERSONAL_WS]),
       workDir,
       identitySources: new Map([["conversations", convSource]]),
     });
     const routed = await routeToolCall({
       identityId: USER_ID,
       namespacedName: "conversations__list",
+      workspaceId: SHARED_WS,
       runtime,
     });
     expect(routed.kind).toBe("identity");
     expect(routed.toolName).toBe("conversations__list");
     expect(routed.source).toBe(convSource);
-    // Load-bearing: an identity request NEVER constructs a WorkspaceContext.
     expect(runtime.contextCallCount()).toBe(0);
     if (routed.kind === "identity") {
       expect(routed.context).toBeInstanceOf(IdentityContext);
@@ -251,17 +211,40 @@ describe("routeToolCall — strict invariant (Stage 1 lesson 3)", () => {
   });
 });
 
-describe("routeToolCall — authorization fails loud", () => {
-  // Pins: identity whose workspaces don't include the target throws
-  // WorkspaceAccessDenied. Naive failure: returning a context anyway
-  // (membership not checked) — bypassing the workspace isolation
-  // invariant.
-  test("non-member identity throws WorkspaceAccessDenied — does NOT return a context", async () => {
+describe("routeToolCall — the wall (cross-workspace denial)", () => {
+  // A session bounded to one workspace cannot reach another — even one the
+  // identity is a member of. Denied before existence is checked, so no
+  // WorkspaceContext is constructed.
+  test("a call to a workspace other than the session's throws CrossWorkspaceReachDenied", async () => {
+    const runtime = makeStubRuntime({
+      registries: new Map([[OTHER_WS, [makeStubSource("crm")]]]),
+      workDir,
+    });
+
+    let thrown: unknown = null;
+    try {
+      await routeToolCall({
+        identityId: USER_ID,
+        namespacedName: `${OTHER_WS}-crm__search`,
+        workspaceId: SHARED_WS,
+        runtime,
+      });
+    } catch (err) {
+      thrown = err;
+    }
+    expect(thrown).toBeInstanceOf(CrossWorkspaceReachDenied);
+    // Maps through the existing WorkspaceAccessDenied error surface.
+    expect(thrown).toBeInstanceOf(WorkspaceAccessDenied);
+    expect((thrown as CrossWorkspaceReachDenied).wsId).toBe(OTHER_WS);
+    expect((thrown as CrossWorkspaceReachDenied).focusedWorkspaceId).toBe(SHARED_WS);
+    expect(runtime.contextCallCount()).toBe(0);
+  });
+
+  // An identity-scoped session with NO workspace (e.g. `/mcp`) cannot reach any
+  // workspace tool — only identity tools.
+  test("a workspace call on a session with no workspace throws WorkspaceToolUnavailable", async () => {
     const runtime = makeStubRuntime({
       registries: new Map([[SHARED_WS, [makeStubSource("crm")]]]),
-      // u1's only workspace is the personal one; SHARED_WS is NOT in the list.
-      memberships: new Map([[USER_ID, [PERSONAL_WS]]]),
-      existingWorkspaces: new Set([SHARED_WS, PERSONAL_WS]),
       workDir,
     });
 
@@ -270,31 +253,28 @@ describe("routeToolCall — authorization fails loud", () => {
       await routeToolCall({
         identityId: USER_ID,
         namespacedName: `${SHARED_WS}-crm__search`,
+        // No workspaceId — identity-scoped session.
         runtime,
       });
     } catch (err) {
       thrown = err;
     }
+    expect(thrown).toBeInstanceOf(WorkspaceToolUnavailable);
     expect(thrown).toBeInstanceOf(WorkspaceAccessDenied);
-    expect((thrown as WorkspaceAccessDenied).identityId).toBe(USER_ID);
-    expect((thrown as WorkspaceAccessDenied).wsId).toBe(SHARED_WS);
-    // No context constructed — the error fires before step 4.
     expect(runtime.contextCallCount()).toBe(0);
   });
 });
 
-describe("routeToolCall — personal workspace authorization", () => {
-  // Pins: identity calling its OWN personal workspace succeeds.
-  // The wsId is derived via `personalWorkspaceIdFor(userId)` to
-  // guard against hand-built `ws_user_<id>` forms that drift from
-  // the canonical helper.
-  test("identity u1 calling ws_user_u1/... succeeds (wsId from personalWorkspaceIdFor)", async () => {
-    const runtime = buildHappyRuntime();
-
+describe("routeToolCall — personal workspace", () => {
+  // A session bounded to the user's personal workspace routes its tools. The
+  // wsId is derived via `personalWorkspaceIdFor(userId)` to guard against
+  // hand-built `ws_user_<id>` forms.
+  test("a call to the bound personal workspace succeeds", async () => {
     const routed = await routeToolCall({
       identityId: USER_ID,
       namespacedName: `${PERSONAL_WS}-gmail__send`,
-      runtime,
+      workspaceId: PERSONAL_WS,
+      runtime: buildHappyRuntime(),
     });
 
     expect(routed.context.workspaceId).toBe(PERSONAL_WS);
@@ -303,113 +283,54 @@ describe("routeToolCall — personal workspace authorization", () => {
   });
 });
 
-describe("routeToolCall — context isolation (Stage 1 lesson 1)", () => {
-  // Pins: two consecutive routes for different wsIds return
-  // distinct `WorkspaceContext` instances with distinct `getRoot()`s.
-  // Naive failure: a cache keyed only on the first wsId returns the
-  // first context for both calls — cross-tenant aliasing.
-  test("two consecutive routes return non-aliased contexts whose getRoot() differ", async () => {
+describe("routeToolCall — context isolation", () => {
+  // Two routes (each bounded to its own workspace) return distinct
+  // `WorkspaceContext` instances with distinct roots — no cross-tenant aliasing.
+  test("two routes return non-aliased contexts whose getRoot() differ", async () => {
     const runtime = buildHappyRuntime();
 
     const first = await routeToolCall({
       identityId: USER_ID,
       namespacedName: `${SHARED_WS}-crm__search`,
+      workspaceId: SHARED_WS,
       runtime,
     });
     const second = await routeToolCall({
       identityId: USER_ID,
       namespacedName: `${PERSONAL_WS}-gmail__send`,
+      workspaceId: PERSONAL_WS,
       runtime,
     });
 
-    // Identity-distinct (different object).
     expect(first.context).not.toBe(second.context);
-    // Root paths differ (the load-bearing assertion — a single
-    // cached context that ignored the second wsId would return
-    // identical roots).
     expect(first.context.getRoot()).not.toBe(second.context.getRoot());
     expect(first.context.workspaceId).toBe(SHARED_WS);
     expect(second.context.workspaceId).toBe(PERSONAL_WS);
-    // Two calls, two distinct emissions — the orchestrator never
-    // reuses an existing context across wsIds.
     expect(runtime.contextCallCount()).toBe(2);
   });
 });
 
 describe("routeToolCall — no ambient state", () => {
-  // Pins: routing succeeds without any "current workspace" pointer.
-  // The orchestrator must derive wsId from the parsed namespace
-  // alone, not from `runtime.requireWorkspaceId()` or
-  // `getCurrentWorkspaceId()`. Our stub doesn't even expose those
-  // accessors — if the orchestrator reached for them this test
-  // would surface a type error or a runtime crash.
-  test("orchestrator does not read any ambient 'current workspace' — routing succeeds with no such state", async () => {
-    const runtime = buildHappyRuntime();
-    // No setup needed beyond the bare stub. The stub deliberately
-    // omits `requireWorkspaceId` / `getCurrentWorkspaceId`. If the
-    // orchestrator ever depends on them, this test breaks first.
-
+  // The orchestrator derives wsId from the parsed namespace + the passed
+  // `workspaceId` alone — never from a "current workspace" pointer. The stub
+  // deliberately omits any such accessor.
+  test("routing succeeds with no ambient 'current workspace' state", async () => {
     const routed = await routeToolCall({
       identityId: USER_ID,
       namespacedName: `${SHARED_WS}-crm__search`,
-      runtime,
+      workspaceId: SHARED_WS,
+      runtime: buildHappyRuntime(),
     });
 
     expect(routed.context.workspaceId).toBe(SHARED_WS);
   });
 });
 
-describe("routeToolCall — unknown workspace", () => {
-  // Pins: `ws_doesnotexist/foo` throws `UnknownWorkspace`,
-  // distinct from `WorkspaceAccessDenied`. The two are conflated
-  // dangerously easy ("any unknown / inaccessible workspace → 403")
-  // — operators need them split to triage cross-tenant accidents
-  // (workspace bogus) from permissions misconfiguration (workspace
-  // exists, identity not a member).
-  test("ws_doesnotexist throws UnknownWorkspace, NOT WorkspaceAccessDenied", async () => {
-    const runtime = makeStubRuntime({
-      registries: new Map(),
-      memberships: new Map([[USER_ID, [SHARED_WS, PERSONAL_WS]]]),
-      existingWorkspaces: new Set([SHARED_WS, PERSONAL_WS]),
-      workDir,
-    });
-
-    let thrown: unknown = null;
-    try {
-      await routeToolCall({
-        identityId: USER_ID,
-        namespacedName: "ws_doesnotexist-foo__bar",
-        runtime,
-      });
-    } catch (err) {
-      thrown = err;
-    }
-
-    expect(thrown).toBeInstanceOf(UnknownWorkspace);
-    // Critical: NOT a WorkspaceAccessDenied — the distinction is the
-    // whole point of the separate error class.
-    expect(thrown).not.toBeInstanceOf(WorkspaceAccessDenied);
-    expect((thrown as UnknownWorkspace).wsId).toBe("ws_doesnotexist");
-  });
-});
-
-// ── Bonus: source-not-registered surfaces UnknownToolSource ──────
-//
-// Not in the task spec's "Tests Required" list, but the orchestrator
-// returns a typed `source` and the failure mode (a tool name whose
-// source prefix isn't installed in the workspace) needs a structured
-// error rather than a bare `Error`. Documented as a fourth distinct
-// error class in the task report; tested here to keep its contract
-// from drifting.
-
 describe("routeToolCall — unknown tool source", () => {
-  test("source not registered in workspace registry throws UnknownToolSource", async () => {
+  test("source not registered in the workspace registry throws UnknownToolSource", async () => {
     const runtime = makeStubRuntime({
-      // SHARED_WS exists and identity belongs, but no `crm` source
-      // is registered.
+      // SHARED_WS is the session workspace but has no `crm` source.
       registries: new Map([[SHARED_WS, []]]),
-      memberships: new Map([[USER_ID, [SHARED_WS]]]),
-      existingWorkspaces: new Set([SHARED_WS]),
       workDir,
     });
 
@@ -418,6 +339,7 @@ describe("routeToolCall — unknown tool source", () => {
       await routeToolCall({
         identityId: USER_ID,
         namespacedName: `${SHARED_WS}-crm__search`,
+        workspaceId: SHARED_WS,
         runtime,
       });
     } catch (err) {
@@ -430,25 +352,12 @@ describe("routeToolCall — unknown tool source", () => {
 });
 
 // ── Self-heal: a missing-but-recoverable source is re-registered ─────
-//
-// Regression for the incident where a remote-OAuth connector
-// (Dropbox) was torn down from a workspace registry mid-run without
-// being re-added — every subsequent tool call (chat AND scheduled
-// automations, which share the same registry) failed with
-// `UnknownToolSource` until a platform restart. The orchestrator now
-// gives the runtime one best-effort, cooldown-guarded chance to
-// re-spawn the source from its persisted ref before failing.
 
 describe("routeToolCall — self-heal on a recoverable source miss", () => {
   test("re-registers a missing source via recoverWorkspaceSource, then routes to it", async () => {
-    // SHARED_WS starts with NO `crm` source. The recovery hook pushes
-    // it in (simulating a re-spawn from the persisted ref) and reports
-    // success — mirroring production's `tryRecoverSource`.
     const wsSources: ToolSource[] = [];
     const runtime = makeStubRuntime({
       registries: new Map([[SHARED_WS, wsSources]]),
-      memberships: new Map([[USER_ID, [SHARED_WS]]]),
-      existingWorkspaces: new Set([SHARED_WS]),
       workDir,
       recoverWorkspaceSource(_wsId, sourceName) {
         wsSources.push(makeStubSource(sourceName));
@@ -459,23 +368,18 @@ describe("routeToolCall — self-heal on a recoverable source miss", () => {
     const routed = await routeToolCall({
       identityId: USER_ID,
       namespacedName: `${SHARED_WS}-crm__search`,
+      workspaceId: SHARED_WS,
       runtime,
     });
 
     expect(routed.source.name).toBe("crm");
     expect(routed.toolName).toBe("crm__search");
-    // Self-heal fired exactly once — the orchestrator does not loop.
     expect(runtime.recoverCallCount()).toBe(1);
   });
 
   test("recovery that fails to register still throws UnknownToolSource (no masking)", async () => {
-    // The hook is invoked but does NOT add the source (e.g. the bundle
-    // is genuinely broken / needs interactive auth that never lands).
-    // The call must still fail loud, exactly as before recovery existed.
     const runtime = makeStubRuntime({
       registries: new Map([[SHARED_WS, []]]),
-      memberships: new Map([[USER_ID, [SHARED_WS]]]),
-      existingWorkspaces: new Set([SHARED_WS]),
       workDir,
       recoverWorkspaceSource() {
         return false;
@@ -487,6 +391,7 @@ describe("routeToolCall — self-heal on a recoverable source miss", () => {
       await routeToolCall({
         identityId: USER_ID,
         namespacedName: `${SHARED_WS}-crm__search`,
+        workspaceId: SHARED_WS,
         runtime,
       });
     } catch (err) {
@@ -498,12 +403,8 @@ describe("routeToolCall — self-heal on a recoverable source miss", () => {
   });
 
   test("a recovery hook that throws is swallowed; the call fails with UnknownToolSource", async () => {
-    // Recovery is strictly best-effort: a throw inside the hook must
-    // not escape routeToolCall as a non-orchestrator error.
     const runtime = makeStubRuntime({
       registries: new Map([[SHARED_WS, []]]),
-      memberships: new Map([[USER_ID, [SHARED_WS]]]),
-      existingWorkspaces: new Set([SHARED_WS]),
       workDir,
       recoverWorkspaceSource() {
         throw new Error("re-spawn blew up");
@@ -515,6 +416,7 @@ describe("routeToolCall — self-heal on a recoverable source miss", () => {
       await routeToolCall({
         identityId: USER_ID,
         namespacedName: `${SHARED_WS}-crm__search`,
+        workspaceId: SHARED_WS,
         runtime,
       });
     } catch (err) {
@@ -526,8 +428,6 @@ describe("routeToolCall — self-heal on a recoverable source miss", () => {
   test("an already-registered source never invokes recovery", async () => {
     const runtime = makeStubRuntime({
       registries: new Map([[SHARED_WS, [makeStubSource("crm")]]]),
-      memberships: new Map([[USER_ID, [SHARED_WS]]]),
-      existingWorkspaces: new Set([SHARED_WS]),
       workDir,
       recoverWorkspaceSource() {
         return true;
@@ -537,11 +437,11 @@ describe("routeToolCall — self-heal on a recoverable source miss", () => {
     const routed = await routeToolCall({
       identityId: USER_ID,
       namespacedName: `${SHARED_WS}-crm__search`,
+      workspaceId: SHARED_WS,
       runtime,
     });
 
     expect(routed.source.name).toBe("crm");
-    // The fast path never touches recovery.
     expect(runtime.recoverCallCount()).toBe(0);
   });
 });

@@ -74,11 +74,6 @@ import { getModelByString, getProviderFromModel } from "../model/catalog.ts";
 import { buildModelResolver, resolveModelString } from "../model/registry.ts";
 import { registerBuiltinCredentialProviders } from "../oauth/minted-credential-provider.ts";
 import { requestIdentityAttrs, withSpan } from "../observability/index.ts";
-import {
-  createToolListAggregator,
-  type ToolListAggregator,
-  type WorkspaceToolListing,
-} from "../orchestrator/index.ts";
 import { PermissionStore } from "../permissions/permission-store.ts";
 import type {
   AppStateInfo,
@@ -263,23 +258,6 @@ export class Runtime {
   _getWorkspaceId: () => string | null = () => null;
   /** Per-workspace ToolRegistry instances — each workspace gets its own scoped registry. */
   private _workspaceRegistries: Map<string, ToolRegistry>;
-  /**
-   * Cross-workspace tool-list aggregator — retained ONLY for the `/mcp`
-   * `tools/list` surface (`api/mcp-server.ts`), which still returns the union
-   * of every workspace the identity can reach. The chat and task surfaces do
-   * NOT use it: they are walled to one workspace and list its tools via
-   * `listToolsForWorkspace(workspaceId)`. Removed once `/mcp` is bound to a
-   * single workspace.
-   *
-   * The aggregator owns per-workspace `fs.watch` handles for invalidation, so
-   * sharing one instance is mandatory (a second would attach its own watchers
-   * per workspace, multiplying handle count without buying any cache benefit).
-   * `Runtime.shutdown()` MUST call `aggregator.dispose()` or the watchers leak
-   * across the process lifetime. Constructed in `Runtime.start()` after the
-   * workspace store + registries exist; the constructor takes it as a required
-   * parameter so the field stays non-nullable.
-   */
-  private _toolListAggregator: ToolListAggregator;
   // Protected sources are captured in start() and passed to startWorkspaceBundles directly.
   /** The system source ("nb") — shared across workspace registries. */
   _systemSource: ToolSource | null;
@@ -370,7 +348,6 @@ export class Runtime {
     workspaceRegistries: Map<string, ToolRegistry>,
     systemSource: ToolSource | null,
     currentWorkspaceId: () => string | null,
-    toolListAggregator: ToolListAggregator,
   ) {
     this.resolveModelFn = resolveModelFn;
     this.store = store;
@@ -392,7 +369,6 @@ export class Runtime {
     this._workspaceRegistries = workspaceRegistries;
     this._systemSource = systemSource;
     this._currentWorkspaceId = currentWorkspaceId;
-    this._toolListAggregator = toolListAggregator;
   }
 
   /** Create and start a runtime from config. */
@@ -719,69 +695,6 @@ export class Runtime {
     };
     const toolEligibilityCtx = { isToolEligible: isToolEligibleForCurrentRequest };
 
-    // Stage 2 (T006): construct the cross-workspace tool-list aggregator.
-    // `listToolsForWorkspace` is the per-workspace enumerator the aggregator
-    // calls under its watcher-backed cache. We dispatch through the runtime's
-    // per-workspace `ToolRegistry` (via the late-bound `rtHolder.rt`), reading
-    // each source's bare `tools()` list rather than the registry's
-    // `availableTools()` projection — the aggregator wants the source-of-
-    // truth `Tool[]` shape with `execution.taskSupport` preserved.
-    //
-    // The aggregator is owned by the Runtime and disposed in `shutdown()`
-    // (acceptance criterion of T006). It must outlive every chat turn so the
-    // per-identity cache is reused; constructing one per call would defeat
-    // the cache and re-attach a fresh `fs.watch` per workspace per call.
-    const workspaceToolLister = async (wsId: string): Promise<WorkspaceToolListing> => {
-      const rt = rtHolder.rt;
-      if (!rt) throw new Error("[runtime] tool-list aggregator: runtime not initialized");
-      // Workspaces created post-boot need a JIT registry — mirrors what
-      // `runtime.chat` does for the request's own workspace.
-      const registry = await rt.ensureWorkspaceRegistry(wsId);
-      const all: Tool[] = [];
-      // `complete` flips to false the moment any source can't be enumerated
-      // (still starting / restarting / pending auth). The cache uses this to
-      // refuse to memoize a partial cold-start snapshot, so the next ask
-      // re-lists once the source is up rather than serving a sticky empty
-      // list. Without it, a single not-yet-ready source at first-ask time
-      // poisons discovery for the whole identity until an unrelated event
-      // invalidates the union.
-      let complete = true;
-      for (const source of registry.getSources()) {
-        try {
-          for (const tool of await source.tools()) {
-            all.push(tool);
-          }
-        } catch (err) {
-          complete = false;
-          // Per-source error containment, mirroring
-          // `ToolRegistry.availableTools` — one stuck source must not poison
-          // the cross-workspace listing. Surface in the source's own state
-          // (Connectors page) and skip here; a debug line makes "my tool
-          // disappeared from the list" diagnosable without spamming normal
-          // operation (gated behind NB_DEBUG=mcp).
-          log.debug(
-            "mcp",
-            `[runtime] tool-list aggregator: skipping source "${source.name}" in ${wsId} — ${
-              err instanceof Error ? err.message : String(err)
-            }`,
-          );
-        }
-      }
-      return { tools: all, complete };
-    };
-    const toolListAggregator = createToolListAggregator({
-      workDir: resolveWorkDir(config),
-      workspaceStore,
-      listToolsForWorkspace: workspaceToolLister,
-      // Identity sources (conversations, …) are emitted bare and prepended to
-      // every identity's union — they're owned by the user, not a workspace.
-      listIdentityTools: async () => {
-        const rt = rtHolder.rt;
-        if (!rt) throw new Error("[runtime] identity-tool listing: runtime not initialized");
-        return rt.listIdentitySourceTools();
-      },
-    });
-
     // Create Runtime with empty workspace registries first — needed by system tools
     const rt = new Runtime(
       resolveModelFn,
@@ -804,7 +717,6 @@ export class Runtime {
       new Map<string, ToolRegistry>(),
       null, // systemSource — set after creation
       getWorkspaceId,
-      toolListAggregator,
     );
     rtHolder.rt = rt;
     rt._getIdentity = getIdentity;
@@ -904,17 +816,6 @@ export class Runtime {
     rt._workspaceRegistries = workspaceRegistries;
     rt._platformSources = platformSources;
     rt._workspaceSources = workspaceSources;
-
-    // Wire each per-workspace registry's invalidation listener to the
-    // aggregator. Done AFTER boot population (not inside createWorkspaceRegistry)
-    // so the boot-time `addSource` storm doesn't fire invalidations before any
-    // union is cached. From here on, a source-set change OR a source-readiness
-    // transition (subprocess (re)connect, deferred/pending-auth start, native
-    // `tools/list_changed`) drops the affected workspace's cached union so the
-    // next discovery re-lists with current tools.
-    for (const [wsId, registry] of workspaceRegistries) {
-      registry.setInvalidationListener(() => toolListAggregator.invalidateWorkspace(wsId));
-    }
 
     // Wire the workspace registries into lifecycle so workspace-scope
     // startAuth / disconnect / install can add+remove sources without
@@ -2884,10 +2785,10 @@ export class Runtime {
    * List the kernel identity sources' tools (conversations, …), source-
    * qualified (`conversations__list`). These are emitted BARE — owned by the
    * user, not any workspace — and prepended to the session's one workspace
-   * tools by `listToolsForWorkspace` (the `/mcp` aggregator prepends them to
-   * its union the same way). Resolved from `_platformSources` (the whole set,
-   * already started by `createPlatformSources`); identity sources are NOT in
-   * any workspace registry, so this is the only path that lists them.
+   * tools by `listToolsForWorkspace`; on `/mcp` (identity-only, no workspace)
+   * they are the entire tool list. Resolved from `_platformSources` (the whole
+   * set, already started by `createPlatformSources`); identity sources are NOT
+   * in any workspace registry, so this is the only path that lists them.
    * Per-source error containment mirrors the workspace lister.
    */
   async listIdentitySourceTools(): Promise<readonly Tool[]> {
@@ -3021,10 +2922,6 @@ export class Runtime {
     // Wire permission context so the registry can gate disallowed tools
     // before they reach the source.execute() path.
     wsRegistry.setPermissionContext(wsId, this.getPermissionStore());
-    // Reactive tool-list invalidation — mirrors the boot wiring so a
-    // JIT-provisioned workspace's union refreshes when its sources change
-    // state (install/uninstall, subprocess (re)connect, native list_changed).
-    wsRegistry.setInvalidationListener(() => this._toolListAggregator.invalidateWorkspace(wsId));
     this._workspaceRegistries.set(wsId, wsRegistry);
     return wsRegistry;
   }
@@ -4003,23 +3900,6 @@ export class Runtime {
         await reg.removeSource(name);
       }
     }
-    // Stage 2 (T006): tear down the cross-workspace tool-list aggregator.
-    // Without this, every per-workspace `fs.watch` handle the aggregator
-    // attached leaks across the process lifetime — Group B audit
-    // CLOSEOUT FOLLOW-UP, wired in here as part of T006. The aggregator's
-    // own `dispose()` is idempotent (checks an internal `disposed` flag),
-    // so calling it during a partial shutdown is safe.
-    this._toolListAggregator.dispose();
-  }
-
-  /**
-   * Cross-workspace tool-list aggregator. Owned by the runtime; disposed in
-   * `shutdown()`. Exposed for the identity-bound chat path (this file) and
-   * for the `/mcp` session handler (T007). Tests use `activeWatcherCount()`
-   * on the returned handle to verify leak-free shutdown.
-   */
-  getToolListAggregator(): ToolListAggregator {
-    return this._toolListAggregator;
   }
 }
 
