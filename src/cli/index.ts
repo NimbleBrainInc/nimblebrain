@@ -8,6 +8,37 @@ import { TelemetryManager } from "../telemetry/manager.ts";
 import { runServe } from "./serve.ts";
 
 /**
+ * Parse server flags, accepting (and ignoring) a leading `serve` token so the
+ * image/chart command `bun run src/cli/index.ts serve` is unchanged. A bad flag
+ * or stray positional is a usage error (exit 2), distinct from a runtime failure
+ * (exit 1). NOTE: the only behavioral difference between the `serve` strip being
+ * present vs. absent is whether a *bare* `serve` boots — `serve <garbage>` exits
+ * non-zero either way — so the deploy contract is pinned by the integration boot
+ * smoke, not by an arg-parse assertion.
+ */
+function parseServeArgs(argv: string[]) {
+  const args = argv[0] === "serve" ? argv.slice(1) : argv;
+  try {
+    return parseArgs({
+      args,
+      options: {
+        config: { type: "string", short: "c" },
+        model: { type: "string" },
+        port: { type: "string" },
+        debug: { type: "boolean" },
+      },
+      allowPositionals: false,
+    }).values;
+  } catch (err) {
+    process.stderr.write(
+      `${err instanceof Error ? err.message : String(err)}\n` +
+        "Usage: bun run src/cli/index.ts [serve] [--config <path>] [--port <n>] [--model <id>] [--debug]\n",
+    );
+    process.exit(2);
+  }
+}
+
+/**
  * Process entry point: boot the HTTP API server. Serving is the one thing the
  * runtime binary does — the web shell and `/mcp` are its UIs. Local dev
  * orchestration (watch + web HMR) is tooling, not runtime: it lives in
@@ -22,20 +53,7 @@ async function main(): Promise<void> {
   // (nothing exported) unless OTEL_EXPORTER_OTLP_ENDPOINT is set.
   initTracing();
 
-  // Accept (and ignore) a leading `serve` token for deploy-command stability.
-  const argv = process.argv.slice(2);
-  if (argv[0] === "serve") argv.shift();
-
-  const { values } = parseArgs({
-    args: argv,
-    options: {
-      config: { type: "string", short: "c" },
-      model: { type: "string" },
-      port: { type: "string" },
-      debug: { type: "boolean" },
-    },
-    allowPositionals: false,
-  });
+  const values = parseServeArgs(process.argv.slice(2));
 
   const telemetry = TelemetryManager.create({ workDir: join(homedir(), ".nimblebrain") });
   try {
