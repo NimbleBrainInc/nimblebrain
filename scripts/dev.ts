@@ -1,10 +1,21 @@
+#!/usr/bin/env bun
+/**
+ * `bun run dev` — supervised dual-process development mode.
+ *
+ * Local developer tooling, not part of the runtime. Spawns the API server in
+ * watch mode (`bun --watch src/cli/index.ts serve`) plus the Vite web dev
+ * server, with unified prefixed output and readiness gating. The runtime binary
+ * (`src/cli/index.ts`) only serves; this script orchestrates the dev loop on top
+ * of it, alongside the other `scripts/dev-*.ts` tooling.
+ */
 import { existsSync, readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
+import { parseArgs } from "node:util";
 import { type Subprocess, spawn } from "bun";
-import { log } from "../observability/log.ts";
-import { setAppDevMode } from "../runtime/dev-registry.ts";
+import { log } from "../src/observability/log.ts";
+import { setAppDevMode } from "../src/runtime/dev-registry.ts";
 
-export interface DevOptions {
+interface DevOptions {
   port: number;
   noWeb: boolean;
   config: string | undefined;
@@ -74,19 +85,12 @@ async function waitForHealth(port: number, opts: { timeoutMs: number }): Promise
   throw new Error(`API did not become ready within ${opts.timeoutMs}ms`);
 }
 
-/**
- * `bun run dev` — supervised dual-process development mode.
- *
- * Starts the API server with bun --watch (auto-restart on source changes)
- * and optionally the Vite web dev server. Both share a single terminal
- * with prefixed output.
- */
-export async function runDev(options: DevOptions): Promise<void> {
+async function runDev(options: DevOptions): Promise<void> {
   const { port, noWeb, config, debug, app: appPath, appPort = 5173 } = options;
   const children: Subprocess[] = [];
 
-  // Resolve the CLI entry point relative to this file's location
-  const cliEntry = join(import.meta.dir, "index.ts");
+  // The runtime entry, relative to this script (scripts/ -> ../src/cli/index.ts).
+  const cliEntry = join(import.meta.dir, "..", "src", "cli", "index.ts");
 
   // --- API server with bun --watch ---
   const apiArgs = ["bun", "--watch", cliEntry, "serve", "--port", String(port)];
@@ -250,3 +254,33 @@ export async function runDev(options: DevOptions): Promise<void> {
 
   process.exit(apiExitCode ?? 0);
 }
+
+async function main(): Promise<void> {
+  const rest = process.argv.slice(2);
+  const { values } = parseArgs({
+    args: rest,
+    // strict:false so the `--no-web` negation token passes through; we read it
+    // off argv directly since parseArgs has no boolean-negation support.
+    strict: false,
+    options: {
+      config: { type: "string", short: "c" },
+      port: { type: "string" },
+      app: { type: "string" },
+      "app-port": { type: "string" },
+      debug: { type: "boolean" },
+    },
+  });
+  await runDev({
+    port: values.port ? Number(values.port) : 27247,
+    noWeb: rest.includes("--no-web"),
+    config: values.config as string | undefined,
+    debug: (values.debug as boolean | undefined) ?? false,
+    app: values.app as string | undefined,
+    appPort: values["app-port"] ? Number(values["app-port"]) : undefined,
+  });
+}
+
+main().catch((err) => {
+  log.error(`[dev] Fatal: ${err}`);
+  process.exit(1);
+});

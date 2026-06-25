@@ -65,7 +65,7 @@ const TENANT_ID_ENV = "NB_TENANT_ID";
  * User-facing SPA origin for post-callback returns. In production the API and
  * the SPA share one origin (Caddy proxies `/v1/*` to the API), so this equals
  * `publicOrigin()`. In dev they split — API on :27247, SPA on :27246 — and
- * `src/cli/dev.ts` sets `NB_WEB_URL` so a connector return lands on the SPA,
+ * `scripts/dev.ts` sets `NB_WEB_URL` so a connector return lands on the SPA,
  * not a JSON error page on the API port. This module is the only sanctioned
  * reader of `NB_WEB_URL` — `check:public-origin` rejects it elsewhere.
  */

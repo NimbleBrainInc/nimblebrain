@@ -1,20 +1,14 @@
-import { describe, expect, it } from "bun:test";
 import { spawnSync } from "bun";
+import { describe, expect, it } from "bun:test";
 
-// The CLI is a thin argv dispatcher over two commands (serve, dev). These tests
-// exercise the dispatch/usage edges without booting a server.
+// The runtime binary's one job is to serve. It accepts (and ignores) a leading
+// `serve` token for deploy-command stability and rejects other positionals
+// before booting anything.
 const CLI = "src/cli/index.ts";
 
-describe("nb dispatcher", () => {
-  it("no command prints usage and exits 0", () => {
-    const result = spawnSync(["bun", "run", CLI], { stdout: "pipe", stderr: "pipe" });
-    expect(result.exitCode).toBe(0);
-    expect(result.stderr.toString()).toContain("Usage:");
-  });
-
-  it("unknown command exits 2 with an error", () => {
+describe("serve entry", () => {
+  it("rejects an unrecognized positional argument", () => {
     const result = spawnSync(["bun", "run", CLI, "fakecmd"], { stdout: "pipe", stderr: "pipe" });
-    expect(result.exitCode).toBe(2);
-    expect(result.stderr.toString()).toContain("Unknown command");
+    expect(result.exitCode).not.toBe(0);
   });
 });

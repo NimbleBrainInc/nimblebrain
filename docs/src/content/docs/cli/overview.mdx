@@ -34,7 +34,7 @@ The server and dev mode share most flags:
 | `--debug` | serve, dev | Verbose event logging to stderr |
 | `--no-web` | dev | Skip the web dev server (API only) |
 
-The working directory is set with the `NB_WORK_DIR` environment variable, not a flag. Running `bun run src/cli/index.ts` with no command prints a one-line usage summary; an unrecognized command prints the same summary and exits with code 2.
+The working directory is set with the `NB_WORK_DIR` environment variable, not a flag. `bun run src/cli/index.ts` boots the server directly; a leading `serve` token is accepted (the deploy command passes it) but optional.
 
 See [Running the server](/cli/serve/) and [Dev mode](/cli/dev/) for each command's full flag set.
 
