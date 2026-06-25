@@ -72,7 +72,6 @@ import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js";
 import {
   CallToolRequestSchema,
-  type CreateTaskResult,
   ErrorCode,
   isInitializeRequest,
   ListResourcesRequestSchema,
@@ -80,7 +79,6 @@ import {
   McpError,
   ReadResourceRequestSchema,
   type Resource,
-  type ServerCapabilities,
 } from "@modelcontextprotocol/sdk/types.js";
 import { isToolEnabled, isToolVisibleToRole, type ResolvedFeatures } from "../config/features.ts";
 import type { UserIdentity } from "../identity/provider.ts";
@@ -98,12 +96,6 @@ import type { Runtime } from "../runtime/runtime.ts";
 import { IDENTITY_SOURCES } from "../tools/identity-sources.ts";
 import { McpSource } from "../tools/mcp-source.ts";
 import type { ToolRegistry } from "../tools/registry.ts";
-import {
-  createMcpTaskStore,
-  type McpTaskStore,
-  type OwnerContext,
-  type TaskAwareSource,
-} from "./mcp-task-store.ts";
 import type { SessionRegistry } from "./session-store/index.ts";
 
 /**
@@ -208,20 +200,6 @@ export interface McpServerHostOptions {
 export interface McpSessionContext {
   identity: UserIdentity | null;
 }
-
-/**
- * Server capabilities for tasks utility (MCP draft 2025-11-25).
- *
- * - `cancel: {}` — we accept `tasks/cancel` and route through McpSource.cancelTask
- * - `requests.tools.call: {}` — we accept task-augmented `tools/call` (CreateTaskResult)
- * - `list` is deliberately absent — `tasks/list` is deferred.
- *
- * Shape defined by `ServerCapabilitiesSchema.tasks` in the SDK types.
- */
-const TASKS_CAPABILITY: NonNullable<ServerCapabilities["tasks"]> = {
-  cancel: {},
-  requests: { tools: { call: {} } },
-};
 
 /**
  * Per-process MCP HTTP host. Owns the in-process transport map and delegates
@@ -617,30 +595,18 @@ function createServer(
   features: ResolvedFeatures,
   sessionCtx: McpSessionContext,
 ): Server {
-  // Build a session-scoped in-memory task store. The SDK installs handlers
-  // for tasks/{get,result,cancel,list} automatically when this is passed via
-  // ProtocolOptions.taskStore — we never register them ourselves.
-  //
-  // Stage 2: the task store is identity-bound (not workspace-bound) so the
-  // same session can carry tasks across multiple workspaces. The
-  // `recordTask` call still stamps the per-task `ownerContext` with the
-  // routed workspace so cross-tenant lookups surface as -32602
-  // "task not found" per spec §8 security guidance.
-  const taskStore: McpTaskStore | undefined = runtime
-    ? createMcpTaskStore({
-        identity: sessionCtx.identity,
-      })
-    : undefined;
-
+  // `/mcp` is identity-only and exposes no task-augmented tools, so the MCP
+  // tasks capability is NOT advertised — advertising it while no tool can ever
+  // create a task is a protocol lie (a task-augmented call would get a
+  // CallToolResult where the client expects a CreateTaskResult). Task support
+  // returns with the workspace-bound agent-projection rework.
   const server = new Server(
     { name: "nimblebrain", version: MCP_SERVER_VERSION },
     {
       capabilities: {
         tools: {},
         resources: {},
-        ...(taskStore ? { tasks: TASKS_CAPABILITY } : {}),
       },
-      ...(taskStore ? { taskStore } : {}),
     },
   );
 
@@ -677,8 +643,6 @@ function createServer(
 
   server.setRequestHandler(CallToolRequestSchema, async (request) => {
     const { name, arguments: args } = request.params;
-    const taskParam = request.params.task; // { ttl?, pollInterval? } | undefined
-    const isTaskRequest = taskParam !== undefined;
 
     if (!runtime || !identityId) {
       throw new McpError(
@@ -797,128 +761,16 @@ function createServer(
       };
     }
 
-    const { context: workspaceContext, toolName: innerToolName, source } = routed;
-
-    // Feature gating + role visibility on the BARE tool name (post-parse).
-    if (!isToolEnabled(innerToolName, features)) {
-      return {
-        content: [{ type: "text" as const, text: `Tool "${name}" is disabled` }],
-        isError: true,
-      };
-    }
-    if (!isToolVisibleToRole(innerToolName, sessionCtx.identity?.orgRole)) {
-      return {
-        content: [{ type: "text" as const, text: `Tool "${name}" is not available` }],
-        isError: true,
-      };
-    }
-
-    // ── Tool-level task negotiation (MCP spec 2025-11-25 §tasks) ─────────
-    //
-    // The low-level SDK `Server` validates the *result shape* against the
-    // request (CreateTaskResult vs CallToolResult) but does NOT enforce the
-    // tool-level taskSupport semantics. We do that here:
-    //   - `required` + no task param   → -32601 MethodNotFound
-    //   - `forbidden`/absent + task    → -32601 MethodNotFound
-    //   - `optional`                   → either path is legal
-    //
-    // See `src/tools/types.ts::Tool.execution.taskSupport` for the field.
-    //
-    // The orchestrator's parse already split `innerToolName` into
-    // `<source>__<tool>`; reuse that here.
-    const sepIndex = innerToolName.indexOf("__");
-    const sourceName = sepIndex >= 0 ? innerToolName.slice(0, sepIndex) : null;
-    const localName = sepIndex >= 0 ? innerToolName.slice(sepIndex + 2) : innerToolName;
-    const wsId = workspaceContext.workspaceId;
-    const wsRegistry = runtime.getRegistryForWorkspace(wsId);
-    const taskAwareSource = sourceName ? wsRegistry.findTaskAwareSource(sourceName) : null;
-    // Inspect the cached tool definition (if the source is MCP-backed) to
-    // read `taskSupport`. Non-MCP sources never support tasks.
-    let taskSupport: "optional" | "required" | "forbidden" | undefined;
-    if (taskAwareSource) {
-      const tools = await taskAwareSource.tools();
-      const tool = tools.find((t) => t.name === innerToolName);
-      taskSupport = tool?.execution?.taskSupport;
-    }
-
-    if (taskSupport === "required" && !isTaskRequest) {
-      throw new McpError(
-        ErrorCode.MethodNotFound,
-        `Tool ${name} requires task augmentation (taskSupport: 'required')`,
-      );
-    }
-    if (isTaskRequest && (!taskSupport || taskSupport === "forbidden")) {
-      throw new McpError(
-        ErrorCode.MethodNotFound,
-        `Tool ${name} does not support task augmentation (taskSupport: ${taskSupport ?? "none"})`,
-      );
-    }
-
-    // Build per-request context for AsyncLocalStorage (concurrency-safe).
-    // Workspace ID is derived from the parsed namespace — NOT from any
-    // session-level state. This is the per-call routing the orchestrator
-    // exists to enforce.
-    const reqCtx: RequestContext = {
-      identity: sessionCtx.identity ?? null,
-      scope: {
-        kind: "workspace",
-        workspaceId: wsId,
-        workspaceAgents: null,
-        workspaceModelOverride: null,
-      },
-    };
-
-    // ── Task-augmented path ─────────────────────────────────────────────
-    //
-    // Return a CreateTaskResult immediately. The McpSource has already
-    // started the stream and is draining it in the background; its
-    // TaskHandle holds the terminal deferred for later `tasks/result` and
-    // its abortController for `tasks/cancel`. We stash the (source, owner)
-    // pair in the session's task store so the SDK-installed task handlers
-    // can find their way back.
-    if (isTaskRequest && taskAwareSource && taskStore) {
-      const ownerContext: OwnerContext = {
-        workspaceId: wsId,
-        ...(sessionCtx.identity?.id ? { identityId: sessionCtx.identity.id } : {}),
-      };
-      const createResult: CreateTaskResult = await runWithRequestContext(reqCtx, () =>
-        taskAwareSource.startToolAsTask(localName, (args ?? {}) as Record<string, unknown>, {
-          ownerContext,
-          ...(taskParam.ttl !== undefined ? { ttlMs: taskParam.ttl } : {}),
-        }),
-      );
-      taskStore.recordTask({
-        source: taskAwareSource as TaskAwareSource,
-        toolFullName: innerToolName,
-        task: createResult.task,
-        ownerContext,
-      });
-      return createResult;
-    }
-
-    // ── Inline path ─────────────────────────────────────────────────────
-    //
-    // Dispatch via the resolved source directly (the orchestrator already
-    // looked it up and returned it). `ToolSource.execute` takes the bare
-    // (post-`__`) tool name, mirroring `ToolRegistry.execute`'s contract.
-    //
-    // Preserve `structuredContent` — dropping it was a long-standing bug
-    // that silently violated `CallToolResult must be returned as-is`.
-    // `_meta` propagation on the
-    // inline path is a no-op today because the engine's ToolResult shape
-    // doesn't carry `_meta`; task-augmented flows carry `_meta` through
-    // naturally because `tasks/result` returns the full CallToolResult
-    // directly from `awaitToolTaskResult` (see mcp-task-store.ts).
-    const result = await runWithRequestContext(reqCtx, () =>
-      source.execute(localName, (args ?? {}) as Record<string, unknown>),
+    // Unreachable on `/mcp`: this handler calls `routeToolCall` with no
+    // `workspaceId`, so any workspace-scoped (`ws_<id>-...`) name throws
+    // `WorkspaceToolUnavailable` upstream and only the identity branch above
+    // returns. A workspace-routed result here would be a routing bug — fail
+    // loudly. Workspace dispatch and the MCP tasks path return with the
+    // workspace-bound agent-projection rework.
+    throw new McpError(
+      ErrorCode.InternalError,
+      "unexpected workspace-routed tool call on an identity-bound /mcp session",
     );
-    return {
-      content: result.content,
-      ...(result.structuredContent !== undefined
-        ? { structuredContent: result.structuredContent }
-        : {}),
-      isError: result.isError,
-    };
   });
 
   // ── resources/list ────────────────────────────────────────────────
