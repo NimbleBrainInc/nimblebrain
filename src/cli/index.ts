@@ -8,7 +8,7 @@ import { TelemetryManager } from "../telemetry/manager.ts";
 import { runDev } from "./dev.ts";
 import { runServe } from "./serve.ts";
 
-const USAGE = "Usage: nb <serve|dev> [options]\n";
+const USAGE = "Usage: bun run src/cli/index.ts <serve|dev> [options]\n";
 
 /**
  * Process entry point. Dispatches the two server-side commands the platform

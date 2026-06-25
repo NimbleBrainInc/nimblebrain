@@ -160,7 +160,7 @@ Test your bundle against a local NimbleBrain instance before publishing:
    }
    ```
 
-   Then restart the dev server to load it (`nb dev` picks up source changes automatically).
+   Then restart the dev server to load it (`bun run dev` picks up source changes automatically).
 
 3. **Verify tools** are registered by asking the agent which apps are installed, or by checking the workspace **Settings → About** tab in the web UI.
 
@@ -173,7 +173,7 @@ Test your bundle against a local NimbleBrain instance before publishing:
 </Steps>
 
 <Aside type="tip">
-During development, use `{ "path": "../my-app" }` in your config so NimbleBrain loads the bundle from disk. Changes to your MCP server take effect after the dev server restarts (`nb dev` restarts the API on source changes).
+During development, use `{ "path": "../my-app" }` in your config so NimbleBrain loads the bundle from disk. Changes to your MCP server take effect after the dev server restarts (`bun run dev` restarts the API on source changes).
 </Aside>
 
 ## Python bundle tips

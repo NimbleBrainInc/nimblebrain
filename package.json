@@ -35,9 +35,6 @@
   "exports": {
     ".": "./src/index.ts"
   },
-  "bin": {
-    "nb": "./src/cli/index.ts"
-  },
   "scripts": {
     "dev": "bun run src/cli/index.ts dev",
     "dev:empty": "NB_API_PORT=27249 NB_WEB_PORT=27248 bun run src/cli/index.ts dev --port 27249 --config .environments/empty/nimblebrain.json",

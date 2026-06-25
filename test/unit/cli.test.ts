@@ -340,10 +340,9 @@ describe("workdir resolution (§19.4)", () => {
 });
 
 describe("package.json", () => {
-	it("bin entry is nb", async () => {
+	it("exposes no bin (the runtime is launched via bun, not an nb binary)", async () => {
 		const pkg = await Bun.file("package.json").json();
-		expect(pkg.bin).toHaveProperty("nb");
-		expect(pkg.bin.nb).toBe("./src/cli/index.ts");
+		expect(pkg.bin).toBeUndefined();
 	});
 
 	it("scripts include dev, dev:api, dev:web, start", async () => {

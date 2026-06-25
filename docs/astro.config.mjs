@@ -154,8 +154,8 @@ export default defineConfig({
             icon: 'seti:shell',
             items: [
               { label: 'Overview', slug: 'cli/overview' },
-              { label: 'nb serve', slug: 'cli/serve' },
-              { label: 'nb dev', slug: 'cli/dev' },
+              { label: 'Running the server', slug: 'cli/serve' },
+              { label: 'Dev mode', slug: 'cli/dev' },
             ],
           },
           {

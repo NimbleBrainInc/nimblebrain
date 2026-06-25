@@ -1,28 +1,30 @@
 ---
 title: CLI Overview
-description: Commands, global flags, and config resolution for the nb command-line interface.
+description: Entry points, global flags, and config resolution for running the NimbleBrain runtime with bun.
 ---
 
-The `nb` command runs the NimbleBrain runtime. It has two commands: `serve` starts the production HTTP API server, and `dev` runs the same server in development mode with file watching and web HMR.
+The NimbleBrain runtime launches with bun. There are two entry points: `bun run start` starts the production HTTP API server, and `bun run dev` runs the same server in development mode with file watching and web HMR.
 
-The runtime has no terminal client. You interact with a running instance through the web app it serves and the `/mcp` endpoint (for external MCP clients) -- not through the CLI. Bundles, skills, credentials, and automations are managed from the web UI and the agent's tool actions, not CLI subcommands.
+The runtime has no terminal client. You interact with a running instance through the web app it serves and the `/mcp` endpoint (for external MCP clients) -- not from the shell. Bundles, skills, credentials, and automations are managed from the web UI and the agent's tool actions, not from subcommands.
 
 ## Usage
 
 ```
-nb <command> [flags]
+bun run start                            # production HTTP server
+bun run dev                              # development mode (watch + web HMR)
+bun run src/cli/index.ts serve [flags]   # explicit form (config / production)
 ```
 
-## Commands
+## Entry points
 
 | Command | Description |
 |---------|-------------|
-| `serve` | Start the HTTP API server (production entry point) |
-| `dev` | Start development mode (API with watch + web HMR) |
+| `bun run start` | Start the HTTP API server (production entry point) |
+| `bun run dev` | Start development mode (API with watch + web HMR) |
 
 ## Flags
 
-`serve` and `dev` share most flags:
+The server and dev mode share most flags:
 
 | Flag | Commands | Description |
 |------|----------|-------------|
@@ -32,9 +34,9 @@ nb <command> [flags]
 | `--debug` | serve, dev | Verbose event logging to stderr |
 | `--no-web` | dev | Skip the web dev server (API only) |
 
-The working directory is set with the `NB_WORK_DIR` environment variable, not a flag. Running `nb` with no command (or an unrecognized one) prints a one-line usage summary and exits with code 2.
+The working directory is set with the `NB_WORK_DIR` environment variable, not a flag. Running `bun run src/cli/index.ts` with no command prints a one-line usage summary; an unrecognized command prints the same summary and exits with code 2.
 
-See [nb serve](/cli/serve/) and [nb dev](/cli/dev/) for each command's full flag set.
+See [Running the server](/cli/serve/) and [Dev mode](/cli/dev/) for each command's full flag set.
 
 ## Config resolution
 
@@ -46,7 +48,7 @@ NimbleBrain loads its configuration from a `nimblebrain.json` file. The CLI reso
 | 2 | `NB_WORK_DIR` env var | `<NB_WORK_DIR>/nimblebrain.json` |
 | 3 | Default work directory | `~/.nimblebrain/nimblebrain.json` |
 
-Both `nb serve` and `nb dev` default to the same global work directory at `~/.nimblebrain`. `nb dev` spawns `nb serve` under the hood, so it inherits that default unless you override it with `--config` or `NB_WORK_DIR`.
+Both `bun run start` and `bun run dev` default to the same global work directory at `~/.nimblebrain`. `bun run dev` starts the server (`bun run src/cli/index.ts serve`) under the hood, so it inherits that default unless you override it with `--config` or `NB_WORK_DIR`.
 
 If no config file exists at the resolved path, NimbleBrain auto-creates one with defaults:
 
@@ -71,5 +73,5 @@ CLI flags override values from the config file. For example, `--model claude-son
 
 ## Related commands
 
-- [nb serve](/cli/serve/) -- production HTTP server
-- [nb dev](/cli/dev/) -- development mode
+- [Running the server](/cli/serve/) -- production HTTP server
+- [Dev mode](/cli/dev/) -- development mode

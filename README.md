@@ -272,16 +272,20 @@ Bundles, tool registries, and conversation data are scoped to a workspace. Every
 
 Two workspaces that install the same bundle spawn independent subprocesses with data directories under `<workDir>/workspaces/<wsId>/data/<bundle>/`, so their entity data never crosses. Sidebar placements, briefing facets, and the app list are filtered per workspace.
 
-### CLI Commands
+### Running the runtime
 
+The runtime is launched with `bun` (there is no `nb` binary):
+
+```bash
+bun run start    # serve: HTTP API server (production)
+bun run dev      # dev mode: API with file watching + web HMR
 ```
-nb serve                    HTTP API server (production)
-nb dev                      Dev mode: API with file watching + web HMR
-```
 
-These also run via package scripts: `bun run start` (serve) and `bun run dev`. Without `bun link`, invoke as `bun run src/cli/index.ts <serve|dev>` instead of `nb`. Everything else — bundles, skills, credentials, automations, telemetry — is managed from the web UI and the agent's tools, not the CLI.
+`bun run start` is `bun run src/cli/index.ts serve`; that explicit form (with `--config`, `--port`) is exactly what the container runs. Everything else — bundles, skills, credentials, automations, telemetry — is managed from the web UI and the agent's tools, not the CLI.
 
-### CLI Flags
+### Flags
+
+Pass flags after the command, e.g. `bun run start --port 8080` or `bun run dev --no-web`:
 
 | Flag | Scope | Purpose |
 |------|-------|---------|
@@ -307,7 +311,7 @@ The working directory is set via `NB_WORK_DIR` (see Environment Variables).
 
 | Variable | Purpose |
 |----------|---------|
-| `NB_WORK_DIR` | Override working directory (takes precedence over config and `--workdir`) |
+| `NB_WORK_DIR` | Override working directory (takes precedence over config) |
 | `ALLOWED_ORIGINS` | Comma-separated allowed CORS origins (for cookie-based auth) |
 | `MCP_MAX_SESSIONS` | Max concurrent MCP sessions before LRU eviction kicks in (default: 100) |
 | `MCP_SESSION_TTL_SECONDS` | MCP session idle TTL in seconds; drives both transport-map sweep and registry TTL (default: 28800, i.e. 8h) |
@@ -457,7 +461,7 @@ src/
 └── cli/                  Process entry: serve + dev launchers
     ├── index.ts          Entry point (argv dispatch: serve | dev)
     ├── serve.ts          HTTP API server boot
-    ├── dev.ts            nb dev dual-process supervisor
+    ├── dev.ts            dev-mode dual-process supervisor
     └── config.ts         nimblebrain.json loading
 ```
 

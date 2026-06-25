@@ -18,7 +18,7 @@ NimbleBrain looks for the config file in this order, stopping at the first match
 
 1. **`--config <path>`** — Explicit path passed as a CLI flag.
 2. **`.nimblebrain/nimblebrain.json`** — Project-local config directory in the current working directory.
-3. **`<defaultWorkDir>/nimblebrain.json`** — Inside the command's default working directory (`~/.nimblebrain` for `nb serve`, the project-local workdir for worktree dev).
+3. **`<defaultWorkDir>/nimblebrain.json`** — Inside the command's default working directory (`~/.nimblebrain` for `bun run start`, the project-local workdir for worktree dev).
 4. **`./nimblebrain.json`** — Current working directory (bare file).
 
 If no config file exists at the resolved path, NimbleBrain auto-creates a minimal default file (`{ "$schema": …, "version": "1" }`) as long as the parent directory exists.
@@ -161,7 +161,7 @@ Each provider key is optional. If a provider's `apiKey` is omitted, the SDK fall
 
 ## store
 
-Choose where conversations are persisted. **The CLI (`nb serve`) defaults to `jsonl`** — conversations persist across restarts at `{workDir}/conversations/`. In-memory is the fallback only for programmatic embedding where no `store` is given.
+Choose where conversations are persisted. **The CLI (`bun run start`) defaults to `jsonl`** — conversations persist across restarts at `{workDir}/conversations/`. In-memory is the fallback only for programmatic embedding where no `store` is given.
 
 <Tabs>
   <TabItem label="JSONL (default for the CLI)">
