@@ -14,7 +14,7 @@ import type {
   AutomationsStatusOutput,
 } from "../../tools/platform/schemas/automations.ts";
 import { loadConfig } from "../config.ts";
-import { log } from "../log.ts";
+import { log } from "../../observability/log.ts";
 
 /**
  * Start a headless runtime for CLI tool invocation.

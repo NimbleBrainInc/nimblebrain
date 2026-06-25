@@ -1,7 +1,7 @@
 import { chmod, mkdir, readFile, rename, stat, unlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { MpakConfigError } from "@nimblebrain/mpak-sdk";
-import { log } from "../cli/log.ts";
+import { log } from "../observability/log.ts";
 import { WORKSPACE_ID_RE } from "../workspace/workspace-store.ts";
 import type { ConfirmationGate } from "./privilege.ts";
 

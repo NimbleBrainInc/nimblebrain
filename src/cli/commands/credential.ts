@@ -3,7 +3,7 @@ import { join } from "node:path";
 import { Command } from "commander";
 import { FileCredentialStore } from "../../tools/credential-store.ts";
 import { WorkspaceContext } from "../../workspace/context.ts";
-import { log } from "../log.ts";
+import { log } from "../../observability/log.ts";
 
 /**
  * `nb credential ...` — manage workspace-scoped opaque secrets used by

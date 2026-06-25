@@ -24,8 +24,8 @@
  * returns a fresh instance per request, keeping the lifetime short.
  */
 
-import { log } from "../cli/log.ts";
 import type { ServerDetail } from "../connectors/server-detail.ts";
+import { log } from "../observability/log.ts";
 import { MpakSource } from "./mpak-source.ts";
 import {
   type ConnectorCatalogEntry,

@@ -16,7 +16,7 @@ import { createSkillCommand } from "./commands/skill.ts";
 import { createStatusCommand } from "./commands/status.ts";
 import { createTelemetryCommand } from "./commands/telemetry.ts";
 import { createUserCommand } from "./commands/user.ts";
-import { log } from "./log.ts";
+import { log } from "../observability/log.ts";
 import { createProgram, determineModeFromArgv } from "./program.ts";
 
 const KNOWN_COMMANDS = new Set([

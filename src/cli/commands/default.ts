@@ -11,7 +11,7 @@ import { Runtime } from "../../runtime/runtime.ts";
 import type { TelemetryManager } from "../../telemetry/manager.ts";
 import { App } from "../app.tsx";
 import { loadConfig } from "../config.ts";
-import { log } from "../log.ts";
+import { log } from "../../observability/log.ts";
 import { TuiConfirmationGate } from "../tui-gate.ts";
 
 /**

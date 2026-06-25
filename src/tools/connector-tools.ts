@@ -13,7 +13,6 @@ import { deriveServerName, slugifyServerName } from "../bundles/paths.ts";
 import { startBundleSource } from "../bundles/startup.ts";
 import type { BundleManifest, BundleRef, RemoteTransportConfig } from "../bundles/types.ts";
 import { installBundleInWorkspace } from "../bundles/workspace-ops.ts";
-import { log } from "../cli/log.ts";
 import {
   composioUserId,
   connectComposioApiKey,
@@ -25,6 +24,7 @@ import { connectorSkillIdentityFrom } from "../connectors/server-detail.ts";
 import { textContent } from "../engine/content-helpers.ts";
 import type { ToolResult } from "../engine/types.ts";
 import type { UserIdentity } from "../identity/provider.ts";
+import { log } from "../observability/log.ts";
 import type { ConnectorCatalogEntry } from "../registries/projection.ts";
 import type { DirectoryEntry } from "../registries/types.ts";
 import type { Runtime } from "../runtime/runtime.ts";

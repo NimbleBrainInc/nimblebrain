@@ -1,6 +1,6 @@
 import { MpakClient } from "@nimblebrain/mpak-sdk";
-import { log } from "../cli/log.ts";
 import { type ServerDetail, validateServerDetail } from "../connectors/server-detail.ts";
+import { log } from "../observability/log.ts";
 import type { ConnectorSource } from "./types.ts";
 
 /**

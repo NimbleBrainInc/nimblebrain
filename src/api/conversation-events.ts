@@ -8,7 +8,7 @@
  * Separate from SseEventManager which handles workspace-level events.
  */
 
-import { log } from "../cli/log.ts";
+import { log } from "../observability/log.ts";
 import type { BufferedRunEvent } from "../runtime/run-bus.ts";
 
 /** A subscriber watching a specific conversation's events. */

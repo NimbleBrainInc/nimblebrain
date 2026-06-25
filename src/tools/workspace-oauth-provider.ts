@@ -15,8 +15,8 @@ import type {
   OAuthTokens,
 } from "@modelcontextprotocol/sdk/shared/auth.js";
 import { validateBundleUrl } from "../bundles/url-validator.ts";
-import { log } from "../cli/log.ts";
 import { buildTenantAssertion } from "../oauth/fleet-assertion.ts";
+import { log } from "../observability/log.ts";
 import { validateAdditionalAuthorizationParams } from "../util/oauth-params.ts";
 import type { WorkspaceContext } from "../workspace/context.ts";
 import { register as registerInteractiveFlow } from "./oauth-flow-registry.ts";

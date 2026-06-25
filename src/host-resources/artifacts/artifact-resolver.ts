@@ -1,6 +1,6 @@
 import type { ReadResourceResult } from "@modelcontextprotocol/sdk/types.js";
-import { log } from "../../cli/log.ts";
 import { isTextMime } from "../../files/mime.ts";
+import { log } from "../../observability/log.ts";
 import { isArtifactUri, uriToArtifactId } from "./artifact-uri.ts";
 import {
   type ArtifactListOptions,

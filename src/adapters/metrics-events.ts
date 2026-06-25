@@ -6,8 +6,8 @@ import {
   toolCallsTotal,
   toolPromotionsTotal,
 } from "../api/metrics.ts";
-import { log } from "../cli/log.ts";
 import type { EngineEvent, EventSink } from "../engine/types.ts";
+import { log } from "../observability/log.ts";
 import type { TokenUsage } from "../usage/types.ts";
 
 /**

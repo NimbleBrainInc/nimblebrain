@@ -6,7 +6,7 @@
  * Operators can opt in specific vars per bundle via `allowedEnv`.
  */
 
-import { log } from "../cli/log.ts";
+import { log } from "../observability/log.ts";
 
 /** Safe, non-secret vars that all bundles receive by default. */
 const DEFAULT_ALLOWLIST = new Set([

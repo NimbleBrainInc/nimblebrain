@@ -1,7 +1,6 @@
 import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
-import { log } from "../cli/log.ts";
 import {
   friendlyMpakConfigError,
   type UserConfigFieldDef,
@@ -15,6 +14,7 @@ import {
 } from "../host-resources/index.ts";
 import { fleetIssuerOption } from "../oauth/fleet-assertion.ts";
 import { mcpAuthCallbackUrl } from "../oauth/mcp-callback-url.ts";
+import { log } from "../observability/log.ts";
 import { FileCredentialStore } from "../tools/credential-store.ts";
 import { type BundleMcpContext, McpSource } from "../tools/mcp-source.ts";
 import type { ToolRegistry } from "../tools/registry.ts";

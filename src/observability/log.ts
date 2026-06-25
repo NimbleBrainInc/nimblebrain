@@ -51,8 +51,8 @@
  * a chatty bundle. Visual prefix + dim formatting makes it tunable by eye.
  */
 
-import { requestIdentityAttrs } from "../observability/identity.ts";
-import { currentTraceId } from "../observability/tracing.ts";
+import { requestIdentityAttrs } from "./identity.ts";
+import { currentTraceId } from "./tracing.ts";
 
 const dim = (s: string) => `\x1b[2m${s}\x1b[0m`;
 const yellow = (s: string) => `\x1b[33m${s}\x1b[0m`;

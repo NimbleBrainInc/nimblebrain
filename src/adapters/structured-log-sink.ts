@@ -1,7 +1,7 @@
 import { appendFileSync, mkdirSync, readdirSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
-import { log } from "../cli/log.ts";
 import type { EngineEvent, EventSink } from "../engine/types.ts";
+import { log } from "../observability/log.ts";
 
 export interface StructuredLogConfig {
   /** Directory to write log files. Created if missing. */

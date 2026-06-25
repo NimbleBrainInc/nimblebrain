@@ -1,7 +1,7 @@
 import { existsSync, mkdirSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
-import { log } from "../cli/log.ts";
+import { log } from "../observability/log.ts";
 import { writeJsonAtomic } from "../util/atomic-json.ts";
 import { readStaticServers } from "./static-source.ts";
 import type { RegistryConfig } from "./types.ts";

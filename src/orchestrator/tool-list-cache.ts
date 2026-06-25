@@ -44,7 +44,7 @@
 
 import { type FSWatcher, watch } from "node:fs";
 import { join } from "node:path";
-import { log } from "../cli/log.ts";
+import { log } from "../observability/log.ts";
 import type { Tool } from "../tools/types.ts";
 
 // ── Defaults ───────────────────────────────────────────────────────

@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, spyOn } from "bun:test";
 import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { log } from "../../src/cli/log.ts";
+import { log } from "../../src/observability/log.ts";
 import { StructuredLogSink } from "../../src/adapters/structured-log-sink.ts";
 
 function makeLogDir(): string {

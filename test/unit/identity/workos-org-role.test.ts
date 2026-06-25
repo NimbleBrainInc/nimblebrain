@@ -14,7 +14,7 @@ import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { WorkosAuth } from "../../../src/identity/instance.ts";
-import { log } from "../../../src/cli/log.ts";
+import { log } from "../../../src/observability/log.ts";
 import { WorkosIdentityProvider } from "../../../src/identity/providers/workos.ts";
 import type { UserIdentity } from "../../../src/identity/provider.ts";
 import type { OrgRole } from "../../../src/identity/types.ts";

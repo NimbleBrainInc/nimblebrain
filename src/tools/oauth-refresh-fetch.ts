@@ -1,5 +1,5 @@
 import type { FetchLike } from "@modelcontextprotocol/sdk/shared/transport.js";
-import { log } from "../cli/log.ts";
+import { log } from "../observability/log.ts";
 
 /**
  * Refresh-aware `fetch` wrapper for remote OAuth MCP connectors.

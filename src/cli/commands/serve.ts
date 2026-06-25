@@ -8,7 +8,7 @@ import { createSessionRegistry, resolveSessionStoreConfig } from "../../api/sess
 import { Runtime } from "../../runtime/runtime.ts";
 import type { TelemetryManager } from "../../telemetry/manager.ts";
 import { loadConfig } from "../config.ts";
-import { log } from "../log.ts";
+import { log } from "../../observability/log.ts";
 
 export function createServeCommand(telemetry: TelemetryManager): Command {
   return new Command("serve")

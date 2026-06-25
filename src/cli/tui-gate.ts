@@ -1,5 +1,5 @@
 import type { ConfigField, ConfirmationGate } from "../config/privilege.ts";
-import { log } from "./log.ts";
+import { log } from "../observability/log.ts";
 
 /**
  * Pending prompt that the Ink App component renders and resolves.

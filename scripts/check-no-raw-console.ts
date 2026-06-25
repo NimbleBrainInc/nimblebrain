@@ -2,7 +2,7 @@
 /**
  * Lint: operational code logs through the structured logger, not raw `console.*`.
  *
- * `src/cli/log.ts` is the one logger. In a deployed pod (`NB_LOG_FORMAT=json`) it
+ * `src/observability/log.ts` is the one logger. In a deployed pod (`NB_LOG_FORMAT=json`) it
  * emits structured JSON auto-enriched with `service` / `tenant_id` /
  * `correlation_id` (the active trace id) / identity, so logs pivot to traces and
  * are queryable per tenant in Loki. A raw `console.error` / `console.warn` /
@@ -33,7 +33,7 @@ const ALLOW_MARKER = "lint-ok:console";
 /** Files where raw `console.*` is the correct, sanctioned output. */
 const ALLOWED_FILES: ReadonlySet<string> = new Set<string>(
   [
-    "cli/log.ts",
+    "observability/log.ts",
     "cli/commands.ts",
     "adapters/console-events.ts",
     "adapters/debug-events.ts",
@@ -98,7 +98,7 @@ async function main(): Promise<void> {
       console.error(`  ${v.file}:${v.line}`);
       console.error(`    ${v.snippet}\n`);
     }
-    console.error("Operational code must log through `log` from `src/cli/log.ts` so lines are");
+    console.error("Operational code must log through `log` from `src/observability/log.ts` so lines are");
     console.error("structured JSON with tenant_id + correlation_id in deployed pods. CLI command");
     console.error(`output is exempt; a rare exception needs a // ${ALLOW_MARKER} comment above.`);
     process.exit(1);

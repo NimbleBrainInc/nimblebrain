@@ -8,12 +8,12 @@ import type {
   LanguageModelV3ToolResultPart,
   SharedV3ProviderOptions,
 } from "@ai-sdk/provider";
-import { log } from "../cli/log.ts";
 import { DEFAULT_MAX_DIRECT_TOOLS, MAX_ITERATIONS, MAX_LENGTH_CONTINUATIONS } from "../limits.ts";
 import { applyCachePolicy } from "../model/cache-policy.ts";
 import { getProviderFromModel, supportsEnabledThinking } from "../model/catalog.ts";
 import { normalizeForReplay } from "../model/inbound-fit.ts";
 import { callModel, type StreamResult } from "../model/stream.ts";
+import { log } from "../observability/log.ts";
 import { toolMatches } from "../skills/select.ts";
 import { coerceInputForSchema } from "../tools/coerce-input.ts";
 import { bareToolName } from "../tools/namespace.ts";

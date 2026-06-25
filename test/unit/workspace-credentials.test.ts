@@ -15,7 +15,7 @@ import {
   saveWorkspaceCredential,
   type UserConfigFieldDef,
 } from "../../src/config/workspace-credentials.ts";
-import { log } from "../../src/cli/log.ts";
+import { log } from "../../src/observability/log.ts";
 
 const BUNDLE = "@nimblebraininc/newsapi";
 const WS_A = "ws_alpha";

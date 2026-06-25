@@ -1,7 +1,7 @@
 import { appendFileSync, mkdirSync, readdirSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
-import { log } from "../cli/log.ts";
 import type { EngineEvent, EngineEventType, EventSink } from "../engine/types.ts";
+import { log } from "../observability/log.ts";
 
 /** Event types that belong in the workspace log. */
 const WORKSPACE_EVENTS = new Set<EngineEventType>([
