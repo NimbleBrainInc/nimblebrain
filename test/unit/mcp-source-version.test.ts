@@ -33,6 +33,15 @@ describe("sanitizeReportedVersion", () => {
     expect(sanitizeReportedVersion("9".repeat(200))).toBe("9".repeat(64));
   });
 
+  it("caps by code points, never splitting a surrogate pair at the boundary", () => {
+    // U+1F600 is one code point / two UTF-16 units. Placed so the naive
+    // string.slice(0, 64) boundary would fall mid-pair (after 63 ASCII chars).
+    const astral = String.fromCodePoint(0x1f600);
+    const out = sanitizeReportedVersion(`${"a".repeat(63)}${astral}xx`);
+    expect(out).toBe(`${"a".repeat(63)}${astral}`);
+    expect(Array.from(out ?? "")).toHaveLength(64);
+  });
+
   it("returns undefined when nothing usable remains", () => {
     expect(sanitizeReportedVersion("")).toBeUndefined();
     expect(sanitizeReportedVersion("   ")).toBeUndefined();

@@ -238,15 +238,17 @@ function deferred<T>(): Deferred<T> {
  * remains.
  */
 export function sanitizeReportedVersion(raw: string): string | undefined {
-  const cleaned = Array.from(raw)
+  const printable = Array.from(raw)
     .filter((ch) => {
       const cp = ch.codePointAt(0) ?? 0;
       return cp > 0x1f && !(cp >= 0x7f && cp <= 0x9f);
     })
     .join("")
-    .trim()
-    .slice(0, 64);
-  return cleaned || undefined;
+    .trim();
+  // Cap by code points, not UTF-16 units: slicing the string directly could cut
+  // an astral character at the 64-unit boundary and leave a lone surrogate.
+  const capped = Array.from(printable).slice(0, 64).join("");
+  return capped || undefined;
 }
 
 /**
