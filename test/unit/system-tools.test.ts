@@ -124,7 +124,7 @@ describe("System Tools", () => {
 		]);
 	});
 
-	it("search auto-promotes its top matches into the active set", async () => {
+	it("search returns matches as data without promoting (append-only)", async () => {
 		const registry = await makeRegistry();
 		const added: string[] = [];
 		const toolPromotionCtx: ToolPromotionContext = {
@@ -157,12 +157,16 @@ describe("System Tools", () => {
 		const result = await systemTools.execute("search", { scope: "tools", query: "greet" });
 
 		expect(result.isError).toBe(false);
-		// The matched tool was promoted into the active set (one fewer round-trip
-		// than search → manage_tools → call).
-		expect(added).toContain("test__greet");
-		// The model is told it can call it directly, and the result reports it.
-		expect(extractText(result.content)).toContain("now active");
-		expect(getStructured<{ promoted?: string[] }>(result)?.promoted).toContain("test__greet");
+		// Search returns matches as data and never mutates the active set —
+		// adding a tool is wire position 0 and would bust the whole cached
+		// prefix. The model activates a committed tool via nb__manage_tools.
+		expect(added).toEqual([]);
+		expect(extractText(result.content)).not.toContain("now active");
+		expect(extractText(result.content)).toContain("nb__manage_tools");
+		expect(getStructured<{ tools?: Array<{ name: string }> }>(result)?.tools).toContainEqual({
+			name: "test__greet",
+		});
+		expect(getStructured<{ promoted?: string[] }>(result)?.promoted).toBeUndefined();
 	});
 
 	it("search with scope=tools preserves single-word prefix substring matches", async () => {
@@ -620,10 +624,10 @@ describe("System Tools", () => {
 			{ name: "test__tool.with.dot" },
 		]);
 
-		// search now auto-promotes its top match; clear the log to isolate the
-		// manage_tools call below (intent: manage_tools accepts the searched name).
-		expect(calls).toEqual(["add:test__tool.with.dot"]);
-		calls.length = 0;
+		// search no longer mutates the active set (append-only — promoting a tool
+		// would bust the cached prefix), so it added nothing; the manage_tools
+		// call below is the only promotion (intent: it accepts the searched name).
+		expect(calls).toEqual([]);
 
 		const result = await systemTools.execute("manage_tools", {
 			add: ["test__tool.with.dot"],

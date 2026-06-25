@@ -150,12 +150,12 @@ export const toolCallsTotal = new Counter({
 });
 
 /**
- * Tools promoted into the active set (progressive-disclosure discovery),
- * labeled by whether the promoted tool was actually called later in the same
- * run. `used="false"` is the wasted-promotion signal — a cache-prefix re-write
- * for a tool the model never used — that validates the auto-promote policy:
- * `used="false" / total` is the promoted-but-never-called rate. Counted at run
- * end (not at promote time) so the correlation is known.
+ * Tools promoted into the active set via nb__manage_tools (the model
+ * activating a tool it intends to call), labeled by whether the promoted tool
+ * was actually called later in the same run. `used="false"` is the
+ * wasted-promotion signal — a cache-prefix re-write for a tool the model never
+ * used — so `used="false" / total` is the promoted-but-never-called rate.
+ * Counted at run end (not at promote time) so the correlation is known.
  */
 export const toolPromotionsTotal = new Counter({
   name: "nb_tool_promotions_total",
