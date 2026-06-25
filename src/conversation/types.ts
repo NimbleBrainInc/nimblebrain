@@ -210,6 +210,14 @@ export type UserContentPart = LanguageModelV3TextPart | ResourceLinkContentPart;
 
 interface StoredMessageMetadata {
   skill?: string | null;
+  /**
+   * Marks a message the reconstructor synthesized rather than one the model
+   * or user produced. `"connector_skill_injected"` is the surface-once
+   * connector-overlay message (paired with `skill`, the overlay name) — the
+   * engine inspects this on replay to dedup re-injection. See
+   * `event-reconstructor.ts`.
+   */
+  synthetic?: string;
   toolCalls?: Array<{
     id: string;
     name: string;
@@ -278,6 +286,7 @@ export type ConversationEventType =
   | "run.error"
   | "skills.loaded"
   | "context.assembled"
+  | "connector.skill.injected"
   | "metadata.title"
   | "history.compacted"
   | "aux.usage";
@@ -449,6 +458,29 @@ export interface HistoryCompactedEvent {
 }
 
 /**
+ * A curated connector-skill overlay surfaced into the conversation for the
+ * first time, triggered by a matching connector tool call during a run.
+ * The reconstructor turns this event into a synthetic assistant message whose
+ * body is the overlay wrapped in `<connector-skill>` containment, carrying
+ * `metadata.synthetic = "connector_skill_injected"` + `metadata.skill` so the
+ * guidance rides the append-only history from the next turn on AND so the
+ * engine can detect it on replay to never re-inject. Emitted at most once per
+ * (conversation, skill).
+ */
+export interface ConnectorSkillInjectedEvent {
+  ts: string;
+  type: "connector.skill.injected";
+  /** The connector tool call that triggered the surfacing (e.g. `gmail__send`). */
+  toolName: string;
+  /** The overlay's skill name (matches the materialized manifest `name`). */
+  skillName: string;
+  /** The overlay body (markdown), surfaced verbatim into history. */
+  skillBody: string;
+  /** Scope label for containment / telemetry. Always `"connector"` in v1. */
+  scope: string;
+}
+
+/**
  * Token usage for a forked model call that is NOT a conversation turn — the
  * compaction summarizer and the auto-title generator. These run the `fast`
  * slot outside the agentic loop and so emit no `llm.response`; without this
@@ -478,6 +510,7 @@ export type ConversationEvent =
   | RunErrorEvent
   | SkillsLoadedEvent
   | ContextAssembledEvent
+  | ConnectorSkillInjectedEvent
   | TitleChangeEvent
   | HistoryCompactedEvent
   | AuxUsageEvent;

@@ -11,6 +11,7 @@
 import { Value } from "@sinclair/typebox/value";
 import { describe, expect, test } from "bun:test";
 import {
+  ConnectorSkillInjectedPayload,
   ContextAssembledPayload,
   DataChangedPayload,
   FileCreatedPayload,
@@ -123,6 +124,18 @@ describe("event schemas — accept representative payloads", () => {
         runId: "run-abc",
         toolName: "app__tool",
         reason: "evicted",
+      }),
+    ).toBe(true);
+  });
+
+  test("connector.skill.injected — full payload", () => {
+    expect(
+      Value.Check(ConnectorSkillInjectedPayload, {
+        runId: "run-abc",
+        toolName: "gmail__send",
+        skillName: "composio/gmail",
+        skillBody: "Confirm the recipient before sending.",
+        scope: "connector",
       }),
     ).toBe(true);
   });

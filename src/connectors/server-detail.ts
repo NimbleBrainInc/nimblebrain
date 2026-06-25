@@ -250,6 +250,35 @@ export function getNimbleBrainHostMeta(s: ServerDetail): HostManifestMeta | unde
   return s._meta?.[NIMBLEBRAIN_HOST_META_KEY] as HostManifestMeta | undefined;
 }
 
+/**
+ * The connector-skill identity rule, over the two values that determine it.
+ * For a Composio connector the identity is `composio/<toolkit>` (the toolkit
+ * slug is stable across deployments, unlike the per-account auth config id);
+ * otherwise it is the server name. Shared by {@link connectorSkillIdentity}
+ * (ServerDetail callers) and the install path (which has the toolkit + server
+ * name directly, not a ServerDetail).
+ */
+export function connectorSkillIdentityFrom(
+  composioToolkit: string | undefined,
+  serverName: string,
+): string {
+  const toolkit = composioToolkit?.trim();
+  return toolkit ? `composio/${toolkit}` : serverName;
+}
+
+/**
+ * Stable identity used to look up a curated connector-skill overlay in the
+ * public overlay repo, laid out as `<identity>/SKILL.md`. See
+ * {@link connectorSkillIdentityFrom} for the rule. `name` is required on
+ * `ServerDetail`, so a usable identity is always derivable.
+ */
+export function connectorSkillIdentity(detail: ServerDetail): string {
+  return connectorSkillIdentityFrom(
+    getNimbleBrainConnectorMeta(detail)?.composio?.toolkit,
+    detail.name,
+  );
+}
+
 // ── ajv validator (compiled once at module load) ────────────────────
 
 const schemaPath = join(import.meta.dir, "schemas", "server.schema.json");

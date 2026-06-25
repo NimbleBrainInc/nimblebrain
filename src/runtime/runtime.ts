@@ -43,6 +43,7 @@ import {
 import { AgentEngine } from "../engine/engine.ts";
 import { estimateMessageTokens, estimateToolDescriptionTokens } from "../engine/token-estimate.ts";
 import type {
+  ConnectorSkillCandidate,
   ContextAssembledPayload,
   ContextAssembledSource,
   EngineConfig,
@@ -55,6 +56,7 @@ import type {
   ToolRouter,
   ToolSchema,
 } from "../engine/types.ts";
+import { CONNECTOR_SKILL_SYNTHETIC } from "../engine/types.ts";
 import { rehydrateUserResources } from "../files/rehydrate.ts";
 import { createFileStore, type FileStore } from "../files/store.ts";
 import { DEFAULT_FILE_CONFIG, type FileConfig } from "../files/types.ts";
@@ -88,6 +90,12 @@ import { composeSystemSegments } from "../prompt/compose.ts";
 import { ConnectorDirectory } from "../registries/directory.ts";
 import { RegistryStore, warnIfCuratedCatalogEmpty } from "../registries/registry-store.ts";
 import { synthesizeBundleSkill } from "../skills/bundle-skills.ts";
+import {
+  CONNECTOR_SKILLS_SUBDIR,
+  type ConnectorOverlayInfo,
+  listConnectorOverlays,
+  readConnectorSkillCandidates,
+} from "../skills/connector-skill-store.ts";
 import {
   loadBuiltinSkills,
   loadCoreSkills,
@@ -450,6 +458,11 @@ export class Runtime {
       mpakHome,
     );
     lifecycle.setPlacementRegistry(placementRegistry);
+    // Connector-skill cleanup on uninstall resolves the `connector-skills/`
+    // store from this same workDir that install + the per-turn loader use, so
+    // an operator `workDir` in nimblebrain.json (NB_WORK_DIR unset) cleans up
+    // correctly rather than looking under ~/.nimblebrain.
+    lifecycle.setWorkDir(resolveWorkDir(config));
 
     // Host-resources subsystem. One resolver + one rate-limit shared
     // across every bundle spawned through this runtime, parameterized
@@ -1680,6 +1693,17 @@ export class Runtime {
         skillsLoaded,
         contextAssembled,
       },
+      // Connector-skill overlays for the FOCUSED workspace — surfaced once
+      // into history by the engine on a matching connector tool call, never
+      // into the system prefix. Same workspace scoping as the layer-3 pool.
+      connectorSkillCandidates: this.loadConnectorSkillCandidates(focusedWsId ?? sessionWsId),
+      // Computed from the UN-rehydrated history — rehydrate strips the synthetic
+      // marker's metadata, so the engine can't recover the already-injected set
+      // from the messages it receives. This is what makes surface-ONCE hold
+      // across turns on the real chat path.
+      alreadyInjectedConnectorSkills: this.collectInjectedConnectorSkills(
+        compactedHistory ?? history,
+      ),
       // Cancellation: thread the caller's signal into the engine. The
       // engine checks it between iterations and forwards it down to every
       // tool call. Without this, callers racing the chat against a
@@ -2182,6 +2206,16 @@ export class Runtime {
       maxToolResultSize: this.config.maxToolResultSize,
       hooks: perRequestHooks,
       runMetadata: { skillsLoaded, contextAssembled },
+      // Connector-skill overlays — same focused-workspace scoping as the
+      // layer-3 pool; surfaced once into history, never the system prefix.
+      connectorSkillCandidates: this.loadConnectorSkillCandidates(focusedWsId ?? sessionWsId),
+      // Computed from the UN-rehydrated history — rehydrate strips the synthetic
+      // marker's metadata, so the engine can't recover the already-injected set
+      // from the messages it receives. This is what makes surface-ONCE hold
+      // across turns on the real chat path.
+      alreadyInjectedConnectorSkills: this.collectInjectedConnectorSkills(
+        compactedHistory ?? history,
+      ),
       ...(request.signal ? { signal: request.signal } : {}),
     };
 
@@ -2642,9 +2676,20 @@ export class Runtime {
     // safely would make the situation worse, not better. Trust is enforced at
     // install time. See `formatFocusedAppSection` for the matching policy on
     // the `<app-guide>` path.
+    // Servers with a materialized connector overlay: skip synthesizing
+    // their `skill://<server>/usage` guidance — the curated overlay supersedes
+    // it (and would otherwise double the guidance under two framings). A bundle
+    // "has an overlay" iff its persisted ref carries a non-empty `skillsLock`.
+    const overlaidServers = new Set(
+      this.getBundleInstancesForWorkspace(wsId)
+        .filter((i) => i.ref && "skillsLock" in i.ref && (i.ref.skillsLock?.length ?? 0) > 0)
+        .map((i) => i.serverName),
+    );
+
     const candidates: string[] = [];
     for (const source of registry.getSources()) {
       if (source.name === options.appContextServerName) continue;
+      if (overlaidServers.has(source.name)) continue;
       const inner = source instanceof SharedSourceRef ? source.unwrap() : source;
       if (!(inner instanceof McpSource)) continue;
       candidates.push(source.name);
@@ -3517,6 +3562,60 @@ export class Runtime {
     }
 
     return mergeScopedSkills(orgPool, workspacePool, userPool);
+  }
+
+  /**
+   * Connector-skill overlay candidates for a turn — curated connector
+   * guidance materialized into the FOCUSED workspace's `connector-skills/`
+   * store (a sibling of `skills/`). Returned as the engine's lightweight
+   * candidate shape and handed to `engine.run` via
+   * `EngineConfig.connectorSkillCandidates`, where the surface-once hook
+   * matches them by tool-affinity. They are deliberately NOT merged into
+   * `loadConversationSkills` — that pool composes into the system prompt /
+   * Layer-3, and connector overlays must only ever ride the conversation
+   * history. Empty when nothing was materialized (feature off, or no overlay
+   * curated for the workspace's connectors).
+   */
+  loadConnectorSkillCandidates(wsId: string): ConnectorSkillCandidate[] {
+    const dir = this.getWorkspaceContext(wsId).getDataPath(CONNECTOR_SKILLS_SUBDIR);
+    return readConnectorSkillCandidates(dir);
+  }
+
+  /**
+   * Names of connector overlays already surfaced in this conversation,
+   * read from the reconstructed history's synthetic-message markers. MUST be
+   * called on the UN-rehydrated history (`compactedHistory ?? history`):
+   * `rehydrateUserResources` strips message `metadata`, so the marker is gone
+   * from the rehydrated `messages` the engine receives. Passed to the engine as
+   * `alreadyInjectedConnectorSkills` so a bound overlay is surfaced once across
+   * the whole conversation, not re-injected every turn its tools are used.
+   *
+   * Compaction interaction (intended): reading from `compactedHistory ?? history`
+   * means that once compaction folds the synthetic marker into a summary, the
+   * overlay is no longer "already injected" and re-surfaces once on the next
+   * matching tool call — re-establishing the guidance after the verbatim block
+   * was summarized away. The cost is bounded (one re-injection per compaction).
+   */
+  private collectInjectedConnectorSkills(messages: StoredMessage[]): string[] {
+    const names = new Set<string>();
+    for (const m of messages) {
+      const meta = m.metadata;
+      if (meta?.synthetic === CONNECTOR_SKILL_SYNTHETIC && typeof meta.skill === "string") {
+        names.add(meta.skill);
+      }
+    }
+    return [...names];
+  }
+
+  /**
+   * Materialized connector overlays in a workspace, with provenance — backs
+   * `manage_connectors list_bound_skills`. Distinct from
+   * {@link loadConnectorSkillCandidates} (the engine's lightweight pool): this
+   * carries the bound server + source ref for an operator-facing listing.
+   */
+  listConnectorOverlays(wsId: string): ConnectorOverlayInfo[] {
+    const dir = this.getWorkspaceContext(wsId).getDataPath(CONNECTOR_SKILLS_SUBDIR);
+    return listConnectorOverlays(dir);
   }
 
   /**

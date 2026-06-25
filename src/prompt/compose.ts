@@ -793,6 +793,28 @@ function formatLayer3SkillsSection(entries: Layer3SkillEntry[]): string | null {
 }
 
 /**
+ * Wrap a connector-skill overlay body for surfacing into the conversation
+ * history. Unlike Layer-3 skills, a connector overlay NEVER enters the
+ * cached system prefix — it becomes the body of a synthetic assistant message
+ * the reconstructor emits on the first matching connector tool call, so the
+ * guidance rides the append-only history rather than re-varying the prompt
+ * prefix every turn.
+ *
+ * Containment is the same per-prompt defense `formatLayer3SkillsSection`
+ * applies (bundle trust is install-time; this is the per-prompt guard): the
+ * body is wrapped in `<connector-skill>` and any literal closing tag inside it
+ * is rewritten to `&lt;/connector-skill>` so an overlay author can't break out
+ * of containment. Name/scope ride a sanitized provenance line.
+ */
+export function formatConnectorSkillBlock(name: string, scope: string, body: string): string {
+  const safeName = sanitizeLineField(name);
+  const safeScope = sanitizeLineField(scope);
+  const safeBody = body.replaceAll("</connector-skill>", "&lt;/connector-skill>");
+  const provenance = `_${safeName}_ — scope: ${safeScope}; surfaced on first matching connector tool call`;
+  return `${provenance}\n\n<connector-skill>\n${safeBody}\n</connector-skill>`;
+}
+
+/**
  * Workspace-scoping applies to TOOLS, not to files or conversations. Both
  * workspace blocks narrate that tools are workspace-scoped (find others with
  * `nb__search`); without an explicit counter-statement an agent overgeneralises

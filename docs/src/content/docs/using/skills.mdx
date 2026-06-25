@@ -108,6 +108,19 @@ Skills are loaded from multiple locations, in order:
 
 Files must have a `.md` extension.
 
+## Connector skill overlays
+
+Installing a connector can automatically apply a short **usage overlay** — curated guidance for *that* connector's tools (e.g. "confirm the recipient before sending mail"). Overlays target the connectors you don't author yourself (Composio and other third-party MCP servers), so they're sourced from a NimbleBrain-curated **public overlay repo** keyed by connector identity (`composio/<toolkit>` for Composio connectors, otherwise the server name) at a pinned version.
+
+Overlays differ from authored skills in two ways:
+
+- **Surfaced once into the conversation, not the system prompt.** An authored `dynamic` + `tool-affinity` skill composes into the system prompt for the turn. A connector overlay instead appears in the conversation history exactly once — on the first call to a matching tool — and then rides the (cached, append-only) history for the rest of the conversation. It's relevant (only when the connector's tools are actually used) and cache-friendly (it never re-varies the cached system prefix turn to turn). The tradeoff of this reactive model: the overlay surfaces *after* the first matching tool call and takes effect from the next turn, so guidance whose value is preemptive (e.g. "confirm before sending") does not gate that very first call. For hard preconditions, prefer an authored `always` skill or a tool-side guard.
+- **Stored separately.** Materialized overlays live in a `connector-skills/` store, distinct from authored `skills/`. They don't appear in `nb skill list` / `skills__list`; list them with the connector tool's `list_bound_skills` action instead.
+
+Resolution is **opt-in and fail-closed**: it runs only when `CONNECTOR_SKILLS_ENABLED=true`, fetches at a pinned repo version, records the fetched content hash, and treats a missing overlay (or any fetch error) as a no-op — a connector install never fails because its optional guidance couldn't be fetched. Override the repo / version with `CONNECTOR_SKILLS_REPO` and `CONNECTOR_SKILLS_VERSION`. When a connector has a curated overlay, the platform skips synthesizing the bundle's own `skill://usage` guidance so the model sees one set of instructions, not two.
+
+Uninstalling the connector removes its materialized overlays.
+
 ## Listing skills
 
 ```bash

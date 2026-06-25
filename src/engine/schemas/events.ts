@@ -143,6 +143,26 @@ export type FileCreatedPayload = Static<typeof FileCreatedPayload>;
 export const FileDeletedPayload = Type.Object({ id: Type.String() });
 export type FileDeletedPayload = Static<typeof FileDeletedPayload>;
 
+/**
+ * `connector.skill.injected` — a curated connector overlay surfaced into
+ * the conversation history for the first time, triggered by a matching
+ * connector tool call. The reconstructor turns this into a synthetic assistant
+ * message; the body is wrapped in `<connector-skill>` containment at that point.
+ */
+export const ConnectorSkillInjectedPayload = Type.Object({
+  /** Engine-attached run id for debug/correlation. */
+  runId: Type.String(),
+  /** The connector tool call that triggered the surfacing (e.g. `gmail__send`). */
+  toolName: Type.String(),
+  /** The overlay's skill name (matches the materialized manifest `name`). */
+  skillName: Type.String(),
+  /** The overlay body (markdown), surfaced verbatim into history. */
+  skillBody: Type.String(),
+  /** Scope label for containment / telemetry. Always `"connector"` in v1. */
+  scope: Type.String(),
+});
+export type ConnectorSkillInjectedPayload = Static<typeof ConnectorSkillInjectedPayload>;
+
 // ── Discriminated event union ────────────────────────────────────────────
 //
 // Events with a typed payload are listed in the union below. Emitters
@@ -166,5 +186,9 @@ export const TypedEngineEvent = Type.Union([
   Type.Object({ type: Type.Literal("skill.deleted"), data: SkillDeletedPayload }),
   Type.Object({ type: Type.Literal("file.created"), data: FileCreatedPayload }),
   Type.Object({ type: Type.Literal("file.deleted"), data: FileDeletedPayload }),
+  Type.Object({
+    type: Type.Literal("connector.skill.injected"),
+    data: ConnectorSkillInjectedPayload,
+  }),
 ]);
 export type TypedEngineEvent = Static<typeof TypedEngineEvent>;

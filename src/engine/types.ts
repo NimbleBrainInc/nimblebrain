@@ -4,6 +4,17 @@ import type { TokenUsage } from "../usage/types.ts";
 
 export type { ContentBlock, TextContent };
 
+/**
+ * Metadata marker stamped on the synthetic message the reconstructor builds
+ * from a `connector.skill.injected` event. The engine reads it on replay
+ * (`history.some(m => m.metadata?.synthetic === CONNECTOR_SKILL_SYNTHETIC)`) to
+ * detect an already-surfaced connector overlay and never re-inject it. Lives
+ * here — the dependency-safe shared home — because both the engine (producer of
+ * the dedup contract) and the conversation reconstructor (which stamps it) need
+ * it, and `engine/` must not import `conversation/`.
+ */
+export const CONNECTOR_SKILL_SYNTHETIC = "connector_skill_injected";
+
 /** Port 2: Tool routing abstraction. */
 export interface ToolRouter {
   availableTools(): Promise<ToolSchema[]>;
@@ -115,6 +126,16 @@ export type EngineEventType =
   | "run.done"
   | "run.error"
   | "skills.loaded"
+  /**
+   * A curated connector-skill overlay was surfaced into the conversation for
+   * the first time, triggered by a matching connector tool call. The
+   * reconstructor turns this into a synthetic assistant message carrying the
+   * skill body, so the guidance rides the cached, append-only history from the
+   * next turn on instead of re-entering the system prefix every turn. Emitted
+   * at most once per (conversation, skill). Payload: { runId, toolName,
+   * skillName, skillBody, scope }.
+   */
+  | "connector.skill.injected"
   | "context.assembled"
   /**
    * Emitted when a model call is rejected for exceeding the context window
@@ -254,6 +275,28 @@ export interface EngineConfig {
    * may add more entries here without touching the engine signature.
    */
   runMetadata?: RunMetadata;
+  /**
+   * Connector-skill overlay candidates for this run. Curated usage
+   * guidance for connectors the platform doesn't control, loaded as
+   * `scope: connector` and surfaced ONCE into the conversation history on the
+   * first matching tool call — never into the cached system prefix. The engine
+   * matches each candidate's `toolAffinity` globs against the called tool name;
+   * on the first match (per conversation, deduped via history inspection) it
+   * emits `connector.skill.injected`, which the reconstructor turns into a
+   * synthetic assistant message that rides the cached history from the next
+   * turn on. Empty / absent = the feature is off for this run.
+   */
+  connectorSkillCandidates?: ConnectorSkillCandidate[];
+  /**
+   * Names of connector overlays already surfaced earlier in this conversation,
+   * so the engine never re-injects them (cross-run dedup). The runtime
+   * computes this from the UN-rehydrated reconstructed history: the synthetic
+   * marker lives in message `metadata`, which `rehydrateUserResources` strips
+   * before the engine sees the messages, so the engine's own history scan can't
+   * be the sole source on the real chat path. The scan remains a fallback for
+   * callers that pass metadata-bearing messages directly (the engine+store test).
+   */
+  alreadyInjectedConnectorSkills?: string[];
   toolPromotion?: {
     isToolEligible(tool: ToolSchema): boolean;
     registerControls(controls: ToolPromotionControls): () => void;
@@ -266,6 +309,25 @@ export interface EngineConfig {
    * — the same invariant `surfaceTools` enforces at run start.
    */
   maxActiveTools?: number;
+}
+
+/**
+ * A connector-skill overlay considered for surface-once-into-history during a
+ * run. The runtime loads these from the workspace's `connector-skills/`
+ * candidate store (NOT `/skills`) and hands them to the engine via
+ * {@link EngineConfig.connectorSkillCandidates}. They are NEVER composed into
+ * the system prompt — the engine surfaces a matched candidate into the
+ * conversation history exactly once.
+ */
+export interface ConnectorSkillCandidate {
+  /** Skill name — matches the materialized overlay's manifest `name`. */
+  name: string;
+  /** The overlay body (markdown) to surface into history, verbatim. */
+  body: string;
+  /** Scope label for containment / telemetry. Always `"connector"` in v1. */
+  scope: string;
+  /** Tool-affinity globs (e.g. `["<server>__*"]`); the first match triggers surfacing. */
+  toolAffinity: string[];
 }
 
 /**

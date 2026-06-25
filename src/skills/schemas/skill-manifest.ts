@@ -36,6 +36,9 @@ const ProvenanceSchema = Type.Object(
     "created-by": Type.Optional(Type.String()),
     "created-at": Type.Optional(Type.String()),
     "updated-at": Type.Optional(Type.String()),
+    // Upstream source reference for a derived skill. For `connector` overlays
+    // this is `connector:<identity>@<version>` (e.g. `connector:composio/gmail@v0.1.0`).
+    source: Type.Optional(Type.String()),
   },
   { additionalProperties: false },
 );
@@ -105,6 +108,13 @@ export interface SkillProvenance {
   createdBy?: string;
   createdAt?: string;
   updatedAt?: string;
+  /**
+   * Upstream source reference for a derived skill. For `connector` overlays
+   * this is `connector:<identity>@<version>` (e.g.
+   * `connector:composio/gmail@v0.1.0`), recording which curated overlay and
+   * pinned version the materialized copy came from.
+   */
+  source?: string;
 }
 
 export interface SkillManifest {
@@ -157,6 +167,7 @@ function mapProvenance(
     ...(p["created-by"] ? { createdBy: p["created-by"] } : {}),
     ...(p["created-at"] ? { createdAt: p["created-at"] } : {}),
     ...(p["updated-at"] ? { updatedAt: p["updated-at"] } : {}),
+    ...(p.source ? { source: p.source } : {}),
   };
 }
 

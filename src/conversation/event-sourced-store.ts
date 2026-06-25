@@ -20,6 +20,7 @@ import {
 } from "./event-reconstructor.ts";
 import { ConversationIndex, canAccess } from "./index-cache.ts";
 import {
+  type ConnectorSkillInjectedEvent,
   type ContextAssembledEvent,
   type ContextAssembledSource,
   type Conversation,
@@ -75,6 +76,7 @@ const CONVERSATION_EVENT_TYPES = new Set([
   "run.error",
   "skills.loaded",
   "context.assembled",
+  "connector.skill.injected",
 ]);
 
 // ---------------------------------------------------------------------------
@@ -653,6 +655,24 @@ export class EventSourcedConversationStore implements ConversationStore, EventSi
           totalTokens: (d.totalTokens as number) ?? 0,
           ...(typeof d.modelMaxContext === "number" ? { modelMaxContext: d.modelMaxContext } : {}),
           ...(typeof d.headroomTokens === "number" ? { headroomTokens: d.headroomTokens } : {}),
+        };
+        return e;
+      }
+
+      case "connector.skill.injected": {
+        // The body is persisted verbatim; the reconstructor wraps it in
+        // `<connector-skill>` containment when it rebuilds the message. A
+        // missing body would surface an empty guidance block, so drop the
+        // event rather than persist a useless one.
+        const skillBody = typeof d.skillBody === "string" ? d.skillBody : "";
+        if (!skillBody) return null;
+        const e: ConnectorSkillInjectedEvent = {
+          ts,
+          type: "connector.skill.injected",
+          toolName: (d.toolName as string) ?? "",
+          skillName: (d.skillName as string) ?? "",
+          skillBody,
+          scope: (d.scope as string) ?? "connector",
         };
         return e;
       }

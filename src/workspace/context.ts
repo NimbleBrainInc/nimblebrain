@@ -41,15 +41,24 @@ import { WORKSPACE_ID_RE } from "./workspace-store.ts";
  *
  *   - `data`           — bundle data dirs (`{name}/...`)
  *   - `credentials`    — per-bundle credentials, OAuth tokens, secrets
- *   - `conversations`  — JSONL message persistence
- *   - `skills`         — workspace-installed skills
- *   - `files`          — uploaded files / file context
+ *   - `conversations`    — JSONL message persistence
+ *   - `skills`           — workspace-installed (authored) skills
+ *   - `connector-skills` — materialized connector overlays; a SIBLING of
+ *     `skills/`, never read by the authored-skill loader
+ *   - `files`            — uploaded files / file context
  *
  * `root` returns the workspace root itself (`workspaces/{wsId}/`); it is
  * the parent of every other scope and most callers should prefer a
  * specific scope over `root` so the intent is legible.
  */
-export type WorkspaceScope = "root" | "data" | "credentials" | "conversations" | "skills" | "files";
+export type WorkspaceScope =
+  | "root"
+  | "data"
+  | "credentials"
+  | "conversations"
+  | "skills"
+  | "connector-skills"
+  | "files";
 
 const SUBPATH_FORBIDDEN_RE = /\0/;
 

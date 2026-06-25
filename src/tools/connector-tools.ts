@@ -21,6 +21,7 @@ import {
   deleteComposioConnectedAccount,
 } from "../composio/sdk.ts";
 import type { UserConfigFieldDef } from "../config/workspace-credentials.ts";
+import { connectorSkillIdentityFrom } from "../connectors/server-detail.ts";
 import { textContent } from "../engine/content-helpers.ts";
 import type { ToolResult } from "../engine/types.ts";
 import type { UserIdentity } from "../identity/provider.ts";
@@ -227,6 +228,7 @@ export function createManageConnectorsTool(ctx: ManageConnectorsContext): InProc
             "set_user_config",
             "clear_user_config",
             "get_redirect_uri",
+            "list_bound_skills",
           ],
           description: "Action to perform.",
         },
@@ -402,6 +404,8 @@ export function createManageConnectorsTool(ctx: ManageConnectorsContext): InProc
             structuredContent: { redirectUri: mcpAuthCallbackUrl() },
             isError: false,
           };
+        case "list_bound_skills":
+          return handleListBoundSkills(ctx, wsId);
         default:
           return errResult(`Unknown action "${action}".`);
       }
@@ -472,6 +476,27 @@ async function handleListDirectory(
       `Directory: ${result.entries.length} entries (${result.errors.length} registry errors).`,
     ),
     structuredContent: { entries: result.entries, errors: result.errors },
+    isError: false,
+  };
+}
+
+/**
+ * `list_bound_skills` — the curated connector-skill overlays materialized
+ * in this workspace, with their bound server + provenance source. These are
+ * surface-once-into-history candidates, not authored skills, so they don't
+ * appear in `skills__list`; this is how an operator sees what's bound.
+ */
+function handleListBoundSkills(ctx: ManageConnectorsContext, wsId: string | null): ToolResult {
+  if (!wsId) {
+    return errResult("No workspace in scope — pass `wsId` or call from a workspace.");
+  }
+  const overlays = ctx.runtime.listConnectorOverlays(wsId);
+  const summary = overlays.length
+    ? overlays.map((o) => `- ${o.server}: ${o.name}${o.source ? ` (${o.source})` : ""}`).join("\n")
+    : "No connector-skill overlays bound in this workspace.";
+  return {
+    content: textContent(summary),
+    structuredContent: { wsId, overlays },
     isError: false,
   };
 }
@@ -1488,6 +1513,21 @@ async function handleInstallRemoteOAuth(
     staticOAuthClient = client;
   }
   const ref = buildRef(composioWiring, staticOAuthClient);
+  // Bind the curated connector-skill overlay, if one is curated for this
+  // connector's identity. Best-effort + non-fatal (see `syncBoundSkills`): the
+  // returned lock rides the persisted ref so uninstall cleans it up and the
+  // dedupe path knows the connector has an overlay. The overlay materializes
+  // into the workspace's `connector-skills/` store, NEVER the system prompt.
+  const skillsLock = await lifecycle.syncBoundSkills(
+    connectorSkillIdentityFrom(
+      action.auth === "composio" ? action.composio?.toolkit : undefined,
+      serverName,
+    ),
+    serverName,
+    wsId,
+    ctx.runtime.getWorkDir(),
+  );
+  if (skillsLock.length > 0) ref.skillsLock = skillsLock;
   await ctx.runtime.getWorkspaceStore().update(wsId, { bundles: [...ws.bundles, ref] });
   const wsRegistry = ctx.runtime.getRegistryForWorkspace(wsId);
   lifecycle.seedInstance(serverName, action.url, ref, undefined, wsId, undefined, wsRegistry);

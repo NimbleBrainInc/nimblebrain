@@ -62,9 +62,14 @@ Both install from the same Browse directory, but they differ:
 - **Connectors** are remote services you reach over OAuth. Nothing runs on your platform host except the connection.
 - **Stdio apps** are MCP bundles that run as a subprocess on the platform. They may declare `user_config` fields (API keys, settings) you fill in on their Configure page. See [Installing Apps](/using/installing-apps).
 
+## Usage overlays
+
+When you install a connector, the platform can automatically apply a short **usage overlay** — curated guidance for that connector's tools, surfaced into the conversation the first time the agent calls one of them (never into the system prompt). It's opt-in (`CONNECTOR_SKILLS_ENABLED=true`) and fail-closed; a connector with no curated overlay installs exactly as before. See [Connector skill overlays](/using/skills/#connector-skill-overlays) for how it works, and use the connector tool's `list_bound_skills` action to see what's bound in a workspace.
+
 ## What's next
 
 - [Installing Apps](/using/installing-apps) — stdio bundles and the agent-driven install path
 - [Managing Apps](/using/managing-apps) — lifecycle, status, and trust scores
+- [Skills](/using/skills/#connector-skill-overlays) — connector skill overlays
 - [Credentials](/config/credentials/) — how secrets are stored
 - [Workspace configuration](/config/workspace-json) — `connectorsAllowList` and `oauthOperatorApps`
