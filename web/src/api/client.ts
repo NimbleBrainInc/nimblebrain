@@ -650,7 +650,15 @@ export interface BundleUserConfigField {
 export interface InstalledConnector {
   serverName: string;
   bundleName: string;
+  /** Declared version — the catalog/manifest's stated version. */
   version: string;
+  /**
+   * The version the running server reports in its MCP `initialize` handshake
+   * (serverInfo.version). What's *actually* connected, vs `version` (declared).
+   * Absent when the source is stopped or the server reports none. Untrusted,
+   * display-only.
+   */
+  handshakeVersion?: string;
   type: "remote" | "local";
   state: string;
   scope: "workspace";

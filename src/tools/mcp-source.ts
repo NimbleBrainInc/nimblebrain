@@ -231,6 +231,27 @@ function deferred<T>(): Deferred<T> {
 }
 
 /**
+ * Sanitize an untrusted `serverInfo.version` before we store or surface it. The
+ * string comes from the MCP server — a Composio gateway or a third-party OAuth
+ * server controls it — so drop C0/C1 control characters and cap the length.
+ * Display-only; never a security signal. Returns undefined if nothing usable
+ * remains.
+ */
+export function sanitizeReportedVersion(raw: string): string | undefined {
+  const printable = Array.from(raw)
+    .filter((ch) => {
+      const cp = ch.codePointAt(0) ?? 0;
+      return cp > 0x1f && !(cp >= 0x7f && cp <= 0x9f);
+    })
+    .join("")
+    .trim();
+  // Cap by code points, not UTF-16 units: slicing the string directly could cut
+  // an astral character at the 64-unit boundary and leave a lone surrogate.
+  const capped = Array.from(printable).slice(0, 64).join("");
+  return capped || undefined;
+}
+
+/**
  * ToolSource wrapping a single MCP server (stdio subprocess or remote HTTP/SSE).
  * Lazy tool loading: first tools() call triggers listTools(), then caches.
  * Crash recovery: on execute failure, attempts one restart + retry.
@@ -245,6 +266,10 @@ export class McpSource implements ToolSource {
    *  `initialize`. Captured after connect so callers (e.g. the system
    *  prompt composer) can surface per-bundle guidance to the LLM. */
   private _instructions: string | undefined;
+  /** Sanitized `serverInfo.version` reported in the `initialize` response.
+   *  Untrusted (the server sets it); display-only. Undefined until start()
+   *  completes, if the server reports none, or after stop(). */
+  private _serverVersion: string | undefined;
   /**
    * For `inProcess` mode only — the linked-pair MCP server that this source
    * speaks to. Owned by McpSource (constructed in `start()` via
@@ -549,6 +574,17 @@ export class McpSource implements ToolSource {
     // the system prompt composer can render it in the apps list.
     const instructions = this.client.getInstructions();
     this._instructions = typeof instructions === "string" ? instructions : undefined;
+
+    // Capture the server's reported version (serverInfo.version, from the same
+    // initialize response). The server is untrusted — a Composio gateway or a
+    // third-party OAuth server controls this string — so strip control chars and
+    // cap length before storing. Display-only; never a security signal. A server
+    // that sets no version reports its framework's instead; that's still what it
+    // claims, so we keep it and let the UI decide (running version primary,
+    // catalog version shown only on drift).
+    const reportedVersion = this.client.getServerVersion()?.version;
+    this._serverVersion =
+      typeof reportedVersion === "string" ? sanitizeReportedVersion(reportedVersion) : undefined;
 
     this.startTaskSweeper();
 
@@ -937,12 +973,20 @@ export class McpSource implements ToolSource {
     this.inProcessServer = null;
     this.cachedTools = null;
     this._instructions = undefined;
+    this._serverVersion = undefined;
   }
 
   /** Server `instructions` string from the MCP `initialize` response.
    *  Undefined until start() completes; cleared by stop(). */
   getInstructions(): string | undefined {
     return this._instructions;
+  }
+
+  /** Sanitized `serverInfo.version` from the MCP `initialize` response.
+   *  Undefined until start() completes, if the server reports none, or after
+   *  stop(). Display-only — the server is untrusted. */
+  getReportedVersion(): string | undefined {
+    return this._serverVersion;
   }
 
   /**
