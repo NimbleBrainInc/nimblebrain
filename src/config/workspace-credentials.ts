@@ -505,7 +505,7 @@ export class WorkspaceCredentialStore {
    * then tries its own tiers — manifest-declared `mcp_config.env` aliases
    * and manifest defaults — and throws `MpakConfigError` if anything
    * required is still unresolved. Callers catch that at the SDK boundary
-   * and translate to a `nb config set -w <wsId>` hint.
+   * and translate to an operator hint (env var(s) / web UI Connections settings).
    *
    * `~/.mpak/config.json` is intentionally not consulted here or anywhere
    * else in NimbleBrain — the workspace store is our persistence surface.
@@ -582,8 +582,9 @@ export async function resolveUserConfig(
 }
 
 /**
- * Translate an `MpakConfigError` from the mpak SDK into NimbleBrain's
- * copy-pastable `nb config set -w <wsId>` hint. Callers use this at every
+ * Translate an `MpakConfigError` from the mpak SDK into a NimbleBrain operator
+ * hint pointing at the env var(s) (or the workspace's Connections settings)
+ * that satisfy each missing field. Callers use this at every
  * site that calls `mpak.prepareServer` after host-side credential resolution.
  *
  * Each missing field's message includes the specific env var(s) the
@@ -603,12 +604,16 @@ export function friendlyMpakConfigError(err: unknown, wsId: string): Error {
   const fields = err.missingFields;
   if (fields.length === 0) return new Error(err.message);
 
-  // Per-field hint: one `nb config set` line, plus one `export VAR=...`
-  // line per declared env alias. The alias list is derived by the SDK
-  // and attached to each missing field — we don't re-derive it.
+  // Per-field hint: one `export VAR=...` line per declared env alias (the alias
+  // list is derived by the SDK and attached to each missing field — we don't
+  // re-derive it). A field with no declared alias points at the workspace's
+  // Connections settings, where the same value is configured in the web UI.
   const hintLines: string[] = [];
   for (const f of fields) {
-    hintLines.push(`  nb config set ${bundle} ${f.key}=<value> -w ${wsId}`);
+    if (f.envAliases.length === 0) {
+      hintLines.push(`  set "${f.key}" in the workspace's Connections settings (web UI)`);
+      continue;
+    }
     for (const envVar of f.envAliases) {
       hintLines.push(`  export ${envVar}=<value>  # satisfies "${f.key}"`);
     }
@@ -618,6 +623,6 @@ export function friendlyMpakConfigError(err: unknown, wsId: string): Error {
   // is useless for user-facing output — fall back to the raw key.
   const labels = fields.map((f) => `"${f.title?.length ? f.title : f.key}"`).join(", ");
   return new Error(
-    `Missing required config ${labels} for ${bundle}.\nRun one of:\n${hintLines.join("\n")}`,
+    `Missing required config ${labels} for ${bundle} (workspace ${wsId}). Configure it in the workspace's Connections settings in the web UI, or set the variable(s):\n${hintLines.join("\n")}`,
   );
 }

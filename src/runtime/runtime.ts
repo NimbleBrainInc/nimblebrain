@@ -298,8 +298,8 @@ export class Runtime {
   private _workspaceSources: ToolSource[] = [];
   /**
    * Domain-context getter for the automations bundle. Set by the
-   * automations source factory; consumed by internal callers (CLI's
-   * `nb automation pause/resume`, bundle lifecycle's
+   * automations source factory; consumed by internal callers (the
+   * automations tool handlers and bundle lifecycle's
    * `installBundleSchedules` / `removeBundleAutomations`) that need the
    * full domain shape — including operator-only fields (`source`,
    * `bundleName`, `allowedTools`) — that the LLM-facing tool schema
@@ -416,7 +416,6 @@ export class Runtime {
     const telemetryManager = TelemetryManager.create({
       workDir: resolveWorkDir(config),
       enabled: config.telemetry?.enabled,
-      mode: "serve",
     });
 
     // Load identity stores early — before bundle startup

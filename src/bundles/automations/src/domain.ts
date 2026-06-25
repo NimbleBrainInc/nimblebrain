@@ -3,8 +3,8 @@
  *
  * The LLM-facing tool handlers (`handleCreate` / `handleUpdate` /
  * `handleDelete` in `server.ts`) are thin schema-translators that
- * delegate here. Internal callers — the CLI (`nb automation pause/resume`)
- * and the bundle lifecycle (bundle-contributed schedules) — call this
+ * delegate here. Internal callers — the bundle lifecycle
+ * (bundle-contributed schedules) — call this
  * module directly. No callers go through the LLM-facing schema except
  * the LLM itself.
  *

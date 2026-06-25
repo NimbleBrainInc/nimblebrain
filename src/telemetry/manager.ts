@@ -12,7 +12,7 @@ const POSTHOG_HOST = "https://us.i.posthog.com";
 const FIRST_RUN_NOTICE = `
 NimbleBrain collects anonymous usage telemetry to improve the platform.
 No personal data, conversation content, or file paths are ever sent.
-Run 'nb telemetry off' to disable.  Learn more: https://nimblebrain.ai/telemetry
+Set NB_TELEMETRY_DISABLED=1 (or DO_NOT_TRACK=1) to disable.  Learn more: https://nimblebrain.ai/telemetry
 `.trim();
 
 /** Minimal interface for PostHog client (production or mock). */
@@ -34,7 +34,6 @@ export type TelemetryClientFactory = (
 export interface TelemetryManagerOptions {
   workDir: string;
   enabled?: boolean;
-  mode?: "tui" | "headless" | "serve" | "dev" | "subcommand";
   clientFactory?: TelemetryClientFactory;
 }
 
@@ -94,12 +93,14 @@ export class TelemetryManager {
     if (!POSTHOG_API_KEY && !options.clientFactory) {
       return new TelemetryManager(null, anonymousId, false);
     }
-    const isServe = options.mode === "serve" || options.mode === "dev";
+    // Batched flush: the runtime is a long-running server, so events accumulate
+    // and flush every 30s (or every 20 events). No short-lived invocation path
+    // remains that would need immediate per-event flushing.
     const factory = options.clientFactory ?? defaultClientFactory;
     const client = factory(POSTHOG_API_KEY, {
       host: POSTHOG_HOST,
-      flushAt: isServe ? 20 : 1,
-      flushInterval: isServe ? 30_000 : 0,
+      flushAt: 20,
+      flushInterval: 30_000,
       disableGeoip: true,
     });
 

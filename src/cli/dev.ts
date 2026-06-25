@@ -75,7 +75,7 @@ async function waitForHealth(port: number, opts: { timeoutMs: number }): Promise
 }
 
 /**
- * `nb dev` — supervised dual-process development mode.
+ * `bun run dev` — supervised dual-process development mode.
  *
  * Starts the API server with bun --watch (auto-restart on source changes)
  * and optionally the Vite web dev server. Both share a single terminal

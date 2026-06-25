@@ -1316,7 +1316,7 @@ export class BundleLifecycleManager {
         if (!wrapped) {
           throw new Error(
             `[lifecycle] OAuth client_secret not found at credential key "${ref.oauthClient.clientSecret.key}" for ${serverName} — ` +
-              `run \`nb credential set ${wsId} ${ref.oauthClient.clientSecret.key} <value>\``,
+              `configure it in the workspace's Connections settings (web UI)`,
           );
         }
         resolvedSecret = wrapped.reveal();

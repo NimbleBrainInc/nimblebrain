@@ -27,7 +27,6 @@ async function main(): Promise<void> {
 
   const telemetry = TelemetryManager.create({
     workDir: join(homedir(), ".nimblebrain"),
-    mode: command === "serve" || command === "dev" ? command : undefined,
   });
 
   try {
