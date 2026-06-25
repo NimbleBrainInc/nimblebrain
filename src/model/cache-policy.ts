@@ -190,7 +190,12 @@ const anthropicStrategy: CacheStrategy = ({ systemPrompt, messages, tools, eager
   // block. `eagerToolCount` defaults to `tools.length` — with no disclosure the
   // breakpoint is the last tool, exactly as before. A count of 0 (no eager
   // tools) places no tools breakpoint.
-  const eagerBreakpointIdx = (eagerToolCount ?? tools.length) - 1;
+  // Clamp to the array length: a future strategy that computes eagerToolCount
+  // before a filter drops a tool could pass a count > tools.length, which would
+  // place the breakpoint past the end (no breakpoint at all → the whole prefix
+  // silently loses its 1h anchor). Clamp so the breakpoint always lands on a
+  // real tool (the last one) in that case.
+  const eagerBreakpointIdx = Math.min(eagerToolCount ?? tools.length, tools.length) - 1;
   const cachedTools =
     eagerBreakpointIdx < 0
       ? tools

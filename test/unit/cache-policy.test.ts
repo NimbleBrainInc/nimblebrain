@@ -165,6 +165,18 @@ describe("applyCachePolicy — Anthropic breakpoint placement", () => {
     expect(tools.some((t) => hasCache(t))).toBe(false);
   });
 
+  test("eagerToolCount above tools.length clamps to the last tool (no lost 1h anchor)", () => {
+    const { tools } = applyCachePolicy({
+      provider: "anthropic",
+      systemPrompt: "sys",
+      messages: [userMsg("hi")],
+      tools: TOOLS,
+      eagerToolCount: 99, // > tools.length — must clamp, not drop the breakpoint
+    });
+    expect(hasCache(tools[tools.length - 1])).toBe(true);
+    expect(tools.filter((t) => hasCache(t)).length).toBe(1);
+  });
+
   test("tail breakpoint is on the last message", () => {
     const history = [userMsg("go")];
     appendStep(history, 0, 4);
