@@ -9,6 +9,8 @@ export declare const FilesListInput: import("@sinclair/typebox").TObject<{
     tags: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TArray<import("@sinclair/typebox").TString>>;
     mimeType: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
     sort: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"createdAt" | "filename" | "size">>;
+    workspaceId: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
+    includeUnstamped: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TBoolean>;
 }>;
 export type FilesListInput = Static<typeof FilesListInput>;
 export declare const FilesSearchInput: import("@sinclair/typebox").TObject<{

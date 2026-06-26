@@ -19,6 +19,18 @@ export const FilesListInput = Type.Object({
       description: 'Sort field. Default: "createdAt".',
     }),
   ),
+  workspaceId: Type.Optional(
+    Type.String({
+      description:
+        "Filter: only files that ran in this room (workspace). Applied before the limit, so the page reflects the room's set. Omit for all rooms.",
+    }),
+  ),
+  includeUnstamped: Type.Optional(
+    Type.Boolean({
+      description:
+        "When workspaceId is set, also include files with no stamped room — legacy files belong to the personal room. Default false.",
+    }),
+  ),
 });
 export type FilesListInput = Static<typeof FilesListInput>;
 

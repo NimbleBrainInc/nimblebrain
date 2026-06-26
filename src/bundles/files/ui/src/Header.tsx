@@ -1,6 +1,6 @@
 import { TYPE_FILTERS } from "./format";
 import { UploadIcon } from "./icons";
-import type { FileEntry, FilterKey, TagCount } from "./types";
+import type { FileEntry, FilterKey, RoomScope, TagCount } from "./types";
 
 interface Props {
   totalCount: number;
@@ -11,6 +11,10 @@ interface Props {
   searchQuery: string;
   uploading: boolean;
   tags: TagCount[];
+  /** Display name of the focused room; absent until the host handshake lands. */
+  roomName?: string;
+  roomScope: RoomScope;
+  onSelectRoomScope: (scope: RoomScope) => void;
   onSelectFilter: (key: FilterKey) => void;
   onToggleTag: (tag: string) => void;
   onSearchInput: (value: string) => void;
@@ -27,6 +31,9 @@ export function Header({
   searchQuery,
   uploading,
   tags,
+  roomName,
+  roomScope,
+  onSelectRoomScope,
   onSelectFilter,
   onToggleTag,
   onSearchInput,
@@ -43,12 +50,25 @@ export function Header({
     <>
       <div className="header">
         <div className="header-top">
-          <div>
-            <div className="header-title">Files</div>
-            {!loading && totalCount > 0 && (
-              <div className="header-lede">
-                {totalCount} file{totalCount === 1 ? "" : "s"} in workspace
-              </div>
+          <div className="header-top-left">
+            <div>
+              <div className="header-title">Files</div>
+              {!loading && totalCount > 0 && (
+                <div className="header-lede">
+                  {totalCount} file{totalCount === 1 ? "" : "s"}
+                </div>
+              )}
+            </div>
+            {roomName && (
+              <select
+                className="room-select"
+                value={roomScope}
+                onChange={(e) => onSelectRoomScope(e.target.value as RoomScope)}
+                aria-label="Scope files by room"
+              >
+                <option value="current">{roomName}</option>
+                <option value="all">All rooms</option>
+              </select>
             )}
           </div>
           <button

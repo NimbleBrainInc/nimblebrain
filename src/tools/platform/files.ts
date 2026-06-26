@@ -54,6 +54,22 @@ interface ListInput {
   tags?: string[];
   mimeType?: string;
   sort?: "createdAt" | "filename" | "size";
+  /** Scope to one room. Applied before pagination so the page reflects the room's set. */
+  workspaceId?: string;
+  /** With `workspaceId`, include roomless (legacy) files — they belong to the personal room. */
+  includeUnstamped?: boolean;
+}
+
+// Scope a file set to one room. A file with no stamped room (legacy) belongs to
+// the personal room, so it's kept only when the caller asks via `includeUnstamped`
+// (set when the focused room is personal). Mirrors the conversation-list filter.
+function filterByRoom(
+  entries: FileEntry[],
+  workspaceId: string | undefined,
+  includeUnstamped: boolean,
+): FileEntry[] {
+  if (!workspaceId) return entries;
+  return entries.filter((f) => (f.workspaceId ? f.workspaceId === workspaceId : includeUnstamped));
 }
 
 function filterEntries(
@@ -77,7 +93,10 @@ async function handleList(store: FileStore, args: ListInput): Promise<object> {
   const sort = args.sort ?? "createdAt";
 
   const all = await store.readRegistry();
-  const files = filterEntries(all, args.tags, args.mimeType);
+  // Room filter runs before sort/slice, so the limit applies to the room's
+  // set rather than slicing a global page we'd then drop out-of-room files from.
+  const scoped = filterByRoom(all, args.workspaceId, args.includeUnstamped ?? false);
+  const files = filterEntries(scoped, args.tags, args.mimeType);
 
   if (sort === "createdAt") {
     files.sort((a, b) => b.createdAt.localeCompare(a.createdAt));

@@ -13,6 +13,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { NoopEventSink } from "../../../../src/adapters/noop-events.ts";
 import { createFileStore } from "../../../../src/files/store.ts";
+import type { FileEntry } from "../../../../src/files/types.ts";
 import { createFilesSource } from "../../../../src/tools/platform/files.ts";
 import type { ContentBlock, ToolResult } from "../../../../src/engine/types.ts";
 import type { Runtime } from "../../../../src/runtime/runtime.ts";
@@ -324,5 +325,94 @@ describe("files bundle", () => {
     const body = parseFirst(result) as { error: string };
     expect(body.error).toContain('Invalid arguments for "read_pdf_pages"');
     expect(body.error).toContain("/pages: must NOT have more than 10 items");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Room (workspace) filtering — the list scopes to the focused room before the
+// limit, mirroring the conversation-list filter.
+// ---------------------------------------------------------------------------
+
+function fileEntry(over: Partial<FileEntry> & { id: string }): FileEntry {
+  return {
+    id: over.id,
+    filename: `${over.id}.txt`,
+    mimeType: "text/plain",
+    size: 10,
+    tags: [],
+    source: "manual",
+    conversationId: null,
+    createdAt: "2025-01-01T00:00:00.000Z",
+    description: null,
+    ...over,
+  };
+}
+
+function listOut(result: ToolResult): { files: Array<{ id: string }>; total: number } {
+  return parseFirst(result) as { files: Array<{ id: string }>; total: number };
+}
+
+function listFiles(result: ToolResult): string[] {
+  return listOut(result).files.map((f) => f.id);
+}
+
+describe("files room filtering", () => {
+  async function seed(): Promise<void> {
+    const store = createFileStore(join(workDir, "files"));
+    await store.ensureFilesDir();
+    await store.appendRegistry(fileEntry({ id: "fl_helix", workspaceId: "ws_helix" }));
+    await store.appendRegistry(fileEntry({ id: "fl_acme", workspaceId: "ws_acme" }));
+    await store.appendRegistry(fileEntry({ id: "fl_legacy" })); // no stamped room
+  }
+
+  test("workspaceId scopes to that room, excluding other rooms and roomless files", async () => {
+    await seed();
+    const res = await source.execute("list", { workspaceId: "ws_helix" });
+    expect(res.isError).toBe(false);
+    expect(listFiles(res)).toEqual(["fl_helix"]);
+    expect(listOut(res).total).toBe(1);
+  });
+
+  test("includeUnstamped folds roomless files into the personal room", async () => {
+    await seed();
+    const res = await source.execute("list", {
+      workspaceId: "ws_user_u1",
+      includeUnstamped: true,
+    });
+    expect(listFiles(res)).toEqual(["fl_legacy"]);
+  });
+
+  test("no workspaceId returns all rooms' files", async () => {
+    await seed();
+    const res = await source.execute("list", {});
+    expect(listFiles(res).sort()).toEqual(["fl_acme", "fl_helix", "fl_legacy"]);
+  });
+
+  test("the room filter runs before the limit (no post-pagination under-count)", async () => {
+    const store = createFileStore(join(workDir, "files"));
+    await store.ensureFilesDir();
+    // 25 Acme files newer than one older Helix file.
+    for (let i = 0; i < 25; i++) {
+      const day = String(i + 1).padStart(2, "0");
+      await store.appendRegistry(
+        fileEntry({
+          id: `fl_acme_${i}`,
+          workspaceId: "ws_acme",
+          createdAt: `2025-02-${day}T00:00:00.000Z`,
+        }),
+      );
+    }
+    await store.appendRegistry(
+      fileEntry({ id: "fl_helix_old", workspaceId: "ws_helix", createdAt: "2025-01-01T00:00:00.000Z" }),
+    );
+
+    // The global most-recent page of 20 is all Acme — the Helix file isn't in it.
+    const globalPage = await source.execute("list", { limit: 20 });
+    expect(listFiles(globalPage)).not.toContain("fl_helix_old");
+
+    // Room-scoped: the limit applies to Helix's set, so its file is returned.
+    const helix = await source.execute("list", { limit: 20, workspaceId: "ws_helix" });
+    expect(listFiles(helix)).toEqual(["fl_helix_old"]);
+    expect(listOut(helix).total).toBe(1);
   });
 });

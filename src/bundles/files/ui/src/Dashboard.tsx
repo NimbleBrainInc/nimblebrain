@@ -1,19 +1,31 @@
-import { useDataSync, useFileUpload, useSynapse } from "@nimblebrain/synapse/react";
+import { useDataSync, useFileUpload, useHostContext, useSynapse } from "@nimblebrain/synapse/react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { DetailOverlay } from "./DetailOverlay";
 import { FileGrid } from "./FileGrid";
 import { collectTags, TYPE_FILTERS } from "./format";
 import { Header } from "./Header";
-import type { FileEntry, FilterKey, ListResult } from "./types";
+import type { FileEntry, FilterKey, ListResult, RoomScope } from "./types";
 
 const SEARCH_DEBOUNCE_MS = 300;
 
 export function Dashboard() {
   const synapse = useSynapse();
   const { pickFiles } = useFileUpload();
+  // The room the shell is focused on — the binding for the default room-scoped
+  // list. Pushed by the host via hostContext.
+  const { workspace } = useHostContext<{
+    workspace?: { id: string; name: string; isPersonal?: boolean };
+  }>();
+  // Primitives (not the workspace object, whose identity churns per push) so
+  // `loadFiles` only re-runs when the room actually changes.
+  const roomId = workspace?.id;
+  const roomIsPersonal = workspace?.isPersonal === true;
 
   const [files, setFiles] = useState<FileEntry[]>([]);
   const [totalCount, setTotalCount] = useState(0);
+  // Default to the focused room — the list matches where you are. "All rooms"
+  // is the deliberate cross-room escape hatch.
+  const [roomScope, setRoomScope] = useState<RoomScope>("current");
   const [activeFilter, setActiveFilter] = useState<FilterKey>("all");
   const [activeTag, setActiveTag] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
@@ -29,9 +41,17 @@ export function Dashboard() {
     setLoading(true);
     setError(null);
     try {
-      const result = await synapse.callTool<{ limit: number }, ListResult>("list", {
+      // Scope to the focused room server-side so the limit applies to the
+      // room's set. "All rooms" omits the params; legacy roomless files belong
+      // to the personal room, so include them only when the room is personal.
+      const args: { limit: number; workspaceId?: string; includeUnstamped?: boolean } = {
         limit: 200,
-      });
+      };
+      if (roomScope === "current" && roomId) {
+        args.workspaceId = roomId;
+        if (roomIsPersonal) args.includeUnstamped = true;
+      }
+      const result = await synapse.callTool<typeof args, ListResult>("list", args);
       if (result.isError) {
         setError("Failed to load files");
         return;
@@ -43,7 +63,7 @@ export function Dashboard() {
     } finally {
       setLoading(false);
     }
-  }, [synapse]);
+  }, [synapse, roomScope, roomId, roomIsPersonal]);
 
   const searchFiles = useCallback(
     async (query: string) => {
@@ -164,6 +184,9 @@ export function Dashboard() {
         searchQuery={searchQuery}
         uploading={uploading}
         tags={tags}
+        roomName={workspace?.name}
+        roomScope={roomScope}
+        onSelectRoomScope={setRoomScope}
         onSelectFilter={setActiveFilter}
         onToggleTag={(tag) => setActiveTag((current) => (current === tag ? null : tag))}
         onSearchInput={handleSearchInput}
