@@ -86,11 +86,15 @@ export interface AppContext {
    * Whether auth cookies (`nb_session`, `nb_refresh`, OAuth-state) are issued
    * with the `Secure` attribute. True for any auth-configured deployment — the
    * browser↔edge leg is HTTPS even though the container itself is reached over
-   * plain HTTP behind the TLS-terminating edge. False only in dev mode, where
-   * the app is served over http://localhost and `Secure` would make the browser
-   * drop the cookie. Derived from a deployment property, never from the listen
-   * address or a client-supplied forwarded-scheme header (both spoofable /
-   * misleading — the listen address is `0.0.0.0` in production).
+   * plain HTTP behind the TLS-terminating edge. False in dev mode, which serves
+   * plain HTTP with no TLS (localhost or a LAN IP), where a non-localhost origin
+   * would drop a `Secure` cookie. Derived from a deployment property, never from
+   * the listen address or a client-supplied forwarded-scheme header (both
+   * spoofable / misleading — the listen address is `0.0.0.0` in production).
+   *
+   * Edge case: running a real auth provider locally over http://localhost yields
+   * `Secure` cookies (auth is configured). That still works because modern
+   * browsers treat localhost as a secure context and accept Secure cookies there.
    */
   secureCookies: boolean;
   appOrigin: string | undefined;

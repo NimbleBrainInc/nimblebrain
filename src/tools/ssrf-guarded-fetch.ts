@@ -3,9 +3,9 @@ import { validateBundleUrl } from "../bundles/url-validator.ts";
 
 /**
  * Maximum redirect hops to follow before giving up. A legitimate remote MCP
- * endpoint needs at most one or two (http→https upgrade, a trailing-slash
- * normalization); a long chain is either misconfiguration or an attacker
- * walking us around the network.
+ * endpoint needs at most one or two same-origin hops (a trailing-slash or path
+ * normalization — a scheme or host change is cross-origin and refused); a long
+ * chain is either misconfiguration or an attacker walking us around the network.
  */
 const MAX_REDIRECT_HOPS = 5;
 
