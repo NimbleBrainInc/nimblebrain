@@ -230,16 +230,16 @@ describe("MCP /mcp — resources", () => {
     }
   });
 
-  it("resources/list returns resources from every source the identity can access", async () => {
+  it("resources/list returns only the focused workspace's resources (walled)", async () => {
     const client = await createMcpClient();
     try {
       const result = await client.listResources();
       const uris = result.resources.map((r) => r.uri);
       expect(uris).toContain("ui://fixture/dashboard");
       expect(uris).toContain("text://fixture/greeting");
-      // Stage 2: sessions are identity-bound; the identity is also a
-      // member of the "other" workspace, so its resources appear here.
-      expect(uris).toContain("ui://other/dashboard");
+      // Walled: the identity is also a member of the "other" workspace, but a
+      // session focused on TEST_WORKSPACE_ID never enumerates its resources.
+      expect(uris).not.toContain("ui://other/dashboard");
     } finally {
       await client.close();
     }
@@ -346,27 +346,38 @@ describe("MCP /mcp — resources", () => {
     expect(payload.error?.code).toBe(-32002);
   });
 
-  it("identity-bound session: resources aggregate across every workspace the identity can access (Stage 2)", async () => {
-    // Stage 2 (Q4 hard cut): `/mcp` sessions are identity-bound. A
-    // single session sees every workspace's resources the identity
-    // belongs to, not just the one the `X-Workspace-Id` header
-    // (which is now ignored) points at. The dev identity is a member
-    // of both `TEST_WORKSPACE_ID` and `OTHER_WORKSPACE_ID`, so both
-    // workspaces' resources show up in the same `resources/list`.
-    const client = await createMcpClient(TEST_WORKSPACE_ID);
+  it("SECURITY: a walled session cannot list or read another workspace's resources", async () => {
+    // The dev identity is a member of both `TEST_WORKSPACE_ID` and
+    // `OTHER_WORKSPACE_ID`, but the wall bounds a `/mcp` session to the one
+    // named by `X-Workspace-Id`. Focused on TEST_WORKSPACE_ID,
+    // `ui://other/dashboard` is neither listed nor readable.
+    const focused = await createMcpClient(TEST_WORKSPACE_ID);
     try {
-      const list = await client.listResources();
-      const uris = list.resources.map((r) => r.uri);
+      const uris = (await focused.listResources()).resources.map((r) => r.uri);
       expect(uris).toContain("ui://fixture/dashboard");
-      expect(uris).toContain("ui://other/dashboard");
+      expect(uris).not.toContain("ui://other/dashboard");
 
-      // resources/read also resolves across workspaces.
-      const own = await client.readResource({ uri: "ui://fixture/dashboard" });
+      // The focused workspace's own resource still reads.
+      const own = await focused.readResource({ uri: "ui://fixture/dashboard" });
       expect(own.contents[0]!.text).toBe(FIXTURE_HTML);
-      const other = await client.readResource({ uri: "ui://other/dashboard" });
+
+      // The other workspace's resource is out of reach — the read fails,
+      // never returns its bytes.
+      await expect(focused.readResource({ uri: "ui://other/dashboard" })).rejects.toThrow(
+        /not found/i,
+      );
+    } finally {
+      await focused.close();
+    }
+
+    // Proof the block is the wall, not a missing fixture: the same resource
+    // reads fine from a session focused on its own workspace.
+    const otherFocused = await createMcpClient(OTHER_WORKSPACE_ID);
+    try {
+      const other = await otherFocused.readResource({ uri: "ui://other/dashboard" });
       expect(other.contents[0]!.text).toBe("<h1>Other Workspace</h1>");
     } finally {
-      await client.close();
+      await otherFocused.close();
     }
   });
 });

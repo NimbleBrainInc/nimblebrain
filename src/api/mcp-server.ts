@@ -98,7 +98,7 @@ import { type RequestContext, runWithRequestContext } from "../runtime/request-c
 import type { Runtime } from "../runtime/runtime.ts";
 import { IDENTITY_SOURCES } from "../tools/identity-sources.ts";
 import { McpSource } from "../tools/mcp-source.ts";
-import { parseNamespacedToolName } from "../tools/namespace.ts";
+import { bareToolName } from "../tools/namespace.ts";
 import type { ToolRegistry } from "../tools/registry.ts";
 import {
   createMcpTaskStore,
@@ -699,8 +699,8 @@ function createServer(
     return {
       tools: all
         // Feature gating + role visibility apply to the BARE tool name.
-        .filter((t) => isToolEnabled(parseNamespacedToolName(t.name).toolName, features))
-        .filter((t) => isToolVisibleToRole(parseNamespacedToolName(t.name).toolName, orgRole))
+        .filter((t) => isToolEnabled(bareToolName(t.name), features))
+        .filter((t) => isToolVisibleToRole(bareToolName(t.name), orgRole))
         .map((t) => ({
           name: t.name,
           description: t.description,
@@ -957,11 +957,13 @@ function createServer(
 
   // ── resources/list ────────────────────────────────────────────────
   //
-  // Stage 2: aggregate resources across every workspace the identity can
-  // access. Each per-workspace iteration mirrors the pre-Stage-2 logic
-  // (delegate to the underlying MCP client; swallow per-source errors so
-  // one bad source doesn't kill the listing). One stuck workspace's
-  // registry must not poison the cross-workspace list either.
+  // Walled to the request's workspace (validated `X-Workspace-Id`), exactly
+  // like `tools/list`: only that one workspace's sources are enumerated. No
+  // workspace in scope (no / non-member header) → no workspace resources; the
+  // session is identity-only. NEVER a sweep across every workspace the
+  // identity belongs to — that was the cross-workspace read hole the wall
+  // exists to close. Per-source errors are swallowed so one bad source doesn't
+  // kill the listing.
   //
   // Pagination: MVP returns everything in a single response (no `cursor`
   // plumbing). The SDK type allows `nextCursor`, but iframe consumers today
@@ -971,34 +973,27 @@ function createServer(
     const resources: Resource[] = [];
     if (!runtime || !identityId) return { resources };
 
-    const wsStore = runtime.getWorkspaceStore();
-    let accessible: Array<{ id: string }>;
+    const wsId = mcpRequestWorkspace.getStore();
+    if (!wsId) return { resources };
+
+    let wsRegistry: ToolRegistry;
     try {
-      accessible = await wsStore.getWorkspacesForUser(identityId);
+      wsRegistry = await runtime.ensureWorkspaceRegistry(wsId);
     } catch {
       return { resources };
     }
-    for (const ws of accessible) {
-      let wsRegistry: ToolRegistry;
+    for (const src of wsRegistry.getSources()) {
+      if (!(src instanceof McpSource)) continue;
+      const client = src.getClient();
+      if (!client) continue;
       try {
-        wsRegistry = await runtime.ensureWorkspaceRegistry(ws.id);
-      } catch {
-        continue;
-      }
-      for (const src of wsRegistry.getSources()) {
-        if (!(src instanceof McpSource)) continue;
-        const client = src.getClient();
-        if (!client) continue;
-        try {
-          const result = await client.listResources();
-          for (const r of result.resources) {
-            resources.push(r as Resource);
-          }
-        } catch {
-          // Source didn't implement resources/list, or transport hiccup.
-          // Swallow per-source errors so one bad source doesn't kill the
-          // cross-workspace list.
+        const result = await client.listResources();
+        for (const r of result.resources) {
+          resources.push(r as Resource);
         }
+      } catch {
+        // Source didn't implement resources/list, or transport hiccup —
+        // swallow so one bad source doesn't kill the listing.
       }
     }
     return { resources };
@@ -1006,10 +1001,11 @@ function createServer(
 
   // ── resources/read ────────────────────────────────────────────────
   //
-  // Stage 2: search across every workspace the identity can access.
-  // Cross-workspace lookups: we deliberately do not distinguish
-  // "doesn't exist anywhere" from "exists but you can't see it" — per
-  // MCP spec guidance, avoid leaking cross-tenant existence information.
+  // Identity resources (files, conversations, automations) resolve first
+  // (below), then the request's one workspace (validated `X-Workspace-Id`) —
+  // never a sweep across every workspace the identity belongs to. We
+  // deliberately do not distinguish "doesn't exist" from "exists but out of
+  // reach": per MCP spec guidance, avoid leaking cross-workspace existence.
   server.setRequestHandler(ReadResourceRequestSchema, async (request) => {
     const uri = request.params.uri;
     if (!runtime || !identityId) {
@@ -1044,16 +1040,19 @@ function createServer(
       }
     }
 
-    const wsStore = runtime.getWorkspaceStore();
-    const accessible = await wsStore.getWorkspacesForUser(identityId);
-    for (const ws of accessible) {
-      let wsRegistry: ToolRegistry;
+    // Walled to the request's workspace (validated `X-Workspace-Id`). With no
+    // workspace in scope the read falls through to not-found below — an
+    // identity-only session reads its identity resources (above) and nothing
+    // else. NEVER a sweep across every workspace the identity belongs to.
+    const wsId = mcpRequestWorkspace.getStore();
+    if (wsId) {
+      let wsRegistry: ToolRegistry | undefined;
       try {
-        wsRegistry = await runtime.ensureWorkspaceRegistry(ws.id);
+        wsRegistry = await runtime.ensureWorkspaceRegistry(wsId);
       } catch {
-        continue;
+        wsRegistry = undefined;
       }
-      for (const src of wsRegistry.getSources()) {
+      for (const src of wsRegistry?.getSources() ?? []) {
         if (src instanceof McpSource) {
           const client = src.getClient();
           if (!client) continue;
@@ -1069,9 +1068,9 @@ function createServer(
       }
     }
 
-    // No source in any accessible workspace resolved the URI. Per MCP
-    // spec, raise a JSON-RPC error — the SDK transport converts McpError
-    // into a proper `error` envelope.
+    // The URI resolved in neither the caller's identity sources nor the
+    // focused workspace. Per MCP spec, raise a JSON-RPC error — the SDK
+    // transport converts McpError into a proper `error` envelope.
     throw new McpError(RESOURCE_NOT_FOUND_CODE, `Resource not found: ${uri}`, { uri });
   });
 

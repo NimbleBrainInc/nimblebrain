@@ -39,6 +39,7 @@ import { createEchoModel } from "../helpers/echo-model.ts";
 function buildCounterSource(
   sourceName: string,
   toolName: string,
+  resourceUri?: string,
 ): { source: McpSource; callCount: () => number; reset: () => void } {
   let count = 0;
   const tool: InProcessTool = {
@@ -62,6 +63,11 @@ function buildCounterSource(
       name: sourceName,
       version: "1.0.0",
       tools: [tool],
+      // A single workspace resource, so the resource wall can be asserted the
+      // same way as the tool wall.
+      ...(resourceUri
+        ? { resources: new Map([[resourceUri, `<html>[${sourceName}] resource body</html>`]]) }
+        : {}),
     },
     new NoopEventSink(),
   );
@@ -95,6 +101,11 @@ const PERSONAL_TOOL_BARE = "send";
 const STRANGER_WS_ID = "ws_stranger";
 const STRANGER_SOURCE_NAME = "vault";
 const STRANGER_TOOL_BARE = "open";
+// Each workspace source also serves one resource, so the resource wall (the
+// `resources/list` + `resources/read` sibling of the tool wall) can be pinned.
+const SHARED_RESOURCE_URI = "ui://crm/data";
+const PERSONAL_RESOURCE_URI = "ui://gmail/data";
+const STRANGER_RESOURCE_URI = "ui://vault/data";
 
 beforeAll(async () => {
   mkdirSync(testDir, { recursive: true });
@@ -127,9 +138,17 @@ beforeAll(async () => {
   const personalReg = await runtime.ensureWorkspaceRegistry(personalWsId);
   const strangerReg = await runtime.ensureWorkspaceRegistry(STRANGER_WS_ID);
 
-  sharedSource = buildCounterSource(SHARED_SOURCE_NAME, SHARED_TOOL_BARE);
-  personalSource = buildCounterSource(PERSONAL_SOURCE_NAME, PERSONAL_TOOL_BARE);
-  strangerSource = buildCounterSource(STRANGER_SOURCE_NAME, STRANGER_TOOL_BARE);
+  sharedSource = buildCounterSource(SHARED_SOURCE_NAME, SHARED_TOOL_BARE, SHARED_RESOURCE_URI);
+  personalSource = buildCounterSource(
+    PERSONAL_SOURCE_NAME,
+    PERSONAL_TOOL_BARE,
+    PERSONAL_RESOURCE_URI,
+  );
+  strangerSource = buildCounterSource(
+    STRANGER_SOURCE_NAME,
+    STRANGER_TOOL_BARE,
+    STRANGER_RESOURCE_URI,
+  );
   await sharedSource.source.start();
   await personalSource.source.start();
   await strangerSource.source.start();
@@ -343,6 +362,78 @@ describe("/mcp fail-closed on a non-member X-Workspace-Id", () => {
       expect(code).toBe(-32602);
       expect(reason).toBe("workspace_access_denied");
       expect(strangerSource.callCount()).toBe(0);
+    } finally {
+      await client.close();
+    }
+  });
+});
+
+// ── Resources are walled exactly like tools ───────────────────────
+//
+// `resources/list` and `resources/read` are the sibling of `tools/list` /
+// `tools/call`, and reach the SAME per-request workspace — never a sweep
+// across every workspace the identity belongs to. A walled session must not
+// enumerate or read another workspace's resources.
+
+describe("/mcp resources are walled to the request's workspace", () => {
+  it("no header: resources/list exposes no workspace resources", async () => {
+    const client = await createMcpClient();
+    try {
+      const uris = (await client.listResources()).resources.map((r) => r.uri);
+      expect(uris).not.toContain(SHARED_RESOURCE_URI);
+      expect(uris).not.toContain(PERSONAL_RESOURCE_URI);
+    } finally {
+      await client.close();
+    }
+  });
+
+  it("member header: resources/list serves only the focused workspace's resources", async () => {
+    const client = await createMcpClient({ workspace: SHARED_WS_ID });
+    try {
+      const uris = (await client.listResources()).resources.map((r) => r.uri);
+      expect(uris).toContain(SHARED_RESOURCE_URI);
+      expect(uris).not.toContain(PERSONAL_RESOURCE_URI);
+      expect(uris).not.toContain(STRANGER_RESOURCE_URI);
+    } finally {
+      await client.close();
+    }
+  });
+
+  it("member header: a focused-workspace resource reads successfully", async () => {
+    const client = await createMcpClient({ workspace: SHARED_WS_ID });
+    try {
+      const result = await client.readResource({ uri: SHARED_RESOURCE_URI });
+      expect(result.contents.length).toBeGreaterThan(0);
+    } finally {
+      await client.close();
+    }
+  });
+
+  it("SECURITY: resources/read of another member workspace's resource is refused", async () => {
+    // Session walled to Helix; the dev is a member of the personal workspace
+    // too, but its resources are out of reach — the read must fail, never
+    // return the other workspace's data.
+    const client = await createMcpClient({ workspace: SHARED_WS_ID });
+    try {
+      await expect(client.readResource({ uri: PERSONAL_RESOURCE_URI })).rejects.toThrow();
+    } finally {
+      await client.close();
+    }
+  });
+
+  it("SECURITY: a non-member header cannot read that workspace's resource", async () => {
+    const client = await createMcpClient({ workspace: STRANGER_WS_ID });
+    try {
+      await expect(client.readResource({ uri: STRANGER_RESOURCE_URI })).rejects.toThrow();
+    } finally {
+      await client.close();
+    }
+  });
+
+  it("SECURITY: no header cannot read any workspace resource", async () => {
+    const client = await createMcpClient();
+    try {
+      await expect(client.readResource({ uri: SHARED_RESOURCE_URI })).rejects.toThrow();
     } finally {
       await client.close();
     }
