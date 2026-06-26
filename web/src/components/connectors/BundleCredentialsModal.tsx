@@ -5,6 +5,7 @@ import {
   type InstalledConnector,
   setBundleUserConfig,
 } from "../../api/client";
+import { Button } from "../ui/button";
 
 /**
  * Edit a stdio bundle's workspace `user_config` credentials, schema-
@@ -198,21 +199,18 @@ export function BundleCredentialsModal({
               <span />
             )}
             <div className="flex items-center gap-2">
-              <button
+              <Button
                 type="button"
+                variant="outline"
+                size="sm"
                 onClick={onClose}
                 disabled={busy || clearing}
-                className="text-xs px-3 py-1.5 rounded border border-border hover:bg-muted disabled:opacity-60"
               >
                 Cancel
-              </button>
-              <button
-                type="submit"
-                disabled={busy || clearing}
-                className="text-xs px-3 py-1.5 rounded bg-primary text-primary-foreground hover:bg-primary/80 disabled:opacity-60"
-              >
+              </Button>
+              <Button type="submit" size="sm" disabled={busy || clearing}>
                 {busy ? "Saving…" : "Save"}
-              </button>
+              </Button>
             </div>
           </div>
         </form>
