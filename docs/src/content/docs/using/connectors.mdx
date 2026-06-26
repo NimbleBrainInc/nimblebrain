@@ -64,7 +64,7 @@ Both install from the same Browse directory, but they differ:
 
 ## Usage overlays
 
-When you install a connector, the platform can automatically apply a short **usage overlay** — curated guidance for that connector's tools, surfaced into the conversation the first time the agent calls one of them (never into the system prompt). It's opt-in (`CONNECTOR_SKILLS_ENABLED=true`) and fail-closed; a connector with no curated overlay installs exactly as before. See [Connector skill overlays](/using/skills/#connector-skill-overlays) for how it works, and use the connector tool's `list_bound_skills` action to see what's bound in a workspace.
+When you install a connector, the platform can automatically apply a short **usage overlay** — curated guidance for that connector's tools, surfaced into the conversation the first time the agent calls one of them (never into the system prompt). It's always on and fail-soft; a connector with no curated overlay installs exactly as before (a missing overlay is simply a no-op). See [Connector skill overlays](/using/skills/#connector-skill-overlays) for how it works, and use the connector tool's `list_bound_skills` action to see what's bound in a workspace.
 
 ## What's next
 

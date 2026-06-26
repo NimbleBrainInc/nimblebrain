@@ -293,8 +293,8 @@ export class BundleLifecycleManager {
    * recorded on the bundle's `BundleRef.skillsLock` so uninstall can clean up
    * and the dedupe path knows the connector has an overlay.
    *
-   * Best-effort and NON-FATAL: a disabled feature, a missing overlay (404), an
-   * unparseable overlay, or any fetch/IO error returns `[]` and never throws —
+   * Best-effort and NON-FATAL: a missing overlay (404), an unparseable overlay,
+   * or any fetch/IO error returns `[]` and never throws —
    * the connector install must not fail because its optional guidance couldn't
    * be fetched. The overlay materializes into the workspace's `connector-skills/`
    * store and is surfaced into the conversation only on first matching tool call.
@@ -306,7 +306,6 @@ export class BundleLifecycleManager {
     workDir: string,
   ): Promise<ConnectorSkillLockEntry[]> {
     const config = resolveConnectorSkillsConfig();
-    if (!config.enabled) return [];
     try {
       const cacheDir = join(workDir, "cache", "connector-skills");
       const resolved = await resolveOverlay(identity, {
