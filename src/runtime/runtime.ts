@@ -244,6 +244,8 @@ export class Runtime {
   private eventStore: EventSourcedConversationStore | null;
   /** Process-wide convId → room resolver; lazily built over the workspaces root. */
   private _conversationLocator?: ConversationLocator;
+  /** Subscribers (e.g. the conversations-tool index) notified on any conversation change. */
+  private _conversationsChangedListeners = new Set<() => void>();
   private hooks: EngineHooks;
   private defaultEvents: EventSink;
   private lifecycle: BundleLifecycleManager;
@@ -370,6 +372,12 @@ export class Runtime {
     this._instanceConfig = instanceConfig;
     this._userStore = userStore;
     this._workspaceStore = workspaceStore;
+    // A workspace archive-delete moves its `conversations/` subtree out from
+    // under the locator without going through a room store, so the cache would
+    // otherwise keep ghosts (and a resume could re-mkdir the archived room).
+    // Deletion fires `membershipChanged` for each former member; ride that to
+    // invalidate the conversation caches.
+    this._workspaceStore.onMembershipChanged(() => this.notifyConversationsChanged());
     this._identityProvider = identityProvider;
     this._workspaceRegistries = workspaceRegistries;
     this._systemSource = systemSource;
@@ -2955,8 +2963,9 @@ export class Runtime {
   /**
    * Process-wide conversation locator: resolves a `convId` to the room +
    * owner it's stored under, and serves the cross-room (All-rooms) and
-   * room-scoped list views. Lazily built over the workspaces root; the room
-   * stores invalidate it on create/delete via their `onMutate` hook.
+   * room-scoped list views. Lazily built over the workspaces root; invalidated
+   * via `notifyConversationsChanged` on every conversation write and on
+   * workspace archive-delete.
    */
   getConversationLocator(): ConversationLocator {
     if (!this._conversationLocator) {
@@ -2966,17 +2975,46 @@ export class Runtime {
   }
 
   /**
+   * Subscribe to conversation changes (create / delete / append, and workspace
+   * archive-delete). The conversations-tool index registers here so it refreshes
+   * off the same invalidation signal the locator uses — one hook, both caches,
+   * no divergent freshness. Returns an unsubscribe function.
+   */
+  onConversationsChanged(listener: () => void): () => void {
+    this._conversationsChangedListeners.add(listener);
+    return () => this._conversationsChangedListeners.delete(listener);
+  }
+
+  /**
+   * Invalidate every conversation cache. The single freshness chokepoint:
+   * room stores call this on create/delete/append (via `onMutate`), and a
+   * workspace archive-delete calls it (via the membership-change hook), so the
+   * locator and the conversations-tool index never serve a frozen summary or a
+   * ghost of a deleted room.
+   */
+  notifyConversationsChanged(): void {
+    this._conversationLocator?.invalidate();
+    for (const listener of this._conversationsChangedListeners) {
+      try {
+        listener();
+      } catch (err) {
+        log.warn(`[runtime] conversations-changed listener threw: ${(err as Error).message}`);
+      }
+    }
+  }
+
+  /**
    * Conversation store for a user's private chats in ONE room
    * (`workspaces/<wsId>/conversations/<ownerId>/`). The room owns the
    * directory — the path is the boundary. Per-call instances are intentional
    * (the store is stateless w.r.t. its dir); the `onMutate` hook keeps the
-   * process-wide locator fresh on create/delete.
+   * conversation caches fresh on every write.
    */
   roomConversationStore(wsId: string, ownerId: string): EventSourcedConversationStore {
     return new EventSourcedConversationStore({
       dir: roomConversationsDir(resolveWorkDir(this.config), wsId, ownerId),
       logLevel: this.config.logging?.level ?? "normal",
-      onMutate: () => this._conversationLocator?.invalidate(),
+      onMutate: () => this.notifyConversationsChanged(),
     });
   }
 
@@ -2988,7 +3026,7 @@ export class Runtime {
     return new EventSourcedConversationStore({
       dir: runConversationsDir(resolveWorkDir(this.config), wsId, automationId),
       logLevel: this.config.logging?.level ?? "normal",
-      onMutate: () => this._conversationLocator?.invalidate(),
+      onMutate: () => this.notifyConversationsChanged(),
     });
   }
 

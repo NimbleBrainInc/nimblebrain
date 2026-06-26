@@ -74,9 +74,6 @@ class FakeRuntime {
     // tests that just want a typed handle for path derivation.
     return new WorkspaceContext({ wsId, workDir: this.workDir });
   }
-  findConversationStore(): EventSourcedConversationStore {
-    return this._store;
-  }
   getWorkspaceStore() {
     return {
       get: async (id: string) => this.workspaces.get(id) ?? null,

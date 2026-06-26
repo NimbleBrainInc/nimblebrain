@@ -89,10 +89,11 @@ export interface EventSourcedStoreConfig {
   /** Logging verbosity — "debug" persists full request/response data. */
   logLevel?: "normal" | "debug";
   /**
-   * Called whenever the set of conversations in this dir changes (create /
-   * delete). The runtime passes the process-wide `ConversationLocator`'s
-   * `invalidate` here so a context-free load/list sees the new convId set.
-   * The per-dir `ConversationIndex` is invalidated independently in-store.
+   * Called on any write to this dir's conversations — create, delete, or
+   * append (an append changes a conversation's summary). The runtime routes
+   * this to its conversation-cache invalidation so cross-room lists/loads
+   * (the locator and the conversations-tool index) stay fresh. The per-dir
+   * `ConversationIndex` is invalidated independently in-store.
    */
   onMutate?: () => void;
 }
@@ -698,6 +699,10 @@ export class EventSourcedConversationStore implements ConversationStore, EventSi
     assertNoBinaryPayloads(event, `event(${event.type})`);
     const path = this.path(id);
     appendFileSync(path, `${JSON.stringify(event)}\n`);
+    // An append changes a conversation's summary (title/updatedAt/tokens), so
+    // the cross-room caches must refresh — not just on create/delete. The hook
+    // is a cheap invalidation flag; the rescan it triggers is lazy (next read).
+    this.onMutate?.();
   }
 
   /** Detect whether a conversation file uses event format or legacy message format. */

@@ -947,15 +947,18 @@ export function createCoreToolDefs(runtime: Runtime): InProcessTool[] {
                   if (!convId) return;
                   // Resolve the conversation's room store and append; the
                   // briefing callback is sync, so fire-and-forget the async
-                  // room resolution.
-                  void runtime.appendConversationEvent(convId, {
-                    ts: new Date().toISOString(),
-                    type: "aux.usage",
-                    source: "briefing",
-                    model: modelString ?? "unknown",
-                    usage,
-                    llmMs,
-                  });
+                  // room resolution. Swallow rejections — a missed aux.usage
+                  // append must never surface as an unhandled rejection.
+                  runtime
+                    .appendConversationEvent(convId, {
+                      ts: new Date().toISOString(),
+                      type: "aux.usage",
+                      source: "briefing",
+                      model: modelString ?? "unknown",
+                      usage,
+                      llmMs,
+                    })
+                    .catch(() => {});
                 },
               );
               return generator.generate(activity, facetContext);

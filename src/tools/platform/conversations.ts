@@ -57,12 +57,16 @@ export async function createConversationsSource(
     if (!cachedIndex) {
       cachedIndex = new ConversationIndex();
       await cachedIndex.build(dir);
-      cachedIndex.startWatching(dir);
+      // The recursive room layout defeats a root `fs.watch` (it can't see nested
+      // `ws_*/conversations/<owner>/*.jsonl` writes), so freshness rides the
+      // runtime's invalidation hook instead of the watcher: every conversation
+      // write (create/delete/append) and every workspace archive-delete flags
+      // the index stale, and `refresh()` does a full rebuild on the next read —
+      // re-reading headers (updates) and dropping vanished files (deletes).
+      const idx = cachedIndex;
+      runtime.onConversationsChanged(() => idx.invalidate());
     }
-    // Recursive layout: the root `fs.watch` can't see nested writes, so the
-    // just-in-time rescan in `flushPending` (not the watcher) is what keeps the
-    // index fresh — it re-scans every room subtree and indexes new files.
-    await cachedIndex.flushPending();
+    await cachedIndex.refresh();
     return { index: cachedIndex, dir };
   }
 

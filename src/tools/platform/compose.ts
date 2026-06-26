@@ -566,19 +566,16 @@ async function readConvEvents(
   // the event log. The conversation id is a tool input — any
   // authenticated caller could pass an arbitrary id; without this
   // check, `effective_context` would happily read peer conversations'
-  // assembled-context / skills.loaded / llm.response events. The
-  // `findConversation(id, access)` call returns null for both
-  // not-found and foreign-owner, same shape as the "no store" branch
-  // below.
+  // assembled-context / skills.loaded / llm.response events.
   const identity = runtime.getCurrentIdentity();
   if (!identity) return null;
-  const owned = await runtime.findConversation(convId, { userId: identity.id });
-  if (!owned) return null;
-
-  // `owned` (above) already verified ownership + existence via the locator;
-  // resolve the conversation's room store and read its events directly.
+  // One locator resolution: get the conversation's room store, then gate on
+  // ownership via its access-checked `load` (null for both not-found and
+  // foreign-owner, same shape as the "no store" branch).
   const store = await runtime.resolveConversationStore(convId);
   if (!store) return null;
+  const owned = await store.load(convId, { userId: identity.id });
+  if (!owned) return null;
   return store.readEvents(convId);
 }
 

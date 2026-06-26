@@ -134,51 +134,16 @@ export class ConversationLocator {
     if (this.populated) return;
     this.entries.clear();
 
-    let wsDirs: string[];
-    try {
-      wsDirs = readdirSync(this.workspacesRoot).filter(isWorkspaceDir);
-    } catch {
-      // No workspaces root yet (fresh install) — empty index.
-      this.populated = true;
-      return;
-    }
-
+    // One tree walk for both this index and the usage aggregator's file list.
     let ownerlessSkipped = 0;
-    for (const wsId of wsDirs) {
-      const convRoot = join(this.workspacesRoot, wsId, "conversations");
-      for (const partition of safeReaddir(convRoot)) {
-        const partitionDir = join(convRoot, partition);
-        if (partition === RUN_PARTITION_SEGMENT) {
-          for (const automationId of safeReaddir(partitionDir)) {
-            ownerlessSkipped += await this.indexDir(join(partitionDir, automationId));
-          }
-        } else {
-          ownerlessSkipped += await this.indexDir(partitionDir);
-        }
-      }
-    }
-
-    if (ownerlessSkipped > 0) {
-      log.warn(
-        `[locator] excluded ${ownerlessSkipped} ownerless conversation file(s) — run \`bun run migrate:conversations-to-room\` to stamp ownerId.`,
-      );
-    }
-    this.populated = true;
-  }
-
-  /** Index every `*.jsonl` in one conversation leaf dir. Returns ownerless skips. */
-  private async indexDir(dir: string): Promise<number> {
-    let ownerless = 0;
-    for (const file of safeReaddir(dir)) {
-      if (!file.endsWith(".jsonl")) continue;
-      const filePath = join(dir, file);
+    for (const filePath of listAllConversationFiles(this.workspacesRoot)) {
       const loc = parseConversationPath(filePath);
       if (!loc) continue;
       try {
         const content = await readFile(filePath, "utf-8");
         const parsed = parseFileHeader(content);
         if (!parsed) {
-          ownerless++;
+          ownerlessSkipped++;
           continue;
         }
         this.entries.set(parsed.summary.id, {
@@ -193,7 +158,13 @@ export class ConversationLocator {
         // Corrupt / unreadable file — skip, same posture as the per-dir index.
       }
     }
-    return ownerless;
+
+    if (ownerlessSkipped > 0) {
+      log.warn(
+        `[locator] excluded ${ownerlessSkipped} ownerless conversation file(s) — run \`bun run migrate:conversations-to-room\` to stamp ownerId.`,
+      );
+    }
+    this.populated = true;
   }
 }
 
