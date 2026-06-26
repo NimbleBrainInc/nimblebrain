@@ -37,7 +37,7 @@ function Inner() {
           {panels.map((panel) => {
             const Icon = panel.icon ? resolveIcon(panel.icon) : null;
             return (
-              <Card key={panel.serverName} className="hover:bg-muted/40 transition-colors">
+              <Card key={panel.serverName} className="hover:bg-muted/50 transition-colors">
                 <CardContent className="py-3 px-4">
                   <Link
                     to={panel.serverName}

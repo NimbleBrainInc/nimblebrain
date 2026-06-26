@@ -88,6 +88,23 @@
     --radius-4xl: calc(var(--radius) * 2.6);
 }
 
+/* ─────────────────────────────────────────────────────────────────────────
+ * Opacity ramp — the canonical opacity modifiers for color utilities (the
+ * `/N` suffix on `text-`, `bg-`, and `border-` colors). Six steps; pick by
+ * intent, don't invent in-between values (no /55, /70, /8…).
+ *
+ *   /5   passive hover · resting subtle fill (nav rows, search box at rest)
+ *   /10  active / selected fill · stronger hover for a discrete control
+ *   /20  soft border (foreground / sidebar-foreground) · faint surface (muted header strips)
+ *   /50  faint text (placeholder / disabled) · default muted surface (muted cards)
+ *   /60  muted / secondary text · softened border token (border-border)
+ *   /80  emphasized text · primary action hover (bg-primary)
+ *
+ * Two intentional two-level pairs — keep them distinct: /5 vs /10 (passive vs
+ * control fill) and /20 vs /50 (faint vs default muted surface). shadcn
+ * primitives under components/ui/* keep their vendored values.
+ * ───────────────────────────────────────────────────────────────────────── */
+
 @layer base {
   * {
     @apply border-border outline-ring/50;

@@ -266,7 +266,7 @@ export function ArtifactPanel() {
               )}
 
               {!loading && error && (
-                <div className="m-6 rounded-lg border border-destructive/30 bg-destructive/5 p-4 text-sm text-destructive">
+                <div className="m-6 rounded-lg border border-destructive/20 bg-destructive/5 p-4 text-sm text-destructive">
                   Failed to load {title}: {error}
                 </div>
               )}

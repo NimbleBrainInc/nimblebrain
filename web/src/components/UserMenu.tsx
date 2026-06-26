@@ -159,7 +159,7 @@ export const UserMenu = memo(function UserMenu({
             </div>
             <ChevronUp
               className={cn(
-                "shrink-0 w-4 h-4 text-sidebar-foreground/40 transition-transform duration-200",
+                "shrink-0 w-4 h-4 text-sidebar-foreground/50 transition-transform duration-200",
                 open ? "rotate-0" : "rotate-180",
               )}
             />

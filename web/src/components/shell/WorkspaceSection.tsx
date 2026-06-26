@@ -109,7 +109,7 @@ export function WorkspaceSection({ collapsed = false }: WorkspaceSectionProps) {
     >
       {!collapsed && (
         <div className="flex items-center justify-between px-4 pt-1 pb-1">
-          <div className="text-2xs font-bold tracking-[0.08em] text-sidebar-foreground/70 uppercase">
+          <div className="text-2xs font-bold tracking-[0.08em] text-sidebar-foreground/60 uppercase">
             Workspaces
           </div>
           <button
@@ -226,7 +226,7 @@ function WorkspaceInlineApps({ workspaceId }: { workspaceId: string }) {
         <Link
           to={`/w/${slug}/`}
           data-testid="sidebar-workspace-view-all"
-          className="flex items-center gap-1.5 px-2 py-1 text-xs text-sidebar-foreground/55 hover:text-sidebar-foreground transition-colors"
+          className="flex items-center gap-1.5 px-2 py-1 text-xs text-sidebar-foreground/50 hover:text-sidebar-foreground transition-colors"
         >
           <ArrowRight className="size-3 shrink-0" />
           <span className="truncate">View all {apps.length} apps</span>
