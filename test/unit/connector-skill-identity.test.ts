@@ -33,4 +33,13 @@ describe("connectorSkillIdentity", () => {
     });
     expect(connectorSkillIdentity(d)).toBe("weird");
   });
+
+  it("derives <org> (not <server>) for io.github.<org>/<server> — documented limitation", () => {
+    // The slug rule takes the LAST dotted label before the path, so the
+    // registry-standard io.github.<org>/<server> form yields <org>. Harmless
+    // today (overlays are curated first-party + opt-in; a wrong slug 404s and
+    // the connector still installs). Pinned so a future change is conscious —
+    // see the connectorSkillIdentityFrom doc comment.
+    expect(connectorSkillIdentity(detail({ name: "io.github.acme/widget" }))).toBe("acme");
+  });
 });
