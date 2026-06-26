@@ -238,7 +238,8 @@ function main(): void {
   if (summary.skippedOwnerless > 0) {
     console.warn(
       `\n  ! ${summary.skippedOwnerless} ownerless conversation file(s) left in place — ` +
-        "they predate the owner invariant (no ownerId → no room to migrate into); stamp ownerId first.",
+        "they predate the owner invariant (no ownerId → no room to migrate into). Manual triage: " +
+        "add an ownerId to each file's line-1 metadata and re-run, or remove the files.",
     );
   }
   if (summary.skippedInvalidId > 0) {

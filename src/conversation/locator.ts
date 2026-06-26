@@ -175,7 +175,7 @@ export class ConversationLocator {
 
     if (ownerlessSkipped > 0) {
       log.warn(
-        `[locator] excluded ${ownerlessSkipped} ownerless conversation file(s) — run \`bun run migrate:conversations-to-room\` to stamp ownerId.`,
+        `[locator] excluded ${ownerlessSkipped} ownerless conversation file(s) — these predate the ownership invariant and need manual triage (stamp an ownerId on line 1, or remove); no migration stamps them.`,
       );
     }
     this.populated = true;

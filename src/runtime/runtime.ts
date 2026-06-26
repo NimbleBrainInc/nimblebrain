@@ -1626,8 +1626,13 @@ export class Runtime {
       ...(request.signal ? { signal: request.signal } : {}),
     };
 
-    // Determine which event store handles conversation events for this request.
-    // For workspace-scoped requests, use the workspace store instead of the global one.
+    // Conversations are room-owned, so `store` (from `resolveChatStore`) is
+    // always a per-call room store and is always the event sink. The
+    // `this.eventStore`/`this.store` sentinel path below is VESTIGIAL —
+    // `this.eventStore` is always null and `isWorkspaceRequest` always true.
+    // TODO(cleanup): collapse to "always use the per-call room store" and drop
+    // the boot-store fields. Deferred from this PR because removing `this.store`
+    // is entangled with the `config.store` "embedding-only" story (also deferred).
     const isWorkspaceRequest =
       store instanceof EventSourcedConversationStore && store !== this.store;
     let activeEventStore: EventSourcedConversationStore | null = null;
@@ -2150,9 +2155,9 @@ export class Runtime {
       ...(request.signal ? { signal: request.signal } : {}),
     };
 
-    // Event store routing — same as chat. The task's conversation is the
-    // active conversation for the global event store unless we're using a
-    // workspace-scoped store.
+    // Event store routing — same as chat: the task's per-call room store is
+    // always the sink; the `this.eventStore` branch is vestigial (always null).
+    // TODO(cleanup): collapse with the chat path (see `_chatInner`).
     const isWorkspaceRequest =
       store instanceof EventSourcedConversationStore && store !== this.store;
     let activeEventStore: EventSourcedConversationStore | null = null;
@@ -2991,6 +2996,16 @@ export class Runtime {
    * workspace archive-delete calls it (via the membership-change hook), so the
    * locator and the conversations-tool index never serve a frozen summary or a
    * ghost of a deleted room.
+   *
+   * Scaling note: invalidation is tenant-wide and per-append, so under
+   * concurrent chat the *list* index (summaries) rarely stays warm — the next
+   * `listConversations` rebuilds by re-reading headers across rooms. The hot
+   * per-message resume path does NOT pay this (locate is a readdir-only walk,
+   * see `ConversationLocator.locate`); only list views do. The recursive room
+   * layout rules out the old `fs.watch` debounce-coalescing, so before a
+   * high-conversation tenant feels it, the move is a per-room / incremental
+   * index (update one entry on the changed conv's room) rather than a full
+   * tenant-wide rebuild. Out of scope here; correctness over the dead watcher.
    */
   notifyConversationsChanged(): void {
     this._conversationLocator?.invalidate();

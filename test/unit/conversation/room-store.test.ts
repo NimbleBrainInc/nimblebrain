@@ -54,7 +54,7 @@ test("two owners in the same room are physically partitioned", async () => {
   expect(await bob.load(aliceConv.id)).toBeNull();
 });
 
-test("onMutate fires on create and delete (locator invalidation hook)", async () => {
+test("onMutate fires on create, append, and delete (cache invalidation hook)", async () => {
   let mutations = 0;
   const store = roomStore("ws_helix", "usr_alice", () => {
     mutations += 1;
@@ -63,8 +63,17 @@ test("onMutate fires on create and delete (locator invalidation hook)", async ()
   const conv = await store.create({ ownerId: "usr_alice", workspaceId: "ws_helix" });
   expect(mutations).toBe(1);
 
-  await store.delete(conv.id);
+  // An append changes the conversation's summary, so it must invalidate the
+  // caches too — this is the fix for the frozen-list-summary regression.
+  store.appendEvent(conv.id, {
+    ts: "2026-06-25T00:00:00.000Z",
+    type: "metadata.title",
+    title: "Renamed",
+  });
   expect(mutations).toBe(2);
+
+  await store.delete(conv.id);
+  expect(mutations).toBe(3);
 });
 
 test("the conversation records its bound room as workspaceId", async () => {
