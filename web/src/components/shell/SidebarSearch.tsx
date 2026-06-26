@@ -28,7 +28,7 @@ export function SidebarSearch() {
           style={{ width: 14, height: 14 }}
         />
         <span className="flex-1 truncate text-sidebar-foreground/50">Search or run a command</span>
-        <kbd className="shrink-0 inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium bg-sidebar-foreground/10 text-sidebar-foreground/60 border border-sidebar-border">
+        <kbd className="shrink-0 inline-flex items-center px-1.5 py-0.5 rounded text-3xs font-medium bg-sidebar-foreground/10 text-sidebar-foreground/60 border border-sidebar-border">
           ⌘P
         </kbd>
       </button>

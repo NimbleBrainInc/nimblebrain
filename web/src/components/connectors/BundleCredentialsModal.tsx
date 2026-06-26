@@ -269,11 +269,11 @@ function BundleField({
         {label}
         {field.required && <span className="text-destructive">*</span>}
         {isPopulated && (
-          <span className="text-[10px] font-normal text-muted-foreground">✓ configured</span>
+          <span className="text-3xs font-normal text-muted-foreground">✓ configured</span>
         )}
       </span>
       {field.description && (
-        <span className="block text-[11px] text-muted-foreground mt-0.5">{field.description}</span>
+        <span className="block text-2xs text-muted-foreground mt-0.5">{field.description}</span>
       )}
       <input
         ref={inputRef}

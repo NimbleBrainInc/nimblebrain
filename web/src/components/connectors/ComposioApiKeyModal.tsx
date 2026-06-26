@@ -136,9 +136,7 @@ export function ComposioApiKeyModal({
                 className="mt-1 w-full text-sm font-mono px-2.5 py-1.5 rounded border border-border bg-background focus:outline-none focus:ring-1 focus:ring-ring disabled:opacity-60"
               />
               {f.description && (
-                <span className="block text-[11px] text-muted-foreground mt-1">
-                  {f.description}
-                </span>
+                <span className="block text-2xs text-muted-foreground mt-1">{f.description}</span>
               )}
             </label>
           ))}

@@ -49,7 +49,7 @@ export function SettingsAppPanelPage({ panel, children }: SettingsAppPanelPagePr
       </div>
       <div className="flex-1 min-h-0 overflow-hidden">{children}</div>
       <p className="shrink-0 pt-2 text-right text-xs text-muted-foreground">
-        Provided by <code className="text-[11px]">{panel.serverName}</code>
+        Provided by <code className="text-2xs">{panel.serverName}</code>
       </p>
     </div>
   );

@@ -52,7 +52,7 @@ export function FileAttachment({ file }: Props) {
             } object-contain`}
           />
         </button>
-        <span className="block text-[10px] text-muted-foreground mt-1">
+        <span className="block text-3xs text-muted-foreground mt-1">
           {file.filename} ({formatFileSize(file.size)})
         </span>
       </div>
@@ -66,7 +66,7 @@ export function FileAttachment({ file }: Props) {
       <span className="truncate max-w-[200px]">{file.filename}</span>
       <span className="text-muted-foreground text-xs shrink-0">{formatFileSize(file.size)}</span>
       {file.extracted && (
-        <span className="text-[10px] text-success" title="Content extracted">
+        <span className="text-3xs text-success" title="Content extracted">
           extracted
         </span>
       )}

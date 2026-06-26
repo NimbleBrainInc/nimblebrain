@@ -139,7 +139,7 @@ export function KeyboardShortcutsModal({ isOpen, onClose }: KeyboardShortcutsMod
         <div className="px-5 py-3 border-t border-border bg-muted/50">
           <p className="text-xs text-muted-foreground text-center">
             Press{" "}
-            <kbd className="px-1 py-0.5 text-[10px] font-mono bg-card rounded border border-border">
+            <kbd className="px-1 py-0.5 text-3xs font-mono bg-card rounded border border-border">
               ?
             </kbd>{" "}
             anytime to show this

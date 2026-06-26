@@ -77,7 +77,7 @@ function formatInline(text: string): ReactNode[] {
 
 function Eyebrow() {
   return (
-    <div className="text-[11px] font-bold tracking-[0.08em] uppercase text-muted-foreground">
+    <div className="text-2xs font-bold tracking-[0.08em] uppercase text-muted-foreground">
       Briefing
     </div>
   );
@@ -105,7 +105,7 @@ function SectionGroup({
   if (items.length === 0) return null;
   return (
     <div className="mt-4 first:mt-3">
-      <div className="text-[11px] font-semibold tracking-[0.06em] uppercase text-muted-foreground/70">
+      <div className="text-2xs font-semibold tracking-[0.06em] uppercase text-muted-foreground/70">
         {label}
       </div>
       <ul className="mt-1.5 space-y-1.5">

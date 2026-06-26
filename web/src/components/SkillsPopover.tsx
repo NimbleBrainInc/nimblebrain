@@ -112,7 +112,7 @@ export function SkillsPopover({ conversationId }: { conversationId: string | nul
             <div className="text-xs font-semibold">Active skills</div>
             <Link
               to={skillsPath}
-              className="text-[11px] text-muted-foreground hover:text-foreground"
+              className="text-2xs text-muted-foreground hover:text-foreground"
               onClick={() => setOpen(false)}
             >
               Manage →
@@ -138,16 +138,16 @@ export function SkillsPopover({ conversationId }: { conversationId: string | nul
                   <li key={s.id} className="px-3 py-2 space-y-0.5">
                     <div className="flex items-baseline justify-between gap-2">
                       <span className="text-xs font-medium truncate">{shortName(s.id)}</span>
-                      <span className="text-[10px] text-muted-foreground tabular-nums shrink-0">
+                      <span className="text-3xs text-muted-foreground tabular-nums shrink-0">
                         {s.tokens} tok
                       </span>
                     </div>
-                    <div className="flex items-center gap-2 text-[10px] text-muted-foreground">
+                    <div className="flex items-center gap-2 text-3xs text-muted-foreground">
                       <span className={SCOPE_COLOR[s.scope]}>{s.scope}</span>
                       <span>·</span>
                       <span>loaded: {s.loadedBy}</span>
                     </div>
-                    <div className="text-[10px] text-muted-foreground/80 truncate" title={s.reason}>
+                    <div className="text-3xs text-muted-foreground/80 truncate" title={s.reason}>
                       {s.reason}
                     </div>
                   </li>

@@ -152,7 +152,7 @@ export const UserMenu = memo(function UserMenu({
                 {label}
               </div>
               {displayName && email && displayName !== email && (
-                <div className="truncate text-[11px] text-sidebar-foreground/50 leading-tight">
+                <div className="truncate text-2xs text-sidebar-foreground/50 leading-tight">
                   {email}
                 </div>
               )}
@@ -184,7 +184,7 @@ export const UserMenu = memo(function UserMenu({
             <div className="px-3 py-2.5 border-b border-sidebar-border">
               <div className="truncate text-sm font-medium text-sidebar-foreground">{label}</div>
               {email && email !== label && (
-                <div className="truncate text-[11px] text-sidebar-foreground/50">{email}</div>
+                <div className="truncate text-2xs text-sidebar-foreground/50">{email}</div>
               )}
             </div>
           )}
