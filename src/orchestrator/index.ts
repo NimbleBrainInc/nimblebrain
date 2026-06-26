@@ -17,7 +17,6 @@ export {
   UnknownIdentitySource,
   UnknownNamespacedToolName,
   UnknownToolSource,
-  UnknownWorkspace,
   WorkspaceAccessDenied,
   WorkspaceToolUnavailable,
 } from "./route.ts";

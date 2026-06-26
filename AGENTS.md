@@ -161,7 +161,7 @@ The session's reachable set comes from `runtime.listToolsForWorkspace(wsId)` (th
 
 - **Construct** workspace names only via `namespacedToolName(wsId, name)` from `src/tools/namespace.ts`. **Parse** only via `parseNamespacedToolName(s)` (a name with no `ws_<id>-` prefix is `scope: { kind: "identity" }`). `check:tool-namespace` enforces.
 - **Web tier** mirrors the parser at `web/src/lib/namespaced-tool.ts` (regex from `web/src/_generated/workspace-id-pattern.ts`, emitted by `bun run codegen`; `check:codegen` catches drift).
-- **Per-call routing** lives in `src/orchestrator/route.ts`. Errors: `UnknownNamespacedToolName` / `CrossWorkspaceReachDenied` / `WorkspaceToolUnavailable` / `UnknownToolSource` / `UnknownIdentitySource` (`UnknownWorkspace` / `WorkspaceAccessDenied` stay in the taxonomy as the base/legacy classes). Both `POST /v1/chat` and `/mcp` map them to identical structured `data.reason` discriminators.
+- **Per-call routing** lives in `src/orchestrator/route.ts`. Errors: `UnknownNamespacedToolName` / `CrossWorkspaceReachDenied` / `WorkspaceToolUnavailable` / `UnknownToolSource` / `UnknownIdentitySource` (`WorkspaceAccessDenied` is the base class the wall's two denials share). Both `POST /v1/chat` and `/mcp` map them to identical structured `data.reason` discriminators.
 - `BundleRef.oauthScope: "user"` is **deleted from the type union**. Every install binds workspace explicitly via `wsId`; legacy disk records throw `LegacyOAuthScopeError` on load.
 - **Dev-mode parity.** The wall works in dev mode (no auth gate); the dev identity flows through the orchestrator the same as a real one. `runtime.requireWorkspaceId()` returns `"_dev"` only when no workspace is in scope.
 

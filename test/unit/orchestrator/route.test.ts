@@ -236,7 +236,6 @@ describe("routeToolCall — the wall (cross-workspace denial)", () => {
     // Maps through the existing WorkspaceAccessDenied error surface.
     expect(thrown).toBeInstanceOf(WorkspaceAccessDenied);
     expect((thrown as CrossWorkspaceReachDenied).wsId).toBe(OTHER_WS);
-    expect((thrown as CrossWorkspaceReachDenied).focusedWorkspaceId).toBe(SHARED_WS);
     expect(runtime.contextCallCount()).toBe(0);
   });
 

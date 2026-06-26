@@ -1,43 +1,33 @@
 /**
- * Per-call workspace routing for cross-workspace tool dispatch.
+ * Per-call tool routing — the single primitive every chat / task / `/mcp` tool
+ * dispatch flows through. Given a namespaced tool name and the calling identity,
+ * `routeToolCall`:
  *
- * Stage 2 (cross-workspace refactor) makes every chat / `/mcp` tool
- * dispatch flow through this single primitive. Given a namespaced tool
- * name (`ws_<id>-<innerToolName>`) and the calling identity, the
- * orchestrator:
+ *   1. Parses the namespace via `parseNamespacedToolName` (the only legal parse
+ *      site). Throws `UnknownNamespacedToolName` on malformed input.
+ *   2. A bare `<source>__<tool>` routes through the IDENTITY door (no workspace).
+ *   3. A `ws_<id>-<tool>` routes through the WORKSPACE door, walled to the
+ *      session's one workspace (`workspaceId`): a call to ANY OTHER workspace is
+ *      `CrossWorkspaceReachDenied`, and a session with no workspace (e.g. an
+ *      external `/mcp` client with no `X-Workspace-Id`) is
+ *      `WorkspaceToolUnavailable`. **There is no per-call membership scan** — the
+ *      session's `workspaceId` was membership-validated when the session was
+ *      established, so reaching only it is reaching only a member workspace.
+ *   4. Constructs a fresh `WorkspaceContext` from the bound `wsId` — NEVER from
+ *      `runtime.requireWorkspaceId()` or any ambient session-level state.
+ *   5. Resolves the dispatch handle (`ToolSource`) in that workspace's registry.
+ *      Throws `UnknownToolSource` if the source prefix isn't registered.
  *
- *   1. Parses the namespace via `parseNamespacedToolName` (T002 — the
- *      only legal parse site for the form). Throws
- *      `UnknownNamespacedToolName` on malformed input.
- *   2. Confirms the workspace exists in the store. Throws
- *      `UnknownWorkspace` if not — distinct from "identity can't see
- *      it" so operators can triage cross-tenant accidents vs typos.
- *   3. Authorizes the identity against the workspace's membership.
- *      Throws `WorkspaceAccessDenied` if the workspace exists but the
- *      identity isn't a member.
- *   4. Constructs a fresh `WorkspaceContext` derived from the parsed
- *      `wsId`. NEVER from `runtime.requireWorkspaceId()` or any other
- *      ambient session-level state — the context IS the workspace boundary.
- *   5. Resolves the dispatch handle (the `ToolSource`) for the inner
- *      tool name in that workspace's registry. Throws
- *      `UnknownToolSource` if the source prefix isn't registered.
+ * Design rules:
+ *   - **Strict invariants over defensive defaults.** No `wsId ?? "ws_default"`,
+ *     no fallback to "current workspace." Every failure throws a structured
+ *     error the caller can map.
+ *   - **Derive don't cast.** Types flow from `WorkspaceContext` / `ToolSource`.
+ *   - **No ambient state.** The wsId comes from the parsed namespace + the
+ *     passed `workspaceId` alone.
  *
- * Design rules carried from Stage 1 lessons:
- *
- *   - **Lesson 3 — strict invariants over defensive defaults.** No
- *     `wsId ?? "ws_default"`, no fallback to "current workspace." Every
- *     failure throws a structured error the caller can map.
- *   - **Lesson 6 — derive don't cast.** Types flow from the existing
- *     `WorkspaceContext` and `ToolSource` shapes; no `as unknown as T`.
- *   - **No ambient state.** The orchestrator never reads
- *     `runtime.requireWorkspaceId()` / `getCurrentWorkspaceId()`. The
- *     wsId comes from the parsed namespace alone.
- *
- * The runtime dependency is expressed as a narrow structural type
- * (`OrchestratorRuntime`) so unit tests can stub without spinning up
- * the full `Runtime`. The production `Runtime` satisfies this shape by
- * exposing `getWorkspaceStore()`, `getWorkspaceContext(wsId)`, and
- * `getRegistryForWorkspace(wsId)` — all already in place pre-Stage-2.
+ * The runtime dependency is a narrow structural type (`OrchestratorRuntime`) so
+ * unit tests can stub without a full `Runtime`.
  */
 
 import type { ToolSchema } from "../engine/types.ts";
@@ -49,36 +39,11 @@ import type { WorkspaceContext } from "../workspace/context.ts";
 // ── Errors ─────────────────────────────────────────────────────────
 
 /**
- * Thrown when a namespaced tool name's `wsId` is not registered in the
- * workspace store. Distinct from `WorkspaceAccessDenied` on purpose:
- *
- *   - `UnknownWorkspace`     — the wsId is bogus (typo, cross-tenant
- *                              accident, deleted workspace).
- *   - `WorkspaceAccessDenied` — the workspace exists but the identity
- *                              isn't a member.
- *
- * Operators triaging "tool call failed" need to distinguish these:
- * the former points at a buggy client / stale link; the latter at a
- * permissions misconfiguration or an attempted cross-tenant probe.
- * Conflating them would hide both shapes under one symptom.
- */
-export class UnknownWorkspace extends Error {
-  readonly wsId: string;
-
-  constructor(wsId: string) {
-    super(`[orchestrator] unknown workspace "${wsId}"`);
-    this.name = "UnknownWorkspace";
-    this.wsId = wsId;
-  }
-}
-
-/**
- * Thrown when the workspace exists but the calling identity isn't a
- * member. The orchestrator deliberately surfaces this as an explicit
- * error rather than coercing to a "default" workspace.
- *
- * The payload carries both `identityId` and `wsId` so the HTTP layer
- * can emit a structured 403 without re-parsing the name.
+ * Base class for the wall's denial errors — `CrossWorkspaceReachDenied` (reach
+ * to another workspace) and `WorkspaceToolUnavailable` (no workspace on the
+ * session). Not thrown directly today; the two subclasses are. The payload
+ * carries `identityId` and `wsId` so the HTTP / `/mcp` layer can emit a
+ * structured `workspace_access_denied` response without re-parsing the name.
  */
 export class WorkspaceAccessDenied extends Error {
   readonly identityId: string;
@@ -97,17 +62,16 @@ export class WorkspaceAccessDenied extends Error {
  * A session is bounded to exactly one workspace; a `ws_<other>-<tool>` call is
  * denied even though the identity may be a member of that other workspace.
  * Subclasses `WorkspaceAccessDenied` so the existing error mapping (HTTP 403 /
- * `-32602`) applies unchanged, while `name` / `focusedWorkspaceId` let audit
- * distinguish "walled" from "not a member."
+ * `-32602`) applies unchanged; `name` distinguishes "walled" from "not a member"
+ * — both map to the same `workspace_access_denied` response (we don't leak
+ * whether the other workspace exists). The bounded workspace is named in the
+ * message.
  */
 export class CrossWorkspaceReachDenied extends WorkspaceAccessDenied {
-  readonly focusedWorkspaceId: string;
-
   constructor(identityId: string, wsId: string, focusedWorkspaceId: string) {
     super(identityId, wsId);
     this.name = "CrossWorkspaceReachDenied";
     this.message = `[orchestrator] session is bounded to workspace "${focusedWorkspaceId}"; reach to "${wsId}" is denied`;
-    this.focusedWorkspaceId = focusedWorkspaceId;
   }
 }
 
@@ -128,16 +92,11 @@ export class WorkspaceToolUnavailable extends WorkspaceAccessDenied {
 }
 
 /**
- * Thrown when the inner tool name's source prefix isn't registered in
- * the target workspace's `ToolRegistry`. Surfaced separately from
- * `UnknownWorkspace` because the failure mode is different: the
- * workspace exists and the identity has access, but no bundle in that
- * workspace serves the requested source.
- *
- * Not in the task spec's "three distinct types" list — added as a
- * fourth strict error rather than throwing a bare `Error` so the
- * HTTP layer / audit can distinguish "tool source not installed" from
- * "tool exists but execution failed." Disclosed in the task report.
+ * Thrown when the inner tool name's source prefix isn't registered in the
+ * session's workspace `ToolRegistry` — the workspace is the bound one, but no
+ * bundle in it serves the requested source. A structured error (not a bare
+ * `Error`) so the HTTP / `/mcp` layer can distinguish "tool source not
+ * installed" from "tool exists but execution failed."
  */
 export class UnknownToolSource extends Error {
   readonly wsId: string;

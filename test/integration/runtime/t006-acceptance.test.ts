@@ -108,8 +108,9 @@ describe("runtime.chat — orchestrator error taxonomy (T006)", () => {
 
   it("`WorkspaceAccessDenied` → reason='workspace_access_denied'", async () => {
     // Create a third workspace the identity is NOT a member of, then
-    // emit a tool call into it. The orchestrator must refuse with
-    // WorkspaceAccessDenied (not UnknownWorkspace — the ws exists).
+    // emit a tool call into it. The wall refuses any reach outside the
+    // session's workspace with workspace_access_denied (here via
+    // CrossWorkspaceReachDenied — the stranger ws exists, it's just not ours).
     fixture = await createTwoWorkspaceFixture();
     const wsStore = fixture.runtime.getWorkspaceStore();
     const stranger = await wsStore.create("Stranger Workspace", "stranger");
@@ -156,10 +157,10 @@ describe("runtime.chat — orchestrator error taxonomy (T006)", () => {
           toolCalls: [
             {
               toolCallId: "call_unknown_source",
-              // Personal workspace is accessible, but `nonexistent` source
-              // is not registered there. Orchestrator must surface
-              // UnknownToolSource (not UnknownWorkspace — ws exists and
-              // user IS a member).
+              // Personal is the session's workspace (the wall lets it
+              // through), but `nonexistent` source is not registered there.
+              // Orchestrator must surface UnknownToolSource — the ws is in
+              // reach, the source name just doesn't resolve.
               toolName: `${fixture?.personal.id ?? "ws_user_x"}-nonexistent__do_thing`,
               input: "{}",
             },

@@ -92,7 +92,6 @@ import {
   UnknownIdentitySource,
   UnknownNamespacedToolName,
   UnknownToolSource,
-  UnknownWorkspace,
   WorkspaceAccessDenied,
 } from "../orchestrator/index.ts";
 import { type RequestContext, runWithRequestContext } from "../runtime/request-context.ts";
@@ -733,8 +732,9 @@ function createServer(
     // `error.data.reason: "unknown_identity_source"`. Truly malformed names
     // (empty, empty tool, bad `ws_` id) surface as `invalid_tool_name`. Either
     // way the client gets a meaningful reason and the call never silently
-    // routes. The orchestrator's five error classes
-    // each map to a distinct response shape.
+    // routes. Each orchestrator error class maps to a distinct response shape
+    // (the wall's two denials, `CrossWorkspaceReachDenied` and
+    // `WorkspaceToolUnavailable`, share the `workspace_access_denied` reason).
     let routed: Awaited<ReturnType<typeof routeToolCall>>;
     try {
       routed = await routeToolCall({
@@ -749,12 +749,6 @@ function createServer(
           reason: "invalid_tool_name",
           input: err.input,
           parse: err.reason,
-        });
-      }
-      if (err instanceof UnknownWorkspace) {
-        throw new McpError(ErrorCode.InvalidParams, `Unknown workspace "${err.wsId}"`, {
-          reason: "unknown_workspace",
-          wsId: err.wsId,
         });
       }
       if (err instanceof WorkspaceAccessDenied) {

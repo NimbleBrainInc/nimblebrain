@@ -7,13 +7,12 @@
  * thrown errors as run-level failures (`run.error`), not per-call failures,
  * which is the wrong shape for "you called a tool name we couldn't route."
  *
- * Five distinct `data.reason` values so HTTP / audit consumers can
- * differentiate failure modes without parsing the human message
- * (Stage 1 lesson 2 — conflating errors hides real bugs):
+ * Distinct `data.reason` values so HTTP / `/mcp` consumers can differentiate
+ * failure modes without parsing the human message:
  *
  *   - `UnknownNamespacedToolName` → `invalid_tool_name`        + `{ name, parseReason }`
- *   - `UnknownWorkspace`          → `unknown_workspace`        + `{ wsId }`
  *   - `WorkspaceAccessDenied`     → `workspace_access_denied`  + `{ identityId, wsId }`
+ *     (the live base of `CrossWorkspaceReachDenied` / `WorkspaceToolUnavailable`)
  *   - `UnknownToolSource`         → `unknown_tool_source`      + `{ wsId, sourceName, toolName }`
  *   - `UnknownIdentitySource`     → `unknown_identity_source`  + `{ toolName }`
  *
@@ -28,7 +27,6 @@ import {
   UnknownIdentitySource,
   UnknownNamespacedToolName,
   UnknownToolSource,
-  UnknownWorkspace,
   WorkspaceAccessDenied,
 } from "./route.ts";
 
@@ -47,22 +45,6 @@ export function mapOrchestratorErrorToToolResult(err: unknown, namespacedName: s
         reason: "invalid_tool_name",
         name: err.input,
         parseReason: err.reason,
-      },
-    };
-  }
-  if (err instanceof UnknownWorkspace) {
-    return {
-      content: [
-        {
-          type: "text",
-          text: `[orchestrator] unknown workspace "${err.wsId}" (typo, deleted workspace, or cross-tenant accident) — call refused.`,
-        },
-      ],
-      isError: true,
-      structuredContent: {
-        error: "orchestrator_error",
-        reason: "unknown_workspace",
-        wsId: err.wsId,
       },
     };
   }

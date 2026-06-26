@@ -3,8 +3,8 @@
  *
  * Pins the failure-mode taxonomy: every orchestrator error class maps to
  * a distinct `data.reason`, and non-orchestrator errors re-throw rather
- * than being silently swallowed. Stage 1 lesson 2 (conflating errors
- * hides real bugs) — these are five separate code paths.
+ * than being silently swallowed. Conflating errors hides real bugs —
+ * each of these is a separate code path.
  */
 
 import { describe, expect, test } from "bun:test";
@@ -13,7 +13,6 @@ import { mapOrchestratorErrorToToolResult } from "../../../src/orchestrator/erro
 import {
   UnknownIdentitySource,
   UnknownToolSource,
-  UnknownWorkspace,
   WorkspaceAccessDenied,
 } from "../../../src/orchestrator/index.ts";
 import { UnknownNamespacedToolName } from "../../../src/tools/namespace.ts";
@@ -28,16 +27,6 @@ describe("mapOrchestratorErrorToToolResult", () => {
       reason: "invalid_tool_name",
       name: "bad-name",
       parseReason: "missing_double_underscore",
-    });
-  });
-
-  test("UnknownWorkspace → reason: unknown_workspace + wsId", () => {
-    const err = new UnknownWorkspace("ws_missing");
-    const result = mapOrchestratorErrorToToolResult(err, "ws_missing-crm__search");
-    expect(result.isError).toBe(true);
-    expect(result.structuredContent).toMatchObject({
-      reason: "unknown_workspace",
-      wsId: "ws_missing",
     });
   });
 
