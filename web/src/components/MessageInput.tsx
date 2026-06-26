@@ -227,7 +227,7 @@ export function MessageInput({
               onClick={onStop}
               type="button"
               aria-label="Stop generating"
-              className="shrink-0 flex items-center justify-center w-8 h-8 rounded-lg transition-all duration-200 bg-primary hover:bg-primary/90 text-primary-foreground"
+              className="shrink-0 flex items-center justify-center w-8 h-8 rounded-lg transition-all duration-200 bg-primary hover:bg-primary/80 text-primary-foreground"
             >
               <Square style={{ width: 14, height: 14 }} fill="currentColor" />
             </button>
@@ -239,7 +239,7 @@ export function MessageInput({
               aria-label="Send message"
               className={`shrink-0 flex items-center justify-center w-8 h-8 rounded-lg transition-all duration-200 ${
                 canSend
-                  ? "bg-primary hover:bg-primary/90 text-primary-foreground"
+                  ? "bg-primary hover:bg-primary/80 text-primary-foreground"
                   : "bg-muted text-muted-foreground cursor-not-allowed"
               }`}
             >

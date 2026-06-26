@@ -277,7 +277,7 @@ export function CommandPalette({ onLogout }: { onLogout: () => void }) {
           </div>
 
           {/* Footer */}
-          <div className="flex items-center gap-3.5 px-3.5 py-2.5 border-t border-border bg-muted/40 text-3xs font-mono text-muted-foreground">
+          <div className="flex items-center gap-3.5 px-3.5 py-2.5 border-t border-border bg-muted/50 text-3xs font-mono text-muted-foreground">
             <span>
               <Kbd>↑↓</Kbd> navigate
             </span>

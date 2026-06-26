@@ -44,7 +44,7 @@ export function ArtifactChip({ appName, uri, name, mimeType, description }: Arti
     <button
       type="button"
       onClick={() => openArtifact({ appName, uri, name, mimeType, description })}
-      className="group w-full my-2 flex items-center gap-3 rounded-lg border border-border bg-card px-3 py-2.5 text-left transition-colors hover:bg-muted/40 hover:border-border focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+      className="group w-full my-2 flex items-center gap-3 rounded-lg border border-border bg-card px-3 py-2.5 text-left transition-colors hover:bg-muted/50 hover:border-border focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
       aria-label={`Open ${title}`}
     >
       <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md bg-muted text-muted-foreground">

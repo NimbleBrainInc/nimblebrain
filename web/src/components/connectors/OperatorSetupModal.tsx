@@ -232,7 +232,7 @@ export function OperatorSetupModal({
             <button
               type="submit"
               disabled={busy}
-              className="text-xs px-3 py-1.5 rounded bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-60"
+              className="text-xs px-3 py-1.5 rounded bg-primary text-primary-foreground hover:bg-primary/80 disabled:opacity-60"
             >
               {busy ? "Saving…" : isEdit ? "Save changes" : "Save"}
             </button>

@@ -39,7 +39,7 @@ export const SidebarToggle = memo(function SidebarToggle() {
       onClick={toggle}
       aria-label={label}
       title={`${label} (⌘B)`}
-      className="p-2 rounded-lg text-sidebar-foreground/40 hover:text-sidebar-foreground/60 hover:bg-sidebar-hover transition-colors shrink-0"
+      className="p-2 rounded-lg text-sidebar-foreground/50 hover:text-sidebar-foreground/60 hover:bg-sidebar-hover transition-colors shrink-0"
     >
       {icon}
     </button>

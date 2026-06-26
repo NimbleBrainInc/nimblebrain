@@ -115,7 +115,7 @@ export function ArtifactView({ uri, appName, name, mimeType, description }: Arti
 
   if (error || !content) {
     return (
-      <div className="w-full my-2 rounded-lg border border-destructive/30 bg-destructive/5 p-3 text-sm text-destructive">
+      <div className="w-full my-2 rounded-lg border border-destructive/20 bg-destructive/5 p-3 text-sm text-destructive">
         Failed to load {displayName}: {error ?? "unknown error"}
       </div>
     );
@@ -129,7 +129,7 @@ export function ArtifactView({ uri, appName, name, mimeType, description }: Arti
   const isRenderable = kind !== "unsupported" && content.text !== undefined;
 
   const header = (
-    <div className="flex items-center justify-between gap-2 px-3 py-2 border-b border-border bg-muted/30 text-xs">
+    <div className="flex items-center justify-between gap-2 px-3 py-2 border-b border-border bg-muted/20 text-xs">
       <div className="flex items-center gap-2 min-w-0">
         <FileText className="w-3.5 h-3.5 shrink-0 text-muted-foreground" />
         <span className="truncate font-medium">{displayName}</span>

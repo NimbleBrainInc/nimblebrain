@@ -308,7 +308,7 @@ function DirectoryCard({
   const operatorReady = entry.operatorConfigured === true;
 
   return (
-    <div className="flex flex-col gap-3 p-4 border border-border/50 rounded-md bg-background h-full">
+    <div className="flex flex-col gap-3 p-4 border border-border/60 rounded-md bg-background h-full">
       <div className="flex items-start gap-3">
         <ConnectorIcon name={entry.name} iconUrl={entry.iconUrl} />
         <div className="flex-1 min-w-0">

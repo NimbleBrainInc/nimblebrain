@@ -18,7 +18,7 @@ export function InlineError({
 }) {
   return (
     <div
-      className="flex items-center justify-between gap-3 rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2"
+      className="flex items-center justify-between gap-3 rounded-md border border-destructive/20 bg-destructive/5 px-3 py-2"
       role={role}
     >
       <p className="text-sm text-destructive">{message}</p>

@@ -404,7 +404,7 @@ export function MessageList({
                     )}
                     {/* Inline error notice */}
                     {msg.error && (
-                      <div className="px-3 py-2.5 rounded-md bg-destructive/8 border border-destructive/20 text-sm">
+                      <div className="px-3 py-2.5 rounded-md bg-destructive/10 border border-destructive/20 text-sm">
                         <div className="flex items-center gap-2">
                           <AlertCircle className="w-4 h-4 shrink-0 text-destructive" />
                           <span className="flex-1 text-foreground">

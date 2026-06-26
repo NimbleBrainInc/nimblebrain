@@ -166,7 +166,7 @@ export function ConnectorStatusHero({
           <div className="flex items-center gap-2 flex-wrap">
             <h1 className="text-xl font-semibold tracking-tight">{name}</h1>
             {installed.interactive && (
-              <span className="text-3xs px-1.5 py-0.5 rounded bg-accent/40 text-accent-foreground font-medium">
+              <span className="text-3xs px-1.5 py-0.5 rounded bg-accent/50 text-accent-foreground font-medium">
                 Interactive
               </span>
             )}
@@ -179,7 +179,7 @@ export function ConnectorStatusHero({
             <p className="text-xs text-muted-foreground font-mono mt-0.5">
               v{shownVersion}
               {versionDrift && (
-                <span className="ml-2 text-muted-foreground/70">catalog v{versionDrift}</span>
+                <span className="ml-2 text-muted-foreground/60">catalog v{versionDrift}</span>
               )}
             </p>
           )}
@@ -193,7 +193,7 @@ export function ConnectorStatusHero({
           When `ready`, the page reads as quiet settings; when any
           other status applies, this block is the visual anchor. */}
       {installed.status !== "ready" && (
-        <div className="flex items-start justify-between gap-4 px-4 py-3 border border-border/60 rounded-md bg-muted/30">
+        <div className="flex items-start justify-between gap-4 px-4 py-3 border border-border/60 rounded-md bg-muted/20">
           <div className="flex items-start gap-3 min-w-0">
             <StatusDot status={installed.status} />
             <div className="min-w-0">

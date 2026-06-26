@@ -208,7 +208,7 @@ export function BundleCredentialsModal({
               <button
                 type="submit"
                 disabled={busy || clearing}
-                className="text-xs px-3 py-1.5 rounded bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-60"
+                className="text-xs px-3 py-1.5 rounded bg-primary text-primary-foreground hover:bg-primary/80 disabled:opacity-60"
               >
                 {busy ? "Saving…" : "Save"}
               </button>
