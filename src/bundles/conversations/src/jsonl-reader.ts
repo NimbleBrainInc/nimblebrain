@@ -26,6 +26,13 @@ export interface ConversationMeta {
   totalCostUsd: number;
   lastModel: string | null;
   ownerId?: string;
+  /**
+   * The room (workspace) the conversation ran in — the breadcrumb the
+   * runtime stamps on the line-1 header at create time. Absent on legacy
+   * files written before workspace stamping; a consumer treats absent as
+   * the owner's personal room.
+   */
+  workspaceId?: string;
 }
 
 /**
@@ -283,6 +290,7 @@ function parseMeta(raw: Record<string, unknown>): ConversationMeta | null {
     totalCostUsd: (raw.totalCostUsd as number) ?? 0,
     lastModel: (raw.lastModel as string | null) ?? null,
     ...(raw.ownerId ? { ownerId: raw.ownerId as string } : {}),
+    ...(raw.workspaceId ? { workspaceId: raw.workspaceId as string } : {}),
   };
 }
 

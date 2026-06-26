@@ -4,7 +4,7 @@ import { ConversationList } from "./ConversationList";
 import { groupByDate } from "./dateUtils";
 import { Header } from "./Header";
 import { SearchResults } from "./SearchResults";
-import type { FilterKey, ListResult, SearchResultData } from "./types";
+import type { FilterKey, ListResult, RoomScope, SearchResultData } from "./types";
 
 type View = "list" | "search";
 
@@ -13,7 +13,13 @@ export function Dashboard() {
   const action = useAction();
   // Conversations with an in-flight assistant turn in this tab — pushed by the
   // host via hostContext. Drives a live per-row streaming indicator.
-  const { streamingConversationIds } = useHostContext<{ streamingConversationIds?: string[] }>();
+  // `workspace` is the room the shell is focused on — the binding for the
+  // default room-scoped list. `streamingConversationIds` drives the live
+  // per-row indicator. Both are pushed by the host via hostContext.
+  const { streamingConversationIds, workspace } = useHostContext<{
+    streamingConversationIds?: string[];
+    workspace?: { id: string; name: string; isPersonal?: boolean };
+  }>();
   const streamingIds = useMemo(
     () => new Set(streamingConversationIds ?? []),
     [streamingConversationIds],
@@ -22,6 +28,9 @@ export function Dashboard() {
   const [view, setView] = useState<View>("list");
   const [conversations, setConversations] = useState<ListResult["conversations"]>([]);
   const [activeFilter, setActiveFilter] = useState<FilterKey>("all");
+  // Default to the focused room — the list matches where you are. "All rooms"
+  // is the deliberate cross-room escape hatch.
+  const [roomScope, setRoomScope] = useState<RoomScope>("current");
   const [searchQuery, setSearchQuery] = useState("");
   const [searchResults, setSearchResults] = useState<SearchResultData | null>(null);
   const [loading, setLoading] = useState(true);
@@ -176,21 +185,31 @@ export function Dashboard() {
     [action],
   );
 
-  const groups = useMemo(
-    () => (loading ? [] : groupByDate(conversations)),
-    [loading, conversations],
-  );
+  // Scope the list to the focused room by default. A chat with no stamped
+  // room belongs to the personal room, so it shows only when the focused room
+  // IS personal. "All rooms" bypasses the filter for the cross-room view.
+  const roomScoped = useMemo(() => {
+    if (roomScope === "all" || !workspace) return conversations;
+    return conversations.filter((c) =>
+      c.workspaceId ? c.workspaceId === workspace.id : workspace.isPersonal === true,
+    );
+  }, [conversations, roomScope, workspace]);
+
+  const groups = useMemo(() => (loading ? [] : groupByDate(roomScoped)), [loading, roomScoped]);
   const isSearching = view === "search";
 
   return (
     <>
       <Header
-        totalCount={conversations.length}
+        totalCount={roomScoped.length}
         loading={loading}
         groups={groups}
         activeFilter={activeFilter}
         isSearching={isSearching}
         searchQuery={searchQuery}
+        roomName={workspace?.name}
+        roomScope={roomScope}
+        onSelectRoomScope={setRoomScope}
         onSelectFilter={handleSelectFilter}
         onSearchInput={handleSearchInput}
         onSearchSubmit={handleSearchSubmit}
@@ -210,7 +229,7 @@ export function Dashboard() {
             loading={loading}
             groups={groups}
             activeFilter={activeFilter}
-            totalConversations={conversations.length}
+            totalConversations={roomScoped.length}
             streamingIds={streamingIds}
             onOpen={handleOpenConversation}
           />

@@ -33,6 +33,12 @@ export interface IndexEntry {
    * and the dispatcher treats `null` as inaccessible (no synthesis).
    */
   ownerId: string | null;
+  /**
+   * The room (workspace) the conversation ran in. `null` for legacy files
+   * with no stamped workspace — a consumer reads that as the owner's
+   * personal room. The room-scoped conversation list keys off this.
+   */
+  workspaceId: string | null;
 }
 
 export interface ListOptions {
@@ -230,6 +236,7 @@ export class ConversationIndex {
       preview: header.preview,
       filePath,
       ownerId: header.meta.ownerId ?? null,
+      workspaceId: header.meta.workspaceId ?? null,
     };
 
     this.entries.set(entry.id, entry);
@@ -262,6 +269,7 @@ export class ConversationIndex {
           preview: header.preview,
           filePath,
           ownerId: header.meta.ownerId ?? null,
+          workspaceId: header.meta.workspaceId ?? null,
         };
         this.entries.set(entry.id, entry);
         this.fileToId.set(filename, entry.id);

@@ -17,7 +17,18 @@
 
 import { getThemeTokens } from "./theme";
 
-export type WorkspaceForHostContext = { id: string; name: string } | null;
+export type WorkspaceForHostContext = {
+  id: string;
+  name: string;
+  /**
+   * Whether the active room is the user's personal room. Apps that scope a
+   * view to the current room read this to fold legacy artifacts with no
+   * stamped room into Personal (absent room === personal, per the
+   * permission-boundaries spec). This is the app's OWN active room — not a
+   * roster of other rooms — so it crosses no wall.
+   */
+  isPersonal?: boolean;
+} | null;
 
 /**
  * Non-spec extension keys to merge into the `ui/initialize` hostContext
@@ -34,7 +45,13 @@ export function buildHostExtensions(
   streamingConversationIds: string[] = [],
 ): Record<string, unknown> {
   const ext: Record<string, unknown> = workspace
-    ? { workspace: { id: workspace.id, name: workspace.name } }
+    ? {
+        workspace: {
+          id: workspace.id,
+          name: workspace.name,
+          isPersonal: workspace.isPersonal ?? false,
+        },
+      }
     : {};
   if (forceRefresh) ext.forceRefresh = true;
   // Conversations with an in-flight assistant turn in this browser tab. Apps

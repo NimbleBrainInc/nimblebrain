@@ -1,5 +1,5 @@
 import { FILTER_GROUPS, FILTER_LABELS } from "./dateUtils";
-import type { DateGroup, FilterKey } from "./types";
+import type { DateGroup, FilterKey, RoomScope } from "./types";
 
 interface HeaderProps {
   totalCount: number;
@@ -8,6 +8,10 @@ interface HeaderProps {
   activeFilter: FilterKey;
   isSearching: boolean;
   searchQuery: string;
+  /** Display name of the focused room; absent until the host handshake lands. */
+  roomName?: string;
+  roomScope: RoomScope;
+  onSelectRoomScope: (scope: RoomScope) => void;
   onSelectFilter: (key: FilterKey) => void;
   onSearchInput: (value: string) => void;
   onSearchSubmit: () => void;
@@ -25,6 +29,9 @@ export function Header({
   activeFilter,
   isSearching,
   searchQuery,
+  roomName,
+  roomScope,
+  onSelectRoomScope,
   onSelectFilter,
   onSearchInput,
   onSearchSubmit,
@@ -34,7 +41,20 @@ export function Header({
 
   return (
     <div className="header">
-      <div className="header-title">Conversations</div>
+      <div className="header-top">
+        <div className="header-title">Conversations</div>
+        {roomName && (
+          <select
+            className="room-select"
+            value={roomScope}
+            onChange={(e) => onSelectRoomScope(e.target.value as RoomScope)}
+            aria-label="Scope conversations by room"
+          >
+            <option value="current">{roomName}</option>
+            <option value="all">All rooms</option>
+          </select>
+        )}
+      </div>
       {!loading && totalCount > 0 && (
         <div className="header-lede">
           You have {totalCount} conversation{totalCount === 1 ? "" : "s"}
