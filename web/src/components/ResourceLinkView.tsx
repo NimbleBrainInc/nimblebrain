@@ -99,7 +99,7 @@ export function ResourceLinkView({
 
   if (loading) {
     return (
-      <div className="w-full my-2 rounded-lg border border-border bg-card p-3 flex items-center gap-2 text-sm text-muted-foreground">
+      <div className="w-full my-2 rounded-sm border border-border bg-card p-3 flex items-center gap-2 text-sm text-muted-foreground">
         <Loader2 className="w-4 h-4 text-processing animate-spin" />
         Loading {displayName}...
       </div>
@@ -108,7 +108,7 @@ export function ResourceLinkView({
 
   if (error || !content) {
     return (
-      <div className="w-full my-2 rounded-lg border border-destructive/20 bg-destructive/5 p-3 text-sm text-destructive">
+      <div className="w-full my-2 rounded-sm border border-destructive/20 bg-destructive/5 p-3 text-sm text-destructive">
         Failed to load {displayName}: {error ?? "unknown error"}
       </div>
     );
@@ -140,7 +140,7 @@ export function ResourceLinkView({
 
   if (resolvedMime === "application/pdf" && objectUrl) {
     return (
-      <div className="w-full my-2 rounded-lg border border-border bg-card overflow-hidden">
+      <div className="w-full my-2 rounded-sm border border-border bg-card overflow-hidden">
         {header}
         {/* No `sandbox` attribute by design. Chromium routes application/pdf
             to PDFium, which runs in a separate sandboxed renderer process
@@ -171,7 +171,7 @@ export function ResourceLinkView({
 
   if (resolvedMime.startsWith("image/") && objectUrl) {
     return (
-      <div className="w-full my-2 rounded-lg border border-border bg-card overflow-hidden">
+      <div className="w-full my-2 rounded-sm border border-border bg-card overflow-hidden">
         {header}
         <img src={objectUrl} alt={displayName} className="block max-w-full h-auto" />
         {description && (
@@ -185,7 +185,7 @@ export function ResourceLinkView({
 
   if (content.text !== undefined) {
     return (
-      <div className="w-full my-2 rounded-lg border border-border bg-card overflow-hidden">
+      <div className="w-full my-2 rounded-sm border border-border bg-card overflow-hidden">
         {header}
         <pre className="p-3 text-xs overflow-x-auto whitespace-pre-wrap break-words max-h-96">
           {content.text}
@@ -200,7 +200,7 @@ export function ResourceLinkView({
   }
 
   return (
-    <div className="w-full my-2 rounded-lg border border-border bg-card">
+    <div className="w-full my-2 rounded-sm border border-border bg-card">
       {header}
       <div className="p-3 text-sm">
         {objectUrl ? (

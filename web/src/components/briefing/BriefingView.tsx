@@ -148,7 +148,7 @@ export function BriefingView({ briefing, loading, error, onRetry, onAction }: Br
 
       {error && (
         <div
-          className="mt-3 rounded-lg border border-destructive/20 bg-destructive/5 px-4 py-3 text-sm text-destructive"
+          className="mt-3 rounded-sm border border-destructive/20 bg-destructive/5 px-4 py-3 text-sm text-destructive"
           data-testid="workspace-briefing-error"
         >
           <p>{error}</p>

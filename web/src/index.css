@@ -81,13 +81,15 @@
     --color-processing-foreground: var(--processing-foreground);
     --color-processing-light: var(--processing-light);
     --color-info-light: var(--info-light);
-    --radius-sm: calc(var(--radius) * 0.6);
-    --radius-md: calc(var(--radius) * 0.8);
-    --radius-lg: var(--radius);
-    --radius-xl: calc(var(--radius) * 1.4);
-    --radius-2xl: calc(var(--radius) * 1.8);
-    --radius-3xl: calc(var(--radius) * 2.2);
-    --radius-4xl: calc(var(--radius) * 2.6);
+    /* Radius scale — single-sourced from src/theme/palette.ts (radiusScale),
+       emitted to :root as --border-radius-* (the ext-apps / synapse-ui names)
+       and aliased here so shell `rounded-*` and the iframe apps round
+       equivalent elements identically: controls 8px (sm), cards 12px (md). */
+    --radius-xs: var(--border-radius-xs);
+    --radius-sm: var(--border-radius-sm);
+    --radius-md: var(--border-radius-md);
+    --radius-lg: var(--border-radius-lg);
+    --radius-xl: var(--border-radius-xl);
 }
 
 /* ─────────────────────────────────────────────────────────────────────────

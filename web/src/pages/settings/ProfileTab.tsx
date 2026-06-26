@@ -136,7 +136,7 @@ export function ProfileTab() {
                 type="button"
                 onClick={() => handleThemeChange(opt.value)}
                 className={cn(
-                  "flex flex-col items-center gap-2 rounded-lg border-2 p-4 text-center transition-all",
+                  "flex flex-col items-center gap-2 rounded-sm border-2 p-4 text-center transition-all",
                   selected
                     ? "border-warm bg-warm/5 text-foreground"
                     : "border-border bg-card text-muted-foreground hover:border-muted-foreground/20 hover:bg-muted/50",

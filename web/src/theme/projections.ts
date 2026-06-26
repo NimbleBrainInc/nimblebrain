@@ -88,6 +88,11 @@ export function paletteToRootCss(): string {
   const lightDecls = names.map((n) => `  --${n}: ${pick(colors[n], "light")};`);
   lightDecls.push(`  --radius: ${radiusBase};`);
   for (const [k, v] of Object.entries(layout)) lightDecls.push(`  ${k}: ${v};`);
+  // Radius scale — the ONE radius source, shared with the iframe apps. Emitted
+  // as `--border-radius-*` (the ext-apps / synapse-ui names) and aliased to
+  // Tailwind's `--radius-*` in index.css, so the shell and the apps round
+  // equivalent elements identically.
+  for (const [k, v] of Object.entries(radiusScale)) lightDecls.push(`  ${k}: ${v};`);
   // Type scale is mode-independent — :root only, aliased to Tailwind `--text-*`
   // in index.css. Same single-source path as colors/radius/layout.
   for (const [k, v] of Object.entries(typeScale)) lightDecls.push(`  ${k}: ${v};`);

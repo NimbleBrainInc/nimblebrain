@@ -339,7 +339,7 @@ const NavItem = memo(function NavItem({
         end={end}
         title={label}
         className={({ isActive }) =>
-          `flex items-center justify-center p-2.5 mx-2 rounded-lg text-sm font-medium transition-colors ${
+          `flex items-center justify-center p-2.5 mx-2 rounded-sm text-sm font-medium transition-colors ${
             isActive
               ? "bg-sidebar-foreground/10 text-sidebar-foreground"
               : "text-sidebar-foreground hover:bg-sidebar-foreground/5 hover:text-sidebar-foreground"
@@ -356,7 +356,7 @@ const NavItem = memo(function NavItem({
       to={to}
       end={end}
       className={({ isActive }) =>
-        `flex items-center gap-3 px-3 py-2.5 mx-2 rounded-lg text-sm font-medium transition-colors ${
+        `flex items-center gap-3 px-3 py-2.5 mx-2 rounded-sm text-sm font-medium transition-colors ${
           isActive
             ? "bg-sidebar-foreground/10 text-sidebar-foreground"
             : "text-sidebar-foreground hover:bg-sidebar-foreground/5 hover:text-sidebar-foreground"
@@ -387,7 +387,7 @@ function MobileNavItem({
       end={end}
       onClick={() => setDrawerOpen(false)}
       className={({ isActive }) =>
-        `flex items-center gap-3 px-3 py-2.5 mx-2 rounded-lg text-sm font-medium transition-colors ${
+        `flex items-center gap-3 px-3 py-2.5 mx-2 rounded-sm text-sm font-medium transition-colors ${
           isActive
             ? "bg-sidebar-foreground/10 text-sidebar-foreground"
             : "text-sidebar-foreground hover:bg-sidebar-foreground/5 hover:text-sidebar-foreground"

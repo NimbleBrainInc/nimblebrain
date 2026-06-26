@@ -95,7 +95,7 @@ export function ComposioApiKeyModal({
         role="dialog"
         aria-modal="true"
         aria-labelledby="composio-apikey-title"
-        className="bg-background border border-border rounded-lg shadow-xl w-full max-w-md p-5"
+        className="bg-background border border-border rounded-sm shadow-xl w-full max-w-md p-5"
       >
         <h2 id="composio-apikey-title" className="text-base font-semibold">
           Connect {connectorName}

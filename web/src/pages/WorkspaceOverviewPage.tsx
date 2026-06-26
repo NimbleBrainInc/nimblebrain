@@ -118,7 +118,7 @@ export function WorkspaceOverviewPage() {
           <Link
             to={`/w/${toSlug(workspace.id)}/settings/general`}
             data-testid="workspace-overview-settings"
-            className="shrink-0 inline-flex items-center gap-2 px-3 py-2 rounded-lg border border-border text-sm text-muted-foreground hover:text-foreground hover:bg-foreground/[0.02] hover:border-foreground/20 transition-colors"
+            className="shrink-0 inline-flex items-center gap-2 px-3 py-2 rounded-sm border border-border text-sm text-muted-foreground hover:text-foreground hover:bg-foreground/[0.02] hover:border-foreground/20 transition-colors"
           >
             <Settings className="w-4 h-4" />
             <span className="hidden sm:inline">Settings</span>
@@ -145,7 +145,7 @@ export function WorkspaceOverviewPage() {
           <AppGridSkeleton />
         ) : apps.length === 0 ? (
           <div
-            className="rounded-lg border border-dashed border-border p-8 text-center text-sm text-muted-foreground"
+            className="rounded-sm border border-dashed border-border p-8 text-center text-sm text-muted-foreground"
             data-testid="workspace-overview-empty"
           >
             No apps installed in this workspace yet.
@@ -195,7 +195,7 @@ function AppGridSkeleton() {
       aria-hidden
     >
       {[0, 1, 2].map((i) => (
-        <div key={i} className="flex flex-col gap-2 p-4 rounded-lg border border-border bg-card">
+        <div key={i} className="flex flex-col gap-2 p-4 rounded-sm border border-border bg-card">
           <div className="flex items-center gap-2">
             <div className="h-4 w-4 shrink-0 rounded bg-muted-foreground/20 animate-pulse" />
             <div className="h-3.5 w-2/3 rounded bg-muted-foreground/20 animate-pulse" />
@@ -224,7 +224,7 @@ function AppCard({
       data-testid="workspace-overview-app-card"
       data-app-route={placement.route ?? ""}
       className={cn(
-        "group flex flex-col gap-2 p-4 rounded-lg border border-border bg-card text-left",
+        "group flex flex-col gap-2 p-4 rounded-sm border border-border bg-card text-left",
         "hover:border-foreground/20 hover:bg-foreground/[0.02] transition-colors",
       )}
     >
