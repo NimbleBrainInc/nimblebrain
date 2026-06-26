@@ -157,6 +157,8 @@ A chat or task session reaches **exactly one workspace** plus the caller's ident
 
 The session's reachable set comes from `runtime.listToolsForWorkspace(wsId)` (that workspace's tools, namespaced, + identity tools); the engine's router and `nb__search` both read it. `nb__search` discovers **only** that workspace — there is no cross-workspace search corpus.
 
+**Skills are walled the same way.** Layer-3 skill selection (`selectRequestLayer3`) loads org-tier (`workDir/skills/`, org-wide), workspace-tier (the focused `wsId` only), and user-tier (`users/<userId>/skills/`) skills — plus **bundle skills** (a connector/app's own `skill://<name>/usage` guidance, synthesized and tool-affinity-matched) from the **focused workspace only**. A bundle installed in another workspace never injects its skill here. No skill crosses a workspace boundary.
+
 - **Construct** workspace names only via `namespacedToolName(wsId, name)` from `src/tools/namespace.ts`. **Parse** only via `parseNamespacedToolName(s)` (a name with no `ws_<id>-` prefix is `scope: { kind: "identity" }`). `check:tool-namespace` enforces.
 - **Web tier** mirrors the parser at `web/src/lib/namespaced-tool.ts` (regex from `web/src/_generated/workspace-id-pattern.ts`, emitted by `bun run codegen`; `check:codegen` catches drift).
 - **Per-call routing** lives in `src/orchestrator/route.ts`. Errors: `UnknownNamespacedToolName` / `CrossWorkspaceReachDenied` / `WorkspaceToolUnavailable` / `UnknownToolSource` / `UnknownIdentitySource` (`UnknownWorkspace` / `WorkspaceAccessDenied` stay in the taxonomy as the base/legacy classes). Both `POST /v1/chat` and `/mcp` map them to identical structured `data.reason` discriminators.

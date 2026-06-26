@@ -1412,7 +1412,6 @@ export class Runtime {
     // per turn, not twice.
     const selectedLayer3 = await this.selectRequestLayer3({
       wsId: focusedWsId ?? sessionWsId,
-      ownerId,
       userId,
       activeToolNames: tools.map((t) => t.name),
       capabilityPool: poolCapability,
@@ -1963,10 +1962,9 @@ export class Runtime {
     const requestContextSkills = identityOverride
       ? [...contextBase, identityOverride]
       : contextBase;
-    const accessibleForSkills = await this._workspaceStore.getWorkspacesForUser(ownerId);
-    const bundleSkills = (
-      await Promise.all(accessibleForSkills.map((ws) => this.loadBundleSkills(ws.id, {})))
-    ).flat();
+    // Bundle skills come from the FOCUSED workspace only (the wall) — never
+    // across the owner's other workspaces.
+    const bundleSkills = await this.loadBundleSkills(focusedWsId ?? sessionWsId, {});
     const mergedLayer3Pool: Skill[] = [...poolCapability, ...bundleSkills];
     const activeToolNames = tools.map((t) => t.name);
     const selectedLayer3 = selectLayer3Skills({
@@ -3554,10 +3552,12 @@ export class Runtime {
    * `dynamic` (tool-affinity) strategy against `activeToolNames`.
    */
   async selectRequestLayer3(params: {
-    /** Focused workspace (or session/personal in home mode) for workspace-tier skills. */
+    /**
+     * Focused workspace (or session/personal in home mode) — the ONLY workspace
+     * whose workspace-tier AND bundle skills are in scope. Skills never cross a
+     * workspace boundary.
+     */
     wsId: string;
-    /** Owner identity for cross-workspace reach (accessible workspaces + bundle skills). */
-    ownerId: string;
     /** Identity for user-tier skills; null in non-identity-bound paths. */
     userId: string | null;
     /** Names of tools in the set tool-affinity is evaluated against. */
@@ -3577,18 +3577,11 @@ export class Runtime {
     const capabilityPool =
       params.capabilityPool ??
       partitionSkillsByRole(this.loadConversationSkills(params.wsId, params.userId)).capability;
-    const accessibleForSkills = await this._workspaceStore.getWorkspacesForUser(params.ownerId);
-    const bundleSkills = (
-      await Promise.all(
-        accessibleForSkills.map((ws) =>
-          this.loadBundleSkills(ws.id, {
-            ...(params.appContextServerName
-              ? { appContextServerName: params.appContextServerName }
-              : {}),
-          }),
-        ),
-      )
-    ).flat();
+    // Bundle skills come from the FOCUSED workspace only — a connector installed
+    // in another workspace must not inject its usage skill here (the wall).
+    const bundleSkills = await this.loadBundleSkills(params.wsId, {
+      ...(params.appContextServerName ? { appContextServerName: params.appContextServerName } : {}),
+    });
     return selectLayer3Skills({
       skills: [...capabilityPool, ...bundleSkills],
       activeTools: params.activeToolNames,
@@ -3627,7 +3620,6 @@ export class Runtime {
     );
     const layer3 = await this.selectRequestLayer3({
       wsId,
-      ownerId,
       userId,
       activeToolNames,
       capabilityPool: capability,
