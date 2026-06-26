@@ -1253,18 +1253,18 @@ export class Runtime {
       : { org: await this.getInstructionsStore().read({ scope: "org" }), workspace: "" };
 
     // Build focusedApp when the request is scoped to a specific app (§7 app-aware chat).
-    // Pre-Stage-2 this searched the request's single workspace; post-T006
-    // an appContext.serverName may resolve in ANY workspace the identity
-    // can see. Search across the identity's accessible registries.
+    // The app is resolved in the SAME single workspace the session's tools are
+    // bound to (`focusedWsId ?? sessionWsId` — see `toolsWsId` below), never a
+    // scan across the identity's other workspaces. The wall applies to the
+    // briefing too: it can only ever describe an app whose tools this session
+    // is actually allowed to call.
     let focusedApp: FocusedAppInfo | undefined;
     let focusedAppWsId: string | undefined;
     if (request.appContext) {
-      const accessibleWorkspaces = await this._workspaceStore.getWorkspacesForUser(ownerId);
-      for (const ws of accessibleWorkspaces) {
-        const reg = this._workspaceRegistries.get(ws.id);
-        if (!reg) continue;
-        const source = reg.getSources().find((s) => s.name === request.appContext?.serverName);
-        if (!source) continue;
+      const appWsId = focusedWsId ?? sessionWsId;
+      const reg = this._workspaceRegistries.get(appWsId);
+      const source = reg?.getSources().find((s) => s.name === request.appContext?.serverName);
+      if (source) {
         try {
           const sourceTools = await source.tools();
           const skillResource = await this.getAppSkillResource(request.appContext.serverName);
@@ -1272,7 +1272,10 @@ export class Runtime {
           const hasReference = skillResource
             ? source instanceof McpSource && (await this.hasResource(source, referenceUri))
             : false;
-          const bundleInstance = this.lifecycle?.getInstance(request.appContext.serverName, ws.id);
+          const bundleInstance = this.lifecycle?.getInstance(
+            request.appContext.serverName,
+            appWsId,
+          );
           focusedApp = {
             name: request.appContext.appName,
             tools: sourceTools.map((t) => ({
@@ -1283,10 +1286,9 @@ export class Runtime {
             ...(hasReference ? { referenceResourceUri: referenceUri } : {}),
             trustScore: bundleInstance?.trustScore ?? 100,
           };
-          focusedAppWsId = ws.id;
-          break;
+          focusedAppWsId = appWsId;
         } catch {
-          // Source may be stopped or crashed — try other workspaces
+          // Source stopped or crashed — no app briefing this turn.
         }
       }
     }
