@@ -218,4 +218,14 @@ describe("paletteToRootCss — shell :root/.dark match current values", () => {
   test("dark block does not redefine the type scale (mode-independent, cascades)", () => {
     expect(darkBlock).not.toContain("--font-text-");
   });
+
+  test("light :root carries the font stacks (aliased to Tailwind --font-* in index.css)", () => {
+    expect(rootBlock).toContain("--nb-font-sans: 'Satoshi', system-ui, sans-serif;");
+    expect(rootBlock).toContain("--nb-font-heading: 'Erode', Georgia, serif;");
+    expect(rootBlock).toContain("--nb-font-mono: 'JetBrains Mono Variable'");
+  });
+
+  test("dark block does not redefine the font stacks (mode-independent, cascades)", () => {
+    expect(darkBlock).not.toContain("--nb-font-");
+  });
 });
