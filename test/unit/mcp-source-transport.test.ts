@@ -37,7 +37,7 @@ describe("McpSource transport mode", () => {
   });
 
   // Note: real 15s TCP timeout test removed — it waited for a non-routable IP
-  // to time out, costing 15s per run. Timeout behavior is covered by smoke tests.
+  // to time out, costing 15s per run.
 
   it("remote source onclose marks source as dead and emits event", async () => {
     // We can't easily test a full remote connection, but we can test the

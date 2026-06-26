@@ -427,11 +427,8 @@ describe("System Tools", () => {
 		]);
 	});
 
-	// `search with scope=registry` lives in test/smoke/system-tools-registry.test.ts.
-	// It hits the live mpak registry over the network, which makes it a smoke
-	// test by definition (CLAUDE.md: smoke tier owns "real MCP server spawns,
-	// network calls"). Unit gate stays deterministic; smoke job continues to
-	// validate the live wiring on main.
+	// `search with scope=registry` is not exercised here: it hits the live mpak
+	// registry over the network, so it can't run in the deterministic unit gate.
 
 	it("tools() returns prefixed tool names", async () => {
 		const registry = await makeRegistry();

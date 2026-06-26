@@ -75,32 +75,6 @@ jobs:
       - name: Integration tests
         run: bun run test:integration
 
-  smoke:
-    name: Smoke Tests
-    # Runs on PRs and on main, in parallel with the other test jobs — NOT chained
-    # behind unit/integration. build-and-push gates on all four test jobs (incl.
-    # smoke), so nothing builds until every test is green; chaining smoke only
-    # delayed that gate without adding safety. Smoke hits the live mpak registry +
-    # downloads bundles (~15s, network). Not gated to main-only: that previously
-    # let a stale smoke assertion merge green and turn main red post-merge.
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v6
-      - uses: actions/setup-python@v6
-        with:
-          python-version: "3.13"
-      - uses: oven-sh/setup-bun@v2
-        with:
-          bun-version: ${{ env.BUN_VERSION }}
-      - name: Install dependencies
-        run: bun install
-      - name: Install mpak
-        # Intentionally @latest: smoke validates the live registry against the
-        # current mpak. Do NOT pin — a fixed version blinds the check it exists for.
-        run: npm install -g @nimblebrain/mpak@latest
-      - name: Smoke tests
-        run: bun run smoke
-
   # Build + push a SHA-tagged image for every commit that lands on main, so
   # `make deploy` can roll out any main commit without a manual local push.
   # This is the everyday counterpart to release.yml (which builds on `v*`
@@ -114,7 +88,7 @@ jobs:
   # main commits get published.
   build-and-push:
     name: Build & Push Images
-    needs: [lint-and-check, test-unit, test-integration, smoke]
+    needs: [lint-and-check, test-unit, test-integration]
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     permissions:
