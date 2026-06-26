@@ -10,6 +10,7 @@ import { ConnectorStatusHero } from "../../components/connectors/ConnectorStatus
 import { OAuthConnectionSection } from "../../components/connectors/OAuthConnectionSection";
 import { OperatorOAuthSection } from "../../components/connectors/OperatorOAuthSection";
 import { ToolPermissionsTable } from "../../components/connectors/ToolPermissionsTable";
+import { Button } from "../../components/ui/button";
 import { roleAtLeast, useScopedRole } from "../../hooks/useScopedRole";
 
 /**
@@ -148,13 +149,14 @@ export function ConnectorDetailPage() {
             </a>
           )}
           {showHeaderConfigure && (
-            <button
+            <Button
               type="button"
+              variant="outline"
+              size="sm"
               onClick={() => setConfigureModalOpen(true)}
-              className="text-xs px-3 py-1.5 rounded border border-border bg-background hover:bg-muted"
             >
               Configure
-            </button>
+            </Button>
           )}
           {canManage && (
             <button

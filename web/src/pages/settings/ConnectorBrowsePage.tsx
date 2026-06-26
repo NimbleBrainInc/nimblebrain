@@ -12,6 +12,7 @@ import {
 import { ComposioApiKeyModal } from "../../components/connectors/ComposioApiKeyModal";
 import { ConnectorIcon } from "../../components/connectors/ConnectorIcon";
 import { OperatorSetupModal } from "../../components/connectors/OperatorSetupModal";
+import { Button } from "../../components/ui/button";
 import { roleAtLeast, useScopedRole } from "../../hooks/useScopedRole";
 
 /**
@@ -363,9 +364,6 @@ function CardAction({
   // surfaces inside OperatorSetupModal, so the small `app.asana.com`
   // hint that used to live under each Set up button is intentionally
   // gone here.
-  const btnClass =
-    "text-xs px-3 py-1.5 rounded border border-border bg-background hover:bg-muted disabled:opacity-60";
-
   // Static-auth flow:
   //   - not configured + admin     → Set up
   //   - not configured + non-admin → "Operator setup required"
@@ -374,29 +372,29 @@ function CardAction({
     if (!operatorReady) {
       if (isWsAdmin) {
         return (
-          <button type="button" onClick={onSetUp} className={btnClass}>
+          <Button type="button" variant="outline" size="sm" onClick={onSetUp}>
             Set up
-          </button>
+          </Button>
         );
       }
       return <span className="text-xs text-muted-foreground">Operator setup required</span>;
     }
     return (
-      <button type="button" onClick={onInstall} disabled={busy} className={btnClass}>
+      <Button type="button" variant="outline" size="sm" onClick={onInstall} disabled={busy}>
         {busy ? "Installing…" : "Install"}
-      </button>
+      </Button>
     );
   }
   if (isMpakStub) {
     return (
-      <button type="button" onClick={onInstall} disabled={busy} className={btnClass}>
+      <Button type="button" variant="outline" size="sm" onClick={onInstall} disabled={busy}>
         {busy ? "Installing…" : "Install"}
-      </button>
+      </Button>
     );
   }
   return (
-    <button type="button" onClick={onInstall} disabled={busy} className={btnClass}>
+    <Button type="button" variant="outline" size="sm" onClick={onInstall} disabled={busy}>
       {busy ? "Installing…" : "Install"}
-    </button>
+    </Button>
   );
 }
