@@ -13,7 +13,7 @@ import type {
 } from "./home-types.ts";
 
 type ConversationSource =
-  | { kind: "store"; store: ConversationStore }
+  | { kind: "store"; store: Pick<ConversationStore, "list"> }
   | { kind: "jsonl"; conversationsDir: string };
 
 type BundleEventSource = { kind: "sse"; eventManager: SseEventManager } | { kind: "none" };
@@ -128,7 +128,7 @@ export class ActivityCollector {
   }
 
   private async collectConversationsFromStore(
-    store: ConversationStore,
+    store: Pick<ConversationStore, "list">,
     since: string,
     until: string,
     limit: number,

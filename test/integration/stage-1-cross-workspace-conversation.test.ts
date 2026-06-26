@@ -31,6 +31,7 @@ import { tmpdir } from "node:os";
 import type { ServerHandle } from "../../src/api/server.ts";
 import { startServer } from "../../src/api/server.ts";
 import { canAccess } from "../../src/conversation/index-cache.ts";
+import { roomConversationsDir } from "../../src/conversation/paths.ts";
 import type {
   CreateUserInput,
   CreateUserResult,
@@ -141,9 +142,10 @@ describe("Stage 1 — conversations outlive their workspace context", () => {
   });
 
   test("a conversation created in workspace A survives Alice being removed from A", async () => {
-    // 1. Alice POSTs a chat in shared_a — produces a conversation
-    //    whose file lives at the top-level user path, with
-    //    `workspaceId: sharedA` on metadata.
+    // 1. Alice POSTs a chat in shared_a — produces a conversation that is
+    //    room-owned under her personal room (the identity-bound chat surface
+    //    stores under the session/personal workspace; the X-Workspace-Id
+    //    header scopes the prompt briefing, not the conversation's room).
     const createRes = await fetch(`${baseUrl}/v1/chat`, {
       method: "POST",
       headers: {
@@ -158,17 +160,21 @@ describe("Stage 1 — conversations outlive their workspace context", () => {
     const convId = createBody.conversationId;
     expect(convId).toMatch(/^conv_[a-f0-9]{16}$/);
 
-    // Conversation file lives at top-level, NOT under the workspace.
-    const topLevelPath = join(workDir, "conversations", `${convId}.jsonl`);
-    const wsScopedPath = join(workDir, "workspaces", sharedA, "conversations", `${convId}.jsonl`);
-    expect((await stat(topLevelPath)).isFile()).toBe(true);
-    let wsScopedExists = true;
+    // The conversation is room-owned: its file lives under the workspace it
+    // ran in (`workspaces/<sharedA>/conversations/<ownerId>/`) — the room owns
+    // the directory — and NOT in a flat top-level `conversations/` dir. The
+    // owner partition is what makes it survive removal: dropping Alice from
+    // sharedA's member list doesn't touch her conversation file.
+    const roomPath = join(roomConversationsDir(workDir, sharedA, ALICE.id), `${convId}.jsonl`);
+    const flatPath = join(workDir, "conversations", `${convId}.jsonl`);
+    expect((await stat(roomPath)).isFile()).toBe(true);
+    let flatExists = true;
     try {
-      await stat(wsScopedPath);
+      await stat(flatPath);
     } catch {
-      wsScopedExists = false;
+      flatExists = false;
     }
-    expect(wsScopedExists).toBe(false);
+    expect(flatExists).toBe(false);
 
     // 2. Remove Alice from shared_a. This is the load-bearing
     //    mutation: workspace membership goes away, conversation
@@ -181,12 +187,11 @@ describe("Stage 1 — conversations outlive their workspace context", () => {
     const loaded = await runtime.findConversation(convId, { userId: ALICE.id });
     expect(loaded).not.toBeNull();
     expect(loaded?.ownerId).toBe(ALICE.id);
-    // Stage 2 (T006): the chat surface is identity-bound; the metadata
-    // `workspaceId` is the session (personal) workspace, NOT the value
-    // of `X-Workspace-Id`. The header now scopes the prompt briefing, not
-    // this metadata field; per-call workspace attribution lives on each tool.done
-    // event's payload.
-    expect(loaded?.workspaceId).toBe(`ws_user_${ALICE.id}`);
+    // The conversation is room-owned by the workspace it ran in: the metadata
+    // `workspaceId` records that room (`sharedA`, the focused `X-Workspace-Id`),
+    // which is also where its file lives. Ownership — not workspace membership —
+    // is the access gate, so the conversation outlives Alice's removal from it.
+    expect(loaded?.workspaceId).toBe(sharedA);
 
     // 4. SSE event stream on the conversation also still works —
     //    the events route gates on ownership, not workspace membership.
@@ -237,22 +242,21 @@ describe("Stage 1 — conversations outlive their workspace context", () => {
     const continueBody = (await continueRes.json()) as { conversationId: string };
     expect(continueBody.conversationId).toBe(convId);
 
-    // 7. The conversation now has two turns recorded — one in
-    //    sharedA-flavored context (pre-removal), one in sharedB-flavored
-    //    (post-removal). Per Stage 2 (T006) the metadata `workspaceId`
-    //    records the session (personal) workspace, NOT the `X-Workspace-Id`
-    //    of the request (which now scopes the prompt briefing, not this
-    //    metadata). Tool scoping for cross-workspace calls happens at
-    //    dispatch time via the orchestrator's parsed namespace
-    //    — the metadata field is only a UI breadcrumb for the legacy
-    //    single-workspace overlays/file-store reads.
-    const store = runtime.findConversationStore();
-    const conv = (await store.load(convId)) ?? null;
+    // 7. The conversation now has two turns recorded — one created while
+    //    focused on sharedA (pre-removal), one continued while focused on
+    //    sharedB (post-removal). The conversation's ROOM is fixed at create
+    //    (sharedA) and does NOT migrate when continued from a different
+    //    focused workspace: on resume the store is resolved from the
+    //    conversation's own path, so both turns land in the sharedA room and
+    //    `workspaceId` stays sharedA. The X-Workspace-Id of the second turn
+    //    scopes that turn's tools/briefing, not where the conversation lives.
+    const store = await runtime.resolveConversationStore(convId);
+    const conv = (await store!.load(convId)) ?? null;
     expect(conv).not.toBeNull();
     if (conv) {
-      const messages = await store.history(conv);
+      const messages = await store!.history(conv);
       expect(messages.length).toBeGreaterThanOrEqual(2);
-      expect(conv.workspaceId).toBe(`ws_user_${ALICE.id}`);
+      expect(conv.workspaceId).toBe(sharedA);
     }
   });
 });

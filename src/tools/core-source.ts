@@ -910,7 +910,10 @@ export function createCoreToolDefs(runtime: Runtime): InProcessTool[] {
               const until = new Date().toISOString();
               const collector = new ActivityCollector({
                 logDir: join(runtime.getWorkspaceScopedDir(wsId), "logs"),
-                conversations: { kind: "store", store: runtime.findConversationStore() },
+                conversations: {
+                  kind: "store",
+                  store: { list: (o, a) => runtime.listConversations(o, a) },
+                },
                 access: { userId: identity.id },
               });
               const activity = await collector.collect({ since });
@@ -942,14 +945,23 @@ export function createCoreToolDefs(runtime: Runtime): InProcessTool[] {
                   recordLlmUsage("briefing", modelString ?? "unknown", usage);
                   const convId = getRequestContext()?.conversationId;
                   if (!convId) return;
-                  runtime.findConversationStore()?.appendEvent?.(convId, {
-                    ts: new Date().toISOString(),
-                    type: "aux.usage",
-                    source: "briefing",
-                    model: modelString ?? "unknown",
-                    usage,
-                    llmMs,
-                  });
+                  // The foreground briefing runs inside the caller's
+                  // conversation, whose room is this focused workspace + owner —
+                  // so append by path directly (O(1)), never a cross-room
+                  // `locate` walk. Guard the append so a missed aux.usage event
+                  // can never break briefing generation.
+                  try {
+                    runtime.roomConversationStore(wsId, identity.id).appendEvent(convId, {
+                      ts: new Date().toISOString(),
+                      type: "aux.usage",
+                      source: "briefing",
+                      model: modelString ?? "unknown",
+                      usage,
+                      llmMs,
+                    });
+                  } catch {
+                    // best-effort: usage attribution, not correctness
+                  }
                 },
               );
               return generator.generate(activity, facetContext);

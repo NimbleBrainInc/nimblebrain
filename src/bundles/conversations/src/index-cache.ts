@@ -1,8 +1,12 @@
 /**
  * In-memory index of conversation metadata for fast listing, searching, and filtering.
  *
- * Built on startup by scanning all JSONL file headers. Invalidated by fs.watch()
- * on the conversations directory (debounced 500ms).
+ * Built on startup by scanning all JSONL file headers. Kept fresh one of two
+ * ways: `fs.watch` (`startWatching`, for a single flat directory) OR — when the
+ * index spans the recursive room layout, where a root watcher can't see nested
+ * writes — an external `invalidate()` signal followed by a `refresh()` full
+ * rebuild on the next read. The runtime drives the latter from its
+ * conversation-change hook (every write + workspace delete).
  *
  * Types are defined locally — no imports from the runtime codebase.
  */
@@ -71,6 +75,8 @@ export class ConversationIndex {
   private watcher: FSWatcher | null = null;
   private debounceTimer: ReturnType<typeof setTimeout> | null = null;
   private pendingFiles: Set<string> = new Set();
+  /** Set when the index may be stale; the next read does a full rebuild. */
+  private dirty = false;
 
   /** Build index by scanning all .jsonl files in dir. Reads only headers (line 1 + preview). */
   async build(dir: string): Promise<void> {
@@ -82,6 +88,30 @@ export class ConversationIndex {
 
     for (const filePath of files) {
       await this.indexFile(filePath);
+    }
+  }
+
+  /**
+   * Mark the index stale. The next `refresh()` rebuilds from disk. Used when an
+   * external signal (the runtime's conversation-change hook) reports a write or
+   * a workspace delete the index can't observe itself — the recursive room
+   * layout defeats `fs.watch`, so the index cannot rely on the watcher for
+   * updates or deletions.
+   */
+  invalidate(): void {
+    this.dirty = true;
+  }
+
+  /**
+   * Bring the index up to date on the read path. A no-op when clean (O(1)); a
+   * full rebuild when `invalidate()` flagged it stale — re-reading every header
+   * (so summary changes from appends land) and dropping entries whose file is
+   * gone (so deletes don't ghost). Unlike `flushPending`, this is not add-only.
+   */
+  async refresh(): Promise<void> {
+    if (this.dirty && this.dir !== null) {
+      await this.build(this.dir);
+      this.dirty = false;
     }
   }
 

@@ -42,11 +42,13 @@ export function createHomeSource(runtime: Runtime, eventSink: EventSink): McpSou
           }
           const wsDir = runtime.getWorkspaceScopedDir();
           const logDir = join(wsDir, "logs");
-          const store = runtime.findConversationStore();
           const automationRunsDir = join(wsDir, "automations", "runs");
           const collector = new ActivityCollector({
             logDir,
-            conversations: { kind: "store", store },
+            conversations: {
+              kind: "store",
+              store: { list: (o, a) => runtime.listConversations(o, a) },
+            },
             automationRunsDir,
             access: { userId: identity.id },
           });

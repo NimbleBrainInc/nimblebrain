@@ -9,8 +9,9 @@
  * codebase — because this bundle is deployable independently.
  */
 
-import { readdirSync } from "node:fs";
+import { type Dirent, readdirSync } from "node:fs";
 import { readFile } from "node:fs/promises";
+import { join } from "node:path";
 
 // ---------------------------------------------------------------------------
 // Public types — the display projection of a conversation
@@ -890,12 +891,53 @@ export async function readConversationHeader(
   return { meta, preview, messageCount };
 }
 
-/** List all .jsonl files in a directory. Absolute paths. */
+const RUN_PARTITION = "_runs";
+
+/**
+ * Conversation JSONL file paths under `dir`. Handles BOTH layouts:
+ *   - flat: `.jsonl` files directly in `dir` (legacy / test fixtures);
+ *   - room-owned: `dir` is the workspaces root; each room's `conversations/`
+ *     holds an owner partition plus a `_runs` automation partition.
+ * A flat directory yields its own files; the workspaces root yields every
+ * room's files. Self-contained (no runtime imports) so the bundle stays
+ * independently deployable.
+ */
 export function listConversationFiles(dir: string): string[] {
+  const out: string[] = [];
+  let top: Dirent[];
   try {
-    return readdirSync(dir)
-      .filter((f) => f.endsWith(".jsonl"))
-      .map((f) => `${dir}/${f}`);
+    top = readdirSync(dir, { withFileTypes: true });
+  } catch {
+    return [];
+  }
+  for (const ent of top) {
+    if (ent.isFile() && ent.name.endsWith(".jsonl")) {
+      out.push(join(dir, ent.name));
+      continue;
+    }
+    if (!ent.isDirectory() || !ent.name.startsWith("ws_")) continue;
+    // Room-owned layout: each workspace's conversations subtree.
+    // lint-ok:conversation-path
+    const convRoot = join(dir, ent.name, "conversations");
+    for (const partition of safeReaddir(convRoot)) {
+      const partitionDir = join(convRoot, partition);
+      const leaves =
+        partition === RUN_PARTITION
+          ? safeReaddir(partitionDir).map((id) => join(partitionDir, id))
+          : [partitionDir];
+      for (const leaf of leaves) {
+        for (const f of safeReaddir(leaf)) {
+          if (f.endsWith(".jsonl")) out.push(join(leaf, f));
+        }
+      }
+    }
+  }
+  return out;
+}
+
+function safeReaddir(dir: string): string[] {
+  try {
+    return readdirSync(dir);
   } catch {
     return [];
   }

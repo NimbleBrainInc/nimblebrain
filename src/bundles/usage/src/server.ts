@@ -33,6 +33,11 @@ import { UsageReportInput } from "../../../tools/platform/schemas/usage.ts";
 // ---------------------------------------------------------------------------
 
 const WORK_DIR = process.env.NB_WORK_DIR ?? join(homedir(), ".nimblebrain");
+// TODO(conversations-room): this standalone subprocess server is superseded by
+// the in-process `src/tools/platform/usage.ts` (already room-aware). Post
+// room-owned migration this flat dir is empty; repoint to a recursive walk of
+// `workspaces/*/conversations/**` or retire this server.
+// lint-ok:conversation-path
 const CONVERSATIONS_DIR = join(WORK_DIR, "conversations");
 
 // UI: load the built React SPA from ui/dist/index.html

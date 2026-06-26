@@ -317,7 +317,7 @@ export interface AggregateUsageOptions {
  *    dimensions (`groupBy: "user"` buckets by the conversation owner)
  */
 export async function aggregateUsage(
-  conversationsDir: string,
+  source: string | string[],
   period: string,
   groupBy: string | string[],
   options: AggregateUsageOptions = {},
@@ -326,19 +326,26 @@ export async function aggregateUsage(
   const range = resolveDateRange(period, from, to);
   const groupBys = normalizeGroupBys(groupBy);
 
-  // List conversation files
-  let filenames: string[];
-  try {
-    filenames = readdirSync(conversationsDir).filter((f) => f.endsWith(".jsonl"));
-  } catch {
-    filenames = [];
+  // `source` is either an explicit list of conversation file paths — the
+  // room-owned platform path, spanning every workspace a user touched — or a
+  // single flat directory to enumerate (legacy / test fixtures).
+  let filePaths: string[];
+  if (Array.isArray(source)) {
+    filePaths = source;
+  } else {
+    try {
+      filePaths = readdirSync(source)
+        .filter((f) => f.endsWith(".jsonl"))
+        .map((f) => join(source, f));
+    } catch {
+      filePaths = [];
+    }
   }
 
   // Collect LLM call records whose event timestamp is in the date range.
   const records: LlmCallRecord[] = [];
 
-  for (const filename of filenames) {
-    const filepath = join(conversationsDir, filename);
+  for (const filepath of filePaths) {
     let content: string;
     try {
       content = await readFile(filepath, "utf-8");

@@ -1,5 +1,5 @@
 import { existsSync, mkdirSync } from "node:fs";
-import { readdir, readFile, rm } from "node:fs/promises";
+import { readdir, readFile, rename } from "node:fs/promises";
 import { join } from "node:path";
 import { log } from "../observability/log.ts";
 import { writeJsonAtomic } from "../util/atomic-json.ts";
@@ -164,14 +164,44 @@ export async function resolveWorkspaceDisplayName(
   }
 }
 
+// ── Archive (tombstone) marker ─────────────────────────────────────
+
+/** Filename of the per-archive tombstone marker dropped by `delete`. */
+export const ARCHIVE_MARKER_FILENAME = ".archived.json";
+
+/**
+ * Tombstone written to `archived/<wsId>/.archived.json` when a workspace
+ * is deleted.
+ *
+ * Deletion is archive-then-cascade (SPEC-permission-boundaries §2.3):
+ * the room's data subtree is moved under `archived/` rather than
+ * destroyed, so it stays recoverable/exportable for a retention window.
+ * A separate operator/cleanup job enumerates these markers to apply a
+ * retention/export policy — the store never auto-purges (default: keep).
+ *
+ * The marker deliberately omits a self-reported timestamp: the archive
+ * dir's mtime (set at move time) is the authoritative archival time, so
+ * duplicating it here would only invite drift. Keeping the marker to a
+ * fixed shape also keeps archive contents deterministic for tests.
+ */
+export interface ArchiveMarker {
+  wsId: string;
+  archivedReason: "workspace_deleted";
+}
+
 // ── WorkspaceStore ─────────────────────────────────────────────────
 
 export class WorkspaceStore {
   private workspacesDir: string;
+  private archivedDir: string;
   private membershipChangeHandlers = new Set<MembershipChangeHandler>();
 
   constructor(workDir: string) {
     this.workspacesDir = join(workDir, "workspaces");
+    // Sibling of `workspaces/` — tombstoned subtrees land here on delete.
+    // Created lazily (in `delete`), not here, so the many throwaway stores
+    // (e.g. `resolveWorkspaceDisplayName`) don't litter empty `archived/`.
+    this.archivedDir = join(workDir, "archived");
     if (!existsSync(this.workspacesDir)) {
       mkdirSync(this.workspacesDir, { recursive: true });
     }
@@ -186,6 +216,17 @@ export class WorkspaceStore {
    */
   getWorkspacesDir(): string {
     return this.workspacesDir;
+  }
+
+  /**
+   * Absolute path to the `archived/` tombstone directory, where `delete`
+   * moves a workspace's data subtree. Exposed for an operator/cleanup job
+   * that enumerates `archived/<wsId>/.archived.json` markers to apply a
+   * retention/export policy — the store itself never sweeps (see `delete`).
+   * Created lazily on the first archive, so this path may not exist yet.
+   */
+  getArchivedDir(): string {
+    return this.archivedDir;
   }
 
   async get(id: string): Promise<Workspace | null> {
@@ -467,18 +508,84 @@ export class WorkspaceStore {
     return updated;
   }
 
-  async delete(id: string): Promise<boolean> {
+  /**
+   * Delete a workspace — **archive-then-cascade, not hard `rm`**
+   * (SPEC-permission-boundaries §2.3).
+   *
+   * A room owns its data subtree (`workspaces/<wsId>/`: the workspace
+   * record, credentials, skills, files, and conversations as they migrate
+   * under it), so deletion must handle that subtree rather than orphan or
+   * destroy it. Instead of removing the directory, we *tombstone* it: move
+   * the whole subtree to `archived/<wsId>/` (a same-filesystem `rename(2)`)
+   * and drop a `.archived.json` marker. The data stays recoverable /
+   * exportable for a retention window; a separate operator/cleanup job
+   * purges tombstones under its own policy — the store never auto-purges
+   * (default: keep).
+   *
+   * From every other surface the workspace is gone the moment this
+   * returns: `get`/`list` read `workspaces/`, which no longer holds the
+   * subtree. Membership-change notifications fire for each former member,
+   * exactly as before (the only change is on-disk: archive vs. destroy).
+   *
+   * Returns `false` (idempotent no-op) when no such workspace dir exists.
+   *
+   * `archiveSuffix` disambiguates a same-id re-archive — rare, and mostly
+   * personal `ws_user_*` workspaces re-created after a prior delete. When
+   * `archived/<wsId>/` is already occupied the suffix is appended
+   * (`archived/<wsId>-<suffix>/`); absent a suffix the store probes a
+   * deterministic incrementing counter (`-1`, `-2`, …). The path carries
+   * no wall-clock or randomness, so archives stay reproducible for tests
+   * and legible to an operator.
+   */
+  async delete(id: string, opts?: { archiveSuffix?: string }): Promise<boolean> {
     const wsDir = join(this.workspacesDir, id);
     if (!existsSync(wsDir)) return false;
-    // Read members BEFORE removing — we need them to fire change
+    // Read members BEFORE moving — we need them to fire change
     // notifications. A corrupted dir (missing workspace.json) yields
     // `null` and we simply don't fire; nothing to invalidate.
     const ws = await this.get(id);
-    await rm(wsDir, { recursive: true, force: true });
+
+    // Tombstone the subtree: move it under `archived/` rather than rm-ing
+    // it. The move is an atomic same-filesystem rename — no copy, and no
+    // window where the subtree is half-present in both trees.
+    mkdirSync(this.archivedDir, { recursive: true });
+    const dest = this.resolveArchiveDest(id, opts?.archiveSuffix);
+    await rename(wsDir, dest);
+    const marker: ArchiveMarker = { wsId: id, archivedReason: "workspace_deleted" };
+    await writeJsonAtomic(join(dest, ARCHIVE_MARKER_FILENAME), marker);
+
     if (ws) {
       for (const m of ws.members) this.fireMembershipChanged(m.userId);
     }
     return true;
+  }
+
+  /**
+   * Resolve a free destination under `archived/` for `id`'s subtree.
+   *
+   * Prefers `archived/<id>`. On collision (a same-id workspace archived
+   * before) a caller-supplied `suffix` wins (`archived/<id>-<suffix>`);
+   * otherwise an incrementing counter is probed. Pure path resolution plus
+   * `existsSync` — deterministic, no wall-clock or randomness — so the
+   * chosen path is reproducible for tests and predictable for operators.
+   */
+  private resolveArchiveDest(id: string, suffix?: string): string {
+    const base = join(this.archivedDir, id);
+    if (!existsSync(base)) return base;
+
+    if (suffix !== undefined && suffix !== "") {
+      const withSuffix = join(this.archivedDir, `${id}-${suffix}`);
+      if (!existsSync(withSuffix)) return withSuffix;
+    }
+
+    const MAX_ARCHIVE_ATTEMPTS = 10_000;
+    for (let n = 1; n <= MAX_ARCHIVE_ATTEMPTS; n++) {
+      const candidate = join(this.archivedDir, `${id}-${n}`);
+      if (!existsSync(candidate)) return candidate;
+    }
+    throw new Error(
+      `[workspace-store] delete: could not find a free archive destination for "${id}" after ${MAX_ARCHIVE_ATTEMPTS} attempts`,
+    );
   }
 
   // ── Member operations ──────────────────────────────────────────

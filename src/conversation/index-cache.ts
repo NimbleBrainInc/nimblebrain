@@ -56,11 +56,10 @@ export class ConversationIndex {
     }
 
     // Count ownerless files separately from generic "couldn't parse"
-    // failures. Ownerless files are pre-migration state that the
-    // operator's expected resolution is `bun run migrate:conversations-
-    // to-top-level`; surface a single line so they aren't a silent
-    // oracle ("the dashboard is missing N conversations and no one
-    // sees why").
+    // failures. Ownerless files are pre-invariant state needing manual
+    // triage (no migration stamps an owner); surface a single line so
+    // they aren't a silent oracle ("the dashboard is missing N
+    // conversations and no one sees why").
     let ownerlessSkipped = 0;
     for (const file of files) {
       try {
@@ -79,7 +78,7 @@ export class ConversationIndex {
 
     if (ownerlessSkipped > 0) {
       log.warn(
-        `[index] excluded ${ownerlessSkipped} ownerless conversation file(s) in ${dir} — run \`bun run migrate:conversations-to-top-level\` to stamp ownerId.`,
+        `[index] excluded ${ownerlessSkipped} ownerless conversation file(s) in ${dir} — these predate the ownership invariant and need manual triage (stamp an ownerId on line 1, or remove); no migration stamps them.`,
       );
     }
 
@@ -240,7 +239,7 @@ function isLikelyOwnerlessFile(content: string): boolean {
  * Reads line 1 for metadata and scans for the first user message as preview.
  * Supports both legacy (StoredMessage) and event-sourced formats.
  */
-function parseFileHeader(
+export function parseFileHeader(
   content: string,
 ): { summary: ConversationSummary; access: IndexedAccessMeta } | null {
   const lines = content.split("\n").filter(Boolean);

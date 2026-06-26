@@ -1,4 +1,3 @@
-import { join } from "node:path";
 import {
   type AccessContext,
   ConversationIndex,
@@ -45,26 +44,29 @@ export async function createConversationsSource(
   runtime: Runtime,
   eventSink: EventSink,
 ): Promise<McpSource> {
-  // Single process-wide ConversationIndex over the top-level
-  // conversation directory. Post-Stage-1, all conversations live at
-  // `{workDir}/conversations/`; per-workspace caches would just be
-  // identical clones over the same dir. Access filtering is the
-  // dispatcher's job (see `currentAccess()` below), not the index's
-  // — the index tracks ownerId on every entry and each handler call
-  // narrows to the caller's owned set.
+  // Single process-wide ConversationIndex over the workspaces root.
+  // Conversations are room-owned (`workspaces/<wsId>/conversations/<ownerId>/`),
+  // so the index recurses every room's conversation subtree; each entry keeps
+  // its own `filePath`, so the handlers read the right room file. Access
+  // filtering is the dispatcher's job (see `currentAccess()` below) — the index
+  // tracks ownerId on every entry and each handler narrows to the caller's set.
   let cachedIndex: ConversationIndex | null = null;
 
   async function getIndex(): Promise<{ index: ConversationIndex; dir: string }> {
-    const dir = join(runtime.getWorkDir(), "conversations");
+    const dir = runtime.getWorkspaceStore().getWorkspacesDir();
     if (!cachedIndex) {
       cachedIndex = new ConversationIndex();
       await cachedIndex.build(dir);
-      cachedIndex.startWatching(dir);
+      // The recursive room layout defeats a root `fs.watch` (it can't see nested
+      // `ws_*/conversations/<owner>/*.jsonl` writes), so freshness rides the
+      // runtime's invalidation hook instead of the watcher: every conversation
+      // write (create/delete/append) and every workspace archive-delete flags
+      // the index stale, and `refresh()` does a full rebuild on the next read —
+      // re-reading headers (updates) and dropping vanished files (deletes).
+      const idx = cachedIndex;
+      runtime.onConversationsChanged(() => idx.invalidate());
     }
-    // Pick up brand-new conversations deterministically rather than racing the
-    // fs.watch debounce — a `data.changed` refresh fires the instant a turn
-    // starts, before the watch has re-indexed the new file.
-    await cachedIndex.flushPending();
+    await cachedIndex.refresh();
     return { index: cachedIndex, dir };
   }
 

@@ -89,7 +89,7 @@ async function getLatestRunId(
       },
     },
     async () => {
-      const store = runtime.findConversationStore();
+      const store = await runtime.resolveConversationStore(convId);
       if (!(store instanceof EventSourcedConversationStore)) return null;
       const events = await store.readEvents(convId);
       for (let i = events.length - 1; i >= 0; i--) {

@@ -88,11 +88,20 @@ export interface EventSourcedStoreConfig {
   dir: string;
   /** Logging verbosity — "debug" persists full request/response data. */
   logLevel?: "normal" | "debug";
+  /**
+   * Called on any write to this dir's conversations — create, delete, or
+   * append (an append changes a conversation's summary). The runtime routes
+   * this to its conversation-cache invalidation so cross-room lists/loads
+   * (the locator and the conversations-tool index) stay fresh. The per-dir
+   * `ConversationIndex` is invalidated independently in-store.
+   */
+  onMutate?: () => void;
 }
 
 export class EventSourcedConversationStore implements ConversationStore, EventSink {
   private dir: string;
   private logLevel: "normal" | "debug";
+  private onMutate?: () => void;
   private index = new ConversationIndex();
   private activeConversationId: string | null = null;
   private pendingWrites = new Set<Promise<unknown>>();
@@ -102,6 +111,7 @@ export class EventSourcedConversationStore implements ConversationStore, EventSi
   constructor(config: EventSourcedStoreConfig) {
     this.dir = config.dir;
     this.logLevel = config.logLevel ?? "normal";
+    this.onMutate = config.onMutate;
     if (!existsSync(this.dir)) {
       mkdirSync(this.dir, { recursive: true });
     }
@@ -148,6 +158,7 @@ export class EventSourcedConversationStore implements ConversationStore, EventSi
     const path = this.path(id);
     await writeFile(path, `${JSON.stringify(conversation)}\n`);
     this.index.invalidate();
+    this.onMutate?.();
     return conversation;
   }
 
@@ -355,6 +366,7 @@ export class EventSourcedConversationStore implements ConversationStore, EventSi
     if (!existsSync(path)) return false;
     await unlink(path);
     this.index.remove(id);
+    this.onMutate?.();
     return true;
   }
 
@@ -687,6 +699,10 @@ export class EventSourcedConversationStore implements ConversationStore, EventSi
     assertNoBinaryPayloads(event, `event(${event.type})`);
     const path = this.path(id);
     appendFileSync(path, `${JSON.stringify(event)}\n`);
+    // An append changes a conversation's summary (title/updatedAt/tokens), so
+    // the cross-room caches must refresh — not just on create/delete. The hook
+    // is a cheap invalidation flag; the rescan it triggers is lazy (next read).
+    this.onMutate?.();
   }
 
   /** Detect whether a conversation file uses event format or legacy message format. */

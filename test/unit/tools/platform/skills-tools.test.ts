@@ -19,6 +19,13 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { NoopEventSink } from "../../../../src/adapters/noop-events.ts";
 import { EventSourcedConversationStore } from "../../../../src/conversation/event-sourced-store.ts";
+import { ConversationLocator } from "../../../../src/conversation/locator.ts";
+import { roomConversationsDir, runConversationsDir } from "../../../../src/conversation/paths.ts";
+import type {
+  ConversationAccessContext,
+  ConversationListResult,
+  ListOptions,
+} from "../../../../src/conversation/types.ts";
 import { parseSkillFile } from "../../../../src/skills/loader.ts";
 import type { Skill } from "../../../../src/skills/types.ts";
 import { runWithRequestContext } from "../../../../src/runtime/request-context.ts";
@@ -29,6 +36,15 @@ import { createSkillsSource } from "../../../../src/tools/platform/skills.ts";
 // filtering / dispatch — none verify hash math, so the actual value just
 // needs to be syntactically valid and stable across fixture rows.
 const TEST_HASH = "0".repeat(64);
+
+// The room the fake's seed conversations live in. Conversations are
+// room-owned (`workspaces/<wsId>/conversations/<ownerId>/<convId>.jsonl`);
+// every `runtime.store().create(...)` in this file seeds into this room +
+// owner partition, and the facade (`resolveConversationStore` /
+// `findConversation` / `listConversations`) reads them back through a real
+// `ConversationLocator` over `{workDir}/workspaces`.
+const SEED_WS_ID = "ws_test";
+const SEED_OWNER_ID = "user_test";
 
 // ── Fake Runtime ─────────────────────────────────────────────────────────
 
@@ -41,15 +57,24 @@ class FakeRuntime {
   hasIdentityProvider = false;
   wsId: string | null = null;
   private readonly _store: EventSourcedConversationStore;
+  private readonly _locator: ConversationLocator;
 
   contextSkills: Skill[] = [];
   matchableSkills: Skill[] = [];
   conversationOverlay: Skill[] = [];
 
   constructor(private workDir: string) {
-    const convDir = join(workDir, "conversations");
+    // Back the fake with a real locator over the workspaces root and a real
+    // room store, so the conversation facade (`resolveConversationStore` /
+    // `findConversation` / `listConversations`) is exercised end-to-end
+    // against the room-partitioned on-disk layout.
+    this._locator = new ConversationLocator(join(workDir, "workspaces"));
+    const convDir = roomConversationsDir(workDir, SEED_WS_ID, SEED_OWNER_ID);
     mkdirSync(convDir, { recursive: true });
-    this._store = new EventSourcedConversationStore({ dir: convDir });
+    this._store = new EventSourcedConversationStore({
+      dir: convDir,
+      onMutate: () => this._locator.invalidate(),
+    });
   }
 
   getWorkDir(): string {
@@ -65,14 +90,26 @@ class FakeRuntime {
     if (!this.wsId) throw new Error("no workspace");
     return this.wsId;
   }
-  findConversationStore(): EventSourcedConversationStore {
-    return this._store;
+  /** Resolve the room store holding `convId` via the locator (null if unknown). */
+  async resolveConversationStore(convId: string): Promise<EventSourcedConversationStore | null> {
+    const loc = await this._locator.locate(convId);
+    if (!loc) return null;
+    return new EventSourcedConversationStore({
+      dir: loc.automationId
+        ? runConversationsDir(this.workDir, loc.wsId, loc.automationId)
+        : roomConversationsDir(this.workDir, loc.wsId, loc.ownerId ?? ""),
+    });
   }
-  async findConversation(
-    id: string,
-    access?: { userId: string },
-  ): Promise<unknown> {
-    return this._store.load(id, access);
+  async findConversation(id: string, access?: ConversationAccessContext): Promise<unknown> {
+    const store = await this.resolveConversationStore(id);
+    if (!store) return null;
+    return store.load(id, access);
+  }
+  async listConversations(
+    options?: ListOptions,
+    access?: ConversationAccessContext,
+  ): Promise<ConversationListResult> {
+    return this._locator.list(options, access);
   }
   getWorkspaceStore() {
     // Tests that exercise the cross-workspace path supply this directly

@@ -143,10 +143,10 @@ describe("runtime.executeTask", () => {
 
     // The conversation is reachable via the runtime's conversation store
     // and must carry the assistant message holding the deliverable.
-    const store = runtime.findConversationStore();
-    const convo = await store.load(result.conversationId);
+    const store = await runtime.resolveConversationStore(result.conversationId);
+    const convo = await store!.load(result.conversationId);
     expect(convo).not.toBeNull();
-    const history = await store.history(convo!);
+    const history = await store!.history(convo!);
     const assistantMessages = history.filter((m) => m.role === "assistant");
     expect(assistantMessages.length).toBeGreaterThan(0);
     // The deliverable in result.output matches what was persisted.
@@ -315,8 +315,8 @@ describe("runtime.executeTask", () => {
       metadata: { automationId: "auto_test_123" },
     });
 
-    const store = runtime.findConversationStore();
-    const convo = await store.load(result.conversationId);
+    const store = await runtime.resolveConversationStore(result.conversationId);
+    const convo = await store!.load(result.conversationId);
     expect(convo).not.toBeNull();
     expect(convo!.metadata?.source).toBe("task");
     // Caller's metadata passes through alongside the source tag.
@@ -356,8 +356,8 @@ describe("runtime.executeTask", () => {
       workspaceId: SHARED_WS_ID,
     });
 
-    const store = runtime.findConversationStore();
-    const events = await store.readEvents(result.conversationId);
+    const store = await runtime.resolveConversationStore(result.conversationId);
+    const events = await store!.readEvents(result.conversationId);
     const skillsLoaded = events.find((e) => e.type === "skills.loaded");
     expect(skillsLoaded).toBeDefined();
 

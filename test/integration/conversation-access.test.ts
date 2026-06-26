@@ -158,14 +158,14 @@ describe("runtime.chat — single-owner ownership check", () => {
     });
     expect(second.conversationId).toBe(first.conversationId);
 
-    const store = runtime.findConversationStore();
-    const loaded = await store.load(first.conversationId);
+    const store = await runtime.resolveConversationStore(first.conversationId);
+    const loaded = await store!.load(first.conversationId);
     expect(loaded).not.toBeNull();
     expect(loaded!.ownerId).toBe(ALICE.id);
     // Both turns appended — `history()` is the event-sourced read; the
     // turn count proves the second call resumed rather than minted a new
     // conversation.
-    const messages = await store.history(loaded!);
+    const messages = await store!.history(loaded!);
     expect(messages.length).toBeGreaterThanOrEqual(2);
   });
 
@@ -195,8 +195,7 @@ describe("runtime.chat — single-owner ownership check", () => {
 
     // Crucial: the foreign attempt did NOT silently mint a new conversation
     // — that would mask a takeover attempt as a normal flow.
-    const store = runtime.findConversationStore();
-    const loaded = await store.load(aliceConv.conversationId);
+    const loaded = await runtime.findConversation(aliceConv.conversationId);
     expect(loaded!.ownerId).toBe(ALICE.id);
   });
 
@@ -213,8 +212,7 @@ describe("runtime.chat — single-owner ownership check", () => {
     // The runtime treats unknown ids as "create new" — distinguishing this
     // from foreign-owner is what closes the existence-leak side channel.
     expect(result.conversationId).not.toBe(bogus);
-    const store = runtime.findConversationStore();
-    const loaded = await store.load(result.conversationId);
+    const loaded = await runtime.findConversation(result.conversationId);
     expect(loaded).not.toBeNull();
     expect(loaded!.ownerId).toBe(ALICE.id);
   });

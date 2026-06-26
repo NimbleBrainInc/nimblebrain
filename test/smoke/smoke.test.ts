@@ -21,7 +21,7 @@ import { DEV_IDENTITY } from "../../src/identity/providers/dev.ts";
 import { McpSource } from "../../src/tools/mcp-source.ts";
 import { ToolRegistry } from "../../src/tools/registry.ts";
 import { validateManifest } from "../../src/bundles/manifest.ts";
-import { JsonlConversationStore } from "../../src/conversation/jsonl-store.ts";
+import { roomConversationsDir } from "../../src/conversation/paths.ts";
 import type { EngineEvent, EventSink, ToolResult } from "../../src/engine/types.ts";
 
 /** Extract text content from a ToolResult's ContentBlock array */
@@ -286,14 +286,12 @@ describe("Smoke: Runtime with real echo bundle", () => {
 
 describe("Smoke: Conversation persistence", () => {
   const convWorkDir = join(tmpdir(), `nimblebrain-smoke-conv-${Date.now()}`);
-  const convDir = join(convWorkDir, "conversations");
-  mkdirSync(convDir, { recursive: true });
 
   afterAll(() => {
     if (existsSync(convWorkDir)) rmSync(convWorkDir, { recursive: true });
   });
 
-  it("persists conversations to isolated workDir", async () => {
+  it("persists conversations under the room, not a flat top-level dir", async () => {
     const runtime = await Runtime.start({
       model: { provider: "custom", adapter: createEchoModel() },
       noDefaultBundles: true,
@@ -302,17 +300,15 @@ describe("Smoke: Conversation persistence", () => {
     });
     await provisionTestWorkspace(runtime);
 
-    const store = runtime.findConversationStore() as JsonlConversationStore;
-    const topConvDir = join(convWorkDir, "conversations");
-
     const result = await runtime.chat({ message: "Smoke test message", workspaceId: TEST_WORKSPACE_ID });
     expect(result.conversationId).toMatch(/^conv_/);
     expect(result.response).toBe("Smoke test message");
 
-    await store.flush();
-
-    const files = readdirSync(topConvDir).filter((f) => f.endsWith(".jsonl"));
-    expect(files.length).toBe(1);
+    // The file lands in the room's owner partition — the path is the wall.
+    const roomDir = roomConversationsDir(convWorkDir, TEST_WORKSPACE_ID, DEV_IDENTITY.id);
+    expect(readdirSync(roomDir).filter((f) => f.endsWith(".jsonl")).length).toBe(1);
+    // ...and NOT in the legacy flat top-level dir.
+    expect(existsSync(join(convWorkDir, "conversations"))).toBe(false);
 
     const result2 = await runtime.chat({
       message: "Follow-up",
@@ -320,10 +316,12 @@ describe("Smoke: Conversation persistence", () => {
       workspaceId: TEST_WORKSPACE_ID,
     });
     expect(result2.conversationId).toBe(result.conversationId);
-    expect(readdirSync(topConvDir).filter((f) => f.endsWith(".jsonl")).length).toBe(1);
+    expect(readdirSync(roomDir).filter((f) => f.endsWith(".jsonl")).length).toBe(1);
+
+    // Resume resolves through the locator across rooms.
+    expect(await runtime.findConversation(result.conversationId)).not.toBeNull();
 
     await runtime.shutdown();
-    await store.flush();
   });
 });
 

@@ -2,6 +2,7 @@ import { describe, expect, it, afterAll } from "bun:test";
 import { existsSync, rmSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
+import { roomConversationsDir } from "../../src/conversation/paths.ts";
 import { Runtime } from "../../src/runtime/runtime.ts";
 import { surfaceTools } from "../../src/tools/surfacing.ts";
 import { createEchoModel } from "../helpers/echo-model.ts";
@@ -171,13 +172,13 @@ describe("ChatRequest.metadata — conversation persistence", () => {
       });
 
       // Load the conversation and verify metadata is present
-      const conv = await runtime.findConversationStore().load(result.conversationId);
+      const conv = await runtime.findConversation(result.conversationId);
       expect(conv).not.toBeNull();
       expect(conv!.metadata).toEqual({ source: "automation", id: "test-123" });
 
-      // Verify it's actually in the JSONL file's first line at the
-      // top-level conversation path.
-      const convDir = join(workDir, "conversations");
+      // Verify it's actually in the JSONL file's first line under the room's
+      // owner partition (dev owner `usr_default`, focused on TEST_WORKSPACE_ID).
+      const convDir = roomConversationsDir(workDir, TEST_WORKSPACE_ID, "usr_default");
       const files = require("fs").readdirSync(convDir).filter((f: string) => f.endsWith(".jsonl"));
       expect(files.length).toBeGreaterThan(0);
       const content = readFileSync(join(convDir, files[0]!), "utf-8");
@@ -203,7 +204,7 @@ describe("ChatRequest.metadata — conversation persistence", () => {
         message: "hello",
         workspaceId: TEST_WORKSPACE_ID,
       });
-      const conv = await runtime.findConversationStore().load(result.conversationId);
+      const conv = await runtime.findConversation(result.conversationId);
       expect(conv).not.toBeNull();
       expect(conv!.metadata).toBeUndefined();
     } finally {
@@ -237,7 +238,7 @@ describe("ChatRequest.metadata — conversation persistence", () => {
         metadata: { source: "second" },
       });
 
-      const conv = await runtime.findConversationStore().load(result1.conversationId);
+      const conv = await runtime.findConversation(result1.conversationId);
       expect(conv!.metadata).toEqual({ source: "first" });
     } finally {
       await runtime.shutdown();

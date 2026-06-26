@@ -36,9 +36,6 @@ class FakeRuntime {
   requireWorkspaceId(): never {
     throw new Error("no workspace");
   }
-  findConversationStore(): never {
-    throw new Error("no store");
-  }
   getContextSkills(): never[] {
     return [];
   }

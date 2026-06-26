@@ -52,7 +52,7 @@ describe("Runtime identity stores wiring", () => {
 
     await provisionTestWorkspace(rt);
 
-    const convStore = rt.findConversationStore();
+    const convStore = rt.roomConversationStore(TEST_WORKSPACE_ID, "user_test");
     expect(typeof convStore.create).toBe("function");
   });
 
@@ -131,7 +131,7 @@ describe("Runtime identity stores wiring", () => {
     expect(fetched!.name).toBe("Test Workspace");
   });
 
-  it("findConversationStore() and findConversation() share the top-level store", async () => {
+  it("roomConversationStore() write is visible through findConversation()", async () => {
     const workDir = makeTempDir("conv-alias");
     dirs.push(workDir);
 
@@ -143,10 +143,10 @@ describe("Runtime identity stores wiring", () => {
 
     await provisionTestWorkspace(rt);
 
-    // Both accessors land on `{workDir}/conversations/`. New instances
-    // each call (the store is stateless w.r.t. its dir), but a write
-    // through one is immediately visible through the other.
-    const store = rt.findConversationStore();
+    // A conversation written through the room store (it invalidates the
+    // process-wide locator on create) is immediately resolvable by id via
+    // `findConversation`, which routes through that same locator.
+    const store = rt.roomConversationStore(TEST_WORKSPACE_ID, "user_test");
     const conv = await store.create({
       workspaceId: TEST_WORKSPACE_ID,
       ownerId: "user_test",

@@ -145,8 +145,8 @@ describe("bundle-skill adapter — end-to-end", () => {
     });
 
     // Pull the conversation store and read the skills.loaded event.
-    const store = runtime.findConversationStore();
-    const events = await store.readEvents(chat.conversationId);
+    const store = await runtime.resolveConversationStore(chat.conversationId);
+    const events = await store!.readEvents(chat.conversationId);
     const skillsLoaded = events.find((e) => e.type === "skills.loaded");
     expect(skillsLoaded).toBeDefined();
 
@@ -181,8 +181,8 @@ describe("bundle-skill adapter — end-to-end", () => {
       allowedTools: ["test__doit"],
     });
 
-    const store = runtime.findConversationStore();
-    const events = await store.readEvents(chat.conversationId);
+    const store = await runtime.resolveConversationStore(chat.conversationId);
+    const events = await store!.readEvents(chat.conversationId);
     const skillsLoaded = events.find((e) => e.type === "skills.loaded");
     expect(skillsLoaded).toBeDefined();
 
@@ -203,8 +203,8 @@ describe("bundle-skill adapter — end-to-end", () => {
       allowedTools: [],
     });
 
-    const store = runtime.findConversationStore();
-    const events = await store.readEvents(chat.conversationId);
+    const store = await runtime.resolveConversationStore(chat.conversationId);
+    const events = await store!.readEvents(chat.conversationId);
     const skillsLoaded = events.find((e) => e.type === "skills.loaded");
     expect(skillsLoaded).toBeDefined();
 

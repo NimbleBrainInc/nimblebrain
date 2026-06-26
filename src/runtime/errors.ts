@@ -36,12 +36,13 @@ export class ConversationAccessDeniedError extends Error {
  * `ownerId`. The store can't synthesize an owner safely and the chat
  * runtime can't authorize access on it.
  *
- * Operator action is to run `bun run migrate:conversations-to-top-level`,
- * which stamps `ownerId` (skips files that genuinely have no owner
- * derivable; those need manual triage). Without this typed error, the
- * unwrapped `Error("missing ownerId in ...")` from `event-sourced-store`
- * bubbles to `handleChat` as a 500; with it, the HTTP layer can return
- * a clean `422 conversation_corrupted` that names the migration command.
+ * Operator action is manual: an ownerless file has no derivable owner, so no
+ * migration can recover it — `migrate:conversations-to-room` skips ownerless
+ * files rather than guessing. Recovery is to stamp an `ownerId` on the file's
+ * line-1 metadata (when the owner is known) or remove the file. Without this
+ * typed error, the unwrapped `Error("missing ownerId in ...")` from
+ * `event-sourced-store` bubbles to `handleChat` as a 500; with it, the HTTP
+ * layer returns a clean `422 conversation_corrupted` that explains the triage.
  */
 export class ConversationCorruptedError extends Error {
   readonly code = "conversation_corrupted";
@@ -50,8 +51,9 @@ export class ConversationCorruptedError extends Error {
     public readonly reason: "missing_owner",
   ) {
     super(
-      `Conversation ${conversationId} is corrupted (${reason}). ` +
-        `Run \`bun run migrate:conversations-to-top-level\` to stamp ownerId on legacy files.`,
+      `Conversation ${conversationId} is corrupted (${reason}): the file predates the ` +
+        `ownership invariant and has no ownerId. No migration stamps these — add an ownerId ` +
+        `to its line-1 metadata or remove the file.`,
     );
     this.name = "ConversationCorruptedError";
   }

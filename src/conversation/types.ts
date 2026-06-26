@@ -55,6 +55,13 @@ export interface ListOptions {
   cursor?: string;
   search?: string;
   sortBy?: "createdAt" | "updatedAt";
+  /**
+   * Restrict the listing to one room. The room-scoped conversation view (a
+   * single `workspaces/<wsId>/conversations/` subtree); omit for the owner's
+   * "All rooms" view across every workspace they belong to. Orthogonal to
+   * `access` — `workspaceId` is the path filter, ownership is the access gate.
+   */
+  workspaceId?: string;
 }
 
 /** Paginated conversation list result. */
@@ -67,14 +74,18 @@ export interface ConversationListResult {
 /**
  * Options for creating a new conversation.
  *
- * Stage 1: single-owner. `ownerId` is required — the conversation is
- * owned by exactly one user at all times. `workspaceId` is optional
- * and informs which workspace's tools the chat in this conversation
- * has access to at run time; it does NOT scope ownership.
+ * `ownerId` is required — the conversation is owned by exactly one user.
+ * `workspaceId` is the room the chat is born in (the binding moment is the
+ * first message); it determines the storage directory and is fixed for the
+ * conversation's life — there is no mid-chat room switching. When `automationId`
+ * is set the conversation is an automation run and lands in that room's
+ * `_runs/<automationId>/` partition instead of the owner partition.
  */
 export interface CreateConversationOptions {
   workspaceId?: string;
   ownerId: string;
+  /** When set, this is an automation run — stored under `_runs/<automationId>/`. */
+  automationId?: string;
   metadata?: Record<string, unknown>;
   /** Create with a specific id instead of a generated one. Used by the
    *  detached-turn path so the conversation id is known to the caller before
@@ -173,10 +184,12 @@ export interface Conversation {
   /** User who owns this conversation. The single authorization principal. */
   ownerId: string;
   /**
-   * Workspace whose tools the chat in this conversation has access to at run
-   * time. The session is walled to this one workspace (plus the user's identity
-   * tools); there is no cross-workspace aggregation. Tool-scoping, not
-   * ownership — the conversation lives top-level regardless.
+   * The room this conversation lives in — the binding. Set at create from the
+   * first-message room and never mutated (no mid-chat room switching). The
+   * conversation is stored under `workspaces/<workspaceId>/conversations/`, so
+   * the path is authoritative and this field is the denormalised convenience.
+   * The session is walled to this one workspace plus the owner's identity tools.
+   * Optional only for legacy records predating the room-owned layout.
    */
   workspaceId?: string;
   /** Arbitrary caller-provided metadata. Stored in JSONL first line, never validated. */

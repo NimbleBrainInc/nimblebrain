@@ -19,9 +19,8 @@
  * next implementer registers them in the right place.
  */
 
-import { copyFileSync, existsSync, mkdirSync, readFileSync, realpathSync, statSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, readFileSync, realpathSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
-import { EventSourcedConversationStore } from "../../conversation/event-sourced-store.ts";
 import type { ConversationEvent, SkillsLoadedEvent } from "../../conversation/types.ts";
 import { textContent } from "../../engine/content-helpers.ts";
 import type { EventSink, ToolResult } from "../../engine/types.ts";
@@ -932,31 +931,11 @@ async function readConvEvents(
   runtime: Runtime,
   convId: string,
 ): Promise<ConversationEvent[] | null> {
-  const store = getEventStore(runtime);
+  // The locator resolves the conversation's room store (null if not found,
+  // which folds in the existence check).
+  const store = await runtime.resolveConversationStore(convId);
   if (!store) return null;
-  if (!conversationFileExists(store, convId)) return null;
   return store.readEvents(convId);
-}
-
-function getEventStore(runtime: Runtime): EventSourcedConversationStore | null {
-  // The runtime exposes a `ConversationStore` interface; only the
-  // event-sourced store has `readEvents`. Returns null when the store
-  // is some other shape (e.g. an in-memory test double).
-  try {
-    const raw = runtime.findConversationStore();
-    return raw instanceof EventSourcedConversationStore ? raw : null;
-  } catch {
-    return null;
-  }
-}
-
-function conversationFileExists(store: EventSourcedConversationStore, convId: string): boolean {
-  try {
-    statSync(join(store.getDir(), `${convId}.jsonl`));
-    return true;
-  } catch {
-    return false;
-  }
 }
 
 /**
@@ -969,14 +948,15 @@ async function listOwnedConversationIds(
   runtime: Runtime,
   access: { userId: string },
 ): Promise<string[]> {
-  const store = runtime.findConversationStore();
   const ids: string[] = [];
   let cursor: string | undefined;
-  // Fixed page size; enough that a normal tenant gets one page.
-  // The store's `list` is in-memory after `populate`, so paging is
-  // cheap. Loop until the store reports no more.
+  // Fixed page size; enough that a normal tenant gets one page. The locator's
+  // `list` is in-memory after populate, so paging is cheap. Loop until done.
   while (true) {
-    const page = await store.list({ limit: 200, ...(cursor ? { cursor } : {}) }, access);
+    const page = await runtime.listConversations(
+      { limit: 200, ...(cursor ? { cursor } : {}) },
+      access,
+    );
     for (const c of page.conversations) ids.push(c.id);
     if (!page.nextCursor) break;
     cursor = page.nextCursor;

@@ -12,7 +12,9 @@ import { afterAll, describe, expect, it } from "bun:test";
 import { existsSync, mkdirSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { roomConversationsDir } from "../../src/conversation/paths.ts";
 import { Runtime } from "../../src/runtime/runtime.ts";
+import { personalWorkspaceIdFor } from "../../src/workspace/workspace-store.ts";
 import { createEchoModel } from "../helpers/echo-model.ts";
 import { TEST_WORKSPACE_ID, provisionTestWorkspace } from "../helpers/test-workspace.ts";
 
@@ -138,13 +140,14 @@ describe("Management tools in registry", () => {
 // requested workspace's directory" and "chat without workspaceId throws."
 // Both contracts were deleted by T006: chat is now identity-bound, the
 // session workspace is the identity's personal workspace, and the
-// `ChatRequest.workspaceId` field is gone. The conversation file still
-// lives at top-level (`{workDir}/conversations/{convId}.jsonl`); the
-// metadata's `workspaceId` is the session breadcrumb (personal workspace),
-// not a path concern.
+// `ChatRequest.workspaceId` field is gone. The conversation file lives in
+// the caller's personal room
+// (`{workDir}/workspaces/ws_user_<id>/conversations/<id>/{convId}.jsonl`);
+// the metadata's `workspaceId` is that same personal-room binding (also the
+// session breadcrumb for legacy single-workspace reads).
 
 describe("Chat is identity-bound (Stage 2 / T006)", () => {
-  it("conversation lives at top-level with ownerId; metadata records the personal workspace as the session breadcrumb", async () => {
+  it("conversation lives in the personal room with ownerId; metadata records the personal workspace as the session breadcrumb", async () => {
     const workDir = makeTempDir("identity-bound-chat");
     const runtime = await Runtime.start({
       workDir,
@@ -166,9 +169,12 @@ describe("Chat is identity-bound (Stage 2 / T006)", () => {
 
     expect(result.conversationId).toMatch(/^conv_/);
 
-    // Conversation lives at the top-level (Stage 1 Task 005); the
-    // metadata workspaceId is the session (personal) workspace.
-    const convFile = join(workDir, "conversations", `${result.conversationId}.jsonl`);
+    // Conversation lives in the personal room's owner partition; the
+    // metadata workspaceId is that same session (personal) workspace.
+    const convFile = join(
+      roomConversationsDir(workDir, personalWorkspaceIdFor("usr_alice"), "usr_alice"),
+      `${result.conversationId}.jsonl`,
+    );
     expect(existsSync(convFile)).toBe(true);
 
     const content = readFileSync(convFile, "utf-8");
@@ -178,15 +184,10 @@ describe("Chat is identity-bound (Stage 2 / T006)", () => {
     expect(typeof metadataLine.workspaceId).toBe("string");
     expect(metadataLine.workspaceId).toMatch(/^ws_user_usr_alice/);
 
-    // Nothing was written under a workspace-scoped dir.
-    const wsConvFile = join(
-      workDir,
-      "workspaces",
-      metadataLine.workspaceId,
-      "conversations",
-      `${result.conversationId}.jsonl`,
+    // Nothing was written at the old flat top-level path.
+    expect(existsSync(join(workDir, "conversations", `${result.conversationId}.jsonl`))).toBe(
+      false,
     );
-    expect(existsSync(wsConvFile)).toBe(false);
 
     await runtime.shutdown();
   });
@@ -204,9 +205,12 @@ describe("Chat is identity-bound (Stage 2 / T006)", () => {
     expect(result.response).toBeTruthy();
     expect(result.conversationId).toMatch(/^conv_/);
 
-    // Conversation at top-level dir; identity-bound under DEV_IDENTITY's
-    // personal workspace.
-    const convFile = join(workDir, "conversations", `${result.conversationId}.jsonl`);
+    // Identity-bound under DEV_IDENTITY (`usr_default`); the conversation
+    // lives in that identity's personal room.
+    const convFile = join(
+      roomConversationsDir(workDir, personalWorkspaceIdFor("usr_default"), "usr_default"),
+      `${result.conversationId}.jsonl`,
+    );
     expect(existsSync(convFile)).toBe(true);
 
     await runtime.shutdown();

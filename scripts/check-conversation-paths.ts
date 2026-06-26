@@ -1,32 +1,40 @@
 #!/usr/bin/env bun
 /**
- * Lint: conversation files live at the top-level user path post-Stage-1.
+ * Lint: conversations are room-owned — never built at the flat top level.
  *
- * The cross-workspace refactor (Stage 1 Task 005) collapsed every
- * conversation onto a single user-scoped store at
- * `{workDir}/conversations/{convId}.jsonl`. The pre-Stage-1 workspace-
- * scoped layout (`{workDir}/workspaces/{wsId}/conversations/...`) is
- * fully deleted. Any new occurrence of `join(..., "workspaces", X,
- * "conversations", ...)` is a regression.
+ * A conversation lives under the workspace (room) it runs in, with the owner
+ * as a privacy sub-partition:
  *
- * What this script flags: any `join(...)` call whose argument list
- * contains the literal sequence `"workspaces", <wsId>, "conversations"`
- * — building a per-workspace conversations directory by hand.
+ *   workspaces/<wsId>/conversations/<ownerId>/<convId>.jsonl          private user chats
+ *   workspaces/<wsId>/conversations/_runs/<automationId>/<convId>.jsonl  automation runs
+ *
+ * The flat `{workDir}/conversations/<convId>.jsonl` layout is gone. Any new
+ * occurrence of the flat construction — joining `"conversations"` directly onto
+ * a workDir-ish root, or spelling `…/conversations/…` outside a
+ * `workspaces/<wsId>/` subtree — is a regression: it drops the room wall the
+ * permission model depends on.
+ *
+ * What this script flags: a `join(...)` whose `"conversations"` segment is NOT
+ * qualified by a workspace root before it (neither a literal `"workspaces",
+ * <wsId>` pair nor a workspace-scoped base like `this.workspacesRoot` /
+ * `getWorkspaceScopedDir()`), and the equivalent flat template / string-literal
+ * path. The room-partitioned shape is the required, allowed shape.
  *
  * What it allows:
- *   - `scripts/migrate-conversations-to-top-level.ts` — explicitly
- *     reads the old layout to move files to the new one.
- *   - `src/conversation/event-sourced-store.ts` — the store doesn't
- *     know whether its `dir` is workspace-scoped or top-level; the
- *     directory is injected. Whoever passes the dir owns the layout
- *     decision (the runtime always passes the top-level path).
- *   - A `// lint-ok:conversation-path` marker on the line immediately
- *     above the call, for the rare future case where the typed helper
- *     genuinely doesn't apply.
+ *   - `src/conversation/paths.ts` — the single sanctioned construction (and
+ *     parse) site for the `workspaces/<wsId>/conversations/...` layout. It *is*
+ *     the definition this lint protects.
+ *   - `scripts/migrate-conversations-to-room.ts` — it must read the legacy flat
+ *     `{workDir}/conversations/<id>.jsonl` SOURCE paths in order to move them
+ *     into the room-owned layout.
+ *   - Room-scoped joins off a workspace root (`join(this.workspacesRoot, wsId,
+ *     "conversations")`) — the `"conversations"` segment is already under a
+ *     workspace, so these are the intended shape, not the flat one.
+ *   - A `// lint-ok:conversation-path` marker on the line immediately above the
+ *     construction, for the rare future case the typed helpers don't cover.
  *
- * Scope: `src/**\/*.ts`. Tests are out of scope (legacy migration tests
- * deliberately construct the old paths to assert the migration moves
- * them away).
+ * Scope: `src/**\/*.ts`. Tests are out of scope (migration tests deliberately
+ * construct the flat source paths to assert the migration moves them away).
  */
 
 import { readFileSync } from "node:fs";
@@ -38,15 +46,18 @@ const ROOT = join(import.meta.dirname ?? __dirname, "..");
 const SRC_ROOT = join(ROOT, "src");
 const ALLOW_MARKER = "lint-ok:conversation-path";
 
-// Files that legitimately reference the legacy workspace-scoped path,
-// either to migrate away from it or because the store layer is
-// dir-agnostic by design.
+// Files (relative to repo root) that legitimately reference the flat layout —
+// either because they DEFINE the room-owned layout, or because they migrate
+// data off the flat one. The lint would otherwise fight the definitions it
+// exists to protect.
 const ALLOWED_FILES = new Set(
   [
-    // Store implementation gets its dir injected — caller picks the
-    // layout. The runtime always passes top-level; the lint would
-    // false-positive against the `join(this.dir, ...)` calls inside.
-    "conversation/event-sourced-store.ts",
+    // The single sanctioned site that builds + parses the room-owned
+    // `workspaces/<wsId>/conversations/...` layout.
+    "src/conversation/paths.ts",
+    // Migrates conversations off the flat layout — reads the old
+    // `{workDir}/conversations/<id>.jsonl` source paths to relocate them.
+    "scripts/migrate-conversations-to-room.ts",
   ].map((f) => f.split("/").join(sep)),
 );
 
@@ -57,114 +68,115 @@ interface Violation {
   snippet: string;
 }
 
-/**
- * Returns true iff `node` is `join(...)` whose args contain the
- * adjacency `"workspaces", <wsId>, "conversations"`. The `<wsId>` slot
- * accepts any non-literal (identifier, property access, etc.) — the
- * lint is about the workspace-scoped-conversation pattern, not the
- * specific wsId expression.
- *
- * Exported for the self-test under `test/unit/scripts/`.
- */
-export function isWorkspaceConversationJoin(node: ts.CallExpression): boolean {
+/** The callee's simple name for `f(...)` / `x.f(...)`, else `null`. */
+function calleeName(node: ts.CallExpression): string | null {
   const callee = node.expression;
-  const calleeName = ts.isIdentifier(callee)
+  return ts.isIdentifier(callee)
     ? callee.text
     : ts.isPropertyAccessExpression(callee)
       ? callee.name.text
       : null;
-  if (calleeName !== "join") return false;
+}
 
-  const args = node.arguments;
-  // Need three adjacent positions: "workspaces", <wsId>, "conversations".
-  for (let i = 0; i < args.length - 2; i++) {
-    const a = args[i];
-    const b = args[i + 1];
-    const c = args[i + 2];
-    if (!a || !b || !c) continue;
-    const aIsWorkspaces =
-      (ts.isStringLiteral(a) || ts.isNoSubstitutionTemplateLiteral(a)) && a.text === "workspaces";
-    const cIsConversations =
-      (ts.isStringLiteral(c) || ts.isNoSubstitutionTemplateLiteral(c)) &&
-      c.text === "conversations";
-    if (aIsWorkspaces && cIsConversations) return true;
+/** The static string value of a string / no-substitution-template literal, else `null`. */
+function staticText(node: ts.Expression | undefined): string | null {
+  if (!node) return null;
+  if (ts.isStringLiteral(node) || ts.isNoSubstitutionTemplateLiteral(node)) return node.text;
+  return null;
+}
+
+const WORKSPACE_RE = /workspace/i;
+
+/**
+ * True iff `node` carries a workspace-root signal — a `"workspaces"`-ish string
+ * literal, or an identifier / property / call whose name references a workspace
+ * (`this.workspacesRoot`, `getWorkspaceScopedDir()`, …). Used to decide whether
+ * a `"conversations"` segment is already room-scoped (qualified by a workspace)
+ * rather than flat.
+ */
+function referencesWorkspaces(node: ts.Expression | undefined): boolean {
+  if (!node) return false;
+  const text = staticText(node);
+  if (text !== null) return WORKSPACE_RE.test(text);
+  if (ts.isIdentifier(node)) return WORKSPACE_RE.test(node.text);
+  if (ts.isPropertyAccessExpression(node)) return WORKSPACE_RE.test(node.name.text);
+  if (ts.isCallExpression(node)) {
+    const name = calleeName(node);
+    return name !== null && WORKSPACE_RE.test(name);
+  }
+  return false;
+}
+
+/** True iff any argument before `idx` qualifies the path with a workspace root. */
+function hasWorkspaceQualifierBefore(args: ts.NodeArray<ts.Expression>, idx: number): boolean {
+  for (let i = 0; i < idx; i++) {
+    if (referencesWorkspaces(args[i])) return true;
   }
   return false;
 }
 
 /**
- * Returns true iff `node` is a template literal whose text contains
- * the substring `workspaces/<...>/conversations/`. Catches the
- * `` `${workDir}/workspaces/${wsId}/conversations/${id}.jsonl` ``
- * shape that `join` would otherwise express piecewise.
- */
-export function isWorkspaceConversationTemplate(node: ts.TemplateExpression): boolean {
-  let assembled = node.head.text;
-  for (const span of node.templateSpans) {
-    // Use a placeholder so adjacency-matching works on the literal text
-    // between substitutions.
-    assembled += "<expr>";
-    assembled += span.literal.text;
-  }
-  return /workspaces\/[^/]+\/conversations(\/|$)/.test(assembled);
-}
-
-export function isWorkspaceConversationStringLiteral(node: ts.StringLiteral): boolean {
-  return /workspaces\/[^/]+\/conversations(\/|$)/.test(node.text);
-}
-
-/**
- * Returns true iff `node` is `join(getWorkspaceScopedDir(...), ...,
- * "conversations", ...)` — building a conversations dir off the
- * workspace-scoped root. This is the exact regression that produced the
- * all-zeros usage dashboard (issue: usage read
- * `join(getWorkspaceScopedDir(), "conversations")`, the empty pre-Stage-1
- * per-workspace dir). Post-Stage-1 conversations are top-level and
- * user-scoped — use `runtime.getConversationsDir()` /
- * `runtime.findConversationStore()` instead.
- *
- * The `getWorkspaceScopedDir` call may be a bare identifier
- * (`getWorkspaceScopedDir(...)`) or a method access
- * (`runtime.getWorkspaceScopedDir(...)`); both are flagged. Any literal
- * `"conversations"` argument anywhere in the `join` triggers — the
- * pairing of the two is the smell.
+ * Returns true iff `node` is `join(...)` building a FLAT conversations path —
+ * a `"conversations"` string-literal argument that is NOT qualified by a
+ * workspace root before it. `join(workDir, "conversations", file)` flags;
+ * `join(workDir, "workspaces", wsId, "conversations", file)` and
+ * `join(this.workspacesRoot, wsId, "conversations")` do not (already
+ * room-scoped).
  *
  * Exported for the self-test under `test/unit/scripts/`.
  */
-export function isWorkspaceScopedConversationJoin(node: ts.CallExpression): boolean {
-  const callee = node.expression;
-  const calleeName = ts.isIdentifier(callee)
-    ? callee.text
-    : ts.isPropertyAccessExpression(callee)
-      ? callee.name.text
-      : null;
-  if (calleeName !== "join") return false;
-
+export function isFlatConversationJoin(node: ts.CallExpression): boolean {
+  if (calleeName(node) !== "join") return false;
   const args = node.arguments;
-
-  const firstArgIsWorkspaceScopedDir =
-    args.length > 0 &&
-    args[0] !== undefined &&
-    ts.isCallExpression(args[0]) &&
-    isGetWorkspaceScopedDirCall(args[0]);
-  if (!firstArgIsWorkspaceScopedDir) return false;
-
-  return args.some(
-    (a) =>
-      (ts.isStringLiteral(a) || ts.isNoSubstitutionTemplateLiteral(a)) &&
-      a.text === "conversations",
-  );
+  for (let j = 0; j < args.length; j++) {
+    if (staticText(args[j]) !== "conversations") continue;
+    if (!hasWorkspaceQualifierBefore(args, j)) return true;
+  }
+  return false;
 }
 
-/** True iff `node` is a `getWorkspaceScopedDir(...)` or `x.getWorkspaceScopedDir(...)` call. */
-function isGetWorkspaceScopedDirCall(node: ts.CallExpression): boolean {
-  const callee = node.expression;
-  const name = ts.isIdentifier(callee)
-    ? callee.text
-    : ts.isPropertyAccessExpression(callee)
-      ? callee.name.text
-      : null;
-  return name === "getWorkspaceScopedDir";
+/** A `conversations` path segment anywhere in an assembled path. */
+const CONV_SEGMENT_RE = /(^|\/)conversations(\/|$)/;
+/** The room-owned shape: `workspaces/<id>/conversations`. */
+const ROOM_CONV_RE = /workspaces\/[^/]+\/conversations(\/|$)/;
+/** A flat conversation FILE literal: `…/conversations/<convId>.jsonl`. */
+const FLAT_CONV_FILE_RE = /(^|\/)conversations\/[^/]+\.jsonl$/;
+
+/**
+ * Returns true iff `node` is a template literal that spells a FLAT
+ * `…/conversations/…` path — a `conversations` segment NOT under
+ * `workspaces/<id>/`. Catches the
+ * `` `${workDir}/conversations/${id}.jsonl` `` shape that `join` would
+ * otherwise express piecewise.
+ *
+ * Exported for the self-test under `test/unit/scripts/`.
+ */
+export function isFlatConversationTemplate(node: ts.TemplateExpression): boolean {
+  let assembled = node.head.text;
+  for (const span of node.templateSpans) {
+    // Placeholder so adjacency-matching works on the literal text between
+    // substitutions.
+    assembled += "<expr>";
+    assembled += span.literal.text;
+  }
+  if (!CONV_SEGMENT_RE.test(assembled)) return false;
+  return !ROOM_CONV_RE.test(assembled);
+}
+
+/**
+ * Returns true iff `node` is a string literal hardcoding a FLAT conversation
+ * file path (`…/conversations/<id>.jsonl` not under `workspaces/<id>/`).
+ * Resource URIs (`ui://conversations/browser`) and package routes
+ * (`@scope/conversations`) share the token but aren't on-disk layout, so they
+ * don't match.
+ *
+ * Exported for the self-test under `test/unit/scripts/`.
+ */
+export function isFlatConversationStringLiteral(node: ts.StringLiteral): boolean {
+  const text = node.text;
+  if (text.includes("://")) return false;
+  if (!FLAT_CONV_FILE_RE.test(text)) return false;
+  return !ROOM_CONV_RE.test(text);
 }
 
 function hasAllowMarker(node: ts.Node, sourceFile: ts.SourceFile, src: string): boolean {
@@ -189,7 +201,7 @@ function hasAllowMarker(node: ts.Node, sourceFile: ts.SourceFile, src: string): 
 }
 
 function scanFile(absPath: string, violations: Violation[]): void {
-  const relPath = relative(SRC_ROOT, absPath);
+  const relPath = relative(ROOT, absPath);
   if (ALLOWED_FILES.has(relPath)) return;
   const src = readFileSync(absPath, "utf-8");
   const sourceFile = ts.createSourceFile(
@@ -212,14 +224,11 @@ function scanFile(absPath: string, violations: Violation[]): void {
   }
 
   function visit(node: ts.Node): void {
-    if (
-      ts.isCallExpression(node) &&
-      (isWorkspaceConversationJoin(node) || isWorkspaceScopedConversationJoin(node))
-    ) {
+    if (ts.isCallExpression(node) && isFlatConversationJoin(node)) {
       record(node);
-    } else if (ts.isTemplateExpression(node) && isWorkspaceConversationTemplate(node)) {
+    } else if (ts.isTemplateExpression(node) && isFlatConversationTemplate(node)) {
       record(node);
-    } else if (ts.isStringLiteral(node) && isWorkspaceConversationStringLiteral(node)) {
+    } else if (ts.isStringLiteral(node) && isFlatConversationStringLiteral(node)) {
       record(node);
     }
     ts.forEachChild(node, visit);
@@ -242,16 +251,16 @@ async function main(): Promise<void> {
   }
 
   if (violations.length > 0) {
-    console.error(`✗ Found ${violations.length} workspace-scoped conversation path(s) in src/:\n`);
+    console.error(`✗ Found ${violations.length} flat conversation path(s) in src/:\n`);
     for (const v of violations) {
       console.error(`  ${v.file}:${v.line}:${v.column}`);
       console.error(`    ${v.snippet}\n`);
     }
     console.error(
-      "Stage 1: conversations live at `{workDir}/conversations/{convId}.jsonl` — top-level, user-scoped.",
+      "Conversations are room-owned: `workspaces/<wsId>/conversations/<ownerId>/<convId>.jsonl`.",
     );
     console.error(
-      "Use `runtime.findConversationStore()` / `runtime.findConversation(convId)` instead of building per-workspace paths.",
+      "Build the directory via `roomConversationsDir()` (src/conversation/paths.ts) or the runtime's room conversation store — never the flat `conversations/` path.",
     );
     console.error(
       `Legitimate exceptions (rare) require a // ${ALLOW_MARKER} comment on the line above the construction.`,
@@ -259,7 +268,7 @@ async function main(): Promise<void> {
     process.exit(1);
   }
 
-  console.log(`✓ No workspace-scoped conversation paths in ${scanned} src/ files`);
+  console.log(`✓ No flat conversation paths in ${scanned} src/ files`);
 }
 
 // Gate the side effect on direct invocation. Unit tests `import` this

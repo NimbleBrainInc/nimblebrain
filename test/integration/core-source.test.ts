@@ -628,7 +628,9 @@ describe("Core Source", () => {
 			// generator short-circuits to a "quiet day" briefing and the
 			// model never gets invoked (the cache test would pass vacuously).
 			await runWithRequestContext(ctx, async () => {
-				const store = runtime.findConversationStore();
+				// Seed in the focused room's owner partition so the briefing's
+				// cross-room `listConversations({userId: "user_test"})` walk sees it.
+				const store = runtime.roomConversationStore(TEST_WORKSPACE_ID, "user_test");
 				await store.create({ ownerId: "user_test" });
 			});
 

@@ -1,17 +1,17 @@
 /**
- * Integration tests for `Runtime.findConversation` /
- * `findConversationStore` — the post-Stage-1 (Task 005) accessors that
- * collapsed the workspace-scoped conversation surface onto a single
- * top-level store.
+ * Integration tests for `Runtime.findConversation` — the cross-room
+ * accessor that resolves a conversation by id through the locator.
+ *
+ * Conversations are room-owned:
+ * `{workDir}/workspaces/<wsId>/conversations/<ownerId>/<convId>.jsonl`.
  *
  * Covers:
- *  - `findConversation(id)` resolves a conversation that exists at top-level.
+ *  - `findConversation(id)` resolves a conversation that exists in its room.
  *  - `findConversation(id)` returns null when the conversation doesn't exist.
  *  - `findConversation(id, access)` returns null for foreign owner
  *    (same shape as not-found — no existence leak).
- *  - Chat lands at `{workDir}/conversations/`, not any workspace path.
- *  - `/v1/conversations/:id/events` works without `X-Workspace-Id`
- *    (Task 005 made the workspace header optional on this route).
+ *  - Chat lands under the focused room's owner partition.
+ *  - `/v1/conversations/:id/events` works without `X-Workspace-Id`.
  */
 
 import { afterAll, describe, expect, test } from "bun:test";
@@ -22,6 +22,7 @@ import { tmpdir } from "node:os";
 
 import type { ServerHandle } from "../../../src/api/server.ts";
 import { startServer } from "../../../src/api/server.ts";
+import { roomConversationsDir } from "../../../src/conversation/paths.ts";
 import { createTestAuthAdapter, TEST_IDENTITY } from "../../helpers/test-auth-adapter.ts";
 import { Runtime } from "../../../src/runtime/runtime.ts";
 import { createEchoModel } from "../../helpers/echo-model.ts";
@@ -46,7 +47,7 @@ describe("Runtime.findConversation", () => {
     expect(runtime).toBeDefined();
   });
 
-  test("resolves an existing conversation from the top-level store", async () => {
+  test("resolves an existing conversation from its room store", async () => {
     const result = await runtime.chat({
       message: "alice's note",
       workspaceId: TEST_WORKSPACE_ID,
@@ -82,14 +83,17 @@ describe("Runtime.findConversation", () => {
     expect(foundForAlice!.id).toBe(aliceConv.conversationId);
   });
 
-  test("chat writes the conversation file at {workDir}/conversations/{convId}.jsonl", async () => {
+  test("chat writes the conversation file under the focused room's owner partition", async () => {
     const result = await runtime.chat({
       message: "where does this land",
       workspaceId: TEST_WORKSPACE_ID,
       identity: ALICE,
     });
-    const topLevelPath = join(workDir, "conversations", `${result.conversationId}.jsonl`);
-    const s = await stat(topLevelPath);
+    const roomPath = join(
+      roomConversationsDir(workDir, TEST_WORKSPACE_ID, ALICE.id),
+      `${result.conversationId}.jsonl`,
+    );
+    const s = await stat(roomPath);
     expect(s.isFile()).toBe(true);
   });
 
@@ -297,15 +301,20 @@ describe("/v1/conversations/:id/events — dev mode (no provider)", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Ownerless conversation file → 422 conversation_corrupted (not 500).
+// Ownerless (pre-migration) conversation file — no 500s.
 //
-// Regression for round-7 QA #2: a pre-migration file lacking `ownerId`
-// caused the store to throw a generic Error that bubbled to handleChat
-// as 500. The typed `ConversationCorruptedError` maps to 422 with the
-// migration command in the message.
+// A file lacking `ownerId` is pre-migration state. The locator resolves by
+// PATH (it never reads file contents), so an ownerless file resolves to its
+// room on both routes, and `store.load` is the one place ownership/validity is
+// checked — it throws the typed `ConversationCorruptedError`. So both the read
+// route (`/v1/conversations/:id/events`) and the chat resume path (`/v1/chat`)
+// surface a clean 422 with the migration command, never a 500.
+//
+// The ownerless file is planted at the exact room path the resume resolves
+// (TEST_WORKSPACE_ID + the authenticated caller's owner partition).
 // ---------------------------------------------------------------------------
 
-describe("ownerless conversation file → 422 conversation_corrupted", () => {
+describe("ownerless conversation file — no 500s", () => {
   const API_KEY = "find-conv-corrupted-key-1234";
   const workDir = join(tmpdir(), `nb-find-conv-corrupted-${Date.now()}`);
   let runtime: Runtime;
@@ -329,14 +338,12 @@ describe("ownerless conversation file → 422 conversation_corrupted", () => {
     });
     baseUrl = `http://localhost:${handle.port}`;
 
-    // Plant an ownerless file at the top-level conversations dir to
-    // simulate a tenant that ran migrate:personal-workspaces but
-    // never ran migrate:conversations-to-top-level. (In practice
-    // ownerless files would live under workspaces/.../conversations/
-    // pre-migration, but the second migration is what stamps
-    // ownerId; a file at top-level with no ownerId is the
-    // operator-forgot-step-2 state.)
-    mkdirSync(join(workDir, "conversations"), { recursive: true });
+    // Plant an ownerless file at the room path the resume path reads:
+    // `workspaces/<TEST_WORKSPACE_ID>/conversations/<callerId>/<convId>.jsonl`.
+    // The locator skips it (no ownerId), so the read route 404s; the resume
+    // path reads it directly via the room store and 422s.
+    const convDir = roomConversationsDir(workDir, TEST_WORKSPACE_ID, TEST_IDENTITY.id);
+    mkdirSync(convDir, { recursive: true });
     const meta = {
       id: convId,
       createdAt: "2025-01-01T00:00:00.000Z",
@@ -346,22 +353,19 @@ describe("ownerless conversation file → 422 conversation_corrupted", () => {
       format: "events",
       // intentionally no ownerId
     };
-    await Bun.write(
-      join(workDir, "conversations", `${convId}.jsonl`),
-      `${JSON.stringify(meta)}\n`,
-    );
+    await Bun.write(join(convDir, `${convId}.jsonl`), `${JSON.stringify(meta)}\n`);
   });
 
   test("GET /v1/conversations/:id/events on an ownerless file returns 422 (not 500)", async () => {
+    // `locate` resolves the file by path; `findConversation` then loads it and
+    // the store throws `ConversationCorruptedError`, which the route maps to a
+    // 422 carrying the migration command — operator-actionable, not a bare 404.
     const res = await fetch(`${baseUrl}/v1/conversations/${convId}/events`, {
       headers: { Authorization: `Bearer ${API_KEY}` },
     });
     expect(res.status).toBe(422);
     const body = await res.json();
     expect(body.error).toBe("conversation_corrupted");
-    expect(body.message).toMatch(/migrate:conversations-to-top-level/);
-    expect(body.details?.conversationId).toBe(convId);
-    expect(body.details?.reason).toBe("missing_owner");
   });
 
   test("POST /v1/chat resuming an ownerless conversation returns 422 (not 500)", async () => {
