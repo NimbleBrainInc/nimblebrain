@@ -86,8 +86,7 @@ const ALLOWED_FILES = new Set(
  * `name`, the lint surfaces it via the construction predicates first;
  * splitting it back open is then trivially obvious in review.
  */
-const NAMESPACED_BINDING_RE =
-  /^(?:namespaced|qualified)[A-Za-z_]*name$|^fullToolName$|^toolName$/i;
+const NAMESPACED_BINDING_RE = /^(?:namespaced|qualified)[A-Za-z_]*name$|^fullToolName$|^toolName$/i;
 
 interface Violation {
   file: string;
@@ -139,7 +138,7 @@ export function isNamespacedToolTemplate(node: ts.TemplateExpression): boolean {
   // begins with `-`.
   if (node.head.text === "ws_") {
     const firstSpan = node.templateSpans[0];
-    if (firstSpan && firstSpan.literal.text.startsWith("-")) return true;
+    if (firstSpan?.literal.text.startsWith("-")) return true;
   }
   return false;
 }
@@ -174,8 +173,7 @@ export function isNamespacedToolBinaryConcat(node: ts.BinaryExpression): boolean
   for (let i = 0; i < operands.length; i++) {
     const op = operands[i];
     if (!op) continue;
-    const text =
-      ts.isStringLiteral(op) || ts.isNoSubstitutionTemplateLiteral(op) ? op.text : null;
+    const text = ts.isStringLiteral(op) || ts.isNoSubstitutionTemplateLiteral(op) ? op.text : null;
     if (text === null) continue;
     if (sawWsPrefix < 0) {
       // Either exactly "ws_" or a literal beginning with "ws_" and
@@ -255,9 +253,7 @@ function scanFile(absPath: string, scanRoot: string, violations: Violation[]): v
 
   function record(node: ts.Node, reason: string): void {
     if (hasAllowMarker(node, sourceFile, src)) return;
-    const { line, character } = sourceFile.getLineAndCharacterOfPosition(
-      node.getStart(sourceFile),
-    );
+    const { line, character } = sourceFile.getLineAndCharacterOfPosition(node.getStart(sourceFile));
     violations.push({
       file: relative(ROOT, absPath),
       line: line + 1,
@@ -318,9 +314,7 @@ async function main(): Promise<void> {
     console.error(
       "Cross-workspace tool names must flow through `namespacedToolName(wsId, name)` /",
     );
-    console.error(
-      "`parseNamespacedToolName(s)` — `src/tools/namespace.ts` (platform) or",
-    );
+    console.error("`parseNamespacedToolName(s)` — `src/tools/namespace.ts` (platform) or");
     console.error("`web/src/lib/namespaced-tool.ts` (web mirror).");
     console.error(
       `Legitimate exceptions (rare) require a // ${ALLOW_MARKER} comment on the line above the construction.`,

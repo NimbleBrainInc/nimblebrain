@@ -77,7 +77,7 @@ function formatInline(text: string): ReactNode[] {
 
 function Eyebrow() {
   return (
-    <div className="text-[11px] font-bold tracking-[0.08em] uppercase text-muted-foreground">
+    <div className="text-2xs font-bold tracking-[0.08em] uppercase text-muted-foreground">
       Briefing
     </div>
   );
@@ -105,12 +105,12 @@ function SectionGroup({
   if (items.length === 0) return null;
   return (
     <div className="mt-4 first:mt-3">
-      <div className="text-[11px] font-semibold tracking-[0.06em] uppercase text-muted-foreground/70">
+      <div className="text-2xs font-semibold tracking-[0.06em] uppercase text-muted-foreground/60">
         {label}
       </div>
       <ul className="mt-1.5 space-y-1.5">
         {items.map((item) => (
-          <li key={item.id} className="flex items-start gap-2.5 text-sm text-foreground/90">
+          <li key={item.id} className="flex items-start gap-2.5 text-sm text-foreground/80">
             <span
               className={cn("mt-[7px] h-1.5 w-1.5 shrink-0 rounded-full", dotClass(item.type))}
               aria-hidden
@@ -148,7 +148,7 @@ export function BriefingView({ briefing, loading, error, onRetry, onAction }: Br
 
       {error && (
         <div
-          className="mt-3 rounded-lg border border-destructive/30 bg-destructive/5 px-4 py-3 text-sm text-destructive"
+          className="mt-3 rounded-sm border border-destructive/20 bg-destructive/5 px-4 py-3 text-sm text-destructive"
           data-testid="workspace-briefing-error"
         >
           <p>{error}</p>

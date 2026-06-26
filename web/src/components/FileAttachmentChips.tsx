@@ -37,7 +37,7 @@ export function FileAttachmentChips({ files, onRemove }: Props) {
         <div
           // biome-ignore lint/suspicious/noArrayIndexKey: composite key with idx to handle duplicate files
           key={`${file.name}-${file.size}-${idx}`}
-          className="flex items-center gap-1.5 px-2 py-1 rounded-lg bg-muted text-xs text-foreground border border-border"
+          className="flex items-center gap-1.5 px-2 py-1 rounded-sm bg-muted text-xs text-foreground border border-border"
         >
           {file.type.startsWith("image/") && <Thumbnail file={file} />}
           <span className="truncate max-w-[120px]">{file.name}</span>

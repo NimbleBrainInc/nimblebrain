@@ -122,6 +122,17 @@ const ADDED_DARK = {
   "--nb-color-processing-light": "#1a0f2e",
   "--nb-color-info-light": "#0c1a33",
 };
+/**
+ * Net-new sub-`xs` type steps (mode-independent) added for the dense shell.
+ * They ride into the ext-apps token map via `...typeScale`, so the exact-match
+ * fixtures above gain them in both modes.
+ */
+const ADDED_TYPE_STEPS = {
+  "--font-text-3xs-size": "0.625rem",
+  "--font-text-3xs-line-height": "0.875rem",
+  "--font-text-2xs-size": "0.6875rem",
+  "--font-text-2xs-line-height": "1rem",
+};
 
 describe("paletteToExtAppsTokens — no visual change except documented deltas", () => {
   test("light map = legacy light + (Satoshi, simplified heading, added brand semantics)", () => {
@@ -129,6 +140,7 @@ describe("paletteToExtAppsTokens — no visual change except documented deltas",
       ...LEGACY_LIGHT,
       "--font-sans": SATOSHI,
       "--nb-font-heading": ERODE,
+      ...ADDED_TYPE_STEPS,
       ...ADDED_LIGHT,
     };
     expect(paletteToExtAppsTokens("light")).toEqual(expected);
@@ -139,6 +151,7 @@ describe("paletteToExtAppsTokens — no visual change except documented deltas",
       ...LEGACY_DARK,
       "--font-sans": SATOSHI,
       "--nb-font-heading": ERODE,
+      ...ADDED_TYPE_STEPS,
       ...ADDED_DARK,
     };
     expect(paletteToExtAppsTokens("dark")).toEqual(expected);
@@ -194,5 +207,36 @@ describe("paletteToRootCss — shell :root/.dark match current values", () => {
     expect(darkBlock).toContain("--processing: #a78bfa;");
     expect(darkBlock).not.toContain("--radius:");
     expect(darkBlock).not.toContain("--sidebar-width:");
+  });
+
+  test("light :root carries the type scale (aliased to Tailwind --text-* in index.css)", () => {
+    expect(rootBlock).toContain("--font-text-3xs-size: 0.625rem;");
+    expect(rootBlock).toContain("--font-text-2xs-size: 0.6875rem;");
+    expect(rootBlock).toContain("--font-text-xs-size: 0.75rem;");
+  });
+
+  test("dark block does not redefine the type scale (mode-independent, cascades)", () => {
+    expect(darkBlock).not.toContain("--font-text-");
+  });
+
+  test("light :root carries the font stacks (aliased to Tailwind --font-* in index.css)", () => {
+    expect(rootBlock).toContain("--nb-font-sans: 'Satoshi', system-ui, sans-serif;");
+    expect(rootBlock).toContain("--nb-font-heading: 'Erode', Georgia, serif;");
+    expect(rootBlock).toContain("--nb-font-mono: 'JetBrains Mono Variable'");
+  });
+
+  test("dark block does not redefine the font stacks (mode-independent, cascades)", () => {
+    expect(darkBlock).not.toContain("--nb-font-");
+  });
+
+  test("light :root carries the radius scale (aliased to Tailwind --radius-* in index.css)", () => {
+    expect(rootBlock).toContain("--border-radius-xs: 0.25rem;");
+    expect(rootBlock).toContain("--border-radius-sm: 0.5rem;");
+    expect(rootBlock).toContain("--border-radius-md: 0.75rem;");
+    expect(rootBlock).toContain("--border-radius-lg: 1rem;");
+  });
+
+  test("dark block does not redefine the radius scale (mode-independent, cascades)", () => {
+    expect(darkBlock).not.toContain("--border-radius-");
   });
 });

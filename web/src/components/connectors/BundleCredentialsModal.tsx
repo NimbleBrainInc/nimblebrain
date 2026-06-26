@@ -146,7 +146,7 @@ export function BundleCredentialsModal({
         role="dialog"
         aria-modal="true"
         aria-labelledby="bundle-credentials-title"
-        className="bg-background border border-border rounded-lg shadow-xl w-full max-w-md p-5"
+        className="bg-background border border-border rounded-sm shadow-xl w-full max-w-md p-5"
       >
         <h2 id="bundle-credentials-title" className="text-base font-semibold">
           Configure {connectorName}
@@ -208,7 +208,7 @@ export function BundleCredentialsModal({
               <button
                 type="submit"
                 disabled={busy || clearing}
-                className="text-xs px-3 py-1.5 rounded bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-60"
+                className="text-xs px-3 py-1.5 rounded bg-primary text-primary-foreground hover:bg-primary/80 disabled:opacity-60"
               >
                 {busy ? "Saving…" : "Save"}
               </button>
@@ -269,11 +269,11 @@ function BundleField({
         {label}
         {field.required && <span className="text-destructive">*</span>}
         {isPopulated && (
-          <span className="text-[10px] font-normal text-muted-foreground">✓ configured</span>
+          <span className="text-3xs font-normal text-muted-foreground">✓ configured</span>
         )}
       </span>
       {field.description && (
-        <span className="block text-[11px] text-muted-foreground mt-0.5">{field.description}</span>
+        <span className="block text-2xs text-muted-foreground mt-0.5">{field.description}</span>
       )}
       <input
         ref={inputRef}

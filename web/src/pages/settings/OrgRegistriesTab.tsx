@@ -80,10 +80,10 @@ function RegistryRow({
       <div className="flex-1 min-w-0">
         <div className="flex items-center gap-2">
           <span className="text-sm font-medium">{registry.name}</span>
-          <span className="text-[10px] px-1.5 py-0.5 rounded bg-muted text-muted-foreground">
+          <span className="text-3xs px-1.5 py-0.5 rounded bg-muted text-muted-foreground">
             {registry.type}
           </span>
-          {registry.locked && <span className="text-[10px] text-muted-foreground">locked</span>}
+          {registry.locked && <span className="text-3xs text-muted-foreground">locked</span>}
         </div>
         {supportsUrl && (
           <div className="mt-1 font-mono text-xs text-muted-foreground">
@@ -113,6 +113,9 @@ function Toggle({
   label: string;
 }) {
   return (
+    // The off-state track and thumb must both stay visible on the off-white
+    // canvas: bg-input gives the track a form-control gray with real contrast in
+    // both themes, and shadow-sm lifts the thumb off whichever track it sits on.
     <button
       type="button"
       role="switch"
@@ -121,11 +124,11 @@ function Toggle({
       disabled={disabled}
       onClick={() => onChange(!checked)}
       className={`relative inline-flex h-5 w-9 shrink-0 items-center rounded-full transition-colors disabled:cursor-not-allowed disabled:opacity-60 ${
-        checked ? "bg-primary" : "bg-muted"
+        checked ? "bg-primary" : "bg-input"
       }`}
     >
       <span
-        className={`inline-block h-4 w-4 transform rounded-full bg-background transition-transform ${
+        className={`inline-block h-4 w-4 transform rounded-full bg-background shadow-sm transition-transform ${
           checked ? "translate-x-4" : "translate-x-0.5"
         }`}
       />

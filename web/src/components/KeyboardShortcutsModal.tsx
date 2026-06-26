@@ -92,14 +92,14 @@ export function KeyboardShortcutsModal({ isOpen, onClose }: KeyboardShortcutsMod
       <div className="absolute inset-0 bg-black/40 backdrop-blur-sm" />
       <div
         ref={modalRef}
-        className="relative bg-card border border-border rounded-xl shadow-2xl w-full max-w-md mx-4 overflow-hidden"
+        className="relative bg-card border border-border rounded-md shadow-2xl w-full max-w-md mx-4 overflow-hidden"
       >
         <div className="flex items-center justify-between px-5 py-4 border-b border-border">
           <h2 className="font-heading text-lg font-medium text-foreground">Keyboard Shortcuts</h2>
           <button
             type="button"
             onClick={onClose}
-            className="p-1.5 hover:bg-muted rounded-lg transition-colors text-muted-foreground hover:text-foreground"
+            className="p-1.5 hover:bg-muted rounded-sm transition-colors text-muted-foreground hover:text-foreground"
           >
             <X style={{ width: 16, height: 16 }} />
           </button>
@@ -139,7 +139,7 @@ export function KeyboardShortcutsModal({ isOpen, onClose }: KeyboardShortcutsMod
         <div className="px-5 py-3 border-t border-border bg-muted/50">
           <p className="text-xs text-muted-foreground text-center">
             Press{" "}
-            <kbd className="px-1 py-0.5 text-[10px] font-mono bg-card rounded border border-border">
+            <kbd className="px-1 py-0.5 text-3xs font-mono bg-card rounded border border-border">
               ?
             </kbd>{" "}
             anytime to show this

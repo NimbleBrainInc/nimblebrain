@@ -106,12 +106,26 @@ export const extOnlyColors = {
   "text-tertiary": ["#a3a3a3", "#737373"],
 } as const satisfies Record<string, Pair>;
 
-/** Mode-independent typography scale (ext-apps token names → value). */
+/**
+ * Mode-independent typography scale. Consumed two ways:
+ *   - the shell `:root` (via `paletteToRootCss`), aliased into Tailwind's
+ *     `--text-*` namespace in `index.css` so components use `text-2xs`…`text-lg`
+ *     instead of hand-set `text-[11px]`.
+ *   - the ext-apps iframe token map (via `paletteToExtAppsTokens`).
+ *
+ * `xs`–`lg` match Tailwind's default sizes (now single-sourced here). `2xs`/`3xs`
+ * are the sub-`xs` steps the dense shell needs (sidebar rows, counts, metadata),
+ * collapsing the prior ad-hoc `text-[9px]`…`text-[11px]` values onto the scale.
+ */
 export const typeScale = {
   "--font-weight-normal": "400",
   "--font-weight-medium": "500",
   "--font-weight-semibold": "600",
   "--font-weight-bold": "700",
+  "--font-text-3xs-size": "0.625rem",
+  "--font-text-3xs-line-height": "0.875rem",
+  "--font-text-2xs-size": "0.6875rem",
+  "--font-text-2xs-line-height": "1rem",
   "--font-text-xs-size": "0.75rem",
   "--font-text-xs-line-height": "1rem",
   "--font-text-sm-size": "0.875rem",

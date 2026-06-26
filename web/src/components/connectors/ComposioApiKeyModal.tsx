@@ -95,7 +95,7 @@ export function ComposioApiKeyModal({
         role="dialog"
         aria-modal="true"
         aria-labelledby="composio-apikey-title"
-        className="bg-background border border-border rounded-lg shadow-xl w-full max-w-md p-5"
+        className="bg-background border border-border rounded-sm shadow-xl w-full max-w-md p-5"
       >
         <h2 id="composio-apikey-title" className="text-base font-semibold">
           Connect {connectorName}
@@ -136,9 +136,7 @@ export function ComposioApiKeyModal({
                 className="mt-1 w-full text-sm font-mono px-2.5 py-1.5 rounded border border-border bg-background focus:outline-none focus:ring-1 focus:ring-ring disabled:opacity-60"
               />
               {f.description && (
-                <span className="block text-[11px] text-muted-foreground mt-1">
-                  {f.description}
-                </span>
+                <span className="block text-2xs text-muted-foreground mt-1">{f.description}</span>
               )}
             </label>
           ))}
@@ -157,7 +155,7 @@ export function ComposioApiKeyModal({
               type="button"
               onClick={() => void submit()}
               disabled={busy}
-              className="text-xs px-3 py-1.5 rounded bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-60"
+              className="text-xs px-3 py-1.5 rounded bg-primary text-primary-foreground hover:bg-primary/80 disabled:opacity-60"
             >
               {busy ? "Connecting…" : "Connect"}
             </button>

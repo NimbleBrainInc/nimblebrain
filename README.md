@@ -458,12 +458,13 @@ src/
 ├── telemetry/            Anonymous product telemetry
 │   ├── posthog-sink.ts   PostHog event mapping
 │   └── manager.ts        TelemetryManager (opt-in/out, anonymous ID)
-└── cli/                  Process entry: serve + dev launchers
-    ├── index.ts          Entry point (argv dispatch: serve | dev)
+└── cli/                  Process entry: the serve HTTP API server
+    ├── index.ts          Entry point (boots the server)
     ├── serve.ts          HTTP API server boot
-    ├── dev.ts            dev-mode dual-process supervisor
     └── config.ts         nimblebrain.json loading
 ```
+
+Local dev orchestration (watch + web HMR) is tooling, not runtime: `scripts/dev.ts` (`bun run dev`).
 
 ## Deployment
 

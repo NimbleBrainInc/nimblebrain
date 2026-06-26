@@ -3683,7 +3683,7 @@ describe("malformed tool call input", () => {
 
 describe("AgentEngine — connector-skill surface-once (P4)", () => {
   const GMAIL_CANDIDATE = {
-    name: "composio/gmail",
+    name: "gmail",
     body: "Confirm the recipient before calling gmail__send.",
     scope: "connector",
     toolAffinity: ["gmail__*"],
@@ -3744,7 +3744,7 @@ describe("AgentEngine — connector-skill surface-once (P4)", () => {
     );
 
     expect(injected).toHaveLength(1);
-    expect(injected[0]!.data["skillName"]).toBe("composio/gmail");
+    expect(injected[0]!.data["skillName"]).toBe("gmail");
     expect(injected[0]!.data["toolName"]).toBe("gmail__send");
     expect(injected[0]!.data["skillBody"]).toBe(GMAIL_CANDIDATE.body);
     expect(injected[0]!.data["scope"]).toBe("connector");
@@ -3783,7 +3783,7 @@ describe("AgentEngine — connector-skill surface-once (P4)", () => {
     const priorInjection = {
       role: "assistant",
       content: [{ type: "text", text: "<connector-skill>...</connector-skill>" }],
-      metadata: { synthetic: "connector_skill_injected", skill: "composio/gmail" },
+      metadata: { synthetic: "connector_skill_injected", skill: "gmail" },
     } as unknown as LanguageModelV3Message;
 
     await engine.run(

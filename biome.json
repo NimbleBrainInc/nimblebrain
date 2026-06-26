@@ -31,7 +31,7 @@
     }
   },
   "files": {
-    "includes": ["src/**", "web/src/**", "instrument/**", "!**/dist/**", "!web/src/_generated/**"]
+    "includes": ["src/**", "web/src/**", "instrument/**", "scripts/**", "!**/dist/**", "!web/src/_generated/**"]
   },
   "overrides": [
     {

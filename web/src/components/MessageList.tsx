@@ -30,7 +30,7 @@ function UsageChip({ usage }: { usage: NonNullable<ChatMessage["usage"]> }) {
   if (cacheRead > 0) parts.push(`${formatTokens(cacheRead)} cached`);
 
   return (
-    <span className="inline-flex items-center gap-1 text-[10px] text-muted-foreground tabular-nums">
+    <span className="inline-flex items-center gap-1 text-3xs text-muted-foreground tabular-nums">
       <Zap style={{ width: 10, height: 10 }} className="opacity-70" />
       <span>{parts.join(" · ")}</span>
     </span>
@@ -334,7 +334,7 @@ export function MessageList({
                   >
                     {shouldShowSpeaker(msg, idx, messages, currentUserId) && (
                       <div
-                        className="flex items-center gap-1.5 mb-1 text-[11px] font-medium"
+                        className="flex items-center gap-1.5 mb-1 text-2xs font-medium"
                         style={{ color: participantColor(msg.userId!) }}
                       >
                         <span
@@ -346,10 +346,10 @@ export function MessageList({
                     )}
                     {contextPrefix && (
                       <details className="mb-1">
-                        <summary className="text-[10px] opacity-60 cursor-pointer select-none">
+                        <summary className="text-3xs opacity-60 cursor-pointer select-none">
                           App Context
                         </summary>
-                        <span className="block text-[10px] opacity-60 mt-0.5">{contextPrefix}</span>
+                        <span className="block text-3xs opacity-60 mt-0.5">{contextPrefix}</span>
                       </details>
                     )}
                     {msg.files && msg.files.length > 0 && (
@@ -397,14 +397,14 @@ export function MessageList({
                     )}
                     {/* Stop reason notice */}
                     {msg.stopReason && (
-                      <div className="flex items-start gap-2 px-3 py-2 rounded-md bg-muted/50 border border-border text-sm text-muted-foreground">
+                      <div className="flex items-start gap-2 px-3 py-2 rounded-sm bg-muted/50 border border-border text-sm text-muted-foreground">
                         <AlertCircle className="w-4 h-4 mt-0.5 shrink-0" />
                         <span>{stopReasonMessage(msg.stopReason)}</span>
                       </div>
                     )}
                     {/* Inline error notice */}
                     {msg.error && (
-                      <div className="px-3 py-2.5 rounded-md bg-destructive/8 border border-destructive/20 text-sm">
+                      <div className="px-3 py-2.5 rounded-sm bg-destructive/10 border border-destructive/20 text-sm">
                         <div className="flex items-center gap-2">
                           <AlertCircle className="w-4 h-4 shrink-0 text-destructive" />
                           <span className="flex-1 text-foreground">
@@ -414,7 +414,7 @@ export function MessageList({
                             <button
                               type="button"
                               onClick={onRetry}
-                              className="inline-flex items-center gap-1.5 px-2.5 py-1 text-xs font-medium rounded-md border border-border bg-card hover:bg-muted text-foreground transition-colors shrink-0"
+                              className="inline-flex items-center gap-1.5 px-2.5 py-1 text-xs font-medium rounded-sm border border-border bg-card hover:bg-muted text-foreground transition-colors shrink-0"
                             >
                               <RotateCcw className="w-3 h-3" />
                               Try again
@@ -447,7 +447,7 @@ export function MessageList({
                 >
                   <CopyButton content={displayContent} />
                   {showTimestamp && msg.timestamp && (
-                    <span className="text-[10px] text-muted-foreground">
+                    <span className="text-3xs text-muted-foreground">
                       {formatRelativeTime(msg.timestamp)}
                     </span>
                   )}

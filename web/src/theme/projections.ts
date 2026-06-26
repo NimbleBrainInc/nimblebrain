@@ -78,9 +78,9 @@ export function paletteToExtAppsTokens(mode: Mode): Record<string, string> {
 /**
  * Build the shell's `:root` (light) and `.dark` (dark) CSS blocks. The values
  * and selectors match what Tailwind v4's `@theme inline` already references
- * (`--background`, `--sidebar-*`, `--chart-*`, `--radius`, …). `:root` also
- * carries the mode-independent layout constants and base radius; `.dark`
- * redefines colors only (radius/layout cascade from `:root`).
+ * (`--background`, `--sidebar-*`, `--chart-*`, `--radius`, `--font-text-*`, …).
+ * `:root` also carries the mode-independent layout constants, base radius, and
+ * type scale; `.dark` redefines colors only (the rest cascade from `:root`).
  */
 export function paletteToRootCss(): string {
   const names = Object.keys(colors) as (keyof typeof colors)[];
@@ -88,6 +88,18 @@ export function paletteToRootCss(): string {
   const lightDecls = names.map((n) => `  --${n}: ${pick(colors[n], "light")};`);
   lightDecls.push(`  --radius: ${radiusBase};`);
   for (const [k, v] of Object.entries(layout)) lightDecls.push(`  ${k}: ${v};`);
+  // Radius scale — the ONE radius source, shared with the iframe apps. Emitted
+  // as `--border-radius-*` (the ext-apps / synapse-ui names) and aliased to
+  // Tailwind's `--radius-*` in index.css, so the shell and the apps round
+  // equivalent elements identically.
+  for (const [k, v] of Object.entries(radiusScale)) lightDecls.push(`  ${k}: ${v};`);
+  // Type scale is mode-independent — :root only, aliased to Tailwind `--text-*`
+  // in index.css. Same single-source path as colors/radius/layout.
+  for (const [k, v] of Object.entries(typeScale)) lightDecls.push(`  ${k}: ${v};`);
+  // Font stacks — single-sourced into the shell as `--nb-font-*`, aliased to
+  // Tailwind's `--font-*` in index.css (the shell previously restated these as
+  // literals). Mode-independent, :root only.
+  for (const [k, v] of Object.entries(fonts)) lightDecls.push(`  --nb-font-${k}: ${v};`);
 
   const darkDecls = names.map((n) => `  --${n}: ${pick(colors[n], "dark")};`);
 

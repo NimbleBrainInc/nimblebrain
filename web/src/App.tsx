@@ -189,7 +189,7 @@ function BootstrappedShell({
         <span>Failed to load workspace: {error}</span>
         <button
           type="button"
-          className="px-4 py-2 text-sm bg-secondary text-secondary-foreground rounded-md hover:bg-accent transition-colors"
+          className="px-4 py-2 text-sm bg-secondary text-secondary-foreground rounded-sm hover:bg-accent transition-colors"
           onClick={() => window.location.reload()}
         >
           Retry

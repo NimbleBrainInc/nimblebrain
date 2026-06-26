@@ -47,7 +47,7 @@ function config(): EngineConfig {
     maxInputTokens: 500_000,
     maxOutputTokens: 16_384,
     connectorSkillCandidates: [
-      { name: "composio/gmail", body: OVERLAY_BODY, scope: "connector", toolAffinity: ["gmail__*"] },
+      { name: "gmail", body: OVERLAY_BODY, scope: "connector", toolAffinity: ["gmail__*"] },
     ],
   };
 }
@@ -114,7 +114,7 @@ describe("connector-skill surface-once (engine + event store)", () => {
     const synthetic = afterTurn1.find((m) => m.metadata?.synthetic === "connector_skill_injected");
     expect(synthetic).toBeDefined();
     expect(synthetic!.role).toBe("assistant");
-    expect(synthetic!.metadata?.skill).toBe("composio/gmail");
+    expect(synthetic!.metadata?.skill).toBe("gmail");
 
     // It NEVER entered the cached system prefix on any turn-1 model call.
     for (const call of rec1.calls) {

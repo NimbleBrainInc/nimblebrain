@@ -37,7 +37,7 @@ describe("materializeConnectorSkill", () => {
       connectorSkillsDir: root,
       serverName: "gmail",
       overlayBody: OVERLAY,
-      source: "connector:composio/gmail@v0.1.0",
+      source: "connector:gmail@v0.2.0",
       now: "2026-01-01T00:00:00.000Z",
     });
 
@@ -52,7 +52,7 @@ describe("materializeConnectorSkill", () => {
     expect(written).toContain("loading-strategy: dynamic");
     expect(written).toContain("gmail__*");
     expect(written).toContain("origin: connector");
-    expect(written).toContain("connector:composio/gmail@v0.1.0");
+    expect(written).toContain("connector:gmail@v0.2.0");
     // The author's `always` strategy did NOT survive.
     expect(written).not.toContain("loading-strategy: always");
   });
@@ -63,7 +63,7 @@ describe("materializeConnectorSkill", () => {
       connectorSkillsDir: root,
       serverName: "gmail",
       overlayBody: "no frontmatter, just prose",
-      source: "connector:composio/gmail@v0.1.0",
+      source: "connector:gmail@v0.2.0",
       now: "2026-01-01T00:00:00.000Z",
     });
     expect(res).toBeNull();
@@ -84,7 +84,7 @@ metadata:
       connectorSkillsDir: root,
       serverName: "gmail",
       overlayBody: emptyBody,
-      source: "connector:composio/gmail@v0.1.0",
+      source: "connector:gmail@v0.2.0",
       now: "2026-01-01T00:00:00.000Z",
     });
     expect(res).toBeNull();
@@ -103,7 +103,7 @@ describe("readConnectorSkillCandidates", () => {
       connectorSkillsDir: root,
       serverName: "gmail",
       overlayBody: OVERLAY,
-      source: "connector:composio/gmail@v0.1.0",
+      source: "connector:gmail@v0.2.0",
       now: "2026-01-01T00:00:00.000Z",
     });
 
@@ -123,7 +123,7 @@ describe("removeConnectorSkillsForServer", () => {
       connectorSkillsDir: root,
       serverName: "gmail",
       overlayBody: OVERLAY,
-      source: "connector:composio/gmail@v0.1.0",
+      source: "connector:gmail@v0.2.0",
       now: "2026-01-01T00:00:00.000Z",
     });
     expect(existsSync(join(root, "gmail"))).toBe(true);

@@ -55,7 +55,7 @@ export function SettingsPageHeader({
   onBack,
 }: SettingsPageHeaderProps) {
   const backButtonClass =
-    "-ml-1 shrink-0 inline-flex h-8 w-8 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-3 focus-visible:ring-ring/50";
+    "-ml-1 shrink-0 inline-flex h-8 w-8 items-center justify-center rounded-sm text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-3 focus-visible:ring-ring/50";
   return (
     <header className="flex items-start justify-between gap-4">
       <div className="flex items-start gap-2 min-w-0">

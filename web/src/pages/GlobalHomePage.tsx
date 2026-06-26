@@ -44,7 +44,7 @@ export function GlobalHomePage() {
         </header>
 
         <section>
-          <h2 className="text-[11px] font-bold tracking-[0.08em] uppercase text-muted-foreground mb-3">
+          <h2 className="text-2xs font-bold tracking-[0.08em] uppercase text-muted-foreground mb-3">
             Your workspaces
           </h2>
           {wsCtx.loading ? (
@@ -78,13 +78,13 @@ function WorkspaceTile({ workspace }: { workspace: WorkspaceInfo }) {
       data-testid="home-workspace-tile"
       data-workspace-id={workspace.id}
       className={cn(
-        "group flex items-center gap-3 p-4 rounded-lg border border-border bg-card",
+        "group flex items-center gap-3 p-4 rounded-sm border border-border bg-card",
         "hover:border-foreground/20 hover:bg-foreground/[0.02] transition-colors",
       )}
     >
       <span
         aria-hidden="true"
-        className="shrink-0 flex items-center justify-center rounded-md text-white text-sm font-semibold"
+        className="shrink-0 flex items-center justify-center rounded-sm text-white text-sm font-semibold"
         style={{ width: 32, height: 32, backgroundColor: avatar.color }}
       >
         {avatar.letter}
@@ -105,7 +105,7 @@ function NewWorkspaceTile() {
       to="/org/workspaces"
       data-testid="home-new-workspace-tile"
       className={cn(
-        "flex flex-col items-center justify-center gap-2 p-4 rounded-lg border border-dashed border-border",
+        "flex flex-col items-center justify-center gap-2 p-4 rounded-sm border border-dashed border-border",
         "text-muted-foreground hover:text-foreground hover:border-foreground/20 hover:bg-foreground/[0.02] transition-colors",
         "min-h-[100px]",
       )}

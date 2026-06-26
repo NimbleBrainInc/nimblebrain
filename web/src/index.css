@@ -12,9 +12,28 @@
 @custom-variant dark (&:is(.dark *));
 
 @theme inline {
-    --font-sans: 'Satoshi', system-ui, sans-serif;
-    --font-heading: 'Erode', Georgia, serif;
-    --font-mono: 'JetBrains Mono Variable', ui-monospace, SFMono-Regular, monospace;
+    /* Font stacks — single-sourced from src/theme/palette.ts (fonts), emitted
+       into :root as --nb-font-* by gen:theme. One source, same value. */
+    --font-sans: var(--nb-font-sans);
+    --font-heading: var(--nb-font-heading);
+    --font-mono: var(--nb-font-mono);
+
+    /* Type scale — single-sourced from src/theme/palette.ts (typeScale),
+       emitted into :root by gen:theme. Gives `text-3xs`/`text-2xs` for the
+       dense shell (sidebar, counts, metadata) plus `text-xs`…`text-lg`
+       (Tailwind's defaults, now palette-backed). Prefer these over `text-[Npx]`. */
+    --text-3xs: var(--font-text-3xs-size);
+    --text-3xs--line-height: var(--font-text-3xs-line-height);
+    --text-2xs: var(--font-text-2xs-size);
+    --text-2xs--line-height: var(--font-text-2xs-line-height);
+    --text-xs: var(--font-text-xs-size);
+    --text-xs--line-height: var(--font-text-xs-line-height);
+    --text-sm: var(--font-text-sm-size);
+    --text-sm--line-height: var(--font-text-sm-line-height);
+    --text-base: var(--font-text-base-size);
+    --text-base--line-height: var(--font-text-base-line-height);
+    --text-lg: var(--font-text-lg-size);
+    --text-lg--line-height: var(--font-text-lg-line-height);
 
     --color-sidebar-ring: var(--sidebar-ring);
     --color-sidebar-border: var(--sidebar-border);
@@ -62,14 +81,33 @@
     --color-processing-foreground: var(--processing-foreground);
     --color-processing-light: var(--processing-light);
     --color-info-light: var(--info-light);
-    --radius-sm: calc(var(--radius) * 0.6);
-    --radius-md: calc(var(--radius) * 0.8);
-    --radius-lg: var(--radius);
-    --radius-xl: calc(var(--radius) * 1.4);
-    --radius-2xl: calc(var(--radius) * 1.8);
-    --radius-3xl: calc(var(--radius) * 2.2);
-    --radius-4xl: calc(var(--radius) * 2.6);
+    /* Radius scale — single-sourced from src/theme/palette.ts (radiusScale),
+       emitted to :root as --border-radius-* (the ext-apps / synapse-ui names)
+       and aliased here so shell `rounded-*` and the iframe apps round
+       equivalent elements identically: controls 8px (sm), cards 12px (md). */
+    --radius-xs: var(--border-radius-xs);
+    --radius-sm: var(--border-radius-sm);
+    --radius-md: var(--border-radius-md);
+    --radius-lg: var(--border-radius-lg);
+    --radius-xl: var(--border-radius-xl);
 }
+
+/* ─────────────────────────────────────────────────────────────────────────
+ * Opacity ramp — the canonical opacity modifiers for color utilities (the
+ * `/N` suffix on `text-`, `bg-`, and `border-` colors). Six steps; pick by
+ * intent, don't invent in-between values (no /55, /70, /8…).
+ *
+ *   /5   passive hover · resting subtle fill (nav rows, search box at rest)
+ *   /10  active / selected fill · stronger hover for a discrete control
+ *   /20  soft border (foreground / sidebar-foreground) · faint surface (muted header strips)
+ *   /50  faint text (placeholder / disabled) · default muted surface (muted cards)
+ *   /60  muted / secondary text · softened border token (border-border)
+ *   /80  emphasized text · primary action hover (bg-primary)
+ *
+ * Two intentional two-level pairs — keep them distinct: /5 vs /10 (passive vs
+ * control fill) and /20 vs /50 (faint vs default muted surface). shadcn
+ * primitives under components/ui/* keep their vendored values.
+ * ───────────────────────────────────────────────────────────────────────── */
 
 @layer base {
   * {
@@ -125,6 +163,10 @@
 /* User messages: italic sans-serif */
 .presence-user-message {
   font-family: var(--font-sans);
+  /* Deliberate editorial size — sits between the type scale's sm (14px) and
+     base (16px) with no exact step; kept bespoke so the most-visible text in
+     the app isn't snapped for the sake of the rule. Assistant body below is
+     18px = the scale's lg, so it's tokenized. */
   font-size: 15px;
   font-weight: 500;
   line-height: 1.5;
@@ -135,7 +177,7 @@
 /* Assistant messages: serif typography base, Streamdown handles markdown rendering */
 .presence-assistant-message {
   font-family: var(--font-heading);
-  font-size: 18px;
+  font-size: var(--font-text-lg-size);
   font-weight: 400;
   line-height: 1.5;
   color: var(--foreground);
@@ -240,8 +282,8 @@
 }
 
 @keyframes breathing-glow {
-  0%, 100% { box-shadow: 0 0 0 1px var(--processing), 0 0 8px 0 rgba(124, 58, 237, 0.15); }
-  50% { box-shadow: 0 0 0 1px var(--processing), 0 0 16px 2px rgba(124, 58, 237, 0.08); }
+  0%, 100% { box-shadow: 0 0 0 1px var(--processing), 0 0 8px 0 color-mix(in oklch, var(--processing) 15%, transparent); }
+  50% { box-shadow: 0 0 0 1px var(--processing), 0 0 16px 2px color-mix(in oklch, var(--processing) 8%, transparent); }
 }
 
 /* Warm background shift — ambient state on scroll container */
@@ -274,7 +316,7 @@
 
 .turn-pill {
   width: 100%;
-  font-size: 12px;
+  font-size: var(--font-text-xs-size);
   color: var(--muted-foreground);
 }
 
@@ -339,7 +381,7 @@
 .turn-pill__ms {
   color: var(--muted-foreground);
   opacity: 0.7;
-  font-size: 12px;
+  font-size: var(--font-text-xs-size);
   font-variant-numeric: tabular-nums;
   flex-shrink: 0;
 }
@@ -404,7 +446,7 @@
   color: var(--muted-foreground);
   cursor: pointer;
   font: inherit;
-  font-size: 12px;
+  font-size: var(--font-text-xs-size);
   text-align: left;
   transition: color 150ms, background-color 150ms;
 }
@@ -426,14 +468,14 @@
 .turn-pill__row-count {
   color: var(--muted-foreground);
   opacity: 0.6;
-  font-size: 11px;
+  font-size: var(--font-text-2xs-size);
   font-variant-numeric: tabular-nums;
   flex-shrink: 0;
 }
 .turn-pill__row-ms {
   color: var(--muted-foreground);
   opacity: 0.6;
-  font-size: 11px;
+  font-size: var(--font-text-2xs-size);
   font-variant-numeric: tabular-nums;
   flex-shrink: 0;
 }
@@ -460,7 +502,7 @@
   color: var(--muted-foreground);
   cursor: pointer;
   font: inherit;
-  font-size: 11.5px;
+  font-size: var(--font-text-2xs-size);
   text-align: left;
   transition: color 150ms;
 }
@@ -473,7 +515,7 @@
   min-width: 0;
   color: var(--muted-foreground);
   font-family: "JetBrains Mono", ui-monospace, monospace;
-  font-size: 11px;
+  font-size: var(--font-text-2xs-size);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -481,7 +523,7 @@
 .turn-pill__call-ms {
   color: var(--muted-foreground);
   opacity: 0.6;
-  font-size: 11px;
+  font-size: var(--font-text-2xs-size);
   font-variant-numeric: tabular-nums;
   flex-shrink: 0;
 }
@@ -501,7 +543,7 @@
   background: transparent;
   border: 0;
   color: var(--muted-foreground);
-  font-size: 12.5px;
+  font-size: var(--font-text-xs-size);
   line-height: 1.55;
   white-space: pre-wrap;
   word-break: break-word;
@@ -529,7 +571,7 @@
   padding: 0 2px 4px;
 }
 .turn-pill__section-label {
-  font-size: 10px;
+  font-size: var(--font-text-3xs-size);
   letter-spacing: 0.06em;
   text-transform: uppercase;
   color: var(--muted-foreground);
@@ -546,7 +588,7 @@
   border: 0;
   color: var(--primary);
   font: inherit;
-  font-size: 10px;
+  font-size: var(--font-text-3xs-size);
   cursor: pointer;
   border-radius: 4px;
   transition: background-color 120ms;
@@ -561,7 +603,7 @@
   background: var(--muted);
   overflow: hidden;
   font-family: "JetBrains Mono", ui-monospace, monospace;
-  font-size: 11.5px;
+  font-size: var(--font-text-2xs-size);
 }
 .turn-pill__kv-row {
   display: grid;
@@ -598,7 +640,7 @@
   border: 1px solid var(--border);
   border-radius: 6px;
   font-family: "JetBrains Mono", ui-monospace, monospace;
-  font-size: 11px;
+  font-size: var(--font-text-2xs-size);
   line-height: 1.55;
   color: var(--muted-foreground);
   overflow-x: auto;
@@ -630,7 +672,7 @@
   gap: 8px;
   padding: 2px 0;
   color: var(--muted-foreground);
-  font-size: 12px;
+  font-size: var(--font-text-xs-size);
 }
 .live-cursor__spinner {
   color: var(--processing);

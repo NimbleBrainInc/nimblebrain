@@ -130,7 +130,7 @@ export const UserMenu = memo(function UserMenu({
         aria-label={`Account: ${label}`}
         aria-expanded={open}
         className={cn(
-          "flex items-center w-full rounded-lg transition-all duration-150 text-sm",
+          "flex items-center w-full rounded-sm transition-all duration-150 text-sm",
           "text-sidebar-foreground hover:bg-sidebar-foreground/5",
           open && "bg-sidebar-foreground/5",
           collapsed ? "justify-center p-1.5" : "gap-2.5 px-2 py-2",
@@ -138,7 +138,7 @@ export const UserMenu = memo(function UserMenu({
       >
         <span
           className={cn(
-            "inline-flex items-center justify-center font-semibold shrink-0 select-none rounded-md",
+            "inline-flex items-center justify-center font-semibold shrink-0 select-none rounded-sm",
             "w-7 h-7 text-xs",
           )}
           style={{ backgroundColor: bg, color: fg }}
@@ -152,14 +152,14 @@ export const UserMenu = memo(function UserMenu({
                 {label}
               </div>
               {displayName && email && displayName !== email && (
-                <div className="truncate text-[11px] text-sidebar-foreground/50 leading-tight">
+                <div className="truncate text-2xs text-sidebar-foreground/50 leading-tight">
                   {email}
                 </div>
               )}
             </div>
             <ChevronUp
               className={cn(
-                "shrink-0 w-4 h-4 text-sidebar-foreground/40 transition-transform duration-200",
+                "shrink-0 w-4 h-4 text-sidebar-foreground/50 transition-transform duration-200",
                 open ? "rotate-0" : "rotate-180",
               )}
             />
@@ -170,7 +170,7 @@ export const UserMenu = memo(function UserMenu({
       {open && (
         <div
           className={cn(
-            "absolute z-50 rounded-lg border border-sidebar-border bg-sidebar shadow-lg ws-dropdown-enter",
+            "absolute z-50 rounded-sm border border-sidebar-border bg-sidebar shadow-lg ws-dropdown-enter",
             collapsed
               ? cn("left-full ml-2 w-56", dropdownDirection === "up" ? "bottom-0" : "top-0")
               : cn(
@@ -184,7 +184,7 @@ export const UserMenu = memo(function UserMenu({
             <div className="px-3 py-2.5 border-b border-sidebar-border">
               <div className="truncate text-sm font-medium text-sidebar-foreground">{label}</div>
               {email && email !== label && (
-                <div className="truncate text-[11px] text-sidebar-foreground/50">{email}</div>
+                <div className="truncate text-2xs text-sidebar-foreground/50">{email}</div>
               )}
             </div>
           )}
@@ -192,7 +192,7 @@ export const UserMenu = memo(function UserMenu({
             <button
               type="button"
               onClick={goToProfile}
-              className="flex items-center gap-2.5 w-full rounded-md px-2 py-2 text-sm text-left transition-all duration-150 text-sidebar-foreground hover:bg-sidebar-foreground/5"
+              className="flex items-center gap-2.5 w-full rounded-sm px-2 py-2 text-sm text-left transition-all duration-150 text-sidebar-foreground hover:bg-sidebar-foreground/5"
             >
               <UserCog className="w-4 h-4 text-sidebar-foreground/60" />
               <span>Profile settings</span>
@@ -201,7 +201,7 @@ export const UserMenu = memo(function UserMenu({
               <button
                 type="button"
                 onClick={goToOrgSettings}
-                className="flex items-center gap-2.5 w-full rounded-md px-2 py-2 text-sm text-left transition-all duration-150 text-sidebar-foreground hover:bg-sidebar-foreground/5"
+                className="flex items-center gap-2.5 w-full rounded-sm px-2 py-2 text-sm text-left transition-all duration-150 text-sidebar-foreground hover:bg-sidebar-foreground/5"
               >
                 <Building2 className="w-4 h-4 text-sidebar-foreground/60" />
                 <span>Organization</span>
@@ -210,7 +210,7 @@ export const UserMenu = memo(function UserMenu({
             <button
               type="button"
               onClick={handleLogout}
-              className="flex items-center gap-2.5 w-full rounded-md px-2 py-2 text-sm text-left transition-all duration-150 text-sidebar-foreground hover:bg-sidebar-foreground/5"
+              className="flex items-center gap-2.5 w-full rounded-sm px-2 py-2 text-sm text-left transition-all duration-150 text-sidebar-foreground hover:bg-sidebar-foreground/5"
             >
               <LogOut className="w-4 h-4 text-sidebar-foreground/60" />
               <span>Sign out</span>

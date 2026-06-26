@@ -82,7 +82,7 @@ export interface RemoteTransportConfig {
  * whole `connector-skills/<server>/` dir), not on these entries.
  */
 export interface ConnectorSkillLockEntry {
-  /** Overlay identity used for the lookup (e.g. `composio/gmail`). */
+  /** Overlay identity used for the lookup (e.g. `gmail`). */
   identity: string;
   /** Pinned overlay-repo version the overlay was fetched at. */
   version: string;

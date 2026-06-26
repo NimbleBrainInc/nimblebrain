@@ -97,7 +97,7 @@ src/
 ├── prompt/        System prompt composition (identity → core → apps → skill)
 ├── model/         LLM provider registry (AI SDK)
 ├── adapters/      EventSink implementations (logs, console, debug, telemetry)
-├── cli/           Process entry: serve (HTTP API) + dev (watch/HMR) launchers
+├── cli/           Process entry: the serve HTTP API server (dev tooling is in scripts/)
 └── files/         File context extraction
 web/               Vite + React + TypeScript SPA (separate package.json)
 ```

@@ -181,7 +181,7 @@ export function CostChart({ data }: CostChartProps) {
       {/* Tooltip */}
       {hoveredIndex !== null && data[hoveredIndex] && (
         <div
-          className="absolute bg-popover border border-border rounded-md shadow-md px-3 py-2 text-xs pointer-events-none z-20"
+          className="absolute bg-popover border border-border rounded-sm shadow-md px-3 py-2 text-xs pointer-events-none z-20"
           style={{
             left: `${tooltipCenterPct}%`,
             top: 0,
@@ -219,7 +219,7 @@ export function CostChart({ data }: CostChartProps) {
         {Object.entries(COLORS).map(([key, color]) => (
           <span key={key} className="flex items-center gap-1">
             <span
-              className="inline-block w-2.5 h-2.5 rounded-sm"
+              className="inline-block w-2.5 h-2.5 rounded-xs"
               style={{ backgroundColor: color }}
             />
             {LABELS[key]}

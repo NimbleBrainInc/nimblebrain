@@ -149,7 +149,7 @@ export function ToolPermissionsTable({ serverName }: { serverName: string }) {
                   <div className="flex items-center gap-2">
                     <span className="text-sm font-mono">{tool.name}</span>
                     {savingTool === tool.name && (
-                      <span className="text-[10px] text-muted-foreground">saving…</span>
+                      <span className="text-3xs text-muted-foreground">saving…</span>
                     )}
                   </div>
                   {summary && (

@@ -162,7 +162,7 @@ function DownloadFallback({
 }) {
   const label = title ?? downloadName ?? "artifact";
   return (
-    <div className="flex items-center gap-3 rounded-lg border border-border bg-card p-4 text-sm">
+    <div className="flex items-center gap-3 rounded-sm border border-border bg-card p-4 text-sm">
       <FileWarning className="h-5 w-5 shrink-0 text-muted-foreground" />
       <div className="min-w-0 flex-1">
         <p className="font-medium text-foreground">No preview available</p>
@@ -172,7 +172,7 @@ function DownloadFallback({
         <a
           href={objectUrl}
           download={downloadName ?? "artifact"}
-          className="inline-flex shrink-0 items-center gap-1.5 rounded-md border border-border px-2.5 py-1.5 text-xs font-medium text-muted-foreground transition-colors hover:bg-muted/50 hover:text-foreground"
+          className="inline-flex shrink-0 items-center gap-1.5 rounded-sm border border-border px-2.5 py-1.5 text-xs font-medium text-muted-foreground transition-colors hover:bg-muted/50 hover:text-foreground"
         >
           <Download className="h-3.5 w-3.5" />
           Download

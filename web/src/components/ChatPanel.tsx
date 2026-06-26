@@ -139,7 +139,7 @@ export const ChatPanel = forwardRef<ChatPanelRef, ChatPanelProps>(function ChatP
               onClick={onBack}
               type="button"
               aria-label="Back"
-              className="p-1.5 hover:bg-muted rounded-lg transition-all text-muted-foreground hover:text-foreground sm:hidden shrink-0"
+              className="p-1.5 hover:bg-muted rounded-sm transition-all text-muted-foreground hover:text-foreground sm:hidden shrink-0"
             >
               <ArrowLeft style={{ width: 18, height: 18 }} />
             </button>
@@ -167,7 +167,7 @@ export const ChatPanel = forwardRef<ChatPanelRef, ChatPanelProps>(function ChatP
             type="button"
             disabled={isStreaming}
             aria-label="New conversation"
-            className="p-1.5 hover:bg-muted rounded-lg transition-all text-muted-foreground hover:text-foreground disabled:opacity-50 disabled:cursor-not-allowed"
+            className="p-1.5 hover:bg-muted rounded-sm transition-all text-muted-foreground hover:text-foreground disabled:opacity-50 disabled:cursor-not-allowed"
           >
             <RotateCcw style={{ width: 16, height: 16 }} />
           </button>
@@ -176,7 +176,7 @@ export const ChatPanel = forwardRef<ChatPanelRef, ChatPanelProps>(function ChatP
             onClick={() => setShowShortcuts(true)}
             type="button"
             aria-label="Keyboard shortcuts"
-            className="p-1.5 hover:bg-muted rounded-lg transition-all text-muted-foreground hover:text-foreground"
+            className="p-1.5 hover:bg-muted rounded-sm transition-all text-muted-foreground hover:text-foreground"
           >
             <Keyboard style={{ width: 16, height: 16 }} />
           </button>
@@ -185,7 +185,7 @@ export const ChatPanel = forwardRef<ChatPanelRef, ChatPanelProps>(function ChatP
               onClick={onFullscreen}
               type="button"
               aria-label={isFullscreen ? "Exit fullscreen" : "Fullscreen"}
-              className="p-1.5 hover:bg-muted rounded-lg transition-all text-muted-foreground hover:text-foreground"
+              className="p-1.5 hover:bg-muted rounded-sm transition-all text-muted-foreground hover:text-foreground"
             >
               {isFullscreen ? (
                 <Minimize2 style={{ width: 16, height: 16 }} />
@@ -199,7 +199,7 @@ export const ChatPanel = forwardRef<ChatPanelRef, ChatPanelProps>(function ChatP
               onClick={onClose}
               type="button"
               aria-label="Close"
-              className="p-1.5 hover:bg-muted rounded-lg transition-all text-muted-foreground hover:text-foreground"
+              className="p-1.5 hover:bg-muted rounded-sm transition-all text-muted-foreground hover:text-foreground"
             >
               <X style={{ width: 16, height: 16 }} />
             </button>

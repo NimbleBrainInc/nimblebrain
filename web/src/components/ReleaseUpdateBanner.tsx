@@ -49,7 +49,7 @@ export function ReleaseUpdateBanner({ collapsed = false }: { collapsed?: boolean
   return (
     <div
       role="status"
-      className="mx-2 mb-2 shrink-0 rounded-lg border border-warm/30 bg-warm/5 px-2.5 py-2 text-xs text-foreground"
+      className="mx-2 mb-2 shrink-0 rounded-sm border border-warm/20 bg-warm/5 px-2.5 py-2 text-xs text-foreground"
     >
       <div className="flex items-center justify-between gap-1">
         <span className="font-medium">New version available</span>

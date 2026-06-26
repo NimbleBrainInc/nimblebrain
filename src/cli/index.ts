@@ -5,93 +5,73 @@ import { parseArgs } from "node:util";
 import { initTracing } from "../observability/index.ts";
 import { log } from "../observability/log.ts";
 import { TelemetryManager } from "../telemetry/manager.ts";
-import { runDev } from "./dev.ts";
 import { runServe } from "./serve.ts";
 
-const USAGE = "Usage: bun run src/cli/index.ts <serve|dev> [options]\n";
+/**
+ * Parse server flags, accepting (and ignoring) a leading `serve` token so the
+ * image/chart command `bun run src/cli/index.ts serve` is unchanged. A bad flag
+ * or stray positional is a usage error (exit 2), distinct from a runtime failure
+ * (exit 1). NOTE: the only behavioral difference between the `serve` strip being
+ * present vs. absent is whether a *bare* `serve` boots — `serve <garbage>` exits
+ * non-zero either way — so the deploy contract is pinned by the integration boot
+ * smoke, not by an arg-parse assertion.
+ */
+function parseServeArgs(argv: string[]) {
+  const args = argv[0] === "serve" ? argv.slice(1) : argv;
+  try {
+    return parseArgs({
+      args,
+      options: {
+        config: { type: "string", short: "c" },
+        model: { type: "string" },
+        port: { type: "string" },
+        debug: { type: "boolean" },
+      },
+      allowPositionals: false,
+    }).values;
+  } catch (err) {
+    process.stderr.write(
+      `${err instanceof Error ? err.message : String(err)}\n` +
+        "Usage: bun run src/cli/index.ts [serve] [--config <path>] [--port <n>] [--model <id>] [--debug]\n",
+    );
+    process.exit(2);
+  }
+}
 
 /**
- * Process entry point. Dispatches the two server-side commands the platform
- * runs — `serve` (the managed-services HTTP server) and `dev` (the local
- * watch/HMR loop). No interactive terminal client; the web shell and `/mcp`
- * are the runtime's UIs. Kept at this path so the image/chart command
- * (`bun run src/cli/index.ts serve`) is unchanged.
+ * Process entry point: boot the HTTP API server. Serving is the one thing the
+ * runtime binary does — the web shell and `/mcp` are its UIs. Local dev
+ * orchestration (watch + web HMR) is tooling, not runtime: it lives in
+ * `scripts/dev.ts` (`bun run dev`), which spawns this entry in watch mode.
+ *
+ * The image/chart invoke this as `bun run src/cli/index.ts serve [flags]`; the
+ * leading `serve` token is accepted and ignored so the deploy command is
+ * unchanged. Flags: --config/-c, --model, --port, --debug.
  */
 async function main(): Promise<void> {
   // Install vendor-neutral OTel tracing once, before anything runs. No-op
   // (nothing exported) unless OTEL_EXPORTER_OTLP_ENDPOINT is set.
   initTracing();
 
-  const command = process.argv[2];
-  const rest = process.argv.slice(3);
+  const values = parseServeArgs(process.argv.slice(2));
 
-  if (command === "serve") {
-    // Telemetry is created only here. `serve` is the long-running runtime that
-    // emits product usage. `dev` spawns its own `serve` child (which inits its
-    // own telemetry), so initializing it in the dev parent would print the
-    // first-run notice and write the anon-id file while capturing nothing.
-    const telemetry = TelemetryManager.create({ workDir: join(homedir(), ".nimblebrain") });
-    try {
-      const { values } = parseArgs({
-        args: rest,
-        options: {
-          config: { type: "string", short: "c" },
-          model: { type: "string" },
-          port: { type: "string" },
-          debug: { type: "boolean" },
-        },
-        allowPositionals: false,
-      });
-      await runServe(
-        {
-          config: values.config,
-          model: values.model,
-          port: values.port ? Number(values.port) : undefined,
-          debug: values.debug ?? false,
-        },
-        telemetry,
-      );
-    } catch (err) {
-      log.error(`Fatal: ${err}`);
-      await telemetry.shutdown();
-      process.exit(1);
-    }
+  const telemetry = TelemetryManager.create({ workDir: join(homedir(), ".nimblebrain") });
+  try {
+    await runServe(
+      {
+        config: values.config,
+        model: values.model,
+        port: values.port ? Number(values.port) : undefined,
+        debug: values.debug ?? false,
+      },
+      telemetry,
+    );
+  } catch (err) {
+    log.error(`Fatal: ${err}`);
     await telemetry.shutdown();
-    return;
+    process.exit(1);
   }
-
-  if (command === "dev") {
-    try {
-      const { values } = parseArgs({
-        args: rest,
-        // strict:false so the `--no-web` negation token passes through; we read
-        // it off argv directly since parseArgs has no boolean-negation support.
-        strict: false,
-        options: {
-          config: { type: "string", short: "c" },
-          port: { type: "string" },
-          app: { type: "string" },
-          "app-port": { type: "string" },
-          debug: { type: "boolean" },
-        },
-      });
-      await runDev({
-        port: values.port ? Number(values.port) : 27247,
-        noWeb: rest.includes("--no-web"),
-        config: values.config as string | undefined,
-        debug: (values.debug as boolean | undefined) ?? false,
-        app: values.app as string | undefined,
-        appPort: values["app-port"] ? Number(values["app-port"]) : undefined,
-      });
-    } catch (err) {
-      log.error(`Fatal: ${err}`);
-      process.exit(1);
-    }
-    return;
-  }
-
-  process.stderr.write(command ? `Unknown command: ${command}\n${USAGE}` : USAGE);
-  process.exit(command ? 2 : 0);
+  await telemetry.shutdown();
 }
 
 main().catch((err) => {

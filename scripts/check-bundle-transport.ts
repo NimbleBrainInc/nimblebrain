@@ -86,7 +86,12 @@ function hasAllowMarker(node: ts.Node, sourceFile: ts.SourceFile, src: string): 
     const lineText = lines[i] ?? "";
     if (lineText.includes(ALLOW_MARKER)) return true;
     const trimmed = lineText.trim();
-    if (trimmed === "" || trimmed.startsWith("//") || trimmed.startsWith("*") || trimmed.startsWith("/*")) {
+    if (
+      trimmed === "" ||
+      trimmed.startsWith("//") ||
+      trimmed.startsWith("*") ||
+      trimmed.startsWith("/*")
+    ) {
       continue; // keep walking up through comments / blank lines
     }
     return false; // hit a code line without seeing the marker
@@ -143,9 +148,7 @@ async function main(): Promise<void> {
       console.error(`    ${v.snippet}\n`);
     }
     console.error("Bundle UIs must construct postMessage envelopes via @nimblebrain/synapse.");
-    console.error(
-      "Legitimate exceptions (e.g. internal-app cross-server calls) require a",
-    );
+    console.error("Legitimate exceptions (e.g. internal-app cross-server calls) require a");
     console.error(`  // ${ALLOW_MARKER}\n  comment on the line above the call.`);
     process.exit(1);
   }

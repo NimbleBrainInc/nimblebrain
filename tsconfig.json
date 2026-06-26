@@ -25,6 +25,6 @@
       "@/*": ["./src/*"]
     }
   },
-  "include": ["src/**/*.ts", "src/**/*.tsx", "instrument/**/*.ts"],
+  "include": ["src/**/*.ts", "src/**/*.tsx", "instrument/**/*.ts", "scripts/**/*.ts"],
   "exclude": ["node_modules", "src/bundles/*/ui", "src/bundles/*/src/ui"]
 }

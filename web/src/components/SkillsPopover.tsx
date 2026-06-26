@@ -101,18 +101,18 @@ export function SkillsPopover({ conversationId }: { conversationId: string | nul
         aria-label="Active skills"
         aria-expanded={open}
         title="Skills loaded for this conversation"
-        className="p-1.5 hover:bg-muted rounded-lg transition-all text-muted-foreground hover:text-foreground"
+        className="p-1.5 hover:bg-muted rounded-sm transition-all text-muted-foreground hover:text-foreground"
       >
         <Lightbulb style={{ width: 16, height: 16 }} />
       </button>
 
       {open && (
-        <div className="absolute right-0 top-full mt-1 z-50 w-80 rounded-md border bg-popover text-popover-foreground shadow-md">
+        <div className="absolute right-0 top-full mt-1 z-50 w-80 rounded-sm border bg-popover text-popover-foreground shadow-md">
           <div className="px-3 py-2 border-b flex items-center justify-between">
             <div className="text-xs font-semibold">Active skills</div>
             <Link
               to={skillsPath}
-              className="text-[11px] text-muted-foreground hover:text-foreground"
+              className="text-2xs text-muted-foreground hover:text-foreground"
               onClick={() => setOpen(false)}
             >
               Manage →
@@ -138,16 +138,16 @@ export function SkillsPopover({ conversationId }: { conversationId: string | nul
                   <li key={s.id} className="px-3 py-2 space-y-0.5">
                     <div className="flex items-baseline justify-between gap-2">
                       <span className="text-xs font-medium truncate">{shortName(s.id)}</span>
-                      <span className="text-[10px] text-muted-foreground tabular-nums shrink-0">
+                      <span className="text-3xs text-muted-foreground tabular-nums shrink-0">
                         {s.tokens} tok
                       </span>
                     </div>
-                    <div className="flex items-center gap-2 text-[10px] text-muted-foreground">
+                    <div className="flex items-center gap-2 text-3xs text-muted-foreground">
                       <span className={SCOPE_COLOR[s.scope]}>{s.scope}</span>
                       <span>·</span>
                       <span>loaded: {s.loadedBy}</span>
                     </div>
-                    <div className="text-[10px] text-muted-foreground/80 truncate" title={s.reason}>
+                    <div className="text-3xs text-muted-foreground/80 truncate" title={s.reason}>
                       {s.reason}
                     </div>
                   </li>

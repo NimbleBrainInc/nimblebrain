@@ -163,7 +163,7 @@ export function MessageInput({
     <div className="py-3 shrink-0">
       {/* biome-ignore lint/a11y/noStaticElementInteractions: drag-and-drop container for file uploads */}
       <div
-        className={`rounded-2xl border transition-all duration-200 bg-card ${
+        className={`rounded-lg border transition-all duration-200 bg-card ${
           isDragOver
             ? "border-primary shadow-lg shadow-primary/20"
             : isActive && !isFocused
@@ -217,7 +217,7 @@ export function MessageInput({
               disabled={disabled}
               type="button"
               aria-label="Attach files"
-              className="shrink-0 flex items-center justify-center w-8 h-8 rounded-lg transition-all duration-200 text-muted-foreground hover:text-foreground hover:bg-muted disabled:opacity-50 disabled:cursor-not-allowed"
+              className="shrink-0 flex items-center justify-center w-8 h-8 rounded-sm transition-all duration-200 text-muted-foreground hover:text-foreground hover:bg-muted disabled:opacity-50 disabled:cursor-not-allowed"
             >
               <Paperclip style={{ width: 16, height: 16 }} />
             </button>
@@ -227,7 +227,7 @@ export function MessageInput({
               onClick={onStop}
               type="button"
               aria-label="Stop generating"
-              className="shrink-0 flex items-center justify-center w-8 h-8 rounded-lg transition-all duration-200 bg-primary hover:bg-primary/90 text-primary-foreground"
+              className="shrink-0 flex items-center justify-center w-8 h-8 rounded-sm transition-all duration-200 bg-primary hover:bg-primary/80 text-primary-foreground"
             >
               <Square style={{ width: 14, height: 14 }} fill="currentColor" />
             </button>
@@ -237,9 +237,9 @@ export function MessageInput({
               disabled={!canSend}
               type="button"
               aria-label="Send message"
-              className={`shrink-0 flex items-center justify-center w-8 h-8 rounded-lg transition-all duration-200 ${
+              className={`shrink-0 flex items-center justify-center w-8 h-8 rounded-sm transition-all duration-200 ${
                 canSend
-                  ? "bg-primary hover:bg-primary/90 text-primary-foreground"
+                  ? "bg-primary hover:bg-primary/80 text-primary-foreground"
                   : "bg-muted text-muted-foreground cursor-not-allowed"
               }`}
             >
@@ -250,21 +250,21 @@ export function MessageInput({
       </div>
 
       {/* Shortcut hints — status copy lives on the BlockTimeline / LiveCursor, not here. */}
-      <div className="flex items-center justify-center gap-3 mt-2 text-[10px] text-muted-foreground">
+      <div className="flex items-center justify-center gap-3 mt-2 text-3xs text-muted-foreground">
         {onNewConversation && (
           <button
             type="button"
             onClick={onNewConversation}
             className="hover:text-foreground transition-colors"
           >
-            <kbd className="px-1 py-0.5 font-mono bg-muted rounded border border-border text-[10px]">
+            <kbd className="px-1 py-0.5 font-mono bg-muted rounded border border-border text-3xs">
               /clear
             </kbd>{" "}
             reset
           </button>
         )}
         <span>
-          <kbd className="px-1 py-0.5 font-mono bg-muted rounded border border-border text-[10px]">
+          <kbd className="px-1 py-0.5 font-mono bg-muted rounded border border-border text-3xs">
             ⌘K
           </kbd>{" "}
           close

@@ -44,7 +44,7 @@ export interface SettingsShellProps {
 
 const navItemClass = (isActive: boolean) =>
   cn(
-    "px-3 py-2 text-sm font-medium rounded-md transition-colors whitespace-nowrap",
+    "px-3 py-2 text-sm font-medium rounded-sm transition-colors whitespace-nowrap",
     isActive
       ? "bg-accent text-accent-foreground"
       : "text-muted-foreground hover:text-foreground hover:bg-muted",

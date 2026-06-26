@@ -103,7 +103,7 @@ export function WorkspaceOverviewPage() {
         <header className="mb-8 flex items-start justify-between gap-4">
           <div className="min-w-0">
             <div
-              className="text-[11px] font-bold tracking-[0.08em] uppercase text-muted-foreground"
+              className="text-2xs font-bold tracking-[0.08em] uppercase text-muted-foreground"
               data-testid="workspace-overview-breadcrumb"
             >
               Workspace · {workspace.id}
@@ -118,7 +118,7 @@ export function WorkspaceOverviewPage() {
           <Link
             to={`/w/${toSlug(workspace.id)}/settings/general`}
             data-testid="workspace-overview-settings"
-            className="shrink-0 inline-flex items-center gap-2 px-3 py-2 rounded-lg border border-border text-sm text-muted-foreground hover:text-foreground hover:bg-foreground/[0.02] hover:border-foreground/20 transition-colors"
+            className="shrink-0 inline-flex items-center gap-2 px-3 py-2 rounded-sm border border-border text-sm text-muted-foreground hover:text-foreground hover:bg-foreground/[0.02] hover:border-foreground/20 transition-colors"
           >
             <Settings className="w-4 h-4" />
             <span className="hidden sm:inline">Settings</span>
@@ -138,14 +138,14 @@ export function WorkspaceOverviewPage() {
           />
         </div>
 
-        <div className="text-[11px] font-bold tracking-[0.08em] uppercase text-muted-foreground mb-3">
+        <div className="text-2xs font-bold tracking-[0.08em] uppercase text-muted-foreground mb-3">
           Available apps
         </div>
         {!appsReady ? (
           <AppGridSkeleton />
         ) : apps.length === 0 ? (
           <div
-            className="rounded-lg border border-dashed border-border p-8 text-center text-sm text-muted-foreground"
+            className="rounded-sm border border-dashed border-border p-8 text-center text-sm text-muted-foreground"
             data-testid="workspace-overview-empty"
           >
             No apps installed in this workspace yet.
@@ -195,7 +195,7 @@ function AppGridSkeleton() {
       aria-hidden
     >
       {[0, 1, 2].map((i) => (
-        <div key={i} className="flex flex-col gap-2 p-4 rounded-lg border border-border bg-card">
+        <div key={i} className="flex flex-col gap-2 p-4 rounded-sm border border-border bg-card">
           <div className="flex items-center gap-2">
             <div className="h-4 w-4 shrink-0 rounded bg-muted-foreground/20 animate-pulse" />
             <div className="h-3.5 w-2/3 rounded bg-muted-foreground/20 animate-pulse" />
@@ -224,15 +224,15 @@ function AppCard({
       data-testid="workspace-overview-app-card"
       data-app-route={placement.route ?? ""}
       className={cn(
-        "group flex flex-col gap-2 p-4 rounded-lg border border-border bg-card text-left",
+        "group flex flex-col gap-2 p-4 rounded-sm border border-border bg-card text-left",
         "hover:border-foreground/20 hover:bg-foreground/[0.02] transition-colors",
       )}
     >
       <div className="flex items-center gap-2">
-        <ConnectorIcon name={label} iconUrl={iconUrl} className="h-5 w-5 rounded text-[10px]" />
+        <ConnectorIcon name={label} iconUrl={iconUrl} className="h-5 w-5 rounded text-3xs" />
         <div className="truncate text-sm font-medium text-foreground">{label}</div>
       </div>
-      <div className="text-[10px] font-medium tracking-[0.04em] uppercase text-muted-foreground">
+      <div className="text-3xs font-medium tracking-[0.04em] uppercase text-muted-foreground">
         {describePlacementType(placement)}
       </div>
     </button>

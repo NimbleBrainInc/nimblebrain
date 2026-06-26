@@ -132,7 +132,7 @@ export function OperatorSetupModal({
         role="dialog"
         aria-modal="true"
         aria-labelledby="operator-setup-title"
-        className="bg-background border border-border rounded-lg shadow-xl w-full max-w-md p-5"
+        className="bg-background border border-border rounded-sm shadow-xl w-full max-w-md p-5"
       >
         <h2 id="operator-setup-title" className="text-base font-semibold">
           {isEdit ? `Edit ${entry.name} OAuth app` : `Set up ${entry.name}`}
@@ -165,13 +165,13 @@ export function OperatorSetupModal({
               <span className="flex-1 min-w-0">
                 Add this redirect URI to the OAuth app's allowed redirect list:
                 <span className="mt-1 flex items-center gap-2">
-                  <code className="flex-1 min-w-0 truncate font-mono text-[11px] px-2 py-1 rounded border border-border bg-muted text-foreground">
+                  <code className="flex-1 min-w-0 truncate font-mono text-2xs px-2 py-1 rounded border border-border bg-muted text-foreground">
                     {redirectUri}
                   </code>
                   <button
                     type="button"
                     onClick={onCopyRedirectUri}
-                    className="text-[11px] px-2 py-1 rounded border border-border hover:bg-muted shrink-0"
+                    className="text-2xs px-2 py-1 rounded border border-border hover:bg-muted shrink-0"
                   >
                     {copied ? "Copied" : "Copy"}
                   </button>
@@ -232,7 +232,7 @@ export function OperatorSetupModal({
             <button
               type="submit"
               disabled={busy}
-              className="text-xs px-3 py-1.5 rounded bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-60"
+              className="text-xs px-3 py-1.5 rounded bg-primary text-primary-foreground hover:bg-primary/80 disabled:opacity-60"
             >
               {busy ? "Saving…" : isEdit ? "Save changes" : "Save"}
             </button>

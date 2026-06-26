@@ -34,7 +34,7 @@ export function ComposerFooter() {
 
   return (
     <div
-      className="px-3 py-2 text-xs text-muted-foreground border-t border-border/40 space-y-1"
+      className="px-3 py-2 text-xs text-muted-foreground border-t border-border/60 space-y-1"
       data-testid="composer-footer"
     >
       <ViewingLine activeWorkspace={wsCtx.activeWorkspace} activeAppDisplayName={activeApp} />
@@ -94,7 +94,7 @@ function ToolsFromLine({ workspaces }: { workspaces: readonly WorkspaceInfo[] })
       data-state="ready"
       data-workspace-count={workspaces.length}
     >
-      <span className="uppercase tracking-wider text-[10px] font-semibold">Tools from</span>
+      <span className="uppercase tracking-wider text-3xs font-semibold">Tools from</span>
       {workspaces.map((ws) => (
         <Badge
           key={ws.id}

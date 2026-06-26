@@ -20,7 +20,7 @@ function RowIcon({ icon }: { icon?: CommandIcon }) {
     return (
       <span
         aria-hidden="true"
-        className="shrink-0 flex items-center justify-center rounded-md text-white text-[11px] font-semibold"
+        className="shrink-0 flex items-center justify-center rounded-sm text-white text-2xs font-semibold"
         style={{ width: 24, height: 24, backgroundColor: icon.color }}
       >
         {icon.letter}
@@ -32,7 +32,7 @@ function RowIcon({ icon }: { icon?: CommandIcon }) {
     return (
       <span
         aria-hidden="true"
-        className="shrink-0 flex items-center justify-center rounded-md bg-muted text-muted-foreground"
+        className="shrink-0 flex items-center justify-center rounded-sm bg-muted text-muted-foreground"
         style={{ width: 24, height: 24 }}
       >
         <Icon style={{ width: 14, height: 14 }} />
@@ -44,7 +44,7 @@ function RowIcon({ icon }: { icon?: CommandIcon }) {
     <ConnectorIcon
       name={icon.fallbackLetter}
       iconUrl={icon.url}
-      className="h-6 w-6 rounded-md text-[11px]"
+      className="h-6 w-6 rounded-sm text-2xs"
     />
   );
 }
@@ -71,7 +71,7 @@ export const CommandRow = memo(function CommandRow({
       onClick={onSelect}
       onMouseMove={onHover}
       className={cn(
-        "w-full flex items-center gap-3 px-2.5 py-2 rounded-md text-left transition-colors",
+        "w-full flex items-center gap-3 px-2.5 py-2 rounded-sm text-left transition-colors",
         selected ? "bg-accent text-accent-foreground" : "text-foreground hover:bg-accent/50",
       )}
     >
@@ -79,13 +79,13 @@ export const CommandRow = memo(function CommandRow({
       <span className="flex-1 min-w-0 leading-tight">
         <span className="block text-sm truncate">{item.title}</span>
         {item.subtitle && (
-          <span className="block text-[11px] text-muted-foreground font-mono truncate">
+          <span className="block text-2xs text-muted-foreground font-mono truncate">
             {item.subtitle}
           </span>
         )}
       </span>
       {item.meta && (
-        <span className="shrink-0 text-[10.5px] font-mono text-muted-foreground">{item.meta}</span>
+        <span className="shrink-0 text-3xs font-mono text-muted-foreground">{item.meta}</span>
       )}
     </button>
   );

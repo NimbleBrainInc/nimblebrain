@@ -87,7 +87,7 @@ export function TimezoneSelect({ value, onChange }: TimezoneSelectProps) {
           }
         }}
         className={cn(
-          "flex h-8 w-full items-center justify-between rounded-lg border border-input bg-transparent px-2.5 py-1 text-sm transition-colors",
+          "flex h-8 w-full items-center justify-between rounded-sm border border-input bg-transparent px-2.5 py-1 text-sm transition-colors",
           "hover:border-ring focus-visible:outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50",
           !value && "text-muted-foreground",
         )}
@@ -106,7 +106,7 @@ export function TimezoneSelect({ value, onChange }: TimezoneSelectProps) {
 
       {/* Dropdown */}
       {open && (
-        <div className="absolute z-50 mt-1 w-full rounded-lg border border-border bg-card shadow-lg animate-in fade-in-0 zoom-in-95 duration-100">
+        <div className="absolute z-50 mt-1 w-full rounded-sm border border-border bg-card shadow-lg animate-in fade-in-0 zoom-in-95 duration-100">
           {/* Search */}
           <div className="p-2 border-b border-border">
             <input
