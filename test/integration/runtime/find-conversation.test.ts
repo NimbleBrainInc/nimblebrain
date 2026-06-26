@@ -303,13 +303,12 @@ describe("/v1/conversations/:id/events — dev mode (no provider)", () => {
 // ---------------------------------------------------------------------------
 // Ownerless (pre-migration) conversation file — no 500s.
 //
-// A file lacking `ownerId` is pre-migration state. In the room layout the
-// locator EXCLUDES ownerless files entirely, so the two routes diverge:
-//   - The read route (`/v1/conversations/:id/events`) resolves through the
-//     locator only, so an ownerless file is invisible → 404 (not 500).
-//   - The chat resume path (`/v1/chat`) resolves the room store from the
-//     request's workspace + owner and calls `store.load`, which throws the
-//     typed `ConversationCorruptedError` → 422 with the migration command.
+// A file lacking `ownerId` is pre-migration state. The locator resolves by
+// PATH (it never reads file contents), so an ownerless file resolves to its
+// room on both routes, and `store.load` is the one place ownership/validity is
+// checked — it throws the typed `ConversationCorruptedError`. So both the read
+// route (`/v1/conversations/:id/events`) and the chat resume path (`/v1/chat`)
+// surface a clean 422 with the migration command, never a 500.
 //
 // The ownerless file is planted at the exact room path the resume resolves
 // (TEST_WORKSPACE_ID + the authenticated caller's owner partition).
@@ -357,15 +356,16 @@ describe("ownerless conversation file — no 500s", () => {
     await Bun.write(join(convDir, `${convId}.jsonl`), `${JSON.stringify(meta)}\n`);
   });
 
-  test("GET /v1/conversations/:id/events on an ownerless file returns 404 (not 500)", async () => {
-    // The locator excludes ownerless files, so the read route treats this
-    // physically-present file as not-found rather than 500ing on it.
+  test("GET /v1/conversations/:id/events on an ownerless file returns 422 (not 500)", async () => {
+    // `locate` resolves the file by path; `findConversation` then loads it and
+    // the store throws `ConversationCorruptedError`, which the route maps to a
+    // 422 carrying the migration command — operator-actionable, not a bare 404.
     const res = await fetch(`${baseUrl}/v1/conversations/${convId}/events`, {
       headers: { Authorization: `Bearer ${API_KEY}` },
     });
-    expect(res.status).toBe(404);
+    expect(res.status).toBe(422);
     const body = await res.json();
-    expect(body.error).toBe("not_found");
+    expect(body.error).toBe("conversation_corrupted");
   });
 
   test("POST /v1/chat resuming an ownerless conversation returns 422 (not 500)", async () => {

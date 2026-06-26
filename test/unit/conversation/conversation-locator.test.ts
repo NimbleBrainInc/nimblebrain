@@ -63,6 +63,20 @@ test("locate returns undefined for an unknown id", async () => {
   expect(await locator().locate("conv_ffffffffffffffff")).toBeUndefined();
 });
 
+test("locate resolves by path alone — it never reads/parses file content", async () => {
+  // A resume runs on every message; resolution must not parse files (that scan
+  // was the hot-path regression). Prove it: an unparseable body still resolves,
+  // because locate only uses the directory path + the filename.
+  const id = convId();
+  const dir = roomConversationsDir(workDir, "ws_helix", "usr_alice");
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(join(dir, `${id}.jsonl`), "not valid json at all\n{{{{");
+
+  const loc = await locator().locate(id);
+  expect(loc?.wsId).toBe("ws_helix");
+  expect(loc?.ownerId).toBe("usr_alice");
+});
+
 test("an automation-run conversation resolves with its automationId, ownerId null", async () => {
   const id = convId();
   writeConversation(runConversationsDir(workDir, "ws_helix", "auto_x"), id, "usr_alice", "ws_helix");
@@ -125,7 +139,7 @@ test("invalidate + JIT rescan picks up a newly written conversation (no fs.watch
   expect((await loc.list({}, { userId: "usr_alice" })).totalCount).toBe(2);
 });
 
-test("an ownerless conversation file is excluded from the index", async () => {
+test("an ownerless file is excluded from list() but still resolves by path", async () => {
   const id = convId();
   const dir = roomConversationsDir(workDir, "ws_helix", "usr_alice");
   mkdirSync(dir, { recursive: true });
@@ -135,5 +149,10 @@ test("an ownerless conversation file is excluded from the index", async () => {
     `${JSON.stringify({ id, createdAt: "2026-06-25T00:00:00.000Z", format: "events" })}\n`,
   );
 
-  expect(await locator().locate(id)).toBeUndefined();
+  const loc = locator();
+  // list() parses headers and drops the ownerless entry (no owner to gate on)...
+  expect((await loc.list({})).totalCount).toBe(0);
+  // ...but locate() resolves purely by PATH, so a context-free load reaches the
+  // file and surfaces the missing owner as a corruption error, not a silent miss.
+  expect((await loc.locate(id))?.wsId).toBe("ws_helix");
 });

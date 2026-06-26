@@ -27,7 +27,7 @@
 
 import { readdirSync } from "node:fs";
 import { readFile } from "node:fs/promises";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import { log } from "../observability/log.ts";
 import { canAccess, parseFileHeader } from "./index-cache.ts";
 import { parseConversationPath, RUN_PARTITION_SEGMENT } from "./paths.ts";
@@ -72,17 +72,31 @@ export class ConversationLocator {
     this.populated = false;
   }
 
-  /** Resolve a conversation id to its room + owner. `undefined` if unknown. */
+  /**
+   * Resolve a conversation id to its room + owner. `undefined` if no room holds
+   * it. Resolution is a PATH operation, NOT a content one: the filename is the
+   * convId and `parseConversationPath` recovers `{ wsId, ownerId }` from the
+   * directory. So this is a readdir-only walk — it never reads or parses a file,
+   * and never touches the summary index (which `list()` rebuilds on every append
+   * and would make every resolve a full-tenant scan). Owner/validity is the
+   * caller's `load()`'s job: an ownerless file resolves here and surfaces as a
+   * `ConversationCorruptedError` on load, not a silent not-found.
+   */
   async locate(convId: string): Promise<ConversationLocation | undefined> {
-    await this.ensurePopulated();
-    const entry = this.entries.get(convId);
-    if (!entry) return undefined;
-    return {
-      wsId: entry.wsId,
-      ownerId: entry.ownerId,
-      automationId: entry.automationId,
-      filePath: entry.filePath,
-    };
+    const target = `${convId}.jsonl`;
+    for (const filePath of listAllConversationFiles(this.workspacesRoot)) {
+      if (basename(filePath) !== target) continue;
+      const loc = parseConversationPath(filePath);
+      if (loc) {
+        return {
+          wsId: loc.wsId,
+          ownerId: loc.ownerId,
+          automationId: loc.automationId,
+          filePath,
+        };
+      }
+    }
+    return undefined;
   }
 
   /**

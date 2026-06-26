@@ -3056,9 +3056,27 @@ export class Runtime {
     ownerId: string,
   ): Promise<{ store: EventSourcedConversationStore; roomWsId: string }> {
     if (conversationId) {
+      // Hot path: the conversation almost always lives in the focused/personal
+      // room under the caller's own owner partition. Probe that one path
+      // directly (O(1) `existsSync`) before any cross-room walk — a resume runs
+      // on every message, so this must not scan the tenant.
+      const directDir = roomConversationsDir(resolveWorkDir(this.config), createRoomWsId, ownerId);
+      if (existsSync(join(directDir, `${conversationId}.jsonl`))) {
+        return {
+          store: this.roomConversationStore(createRoomWsId, ownerId),
+          roomWsId: createRoomWsId,
+        };
+      }
+      // Cross-room deep-link: resolve by path (a readdir-only walk, no reads).
       const loc = await this.getConversationLocator().locate(conversationId);
-      if (loc?.ownerId) {
-        return { store: this.roomConversationStore(loc.wsId, loc.ownerId), roomWsId: loc.wsId };
+      if (loc) {
+        // An automation-run conversation (no owner partition) resolves to its
+        // `_runs/` store — never split-brain a fresh file into the owner
+        // partition under the same id.
+        const store = loc.automationId
+          ? this.runConversationStore(loc.wsId, loc.automationId)
+          : this.roomConversationStore(loc.wsId, loc.ownerId ?? ownerId);
+        return { store, roomWsId: loc.wsId };
       }
     }
     return { store: this.roomConversationStore(createRoomWsId, ownerId), roomWsId: createRoomWsId };
