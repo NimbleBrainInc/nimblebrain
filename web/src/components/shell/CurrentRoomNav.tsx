@@ -160,7 +160,9 @@ function RoomHeaderRow({
       type="button"
       onClick={onSelect}
       aria-label={collapsed ? label : undefined}
-      aria-current={focused ? "true" : undefined}
+      // The room you're in is a location indicator, not the active route — the
+      // nested NavLink carries aria-current="page" for the actual view.
+      aria-current={focused ? "location" : undefined}
       title={label}
       data-testid="sidebar-room-header"
       data-room-id={workspace.id}
