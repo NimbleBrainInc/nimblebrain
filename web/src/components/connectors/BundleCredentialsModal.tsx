@@ -6,6 +6,7 @@ import {
   setBundleUserConfig,
 } from "../../api/client";
 import { Button } from "../ui/button";
+import { Input } from "../ui/input";
 
 /**
  * Edit a stdio bundle's workspace `user_config` credentials, schema-
@@ -263,7 +264,7 @@ function BundleField({
   const inputType = field.sensitive ? "password" : "text";
   const label = field.title ?? fieldKey;
   return (
-    <label className="block">
+    <label className="block" htmlFor={`bundle-${fieldKey}`}>
       <span className="text-xs font-medium flex items-center gap-2">
         {label}
         {field.required && <span className="text-destructive">*</span>}
@@ -274,7 +275,8 @@ function BundleField({
       {field.description && (
         <span className="block text-2xs text-muted-foreground mt-0.5">{field.description}</span>
       )}
-      <input
+      <Input
+        id={`bundle-${fieldKey}`}
         ref={inputRef}
         type={inputType}
         value={value}
@@ -291,7 +293,7 @@ function BundleField({
         spellCheck={false}
         disabled={busy}
         placeholder={isPopulated ? "Leave blank to keep existing value" : ""}
-        className="mt-1 w-full text-sm font-mono px-2.5 py-1.5 rounded border border-border bg-background focus:outline-none focus:ring-1 focus:ring-ring disabled:opacity-60"
+        className="mt-1 font-mono"
       />
     </label>
   );

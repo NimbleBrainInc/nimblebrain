@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { type ComposioField, connectComposioApiKey } from "../../api/client";
 import { Button } from "../ui/button";
+import { Input } from "../ui/input";
 
 /**
  * Field-collection modal for a non-redirect (API-key) Composio connector.
@@ -113,12 +114,13 @@ export function ComposioApiKeyModal({
             browser's checkValidity pass, which we don't use.) */}
         <div className="mt-4 space-y-3">
           {fields.map((f, idx) => (
-            <label key={f.key} className="block">
+            <label key={f.key} className="block" htmlFor={`composio-${f.key}`}>
               <span className="text-xs font-medium">
                 {f.title}
                 {!isRequired(f) && <span className="text-muted-foreground"> (optional)</span>}
               </span>
-              <input
+              <Input
+                id={`composio-${f.key}`}
                 ref={idx === 0 ? firstFieldRef : undefined}
                 type={f.sensitive ? "password" : "text"}
                 value={values[f.key] ?? ""}
@@ -135,7 +137,7 @@ export function ComposioApiKeyModal({
                 spellCheck={false}
                 disabled={busy}
                 placeholder={f.placeholder}
-                className="mt-1 w-full text-sm font-mono px-2.5 py-1.5 rounded border border-border bg-background focus:outline-none focus:ring-1 focus:ring-ring disabled:opacity-60"
+                className="mt-1 font-mono"
               />
               {f.description && (
                 <span className="block text-2xs text-muted-foreground mt-1">{f.description}</span>

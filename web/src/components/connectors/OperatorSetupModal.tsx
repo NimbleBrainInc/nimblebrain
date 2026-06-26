@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { type DirectoryEntry, getOAuthRedirectUri, setupConnectorOperator } from "../../api/client";
 import { safeHostname } from "../../lib/safe-url";
 import { Button } from "../ui/button";
+import { Input } from "../ui/input";
 
 /**
  * Workspace operator OAuth app setup. The form is the same whether
@@ -190,9 +191,10 @@ export function OperatorSetupModal({
         </ol>
 
         <form onSubmit={submit} className="mt-4 space-y-3">
-          <label className="block">
+          <label className="block" htmlFor="operator-client-id">
             <span className="text-xs font-medium">Client ID</span>
-            <input
+            <Input
+              id="operator-client-id"
               ref={firstFieldRef}
               type="text"
               value={clientId}
@@ -202,12 +204,13 @@ export function OperatorSetupModal({
               data-lpignore="true"
               spellCheck={false}
               disabled={busy}
-              className="mt-1 w-full text-sm font-mono px-2.5 py-1.5 rounded border border-border bg-background focus:outline-none focus:ring-1 focus:ring-ring disabled:opacity-60"
+              className="mt-1 font-mono"
             />
           </label>
-          <label className="block">
+          <label className="block" htmlFor="operator-client-secret">
             <span className="text-xs font-medium">Client Secret</span>
-            <input
+            <Input
+              id="operator-client-secret"
               type="password"
               value={clientSecret}
               onChange={(e) => setClientSecret(e.target.value)}
@@ -217,7 +220,7 @@ export function OperatorSetupModal({
               spellCheck={false}
               disabled={busy}
               placeholder={isEdit ? "Paste new secret to rotate" : ""}
-              className="mt-1 w-full text-sm font-mono px-2.5 py-1.5 rounded border border-border bg-background focus:outline-none focus:ring-1 focus:ring-ring disabled:opacity-60"
+              className="mt-1 font-mono"
             />
           </label>
           {error && <p className="text-xs text-destructive">{error}</p>}
