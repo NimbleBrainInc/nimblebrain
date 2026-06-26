@@ -108,6 +108,20 @@ export function getActiveWorkspaceId(): string | null {
   return activeWorkspaceId;
 }
 
+/**
+ * Build the browser URL for the room-scoped file-serve endpoint. Files are
+ * workspace-owned, so the endpoint requires `?ws=<workspaceId>` — a browser
+ * `<img src>` or download anchor can't send the `X-Workspace-Id` header, so
+ * the room rides in the URL (a request without it returns 400
+ * `workspace_required`). Defaults to the active workspace; pass `workspaceId`
+ * to target a specific room.
+ */
+export function fileUrl(fileId: string, workspaceId?: string | null): string {
+  const ws = workspaceId ?? activeWorkspaceId;
+  const query = ws ? `?ws=${encodeURIComponent(ws)}` : "";
+  return `${API_BASE}/v1/files/${encodeURIComponent(fileId)}${query}`;
+}
+
 /** Register a callback invoked on 401 responses. */
 export function setOnAuthError(callback: (() => void) | null): void {
   onAuthError = callback;

@@ -12,12 +12,18 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { NoopEventSink } from "../../../../src/adapters/noop-events.ts";
+import { roomFilesDir } from "../../../../src/files/paths.ts";
 import { createFileStore } from "../../../../src/files/store.ts";
 import { createFilesSource } from "../../../../src/tools/platform/files.ts";
 import type { ContentBlock, ToolResult } from "../../../../src/engine/types.ts";
+import { runWithRequestContext } from "../../../../src/runtime/request-context.ts";
 import type { Runtime } from "../../../../src/runtime/runtime.ts";
 import type { McpSource } from "../../../../src/tools/mcp-source.ts";
 import type { FilesReadPdfPagesOutput } from "../../../../src/tools/platform/schemas/files.ts";
+
+/** The owner and focused room every handler call in this file runs as. */
+const OWNER_ID = "usr_test";
+const WS_ID = "ws_user_usr_test";
 
 function parseFirst(result: ToolResult): unknown {
   const first = result.content[0];
@@ -54,16 +60,30 @@ function findResourceLink(result: ToolResult): {
 }
 
 function makeRuntime(workDir: string): Runtime {
-  // Files are identity-owned: the source resolves its store via
-  // `resolveRequestUserId(getCurrentIdentity())` + `getFileStore(userId)`. The
-  // mock keeps the store at `<workDir>/files` so the on-disk assertions are
-  // unchanged.
+  // Files are room-owned: the source resolves its store via
+  // `getRoomFileStore(fileWorkspaceId, resolveRequestUserId(getCurrentIdentity()))`,
+  // where the room comes from the request context (see `exec`) and the owner
+  // from the current identity. The mock roots each store at the matching room
+  // partition so the on-disk round-trip is exercised faithfully.
   return {
-    getCurrentIdentity: () => ({ id: "usr_test" }),
-    resolveRequestUserId: (identity?: { id: string }) => identity?.id ?? "usr_test",
-    getFileStore: () => createFileStore(join(workDir, "files")),
+    getCurrentIdentity: () => ({ id: OWNER_ID }),
+    resolveRequestUserId: (identity?: { id: string }) => identity?.id ?? OWNER_ID,
+    getRoomFileStore: (wsId: string, ownerId: string) =>
+      createFileStore(roomFilesDir(workDir, wsId, ownerId)),
     getFilesConfig: () => ({ maxExtractedTextSize: 204_800 }),
   } as unknown as Runtime;
+}
+
+/**
+ * Run a files tool the way the runtime does during a chat: inside a request
+ * context whose `fileWorkspaceId` names the focused room. Without it the
+ * room-owned store has no room in scope and `getStore()` throws.
+ */
+function exec(tool: string, args: Record<string, unknown>): Promise<ToolResult> {
+  return runWithRequestContext(
+    { identity: null, scope: { kind: "identity" }, fileWorkspaceId: WS_ID },
+    () => source.execute(tool, args),
+  );
 }
 
 function pdfString(value: string): string {
@@ -133,7 +153,7 @@ describe("files bundle", () => {
     const payload = "the quick brown fox";
     const encoded = Buffer.from(payload).toString("base64");
 
-    const created = await source.execute("create", {
+    const created = await exec("create", {
       manifest: { filename: "fox.txt", mimeType: "text/plain" },
       body: encoded,
     });
@@ -141,7 +161,7 @@ describe("files bundle", () => {
     const { id } = parseFirst(created) as { id: string };
     expect(id).toMatch(/^fl_/);
 
-    const read = await source.execute("read", { id });
+    const read = await exec("read", { id });
     expect(read.isError).toBe(false);
 
     // resource_link is present and points at the workspace file.
@@ -179,14 +199,14 @@ describe("files bundle", () => {
       "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=";
     const pngBytes = Buffer.from(pngBase64, "base64");
 
-    const created = await source.execute("create", {
+    const created = await exec("create", {
       manifest: { filename: "pixel.png", mimeType: "image/png" },
       body: pngBase64,
     });
     expect(created.isError).toBe(false);
     const { id } = parseFirst(created) as { id: string };
 
-    const read = await source.execute("read", { id });
+    const read = await exec("read", { id });
     expect(read.isError).toBe(false);
 
     const link = findResourceLink(read);
@@ -212,7 +232,7 @@ describe("files bundle", () => {
   });
 
   test("read of nonexistent id surfaces a clean message (not a raw fs error)", async () => {
-    const result = await source.execute("read", { id: "fl_doesnotexist" });
+    const result = await exec("read", { id: "fl_doesnotexist" });
     expect(result.isError).toBe(true);
     const body = parseFirst(result) as { error: string };
     expect(body.error).toBe("File not found: fl_doesnotexist");
@@ -227,14 +247,14 @@ describe("files bundle", () => {
       "page three should stay hidden",
     ]);
 
-    const created = await source.execute("create", {
+    const created = await exec("create", {
       manifest: { filename: "report.pdf", mimeType: "application/pdf" },
       body: pdf.toString("base64"),
     });
     expect(created.isError).toBe(false);
     const { id } = parseFirst(created) as { id: string };
 
-    const result = await source.execute("read_pdf_pages", { id, pages: [2] });
+    const result = await exec("read_pdf_pages", { id, pages: [2] });
     expect(result.isError).toBe(false);
 
     const link = findResourceLink(result);
@@ -270,14 +290,14 @@ describe("files bundle", () => {
   test("read_pdf_pages reports out-of-range pages without failing valid pages", async () => {
     const pdf = makeTextPdf(["only page"]);
 
-    const created = await source.execute("create", {
+    const created = await exec("create", {
       manifest: { filename: "single.pdf", mimeType: "application/pdf" },
       body: pdf.toString("base64"),
     });
     expect(created.isError).toBe(false);
     const { id } = parseFirst(created) as { id: string };
 
-    const result = await source.execute("read_pdf_pages", { id, pages: [99, 1, 1] });
+    const result = await exec("read_pdf_pages", { id, pages: [99, 1, 1] });
     expect(result.isError).toBe(false);
 
     const text = findText(result);
@@ -292,21 +312,21 @@ describe("files bundle", () => {
   });
 
   test("read_pdf_pages rejects non-PDF files cleanly", async () => {
-    const created = await source.execute("create", {
+    const created = await exec("create", {
       manifest: { filename: "notes.txt", mimeType: "text/plain" },
       body: Buffer.from("not a pdf").toString("base64"),
     });
     expect(created.isError).toBe(false);
     const { id } = parseFirst(created) as { id: string };
 
-    const result = await source.execute("read_pdf_pages", { id, pages: [1] });
+    const result = await exec("read_pdf_pages", { id, pages: [1] });
     expect(result.isError).toBe(true);
     const body = parseFirst(result) as { error: string };
     expect(body.error).toBe("File is not a PDF: notes.txt (text/plain)");
   });
 
   test("read_pdf_pages rejects empty page lists at schema validation", async () => {
-    const result = await source.execute("read_pdf_pages", { id: "fl_any", pages: [] });
+    const result = await exec("read_pdf_pages", { id: "fl_any", pages: [] });
 
     expect(result.isError).toBe(true);
     const body = parseFirst(result) as { error: string };
@@ -315,7 +335,7 @@ describe("files bundle", () => {
   });
 
   test("read_pdf_pages rejects more than 10 pages at schema validation", async () => {
-    const result = await source.execute("read_pdf_pages", {
+    const result = await exec("read_pdf_pages", {
       id: "fl_any",
       pages: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11],
     });

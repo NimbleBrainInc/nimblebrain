@@ -71,20 +71,21 @@ export interface HostResourcesResolver {
  * `files__read` exactly. Audit events ride the platform's existing
  * event sink alongside other tool activity.
  *
- * `getFileStore` resolves the caller's identity store; it takes no workspace
- * because files are identity-owned. `ctx.workspaceId` survives on read/list
- * for audit logging (which workspace the bundle ran in), not for storage.
+ * Files are room-owned: `getFileStore(wsId)` resolves the caller's store in one
+ * room. The resolver passes `ctx.workspaceId` (the room the bundle ran in), so a
+ * `files://` read resolves in that room only — a file from another room is not
+ * on disk there and collapses to `-32002`.
  */
 export class FileBackedHostResourcesResolver implements HostResourcesResolver {
   constructor(
-    private readonly getFileStore: () => FileStore,
+    private readonly getFileStore: (wsId: string) => FileStore,
     private readonly maxReadSize: number = HOST_RESOURCES_MAX_READ_SIZE,
   ) {}
 
   async read(uri: string, ctx: HostResourceContext): Promise<ReadResourceResult> {
     const start = Date.now();
     const fileId = this.requireFileScheme(uri);
-    const store = this.getFileStore();
+    const store = this.getFileStore(ctx.workspaceId);
 
     let result: Awaited<ReturnType<typeof store.readFile>>;
     try {
@@ -159,7 +160,7 @@ export class FileBackedHostResourcesResolver implements HostResourcesResolver {
       });
     }
 
-    const store = this.getFileStore();
+    const store = this.getFileStore(ctx.workspaceId);
     const all = await store.readRegistry();
 
     const filteredByMime = params.filter?.mimeType

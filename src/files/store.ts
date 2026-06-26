@@ -80,12 +80,15 @@ export interface FileStore {
 /**
  * Create a file store rooted at `filesDir`.
  *
- * Files are identity-owned (Phase B): `filesDir` must be a resolved,
- * identity-scoped path (`users/{userId}/files/`). Construct it only through
- * `Runtime.getFileStore(userId)` — the single sanctioned path, enforced by
- * `check:file-paths`. Passing a workspace-scoped path (the pre-Phase-B
- * `getWorkspaceScopedDir(wsId)/files`) silos files per workspace, the exact
- * bug this migration removes.
+ * Files are room-owned: `filesDir` is one owner's partition in one room,
+ * `workspaces/<wsId>/files/<ownerId>/` (the registry, bytes, and sidecars all
+ * live in it — self-contained, so the store needs no owner/room logic). Build it
+ * only through `Runtime.getRoomFileStore(wsId, ownerId)` via
+ * `roomFilesDir(...)` from `src/files/paths.ts` — the single sanctioned path,
+ * enforced by `check:file-paths`. Because the store sees only one owner's
+ * partition in one room, owner-isolation and cross-room denial hold by
+ * construction (an id created in another owner's partition or another room is
+ * simply not on disk here).
  */
 export function createFileStore(filesDir: string): FileStore {
   const registryPath = join(filesDir, "registry.jsonl");

@@ -143,13 +143,17 @@ describe("workspace files exposed as MCP resources", () => {
   it("resolves identity files over the /mcp JSON-RPC surface (iframe-bridge path)", async () => {
     // Regression: the iframe bridge reads `files://<id>` through `/mcp`
     // `resources/read` (bare URI, no `server` param) — NOT the REST endpoint
-    // the other cases above exercise. The `/mcp` handler used to search only
-    // workspace registries, but `files` is a kernel identity source that
-    // lives outside them, so the read never resolved and the request hung.
+    // the other cases above exercise. `files` is a kernel identity source that
+    // lives outside every workspace registry, so the `/mcp` handler resolves it
+    // through the identity door. Files are room-owned, so the read must name the
+    // room: the per-request `X-Workspace-Id` header is threaded as the focused
+    // room (here the dev user's personal workspace, where the upload landed).
     // This drives the real MCP SDK client end-to-end to lock in the fix.
     const id = await uploadChatFile(PNG_BYTES, "bridge.png", "image/png");
 
-    const transport = new StreamableHTTPClientTransport(new URL(`${baseUrl}/mcp`));
+    const transport = new StreamableHTTPClientTransport(new URL(`${baseUrl}/mcp`), {
+      requestInit: { headers: { "X-Workspace-Id": PERSONAL_WS_ID } },
+    });
     const client = new Client({ name: "files-mcp-bridge-test", version: "1.0.0" });
     await client.connect(transport);
     try {

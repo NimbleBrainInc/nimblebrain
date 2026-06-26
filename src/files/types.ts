@@ -12,7 +12,7 @@ export interface ExtractedTextSidecar {
   truncated: boolean;
 }
 
-/** Identity-owned file entry stored in registry.jsonl (`users/{userId}/files/`). */
+/** File entry in the room registry (`workspaces/<wsId>/files/registry.jsonl`). */
 export interface FileEntry {
   id: string;
   filename: string;
@@ -24,10 +24,16 @@ export interface FileEntry {
   createdAt: string;
   description: string | null;
   /**
-   * Provenance breadcrumb (Phase B): the workspace whose tools were in scope
-   * when this file was created. Informational only — files are identity-owned,
-   * so this is NEVER the storage key (mirrors `Conversation.workspaceId`).
-   * Absent on files created before the field existed.
+   * Denormalised owner of the file. The store is rooted at the owner partition
+   * (`workspaces/<wsId>/files/<ownerId>/`), so the DIRECTORY is the authority —
+   * this field is a convenience the migration stamps for audit / future
+   * cross-owner views. Absent on entries created without it.
+   */
+  ownerId?: string;
+  /**
+   * Denormalised room the file lives in. Stored under
+   * `workspaces/<workspaceId>/files/<ownerId>/`, so the path is authoritative
+   * and this field is the convenience. Absent on legacy/identity-era records.
    */
   workspaceId?: string;
   deleted?: true;

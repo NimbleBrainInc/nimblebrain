@@ -61,10 +61,11 @@ describe("POST /v1/resources", () => {
     expect(entry.mimeType.split(";")[0]).toBe("text/plain");
     expect(entry.size).toBe(11);
 
-    // Bytes land under the uploader's IDENTITY store (files are
-    // identity-owned; Phase B) — `users/{userId}/files/`, not the workspace
-    // dir. The dev server authenticates as DEV_IDENTITY.
-    const filesDir = join(testDir, "users", DEV_IDENTITY.id, "files");
+    // Bytes land under the ROOM store (files are room-owned) — keyed by the
+    // focused workspace (the X-Workspace-Id sent above) with the uploader as
+    // the owner sub-partition: `workspaces/{wsId}/files/{ownerId}/`. The dev
+    // server authenticates as DEV_IDENTITY.
+    const filesDir = join(testDir, "workspaces", TEST_WORKSPACE_ID, "files", DEV_IDENTITY.id);
     const onDisk = readdirSync(filesDir);
     expect(onDisk.some((name) => name.startsWith(`${entry.id}_`))).toBe(true);
   });

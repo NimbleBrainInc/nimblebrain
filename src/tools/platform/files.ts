@@ -23,6 +23,7 @@ import { isTextMime, resolveMimeType } from "../../files/mime.ts";
 import type { FileStore } from "../../files/store.ts";
 import type { FileEntry } from "../../files/types.ts";
 import { fileIdToUri, uriToFileId } from "../../files/uri.ts";
+import { getRequestContext } from "../../runtime/request-context.ts";
 import type { Runtime } from "../../runtime/runtime.ts";
 import {
   type DynamicResourceEntry,
@@ -407,9 +408,16 @@ export function createFilesSource(runtime: Runtime, eventSink: EventSink): McpSo
     // rehydration use, so "who am I" never drifts between sources. Fail-closed
     // in production (throws when an identity provider is configured but the
     // request carries no identity); DEV_IDENTITY only in dev.
-    return runtime.getFileStore(
-      runtime.resolveRequestUserId(runtime.getCurrentIdentity() ?? undefined),
-    );
+    const ownerId = runtime.resolveRequestUserId(runtime.getCurrentIdentity() ?? undefined);
+    // Files are room-owned: the room comes from the request context's
+    // `fileWorkspaceId` (set on both doors), NOT `scope.workspaceId` (which is
+    // the personal/session workspace on the identity door). Deny when no room is
+    // in scope — e.g. an external `/mcp` call with no `X-Workspace-Id`.
+    const wsId = getRequestContext()?.fileWorkspaceId;
+    if (!wsId) {
+      throw new Error("files: no workspace in scope (files are room-owned)");
+    }
+    return runtime.getRoomFileStore(wsId, ownerId);
   }
 
   function ok(data: object): ToolResult {
