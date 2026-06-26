@@ -30,7 +30,6 @@ import { roomConversationsDir, runConversationsDir } from "../conversation/paths
 import type {
   Conversation,
   ConversationAccessContext,
-  ConversationEvent,
   ConversationListResult,
   ConversationStore,
   CreateConversationOptions,
@@ -1157,10 +1156,11 @@ export class Runtime {
     };
 
     // Resume an existing conversation only if the caller owns it.
-    // Conversations live on a single top-level store (not per-workspace),
-    // so this ownerId check is the ONLY barrier between users and each
-    // other's conversations — it runs in the load-bearing chat path, not
-    // just at a higher layer.
+    // Conversations are room-owned (`workspaces/<wsId>/conversations/<ownerId>/`),
+    // but the path is a privacy partition, not an authorization gate: this
+    // ownerId check is the ONLY barrier between users and each other's
+    // conversations — it runs in the load-bearing chat path, not just at a
+    // higher layer.
     //
     // The disambiguation between "doesn't exist" (→ create new) and
     // "exists but isn't yours" (→ throw) matters: silently creating a
@@ -3113,16 +3113,6 @@ export class Runtime {
     const store = await this.resolveConversationStore(convId);
     if (!store) return null;
     return store.load(convId, access);
-  }
-
-  /**
-   * Append a conversation event to a conversation by id, resolving its room.
-   * For out-of-band emitters (e.g. the briefing's `aux.usage`) that hold a
-   * convId but not its room store. No-op if the conversation can't be located.
-   */
-  async appendConversationEvent(convId: string, event: ConversationEvent): Promise<void> {
-    const store = await this.resolveConversationStore(convId);
-    store?.appendEvent(convId, event);
   }
 
   /** Get the UserStore instance. */

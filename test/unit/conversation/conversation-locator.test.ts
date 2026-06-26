@@ -63,6 +63,12 @@ test("locate returns undefined for an unknown id", async () => {
   expect(await locator().locate("conv_ffffffffffffffff")).toBeUndefined();
 });
 
+test("roomConversationsDir rejects the reserved _runs ownerId", () => {
+  // A user whose ownerId were literally `_runs` would have their chats misparsed
+  // as automation runs — fail closed rather than collide.
+  expect(() => roomConversationsDir(workDir, "ws_helix", "_runs")).toThrow(/reserved/);
+});
+
 test("locate resolves by path alone — it never reads/parses file content", async () => {
   // A resume runs on every message; resolution must not parse files (that scan
   // was the hot-path regression). Prove it: an unparseable body still resolves,

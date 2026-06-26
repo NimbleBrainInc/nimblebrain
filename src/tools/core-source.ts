@@ -945,20 +945,23 @@ export function createCoreToolDefs(runtime: Runtime): InProcessTool[] {
                   recordLlmUsage("briefing", modelString ?? "unknown", usage);
                   const convId = getRequestContext()?.conversationId;
                   if (!convId) return;
-                  // Resolve the conversation's room store and append; the
-                  // briefing callback is sync, so fire-and-forget the async
-                  // room resolution. Swallow rejections — a missed aux.usage
-                  // append must never surface as an unhandled rejection.
-                  runtime
-                    .appendConversationEvent(convId, {
+                  // The foreground briefing runs inside the caller's
+                  // conversation, whose room is this focused workspace + owner —
+                  // so append by path directly (O(1)), never a cross-room
+                  // `locate` walk. Guard the append so a missed aux.usage event
+                  // can never break briefing generation.
+                  try {
+                    runtime.roomConversationStore(wsId, identity.id).appendEvent(convId, {
                       ts: new Date().toISOString(),
                       type: "aux.usage",
                       source: "briefing",
                       model: modelString ?? "unknown",
                       usage,
                       llmMs,
-                    })
-                    .catch(() => {});
+                    });
+                  } catch {
+                    // best-effort: usage attribution, not correctness
+                  }
                 },
               );
               return generator.generate(activity, facetContext);

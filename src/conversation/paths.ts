@@ -30,6 +30,14 @@ const WORKSPACES_SEGMENT = "workspaces";
  * `{workDir}/workspaces/<wsId>/conversations/<ownerId>`.
  */
 export function roomConversationsDir(workDir: string, wsId: string, ownerId: string): string {
+  // `_runs` is reserved for the automation-run partition; an ownerId equal to it
+  // would make `parseConversationPath` misread that user's chats as automation
+  // runs. Opaque OIDC/email ids never collide, but fail closed if one ever does.
+  if (ownerId === RUN_PARTITION_SEGMENT) {
+    throw new Error(
+      `[conversation-paths] ownerId "${RUN_PARTITION_SEGMENT}" is reserved for automation runs`,
+    );
+  }
   return join(workDir, WORKSPACES_SEGMENT, wsId, CONVERSATIONS_SEGMENT, ownerId);
 }
 
