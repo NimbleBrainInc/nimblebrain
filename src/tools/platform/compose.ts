@@ -575,19 +575,10 @@ async function readConvEvents(
   const owned = await runtime.findConversation(convId, { userId: identity.id });
   if (!owned) return null;
 
-  const { EventSourcedConversationStore } = await import(
-    "../../conversation/event-sourced-store.ts"
-  );
-  let store: InstanceType<typeof EventSourcedConversationStore> | null = null;
-  try {
-    const raw = runtime.findConversationStore();
-    store = raw instanceof EventSourcedConversationStore ? raw : null;
-  } catch {
-    /* no store in scope — fall through to null */
-  }
+  // `owned` (above) already verified ownership + existence via the locator;
+  // resolve the conversation's room store and read its events directly.
+  const store = await runtime.resolveConversationStore(convId);
   if (!store) return null;
-  const path = join(store.getDir(), `${convId}.jsonl`);
-  if (!existsSync(path)) return null;
   return store.readEvents(convId);
 }
 

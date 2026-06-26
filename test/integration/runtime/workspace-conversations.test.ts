@@ -1,16 +1,18 @@
 /**
  * Conversation persistence tests.
  *
- * Post-Stage-1 (Task 005) every conversation lives at
- * `{workDir}/conversations/{convId}.jsonl` — the workspace-scoped
- * layout under `workspaces/<wsId>/conversations/` is gone.
+ * Conversations are room-owned: each lives at
+ * `{workDir}/workspaces/<wsId>/conversations/<ownerId>/<convId>.jsonl`. An
+ * identity-bound chat with no focused `workspaceId` is born in the caller's
+ * personal room (`ws_user_<userId>`), with the owner as the privacy
+ * sub-partition. The old flat `{workDir}/conversations/` layout is gone.
  *
  * Stage 2 (T006) made the chat surface identity-bound:
  * `ChatRequest.workspaceId` is removed and `ChatResult.workspaceId` with
- * it. The `workspaceId` on conversation metadata is now the session
- * (personal) workspace — a breadcrumb for legacy single-workspace reads
- * (overlays, file store) — not a per-call attribution. Per-call workspace
- * lives on each `tool.done` event's `workspaceId`, stamped by the
+ * it. The `workspaceId` on conversation metadata is the session (personal)
+ * workspace — the room binding and a breadcrumb for legacy single-workspace
+ * reads (overlays, file store) — not a per-call attribution. Per-call
+ * workspace lives on each `tool.done` event's `workspaceId`, stamped by the
  * orchestrator from the parsed namespace.
  */
 
@@ -18,7 +20,9 @@ import { afterAll, describe, expect, it } from "bun:test";
 import { existsSync, mkdirSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { roomConversationsDir } from "../../../src/conversation/paths.ts";
 import { Runtime } from "../../../src/runtime/runtime.ts";
+import { personalWorkspaceIdFor } from "../../../src/workspace/workspace-store.ts";
 import { createEchoModel } from "../../helpers/echo-model.ts";
 
 const testDir = join(tmpdir(), `nb-ws-conv-${Date.now()}`);
@@ -27,16 +31,20 @@ afterAll(() => {
   if (existsSync(testDir)) rmSync(testDir, { recursive: true });
 });
 
-function topLevelConvPath(workDir: string, convId: string): string {
+/** The room-owned path for a conversation born in `ownerId`'s personal room. */
+function personalRoomConvPath(workDir: string, ownerId: string, convId: string): string {
+  return join(
+    roomConversationsDir(workDir, personalWorkspaceIdFor(ownerId), ownerId),
+    `${convId}.jsonl`,
+  );
+}
+
+function flatConvPath(workDir: string, convId: string): string {
   return join(workDir, "conversations", `${convId}.jsonl`);
 }
 
-function workspaceConvPath(workDir: string, wsId: string, convId: string): string {
-  return join(workDir, "workspaces", wsId, "conversations", `${convId}.jsonl`);
-}
-
-describe("conversation persistence — top-level layout", () => {
-  it("chat with identity creates conversation at top-level (not under workspaces/)", async () => {
+describe("conversation persistence — room layout", () => {
+  it("chat with identity creates conversation in the owner's personal room (not flat)", async () => {
     const workDir = join(testDir, "identity-bound");
     mkdirSync(workDir, { recursive: true });
 
@@ -57,19 +65,18 @@ describe("conversation persistence — top-level layout", () => {
     const result = await runtime.chat({ message: "hello", identity });
     expect(result.conversationId).toMatch(/^conv_/);
 
-    // File at top-level.
-    expect(existsSync(topLevelConvPath(workDir, result.conversationId))).toBe(true);
+    // File lives under the personal room's owner partition.
+    expect(existsSync(personalRoomConvPath(workDir, identity.id, result.conversationId))).toBe(
+      true,
+    );
 
-    // No per-workspace dir.
-    const personalWsId = `ws_user_${identity.id}`;
-    expect(
-      existsSync(workspaceConvPath(workDir, personalWsId, result.conversationId)),
-    ).toBe(false);
+    // Not at the old flat top-level path.
+    expect(existsSync(flatConvPath(workDir, result.conversationId))).toBe(false);
 
     await runtime.shutdown();
   });
 
-  it("chats across multiple invocations share one top-level conversations directory", async () => {
+  it("chats across multiple invocations share one room conversations directory", async () => {
     const workDir = join(testDir, "many-convs-one-dir");
     mkdirSync(workDir, { recursive: true });
 
@@ -90,8 +97,8 @@ describe("conversation persistence — top-level layout", () => {
     const r1 = await runtime.chat({ message: "hello 1", identity });
     const r2 = await runtime.chat({ message: "hello 2", identity });
 
-    expect(existsSync(topLevelConvPath(workDir, r1.conversationId))).toBe(true);
-    expect(existsSync(topLevelConvPath(workDir, r2.conversationId))).toBe(true);
+    expect(existsSync(personalRoomConvPath(workDir, identity.id, r1.conversationId))).toBe(true);
+    expect(existsSync(personalRoomConvPath(workDir, identity.id, r2.conversationId))).toBe(true);
 
     await runtime.shutdown();
   });
@@ -116,7 +123,7 @@ describe("conversation persistence — top-level layout", () => {
 
     const result = await runtime.chat({ message: "hello metadata", identity });
 
-    const convFile = topLevelConvPath(workDir, result.conversationId);
+    const convFile = personalRoomConvPath(workDir, identity.id, result.conversationId);
     const content = readFileSync(convFile, "utf-8");
     const metadataLine = JSON.parse(content.split("\n")[0]!);
 
@@ -149,7 +156,7 @@ describe("conversation persistence — top-level layout", () => {
 
     const result = await runtime.chat({ message: "hello userId", identity });
 
-    const convFile = topLevelConvPath(workDir, result.conversationId);
+    const convFile = personalRoomConvPath(workDir, identity.id, result.conversationId);
     const content = readFileSync(convFile, "utf-8");
     const lines = content.split("\n").filter(Boolean);
     const userEvent = lines
@@ -163,7 +170,7 @@ describe("conversation persistence — top-level layout", () => {
     await runtime.shutdown();
   });
 
-  it("resuming a conversation loads from the top-level path", async () => {
+  it("resuming a conversation loads from the room path", async () => {
     const workDir = join(testDir, "ws-resume");
     mkdirSync(workDir, { recursive: true });
 
@@ -194,7 +201,7 @@ describe("conversation persistence — top-level layout", () => {
 
     expect(result2.conversationId).toBe(result1.conversationId);
 
-    const convFile = topLevelConvPath(workDir, result1.conversationId);
+    const convFile = personalRoomConvPath(workDir, identity.id, result1.conversationId);
     expect(existsSync(convFile)).toBe(true);
 
     // Wait for any pending writes (title generation + metadata cache).
@@ -224,7 +231,9 @@ describe("conversation persistence — top-level layout", () => {
     // wire as an audit signal that this turn was an anonymous dev call.
     const result = await runtime.chat({ message: "no identity" });
 
-    const convFile = topLevelConvPath(workDir, result.conversationId);
+    // Dev fallback owner is `usr_default`; its conversation lives in that
+    // identity's personal room.
+    const convFile = personalRoomConvPath(workDir, "usr_default", result.conversationId);
     const content = readFileSync(convFile, "utf-8");
     const lines = content.split("\n").filter(Boolean);
     const userEvent = lines

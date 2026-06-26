@@ -910,7 +910,10 @@ export function createCoreToolDefs(runtime: Runtime): InProcessTool[] {
               const until = new Date().toISOString();
               const collector = new ActivityCollector({
                 logDir: join(runtime.getWorkspaceScopedDir(wsId), "logs"),
-                conversations: { kind: "store", store: runtime.findConversationStore() },
+                conversations: {
+                  kind: "store",
+                  store: { list: (o, a) => runtime.listConversations(o, a) },
+                },
                 access: { userId: identity.id },
               });
               const activity = await collector.collect({ since });
@@ -942,7 +945,10 @@ export function createCoreToolDefs(runtime: Runtime): InProcessTool[] {
                   recordLlmUsage("briefing", modelString ?? "unknown", usage);
                   const convId = getRequestContext()?.conversationId;
                   if (!convId) return;
-                  runtime.findConversationStore()?.appendEvent?.(convId, {
+                  // Resolve the conversation's room store and append; the
+                  // briefing callback is sync, so fire-and-forget the async
+                  // room resolution.
+                  void runtime.appendConversationEvent(convId, {
                     ts: new Date().toISOString(),
                     type: "aux.usage",
                     source: "briefing",

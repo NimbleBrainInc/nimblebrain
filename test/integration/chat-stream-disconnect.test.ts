@@ -25,7 +25,6 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { ServerHandle } from "../../src/api/server.ts";
 import { startServer } from "../../src/api/server.ts";
-import { EventSourcedConversationStore } from "../../src/conversation/event-sourced-store.ts";
 import { Runtime } from "../../src/runtime/runtime.ts";
 import { createMockModel } from "../helpers/mock-model.ts";
 import { TEST_WORKSPACE_ID, provisionTestWorkspace } from "../helpers/test-workspace.ts";
@@ -143,7 +142,7 @@ describe("POST /v1/chat/stream — run survives client disconnect", () => {
 
     // Inspect the persisted event log — the same surface that showed
     // `run.error: "The connection was closed."` in the production repro.
-    const store = runtime.findConversationStore() as EventSourcedConversationStore;
+    const store = (await runtime.resolveConversationStore(convId))!;
     const events = await store.readEvents(convId);
 
     const runErrors = events.filter((e) => e.type === "run.error");

@@ -240,7 +240,7 @@ function isLikelyOwnerlessFile(content: string): boolean {
  * Reads line 1 for metadata and scans for the first user message as preview.
  * Supports both legacy (StoredMessage) and event-sourced formats.
  */
-function parseFileHeader(
+export function parseFileHeader(
   content: string,
 ): { summary: ConversationSummary; access: IndexedAccessMeta } | null {
   const lines = content.split("\n").filter(Boolean);

@@ -2,8 +2,10 @@ import { describe, expect, it, afterAll } from "bun:test";
 import { mkdirSync, writeFileSync, rmSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
+import { roomConversationsDir } from "../../src/conversation/paths.ts";
 import { Runtime } from "../../src/runtime/runtime.ts";
 import { filterTools } from "../../src/tools/surfacing.ts";
+import { personalWorkspaceIdFor } from "../../src/workspace/workspace-store.ts";
 import { createEchoModel } from "../helpers/echo-model.ts";
 import { createMockModel } from "../helpers/mock-model.ts";
 import type { EngineEvent, EventSink, ToolSchema } from "../../src/engine/types.ts";
@@ -124,7 +126,7 @@ describe("Runtime", () => {
     await runtime.shutdown();
   });
 
-  it("getUserConversationStore() creates and uses {workDir}/conversations/", async () => {
+  it("roomConversationStore() creates and uses the room's owner partition", async () => {
     const workDir = join(testDir, "user-conv-store-fresh-dir");
     mkdirSync(workDir, { recursive: true });
 
@@ -134,14 +136,17 @@ describe("Runtime", () => {
       workDir,
     });
 
-    const store = runtime.getUserConversationStore();
+    const wsId = personalWorkspaceIdFor("user_alice");
+    const store = runtime.roomConversationStore(wsId, "user_alice");
     const conv = await store.create({ ownerId: "user_alice" });
 
-    // The conversation lives at {workDir}/conversations/{convId}.jsonl
-    // — not under any workspace.
-    const topLevelDir = join(workDir, "conversations");
-    expect(existsSync(topLevelDir)).toBe(true);
-    expect(existsSync(join(topLevelDir, `${conv.id}.jsonl`))).toBe(true);
+    // The conversation lives under the room's owner partition:
+    // {workDir}/workspaces/<wsId>/conversations/user_alice/{convId}.jsonl
+    const ownerDir = roomConversationsDir(workDir, wsId, "user_alice");
+    expect(existsSync(ownerDir)).toBe(true);
+    expect(existsSync(join(ownerDir, `${conv.id}.jsonl`))).toBe(true);
+    // Not at the old flat top-level path.
+    expect(existsSync(join(workDir, "conversations", `${conv.id}.jsonl`))).toBe(false);
 
     // The conversation's owner round-trips.
     const loaded = await store.load(conv.id);
@@ -150,7 +155,7 @@ describe("Runtime", () => {
     await runtime.shutdown();
   });
 
-  it("chat persists conversations at the top-level store", async () => {
+  it("chat persists conversations under the room store", async () => {
     const workDir = join(testDir, "jsonl-store");
     mkdirSync(workDir, { recursive: true });
 
@@ -162,17 +167,15 @@ describe("Runtime", () => {
 
     await provisionTestWorkspace(runtime);
 
+    // Dev-mode owner is `usr_default`; the chat is focused on TEST_WORKSPACE_ID,
+    // so the conversation is born in that room's owner partition.
     await runtime.chat({ message: "Persistent", workspaceId: TEST_WORKSPACE_ID });
 
-    // Conversations live at the top-level user dir, not under any
-    // workspace path. Stage 1 Task 005 collapsed the workspace-scoped
-    // location entirely.
-    const topLevelConvDir = join(workDir, "conversations");
-    const topLevelFiles = [...new Bun.Glob("**/*.jsonl").scanSync(topLevelConvDir)];
-    expect(topLevelFiles.length).toBeGreaterThan(0);
-    // Nothing was written under workspaces/.../conversations/.
-    const wsConvDir = join(workDir, "workspaces", TEST_WORKSPACE_ID, "conversations");
-    expect(existsSync(wsConvDir)).toBe(false);
+    const ownerDir = roomConversationsDir(workDir, TEST_WORKSPACE_ID, "usr_default");
+    const roomFiles = [...new Bun.Glob("*.jsonl").scanSync(ownerDir)];
+    expect(roomFiles.length).toBeGreaterThan(0);
+    // Nothing was written at the old flat top-level path.
+    expect(existsSync(join(workDir, "conversations"))).toBe(false);
 
     await runtime.shutdown();
   });

@@ -24,10 +24,13 @@ import { generateTitle } from "../conversation/auto-title.ts";
 import { compactConversationMessages } from "../conversation/compaction.ts";
 import { EventSourcedConversationStore } from "../conversation/event-sourced-store.ts";
 import { JsonlConversationStore } from "../conversation/jsonl-store.ts";
+import { ConversationLocator } from "../conversation/locator.ts";
 import { InMemoryConversationStore } from "../conversation/memory-store.ts";
+import { roomConversationsDir, runConversationsDir } from "../conversation/paths.ts";
 import type {
   Conversation,
   ConversationAccessContext,
+  ConversationEvent,
   ConversationListResult,
   ConversationStore,
   CreateConversationOptions,
@@ -239,6 +242,8 @@ export class Runtime {
   private config: RuntimeConfig;
   private contextSkills: Skill[];
   private eventStore: EventSourcedConversationStore | null;
+  /** Process-wide convId → room resolver; lazily built over the workspaces root. */
+  private _conversationLocator?: ConversationLocator;
   private hooks: EngineHooks;
   private defaultEvents: EventSink;
   private lifecycle: BundleLifecycleManager;
@@ -919,7 +924,6 @@ export class Runtime {
    * {@link RunInProgressError} if a turn is already active for the conversation.
    */
   async startTurn(request: ChatRequest): Promise<{ conversationId: string }> {
-    const store = this.findConversationStore();
     // Same strict production-vs-dev owner rule as `chat()` and the REST
     // handlers — one shared resolver, no forked copy to drift out of sync.
     const ownerId = resolveRequestOwnerId(request.identity, this._identityProvider !== null);
@@ -937,6 +941,11 @@ export class Runtime {
       workspaceId: wsId,
       ...(request.metadata ? { metadata: request.metadata } : {}),
     };
+
+    // Resolve the conversation's room store: the conversation's own room on
+    // resume (authoritative, from the locator), or the room it's born in
+    // (`wsId`) for a new conversation. The room owns the directory.
+    const { store } = await this.resolveChatStore(request.conversationId, wsId, ownerId);
 
     // Reserve the run (throws RunInProgressError if one is already active). The
     // returned signal is the RunBus's — NOT the HTTP request's — so a client
@@ -1112,11 +1121,15 @@ export class Runtime {
     });
     await this.ensureWorkspaceRegistry(sessionWsId);
 
-    // Resolve conversation store: top-level, user-scoped. Stage 1
-    // collapsed conversations onto a single store at `{workDir}/
-    // conversations/`. Per-call instances remain safe —
-    // `EventSourcedConversationStore` is stateless w.r.t. its dir.
-    const store: ConversationStore = this.findConversationStore();
+    // The conversation's ROOM — the binding. A chat is born in the focused
+    // workspace, or the caller's personal room when there's no focus
+    // (`request.workspaceId ?? sessionWsId`), and stays there for its whole
+    // life. On resume the room is read from the conversation's own path via the
+    // locator (authoritative). The room owns the directory; the path is the
+    // boundary. This is a SEPARATE axis from `toolsWsId` (tool/skill/app scope)
+    // below — the conversation room is fixed at create, the tool scope is not.
+    const roomWsId = request.workspaceId ?? sessionWsId;
+    const { store } = await this.resolveChatStore(request.conversationId, roomWsId, ownerId);
 
     // Load the personal workspace config for agents / models override.
     // Pre-Stage-2 this looked up the request's `workspaceId`; that field
@@ -1127,13 +1140,11 @@ export class Runtime {
 
     const createOpts: CreateConversationOptions = {
       ownerId,
-      // Conversation metadata `workspaceId` is a tool-scoping breadcrumb
-      // — it records the session workspace that was active when the
-      // conversation was first created. Post-T006 different tool calls
-      // in the same turn may land in different workspaces; the breadcrumb
-      // is for resuming UI context (the session-level wsId used for
-      // overlays / file store on subsequent turns).
-      workspaceId: sessionWsId,
+      // The conversation's room binding — the workspace it's born in (focused,
+      // or personal when unfocused). Authoritative: the conversation is stored
+      // under `workspaces/<workspaceId>/conversations/<ownerId>/`, and this is
+      // fixed for its whole life (no mid-chat room switching).
+      workspaceId: roomWsId,
       ...(request.metadata ? { metadata: request.metadata } : {}),
     };
 
@@ -1866,14 +1877,28 @@ export class Runtime {
       ...(requestIdentity.displayName ? { displayName: requestIdentity.displayName } : {}),
     });
     await this.ensureWorkspaceRegistry(sessionWsId);
-    const store: ConversationStore = this.findConversationStore();
+    // The run conversation lives in its provenance room (the focused workspace,
+    // or the owner's personal room when unfocused). When an automation id is
+    // threaded it lands in that room's `_runs/<automationId>/` partition
+    // (room-visible); otherwise the owner partition.
+    const provRoomWsId = request.workspaceId ?? sessionWsId;
+    const automationId =
+      typeof request.metadata?.automationId === "string"
+        ? request.metadata.automationId
+        : undefined;
+    // TODO(PR3): thread the automation id through the scheduler→executeTask
+    // contract so every scheduled run lands in `_runs/<automationId>/`.
+    const store: EventSourcedConversationStore = automationId
+      ? this.runConversationStore(provRoomWsId, automationId)
+      : this.roomConversationStore(provRoomWsId, ownerId);
     const sessionWorkspace = await this._workspaceStore.get(sessionWsId);
 
     // Always create a fresh conversation per task. No resume path —
     // `TaskRequest` has no `conversationId` field by design.
     const conversation = await store.create({
       ownerId,
-      workspaceId: sessionWsId,
+      workspaceId: provRoomWsId,
+      ...(automationId ? { automationId } : {}),
       metadata: { source: "task", ...(request.metadata ?? {}) },
     });
 
@@ -2928,81 +2953,105 @@ export class Runtime {
   }
 
   /**
-   * Get the **user-scoped** (top-level) ConversationStore.
-   *
-   * As of Stage 1, conversations are user-owned entities stored at
-   * `{workDir}/conversations/{convId}.jsonl`, not workspace-scoped. This
-   * is the canonical conversation store; every read and write of a
-   * conversation routes through it.
-   *
-   * Per-call instances are intentional: `EventSourcedConversationStore`
-   * is stateless w.r.t. its dir (each operation reads from disk), so
-   * sharing instances across requests would add no benefit and force
-   * a lifecycle concern (when does it die?). The directory is created
-   * on first use.
-   *
-   * STAGE 1 CLOSEOUT FOLLOW-UP — perf at scale: every call rebuilds
-   * the store's `ConversationIndex`, which re-scans the conversations
-   * directory on first `list()`. Fine for low-traffic dev; on a
-   * tenant with thousands of conversations the activity-dashboard's
-   * `store.list({ limit: 50 }, access)` becomes O(n) on every
-   * refresh. The bundle's `src/bundles/conversations/src/index-cache.ts`
-   * uses `fs.watch` + debounce specifically to avoid this — the
-   * runtime version does not. Either cache the store as a
-   * Runtime-lifetime singleton (and propagate `invalidate()` through
-   * the same chain `EventSink` events already flow), or share the
-   * bundle's watcher-backed index here. Not blocking Stage 1 ship.
+   * Process-wide conversation locator: resolves a `convId` to the room +
+   * owner it's stored under, and serves the cross-room (All-rooms) and
+   * room-scoped list views. Lazily built over the workspaces root; the room
+   * stores invalidate it on create/delete via their `onMutate` hook.
    */
-  getUserConversationStore(): ConversationStore {
+  getConversationLocator(): ConversationLocator {
+    if (!this._conversationLocator) {
+      this._conversationLocator = new ConversationLocator(this._workspaceStore.getWorkspacesDir());
+    }
+    return this._conversationLocator;
+  }
+
+  /**
+   * Conversation store for a user's private chats in ONE room
+   * (`workspaces/<wsId>/conversations/<ownerId>/`). The room owns the
+   * directory — the path is the boundary. Per-call instances are intentional
+   * (the store is stateless w.r.t. its dir); the `onMutate` hook keeps the
+   * process-wide locator fresh on create/delete.
+   */
+  roomConversationStore(wsId: string, ownerId: string): EventSourcedConversationStore {
     return new EventSourcedConversationStore({
-      dir: this.getConversationsDir(),
+      dir: roomConversationsDir(resolveWorkDir(this.config), wsId, ownerId),
       logLevel: this.config.logging?.level ?? "normal",
+      onMutate: () => this._conversationLocator?.invalidate(),
     });
   }
 
   /**
-   * Absolute path to the top-level, user-scoped conversations directory
-   * (`{workDir}/conversations`). This is the single source of truth for
-   * conversation storage post-Stage-1 — every conversation lives here
-   * regardless of owner or workspace. Read-side consumers that scan the
-   * raw JSONL files (e.g. the usage aggregator) take this path rather than
-   * hand-building it, so the layout decision stays in one place.
-   *
-   * NOT workspace-scoped — do not pair this with `getWorkspaceScopedDir()`.
+   * Conversation store for an automation's run conversations in one room
+   * (`workspaces/<wsId>/conversations/_runs/<automationId>/`, room-visible).
    */
-  getConversationsDir(): string {
-    return join(resolveWorkDir(this.config), "conversations");
+  runConversationStore(wsId: string, automationId: string): EventSourcedConversationStore {
+    return new EventSourcedConversationStore({
+      dir: runConversationsDir(resolveWorkDir(this.config), wsId, automationId),
+      logLevel: this.config.logging?.level ?? "normal",
+      onMutate: () => this._conversationLocator?.invalidate(),
+    });
   }
 
   /**
-   * The canonical store handle for conversation reads and writes. Alias
-   * for `getUserConversationStore()` — `find*` is the read-side framing
-   * (`findConversation` returns a single conversation by id;
-   * `findConversationStore` returns the store you'd use to enumerate or
-   * mutate). Both forms point at the same top-level store; keep them
-   * as siblings until usage settles and one form clearly wins.
+   * Resolve a conversation id to the room store that holds it, or `null` if no
+   * room contains it. The single bridge from a bare `convId` (deep link,
+   * history fetch, event append) to its room-owned store.
    */
-  findConversationStore(): ConversationStore {
-    return this.getUserConversationStore();
+  async resolveConversationStore(convId: string): Promise<EventSourcedConversationStore | null> {
+    const loc = await this.getConversationLocator().locate(convId);
+    if (!loc) return null;
+    return loc.automationId
+      ? this.runConversationStore(loc.wsId, loc.automationId)
+      : this.roomConversationStore(loc.wsId, loc.ownerId ?? "");
   }
 
   /**
-   * Locate a conversation by id from the top-level store. Returns the
-   * `Conversation` metadata, or `null` if the file doesn't exist. The
-   * single source of truth for "give me this conversation" — every
-   * conversation-touching call site reads through this.
+   * Resolve the room store for a chat turn. On resume the conversation's room
+   * is authoritative (read from the locator); for a new conversation it's the
+   * room the chat is born in (`createRoomWsId` = the focused workspace, or the
+   * caller's personal room when unfocused). Returns the store plus the resolved
+   * room id so the create path can stamp the binding.
+   */
+  private async resolveChatStore(
+    conversationId: string | undefined,
+    createRoomWsId: string,
+    ownerId: string,
+  ): Promise<{ store: EventSourcedConversationStore; roomWsId: string }> {
+    if (conversationId) {
+      const loc = await this.getConversationLocator().locate(conversationId);
+      if (loc?.ownerId) {
+        return { store: this.roomConversationStore(loc.wsId, loc.ownerId), roomWsId: loc.wsId };
+      }
+    }
+    return { store: this.roomConversationStore(createRoomWsId, ownerId), roomWsId: createRoomWsId };
+  }
+
+  /**
+   * Locate a conversation by id across rooms. Returns the `Conversation`
+   * metadata, or `null` if no room holds it / the caller isn't the owner.
    *
-   * Pass `access` to gate the read by ownership at the store layer.
-   * Without `access` the caller is asserting "I am the ownership
-   * boundary" (e.g. `runtime.chat` after its own owner check, or a
-   * trusted internal caller); with it, the store returns `null` for
-   * existence-but-not-yours, matching `load()`'s posture.
+   * Pass `access` to gate the read by ownership at the store layer. Without
+   * `access` the caller asserts "I am the ownership boundary" (e.g.
+   * `runtime.chat` after its own owner check); with it, the store returns
+   * `null` for existence-but-not-yours, matching `load()`'s posture.
    */
   async findConversation(
     convId: string,
     access?: ConversationAccessContext,
   ): Promise<Conversation | null> {
-    return this.findConversationStore().load(convId, access);
+    const store = await this.resolveConversationStore(convId);
+    if (!store) return null;
+    return store.load(convId, access);
+  }
+
+  /**
+   * Append a conversation event to a conversation by id, resolving its room.
+   * For out-of-band emitters (e.g. the briefing's `aux.usage`) that hold a
+   * convId but not its room store. No-op if the conversation can't be located.
+   */
+  async appendConversationEvent(convId: string, event: ConversationEvent): Promise<void> {
+    const store = await this.resolveConversationStore(convId);
+    store?.appendEvent(convId, event);
   }
 
   /** Get the UserStore instance. */
@@ -3799,19 +3848,17 @@ export class Runtime {
   }
 
   /**
-   * List conversations from the top-level store. Pass `access` to filter
-   * by ownership; without it the caller asserts trusted enumeration
-   * scope (CLI, admin tools). The `wsId` parameter is gone — every
-   * conversation lives at the user level, and tool/workspace scoping
-   * is a concern for the conversation's runtime context, not for
-   * enumeration. To filter by workspace, list and filter on
-   * `Conversation.workspaceId` at the call site.
+   * List conversations across rooms via the locator. Pass `access` to filter
+   * by ownership; without it the caller asserts trusted enumeration scope
+   * (CLI, admin tools). Pass `options.workspaceId` for the room-scoped view (a
+   * single room's chats); omit it for the owner's "All rooms" view. The room
+   * filter is the path; ownership is the access gate — orthogonal axes.
    */
   async listConversations(
     options?: ListOptions,
     access?: ConversationAccessContext,
   ): Promise<ConversationListResult> {
-    return this.findConversationStore().list(options, access);
+    return this.getConversationLocator().list(options, access);
   }
 
   /**
@@ -3973,7 +4020,6 @@ function buildEventSink(config: RuntimeConfig): {
   events: EventSink;
   eventStore: EventSourcedConversationStore | null;
 } {
-  let eventStore: EventSourcedConversationStore | null = null;
   const sinks: EventSink[] = config.events ? [...config.events] : [];
   if (!config.logging?.disabled) {
     const workDir = resolveWorkDir(config);
@@ -3981,26 +4027,24 @@ function buildEventSink(config: RuntimeConfig): {
     const retentionDays = config.logging?.retentionDays;
     // Workspace events (bundle lifecycle, bridge calls, audit) go to daily workspace log
     sinks.push(new WorkspaceLogSink({ dir: logDir, retentionDays }));
-    // Conversation events are handled by the EventSourcedConversationStore (added to sink chain in start())
-    eventStore = new EventSourcedConversationStore({
-      dir: join(workDir, "conversations"),
-      logLevel: config.logging?.level ?? "normal",
-    });
   }
   const events: EventSink = sinks.length > 0 ? new MultiEventSink(sinks) : new NoopEventSink();
-  return { events, eventStore };
+  // No boot-time conversation event store: conversations are room-owned, so
+  // every chat/task turn routes engine events through its own per-call room
+  // store (the `isWorkspaceRequest` sink, always taken now). `this.eventStore`
+  // stays null; there is no flat top-level conversations dir.
+  return { events, eventStore: null };
 }
 
 function buildStore(config: RuntimeConfig): ConversationStore {
   if (config.store?.type === "memory") return new InMemoryConversationStore();
   if (config.store?.type === "jsonl") return new JsonlConversationStore(config.store.dir);
   if (config.store?.type === "custom") return config.store.adapter;
-  // Default: event-sourced JSONL persistence in workDir/conversations/
-  const workDir = resolveWorkDir(config);
-  return new EventSourcedConversationStore({
-    dir: join(workDir, "conversations"),
-    logLevel: config.logging?.level ?? "normal",
-  });
+  // Default: conversations are room-owned (per-call room stores), so there is
+  // no flat top-level store. `this.store` is only the sentinel the chat path
+  // compares against (`store !== this.store` ⇒ use the per-call room store as
+  // the event sink), so an in-memory placeholder is correct and never written.
+  return new InMemoryConversationStore();
 }
 
 function buildSkills(config: RuntimeConfig): {

@@ -78,8 +78,8 @@ describe("Layer 3 — workspace-tier `loading_strategy: always` skills", () => {
       message: "hello",
     });
 
-    const store = runtime.findConversationStore();
-    const events = await store.readEvents(chat.conversationId);
+    const store = await runtime.resolveConversationStore(chat.conversationId);
+    const events = await store!.readEvents(chat.conversationId);
     const skillsLoaded = events.find((e) => e.type === "skills.loaded");
     expect(skillsLoaded).toBeDefined();
 
@@ -153,8 +153,8 @@ describe("Layer 3 — workspace-tier `loading_strategy: always` skills", () => {
       message: "hello from home",
     });
 
-    const store = runtime.findConversationStore();
-    const events = await store.readEvents(chat.conversationId);
+    const store = await runtime.resolveConversationStore(chat.conversationId);
+    const events = await store!.readEvents(chat.conversationId);
     const skillsLoaded = events.find((e) => e.type === "skills.loaded");
     expect(skillsLoaded).toBeDefined();
 

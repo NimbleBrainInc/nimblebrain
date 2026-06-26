@@ -88,11 +88,19 @@ export interface EventSourcedStoreConfig {
   dir: string;
   /** Logging verbosity — "debug" persists full request/response data. */
   logLevel?: "normal" | "debug";
+  /**
+   * Called whenever the set of conversations in this dir changes (create /
+   * delete). The runtime passes the process-wide `ConversationLocator`'s
+   * `invalidate` here so a context-free load/list sees the new convId set.
+   * The per-dir `ConversationIndex` is invalidated independently in-store.
+   */
+  onMutate?: () => void;
 }
 
 export class EventSourcedConversationStore implements ConversationStore, EventSink {
   private dir: string;
   private logLevel: "normal" | "debug";
+  private onMutate?: () => void;
   private index = new ConversationIndex();
   private activeConversationId: string | null = null;
   private pendingWrites = new Set<Promise<unknown>>();
@@ -102,6 +110,7 @@ export class EventSourcedConversationStore implements ConversationStore, EventSi
   constructor(config: EventSourcedStoreConfig) {
     this.dir = config.dir;
     this.logLevel = config.logLevel ?? "normal";
+    this.onMutate = config.onMutate;
     if (!existsSync(this.dir)) {
       mkdirSync(this.dir, { recursive: true });
     }
@@ -148,6 +157,7 @@ export class EventSourcedConversationStore implements ConversationStore, EventSi
     const path = this.path(id);
     await writeFile(path, `${JSON.stringify(conversation)}\n`);
     this.index.invalidate();
+    this.onMutate?.();
     return conversation;
   }
 
@@ -355,6 +365,7 @@ export class EventSourcedConversationStore implements ConversationStore, EventSi
     if (!existsSync(path)) return false;
     await unlink(path);
     this.index.remove(id);
+    this.onMutate?.();
     return true;
   }
 

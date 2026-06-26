@@ -3,8 +3,9 @@
  *
  * Verifies the per-user / per-org scope model after usage moved off
  * workspace settings to the org/audit surface:
- *   - The tool reads the TOP-LEVEL conversations dir (not workspace-scoped),
- *     so it sees conversations regardless of workspace.
+ *   - The tool walks every room's conversation files (across workspaces /
+ *     owner partitions), so it sees a user's usage regardless of which room
+ *     a conversation lived in.
  *   - `scope: "user"` (default) is gated to the caller's own conversations
  *     via the aggregator's ownerFilter — a member can't see peers' usage.
  *   - `scope: "org"` requires org admin/owner; a member is denied.
@@ -12,11 +13,12 @@
  *   - The response echoes the resolved `scope`.
  */
 
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { NoopEventSink } from "../../../../src/adapters/noop-events.ts";
+import { roomConversationsDir } from "../../../../src/conversation/paths.ts";
 import type { McpSource } from "../../../../src/tools/mcp-source.ts";
 import type { UsageReportOutput } from "../../../../src/tools/platform/schemas/usage.ts";
 import { createUsageSource } from "../../../../src/tools/platform/usage.ts";
@@ -32,10 +34,11 @@ class FakeRuntime {
   identity: FakeIdentity | null = null;
   hasIdentityProvider = false;
 
-  constructor(private convDir: string) {}
+  constructor(private workDir: string) {}
 
-  getConversationsDir(): string {
-    return this.convDir;
+  getWorkspaceStore() {
+    // The usage source walks `getWorkspacesDir()` via `listAllConversationFiles`.
+    return { getWorkspacesDir: () => join(this.workDir, "workspaces") };
   }
   getCurrentIdentity() {
     return this.identity;
@@ -60,24 +63,39 @@ function convJsonl(id: string, ownerId: string, input: number, output: number): 
   return `${meta}\n${JSON.stringify(llmEvent(input, output))}\n`;
 }
 
+/** Seed a conversation into its room+owner partition under `{workDir}/workspaces`. */
+async function seedRoomConversation(
+  workDir: string,
+  wsId: string,
+  ownerId: string,
+  id: string,
+  input: number,
+  output: number,
+): Promise<void> {
+  const dir = roomConversationsDir(workDir, wsId, ownerId);
+  await mkdir(dir, { recursive: true });
+  await writeFile(join(dir, `${id}.jsonl`), convJsonl(id, ownerId, input, output));
+}
+
 // ── Setup ───────────────────────────────────────────────────────────────
 
-let convDir: string;
+let workDir: string;
 let runtime: FakeRuntime;
 let source: McpSource | undefined;
 
 beforeEach(async () => {
-  convDir = await mkdtemp(join(tmpdir(), "usage-source-test-"));
-  runtime = new FakeRuntime(convDir);
-  // Two owners: alice has 100/50, bob has 400/200.
-  await writeFile(join(convDir, "alice.jsonl"), convJsonl("conv_a", "usr_alice", 100, 50));
-  await writeFile(join(convDir, "bob.jsonl"), convJsonl("conv_b", "usr_bob", 400, 200));
+  workDir = await mkdtemp(join(tmpdir(), "usage-source-test-"));
+  runtime = new FakeRuntime(workDir);
+  // Two owners in two different rooms — usage must aggregate by owner ACROSS
+  // rooms via the cross-room walk. alice has 100/50, bob has 400/200.
+  await seedRoomConversation(workDir, "ws_alice", "usr_alice", "conv_0000000000000a1c", 100, 50);
+  await seedRoomConversation(workDir, "ws_bob", "usr_bob", "conv_0000000000000b0b", 400, 200);
 });
 
 afterEach(async () => {
   if (source) await source.stop();
   source = undefined;
-  await rm(convDir, { recursive: true, force: true });
+  await rm(workDir, { recursive: true, force: true });
 });
 
 async function buildSource(): Promise<McpSource> {

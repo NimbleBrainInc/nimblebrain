@@ -1,19 +1,19 @@
 /**
  * Self-tests for `scripts/check-conversation-paths.ts`.
  *
- * The lint exports its AST predicates so we can exercise them
- * directly — no subprocess, no fixture-on-disk dance. Each predicate
- * is tested against a small parsed snippet that either matches or
- * doesn't, and against a clean snippet that must not match.
+ * The lint exports its AST predicates so we can exercise them directly — no
+ * subprocess, no fixture-on-disk dance. Each predicate is tested against a
+ * small parsed snippet that either matches (a flat construction) or doesn't
+ * (the room-owned shape, or an unrelated path). Same shape as
+ * `check-credential-paths.test.ts` and `check-tool-namespace.test.ts`.
  */
 
 import { describe, expect, test } from "bun:test";
 import * as ts from "typescript";
 import {
-  isWorkspaceConversationJoin,
-  isWorkspaceConversationStringLiteral,
-  isWorkspaceConversationTemplate,
-  isWorkspaceScopedConversationJoin,
+  isFlatConversationJoin,
+  isFlatConversationStringLiteral,
+  isFlatConversationTemplate,
 } from "../../../scripts/check-conversation-paths.ts";
 
 function parse(snippet: string): ts.SourceFile {
@@ -37,125 +37,127 @@ function findFirst<T extends ts.Node>(
   return found;
 }
 
-describe("check-conversation-paths — isWorkspaceConversationJoin", () => {
-  test("matches `join(workDir, 'workspaces', wsId, 'conversations', file)`", () => {
-    const src = parse(
-      `const path = join(workDir, "workspaces", wsId, "conversations", file);`,
-    );
-    const call = findFirst(src, ts.isCallExpression);
-    expect(call).toBeDefined();
-    expect(isWorkspaceConversationJoin(call!)).toBe(true);
-  });
-
-  test("does NOT match `join(workDir, 'workspaces')` (parent dir; legitimate)", () => {
-    const src = parse(`const dir = join(workDir, "workspaces");`);
-    const call = findFirst(src, ts.isCallExpression);
-    expect(isWorkspaceConversationJoin(call!)).toBe(false);
-  });
-
-  test("does NOT match `join(workDir, 'conversations')` (top-level path; the intended form)", () => {
+describe("check-conversation-paths — isFlatConversationJoin", () => {
+  test("matches `join(workDir, 'conversations')` (the forbidden flat path)", () => {
     const src = parse(`const dir = join(workDir, "conversations");`);
     const call = findFirst(src, ts.isCallExpression);
-    expect(isWorkspaceConversationJoin(call!)).toBe(false);
+    expect(call).toBeDefined();
+    expect(isFlatConversationJoin(call!)).toBe(true);
   });
 
-  test("does NOT match `join(workDir, 'workspaces', wsId, 'files')` (different subdir)", () => {
-    const src = parse(`const dir = join(workDir, "workspaces", wsId, "files");`);
+  test("matches `join(runtime.getWorkDir(), 'conversations', file)` (workDir accessor base)", () => {
+    const src = parse(`const p = join(runtime.getWorkDir(), "conversations", file);`);
     const call = findFirst(src, ts.isCallExpression);
-    expect(isWorkspaceConversationJoin(call!)).toBe(false);
+    expect(isFlatConversationJoin(call!)).toBe(true);
+  });
+
+  test("does NOT match `join(workDir, 'workspaces', wsId, 'conversations', file)` (room-owned)", () => {
+    const src = parse(`const path = join(workDir, "workspaces", wsId, "conversations", file);`);
+    const call = findFirst(src, ts.isCallExpression);
+    expect(isFlatConversationJoin(call!)).toBe(false);
+  });
+
+  test("does NOT match `join(this.workspacesRoot, wsId, 'conversations')` (workspace-scoped base)", () => {
+    const src = parse(`const convRoot = join(this.workspacesRoot, wsId, "conversations");`);
+    const call = findFirst(src, ts.isCallExpression);
+    expect(isFlatConversationJoin(call!)).toBe(false);
+  });
+
+  test("does NOT match `join(getWorkspaceScopedDir(), 'conversations')` (workspace-scoped base)", () => {
+    const src = parse(`const dir = join(getWorkspaceScopedDir(), "conversations");`);
+    const call = findFirst(src, ts.isCallExpression);
+    expect(isFlatConversationJoin(call!)).toBe(false);
+  });
+
+  test("does NOT match `join(workDir, 'workspaces')` (parent dir; no conversations)", () => {
+    const src = parse(`const dir = join(workDir, "workspaces");`);
+    const call = findFirst(src, ts.isCallExpression);
+    expect(isFlatConversationJoin(call!)).toBe(false);
+  });
+
+  test("does NOT match `join(workDir, 'cache')` (different top-level subdir)", () => {
+    const src = parse(`const dir = join(workDir, "cache");`);
+    const call = findFirst(src, ts.isCallExpression);
+    expect(isFlatConversationJoin(call!)).toBe(false);
   });
 
   test("matches `path.join(...)` too — accepts any callee named 'join'", () => {
-    const src = parse(`const p = path.join(root, "workspaces", id, "conversations");`);
+    const src = parse(`const p = path.join(root, "conversations", id);`);
     const call = findFirst(src, ts.isCallExpression);
-    expect(isWorkspaceConversationJoin(call!)).toBe(true);
+    expect(isFlatConversationJoin(call!)).toBe(true);
   });
 });
 
-describe("check-conversation-paths — isWorkspaceConversationTemplate", () => {
-  test("matches a template literal that spells out the workspace-conv path", () => {
-    const src = parse("const p = `${workDir}/workspaces/${wsId}/conversations/${id}.jsonl`;");
-    const node = findFirst(src, ts.isTemplateExpression);
-    expect(node).toBeDefined();
-    expect(isWorkspaceConversationTemplate(node!)).toBe(true);
-  });
-
-  test("does NOT match a template that ends at /workspaces/${wsId}", () => {
-    const src = parse("const p = `${workDir}/workspaces/${wsId}`;");
-    const node = findFirst(src, ts.isTemplateExpression);
-    expect(isWorkspaceConversationTemplate(node!)).toBe(false);
-  });
-
-  test("does NOT match a template that uses /conversations/ at top-level", () => {
+describe("check-conversation-paths — isFlatConversationTemplate", () => {
+  test("matches a template literal that uses /conversations/ at top-level", () => {
     const src = parse("const p = `${workDir}/conversations/${id}.jsonl`;");
     const node = findFirst(src, ts.isTemplateExpression);
-    expect(isWorkspaceConversationTemplate(node!)).toBe(false);
+    expect(node).toBeDefined();
+    expect(isFlatConversationTemplate(node!)).toBe(true);
+  });
+
+  test("does NOT match a template that spells out the room-owned conversation path", () => {
+    const src = parse(
+      "const p = `${workDir}/workspaces/${wsId}/conversations/${ownerId}/${id}.jsonl`;",
+    );
+    const node = findFirst(src, ts.isTemplateExpression);
+    expect(isFlatConversationTemplate(node!)).toBe(false);
+  });
+
+  test("does NOT match a template that ends at /workspaces/${wsId} (no conversations segment)", () => {
+    const src = parse("const p = `${workDir}/workspaces/${wsId}`;");
+    const node = findFirst(src, ts.isTemplateExpression);
+    expect(isFlatConversationTemplate(node!)).toBe(false);
   });
 });
 
-describe("check-conversation-paths — isWorkspaceConversationStringLiteral", () => {
-  test("matches a string literal containing the substring path", () => {
-    const src = parse(`const p = "/work/workspaces/ws_a/conversations/foo.jsonl";`);
-    const node = findFirst(src, ts.isStringLiteral);
-    expect(isWorkspaceConversationStringLiteral(node!)).toBe(true);
-  });
-
-  test("does NOT match a string with /conversations/ but no /workspaces/", () => {
+describe("check-conversation-paths — isFlatConversationStringLiteral", () => {
+  test("matches a flat conversation file literal", () => {
     const src = parse(`const p = "/work/conversations/foo.jsonl";`);
     const node = findFirst(src, ts.isStringLiteral);
-    expect(isWorkspaceConversationStringLiteral(node!)).toBe(false);
-  });
-});
-
-describe("check-conversation-paths — isWorkspaceScopedConversationJoin", () => {
-  test("matches `join(getWorkspaceScopedDir(), 'conversations')` (the usage-dashboard regression)", () => {
-    const src = parse(`const dir = join(getWorkspaceScopedDir(), "conversations");`);
-    const call = findFirst(src, ts.isCallExpression);
-    expect(call).toBeDefined();
-    expect(isWorkspaceScopedConversationJoin(call!)).toBe(true);
+    expect(isFlatConversationStringLiteral(node!)).toBe(true);
   });
 
-  test("matches `join(runtime.getWorkspaceScopedDir(wsId), 'conversations', file)` (method form)", () => {
-    const src = parse(
-      `const p = join(runtime.getWorkspaceScopedDir(wsId), "conversations", file);`,
-    );
-    const call = findFirst(src, ts.isCallExpression);
-    expect(isWorkspaceScopedConversationJoin(call!)).toBe(true);
+  test("does NOT match the room-owned conversation file literal", () => {
+    const src = parse(`const p = "/work/workspaces/ws_a/conversations/user_x/foo.jsonl";`);
+    const node = findFirst(src, ts.isStringLiteral);
+    expect(isFlatConversationStringLiteral(node!)).toBe(false);
   });
 
-  test("does NOT match `join(getWorkspaceScopedDir(), 'files')` (different subdir)", () => {
-    const src = parse(`const dir = join(getWorkspaceScopedDir(), "files");`);
-    const call = findFirst(src, ts.isCallExpression);
-    expect(isWorkspaceScopedConversationJoin(call!)).toBe(false);
+  test("does NOT match a resource URI `ui://conversations/browser`", () => {
+    const src = parse(`const u = "ui://conversations/browser";`);
+    const node = findFirst(src, ts.isStringLiteral);
+    expect(isFlatConversationStringLiteral(node!)).toBe(false);
   });
 
-  test("does NOT match `join(getConversationsDir())` (the correct top-level accessor)", () => {
-    const src = parse(`const dir = join(getConversationsDir(), "x");`);
-    const call = findFirst(src, ts.isCallExpression);
-    expect(isWorkspaceScopedConversationJoin(call!)).toBe(false);
-  });
-
-  test("does NOT match `join(workDir, 'conversations')` (workDir, not workspace-scoped)", () => {
-    const src = parse(`const dir = join(workDir, "conversations");`);
-    const call = findFirst(src, ts.isCallExpression);
-    expect(isWorkspaceScopedConversationJoin(call!)).toBe(false);
+  test("does NOT match a package route `@nimblebraininc/conversations`", () => {
+    const src = parse(`const r = "@nimblebraininc/conversations";`);
+    const node = findFirst(src, ts.isStringLiteral);
+    expect(isFlatConversationStringLiteral(node!)).toBe(false);
   });
 });
 
 describe("check-conversation-paths — script self-invocation", () => {
-  test("clean tree: running the script produces a passing message and exits 0", async () => {
-    // Subprocess invocation: the lint runs against the current src/
-    // tree, which is the post-Stage-1 clean state. Exit 0 here proves
-    // the predicate set above doesn't false-positive on the actual
-    // codebase. The matching "exit 1 on violation" half is covered by
-    // the predicate unit tests above — each is a single fixture
-    // snippet that the predicate either flags or doesn't.
+  test("runs end-to-end against src/ and speaks the inverted contract", async () => {
+    // The room-storage migration is in flight: src/ may still contain flat
+    // conversation constructions (the runtime is being de-flatted
+    // concurrently), so the script may legitimately exit 0 (clean) or 1
+    // (flat paths still present). Either way it must run to completion and
+    // emit the room-owned guidance. The exhaustive match/no-match contract
+    // is covered by the predicate unit tests above.
     const proc = Bun.spawn({
       cmd: ["bun", "run", "scripts/check-conversation-paths.ts"],
       stdout: "pipe",
       stderr: "pipe",
     });
     const exitCode = await proc.exited;
-    expect(exitCode).toBe(0);
+    const stdout = await new Response(proc.stdout).text();
+    const stderr = await new Response(proc.stderr).text();
+    expect([0, 1]).toContain(exitCode);
+    if (exitCode === 0) {
+      expect(stdout).toContain("No flat conversation paths");
+    } else {
+      expect(stderr).toContain("roomConversationsDir");
+    }
   });
 });

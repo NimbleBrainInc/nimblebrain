@@ -1,4 +1,3 @@
-import { join } from "node:path";
 import {
   type AccessContext,
   ConversationIndex,
@@ -45,25 +44,24 @@ export async function createConversationsSource(
   runtime: Runtime,
   eventSink: EventSink,
 ): Promise<McpSource> {
-  // Single process-wide ConversationIndex over the top-level
-  // conversation directory. Post-Stage-1, all conversations live at
-  // `{workDir}/conversations/`; per-workspace caches would just be
-  // identical clones over the same dir. Access filtering is the
-  // dispatcher's job (see `currentAccess()` below), not the index's
-  // — the index tracks ownerId on every entry and each handler call
-  // narrows to the caller's owned set.
+  // Single process-wide ConversationIndex over the workspaces root.
+  // Conversations are room-owned (`workspaces/<wsId>/conversations/<ownerId>/`),
+  // so the index recurses every room's conversation subtree; each entry keeps
+  // its own `filePath`, so the handlers read the right room file. Access
+  // filtering is the dispatcher's job (see `currentAccess()` below) — the index
+  // tracks ownerId on every entry and each handler narrows to the caller's set.
   let cachedIndex: ConversationIndex | null = null;
 
   async function getIndex(): Promise<{ index: ConversationIndex; dir: string }> {
-    const dir = join(runtime.getWorkDir(), "conversations");
+    const dir = runtime.getWorkspaceStore().getWorkspacesDir();
     if (!cachedIndex) {
       cachedIndex = new ConversationIndex();
       await cachedIndex.build(dir);
       cachedIndex.startWatching(dir);
     }
-    // Pick up brand-new conversations deterministically rather than racing the
-    // fs.watch debounce — a `data.changed` refresh fires the instant a turn
-    // starts, before the watch has re-indexed the new file.
+    // Recursive layout: the root `fs.watch` can't see nested writes, so the
+    // just-in-time rescan in `flushPending` (not the watcher) is what keeps the
+    // index fresh — it re-scans every room subtree and indexes new files.
     await cachedIndex.flushPending();
     return { index: cachedIndex, dir };
   }

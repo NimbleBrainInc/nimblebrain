@@ -3,6 +3,7 @@ import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { EventSourcedConversationStore } from "../../src/conversation/event-sourced-store.ts";
+import { roomConversationsDir } from "../../src/conversation/paths.ts";
 import type { ConversationAccessContext } from "../../src/conversation/types.ts";
 import {
   ConversationAccessDeniedError,
@@ -83,9 +84,9 @@ describe("detached turns (server-authoritative streaming)", () => {
     const conv = await runtime.findConversation(conversationId, { userId: "usr_default" });
     expect(conv).not.toBeNull();
 
-    const store = runtime.findConversationStore();
+    const store = await runtime.resolveConversationStore(conversationId);
     expect(store).toBeInstanceOf(EventSourcedConversationStore);
-    const events = await (store as EventSourcedConversationStore).readEvents(conversationId);
+    const events = await store!.readEvents(conversationId);
     expect(events.length).toBeGreaterThan(0);
   });
 
@@ -131,7 +132,11 @@ describe("detached turns (server-authoritative streaming)", () => {
     // ownership BEFORE runBus.begin() flips the run active — otherwise an
     // unauthorized caller could mutate another user's run state.
     const convId = "conv_d00dd00dd00dd00d";
-    const convDir = join(testDir, "conversations");
+    // Seed the foreign conversation in its owner's room
+    // (`workspaces/ws_user_<id>/conversations/<ownerId>/`) so the locator
+    // resolves it and startTurn's ownership check fires.
+    const foreignOwner = "usr_someone_else";
+    const convDir = roomConversationsDir(testDir, `ws_user_${foreignOwner}`, foreignOwner);
     mkdirSync(convDir, { recursive: true });
     writeFileSync(
       join(convDir, `${convId}.jsonl`),
@@ -141,7 +146,7 @@ describe("detached turns (server-authoritative streaming)", () => {
         updatedAt: "2025-01-01T00:00:00.000Z",
         title: null,
         format: "events",
-        ownerId: "usr_someone_else",
+        ownerId: foreignOwner,
       })}\n`,
     );
 

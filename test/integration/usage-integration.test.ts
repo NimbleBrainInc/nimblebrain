@@ -101,8 +101,12 @@ describe("per-conversation token accumulation", () => {
 
 		// Derived totals from the list summary should be the sum of per-turn
 		// usage. Allow for async flush — at least 2 turns must be visible.
-		const store = runtime.findConversationStore();
-		const list = await store.list();
+		// Read the per-room store directly: a fresh store instance re-derives
+		// each summary's totals from the conversation file, so the accumulated
+		// per-turn tokens are visible. (The cross-room locator list is
+		// create/delete-fresh, not append-fresh.) Dev-mode owner is
+		// `usr_default`, focused on TEST_WORKSPACE_ID.
+		const list = await runtime.roomConversationStore(TEST_WORKSPACE_ID, "usr_default").list();
 		const summary = list.conversations.find((c) => c.id === turn1.conversationId);
 		expect(summary).toBeDefined();
 
@@ -135,8 +139,7 @@ describe("per-conversation token accumulation", () => {
 
 		await new Promise((r) => setTimeout(r, 1500));
 
-		const store = runtime.findConversationStore();
-		const list = await store.list();
+		const list = await runtime.roomConversationStore(TEST_WORKSPACE_ID, "usr_default").list();
 		const sumA = list.conversations.find((c) => c.id === a1.conversationId);
 		const sumB = list.conversations.find((c) => c.id === b1.conversationId);
 

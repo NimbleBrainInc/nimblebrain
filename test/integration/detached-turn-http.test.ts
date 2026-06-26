@@ -3,9 +3,14 @@ import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { type ServerHandle, startServer } from "../../src/api/server.ts";
+import { roomConversationsDir } from "../../src/conversation/paths.ts";
 import { Runtime } from "../../src/runtime/runtime.ts";
 import { createEchoModel } from "../helpers/echo-model.ts";
 import { TEST_WORKSPACE_ID, provisionTestWorkspace } from "../helpers/test-workspace.ts";
+
+// Dev-mode caller (no identity provider) — every request resolves to this
+// owner, and conversations are born in TEST_WORKSPACE_ID's owner partition.
+const DEV_OWNER = "usr_default";
 
 let runtime: Runtime;
 let handle: ServerHandle;
@@ -120,9 +125,13 @@ describe("detached turn HTTP surface", () => {
 
   it("start on a pre-migration (ownerless) conversation is 422, not 500", async () => {
     // Seed a corrupted conversation: line-1 metadata without ownerId makes the
-    // store throw ConversationCorruptedError on load (the resume path).
+    // store throw ConversationCorruptedError on load (the resume path). It must
+    // live at the exact room path the resume resolves (TEST_WORKSPACE_ID +
+    // the dev caller's owner partition) — the locator skips ownerless files, so
+    // the corrupted-load is reached via `resolveChatStore`'s deterministic
+    // room-store fallback, not the locator.
     const convId = "conv_dead00000000beef"; // conv_ + 16 hex
-    const convDir = join(testDir, "conversations");
+    const convDir = roomConversationsDir(testDir, TEST_WORKSPACE_ID, DEV_OWNER);
     mkdirSync(convDir, { recursive: true });
     const meta = JSON.stringify({
       id: convId,
@@ -180,26 +189,19 @@ describe("detached turn HTTP surface", () => {
    * Seed a well-formed conversation owned by a *different* user. The HTTP
    * suite runs in dev mode (caller is always `usr_default`), so a mismatched
    * `ownerId` is the way to drive the ownership 403 branch without an identity
-   * provider. `findConversation` (no access ctx) returns the row regardless of
-   * owner; the route's own ownership check is what must 403.
+   * provider. Seed through the room store so the locator (which the
+   * read/cancel/start routes resolve through) sees it; the route's own
+   * ownership check is what must 403.
    */
-  function seedOtherUserConversation(convId: string): void {
-    const convDir = join(testDir, "conversations");
-    mkdirSync(convDir, { recursive: true });
-    const meta = JSON.stringify({
-      id: convId,
-      createdAt: "2025-01-01T00:00:00.000Z",
-      updatedAt: "2025-01-01T00:00:00.000Z",
-      title: null,
-      format: "events",
-      ownerId: "usr_someone_else",
-    });
-    writeFileSync(join(convDir, `${convId}.jsonl`), `${meta}\n`);
+  async function seedOtherUserConversation(convId: string): Promise<void> {
+    await runtime
+      .roomConversationStore(TEST_WORKSPACE_ID, "usr_someone_else")
+      .create({ ownerId: "usr_someone_else", id: convId });
   }
 
   it("GET /v1/conversations/:id/events on another user's conversation is 403", async () => {
     const convId = "conv_0a0a0a0a0a0a0a0a";
-    seedOtherUserConversation(convId);
+    await seedOtherUserConversation(convId);
     const res = await fetch(`${baseUrl}/v1/conversations/${convId}/events`, {
       headers: { "X-Workspace-Id": TEST_WORKSPACE_ID },
     });
@@ -209,7 +211,7 @@ describe("detached turn HTTP surface", () => {
 
   it("POST /v1/conversations/:id/cancel on another user's conversation is 403", async () => {
     const convId = "conv_0b0b0b0b0b0b0b0b";
-    seedOtherUserConversation(convId);
+    await seedOtherUserConversation(convId);
     const res = await fetch(`${baseUrl}/v1/conversations/${convId}/cancel`, {
       method: "POST",
       headers: { "X-Workspace-Id": TEST_WORKSPACE_ID },
@@ -235,7 +237,7 @@ describe("detached turn HTTP surface", () => {
 
   it("POST /v1/chat/start on another user's conversation is 403", async () => {
     const convId = "conv_0c0c0c0c0c0c0c0c";
-    seedOtherUserConversation(convId);
+    await seedOtherUserConversation(convId);
     const res = await fetch(`${baseUrl}/v1/chat/start`, {
       method: "POST",
       headers: { "Content-Type": "application/json", "X-Workspace-Id": TEST_WORKSPACE_ID },

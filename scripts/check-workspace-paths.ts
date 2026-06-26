@@ -19,8 +19,10 @@
  *     itself, which is correct in scope-classification code.
  *   - Sites inside the implementation files that DEFINE the layout
  *     (`src/workspace/context.ts`, `src/workspace/workspace-store.ts`,
- *     `src/config/workspace-credentials.ts`) — those are the source of
- *     truth and the lint shouldn't fight itself.
+ *     `src/config/workspace-credentials.ts`, and
+ *     `src/conversation/paths.ts` for the room-owned
+ *     `workspaces/<wsId>/conversations/...` subtree) — those are the
+ *     source of truth and the lint shouldn't fight itself.
  *   - A `// lint-ok:workspace-path` marker on the line immediately
  *     above the call, for the rare future case where the typed handle
  *     genuinely doesn't apply.
@@ -42,9 +44,14 @@ const ALLOW_MARKER = "lint-ok:workspace-path";
 // Files that legitimately define the workspace path layout. The lint
 // would otherwise flag the definitions it exists to protect.
 const ALLOWED_FILES = new Set(
-  ["workspace/context.ts", "workspace/workspace-store.ts", "config/workspace-credentials.ts"].map(
-    (f) => f.split("/").join(sep),
-  ),
+  [
+    "workspace/context.ts",
+    "workspace/workspace-store.ts",
+    "config/workspace-credentials.ts",
+    // Defines the `workspaces/<wsId>/conversations/...` room-owned conversation
+    // layout — the one sanctioned site that hand-builds that subtree.
+    "conversation/paths.ts",
+  ].map((f) => f.split("/").join(sep)),
 );
 
 interface Violation {

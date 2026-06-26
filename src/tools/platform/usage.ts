@@ -20,6 +20,7 @@
  *     so local development sees all conversations.
  */
 
+import { listAllConversationFiles } from "../../conversation/locator.ts";
 import { aggregateUsage } from "../../conversation/usage-aggregator.ts";
 import { textContent } from "../../engine/content-helpers.ts";
 import type { EventSink, ToolResult } from "../../engine/types.ts";
@@ -101,10 +102,10 @@ export function createUsageSource(runtime: Runtime, eventSink: EventSink): McpSo
           const period = args.period ?? "month";
           const groupBy = args.groupBy ?? "day";
 
-          // Conversations live top-level (user-scoped), NOT in the
-          // workspace dir. Usage spans every workspace a user touched.
-          const conversationsDir = runtime.getConversationsDir();
-          const report = await aggregateUsage(conversationsDir, period, groupBy, {
+          // Conversations are room-owned; usage spans every workspace a user
+          // touched, so aggregate over the conversation files across all rooms.
+          const files = listAllConversationFiles(runtime.getWorkspaceStore().getWorkspacesDir());
+          const report = await aggregateUsage(files, period, groupBy, {
             from: args.from,
             to: args.to,
             ownerFilter: resolved.ownerFilter,
