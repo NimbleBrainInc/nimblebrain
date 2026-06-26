@@ -16,19 +16,10 @@ import { Logo } from "./Logo";
 import { MobileSidebarDrawer } from "./MobileSidebarDrawer";
 import { ReleaseUpdateBanner } from "./ReleaseUpdateBanner";
 import { SidebarToggle } from "./SidebarToggle";
+import { CurrentRoomNav } from "./shell/CurrentRoomNav";
 import { SidebarSearch } from "./shell/SidebarSearch";
 import { WorkspaceSection } from "./shell/WorkspaceSection";
 import { UserMenu } from "./UserMenu";
-
-/**
- * Priority threshold for core sidebar items. Items in the bare
- * "sidebar" slot with priority < 10 render as ungrouped core nav
- * (Home, Conversations, Automations, Files). Priority >= 10 items —
- * historically the "Apps" sub-slot group at the bottom of the sidebar —
- * are no longer rendered here; apps live on the workspace overview
- * page (`/w/<slug>/`) instead.
- */
-const UNGROUPED_PRIORITY_THRESHOLD = 10;
 
 interface ShellLayoutProps {
   forSlot: (slot: string) => PlacementEntry[];
@@ -47,14 +38,11 @@ interface ShellLayoutProps {
  * Sidebar zones (top → bottom):
  *   1. Identity (UserMenu)
  *   2. Search stub (⌘P)
- *   3. Core nav: Home, Conversations, Automations, Files (global,
- *      identity-bound, cross-workspace)
- *   4. WORKSPACES section — workspaces are a sibling category to the
- *      core nav, not a parent column. Click a workspace row =
- *      navigate to its overview at `/w/<slug>/`. No inline apps.
- *
- * The former bottom "APPS" group is gone — apps surface on each
- * workspace's overview page now.
+ *   3. Current-room section (`CurrentRoomNav`) — the room you're in is the
+ *      parent: its Conversations / Automations / Files / Connectors + its
+ *      apps nest under it. Home = Personal.
+ *   4. WORKSPACES section — the OTHER rooms. Click one to focus it; it
+ *      promotes into the current-room section above.
  */
 // Chat panel transition timings — kept in lockstep with `ChatChrome` so
 // the main content's marginRight slides in sync with the panel itself.
@@ -85,14 +73,6 @@ export const ShellLayout = memo(function ShellLayout({
   const mainMarginRight =
     chatIsSidebar && !isMobile ? chatPanel.panelWidth + CHAT_RESIZE_HANDLE_WIDTH : 0;
 
-  // Ungrouped core items: bare "sidebar" slot with priority < threshold.
-  // Grouped items (formerly the bottom "APPS" group, sourced from
-  // `sidebar.<group>` sub-slots) are no longer rendered in the sidebar —
-  // apps live on the workspace overview page (`/w/<slug>/`) now.
-  const ungrouped = forSlot("sidebar").filter(
-    (p) => p.slot === "sidebar" && p.priority < UNGROUPED_PRIORITY_THRESHOLD,
-  );
-
   // Sidebar bottom items: pinned to bottom, excluding settings (now in workspace dropdown)
   const sidebarBottom = forSlot("sidebar.bottom").filter((p) => p.route !== "settings");
 
@@ -117,31 +97,16 @@ export const ShellLayout = memo(function ShellLayout({
               session). Hidden when the sidebar is collapsed to icon-only. */}
           {!isCollapsed && <SidebarSearch />}
 
-          {/* Scrolling region. The nav is identity-level — the same Home /
-              Conversations / Automations / Files + workspaces list regardless
-              of which workspace is active — so it must NOT remount on a
-              workspace switch (no `key={wsSlug}`). Switching just re-renders the
-              active highlight + the workspace-routed hrefs in place; remounting
-              made the whole left nav visibly flash on every switch. The
-              fade-in runs once, on initial mount. */}
+          {/* Scrolling region. Must NOT remount on a workspace switch (no
+              `key={wsSlug}`): a switch reflows the current-room section + the
+              active highlight in place; remounting flashed the whole left nav.
+              The fade-in runs once, on initial mount. */}
           <div className="flex-1 overflow-y-auto py-1 sidebar-scroll sidebar-nav-fade">
-            {/* Core nav (Home, Conversations, Automations, Files) —
-                global, identity-bound. Siblings of workspaces. */}
-            {ungrouped.map((p) => (
-              <NavItem
-                key={p.resourceUri}
-                to={resolveRoute(p, wsSlug)}
-                icon={p.icon}
-                label={p.label ?? "Item"}
-                collapsed={isCollapsed}
-                end={p.route === "/"}
-              />
-            ))}
+            {/* The room you're in, as the parent of its contents. */}
+            <CurrentRoomNav collapsed={isCollapsed} />
 
-            {/* WORKSPACES section — sibling category to the core nav,
-                rendered with a labelled header (Linear / Notion
-                pattern) so the visual cue is "different kind of
-                thing," not "parent column." */}
+            {/* The OTHER rooms — click one to focus it (it promotes into the
+                current-room section above). */}
             <WorkspaceSection collapsed={isCollapsed} />
           </div>
 
@@ -212,18 +177,10 @@ export const ShellLayout = memo(function ShellLayout({
             <SidebarSearch />
 
             <div className="flex-1 overflow-y-auto py-1 sidebar-scroll">
-              {/* Core nav — siblings of workspaces, not parents. */}
-              {ungrouped.map((p) => (
-                <MobileNavItem
-                  key={p.resourceUri}
-                  to={resolveRoute(p, wsSlug)}
-                  icon={p.icon}
-                  label={p.label ?? "Item"}
-                  end={p.route === "/"}
-                />
-              ))}
+              {/* The room you're in, as the parent of its contents. */}
+              <CurrentRoomNav />
 
-              {/* WORKSPACES section */}
+              {/* The OTHER rooms. */}
               <WorkspaceSection />
             </div>
 
@@ -316,56 +273,6 @@ const SidebarEdgeToggle = memo(function SidebarEdgeToggle({
     >
       <Icon className="w-3.5 h-3.5" />
     </button>
-  );
-});
-
-const NavItem = memo(function NavItem({
-  to,
-  icon,
-  label,
-  collapsed,
-  end,
-}: {
-  to: string;
-  icon?: string;
-  label: string;
-  collapsed?: boolean;
-  end?: boolean;
-}) {
-  if (collapsed) {
-    return (
-      <NavLink
-        to={to}
-        end={end}
-        title={label}
-        className={({ isActive }) =>
-          `flex items-center justify-center p-2.5 mx-2 rounded-sm text-sm font-medium transition-colors ${
-            isActive
-              ? "bg-sidebar-foreground/10 text-sidebar-foreground"
-              : "text-sidebar-foreground hover:bg-sidebar-foreground/5 hover:text-sidebar-foreground"
-          }`
-        }
-      >
-        {icon && <NavIcon name={icon} />}
-      </NavLink>
-    );
-  }
-
-  return (
-    <NavLink
-      to={to}
-      end={end}
-      className={({ isActive }) =>
-        `flex items-center gap-3 px-3 py-2.5 mx-2 rounded-sm text-sm font-medium transition-colors ${
-          isActive
-            ? "bg-sidebar-foreground/10 text-sidebar-foreground"
-            : "text-sidebar-foreground hover:bg-sidebar-foreground/5 hover:text-sidebar-foreground"
-        }`
-      }
-    >
-      {icon && <NavIcon name={icon} />}
-      <span className="flex-1 truncate">{label}</span>
-    </NavLink>
   );
 });
 
