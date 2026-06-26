@@ -118,7 +118,7 @@ export function WorkspaceSection({ collapsed = false }: WorkspaceSectionProps) {
             aria-label="Add workspace"
             title="Add workspace"
             data-testid="sidebar-workspace-add"
-            className="p-1 rounded-md text-sidebar-foreground/60 hover:text-sidebar-foreground hover:bg-sidebar-foreground/10 transition-colors"
+            className="p-1 rounded-sm text-sidebar-foreground/60 hover:text-sidebar-foreground hover:bg-sidebar-foreground/10 transition-colors"
           >
             <Plus className="size-3.5" />
           </button>
@@ -207,7 +207,7 @@ function WorkspaceInlineApps({ workspaceId }: { workspaceId: string }) {
             data-app-route={p.route ?? ""}
             data-is-active={isActive ? "true" : "false"}
             className={cn(
-              "flex items-center gap-2 text-sm transition-colors rounded-md px-2 py-1",
+              "flex items-center gap-2 text-sm transition-colors rounded-sm px-2 py-1",
               isActive
                 ? "bg-sidebar-foreground/10 text-sidebar-foreground"
                 : "text-sidebar-foreground/80 hover:bg-sidebar-foreground/5 hover:text-sidebar-foreground",
@@ -216,7 +216,7 @@ function WorkspaceInlineApps({ workspaceId }: { workspaceId: string }) {
             <ConnectorIcon
               name={label}
               iconUrl={iconFor(p.serverName)}
-              className="size-[18px] rounded-sm text-3xs"
+              className="size-[18px] rounded-xs text-3xs"
             />
             <span className="flex-1 truncate">{label}</span>
           </Link>
@@ -265,7 +265,7 @@ function WorkspaceItem({
       data-is-active={isActive ? "true" : "false"}
       data-is-personal={workspace.isPersonal === true ? "true" : "false"}
       className={cn(
-        "flex items-center text-sm transition-colors text-left rounded-md mx-2 my-px",
+        "flex items-center text-sm transition-colors text-left rounded-sm mx-2 my-px",
         collapsed ? "justify-center p-1.5" : "gap-2 px-3 py-1.5",
         isActive
           ? "bg-sidebar-foreground/10 text-sidebar-foreground"
@@ -275,7 +275,7 @@ function WorkspaceItem({
       <span
         aria-hidden="true"
         data-testid="workspace-avatar"
-        className="size-[18px] shrink-0 flex items-center justify-center rounded-md text-white text-3xs font-semibold"
+        className="size-[18px] shrink-0 flex items-center justify-center rounded-sm text-white text-3xs font-semibold"
         style={{ backgroundColor: avatar.color }}
       >
         {avatar.letter}

@@ -49,6 +49,12 @@
   --radius: 0.5rem;
   --sidebar-width: 240px;
   --sidebar-width-collapsed: 64px;
+  --border-radius-xs: 0.25rem;
+  --border-radius-sm: 0.5rem;
+  --border-radius-md: 0.75rem;
+  --border-radius-lg: 1rem;
+  --border-radius-xl: 1.5rem;
+  --border-width-regular: 1px;
   --font-weight-normal: 400;
   --font-weight-medium: 500;
   --font-weight-semibold: 600;

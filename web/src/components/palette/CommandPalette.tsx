@@ -199,7 +199,7 @@ export function CommandPalette({ onLogout }: { onLogout: () => void }) {
           aria-modal="true"
           aria-label="Command palette"
           data-testid="command-palette"
-          className="relative mt-[12vh] w-[min(580px,calc(100vw-2rem))] bg-card border border-border rounded-xl shadow-2xl overflow-hidden animate-in"
+          className="relative mt-[12vh] w-[min(580px,calc(100vw-2rem))] bg-card border border-border rounded-md shadow-2xl overflow-hidden animate-in"
         >
           {/* Input */}
           <div className="flex items-center gap-3 px-4 py-3.5 border-b border-border">

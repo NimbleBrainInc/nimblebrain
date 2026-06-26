@@ -382,7 +382,7 @@ export function WorkspaceDetailPage() {
         header switcher and use Settings → This Workspace → General.
       */}
       <Section>
-        <div className="rounded-md border border-dashed p-4">
+        <div className="rounded-sm border border-dashed p-4">
           <p className="text-sm text-muted-foreground">
             To view or edit this workspace's custom instructions, switch into{" "}
             <span className="font-medium">{workspace?.name}</span> via the header workspace

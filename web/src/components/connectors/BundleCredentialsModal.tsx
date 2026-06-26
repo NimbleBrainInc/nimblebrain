@@ -146,7 +146,7 @@ export function BundleCredentialsModal({
         role="dialog"
         aria-modal="true"
         aria-labelledby="bundle-credentials-title"
-        className="bg-background border border-border rounded-lg shadow-xl w-full max-w-md p-5"
+        className="bg-background border border-border rounded-sm shadow-xl w-full max-w-md p-5"
       >
         <h2 id="bundle-credentials-title" className="text-base font-semibold">
           Configure {connectorName}

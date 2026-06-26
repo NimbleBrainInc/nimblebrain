@@ -23,7 +23,7 @@ export function Logo({ variant = "full", height = 24, className = "" }: LogoProp
           src={iconSquare}
           alt="NimbleBrain"
           style={{ height, width: height }}
-          className="rounded-sm"
+          className="rounded-xs"
         />
       </span>
     );
@@ -48,7 +48,7 @@ export function Logo({ variant = "full", height = 24, className = "" }: LogoProp
         alt=""
         aria-hidden="true"
         style={{ height, width: height }}
-        className="rounded-sm"
+        className="rounded-xs"
       />
       <span
         className="font-heading font-semibold tracking-tight text-foreground"

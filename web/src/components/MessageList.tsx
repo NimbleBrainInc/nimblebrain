@@ -397,14 +397,14 @@ export function MessageList({
                     )}
                     {/* Stop reason notice */}
                     {msg.stopReason && (
-                      <div className="flex items-start gap-2 px-3 py-2 rounded-md bg-muted/50 border border-border text-sm text-muted-foreground">
+                      <div className="flex items-start gap-2 px-3 py-2 rounded-sm bg-muted/50 border border-border text-sm text-muted-foreground">
                         <AlertCircle className="w-4 h-4 mt-0.5 shrink-0" />
                         <span>{stopReasonMessage(msg.stopReason)}</span>
                       </div>
                     )}
                     {/* Inline error notice */}
                     {msg.error && (
-                      <div className="px-3 py-2.5 rounded-md bg-destructive/10 border border-destructive/20 text-sm">
+                      <div className="px-3 py-2.5 rounded-sm bg-destructive/10 border border-destructive/20 text-sm">
                         <div className="flex items-center gap-2">
                           <AlertCircle className="w-4 h-4 shrink-0 text-destructive" />
                           <span className="flex-1 text-foreground">
@@ -414,7 +414,7 @@ export function MessageList({
                             <button
                               type="button"
                               onClick={onRetry}
-                              className="inline-flex items-center gap-1.5 px-2.5 py-1 text-xs font-medium rounded-md border border-border bg-card hover:bg-muted text-foreground transition-colors shrink-0"
+                              className="inline-flex items-center gap-1.5 px-2.5 py-1 text-xs font-medium rounded-sm border border-border bg-card hover:bg-muted text-foreground transition-colors shrink-0"
                             >
                               <RotateCcw className="w-3 h-3" />
                               Try again

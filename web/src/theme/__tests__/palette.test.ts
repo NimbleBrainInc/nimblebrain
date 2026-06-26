@@ -228,4 +228,15 @@ describe("paletteToRootCss — shell :root/.dark match current values", () => {
   test("dark block does not redefine the font stacks (mode-independent, cascades)", () => {
     expect(darkBlock).not.toContain("--nb-font-");
   });
+
+  test("light :root carries the radius scale (aliased to Tailwind --radius-* in index.css)", () => {
+    expect(rootBlock).toContain("--border-radius-xs: 0.25rem;");
+    expect(rootBlock).toContain("--border-radius-sm: 0.5rem;");
+    expect(rootBlock).toContain("--border-radius-md: 0.75rem;");
+    expect(rootBlock).toContain("--border-radius-lg: 1rem;");
+  });
+
+  test("dark block does not redefine the radius scale (mode-independent, cascades)", () => {
+    expect(darkBlock).not.toContain("--border-radius-");
+  });
 });

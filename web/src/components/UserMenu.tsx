@@ -130,7 +130,7 @@ export const UserMenu = memo(function UserMenu({
         aria-label={`Account: ${label}`}
         aria-expanded={open}
         className={cn(
-          "flex items-center w-full rounded-lg transition-all duration-150 text-sm",
+          "flex items-center w-full rounded-sm transition-all duration-150 text-sm",
           "text-sidebar-foreground hover:bg-sidebar-foreground/5",
           open && "bg-sidebar-foreground/5",
           collapsed ? "justify-center p-1.5" : "gap-2.5 px-2 py-2",
@@ -138,7 +138,7 @@ export const UserMenu = memo(function UserMenu({
       >
         <span
           className={cn(
-            "inline-flex items-center justify-center font-semibold shrink-0 select-none rounded-md",
+            "inline-flex items-center justify-center font-semibold shrink-0 select-none rounded-sm",
             "w-7 h-7 text-xs",
           )}
           style={{ backgroundColor: bg, color: fg }}
@@ -170,7 +170,7 @@ export const UserMenu = memo(function UserMenu({
       {open && (
         <div
           className={cn(
-            "absolute z-50 rounded-lg border border-sidebar-border bg-sidebar shadow-lg ws-dropdown-enter",
+            "absolute z-50 rounded-sm border border-sidebar-border bg-sidebar shadow-lg ws-dropdown-enter",
             collapsed
               ? cn("left-full ml-2 w-56", dropdownDirection === "up" ? "bottom-0" : "top-0")
               : cn(
@@ -192,7 +192,7 @@ export const UserMenu = memo(function UserMenu({
             <button
               type="button"
               onClick={goToProfile}
-              className="flex items-center gap-2.5 w-full rounded-md px-2 py-2 text-sm text-left transition-all duration-150 text-sidebar-foreground hover:bg-sidebar-foreground/5"
+              className="flex items-center gap-2.5 w-full rounded-sm px-2 py-2 text-sm text-left transition-all duration-150 text-sidebar-foreground hover:bg-sidebar-foreground/5"
             >
               <UserCog className="w-4 h-4 text-sidebar-foreground/60" />
               <span>Profile settings</span>
@@ -201,7 +201,7 @@ export const UserMenu = memo(function UserMenu({
               <button
                 type="button"
                 onClick={goToOrgSettings}
-                className="flex items-center gap-2.5 w-full rounded-md px-2 py-2 text-sm text-left transition-all duration-150 text-sidebar-foreground hover:bg-sidebar-foreground/5"
+                className="flex items-center gap-2.5 w-full rounded-sm px-2 py-2 text-sm text-left transition-all duration-150 text-sidebar-foreground hover:bg-sidebar-foreground/5"
               >
                 <Building2 className="w-4 h-4 text-sidebar-foreground/60" />
                 <span>Organization</span>
@@ -210,7 +210,7 @@ export const UserMenu = memo(function UserMenu({
             <button
               type="button"
               onClick={handleLogout}
-              className="flex items-center gap-2.5 w-full rounded-md px-2 py-2 text-sm text-left transition-all duration-150 text-sidebar-foreground hover:bg-sidebar-foreground/5"
+              className="flex items-center gap-2.5 w-full rounded-sm px-2 py-2 text-sm text-left transition-all duration-150 text-sidebar-foreground hover:bg-sidebar-foreground/5"
             >
               <LogOut className="w-4 h-4 text-sidebar-foreground/60" />
               <span>Sign out</span>

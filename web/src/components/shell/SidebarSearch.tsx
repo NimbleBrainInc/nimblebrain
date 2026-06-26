@@ -20,7 +20,7 @@ export function SidebarSearch() {
         onClick={() => openPalette()}
         aria-label="Open command palette"
         aria-keyshortcuts="Meta+P Control+P"
-        className="w-full h-8 flex items-center gap-2.5 pl-2.5 pr-1.5 rounded-md text-sm bg-sidebar-foreground/5 border border-transparent hover:bg-sidebar-foreground/10 hover:border-sidebar-foreground/20 transition-colors text-left"
+        className="w-full h-8 flex items-center gap-2.5 pl-2.5 pr-1.5 rounded-sm text-sm bg-sidebar-foreground/5 border border-transparent hover:bg-sidebar-foreground/10 hover:border-sidebar-foreground/20 transition-colors text-left"
       >
         <Search
           aria-hidden="true"

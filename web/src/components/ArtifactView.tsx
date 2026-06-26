@@ -106,7 +106,7 @@ export function ArtifactView({ uri, appName, name, mimeType, description }: Arti
 
   if (loading) {
     return (
-      <div className="w-full my-2 rounded-lg border border-border bg-card p-3 flex items-center gap-2 text-sm text-muted-foreground">
+      <div className="w-full my-2 rounded-sm border border-border bg-card p-3 flex items-center gap-2 text-sm text-muted-foreground">
         <Loader2 className="w-4 h-4 text-processing animate-spin" />
         Loading {displayName}...
       </div>
@@ -115,7 +115,7 @@ export function ArtifactView({ uri, appName, name, mimeType, description }: Arti
 
   if (error || !content) {
     return (
-      <div className="w-full my-2 rounded-lg border border-destructive/20 bg-destructive/5 p-3 text-sm text-destructive">
+      <div className="w-full my-2 rounded-sm border border-destructive/20 bg-destructive/5 p-3 text-sm text-destructive">
         Failed to load {displayName}: {error ?? "unknown error"}
       </div>
     );
@@ -153,7 +153,7 @@ export function ArtifactView({ uri, appName, name, mimeType, description }: Arti
   );
 
   return (
-    <div className="w-full my-2 rounded-lg border border-border bg-card overflow-hidden">
+    <div className="w-full my-2 rounded-sm border border-border bg-card overflow-hidden">
       {header}
       <div className="p-3 max-h-[32rem] overflow-y-auto">
         <ArtifactRenderer

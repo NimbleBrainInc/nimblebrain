@@ -160,7 +160,7 @@ export function InlineAppView({ appName, resourceUri, toolResult }: InlineAppVie
   }, [appName, resourceUri]);
 
   return (
-    <div className="w-full max-w-full my-2 rounded-lg overflow-hidden border border-border bg-card">
+    <div className="w-full max-w-full my-2 rounded-sm overflow-hidden border border-border bg-card">
       <div
         className="relative w-full transition-[height] duration-150"
         style={{ height: `${height}px` }}

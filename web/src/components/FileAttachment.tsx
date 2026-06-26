@@ -47,7 +47,7 @@ export function FileAttachment({ file }: Props) {
             alt={file.filename}
             loading="lazy"
             onError={() => setImgError(true)}
-            className={`rounded-lg border border-border transition-all duration-200 ${
+            className={`rounded-sm border border-border transition-all duration-200 ${
               expanded ? "max-w-full" : "max-w-[240px] max-h-[180px]"
             } object-contain`}
           />
@@ -61,7 +61,7 @@ export function FileAttachment({ file }: Props) {
 
   // Non-images, pending uploads, or failed image loads → file chip
   return (
-    <div className="inline-flex items-center gap-2 px-3 py-2 rounded-lg bg-muted border border-border text-sm">
+    <div className="inline-flex items-center gap-2 px-3 py-2 rounded-sm bg-muted border border-border text-sm">
       <Icon style={{ width: 16, height: 16 }} className="text-muted-foreground shrink-0" />
       <span className="truncate max-w-[200px]">{file.filename}</span>
       <span className="text-muted-foreground text-xs shrink-0">{formatFileSize(file.size)}</span>

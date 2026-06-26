@@ -229,7 +229,7 @@ export function ArtifactPanel() {
                 type="button"
                 onClick={onCopy}
                 disabled={text == null}
-                className="inline-flex items-center gap-1.5 rounded-md border border-border px-2.5 py-1.5 text-xs font-medium text-muted-foreground transition-colors hover:bg-muted/50 hover:text-foreground disabled:opacity-40"
+                className="inline-flex items-center gap-1.5 rounded-sm border border-border px-2.5 py-1.5 text-xs font-medium text-muted-foreground transition-colors hover:bg-muted/50 hover:text-foreground disabled:opacity-40"
                 aria-label="Copy document to clipboard"
               >
                 {copied ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}
@@ -239,7 +239,7 @@ export function ArtifactPanel() {
                 type="button"
                 onClick={onDownload}
                 disabled={text == null}
-                className="inline-flex items-center gap-1.5 rounded-md border border-border px-2.5 py-1.5 text-xs font-medium text-muted-foreground transition-colors hover:bg-muted/50 hover:text-foreground disabled:opacity-40"
+                className="inline-flex items-center gap-1.5 rounded-sm border border-border px-2.5 py-1.5 text-xs font-medium text-muted-foreground transition-colors hover:bg-muted/50 hover:text-foreground disabled:opacity-40"
                 aria-label="Download document"
               >
                 <Download className="h-3.5 w-3.5" />
@@ -249,7 +249,7 @@ export function ArtifactPanel() {
                 ref={closeButtonRef}
                 type="button"
                 onClick={closeArtifact}
-                className="ml-1 inline-flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted/50 hover:text-foreground"
+                className="ml-1 inline-flex h-7 w-7 items-center justify-center rounded-sm text-muted-foreground transition-colors hover:bg-muted/50 hover:text-foreground"
                 aria-label="Close document panel"
               >
                 <X className="h-4 w-4" />
@@ -266,7 +266,7 @@ export function ArtifactPanel() {
               )}
 
               {!loading && error && (
-                <div className="m-6 rounded-lg border border-destructive/20 bg-destructive/5 p-4 text-sm text-destructive">
+                <div className="m-6 rounded-sm border border-destructive/20 bg-destructive/5 p-4 text-sm text-destructive">
                   Failed to load {title}: {error}
                 </div>
               )}

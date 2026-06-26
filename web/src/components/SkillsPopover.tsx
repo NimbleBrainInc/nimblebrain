@@ -101,13 +101,13 @@ export function SkillsPopover({ conversationId }: { conversationId: string | nul
         aria-label="Active skills"
         aria-expanded={open}
         title="Skills loaded for this conversation"
-        className="p-1.5 hover:bg-muted rounded-lg transition-all text-muted-foreground hover:text-foreground"
+        className="p-1.5 hover:bg-muted rounded-sm transition-all text-muted-foreground hover:text-foreground"
       >
         <Lightbulb style={{ width: 16, height: 16 }} />
       </button>
 
       {open && (
-        <div className="absolute right-0 top-full mt-1 z-50 w-80 rounded-md border bg-popover text-popover-foreground shadow-md">
+        <div className="absolute right-0 top-full mt-1 z-50 w-80 rounded-sm border bg-popover text-popover-foreground shadow-md">
           <div className="px-3 py-2 border-b flex items-center justify-between">
             <div className="text-xs font-semibold">Active skills</div>
             <Link

@@ -579,7 +579,7 @@ function Toggle({
       disabled={disabled}
       aria-label={`${on ? "Turn off" : "Turn on"} ${label}`}
       className={cn(
-        "inline-flex items-center gap-2 px-2 py-1 rounded-md text-xs font-medium select-none",
+        "inline-flex items-center gap-2 px-2 py-1 rounded-sm text-xs font-medium select-none",
         disabled ? "text-muted-foreground/60 cursor-not-allowed" : "text-foreground hover:bg-muted",
       )}
     >

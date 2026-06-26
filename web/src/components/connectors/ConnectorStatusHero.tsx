@@ -160,7 +160,7 @@ export function ConnectorStatusHero({
         <ConnectorIcon
           name={name}
           iconUrl={installed.iconUrl}
-          className="h-12 w-12 rounded-md text-base"
+          className="h-12 w-12 rounded-sm text-base"
         />
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2 flex-wrap">
@@ -193,7 +193,7 @@ export function ConnectorStatusHero({
           When `ready`, the page reads as quiet settings; when any
           other status applies, this block is the visual anchor. */}
       {installed.status !== "ready" && (
-        <div className="flex items-start justify-between gap-4 px-4 py-3 border border-border/60 rounded-md bg-muted/20">
+        <div className="flex items-start justify-between gap-4 px-4 py-3 border border-border/60 rounded-sm bg-muted/20">
           <div className="flex items-start gap-3 min-w-0">
             <StatusDot status={installed.status} />
             <div className="min-w-0">
