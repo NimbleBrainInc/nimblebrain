@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { type DirectoryEntry, getOAuthRedirectUri, setupConnectorOperator } from "../../api/client";
 import { safeHostname } from "../../lib/safe-url";
+import { Button } from "../ui/button";
 
 /**
  * Workspace operator OAuth app setup. The form is the same whether
@@ -222,21 +223,12 @@ export function OperatorSetupModal({
           {error && <p className="text-xs text-destructive">{error}</p>}
 
           <div className="flex items-center justify-end gap-2 pt-2">
-            <button
-              type="button"
-              onClick={onClose}
-              disabled={busy}
-              className="text-xs px-3 py-1.5 rounded border border-border hover:bg-muted disabled:opacity-60"
-            >
+            <Button type="button" variant="outline" size="sm" onClick={onClose} disabled={busy}>
               Cancel
-            </button>
-            <button
-              type="submit"
-              disabled={busy}
-              className="text-xs px-3 py-1.5 rounded bg-primary text-primary-foreground hover:bg-primary/80 disabled:opacity-60"
-            >
+            </Button>
+            <Button type="submit" size="sm" disabled={busy}>
               {busy ? "Saving…" : isEdit ? "Save changes" : "Save"}
-            </button>
+            </Button>
           </div>
         </form>
       </div>
