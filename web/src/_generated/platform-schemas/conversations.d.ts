@@ -10,6 +10,8 @@ export declare const ConversationsListInput: import("@sinclair/typebox").TObject
     sortBy: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"created" | "updated">>;
     dateFrom: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
     dateTo: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
+    workspaceId: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
+    includeUnstamped: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TBoolean>;
 }>;
 export type ConversationsListInput = Static<typeof ConversationsListInput>;
 export declare const ConversationsGetInput: import("@sinclair/typebox").TObject<{

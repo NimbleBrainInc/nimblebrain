@@ -15,6 +15,10 @@ export interface ListInput {
   sortBy?: "created" | "updated";
   dateFrom?: string;
   dateTo?: string;
+  /** Scope to one room. Applied before the limit so the page reflects the room's set. */
+  workspaceId?: string;
+  /** With `workspaceId`, also include roomless (legacy) chats — they belong to the personal room. */
+  includeUnstamped?: boolean;
 }
 
 export async function handleList(
@@ -30,6 +34,8 @@ export async function handleList(
       sortBy: input.sortBy,
       dateFrom: input.dateFrom,
       dateTo: input.dateTo,
+      workspaceId: input.workspaceId,
+      includeUnstamped: input.includeUnstamped,
     },
     access,
   );
