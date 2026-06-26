@@ -78,7 +78,7 @@ LLM evals (`test/eval/`) send real messages to Claude and assert on agent behavi
 
 - Keep PRs focused — one logical change per PR.
 - Describe *why* the change is needed, not just what it does.
-- Reference any related issues.
+- If the PR resolves an issue, link it with a closing keyword (`Closes #123`) so it auto-closes on merge. Use `Related to #123` for issues the PR touches but doesn't fully resolve.
 
 ## Reporting Issues
 
