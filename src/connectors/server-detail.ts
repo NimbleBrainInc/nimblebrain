@@ -252,18 +252,28 @@ export function getNimbleBrainHostMeta(s: ServerDetail): HostManifestMeta | unde
 
 /**
  * The connector-skill identity rule, over the two values that determine it.
- * For a Composio connector the identity is `composio/<toolkit>` (the toolkit
- * slug is stable across deployments, unlike the per-account auth config id);
- * otherwise it is the server name. Shared by {@link connectorSkillIdentity}
- * (ServerDetail callers) and the install path (which has the toolkit + server
- * name directly, not a ServerDetail).
+ * Identity is a FLAT connector slug — a gmail connector is `gmail` whether it
+ * is Composio-backed or a remote MCP server. For a Composio connector that is
+ * the toolkit slug (stable across deployments, unlike the per-account auth
+ * config id); otherwise it is the connector segment of the reverse-DNS server
+ * name (`com.notion/mcp` -> `notion`, `app.linear/mcp` -> `linear`). Shared by
+ * {@link connectorSkillIdentity} (ServerDetail callers) and the install path
+ * (which has the toolkit + server name directly, not a ServerDetail).
+ *
+ * The non-Composio rule takes the LAST dotted label before the path, which fits
+ * our curated first-party forms (`com.notion`, `app.linear`). It would derive
+ * `<org>` (not `<server>`) from the registry-standard `io.github.<org>/<server>`
+ * form — harmless today (overlays exist only for curated first-party connectors,
+ * resolution is opt-in, and a wrong slug is a non-fatal 404), but revisit if an
+ * `io.github.*`-style connector ever needs an overlay.
  */
 export function connectorSkillIdentityFrom(
   composioToolkit: string | undefined,
   serverName: string,
 ): string {
   const toolkit = composioToolkit?.trim();
-  return toolkit ? `composio/${toolkit}` : serverName;
+  if (toolkit) return toolkit;
+  return serverName.split("/")[0]?.split(".").pop() || serverName;
 }
 
 /**

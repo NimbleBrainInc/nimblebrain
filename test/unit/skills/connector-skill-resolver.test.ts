@@ -39,8 +39,8 @@ function fakeFetch(
 
 describe("overlayUrl", () => {
   test("builds the raw.githubusercontent URL for <identity>/SKILL.md", () => {
-    expect(overlayUrl("Owner/repo", "v1.2.0", "composio/gmail")).toBe(
-      "https://raw.githubusercontent.com/Owner/repo/v1.2.0/composio/gmail/SKILL.md",
+    expect(overlayUrl("Owner/repo", "v1.2.0", "gmail")).toBe(
+      "https://raw.githubusercontent.com/Owner/repo/v1.2.0/gmail/SKILL.md",
     );
   });
 });
@@ -48,7 +48,7 @@ describe("overlayUrl", () => {
 describe("resolveOverlay", () => {
   const repo = "Owner/repo";
   const version = "v1.0.0";
-  const identity = "composio/gmail";
+  const identity = "gmail";
   const url = overlayUrl(repo, version, identity);
 
   test("200 returns the body and its sha", async () => {

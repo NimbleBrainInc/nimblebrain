@@ -102,13 +102,13 @@ describe("connector-skill binding lifecycle (runtime wiring)", () => {
 
     // --- Install: bind the curated overlay for a Composio gmail connector. ---
     const lock = await lifecycle.syncBoundSkills(
-      "composio/gmail",
+      "gmail",
       "gmail",
       TEST_WORKSPACE_ID,
       runtime.getWorkDir(),
     );
     expect(lock).toHaveLength(1);
-    expect(lock[0]!.identity).toBe("composio/gmail");
+    expect(lock[0]!.identity).toBe("gmail");
 
     // Loaded into the engine candidate pool with the right tool-affinity.
     const candidates = runtime.loadConnectorSkillCandidates(TEST_WORKSPACE_ID);
@@ -121,7 +121,7 @@ describe("connector-skill binding lifecycle (runtime wiring)", () => {
     const overlays = runtime.listConnectorOverlays(TEST_WORKSPACE_ID);
     expect(overlays).toHaveLength(1);
     expect(overlays[0]!.server).toBe("gmail");
-    expect(overlays[0]!.source).toBe("connector:composio/gmail@v0.1.0");
+    expect(overlays[0]!.source).toBe("connector:gmail@v0.2.0");
 
     // Absent from the authored-skill listing — a separate store, filtered out.
     const list = await callTool(runtime, "skills__list", {});
@@ -189,7 +189,7 @@ describe("connector-skill binding lifecycle (runtime wiring)", () => {
     runtime.getLifecycle().setConnectorSkillFetch(fixtureFetch());
     const lock = await runtime
       .getLifecycle()
-      .syncBoundSkills("composio/mytool", "mytool", TEST_WORKSPACE_ID, runtime.getWorkDir());
+      .syncBoundSkills("mytool", "mytool", TEST_WORKSPACE_ID, runtime.getWorkDir());
     expect(lock).toHaveLength(1);
 
     const t1 = await runtime.chat({

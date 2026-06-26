@@ -110,7 +110,7 @@ Files must have a `.md` extension.
 
 ## Connector skill overlays
 
-Installing a connector can automatically apply a short **usage overlay** — curated guidance for *that* connector's tools (e.g. "confirm the recipient before sending mail"). Overlays target the connectors you don't author yourself (Composio and other third-party MCP servers), so they're sourced from a NimbleBrain-curated **public overlay repo** keyed by connector identity (`composio/<toolkit>` for Composio connectors, otherwise the server name) at a pinned version.
+Installing a connector can automatically apply a short **usage overlay** — curated guidance for *that* connector's tools (e.g. "confirm the recipient before sending mail"). Overlays target the connectors you don't author yourself (Composio and other third-party MCP servers), so they're sourced from a NimbleBrain-curated **public overlay repo** keyed by the connector's flat slug (the Composio toolkit, e.g. `gmail`; otherwise the connector slug, e.g. `notion`) at a pinned version.
 
 Overlays differ from authored skills in two ways:
 

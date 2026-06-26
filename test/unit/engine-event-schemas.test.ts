@@ -133,7 +133,7 @@ describe("event schemas — accept representative payloads", () => {
       Value.Check(ConnectorSkillInjectedPayload, {
         runId: "run-abc",
         toolName: "gmail__send",
-        skillName: "composio/gmail",
+        skillName: "gmail",
         skillBody: "Confirm the recipient before sending.",
         scope: "connector",
       }),
