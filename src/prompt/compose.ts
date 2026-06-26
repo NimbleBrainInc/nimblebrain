@@ -816,8 +816,9 @@ export function formatConnectorSkillBlock(name: string, scope: string, body: str
 
 /**
  * Workspace-scoping applies to TOOLS, not to files or conversations. Both
- * workspace blocks narrate that tools are workspace-scoped (find others with
- * `nb__search`); without an explicit counter-statement an agent overgeneralises
+ * workspace blocks narrate that a session reaches one workspace's tools (more
+ * within that workspace are found with `nb__search`); without an explicit
+ * counter-statement an agent overgeneralises
  * that model onto files and asks the user "which workspace does this file live
  * in?" — a real failure observed in production. Files and conversations are
  * identity-owned (one store at `users/{userId}/files/`, regardless of
@@ -833,7 +834,7 @@ function formatWorkspaceContext(ws: WorkspaceContext): string {
   if (ws.name) lines.push(`- Name: ${sanitizeLineField(ws.name)}`);
   lines.push("");
   lines.push(
-    "Your active tools are this workspace's — its apps plus the platform tools. Tools in the user's OTHER workspaces, and their personal tools (e.g. email), are NOT loaded right now. Find any tool across all of the user's workspaces with `nb__search`; matches are added to your tools on demand. Don't assume a tool is missing — search first.",
+    "Your active tools are this workspace's — its apps plus the platform tools. This session reaches **only this workspace**: the user's OTHER workspaces, and their personal tools (e.g. email), are not reachable from here. If this workspace has more tools than are active right now, find them with `nb__search` — it searches THIS workspace and activates matches on demand, so search before assuming a tool is missing. If the user needs a tool that lives in a different workspace, tell them to switch to that workspace.",
   );
   lines.push("");
   lines.push(IDENTITY_SCOPE_NOTE);
@@ -844,8 +845,9 @@ function formatWorkspaceContext(ws: WorkspaceContext): string {
  * Workspace block for the identity-level home (no focused workspace). States
  * plainly that there is no current workspace, so the agent answers "which
  * workspace am I in?" from context instead of calling a workspace-namespaced
- * tool and reporting an arbitrary one — and points at `nb__search` for tools
- * that aren't in the home active set.
+ * tool and reporting an arbitrary one — and tells the agent that a specific
+ * workspace's tools require opening that workspace (the home session can't
+ * reach into them).
  */
 function formatNoWorkspaceContext(): string {
   return [
@@ -853,7 +855,7 @@ function formatNoWorkspaceContext(): string {
     "",
     "The user is at their identity-level home — **not in any single workspace**. There is no current workspace. If the user asks which workspace they're in, tell them they're at their home view, not a specific one.",
     "",
-    "Your active tools are the platform tools and the user's own (conversations, personal). Tools that belong to a specific workspace are NOT loaded here. Find any tool across all of the user's workspaces with `nb__search`; matches are added to your tools on demand. Don't assume a tool is missing — search first.",
+    "Your active tools are your personal workspace's — its apps plus the platform tools. A specific workspace's apps and tools are **not reachable from the home view**: to use them, the user must open that workspace. `nb__search` here searches only your personal workspace — it does not reach into other workspaces, so it won't surface a workspace's apps.",
     "",
     IDENTITY_SCOPE_NOTE,
   ].join("\n");
