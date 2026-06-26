@@ -92,9 +92,13 @@ if (envResult.path) {
   console.log(`[dev:worktree]   Loaded .env from ${envResult.path}${note}`);
 }
 
+// Delegate to the shared dev orchestrator (serve API + Vite web). The runtime
+// binary is serve-only — it no longer has a `dev` subcommand — so worktree dev
+// goes through `scripts/dev.ts`, the same launcher `bun run dev` uses, with the
+// worktree's ports/workdir threaded via env below.
 const child = spawn(
   "bun",
-  ["run", "src/cli/index.ts", "dev", "--port", API_PORT, "--config", CONFIG_PATH],
+  ["run", "scripts/dev.ts", "--port", API_PORT, "--config", CONFIG_PATH],
   {
     stdio: "inherit",
     cwd: WORKTREE_ROOT,
