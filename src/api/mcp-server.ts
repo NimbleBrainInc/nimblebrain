@@ -451,10 +451,10 @@ export class McpServerHost {
   }
 
   /**
-   * Stage 2: log-once-per-session that the client sent `X-Workspace-Id`.
-   * Routing post-Stage-2 derives the workspace from the namespaced tool
-   * name on every `tools/call`; the header is ignored. The log line
-   * surfaces the straggler so operators can chase down a stale client.
+   * Debug-log once per session that the client sent `X-Workspace-Id`. The
+   * header IS honored: `resolveRequestWorkspace` validates membership and the
+   * wall bounds each request to that workspace. The once-per-session line just
+   * records which workspace a session first scoped to, for operator triage.
    *
    * Read once per session id to keep the cost off the hot path. The
    * `loggedWorkspaceHeaderSessions` set bloats by one entry per session
@@ -630,15 +630,17 @@ export class McpServerHost {
 }
 
 /**
- * Create a new MCP Server instance bound to a single identity-scoped
- * session. Each session gets its own Server + Transport pair.
+ * Create a new MCP Server instance for one session. Each session gets its
+ * own Server + Transport pair.
  *
- * `/mcp` sessions are identity-bound and carry no workspace: `tools/list`
- * returns only the caller's identity tools (conversations / files /
- * automations) — no workspace tools, no cross-workspace union. `tools/call`
- * routes identity (bare) names via `routeToolCall`; a `ws_<id>-...` name is
- * refused (`WorkspaceToolUnavailable`) until `/mcp` is reworked as a
- * workspace-bound agent projection.
+ * A `/mcp` session has no fixed workspace — it is walled per request to the
+ * workspace named by a membership-validated `X-Workspace-Id` (threaded in via
+ * `mcpRequestWorkspace`). `tools/list` serves that workspace's tools
+ * (namespaced) plus the caller's identity tools (conversations / files /
+ * automations); a request with no / non-member header is identity-only. Every
+ * `tools/call` routes through `routeToolCall`, so a `ws_<other>-...` name is
+ * refused (`CrossWorkspaceReachDenied`) and any `ws_<id>-...` on a
+ * no-workspace request is `WorkspaceToolUnavailable`.
  *
  * When `runtime` is null (legacy unit-test path), tool handlers degrade
  * to safe no-ops: `tools/list` returns empty and `tools/call` rejects
