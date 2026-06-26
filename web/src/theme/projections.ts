@@ -77,9 +77,11 @@ export function paletteToExtAppsTokens(mode: Mode): Record<string, string> {
 /**
  * Build the shell's `:root` (light) and `.dark` (dark) CSS blocks. The values
  * and selectors match what Tailwind v4's `@theme inline` already references
- * (`--background`, `--sidebar-*`, `--chart-*`, `--radius`, `--font-text-*`, …).
- * `:root` also carries the mode-independent layout constants, base radius, and
- * type scale; `.dark` redefines colors only (the rest cascade from `:root`).
+ * (`--background`, `--sidebar-*`, `--chart-*`, `--border-radius-*`,
+ * `--font-text-*`, `--nb-shadow-*`, …). `:root` also carries the
+ * mode-independent layout constants, radius scale, type scale, and fonts;
+ * `.dark` redefines colors and shadows (both mode-dependent), the rest cascade
+ * from `:root`.
  */
 export function paletteToRootCss(): string {
   const names = Object.keys(colors) as (keyof typeof colors)[];
