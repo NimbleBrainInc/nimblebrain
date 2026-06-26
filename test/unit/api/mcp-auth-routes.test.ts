@@ -53,7 +53,7 @@ function makeStubLifecycle(): StubLifecycle {
   };
 }
 
-function makeApp(lifecycle: StubLifecycle, isLocalhost = true): Hono<AppEnv> {
+function makeApp(lifecycle: StubLifecycle, secureCookies = false): Hono<AppEnv> {
   const ctx = {
     runtime: {
       getLifecycle: () => lifecycle,
@@ -65,7 +65,7 @@ function makeApp(lifecycle: StubLifecycle, isLocalhost = true): Hono<AppEnv> {
     // workspaceId. We set it ourselves in the wrapping middleware below.
     authOptions: { mode: { type: "dev" }, eventSink: { emit: () => {} } },
     workspaceStore: {},
-    isLocalhost,
+    secureCookies,
   } as unknown as AppContext;
 
   const app = new Hono<AppEnv>();
@@ -111,17 +111,17 @@ describe("POST /v1/mcp-auth/initiate", () => {
     expect(setCookie!).toContain("SameSite=Lax");
     expect(setCookie!).toContain("Path=/v1/mcp-auth/callback");
     expect(setCookie!).toContain("Max-Age=900");
-    // Localhost = no Secure flag
+    // secureCookies=false (dev) → no Secure flag
     expect(setCookie!).not.toContain("Secure");
   });
 
-  test("adds Secure flag when not on localhost", async () => {
+  test("adds Secure flag when secureCookies is set", async () => {
     lifecycle.instances.set(`granola|${WS_ID}`, { oauthScope: "workspace" });
     lifecycle.authUrls.set(
       `granola|${WS_ID}|_workspace`,
       "https://granola.test/auth?state=s",
     );
-    const prodApp = makeApp(lifecycle, /* isLocalhost */ false);
+    const prodApp = makeApp(lifecycle, /* secureCookies */ true);
 
     const res = await prodApp.request("http://api.example.com/v1/mcp-auth/initiate", {
       method: "POST",
@@ -248,7 +248,7 @@ describe("GET /v1/mcp-auth/callback", () => {
       },
       authOptions: { mode: { type: "dev" }, eventSink: { emit: () => {} } },
       workspaceStore: {},
-      isLocalhost: true,
+      secureCookies: false,
     } as unknown as AppContext;
     const wrapped = new Hono<AppEnv>();
     wrapped.use("*", securityHeaders());

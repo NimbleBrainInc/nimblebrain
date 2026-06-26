@@ -1520,7 +1520,7 @@ export async function handleOidcAuthorize(provider: IdentityProvider): Promise<R
 export async function handleOidcCallback(
   request: Request,
   provider: IdentityProvider,
-  isLocalhost: boolean,
+  secureCookies: boolean,
   appOrigin?: string,
 ): Promise<Response> {
   if (!provider.capabilities.authCodeFlow || !provider.exchangeCode) {
@@ -1558,7 +1558,7 @@ export async function handleOidcCallback(
     const result = await provider.exchangeCode(code, pendingFlow.codeVerifier);
 
     const redirectUrl = appOrigin ?? url.origin;
-    const secure = !isLocalhost;
+    const secure = secureCookies;
 
     const sessionParts = [
       `nb_session=${result.accessToken}`,
@@ -1603,7 +1603,7 @@ export async function handleOidcCallback(
 export async function handleOidcRefresh(
   request: Request,
   provider: IdentityProvider,
-  isLocalhost: boolean,
+  secureCookies: boolean,
 ): Promise<Response> {
   if (!provider.capabilities.tokenRefresh || !provider.refreshToken) {
     return apiError(400, "not_configured", "OIDC auth not configured");
@@ -1626,7 +1626,7 @@ export async function handleOidcRefresh(
   try {
     const result = await provider.refreshToken(refreshToken);
 
-    const secure = !isLocalhost;
+    const secure = secureCookies;
     const sessionParts = [
       `nb_session=${result.accessToken}`,
       "HttpOnly",

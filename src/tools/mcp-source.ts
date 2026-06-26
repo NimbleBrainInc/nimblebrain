@@ -135,6 +135,12 @@ export type McpTransportMode =
       url: URL;
       transportConfig?: RemoteTransportConfig;
       /**
+       * Dev-mode `allowInsecureRemotes` flag, threaded to the SSRF redirect
+       * guard in `createRemoteTransport` so http://localhost endpoints work in
+       * local development. Defaults to false (production posture).
+       */
+      allowInsecure?: boolean;
+      /**
        * Optional OAuth provider for the MCP SDK. When set and no static
        * `transportConfig.auth` is present, `createRemoteTransport` attaches
        * it to the client transport. If the server returns 401 on connect,
@@ -414,7 +420,10 @@ export class McpSource implements ToolSource {
         this.mode.url,
         this.mode.transportConfig,
         this.mode.authProvider,
-        { workspaceId: this.bundleContext?.workspaceId },
+        {
+          workspaceId: this.bundleContext?.workspaceId,
+          allowInsecure: this.mode.allowInsecure ?? false,
+        },
       );
 
       // Remote: watch for transport close — wired AFTER successful start
@@ -692,7 +701,10 @@ export class McpSource implements ToolSource {
       this.mode.url,
       this.mode.transportConfig,
       this.mode.authProvider,
-      { workspaceId: this.bundleContext?.workspaceId },
+      {
+        workspaceId: this.bundleContext?.workspaceId,
+        allowInsecure: this.mode.allowInsecure ?? false,
+      },
     );
     // onclose is wired in `start()` AFTER the connect succeeds — same
     // reason as the initial-construction site: a transport close that

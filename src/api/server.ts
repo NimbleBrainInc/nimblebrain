@@ -261,7 +261,12 @@ export function startServer(options: ServerOptions): ServerHandle {
     mcpLimiter,
     isDevMode,
     eventSink: runtime.getEventSink(),
-    isLocalhost: true, // Updated after Bun.serve starts
+    // Secure cookies whenever auth is configured (i.e. not dev mode). A
+    // configured deployment is always fronted by a TLS-terminating edge, so the
+    // browser↔edge leg is HTTPS regardless of the container's plain-HTTP listen
+    // address. Deriving this from the listen address is wrong: Bun binds
+    // `0.0.0.0` in production, which must NOT be read as localhost.
+    secureCookies: authConfigured,
     // Post-login landing — a user-facing browser destination, so it uses
     // webOrigin() like the connectors return (one rule: browser-facing →
     // webOrigin, vendor-facing → publicOrigin). Identical to publicOrigin() in
@@ -278,10 +283,6 @@ export function startServer(options: ServerOptions): ServerHandle {
     idleTimeout: 255, // seconds — max Bun allows; needed for SSE streams and long chat requests
     fetch: app.fetch,
   });
-
-  const host = server.hostname;
-  ctx.isLocalhost =
-    host === "127.0.0.1" || host === "::1" || host === "localhost" || host === "0.0.0.0";
 
   return {
     server,

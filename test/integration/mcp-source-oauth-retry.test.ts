@@ -208,6 +208,9 @@ describe("McpSource — OAuth retry path", () => {
       {
         type: "remote",
         url: new URL(server.url),
+        // Mock runs on localhost; the transport's SSRF guard would otherwise
+        // reject the plain-http URL (matches the provider's allowInsecureRemotes).
+        allowInsecure: true,
         authProvider: provider,
       },
       new NoopEventSink(),

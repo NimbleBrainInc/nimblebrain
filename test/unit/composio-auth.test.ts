@@ -56,7 +56,7 @@ function sha256Hex(input: string): string {
 /**
  * Minimal AppContext stub. The composio-auth routes touch only the
  * runtime accessor for the connector directory + work dir, plus
- * `isLocalhost` for cookie scoping. requireAuth + requireWorkspace
+ * `secureCookies` for cookie scoping. requireAuth + requireWorkspace
  * are not exercised by tests below (the callback and proxy routes
  * are unauthenticated by design; the initiate route is covered
  * separately by the helper-function tests).
@@ -132,7 +132,7 @@ function stubCtx(
     runtime,
     workspaceStore: { get: async () => null } as unknown as AppContext["workspaceStore"],
     authOptions: {} as AppContext["authOptions"],
-    isLocalhost: true,
+    secureCookies: false,
     __lifecycleCalls: calls,
   } as unknown as AppContext & { __lifecycleCalls: StubLifecycleCalls };
 }
