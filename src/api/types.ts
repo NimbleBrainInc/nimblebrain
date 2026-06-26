@@ -82,7 +82,17 @@ export interface AppContext {
    */
   isDevMode: boolean;
   eventSink: EventSink;
-  isLocalhost: boolean;
+  /**
+   * Whether auth cookies (`nb_session`, `nb_refresh`, OAuth-state) are issued
+   * with the `Secure` attribute. True for any auth-configured deployment — the
+   * browser↔edge leg is HTTPS even though the container itself is reached over
+   * plain HTTP behind the TLS-terminating edge. False only in dev mode, where
+   * the app is served over http://localhost and `Secure` would make the browser
+   * drop the cookie. Derived from a deployment property, never from the listen
+   * address or a client-supplied forwarded-scheme header (both spoofable /
+   * misleading — the listen address is `0.0.0.0` in production).
+   */
+  secureCookies: boolean;
   appOrigin: string | undefined;
   internalToken: string;
   mcpHost: McpServerHost;

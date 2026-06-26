@@ -216,7 +216,7 @@ export function mcpAuthRoutes(ctx: AppContext) {
         "Path=/v1/mcp-auth/callback",
         "Max-Age=900",
       ];
-      if (!ctx.isLocalhost) cookieParts.push("Secure");
+      if (ctx.secureCookies) cookieParts.push("Secure");
       c.header("Set-Cookie", cookieParts.join("; "));
 
       return c.json({ authorizationUrl });
@@ -333,7 +333,7 @@ export function mcpAuthRoutes(ctx: AppContext) {
       "Path=/v1/mcp-auth/callback",
       "Max-Age=0",
     ];
-    if (!ctx.isLocalhost) expireParts.push("Secure");
+    if (ctx.secureCookies) expireParts.push("Secure");
     c.header("Set-Cookie", expireParts.join("; "));
 
     // Auto-redirect back to the workspace Connectors page. The user came

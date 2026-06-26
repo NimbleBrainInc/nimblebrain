@@ -21,12 +21,12 @@ export function authRoutes(ctx: AppContext) {
 
   app.get("/v1/auth/callback", (c) => {
     if (!ctx.provider) return apiError(400, "not_configured", "Auth provider not configured");
-    return handleOidcCallback(c.req.raw, ctx.provider, ctx.isLocalhost, ctx.appOrigin);
+    return handleOidcCallback(c.req.raw, ctx.provider, ctx.secureCookies, ctx.appOrigin);
   });
 
   app.post("/v1/auth/refresh", limit, (c) => {
     if (!ctx.provider) return apiError(400, "not_configured", "Auth provider not configured");
-    return handleOidcRefresh(c.req.raw, ctx.provider, ctx.isLocalhost);
+    return handleOidcRefresh(c.req.raw, ctx.provider, ctx.secureCookies);
   });
 
   // --- Authenticated ---

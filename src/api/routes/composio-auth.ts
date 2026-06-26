@@ -293,7 +293,7 @@ export function composioAuthRoutes(ctx: AppContext) {
         "Path=/v1/composio-auth/callback",
         "Max-Age=900",
       ];
-      if (!ctx.isLocalhost) cookieParts.push("Secure");
+      if (ctx.secureCookies) cookieParts.push("Secure");
       c.header("Set-Cookie", cookieParts.join("; "));
 
       return c.json({
@@ -401,7 +401,7 @@ export function composioAuthRoutes(ctx: AppContext) {
       "Path=/v1/composio-auth/callback",
       "Max-Age=0",
     ];
-    if (!ctx.isLocalhost) expireParts.push("Secure");
+    if (ctx.secureCookies) expireParts.push("Secure");
     c.header("Set-Cookie", expireParts.join("; "));
 
     const returnUrl = workspaceConnectorsUrl(wsId);
