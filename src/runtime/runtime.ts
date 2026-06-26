@@ -553,8 +553,9 @@ export class Runtime {
       // so the identity router can route them) + bare kernel identity
       // tools. Mirrors `_chatInner`'s `allTools` composition so a child
       // agent starts with the same default tool view the parent has.
-      // Bare-name globs in `tools: [...]` match against THIS set, not
-      // against the identity-wide union — see `DelegateContext.tools`.
+      // Bare-name globs in `tools: [...]` match against THIS set; namespaced
+      // globs match the bound workspace's reachable set — see
+      // `DelegateContext.tools`.
       defaultActiveTools: async (): Promise<ToolSchema[]> => {
         if (!rtHolder.rt) throw new Error("Runtime not initialized");
         const rt = rtHolder.rt;
@@ -1060,15 +1061,16 @@ export class Runtime {
   }
 
   private async _chatInner(request: ChatRequest, requestSink?: EventSink): Promise<ChatResult> {
-    // Stage 2 (T006) — identity-bound chat session.
+    // Identity-bound chat session, walled to one workspace.
     //
-    // The chat surface no longer takes a session-level `workspaceId`. Tools
-    // are aggregated across every workspace the identity has access to
-    // (T005 cache), and each tool call routes via the orchestrator (T004)
-    // back to the workspace named in the namespace prefix. The "session
-    // workspace" needed by legacy single-workspace reads (focused app,
-    // overlays, file store, skills, workspace agents/models override) is
-    // the identity's personal workspace.
+    // The chat surface has no session-level `workspaceId` field; the focused
+    // workspace arrives per request (`request.workspaceId`). Tool reach is
+    // exactly that one workspace's tools plus the caller's identity tools —
+    // never a cross-workspace union — and each tool call routes via the
+    // orchestrator, which denies any other workspace. Single-workspace reads
+    // (focused app, overlays, skills) bind to the focused workspace; the file
+    // store and other session-bridge reads use the identity's personal
+    // workspace (`sessionWsId`).
     //
     // Identity resolution rules (strict, no `??` fallbacks anywhere):
     //   - When an identity provider is configured (production / `instance.json`):
@@ -3547,11 +3549,12 @@ export class Runtime {
    *
    * The pool merges per-conversation tier skills (org + workspace + user, via
    * {@link loadConversationSkills}) with bundle-exposed `skill://<name>/usage`
-   * skills across every workspace the identity can reach — a bundle installed
-   * in a shared workspace whose tools land in the cross-workspace tool list
-   * must also surface its workflow guidance, else the model gets the namespaced
-   * tool name with no instructions. `selectLayer3Skills` then filters to the
-   * `dynamic` (tool-affinity) strategy against `activeToolNames`.
+   * skills from the focused workspace only — a bundle installed there whose
+   * tools land in the workspace's tool list must also surface its workflow
+   * guidance, else the model gets the namespaced tool name with no
+   * instructions. A bundle in another workspace never contributes here.
+   * `selectLayer3Skills` then filters to the `dynamic` (tool-affinity)
+   * strategy against `activeToolNames`.
    */
   async selectRequestLayer3(params: {
     /**

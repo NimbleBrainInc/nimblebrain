@@ -17,12 +17,13 @@
  *      correct workspace on a cross-workspace dispatch.
  *
  * Two consumers today: the chat engine (`Runtime._chatInner`) and the
- * `nb__delegate` child engine (`DelegateContext.tools`). Both need
- * identity-wide reach. Workspace-focused defaults (initial active schemas
- * for the chat surface, default initial active set for delegate) are a
- * concern of the CALLER, not the router — see `CLAUDE.md` § "Progressive
- * disclosure". The router governs what's REACHABLE; the caller decides
- * what's IMMEDIATELY VISIBLE.
+ * `nb__delegate` child engine (`DelegateContext.tools`). Both reach exactly
+ * one workspace's tools plus the caller's identity tools — the bound
+ * `workspaceId`, never a cross-workspace union. Which of those reachable
+ * tools start IMMEDIATELY VISIBLE (initial active schemas for the chat
+ * surface, default initial active set for delegate) is a concern of the
+ * CALLER, not the router — see `CLAUDE.md` § "Progressive disclosure". The
+ * router governs what's REACHABLE; the caller decides what's visible.
  *
  * Trust boundary: `identityId` is captured at construction time from the
  * authenticated request context. The router NEVER accepts a caller-provided

@@ -346,14 +346,11 @@ export interface ChatResult {
  *                             workspace briefing names that workspace.
  *  - `workspaceId` omitted  → active tools are the owner's personal-
  *                             workspace tools + identity tools (no
- *                             focused-workspace briefing). The full
- *                             cross-workspace tool union is the
- *                             DISCOVERABLE corpus reached on demand via
- *                             `nb__search`, not the active toolset.
- *                             (Bundle workflow guidance via Layer 3
- *                             DOES aggregate across every workspace the
- *                             owner can see, so a discovered tool's
- *                             usage skill is available when it lands.)
+ *                             focused-workspace briefing). `nb__search`
+ *                             discovers the rest of that one bound
+ *                             workspace on demand — there is no
+ *                             cross-workspace union, and Layer 3 bundle
+ *                             skills come from the bound workspace only.
  *
  * Each call writes a FRESH conversation owned by `identity`. There is no
  * continuation, no `conversationId` to resume — the returned
@@ -375,10 +372,9 @@ export interface TaskRequest {
    * Focused workspace (optional). When set, drives the active tool set
    * (that workspace's tools + identity tools) and the focused-workspace
    * briefing layer in the system prompt. When omitted, the active tool
-   * set is the owner's personal-workspace tools + identity tools; the
-   * full cross-workspace tool union is the discoverable corpus via
-   * `nb__search`, NOT the active toolset (progressive disclosure, same
-   * shape as chat at the identity-level home). The focused-workspace
+   * set is the owner's personal-workspace tools + identity tools; `nb__search`
+   * discovers the rest of that one workspace, NOT a cross-workspace union
+   * (progressive disclosure, same shape as chat). The focused-workspace
    * briefing layer is skipped — `TASK_IDENTITY` carries the framing.
    */
   workspaceId?: string;

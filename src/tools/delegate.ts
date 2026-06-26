@@ -29,25 +29,24 @@ export interface DelegateContext {
   /** Resolve model slot names (e.g., "fast") to actual model IDs. Passes through non-slot strings. */
   resolveSlot: (modelString: string) => string;
   /**
-   * Tool router used for the child engine's per-call dispatch. Identity-wide
-   * (Stage 2): `availableTools()` returns the cross-workspace namespaced
-   * union for the request's identity; `execute(call, ...)` routes through
-   * the orchestrator, gated by workspace membership.
+   * Tool router used for the child engine's per-call dispatch. Walled to one
+   * workspace: `availableTools()` returns the session workspace's namespaced
+   * tools plus the caller's identity tools — never a cross-workspace union.
+   * `execute(call, ...)` routes through the orchestrator, which denies any
+   * other workspace.
    *
    * The child engine's INITIAL active set is governed by
    * `defaultActiveTools()` (focused-workspace-scoped) — NOT by
-   * `tools.availableTools()`. Reachability ≠ default visibility. A child
-   * agent can REACH any tool the identity is a member-of-the-workspace-for
-   * (so `manage_tools.add("ws_<B>-...")` works on demand), but its initial
-   * tool list is the focused workspace's set so the prompt stays bounded.
+   * `tools.availableTools()`. Reachability ≠ default visibility: a child
+   * agent can REACH any tool in the bound workspace on demand (e.g.
+   * `manage_tools.add(...)`), but its initial tool list is the focused
+   * workspace's default set so the prompt stays bounded.
    *
    * Globs in `tools: [...]` widen the initial active set: namespaced globs
-   * (`ws_<id>-...`) match against `tools.availableTools()` (identity-wide);
-   * bare globs (`source__*`) match against `defaultActiveTools()` (focused
-   * workspace + identity sources). The asymmetry is deliberate — bare
-   * globs are how existing delegate callers express "the focused
-   * workspace's CRM"; preserving that prevents accidental cross-workspace
-   * fan-out when the same connector is installed in multiple workspaces.
+   * (`ws_<id>-...`) match against `tools.availableTools()` (the bound
+   * workspace); bare globs (`source__*`) match against `defaultActiveTools()`
+   * (focused workspace + identity sources). A namespaced glob for any other
+   * workspace matches nothing — the wall keeps the reachable set to one room.
    */
   tools: ToolRouter;
   /**
