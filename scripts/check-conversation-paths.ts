@@ -202,9 +202,7 @@ function scanFile(absPath: string, violations: Violation[]): void {
 
   function record(node: ts.Node): void {
     if (hasAllowMarker(node, sourceFile, src)) return;
-    const { line, character } = sourceFile.getLineAndCharacterOfPosition(
-      node.getStart(sourceFile),
-    );
+    const { line, character } = sourceFile.getLineAndCharacterOfPosition(node.getStart(sourceFile));
     violations.push({
       file: relative(ROOT, absPath),
       line: line + 1,
@@ -244,9 +242,7 @@ async function main(): Promise<void> {
   }
 
   if (violations.length > 0) {
-    console.error(
-      `✗ Found ${violations.length} workspace-scoped conversation path(s) in src/:\n`,
-    );
+    console.error(`✗ Found ${violations.length} workspace-scoped conversation path(s) in src/:\n`);
     for (const v of violations) {
       console.error(`  ${v.file}:${v.line}:${v.column}`);
       console.error(`    ${v.snippet}\n`);

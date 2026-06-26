@@ -20,7 +20,11 @@ interface Violation {
 
 const violations: Violation[] = [];
 
-function checkDir(dir: string, forbiddenPatterns: Array<{ pattern: RegExp; description: string }>, allowedFiles: Set<string>) {
+function checkDir(
+  dir: string,
+  forbiddenPatterns: Array<{ pattern: RegExp; description: string }>,
+  allowedFiles: Set<string>,
+) {
   let files: string[];
   try {
     files = readdirSync(dir, { recursive: true }) as unknown as string[];

@@ -92,7 +92,9 @@ async function main(): Promise<void> {
       console.error(`  ${v.file}:${v.line}`);
       console.error(`    ${v.snippet}\n`);
     }
-    console.error("Operational code must log through `log` from `src/observability/log.ts` so lines are");
+    console.error(
+      "Operational code must log through `log` from `src/observability/log.ts` so lines are",
+    );
     console.error("structured JSON with tenant_id + correlation_id in deployed pods. CLI command");
     console.error(`output is exempt; a rare exception needs a // ${ALLOW_MARKER} comment above.`);
     process.exit(1);

@@ -16,11 +16,11 @@
  * check.
  */
 
-import { mkdirSync, writeFileSync, rmSync } from "node:fs";
-import { join } from "node:path";
+import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { McpSource, type McpTransportMode } from "../src/tools/mcp-source.ts";
+import { join } from "node:path";
 import type { EngineEvent, EventSink } from "../src/engine/types.ts";
+import { McpSource, type McpTransportMode } from "../src/tools/mcp-source.ts";
 
 const RESET = "\x1b[0m";
 const GREEN = "\x1b[32m";
@@ -136,7 +136,10 @@ const crashes = events.filter(
 if (crashes.length === 0) {
   fail("No source.crashed event was emitted");
 } else if (crashes.length > 1) {
-  fail(`Expected exactly 1 source.crashed event, got ${crashes.length}`, "Dead-guard de-dup is broken.");
+  fail(
+    `Expected exactly 1 source.crashed event, got ${crashes.length}`,
+    "Dead-guard de-dup is broken.",
+  );
 } else {
   pass("Exactly one source.crashed event was emitted (dead-guard works)");
 }
@@ -145,7 +148,10 @@ if (crashes.length > 0) {
   const data = crashes[0]!.data as { stderrTail?: string };
   const tail = data.stderrTail ?? "";
   if (!tail) {
-    fail("source.crashed payload has empty stderrTail", "Ring buffer didn't capture pre-crash output.");
+    fail(
+      "source.crashed payload has empty stderrTail",
+      "Ring buffer didn't capture pre-crash output.",
+    );
   } else if (!tail.includes("ModuleNotFoundError")) {
     fail(
       "source.crashed.stderrTail is non-empty but doesn't contain 'ModuleNotFoundError'",
@@ -161,7 +167,9 @@ rmSync(bundleDir, { recursive: true, force: true });
 
 console.log("");
 if (failures > 0) {
-  console.log(`${RED}${BOLD}FAIL${RESET} — ${failures} contract violation(s). Issue #116 fix is broken.`);
+  console.log(
+    `${RED}${BOLD}FAIL${RESET} — ${failures} contract violation(s). Issue #116 fix is broken.`,
+  );
   process.exit(1);
 }
 console.log(`${GREEN}${BOLD}PASS${RESET} — issue #116 fix is wired end-to-end.`);

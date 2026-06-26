@@ -77,9 +77,9 @@
     "check": "bunx tsc --noEmit",
     "check:web": "cd web && bunx tsc --noEmit",
     "check:theme": "cd web && bun run check:theme",
-    "lint": "bunx @biomejs/biome check src/ instrument/",
-    "format": "bunx @biomejs/biome format --write src/ web/src/ instrument/",
-    "format:check": "bunx @biomejs/biome format src/ web/src/ instrument/",
+    "lint": "bunx @biomejs/biome check src/ instrument/ scripts/",
+    "format": "bunx @biomejs/biome format --write src/ web/src/ instrument/ scripts/",
+    "format:check": "bunx @biomejs/biome format src/ web/src/ instrument/ scripts/",
     "sync-models": "bun run src/model/sync-models.ts",
     "migrate:skill-frontmatter": "bun run scripts/migrate-skill-frontmatter.ts"
   },

@@ -80,7 +80,9 @@ async function main(): Promise<void> {
     console.error(
       "for vendor/OAuth callback URLs or `webOrigin()` for user-facing SPA returns — not raw",
     );
-    console.error(`NB_API_URL / NB_WEB_URL. Rare exceptions need a // ${ALLOW_MARKER} comment above.`);
+    console.error(
+      `NB_API_URL / NB_WEB_URL. Rare exceptions need a // ${ALLOW_MARKER} comment above.`,
+    );
     process.exit(1);
   }
 
