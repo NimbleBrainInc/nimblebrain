@@ -142,6 +142,10 @@
 /* User messages: italic sans-serif */
 .presence-user-message {
   font-family: var(--font-sans);
+  /* Deliberate editorial size — sits between the type scale's sm (14px) and
+     base (16px) with no exact step; kept bespoke so the most-visible text in
+     the app isn't snapped for the sake of the rule. Assistant body below is
+     18px = the scale's lg, so it's tokenized. */
   font-size: 15px;
   font-weight: 500;
   line-height: 1.5;
@@ -152,7 +156,7 @@
 /* Assistant messages: serif typography base, Streamdown handles markdown rendering */
 .presence-assistant-message {
   font-family: var(--font-heading);
-  font-size: 18px;
+  font-size: var(--font-text-lg-size);
   font-weight: 400;
   line-height: 1.5;
   color: var(--foreground);
@@ -291,7 +295,7 @@
 
 .turn-pill {
   width: 100%;
-  font-size: 12px;
+  font-size: var(--font-text-xs-size);
   color: var(--muted-foreground);
 }
 
@@ -356,7 +360,7 @@
 .turn-pill__ms {
   color: var(--muted-foreground);
   opacity: 0.7;
-  font-size: 12px;
+  font-size: var(--font-text-xs-size);
   font-variant-numeric: tabular-nums;
   flex-shrink: 0;
 }
@@ -421,7 +425,7 @@
   color: var(--muted-foreground);
   cursor: pointer;
   font: inherit;
-  font-size: 12px;
+  font-size: var(--font-text-xs-size);
   text-align: left;
   transition: color 150ms, background-color 150ms;
 }
@@ -443,14 +447,14 @@
 .turn-pill__row-count {
   color: var(--muted-foreground);
   opacity: 0.6;
-  font-size: 11px;
+  font-size: var(--font-text-2xs-size);
   font-variant-numeric: tabular-nums;
   flex-shrink: 0;
 }
 .turn-pill__row-ms {
   color: var(--muted-foreground);
   opacity: 0.6;
-  font-size: 11px;
+  font-size: var(--font-text-2xs-size);
   font-variant-numeric: tabular-nums;
   flex-shrink: 0;
 }
@@ -477,7 +481,7 @@
   color: var(--muted-foreground);
   cursor: pointer;
   font: inherit;
-  font-size: 11.5px;
+  font-size: var(--font-text-2xs-size);
   text-align: left;
   transition: color 150ms;
 }
@@ -490,7 +494,7 @@
   min-width: 0;
   color: var(--muted-foreground);
   font-family: "JetBrains Mono", ui-monospace, monospace;
-  font-size: 11px;
+  font-size: var(--font-text-2xs-size);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -498,7 +502,7 @@
 .turn-pill__call-ms {
   color: var(--muted-foreground);
   opacity: 0.6;
-  font-size: 11px;
+  font-size: var(--font-text-2xs-size);
   font-variant-numeric: tabular-nums;
   flex-shrink: 0;
 }
@@ -518,7 +522,7 @@
   background: transparent;
   border: 0;
   color: var(--muted-foreground);
-  font-size: 12.5px;
+  font-size: var(--font-text-xs-size);
   line-height: 1.55;
   white-space: pre-wrap;
   word-break: break-word;
@@ -546,7 +550,7 @@
   padding: 0 2px 4px;
 }
 .turn-pill__section-label {
-  font-size: 10px;
+  font-size: var(--font-text-3xs-size);
   letter-spacing: 0.06em;
   text-transform: uppercase;
   color: var(--muted-foreground);
@@ -563,7 +567,7 @@
   border: 0;
   color: var(--primary);
   font: inherit;
-  font-size: 10px;
+  font-size: var(--font-text-3xs-size);
   cursor: pointer;
   border-radius: 4px;
   transition: background-color 120ms;
@@ -578,7 +582,7 @@
   background: var(--muted);
   overflow: hidden;
   font-family: "JetBrains Mono", ui-monospace, monospace;
-  font-size: 11.5px;
+  font-size: var(--font-text-2xs-size);
 }
 .turn-pill__kv-row {
   display: grid;
@@ -615,7 +619,7 @@
   border: 1px solid var(--border);
   border-radius: 6px;
   font-family: "JetBrains Mono", ui-monospace, monospace;
-  font-size: 11px;
+  font-size: var(--font-text-2xs-size);
   line-height: 1.55;
   color: var(--muted-foreground);
   overflow-x: auto;
@@ -647,7 +651,7 @@
   gap: 8px;
   padding: 2px 0;
   color: var(--muted-foreground);
-  font-size: 12px;
+  font-size: var(--font-text-xs-size);
 }
 .live-cursor__spinner {
   color: var(--processing);
