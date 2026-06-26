@@ -96,20 +96,16 @@ if (envResult.path) {
 // binary is serve-only — it no longer has a `dev` subcommand — so worktree dev
 // goes through `scripts/dev.ts`, the same launcher `bun run dev` uses, with the
 // worktree's ports/workdir threaded via env below.
-const child = spawn(
-  "bun",
-  ["run", "scripts/dev.ts", "--port", API_PORT, "--config", CONFIG_PATH],
-  {
-    stdio: "inherit",
-    cwd: WORKTREE_ROOT,
-    env: {
-      ...process.env,
-      NB_API_PORT: API_PORT,
-      NB_WEB_PORT: WEB_PORT,
-      NB_WORK_DIR: WORKDIR,
-    },
+const child = spawn("bun", ["run", "scripts/dev.ts", "--port", API_PORT, "--config", CONFIG_PATH], {
+  stdio: "inherit",
+  cwd: WORKTREE_ROOT,
+  env: {
+    ...process.env,
+    NB_API_PORT: API_PORT,
+    NB_WEB_PORT: WEB_PORT,
+    NB_WORK_DIR: WORKDIR,
   },
-);
+});
 
 child.on("error", (err) => {
   console.error(`[dev:worktree] Failed to spawn bun: ${err.message}`);
