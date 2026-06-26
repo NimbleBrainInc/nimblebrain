@@ -74,11 +74,6 @@ import { buildModelResolver, resolveModelString } from "../model/registry.ts";
 import { registerBuiltinCredentialProviders } from "../oauth/minted-credential-provider.ts";
 import { requestIdentityAttrs, withSpan } from "../observability/index.ts";
 import { log } from "../observability/log.ts";
-import {
-  createToolListAggregator,
-  type ToolListAggregator,
-  type WorkspaceToolListing,
-} from "../orchestrator/index.ts";
 import { PermissionStore } from "../permissions/permission-store.ts";
 import type {
   AppStateInfo,
@@ -263,21 +258,6 @@ export class Runtime {
   _getWorkspaceId: () => string | null = () => null;
   /** Per-workspace ToolRegistry instances — each workspace gets its own scoped registry. */
   private _workspaceRegistries: Map<string, ToolRegistry>;
-  /**
-   * Cross-workspace tool-list aggregator (Stage 2 / T005).
-   *
-   * The identity-bound chat surface (T006) and the `/mcp` server (T007)
-   * both call `aggregateToolList(identityId)` through this single
-   * instance — the aggregator owns per-workspace `fs.watch` handles for
-   * invalidation, so sharing one is mandatory (a second aggregator
-   * would attach its own watchers per workspace, multiplying handle
-   * count without buying any cache benefit). `Runtime.shutdown()` MUST
-   * call `aggregator.dispose()` or the watchers leak across the
-   * process lifetime. Constructed in `Runtime.start()` after the
-   * workspace store + registries exist; the constructor takes it as a
-   * required parameter so the field stays non-nullable.
-   */
-  private _toolListAggregator: ToolListAggregator;
   // Protected sources are captured in start() and passed to startWorkspaceBundles directly.
   /** The system source ("nb") — shared across workspace registries. */
   _systemSource: ToolSource | null;
@@ -368,7 +348,6 @@ export class Runtime {
     workspaceRegistries: Map<string, ToolRegistry>,
     systemSource: ToolSource | null,
     currentWorkspaceId: () => string | null,
-    toolListAggregator: ToolListAggregator,
   ) {
     this.resolveModelFn = resolveModelFn;
     this.store = store;
@@ -390,7 +369,6 @@ export class Runtime {
     this._workspaceRegistries = workspaceRegistries;
     this._systemSource = systemSource;
     this._currentWorkspaceId = currentWorkspaceId;
-    this._toolListAggregator = toolListAggregator;
   }
 
   /** Create and start a runtime from config. */
@@ -543,41 +521,41 @@ export class Runtime {
       resolveSlot,
       // Child engine's per-call ToolRouter.
       //
-      // Identity-bound when an authenticated identity is in the request
-      // context (the chat / `/mcp` path): the child engine gets the same
-      // cross-workspace reach the parent has, gated per-call by
-      // `routeToolCall`'s membership check. Without this, a delegate
-      // invoked from one workspace couldn't dispatch a tool installed in
-      // another workspace the identity belongs to — even though the
-      // session is identity-bound and the orchestrator already supports
-      // the dispatch. (See `IdentityToolRouter`.)
+      // Identity-bound when both an authenticated identity AND a workspace are
+      // in the request context (the chat / `/mcp` path): the child is walled to
+      // the SAME one workspace as the parent, exactly like the parent's router.
+      // It reaches that workspace's tools plus the caller's identity tools —
+      // never another workspace; `routeToolCall` denies any cross-workspace
+      // dispatch. (See `IdentityToolRouter`.)
       //
-      // Falls back to the current workspace's registry when no identity
-      // is in scope — CLI / dev paths construct delegateCtx without an
-      // authenticated identity, and the workspace registry's bare-name
-      // surface is what they expect. This mirrors
-      // `runtime.listDiscoverableTools`'s identity-vs-fallback split.
+      // Falls back to the current workspace's registry when no identity or no
+      // workspace is in scope — CLI / dev paths construct delegateCtx without an
+      // authenticated identity, and the workspace registry's bare-name surface
+      // is what they expect.
       //
       // The child's INITIAL active set is governed by `defaultActiveTools`
-      // below, not by this router. Identity-wide reachability without
-      // workspace-scoped defaults would flood the prompt with N copies
-      // of the system tools — see `_chatInner`'s tool-surfacing comment.
+      // below, not by this router.
       get tools() {
         if (!rtHolder.rt) throw new Error("Runtime not initialized");
         const identity = getRequestContext()?.identity;
-        if (!identity) return rtHolder.rt.getRegistryForCurrentWorkspace();
+        const wsId = rtHolder.rt._currentWorkspaceId?.();
+        // Build the identity-bound router only when both an identity and a
+        // workspace are in scope; otherwise (CLI / dev) the bare workspace
+        // registry is what the caller expects.
+        if (!identity || !wsId) return rtHolder.rt.getRegistryForCurrentWorkspace();
         return new IdentityToolRouter({
           identityId: identity.id,
+          workspaceId: wsId,
           runtime: rtHolder.rt,
-          aggregator: rtHolder.rt.getToolListAggregator(),
         });
       },
       // Default initial active set: focused-workspace tools (namespaced
       // so the identity router can route them) + bare kernel identity
       // tools. Mirrors `_chatInner`'s `allTools` composition so a child
       // agent starts with the same default tool view the parent has.
-      // Bare-name globs in `tools: [...]` match against THIS set, not
-      // against the identity-wide union — see `DelegateContext.tools`.
+      // Bare-name globs in `tools: [...]` match against THIS set; namespaced
+      // globs match the bound workspace's reachable set — see
+      // `DelegateContext.tools`.
       defaultActiveTools: async (): Promise<ToolSchema[]> => {
         if (!rtHolder.rt) throw new Error("Runtime not initialized");
         const rt = rtHolder.rt;
@@ -717,69 +695,6 @@ export class Runtime {
     };
     const toolEligibilityCtx = { isToolEligible: isToolEligibleForCurrentRequest };
 
-    // Stage 2 (T006): construct the cross-workspace tool-list aggregator.
-    // `listToolsForWorkspace` is the per-workspace enumerator the aggregator
-    // calls under its watcher-backed cache. We dispatch through the runtime's
-    // per-workspace `ToolRegistry` (via the late-bound `rtHolder.rt`), reading
-    // each source's bare `tools()` list rather than the registry's
-    // `availableTools()` projection — the aggregator wants the source-of-
-    // truth `Tool[]` shape with `execution.taskSupport` preserved.
-    //
-    // The aggregator is owned by the Runtime and disposed in `shutdown()`
-    // (acceptance criterion of T006). It must outlive every chat turn so the
-    // per-identity cache is reused; constructing one per call would defeat
-    // the cache and re-attach a fresh `fs.watch` per workspace per call.
-    const workspaceToolLister = async (wsId: string): Promise<WorkspaceToolListing> => {
-      const rt = rtHolder.rt;
-      if (!rt) throw new Error("[runtime] tool-list aggregator: runtime not initialized");
-      // Workspaces created post-boot need a JIT registry — mirrors what
-      // `runtime.chat` does for the request's own workspace.
-      const registry = await rt.ensureWorkspaceRegistry(wsId);
-      const all: Tool[] = [];
-      // `complete` flips to false the moment any source can't be enumerated
-      // (still starting / restarting / pending auth). The cache uses this to
-      // refuse to memoize a partial cold-start snapshot, so the next ask
-      // re-lists once the source is up rather than serving a sticky empty
-      // list. Without it, a single not-yet-ready source at first-ask time
-      // poisons discovery for the whole identity until an unrelated event
-      // invalidates the union.
-      let complete = true;
-      for (const source of registry.getSources()) {
-        try {
-          for (const tool of await source.tools()) {
-            all.push(tool);
-          }
-        } catch (err) {
-          complete = false;
-          // Per-source error containment, mirroring
-          // `ToolRegistry.availableTools` — one stuck source must not poison
-          // the cross-workspace listing. Surface in the source's own state
-          // (Connectors page) and skip here; a debug line makes "my tool
-          // disappeared from the list" diagnosable without spamming normal
-          // operation (gated behind NB_DEBUG=mcp).
-          log.debug(
-            "mcp",
-            `[runtime] tool-list aggregator: skipping source "${source.name}" in ${wsId} — ${
-              err instanceof Error ? err.message : String(err)
-            }`,
-          );
-        }
-      }
-      return { tools: all, complete };
-    };
-    const toolListAggregator = createToolListAggregator({
-      workDir: resolveWorkDir(config),
-      workspaceStore,
-      listToolsForWorkspace: workspaceToolLister,
-      // Identity sources (conversations, …) are emitted bare and prepended to
-      // every identity's union — they're owned by the user, not a workspace.
-      listIdentityTools: async () => {
-        const rt = rtHolder.rt;
-        if (!rt) throw new Error("[runtime] identity-tool listing: runtime not initialized");
-        return rt.listIdentitySourceTools();
-      },
-    });
-
     // Create Runtime with empty workspace registries first — needed by system tools
     const rt = new Runtime(
       resolveModelFn,
@@ -802,7 +717,6 @@ export class Runtime {
       new Map<string, ToolRegistry>(),
       null, // systemSource — set after creation
       getWorkspaceId,
-      toolListAggregator,
     );
     rtHolder.rt = rt;
     rt._getIdentity = getIdentity;
@@ -902,17 +816,6 @@ export class Runtime {
     rt._workspaceRegistries = workspaceRegistries;
     rt._platformSources = platformSources;
     rt._workspaceSources = workspaceSources;
-
-    // Wire each per-workspace registry's invalidation listener to the
-    // aggregator. Done AFTER boot population (not inside createWorkspaceRegistry)
-    // so the boot-time `addSource` storm doesn't fire invalidations before any
-    // union is cached. From here on, a source-set change OR a source-readiness
-    // transition (subprocess (re)connect, deferred/pending-auth start, native
-    // `tools/list_changed`) drops the affected workspace's cached union so the
-    // next discovery re-lists with current tools.
-    for (const [wsId, registry] of workspaceRegistries) {
-      registry.setInvalidationListener(() => toolListAggregator.invalidateWorkspace(wsId));
-    }
 
     // Wire the workspace registries into lifecycle so workspace-scope
     // startAuth / disconnect / install can add+remove sources without
@@ -1158,15 +1061,16 @@ export class Runtime {
   }
 
   private async _chatInner(request: ChatRequest, requestSink?: EventSink): Promise<ChatResult> {
-    // Stage 2 (T006) — identity-bound chat session.
+    // Identity-bound chat session, walled to one workspace.
     //
-    // The chat surface no longer takes a session-level `workspaceId`. Tools
-    // are aggregated across every workspace the identity has access to
-    // (T005 cache), and each tool call routes via the orchestrator (T004)
-    // back to the workspace named in the namespace prefix. The "session
-    // workspace" needed by legacy single-workspace reads (focused app,
-    // overlays, file store, skills, workspace agents/models override) is
-    // the identity's personal workspace.
+    // The chat surface has no session-level `workspaceId` field; the focused
+    // workspace arrives per request (`request.workspaceId`). Tool reach is
+    // exactly that one workspace's tools plus the caller's identity tools —
+    // never a cross-workspace union — and each tool call routes via the
+    // orchestrator, which denies any other workspace. Single-workspace reads
+    // (focused app, overlays, skills) bind to the focused workspace; the file
+    // store and other session-bridge reads use the identity's personal
+    // workspace (`sessionWsId`).
     //
     // Identity resolution rules (strict, no `??` fallbacks anywhere):
     //   - When an identity provider is configured (production / `instance.json`):
@@ -1351,18 +1255,18 @@ export class Runtime {
       : { org: await this.getInstructionsStore().read({ scope: "org" }), workspace: "" };
 
     // Build focusedApp when the request is scoped to a specific app (§7 app-aware chat).
-    // Pre-Stage-2 this searched the request's single workspace; post-T006
-    // an appContext.serverName may resolve in ANY workspace the identity
-    // can see. Search across the identity's accessible registries.
+    // The app is resolved in the SAME single workspace the session's tools are
+    // bound to (`focusedWsId ?? sessionWsId` — see `toolsWsId` below), never a
+    // scan across the identity's other workspaces. The wall applies to the
+    // briefing too: it can only ever describe an app whose tools this session
+    // is actually allowed to call.
     let focusedApp: FocusedAppInfo | undefined;
     let focusedAppWsId: string | undefined;
     if (request.appContext) {
-      const accessibleWorkspaces = await this._workspaceStore.getWorkspacesForUser(ownerId);
-      for (const ws of accessibleWorkspaces) {
-        const reg = this._workspaceRegistries.get(ws.id);
-        if (!reg) continue;
-        const source = reg.getSources().find((s) => s.name === request.appContext?.serverName);
-        if (!source) continue;
+      const appWsId = focusedWsId ?? sessionWsId;
+      const reg = this._workspaceRegistries.get(appWsId);
+      const source = reg?.getSources().find((s) => s.name === request.appContext?.serverName);
+      if (source) {
         try {
           const sourceTools = await source.tools();
           const skillResource = await this.getAppSkillResource(request.appContext.serverName);
@@ -1370,7 +1274,10 @@ export class Runtime {
           const hasReference = skillResource
             ? source instanceof McpSource && (await this.hasResource(source, referenceUri))
             : false;
-          const bundleInstance = this.lifecycle?.getInstance(request.appContext.serverName, ws.id);
+          const bundleInstance = this.lifecycle?.getInstance(
+            request.appContext.serverName,
+            appWsId,
+          );
           focusedApp = {
             name: request.appContext.appName,
             tools: sourceTools.map((t) => ({
@@ -1381,10 +1288,9 @@ export class Runtime {
             ...(hasReference ? { referenceResourceUri: referenceUri } : {}),
             trustScore: bundleInstance?.trustScore ?? 100,
           };
-          focusedAppWsId = ws.id;
-          break;
+          focusedAppWsId = appWsId;
         } catch {
-          // Source may be stopped or crashed — try other workspaces
+          // Source stopped or crashed — no app briefing this turn.
         }
       }
     }
@@ -1401,25 +1307,16 @@ export class Runtime {
       };
     }
 
-    // Tool surfacing — progressive disclosure. The ACTIVE set the model sees
-    // is scoped to the FOCUSED workspace (one copy of the platform `nb__*`
-    // tools + that workspace's apps) plus the identity tools, NOT the
-    // cross-workspace union. The union remains the SEARCH corpus
-    // (`listDiscoverableTools`), reachable on demand via `nb__search`; this is
-    // what keeps the active set under `maxActiveTools` and the system tools
-    // un-duplicated. Role-based visibility (`isToolVisibleToRole`) and
-    // surface-tier tiering (`surfaceTools`) apply to this focused set.
-    // ACTIVE tool set = the FOCUSED workspace's tools (ONE copy of the
-    // platform `nb__*` system tools + that workspace's app tools) plus the
-    // identity tools — NOT the cross-workspace union. The union puts every
-    // workspace's tools into the model's active list, including N duplicated
-    // copies of the system set (one per workspace), which blows past
-    // `maxActiveTools` and floods the prompt. Progressive disclosure instead:
-    // the cross-workspace union is the SEARCH corpus (`listDiscoverableTools`),
-    // and the model promotes out-of-context tools on demand via `nb__search`
-    // (see the workspace-context prompt block). At the identity-level home (no
-    // focus) the personal workspace is the active set — the same silent bridge
-    // used for session reads.
+    // Tool surfacing. A session reaches exactly ONE workspace: the ACTIVE set
+    // the model sees is the FOCUSED workspace's tools (one copy of the platform
+    // `nb__*` tools + that workspace's apps) plus the caller's identity tools.
+    // There is no cross-workspace union. `nb__search`'s corpus
+    // (`listDiscoverableTools`) is this same focused workspace, so progressive
+    // disclosure operates WITHIN the room (a workspace with more tools than the
+    // active cap), not across workspaces. Role-based visibility
+    // (`isToolVisibleToRole`) and surface-tier tiering (`surfaceTools`) apply to
+    // this set. At the identity-level home (no focus) the personal workspace is
+    // the room — the same silent bridge used for session reads.
     const toolsWsId = focusedWsId ?? sessionWsId;
     const toolsRegistry = await this.ensureWorkspaceRegistry(toolsWsId);
     const [focusedTools, identityTools] = await Promise.all([
@@ -1519,7 +1416,6 @@ export class Runtime {
     // per turn, not twice.
     const selectedLayer3 = await this.selectRequestLayer3({
       wsId: focusedWsId ?? sessionWsId,
-      ownerId,
       userId,
       activeToolNames: tools.map((t) => t.name),
       capabilityPool: poolCapability,
@@ -1739,12 +1635,13 @@ export class Runtime {
     const model = engineConfig.model;
     const resolvedModel = this.resolveModelFn(model);
 
-    // Stage 2 (T006) — the engine's tool router is identity-bound. It
-    // lists tools via the cross-workspace aggregator and dispatches each
-    // call through the orchestrator (`routeToolCall`), which parses the
-    // namespace and constructs a fresh `WorkspaceContext` from the parsed
-    // wsId. The chat hot path does NOT read `runtime.requireWorkspaceId()`
-    // — that would re-introduce the session-level pinning T006 deletes.
+    // The engine's tool router is identity-bound but WALLED to one workspace.
+    // It lists tools via `listToolsForWorkspace(workspaceId)` (the focused
+    // workspace + identity tools) and dispatches each call through the
+    // orchestrator (`routeToolCall`), which enforces the wall and constructs a
+    // fresh `WorkspaceContext` from the parsed wsId. The chat hot path does NOT
+    // read `runtime.requireWorkspaceId()` — per-call scope comes from the
+    // routed namespace.
     //
     // The per-event sink is a wrapper around the request's sinks that
     // stamps `workspaceId` (resolved from the namespace) onto
@@ -1760,6 +1657,7 @@ export class Runtime {
     const engineSink = new MultiEventSink(wrappedSinks);
     const identityToolRouter = this._buildIdentityToolRouter({
       identityId: ownerId,
+      workspaceId: toolsWsId,
       perCallWorkspaceMap,
     });
     const engine = new AgentEngine(resolvedModel, identityToolRouter, engineSink);
@@ -1938,8 +1836,9 @@ export class Runtime {
    *    `TASK_IDENTITY` so the model produces a deliverable rather than a
    *    conversational reply. The runtime owns this framing — bundles
    *    cannot spoof it by wrapping the user message.
-   *  - `workspaceId` is optional: present → focused workspace tool scope
-   *    + briefing; absent → cross-workspace reach with no briefing layer.
+   *  - `workspaceId` is optional: present → that workspace's tool scope +
+   *    briefing; absent → the session (personal) workspace's tools + identity
+   *    tools, no briefing layer. Either way the task is walled to one workspace.
    *  - No title generation, no `chat.start` SSE emit.
    *
    * NOTE (intentional duplication): much of the setup below mirrors
@@ -1994,9 +1893,10 @@ export class Runtime {
       ? await this.readPromptOverlays(focusedWsId)
       : { org: await this.getInstructionsStore().read({ scope: "org" }), workspace: "" };
 
-    // Tool surfacing. Active set = focused workspace's tools (or session
-    // workspace if no focus) + identity tools. Cross-workspace union
-    // remains the discoverable corpus reachable via `nb__search`.
+    // Tool surfacing. The task is walled to one workspace: active set = the
+    // focused workspace's tools (or the session/personal workspace if no focus)
+    // + identity tools. `nb__search`'s corpus is that same workspace — no
+    // cross-workspace reach.
     const toolsWsId = focusedWsId ?? sessionWsId;
     const toolsRegistry = await this.ensureWorkspaceRegistry(toolsWsId);
     const [focusedTools, identityTools] = await Promise.all([
@@ -2066,10 +1966,9 @@ export class Runtime {
     const requestContextSkills = identityOverride
       ? [...contextBase, identityOverride]
       : contextBase;
-    const accessibleForSkills = await this._workspaceStore.getWorkspacesForUser(ownerId);
-    const bundleSkills = (
-      await Promise.all(accessibleForSkills.map((ws) => this.loadBundleSkills(ws.id, {})))
-    ).flat();
+    // Bundle skills come from the FOCUSED workspace only (the wall) — never
+    // across the owner's other workspaces.
+    const bundleSkills = await this.loadBundleSkills(focusedWsId ?? sessionWsId, {});
     const mergedLayer3Pool: Skill[] = [...poolCapability, ...bundleSkills];
     const activeToolNames = tools.map((t) => t.name);
     const selectedLayer3 = selectLayer3Skills({
@@ -2289,6 +2188,7 @@ export class Runtime {
     const engineSink = new MultiEventSink(wrappedSinks);
     const identityToolRouter = this._buildIdentityToolRouter({
       identityId: ownerId,
+      workspaceId: toolsWsId,
       perCallWorkspaceMap,
     });
     const engine = new AgentEngine(resolvedModel, identityToolRouter, engineSink);
@@ -2388,13 +2288,14 @@ export class Runtime {
    */
   private _buildIdentityToolRouter(opts: {
     identityId: string;
+    workspaceId: string;
     perCallWorkspaceMap: Map<string, string>;
   }): ToolRouter {
-    const { identityId, perCallWorkspaceMap } = opts;
+    const { identityId, workspaceId, perCallWorkspaceMap } = opts;
     return new IdentityToolRouter({
       identityId,
+      workspaceId,
       runtime: this,
-      aggregator: this._toolListAggregator,
       onWorkspaceDispatch: (callId, wsId) => {
         perCallWorkspaceMap.set(callId, wsId);
       },
@@ -2883,11 +2784,12 @@ export class Runtime {
 
   /**
    * List the kernel identity sources' tools (conversations, …), source-
-   * qualified (`conversations__list`). The cross-workspace aggregator emits
-   * these BARE and prepended to every identity's union — they're owned by the
-   * user, not any workspace. Resolved from `_platformSources` (the whole set,
-   * already started by `createPlatformSources`); identity sources are NOT in
-   * any workspace registry, so this is the only path that lists them.
+   * qualified (`conversations__list`). These are emitted BARE — owned by the
+   * user, not any workspace — and prepended to the session's one workspace
+   * tools by `listToolsForWorkspace`; on `/mcp` (identity-only, no workspace)
+   * they are the entire tool list. Resolved from `_platformSources` (the whole
+   * set, already started by `createPlatformSources`); identity sources are NOT
+   * in any workspace registry, so this is the only path that lists them.
    * Per-source error containment mirrors the workspace lister.
    */
   async listIdentitySourceTools(): Promise<readonly Tool[]> {
@@ -2945,31 +2847,53 @@ export class Runtime {
 
   /**
    * Tools the model can DISCOVER via a system-tool surface (`nb__search`
-   * scope:tools). Identity-scoped by design: in an identity-bound session
-   * the searchable set is the UNION of every workspace the identity can
-   * reach (the cross-workspace aggregator), not a single workspace.
+   * scope:tools). The corpus is the FOCUSED workspace only — that workspace's
+   * tools (namespaced `ws_<id>-<tool>`) plus the caller's identity tools. A
+   * session reaches exactly one workspace plus the user's identity tools;
+   * there is no cross-workspace discovery. `nb__search` dispatches as
+   * `ws_<focused>-nb__search`, so the per-call request scope here is already
+   * the focused workspace — we read it and list that registry.
    *
-   * Why this isn't `getRegistryForCurrentWorkspace().availableTools()`:
-   * the aggregator namespaces `nb__search` per workspace, so the model may
-   * invoke ANY workspace's copy of it. Each copy must see everything the
-   * identity can reach — otherwise a tool installed in one workspace is
-   * invisible to another workspace's search. (Concretely: a CRM installed
-   * in `ws_mat`, searched from the personal workspace's `nb__search`,
-   * returned "no CRM tools.") Entries are namespaced (`ws_<id>-<tool>`), so
-   * the model promotes/dispatches them through the orchestrator unchanged.
-   *
-   * Falls back to the current workspace's registry when no identity is in
+   * Falls back to the current workspace's registry when no workspace is in
    * scope (CLI / non-identity-bound dev paths).
    */
   async listDiscoverableTools(): Promise<readonly ToolSchema[]> {
-    const identity = getRequestContext()?.identity;
-    if (identity) {
-      // NamespacedToolDescriptor carries every ToolSchema field (name,
-      // description, inputSchema, annotations) plus wsId/toolName — so the
-      // union is assignable to ToolSchema[] for the search/eligibility path.
-      return this._toolListAggregator.aggregateToolList(identity.id);
+    const ctx = getRequestContext();
+    const wsId =
+      ctx?.scope.kind === "workspace" ? ctx.scope.workspaceId : this._currentWorkspaceId?.();
+    if (!wsId) {
+      return this.getRegistryForCurrentWorkspace().availableTools();
     }
-    return this.getRegistryForCurrentWorkspace().availableTools();
+    return this.listToolsForWorkspace(wsId);
+  }
+
+  /**
+   * The walled tool surface for a session bounded to `wsId`: that workspace's
+   * tools (namespaced `ws_<id>-<tool>`) plus the caller's identity tools
+   * (bare). The engine's reachable universe (`IdentityToolRouter.availableTools`)
+   * and the `nb__search` corpus (`listDiscoverableTools`) both read this — a
+   * session reaches exactly one workspace plus identity tools.
+   */
+  async listToolsForWorkspace(wsId: string): Promise<ToolSchema[]> {
+    const registry = await this.ensureWorkspaceRegistry(wsId);
+    const [wsTools, identityTools] = await Promise.all([
+      registry.availableTools(),
+      this.listIdentitySourceTools(),
+    ]);
+    return [
+      ...wsTools.map((t) => ({
+        name: namespacedToolName(wsId, t.name),
+        description: t.description,
+        inputSchema: t.inputSchema,
+        ...(t.annotations !== undefined ? { annotations: t.annotations } : {}),
+      })),
+      ...identityTools.map((t) => ({
+        name: t.name,
+        description: t.description,
+        inputSchema: t.inputSchema,
+        ...(t.annotations !== undefined ? { annotations: t.annotations } : {}),
+      })),
+    ];
   }
 
   /** Get the per-workspace registries map. */
@@ -2999,10 +2923,6 @@ export class Runtime {
     // Wire permission context so the registry can gate disallowed tools
     // before they reach the source.execute() path.
     wsRegistry.setPermissionContext(wsId, this.getPermissionStore());
-    // Reactive tool-list invalidation — mirrors the boot wiring so a
-    // JIT-provisioned workspace's union refreshes when its sources change
-    // state (install/uninstall, subprocess (re)connect, native list_changed).
-    wsRegistry.setInvalidationListener(() => this._toolListAggregator.invalidateWorkspace(wsId));
     this._workspaceRegistries.set(wsId, wsRegistry);
     return wsRegistry;
   }
@@ -3629,17 +3549,20 @@ export class Runtime {
    *
    * The pool merges per-conversation tier skills (org + workspace + user, via
    * {@link loadConversationSkills}) with bundle-exposed `skill://<name>/usage`
-   * skills across every workspace the identity can reach — a bundle installed
-   * in a shared workspace whose tools land in the cross-workspace tool list
-   * must also surface its workflow guidance, else the model gets the namespaced
-   * tool name with no instructions. `selectLayer3Skills` then filters to the
-   * `dynamic` (tool-affinity) strategy against `activeToolNames`.
+   * skills from the focused workspace only — a bundle installed there whose
+   * tools land in the workspace's tool list must also surface its workflow
+   * guidance, else the model gets the namespaced tool name with no
+   * instructions. A bundle in another workspace never contributes here.
+   * `selectLayer3Skills` then filters to the `dynamic` (tool-affinity)
+   * strategy against `activeToolNames`.
    */
   async selectRequestLayer3(params: {
-    /** Focused workspace (or session/personal in home mode) for workspace-tier skills. */
+    /**
+     * Focused workspace (or session/personal in home mode) — the ONLY workspace
+     * whose workspace-tier AND bundle skills are in scope. Skills never cross a
+     * workspace boundary.
+     */
     wsId: string;
-    /** Owner identity for cross-workspace reach (accessible workspaces + bundle skills). */
-    ownerId: string;
     /** Identity for user-tier skills; null in non-identity-bound paths. */
     userId: string | null;
     /** Names of tools in the set tool-affinity is evaluated against. */
@@ -3659,18 +3582,11 @@ export class Runtime {
     const capabilityPool =
       params.capabilityPool ??
       partitionSkillsByRole(this.loadConversationSkills(params.wsId, params.userId)).capability;
-    const accessibleForSkills = await this._workspaceStore.getWorkspacesForUser(params.ownerId);
-    const bundleSkills = (
-      await Promise.all(
-        accessibleForSkills.map((ws) =>
-          this.loadBundleSkills(ws.id, {
-            ...(params.appContextServerName
-              ? { appContextServerName: params.appContextServerName }
-              : {}),
-          }),
-        ),
-      )
-    ).flat();
+    // Bundle skills come from the FOCUSED workspace only — a connector installed
+    // in another workspace must not inject its usage skill here (the wall).
+    const bundleSkills = await this.loadBundleSkills(params.wsId, {
+      ...(params.appContextServerName ? { appContextServerName: params.appContextServerName } : {}),
+    });
     return selectLayer3Skills({
       skills: [...capabilityPool, ...bundleSkills],
       activeTools: params.activeToolNames,
@@ -3709,7 +3625,6 @@ export class Runtime {
     );
     const layer3 = await this.selectRequestLayer3({
       wsId,
-      ownerId,
       userId,
       activeToolNames,
       capabilityPool: capability,
@@ -3981,23 +3896,6 @@ export class Runtime {
         await reg.removeSource(name);
       }
     }
-    // Stage 2 (T006): tear down the cross-workspace tool-list aggregator.
-    // Without this, every per-workspace `fs.watch` handle the aggregator
-    // attached leaks across the process lifetime — Group B audit
-    // CLOSEOUT FOLLOW-UP, wired in here as part of T006. The aggregator's
-    // own `dispose()` is idempotent (checks an internal `disposed` flag),
-    // so calling it during a partial shutdown is safe.
-    this._toolListAggregator.dispose();
-  }
-
-  /**
-   * Cross-workspace tool-list aggregator. Owned by the runtime; disposed in
-   * `shutdown()`. Exposed for the identity-bound chat path (this file) and
-   * for the `/mcp` session handler (T007). Tests use `activeWatcherCount()`
-   * on the returned handle to verify leak-free shutdown.
-   */
-  getToolListAggregator(): ToolListAggregator {
-    return this._toolListAggregator;
   }
 }
 

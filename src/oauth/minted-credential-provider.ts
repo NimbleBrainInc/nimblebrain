@@ -50,7 +50,7 @@ export const mintedCredentialProvider: TransportCredentialProvider = {
     });
     if (!tokenUrl) {
       throw new Error(
-        "minted transport credential requires the authorizer token endpoint (set NB_FLEET_AUTHORIZER_TOKEN_URL, or NB_FLEET_AUTHORIZER_ISSUER for the legacy `${issuer}/token` fallback)",
+        "minted transport credential requires the authorizer token endpoint (set NB_FLEET_AUTHORIZER_TOKEN_URL, or NB_FLEET_AUTHORIZER_ISSUER for the legacy `<issuer>/token` fallback)",
       );
     }
     const { audience, scope } = config;

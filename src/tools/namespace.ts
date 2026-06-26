@@ -258,8 +258,8 @@ export function bareToolName(s: string): string {
  *
  * A source name has the same `ws_<id>-<rest>` shape as a tool name, but its
  * `<rest>` is a bare source name (`synapse-collateral`) with no `__<tool>`
- * suffix — the cross-workspace aggregator namespaces *tool* names while
- * registry *sources* keep their bare name. So a cross-workspace tool
+ * suffix — tool names are namespaced (`ws_<id>-...`) while registry *sources*
+ * keep their bare name. So a namespaced tool
  * `ws_<id>-synapse-collateral__preview` surfaces an `appName`/`server` of
  * `ws_<id>-synapse-collateral`, which the REST resource/tool endpoints must
  * split into its owning workspace (`ws_<id>`) and the bare source the

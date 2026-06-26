@@ -2,27 +2,28 @@
  * Identity-scoped `ToolRouter` — the bridge between Stage 2's identity-bound
  * sessions and the engine's per-call ToolRouter contract.
  *
- * A user's tool surface aggregates across every workspace they belong to
- * (per `products/nimblebrain/code/CLAUDE.md` § "Cross-workspace tool
- * namespacing"). This router is the single composition of:
+ * A session is bounded to one workspace (the wall). This router is the single
+ * composition of:
  *
- *   1. `ToolListAggregator.aggregateToolList(identityId)` — the namespaced
- *      cross-workspace union the engine can discover and promote from.
- *   2. `routeToolCall({ identityId, namespacedName, runtime })` — per-call
- *      workspace existence + membership check, then dispatch into a fresh
- *      `WorkspaceContext` (or `IdentityContext` for kernel identity sources).
+ *   1. `runtime.listToolsForWorkspace(workspaceId)` — the bound workspace's
+ *      tools (namespaced) plus identity tools; the engine's reachable universe.
+ *   2. `routeToolCall({ identityId, namespacedName, workspaceId, runtime })` —
+ *      per-call wall check (the target must be the bound workspace), then
+ *      dispatch into a fresh `WorkspaceContext` (or `IdentityContext` for
+ *      kernel identity sources).
  *   3. `runWithRequestContext(perCallCtx, ...)` — restamps the AsyncLocalStorage
  *      scope to the ROUTED workspace, NOT the ambient session workspace,
  *      so shared `nb__*` handlers reading `requireWorkspaceId()` see the
  *      correct workspace on a cross-workspace dispatch.
  *
  * Two consumers today: the chat engine (`Runtime._chatInner`) and the
- * `nb__delegate` child engine (`DelegateContext.tools`). Both need
- * identity-wide reach. Workspace-focused defaults (initial active schemas
- * for the chat surface, default initial active set for delegate) are a
- * concern of the CALLER, not the router — see `CLAUDE.md` § "Progressive
- * disclosure". The router governs what's REACHABLE; the caller decides
- * what's IMMEDIATELY VISIBLE.
+ * `nb__delegate` child engine (`DelegateContext.tools`). Both reach exactly
+ * one workspace's tools plus the caller's identity tools — the bound
+ * `workspaceId`, never a cross-workspace union. Which of those reachable
+ * tools start IMMEDIATELY VISIBLE (initial active schemas for the chat
+ * surface, default initial active set for delegate) is a concern of the
+ * CALLER, not the router — see `CLAUDE.md` § "Progressive disclosure". The
+ * router governs what's REACHABLE; the caller decides what's visible.
  *
  * Trust boundary: `identityId` is captured at construction time from the
  * authenticated request context. The router NEVER accepts a caller-provided
@@ -35,7 +36,6 @@ import {
   type OrchestratorRuntime,
   routeToolCall,
 } from "../orchestrator/index.ts";
-import type { ToolListAggregator } from "../orchestrator/tool-list-aggregator.ts";
 import {
   getRequestContext,
   type RequestContext,
@@ -59,13 +59,6 @@ import {
  */
 export type WorkspaceDispatchHook = (callId: string, wsId: string) => void;
 
-/**
- * Subset of `ToolListAggregator` the router needs. Narrow contract so
- * unit tests can stub with a tiny in-memory aggregator that doesn't need
- * a workspace store or FS watcher.
- */
-export type IdentityToolRouterAggregator = Pick<ToolListAggregator, "aggregateToolList">;
-
 export interface IdentityToolRouterOptions {
   /**
    * Captured at construction; never read from the request context at execute
@@ -74,21 +67,26 @@ export interface IdentityToolRouterOptions {
    */
   identityId: string;
   /**
+   * The session's single workspace (the wall). `availableTools` lists this
+   * workspace plus identity tools; `execute` denies any call to another
+   * workspace. Captured at construction alongside the identity.
+   */
+  workspaceId: string;
+  /**
    * Narrow runtime surface for `routeToolCall`. The production `Runtime`
    * satisfies this via `getWorkspaceStore` / `getWorkspaceContext` /
-   * `getRegistryForWorkspace` / `getIdentitySource` / `getIdentityContext`.
+   * `getRegistryForWorkspace` / `getIdentitySource` / `getIdentityContext` /
+   * `listToolsForWorkspace`.
    */
   runtime: OrchestratorRuntime;
-  /** Cross-workspace tool list aggregator. */
-  aggregator: IdentityToolRouterAggregator;
   /** Optional audit-attribution hook. See `WorkspaceDispatchHook`. */
   onWorkspaceDispatch?: WorkspaceDispatchHook;
 }
 
 export class IdentityToolRouter implements ToolRouter {
   private readonly identityId: string;
+  private readonly workspaceId: string;
   private readonly runtime: OrchestratorRuntime;
-  private readonly aggregator: IdentityToolRouterAggregator;
   private readonly onWorkspaceDispatch?: WorkspaceDispatchHook;
 
   constructor(opts: IdentityToolRouterOptions) {
@@ -100,27 +98,18 @@ export class IdentityToolRouter implements ToolRouter {
       throw new Error("[identity-tool-router] identityId must be a non-empty string");
     }
     this.identityId = opts.identityId;
+    this.workspaceId = opts.workspaceId;
     this.runtime = opts.runtime;
-    this.aggregator = opts.aggregator;
     if (opts.onWorkspaceDispatch) this.onWorkspaceDispatch = opts.onWorkspaceDispatch;
   }
 
   /**
-   * Cross-workspace tool union for the identity, as `ToolSchema[]`.
-   *
-   * `NamespacedToolDescriptor` carries every `ToolSchema` field plus
-   * bookkeeping (`wsId`, `toolName`, `execution`) the engine doesn't
-   * consume. We narrow here so the engine's `allToolSchemaMap` doesn't
-   * pick up fields it has no contract for.
+   * The session's reachable tool surface, as `ToolSchema[]`: the bound
+   * workspace's tools (namespaced) plus the caller's identity tools. This is
+   * the engine's reachable universe — a session reaches exactly one workspace.
    */
   async availableTools(): Promise<ToolSchema[]> {
-    const aggregated = await this.aggregator.aggregateToolList(this.identityId);
-    return aggregated.map((t) => ({
-      name: t.name,
-      description: t.description,
-      inputSchema: t.inputSchema,
-      ...(t.annotations !== undefined ? { annotations: t.annotations } : {}),
-    }));
+    return this.runtime.listToolsForWorkspace(this.workspaceId);
   }
 
   /**
@@ -144,6 +133,7 @@ export class IdentityToolRouter implements ToolRouter {
       routed = await routeToolCall({
         identityId: this.identityId,
         namespacedName: call.name,
+        workspaceId: this.workspaceId,
         runtime: this.runtime,
       });
     } catch (err) {

@@ -1,34 +1,20 @@
 /**
- * Integration tests for Stage 2 (cross-workspace refactor) Task 007:
- * `/mcp` sessions are identity-bound, tools are namespaced cross-workspace,
- * and `SessionMeta` no longer carries `workspaceId`.
+ * Integration tests for the `/mcp` endpoint's per-request workspace wall.
  *
- * Each `it(...)` block names the failure mode it pins so the test surface
- * stays connected to the task spec's "Tests Required" list:
+ * A `/mcp` session has no fixed workspace. Each request names its focused
+ * workspace via `X-Workspace-Id`, and the host walls the request to it:
  *
- *   - Identity-only session: `initialize` succeeds with no
- *     `X-Workspace-Id` header; `tools/list` returns the cross-workspace
- *     union via the aggregator.
- *   - Cross-workspace call in one session: `ws_a/foo` and `ws_b/bar` in
- *     succession route to distinct per-source counters (`1` and `1`).
- *   - Workspace switch does not invalidate the session (Q3): the bridge's
- *     `setActiveWorkspaceId` analog firing on a different workspace
- *     leaves the `/mcp` session live; the next tool call still works.
- *   - Synapse iframe regression (Q3 follow-up): a tool call namespaced
- *     to the iframe's host workspace routes to that workspace, NOT
- *     wherever the global switcher last pointed.
- *   - Strict invariant: a bare (non-namespaced) tool name returns
- *     JSON-RPC `-32602` with `data.reason: "invalid_tool_name"` — no
- *     silent coercion to a "current workspace."
- *   - All 4 orchestrator errors map to distinct JSON-RPC responses
- *     (`UnknownNamespacedToolName`, `UnknownWorkspace`,
- *     `WorkspaceAccessDenied`, `UnknownToolSource`).
+ *   - No header → identity tools only (conversations, files, automations);
+ *     a `ws_<id>-...` call is refused (`WorkspaceToolUnavailable`).
+ *   - Member header → that workspace's tools (namespaced) + identity tools;
+ *     a `ws_<other>-...` call is `CrossWorkspaceReachDenied`.
+ *   - Non-member / unknown header → fail-closed to identity tools only
+ *     (the header is not trusted to grant access it doesn't already imply).
  *
- * Setup: spin up a single `Runtime` with the two-workspace fixture (a
- * shared workspace + the identity's personal workspace), each with a
- * counter-incrementing in-process MCP source. The `/mcp` endpoint is
- * dev-mode (no auth) so the SDK client doesn't need a token — the
- * `DEV_IDENTITY` is the implicit caller, a member of both workspaces.
+ * Setup: a single `Runtime` with two workspaces the dev identity belongs to
+ * (Helix + personal, each with a counter source) plus a `stranger` workspace
+ * it is NOT a member of, so we can assert both the honored and the fail-closed
+ * paths. The endpoint is dev-mode (no auth); `DEV_IDENTITY` is the caller.
  */
 
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
@@ -53,6 +39,7 @@ import { createEchoModel } from "../helpers/echo-model.ts";
 function buildCounterSource(
   sourceName: string,
   toolName: string,
+  resourceUri?: string,
 ): { source: McpSource; callCount: () => number; reset: () => void } {
   let count = 0;
   const tool: InProcessTool = {
@@ -76,6 +63,11 @@ function buildCounterSource(
       name: sourceName,
       version: "1.0.0",
       tools: [tool],
+      // A single workspace resource, so the resource wall can be asserted the
+      // same way as the tool wall.
+      ...(resourceUri
+        ? { resources: new Map([[resourceUri, `<html>[${sourceName}] resource body</html>`]]) }
+        : {}),
     },
     new NoopEventSink(),
   );
@@ -95,15 +87,25 @@ let handle: ServerHandle;
 let baseUrl: string;
 let sharedSource: ReturnType<typeof buildCounterSource>;
 let personalSource: ReturnType<typeof buildCounterSource>;
+let strangerSource: ReturnType<typeof buildCounterSource>;
 
 const testDir = join(tmpdir(), `nb-mcp-identity-bound-${Date.now()}`);
 
-// Stage 2 fixture: two workspaces the dev identity belongs to.
 const SHARED_WS_ID = "ws_helix";
 const SHARED_SOURCE_NAME = "crm";
 const SHARED_TOOL_BARE = "search";
 const PERSONAL_SOURCE_NAME = "gmail";
 const PERSONAL_TOOL_BARE = "send";
+// A workspace the dev identity is NOT a member of — used to assert the
+// fail-closed path (a non-member header must not grant any reach).
+const STRANGER_WS_ID = "ws_stranger";
+const STRANGER_SOURCE_NAME = "vault";
+const STRANGER_TOOL_BARE = "open";
+// Each workspace source also serves one resource, so the resource wall (the
+// `resources/list` + `resources/read` sibling of the tool wall) can be pinned.
+const SHARED_RESOURCE_URI = "ui://crm/data";
+const PERSONAL_RESOURCE_URI = "ui://gmail/data";
+const STRANGER_RESOURCE_URI = "ui://vault/data";
 
 beforeAll(async () => {
   mkdirSync(testDir, { recursive: true });
@@ -127,16 +129,32 @@ beforeAll(async () => {
   });
   const personalWsId = personalWorkspaceIdFor(DEV_IDENTITY.id);
 
+  // Stranger workspace — exists, has a source, but the dev identity is NOT a
+  // member. Membership is deliberately not granted.
+  await wsStore.create("Stranger", STRANGER_WS_ID.slice(3));
+
   // Per-workspace registries + counter sources.
   const sharedReg = await runtime.ensureWorkspaceRegistry(SHARED_WS_ID);
   const personalReg = await runtime.ensureWorkspaceRegistry(personalWsId);
+  const strangerReg = await runtime.ensureWorkspaceRegistry(STRANGER_WS_ID);
 
-  sharedSource = buildCounterSource(SHARED_SOURCE_NAME, SHARED_TOOL_BARE);
-  personalSource = buildCounterSource(PERSONAL_SOURCE_NAME, PERSONAL_TOOL_BARE);
+  sharedSource = buildCounterSource(SHARED_SOURCE_NAME, SHARED_TOOL_BARE, SHARED_RESOURCE_URI);
+  personalSource = buildCounterSource(
+    PERSONAL_SOURCE_NAME,
+    PERSONAL_TOOL_BARE,
+    PERSONAL_RESOURCE_URI,
+  );
+  strangerSource = buildCounterSource(
+    STRANGER_SOURCE_NAME,
+    STRANGER_TOOL_BARE,
+    STRANGER_RESOURCE_URI,
+  );
   await sharedSource.source.start();
   await personalSource.source.start();
+  await strangerSource.source.start();
   sharedReg.addSource(sharedSource.source);
   personalReg.addSource(personalSource.source);
+  strangerReg.addSource(strangerSource.source);
 
   handle = startServer({ runtime, port: 0 });
   baseUrl = `http://localhost:${handle.port}`;
@@ -162,45 +180,56 @@ function personalToolName(): string {
   return `${personalWsId()}-${PERSONAL_SOURCE_NAME}__${PERSONAL_TOOL_BARE}`;
 }
 
-/**
- * Build an MCP client with NO `X-Workspace-Id` header — the Stage 2
- * contract is that the header is purely advisory and routing derives
- * the target workspace from the namespaced tool name on every call.
- */
-async function createIdentityBoundClient(
-  opts: { extraHeaders?: Record<string, string> } = {},
+function strangerToolName(): string {
+  return `${STRANGER_WS_ID}-${STRANGER_SOURCE_NAME}__${STRANGER_TOOL_BARE}`;
+}
+
+async function createMcpClient(
+  opts: { workspace?: string } = {},
 ): Promise<Client> {
+  const headers = opts.workspace ? { "x-workspace-id": opts.workspace } : {};
   const transport = new StreamableHTTPClientTransport(new URL(`${baseUrl}/mcp`), {
-    requestInit: { headers: opts.extraHeaders ?? {} },
+    requestInit: { headers },
   });
-  const client = new Client({ name: "stage-2-test", version: "1.0.0" });
+  const client = new Client({ name: "mcp-identity-test", version: "1.0.0" });
   await client.connect(transport);
   return client;
 }
 
-// ── Tests ─────────────────────────────────────────────────────────
+/** Invoke a tool and capture the JSON-RPC error code + `data.reason`, if any. */
+async function callExpectingError(
+  client: Client,
+  name: string,
+): Promise<{ code?: number; reason?: string }> {
+  try {
+    await client.callTool({ name, arguments: { echo: "x" } });
+    return {};
+  } catch (err) {
+    const e = err as { code?: number; data?: { reason?: string } };
+    return { code: e.code, reason: e.data?.reason };
+  }
+}
 
-describe("/mcp identity-bound session (Stage 2 T007)", () => {
-  it("initialize without X-Workspace-Id succeeds and tools/list returns the union (failure mode: workspace-required session)", async () => {
-    const client = await createIdentityBoundClient();
+// ── No header → identity tools only ───────────────────────────────
+
+describe("/mcp with no X-Workspace-Id (identity tools only)", () => {
+  it("tools/list returns only identity tools — no workspace tools, no cross-workspace union", async () => {
+    const client = await createMcpClient();
     try {
-      const result = await client.listTools();
-      const names = result.tools.map((t) => t.name);
-      // Both workspaces' tools appear — the aggregator wins.
-      expect(names).toContain(sharedToolName());
-      expect(names).toContain(personalToolName());
+      const names = (await client.listTools()).tools.map((t) => t.name);
+      // Identity tools are present (bare).
+      expect(names).toContain("conversations__list");
+      // No workspace's tools are exposed without a header.
+      expect(names).not.toContain(sharedToolName());
+      expect(names).not.toContain(personalToolName());
+      expect(names.every((n) => !n.startsWith("ws_"))).toBe(true);
     } finally {
       await client.close();
     }
   });
 
   it("identity sources surface BARE in tools/list, never ws-prefixed (one door)", async () => {
-    // `conversations` is a kernel identity source: emitted bare
-    // (`conversations__list`) and NOT composed into any workspace registry, so
-    // it never appears as `ws_<id>-conversations__*`. This is the one-door
-    // guarantee at the list level — the chat reaches conversations through the
-    // identity door only, never the workspace door.
-    const client = await createIdentityBoundClient();
+    const client = await createMcpClient();
     try {
       const names = (await client.listTools()).tools.map((t) => t.name);
       expect(names).toContain("conversations__list");
@@ -210,193 +239,33 @@ describe("/mcp identity-bound session (Stage 2 T007)", () => {
     }
   });
 
-  it("cross-workspace calls in one session route to distinct sources (failure mode: dispatch-to-current-workspace)", async () => {
-    sharedSource.reset();
-    personalSource.reset();
-    const client = await createIdentityBoundClient();
+  it("a workspace tool call is refused — no workspace in scope (-32602 workspace_access_denied)", async () => {
+    const client = await createMcpClient();
     try {
-      // Two calls on the SAME session id (same MCP client = same session).
-      const a = await client.callTool({
-        name: sharedToolName(),
-        arguments: { echo: "a" },
-      });
-      const b = await client.callTool({
-        name: personalToolName(),
-        arguments: { echo: "b" },
-      });
-      expect(a.isError).toBeFalsy();
-      expect(b.isError).toBeFalsy();
-
-      // Topology probe: the lesson-1 naive impl ("dispatch to current
-      // workspace") would read either `2,0` or `0,2`. We assert `1,1`.
-      expect(sharedSource.callCount()).toBe(1);
-      expect(personalSource.callCount()).toBe(1);
+      const { code, reason } = await callExpectingError(client, sharedToolName());
+      expect(code).toBe(-32602);
+      expect(reason).toBe("workspace_access_denied");
     } finally {
       await client.close();
     }
   });
 
-  it("workspace-switcher header analog does not invalidate the session (Q3)", async () => {
-    sharedSource.reset();
-    personalSource.reset();
-    // The bridge's web-shell switcher sends an `X-Workspace-Id` on
-    // settings/connectors fetches. The `/mcp` session must ignore it
-    // (the header is read at debug-log only; routing derives the
-    // workspace from the namespaced tool name on every call) and the
-    // session must stay alive across "switches."
-    //
-    // We drive `/mcp` at the raw HTTP layer instead of the SDK client
-    // so we can change `X-Workspace-Id` between requests on the same
-    // session id without poking SDK internals.
-    const initRes = await fetch(`${baseUrl}/mcp`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Accept: "application/json, text/event-stream",
-        "x-workspace-id": SHARED_WS_ID,
-      },
-      body: JSON.stringify({
-        jsonrpc: "2.0",
-        id: 1,
-        method: "initialize",
-        params: {
-          protocolVersion: "2025-06-18",
-          capabilities: {},
-          clientInfo: { name: "switch-test", version: "1.0.0" },
-        },
-      }),
-    });
-    expect(initRes.status).toBe(200);
-    const sessionId = initRes.headers.get("mcp-session-id");
-    expect(sessionId).toBeTruthy();
-    await initRes.body?.cancel();
-
-    // Required `initialized` notification.
-    await fetch(`${baseUrl}/mcp`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Accept: "application/json, text/event-stream",
-        "x-workspace-id": SHARED_WS_ID,
-        "mcp-session-id": sessionId!,
-      },
-      body: JSON.stringify({ jsonrpc: "2.0", method: "notifications/initialized" }),
-    });
-
-    // Call 1: header says `ws_helix`. Namespaced name says `ws_helix`.
-    const call1 = await fetch(`${baseUrl}/mcp`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Accept: "application/json, text/event-stream",
-        "x-workspace-id": SHARED_WS_ID,
-        "mcp-session-id": sessionId!,
-      },
-      body: JSON.stringify({
-        jsonrpc: "2.0",
-        id: 2,
-        method: "tools/call",
-        params: { name: sharedToolName(), arguments: { echo: "first" } },
-      }),
-    });
-    expect(call1.status).toBe(200);
-    await call1.body?.cancel();
-    expect(sharedSource.callCount()).toBe(1);
-
-    // "Switch": same session id, header now flips to the personal
-    // workspace. Adversarial: a naive implementation that reset the
-    // session on header change would 404 here.
-    const call2 = await fetch(`${baseUrl}/mcp`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Accept: "application/json, text/event-stream",
-        "x-workspace-id": personalWsId(),
-        "mcp-session-id": sessionId!,
-      },
-      body: JSON.stringify({
-        jsonrpc: "2.0",
-        id: 3,
-        method: "tools/call",
-        params: { name: sharedToolName(), arguments: { echo: "after-switch" } },
-      }),
-    });
-    expect(call2.status).toBe(200);
-    await call2.body?.cancel();
-    // The switcher must NOT influence routing: the namespaced name
-    // still says `ws_helix`, so the shared source's counter increments
-    // — NOT the personal source's.
-    expect(sharedSource.callCount()).toBe(2);
-    expect(personalSource.callCount()).toBe(0);
-
-    // Tidy: terminate the session.
-    await fetch(`${baseUrl}/mcp`, {
-      method: "DELETE",
-      headers: { "mcp-session-id": sessionId! },
-    });
-  });
-
-  it("synapse iframe auto-prefix routes to the iframe's host workspace, not the switcher's pointee (Q3 follow-up)", async () => {
-    sharedSource.reset();
-    personalSource.reset();
-    // The bridge auto-prefixes synapse-app tool calls with the
-    // iframe's host workspace id. Here we simulate by constructing
-    // a tool name namespaced to `ws_helix` even though the global
-    // switcher (header) points elsewhere.
-    const client = await createIdentityBoundClient({
-      extraHeaders: { "x-workspace-id": personalWsId() }, // switcher → personal
-    });
+  it("a bare workspace-app name rejects with -32602 unknown_identity_source (no silent workspace routing)", async () => {
+    const client = await createMcpClient();
     try {
-      const result = await client.callTool({
-        name: sharedToolName(), // iframe-host-prefixed
-        arguments: { echo: "iframe-bound" },
-      });
-      expect(result.isError).toBeFalsy();
-      expect(sharedSource.callCount()).toBe(1);
-      expect(personalSource.callCount()).toBe(0);
+      const { code, reason } = await callExpectingError(
+        client,
+        `${SHARED_SOURCE_NAME}__${SHARED_TOOL_BARE}`,
+      );
+      expect(code).toBe(-32602);
+      expect(reason).toBe("unknown_identity_source");
     } finally {
       await client.close();
     }
   });
 
-  it("tools/call with a bare name rejects with -32602 (bare → identity scope, not silently routed to a workspace)", async () => {
-    const client = await createIdentityBoundClient();
-    try {
-      let errorCode: number | undefined;
-      let dataReason: string | undefined;
-      let errorMessage: string | undefined;
-      try {
-        // A bare `<source>__<tool>` for a workspace app. Bare = identity
-        // scope; a workspace-app source isn't a kernel identity source, so
-        // it's refused (UnknownIdentitySource) — NOT silently routed to a
-        // current workspace.
-        await client.callTool({
-          name: `${SHARED_SOURCE_NAME}__${SHARED_TOOL_BARE}`,
-          arguments: { echo: "noop" },
-        });
-      } catch (err) {
-        const e = err as { code?: number; data?: { reason?: string }; message?: string };
-        errorCode = e.code;
-        dataReason = e.data?.reason;
-        errorMessage = e.message;
-      }
-      expect(errorCode).toBe(-32602);
-      expect(dataReason).toBe("unknown_identity_source");
-      expect(errorMessage).toContain("No identity source");
-    } finally {
-      await client.close();
-    }
-  });
-
-  it("tools/call with a bare IDENTITY-source name dispatches through the identity door (failure mode: identity tool unreachable)", async () => {
-    // The happy-path counterpart to the rejection above. `conversations` IS a
-    // kernel identity source, so a bare `conversations__list` — no
-    // `X-Workspace-Id`, no `ws_` prefix — routes through the identity door and
-    // executes against the caller's identity. This is the exact wire call the
-    // conversations iframe makes; a fresh workdir yields an empty (but
-    // successful) result, proving the door is open, not just that bare names
-    // parse.
-    const client = await createIdentityBoundClient();
+  it("a bare identity-source name dispatches through the identity door", async () => {
+    const client = await createMcpClient();
     try {
       const result = await client.callTool({ name: "conversations__list", arguments: {} });
       expect(result.isError).toBeFalsy();
@@ -404,76 +273,167 @@ describe("/mcp identity-bound session (Stage 2 T007)", () => {
       await client.close();
     }
   });
+});
 
-  it("orchestrator error mapping: UnknownWorkspace → -32602 unknown_workspace", async () => {
-    const client = await createIdentityBoundClient();
+// ── Member header → walled to that workspace ──────────────────────
+
+describe("/mcp with a member X-Workspace-Id (walled to that workspace)", () => {
+  it("tools/list serves the focused workspace's tools + identity tools, and only that workspace's", async () => {
+    const client = await createMcpClient({ workspace: SHARED_WS_ID });
     try {
-      let errorCode: number | undefined;
-      let dataReason: string | undefined;
-      try {
-        await client.callTool({
-          name: "ws_nonexistent-crm__search",
-          arguments: {},
-        });
-      } catch (err) {
-        const e = err as { code?: number; data?: { reason?: string } };
-        errorCode = e.code;
-        dataReason = e.data?.reason;
-      }
-      expect(errorCode).toBe(-32602);
-      expect(dataReason).toBe("unknown_workspace");
+      const names = (await client.listTools()).tools.map((t) => t.name);
+      // The focused workspace's tools are present (namespaced)…
+      expect(names).toContain(sharedToolName());
+      // …alongside the caller's identity tools…
+      expect(names).toContain("conversations__list");
+      // …but never another workspace's tools.
+      expect(names).not.toContain(personalToolName());
     } finally {
       await client.close();
     }
   });
 
-  it("orchestrator error mapping: WorkspaceAccessDenied → -32602 workspace_access_denied", async () => {
-    // Provision a workspace that the dev identity is NOT a member of.
-    const wsStore = runtime.getWorkspaceStore();
-    const FORBIDDEN_WS = "ws_forbidden";
-    if (!(await wsStore.get(FORBIDDEN_WS))) {
-      await wsStore.create("Forbidden", FORBIDDEN_WS.slice(3));
-    }
-    // Deliberately do NOT add DEV_IDENTITY as a member.
-
-    const client = await createIdentityBoundClient();
+  it("a focused-workspace tool call succeeds", async () => {
+    sharedSource.reset();
+    const client = await createMcpClient({ workspace: SHARED_WS_ID });
     try {
-      let errorCode: number | undefined;
-      let dataReason: string | undefined;
-      try {
-        await client.callTool({
-          name: `${FORBIDDEN_WS}-crm__search`,
-          arguments: {},
-        });
-      } catch (err) {
-        const e = err as { code?: number; data?: { reason?: string } };
-        errorCode = e.code;
-        dataReason = e.data?.reason;
-      }
-      expect(errorCode).toBe(-32602);
-      expect(dataReason).toBe("workspace_access_denied");
+      const result = await client.callTool({
+        name: sharedToolName(),
+        arguments: { echo: "hi" },
+      });
+      expect(result.isError).toBeFalsy();
+      expect(sharedSource.callCount()).toBe(1);
     } finally {
       await client.close();
     }
   });
 
-  it("orchestrator error mapping: UnknownToolSource → -32601 unknown_tool_source", async () => {
-    const client = await createIdentityBoundClient();
+  it("switching the header flips the visible workspace (per-request, no session pinning)", async () => {
+    const client = await createMcpClient({ workspace: personalWsId() });
     try {
-      let errorCode: number | undefined;
-      let dataReason: string | undefined;
-      try {
-        await client.callTool({
-          name: `${SHARED_WS_ID}-no_such_source__no_such_tool`,
-          arguments: {},
-        });
-      } catch (err) {
-        const e = err as { code?: number; data?: { reason?: string } };
-        errorCode = e.code;
-        dataReason = e.data?.reason;
-      }
-      expect(errorCode).toBe(-32601);
-      expect(dataReason).toBe("unknown_tool_source");
+      const names = (await client.listTools()).tools.map((t) => t.name);
+      expect(names).toContain(personalToolName());
+      expect(names).not.toContain(sharedToolName());
+    } finally {
+      await client.close();
+    }
+  });
+
+  it("SECURITY: a tool call to another member workspace is denied (CrossWorkspaceReachDenied)", async () => {
+    // Session header = Helix; the dev IS a member of the personal workspace
+    // too, but the wall bounds each request to its one named workspace — a
+    // reach to any other is denied, membership notwithstanding.
+    personalSource.reset();
+    const client = await createMcpClient({ workspace: SHARED_WS_ID });
+    try {
+      const { code, reason } = await callExpectingError(client, personalToolName());
+      expect(code).toBe(-32602);
+      expect(reason).toBe("workspace_access_denied");
+      // The other workspace's tool never ran.
+      expect(personalSource.callCount()).toBe(0);
+    } finally {
+      await client.close();
+    }
+  });
+});
+
+// ── Non-member header → fail-closed to identity only ──────────────
+
+describe("/mcp fail-closed on a non-member X-Workspace-Id", () => {
+  it("SECURITY: a non-member header does not leak that workspace's tools (falls back to identity only)", async () => {
+    const client = await createMcpClient({ workspace: STRANGER_WS_ID });
+    try {
+      const names = (await client.listTools()).tools.map((t) => t.name);
+      // Identity tools only — the stranger workspace exists and has tools, but
+      // the dev is not a member, so the header buys nothing.
+      expect(names).toContain("conversations__list");
+      expect(names).not.toContain(strangerToolName());
+      expect(names.every((n) => !n.startsWith("ws_"))).toBe(true);
+    } finally {
+      await client.close();
+    }
+  });
+
+  it("SECURITY: a non-member header cannot reach that workspace's tools", async () => {
+    strangerSource.reset();
+    const client = await createMcpClient({ workspace: STRANGER_WS_ID });
+    try {
+      const { code, reason } = await callExpectingError(client, strangerToolName());
+      expect(code).toBe(-32602);
+      expect(reason).toBe("workspace_access_denied");
+      expect(strangerSource.callCount()).toBe(0);
+    } finally {
+      await client.close();
+    }
+  });
+});
+
+// ── Resources are walled exactly like tools ───────────────────────
+//
+// `resources/list` and `resources/read` are the sibling of `tools/list` /
+// `tools/call`, and reach the SAME per-request workspace — never a sweep
+// across every workspace the identity belongs to. A walled session must not
+// enumerate or read another workspace's resources.
+
+describe("/mcp resources are walled to the request's workspace", () => {
+  it("no header: resources/list exposes no workspace resources", async () => {
+    const client = await createMcpClient();
+    try {
+      const uris = (await client.listResources()).resources.map((r) => r.uri);
+      expect(uris).not.toContain(SHARED_RESOURCE_URI);
+      expect(uris).not.toContain(PERSONAL_RESOURCE_URI);
+    } finally {
+      await client.close();
+    }
+  });
+
+  it("member header: resources/list serves only the focused workspace's resources", async () => {
+    const client = await createMcpClient({ workspace: SHARED_WS_ID });
+    try {
+      const uris = (await client.listResources()).resources.map((r) => r.uri);
+      expect(uris).toContain(SHARED_RESOURCE_URI);
+      expect(uris).not.toContain(PERSONAL_RESOURCE_URI);
+      expect(uris).not.toContain(STRANGER_RESOURCE_URI);
+    } finally {
+      await client.close();
+    }
+  });
+
+  it("member header: a focused-workspace resource reads successfully", async () => {
+    const client = await createMcpClient({ workspace: SHARED_WS_ID });
+    try {
+      const result = await client.readResource({ uri: SHARED_RESOURCE_URI });
+      expect(result.contents.length).toBeGreaterThan(0);
+    } finally {
+      await client.close();
+    }
+  });
+
+  it("SECURITY: resources/read of another member workspace's resource is refused", async () => {
+    // Session walled to Helix; the dev is a member of the personal workspace
+    // too, but its resources are out of reach — the read must fail, never
+    // return the other workspace's data.
+    const client = await createMcpClient({ workspace: SHARED_WS_ID });
+    try {
+      await expect(client.readResource({ uri: PERSONAL_RESOURCE_URI })).rejects.toThrow();
+    } finally {
+      await client.close();
+    }
+  });
+
+  it("SECURITY: a non-member header cannot read that workspace's resource", async () => {
+    const client = await createMcpClient({ workspace: STRANGER_WS_ID });
+    try {
+      await expect(client.readResource({ uri: STRANGER_RESOURCE_URI })).rejects.toThrow();
+    } finally {
+      await client.close();
+    }
+  });
+
+  it("SECURITY: no header cannot read any workspace resource", async () => {
+    const client = await createMcpClient();
+    try {
+      await expect(client.readResource({ uri: SHARED_RESOURCE_URI })).rejects.toThrow();
     } finally {
       await client.close();
     }

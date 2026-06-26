@@ -145,11 +145,13 @@ describe("Stage 2 T008 — ambient RequestContext.workspaceId matches the routed
     const sharedReg = await runtime.ensureWorkspaceRegistry(SHARED_WS_ID);
     sharedReg.addSource(probe.source);
 
-    // Run the chat. Session workspace is the user's personal — the
-    // outer `runWithRequestContext` sets `workspaceId = ws_user_<id>`.
-    // T008's inner wrap must override it to ws_helix at dispatch time.
+    // Run the chat FOCUSED on ws_helix. The ambient session scope is still
+    // the user's personal workspace (the session bridge `runWithRequestContext`
+    // sets `workspaceId = ws_user_<id>`); the per-call wrap must restamp to the
+    // routed ws_helix at dispatch time.
     await runtime.chat({
       identity: { id: TEST_USER_ID, displayName: TEST_USER_DISPLAY },
+      workspaceId: SHARED_WS_ID,
       message: "ambient context check",
     });
 
@@ -159,75 +161,6 @@ describe("Stage 2 T008 — ambient RequestContext.workspaceId matches the routed
     expect(probe.observations[0]?.workspaceId).toBe(SHARED_WS_ID);
     // Cross-check: NOT the personal workspace (defends against the
     // failure mode where the outer RequestContext leaked through).
-    expect(probe.observations[0]?.workspaceId).not.toBe(personalWsId);
-  });
-
-  it("/mcp path: cross-workspace tool call sets RequestContext.workspaceId to the routed wsId", async () => {
-    // T007's `/mcp` path constructs its own per-call RequestContext
-    // from the routed wsId (see `mcp-server.ts` ~L808). T008's
-    // ambient-context fix mirrors that on the chat side. This case
-    // exercises the `/mcp` invariant directly via the source-execute
-    // path the orchestrator dispatches to, asserting parity with the
-    // chat test above.
-    //
-    // We import `routeToolCall` directly and dispatch the source
-    // through `runWithRequestContext` exactly as `mcp-server.ts`
-    // does — the test pins behavior without booting a full HTTP MCP
-    // server, which would add several seconds of boot time per case
-    // for no extra coverage of the ambient-context contract.
-    workDir = mkdtempSync(join(tmpdir(), "nb-t008-amb-mcp-"));
-    mkdirSync(workDir, { recursive: true });
-
-    const probe = buildContextProbeSource("probe", "observe");
-    await probe.source.start();
-
-    runtime = await Runtime.start({
-      model: { provider: "custom", adapter: createEchoModel() },
-      noDefaultBundles: true,
-      logging: { disabled: true },
-      workDir,
-    });
-
-    const wsStore: WorkspaceStore = runtime.getWorkspaceStore();
-    await wsStore.create("Helix", SHARED_WS_ID.slice(3));
-    await wsStore.addMember(SHARED_WS_ID, TEST_USER_ID, "admin");
-    const personalWsId = personalWorkspaceIdFor(TEST_USER_ID);
-    await wsStore.create("Personal", personalWsId.slice(3), {
-      isPersonal: true,
-      ownerUserId: TEST_USER_ID,
-    });
-
-    const sharedReg = await runtime.ensureWorkspaceRegistry(SHARED_WS_ID);
-    sharedReg.addSource(probe.source);
-
-    const { routeToolCall } = await import("../../src/orchestrator/route.ts");
-    const { runWithRequestContext } = await import("../../src/runtime/request-context.ts");
-
-    // Dispatch as `/mcp` would: route → wrap → execute. The wrap is
-    // keyed on the routed context's wsId.
-    const routed = await routeToolCall({
-      identityId: TEST_USER_ID,
-      namespacedName: namespacedToolName(SHARED_WS_ID, "probe__observe"),
-      runtime,
-    });
-    const sepIdx = routed.toolName.indexOf("__");
-    const bareToolName = sepIdx >= 0 ? routed.toolName.slice(sepIdx + 2) : routed.toolName;
-
-    await runWithRequestContext(
-      {
-        identity: { id: TEST_USER_ID, displayName: TEST_USER_DISPLAY },
-        scope: {
-          kind: "workspace",
-          workspaceId: routed.context.workspaceId,
-          workspaceAgents: null,
-          workspaceModelOverride: null,
-        },
-      },
-      () => routed.source.execute(bareToolName, {}),
-    );
-
-    expect(probe.observations).toHaveLength(1);
-    expect(probe.observations[0]?.workspaceId).toBe(SHARED_WS_ID);
     expect(probe.observations[0]?.workspaceId).not.toBe(personalWsId);
   });
 });

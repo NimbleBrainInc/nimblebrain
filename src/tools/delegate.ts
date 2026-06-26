@@ -29,25 +29,24 @@ export interface DelegateContext {
   /** Resolve model slot names (e.g., "fast") to actual model IDs. Passes through non-slot strings. */
   resolveSlot: (modelString: string) => string;
   /**
-   * Tool router used for the child engine's per-call dispatch. Identity-wide
-   * (Stage 2): `availableTools()` returns the cross-workspace namespaced
-   * union for the request's identity; `execute(call, ...)` routes through
-   * the orchestrator, gated by workspace membership.
+   * Tool router used for the child engine's per-call dispatch. Walled to one
+   * workspace: `availableTools()` returns the session workspace's namespaced
+   * tools plus the caller's identity tools — never a cross-workspace union.
+   * `execute(call, ...)` routes through the orchestrator, which denies any
+   * other workspace.
    *
    * The child engine's INITIAL active set is governed by
    * `defaultActiveTools()` (focused-workspace-scoped) — NOT by
-   * `tools.availableTools()`. Reachability ≠ default visibility. A child
-   * agent can REACH any tool the identity is a member-of-the-workspace-for
-   * (so `manage_tools.add("ws_<B>-...")` works on demand), but its initial
-   * tool list is the focused workspace's set so the prompt stays bounded.
+   * `tools.availableTools()`. Reachability ≠ default visibility: a child
+   * agent can REACH any tool in the bound workspace on demand (e.g.
+   * `manage_tools.add(...)`), but its initial tool list is the focused
+   * workspace's default set so the prompt stays bounded.
    *
    * Globs in `tools: [...]` widen the initial active set: namespaced globs
-   * (`ws_<id>-...`) match against `tools.availableTools()` (identity-wide);
-   * bare globs (`source__*`) match against `defaultActiveTools()` (focused
-   * workspace + identity sources). The asymmetry is deliberate — bare
-   * globs are how existing delegate callers express "the focused
-   * workspace's CRM"; preserving that prevents accidental cross-workspace
-   * fan-out when the same connector is installed in multiple workspaces.
+   * (`ws_<id>-...`) match against `tools.availableTools()` (the bound
+   * workspace); bare globs (`source__*`) match against `defaultActiveTools()`
+   * (focused workspace + identity sources). A namespaced glob for any other
+   * workspace matches nothing — the wall keeps the reachable set to one room.
    */
   tools: ToolRouter;
   /**
@@ -223,16 +222,15 @@ export function createDelegateTool(ctx: DelegateContext): InProcessTool {
         //     active set. Used as the default when no globs are supplied,
         //     and as the match corpus for BARE globs (`source__*`).
         //
-        //   - `ctx.tools.availableTools()` — identity-wide union, namespaced.
-        //     Used as the match corpus for NAMESPACED globs (`ws_<id>-...`)
-        //     so an explicit cross-workspace request can reach across the
-        //     identity's full set.
+        //   - `ctx.tools.availableTools()` — the bound workspace's tools
+        //     (namespaced) plus identity tools. Used as the match corpus for
+        //     NAMESPACED globs (`ws_<id>-...`), which can only target the one
+        //     workspace the session is walled to; a glob naming another
+        //     workspace matches nothing here and is denied at dispatch.
         //
-        // Bare globs intentionally don't broaden to cross-workspace: a
-        // caller using `["crm__*"]` from workspace A expects the focused
-        // workspace's CRM, not every workspace's CRM. Namespaced globs are
-        // the opt-in for cross-workspace reach. Mixed glob lists work —
-        // each glob expands against its own corpus and the results union.
+        // Bare globs (`["crm__*"]`) match the bound workspace's CRM by its bare
+        // inner name. Mixed glob lists work — each glob expands against the same
+        // bounded corpus and the results union.
         const globs = toolGlobs ?? profile?.tools;
         const defaultTools = await ctx.defaultActiveTools();
         let childTools: ToolSchema[];

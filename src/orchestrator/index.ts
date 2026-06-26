@@ -1,10 +1,9 @@
 /**
  * Public surface of `src/orchestrator/`.
  *
- * Stage 2 (cross-workspace refactor) routes every chat / `/mcp` tool
- * dispatch through this module. See `route.ts` for the routing rules
- * and `tool-list-aggregator.ts` for the per-identity aggregated tool
- * surface (watcher-backed cache).
+ * Every chat / `/mcp` tool dispatch routes through this module. See `route.ts`
+ * for the routing rules: a session is walled to one workspace (or, for `/mcp`,
+ * to identity tools only), and a call to any other workspace is denied.
  *
  * Internal helpers stay unexported — only the orchestrator's public
  * entry points and the structured error taxonomy escape.
@@ -13,23 +12,11 @@
 export { mapOrchestratorErrorToToolResult } from "./error-mapping.ts";
 export type { OrchestratorRuntime, RoutedToolCall } from "./route.ts";
 export {
+  CrossWorkspaceReachDenied,
   routeToolCall,
   UnknownIdentitySource,
   UnknownNamespacedToolName,
   UnknownToolSource,
-  UnknownWorkspace,
   WorkspaceAccessDenied,
+  WorkspaceToolUnavailable,
 } from "./route.ts";
-
-export type {
-  AggregatorWorkspaceStore,
-  NamespacedToolDescriptor,
-  ToolListAggregator,
-  ToolListAggregatorOptions,
-  WorkspaceToolLister,
-  WorkspaceToolListing,
-} from "./tool-list-aggregator.ts";
-export { createToolListAggregator } from "./tool-list-aggregator.ts";
-
-export type { ToolListCacheOptions } from "./tool-list-cache.ts";
-export { ToolListCache } from "./tool-list-cache.ts";

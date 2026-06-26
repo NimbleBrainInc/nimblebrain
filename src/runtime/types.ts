@@ -234,24 +234,22 @@ export interface ChatRequest {
    * section and the org/workspace instruction overlays reflect THIS
    * workspace, identical for every member (no per-user generation).
    *
-   * NOT tool scope. Tools remain the cross-workspace union
-   * (`aggregateToolList(identityId)`); re-introducing this field does not
-   * re-narrow tools to one workspace (what T006 removed). Absent → the
-   * chat isn't focused on a workspace (e.g. the future home control
-   * panel); for now it falls back to the personal workspace as a
-   * temporary bridge, NOT a claim that home == the personal workspace.
+   * It is ALSO the tool scope: a session is walled to this one workspace —
+   * its tools (namespaced) plus the caller's identity tools, via
+   * `listToolsForWorkspace(workspaceId)`. There is no cross-workspace union.
+   * Absent → the chat isn't focused on a workspace (e.g. the home control
+   * panel); it falls back to the personal workspace, which is then the room.
    */
   workspaceId?: string;
   /**
    * When set, the chat is scoped to a specific app.
    *
-   * Stage 2 (cross-workspace): the chat surface is identity-bound, not
-   * workspace-bound. Tools come from the cross-workspace aggregator
-   * (`orchestrator.aggregateToolList(identityId)`) and each tool call
-   * routes through the orchestrator's parsed-namespace path. The
-   * `workspaceId` field above is the *focused* workspace for the
-   * deterministic briefing (apps + overlays) only — it does NOT narrow
-   * the tool list. Per-call workspace attribution lives on the tool's
+   * The chat surface is identity-bound but WALLED to one workspace. Tools come
+   * from `listToolsForWorkspace(workspaceId)` (that workspace + identity tools)
+   * and each tool call routes through the orchestrator's parsed-namespace path,
+   * which denies any other workspace. The `workspaceId` field above is both the
+   * tool scope and the *focused* workspace for the deterministic briefing
+   * (apps + overlays). Per-call workspace attribution lives on the tool's
    * namespace prefix.
    */
   appContext?: AppContext;
@@ -348,14 +346,11 @@ export interface ChatResult {
  *                             workspace briefing names that workspace.
  *  - `workspaceId` omitted  → active tools are the owner's personal-
  *                             workspace tools + identity tools (no
- *                             focused-workspace briefing). The full
- *                             cross-workspace tool union is the
- *                             DISCOVERABLE corpus reached on demand via
- *                             `nb__search`, not the active toolset.
- *                             (Bundle workflow guidance via Layer 3
- *                             DOES aggregate across every workspace the
- *                             owner can see, so a discovered tool's
- *                             usage skill is available when it lands.)
+ *                             focused-workspace briefing). `nb__search`
+ *                             discovers the rest of that one bound
+ *                             workspace on demand — there is no
+ *                             cross-workspace union, and Layer 3 bundle
+ *                             skills come from the bound workspace only.
  *
  * Each call writes a FRESH conversation owned by `identity`. There is no
  * continuation, no `conversationId` to resume — the returned
@@ -377,10 +372,9 @@ export interface TaskRequest {
    * Focused workspace (optional). When set, drives the active tool set
    * (that workspace's tools + identity tools) and the focused-workspace
    * briefing layer in the system prompt. When omitted, the active tool
-   * set is the owner's personal-workspace tools + identity tools; the
-   * full cross-workspace tool union is the discoverable corpus via
-   * `nb__search`, NOT the active toolset (progressive disclosure, same
-   * shape as chat at the identity-level home). The focused-workspace
+   * set is the owner's personal-workspace tools + identity tools; `nb__search`
+   * discovers the rest of that one workspace, NOT a cross-workspace union
+   * (progressive disclosure, same shape as chat). The focused-workspace
    * briefing layer is skipped — `TASK_IDENTITY` carries the framing.
    */
   workspaceId?: string;
