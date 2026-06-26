@@ -1398,7 +1398,10 @@ export class BundleLifecycleManager {
         type: "remote",
         url: new URL(ref.url),
         transportConfig: ref.transport,
-        allowInsecure: this.allowInsecureRemotes,
+        // Honor the per-call flag, same source the OAuth provider above and the
+        // startup-time validateBundleUrl use — not the manager default — so the
+        // transport's SSRF guard agrees with what this install was authorized for.
+        allowInsecure: opts.allowInsecureRemotes === true,
         authProvider: provider,
       },
       this.eventSink,
