@@ -300,7 +300,7 @@ Any MCP bundle that declares UI resources and placements becomes an MCP App. See
 
 ## Platform as MCP server
 
-NimbleBrain exposes a `/mcp` endpoint that turns the platform into a Streamable HTTP MCP server. External MCP clients — Claude Code, Open WebUI, or another NimbleBrain instance — can connect and access your identity tools (conversations, files, automations) through a single endpoint. Workspace-scoped tool access over `/mcp` is being reworked into a workspace-bound projection; until it lands, `/mcp` serves identity tools only.
+NimbleBrain exposes a `/mcp` endpoint that turns the platform into a Streamable HTTP MCP server. External MCP clients — Claude Code, Open WebUI, or another NimbleBrain instance — can connect through a single endpoint. Each request names its workspace via the `X-Workspace-Id` header (validated against your membership): `/mcp` serves that one workspace's tools plus your identity tools (conversations, files, automations), and refuses tools in any other workspace. A request with no `X-Workspace-Id` is identity-only.
 
 This means NimbleBrain is both an MCP **client** (connecting to installed bundles) and an MCP **server** (exposing composed tools to external hosts). See [MCP Endpoint Reference](/connect/mcp-endpoint) for configuration and usage.
 

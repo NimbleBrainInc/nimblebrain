@@ -226,7 +226,64 @@ describe("Bundle with placements → /v1/shell", () => {
 });
 
 // =============================================================================
-// Core tools via Bridge proxy (POST /v1/tools/call server=nb)
+// 3. MCP client → /mcp → lists nb__ tools → calls nb__list_apps
+// =============================================================================
+
+describe("MCP client e2e with nb tools", () => {
+	// Stage 2: every tool name is namespaced as `ws_<id>/<source>__<tool>`.
+	const NB_PREFIX = `${TEST_WORKSPACE_ID}-nb__`;
+
+	it("listTools includes nb__ prefixed tools", async () => {
+		const client = await createMcpClient();
+		try {
+			const result = await client.listTools();
+			const coreTools = result.tools.filter((t) => t.name.startsWith(NB_PREFIX));
+			expect(coreTools.length).toBeGreaterThanOrEqual(7);
+
+			const names = coreTools.map((t) => t.name).sort();
+			expect(names).toContain(`${NB_PREFIX}list_apps`);
+		} finally {
+			await client.close();
+		}
+	});
+
+	it("listTools includes nb__ system tools", async () => {
+		const client = await createMcpClient();
+		try {
+			const result = await client.listTools();
+			const nbTools = result.tools.filter((t) => t.name.startsWith(NB_PREFIX));
+			expect(nbTools.length).toBeGreaterThanOrEqual(1);
+
+			const names = nbTools.map((t) => t.name);
+			expect(names).toContain(`${NB_PREFIX}search`);
+		} finally {
+			await client.close();
+		}
+	});
+
+	it("callTool nb__list_apps returns structured data", async () => {
+		const client = await createMcpClient();
+		try {
+			const result = await client.callTool({
+				name: `${NB_PREFIX}list_apps`,
+				arguments: {},
+			});
+			expect(result.isError).toBeFalsy();
+			expect(Array.isArray(result.content)).toBe(true);
+			const textBlocks = result.content as Array<{ type: string; text: string }>;
+			expect(textBlocks[0]!.type).toBe("text");
+			// MCP protocol returns content blocks, not structuredContent.
+			// The text should contain a human-readable app listing.
+			expect(textBlocks[0]!.text.length).toBeGreaterThan(0);
+		} finally {
+			await client.close();
+		}
+	});
+
+});
+
+// =============================================================================
+// 4. Core tools via Bridge proxy (POST /v1/tools/call server=nb)
 // =============================================================================
 
 describe("POST /v1/tools/call — all core tools via Bridge proxy", () => {

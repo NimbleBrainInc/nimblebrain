@@ -29,8 +29,8 @@ The methods correspond to the Streamable HTTP session lifecycle:
 - **DELETE** — terminate a session (with a valid `Mcp-Session-Id`).
 - **GET** — returns `405 Method Not Allowed` with `Allow: POST, DELETE`. NimbleBrain does not offer the optional GET-style server-to-client SSE channel; progress and task updates flow over the POST that started them. Spec-compliant clients fall back to POST-only automatically.
 
-<Aside type="caution" title="Identity tools only (interim)">
-A `/mcp` session is identity-bound and carries **no workspace**, so it serves only your identity tools (conversations, files, automations). A `tools/call` for a workspace tool (`ws_<id>-<source>__<tool>`) is refused with `-32602 workspace_access_denied`. The `X-Workspace-Id` header is ignored (logged once at debug under `NB_DEBUG=mcp`). Workspace-scoped tool access is being reworked into a workspace-bound projection; until it lands, `/mcp` exposes identity tools only.
+<Aside type="note" title="Per-request workspace">
+A `/mcp` session is identity-bound, but **each request names its workspace** via the `X-Workspace-Id` header — validated against your membership. `tools/list` returns that workspace's tools (`ws_<id>-<source>__<tool>`) plus your identity tools (bare `<source>__<tool>`); a `tools/call` to any **other** workspace is refused with `-32602 workspace_access_denied`. A request with no (or a non-member) `X-Workspace-Id` is identity-only.
 </Aside>
 
 ## Authentication
@@ -123,10 +123,11 @@ NimbleBrain honors `X-Forwarded-Proto` to derive the advertised scheme. Configur
 
 ## What's exposed
 
-In the current interim, the endpoint exposes **identity tools only**:
+For the request's validated `X-Workspace-Id` workspace, the endpoint exposes:
 
-- **Identity tools** — `tools/list` returns your identity-owned tools (conversations, files, automations). Workspace/bundle tools are **not** exposed over `/mcp` for now.
-- **Tool execution** — `tools/call` runs an identity tool. A workspace-namespaced name (`ws_<id>-…`) is refused with `-32602 workspace_access_denied`.
+- **Workspace tools** — namespaced `ws_<id>-<source>__<tool>`, from the bundles installed and running in that workspace.
+- **Identity tools** — your conversations, files, and automations (bare `<source>__<tool>`).
+- **Tool execution** — `tools/call` runs a tool in that workspace or an identity tool. A name in a **different** workspace is refused with `-32602 workspace_access_denied`; with no `X-Workspace-Id`, only identity tools are exposed.
 
 Two filters apply to both `tools/list` and `tools/call`:
 
