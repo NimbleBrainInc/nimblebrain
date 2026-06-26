@@ -78,6 +78,7 @@ export function SlotRenderer({
   // Stable key: only re-mount iframes when the actual placements change
   const placementKey = filtered.map((p) => p.resourceUri).join(",");
 
+  // biome-ignore lint/correctness/useExhaustiveDependencies: re-mount iframes only when placementKey changes — `filtered` is read at run time but changes identity every render (depending on it would thrash iframes), and mode/streaming/forceRefresh are read through refs
   useEffect(() => {
     const container = containerRef.current;
     if (!container) return;
@@ -148,7 +149,6 @@ export function SlotRenderer({
     };
     // Only re-mount iframes when placements change, not when callbacks change.
     // Callbacks are accessed via refs so bridges always call the latest version.
-    // biome-ignore lint/correctness/useExhaustiveDependencies: callbacks accessed via refs
   }, [placementKey]);
 
   // Propagate host-context changes (theme + workspace) to mounted iframes

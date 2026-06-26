@@ -71,7 +71,7 @@ describe("forwardConversationTitleToIframes", () => {
     // No matching iframe in the DOM — querySelectorAll returns empty for any
     // selector. Forward must not throw and must post nothing.
     originalQSA = document.querySelectorAll.bind(document);
-    let posted = false;
+    const posted = false;
     document.querySelectorAll = (() =>
       [] as unknown as NodeListOf<Element>) as typeof document.querySelectorAll;
     // Guard: if forward somehow posted, this would flip — but with zero

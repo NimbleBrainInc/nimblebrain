@@ -11,11 +11,11 @@
  */
 
 import {
-  type Mode,
   colors,
   extOnlyColors,
   fonts,
   layout,
+  type Mode,
   pick,
   radiusBase,
   radiusScale,

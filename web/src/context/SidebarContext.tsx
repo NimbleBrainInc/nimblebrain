@@ -80,7 +80,7 @@ export function SidebarProvider({ children }: { children: React.ReactNode }) {
 
   const value = useMemo<SidebarContextValue>(
     () => ({ state, isDrawerOpen, toggle, setDrawerOpen }),
-    [state, isDrawerOpen, toggle, setDrawerOpen],
+    [state, isDrawerOpen, toggle],
   );
 
   return <SidebarContext.Provider value={value}>{children}</SidebarContext.Provider>;

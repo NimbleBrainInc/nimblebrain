@@ -121,6 +121,7 @@ export function OperatorSetupModal({
   };
 
   return (
+    // biome-ignore lint/a11y/noStaticElementInteractions: backdrop click-to-dismiss is a mouse convenience; keyboard users dismiss via ESC
     <div
       className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4"
       role="presentation"

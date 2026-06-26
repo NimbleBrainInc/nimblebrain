@@ -93,12 +93,18 @@ export function ConnectorBrowsePage() {
     return { byUrl, byBundleName };
   }, [installed]);
 
-  function isInstalled(entry: DirectoryEntry): boolean {
-    if (entry.install.kind === "remote-oauth") return installedByKey.byUrl.has(entry.install.url);
-    if (entry.install.kind === "mpak-bundle")
-      return installedByKey.byBundleName.has(entry.install.package);
-    return false;
-  }
+  // useCallback so the visibleEntries memo can depend on a stable isInstalled
+  // (its identity changes only when installedByKey does — the same trigger the
+  // memo needs to drop newly-installed connectors from the list).
+  const isInstalled = useCallback(
+    (entry: DirectoryEntry): boolean => {
+      if (entry.install.kind === "remote-oauth") return installedByKey.byUrl.has(entry.install.url);
+      if (entry.install.kind === "mpak-bundle")
+        return installedByKey.byBundleName.has(entry.install.package);
+      return false;
+    },
+    [installedByKey],
+  );
 
   // One unified browse list: every connector is installable into any
   // workspace, so the only filtering is dropping already-installed
@@ -113,9 +119,7 @@ export function ConnectorBrowsePage() {
         e.description.toLowerCase().includes(q) ||
         (e.tags ?? []).some((t) => t.toLowerCase().includes(q)),
     );
-    // installedByKey is captured by isInstalled via closure; re-running
-    // when it changes is what lets newly-installed connectors disappear.
-  }, [entries, query, installedByKey]);
+  }, [entries, query, isInstalled]);
 
   // Install into the workspace the user is already in. The page is
   // mounted under `/w/<slug>/...`, so the route names an unambiguous

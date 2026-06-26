@@ -51,6 +51,5 @@ function pickColor(id: string): string {
     hash = (hash * 31 + id.charCodeAt(i)) | 0;
   }
   const idx = Math.abs(hash) % PALETTE.length;
-  // biome-ignore lint/style/noNonNullAssertion: idx is `% PALETTE.length`, so always in-range
   return PALETTE[idx]!;
 }

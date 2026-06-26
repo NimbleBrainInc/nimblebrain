@@ -47,7 +47,6 @@ function fakeConnectEvents(options: ConnectEventsOptions): EventConnection {
   return new FakeConnection();
 }
 
-const React = await import("react");
 const ReactDOMClient = await import("react-dom/client");
 const { act } = await import("react");
 const { useEvents } = await import("../hooks/useEvents");
@@ -96,7 +95,6 @@ describe("useEvents", () => {
     act(() => {
       root.render(<Probe onReconnect={onReconnect} />);
     });
-    // biome-ignore lint/style/noNonNullAssertion: ensureOpen ran on first subscribe()
     expect(lastOptions!.onReconnect).toBeDefined();
 
     // Simulate the singleton firing reconnect (as it does after a

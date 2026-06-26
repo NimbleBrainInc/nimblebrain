@@ -19,8 +19,8 @@ import { CommandPalette } from "./components/palette/CommandPalette";
 import { RouteGuard } from "./components/RouteGuard";
 import { ShellLayout } from "./components/ShellLayout";
 import { WorkspaceRouteGuard } from "./components/WorkspaceRouteGuard";
-import { ChatProvider, useChatConfigContext, useChatContext } from "./context/ChatContext";
 import { ArtifactPanelProvider } from "./context/ArtifactPanelContext";
+import { ChatProvider, useChatConfigContext, useChatContext } from "./context/ChatContext";
 import { ChatPanelProvider, useChatPanelContext } from "./context/ChatPanelContext";
 import { FocusedAppProvider } from "./context/FocusedAppContext";
 import { PaletteProvider } from "./context/PaletteContext";
@@ -36,17 +36,15 @@ import {
 } from "./context/WorkspaceContext";
 import { chatStore } from "./hooks/chat-store";
 import { useDataSync } from "./hooks/useDataSync";
-import { forwardConversationTitleToIframes } from "./lib/forward-conversation-title";
 import { useEvents } from "./hooks/useEvents";
 import { useShell } from "./hooks/useShell";
 import { bootstrapWorkspacesToInfo } from "./lib/bootstrap";
+import { forwardConversationTitleToIframes } from "./lib/forward-conversation-title";
 import { identityAppRoute, isIdentityApp } from "./lib/identity-apps";
 import { recoverFromWorkspaceError } from "./lib/workspace-recovery";
 import { toSlug } from "./lib/workspace-slug";
 import { GlobalHomePage } from "./pages/GlobalHomePage";
 import { ProfilePage } from "./pages/ProfilePage";
-import { ProfileSkillsTab } from "./pages/settings/ProfileSkillsTab";
-import { ProfileTab } from "./pages/settings/ProfileTab";
 import { ConnectorBrowsePage } from "./pages/settings/ConnectorBrowsePage";
 import { ConnectorDetailPage } from "./pages/settings/ConnectorDetailPage";
 import { ModelTab } from "./pages/settings/ModelTab";
@@ -55,6 +53,8 @@ import { OrgRegistriesTab } from "./pages/settings/OrgRegistriesTab";
 import { OrgSettingsPage } from "./pages/settings/OrgSettingsPage";
 import { OrgSkillsTab } from "./pages/settings/OrgSkillsTab";
 import { OrgUsageTab } from "./pages/settings/OrgUsageTab";
+import { ProfileSkillsTab } from "./pages/settings/ProfileSkillsTab";
+import { ProfileTab } from "./pages/settings/ProfileTab";
 import { SettingsAppPanel } from "./pages/settings/SettingsAppPanel";
 import { SkillsTab } from "./pages/settings/SkillsTab";
 import { UsersTab } from "./pages/settings/UsersTab";
@@ -448,7 +448,7 @@ function AuthenticatedAppContent({
               <Route
                 path="model"
                 element={
-                  <RouteGuard role="org_admin">
+                  <RouteGuard requireRole="org_admin">
                     <ModelTab />
                   </RouteGuard>
                 }
@@ -456,7 +456,7 @@ function AuthenticatedAppContent({
               <Route
                 path="workspaces"
                 element={
-                  <RouteGuard role="org_admin">
+                  <RouteGuard requireRole="org_admin">
                     <WorkspacesTab />
                   </RouteGuard>
                 }
@@ -464,7 +464,7 @@ function AuthenticatedAppContent({
               <Route
                 path="workspaces/:slug"
                 element={
-                  <RouteGuard role="org_admin">
+                  <RouteGuard requireRole="org_admin">
                     <WorkspaceDetailPage />
                   </RouteGuard>
                 }
@@ -472,7 +472,7 @@ function AuthenticatedAppContent({
               <Route
                 path="users"
                 element={
-                  <RouteGuard role="org_admin">
+                  <RouteGuard requireRole="org_admin">
                     <UsersTab />
                   </RouteGuard>
                 }
@@ -480,7 +480,7 @@ function AuthenticatedAppContent({
               <Route
                 path="usage"
                 element={
-                  <RouteGuard role="org_admin">
+                  <RouteGuard requireRole="org_admin">
                     <OrgUsageTab />
                   </RouteGuard>
                 }
@@ -488,7 +488,7 @@ function AuthenticatedAppContent({
               <Route
                 path="registries"
                 element={
-                  <RouteGuard role="org_admin">
+                  <RouteGuard requireRole="org_admin">
                     <OrgRegistriesTab />
                   </RouteGuard>
                 }
@@ -496,7 +496,7 @@ function AuthenticatedAppContent({
               <Route
                 path="skills"
                 element={
-                  <RouteGuard role="org_admin">
+                  <RouteGuard requireRole="org_admin">
                     <OrgSkillsTab />
                   </RouteGuard>
                 }

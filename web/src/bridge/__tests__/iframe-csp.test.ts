@@ -1,4 +1,4 @@
-import { describe, expect, it, mock, spyOn } from "bun:test";
+import { describe, expect, it, spyOn } from "bun:test";
 import { buildCSP, isValidCspDomain } from "../iframe.ts";
 
 describe("buildCSP", () => {
