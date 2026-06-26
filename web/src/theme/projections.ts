@@ -17,7 +17,6 @@ import {
   layout,
   type Mode,
   pick,
-  radiusBase,
   radiusScale,
   shadows,
   typeScale,
@@ -78,15 +77,16 @@ export function paletteToExtAppsTokens(mode: Mode): Record<string, string> {
 /**
  * Build the shell's `:root` (light) and `.dark` (dark) CSS blocks. The values
  * and selectors match what Tailwind v4's `@theme inline` already references
- * (`--background`, `--sidebar-*`, `--chart-*`, `--radius`, `--font-text-*`, …).
- * `:root` also carries the mode-independent layout constants, base radius, and
- * type scale; `.dark` redefines colors only (the rest cascade from `:root`).
+ * (`--background`, `--sidebar-*`, `--chart-*`, `--border-radius-*`,
+ * `--font-text-*`, `--nb-shadow-*`, …). `:root` also carries the
+ * mode-independent layout constants, radius scale, type scale, and fonts;
+ * `.dark` redefines colors and shadows (both mode-dependent), the rest cascade
+ * from `:root`.
  */
 export function paletteToRootCss(): string {
   const names = Object.keys(colors) as (keyof typeof colors)[];
 
   const lightDecls = names.map((n) => `  --${n}: ${pick(colors[n], "light")};`);
-  lightDecls.push(`  --radius: ${radiusBase};`);
   for (const [k, v] of Object.entries(layout)) lightDecls.push(`  ${k}: ${v};`);
   // Radius scale — the ONE radius source, shared with the iframe apps. Emitted
   // as `--border-radius-*` (the ext-apps / synapse-ui names) and aliased to
@@ -100,8 +100,16 @@ export function paletteToRootCss(): string {
   // Tailwind's `--font-*` in index.css (the shell previously restated these as
   // literals). Mode-independent, :root only.
   for (const [k, v] of Object.entries(fonts)) lightDecls.push(`  --nb-font-${k}: ${v};`);
+  // Shadows — mode-dependent, so emitted into both :root and .dark. Renamed to
+  // `--nb-shadow-*` (Tailwind owns the `--shadow-*` key) and aliased to it in
+  // index.css. The shell shares the design system's shadow ramp the iframe apps
+  // already use; the shell-only `shadow-xl`/`2xl` (modals) keep Tailwind's
+  // values — the ramp tops out at `lg` in the shared design system.
+  const shadowDecl = (k: string, v: string) => `  ${k.replace("--shadow-", "--nb-shadow-")}: ${v};`;
+  for (const [k, v] of Object.entries(shadows.light)) lightDecls.push(shadowDecl(k, v));
 
   const darkDecls = names.map((n) => `  --${n}: ${pick(colors[n], "dark")};`);
+  for (const [k, v] of Object.entries(shadows.dark)) darkDecls.push(shadowDecl(k, v));
 
   return `:root {\n${lightDecls.join("\n")}\n}\n\n.dark {\n${darkDecls.join("\n")}\n}\n`;
 }

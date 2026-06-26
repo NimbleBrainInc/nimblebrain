@@ -90,6 +90,17 @@
     --radius-md: var(--border-radius-md);
     --radius-lg: var(--border-radius-lg);
     --radius-xl: var(--border-radius-xl);
+
+    /* Shadow ramp — single-sourced from src/theme/palette.ts (shadows),
+       emitted to :root/.dark as --nb-shadow-* and aliased so shell `shadow-*`
+       matches the design system the iframe apps share. The ramp tops out at
+       `lg`; `shadow-xl`/`shadow-2xl` (modals) keep Tailwind's defaults. The
+       palette also emits `--nb-shadow-hairline`, intentionally left unaliased
+       here — there's no Tailwind `shadow-hairline` utility; it's consumed only
+       on the iframe path (bridge/theme.ts). */
+    --shadow-sm: var(--nb-shadow-sm);
+    --shadow-md: var(--nb-shadow-md);
+    --shadow-lg: var(--nb-shadow-lg);
 }
 
 /* ─────────────────────────────────────────────────────────────────────────

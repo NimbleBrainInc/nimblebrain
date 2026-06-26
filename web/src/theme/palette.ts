@@ -29,9 +29,6 @@ export const fonts = {
   mono: "'JetBrains Mono Variable', ui-monospace, SFMono-Regular, monospace",
 } as const;
 
-/** Base corner radius (the shadcn `--radius`; scale multiples derive in index.css `@theme`). */
-export const radiusBase = "0.5rem";
-
 /** Layout constants (mode-independent; `:root` only). */
 export const layout = {
   "--sidebar-width": "240px",

@@ -46,7 +46,6 @@
   --sidebar-border: #e5e5e5;
   --sidebar-ring: #0055FF;
   --sidebar-hover: #faf9f7;
-  --radius: 0.5rem;
   --sidebar-width: 240px;
   --sidebar-width-collapsed: 64px;
   --border-radius-xs: 0.25rem;
@@ -80,6 +79,10 @@
   --nb-font-sans: 'Satoshi', system-ui, sans-serif;
   --nb-font-heading: 'Erode', Georgia, serif;
   --nb-font-mono: 'JetBrains Mono Variable', ui-monospace, SFMono-Regular, monospace;
+  --nb-shadow-hairline: 0 0 0 1px rgba(0,0,0,0.06);
+  --nb-shadow-sm: 0 1px 2px rgba(0,0,0,0.05);
+  --nb-shadow-md: 0 4px 6px -1px rgba(0,0,0,0.1);
+  --nb-shadow-lg: 0 10px 15px -3px rgba(0,0,0,0.1);
 }
 
 .dark {
@@ -127,4 +130,8 @@
   --sidebar-border: #262626;
   --sidebar-ring: #3b8eff;
   --sidebar-hover: #141413;
+  --nb-shadow-hairline: 0 0 0 1px rgba(255,255,255,0.06);
+  --nb-shadow-sm: 0 1px 2px rgba(0,0,0,0.3);
+  --nb-shadow-md: 0 4px 6px -1px rgba(0,0,0,0.4);
+  --nb-shadow-lg: 0 10px 15px -3px rgba(0,0,0,0.4);
 }

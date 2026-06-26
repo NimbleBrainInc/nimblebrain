@@ -193,7 +193,6 @@ describe("paletteToRootCss — shell :root/.dark match current values", () => {
       "--processing: #7c3aed;",
       "--sidebar-accent: #eff6ff;",
       "--chart-1: #0055FF;",
-      "--radius: 0.5rem;",
       "--sidebar-width: 240px;",
     ]) {
       expect(rootBlock).toContain(decl);
@@ -238,5 +237,16 @@ describe("paletteToRootCss — shell :root/.dark match current values", () => {
 
   test("dark block does not redefine the radius scale (mode-independent, cascades)", () => {
     expect(darkBlock).not.toContain("--border-radius-");
+  });
+
+  test("shadow ramp lands in :root (light) and .dark (mode-dependent), aliased to --shadow-* in index.css", () => {
+    expect(rootBlock).toContain("--nb-shadow-sm: 0 1px 2px rgba(0,0,0,0.05);");
+    expect(rootBlock).toContain("--nb-shadow-lg: 0 10px 15px -3px rgba(0,0,0,0.1);");
+    // shadows are mode-dependent, so .dark carries its own values
+    expect(darkBlock).toContain("--nb-shadow-sm: 0 1px 2px rgba(0,0,0,0.3);");
+  });
+
+  test("the --radius base is no longer emitted (vestigial after the radius convergence)", () => {
+    expect(rootBlock).not.toContain("--radius:");
   });
 });
