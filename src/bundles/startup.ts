@@ -415,6 +415,7 @@ export async function startBundleSource(
         type: "remote",
         url: new URL(ref.url),
         transportConfig: ref.transport,
+        allowInsecure: opts?.allowInsecureRemotes === true,
         authProvider,
       },
       eventSink,

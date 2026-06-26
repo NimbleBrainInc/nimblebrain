@@ -5,6 +5,7 @@ import type { FetchLike, Transport } from "@modelcontextprotocol/sdk/shared/tran
 import type { RemoteTransportConfig } from "../bundles/types.ts";
 import { getCredentialProvider } from "./credential-provider.ts";
 import { createOAuthRefreshFetch } from "./oauth-refresh-fetch.ts";
+import { createSsrfGuardedFetch } from "./ssrf-guarded-fetch.ts";
 
 /**
  * Resolve `${ENV_VAR}` placeholders against `process.env`.
@@ -56,6 +57,10 @@ export function createRemoteTransport(
      *  dimension a `provider`-auth token is scoped to). Threaded from the
      *  McpSource's `BundleMcpContext`. */
     workspaceId?: string;
+    /** Dev-mode flag (`allowInsecureRemotes`) threaded to the SSRF redirect
+     *  guard so http://localhost endpoints still work under local development.
+     *  Defaults to false (production posture). */
+    allowInsecure?: boolean;
   },
 ): Transport {
   const headers: Record<string, string> = { ...(config?.headers ?? {}) };
@@ -111,20 +116,33 @@ export function createRemoteTransport(
   const transportFetch: FetchLike | undefined =
     mintingFetch ?? (effectiveAuthProvider ? createOAuthRefreshFetch() : undefined);
 
+  // SSRF redirect guard: the SDK transports follow redirects automatically
+  // (fetch default `redirect: "follow"`). For a tenant-supplied remote URL,
+  // that would let a hostile server 30x our fetch into the cluster network or
+  // cloud metadata. Interpose manual, per-hop-validated redirect handling over
+  // whatever fetch the transport would otherwise use (minting / OAuth-refresh /
+  // global). A `provider`-auth source is the operator-vetted fleet rail and may
+  // point at an in-cluster `http://*.svc` endpoint, so its configured URL is
+  // validated with `fleetInternal` — redirect targets never are.
+  const guardedFetch: FetchLike = createSsrfGuardedFetch(transportFetch, {
+    allowInsecure: opts?.allowInsecure ?? false,
+    fleetInternal: config?.auth?.type === "provider",
+  });
+
   const requestInit: RequestInit = Object.keys(headers).length > 0 ? { headers } : {};
 
   if (config?.type === "sse") {
     return new SSEClientTransport(url, {
       requestInit,
       authProvider: effectiveAuthProvider,
-      fetch: transportFetch,
+      fetch: guardedFetch,
     });
   }
 
   return new StreamableHTTPClientTransport(url, {
     requestInit,
     authProvider: effectiveAuthProvider,
-    fetch: transportFetch,
+    fetch: guardedFetch,
     reconnectionOptions: config?.reconnection
       ? {
           maxReconnectionDelay: config.reconnection.maxReconnectionDelay ?? 30_000,

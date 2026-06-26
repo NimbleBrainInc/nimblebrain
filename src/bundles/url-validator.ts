@@ -9,8 +9,11 @@ const METADATA_HOSTNAMES = ["metadata.google.internal", "metadata.goog", "instan
 
 /**
  * IPv4 private/reserved range patterns (RFC 1918 + link-local + loopback).
- * Checked against the URL hostname string — no DNS resolution is performed
- * (intentionally avoids DNS rebinding bypass).
+ * Checked against the URL hostname string. No DNS resolution is performed: this
+ * avoids the TOCTOU rebinding race (resolve-then-connect can disagree), but it
+ * also does NOT catch a hostname whose A-record points at an internal IP. That
+ * residual gap is closed at the network layer — the tenant egress NetworkPolicy
+ * denies pod→link-local/RFC1918 — not here. See the SSRF follow-up.
  */
 const PRIVATE_IPV4_PATTERNS = [
   /^127\./, // loopback

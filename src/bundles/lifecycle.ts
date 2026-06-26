@@ -1398,6 +1398,7 @@ export class BundleLifecycleManager {
         type: "remote",
         url: new URL(ref.url),
         transportConfig: ref.transport,
+        allowInsecure: this.allowInsecureRemotes,
         authProvider: provider,
       },
       this.eventSink,
