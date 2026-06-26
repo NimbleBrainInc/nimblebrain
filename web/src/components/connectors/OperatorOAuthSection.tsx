@@ -1,5 +1,6 @@
 import { useMemo, useState } from "react";
 import type { DirectoryEntry, InstalledConnector } from "../../api/client";
+import { Button } from "../ui/button";
 import { OperatorSetupModal } from "./OperatorSetupModal";
 
 /**
@@ -78,13 +79,15 @@ export function OperatorOAuthSection({
           </div>
         </div>
         {canManage && (
-          <button
+          <Button
             type="button"
+            variant="outline"
+            size="sm"
+            className="shrink-0"
             onClick={() => setEditing(true)}
-            className="text-xs px-3 py-1.5 rounded border border-border hover:bg-muted shrink-0"
           >
             Edit OAuth app
-          </button>
+          </Button>
         )}
       </div>
       {editing && (

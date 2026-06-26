@@ -6,6 +6,7 @@ import {
   initiateComposioOAuth,
   initiateMcpOAuth,
 } from "../../api/client";
+import { Button } from "../ui/button";
 import { BundleCredentialsModal } from "./BundleCredentialsModal";
 import { ComposioApiKeyModal } from "./ComposioApiKeyModal";
 import { ConnectorIcon } from "./ConnectorIcon";
@@ -204,14 +205,16 @@ export function ConnectorStatusHero({
             </div>
           </div>
           {action && canManageAction(action, canManage) && (
-            <button
+            <Button
               type="button"
+              variant="outline"
+              size="sm"
+              className="shrink-0"
               onClick={onPrimary}
               disabled={acting}
-              className="text-xs px-3 py-1.5 rounded border border-border bg-background hover:bg-muted disabled:opacity-60 shrink-0"
             >
               {acting ? "Working…" : action.label}
-            </button>
+            </Button>
           )}
         </div>
       )}
