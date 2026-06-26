@@ -22,6 +22,18 @@ export const ConversationsListInput = Type.Object({
       description: "Filter: only conversations created on or before this ISO 8601 date.",
     }),
   ),
+  workspaceId: Type.Optional(
+    Type.String({
+      description:
+        "Filter: only conversations that ran in this room (workspace). Applied before the limit, so the page reflects the room's set. Omit for all rooms.",
+    }),
+  ),
+  includeUnstamped: Type.Optional(
+    Type.Boolean({
+      description:
+        "When workspaceId is set, also include conversations with no stamped room — legacy chats belong to the personal room. Default false.",
+    }),
+  ),
 });
 export type ConversationsListInput = Static<typeof ConversationsListInput>;
 

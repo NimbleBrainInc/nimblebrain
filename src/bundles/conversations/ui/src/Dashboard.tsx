@@ -11,11 +11,10 @@ type View = "list" | "search";
 export function Dashboard() {
   const synapse = useSynapse();
   const action = useAction();
-  // Conversations with an in-flight assistant turn in this tab — pushed by the
-  // host via hostContext. Drives a live per-row streaming indicator.
-  // `workspace` is the room the shell is focused on — the binding for the
-  // default room-scoped list. `streamingConversationIds` drives the live
-  // per-row indicator. Both are pushed by the host via hostContext.
+  // Both pushed by the host via hostContext: `workspace` is the room the shell
+  // is focused on (the binding for the default room-scoped list);
+  // `streamingConversationIds` are the chats with an in-flight assistant turn
+  // in this tab (drive the live per-row indicator).
   const { streamingConversationIds, workspace } = useHostContext<{
     streamingConversationIds?: string[];
     workspace?: { id: string; name: string; isPersonal?: boolean };
@@ -24,6 +23,10 @@ export function Dashboard() {
     () => new Set(streamingConversationIds ?? []),
     [streamingConversationIds],
   );
+  // Primitives (not the workspace object, whose identity churns per push) so the
+  // room-scoped `loadList` only re-runs when the room actually changes.
+  const roomId = workspace?.id;
+  const roomIsPersonal = workspace?.isPersonal === true;
 
   const [view, setView] = useState<View>("list");
   const [conversations, setConversations] = useState<ListResult["conversations"]>([]);
@@ -45,7 +48,15 @@ export function Dashboard() {
       if (!opts?.background) setLoading(true);
       setError(null);
       try {
-        const result = await synapse.callTool<Record<string, never>, ListResult>("list", {});
+        // Scope to the focused room server-side, so the limit applies to the
+        // room's set rather than slicing a global page we'd then filter down.
+        // "All rooms" omits the params; legacy roomless chats belong to the
+        // personal room, so include them only when the focused room is personal.
+        const args: { workspaceId?: string; includeUnstamped?: boolean } =
+          roomScope === "current" && roomId
+            ? { workspaceId: roomId, ...(roomIsPersonal ? { includeUnstamped: true } : {}) }
+            : {};
+        const result = await synapse.callTool<typeof args, ListResult>("list", args);
         if (result.isError) {
           setError("Failed to load conversations");
           return;
@@ -57,7 +68,7 @@ export function Dashboard() {
         if (!opts?.background) setLoading(false);
       }
     },
-    [synapse],
+    [synapse, roomScope, roomId, roomIsPersonal],
   );
 
   const runSearch = useCallback(
@@ -87,7 +98,8 @@ export function Dashboard() {
     [synapse],
   );
 
-  // Initial load
+  // Initial load — and reloads whenever the room scope or focused room
+  // changes, since `loadList` now carries the room params (it's in its deps).
   useEffect(() => {
     loadList();
   }, [loadList]);
@@ -185,23 +197,18 @@ export function Dashboard() {
     [action],
   );
 
-  // Scope the list to the focused room by default. A chat with no stamped
-  // room belongs to the personal room, so it shows only when the focused room
-  // IS personal. "All rooms" bypasses the filter for the cross-room view.
-  const roomScoped = useMemo(() => {
-    if (roomScope === "all" || !workspace) return conversations;
-    return conversations.filter((c) =>
-      c.workspaceId ? c.workspaceId === workspace.id : workspace.isPersonal === true,
-    );
-  }, [conversations, roomScope, workspace]);
-
-  const groups = useMemo(() => (loading ? [] : groupByDate(roomScoped)), [loading, roomScoped]);
+  // `conversations` is already room-scoped by the server (see `loadList`), so
+  // group it directly.
+  const groups = useMemo(
+    () => (loading ? [] : groupByDate(conversations)),
+    [loading, conversations],
+  );
   const isSearching = view === "search";
 
   return (
     <>
       <Header
-        totalCount={roomScoped.length}
+        totalCount={conversations.length}
         loading={loading}
         groups={groups}
         activeFilter={activeFilter}
@@ -229,7 +236,7 @@ export function Dashboard() {
             loading={loading}
             groups={groups}
             activeFilter={activeFilter}
-            totalConversations={roomScoped.length}
+            totalConversations={conversations.length}
             streamingIds={streamingIds}
             onOpen={handleOpenConversation}
           />

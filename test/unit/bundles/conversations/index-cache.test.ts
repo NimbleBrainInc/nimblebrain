@@ -17,6 +17,8 @@ interface ConvSpec {
 	totalInputTokens?: number;
 	totalOutputTokens?: number;
 	lastModel?: string | null;
+	ownerId?: string;
+	workspaceId?: string | null;
 	messages?: Array<{ role: string; content: string; timestamp: string }>;
 }
 
@@ -27,6 +29,8 @@ function writeConvFile(spec: ConvSpec): string {
 		updatedAt: spec.updatedAt,
 		title: spec.title,
 		lastModel: spec.lastModel ?? null,
+		...(spec.ownerId ? { ownerId: spec.ownerId } : {}),
+		...(spec.workspaceId ? { workspaceId: spec.workspaceId } : {}),
 	};
 
 	// Bundle no longer reads line-1 totals — attach the requested totals
@@ -283,6 +287,120 @@ describe("list search", () => {
 		const r4 = index.list({ search: "nonexistent" });
 		expect(r4.conversations).toHaveLength(0);
 		expect(r4.totalCount).toBe(0);
+	});
+});
+
+// ---------------------------------------------------------------------------
+// list() — room (workspace) filtering
+// ---------------------------------------------------------------------------
+
+describe("list room filtering", () => {
+	// One owner's chats across two rooms, a roomless (legacy) chat, and another
+	// owner's chat in one of the rooms (to prove the room filter composes with
+	// the ownership filter).
+	async function buildRoomIndex(): Promise<ConversationIndex> {
+		writeConvFile({
+			id: "helix1",
+			createdAt: "2025-01-01T00:00:00.000Z",
+			updatedAt: "2025-01-01T00:00:00.000Z",
+			title: "Helix chat",
+			ownerId: "u1",
+			workspaceId: "ws_helix",
+			messages: [{ role: "user", content: "hi", timestamp: "2025-01-01T00:01:00.000Z" }],
+		});
+		writeConvFile({
+			id: "acme1",
+			createdAt: "2025-01-02T00:00:00.000Z",
+			updatedAt: "2025-01-02T00:00:00.000Z",
+			title: "Acme chat",
+			ownerId: "u1",
+			workspaceId: "ws_acme",
+			messages: [{ role: "user", content: "hi", timestamp: "2025-01-02T00:01:00.000Z" }],
+		});
+		writeConvFile({
+			id: "legacy1",
+			createdAt: "2025-01-03T00:00:00.000Z",
+			updatedAt: "2025-01-03T00:00:00.000Z",
+			title: "Roomless legacy chat",
+			ownerId: "u1",
+			// no workspaceId — belongs to the personal room
+			messages: [{ role: "user", content: "hi", timestamp: "2025-01-03T00:01:00.000Z" }],
+		});
+		writeConvFile({
+			id: "helix_other",
+			createdAt: "2025-01-04T00:00:00.000Z",
+			updatedAt: "2025-01-04T00:00:00.000Z",
+			title: "Another owner in Helix",
+			ownerId: "u2",
+			workspaceId: "ws_helix",
+			messages: [{ role: "user", content: "hi", timestamp: "2025-01-04T00:01:00.000Z" }],
+		});
+		const index = new ConversationIndex();
+		await index.build(TMP_DIR);
+		return index;
+	}
+
+	test("workspaceId scopes to that room, excluding other rooms and roomless chats", async () => {
+		const index = await buildRoomIndex();
+		const r = index.list({ workspaceId: "ws_helix" }, { userId: "u1" });
+		expect(r.conversations.map((c) => c.id)).toEqual(["helix1"]);
+		expect(r.totalCount).toBe(1);
+	});
+
+	test("includeUnstamped folds roomless (legacy) chats into the personal room", async () => {
+		const index = await buildRoomIndex();
+		const r = index.list({ workspaceId: "ws_user_u1", includeUnstamped: true }, { userId: "u1" });
+		expect(r.conversations.map((c) => c.id)).toEqual(["legacy1"]);
+	});
+
+	test("a non-personal room does not pick up roomless chats", async () => {
+		const index = await buildRoomIndex();
+		const r = index.list({ workspaceId: "ws_helix", includeUnstamped: false }, { userId: "u1" });
+		expect(r.conversations.map((c) => c.id)).toEqual(["helix1"]);
+	});
+
+	test("no workspaceId returns all of the owner's rooms", async () => {
+		const index = await buildRoomIndex();
+		const r = index.list({}, { userId: "u1" });
+		expect(r.conversations.map((c) => c.id).sort()).toEqual(["acme1", "helix1", "legacy1"]);
+	});
+
+	test("the room filter runs before the limit (no post-pagination under-count)", async () => {
+		// 25 Acme chats newer than one older Helix chat. A global most-recent
+		// page of 20 is all Acme, so post-pagination filtering would return the
+		// Helix room empty. Filtering server-side before the slice returns it.
+		for (let i = 0; i < 25; i++) {
+			const day = String(i + 1).padStart(2, "0");
+			writeConvFile({
+				id: `acme_${i}`,
+				createdAt: `2025-02-${day}T00:00:00.000Z`,
+				updatedAt: `2025-02-${day}T00:00:00.000Z`,
+				title: `Acme ${i}`,
+				ownerId: "u1",
+				workspaceId: "ws_acme",
+				messages: [{ role: "user", content: "hi", timestamp: `2025-02-${day}T00:01:00.000Z` }],
+			});
+		}
+		writeConvFile({
+			id: "helix_old",
+			createdAt: "2025-01-01T00:00:00.000Z",
+			updatedAt: "2025-01-01T00:00:00.000Z",
+			title: "Old Helix chat",
+			ownerId: "u1",
+			workspaceId: "ws_helix",
+			messages: [{ role: "user", content: "hi", timestamp: "2025-01-01T00:01:00.000Z" }],
+		});
+		const index = new ConversationIndex();
+		await index.build(TMP_DIR);
+
+		// The Helix chat is NOT in the global most-recent page of 20.
+		const globalPage = index.list({ limit: 20 }, { userId: "u1" });
+		expect(globalPage.conversations.map((c) => c.id)).not.toContain("helix_old");
+
+		// Room-scoped: the limit applies to Helix's set, so its chat is returned.
+		const helix = index.list({ limit: 20, workspaceId: "ws_helix" }, { userId: "u1" });
+		expect(helix.conversations.map((c) => c.id)).toEqual(["helix_old"]);
+		expect(helix.totalCount).toBe(1);
 	});
 });
 

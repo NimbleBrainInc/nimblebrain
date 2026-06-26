@@ -48,6 +48,10 @@ export interface ListOptions {
   sortBy?: "created" | "updated";
   dateFrom?: string; // ISO 8601
   dateTo?: string; // ISO 8601
+  /** Scope to one room. Applied before pagination so the limit applies to the room's set. */
+  workspaceId?: string;
+  /** With `workspaceId`, include roomless (legacy) entries — they belong to the personal room. */
+  includeUnstamped?: boolean;
 }
 
 /**
@@ -155,6 +159,18 @@ export class ConversationIndex {
     // reflects the caller's visible set, not the global one.
     if (access) {
       items = items.filter((e) => e.ownerId === access.userId);
+    }
+
+    // Room filter — scope to one workspace BEFORE pagination, so the limit
+    // applies to the room's set rather than slicing a global page and then
+    // dropping out-of-room entries (which under-counts a room whose chats
+    // aren't in the global most-recent page). A roomless (legacy) entry
+    // belongs to the personal room, so it's included only when the caller
+    // asks for it via `includeUnstamped` (set when the focused room is personal).
+    if (options?.workspaceId) {
+      const wsId = options.workspaceId;
+      const includeUnstamped = options.includeUnstamped ?? false;
+      items = items.filter((e) => (e.workspaceId ? e.workspaceId === wsId : includeUnstamped));
     }
 
     // Search filter: case-insensitive substring on title + preview

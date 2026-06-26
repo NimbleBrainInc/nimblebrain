@@ -224,6 +224,8 @@ export declare const PlatformToolCatalog: {
                 sortBy: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"created" | "updated">>;
                 dateFrom: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
                 dateTo: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
+                workspaceId: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
+                includeUnstamped: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TBoolean>;
             }>;
         };
         readonly get: {
