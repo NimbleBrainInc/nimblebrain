@@ -306,7 +306,6 @@ export class BundleLifecycleManager {
     workDir: string,
   ): Promise<ConnectorSkillLockEntry[]> {
     const config = resolveConnectorSkillsConfig();
-    if (!config.enabled) return [];
     try {
       const cacheDir = join(workDir, "cache", "connector-skills");
       const resolved = await resolveOverlay(identity, {
