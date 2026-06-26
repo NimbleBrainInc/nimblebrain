@@ -71,6 +71,9 @@
   --font-heading-md-line-height: 2rem;
   --font-heading-lg-size: 2rem;
   --font-heading-lg-line-height: 2.5rem;
+  --nb-font-sans: 'Satoshi', system-ui, sans-serif;
+  --nb-font-heading: 'Erode', Georgia, serif;
+  --nb-font-mono: 'JetBrains Mono Variable', ui-monospace, SFMono-Regular, monospace;
 }
 
 .dark {

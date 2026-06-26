@@ -91,6 +91,10 @@ export function paletteToRootCss(): string {
   // Type scale is mode-independent — :root only, aliased to Tailwind `--text-*`
   // in index.css. Same single-source path as colors/radius/layout.
   for (const [k, v] of Object.entries(typeScale)) lightDecls.push(`  ${k}: ${v};`);
+  // Font stacks — single-sourced into the shell as `--nb-font-*`, aliased to
+  // Tailwind's `--font-*` in index.css (the shell previously restated these as
+  // literals). Mode-independent, :root only.
+  for (const [k, v] of Object.entries(fonts)) lightDecls.push(`  --nb-font-${k}: ${v};`);
 
   const darkDecls = names.map((n) => `  --${n}: ${pick(colors[n], "dark")};`);
 
