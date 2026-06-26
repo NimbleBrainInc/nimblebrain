@@ -777,16 +777,18 @@ export function buildResourceEnvelopeEntry(
  * The first-party web shell speaks stateless REST and names a source one of
  * two ways:
  *
- *   - **Qualified** `ws_<id>-<source>` — a cross-workspace tool surfaced by
- *     `nb__search` (the aggregator namespaces tool names; the surfaced
- *     `appName`/`server` carries the workspace). The NAME is authoritative:
- *     resolve the owning workspace from it and authorize by MEMBERSHIP —
- *     exactly as the engine's `routeToolCall` does ("derived ONLY from the
- *     parsed wsId; we never reach for any ambient current-workspace
- *     pointer"). The ambient `X-Workspace-Id` is irrelevant here — a preview
- *     link minted in one workspace must read back from a conversation focused
- *     on another. This is the same principle that already lets identity
- *     sources (`files`, `conversations`) ignore the header.
+ *   - **Qualified** `ws_<id>-<source>` — the shell names a source in a
+ *     specific workspace directly (e.g. reading back a preview / citation link
+ *     minted in another workspace). The NAME is authoritative: resolve the
+ *     owning workspace from it and authorize by MEMBERSHIP — exactly as the
+ *     engine's `routeToolCall` does ("derived ONLY from the parsed wsId; we
+ *     never reach for any ambient current-workspace pointer"). The ambient
+ *     `X-Workspace-Id` is irrelevant here — a preview link minted in one
+ *     workspace must read back from a conversation focused on another. This is
+ *     the same principle that already lets identity sources (`files`,
+ *     `conversations`) ignore the header. This is a trusted first-party REST
+ *     surface gated to the caller's own workspaces; the agent never dispatches
+ *     here (it uses the walled in-process `IdentityToolRouter`).
  *
  *   - **Bare** `<source>` — a focused-workspace tool; its workspace is the
  *     ambient `X-Workspace-Id` (unchanged legacy behavior).
