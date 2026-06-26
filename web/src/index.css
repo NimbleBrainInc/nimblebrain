@@ -12,9 +12,11 @@
 @custom-variant dark (&:is(.dark *));
 
 @theme inline {
-    --font-sans: 'Satoshi', system-ui, sans-serif;
-    --font-heading: 'Erode', Georgia, serif;
-    --font-mono: 'JetBrains Mono Variable', ui-monospace, SFMono-Regular, monospace;
+    /* Font stacks — single-sourced from src/theme/palette.ts (fonts), emitted
+       into :root as --nb-font-* by gen:theme. One source, same value. */
+    --font-sans: var(--nb-font-sans);
+    --font-heading: var(--nb-font-heading);
+    --font-mono: var(--nb-font-mono);
 
     /* Type scale — single-sourced from src/theme/palette.ts (typeScale),
        emitted into :root by gen:theme. Gives `text-3xs`/`text-2xs` for the
@@ -278,8 +280,8 @@
 }
 
 @keyframes breathing-glow {
-  0%, 100% { box-shadow: 0 0 0 1px var(--processing), 0 0 8px 0 rgba(124, 58, 237, 0.15); }
-  50% { box-shadow: 0 0 0 1px var(--processing), 0 0 16px 2px rgba(124, 58, 237, 0.08); }
+  0%, 100% { box-shadow: 0 0 0 1px var(--processing), 0 0 8px 0 color-mix(in oklch, var(--processing) 15%, transparent); }
+  50% { box-shadow: 0 0 0 1px var(--processing), 0 0 16px 2px color-mix(in oklch, var(--processing) 8%, transparent); }
 }
 
 /* Warm background shift — ambient state on scroll container */
