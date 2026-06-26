@@ -102,7 +102,7 @@ describe("conversation-stream watchdog", () => {
 
   test("does not reconnect after close()", async () => {
     let calls = 0;
-    globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+    globalThis.fetch = (async (_input: string | URL | Request, init?: RequestInit) => {
       calls++;
       return silentStreamResponse(init?.signal as AbortSignal);
     }) as typeof fetch;

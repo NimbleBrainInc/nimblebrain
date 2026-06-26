@@ -24,8 +24,8 @@ import { useMatch } from "react-router-dom";
 import { useShellContext } from "../../context/ShellContext";
 import { useToolWorkspaces } from "../../context/ToolWorkspacesContext";
 import { useWorkspaceContext, type WorkspaceInfo } from "../../context/WorkspaceContext";
-import { workspaceBadgeVariant } from "./ToolCallProvenance";
 import { Badge } from "../ui/badge";
+import { workspaceBadgeVariant } from "./ToolCallProvenance";
 
 export function ComposerFooter() {
   const wsCtx = useWorkspaceContext();

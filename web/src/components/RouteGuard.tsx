@@ -4,8 +4,8 @@ import { roleAtLeast, type ScopedRole, useScopedRole } from "../hooks/useScopedR
 
 interface RouteGuardProps {
   /** Minimum role required to render `children`. Insufficient → redirect. */
-  role: ScopedRole;
-  /** Where to send users who don't meet `role`. Defaults to /profile. */
+  requireRole: ScopedRole;
+  /** Where to send users who don't meet `requireRole`. Defaults to /profile. */
   fallback?: string;
   children: ReactNode;
 }
@@ -20,9 +20,9 @@ interface RouteGuardProps {
  * backend tool enforces roles independently. None of these alone is the
  * security boundary; together they're defense in depth.
  */
-export function RouteGuard({ role, fallback = "/profile", children }: RouteGuardProps) {
+export function RouteGuard({ requireRole, fallback = "/profile", children }: RouteGuardProps) {
   const current = useScopedRole();
-  if (!roleAtLeast(current, role)) {
+  if (!roleAtLeast(current, requireRole)) {
     return <Navigate to={fallback} replace />;
   }
   return <>{children}</>;

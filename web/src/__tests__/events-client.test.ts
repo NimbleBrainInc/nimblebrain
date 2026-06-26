@@ -111,7 +111,6 @@ describe("events-client — event routing", () => {
     subscribe("config.changed", c);
 
     // Drive an event through the fake's captured onEvent.
-    // biome-ignore lint/style/noNonNullAssertion: lastOptions is set by the first subscribe()
     lastOptions!.onEvent("data.changed", { server: "x", tool: "y" });
 
     expect(a).toHaveBeenCalledTimes(1);
@@ -127,7 +126,6 @@ describe("events-client — event routing", () => {
     subscribe("data.changed", thrower);
     subscribe("data.changed", good);
 
-    // biome-ignore lint/style/noNonNullAssertion: see prior
     lastOptions!.onEvent("data.changed", { server: "x" });
 
     expect(thrower).toHaveBeenCalledTimes(1);
@@ -136,7 +134,6 @@ describe("events-client — event routing", () => {
 
   test("events for types with no subscribers are dropped without error", () => {
     subscribe("data.changed", () => {});
-    // biome-ignore lint/style/noNonNullAssertion: see prior
     expect(() => lastOptions!.onEvent("skill.created", { id: "x" })).not.toThrow();
   });
 });
@@ -149,7 +146,6 @@ describe("events-client — onReconnect", () => {
     onReconnect(a);
     onReconnect(b);
 
-    // biome-ignore lint/style/noNonNullAssertion: see prior
     lastOptions!.onReconnect?.();
 
     expect(a).toHaveBeenCalledTimes(1);
@@ -162,7 +158,6 @@ describe("events-client — onReconnect", () => {
     const unsub = onReconnect(a);
 
     unsub();
-    // biome-ignore lint/style/noNonNullAssertion: see prior
     lastOptions!.onReconnect?.();
 
     expect(a).toHaveBeenCalledTimes(0);

@@ -32,9 +32,9 @@
 // trick required.
 // ---------------------------------------------------------------------------
 
+import { describe, expect, mock, test } from "bun:test";
 import { readdir, readFile } from "node:fs/promises";
 import { join } from "node:path";
-import { describe, expect, mock, test } from "bun:test";
 
 // Real exports under test — asserted as values/types below.
 import {

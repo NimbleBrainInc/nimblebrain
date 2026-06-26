@@ -125,8 +125,8 @@ export function CostChart({ data }: CostChartProps) {
           const x = paddingLeft + gap + i * (barWidth + gap);
           let yOffset = 0;
 
-          // biome-ignore lint/a11y/noStaticElementInteractions: SVG hover for tooltip, no keyboard equivalent needed
           return (
+            // biome-ignore lint/a11y/noStaticElementInteractions: SVG hover for tooltip, no keyboard equivalent needed
             <g
               key={d.key}
               onMouseEnter={() => setHoveredIndex(i)}

@@ -33,7 +33,7 @@
 
 import type { SseEventMap, SseEventType } from "../types";
 import { addAuthLifecycleHandler, getAuthToken } from "./client";
-import { connectEvents, type ConnectEventsOptions, type EventConnection } from "./sse";
+import { type ConnectEventsOptions, connectEvents, type EventConnection } from "./sse";
 
 type Handler<K extends SseEventType> = (data: SseEventMap[K]) => void;
 type ReconnectHandler = () => void;

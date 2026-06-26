@@ -3,6 +3,12 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { Streamdown } from "streamdown";
 import type { ToolInput } from "../../_generated/platform-schemas/catalog";
+import type {
+  SkillSummary as ListedSkill,
+  SkillDetail as ReadSkill,
+  SkillScope as Scope,
+  SkillsListOutput,
+} from "../../_generated/platform-schemas/skills";
 import { callTool } from "../../api/client";
 import { Button } from "../../components/ui/button";
 import { Card, CardContent } from "../../components/ui/card";
@@ -11,13 +17,6 @@ import { Textarea } from "../../components/ui/textarea";
 import { parseToolResponse } from "../../lib/tool-response";
 import { cn } from "../../lib/utils";
 import { RequireActiveWorkspace, Section, SettingsPageHeader } from "./components";
-
-import type {
-  SkillDetail as ReadSkill,
-  SkillScope as Scope,
-  SkillsListOutput,
-  SkillSummary as ListedSkill,
-} from "../../_generated/platform-schemas/skills";
 
 // ── Wrappers ─────────────────────────────────────────────────────────────
 
@@ -465,6 +464,10 @@ function Rule({
 }) {
   const bodyRef = useRef<HTMLDivElement | null>(null);
   const [shellH, setShellH] = useState(0);
+  // `detail` isn't read in the effect, but its async content renders inside
+  // bodyRef — so when it loads the measured scrollHeight changes. Keeping it as
+  // a dependency re-measures on load; it's a deliberate trigger, not dead code.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: detail changes the measured DOM height
   useEffect(() => {
     if (!expanded) {
       setShellH(0);
@@ -711,6 +714,7 @@ function PersonalFooter({ count }: { count: number }) {
 // ── Edit view ────────────────────────────────────────────────────────────
 
 type CreateInput = ToolInput<"skills", "create">;
+
 export type { CreateInput };
 
 /**

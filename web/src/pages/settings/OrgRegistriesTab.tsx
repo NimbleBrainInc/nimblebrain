@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { listRegistries, type RegistryConfig, setRegistryEnabled } from "../../api/client";
 import { SettingsPageHeader } from "./components";
 
@@ -15,7 +15,10 @@ export function OrgRegistriesTab() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  const refresh = async () => {
+  // useCallback so the load-on-mount effect can depend on it without
+  // re-running every render (refresh captures only stable setters + the
+  // module-level listRegistries, so its dep array is empty).
+  const refresh = useCallback(async () => {
     setError(null);
     try {
       const res = await listRegistries();
@@ -25,11 +28,11 @@ export function OrgRegistriesTab() {
     } finally {
       setLoading(false);
     }
-  };
+  }, []);
 
   useEffect(() => {
     refresh();
-  }, []);
+  }, [refresh]);
 
   const onToggle = async (id: string, next: boolean) => {
     setError(null);

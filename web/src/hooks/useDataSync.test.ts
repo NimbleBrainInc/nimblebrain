@@ -7,8 +7,8 @@
 // the null-origin problem (sandbox-proxy work in iframe.ts).
 // ---------------------------------------------------------------------------
 
-import { renderHook } from "@testing-library/react";
 import { afterEach, describe, expect, test } from "bun:test";
+import { renderHook } from "@testing-library/react";
 import { useDataSync } from "./useDataSync";
 
 interface CapturedPost {

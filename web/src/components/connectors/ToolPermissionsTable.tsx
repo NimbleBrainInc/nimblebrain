@@ -2,8 +2,8 @@ import { useEffect, useState } from "react";
 import {
   type ConnectorTool,
   listConnectorToolsWithPermissions,
-  type ToolPolicy,
   setConnectorPermissions,
+  type ToolPolicy,
 } from "../../api/client";
 
 /**
@@ -247,7 +247,7 @@ function PolicyButton({
 
 function CheckIcon() {
   return (
-    <svg width="12" height="12" viewBox="0 0 12 12" aria-hidden>
+    <svg width="12" height="12" viewBox="0 0 12 12" aria-hidden="true">
       <path
         d="M2.5 6.5L5 9L9.5 3.5"
         stroke="currentColor"
@@ -262,7 +262,7 @@ function CheckIcon() {
 
 function DenyIcon() {
   return (
-    <svg width="12" height="12" viewBox="0 0 12 12" aria-hidden>
+    <svg width="12" height="12" viewBox="0 0 12 12" aria-hidden="true">
       <circle cx="6" cy="6" r="4.5" stroke="currentColor" strokeWidth="1.4" fill="none" />
       <path d="M3 9L9 3" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
     </svg>
