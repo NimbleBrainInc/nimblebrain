@@ -1133,24 +1133,31 @@ export class Runtime {
     });
     await this.ensureWorkspaceRegistry(sessionWsId);
 
-    // The conversation's workspace — the binding. A chat is born in the focused
-    // workspace, or the caller's personal workspace when there's no focus
-    // (`request.workspaceId ?? sessionWsId`), and stays there for its whole
-    // life. On resume the workspace is read from the conversation's own path via the
-    // locator (authoritative). The workspace owns the directory; the path is the
-    // boundary. This is a SEPARATE axis from `toolsWsId` (tool/skill/app scope)
-    // below — the conversation workspace is fixed at create, the tool scope is not.
+    // The conversation's workspace — the binding, and the ONE workspace this
+    // turn resolves against. A chat is born in the focused workspace, or the
+    // caller's personal workspace when there's no focus (`request.workspaceId ??
+    // sessionWsId`), and stays there for its whole life. On resume the workspace
+    // is read from the conversation's own path via the locator (authoritative),
+    // NOT from the request header — so a conversation answered while you're
+    // focused elsewhere still resolves its own tools, skills, apps, files, and
+    // workspace context. The conversation is a sealed container; the focused
+    // workspace only decides where a NEW chat is born.
     const requestWsId = request.workspaceId ?? sessionWsId;
     // `convWsId` is authoritative: on a cross-workspace resume `resolveChatStore`
-    // relocates to the workspace the conversation actually lives in. The create
-    // stamp (below) and the file partition (~line 1502) follow it, not the
-    // request header — otherwise a resumed chat's attachments resolve in the
-    // wrong partition and silently vanish.
+    // relocates to the workspace the conversation actually lives in. Every
+    // workspace-scoped surface below (`toolsWsId`, skills, apps, overlays, file
+    // partition) keys off it, not the request header — otherwise a resumed chat
+    // leaks the focused workspace's tools/context into another workspace's thread.
     const { store, convWsId } = await this.resolveChatStore(
       request.conversationId,
       requestWsId,
       ownerId,
     );
+    // Narrate the workspace only when it's a REAL (non-personal) workspace; the
+    // personal/session workspace stays the silent session bridge, never named in
+    // the prompt. Replaces the old "is there a focus?" gate — a sealed
+    // conversation narrates its OWN workspace from wherever it is viewed.
+    const narratedWsId = convWsId !== sessionWsId ? convWsId : undefined;
 
     // Load the personal workspace config for agents / models override.
     // Pre-Stage-2 this looked up the request's `workspaceId`; that field
@@ -1241,11 +1248,10 @@ export class Runtime {
       ...(request.fileRefs?.length ? { metadata: { files: request.fileRefs } } : {}),
     });
 
-    // The workspace the chat is FOCUSED on (the `/w/:slug` being viewed);
-    // absent on the home control panel. Hoisted above the per-request skill
-    // match below because the conversation pool is keyed on it. Reused
-    // unchanged by the briefing / apps / overlay surfaces further down.
-    const focusedWsId = request.workspaceId;
+    // Every workspace-scoped surface below — the skill pool, the briefing, the
+    // tool set — keys off the conversation's own workspace (`convWsId`, resolved
+    // above), so a resumed chat stays sealed to its workspace regardless of the
+    // `/w/:slug` currently being viewed.
 
     // Per-request trigger/keyword match. The boot-time `this.skillMatcher`
     // only ever scans org-tier dirs (`config.skillDirs` + `globalSkillDir`),
@@ -1264,7 +1270,7 @@ export class Runtime {
     // compose into the always-on Layer 0/1 channel; `capability` skills feed the
     // conditional channels (keyword matcher + tool-affinity Layer 3). Disjoint by
     // `type`, so nothing is injected twice — no downstream de-dup.
-    const conversationPool = this.loadConversationSkills(focusedWsId ?? sessionWsId, userId);
+    const conversationPool = this.loadConversationSkills(convWsId, userId);
     const { context: poolContext, capability: poolCapability } =
       partitionSkillsByRole(conversationPool);
     const requestMatcher = new SkillMatcher();
@@ -1272,31 +1278,28 @@ export class Runtime {
     const skill = requestMatcher.match(request.message);
 
     // The workspace BRIEFING (apps + workspace overlay + "## Workspace" block
-    // + workspace persona) reflects the workspace the chat is FOCUSED on —
-    // `focusedWsId` (= `request.workspaceId`, hoisted above). On the home
-    // control panel there is NO focus (`request.workspaceId` absent): the chat
-    // is identity-level, so the briefing is empty — cross-workspace tools and
-    // ORG-level house rules only, no single "current workspace". The personal
-    // workspace stays the SILENT session bridge (`sessionWsId`, used for the
-    // dispatch reqCtx + file store), never narrated. Deterministic +
-    // workspace-scoped when focused (same for every member).
-    const apps = focusedWsId ? await this.buildAppsList(focusedWsId) : [];
+    // + workspace persona) reflects the conversation's own workspace
+    // (`narratedWsId`). When the conversation lives in the personal/session
+    // workspace there is nothing to narrate — the briefing is empty (ORG-level
+    // house rules + identity tools only), and the personal workspace stays the
+    // SILENT session bridge, never named. Deterministic + workspace-scoped
+    // (same for every member of that workspace).
+    const apps = narratedWsId ? await this.buildAppsList(narratedWsId) : [];
     // Org overlay always applies (org-level, not workspace-specific); the
-    // workspace overlay only when focused.
-    const liveOverlays = focusedWsId
-      ? await this.readPromptOverlays(focusedWsId)
+    // workspace overlay only for a real (non-personal) workspace.
+    const liveOverlays = narratedWsId
+      ? await this.readPromptOverlays(narratedWsId)
       : { org: await this.getInstructionsStore().read({ scope: "org" }), workspace: "" };
 
     // Build focusedApp when the request is scoped to a specific app (§7 app-aware chat).
     // The app is resolved in the SAME single workspace the session's tools are
-    // bound to (`focusedWsId ?? sessionWsId` — see `toolsWsId` below), never a
-    // scan across the identity's other workspaces. The wall applies to the
-    // briefing too: it can only ever describe an app whose tools this session
-    // is actually allowed to call.
+    // bound to (`convWsId` — see `toolsWsId` below), never a scan across the
+    // identity's other workspaces. The wall applies to the briefing too: it can
+    // only ever describe an app whose tools this session is actually allowed to call.
     let focusedApp: FocusedAppInfo | undefined;
     let focusedAppWsId: string | undefined;
     if (request.appContext) {
-      const appWsId = focusedWsId ?? sessionWsId;
+      const appWsId = convWsId;
       const reg = this._workspaceRegistries.get(appWsId);
       const source = reg?.getSources().find((s) => s.name === request.appContext?.serverName);
       if (source) {
@@ -1340,17 +1343,17 @@ export class Runtime {
       };
     }
 
-    // Tool surfacing. A session reaches exactly ONE workspace: the ACTIVE set
-    // the model sees is the FOCUSED workspace's tools (one copy of the platform
-    // `nb__*` tools + that workspace's apps) plus the caller's identity tools.
-    // There is no cross-workspace union. `nb__search`'s corpus
-    // (`listDiscoverableTools`) is this same focused workspace, so progressive
-    // disclosure operates WITHIN the workspace (a workspace with more tools than the
-    // active cap), not across workspaces. Role-based visibility
+    // Tool surfacing. A session reaches exactly ONE workspace: the conversation's
+    // own (`convWsId`). The ACTIVE set the model sees is that workspace's tools
+    // (one copy of the platform `nb__*` tools + that workspace's apps) plus the
+    // caller's identity tools. There is no cross-workspace union. `nb__search`'s
+    // corpus (`listDiscoverableTools`) is this same workspace, so progressive
+    // disclosure operates WITHIN the workspace (a workspace with more tools than
+    // the active cap), not across workspaces. Role-based visibility
     // (`isToolVisibleToRole`) and surface-tier tiering (`surfaceTools`) apply to
-    // this set. At the identity-level home (no focus) the personal workspace is
-    // the workspace — the same silent bridge used for session reads.
-    const toolsWsId = focusedWsId ?? sessionWsId;
+    // this set. A conversation in the personal workspace uses it as the
+    // workspace — the same silent bridge used for session reads.
+    const toolsWsId = convWsId;
     const toolsRegistry = await this.ensureWorkspaceRegistry(toolsWsId);
     const [focusedTools, identityTools] = await Promise.all([
       toolsRegistry.availableTools(),
@@ -1400,23 +1403,19 @@ export class Runtime {
       locale: requestIdentity.preferences?.locale ?? "en-US",
     };
 
-    // The prompt narrates the FOCUSED workspace — the same one whose apps +
-    // house rules the briefing above describes — so the prose, the app list,
-    // and the persona all agree. Reuse the already-loaded session workspace
-    // when it's the focused one; otherwise load the focused workspace.
-    const activeWorkspace = focusedWsId
-      ? focusedWsId === sessionWsId
-        ? sessionWorkspace
-        : await this._workspaceStore.get(focusedWsId)
-      : undefined;
-    // No focus (home) → undefined → compose omits the "## Workspace" block.
-    const workspaceContext = focusedWsId
+    // The prompt narrates the conversation's own workspace — the same one whose
+    // apps + house rules the briefing above describes — so the prose, the app
+    // list, and the persona all agree. `narratedWsId` is never the personal
+    // workspace, so this always loads a real, named workspace.
+    const activeWorkspace = narratedWsId ? await this._workspaceStore.get(narratedWsId) : undefined;
+    // Personal/session workspace → undefined → compose omits the "## Workspace" block.
+    const workspaceContext = narratedWsId
       ? activeWorkspace
         ? { id: activeWorkspace.id, name: activeWorkspace.name }
-        : { id: focusedWsId }
+        : { id: narratedWsId }
       : undefined;
 
-    // Workspace identity/persona override — follows the focused workspace too.
+    // Workspace identity/persona override — follows the conversation's workspace too.
     const identityOverride = activeWorkspace?.identity
       ? makeIdentitySkill(activeWorkspace.identity)
       : null;
@@ -1436,19 +1435,15 @@ export class Runtime {
     // surfaced — no `appContext` scoping required (the prior path only fired
     // under `appContext`, missing cross-app workflows).
     //
-    // Workspace-tier skills follow the FOCUSED workspace (the `/w/:slug` the
-    // user is viewing), matching the briefing / apps / overlay surfaces.
-    // On the home control panel there is no focus → fall back to the
-    // session (personal) workspace, which is consistent with the rest of
-    // home mode reading from the identity's personal scope. Pre-Stage-2
-    // this was the request's wsId; Stage 2 (#272) inadvertently pinned it
-    // to the personal workspace, silently dropping every shared-workspace
-    // skill marked `loading_strategy: always`.
+    // Workspace-tier skills follow the conversation's own workspace (`convWsId`),
+    // matching the briefing / apps / overlay surfaces. A conversation in the
+    // personal workspace reads the identity's personal scope, consistent with
+    // the rest of personal-workspace reads.
     // Reuse the pool computed for the per-request matcher above — same
     // `wsId` and `userId` — so the conversation-skill disk read happens once
     // per turn, not twice.
     const selectedLayer3 = await this.selectRequestLayer3({
-      wsId: focusedWsId ?? sessionWsId,
+      wsId: convWsId,
       userId,
       activeToolNames: tools.map((t) => t.name),
       capabilityPool: poolCapability,
@@ -1623,10 +1618,10 @@ export class Runtime {
         skillsLoaded,
         contextAssembled,
       },
-      // Connector-skill overlays for the FOCUSED workspace — surfaced once
-      // into history by the engine on a matching connector tool call, never
+      // Connector-skill overlays for the conversation's own workspace — surfaced
+      // once into history by the engine on a matching connector tool call, never
       // into the system prefix. Same workspace scoping as the layer-3 pool.
-      connectorSkillCandidates: this.loadConnectorSkillCandidates(focusedWsId ?? sessionWsId),
+      connectorSkillCandidates: this.loadConnectorSkillCandidates(convWsId),
       // Computed from the UN-rehydrated history — rehydrate strips the synthetic
       // marker's metadata, so the engine can't recover the already-injected set
       // from the messages it receives. This is what makes surface-ONCE hold
