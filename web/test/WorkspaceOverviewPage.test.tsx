@@ -170,4 +170,21 @@ describe("WorkspaceOverviewPage — app grid three states", () => {
     const page = findByTestId(mounted.container, "workspace-overview-page");
     expect(page?.textContent).toContain("2 apps installed, 2 members");
   });
+
+  test("a revisit paints the last-known cards instead of a skeleton while the shell lags", async () => {
+    // First visit, shell ready → caches this workspace's app set.
+    mounted = await mount(
+      harness(WS.id, [appPlacement({ route: "crm", label: "CRM", resourceUri: "ui://crm/main" })]),
+    );
+    expect(findByTestId(mounted.container, "workspace-overview-app-grid")).not.toBeNull();
+    mounted.unmount();
+    mounted = null;
+
+    // Revisit while the shell still lags (shellWorkspaceId !== WS.id) and
+    // `forSlot` is empty for it: the cached set paints immediately — no
+    // skeleton on the switch back. (Without the cache this is the skeleton.)
+    mounted = await mount(harness("ws_other", []));
+    expect(findByTestId(mounted.container, "workspace-overview-apps-skeleton")).toBeNull();
+    expect(findAllByTestId(mounted.container, "workspace-overview-app-card")).toHaveLength(1);
+  });
 });

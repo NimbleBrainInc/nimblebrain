@@ -34,6 +34,13 @@ import { workspaceApps } from "../lib/workspace-apps";
 import { toSlug } from "../lib/workspace-slug";
 import type { PlacementEntry } from "../types";
 
+// Last-known app set per workspace. The shell's placements lag a switch, so on
+// a revisit we paint this workspace's real cards from here immediately instead
+// of flashing the skeleton while the shell catches up. Keyed by workspace id,
+// so it never shows another workspace's apps; a first visit (no entry) still
+// shows the skeleton. Module-level so it survives the page re-rendering.
+const lastApps = new Map<string, PlacementEntry[]>();
+
 export function WorkspaceOverviewPage() {
   const { slug } = useParams<{ slug: string }>();
   const wsCtx = useWorkspaceContext();
@@ -89,13 +96,15 @@ export function WorkspaceOverviewPage() {
   // refetch is in flight, with no `loading` flag — see ShellContext). Compare
   // the shell's workspace to THIS page's workspace (`workspace.id`, derived
   // from the route slug — the stable truth; the active workspace converges to
-  // it after the route guard's sync effect). Until they match, the shell is
-  // still showing the previous workspace's apps, so the grid is "not ready"
-  // and must render a skeleton, never the empty state. Placements are
-  // registered eagerly server-side, so a matching shell resolves near-instantly
-  // — apps don't wait on the (slower, async) briefing.
+  // it after the route guard's sync effect). Until they match, the shell still
+  // holds the previous workspace's apps, so we don't read it: fall back to THIS
+  // workspace's last-known set (instant on a revisit), and show the skeleton
+  // only when there's nothing for it yet (a genuine first visit) — never the
+  // previous workspace's apps, never a false-empty.
   const appsReady = shell != null && shell.shellWorkspaceId === workspace.id;
-  const apps = appsReady && shell ? workspaceApps(shell.forSlot("sidebar")) : [];
+  const freshApps = appsReady && shell ? workspaceApps(shell.forSlot("sidebar")) : null;
+  if (freshApps) lastApps.set(workspace.id, freshApps);
+  const apps = freshApps ?? lastApps.get(workspace.id) ?? null;
 
   return (
     <div className="h-full overflow-y-auto" data-testid="workspace-overview-page">
@@ -112,7 +121,7 @@ export function WorkspaceOverviewPage() {
               {workspace.name}
             </h1>
             <p className="mt-2 text-sm text-muted-foreground italic">
-              {describeWorkspace(workspace, appsReady ? apps.length : null)}
+              {describeWorkspace(workspace, apps ? apps.length : null)}
             </p>
           </div>
           <Link
@@ -141,7 +150,7 @@ export function WorkspaceOverviewPage() {
         <div className="text-2xs font-bold tracking-[0.08em] uppercase text-muted-foreground mb-3">
           Available apps
         </div>
-        {!appsReady ? (
+        {apps === null ? (
           <AppGridSkeleton />
         ) : apps.length === 0 ? (
           <div
