@@ -15,7 +15,8 @@
 //      the workspace overview. The Connectors count comes from the shared
 //      app-icons fetch.
 //   5. Selecting a (non-focused) workspace fires setActiveWorkspaceId once and
-//      navigates — `/w/<slug>/` for a shared workspace, `/` for Personal.
+//      navigates to its overview `/w/<slug>/` — Personal included (it is just
+//      the workspace labelled "Home · Personal", not a detour through `/`).
 // ---------------------------------------------------------------------------
 
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
@@ -356,7 +357,7 @@ describe("WorkspaceNav — selection + navigation", () => {
     expect(mounted.navigationTarget()).toBe("/w/helix/");
   });
 
-  test("selecting Personal navigates home (/)", async () => {
+  test("selecting Personal opens its own overview (/w/<slug>/), not the global grid", async () => {
     mounted = await mount({
       workspaces: [PERSONAL, HELIX],
       activeId: "ws_helix",
@@ -371,7 +372,7 @@ describe("WorkspaceNav — selection + navigation", () => {
 
     expect(setActiveSpy).toHaveBeenCalledTimes(1);
     expect(setActiveSpy.mock.calls[0]?.[0]).toBe("ws_user_u1");
-    expect(mounted.navigationTarget()).toBe("/");
+    expect(mounted.navigationTarget()).toBe("/w/user_u1/");
   });
 
   test("re-selecting the focused workspace does not fire the setter (T009 equality guard)", async () => {

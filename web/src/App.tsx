@@ -430,17 +430,6 @@ function AuthenticatedAppContent({
               </Route>
             </Route>
 
-            {/* Back-compat: the identity views used to live at top-level
-                (`/conversations`, …). Redirect those to the same view under the
-                focused workspace so old bookmarks / links keep working. */}
-            {identityAppPlacements.map((p) => (
-              <Route
-                key={p.route}
-                path={`/${identityAppSegment(p.serverName)}/*`}
-                element={<IdentityViewRedirect segment={identityAppSegment(p.serverName)} />}
-              />
-            ))}
-
             {/* Profile — top-level, identity-bound. Tabbed surface
                 following the /org/* pattern. Future identity-level
                 config (custom instructions, model prefs) slots in
@@ -520,19 +509,6 @@ function AuthenticatedAppContent({
       </ShellLayout>
     </ShellProvider>
   );
-}
-
-/**
- * Redirects a legacy top-level identity-view URL (`/conversations`, …) to the
- * same view under the focused workspace (`/w/<slug>/conversations`). The
- * identity views moved under `/w/:slug` when they became workspace-scoped; this
- * keeps old bookmarks and shared links working. With no focused workspace yet
- * (shouldn't happen post-bootstrap), fall back to home.
- */
-function IdentityViewRedirect({ segment }: { segment: string }) {
-  const { activeWorkspace } = useWorkspaceContext();
-  if (!activeWorkspace) return <Navigate to="/" replace />;
-  return <Navigate to={`/w/${toSlug(activeWorkspace.id)}/${segment}`} replace />;
 }
 
 /**

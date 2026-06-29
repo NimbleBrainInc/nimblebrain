@@ -57,9 +57,10 @@ export function WorkspaceNav({ collapsed = false }: WorkspaceNavProps) {
       // invariant: re-focusing the active workspace is a no-op for
       // setActiveWorkspaceId (it must not fire the bridge reset hook).
       if (wsCtx.activeWorkspace?.id !== ws.id) wsCtx.setActiveWorkspace(ws);
-      // Personal is home: focusing it lands on the global home (`/`), the
-      // workspace-agnostic greeting. Shared workspaces land on their overview.
-      navigate(ws.isPersonal === true ? "/" : `/w/${toSlug(ws.id)}/`);
+      // Every workspace opens its own overview — Personal included. Personal is
+      // just the workspace labelled "Home · Personal", not a detour through the
+      // global landing grid.
+      navigate(`/w/${toSlug(ws.id)}/`);
     },
     [wsCtx, navigate],
   );
