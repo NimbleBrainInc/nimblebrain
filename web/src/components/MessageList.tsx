@@ -139,6 +139,9 @@ function shouldShowSpeaker(
 
 interface MessageListProps {
   messages: ChatMessage[];
+  /** The conversation being shown — threaded to attachments so cross-workspace
+   *  file downloads resolve to the conversation's workspace. */
+  conversationId?: string;
   isStreaming: boolean;
   streamingState: StreamingState;
   /** Set while the model is emitting a tool-call block (pre-execution). */
@@ -249,6 +252,7 @@ function useSmartScroll(messages: ChatMessage[]) {
 
 export function MessageList({
   messages,
+  conversationId,
   isStreaming,
   streamingState,
   preparingTool,
@@ -355,7 +359,11 @@ export function MessageList({
                     {msg.files && msg.files.length > 0 && (
                       <div className="flex flex-wrap gap-2 mb-2">
                         {msg.files.map((file) => (
-                          <FileAttachment key={file.id} file={file} />
+                          <FileAttachment
+                            key={file.id}
+                            file={file}
+                            conversationId={conversationId}
+                          />
                         ))}
                       </div>
                     )}
@@ -391,7 +399,11 @@ export function MessageList({
                     {msg.files && msg.files.length > 0 && (
                       <div className="flex flex-wrap gap-2">
                         {msg.files.map((file) => (
-                          <FileAttachment key={file.id} file={file} />
+                          <FileAttachment
+                            key={file.id}
+                            file={file}
+                            conversationId={conversationId}
+                          />
                         ))}
                       </div>
                     )}

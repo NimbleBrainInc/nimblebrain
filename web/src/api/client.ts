@@ -116,10 +116,20 @@ export function getActiveWorkspaceId(): string | null {
  * `workspace_required`). Defaults to the active workspace; pass `workspaceId`
  * to target a specific workspace.
  */
-export function fileUrl(fileId: string, workspaceId?: string | null): string {
+export function fileUrl(
+  fileId: string,
+  workspaceId?: string | null,
+  conversationId?: string | null,
+): string {
   const ws = workspaceId ?? activeWorkspaceId;
-  const query = ws ? `?ws=${encodeURIComponent(ws)}` : "";
-  return `${API_BASE}/v1/files/${encodeURIComponent(fileId)}${query}`;
+  const params = new URLSearchParams();
+  if (ws) params.set("ws", ws);
+  // The conversation id lets the server resolve the file's authoritative
+  // workspace even when the focused workspace differs (a cross-workspace
+  // resume); `ws` is the fallback when there's no conversation.
+  if (conversationId) params.set("conversationId", conversationId);
+  const query = params.toString();
+  return `${API_BASE}/v1/files/${encodeURIComponent(fileId)}${query ? `?${query}` : ""}`;
 }
 
 /** Register a callback invoked on 401 responses. */

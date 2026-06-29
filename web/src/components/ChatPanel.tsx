@@ -215,6 +215,7 @@ export const ChatPanel = forwardRef<ChatPanelRef, ChatPanelProps>(function ChatP
 
       <MessageList
         messages={messages}
+        conversationId={conversationId ?? undefined}
         isStreaming={isStreaming}
         streamingState={streamingState}
         preparingTool={preparingTool}

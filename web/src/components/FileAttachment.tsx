@@ -12,6 +12,12 @@ export interface FileAttachmentData {
 
 interface Props {
   file: FileAttachmentData;
+  /**
+   * The conversation this attachment belongs to. Sent to the file endpoint so a
+   * cross-workspace attachment resolves to the conversation's workspace, not the
+   * focused one (which can differ on a resume).
+   */
+  conversationId?: string;
 }
 
 function formatFileSize(bytes: number): string {
@@ -27,7 +33,7 @@ function getTypeIcon(mimeType: string) {
   return FileIcon;
 }
 
-export function FileAttachment({ file }: Props) {
+export function FileAttachment({ file, conversationId }: Props) {
   const [expanded, setExpanded] = useState(false);
   const [imgError, setImgError] = useState(false);
   const isImage = file.mimeType.startsWith("image/");
@@ -44,7 +50,7 @@ export function FileAttachment({ file }: Props) {
           className="block cursor-pointer"
         >
           <img
-            src={fileUrl(file.id)}
+            src={fileUrl(file.id, undefined, conversationId)}
             alt={file.filename}
             loading="lazy"
             onError={() => setImgError(true)}
