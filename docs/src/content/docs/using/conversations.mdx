@@ -9,13 +9,13 @@ NimbleBrain automatically persists every conversation. Each conversation is stor
 
 ## Where conversations live
 
-Conversations are **owned by you**, not by a workspace. Every conversation lives at the top level of the work directory, keyed by its ID:
+Conversations are **partitioned by workspace** and authorized by their owner. Every conversation lives under the workspace it ran in and the user who created it, keyed by its ID:
 
 ```
-~/.nimblebrain/conversations/conv_a1b2c3d4e5f67890.jsonl
+~/.nimblebrain/workspaces/ws_3f9a1c7e0b2d4856/conversations/user_abc123/conv_a1b2c3d4e5f67890.jsonl
 ```
 
-A conversation records which workspace's tools the agent could reach when a turn ran (`workspaceId` in its metadata), but that is a tool-scoping breadcrumb, not a location. The file always lives under `conversations/` regardless of which workspace you were in, and it follows you across every workspace you belong to.
+The path is the authority: `workspaces/<wsId>/conversations/<ownerId>/<convId>.jsonl`. The owner (`ownerId`) is the single authorization principal — only they can read or resume the conversation — while the workspace (`workspaceId`) is where it is stored and which tools the agent could reach when a turn ran.
 
 <Aside type="note">
 Conversation IDs follow the pattern `conv_` followed by 16 hex characters (for example `conv_a1b2c3d4e5f67890`). They are generated from a UUIDv4 with the dashes stripped.

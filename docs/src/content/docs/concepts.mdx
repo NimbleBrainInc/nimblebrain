@@ -131,17 +131,15 @@ NimbleBrain does not install any MCP bundles by default. Platform capabilities (
 ```json
 {
   "name": "@nimblebraininc/postgres",
-  "env": { "DATABASE_URL": "postgres://localhost/mydb" },
-  "protected": true
+  "env": { "DATABASE_URL": "postgres://localhost/mydb" }
 }
 ```
 
 | Field | Description |
 |-------|-------------|
 | `env` | Environment variables passed to the bundle process |
-| `protected` | Prevents uninstall through the management tools |
 | `trustScore` | MTF trust score (0–100) from the mpak registry |
-| `ui` | UI metadata: name, icon, and optional `primaryView` resource URI |
+| `ui` | UI metadata: name, icon, and placement declarations |
 
 ## Skills
 
@@ -262,12 +260,15 @@ The child agent's iteration budget is capped at `min(child.maxIterations, parent
 
 Conversations persist across messages so the agent remembers context.
 
-### Storage backends
+### Storage
 
-| Backend | Default for | Location |
-|---------|------------|----------|
-| **JSONL** | CLI, HTTP server | `~/.nimblebrain/conversations/` |
-| **In-memory** | Programmatic/SDK use | — |
+Conversations are workspace-owned. Every turn is written to a per-conversation JSONL file under the workspace it ran in:
+
+```
+~/.nimblebrain/workspaces/<wsId>/conversations/<ownerId>/<convId>.jsonl
+```
+
+The owner (`ownerId`) is the authorization principal — only they can read or resume the conversation — while the workspace (`wsId`) is where it is stored. Persistence does not depend on any top-level `store` setting; programmatic/SDK embedding can supply an in-memory `ConversationStore` instead.
 
 ### JSONL format
 

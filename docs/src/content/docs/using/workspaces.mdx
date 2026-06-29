@@ -14,7 +14,7 @@ A workspace is an isolated environment within a NimbleBrain instance. It contain
 - **Apps and connectors** — each workspace has its own set of installed MCP bundles and connectors
 - **Members** — users with assigned roles who can access the workspace
 
-When you send a chat message, it runs in the context of your focused workspace, and the agent's active tool set is scoped to the apps installed there. **Conversations are not part of a workspace** — they belong to you and follow you across every workspace you're a member of. See [Conversations](/using/conversations) for how ownership works.
+When you send a chat message, it runs in the context of your focused workspace, and the agent's active tool set is scoped to the apps installed there. **Conversations are partitioned by workspace** — each one is stored under the workspace it ran in and authorized by its owner. See [Conversations](/using/conversations) for how ownership and storage work.
 
 <Aside type="note">
 Workspace IDs are opaque tokens of the form `ws_<16-hex>` (for example `ws_3f9a1c7e0b2d4856`). The ID is assigned once at creation and never derived from the name — renaming a workspace does not change its ID or its URL. Treat the ID as opaque: never parse it for meaning. Your personal workspace is the one exception, with a stable `ws_user_<userId>` form.
@@ -22,22 +22,21 @@ Workspace IDs are opaque tokens of the form `ws_<16-hex>` (for example `ws_3f9a1
 
 ## Roles
 
-Every workspace member has one of three roles:
+Every workspace member has one of two roles:
 
 | Role | Capabilities |
 |------|-------------|
-| **Owner** | Full access. Can manage members, apps, and settings. Cannot be removed. |
-| **Admin** | Can manage members and apps. |
+| **Admin** | Can manage members, apps, and connectors. |
 | **Member** | Can chat and use tools. Cannot manage other members. |
 
 ## What workspaces isolate
 
-| Scoped to workspace | Owned by you (cross-workspace) |
-|---------------------|--------------------------------|
+| Scoped to workspace | Identity-level (cross-workspace) |
+|---------------------|----------------------------------|
 | Installed apps and connectors | Your user account and login |
-| Members and roles | Your conversations and history |
-| Per-workspace credentials | Your files and automations |
-| | Your profile settings (name, theme, timezone) |
+| Members and roles | Your profile settings (name, theme, timezone) |
+| Per-workspace credentials | |
+| Conversations, files, and automations | |
 
 ## Creating a workspace
 
@@ -62,12 +61,12 @@ The tool supports these actions:
 | Action | Description |
 |--------|-------------|
 | `add` | Add a user to the workspace with a specified role |
-| `remove` | Remove a user from the workspace (cannot remove the owner) |
+| `remove` | Remove a user from the workspace |
 | `update` | Change a member's role |
 | `list` | List all members and their roles |
 
 <Aside type="note">
-Only workspace admins and the owner can manage members. Regular members cannot add or remove other users.
+Only workspace admins can manage members. Regular members cannot add or remove other users.
 </Aside>
 
 ## Workspace-scoped apps
@@ -96,10 +95,10 @@ NimbleBrain guarantees every authenticated user has at least one workspace. The 
 
 ## Connecting external MCP clients
 
-The `/mcp` endpoint is **identity-bound**, not workspace-bound. A single connection aggregates your tools across every workspace you belong to, and the tool name itself carries the workspace scope. You do **not** need to send an `X-Workspace-Id` header — it is ignored on `/mcp`. See [Connecting External Clients](/connect/external-clients) for setup.
+The `/mcp` endpoint authenticates you by **identity**, but each request scopes to one workspace via the `X-Workspace-Id` header — validated against your membership. `tools/list` returns that workspace's tools plus your identity tools, and a `tools/call` to any other workspace is refused. A request with no `X-Workspace-Id` exposes identity tools only. See [Connecting External Clients](/connect/external-clients) for setup.
 
 ## What's next
 
-- [Conversations](/using/conversations) — conversations are owned by you, not by a workspace
+- [Conversations](/using/conversations) — conversations are partitioned by workspace and authorized by owner
 - [Managing Apps](/using/managing-apps) — install and configure bundles per workspace
 - [Connecting External Clients](/connect/external-clients) — connect Claude Desktop, Cursor, and other MCP clients

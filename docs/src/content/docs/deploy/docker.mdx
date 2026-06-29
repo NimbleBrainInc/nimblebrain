@@ -5,7 +5,7 @@ description: Deploy NimbleBrain on a single machine with Docker Compose.
 
 import { Steps, Tabs, TabItem, Aside } from '@astrojs/starlight/components';
 
-NimbleBrain ships two container images: **`ghcr.io/nimblebraininc/nimblebrain`** (agent engine + API on port 27247, internal) and **`ghcr.io/nimblebraininc/nimblebrain-web`** (React UI served by Caddy, exposed on port 27246). Docker Compose runs both on a single machine with a shared internal network.
+NimbleBrain ships two container images: **`ghcr.io/nimblebraininc/nimblebrain-runtime`** (agent engine + API on port 27247, internal) and **`ghcr.io/nimblebraininc/nimblebrain-web`** (React UI served by Caddy, exposed on port 27246). Docker Compose runs both on a single machine with a shared internal network.
 
 ## Prerequisites
 
@@ -20,7 +20,7 @@ Create a project directory and add this file:
 ```yaml title="docker-compose.yml"
 services:
   platform:
-    image: ghcr.io/nimblebraininc/nimblebrain:latest
+    image: ghcr.io/nimblebraininc/nimblebrain-runtime:latest
     build: .
     restart: unless-stopped
     volumes:
@@ -60,7 +60,7 @@ The platform reads its working directory from the `workspace` volume mounted at 
 
 | Service | Image | Port | Purpose |
 |---------|-------|------|---------|
-| `platform` | `ghcr.io/nimblebraininc/nimblebrain` | 27247 (internal) | Agent engine, HTTP API, MCP bundle manager |
+| `platform` | `ghcr.io/nimblebraininc/nimblebrain-runtime` | 27247 (internal) | Agent engine, HTTP API, MCP bundle manager |
 | `web` | `ghcr.io/nimblebraininc/nimblebrain-web` | 27246 (host) → 8080 (container) | React SPA served by Caddy, proxies `/v1/*` to platform |
 
 The `web` container runs Caddy, which serves the static UI files and reverse-proxies all `/v1/*` API requests to the platform container. The platform container is **not** exposed to the host — all traffic flows through the web container.
@@ -225,7 +225,7 @@ docker compose up -d
 
 ## Platform image details
 
-The `ghcr.io/nimblebraininc/nimblebrain` image is built on `python:3.13-slim` (Python is the base so Python-based MCP bundles run natively) and adds the Bun runtime plus the tooling bundles shell out to:
+The `ghcr.io/nimblebraininc/nimblebrain-runtime` image is built on `python:3.13-slim` (Python is the base so Python-based MCP bundles run natively) and adds the Bun runtime plus the tooling bundles shell out to:
 
 | Component | Version | Purpose |
 |-----------|---------|---------|

@@ -15,7 +15,7 @@ Most apps don't. You need host capabilities only when your bundle wants to use a
 
 ## Declaring capabilities
 
-Capability declarations live in a `host_capabilities` block inside `_meta["ai.nimblebrain/host"]`. Declaring the block **requires `host_version: "1.1"`** — the schema rejects the block under `1.0`.
+Capability declarations live in a `host_capabilities` block inside `_meta["ai.nimblebrain/host"]`. `host_capabilities` is the `1.1` contract addition, so declare `host_version: "1.1"` alongside the block.
 
 ```json title="manifest.json"
 {

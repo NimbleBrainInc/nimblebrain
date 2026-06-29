@@ -89,15 +89,21 @@ Add `_meta["ai.nimblebrain/host"]` to give your app a presence in the shell:
       "host_version": "1.0",
       "name": "Weather",
       "icon": "cloud-sun",
-      "primaryView": {
-        "resourceUri": "ui://dashboard"
-      }
+      "placements": [
+        {
+          "slot": "main",
+          "resourceUri": "ui://dashboard",
+          "route": "weather",
+          "label": "Weather",
+          "icon": "cloud-sun"
+        }
+      ]
     }
   }
 }
 ```
 
-This registers a main view at `/app/@myorg/weather` and adds a sidebar entry. The `ui://dashboard` resource is an HTML page served by your MCP server and rendered in an iframe.
+This registers a main view at `/app/weather` and adds a sidebar entry under the "Apps" group. Registration and sidebar placement come from the `placements` array — the `ui://dashboard` resource is an HTML page served by your MCP server and rendered in an iframe.
 
 <Aside type="tip">
 You don't need UI to build a useful app. Many powerful apps are tools-only — the agent calls them directly during conversations.

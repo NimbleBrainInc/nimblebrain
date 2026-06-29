@@ -34,7 +34,7 @@ The chat panel and app content work side by side. Ask the agent a question about
        - For a stdio bundle, the install completes in place and you land on the app's **Configure** page to fill in any required fields.
     </Steps>
 
-    Installs are scoped to the workspace named by the URL you're viewing (`/w/<slug>/...`). Installing an app requires the **Admin** or **Owner** role in that workspace.
+    Installs are scoped to the workspace named by the URL you're viewing (`/w/<wsId>/...`, where `<wsId>` is the opaque workspace ID with its `ws_` prefix dropped). Installing an app requires the **admin** role in that workspace.
   </TabItem>
   <TabItem label="Ask the agent">
     The agent can install apps for you. Just ask:

@@ -85,11 +85,12 @@ export function mcpRoutes(ctx: AppContext) {
     async (c) => {
       const features = ctx.runtime.getFeatures();
 
-      // Stage 2: `/mcp` sessions are identity-bound only. The `X-Workspace-Id`
-      // header is no longer consulted here — the host logs once at debug
-      // (`NB_DEBUG=mcp`) if a client still sends one. Tool calls derive their
-      // target workspace from the namespaced tool name on every call (parsed
-      // and routed by the orchestrator).
+      // `/mcp` sessions are identity-bound, walled to a per-request workspace:
+      // each request names its focused workspace via the `X-Workspace-Id` header.
+      // The host honors that header and validates the caller's membership before
+      // scoping the request to that workspace; with no header the session sees
+      // identity-level tools only. Tool calls also carry their target workspace
+      // in the namespaced tool name (parsed and routed by the orchestrator).
       const identity = c.var.identity;
       if (!identity || !ctx.workspaceStore) {
         return apiError(
