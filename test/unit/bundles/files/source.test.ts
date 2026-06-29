@@ -348,8 +348,8 @@ function fileEntry(over: Partial<FileEntry> & { id: string }): FileEntry {
   };
 }
 
-function listOut(result: ToolResult): { files: Array<{ id: string }>; total: number } {
-  return parseFirst(result) as { files: Array<{ id: string }>; total: number };
+function listOut(result: ToolResult): { files: Array<{ id: string }>; totalCount: number } {
+  return parseFirst(result) as { files: Array<{ id: string }>; totalCount: number };
 }
 
 function listFiles(result: ToolResult): string[] {
@@ -370,7 +370,7 @@ describe("files room filtering", () => {
     const res = await source.execute("list", { workspaceId: "ws_helix" });
     expect(res.isError).toBe(false);
     expect(listFiles(res)).toEqual(["fl_helix"]);
-    expect(listOut(res).total).toBe(1);
+    expect(listOut(res).totalCount).toBe(1);
   });
 
   test("includeUnstamped folds roomless files into the personal room", async () => {
@@ -413,6 +413,6 @@ describe("files room filtering", () => {
     // Room-scoped: the limit applies to Helix's set, so its file is returned.
     const helix = await source.execute("list", { limit: 20, workspaceId: "ws_helix" });
     expect(listFiles(helix)).toEqual(["fl_helix_old"]);
-    expect(listOut(helix).total).toBe(1);
+    expect(listOut(helix).totalCount).toBe(1);
   });
 });

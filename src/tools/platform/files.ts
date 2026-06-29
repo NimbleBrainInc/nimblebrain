@@ -106,7 +106,7 @@ async function handleList(store: FileStore, args: ListInput): Promise<object> {
     files.sort((a, b) => b.size - a.size);
   }
 
-  return { files: files.slice(offset, offset + limit), total: files.length };
+  return { files: files.slice(offset, offset + limit), totalCount: files.length };
 }
 
 interface SearchInput {
@@ -130,7 +130,7 @@ async function handleSearch(store: FileStore, args: SearchInput): Promise<object
 
   files.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
 
-  return { files: files.slice(0, limit), total: files.length };
+  return { files: files.slice(0, limit), totalCount: files.length };
 }
 
 function humanSize(bytes: number): string {
