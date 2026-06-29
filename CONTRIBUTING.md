@@ -6,7 +6,6 @@ Thanks for your interest in contributing. This guide covers how to set up the de
 
 - [Bun](https://bun.sh) >= 1.1
 - [Node.js](https://nodejs.org) >= 22 (required by some web tooling)
-- [mpak CLI](https://mpak.dev) (required for smoke tests)
 - Docker (optional, for container-based development)
 
 ## Setup
@@ -42,7 +41,7 @@ Output is prefixed `[api]` / `[web]`. Ctrl+C stops both.
 Before submitting a PR, run the full verification suite:
 
 ```bash
-bun run verify     # lint → typecheck → unit tests → web tests → smoke tests
+bun run verify     # lint → typecheck → unit tests → web tests → integration tests
 ```
 
 Individual steps:
@@ -50,12 +49,9 @@ Individual steps:
 ```bash
 bun run lint       # Biome linter (src/ only)
 bun run check      # TypeScript type check
-bun run test       # Unit tests
-bun run smoke      # Integration/smoke tests (requires mpak + mcp-servers/echo)
+bun run test       # Unit + integration tests
 bun run eval       # LLM evals — requires ANTHROPIC_API_KEY (not in CI)
 ```
-
-Smoke tests require the `mcp-servers/echo` bundle to be available as a sibling directory. If you cloned from the monorepo, it's already there. If not, skip smoke tests with `bun run lint && bun run check && bun run test`.
 
 LLM evals (`test/eval/`) send real messages to Claude and assert on agent behavior (e.g., correct tool discovery). They cost real money and are not part of `verify`. Run them manually when changing prompts, skills, or tool surfacing logic.
 
