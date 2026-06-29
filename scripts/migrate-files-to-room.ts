@@ -51,13 +51,14 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { type ParsedFilesPath, parseFilesPath, roomFilesDir } from "../src/files/paths.ts";
 import type { FileEntry } from "../src/files/types.ts";
+// The ONE servable-file-id validator — shared with the serve handler so a
+// legacy `fl_<base36>_<8 hex>` id the runtime still serves can never be skipped
+// (and thus orphaned) by the migration.
+import { FILE_ID_RE } from "../src/files/uri.ts";
 import { personalWorkspaceIdFor } from "../src/workspace/workspace-store.ts";
 import { acquireMigrationLock } from "./lib/migration-lock.ts";
 
 const MIGRATION_NAME = "files-to-room";
-
-/** A stored file id: `fl_` + 24 hex chars (see `generateFileId` in store.ts). */
-const FILE_ID_RE = /^fl_[0-9a-f]{24}$/;
 
 /** A single entry's planned (dry-run) or performed (write) disposition. */
 interface MovePlan {
@@ -79,7 +80,8 @@ export interface FileMigrationSummary {
   skippedExisting: number;
   /** Live entries left in place because their byte file is missing on disk. */
   skippedMissingBytes: number;
-  /** Entries whose id isn't a valid file id (`fl_` + 24 hex). */
+  /** Entries whose id isn't a servable file id (fails `FILE_ID_RE`) — malformed,
+   *  never a shape the runtime would serve. */
   skippedInvalidId: number;
   /** Registry lines that couldn't be parsed as JSON. */
   skippedUnreadable: number;
@@ -205,7 +207,10 @@ export function migrateFilesToRoom(
       const entries = collapseRegistry(join(userFilesDir, "registry.jsonl"), summary);
 
       for (const [fileId, entry] of entries) {
-        // Validate the id before it ever lands in a path segment.
+        // Validate against the SAME id shape the serve handler accepts (both the
+        // current `fl_<24hex>` and legacy `fl_<base36>_<8hex>` schemes), so a
+        // servable id is never skipped and orphaned. Rejects only truly
+        // malformed ids before they reach a path segment.
         if (!FILE_ID_RE.test(fileId)) {
           summary.skippedInvalidId++;
           continue;
@@ -351,7 +356,8 @@ function main(): void {
   }
   if (summary.skippedInvalidId > 0) {
     console.warn(
-      `  ! ${summary.skippedInvalidId} entr(y/ies) skipped — id is not a valid file id (fl_…).`,
+      `  ! ${summary.skippedInvalidId} entr(y/ies) skipped — malformed id (not a shape the runtime ` +
+        "serves: `fl_<24hex>` or legacy `fl_<base36>_<8hex>`). These are not servable; review the source registry.",
     );
   }
   if (summary.skippedUnreadable > 0) {

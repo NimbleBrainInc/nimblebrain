@@ -172,4 +172,32 @@ describe("migrate-files-to-room", () => {
     expect(existsSync(helixByteDest)).toBe(true);
     expect(existsSync(personalByteDest)).toBe(true);
   });
+
+  // A legacy-scheme id (`fl_<base36>_<8hex>`) is still served by the runtime, so
+  // the migration MUST move it — a stricter gate would skip it and orphan the
+  // file (and every persisted `files://fl_<legacy>` link) on cutover.
+  test("migrates a legacy-format file id (not skipped as invalid)", () => {
+    const legacyId = "fl_m3k2x9_deadbeef";
+    const legacyDir = mkdtempSync(join(tmpdir(), "nb-files-legacy-"));
+    try {
+      const dir = userFilesDir(legacyDir);
+      mkdirSync(dir, { recursive: true });
+      writeFileSync(
+        join(dir, "registry.jsonl"),
+        `${JSON.stringify(entry({ id: legacyId, filename: "old.txt", mimeType: "text/plain" }))}\n`,
+        "utf-8",
+      );
+      writeFileSync(join(dir, byteName(legacyId, "old.txt")), Buffer.from("legacy"));
+
+      const summary = migrateFilesToRoom(legacyDir, { write: true });
+      expect(summary.skippedInvalidId).toBe(0);
+      expect(summary.moved).toBe(1);
+
+      const dest = join(roomFilesDir(legacyDir, personalWorkspaceIdFor(OWNER), OWNER), byteName(legacyId, "old.txt"));
+      expect(existsSync(dest)).toBe(true);
+      expect(readFileSync(dest).toString()).toBe("legacy");
+    } finally {
+      rmSync(legacyDir, { recursive: true, force: true });
+    }
+  });
 });

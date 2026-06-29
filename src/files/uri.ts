@@ -7,15 +7,29 @@
  * messages — the blob lives in the file store, the conversation log only
  * carries the URI.
  *
- * Files are identity-owned (Phase B): every `FileStore` is built against the
- * owner's directory (`users/{userId}/files/`), so a `files://fl_…` URI
- * resolves against the caller's identity store regardless of which workspace
- * created the file. The URI itself does not encode the owner — file ids are
- * globally unique, so the owner's store resolves any of their files.
+ * Files are room-owned: a `FileStore` is built against one owner's partition in
+ * one room (`workspaces/<wsId>/files/<ownerId>/`). The `files://fl_…` URI stays
+ * bare — it does NOT encode the room or owner; the room comes from the ambient
+ * request (`RequestContext.fileWorkspaceId`), and the owner from the request
+ * identity. File ids are globally unique, so the URI resolves once the room is
+ * known.
  */
 
 export const FILE_URI_SCHEME = "files";
 const FILE_URI_PREFIX = `${FILE_URI_SCHEME}://`;
+
+/**
+ * Canonical stored-file id shape — the ONE validator for "is this a servable
+ * file id." Two accepted schemes:
+ *   - `fl_<24 hex>`            — current (`generateFileId` in `store.ts`).
+ *   - `fl_<base36>_<8 hex>`    — legacy; historical `files://` links still
+ *                                resolve, so anything that gates file ids
+ *                                (the serve handler AND the migration) MUST
+ *                                accept it or those files become unreachable.
+ * Import this everywhere a file id is validated — never re-declare a stricter
+ * copy, or "what the runtime serves" and "what the migration moves" drift.
+ */
+export const FILE_ID_RE = /^fl_(?:[a-f0-9]{24}|[a-z0-9]+_[a-f0-9]{8})$/;
 
 export function fileIdToUri(id: string): string {
   return `${FILE_URI_PREFIX}${id}`;

@@ -73,9 +73,10 @@ export interface ParsedFilesPath {
 /**
  * Inverse of the builders: recover `{ wsId, ownerId, automationId }` from a file
  * path under a `workspaces/<wsId>/files/...` subtree. Returns `null` for a path
- * that isn't one (e.g. a legacy `users/<id>/files/...` path, or the room
- * `registry.jsonl` which is not owner-partitioned). Used by the migration and
- * tests to label destinations.
+ * that isn't one (e.g. a legacy `users/<id>/files/...` path). Used by the
+ * migration and tests to label destinations. Note: a per-owner
+ * `<ownerId>/registry.jsonl` parses as an owner-partition path (ownerId set,
+ * filename ignored) — callers pass file paths, not the registry.
  */
 export function parseFilesPath(absPath: string): ParsedFilesPath | null {
   const segments = absPath.split(sep);

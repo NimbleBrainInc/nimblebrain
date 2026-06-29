@@ -7,6 +7,7 @@ import type { EngineEvent, EventSink } from "../engine/types.ts";
 import { ingestFiles, isAllowedMime, type UploadedFile } from "../files/ingest.ts";
 import { resolveMimeType } from "../files/mime.ts";
 import type { FileEntry } from "../files/types.ts";
+import { FILE_ID_RE } from "../files/uri.ts";
 import {
   ArtifactNotFoundError,
   ArtifactTooLargeError,
@@ -1699,15 +1700,6 @@ export function sanitizeFilename(name: string): string {
   // biome-ignore lint/suspicious/noControlCharactersInRegex: intentional security sanitization
   return name.replace(/["\r\n\x00-\x1f]/g, "_");
 }
-
-/**
- * Regex for valid file IDs.
- *  - New scheme: `fl_<24 hex chars>` (randomBytes(12).hex).
- *  - Legacy scheme: `fl_<base36 timestamp>_<8 hex>` from the pre-unification
- *    chat ingest path; kept accepted so historical file links keep working
- *    while aliases.ts (migration) remaps them.
- */
-const FILE_ID_RE = /^fl_(?:[a-f0-9]{24}|[a-z0-9]+_[a-f0-9]{8})$/;
 
 /** Handle GET /v1/files/:fileId?ws=<wsId> — serve a stored file from the room it
  * lives in. Files are room-owned; the URL must carry the room (`?ws=`) because a
