@@ -58,6 +58,7 @@ import type {
   ToolSchema,
 } from "../engine/types.ts";
 import { CONNECTOR_SKILL_SYNTHETIC } from "../engine/types.ts";
+import { FileLocator } from "../files/locator.ts";
 import { workspaceFilesDir } from "../files/paths.ts";
 import { rehydrateUserResources } from "../files/rehydrate.ts";
 import { createFileStore, type FileStore } from "../files/store.ts";
@@ -244,6 +245,7 @@ export class Runtime {
   private eventStore: EventSourcedConversationStore | null;
   /** Process-wide convId → workspace resolver; lazily built over the workspaces root. */
   private _conversationLocator?: ConversationLocator;
+  private _fileLocator?: FileLocator;
   /** Subscribers (e.g. the conversations-tool index) notified on any conversation change. */
   private _conversationsChangedListeners = new Set<() => void>();
   private hooks: EngineHooks;
@@ -2825,7 +2827,24 @@ export class Runtime {
    * because callers are per-request.
    */
   getWorkspaceFileStore(wsId: string, ownerId: string): FileStore {
-    return createFileStore(workspaceFilesDir(resolveWorkDir(this.config), wsId, ownerId));
+    const store = createFileStore(workspaceFilesDir(resolveWorkDir(this.config), wsId, ownerId));
+    // Keep the file locator's `fileId → wsId` memo current at the write sites,
+    // where the workspace is known — so a freshly uploaded file serves O(1) and
+    // a deleted one is forgotten. The locator stays correct without these (a
+    // cold miss walks disk); they just keep the hot path hot.
+    const locator = this.getFileLocator();
+    return {
+      ...store,
+      saveFile: async (data, filename, mimeType) => {
+        const result = await store.saveFile(data, filename, mimeType);
+        locator.remember(result.id, wsId);
+        return result;
+      },
+      deleteFile: async (id) => {
+        await store.deleteFile(id);
+        locator.forget(id);
+      },
+    };
   }
 
   /** Get the ToolRegistry for the current request's workspace (from AsyncLocalStorage context). */
@@ -2931,6 +2950,20 @@ export class Runtime {
       this._conversationLocator = new ConversationLocator(this._workspaceStore.getWorkspacesDir());
     }
     return this._conversationLocator;
+  }
+
+  /**
+   * Process-wide file locator: resolves a globally-unique `fileId` to the
+   * workspace it lives under, within the caller's own owner partitions. Backs
+   * the bare `GET /v1/files/:fileId` serve path (a browser `<img>` GET can't send
+   * `X-Workspace-Id`, so the workspace can't ride the request — the id alone
+   * resolves it). Lazily built; its memo is kept current by `getWorkspaceFileStore`.
+   */
+  getFileLocator(): FileLocator {
+    if (!this._fileLocator) {
+      this._fileLocator = new FileLocator(resolveWorkDir(this.config));
+    }
+    return this._fileLocator;
   }
 
   /**

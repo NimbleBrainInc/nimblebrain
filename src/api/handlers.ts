@@ -1701,21 +1701,19 @@ export function sanitizeFilename(name: string): string {
   return name.replace(/["\r\n\x00-\x1f]/g, "_");
 }
 
-/** Handle GET /v1/files/:fileId?ws=<wsId>&conversationId=<id> — serve a stored
- * file from the workspace it lives in. Files are workspace-owned; the URL must
- * carry the workspace (`?ws=`) because a browser GET can't send the
- * `X-Workspace-Id` header. When `conversationId` is present the workspace is
- * resolved from the conversation instead — the download then follows the
- * conversation's workspace (the partition the chat read/write path uses), so a
- * file stored under a cross-workspace conversation resolves without the client
- * knowing the right `?ws=`. */
+/** Handle GET /v1/files/:fileId — serve a stored file by its globally-unique id.
+ * Files are workspace-owned, but the id alone addresses them: the file locator
+ * resolves the id to its workspace within the caller's OWN owner partitions
+ * (`resolveRequestUserId`), and the store reads from `(wsId, ownerId)`. The owner
+ * partition is both the gate and the search scope — there is no client-supplied
+ * workspace to forge, and a request can only ever reach the caller's own bytes.
+ * The route carries no workspace because a browser `<img>` GET can't send the
+ * `X-Workspace-Id` header; the bare id is sufficient. */
 export async function handleFileServe(
   fileId: string,
   runtime: Runtime,
   features: ResolvedFeatures,
   identity: UserIdentity | undefined,
-  workspaceId: string | undefined,
-  conversationId: string | undefined,
 ): Promise<Response> {
   if (!features.fileContext) {
     return apiError(404, "not_found", "Not found");
@@ -1725,46 +1723,34 @@ export async function handleFileServe(
     return apiError(400, "bad_request", "Invalid file ID format");
   }
 
-  if (!workspaceId && !conversationId) {
-    return apiError(
-      400,
-      "workspace_required",
-      "Files are workspace-owned — pass ?ws=<workspaceId> or conversationId",
-    );
-  }
-
   const ownerId = runtime.resolveRequestUserId(identity);
-  // With a conversationId, follow the conversation's authoritative workspace
-  // (the same partition chat() reads/writes) — the user's own download then
-  // resolves a cross-workspace attachment without the client knowing `?ws=`.
-  // Otherwise `?ws=` is taken at face value WITHOUT a membership check on
-  // purpose — do not add one. The store is rooted at the caller's OWN
-  // `<ownerId>` partition, so a forged `?ws=<other>` can only ever reach files
-  // the caller themselves wrote into that workspace (none, if they're not a
-  // member). The workspace is a storage-routing hint here, not an authorization
-  // axis — the owner partition is the gate. (Membership-gated surfaces use
-  // `optionalWorkspace`; a browser GET can't send the header, which is why this
-  // route reads the query param.)
-  const wsId = conversationId
-    ? await runtime.resolveConversationWorkspaceId(
-        conversationId,
-        workspaceId ?? personalWorkspaceIdFor(ownerId),
-        ownerId,
-      )
-    : (workspaceId as string);
-  const store = runtime.getWorkspaceFileStore(wsId, ownerId);
-  try {
-    const file = await store.readFile(fileId);
-    const safeName = sanitizeFilename(file.filename);
-    return new Response(new Uint8Array(file.data), {
-      headers: {
-        "Content-Type": file.mimeType,
-        "Content-Disposition": `inline; filename="${safeName}"`,
-      },
-    });
-  } catch {
-    return apiError(404, "not_found", "File not found");
+  const locator = runtime.getFileLocator();
+
+  const serve = async (): Promise<Response | null> => {
+    const wsId = await locator.locate(ownerId, fileId);
+    if (!wsId) return null;
+    try {
+      const file = await runtime.getWorkspaceFileStore(wsId, ownerId).readFile(fileId);
+      const safeName = sanitizeFilename(file.filename);
+      return new Response(new Uint8Array(file.data), {
+        headers: {
+          "Content-Type": file.mimeType,
+          "Content-Disposition": `inline; filename="${safeName}"`,
+        },
+      });
+    } catch {
+      return null; // not at the resolved location
+    }
+  };
+
+  let response = await serve();
+  if (!response) {
+    // A memo hit can go stale (out-of-process delete). Drop it and re-resolve
+    // from disk once before giving up — the memo is an optimization, not truth.
+    locator.forget(fileId);
+    response = await serve();
   }
+  return response ?? apiError(404, "not_found", "File not found");
 }
 
 // --- Chat Body Parsing ---

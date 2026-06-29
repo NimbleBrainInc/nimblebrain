@@ -12,7 +12,8 @@ export function toolRoutes(ctx: AppContext) {
   // a tool call may target an identity source (conversations, …) that has NO
   // workspace, so a header isn't required — `handleToolCall` routes identity
   // sources through the identity door and still 400s a workspace source called
-  // without a workspace. `/v1/shell` and `/v1/files` stay workspace-scoped.
+  // without a workspace. `/v1/shell` is workspace-scoped; `/v1/files/:fileId`
+  // resolves the workspace from the file id (no header/param needed).
   return new Hono<AppEnv>()
     .use("*", requireAuth(ctx.authOptions))
     .use("*", errorLog(ctx))
@@ -33,19 +34,11 @@ export function toolRoutes(ctx: AppContext) {
       handleShell(ctx.runtime, c.var.workspaceId),
     )
     .get("/v1/files/:fileId", (c) => {
-      // Files are workspace-owned: the URL carries the workspace as `?ws=<wsId>` (the web
-      // client appends the active workspace; a browser GET can't send a header).
-      // An optional `?conversationId=<id>` makes the download follow the
-      // conversation's workspace instead — resolves a cross-workspace attachment
-      // without the client knowing the right `?ws=`.
+      // Files are workspace-owned but addressed by their globally-unique id alone:
+      // the server resolves the workspace from the id within the caller's own
+      // owner partitions (see handleFileServe). No workspace in the URL — a
+      // browser `<img>` GET can't send `X-Workspace-Id`, and the id is enough.
       const fileId = decodeURIComponent(c.req.param("fileId"));
-      return handleFileServe(
-        fileId,
-        ctx.runtime,
-        ctx.features,
-        c.var.identity,
-        c.req.query("ws"),
-        c.req.query("conversationId"),
-      );
+      return handleFileServe(fileId, ctx.runtime, ctx.features, c.var.identity);
     });
 }

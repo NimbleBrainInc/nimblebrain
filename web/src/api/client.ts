@@ -109,17 +109,14 @@ export function getActiveWorkspaceId(): string | null {
 }
 
 /**
- * Build the browser URL for the workspace-scoped file-serve endpoint. Files are
- * workspace-owned, so the endpoint requires `?ws=<workspaceId>` — a browser
- * `<img src>` or download anchor can't send the `X-Workspace-Id` header, so
- * the workspace rides in the URL (a request without it returns 400
- * `workspace_required`). Defaults to the active workspace; pass `workspaceId`
- * to target a specific workspace.
+ * Build the browser URL for a stored file. File ids are globally unique, so the
+ * bare id addresses the file — the server resolves which workspace it lives in
+ * from the id (within the caller's own files). No workspace in the URL: a
+ * browser `<img src>` or download anchor can't send the `X-Workspace-Id` header,
+ * and it doesn't need to.
  */
-export function fileUrl(fileId: string, workspaceId?: string | null): string {
-  const ws = workspaceId ?? activeWorkspaceId;
-  const query = ws ? `?ws=${encodeURIComponent(ws)}` : "";
-  return `${API_BASE}/v1/files/${encodeURIComponent(fileId)}${query}`;
+export function fileUrl(fileId: string): string {
+  return `${API_BASE}/v1/files/${encodeURIComponent(fileId)}`;
 }
 
 /** Register a callback invoked on 401 responses. */
