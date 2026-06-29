@@ -173,6 +173,12 @@ export class IdentityToolRouter implements ToolRouter {
       identity: outer?.identity ?? null,
       scope: perCallScope,
       ...(outer?.conversationId !== undefined ? { conversationId: outer.conversationId } : {}),
+      // `fileWorkspaceId` is orthogonal to `scope` and rides through the restamp:
+      // identity-door `files__*` tools resolve their workspace-owned store from
+      // this field (NOT `scope.workspaceId`, which is the personal/session
+      // workspace on the identity door). Dropping it here would leave the file
+      // tools with no workspace in scope even when the chat set one.
+      ...(outer?.fileWorkspaceId !== undefined ? { fileWorkspaceId: outer.fileWorkspaceId } : {}),
       ...(outer?.toolPromotion !== undefined ? { toolPromotion: outer.toolPromotion } : {}),
     };
     return runWithRequestContext(perCallCtx, () =>

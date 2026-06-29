@@ -1,5 +1,4 @@
 import type { EventSink } from "../engine/types.ts";
-import { log } from "../observability/log.ts";
 import type { McpSource } from "./mcp-source.ts";
 
 export type BundleState = "healthy" | "restarting" | "dead";
@@ -191,18 +190,15 @@ export class HealthMonitor {
     }
   }
 
-  /** Reconnect a remote source via transport-level stop+start. */
+  /**
+   * Reconnect a remote source. Routes through `restart()` (→ tryRestart) so a
+   * HealthMonitor tick shares the source's in-flight-restart guard with inline
+   * session recovery (readResource / callTool) — otherwise the two could fire
+   * concurrent stop()/start() cycles on the same source after a roll.
+   * `restart()` never throws: it returns false and emits `source.restart_failed`.
+   */
   private async reconnectRemote(source: McpSource): Promise<boolean> {
-    try {
-      await source.stop();
-      await source.start();
-      return true;
-    } catch (err) {
-      log.error("[health-monitor] reconnect failed", {
-        error: err instanceof Error ? err.message : String(err),
-      });
-      return false;
-    }
+    return source.restart();
   }
 }
 

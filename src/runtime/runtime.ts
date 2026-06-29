@@ -24,7 +24,7 @@ import { generateTitle } from "../conversation/auto-title.ts";
 import { compactConversationMessages } from "../conversation/compaction.ts";
 import { EventSourcedConversationStore } from "../conversation/event-sourced-store.ts";
 import { JsonlConversationStore } from "../conversation/jsonl-store.ts";
-import { ConversationLocator } from "../conversation/locator.ts";
+import { type ConversationLocation, ConversationLocator } from "../conversation/locator.ts";
 import { InMemoryConversationStore } from "../conversation/memory-store.ts";
 import { workspaceConversationsDir } from "../conversation/paths.ts";
 import type {
@@ -1138,8 +1138,17 @@ export class Runtime {
     // locator (authoritative). The workspace owns the directory; the path is the
     // boundary. This is a SEPARATE axis from `toolsWsId` (tool/skill/app scope)
     // below — the conversation workspace is fixed at create, the tool scope is not.
-    const convWsId = request.workspaceId ?? sessionWsId;
-    const { store } = await this.resolveChatStore(request.conversationId, convWsId, ownerId);
+    const requestWsId = request.workspaceId ?? sessionWsId;
+    // `convWsId` is authoritative: on a cross-workspace resume `resolveChatStore`
+    // relocates to the workspace the conversation actually lives in. The create
+    // stamp (below) and the file partition (~line 1502) follow it, not the
+    // request header — otherwise a resumed chat's attachments resolve in the
+    // wrong partition and silently vanish.
+    const { store, convWsId } = await this.resolveChatStore(
+      request.conversationId,
+      requestWsId,
+      ownerId,
+    );
 
     // Load the personal workspace config for agents / models override.
     // Pre-Stage-2 this looked up the request's `workspaceId`; that field
@@ -1496,10 +1505,12 @@ export class Runtime {
     // shape (inline bytes) — see `src/files/rehydrate.ts`.
     const history = await store.history(conversation);
     // Files are workspace-owned: rehydrate a `files://` URI from the
-    // conversation's own workspace (`request.workspaceId ?? sessionWsId`, the
-    // same workspace the upload landed in) under the owner's partition — never
-    // another workspace's store.
-    const fileStore = this.getWorkspaceFileStore(request.workspaceId ?? sessionWsId, ownerId);
+    // conversation's AUTHORITATIVE workspace (`convWsId` from `resolveChatStore`,
+    // the same workspace the upload landed in) under the owner's partition —
+    // never another workspace's store. On a cross-workspace resume this is the
+    // conversation's workspace, not the request header — they differ, and reading
+    // from the header would miss the attachment entirely.
+    const fileStore = this.getWorkspaceFileStore(convWsId, ownerId);
 
     // Resolve maxOutputTokens FIRST — resolveThinking needs it to clamp the
     // thinking budget so visible-content headroom is always preserved.
@@ -1709,9 +1720,10 @@ export class Runtime {
         workspaceModelOverride: sessionWorkspace?.models ?? null,
       },
       conversationId: conversation.id,
-      // Files created/read by identity-door `files__*` tools land in the focused
-      // workspace (the conversation's workspace), not the personal `sessionWsId` scope.
-      fileWorkspaceId: request.workspaceId ?? sessionWsId,
+      // Files created/read by identity-door `files__*` tools land in the
+      // conversation's authoritative workspace — the same partition the
+      // rehydration read and the upload write use.
+      fileWorkspaceId: convWsId,
     };
     engineConfig.toolPromotion = this.buildToolPromotionFactory();
 
@@ -2031,7 +2043,9 @@ export class Runtime {
 
     // The task's single input message — no conversation, no history, no resume.
     // Rehydration below is a pass-through for shape consistency with the engine's
-    // message contract (it only does work if the prompt carries file refs).
+    // message contract (it only does work if the prompt carries file refs). The
+    // file store is anchored to the run's provenance workspace (the request
+    // workspace, or the owner's personal workspace when unfocused).
     const fileStore = this.getWorkspaceFileStore(request.workspaceId ?? sessionWsId, ownerId);
     const taskMessages: StoredMessage[] = [
       {
@@ -2194,8 +2208,9 @@ export class Runtime {
       // The run's correlation id (no conversation exists) — stamps audit/file
       // records so a file the run creates is traceable back to it.
       conversationId: runId,
-      // Files created/read by identity-door `files__*` tools land in the focused
-      // (provenance) workspace, not the personal `sessionWsId` scope.
+      // Files created/read by identity-door `files__*` tools land in the run's
+      // provenance workspace — the same partition the rehydration read uses, not
+      // the personal `sessionWsId` scope.
       fileWorkspaceId: request.workspaceId ?? sessionWsId,
     };
     engineConfig.toolPromotion = this.buildToolPromotionFactory();
@@ -2995,33 +3010,56 @@ export class Runtime {
     createConvWsId: string,
     ownerId: string,
   ): Promise<{ store: EventSourcedConversationStore; convWsId: string }> {
+    const { wsId, loc } = await this.resolveConversationLocation(
+      conversationId,
+      createConvWsId,
+      ownerId,
+    );
+    const store = this.workspaceConversationStore(wsId, loc?.ownerId ?? ownerId);
+    return { store, convWsId: wsId };
+  }
+
+  /**
+   * The workspace a conversation lives in — for code outside the chat path (the
+   * upload handlers, the file-serve route, and the per-turn `fileWorkspaceId`
+   * that scopes the agent's `files__*` tools) that must resolve the SAME
+   * partition `chat()` reads from when it rehydrates. A conversation not yet on
+   * disk (a new chat) is born in `fallbackWsId`.
+   */
+  async resolveConversationWorkspaceId(
+    conversationId: string | undefined,
+    fallbackWsId: string,
+    ownerId: string,
+  ): Promise<string> {
+    return (await this.resolveConversationLocation(conversationId, fallbackWsId, ownerId)).wsId;
+  }
+
+  /**
+   * The single probe-then-locate for "which workspace does this conversation live
+   * in" — the one place the partition rule lives, so the read (`resolveChatStore`),
+   * the write (`resolveConversationWorkspaceId` → upload handlers / file serve), and
+   * the file-tool scope (`RequestContext.fileWorkspaceId`) cannot drift apart.
+   * Hot path: probe the focused/personal workspace directly (O(1) `existsSync`, no
+   * tenant scan) — only a cross-workspace deep-link falls back to the locator walk.
+   */
+  private async resolveConversationLocation(
+    conversationId: string | undefined,
+    fallbackWsId: string,
+    ownerId: string,
+  ): Promise<{ wsId: string; loc: ConversationLocation | undefined }> {
     if (conversationId) {
-      // Hot path: the conversation almost always lives in the focused/personal
-      // workspace under the caller's own owner partition. Probe that one path
-      // directly (O(1) `existsSync`) before any cross-workspace walk — a resume runs
-      // on every message, so this must not scan the tenant.
       const directDir = workspaceConversationsDir(
         resolveWorkDir(this.config),
-        createConvWsId,
+        fallbackWsId,
         ownerId,
       );
       if (existsSync(join(directDir, `${conversationId}.jsonl`))) {
-        return {
-          store: this.workspaceConversationStore(createConvWsId, ownerId),
-          convWsId: createConvWsId,
-        };
+        return { wsId: fallbackWsId, loc: undefined };
       }
-      // Cross-workspace deep-link: resolve by path (a readdir-only walk, no reads).
       const loc = await this.getConversationLocator().locate(conversationId);
-      if (loc) {
-        const store = this.workspaceConversationStore(loc.wsId, loc.ownerId ?? ownerId);
-        return { store, convWsId: loc.wsId };
-      }
+      if (loc) return { wsId: loc.wsId, loc };
     }
-    return {
-      store: this.workspaceConversationStore(createConvWsId, ownerId),
-      convWsId: createConvWsId,
-    };
+    return { wsId: fallbackWsId, loc: undefined };
   }
 
   /**

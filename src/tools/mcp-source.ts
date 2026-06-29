@@ -267,6 +267,12 @@ export class McpSource implements ToolSource {
   private transport: Transport | null = null;
   private cachedTools: Tool[] | null = null;
   private dead = false;
+  /** A restart in progress, shared so concurrent recoveries reuse one
+   *  stop()/start() cycle instead of stacking. Resource reads are NOT serialized
+   *  the way the engine serializes tool calls, so a remote roll can land several
+   *  session-loss reads here at once; without this each would fire its own
+   *  restart — a restart storm on a single source. */
+  private restartInFlight: Promise<boolean> | null = null;
   private startedAt: number | null = null;
   /** Optional `instructions` string returned by the MCP server during
    *  `initialize`. Captured after connect so callers (e.g. the system
@@ -1321,27 +1327,29 @@ export class McpSource implements ToolSource {
       return null;
     }
     try {
-      const result = await this.client.readResource({ uri });
-      if (!result.contents || result.contents.length === 0) return null;
-      const first = result.contents[0]!;
-      const meta = mergeResourceMeta(
-        (result as { _meta?: Record<string, unknown> })._meta,
-        (first as { _meta?: Record<string, unknown> })._meta,
-      );
-      if ("text" in first && typeof first.text === "string") {
-        return { text: first.text, mimeType: first.mimeType, meta };
-      }
-      if ("blob" in first && typeof first.blob === "string") {
-        const raw = atob(first.blob);
-        const bytes = new Uint8Array(raw.length);
-        for (let i = 0; i < raw.length; i++) bytes[i] = raw.charCodeAt(i);
-        return { blob: bytes, mimeType: first.mimeType, meta };
-      }
-      return { text: JSON.stringify(first), meta };
+      return this.toResourceData(await this.client.readResource({ uri }));
     } catch (err) {
       // A genuine MCP miss is expected and stays a silent null — e.g. a skill://
       // or app://instructions probe against a server that has neither.
       if (isMcpResourceMiss(err)) return null;
+      // A stale session or a mid-roll gateway blip is recoverable, not a 404: the
+      // remote server rolled and forgot our Streamable-HTTP session, or isn't
+      // ready yet. Unlike a tools/call (whose `execute` catch already restarts +
+      // retries), a resource read would otherwise return null here —
+      // indistinguishable from a genuine miss — and strand the bundle's `ui://`
+      // placement until a manual runtime bounce (issue #571). Re-initialize the
+      // session and retry, riding the brief deploy window with bounded backoff.
+      if (isSessionLost(err) || isTransientTransport(err)) {
+        const recovered = await this.readResourceWithRecovery(uri);
+        if (recovered !== undefined) return recovered;
+        // Recovery exhausted within the inline window. Hand the source to
+        // HealthMonitor's longer exponential backoff: it only sweeps a NOT-alive
+        // source, and a stale session never closed the transport, so without
+        // this the source stays `isAlive()` and is never reconnected.
+        this.emitSourceCrashed(
+          `session recovery exhausted: ${err instanceof Error ? err.message : String(err)}`,
+        );
+      }
       // Anything else — a torn transport, a dropped connection, a timeout — is a
       // real failure, NOT a missing resource. The old bare `catch { return null }`
       // masked every such failure as a 404 with no log to say why, so a degraded
@@ -1359,6 +1367,56 @@ export class McpSource implements ToolSource {
       }
       return null;
     }
+  }
+
+  /**
+   * Project an MCP `resources/read` result into `ResourceData`, or null for an
+   * empty result. Preserves `_meta` from both the per-content entry and the
+   * result level (per-content wins on overlap — the ext-apps spec attaches ui
+   * metadata at the content level).
+   */
+  private toResourceData(result: Awaited<ReturnType<Client["readResource"]>>): ResourceData | null {
+    if (!result.contents || result.contents.length === 0) return null;
+    const first = result.contents[0]!;
+    const meta = mergeResourceMeta(
+      (result as { _meta?: Record<string, unknown> })._meta,
+      (first as { _meta?: Record<string, unknown> })._meta,
+    );
+    if ("text" in first && typeof first.text === "string") {
+      return { text: first.text, mimeType: first.mimeType, meta };
+    }
+    if ("blob" in first && typeof first.blob === "string") {
+      const raw = atob(first.blob);
+      const bytes = new Uint8Array(raw.length);
+      for (let i = 0; i < raw.length; i++) bytes[i] = raw.charCodeAt(i);
+      return { blob: bytes, mimeType: first.mimeType, meta };
+    }
+    return { text: JSON.stringify(first), meta };
+  }
+
+  /**
+   * Re-establish a lost remote session and retry a resource read across a remote
+   * server's restart window. Returns the read result (a `ResourceData`, or a
+   * genuine `null` miss) once the session recovers, or `undefined` if recovery is
+   * exhausted — the caller then escalates to HealthMonitor. Restart attempts are
+   * coalesced by `tryRestart`, so concurrent recovering reads share one cycle.
+   */
+  private async readResourceWithRecovery(uri: string): Promise<ResourceData | null | undefined> {
+    for (const delayMs of SESSION_RECOVERY_DELAYS_MS) {
+      if (delayMs > 0) await sleep(delayMs);
+      const restarted = await this.tryRestart();
+      if (!restarted || !this.client) continue; // server still rolling — back off
+      try {
+        return this.toResourceData(await this.client.readResource({ uri }));
+      } catch (retryErr) {
+        // Session's back but the resource is genuinely absent — a real null.
+        if (isMcpResourceMiss(retryErr)) return null;
+        // Still mid-roll (another stale-session or gateway error) — keep riding.
+        if (isSessionLost(retryErr) || isTransientTransport(retryErr)) continue;
+        return undefined; // a different, non-recoverable error — caller logs it
+      }
+    }
+    return undefined;
   }
 
   /** Expose the underlying MCP client (kept for tests and rare introspection). */
@@ -1971,6 +2029,19 @@ export class McpSource implements ToolSource {
   }
 
   private async tryRestart(): Promise<boolean> {
+    // Coalesce concurrent restarts behind one in-flight stop()/start() cycle —
+    // inline session recovery (readResource / callTool) and HealthMonitor can
+    // all reach here for the same source after a remote roll. See `restartInFlight`.
+    if (this.restartInFlight) return this.restartInFlight;
+    this.restartInFlight = this.doRestart();
+    try {
+      return await this.restartInFlight;
+    } finally {
+      this.restartInFlight = null;
+    }
+  }
+
+  private async doRestart(): Promise<boolean> {
     try {
       await this.stop();
       await this.start();
@@ -2016,6 +2087,102 @@ export function isMcpResourceMiss(err: unknown): boolean {
     typeof message === "string" &&
     /resource not found|unknown resource|no such resource/i.test(message)
   );
+}
+
+/**
+ * The **connection-level** failure classes — properties of the source's
+ * connection, independent of which op (`tools/call`, `resources/read`, …) threw.
+ * This is the only thing classifiable from a throw regardless of op. The
+ * application-outcome question ("server answered, but with a miss / an error?")
+ * is op-DEPENDENT — the same wire code (`-32601`, `-32602`) is a resource miss on
+ * `resources/read` but a method/param error on `tools/call` — so it lives in a
+ * separate, op-scoped classifier (`isMcpResourceMiss` for reads), NOT here. See
+ * `research/SPEC-mcp-source-recovery.md` §3.1.
+ *
+ * `source-absent` (a registry-lookup miss before any call) and `credential-lost`
+ * (a `ConnectionRevalidator` probe verdict) are deliberately absent: they are not
+ * thrown errors, so they cannot be classified from one. They reach recovery as
+ * detector *signals* (handled by the recovery policy in Phase 2), never as
+ * outputs of `classifyConnectionFailure`.
+ */
+export type ConnectionFailure =
+  | "session-lost"
+  | "transient"
+  | "transport-dead"
+  | "auth-lost"
+  | "none";
+
+/**
+ * Classify a thrown error into a connection-failure class. Order is load-bearing
+ * for behavior-preservation: `session-lost` and `transient` use the exact prior
+ * predicate logic and are tested first, so the `isSessionLost` / `isTransientTransport`
+ * wrappers below stay byte-identical to their pre-extraction behavior.
+ *
+ * - **session-lost** — the server forgot our Streamable-HTTP session (it rolled).
+ *   Wire shape (NOT a JSON-RPC code on `err.code`): a request on a stale
+ *   `Mcp-Session-Id` gets HTTP 404 + a `-32001 "Session not found"` body, which the
+ *   SDK throws as a `StreamableHTTPError` whose `.code` is the status (404) and
+ *   whose `.message` carries the `-32001`/text. Match status + message together; a
+ *   code-only match on -32001 silently never fires on the canonical path.
+ * - **transient** — a mid-roll gateway blip (502/503/504, `bad_gateway`). Back off.
+ * - **auth-lost** — a rejected credential. Detectable only as `UnauthorizedError`;
+ *   note its recovery *policy* is config-dependent — a static-auth remote can't
+ *   reauth — but that decision is Phase 2's (see the SPEC §3.2), not this function's.
+ * - **transport-dead** — the connection is torn (closed / refused / timed out).
+ * - **none** — not a connection failure; ask the op-scoped outcome classifier.
+ */
+export function classifyConnectionFailure(err: unknown): ConnectionFailure {
+  if (err === null || typeof err !== "object") return "none";
+  const code = (err as { code?: unknown }).code;
+  const message = (err as { message?: unknown }).message;
+  const msg = typeof message === "string" ? message : "";
+
+  // session-lost — exact prior `isSessionLost` logic, checked first.
+  if (code === -32001 || (code === 404 && /session not found/i.test(msg))) {
+    return "session-lost";
+  }
+  // transient — exact prior `isTransientTransport` logic, checked second.
+  if (
+    code === 502 ||
+    code === 503 ||
+    code === 504 ||
+    /bad[ _]gateway|service unavailable|gateway time-?out/i.test(msg)
+  ) {
+    return "transient";
+  }
+  if (err instanceof UnauthorizedError) return "auth-lost";
+  if (
+    code === -32000 ||
+    /connection closed|fetch failed|socket hang ?up|terminated|network error|econnre(set|fused)|timed? ?out/i.test(
+      msg,
+    )
+  ) {
+    return "transport-dead";
+  }
+  return "none";
+}
+
+/** @see classifyConnectionFailure — the canonical detector; this is a named view of it. */
+export function isSessionLost(err: unknown): boolean {
+  return classifyConnectionFailure(err) === "session-lost";
+}
+
+/** @see classifyConnectionFailure — the canonical detector; this is a named view of it. */
+export function isTransientTransport(err: unknown): boolean {
+  return classifyConnectionFailure(err) === "transient";
+}
+
+/**
+ * Delays (ms) before each remote-session re-establish attempt. The first is
+ * immediate — the common case is a stale session against an already-healthy
+ * server, recovered in one fresh `initialize`. The rest ride a rolling deploy's
+ * brief gateway window (~2.5s total); HealthMonitor's longer exponential backoff
+ * is the backstop for anything beyond it.
+ */
+const SESSION_RECOVERY_DELAYS_MS = [0, 500, 2000] as const;
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 /** Type guard: does this unknown value match Tool.execution's shape? */
