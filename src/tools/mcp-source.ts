@@ -273,6 +273,10 @@ export class McpSource implements ToolSource {
    *  session-loss reads here at once; without this each would fire its own
    *  restart — a restart storm on a single source. */
   private restartInFlight: Promise<boolean> | null = null;
+  /** Backoff schedule for `recover`'s re-establish loop. Defaults to
+   *  `SESSION_RECOVERY_DELAYS_MS`; overridable so tests exercise the policy
+   *  branches without real sleeps. */
+  private recoveryDelaysMs?: readonly number[];
   private startedAt: number | null = null;
   /** Optional `instructions` string returned by the MCP server during
    *  `initialize`. Captured after connect so callers (e.g. the system
@@ -1217,88 +1221,145 @@ export class McpSource implements ToolSource {
         };
       }
 
-      // Authorization loss is not a crash. A remote tool call that throws
-      // UnauthorizedError means the persisted refresh token was rejected
-      // (expired / revoked / conditional-access pulled) — restarting the
-      // transport can't fix a dead credential, and routing it through the
-      // crash/restart path below wrongly escalates the connection toward
-      // `dead`. Flip the connection to `reauth_required` via the provider
-      // (which holds the (wsId, serverName) owner context) so the UI shows
-      // "Reconnect" and a `connection.state_changed` event fires, then surface
-      // a clear, structured reauth error instead of a generic crash. This
-      // wires the documented `running → reauth_required` transition
-      // (see connection.ts) that nothing else triggered.
+      // One recovery path for every outbound op. `recover` classifies the throw,
+      // consults `policyFor`, and effects the action (surface / reauth / restart
+      // + retry with bounded backoff). Two op-specific facts come from here:
       //
-      // Gated on `authProvider`: only an OAuth-provider remote can be
-      // "reconnected" by the user — a 401 there means the refresh token died
-      // and re-running OAuth fixes it. A static-auth remote (e.g. a Composio
-      // bundle's `x-api-key` header) that 401s is a bad OPERATOR credential,
-      // not user-reconnectable: there's no flow to re-run, and `notifyAuthLost`
-      // would no-op anyway (no provider). Fall through to the normal error
-      // path rather than show a misleading "Reconnect".
-      if (
-        err instanceof UnauthorizedError &&
-        this.mode.type === "remote" &&
-        this.mode.authProvider
-      ) {
-        this.mode.authProvider.notifyAuthLost();
-        return {
-          content: textContent(
-            `${this.name} needs to be reconnected — its authorization has expired. Open the connector and click Reconnect.`,
-          ),
-          isError: true,
-          structuredContent: {
-            error: "auth_required",
-            reason: "reauth_required",
-            source: this.name,
-          },
-        };
-      }
-
-      // De-duped via the `dead` guard inside emitSourceCrashed: if the
-      // transport's `onclose` already fired (subprocess died before our
-      // catch ran), this is a no-op and the onclose-side payload — which
-      // includes stderrTail — wins. If we get here first, the thrown
-      // error is the more informative payload.
-      this.emitSourceCrashed(String(err));
-
-      // Crash-retry is ONLY safe for inline calls. A task-augmented call has
-      // spawned server-side state (the task, an entity, possibly external
-      // side effects); retrying would create a duplicate and orphan the
-      // original. Surface the error and let the agent decide whether to
-      // initiate a new run.
-      if (isTaskAugmented) {
-        return {
-          content: textContent(
-            `Task failed and cannot be auto-retried: ${err instanceof Error ? err.message : String(err)}`,
-          ),
-          isError: true,
-        };
-      }
-
-      const restarted = await this.tryRestart();
-      if (restarted) {
-        try {
-          // Use scrubbed args on retry too — the original `input` still
-          // carries any no-op sentinels the upstream API will reject.
-          // Without this, a crash-restart retry bypasses the scrubber on
-          // exactly the code path that's most likely to hit
-          // deterministic-rejection bugs.
-          return await this.callToolInline(toolName, dispatchArgs, signal);
-        } catch (retryErr) {
-          return {
+      //  - `idempotent: !isTaskAugmented` — a task-augmented call has spawned
+      //    server-side state (the task, an entity, side effects); retrying would
+      //    duplicate it. So `policyFor` surfaces every failure for tasks rather
+      //    than retrying. Inline calls are re-issued with the SCRUBBED args
+      //    (`dispatchArgs`), same as the direct call — the original `input` may
+      //    carry no-op sentinels an upstream API rejects.
+      //  - `reauth` — a remote with an OAuth provider flips to `reauth_required`
+      //    and shows a structured "Reconnect"; a static-auth remote (no provider)
+      //    has nothing to re-run, so `policyFor` surfaces it as a normal error.
+      const failMsg = (e: unknown) => (e instanceof Error ? e.message : String(e));
+      return this.recover<ToolResult>(
+        err,
+        () => this.callToolInline(toolName, dispatchArgs, signal),
+        {
+          idempotent: !isTaskAugmented,
+          // A throw on a tools/call is almost always the transport; recover even
+          // unrecognized shapes (old robustness), but only ONCE — see
+          // TOOL_CALL_RECOVERY_DELAYS — so a mutating call isn't replayed N times.
+          recoverUnknown: true,
+          delays: TOOL_CALL_RECOVERY_DELAYS,
+          surface: (e) => ({
             content: textContent(
-              `Retry failed after restart: ${retryErr instanceof Error ? retryErr.message : String(retryErr)}`,
+              isTaskAugmented
+                ? `Task failed and cannot be auto-retried: ${failMsg(e)}`
+                : `${this.name} call failed: ${failMsg(e)}`,
             ),
             isError: true,
-          };
-        }
-      }
-      return {
-        content: textContent(`Server crashed and could not restart: ${this.name}`),
-        isError: true,
-      };
+          }),
+          reauth: () => ({
+            content: textContent(
+              `${this.name} needs to be reconnected — its authorization has expired. Open the connector and click Reconnect.`,
+            ),
+            isError: true,
+            structuredContent: {
+              error: "auth_required",
+              reason: "reauth_required",
+              source: this.name,
+            },
+          }),
+        },
+      );
     }
+  }
+
+  /**
+   * Shared recovery for a failed outbound op — the single place recovery
+   * semantics live (both `execute` and `readResource` route their catch here).
+   * Classifies the throw via `classifyConnectionFailure` (op-INDEPENDENT),
+   * consults `policyFor`, and effects the action:
+   *
+   *  - **surface** — give up; return the caller's terminal representation.
+   *  - **reauth** — flip the connection to `reauth_required` (`notifyAuthLost`),
+   *    then surface the caller's reauth representation.
+   *  - **recover** — re-establish (`tryRestart`, single-flight) and retry the op,
+   *    riding a remote roll with bounded backoff; on exhaustion, mark the source
+   *    crashed so HealthMonitor's longer backoff takes over, then surface.
+   *
+   * Op-scoped outcomes (a genuine resource miss) short-circuit via `shape.miss`
+   * before any recovery — those are application answers, not connection failures.
+   * The op-specific terminal shapes (a `ToolResult` vs a `ResourceData | null`)
+   * come from `shape`. See research/SPEC-mcp-source-recovery.md §3.3.
+   */
+  private async recover<T>(
+    firstErr: unknown,
+    op: () => Promise<T>,
+    shape: {
+      idempotent: boolean;
+      /** How to treat an `unknown` (unclassifiable) throw. Tool calls set this so
+       *  an unrecognized transport error still recovers (old "restart on any
+       *  throw" robustness); reads leave it false so a malformed result / 429 /
+       *  server code surfaces instead of restart-storming the whole source. */
+      recoverUnknown: boolean;
+      /** Per-call-site backoff schedule. Tool calls pass a single immediate
+       *  attempt (`TOOL_CALL_RECOVERY_DELAYS`) to preserve the historical
+       *  one-retry budget — a non-idempotent mutating call must NOT be replayed
+       *  several times. Reads pass the wider roll-window schedule. The test seam
+       *  `recoveryDelaysMs` overrides both. */
+      delays: readonly number[];
+      surface: (err: unknown) => T;
+      reauth: (err: unknown) => T;
+      miss?: (err: unknown) => T;
+    },
+  ): Promise<T> {
+    const hasReauthableProvider = this.mode.type === "remote" && this.mode.authProvider != null;
+    const delays = this.recoveryDelaysMs ?? shape.delays;
+    let err = firstErr;
+
+    for (let attempt = 0; attempt <= delays.length; attempt++) {
+      // The server answered "not here" — an application outcome, not a connection
+      // failure. Checked each iteration (only reads pass `miss`): a genuine miss
+      // discovered AFTER a successful re-establish stays a silent null, matching
+      // the pre-unification behavior, instead of logging a spurious read failure.
+      if (shape.miss && isMcpResourceMiss(err)) return shape.miss(err);
+      const classified = classifyConnectionFailure(err);
+      // An `unknown` throw is recoverable only where the caller opts in (tool path);
+      // elsewhere it's surfaced like a protocol error.
+      const kind =
+        classified === "unknown" ? (shape.recoverUnknown ? "transport-dead" : "none") : classified;
+      if (kind === "none") return shape.surface(err); // app/protocol/unknown — don't restart
+      const action = policyFor(kind, { idempotent: shape.idempotent, hasReauthableProvider });
+      if (action === "reauth") {
+        if (this.mode.type === "remote" && this.mode.authProvider) {
+          this.mode.authProvider.notifyAuthLost();
+        }
+        return shape.reauth(err);
+      }
+      if (action === "surface") {
+        // Giving up on a genuine connection failure we won't retry (a
+        // non-idempotent op — e.g. a task-augmented call whose transport broke).
+        // Mark the source crashed so HealthMonitor heals it for later calls; the
+        // transport is actually broken even though we don't retry this call.
+        // `auth-lost` is a credential problem, not a transport crash — excluded,
+        // so a static-auth 401 surfaces without thrashing restarts.
+        if (kind !== "auth-lost") this.emitSourceCrashed(String(err));
+        return shape.surface(err);
+      }
+      // action === "recover": re-establish + retry, riding the roll window.
+      if (attempt === delays.length) break; // out of attempts
+      const delayMs = delays[attempt] ?? 0;
+      if (delayMs > 0) await sleep(delayMs);
+      if (!(await this.tryRestart())) continue; // server still rolling — back off
+      try {
+        return await op();
+      } catch (retryErr) {
+        err = retryErr; // re-classify on the next iteration
+      }
+    }
+
+    // Recovery exhausted. A stale session never closed the transport, so the
+    // source still reports `isAlive()` — mark it crashed so HealthMonitor's
+    // longer exponential backoff sweeps it (it only acts on a not-alive source).
+    this.emitSourceCrashed(
+      `recovery exhausted: ${firstErr instanceof Error ? firstErr.message : String(firstErr)}`,
+    );
+    return shape.surface(err);
   }
 
   /**
@@ -1326,38 +1387,13 @@ export class McpSource implements ToolSource {
       }
       return null;
     }
-    try {
-      return this.toResourceData(await this.client.readResource({ uri }));
-    } catch (err) {
-      // A genuine MCP miss is expected and stays a silent null — e.g. a skill://
-      // or app://instructions probe against a server that has neither.
-      if (isMcpResourceMiss(err)) return null;
-      // A stale session or a mid-roll gateway blip is recoverable, not a 404: the
-      // remote server rolled and forgot our Streamable-HTTP session, or isn't
-      // ready yet. Unlike a tools/call (whose `execute` catch already restarts +
-      // retries), a resource read would otherwise return null here —
-      // indistinguishable from a genuine miss — and strand the bundle's `ui://`
-      // placement until a manual runtime bounce (issue #571). Re-initialize the
-      // session and retry, riding the brief deploy window with bounded backoff.
-      if (isSessionLost(err) || isTransientTransport(err)) {
-        const recovered = await this.readResourceWithRecovery(uri);
-        if (recovered !== undefined) return recovered;
-        // Recovery exhausted within the inline window. Hand the source to
-        // HealthMonitor's longer exponential backoff: it only sweeps a NOT-alive
-        // source, and a stale session never closed the transport, so without
-        // this the source stays `isAlive()` and is never reconnected.
-        this.emitSourceCrashed(
-          `session recovery exhausted: ${err instanceof Error ? err.message : String(err)}`,
-        );
-      }
-      // Anything else — a torn transport, a dropped connection, a timeout — is a
-      // real failure, NOT a missing resource. The old bare `catch { return null }`
-      // masked every such failure as a 404 with no log to say why, so a degraded
-      // source was undiagnosable. Log it ONLY for app-surface reads (the resource
-      // proxy passes `logFailures`), where a failure is anomalous. Discovery
-      // probes stay silent, so a bundle that simply lacks a probed resource never
-      // spams — whatever non-standard error shape it returns. The null (404) is
-      // preserved either way; this only makes the anomalous case visible.
+    // A real failure (a torn transport, a dropped connection, an exhausted
+    // recovery) is NOT a missing resource — log it ONLY on the app-surface path
+    // (the resource proxy passes `logFailures`), where a failure is anomalous.
+    // Discovery probes stay silent so a bundle that simply lacks a probed
+    // resource never spams. The null (404) is preserved either way; this only
+    // makes the anomalous case visible.
+    const logAndNull = (err: unknown): null => {
       if (opts?.logFailures) {
         log.warn("[mcp] readResource failed", {
           uri,
@@ -1366,6 +1402,35 @@ export class McpSource implements ToolSource {
         });
       }
       return null;
+    };
+    try {
+      return this.toResourceData(await this.client.readResource({ uri }));
+    } catch (err) {
+      // Route every failure through the shared recovery. A genuine MCP miss
+      // (`shape.miss`) stays a silent null — e.g. a skill:// or app://instructions
+      // probe against a server that has neither. A stale session / mid-roll
+      // gateway blip / torn transport re-initializes and retries (issue #571);
+      // an auth loss flips the connection to `reauth_required`. Reads are
+      // idempotent, so they retry across the deploy window.
+      return this.recover<ResourceData | null>(
+        err,
+        async () => {
+          if (!this.client) throw err; // restart produced no client — keep recovering
+          return this.toResourceData(await this.client.readResource({ uri }));
+        },
+        {
+          idempotent: true,
+          // Reads are conservative on unclassifiable errors: a malformed result
+          // (ZodError), a 429, or a server-defined code must NOT restart-storm the
+          // whole source — surface it as a null. Recognized transport failures and
+          // session loss still recover across the deploy window.
+          recoverUnknown: false,
+          delays: SESSION_RECOVERY_DELAYS_MS,
+          miss: () => null,
+          surface: logAndNull,
+          reauth: logAndNull,
+        },
+      );
     }
   }
 
@@ -1392,31 +1457,6 @@ export class McpSource implements ToolSource {
       return { blob: bytes, mimeType: first.mimeType, meta };
     }
     return { text: JSON.stringify(first), meta };
-  }
-
-  /**
-   * Re-establish a lost remote session and retry a resource read across a remote
-   * server's restart window. Returns the read result (a `ResourceData`, or a
-   * genuine `null` miss) once the session recovers, or `undefined` if recovery is
-   * exhausted — the caller then escalates to HealthMonitor. Restart attempts are
-   * coalesced by `tryRestart`, so concurrent recovering reads share one cycle.
-   */
-  private async readResourceWithRecovery(uri: string): Promise<ResourceData | null | undefined> {
-    for (const delayMs of SESSION_RECOVERY_DELAYS_MS) {
-      if (delayMs > 0) await sleep(delayMs);
-      const restarted = await this.tryRestart();
-      if (!restarted || !this.client) continue; // server still rolling — back off
-      try {
-        return this.toResourceData(await this.client.readResource({ uri }));
-      } catch (retryErr) {
-        // Session's back but the resource is genuinely absent — a real null.
-        if (isMcpResourceMiss(retryErr)) return null;
-        // Still mid-roll (another stale-session or gateway error) — keep riding.
-        if (isSessionLost(retryErr) || isTransientTransport(retryErr)) continue;
-        return undefined; // a different, non-recoverable error — caller logs it
-      }
-    }
-    return undefined;
   }
 
   /** Expose the underlying MCP client (kept for tests and rare introspection). */
@@ -2110,26 +2150,36 @@ export type ConnectionFailure =
   | "transient"
   | "transport-dead"
   | "auth-lost"
+  | "unknown"
   | "none";
 
 /**
- * Classify a thrown error into a connection-failure class. Order is load-bearing
- * for behavior-preservation: `session-lost` and `transient` use the exact prior
- * predicate logic and are tested first, so the `isSessionLost` / `isTransientTransport`
- * wrappers below stay byte-identical to their pre-extraction behavior.
+ * Classify a thrown error into a connection-failure class. Order matters:
+ * `session-lost` and `transient` are checked first (most specific), then
+ * `auth-lost`, then the standard protocol codes, then recognized torn-transport
+ * shapes, with `unknown` as the residue.
  *
  * - **session-lost** — the server forgot our Streamable-HTTP session (it rolled).
- *   Wire shape (NOT a JSON-RPC code on `err.code`): a request on a stale
- *   `Mcp-Session-Id` gets HTTP 404 + a `-32001 "Session not found"` body, which the
- *   SDK throws as a `StreamableHTTPError` whose `.code` is the status (404) and
- *   whose `.message` carries the `-32001`/text. Match status + message together; a
- *   code-only match on -32001 silently never fires on the canonical path.
+ *   Matched on the "session not found" MESSAGE (plus the `-32001` code), NOT the
+ *   HTTP status: the fleet servers' Python SDK returns it as HTTP 404 with a
+ *   `{"code":-32600,"message":"Session not found"}` body (so the client's
+ *   `StreamableHTTPError.code` is 404 and the `-32600` is body text), but remote
+ *   bundles are untrusted/heterogeneous — the message is the reliable signal.
  * - **transient** — a mid-roll gateway blip (502/503/504, `bad_gateway`). Back off.
  * - **auth-lost** — a rejected credential. Detectable only as `UnauthorizedError`;
  *   note its recovery *policy* is config-dependent — a static-auth remote can't
  *   reauth — but that decision is Phase 2's (see the SPEC §3.2), not this function's.
- * - **transport-dead** — the connection is torn (closed / refused / timed out).
- * - **none** — not a connection failure; ask the op-scoped outcome classifier.
+ * - **transport-dead** — a RECOGNIZED torn-transport shape (closed / refused /
+ *   reset / timed out / fetch error / broken pipe).
+ * - **none** — the server answered with a standard JSON-RPC *protocol* error
+ *   (parse/invalid-request/method/params/internal, or resource-not-found), or a
+ *   non-object throw. A restart won't change the answer; surface it. App-level
+ *   tool failures don't reach here at all — they come back as `isError` *results*.
+ * - **unknown** — a throw we can't positively classify. The caller decides: the
+ *   tool path treats it as recoverable (old "restart on any throw" robustness,
+ *   now capped); the read path surfaces it (a malformed result / 429 / server
+ *   code must NOT restart-storm the whole source). This split is why `unknown` is
+ *   distinct from `transport-dead` — see `recover`'s `recoverUnknown`.
  */
 export function classifyConnectionFailure(err: unknown): ConnectionFailure {
   if (err === null || typeof err !== "object") return "none";
@@ -2137,11 +2187,23 @@ export function classifyConnectionFailure(err: unknown): ConnectionFailure {
   const message = (err as { message?: unknown }).message;
   const msg = typeof message === "string" ? message : "";
 
-  // session-lost — exact prior `isSessionLost` logic, checked first.
-  if (code === -32001 || (code === 404 && /session not found/i.test(msg))) {
+  // session-lost — checked first (most specific). Match the "session not found"
+  // MESSAGE regardless of the HTTP status / JSON-RPC code, because the signal is
+  // the server's text, not the envelope: the fleet servers' Python MCP SDK returns
+  // it as HTTP 404 with a `{"code":-32600,"message":"Session not found"}` body
+  // (so the SDK client's StreamableHTTPError has `code === 404`), but a remote
+  // bundle is untrusted and heterogeneous — another server (or the same one in
+  // HTTP-200 + JSON-RPC-error mode) could surface it as `McpError(-32600)` or a
+  // non-404 status. Gating on the status would silently strand those. Matching the
+  // message also takes precedence over the `-32600 → none` branch below, so a
+  // session loss carrying the -32600 code still recovers instead of surfacing.
+  // (`-32001` is the canonical session-expired code; the SDK also reuses it for
+  // RequestTimeout — both are recover-eligible, and the tool path caps replays at
+  // one, so a processed-then-timed-out call isn't re-sent repeatedly.)
+  if (code === -32001 || /session not found/i.test(msg)) {
     return "session-lost";
   }
-  // transient — exact prior `isTransientTransport` logic, checked second.
+  // transient — a mid-roll gateway blip (502/503/504, `bad_gateway`). Back off.
   if (
     code === 502 ||
     code === 503 ||
@@ -2151,25 +2213,62 @@ export function classifyConnectionFailure(err: unknown): ConnectionFailure {
     return "transient";
   }
   if (err instanceof UnauthorizedError) return "auth-lost";
+  // Standard JSON-RPC protocol errors the server *answered* with — the transport
+  // is fine, restarting won't help.
+  if (
+    code === -32700 || // parse error
+    code === -32600 || // invalid request
+    code === -32601 || // method not found
+    code === -32602 || // invalid params
+    code === -32603 || // internal error
+    code === -32002 // resource not found (op-scoped; isMcpResourceMiss owns it per op)
+  ) {
+    return "none";
+  }
+  // Recognized torn-transport shapes. (-32000 is the SDK's connection-closed code.)
   if (
     code === -32000 ||
-    /connection closed|fetch failed|socket hang ?up|terminated|network error|econnre(set|fused)|timed? ?out/i.test(
+    /connection closed|fetch failed|socket hang ?up|terminated|network error|econnre(set|fused)|timed? ?out|epipe|broken pipe/i.test(
       msg,
     )
   ) {
     return "transport-dead";
   }
-  return "none";
+  // Couldn't positively classify it — let the caller decide (recover vs surface).
+  return "unknown";
 }
 
-/** @see classifyConnectionFailure — the canonical detector; this is a named view of it. */
-export function isSessionLost(err: unknown): boolean {
-  return classifyConnectionFailure(err) === "session-lost";
-}
+/**
+ * What `McpSource.recover` does with a connection failure. A deliberately small
+ * vocabulary — only what the recovery effector actually distinguishes:
+ *
+ *  - `recover` — re-establish (a fresh `initialize` via stop()+start()) and retry.
+ *  - `reauth` — flip to `reauth_required` and surface a Reconnect; never loop
+ *    (a dead credential won't heal by restarting).
+ *  - `surface` — return the error to the caller; recovery can't help.
+ *
+ * (The richer vocabulary in the SPEC — separate reinit/restart actions,
+ * re-register, credential-lost — lands with its consumers in later phases; at
+ * this layer reinit and restart are the same stop()+start(), so they're one.)
+ */
+export type RecoveryAction = "recover" | "reauth" | "surface";
 
-/** @see classifyConnectionFailure — the canonical detector; this is a named view of it. */
-export function isTransientTransport(err: unknown): boolean {
-  return classifyConnectionFailure(err) === "transient";
+/**
+ * Pure policy: `(connection-failure, context) → action`. The single decision
+ * point for recovery. `idempotent` is false for task-augmented `tools/call`
+ * (retrying would duplicate spawned server-side state), so every failure on a
+ * non-idempotent op surfaces rather than retries. `hasReauthableProvider` is a
+ * property of the *source*, not the error: a 401 on an OAuth remote is fixable by
+ * reauth; the same 401 on a static-auth remote is an operator-credential problem
+ * with nothing to re-run, so it surfaces. See SPEC §3.2.
+ */
+export function policyFor(
+  kind: Exclude<ConnectionFailure, "none" | "unknown">,
+  ctx: { idempotent: boolean; hasReauthableProvider: boolean },
+): RecoveryAction {
+  if (kind === "auth-lost") return ctx.hasReauthableProvider ? "reauth" : "surface";
+  // session-lost / transient / transport-dead: re-establishable iff the op is safe to repeat.
+  return ctx.idempotent ? "recover" : "surface";
 }
 
 /**
@@ -2180,6 +2279,16 @@ export function isTransientTransport(err: unknown): boolean {
  * is the backstop for anything beyond it.
  */
 const SESSION_RECOVERY_DELAYS_MS = [0, 500, 2000] as const;
+
+/**
+ * Backoff for a tool-call (`execute`) recovery: a SINGLE immediate re-establish +
+ * retry. A `tools/call` can be a mutation (and `idempotent: !isTaskAugmented`
+ * only means "didn't spawn a server-side task", not "safe to replay"), so it
+ * keeps the historical one-retry budget — never the multi-attempt window reads
+ * use — to bound duplicate-side-effect exposure when a call times out or the
+ * transport drops after the server may already have processed it.
+ */
+const TOOL_CALL_RECOVERY_DELAYS = [0] as const;
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));

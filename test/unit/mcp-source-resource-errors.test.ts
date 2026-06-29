@@ -1,12 +1,7 @@
 import { McpError } from "@modelcontextprotocol/sdk/types.js";
 import { describe, expect, it, spyOn } from "bun:test";
 import { NoopEventSink } from "../../src/adapters/noop-events.ts";
-import {
-  isMcpResourceMiss,
-  isSessionLost,
-  isTransientTransport,
-  McpSource,
-} from "../../src/tools/mcp-source.ts";
+import { isMcpResourceMiss, McpSource } from "../../src/tools/mcp-source.ts";
 
 /**
  * `readResource` must distinguish a genuine "resource not here" from a transport
@@ -55,6 +50,10 @@ describe("McpSource.readResource — log scoping (no probe spam)", () => {
         throw err;
       },
     };
+    // A torn transport now routes through recovery; with no backoff slots it
+    // exhausts immediately (no real stop()/start(), no sleeps) and surfaces —
+    // exactly the terminal (logged null / silent null) these tests assert.
+    (source as unknown as { recoveryDelaysMs: readonly number[] }).recoveryDelaysMs = [];
     return source;
   }
 
@@ -132,69 +131,6 @@ describe("McpSource.readResource — log scoping (no probe spam)", () => {
     const transport = makeSourceWithThrowingClient(new Error("Connection closed"));
     expect(await miss.readResource("ui://x")).toBeNull();
     expect(await transport.readResource("ui://x", { logFailures: true })).toBeNull();
-  });
-});
-
-/**
- * Classifiers that gate remote-session self-heal (issue #571). The canonical
- * wire shape for a forgotten Streamable-HTTP session is HTTP 404 with the
- * `-32001 "Session not found"` text inside the SDK's StreamableHTTPError
- * message — NOT a JSON-RPC `-32600` (as the issue first guessed) and NOT a
- * numeric `-32001` on `err.code`. A code-only matcher silently never fires on
- * that path, so these lock the real shape down.
- */
-describe("isSessionLost — forgotten remote session", () => {
-  it("matches the canonical 404 + 'Session not found' StreamableHTTPError shape", () => {
-    expect(
-      isSessionLost({
-        code: 404,
-        message:
-          'Streamable HTTP error: Error POSTing to endpoint: {"code":-32001,"message":"Session not found"}',
-      }),
-    ).toBe(true);
-  });
-
-  it("matches a -32001 code from a non-canonical HTTP-200 JSON-RPC body", () => {
-    expect(isSessionLost(new McpError(-32001, "Session not found"))).toBe(true);
-  });
-
-  it("does NOT match a generic 404 (e.g. wrong URL) with no session text", () => {
-    expect(isSessionLost({ code: 404, message: "Not Found" })).toBe(false);
-  });
-
-  it("does NOT match a resource miss or a plain transport error", () => {
-    expect(isSessionLost(new McpError(-32002, "Resource not found"))).toBe(false);
-    expect(isSessionLost(new Error("Connection closed"))).toBe(false);
-  });
-
-  it("is null/non-object safe", () => {
-    expect(isSessionLost(null)).toBe(false);
-    expect(isSessionLost(undefined)).toBe(false);
-    expect(isSessionLost("nope")).toBe(false);
-  });
-});
-
-describe("isTransientTransport — mid-roll gateway blip", () => {
-  it("matches gateway HTTP statuses on err.code", () => {
-    for (const code of [502, 503, 504]) {
-      expect(isTransientTransport({ code, message: "x" })).toBe(true);
-    }
-  });
-
-  it("matches gateway-error message shapes", () => {
-    expect(isTransientTransport({ message: '{"error":"bad_gateway"}' })).toBe(true);
-    expect(isTransientTransport(new Error("Service Unavailable"))).toBe(true);
-    expect(isTransientTransport(new Error("Gateway Timeout"))).toBe(true);
-  });
-
-  it("does NOT match a stale session or a plain transport error", () => {
-    expect(isTransientTransport({ code: 404, message: "Session not found" })).toBe(false);
-    expect(isTransientTransport(new Error("Connection closed"))).toBe(false);
-  });
-
-  it("is null/non-object safe", () => {
-    expect(isTransientTransport(null)).toBe(false);
-    expect(isTransientTransport("nope")).toBe(false);
   });
 });
 
