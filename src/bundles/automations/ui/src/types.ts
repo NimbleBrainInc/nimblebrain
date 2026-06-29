@@ -58,10 +58,37 @@ export interface AutomationRun {
   completedAt?: string;
   resultPreview?: string;
   error?: string;
-  conversationId?: string;
   inputTokens?: number;
   outputTokens?: number;
   toolCalls?: number;
   iterations?: number;
+  stopReason?: "complete" | "max_iterations" | "length" | "content_filter" | "error" | "other";
+}
+
+/** One tool call from a run's activity log (mirror of the runtime's RunToolCall). */
+export interface RunToolCall {
+  id: string;
+  name: string;
+  input: unknown;
+  output: string;
+  ok: boolean;
+  ms: number;
+}
+
+/** A file the run produced, resolvable in the workspace file store. */
+export interface RunFileRef {
+  id: string;
+  filename: string;
+}
+
+/** The full result of a run — fetched on demand via the `run_result` action. */
+export interface AutomationRunResult {
+  runId: string;
+  automationId: string;
+  completedAt: string;
+  output: string;
+  activityLog: RunToolCall[];
+  outputFiles: RunFileRef[];
+  usage: { inputTokens: number; outputTokens: number; iterations: number };
   stopReason?: "complete" | "max_iterations" | "length" | "content_filter" | "error" | "other";
 }

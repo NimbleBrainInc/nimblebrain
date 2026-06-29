@@ -14,6 +14,7 @@ import {
   AutomationsDeleteInput,
   AutomationsListInput,
   AutomationsRunInput,
+  AutomationsRunResultInput,
   AutomationsRunsInput,
   AutomationsStatusInput,
   AutomationsUpdateInput,
@@ -68,6 +69,15 @@ export const TOOL_SCHEMAS: ToolSchema[] = [
     name: "runs",
     description: "Query run history across automations with filters.",
     inputSchema: AutomationsRunsInput,
+  },
+  {
+    name: "run_result",
+    description:
+      "Fetch a single run's full result (the deliverable): the untruncated final output, " +
+      "the activity log of every tool call, refs to any files the run wrote, and usage. " +
+      "The run list (automations__runs / automations__status) carries only a truncated " +
+      "preview — use this to read the whole result for one run by id.",
+    inputSchema: AutomationsRunResultInput,
   },
   {
     name: "run",

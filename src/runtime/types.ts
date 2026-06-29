@@ -352,11 +352,12 @@ export interface ChatResult {
  *                             cross-workspace union, and Layer 3 bundle
  *                             skills come from the bound workspace only.
  *
- * Each call writes a FRESH conversation owned by `identity`. There is no
- * continuation, no `conversationId` to resume — the returned
- * `TaskResult.conversationId` is for traceability only. Conversation
- * history loading, content-parts, file refs, and SSE streaming UI
- * affordances are chat concerns and intentionally absent here.
+ * Each call is a one-shot run owned by `identity` that produces a
+ * deliverable — NOT a conversation. There is no continuation and no
+ * resume; the returned `TaskResult.runId` is a traceability anchor for
+ * the run's persisted result. Conversation history loading, content-parts,
+ * file refs, and SSE streaming UI affordances are chat concerns and
+ * intentionally absent here.
  */
 export interface TaskRequest {
   /** The task description. Goes in as the user message. */
@@ -383,7 +384,11 @@ export interface TaskRequest {
   maxInputTokens?: number;
   /** Glob patterns filtering which tools are available. Matches use the same logic as chat. */
   allowedTools?: string[];
-  /** Arbitrary metadata stored on the conversation's first line. Pass-through. */
+  /**
+   * Arbitrary metadata. The automations executor stamps `source` and
+   * `automationId` here so the run is correlated to its automation in logs
+   * and audit. Pass-through; the runtime does not persist a conversation.
+   */
   metadata?: Record<string, unknown>;
   /**
    * Cancellation signal forwarded into the engine and threaded down to
@@ -402,9 +407,9 @@ export interface TaskRequest {
  *  - No `skillName` — task mode does not perform skill matching on the
  *    prompt; bundle-affined skills still surface via Layer 3.
  *  - `response` renamed to `output` to reflect the deliverable contract.
- *  - `conversationId` is purely a traceability anchor: the fresh
- *    conversation that backs this task. The "Open conversation →" UI
- *    affordance reaches it.
+ *  - `runId` is a traceability anchor — the id of the run, under which the
+ *    caller (the automations bundle) persists the run result (output +
+ *    activity log + output-file refs). No conversation is created.
  *
  * Always returned on completion — including timeout, max_iterations,
  * and content_filter stops. Pre-execution failures (identity bad,
@@ -416,8 +421,9 @@ export interface TaskRequest {
 export interface TaskResult {
   /** The deliverable — the agent's final assistant message text. */
   output: string;
-  /** Traceability anchor — the fresh conversation backing this task. */
-  conversationId: string;
+  /** Traceability anchor — the id of this run. The caller persists the run's
+   *  result (output, activity log, output-file refs) under this id. */
+  runId: string;
   /** Tool calls executed during this run. Same shape as ChatResult.toolCalls. */
   toolCalls: Array<{
     id: string;

@@ -22,16 +22,35 @@ import {
   deleteAutomation,
   updateAutomation,
 } from "../../../../src/bundles/automations/src/domain.ts";
-import { loadDefinitions, saveDefinitions } from "../../../../src/bundles/automations/src/store.ts";
+import {
+  deleteAutomationDefinition,
+  loadOwnerAutomations,
+  saveAutomation,
+} from "../../../../src/bundles/automations/src/store.ts";
 
-let storeDir: string;
+// Automations are workspace-owned: the domain's collection context is backed by
+// the per-automation store, scoped to one workspace + owner (the focus the tool
+// surface would resolve). `save` reconciles the map against disk.
+const WS = "ws_test";
+const OWNER = "usr_test";
+let workDir: string;
 let reloadCount: number;
 
 function makeCtx(): AutomationDomainContext {
   reloadCount = 0;
   return {
-    definitions: () => loadDefinitions(storeDir),
-    save: (defs) => saveDefinitions(defs, storeDir),
+    definitions: () => loadOwnerAutomations(workDir, WS, OWNER),
+    save: (map) => {
+      const onDisk = loadOwnerAutomations(workDir, WS, OWNER);
+      for (const auto of map.values()) {
+        if (!auto.workspaceId) auto.workspaceId = WS;
+        if (!auto.ownerId) auto.ownerId = OWNER;
+        saveAutomation(workDir, WS, OWNER, auto);
+      }
+      for (const id of onDisk.keys()) {
+        if (!map.has(id)) deleteAutomationDefinition(workDir, WS, OWNER, id);
+      }
+    },
     reloadScheduler: () => {
       reloadCount++;
     },
@@ -40,12 +59,12 @@ function makeCtx(): AutomationDomainContext {
 }
 
 beforeEach(() => {
-  storeDir = mkdtempSync(join(tmpdir(), "automations-domain-"));
-  mkdirSync(storeDir, { recursive: true });
+  workDir = mkdtempSync(join(tmpdir(), "automations-domain-"));
+  mkdirSync(workDir, { recursive: true });
 });
 
 afterEach(() => {
-  rmSync(storeDir, { recursive: true, force: true });
+  rmSync(workDir, { recursive: true, force: true });
 });
 
 describe("updateAutomation — pause/resume regression (CLI path)", () => {

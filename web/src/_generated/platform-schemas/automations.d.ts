@@ -99,6 +99,11 @@ export declare const AutomationsCancelInput: import("@sinclair/typebox").TObject
     name: import("@sinclair/typebox").TString;
 }>;
 export type AutomationsCancelInput = Static<typeof AutomationsCancelInput>;
+export declare const AutomationsRunResultInput: import("@sinclair/typebox").TObject<{
+    name: import("@sinclair/typebox").TString;
+    runId: import("@sinclair/typebox").TString;
+}>;
+export type AutomationsRunResultInput = Static<typeof AutomationsRunResultInput>;
 /**
  * Status of the most recent automation run, as exposed via the list/
  * summary surface. Mirrors `AutomationRun["status"]` minus `"running"`
@@ -144,7 +149,6 @@ export interface AutomationRunRecord {
     startedAt: string;
     completedAt?: string;
     status: "running" | "success" | "failure" | "timeout" | "cancelled" | "skipped";
-    conversationId?: string;
     inputTokens: number;
     outputTokens: number;
     toolCalls: number;
@@ -152,6 +156,44 @@ export interface AutomationRunRecord {
     error?: string;
     transient?: boolean;
     resultPreview?: string;
+    stopReason?: "complete" | "max_iterations" | "length" | "content_filter" | "error" | "other";
+}
+/**
+ * One tool call from a run's activity log. Mirror of `RunToolCall` in
+ * `bundles/automations/src/types.ts` (kept here to avoid a cross-tree import;
+ * see the top-of-section note).
+ */
+export interface RunToolCallRecord {
+    id: string;
+    name: string;
+    input: unknown;
+    output: string;
+    ok: boolean;
+    ms: number;
+}
+/** A ref to a file a run produced. Mirror of `RunFileRef`. */
+export interface RunFileRefRecord {
+    id: string;
+    filename: string;
+}
+/**
+ * The full deliverable of a run, returned by `handleRunResult`. Mirror of
+ * `AutomationRunResult` in `bundles/automations/src/types.ts`. A run is not a
+ * conversation: the result carries the final output, the activity log, and refs
+ * to any files the run wrote in the workspace file store.
+ */
+export interface AutomationsRunResultOutput {
+    runId: string;
+    automationId: string;
+    completedAt: string;
+    output: string;
+    activityLog: RunToolCallRecord[];
+    outputFiles: RunFileRefRecord[];
+    usage: {
+        inputTokens: number;
+        outputTokens: number;
+        iterations: number;
+    };
     stopReason?: "complete" | "max_iterations" | "length" | "content_filter" | "error" | "other";
 }
 /**

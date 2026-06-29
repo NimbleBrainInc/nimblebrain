@@ -2,10 +2,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import {
-  workspaceConversationsDir,
-  runConversationsDir,
-} from "../../src/conversation/paths.ts";
+import { workspaceConversationsDir } from "../../src/conversation/paths.ts";
 import { migrateConversationsToWorkspace } from "../../scripts/migrate-conversations-to-workspace.ts";
 import { personalWorkspaceIdFor } from "../../src/workspace/workspace-store.ts";
 
@@ -77,7 +74,9 @@ describe("migrate-conversations-to-workspace", () => {
       `${CONV_PERSONAL}.jsonl`,
     );
 
-    // (c) automation run → that workspace's `_runs/<automationId>/` partition.
+    // (c) a historical automation-run conversation (`source: "task"`) → the
+    // owner partition, like any other chat. Automation runs are no longer
+    // conversations; these old records migrate as ordinary owner-owned chats.
     runSrc = seedFlat(workDir, {
       id: CONV_RUN,
       createdAt: "2026-01-03T00:00:00.000Z",
@@ -85,7 +84,7 @@ describe("migrate-conversations-to-workspace", () => {
       workspaceId: "ws_helix",
       metadata: { source: "task", automationId: "auto_x" },
     });
-    runDest = join(runConversationsDir(workDir, "ws_helix", "auto_x"), `${CONV_RUN}.jsonl`);
+    runDest = join(workspaceConversationsDir(workDir, "ws_helix", OWNER), `${CONV_RUN}.jsonl`);
 
     // (d) no ownerId → pre-migration; must be skipped and left in place.
     ownerlessSrc = seedFlat(workDir, {

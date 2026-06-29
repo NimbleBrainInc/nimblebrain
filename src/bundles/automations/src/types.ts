@@ -141,7 +141,6 @@ export interface AutomationRun {
   startedAt: string;
   completedAt?: string;
   status: "running" | "success" | "failure" | "timeout" | "cancelled" | "skipped";
-  conversationId?: string;
   inputTokens: number;
   outputTokens: number;
   toolCalls: number;
@@ -149,8 +148,9 @@ export interface AutomationRun {
   error?: string;
   /** Whether this failure was classified as transient (eligible for backoff retry). */
   transient?: boolean;
-  /** Final agent response. Field name kept for backward compatibility with
-   *  existing JSONL records; current writes store the full response. */
+  /** Final agent response, truncated for the run list. The full deliverable,
+   *  activity log, and output-file refs live in the run's `AutomationRunResult`
+   *  sidecar (see {@link AutomationRunResult}). */
   resultPreview?: string;
   /**
    * Engine-level stop reason. Mirrors `StopReason` from `src/engine/types.ts`
@@ -158,6 +158,48 @@ export interface AutomationRun {
    * from the engine package). Keep in sync when the engine union changes.
    */
   stopReason?: "complete" | "max_iterations" | "length" | "content_filter" | "error" | "other";
+}
+
+// ---------------------------------------------------------------------------
+// §5.3a — Automation Run Result (the deliverable)
+// ---------------------------------------------------------------------------
+
+/** One tool call from a run's activity log. */
+export interface RunToolCall {
+  id: string;
+  name: string;
+  input: unknown;
+  output: string;
+  ok: boolean;
+  ms: number;
+}
+
+/** A reference to a file the run produced, resolvable in the workspace file store. */
+export interface RunFileRef {
+  id: string;
+  filename: string;
+}
+
+/**
+ * The full result of an automation run — what the run *produced*, persisted
+ * once per run as a sidecar to the lightweight {@link AutomationRun} summary.
+ * An automation run is no longer a conversation: instead of a chat trace, it
+ * leaves a deliverable (the final output), the activity log of what it did,
+ * and references to any files it wrote (in the workspace file store).
+ */
+export interface AutomationRunResult {
+  /** Matches the owning {@link AutomationRun.id}. */
+  runId: string;
+  automationId: string;
+  completedAt: string;
+  /** The agent's final deliverable, in full (untruncated). */
+  output: string;
+  /** What the run did — every tool call, in order. */
+  activityLog: RunToolCall[];
+  /** Files the run wrote, as refs into `workspaces/<wsId>/files/<ownerId>/`. */
+  outputFiles: RunFileRef[];
+  usage: { inputTokens: number; outputTokens: number; iterations: number };
+  stopReason?: AutomationRun["stopReason"];
 }
 
 // ---------------------------------------------------------------------------

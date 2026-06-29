@@ -899,13 +899,11 @@ export async function readConversationHeader(
   return { meta, preview, messageCount };
 }
 
-const RUN_PARTITION = "_runs";
-
 /**
  * Conversation JSONL file paths under `dir`. Handles BOTH layouts:
  *   - flat: `.jsonl` files directly in `dir` (legacy / test fixtures);
- *   - workspace-owned: `dir` is the workspaces root; each workspace's `conversations/`
- *     holds an owner partition plus a `_runs` automation partition.
+ *   - workspace-owned: `dir` is the workspaces root; each workspace's
+ *     `conversations/` holds one `<ownerId>/` partition per member.
  * A flat directory yields its own files; the workspaces root yields every
  * workspace's files. Self-contained (no runtime imports) so the bundle stays
  * independently deployable.
@@ -927,16 +925,10 @@ export function listConversationFiles(dir: string): string[] {
     // Workspace-owned layout: each workspace's conversations subtree.
     // lint-ok:conversation-path
     const convRoot = join(dir, ent.name, "conversations");
-    for (const partition of safeReaddir(convRoot)) {
-      const partitionDir = join(convRoot, partition);
-      const leaves =
-        partition === RUN_PARTITION
-          ? safeReaddir(partitionDir).map((id) => join(partitionDir, id))
-          : [partitionDir];
-      for (const leaf of leaves) {
-        for (const f of safeReaddir(leaf)) {
-          if (f.endsWith(".jsonl")) out.push(join(leaf, f));
-        }
+    for (const ownerId of safeReaddir(convRoot)) {
+      const ownerDir = join(convRoot, ownerId);
+      for (const f of safeReaddir(ownerDir)) {
+        if (f.endsWith(".jsonl")) out.push(join(ownerDir, f));
       }
     }
   }

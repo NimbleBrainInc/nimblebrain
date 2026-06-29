@@ -22,9 +22,9 @@ import {
 	type Executor,
 } from "../../../../src/bundles/automations/src/scheduler.ts";
 import {
-	saveDefinitions,
-	loadDefinitions,
+	loadOwnerAutomations,
 	readRuns,
+	saveAutomation,
 } from "../../../../src/bundles/automations/src/store.ts";
 
 // ---------------------------------------------------------------------------
@@ -33,28 +33,43 @@ import {
 
 let tmpDir: string;
 
-// Automations are identity-owned: the scheduler scans `{usersDir}/<owner>/
-// automations/`. `makeTmpDir` returns the single test owner's store dir;
-// `usersDirOf` recovers the users/ root for the Scheduler; `defOf` looks up
-// the composite-keyed definitions.
+// Automations are workspace-owned: the scheduler scans
+// `{workDir}/workspaces/<wsId>/automations/<ownerId>/`. `makeTmpDir` returns the
+// workDir root handed straight to the Scheduler; `seedDefs`/`loadDefs` write/read
+// the per-automation store; `defOf` looks up the composite-keyed definitions.
+const WS = "ws_test";
 const OWNER = "usr_test";
 
 function makeTmpDir(): string {
-	return join(mkdtempSync(join(tmpdir(), "backoff-test-")), "users", OWNER, "automations");
+	return mkdtempSync(join(tmpdir(), "backoff-test-"));
 }
 
-function usersDirOf(ownerStoreDir: string): string {
-	return join(ownerStoreDir, "..", "..");
+function seedDefs(workDir: string, defs: Map<string, Automation>): void {
+	for (const auto of defs.values()) {
+		if (!auto.workspaceId) auto.workspaceId = WS;
+		if (!auto.ownerId) auto.ownerId = OWNER;
+		saveAutomation(workDir, WS, OWNER, auto);
+	}
 }
 
-function defOf(scheduler: Scheduler, id: string, owner = OWNER): Automation | undefined {
-	return scheduler.getDefinitions().get(`${owner}/${id}`);
+function loadDefs(workDir: string): Map<string, Automation> {
+	return loadOwnerAutomations(workDir, WS, OWNER);
+}
+
+function defOf(scheduler: Scheduler, id: string, owner = OWNER, ws = WS): Automation | undefined {
+	return scheduler.getDefinitions().get(`${ws}/${owner}/${id}`);
+}
+
+/** Wrap a run in the executor's `{ run, result }` return shape. */
+function execOk(run: AutomationRun): { run: AutomationRun; result: null } {
+	return { run, result: null };
 }
 
 function makeAutomation(overrides: Partial<Automation> = {}): Automation {
 	return {
 		id: "backoff-test",
 		ownerId: OWNER,
+		workspaceId: WS,
 		name: "Backoff Test",
 		prompt: "Do the thing",
 		schedule: { type: "interval", intervalMs: 60_000 },
@@ -127,17 +142,17 @@ describe("backoff delay progression", () => {
 		});
 		const defs = new Map<string, Automation>();
 		defs.set(auto.id, auto);
-		saveDefinitions(defs, tmpDir);
+		seedDefs(tmpDir, defs);
 
 		let failCount = 0;
 		const executor: Executor = mock(
 			async (a: Automation, _signal: AbortSignal) => {
 				failCount++;
-				return makeFailureRun(a.id, `Failure #${failCount}`);
+				return execOk(makeFailureRun(a.id, `Failure #${failCount}`));
 			},
 		) as Executor;
 
-		const scheduler = new Scheduler(executor, { usersDir: usersDirOf(tmpDir) });
+		const scheduler = new Scheduler(executor, { workDir: tmpDir });
 		scheduler.start();
 
 		// --- Failure 1 ---
@@ -151,7 +166,7 @@ describe("backoff delay progression", () => {
 
 		// --- Failure 2: manually set nextRunAt to past so it fires ---
 		updated.nextRunAt = new Date(Date.now() - 1).toISOString();
-		saveDefinitions(scheduler.getDefinitions(), tmpDir);
+		seedDefs(tmpDir, scheduler.getDefinitions());
 		scheduler.reload();
 
 		await scheduler.onTimer();
@@ -164,7 +179,7 @@ describe("backoff delay progression", () => {
 
 		// --- Failure 3: manually set nextRunAt to past ---
 		updated.nextRunAt = new Date(Date.now() - 1).toISOString();
-		saveDefinitions(scheduler.getDefinitions(), tmpDir);
+		seedDefs(tmpDir, scheduler.getDefinitions());
 		scheduler.reload();
 
 		await scheduler.onTimer();
@@ -192,13 +207,13 @@ describe("backoff reset on success", () => {
 		});
 		const defs = new Map<string, Automation>();
 		defs.set(auto.id, auto);
-		saveDefinitions(defs, tmpDir);
+		seedDefs(tmpDir, defs);
 
 		const executor: Executor = mock(
-			async (a: Automation, _signal: AbortSignal) => makeSuccessRun(a.id),
+			async (a: Automation, _signal: AbortSignal) => execOk(makeSuccessRun(a.id)),
 		) as Executor;
 
-		const scheduler = new Scheduler(executor, { usersDir: usersDirOf(tmpDir) });
+		const scheduler = new Scheduler(executor, { workDir: tmpDir });
 		scheduler.start();
 
 		await scheduler.onTimer();
@@ -277,13 +292,13 @@ describe("backoff prevents premature execution", () => {
 		});
 		const defs = new Map<string, Automation>();
 		defs.set(auto.id, auto);
-		saveDefinitions(defs, tmpDir);
+		seedDefs(tmpDir, defs);
 
 		const executor: Executor = mock(
-			async (a: Automation, _signal: AbortSignal) => makeSuccessRun(a.id),
+			async (a: Automation, _signal: AbortSignal) => execOk(makeSuccessRun(a.id)),
 		) as Executor;
 
-		const scheduler = new Scheduler(executor, { usersDir: usersDirOf(tmpDir) });
+		const scheduler = new Scheduler(executor, { workDir: tmpDir });
 		scheduler.start();
 
 		// Fire the timer — should NOT execute because of backoff
@@ -302,13 +317,13 @@ describe("backoff prevents premature execution", () => {
 		});
 		const defs = new Map<string, Automation>();
 		defs.set(auto.id, auto);
-		saveDefinitions(defs, tmpDir);
+		seedDefs(tmpDir, defs);
 
 		const executor: Executor = mock(
-			async (a: Automation, _signal: AbortSignal) => makeSuccessRun(a.id),
+			async (a: Automation, _signal: AbortSignal) => execOk(makeSuccessRun(a.id)),
 		) as Executor;
 
-		const scheduler = new Scheduler(executor, { usersDir: usersDirOf(tmpDir) });
+		const scheduler = new Scheduler(executor, { workDir: tmpDir });
 		scheduler.start();
 
 		await scheduler.onTimer();

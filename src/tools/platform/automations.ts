@@ -1,5 +1,3 @@
-import { readdirSync } from "node:fs";
-import { join } from "node:path";
 import {
   createDirectExecutor,
   type ExecutorContext,
@@ -12,15 +10,19 @@ import {
   handleDelete,
   handleList,
   handleRun,
+  handleRunResult,
   handleRuns,
   handleStatus,
   handleUpdate,
   type ToolContext,
 } from "../../bundles/automations/src/server.ts";
 import {
-  detectOrphans,
-  loadDefinitions,
-  saveDefinitions,
+  deleteAutomationDefinition,
+  loadOwnerAutomations,
+  readAllRuns,
+  readRunResult,
+  readRuns,
+  saveAutomation,
 } from "../../bundles/automations/src/store.ts";
 import type { Automation } from "../../bundles/automations/src/types.ts";
 import { textContent } from "../../engine/content-helpers.ts";
@@ -89,24 +91,8 @@ export async function createAutomationsSource(
   runtime: Runtime,
   eventSink: EventSink,
 ): Promise<McpSource> {
-  const initialWorkDir = runtime.getWorkDir();
-  const usersDir = join(initialWorkDir, "users");
+  const workDir = runtime.getWorkDir();
   const defaultTimezone = process.env.NB_TIMEZONE ?? "Pacific/Honolulu";
-
-  // Detect and fix orphaned runs from previous crashes, across every owner's
-  // identity-scoped store (automations are identity-owned; Phase C).
-  let orphanCount = 0;
-  try {
-    for (const owner of readdirSync(usersDir, { withFileTypes: true })) {
-      if (!owner.isDirectory()) continue;
-      orphanCount += detectOrphans(join(usersDir, owner.name, "automations"));
-    }
-  } catch {
-    // users/ not created yet — nothing to sweep.
-  }
-  if (orphanCount > 0) {
-    process.stderr.write(`[automations] Fixed ${orphanCount} orphaned run(s)\n`);
-  }
 
   // Direct executor: calls runtime.executeTask() in-process — the unattended
   // sibling of chat() that frames the agent as producing a deliverable, not a
@@ -122,35 +108,65 @@ export async function createAutomationsSource(
     (req) => runtime.executeTask(req as TaskRequest),
     getExecutorContext,
   );
-  const scheduler = new Scheduler(executor, { usersDir, defaultTimezone });
+  const scheduler = new Scheduler(executor, { workDir, defaultTimezone });
   scheduler.start();
 
   /**
-   * The caller's owner id. Automations are identity-owned: the tool path
-   * carries the caller's identity in the request context; internal callers
-   * (CLI, bundle lifecycle) resolve to the dev identity in dev. Mirrors files'
-   * owner resolution so an automation's store and its scheduled run agree.
+   * The caller's owner id. Automations are workspace-owned with the owner as a
+   * privacy sub-partition: the tool path carries the caller's identity in the
+   * request context; internal callers (CLI, bundle lifecycle) resolve to the dev
+   * identity in dev. Mirrors files' owner resolution so an automation's store and
+   * its scheduled run agree.
    */
   function ownerId(): string {
     return runtime.resolveRequestUserId(runtime.getCurrentIdentity() ?? undefined);
   }
 
-  /** Build an identity-scoped ToolContext for per-request use. */
+  /**
+   * Build a workspace-scoped ToolContext for per-request use. Automations are
+   * workspace-owned: the store lives at `workspaces/<wsId>/automations/<ownerId>/`,
+   * so this needs both the owner (the authenticated identity) and the FOCUSED
+   * workspace. The focused workspace rides `RequestContext.fileWorkspaceId` (set
+   * on both doors), the same mechanism `files` uses — `scope.workspaceId` on the
+   * identity door is the personal/session workspace, not the focus. No workspace
+   * in scope (e.g. an external `/mcp` call with no header) ⇒ deny rather than
+   * guess a workspace.
+   */
   function getToolContext(): ToolContext {
     const owner = ownerId();
-    const storeDir = runtime.getIdentityContext(owner).getDataPath("automations");
-    const reqCtx = getRequestContext();
+    const wsId = getRequestContext()?.fileWorkspaceId;
+    if (!wsId) {
+      throw new Error("automations: no workspace in scope (automations are workspace-owned)");
+    }
     return {
-      definitions: () => loadDefinitions(storeDir),
-      save: (d) => saveDefinitions(d, storeDir),
+      // The collection closures the domain + lifecycle depend on, backed by the
+      // per-automation store. `definitions` reads every `*.json` in the owner
+      // dir; `save` reconciles the map against disk (write each, delete removed).
+      definitions: () => loadOwnerAutomations(workDir, wsId, owner),
+      save: (map) => {
+        const onDisk = loadOwnerAutomations(workDir, wsId, owner);
+        for (const auto of map.values()) {
+          // Stamp the binding so a scheduled run resolves the same workspace + owner.
+          if (!auto.workspaceId) auto.workspaceId = wsId;
+          if (!auto.ownerId) auto.ownerId = owner;
+          saveAutomation(workDir, wsId, owner, auto);
+        }
+        for (const id of onDisk.keys()) {
+          // Definition-only removal — a deleted automation's run history (audit
+          // trail) is preserved (`deleteAutomation` is the hard-purge variant).
+          if (!map.has(id)) deleteAutomationDefinition(workDir, wsId, owner, id);
+        }
+      },
       reloadScheduler: () => scheduler.reload(),
-      runNow: (id) => scheduler.runNow(owner, id),
-      cancelRun: (id) => scheduler.cancelRun(owner, id),
-      storeDir,
+      runNow: (id) => scheduler.runNow(wsId, owner, id),
+      cancelRun: (id) => scheduler.cancelRun(wsId, owner, id),
+      readRuns: (id, opts) => readRuns(workDir, wsId, owner, id, opts),
+      readAllRuns: (opts) => readAllRuns(workDir, wsId, owner, opts),
+      readRunResult: (id, runId) => readRunResult(workDir, wsId, owner, id, runId),
       defaultTimezone,
       defaultModel: runtime.getDefaultModel(),
       currentUserId: owner,
-      currentWorkspaceId: reqCtx?.scope.kind === "workspace" ? reqCtx.scope.workspaceId : undefined,
+      currentWorkspaceId: wsId,
     };
   }
 
@@ -209,6 +225,8 @@ export async function createAutomationsSource(
           return handleStatus(input, ctx);
         case "runs":
           return handleRuns(input, ctx);
+        case "run_result":
+          return handleRunResult(input, ctx);
         case "run":
           return handleRun(input, ctx);
         case "cancel":

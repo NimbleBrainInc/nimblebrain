@@ -1,11 +1,11 @@
 /**
  * The single sanctioned file-path construction/parse site. Pins the workspace-owned
- * layout: bytes under `workspaces/<wsId>/files/<ownerId>/`, `_runs/` reserved.
+ * layout: bytes under `workspaces/<wsId>/files/<ownerId>/`.
  */
 
 import { expect, test } from "bun:test";
 import { join } from "node:path";
-import { parseFilesPath, workspaceFilesDir, runFilesDir } from "../../../src/files/paths.ts";
+import { parseFilesPath, workspaceFilesDir } from "../../../src/files/paths.ts";
 
 const WORK = "/wd";
 
@@ -15,26 +15,9 @@ test("workspaceFilesDir builds the owner partition under the workspace", () => {
   );
 });
 
-test("runFilesDir builds the reserved automation partition", () => {
-  expect(runFilesDir(WORK, "ws_helix", "auto_x")).toBe(
-    join(WORK, "workspaces", "ws_helix", "files", "_runs", "auto_x"),
-  );
-});
-
-test("workspaceFilesDir rejects the reserved _runs ownerId", () => {
-  // A user whose ownerId were literally `_runs` would have their files misparsed
-  // as automation outputs — fail closed rather than collide.
-  expect(() => workspaceFilesDir(WORK, "ws_helix", "_runs")).toThrow(/reserved/);
-});
-
 test("parseFilesPath round-trips an owner-partition path", () => {
   const p = join(workspaceFilesDir(WORK, "ws_helix", "usr_alice"), "fl_abc_doc.pdf");
-  expect(parseFilesPath(p)).toEqual({ wsId: "ws_helix", ownerId: "usr_alice", automationId: null });
-});
-
-test("parseFilesPath round-trips a _runs path", () => {
-  const p = join(runFilesDir(WORK, "ws_helix", "auto_x"), "fl_abc_out.csv");
-  expect(parseFilesPath(p)).toEqual({ wsId: "ws_helix", ownerId: null, automationId: "auto_x" });
+  expect(parseFilesPath(p)).toEqual({ wsId: "ws_helix", ownerId: "usr_alice" });
 });
 
 test("parseFilesPath returns null for a non-workspace path", () => {

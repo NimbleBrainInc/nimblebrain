@@ -48,12 +48,14 @@ export interface RequestContext {
    */
   conversationId?: string;
   /**
-   * The workspace that owns files created or read in this request — the focused
-   * workspace. Orthogonal to `scope`, and set on BOTH doors: identity-door
-   * `files__*` tools need it because `scope.workspaceId` is the personal/session
-   * workspace, not the focused workspace. Absent ⇒ no workspace in scope (e.g. an external
-   * `/mcp` request with no `X-Workspace-Id`): file storage denies rather than
-   * guessing a workspace.
+   * The focused workspace for this request — the workspace that owns the files
+   * and automations created or read here. Orthogonal to `scope`, and set on BOTH
+   * doors: identity-door tools (`files__*`, `automations__*`) need it because
+   * `scope.workspaceId` is the personal/session workspace, not the focused
+   * workspace. Absent ⇒ no workspace in scope (e.g. an external `/mcp` request
+   * with no `X-Workspace-Id`): the store denies rather than guessing a workspace.
+   * (Named `fileWorkspaceId` for the original files consumer; a rename to
+   * `focusedWorkspaceId` now that automations share it is a pending cleanup.)
    */
   fileWorkspaceId?: string;
   toolPromotion?: ToolPromotionControls;

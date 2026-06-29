@@ -6,16 +6,15 @@
  * The single user-scoped store at `{workDir}/conversations/<convId>.jsonl`
  * predates the workspace-owned layout, where a conversation lives under the
  * workspace it runs in with the owner as a privacy sub-partition (see
- * `src/conversation/paths.ts` and `research/SPEC-permission-boundaries.md`):
+ * `src/conversation/paths.ts`):
  *
  *   workspaces/<wsId>/conversations/<ownerId>/<convId>.jsonl          private user chats
- *   workspaces/<wsId>/conversations/_runs/<automationId>/<convId>.jsonl  automation runs
  *
  * This walks the flat dir and moves each file to its workspace-owned home. The
  * destination workspace is `meta.workspaceId` when set, else the owner's personal
- * workspace; an automation run (line-1 `metadata.source === "task"` with an
- * `metadata.automationId`) lands in that workspace's `_runs/<automationId>/`
- * partition instead of the owner partition.
+ * workspace; every conversation lands in its owner partition (historical
+ * `source === "task"` automation-run conversations included — runs are no longer
+ * conversations).
  *
  * Usage:
  *   bun run migrate:conversations-to-workspace                  # dry-run (default)
@@ -43,7 +42,6 @@ import { basename, join } from "node:path";
 import {
   type ParsedConversationPath,
   parseConversationPath,
-  runConversationsDir,
   workspaceConversationsDir,
 } from "../src/conversation/paths.ts";
 import { CONVERSATION_ID_RE } from "../src/conversation/types.ts";
@@ -103,12 +101,9 @@ function emptySummary(): MigrationSummary {
 /** Where one flat conversation file belongs in the workspace-owned layout. */
 function destDirFor(workDir: string, meta: FlatConversationMeta, ownerId: string): string {
   const wsId = meta.workspaceId ?? personalWorkspaceIdFor(ownerId);
-  const m = meta.metadata;
-  // An automation run is `source === "task"` with a present automationId; it
-  // lands in the workspace-visible `_runs/<automationId>/` partition, not the owner's.
-  if (m?.source === "task" && typeof m.automationId === "string" && m.automationId.length > 0) {
-    return runConversationsDir(workDir, wsId, m.automationId);
-  }
+  // Every flat conversation — including historical automation-run conversations
+  // (`source === "task"`) from before runs produced results instead of chats —
+  // lands in the owner partition. Automation runs are no longer conversations.
   return workspaceConversationsDir(workDir, wsId, ownerId);
 }
 
@@ -204,7 +199,6 @@ export function migrateConversationsToWorkspace(
 function workspaceLabel(destFile: string): string {
   const parsed: ParsedConversationPath | null = parseConversationPath(destFile);
   if (!parsed) return destFile;
-  if (parsed.automationId) return `${parsed.wsId} · _runs/${parsed.automationId}`;
   return `${parsed.wsId} · ${parsed.ownerId}`;
 }
 

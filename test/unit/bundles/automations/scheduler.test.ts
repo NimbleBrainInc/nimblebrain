@@ -14,35 +14,64 @@ import {
 	computeBudgetResetAt,
 	type Executor,
 } from "../../../../src/bundles/automations/src/scheduler.ts";
-import { saveDefinitions, loadDefinitions } from "../../../../src/bundles/automations/src/store.ts";
+import {
+	loadOwnerAutomations,
+	saveAutomation,
+} from "../../../../src/bundles/automations/src/store.ts";
 
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 
-// Automations are identity-owned: the scheduler scans `{usersDir}/<owner>/
-// automations/`. Tests seed ONE owner; `makeTmpDir` returns that owner's store
-// dir (so `saveDefinitions(defs, tmpDir)` writes the right place), and
-// `usersDirOf` recovers the `users/` root to hand the Scheduler.
+// Automations are workspace-owned: the scheduler scans
+// `{workDir}/workspaces/<wsId>/automations/<ownerId>/`. Tests seed ONE workspace
+// + owner; `makeTmpDir` returns the workDir root handed straight to the
+// Scheduler, and `seedDefs`/`loadDefs` write/read the per-automation store.
+const WS = "ws_test";
 const OWNER = "usr_test";
 
 function makeTmpDir(): string {
-	return join(mkdtempSync(join(tmpdir(), "scheduler-test-")), "users", OWNER, "automations");
+	return mkdtempSync(join(tmpdir(), "scheduler-test-"));
 }
 
-function usersDirOf(ownerStoreDir: string): string {
-	return join(ownerStoreDir, "..", "..");
+/** Persist a definitions map to the per-automation store (one file per automation). */
+function seedDefs(
+	workDir: string,
+	defs: Map<string, Automation>,
+	owner = OWNER,
+	ws = WS,
+): void {
+	for (const auto of defs.values()) {
+		if (!auto.workspaceId) auto.workspaceId = ws;
+		if (!auto.ownerId) auto.ownerId = owner;
+		saveAutomation(workDir, ws, owner, auto);
+	}
+}
+
+function loadDefs(workDir: string, owner = OWNER, ws = WS): Map<string, Automation> {
+	return loadOwnerAutomations(workDir, ws, owner);
 }
 
 /** Look up a seeded automation in the scheduler's composite-keyed map. */
-function defOf(scheduler: Scheduler, id: string, owner = OWNER): Automation | undefined {
-	return scheduler.getDefinitions().get(`${owner}/${id}`);
+function defOf(
+	scheduler: Scheduler,
+	id: string,
+	owner = OWNER,
+	ws = WS,
+): Automation | undefined {
+	return scheduler.getDefinitions().get(`${ws}/${owner}/${id}`);
+}
+
+/** Wrap a run in the executor's `{ run, result }` return shape. */
+function execOk(run: AutomationRun): { run: AutomationRun; result: null } {
+	return { run, result: null };
 }
 
 function makeAutomation(overrides: Partial<Automation> = {}): Automation {
 	return {
 		id: "test-auto",
 		ownerId: OWNER,
+		workspaceId: WS,
 		name: "Test Automation",
 		prompt: "Do the thing",
 		schedule: { type: "interval", intervalMs: 60_000 },
@@ -90,7 +119,7 @@ function makeFailureRun(automationId: string, error = "Something broke"): Automa
 
 function createMockExecutor(result?: AutomationRun): Executor {
 	return mock(async (auto: Automation, _signal: AbortSignal) => {
-		return result ?? makeSuccessRun(auto.id);
+		return execOk(result ?? makeSuccessRun(auto.id));
 	}) as Executor;
 }
 
@@ -98,11 +127,11 @@ function createMockExecutor(result?: AutomationRun): Executor {
 function createBlockingExecutor(): {
 	executor: Executor;
 	resolve: (run: AutomationRun) => void;
-	promise: Promise<AutomationRun>;
+	promise: Promise<{ run: AutomationRun; result: null }>;
 } {
 	let resolve!: (run: AutomationRun) => void;
-	const promise = new Promise<AutomationRun>((r) => {
-		resolve = r;
+	const promise = new Promise<{ run: AutomationRun; result: null }>((r) => {
+		resolve = (run: AutomationRun) => r(execOk(run));
 	});
 	const executor: Executor = mock(async (_auto: Automation, _signal: AbortSignal) => {
 		return promise;
@@ -346,10 +375,10 @@ describe("Scheduler — timer arming", () => {
 		const auto = makeAutomation({ nextRunAt });
 		const defs = new Map<string, Automation>();
 		defs.set(auto.id, auto);
-		saveDefinitions(defs, tmpDir);
+		seedDefs(tmpDir, defs);
 
 		const executor = createMockExecutor();
-		const scheduler = new Scheduler(executor, { usersDir: usersDirOf(tmpDir) });
+		const scheduler = new Scheduler(executor, { workDir: tmpDir });
 
 		// Spy on setTimeout
 		const originalSetTimeout = globalThis.setTimeout;
@@ -377,10 +406,10 @@ describe("Scheduler — timer arming", () => {
 		const auto = makeAutomation({ nextRunAt });
 		const defs = new Map<string, Automation>();
 		defs.set(auto.id, auto);
-		saveDefinitions(defs, tmpDir);
+		seedDefs(tmpDir, defs);
 
 		const executor = createMockExecutor();
-		const scheduler = new Scheduler(executor, { usersDir: usersDirOf(tmpDir) });
+		const scheduler = new Scheduler(executor, { workDir: tmpDir });
 
 		const originalSetTimeout = globalThis.setTimeout;
 		let capturedDelay = -1;
@@ -401,10 +430,10 @@ describe("Scheduler — timer arming", () => {
 	it("arms timer to 60s when no automations are due", () => {
 		// No automations at all
 		const defs = new Map<string, Automation>();
-		saveDefinitions(defs, tmpDir);
+		seedDefs(tmpDir, defs);
 
 		const executor = createMockExecutor();
-		const scheduler = new Scheduler(executor, { usersDir: usersDirOf(tmpDir) });
+		const scheduler = new Scheduler(executor, { workDir: tmpDir });
 
 		const originalSetTimeout = globalThis.setTimeout;
 		let capturedDelay = -1;
@@ -447,10 +476,10 @@ describe("Scheduler — interval scheduling", () => {
 		});
 		const defs = new Map<string, Automation>();
 		defs.set(auto.id, auto);
-		saveDefinitions(defs, tmpDir);
+		seedDefs(tmpDir, defs);
 
 		const executor = createMockExecutor();
-		const scheduler = new Scheduler(executor, { usersDir: usersDirOf(tmpDir) });
+		const scheduler = new Scheduler(executor, { workDir: tmpDir });
 
 		scheduler.start();
 		// Manually trigger the timer callback
@@ -468,10 +497,10 @@ describe("Scheduler — interval scheduling", () => {
 		});
 		const defs = new Map<string, Automation>();
 		defs.set(auto.id, auto);
-		saveDefinitions(defs, tmpDir);
+		seedDefs(tmpDir, defs);
 
 		const executor = createMockExecutor();
-		const scheduler = new Scheduler(executor, { usersDir: usersDirOf(tmpDir) });
+		const scheduler = new Scheduler(executor, { workDir: tmpDir });
 
 		scheduler.start();
 		// After start(), nextRunAt should be set to approximately now
@@ -557,10 +586,10 @@ describe("Scheduler — concurrency", () => {
 		});
 		const defs = new Map<string, Automation>();
 		defs.set(auto.id, auto);
-		saveDefinitions(defs, tmpDir);
+		seedDefs(tmpDir, defs);
 
 		const { executor, resolve } = createBlockingExecutor();
-		const scheduler = new Scheduler(executor, { usersDir: usersDirOf(tmpDir) });
+		const scheduler = new Scheduler(executor, { workDir: tmpDir });
 		scheduler.start();
 
 		// Fire onTimer (don't await — executor blocks forever)
@@ -600,20 +629,20 @@ describe("Scheduler — concurrency", () => {
 		defs.set(auto1.id, auto1);
 		defs.set(auto2.id, auto2);
 		defs.set(auto3.id, auto3);
-		saveDefinitions(defs, tmpDir);
+		seedDefs(tmpDir, defs);
 
 		// Each automation gets its own blocking promise
 		const promises: Array<{ resolve: (run: AutomationRun) => void }> = [];
 		const callLog: string[] = [];
 		const executor: Executor = mock(async (auto: Automation, _signal: AbortSignal) => {
 			callLog.push(auto.id);
-			return new Promise<AutomationRun>((resolve) => {
-				promises.push({ resolve });
+			return new Promise<{ run: AutomationRun; result: null }>((resolve) => {
+				promises.push({ resolve: (run: AutomationRun) => resolve(execOk(run)) });
 			});
 		}) as Executor;
 
 		const scheduler = new Scheduler(executor, {
-			usersDir: usersDirOf(tmpDir),
+			workDir: tmpDir,
 			maxConcurrentRuns: 2,
 		});
 		scheduler.start();
@@ -654,11 +683,11 @@ describe("Scheduler — backoff", () => {
 		});
 		const defs = new Map<string, Automation>();
 		defs.set(auto.id, auto);
-		saveDefinitions(defs, tmpDir);
+		seedDefs(tmpDir, defs);
 
 		const failRun = makeFailureRun(auto.id);
 		const executor = createMockExecutor(failRun);
-		const scheduler = new Scheduler(executor, { usersDir: usersDirOf(tmpDir) });
+		const scheduler = new Scheduler(executor, { workDir: tmpDir });
 		scheduler.start();
 
 		await scheduler.onTimer();
@@ -679,11 +708,11 @@ describe("Scheduler — backoff", () => {
 		});
 		const defs = new Map<string, Automation>();
 		defs.set(auto.id, auto);
-		saveDefinitions(defs, tmpDir);
+		seedDefs(tmpDir, defs);
 
 		const failRun = makeFailureRun(auto.id);
 		const executor = createMockExecutor(failRun);
-		const scheduler = new Scheduler(executor, { usersDir: usersDirOf(tmpDir) });
+		const scheduler = new Scheduler(executor, { workDir: tmpDir });
 		scheduler.start();
 
 		await scheduler.onTimer();
@@ -704,11 +733,11 @@ describe("Scheduler — backoff", () => {
 		});
 		const defs = new Map<string, Automation>();
 		defs.set(auto.id, auto);
-		saveDefinitions(defs, tmpDir);
+		seedDefs(tmpDir, defs);
 
 		const successRun = makeSuccessRun(auto.id);
 		const executor = createMockExecutor(successRun);
-		const scheduler = new Scheduler(executor, { usersDir: usersDirOf(tmpDir) });
+		const scheduler = new Scheduler(executor, { workDir: tmpDir });
 		scheduler.start();
 
 		await scheduler.onTimer();
@@ -737,10 +766,10 @@ describe("Scheduler — reload", () => {
 
 	it("reload() picks up new definitions and re-arms timer", () => {
 		// Start with empty definitions
-		saveDefinitions(new Map(), tmpDir);
+		seedDefs(tmpDir, new Map());
 
 		const executor = createMockExecutor();
-		const scheduler = new Scheduler(executor, { usersDir: usersDirOf(tmpDir) });
+		const scheduler = new Scheduler(executor, { workDir: tmpDir });
 		scheduler.start();
 
 		expect(scheduler.getDefinitions().size).toBe(0);
@@ -749,7 +778,7 @@ describe("Scheduler — reload", () => {
 		const auto = makeAutomation({ id: "new-auto" });
 		const defs = new Map<string, Automation>();
 		defs.set(auto.id, auto);
-		saveDefinitions(defs, tmpDir);
+		seedDefs(tmpDir, defs);
 
 		// Reload should pick it up
 		scheduler.reload();
@@ -783,13 +812,13 @@ describe("Scheduler — runNow", () => {
 		});
 		const defs = new Map<string, Automation>();
 		defs.set(auto.id, auto);
-		saveDefinitions(defs, tmpDir);
+		seedDefs(tmpDir, defs);
 
 		const executor = createMockExecutor();
-		const scheduler = new Scheduler(executor, { usersDir: usersDirOf(tmpDir) });
+		const scheduler = new Scheduler(executor, { workDir: tmpDir });
 		scheduler.start();
 
-		const run = await scheduler.runNow(OWNER, auto.id);
+		const run = await scheduler.runNow(WS, OWNER, auto.id);
 
 		expect(run).not.toBeNull();
 		expect(run!.status).toBe("success");
@@ -799,13 +828,13 @@ describe("Scheduler — runNow", () => {
 	});
 
 	it("runNow() returns null for unknown automation", async () => {
-		saveDefinitions(new Map(), tmpDir);
+		seedDefs(tmpDir, new Map());
 
 		const executor = createMockExecutor();
-		const scheduler = new Scheduler(executor, { usersDir: usersDirOf(tmpDir) });
+		const scheduler = new Scheduler(executor, { workDir: tmpDir });
 		scheduler.start();
 
-		const run = await scheduler.runNow(OWNER, "nonexistent");
+		const run = await scheduler.runNow(WS, OWNER, "nonexistent");
 		expect(run).toBeNull();
 
 		scheduler.stop();
@@ -817,19 +846,19 @@ describe("Scheduler — runNow", () => {
 		});
 		const defs = new Map<string, Automation>();
 		defs.set(auto.id, auto);
-		saveDefinitions(defs, tmpDir);
+		seedDefs(tmpDir, defs);
 
 		const { executor, resolve } = createBlockingExecutor();
-		const scheduler = new Scheduler(executor, { usersDir: usersDirOf(tmpDir) });
+		const scheduler = new Scheduler(executor, { workDir: tmpDir });
 		scheduler.start();
 
 		// Start a run via onTimer (don't await — executor blocks)
 		scheduler.onTimer();
 		await new Promise((r) => setTimeout(r, 50));
-		expect(scheduler.getActiveRunIds()).toContain(`${OWNER}/${auto.id}`);
+		expect(scheduler.getActiveRunIds()).toContain(`${WS}/${OWNER}/${auto.id}`);
 
 		// runNow should skip
-		const run = await scheduler.runNow(OWNER, auto.id);
+		const run = await scheduler.runNow(WS, OWNER, auto.id);
 		expect(run).not.toBeNull();
 		expect(run!.status).toBe("skipped");
 
@@ -848,7 +877,7 @@ describe("Scheduler — runNow", () => {
 		});
 		const defs = new Map<string, Automation>();
 		defs.set(auto.id, auto);
-		saveDefinitions(defs, tmpDir);
+		seedDefs(tmpDir, defs);
 
 		const SLEEP_MS = 50;
 		const executor: Executor = mock(
@@ -857,10 +886,10 @@ describe("Scheduler — runNow", () => {
 				throw new Error("Automation slow timed out after 1s");
 			},
 		) as Executor;
-		const scheduler = new Scheduler(executor, { usersDir: usersDirOf(tmpDir) });
+		const scheduler = new Scheduler(executor, { workDir: tmpDir });
 		scheduler.start();
 
-		const run = await scheduler.runNow(OWNER, auto.id);
+		const run = await scheduler.runNow(WS, OWNER, auto.id);
 
 		expect(run).not.toBeNull();
 		expect(run!.status).toBe("timeout");
@@ -893,7 +922,7 @@ describe("Scheduler — stop", () => {
 		});
 		const defs = new Map<string, Automation>();
 		defs.set(auto.id, auto);
-		saveDefinitions(defs, tmpDir);
+		seedDefs(tmpDir, defs);
 
 		let receivedSignal: AbortSignal | null = null;
 		const executor: Executor = mock(async (_auto: Automation, signal: AbortSignal) => {
@@ -902,7 +931,7 @@ describe("Scheduler — stop", () => {
 			return new Promise<AutomationRun>(() => {});
 		}) as Executor;
 
-		const scheduler = new Scheduler(executor, { usersDir: usersDirOf(tmpDir) });
+		const scheduler = new Scheduler(executor, { workDir: tmpDir });
 		scheduler.start();
 
 		// Dispatch a run (don't await — executor blocks)
@@ -941,10 +970,10 @@ describe("Scheduler — updateAfterRun", () => {
 		});
 		const defs = new Map<string, Automation>();
 		defs.set(auto.id, auto);
-		saveDefinitions(defs, tmpDir);
+		seedDefs(tmpDir, defs);
 
 		const executor = createMockExecutor();
-		const scheduler = new Scheduler(executor, { usersDir: usersDirOf(tmpDir) });
+		const scheduler = new Scheduler(executor, { workDir: tmpDir });
 		scheduler.start();
 		await scheduler.onTimer();
 
@@ -960,10 +989,10 @@ describe("Scheduler — updateAfterRun", () => {
 		});
 		const defs = new Map<string, Automation>();
 		defs.set(auto.id, auto);
-		saveDefinitions(defs, tmpDir);
+		seedDefs(tmpDir, defs);
 
 		const executor = createMockExecutor();
-		const scheduler = new Scheduler(executor, { usersDir: usersDirOf(tmpDir) });
+		const scheduler = new Scheduler(executor, { workDir: tmpDir });
 		scheduler.start();
 		await scheduler.onTimer();
 
@@ -980,16 +1009,16 @@ describe("Scheduler — updateAfterRun", () => {
 		});
 		const defs = new Map<string, Automation>();
 		defs.set(auto.id, auto);
-		saveDefinitions(defs, tmpDir);
+		seedDefs(tmpDir, defs);
 
 		const executor = createMockExecutor();
-		const scheduler = new Scheduler(executor, { usersDir: usersDirOf(tmpDir) });
+		const scheduler = new Scheduler(executor, { workDir: tmpDir });
 		scheduler.start();
 		await scheduler.onTimer();
 		scheduler.stop();
 
 		// Read from disk to verify persistence
-		const persisted = loadDefinitions(tmpDir);
+		const persisted = loadDefs(tmpDir);
 		const updated = persisted.get(auto.id)!;
 		expect(updated.runCount).toBe(1);
 		expect(updated.lastRunStatus).toBe("success");
@@ -1014,11 +1043,11 @@ describe("Scheduler — backoff respects natural interval", () => {
 		});
 		const defs = new Map<string, Automation>();
 		defs.set(auto.id, auto);
-		saveDefinitions(defs, tmpDir);
+		seedDefs(tmpDir, defs);
 
 		const failRun = makeFailureRun(auto.id);
 		const executor = createMockExecutor(failRun);
-		const scheduler = new Scheduler(executor, { usersDir: usersDirOf(tmpDir) });
+		const scheduler = new Scheduler(executor, { workDir: tmpDir });
 		scheduler.start();
 		await scheduler.onTimer();
 
@@ -1039,11 +1068,11 @@ describe("Scheduler — backoff respects natural interval", () => {
 		});
 		const defs = new Map<string, Automation>();
 		defs.set(auto.id, auto);
-		saveDefinitions(defs, tmpDir);
+		seedDefs(tmpDir, defs);
 
 		const failRun = makeFailureRun(auto.id);
 		const executor = createMockExecutor(failRun);
-		const scheduler = new Scheduler(executor, { usersDir: usersDirOf(tmpDir) });
+		const scheduler = new Scheduler(executor, { workDir: tmpDir });
 		scheduler.start();
 		await scheduler.onTimer();
 
@@ -1064,10 +1093,10 @@ describe("Scheduler — backoff respects natural interval", () => {
 		});
 		const defs = new Map<string, Automation>();
 		defs.set(auto.id, auto);
-		saveDefinitions(defs, tmpDir);
+		seedDefs(tmpDir, defs);
 
 		const executor = createMockExecutor(); // success
-		const scheduler = new Scheduler(executor, { usersDir: usersDirOf(tmpDir) });
+		const scheduler = new Scheduler(executor, { workDir: tmpDir });
 		scheduler.start();
 		await scheduler.onTimer();
 
@@ -1084,11 +1113,11 @@ describe("Scheduler — backoff respects natural interval", () => {
 		});
 		const defs = new Map<string, Automation>();
 		defs.set(auto.id, auto);
-		saveDefinitions(defs, tmpDir);
+		seedDefs(tmpDir, defs);
 
 		const failRun = makeFailureRun(auto.id);
 		const executor = createMockExecutor(failRun);
-		const scheduler = new Scheduler(executor, { usersDir: usersDirOf(tmpDir), defaultTimezone: "Pacific/Honolulu" });
+		const scheduler = new Scheduler(executor, { workDir: tmpDir, defaultTimezone: "Pacific/Honolulu" });
 		scheduler.start();
 		await scheduler.onTimer();
 
@@ -1129,19 +1158,21 @@ describe("Scheduler — skipped runs advance nextRunAt", () => {
 		const defs = new Map<string, Automation>();
 		defs.set(blocking.id, blocking);
 		defs.set(auto.id, auto);
-		saveDefinitions(defs, tmpDir);
+		seedDefs(tmpDir, defs);
 
 		// Block on the first automation, skip the second
 		let resolveBlock!: (run: AutomationRun) => void;
-		const blockPromise = new Promise<AutomationRun>((r) => { resolveBlock = r; });
+		const blockPromise = new Promise<{ run: AutomationRun; result: null }>((r) => {
+			resolveBlock = (run: AutomationRun) => r(execOk(run));
+		});
 		let callCount = 0;
 		const executor: Executor = mock(async (a: Automation, _signal: AbortSignal) => {
 			callCount++;
 			if (a.id === "auto-blocker") return blockPromise;
-			return makeSuccessRun(a.id);
+			return execOk(makeSuccessRun(a.id));
 		}) as Executor;
 
-		const scheduler = new Scheduler(executor, { usersDir: usersDirOf(tmpDir), maxConcurrentRuns: 1 });
+		const scheduler = new Scheduler(executor, { workDir: tmpDir, maxConcurrentRuns: 1 });
 		scheduler.start();
 
 		// First timer: dispatches blocker, skips auto-skip-test (don't await — blocker blocks)
@@ -1177,10 +1208,10 @@ describe("Scheduler — auto-disable", () => {
 		});
 		const defs = new Map<string, Automation>();
 		defs.set(auto.id, auto);
-		saveDefinitions(defs, tmpDir);
+		seedDefs(tmpDir, defs);
 
 		const executor = createMockExecutor(makeFailureRun(auto.id));
-		const scheduler = new Scheduler(executor, { usersDir: usersDirOf(tmpDir) });
+		const scheduler = new Scheduler(executor, { workDir: tmpDir });
 		scheduler.start();
 		await scheduler.onTimer();
 
@@ -1198,10 +1229,10 @@ describe("Scheduler — auto-disable", () => {
 		});
 		const defs = new Map<string, Automation>();
 		defs.set(auto.id, auto);
-		saveDefinitions(defs, tmpDir);
+		seedDefs(tmpDir, defs);
 
 		const executor = createMockExecutor(makeFailureRun(auto.id, "HTTP 401 Unauthorized"));
-		const scheduler = new Scheduler(executor, { usersDir: usersDirOf(tmpDir) });
+		const scheduler = new Scheduler(executor, { workDir: tmpDir });
 		scheduler.start();
 		await scheduler.onTimer();
 
@@ -1223,10 +1254,10 @@ describe("Scheduler — auto-disable", () => {
 		});
 		const defs = new Map<string, Automation>();
 		defs.set(auto.id, auto);
-		saveDefinitions(defs, tmpDir);
+		seedDefs(tmpDir, defs);
 
 		const executor = createMockExecutor();
-		const scheduler = new Scheduler(executor, { usersDir: usersDirOf(tmpDir) });
+		const scheduler = new Scheduler(executor, { workDir: tmpDir });
 		scheduler.start();
 		await scheduler.onTimer();
 
@@ -1251,7 +1282,7 @@ describe("Scheduler — cancelRun", () => {
 		});
 		const defs = new Map<string, Automation>();
 		defs.set(auto.id, auto);
-		saveDefinitions(defs, tmpDir);
+		seedDefs(tmpDir, defs);
 
 		let receivedSignal: AbortSignal | null = null;
 		const executor: Executor = mock(async (_auto: Automation, signal: AbortSignal) => {
@@ -1259,13 +1290,13 @@ describe("Scheduler — cancelRun", () => {
 			return new Promise<AutomationRun>(() => {}); // block forever
 		}) as Executor;
 
-		const scheduler = new Scheduler(executor, { usersDir: usersDirOf(tmpDir) });
+		const scheduler = new Scheduler(executor, { workDir: tmpDir });
 		scheduler.start();
 		scheduler.onTimer(); // don't await — executor blocks
 		await new Promise((r) => setTimeout(r, 50));
 
-		expect(scheduler.getActiveRunIds()).toContain(`${OWNER}/${auto.id}`);
-		const result = scheduler.cancelRun(OWNER, auto.id);
+		expect(scheduler.getActiveRunIds()).toContain(`${WS}/${OWNER}/${auto.id}`);
+		const result = scheduler.cancelRun(WS, OWNER, auto.id);
 		expect(result).toBe(true);
 		expect(receivedSignal!.aborted).toBe(true);
 
@@ -1278,13 +1309,13 @@ describe("Scheduler — cancelRun", () => {
 		});
 		const defs = new Map<string, Automation>();
 		defs.set(auto.id, auto);
-		saveDefinitions(defs, makeTmpDir());
+		seedDefs(tmpDir, defs);
 
 		const executor = createMockExecutor();
-		const scheduler = new Scheduler(executor, { usersDir: usersDirOf(tmpDir) });
+		const scheduler = new Scheduler(executor, { workDir: tmpDir });
 		scheduler.start();
 
-		const result = scheduler.cancelRun(OWNER, auto.id);
+		const result = scheduler.cancelRun(WS, OWNER, auto.id);
 		expect(result).toBe(false);
 		scheduler.stop();
 	});
@@ -1308,13 +1339,13 @@ describe("Scheduler — cumulative token tracking", () => {
 		});
 		const defs = new Map<string, Automation>();
 		defs.set(auto.id, auto);
-		saveDefinitions(defs, tmpDir);
+		seedDefs(tmpDir, defs);
 
 		const run = makeSuccessRun(auto.id);
 		run.inputTokens = 1000;
 		run.outputTokens = 200;
 		const executor = createMockExecutor(run);
-		const scheduler = new Scheduler(executor, { usersDir: usersDirOf(tmpDir) });
+		const scheduler = new Scheduler(executor, { workDir: tmpDir });
 		scheduler.start();
 		await scheduler.onTimer();
 
@@ -1333,12 +1364,12 @@ describe("Scheduler — cumulative token tracking", () => {
 		});
 		const defs = new Map<string, Automation>();
 		defs.set(auto.id, auto);
-		saveDefinitions(defs, tmpDir);
+		seedDefs(tmpDir, defs);
 
 		const run = makeSuccessRun(auto.id);
 		run.inputTokens = 1000; // 4500 + 1000 = 5500 > 5000
 		const executor = createMockExecutor(run);
-		const scheduler = new Scheduler(executor, { usersDir: usersDirOf(tmpDir) });
+		const scheduler = new Scheduler(executor, { workDir: tmpDir });
 		scheduler.start();
 		await scheduler.onTimer();
 
@@ -1358,13 +1389,13 @@ describe("Scheduler — cumulative token tracking", () => {
 		});
 		const defs = new Map<string, Automation>();
 		defs.set(auto.id, auto);
-		saveDefinitions(defs, tmpDir);
+		seedDefs(tmpDir, defs);
 
 		const run = makeSuccessRun(auto.id);
 		run.inputTokens = 1000;
 		run.outputTokens = 200;
 		const executor = createMockExecutor(run);
-		const scheduler = new Scheduler(executor, { usersDir: usersDirOf(tmpDir) });
+		const scheduler = new Scheduler(executor, { workDir: tmpDir });
 		scheduler.start();
 		await scheduler.onTimer();
 
@@ -1437,24 +1468,22 @@ describe("Scheduler — multi-owner", () => {
 		rmSync(root, { recursive: true, force: true });
 	});
 
-	const usersDir = () => join(root, "users");
-	const ownerStore = (owner: string) => join(usersDir(), owner, "automations");
-
 	it("loads + fires automations across owners; colliding ids stay isolated per owner", async () => {
-		// Two owners, SAME kebab id — only composite-key isolation keeps them apart.
+		// Two owners in one workspace, SAME kebab id — only composite-key
+		// isolation (${wsId}/${ownerId}/${id}) keeps them apart.
 		const due = new Date(Date.now() - 1000).toISOString();
 		const a = makeAutomation({ id: "daily-digest", ownerId: "usr_a", nextRunAt: due });
 		const b = makeAutomation({ id: "daily-digest", ownerId: "usr_b", nextRunAt: due });
-		saveDefinitions(new Map([[a.id, a]]), ownerStore("usr_a"));
-		saveDefinitions(new Map([[b.id, b]]), ownerStore("usr_b"));
+		seedDefs(root, new Map([[a.id, a]]), "usr_a");
+		seedDefs(root, new Map([[b.id, b]]), "usr_b");
 
 		const fired: Array<string | undefined> = [];
 		const executor: Executor = mock(async (auto: Automation) => {
 			fired.push(auto.ownerId);
-			return makeSuccessRun(auto.id);
+			return execOk(makeSuccessRun(auto.id));
 		}) as Executor;
 
-		const scheduler = new Scheduler(executor, { usersDir: usersDir() });
+		const scheduler = new Scheduler(executor, { workDir: root });
 		scheduler.start();
 		await scheduler.onTimer();
 		scheduler.stop();
@@ -1462,25 +1491,25 @@ describe("Scheduler — multi-owner", () => {
 		// Both owners' automations fired, each carrying its own owner identity.
 		expect(fired.sort()).toEqual(["usr_a", "usr_b"]);
 		// Each run persisted to ITS OWN store — no cross-owner clobber.
-		expect(loadDefinitions(ownerStore("usr_a")).get("daily-digest")!.runCount).toBe(1);
-		expect(loadDefinitions(ownerStore("usr_b")).get("daily-digest")!.runCount).toBe(1);
+		expect(loadDefs(root, "usr_a").get("daily-digest")!.runCount).toBe(1);
+		expect(loadDefs(root, "usr_b").get("daily-digest")!.runCount).toBe(1);
 	});
 
 	it("runNow targets the owner-qualified automation when ids collide", async () => {
 		const a = makeAutomation({ id: "shared", ownerId: "usr_a", enabled: false });
 		const b = makeAutomation({ id: "shared", ownerId: "usr_b", enabled: false });
-		saveDefinitions(new Map([[a.id, a]]), ownerStore("usr_a"));
-		saveDefinitions(new Map([[b.id, b]]), ownerStore("usr_b"));
+		seedDefs(root, new Map([[a.id, a]]), "usr_a");
+		seedDefs(root, new Map([[b.id, b]]), "usr_b");
 
 		const fired: string[] = [];
 		const executor: Executor = mock(async (auto: Automation) => {
 			fired.push(`${auto.ownerId}/${auto.id}`);
-			return makeSuccessRun(auto.id);
+			return execOk(makeSuccessRun(auto.id));
 		}) as Executor;
 
-		const scheduler = new Scheduler(executor, { usersDir: usersDir() });
+		const scheduler = new Scheduler(executor, { workDir: root });
 		scheduler.start();
-		const run = await scheduler.runNow("usr_b", "shared");
+		const run = await scheduler.runNow(WS, "usr_b", "shared");
 		scheduler.stop();
 
 		expect(run).not.toBeNull();
@@ -1500,14 +1529,14 @@ describe("Scheduler — run trigger", () => {
 	});
 
 	afterEach(() => {
-		rmSync(join(tmpDir, "..", "..", ".."), { recursive: true, force: true });
+		rmSync(tmpDir, { recursive: true, force: true });
 	});
 
 	/** Executor that records the `trigger` it was dispatched with. */
 	function recordingExecutor(triggers: string[]): Executor {
 		return (async (auto: Automation, _signal: AbortSignal, trigger: string) => {
 			triggers.push(trigger);
-			return makeSuccessRun(auto.id);
+			return execOk(makeSuccessRun(auto.id));
 		}) as Executor;
 	}
 
@@ -1519,10 +1548,10 @@ describe("Scheduler — run trigger", () => {
 		});
 		const defs = new Map<string, Automation>();
 		defs.set(auto.id, auto);
-		saveDefinitions(defs, tmpDir);
+		seedDefs(tmpDir, defs);
 
 		const triggers: string[] = [];
-		const scheduler = new Scheduler(recordingExecutor(triggers), { usersDir: usersDirOf(tmpDir) });
+		const scheduler = new Scheduler(recordingExecutor(triggers), { workDir: tmpDir });
 		scheduler.start();
 		await scheduler.onTimer();
 		scheduler.stop();
@@ -1534,12 +1563,12 @@ describe("Scheduler — run trigger", () => {
 		const auto = makeAutomation();
 		const defs = new Map<string, Automation>();
 		defs.set(auto.id, auto);
-		saveDefinitions(defs, tmpDir);
+		seedDefs(tmpDir, defs);
 
 		const triggers: string[] = [];
-		const scheduler = new Scheduler(recordingExecutor(triggers), { usersDir: usersDirOf(tmpDir) });
+		const scheduler = new Scheduler(recordingExecutor(triggers), { workDir: tmpDir });
 		scheduler.start();
-		await scheduler.runNow(OWNER, auto.id);
+		await scheduler.runNow(WS, OWNER, auto.id);
 		scheduler.stop();
 
 		expect(triggers).toEqual(["manual"]);
