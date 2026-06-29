@@ -415,4 +415,24 @@ describe("files room filtering", () => {
     expect(listFiles(helix)).toEqual(["fl_helix_old"]);
     expect(listOut(helix).totalCount).toBe(1);
   });
+
+  test("search returns totalCount and stays cross-room (deliberate, until search is room-scoped)", async () => {
+    const store = createFileStore(join(workDir, "files"));
+    await store.ensureFilesDir();
+    await store.appendRegistry(
+      fileEntry({ id: "fl_h", filename: "report-helix.txt", workspaceId: "ws_helix" }),
+    );
+    await store.appendRegistry(
+      fileEntry({ id: "fl_a", filename: "report-acme.txt", workspaceId: "ws_acme" }),
+    );
+
+    const res = await source.execute("search", { query: "report" });
+    expect(res.isError).toBe(false);
+    const out = listOut(res);
+    // Cross-room: matches from BOTH rooms come back — search is not room-scoped
+    // yet (mirrors the conversation app; room-scoping search is a follow-up).
+    expect(out.files.map((f) => f.id).sort()).toEqual(["fl_a", "fl_h"]);
+    // The renamed count field is populated on the search path too.
+    expect(out.totalCount).toBe(2);
+  });
 });
