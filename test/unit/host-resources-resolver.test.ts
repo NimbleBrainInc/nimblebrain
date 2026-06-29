@@ -11,30 +11,44 @@ import { createFileStore, type FileStore } from "../../src/files/store.ts";
 import type { FileEntry } from "../../src/files/types.ts";
 
 // The resolver is the single chokepoint between a bundle's inbound
-// host-resources request and the caller's identity FileStore. Files are
-// identity-owned (Phase B): the resolver is handed a `() => FileStore`
-// closure yielding the SESSION USER's store — it never trusts the URI (or
-// the ctx workspaceId) to encode a scope. It enforces the scheme allowlist
-// and surfaces the MCP-standard error codes (`-32602` for invalid scheme,
-// `-32002` for resource not found).
+// host-resources request and the workspace-owned FileStore. Files are
+// workspace-owned: the resolver is handed a `(wsId) => FileStore` factory and
+// DELIBERATELY scopes by `ctx.workspaceId` (the workspace the bundle's tool ran
+// in) — passing it to the factory so a `files://` read resolves in that
+// workspace's partition only. The URI is bare (carries just the file id); the
+// scope rides on the ctx, never the URI. It enforces the scheme allowlist and
+// surfaces the MCP-standard error codes (`-32602` for invalid scheme, `-32002`
+// for resource not found).
 
 const RESOURCE_NOT_FOUND = -32002;
 const INVALID_PARAMS = -32602;
 
 let rootDir: string;
 
-// Two identity stores standing in for two users. `currentStore` is what the
-// resolver's closure returns — flipped per test to simulate whose session is
-// active, the same shape Runtime uses (resolve the identity per call, hand
-// back that user's store).
+// Two workspace stores standing in for two workspaces. The resolver's factory
+// selects between them by the wsId it is handed — the same shape Runtime uses
+// (`getWorkspaceFileStore(ctx.workspaceId, owner)` resolves the store for the
+// workspace the bundle ran in).
 let storeA: FileStore;
 let storeB: FileStore;
-let currentStore: FileStore;
 
-// ctx carries the bundle's workspace for AUDIT logging only — it no longer
-// selects the store (files are identity-owned).
+// ctx carries the bundle's workspace — the LIVE store selector. `ws_a` →
+// `storeA`, `ws_b` → `storeB` (see `storeForWorkspace`).
 const ctxA: HostResourceContext = { workspaceId: "ws_a", bundleId: "bundle_x" };
 const ctxB: HostResourceContext = { workspaceId: "ws_b", bundleId: "bundle_x" };
+
+/**
+ * The resolver's store factory: maps `ctx.workspaceId` → that workspace's store,
+ * exactly as Runtime does. Honoring the wsId (rather than ignoring it) is the
+ * point — a regression where the resolver stopped passing `ctx.workspaceId` to
+ * the factory would resolve the wrong workspace, which the isolation test below
+ * catches.
+ */
+function storeForWorkspace(wsId: string): FileStore {
+  if (wsId === "ws_a") return storeA;
+  if (wsId === "ws_b") return storeB;
+  throw new Error(`unexpected workspace id: ${wsId}`);
+}
 
 async function seedFile(store: FileStore, name: string, body: string, mime: string) {
   const saved = await store.saveFile(Buffer.from(body), name, mime);
@@ -53,10 +67,8 @@ async function seedFile(store: FileStore, name: string, body: string, mime: stri
 
 beforeEach(async () => {
   rootDir = await mkdtemp(join(tmpdir(), "nb-host-resources-resolver-"));
-  storeA = createFileStore(join(rootDir, "usr_a", "files"));
-  storeB = createFileStore(join(rootDir, "usr_b", "files"));
-  // Default to user A's session; isolation tests flip to B explicitly.
-  currentStore = storeA;
+  storeA = createFileStore(join(rootDir, "ws_a", "files"));
+  storeB = createFileStore(join(rootDir, "ws_b", "files"));
 });
 
 afterEach(async () => {
@@ -64,7 +76,7 @@ afterEach(async () => {
 });
 
 function makeResolver(): FileBackedHostResourcesResolver {
-  return new FileBackedHostResourcesResolver(() => currentStore);
+  return new FileBackedHostResourcesResolver((wsId) => storeForWorkspace(wsId));
 }
 
 describe("FileBackedHostResourcesResolver.read", () => {
@@ -125,13 +137,13 @@ describe("FileBackedHostResourcesResolver.read", () => {
     expect(caught?.code).toBe(RESOURCE_NOT_FOUND);
   });
 
-  it("collapses cross-identity lookups into -32002 (no info leak)", async () => {
-    // User A's session asking for a file id that EXISTS in user B's store.
-    // The resolver yields A's store, which doesn't have it — "not found",
-    // the SAME response a genuinely-missing id gets. This prevents
-    // cross-identity inventory enumeration.
-    const idInB = await seedFile(storeB, "secret.txt", "usr_b only", "text/plain");
-    currentStore = storeA;
+  it("collapses cross-workspace lookups into -32002 (no info leak)", async () => {
+    // A bundle running in workspace A asking for a file id that EXISTS in
+    // workspace B. The resolver passes `ctx.workspaceId` to the factory, yields
+    // A's store, which doesn't have it — "not found", the SAME response a
+    // genuinely-missing id gets. This prevents cross-workspace inventory
+    // enumeration.
+    const idInB = await seedFile(storeB, "secret.txt", "ws_b only", "text/plain");
     let caught: McpError | null = null;
     try {
       await makeResolver().read(`files://${idInB}`, ctxA);
@@ -139,10 +151,29 @@ describe("FileBackedHostResourcesResolver.read", () => {
       caught = e as McpError;
     }
     expect(caught?.code).toBe(RESOURCE_NOT_FOUND);
-    // Same lookup in user B's session succeeds, proving the file does exist.
-    currentStore = storeB;
+    // The same lookup from workspace B succeeds, proving the file does exist.
     const ok = await makeResolver().read(`files://${idInB}`, ctxB);
-    expect(ok.contents[0]?.text).toBe("usr_b only");
+    expect(ok.contents[0]?.text).toBe("ws_b only");
+  });
+
+  it("scopes by ctx.workspaceId — a file in workspace A is ABSENT under workspace B", async () => {
+    // Seed a file into workspace A. Read it back under ctx A (its own
+    // workspace) → found.
+    const id = await seedFile(storeA, "a-only.txt", "ws_a only", "text/plain");
+    const okA = await makeResolver().read(`files://${id}`, ctxA);
+    expect(okA.contents[0]?.text).toBe("ws_a only");
+
+    // The SAME id under ctx workspace B: the resolver passes `ctx.workspaceId`
+    // to the store factory, which lands in storeB (no such file) → -32002. If
+    // the resolver stopped honoring `ctx.workspaceId` (the regression this
+    // guards), B would read A's store and leak the file across workspaces.
+    let caught: McpError | null = null;
+    try {
+      await makeResolver().read(`files://${id}`, ctxB);
+    } catch (e) {
+      caught = e as McpError;
+    }
+    expect(caught?.code).toBe(RESOURCE_NOT_FOUND);
   });
 
   it("throws ResponseTooLarge when the file exceeds maxReadSize", async () => {
@@ -175,11 +206,10 @@ describe("FileBackedHostResourcesResolver.list", () => {
     await seedFile(storeA, "a2.csv", "y", "text/csv");
     await seedFile(storeB, "b1.csv", "z", "text/csv");
 
-    currentStore = storeA;
     const aList = await makeResolver().list({}, ctxA);
     expect(aList.resources).toHaveLength(2);
     expect(aList.resources.map((r) => r.name).sort()).toEqual(["a1.csv", "a2.csv"]);
-    // Cross-identity isolation: user A's list never includes user B's files.
+    // Cross-workspace isolation: workspace A's list never includes B's files.
     expect(aList.resources.find((r) => r.name === "b1.csv")).toBeUndefined();
   });
 
