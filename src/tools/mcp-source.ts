@@ -2203,7 +2203,7 @@ export function classifyConnectionFailure(err: unknown): ConnectionFailure {
   if (code === -32001 || /session not found/i.test(msg)) {
     return "session-lost";
   }
-  // transient — exact prior `isTransientTransport` logic, checked second.
+  // transient — a mid-roll gateway blip (502/503/504, `bad_gateway`). Back off.
   if (
     code === 502 ||
     code === 503 ||
