@@ -49,7 +49,6 @@ export function WorkspaceOverviewPage() {
   // lockstep — no one-frame mismatch on a switch (see useWorkspaceBriefing).
   const {
     briefing,
-    loading: briefingLoading,
     error: briefingError,
     refresh: refreshBriefing,
   } = useWorkspaceBriefing(workspace?.id);
@@ -131,7 +130,6 @@ export function WorkspaceOverviewPage() {
         <div className="mb-10">
           <BriefingView
             briefing={briefing}
-            loading={briefingLoading}
             error={briefingError}
             onRetry={refreshBriefing}
             onAction={handleBriefingAction}
