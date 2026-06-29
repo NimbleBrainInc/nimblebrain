@@ -1,5 +1,6 @@
 import { useEffect } from "react";
 import { Navigate, Outlet, useParams } from "react-router-dom";
+import { getActiveWorkspaceId, setActiveWorkspaceId } from "../api/client";
 import { useWorkspaceContext } from "../context/WorkspaceContext";
 import { toWsId } from "../lib/workspace-slug";
 
@@ -12,34 +13,41 @@ const loadingWorkspace = (
 /**
  * Route guard for `/w/:slug/*`.
  *
- * The URL slug is the single source of truth for the active workspace.
- * The wire workspace (`X-Workspace-Id`, sent from the ambient
- * `activeWorkspaceId`) is a *projection* of that slug — never an
- * independent value. This guard enforces the projection with one
- * invariant: **a workspace-scoped subtree does not mount until the
- * ambient workspace equals the route.**
+ * The URL slug is the single source of truth for the focused workspace. The
+ * wire workspace (`X-Workspace-Id`, sent from the ambient `activeWorkspaceId`)
+ * is a *projection* of that slug — never an independent value.
  *
- * Why the invariant and not just the sync effect below: React effects
- * run child → parent, so a descendant's data fetch (e.g. the connectors
- * list) would read the *previous* ambient workspace — the bootstrap
- * personal default, or the last route's workspace — before this guard's
- * effect could correct it. That surfaced one workspace's connectors
- * under another workspace's URL (and let `install` / `connect` target
- * the wrong workspace). Gating the `Outlet` makes that state
- * unrepresentable: descendants only exist once ambient === URL, so they
- * fetch and act against the right workspace by construction.
+ * The projection is set **synchronously during render**, before the `Outlet`'s
+ * descendants render. That ordering is the whole point: a descendant's data
+ * fetch (e.g. the connectors list) reads the ambient workspace, and React
+ * effects run child → parent, so an effect here would set it only *after* the
+ * descendants had already fetched the previous workspace — surfacing one
+ * workspace's connectors under another's URL, and letting `install` / `connect`
+ * target the wrong workspace. Setting it inline makes the right workspace true
+ * by the time anything below reads it, with no loading-screen gate — so a
+ * switch never flashes "Loading workspace…" (the route and the ambient id
+ * always agree on the frame the Outlet renders, even though the React-state
+ * `activeWorkspace` reconciles a render later for display-only consumers).
  */
 export function WorkspaceRouteGuard() {
   const { slug } = useParams<{ slug: string }>();
   const { workspaces, activeWorkspace, setActiveWorkspace, loading } = useWorkspaceContext();
 
   const routeWsId = slug ? toWsId(slug) : null;
+  const isMember = !!routeWsId && workspaces.some((ws) => ws.id === routeWsId);
 
-  // Reconcile the ambient workspace to the URL. This stays an effect
-  // (React state can't be set during another component's render), but
-  // the gate below means no descendant observes the pre-reconciliation
-  // value — the effect only has to win against itself, not against child
-  // effects.
+  // Project the route onto the ambient workspace id NOW (a plain module var, not
+  // React state — safe and idempotent to set during render), so the Outlet's
+  // descendants below fetch against this workspace on their first frame.
+  if (isMember && routeWsId && getActiveWorkspaceId() !== routeWsId) {
+    setActiveWorkspaceId(routeWsId);
+  }
+
+  // Keep the React-state `activeWorkspace` in lockstep for display-only
+  // consumers (sidebar highlight, composer footer). State can't be set during
+  // another component's render, so this stays an effect — but the inline
+  // projection above already made descendants correct, so this effect only
+  // has to win against itself, never against child effects.
   useEffect(() => {
     if (loading || !routeWsId || workspaces.length === 0) return;
     if (activeWorkspace?.id === routeWsId) return;
@@ -47,21 +55,13 @@ export function WorkspaceRouteGuard() {
     if (target) setActiveWorkspace(target);
   }, [routeWsId, workspaces, activeWorkspace?.id, setActiveWorkspace, loading]);
 
+  // No workspaces yet (initial list still loading) — the only true loading gate.
   if (loading) return loadingWorkspace;
 
-  // Unknown / non-member slug → bounce to the default landing (only
-  // decidable once the workspace list has loaded).
-  if (routeWsId && workspaces.length > 0 && !workspaces.some((ws) => ws.id === routeWsId)) {
+  // Unknown / non-member slug → bounce to the default landing (only decidable
+  // once the workspace list has loaded).
+  if (routeWsId && workspaces.length > 0 && !isMember) {
     return <Navigate to="/" replace />;
-  }
-
-  // The invariant (see the doc comment). Reaching here with a known
-  // `routeWsId` means the effect above will reconcile to it; hold the
-  // subtree until it has. The `workspaces.length > 0` guard lets the
-  // no-memberships case fall through to the child's own empty-state
-  // instead of spinning here forever.
-  if (routeWsId && workspaces.length > 0 && activeWorkspace?.id !== routeWsId) {
-    return loadingWorkspace;
   }
 
   return <Outlet />;

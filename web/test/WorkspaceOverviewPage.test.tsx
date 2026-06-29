@@ -8,7 +8,7 @@
 //
 // Readiness is `shell.shellWorkspaceId === <this page's workspace id>`. The
 // three states:
-//   not-ready  → skeleton           (never the empty card)
+//   not-ready  → a stable spacer    (never the empty card; no pulsing skeleton)
 //   ready+empty → "No apps installed"
 //   ready+populated → the app grid
 //
@@ -132,11 +132,13 @@ function harness(shellWorkspaceId: string | undefined, placements: PlacementEntr
 }
 
 describe("WorkspaceOverviewPage — app grid three states", () => {
-  test("not ready (shell lags this workspace) → skeleton, never the empty card", async () => {
+  test("not ready (shell lags this workspace) → a stable spacer, never the empty card", async () => {
     // Shell still reflects a different workspace (the switch/deep-link window).
     mounted = await mount(harness("ws_other", [appPlacement({})]));
 
-    expect(findByTestId(mounted.container, "workspace-overview-apps-skeleton")).not.toBeNull();
+    // A held space, not a pulsing skeleton — the page stays mounted across a
+    // switch, so the apps section just holds its place until the shell resolves.
+    expect(findByTestId(mounted.container, "workspace-overview-apps-pending")).not.toBeNull();
     // The false-empty regression: must NOT show "No apps installed" while loading.
     expect(findByTestId(mounted.container, "workspace-overview-empty")).toBeNull();
     expect(findByTestId(mounted.container, "workspace-overview-app-grid")).toBeNull();
@@ -146,11 +148,11 @@ describe("WorkspaceOverviewPage — app grid three states", () => {
     expect(breadcrumb?.textContent).not.toContain("apps installed");
   });
 
-  test("ready + empty → the empty card, no skeleton", async () => {
+  test("ready + empty → the empty card, no pending spacer", async () => {
     mounted = await mount(harness(WS.id, []));
 
     expect(findByTestId(mounted.container, "workspace-overview-empty")).not.toBeNull();
-    expect(findByTestId(mounted.container, "workspace-overview-apps-skeleton")).toBeNull();
+    expect(findByTestId(mounted.container, "workspace-overview-apps-pending")).toBeNull();
     expect(findByTestId(mounted.container, "workspace-overview-app-grid")).toBeNull();
   });
 
@@ -164,27 +166,10 @@ describe("WorkspaceOverviewPage — app grid three states", () => {
 
     expect(findByTestId(mounted.container, "workspace-overview-app-grid")).not.toBeNull();
     expect(findAllByTestId(mounted.container, "workspace-overview-app-card")).toHaveLength(2);
-    expect(findByTestId(mounted.container, "workspace-overview-apps-skeleton")).toBeNull();
+    expect(findByTestId(mounted.container, "workspace-overview-apps-pending")).toBeNull();
     expect(findByTestId(mounted.container, "workspace-overview-empty")).toBeNull();
 
     const page = findByTestId(mounted.container, "workspace-overview-page");
     expect(page?.textContent).toContain("2 apps installed, 2 members");
-  });
-
-  test("a revisit paints the last-known cards instead of a skeleton while the shell lags", async () => {
-    // First visit, shell ready → caches this workspace's app set.
-    mounted = await mount(
-      harness(WS.id, [appPlacement({ route: "crm", label: "CRM", resourceUri: "ui://crm/main" })]),
-    );
-    expect(findByTestId(mounted.container, "workspace-overview-app-grid")).not.toBeNull();
-    mounted.unmount();
-    mounted = null;
-
-    // Revisit while the shell still lags (shellWorkspaceId !== WS.id) and
-    // `forSlot` is empty for it: the cached set paints immediately — no
-    // skeleton on the switch back. (Without the cache this is the skeleton.)
-    mounted = await mount(harness("ws_other", []));
-    expect(findByTestId(mounted.container, "workspace-overview-apps-skeleton")).toBeNull();
-    expect(findAllByTestId(mounted.container, "workspace-overview-app-card")).toHaveLength(1);
   });
 });

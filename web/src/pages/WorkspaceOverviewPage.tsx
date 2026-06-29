@@ -34,13 +34,6 @@ import { workspaceApps } from "../lib/workspace-apps";
 import { toSlug } from "../lib/workspace-slug";
 import type { PlacementEntry } from "../types";
 
-// Last-known app set per workspace. The shell's placements lag a switch, so on
-// a revisit we paint this workspace's real cards from here immediately instead
-// of flashing the skeleton while the shell catches up. Keyed by workspace id,
-// so it never shows another workspace's apps; a first visit (no entry) still
-// shows the skeleton. Module-level so it survives the page re-rendering.
-const lastApps = new Map<string, PlacementEntry[]>();
-
 export function WorkspaceOverviewPage() {
   const { slug } = useParams<{ slug: string }>();
   const wsCtx = useWorkspaceContext();
@@ -50,15 +43,16 @@ export function WorkspaceOverviewPage() {
 
   const workspace = slug ? wsCtx.workspaces.find((w) => toSlug(w.id) === slug) : undefined;
 
-  // The briefing is workspace-scoped server-side via X-Workspace-Id (= the
-  // active workspace). Key the fetch on the active workspace id so the header
-  // and the fetch stay in lockstep (see useWorkspaceBriefing for the rationale).
+  // The briefing is workspace-scoped server-side via X-Workspace-Id, which the
+  // route guard projects from the slug. Key the fetch on THIS page's route
+  // workspace so the header, the fetch, and the briefing all follow the URL in
+  // lockstep — no one-frame mismatch on a switch (see useWorkspaceBriefing).
   const {
     briefing,
     loading: briefingLoading,
     error: briefingError,
     refresh: refreshBriefing,
-  } = useWorkspaceBriefing(wsCtx.activeWorkspace?.id);
+  } = useWorkspaceBriefing(workspace?.id);
 
   const handleBriefingAction = useCallback(
     (action: BriefingAction) => {
@@ -94,17 +88,14 @@ export function WorkspaceOverviewPage() {
   // Readiness — not just "is there a shell?". The shell holds ONE workspace's
   // placements at a time and lags a switch (old data stays visible while the
   // refetch is in flight, with no `loading` flag — see ShellContext). Compare
-  // the shell's workspace to THIS page's workspace (`workspace.id`, derived
-  // from the route slug — the stable truth; the active workspace converges to
-  // it after the route guard's sync effect). Until they match, the shell still
-  // holds the previous workspace's apps, so we don't read it: fall back to THIS
-  // workspace's last-known set (instant on a revisit), and show the skeleton
-  // only when there's nothing for it yet (a genuine first visit) — never the
-  // previous workspace's apps, never a false-empty.
+  // the shell's workspace to THIS page's workspace (`workspace.id`, derived from
+  // the route slug — the stable truth). Until they match, `apps` is `null`: the
+  // shell still reflects the previous workspace, so we don't read it (that would
+  // be a false-empty / wrong-workspace grid). The route guard keeps this page
+  // mounted across a switch, so the apps section just holds its space (the
+  // `apps === null` branch below) until the array resolves — no skeleton flash.
   const appsReady = shell != null && shell.shellWorkspaceId === workspace.id;
-  const freshApps = appsReady && shell ? workspaceApps(shell.forSlot("sidebar")) : null;
-  if (freshApps) lastApps.set(workspace.id, freshApps);
-  const apps = freshApps ?? lastApps.get(workspace.id) ?? null;
+  const apps = appsReady && shell ? workspaceApps(shell.forSlot("sidebar")) : null;
 
   return (
     <div className="h-full overflow-y-auto" data-testid="workspace-overview-page">
@@ -151,7 +142,13 @@ export function WorkspaceOverviewPage() {
           Available apps
         </div>
         {apps === null ? (
-          <AppGridSkeleton />
+          // Brief shell-catch-up window after a switch — hold the space, don't
+          // flash a skeleton (the page stays mounted, so this is a sub-second gap).
+          <div
+            className="min-h-[4.5rem]"
+            aria-hidden
+            data-testid="workspace-overview-apps-pending"
+          />
         ) : apps.length === 0 ? (
           <div
             className="rounded-sm border border-dashed border-border p-8 text-center text-sm text-muted-foreground"
@@ -190,30 +187,6 @@ function describeWorkspace(workspace: WorkspaceInfo, appCount: number | null): s
   if (appCount === null) return `${members}.`;
   const apps = `${appCount} ${appCount === 1 ? "app installed" : "apps installed"}`;
   return `${apps}, ${members}.`;
-}
-
-// Loading placeholder for the app grid: shown while the shell hasn't caught up
-// to this workspace (switch / deep-link window). Mirrors AppCard's shape so the
-// grid doesn't jump when real cards replace it. A fixed three-card placeholder
-// — the real count is unknown until the shell resolves.
-function AppGridSkeleton() {
-  return (
-    <div
-      className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3"
-      data-testid="workspace-overview-apps-skeleton"
-      aria-hidden
-    >
-      {[0, 1, 2].map((i) => (
-        <div key={i} className="flex flex-col gap-2 p-4 rounded-sm border border-border bg-card">
-          <div className="flex items-center gap-2">
-            <div className="h-4 w-4 shrink-0 rounded bg-muted-foreground/20 animate-pulse" />
-            <div className="h-3.5 w-2/3 rounded bg-muted-foreground/20 animate-pulse" />
-          </div>
-          <div className="h-2.5 w-1/3 rounded bg-muted-foreground/20 animate-pulse" />
-        </div>
-      ))}
-    </div>
-  );
 }
 
 function AppCard({
