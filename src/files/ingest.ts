@@ -120,6 +120,11 @@ export async function ingestFiles(
   conversationId: string,
   store: FileStore,
   config: FileConfig,
+  // The workspace/owner the `store` is partitioned by — stamped onto each
+  // registry entry as advisory denormalisation (the directory is authoritative).
+  // Optional so scratch/test callers can ingest without a workspace context.
+  wsId?: string,
+  ownerId?: string,
 ): Promise<IngestResult> {
   const errors: string[] = [];
   const contentParts: ContentPart[] = [];
@@ -169,6 +174,8 @@ export async function ingestFiles(
       conversationId,
       createdAt: new Date().toISOString(),
       description: null,
+      ...(ownerId ? { ownerId } : {}),
+      ...(wsId ? { workspaceId: wsId } : {}),
     };
     await store.appendRegistry(entry);
 

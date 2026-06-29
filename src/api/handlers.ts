@@ -1701,16 +1701,21 @@ export function sanitizeFilename(name: string): string {
   return name.replace(/["\r\n\x00-\x1f]/g, "_");
 }
 
-/** Handle GET /v1/files/:fileId?ws=<wsId> — serve a stored file from the
- * workspace it lives in. Files are workspace-owned; the URL must carry the
- * workspace (`?ws=`) because a browser GET can't send the `X-Workspace-Id`
- * header. */
+/** Handle GET /v1/files/:fileId?ws=<wsId>&conversationId=<id> — serve a stored
+ * file from the workspace it lives in. Files are workspace-owned; the URL must
+ * carry the workspace (`?ws=`) because a browser GET can't send the
+ * `X-Workspace-Id` header. When `conversationId` is present the workspace is
+ * resolved from the conversation instead — the download then follows the
+ * conversation's workspace (the partition the chat read/write path uses), so a
+ * file stored under a cross-workspace conversation resolves without the client
+ * knowing the right `?ws=`. */
 export async function handleFileServe(
   fileId: string,
   runtime: Runtime,
   features: ResolvedFeatures,
   identity: UserIdentity | undefined,
   workspaceId: string | undefined,
+  conversationId: string | undefined,
 ): Promise<Response> {
   if (!features.fileContext) {
     return apiError(404, "not_found", "Not found");
@@ -1720,22 +1725,34 @@ export async function handleFileServe(
     return apiError(400, "bad_request", "Invalid file ID format");
   }
 
-  if (!workspaceId) {
+  if (!workspaceId && !conversationId) {
     return apiError(
       400,
       "workspace_required",
-      "Files are workspace-owned — pass ?ws=<workspaceId>",
+      "Files are workspace-owned — pass ?ws=<workspaceId> or conversationId",
     );
   }
 
-  // `?ws=` is taken at face value WITHOUT a membership check on purpose — do not
-  // add one. The store is rooted at the caller's OWN `<ownerId>` partition, so a
-  // forged `?ws=<other>` can only ever reach files the caller themselves wrote
-  // into that workspace (none, if they're not a member). The workspace is a
-  // storage-routing hint here, not an authorization axis — the owner partition is
-  // the gate. (Membership-gated surfaces use `optionalWorkspace`; a browser GET
-  // can't send the header, which is why this route reads the query param.)
-  const store = runtime.getWorkspaceFileStore(workspaceId, runtime.resolveRequestUserId(identity));
+  const ownerId = runtime.resolveRequestUserId(identity);
+  // With a conversationId, follow the conversation's authoritative workspace
+  // (the same partition chat() reads/writes) — the user's own download then
+  // resolves a cross-workspace attachment without the client knowing `?ws=`.
+  // Otherwise `?ws=` is taken at face value WITHOUT a membership check on
+  // purpose — do not add one. The store is rooted at the caller's OWN
+  // `<ownerId>` partition, so a forged `?ws=<other>` can only ever reach files
+  // the caller themselves wrote into that workspace (none, if they're not a
+  // member). The workspace is a storage-routing hint here, not an authorization
+  // axis — the owner partition is the gate. (Membership-gated surfaces use
+  // `optionalWorkspace`; a browser GET can't send the header, which is why this
+  // route reads the query param.)
+  const wsId = conversationId
+    ? await runtime.resolveConversationWorkspaceId(
+        conversationId,
+        workspaceId ?? personalWorkspaceIdFor(ownerId),
+        ownerId,
+      )
+    : (workspaceId as string);
+  const store = runtime.getWorkspaceFileStore(wsId, ownerId);
   try {
     const file = await store.readFile(fileId);
     const safeName = sanitizeFilename(file.filename);
@@ -1887,19 +1904,32 @@ async function parseMultipartChatBody(
 
   // Ingest files: validate, store, extract text, build content parts.
   //
-  // Files are workspace-owned: ingest writes to the focused workspace
-  // (`workspaceId ?? personal`) under the uploader's owner partition — the SAME
-  // workspace `runtime.chat()` rehydrates from (`request.workspaceId ??
-  // sessionWsId`), so an upload can't land in a workspace the read won't look in.
+  // Files are workspace-owned: ingest writes to the conversation's AUTHORITATIVE
+  // workspace — the SAME partition `runtime.chat()` reads from when it
+  // rehydrates. The workspace is resolved from the conversation (probe +
+  // locator), not the request header: on a cross-workspace resume the two differ,
+  // and a header-partitioned upload would land in a workspace the read never
+  // looks in (the attachment vanishes). A new conversation (no id yet) is born in
+  // the focused/personal workspace.
   const uploadOwner = runtime.resolveRequestUserId(identity);
-  const store = runtime.getWorkspaceFileStore(
-    workspaceId ?? personalWorkspaceIdFor(uploadOwner),
-    uploadOwner,
-  );
-  const filesConfig = runtime.getFilesConfig();
+  const fallbackWsId = workspaceId ?? personalWorkspaceIdFor(uploadOwner);
   // Use conversationId if provided, otherwise a placeholder (will be replaced by runtime.chat)
   const convId = (typeof conversationId === "string" && conversationId) || "pending";
-  const ingestResult = await ingestFiles(uploadedFiles, convId, store, filesConfig);
+  const wsId = await runtime.resolveConversationWorkspaceId(
+    convId === "pending" ? undefined : convId,
+    fallbackWsId,
+    uploadOwner,
+  );
+  const store = runtime.getWorkspaceFileStore(wsId, uploadOwner);
+  const filesConfig = runtime.getFilesConfig();
+  const ingestResult = await ingestFiles(
+    uploadedFiles,
+    convId,
+    store,
+    filesConfig,
+    wsId,
+    uploadOwner,
+  );
 
   if (ingestResult.errors.length > 0) {
     return apiError(400, "file_upload_error", "File upload failed", {
@@ -2039,10 +2069,16 @@ export async function handleResourceUpload(
     typeof conversationIdRaw === "string" && conversationIdRaw ? conversationIdRaw : null;
 
   const uploadOwner = runtime.resolveRequestUserId(identity);
-  const store = runtime.getWorkspaceFileStore(
-    workspaceId ?? personalWorkspaceIdFor(uploadOwner),
+  const fallbackWsId = workspaceId ?? personalWorkspaceIdFor(uploadOwner);
+  // A resource upload attached to a conversation lands in that conversation's
+  // authoritative workspace (the partition the read uses); a standalone app
+  // upload (no conversationId) lands in the focused/personal workspace.
+  const wsId = await runtime.resolveConversationWorkspaceId(
+    conversationId ?? undefined,
+    fallbackWsId,
     uploadOwner,
   );
+  const store = runtime.getWorkspaceFileStore(wsId, uploadOwner);
   const entries: FileEntry[] = [];
   const errors: string[] = [];
 
@@ -2068,6 +2104,11 @@ export async function handleResourceUpload(
       conversationId,
       createdAt: new Date().toISOString(),
       description,
+      // Stamp the resolved workspace/owner the bytes physically landed in (the
+      // conversation's authoritative workspace) — advisory denormalisation that
+      // lets the upload response report where the file lives.
+      ownerId: uploadOwner,
+      workspaceId: wsId,
     };
     await store.appendRegistry(entry);
     entries.push(entry);
