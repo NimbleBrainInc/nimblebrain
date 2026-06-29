@@ -162,7 +162,7 @@ Each provider key is optional. If a provider's `apiKey` is omitted, the SDK fall
 
 Conversations are **workspace-owned and persisted automatically** — you do not configure where they live. Every turn is written to a per-conversation JSONL file at `{workDir}/workspaces/<wsId>/conversations/<ownerId>/<convId>.jsonl` in the **event-sourced** format (one append-only event log per conversation), which is what enables crash-resilient run replay and history [compaction](/config/features/). Legacy message-format JSONL files are still read. This persistence does not depend on the `store` setting below.
 
-The optional top-level `store` field selects the `ConversationStore` the runtime holds for **programmatic / SDK embedding**. It defaults to in-memory, and the platform CLI does not write conversation history through it (workspace stores handle that). Set it only when embedding the runtime as a library.
+The optional top-level `store` field sets the runtime's boot-time `ConversationStore` handle. **It does not change where conversations are stored** — that is always workspace-owned, as above — so most deployments omit it. It defaults to in-memory and is reserved for programmatic embedding of the runtime as a library.
 
 <Tabs>
   <TabItem label="In-memory (default)">
