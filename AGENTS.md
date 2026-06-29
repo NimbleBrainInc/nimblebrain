@@ -31,7 +31,7 @@ bun run build:bundles      # Rebuild every src/bundles/*/ui (vite single-file)
 
 **`bun run dev` does NOT rebuild bundles.** The API serves each bundle from its pre-built `src/bundles/<name>/ui/dist/index.html`. After editing any file under `src/bundles/*/ui/src/`, run `bun run build:bundles` and restart the dev server (the API reads dist on iframe mount; it doesn't watch the file). Forgetting this means the iframe loads stale code while your changes look "live" in the source tree — a high-confusion failure mode.
 
-**Before opening a PR, run `bun run verify`.** It is the single command that mirrors CI, enforced by construction: `.github/workflows/ci.yml` invokes only `verify:*` subscripts (plus `test:integration` and `smoke`) — no inline check steps. To add or change a check, edit the matching subscript in `package.json`; CI picks it up automatically. If CI ever catches something `verify` didn't, the fix is to update the subscript, not the checklist. Tool-level parity is the gate; discipline-level rules are not.
+**Before opening a PR, run `bun run verify`.** It is the single command that mirrors CI, enforced by construction: `.github/workflows/ci.yml` invokes only `verify:*` subscripts (plus `test:integration`) — no inline check steps. To add or change a check, edit the matching subscript in `package.json`; CI picks it up automatically. If CI ever catches something `verify` didn't, the fix is to update the subscript, not the checklist. Tool-level parity is the gate; discipline-level rules are not.
 
 ### Worktree dev
 
@@ -74,7 +74,6 @@ Tests are organized into three tiers:
 |------|-----------|---------|-------------------|
 | Unit | `test/unit/` | `bun run test:unit` | Pure logic, mocked deps, no I/O or servers |
 | Integration | `test/integration/` | `bun run test:integration` | `Runtime.start()`, HTTP servers, real crypto, subprocesses |
-| Smoke | `test/smoke/` | `bun run smoke` | Real MCP server spawns, network calls |
 | Eval | `test/eval/` | `bun run eval` | LLM evals, require `ANTHROPIC_API_KEY` |
 
 Shared test helpers live in `test/helpers/` (imported by both unit and integration).

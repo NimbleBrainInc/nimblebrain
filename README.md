@@ -75,7 +75,7 @@ The engine loops until the model stops calling tools, hits the iteration limit (
 
 ```bash
 bun install
-bun run verify           # lint → typecheck → test → test:web → smoke
+bun run verify           # lint → typecheck → test → test:web → test:integration
 
 # Or individually:
 bun run test             # Unit + integration tests
