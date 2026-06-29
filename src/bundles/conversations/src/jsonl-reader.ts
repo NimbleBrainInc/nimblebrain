@@ -28,10 +28,10 @@ export interface ConversationMeta {
   lastModel: string | null;
   ownerId?: string;
   /**
-   * The room (workspace) the conversation ran in — the breadcrumb the
+   * The workspace (workspace) the conversation ran in — the breadcrumb the
    * runtime stamps on the line-1 header at create time. Absent on legacy
    * files written before workspace stamping; a consumer treats absent as
-   * the owner's personal room.
+   * the owner's personal workspace.
    */
   workspaceId?: string;
 }
@@ -904,10 +904,10 @@ const RUN_PARTITION = "_runs";
 /**
  * Conversation JSONL file paths under `dir`. Handles BOTH layouts:
  *   - flat: `.jsonl` files directly in `dir` (legacy / test fixtures);
- *   - room-owned: `dir` is the workspaces root; each room's `conversations/`
+ *   - workspace-owned: `dir` is the workspaces root; each workspace's `conversations/`
  *     holds an owner partition plus a `_runs` automation partition.
  * A flat directory yields its own files; the workspaces root yields every
- * room's files. Self-contained (no runtime imports) so the bundle stays
+ * workspace's files. Self-contained (no runtime imports) so the bundle stays
  * independently deployable.
  */
 export function listConversationFiles(dir: string): string[] {
@@ -924,7 +924,7 @@ export function listConversationFiles(dir: string): string[] {
       continue;
     }
     if (!ent.isDirectory() || !ent.name.startsWith("ws_")) continue;
-    // Room-owned layout: each workspace's conversations subtree.
+    // Workspace-owned layout: each workspace's conversations subtree.
     // lint-ok:conversation-path
     const convRoot = join(dir, ent.name, "conversations");
     for (const partition of safeReaddir(convRoot)) {

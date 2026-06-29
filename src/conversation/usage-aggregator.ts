@@ -327,7 +327,7 @@ export async function aggregateUsage(
   const groupBys = normalizeGroupBys(groupBy);
 
   // `source` is either an explicit list of conversation file paths — the
-  // room-owned platform path, spanning every workspace a user touched — or a
+  // workspace-owned platform path, spanning every workspace a user touched — or a
   // single flat directory to enumerate (legacy / test fixtures).
   let filePaths: string[];
   if (Array.isArray(source)) {

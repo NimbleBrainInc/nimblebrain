@@ -238,7 +238,7 @@ export interface ChatRequest {
    * its tools (namespaced) plus the caller's identity tools, via
    * `listToolsForWorkspace(workspaceId)`. There is no cross-workspace union.
    * Absent → the chat isn't focused on a workspace (e.g. the home control
-   * panel); it falls back to the personal workspace, which is then the room.
+   * panel); it falls back to the personal workspace, which is then the workspace.
    */
   workspaceId?: string;
   /**

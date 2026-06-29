@@ -1,8 +1,8 @@
 #!/usr/bin/env bun
 /**
- * Lint: conversations are room-owned — never built at the flat top level.
+ * Lint: conversations are workspace-owned — never built at the flat top level.
  *
- * A conversation lives under the workspace (room) it runs in, with the owner
+ * A conversation lives under the workspace (workspace) it runs in, with the owner
  * as a privacy sub-partition:
  *
  *   workspaces/<wsId>/conversations/<ownerId>/<convId>.jsonl          private user chats
@@ -11,23 +11,23 @@
  * The flat `{workDir}/conversations/<convId>.jsonl` layout is gone. Any new
  * occurrence of the flat construction — joining `"conversations"` directly onto
  * a workDir-ish root, or spelling `…/conversations/…` outside a
- * `workspaces/<wsId>/` subtree — is a regression: it drops the room wall the
+ * `workspaces/<wsId>/` subtree — is a regression: it drops the workspace wall the
  * permission model depends on.
  *
  * What this script flags: a `join(...)` whose `"conversations"` segment is NOT
  * qualified by a workspace root before it (neither a literal `"workspaces",
  * <wsId>` pair nor a workspace-scoped base like `this.workspacesRoot` /
  * `getWorkspaceScopedDir()`), and the equivalent flat template / string-literal
- * path. The room-partitioned shape is the required, allowed shape.
+ * path. The workspace-partitioned shape is the required, allowed shape.
  *
  * What it allows:
  *   - `src/conversation/paths.ts` — the single sanctioned construction (and
  *     parse) site for the `workspaces/<wsId>/conversations/...` layout. It *is*
  *     the definition this lint protects.
- *   - `scripts/migrate-conversations-to-room.ts` — it must read the legacy flat
+ *   - `scripts/migrate-conversations-to-workspace.ts` — it must read the legacy flat
  *     `{workDir}/conversations/<id>.jsonl` SOURCE paths in order to move them
- *     into the room-owned layout.
- *   - Room-scoped joins off a workspace root (`join(this.workspacesRoot, wsId,
+ *     into the workspace-owned layout.
+ *   - Workspace-scoped joins off a workspace root (`join(this.workspacesRoot, wsId,
  *     "conversations")`) — the `"conversations"` segment is already under a
  *     workspace, so these are the intended shape, not the flat one.
  *   - A `// lint-ok:conversation-path` marker on the line immediately above the
@@ -47,17 +47,17 @@ const SRC_ROOT = join(ROOT, "src");
 const ALLOW_MARKER = "lint-ok:conversation-path";
 
 // Files (relative to repo root) that legitimately reference the flat layout —
-// either because they DEFINE the room-owned layout, or because they migrate
+// either because they DEFINE the workspace-owned layout, or because they migrate
 // data off the flat one. The lint would otherwise fight the definitions it
 // exists to protect.
 const ALLOWED_FILES = new Set(
   [
-    // The single sanctioned site that builds + parses the room-owned
+    // The single sanctioned site that builds + parses the workspace-owned
     // `workspaces/<wsId>/conversations/...` layout.
     "src/conversation/paths.ts",
     // Migrates conversations off the flat layout — reads the old
     // `{workDir}/conversations/<id>.jsonl` source paths to relocate them.
-    "scripts/migrate-conversations-to-room.ts",
+    "scripts/migrate-conversations-to-workspace.ts",
   ].map((f) => f.split("/").join(sep)),
 );
 
@@ -91,7 +91,7 @@ const WORKSPACE_RE = /workspace/i;
  * True iff `node` carries a workspace-root signal — a `"workspaces"`-ish string
  * literal, or an identifier / property / call whose name references a workspace
  * (`this.workspacesRoot`, `getWorkspaceScopedDir()`, …). Used to decide whether
- * a `"conversations"` segment is already room-scoped (qualified by a workspace)
+ * a `"conversations"` segment is already workspace-scoped (qualified by a workspace)
  * rather than flat.
  */
 function referencesWorkspaces(node: ts.Expression | undefined): boolean {
@@ -121,7 +121,7 @@ function hasWorkspaceQualifierBefore(args: ts.NodeArray<ts.Expression>, idx: num
  * workspace root before it. `join(workDir, "conversations", file)` flags;
  * `join(workDir, "workspaces", wsId, "conversations", file)` and
  * `join(this.workspacesRoot, wsId, "conversations")` do not (already
- * room-scoped).
+ * workspace-scoped).
  *
  * Exported for the self-test under `test/unit/scripts/`.
  */
@@ -137,7 +137,7 @@ export function isFlatConversationJoin(node: ts.CallExpression): boolean {
 
 /** A `conversations` path segment anywhere in an assembled path. */
 const CONV_SEGMENT_RE = /(^|\/)conversations(\/|$)/;
-/** The room-owned shape: `workspaces/<id>/conversations`. */
+/** The workspace-owned shape: `workspaces/<id>/conversations`. */
 const ROOM_CONV_RE = /workspaces\/[^/]+\/conversations(\/|$)/;
 /** A flat conversation FILE literal: `…/conversations/<convId>.jsonl`. */
 const FLAT_CONV_FILE_RE = /(^|\/)conversations\/[^/]+\.jsonl$/;
@@ -257,10 +257,10 @@ async function main(): Promise<void> {
       console.error(`    ${v.snippet}\n`);
     }
     console.error(
-      "Conversations are room-owned: `workspaces/<wsId>/conversations/<ownerId>/<convId>.jsonl`.",
+      "Conversations are workspace-owned: `workspaces/<wsId>/conversations/<ownerId>/<convId>.jsonl`.",
     );
     console.error(
-      "Build the directory via `roomConversationsDir()` (src/conversation/paths.ts) or the runtime's room conversation store — never the flat `conversations/` path.",
+      "Build the directory via `workspaceConversationsDir()` (src/conversation/paths.ts) or the runtime's workspace conversation store — never the flat `conversations/` path.",
     );
     console.error(
       `Legitimate exceptions (rare) require a // ${ALLOW_MARKER} comment on the line above the construction.`,

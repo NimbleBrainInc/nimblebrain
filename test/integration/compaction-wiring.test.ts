@@ -22,7 +22,7 @@ import { tmpdir } from "node:os";
 import { startServer } from "../../src/api/server.ts";
 import type { ServerHandle } from "../../src/api/server.ts";
 import { reconstructMessages } from "../../src/conversation/event-reconstructor.ts";
-import { roomConversationsDir } from "../../src/conversation/paths.ts";
+import { workspaceConversationsDir } from "../../src/conversation/paths.ts";
 import type { ConversationEvent } from "../../src/conversation/types.ts";
 import { Runtime } from "../../src/runtime/runtime.ts";
 import { createMockModel } from "../helpers/mock-model.ts";
@@ -104,9 +104,9 @@ async function sendTurn(message: string, conversationId?: string): Promise<strin
 
 function readEvents(conversationId: string): ConversationEvent[] {
   // The authenticated caller (usr_test via the test auth adapter) chats focused
-  // on TEST_WORKSPACE_ID, so the conversation lives in that room's owner partition.
+  // on TEST_WORKSPACE_ID, so the conversation lives in that workspace's owner partition.
   const path = join(
-    roomConversationsDir(workDir, TEST_WORKSPACE_ID, TEST_IDENTITY.id),
+    workspaceConversationsDir(workDir, TEST_WORKSPACE_ID, TEST_IDENTITY.id),
     `${conversationId}.jsonl`,
   );
   const lines = readFileSync(path, "utf-8").split("\n").filter(Boolean);

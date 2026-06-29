@@ -46,7 +46,7 @@ export interface DelegateContext {
    * (`ws_<id>-...`) match against `tools.availableTools()` (the bound
    * workspace); bare globs (`source__*`) match against `defaultActiveTools()`
    * (focused workspace + identity sources). A namespaced glob for any other
-   * workspace matches nothing — the wall keeps the reachable set to one room.
+   * workspace matches nothing — the wall keeps the reachable set to one workspace.
    */
   tools: ToolRouter;
   /**

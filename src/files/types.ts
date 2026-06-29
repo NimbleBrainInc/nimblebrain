@@ -44,6 +44,13 @@ export interface FileEntry {
    * (`RequestContext.fileWorkspaceId`), never from this field.
    */
   workspaceId?: string;
+  /**
+   * Who can see this file. `private` (owner-only, default) |
+   * `shared` (the workspace's members). **Groundwork: written `private` on
+   * create, never read in v1** — the `<ownerId>` path partition is the live
+   * boundary. Absent reads as `private` (fail-closed).
+   */
+  visibility?: "private" | "shared";
   deleted?: true;
   deletedAt?: string;
 }

@@ -3,8 +3,8 @@
  * paths. Mirrors `src/conversation/paths.ts`: every file directory is built and
  * parsed here, so the on-disk layout has exactly one definition.
  *
- * The workspace owns the directory (see `research/SPEC-permission-boundaries.md`
- * §2.3): a file lives under the workspace it was created in, with the owner as a
+ * The workspace owns the directory: a file lives under the workspace it was
+ * created in, with the owner as a
  * privacy sub-partition. Each owner partition is self-contained — it holds the
  * bytes, the per-owner `registry.jsonl` catalog, and the extracted-text
  * sidecars — so a `FileStore` rooted at the owner partition (like the

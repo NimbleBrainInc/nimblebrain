@@ -1,7 +1,7 @@
 /**
  * Unit tests for the process-wide ConversationLocator.
  *
- * Pins the room-owned storage contract: the path is the wall (room filter),
+ * Pins the workspace-owned storage contract: the path is the wall (workspace filter),
  * ownership is the access gate; resolution and both list views come from one
  * structure; freshness is invalidate-on-write + JIT rescan (no fs.watch).
  */
@@ -11,7 +11,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { ConversationLocator } from "../../../src/conversation/locator.ts";
-import { roomConversationsDir, runConversationsDir } from "../../../src/conversation/paths.ts";
+import { workspaceConversationsDir, runConversationsDir } from "../../../src/conversation/paths.ts";
 
 let workDir: string;
 
@@ -29,7 +29,7 @@ function convId(): string {
   return `conv_${convCounter.toString(16).padStart(16, "0")}`;
 }
 
-/** Write a minimal valid event-sourced conversation file into a room dir. */
+/** Write a minimal valid event-sourced conversation file into a workspace dir. */
 function writeConversation(dir: string, id: string, ownerId: string, wsId: string): void {
   mkdirSync(dir, { recursive: true });
   const meta = {
@@ -48,9 +48,9 @@ function locator(): ConversationLocator {
   return new ConversationLocator(join(workDir, "workspaces"));
 }
 
-test("locate resolves a conversation to its room + owner", async () => {
+test("locate resolves a conversation to its workspace + owner", async () => {
   const id = convId();
-  writeConversation(roomConversationsDir(workDir, "ws_helix", "usr_alice"), id, "usr_alice", "ws_helix");
+  writeConversation(workspaceConversationsDir(workDir, "ws_helix", "usr_alice"), id, "usr_alice", "ws_helix");
 
   const loc = await locator().locate(id);
   expect(loc).toBeDefined();
@@ -63,10 +63,10 @@ test("locate returns undefined for an unknown id", async () => {
   expect(await locator().locate("conv_ffffffffffffffff")).toBeUndefined();
 });
 
-test("roomConversationsDir rejects the reserved _runs ownerId", () => {
+test("workspaceConversationsDir rejects the reserved _runs ownerId", () => {
   // A user whose ownerId were literally `_runs` would have their chats misparsed
   // as automation runs — fail closed rather than collide.
-  expect(() => roomConversationsDir(workDir, "ws_helix", "_runs")).toThrow(/reserved/);
+  expect(() => workspaceConversationsDir(workDir, "ws_helix", "_runs")).toThrow(/reserved/);
 });
 
 test("locate resolves by path alone — it never reads/parses file content", async () => {
@@ -74,7 +74,7 @@ test("locate resolves by path alone — it never reads/parses file content", asy
   // was the hot-path regression). Prove it: an unparseable body still resolves,
   // because locate only uses the directory path + the filename.
   const id = convId();
-  const dir = roomConversationsDir(workDir, "ws_helix", "usr_alice");
+  const dir = workspaceConversationsDir(workDir, "ws_helix", "usr_alice");
   mkdirSync(dir, { recursive: true });
   writeFileSync(join(dir, `${id}.jsonl`), "not valid json at all\n{{{{");
 
@@ -93,27 +93,27 @@ test("an automation-run conversation resolves with its automationId, ownerId nul
   expect(loc?.ownerId).toBeNull();
 });
 
-test("room-scoped list returns only the focused room; all-rooms returns every room", async () => {
+test("workspace-scoped list returns only the focused workspace; all-workspaces returns every workspace", async () => {
   const helix = convId();
   const acme = convId();
-  writeConversation(roomConversationsDir(workDir, "ws_helix", "usr_alice"), helix, "usr_alice", "ws_helix");
-  writeConversation(roomConversationsDir(workDir, "ws_acme", "usr_alice"), acme, "usr_alice", "ws_acme");
+  writeConversation(workspaceConversationsDir(workDir, "ws_helix", "usr_alice"), helix, "usr_alice", "ws_helix");
+  writeConversation(workspaceConversationsDir(workDir, "ws_acme", "usr_alice"), acme, "usr_alice", "ws_acme");
 
   const loc = locator();
   const access = { userId: "usr_alice" };
 
-  const roomScoped = await loc.list({ workspaceId: "ws_helix" }, access);
-  expect(roomScoped.conversations.map((c) => c.id)).toEqual([helix]);
+  const workspaceScoped = await loc.list({ workspaceId: "ws_helix" }, access);
+  expect(workspaceScoped.conversations.map((c) => c.id)).toEqual([helix]);
 
-  const allRooms = await loc.list({}, access);
-  expect(allRooms.conversations.map((c) => c.id).sort()).toEqual([helix, acme].sort());
+  const allWorkspaces = await loc.list({}, access);
+  expect(allWorkspaces.conversations.map((c) => c.id).sort()).toEqual([helix, acme].sort());
 });
 
-test("the access gate hides another owner's conversation in the same room", async () => {
+test("the access gate hides another owner's conversation in the same workspace", async () => {
   const mine = convId();
   const theirs = convId();
-  const dirAlice = roomConversationsDir(workDir, "ws_helix", "usr_alice");
-  const dirBob = roomConversationsDir(workDir, "ws_helix", "usr_bob");
+  const dirAlice = workspaceConversationsDir(workDir, "ws_helix", "usr_alice");
+  const dirBob = workspaceConversationsDir(workDir, "ws_helix", "usr_bob");
   writeConversation(dirAlice, mine, "usr_alice", "ws_helix");
   writeConversation(dirBob, theirs, "usr_bob", "ws_helix");
 
@@ -122,7 +122,7 @@ test("the access gate hides another owner's conversation in the same room", asyn
   expect(aliceList.conversations.map((c) => c.id)).toEqual([mine]);
 
   // Alice cannot resolve-then-read Bob's conversation: locate finds the path,
-  // but the room store's load(access) is what enforces ownership. Here we only
+  // but the workspace store's load(access) is what enforces ownership. Here we only
   // assert the list (the access gate) hides it.
   expect(aliceList.conversations.find((c) => c.id === theirs)).toBeUndefined();
 });
@@ -130,14 +130,14 @@ test("the access gate hides another owner's conversation in the same room", asyn
 test("invalidate + JIT rescan picks up a newly written conversation (no fs.watch)", async () => {
   const loc = locator();
   const first = convId();
-  writeConversation(roomConversationsDir(workDir, "ws_helix", "usr_alice"), first, "usr_alice", "ws_helix");
+  writeConversation(workspaceConversationsDir(workDir, "ws_helix", "usr_alice"), first, "usr_alice", "ws_helix");
 
   // Cold read populates.
   expect((await loc.list({}, { userId: "usr_alice" })).totalCount).toBe(1);
 
   // Write a second file directly (simulating another store), then invalidate.
   const second = convId();
-  writeConversation(roomConversationsDir(workDir, "ws_helix", "usr_alice"), second, "usr_alice", "ws_helix");
+  writeConversation(workspaceConversationsDir(workDir, "ws_helix", "usr_alice"), second, "usr_alice", "ws_helix");
   // Without invalidate the cache is stale...
   expect((await loc.list({}, { userId: "usr_alice" })).totalCount).toBe(1);
   // ...invalidate forces a rescan on the next read.
@@ -147,7 +147,7 @@ test("invalidate + JIT rescan picks up a newly written conversation (no fs.watch
 
 test("an ownerless file is excluded from list() but still resolves by path", async () => {
   const id = convId();
-  const dir = roomConversationsDir(workDir, "ws_helix", "usr_alice");
+  const dir = workspaceConversationsDir(workDir, "ws_helix", "usr_alice");
   mkdirSync(dir, { recursive: true });
   // Line-1 metadata with no ownerId — pre-migration shape.
   writeFileSync(

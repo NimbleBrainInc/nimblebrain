@@ -3,7 +3,7 @@ import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { type ServerHandle, startServer } from "../../src/api/server.ts";
-import { roomConversationsDir } from "../../src/conversation/paths.ts";
+import { workspaceConversationsDir } from "../../src/conversation/paths.ts";
 import { Runtime } from "../../src/runtime/runtime.ts";
 import { createEchoModel } from "../helpers/echo-model.ts";
 import { TEST_WORKSPACE_ID, provisionTestWorkspace } from "../helpers/test-workspace.ts";
@@ -126,12 +126,12 @@ describe("detached turn HTTP surface", () => {
   it("start on a pre-migration (ownerless) conversation is 422, not 500", async () => {
     // Seed a corrupted conversation: line-1 metadata without ownerId makes the
     // store throw ConversationCorruptedError on load (the resume path). It must
-    // live at the exact room path the resume resolves (TEST_WORKSPACE_ID +
+    // live at the exact workspace path the resume resolves (TEST_WORKSPACE_ID +
     // the dev caller's owner partition) — the locator skips ownerless files, so
     // the corrupted-load is reached via `resolveChatStore`'s deterministic
-    // room-store fallback, not the locator.
+    // workspace-store fallback, not the locator.
     const convId = "conv_dead00000000beef"; // conv_ + 16 hex
-    const convDir = roomConversationsDir(testDir, TEST_WORKSPACE_ID, DEV_OWNER);
+    const convDir = workspaceConversationsDir(testDir, TEST_WORKSPACE_ID, DEV_OWNER);
     mkdirSync(convDir, { recursive: true });
     const meta = JSON.stringify({
       id: convId,
@@ -189,13 +189,13 @@ describe("detached turn HTTP surface", () => {
    * Seed a well-formed conversation owned by a *different* user. The HTTP
    * suite runs in dev mode (caller is always `usr_default`), so a mismatched
    * `ownerId` is the way to drive the ownership 403 branch without an identity
-   * provider. Seed through the room store so the locator (which the
+   * provider. Seed through the workspace store so the locator (which the
    * read/cancel/start routes resolve through) sees it; the route's own
    * ownership check is what must 403.
    */
   async function seedOtherUserConversation(convId: string): Promise<void> {
     await runtime
-      .roomConversationStore(TEST_WORKSPACE_ID, "usr_someone_else")
+      .workspaceConversationStore(TEST_WORKSPACE_ID, "usr_someone_else")
       .create({ ownerId: "usr_someone_else", id: convId });
   }
 

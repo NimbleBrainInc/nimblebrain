@@ -137,7 +137,7 @@ const MCP_SERVER_VERSION = process.env.NB_VERSION || mcpPkg.version;
  *
  * The cap is a memory ceiling on the local transport map. When a new
  * initialize lands at capacity, the least-recently-used transport is
- * evicted to make room — we never refuse a well-formed initialize.
+ * evicted to make workspace — we never refuse a well-formed initialize.
  * Override via `MCP_MAX_SESSIONS`.
  *
  * Idle reclamation is independent: a periodic sweep closes transports

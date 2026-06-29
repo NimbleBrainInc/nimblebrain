@@ -49,27 +49,17 @@ body {
   justify-content: space-between;
   gap: 12px;
 }
-.room-select {
+/* Ambient focused-workspace label (no cross-workspace selector). */
+.workspace-label {
   flex: 0 0 auto;
   padding: 4px 8px;
-  border: 1px solid var(--color-border-primary, #e5e5e5);
-  border-radius: var(--border-radius-sm, 6px);
-  background: var(--color-background-secondary, #ffffff);
   color: var(--color-text-secondary, #737373);
   font-size: 12px;
   font-weight: 500;
-  font-family: inherit;
   max-width: 160px;
-  cursor: pointer;
-  transition: border-color 0.15s ease, color 0.15s ease;
-}
-.room-select:hover {
-  border-color: var(--color-text-accent, #0055FF);
-  color: var(--color-text-accent, #0055FF);
-}
-.room-select:focus {
-  outline: none;
-  border-color: var(--color-text-accent, #0055FF);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .header-title {
   font-family: var(--nb-font-heading, Georgia, 'Times New Roman', serif);

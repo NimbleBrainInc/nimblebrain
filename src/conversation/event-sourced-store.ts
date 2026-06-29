@@ -91,7 +91,7 @@ export interface EventSourcedStoreConfig {
   /**
    * Called on any write to this dir's conversations — create, delete, or
    * append (an append changes a conversation's summary). The runtime routes
-   * this to its conversation-cache invalidation so cross-room lists/loads
+   * this to its conversation-cache invalidation so cross-workspace lists/loads
    * (the locator and the conversations-tool index) stay fresh. The per-dir
    * `ConversationIndex` is invalidated independently in-store.
    */
@@ -152,6 +152,9 @@ export class EventSourcedConversationStore implements ConversationStore, EventSi
       lastModel: null,
       ownerId: options.ownerId,
       format: "events",
+      // Groundwork: every record is private by default. Written,
+      // never read in v1 — the `<ownerId>` path partition is the live boundary.
+      visibility: "private",
       ...(options.workspaceId ? { workspaceId: options.workspaceId } : {}),
       ...(options.metadata ? { metadata: options.metadata } : {}),
     };
@@ -188,6 +191,7 @@ export class EventSourcedConversationStore implements ConversationStore, EventSi
       ownerId: raw.ownerId,
       ...(raw.format ? { format: raw.format as "events" } : {}),
       ...(raw.workspaceId ? { workspaceId: raw.workspaceId as string } : {}),
+      ...(raw.visibility ? { visibility: raw.visibility as "private" | "shared" } : {}),
       ...(raw.metadata ? { metadata: raw.metadata as Record<string, unknown> } : {}),
     };
 
@@ -700,7 +704,7 @@ export class EventSourcedConversationStore implements ConversationStore, EventSi
     const path = this.path(id);
     appendFileSync(path, `${JSON.stringify(event)}\n`);
     // An append changes a conversation's summary (title/updatedAt/tokens), so
-    // the cross-room caches must refresh — not just on create/delete. The hook
+    // the cross-workspace caches must refresh — not just on create/delete. The hook
     // is a cheap invalidation flag; the rescan it triggers is lazy (next read).
     this.onMutate?.();
   }

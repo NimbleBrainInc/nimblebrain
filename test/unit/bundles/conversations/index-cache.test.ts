@@ -291,14 +291,14 @@ describe("list search", () => {
 });
 
 // ---------------------------------------------------------------------------
-// list() — room (workspace) filtering
+// list() — workspace (workspace) filtering
 // ---------------------------------------------------------------------------
 
-describe("list room filtering", () => {
-	// One owner's chats across two rooms, a roomless (legacy) chat, and another
-	// owner's chat in one of the rooms (to prove the room filter composes with
+describe("list workspace filtering", () => {
+	// One owner's chats across two workspaces, a workspaceless (legacy) chat, and another
+	// owner's chat in one of the workspaces (to prove the workspace filter composes with
 	// the ownership filter).
-	async function buildRoomIndex(): Promise<ConversationIndex> {
+	async function buildWorkspaceIndex(): Promise<ConversationIndex> {
 		writeConvFile({
 			id: "helix1",
 			createdAt: "2025-01-01T00:00:00.000Z",
@@ -321,9 +321,9 @@ describe("list room filtering", () => {
 			id: "legacy1",
 			createdAt: "2025-01-03T00:00:00.000Z",
 			updatedAt: "2025-01-03T00:00:00.000Z",
-			title: "Roomless legacy chat",
+			title: "Workspaceless legacy chat",
 			ownerId: "u1",
-			// no workspaceId — belongs to the personal room
+			// no workspaceId — belongs to the personal workspace
 			messages: [{ role: "user", content: "hi", timestamp: "2025-01-03T00:01:00.000Z" }],
 		});
 		writeConvFile({
@@ -340,35 +340,35 @@ describe("list room filtering", () => {
 		return index;
 	}
 
-	test("workspaceId scopes to that room, excluding other rooms and roomless chats", async () => {
-		const index = await buildRoomIndex();
+	test("workspaceId scopes to that workspace, excluding other workspaces and workspaceless chats", async () => {
+		const index = await buildWorkspaceIndex();
 		const r = index.list({ workspaceId: "ws_helix" }, { userId: "u1" });
 		expect(r.conversations.map((c) => c.id)).toEqual(["helix1"]);
 		expect(r.totalCount).toBe(1);
 	});
 
-	test("includeUnstamped folds roomless (legacy) chats into the personal room", async () => {
-		const index = await buildRoomIndex();
+	test("includeUnstamped folds workspaceless (legacy) chats into the personal workspace", async () => {
+		const index = await buildWorkspaceIndex();
 		const r = index.list({ workspaceId: "ws_user_u1", includeUnstamped: true }, { userId: "u1" });
 		expect(r.conversations.map((c) => c.id)).toEqual(["legacy1"]);
 	});
 
-	test("a non-personal room does not pick up roomless chats", async () => {
-		const index = await buildRoomIndex();
+	test("a non-personal workspace does not pick up workspaceless chats", async () => {
+		const index = await buildWorkspaceIndex();
 		const r = index.list({ workspaceId: "ws_helix", includeUnstamped: false }, { userId: "u1" });
 		expect(r.conversations.map((c) => c.id)).toEqual(["helix1"]);
 	});
 
-	test("no workspaceId returns all of the owner's rooms", async () => {
-		const index = await buildRoomIndex();
+	test("no workspaceId returns all of the owner's workspaces", async () => {
+		const index = await buildWorkspaceIndex();
 		const r = index.list({}, { userId: "u1" });
 		expect(r.conversations.map((c) => c.id).sort()).toEqual(["acme1", "helix1", "legacy1"]);
 	});
 
-	test("the room filter runs before the limit (no post-pagination under-count)", async () => {
+	test("the workspace filter runs before the limit (no post-pagination under-count)", async () => {
 		// 25 Acme chats newer than one older Helix chat. A global most-recent
 		// page of 20 is all Acme, so post-pagination filtering would return the
-		// Helix room empty. Filtering server-side before the slice returns it.
+		// Helix workspace empty. Filtering server-side before the slice returns it.
 		for (let i = 0; i < 25; i++) {
 			const day = String(i + 1).padStart(2, "0");
 			writeConvFile({
@@ -397,7 +397,7 @@ describe("list room filtering", () => {
 		const globalPage = index.list({ limit: 20 }, { userId: "u1" });
 		expect(globalPage.conversations.map((c) => c.id)).not.toContain("helix_old");
 
-		// Room-scoped: the limit applies to Helix's set, so its chat is returned.
+		// Workspace-scoped: the limit applies to Helix's set, so its chat is returned.
 		const helix = index.list({ limit: 20, workspaceId: "ws_helix" }, { userId: "u1" });
 		expect(helix.conversations.map((c) => c.id)).toEqual(["helix_old"]);
 		expect(helix.totalCount).toBe(1);

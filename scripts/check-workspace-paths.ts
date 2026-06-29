@@ -20,7 +20,7 @@
  *   - Sites inside the implementation files that DEFINE the layout
  *     (`src/workspace/context.ts`, `src/workspace/workspace-store.ts`,
  *     `src/config/workspace-credentials.ts`, and
- *     `src/conversation/paths.ts` for the room-owned
+ *     `src/conversation/paths.ts` for the workspace-owned
  *     `workspaces/<wsId>/conversations/...` subtree) — those are the
  *     source of truth and the lint shouldn't fight itself.
  *   - A `// lint-ok:workspace-path` marker on the line immediately
@@ -48,7 +48,7 @@ const ALLOWED_FILES = new Set(
     "workspace/context.ts",
     "workspace/workspace-store.ts",
     "config/workspace-credentials.ts",
-    // Defines the `workspaces/<wsId>/conversations/...` room-owned conversation
+    // Defines the `workspaces/<wsId>/conversations/...` workspace-owned conversation
     // layout — the one sanctioned site that hand-builds that subtree.
     "conversation/paths.ts",
     // Defines the `workspaces/<wsId>/files/...` workspace-owned file layout —

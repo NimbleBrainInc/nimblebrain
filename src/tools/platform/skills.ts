@@ -931,7 +931,7 @@ async function readConvEvents(
   runtime: Runtime,
   convId: string,
 ): Promise<ConversationEvent[] | null> {
-  // The locator resolves the conversation's room store (null if not found,
+  // The locator resolves the conversation's workspace store (null if not found,
   // which folds in the existence check).
   const store = await runtime.resolveConversationStore(convId);
   if (!store) return null;

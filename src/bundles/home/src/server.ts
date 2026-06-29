@@ -33,9 +33,9 @@ import { HomeActivityInput } from "../../../tools/platform/schemas/home.ts";
 
 const WORK_DIR = process.env.NB_WORK_DIR ?? join(homedir(), ".nimblebrain");
 const LOG_DIR = join(WORK_DIR, "logs");
-// TODO(conversations-room): this standalone subprocess server is superseded by
-// the in-process `src/tools/platform/home.ts` (already room-aware). Post
-// room-owned migration this flat dir is empty; repoint to a recursive walk of
+// TODO(conversations-workspace): this standalone subprocess server is superseded by
+// the in-process `src/tools/platform/home.ts` (already workspace-aware). Post
+// workspace-owned migration this flat dir is empty; repoint to a recursive walk of
 // `workspaces/*/conversations/**` or retire this server.
 // lint-ok:conversation-path
 const CONVERSATIONS_DIR = join(WORK_DIR, "conversations");

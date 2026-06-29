@@ -169,6 +169,8 @@ export async function ingestFiles(
       conversationId,
       createdAt: new Date().toISOString(),
       description: null,
+      // Groundwork: private by default, written not read in v1.
+      visibility: "private",
     };
     await store.appendRegistry(entry);
 

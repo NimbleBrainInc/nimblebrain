@@ -45,9 +45,9 @@ export async function createConversationsSource(
   eventSink: EventSink,
 ): Promise<McpSource> {
   // Single process-wide ConversationIndex over the workspaces root.
-  // Conversations are room-owned (`workspaces/<wsId>/conversations/<ownerId>/`),
-  // so the index recurses every room's conversation subtree; each entry keeps
-  // its own `filePath`, so the handlers read the right room file. Access
+  // Conversations are workspace-owned (`workspaces/<wsId>/conversations/<ownerId>/`),
+  // so the index recurses every workspace's conversation subtree; each entry keeps
+  // its own `filePath`, so the handlers read the right workspace file. Access
   // filtering is the dispatcher's job (see `currentAccess()` below) — the index
   // tracks ownerId on every entry and each handler narrows to the caller's set.
   let cachedIndex: ConversationIndex | null = null;
@@ -57,7 +57,7 @@ export async function createConversationsSource(
     if (!cachedIndex) {
       cachedIndex = new ConversationIndex();
       await cachedIndex.build(dir);
-      // The recursive room layout defeats a root `fs.watch` (it can't see nested
+      // The recursive workspace layout defeats a root `fs.watch` (it can't see nested
       // `ws_*/conversations/<owner>/*.jsonl` writes), so freshness rides the
       // runtime's invalidation hook instead of the watcher: every conversation
       // write (create/delete/append) and every workspace archive-delete flags

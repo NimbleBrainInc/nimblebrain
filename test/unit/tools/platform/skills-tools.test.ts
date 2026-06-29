@@ -20,7 +20,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { NoopEventSink } from "../../../../src/adapters/noop-events.ts";
 import { EventSourcedConversationStore } from "../../../../src/conversation/event-sourced-store.ts";
 import { ConversationLocator } from "../../../../src/conversation/locator.ts";
-import { roomConversationsDir, runConversationsDir } from "../../../../src/conversation/paths.ts";
+import { workspaceConversationsDir, runConversationsDir } from "../../../../src/conversation/paths.ts";
 import type {
   ConversationAccessContext,
   ConversationListResult,
@@ -37,9 +37,9 @@ import { createSkillsSource } from "../../../../src/tools/platform/skills.ts";
 // needs to be syntactically valid and stable across fixture rows.
 const TEST_HASH = "0".repeat(64);
 
-// The room the fake's seed conversations live in. Conversations are
-// room-owned (`workspaces/<wsId>/conversations/<ownerId>/<convId>.jsonl`);
-// every `runtime.store().create(...)` in this file seeds into this room +
+// The workspace the fake's seed conversations live in. Conversations are
+// workspace-owned (`workspaces/<wsId>/conversations/<ownerId>/<convId>.jsonl`);
+// every `runtime.store().create(...)` in this file seeds into this workspace +
 // owner partition, and the facade (`resolveConversationStore` /
 // `findConversation` / `listConversations`) reads them back through a real
 // `ConversationLocator` over `{workDir}/workspaces`.
@@ -65,11 +65,11 @@ class FakeRuntime {
 
   constructor(private workDir: string) {
     // Back the fake with a real locator over the workspaces root and a real
-    // room store, so the conversation facade (`resolveConversationStore` /
+    // workspace store, so the conversation facade (`resolveConversationStore` /
     // `findConversation` / `listConversations`) is exercised end-to-end
-    // against the room-partitioned on-disk layout.
+    // against the workspace-partitioned on-disk layout.
     this._locator = new ConversationLocator(join(workDir, "workspaces"));
-    const convDir = roomConversationsDir(workDir, SEED_WS_ID, SEED_OWNER_ID);
+    const convDir = workspaceConversationsDir(workDir, SEED_WS_ID, SEED_OWNER_ID);
     mkdirSync(convDir, { recursive: true });
     this._store = new EventSourcedConversationStore({
       dir: convDir,
@@ -90,14 +90,14 @@ class FakeRuntime {
     if (!this.wsId) throw new Error("no workspace");
     return this.wsId;
   }
-  /** Resolve the room store holding `convId` via the locator (null if unknown). */
+  /** Resolve the workspace store holding `convId` via the locator (null if unknown). */
   async resolveConversationStore(convId: string): Promise<EventSourcedConversationStore | null> {
     const loc = await this._locator.locate(convId);
     if (!loc) return null;
     return new EventSourcedConversationStore({
       dir: loc.automationId
         ? runConversationsDir(this.workDir, loc.wsId, loc.automationId)
-        : roomConversationsDir(this.workDir, loc.wsId, loc.ownerId ?? ""),
+        : workspaceConversationsDir(this.workDir, loc.wsId, loc.ownerId ?? ""),
     });
   }
   async findConversation(id: string, access?: ConversationAccessContext): Promise<unknown> {

@@ -1,5 +1,5 @@
 import { FILTER_GROUPS, FILTER_LABELS } from "./dateUtils";
-import type { DateGroup, FilterKey, RoomScope } from "./types";
+import type { DateGroup, FilterKey } from "./types";
 
 interface HeaderProps {
   totalCount: number;
@@ -8,10 +8,8 @@ interface HeaderProps {
   activeFilter: FilterKey;
   isSearching: boolean;
   searchQuery: string;
-  /** Display name of the focused room; absent until the host handshake lands. */
-  roomName?: string;
-  roomScope: RoomScope;
-  onSelectRoomScope: (scope: RoomScope) => void;
+  /** Display name of the focused workspace; absent until the host handshake lands. */
+  workspaceName?: string;
   onSelectFilter: (key: FilterKey) => void;
   onSearchInput: (value: string) => void;
   onSearchSubmit: () => void;
@@ -29,9 +27,7 @@ export function Header({
   activeFilter,
   isSearching,
   searchQuery,
-  roomName,
-  roomScope,
-  onSelectRoomScope,
+  workspaceName,
   onSelectFilter,
   onSearchInput,
   onSearchSubmit,
@@ -43,17 +39,9 @@ export function Header({
     <div className="header">
       <div className="header-top">
         <div className="header-title">Conversations</div>
-        {roomName && (
-          <select
-            className="room-select"
-            value={roomScope}
-            onChange={(e) => onSelectRoomScope(e.target.value as RoomScope)}
-            aria-label="Scope conversations by room"
-          >
-            <option value="current">{roomName}</option>
-            <option value="all">All rooms</option>
-          </select>
-        )}
+        {/* The list is always scoped to the focused workspace; show its name
+            ambiently (no cross-workspace selector). */}
+        {workspaceName && <div className="workspace-label">{workspaceName}</div>}
       </div>
       {!loading && totalCount > 0 && (
         <div className="header-lede">

@@ -12,7 +12,7 @@ import { afterAll, describe, expect, it } from "bun:test";
 import { existsSync, mkdirSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { roomConversationsDir } from "../../src/conversation/paths.ts";
+import { workspaceConversationsDir } from "../../src/conversation/paths.ts";
 import { Runtime } from "../../src/runtime/runtime.ts";
 import { personalWorkspaceIdFor } from "../../src/workspace/workspace-store.ts";
 import { createEchoModel } from "../helpers/echo-model.ts";
@@ -141,13 +141,13 @@ describe("Management tools in registry", () => {
 // Both contracts were deleted by T006: chat is now identity-bound, the
 // session workspace is the identity's personal workspace, and the
 // `ChatRequest.workspaceId` field is gone. The conversation file lives in
-// the caller's personal room
+// the caller's personal workspace
 // (`{workDir}/workspaces/ws_user_<id>/conversations/<id>/{convId}.jsonl`);
-// the metadata's `workspaceId` is that same personal-room binding (also the
+// the metadata's `workspaceId` is that same personal-workspace binding (also the
 // session breadcrumb for legacy single-workspace reads).
 
 describe("Chat is identity-bound (Stage 2 / T006)", () => {
-  it("conversation lives in the personal room with ownerId; metadata records the personal workspace as the session breadcrumb", async () => {
+  it("conversation lives in the personal workspace with ownerId; metadata records the personal workspace as the session breadcrumb", async () => {
     const workDir = makeTempDir("identity-bound-chat");
     const runtime = await Runtime.start({
       workDir,
@@ -169,10 +169,10 @@ describe("Chat is identity-bound (Stage 2 / T006)", () => {
 
     expect(result.conversationId).toMatch(/^conv_/);
 
-    // Conversation lives in the personal room's owner partition; the
+    // Conversation lives in the personal workspace's owner partition; the
     // metadata workspaceId is that same session (personal) workspace.
     const convFile = join(
-      roomConversationsDir(workDir, personalWorkspaceIdFor("usr_alice"), "usr_alice"),
+      workspaceConversationsDir(workDir, personalWorkspaceIdFor("usr_alice"), "usr_alice"),
       `${result.conversationId}.jsonl`,
     );
     expect(existsSync(convFile)).toBe(true);
@@ -206,9 +206,9 @@ describe("Chat is identity-bound (Stage 2 / T006)", () => {
     expect(result.conversationId).toMatch(/^conv_/);
 
     // Identity-bound under DEV_IDENTITY (`usr_default`); the conversation
-    // lives in that identity's personal room.
+    // lives in that identity's personal workspace.
     const convFile = join(
-      roomConversationsDir(workDir, personalWorkspaceIdFor("usr_default"), "usr_default"),
+      workspaceConversationsDir(workDir, personalWorkspaceIdFor("usr_default"), "usr_default"),
       `${result.conversationId}.jsonl`,
     );
     expect(existsSync(convFile)).toBe(true);

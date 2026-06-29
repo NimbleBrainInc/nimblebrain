@@ -173,8 +173,8 @@ export const ARCHIVE_MARKER_FILENAME = ".archived.json";
  * Tombstone written to `archived/<wsId>/.archived.json` when a workspace
  * is deleted.
  *
- * Deletion is archive-then-cascade (SPEC-permission-boundaries §2.3):
- * the room's data subtree is moved under `archived/` rather than
+ * Deletion is archive-then-cascade: the workspace's data subtree is moved
+ * under `archived/` rather than
  * destroyed, so it stays recoverable/exportable for a retention window.
  * A separate operator/cleanup job enumerates these markers to apply a
  * retention/export policy — the store never auto-purges (default: keep).
@@ -509,10 +509,9 @@ export class WorkspaceStore {
   }
 
   /**
-   * Delete a workspace — **archive-then-cascade, not hard `rm`**
-   * (SPEC-permission-boundaries §2.3).
+   * Delete a workspace — **archive-then-cascade, not hard `rm`**.
    *
-   * A room owns its data subtree (`workspaces/<wsId>/`: the workspace
+   * A workspace owns its data subtree (`workspaces/<wsId>/`: the workspace
    * record, credentials, skills, files, and conversations as they migrate
    * under it), so deletion must handle that subtree rather than orphan or
    * destroy it. Instead of removing the directory, we *tombstone* it: move
