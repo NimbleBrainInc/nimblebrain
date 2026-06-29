@@ -20,7 +20,7 @@
 // ---------------------------------------------------------------------------
 
 import { Settings } from "lucide-react";
-import { useCallback } from "react";
+import { useCallback, useEffect, useMemo } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import type { BriefingAction } from "../_generated/platform-schemas/home";
 import { BriefingView } from "../components/briefing/BriefingView";
@@ -31,6 +31,7 @@ import { useWorkspaceContext, type WorkspaceInfo } from "../context/WorkspaceCon
 import { useWorkspaceBriefing } from "../hooks/useWorkspaceBriefing";
 import { cn } from "../lib/utils";
 import { workspaceApps } from "../lib/workspace-apps";
+import { lastKnownWorkspaceApps, rememberWorkspaceApps } from "../lib/workspace-apps-cache";
 import { toSlug } from "../lib/workspace-slug";
 import type { PlacementEntry } from "../types";
 
@@ -63,6 +64,34 @@ export function WorkspaceOverviewPage() {
     [navigate, slug],
   );
 
+  // Apps come from the placement registry's grouped sub-slots via the shared
+  // `workspaceApps()` helper (one card per placement) — so this grid and the
+  // sidebar quick-list agree by construction. Bare `sidebar` items (Home,
+  // Conversations, …) are core nav, not apps.
+  //
+  // Readiness — not just "is there a shell?". The shell holds ONE workspace's
+  // placements at a time and lags a switch (old data stays visible while the
+  // refetch is in flight, with no `loading` flag — see ShellContext). Compare
+  // the shell's workspace to THIS page's workspace (`workspaceId`, derived from
+  // the route slug — the stable truth; the active workspace converges to it
+  // after the route guard's sync effect). When they match, `forSlot` is this
+  // workspace's apps; until then it's the previous one's, so we don't read it.
+  const workspaceId = workspace?.id;
+  const appsReady = shell != null && workspaceId != null && shell.shellWorkspaceId === workspaceId;
+  const freshApps = useMemo<PlacementEntry[] | null>(
+    () => (appsReady && shell ? workspaceApps(shell.forSlot("sidebar")) : null),
+    [appsReady, shell],
+  );
+  // Remember this workspace's app set so a later switch back paints it instantly
+  // (see workspace-apps-cache). Only the fresh, this-workspace set is cached.
+  useEffect(() => {
+    if (freshApps && workspaceId) rememberWorkspaceApps(workspaceId, freshApps);
+  }, [freshApps, workspaceId]);
+  // What to render: the fresh set if the shell has caught up, else this
+  // workspace's last-known set (correct data, painted instantly on a revisit),
+  // else null — the only state that shows the skeleton (a true first visit).
+  const apps = freshApps ?? (workspaceId ? lastKnownWorkspaceApps(workspaceId) : null);
+
   if (wsCtx.loading) {
     return (
       <div className="p-8 text-sm text-muted-foreground" data-testid="workspace-overview-loading">
@@ -79,24 +108,6 @@ export function WorkspaceOverviewPage() {
     );
   }
 
-  // Apps come from the placement registry's grouped sub-slots via the shared
-  // `workspaceApps()` helper (one card per placement) — so this grid and the
-  // sidebar quick-list agree by construction. Bare `sidebar` items (Home,
-  // Conversations, …) are core nav, not apps.
-  //
-  // Readiness — not just "is there a shell?". The shell holds ONE workspace's
-  // placements at a time and lags a switch (old data stays visible while the
-  // refetch is in flight, with no `loading` flag — see ShellContext). Compare
-  // the shell's workspace to THIS page's workspace (`workspace.id`, derived
-  // from the route slug — the stable truth; the active workspace converges to
-  // it after the route guard's sync effect). Until they match, the shell is
-  // still showing the previous workspace's apps, so the grid is "not ready"
-  // and must render a skeleton, never the empty state. Placements are
-  // registered eagerly server-side, so a matching shell resolves near-instantly
-  // — apps don't wait on the (slower, async) briefing.
-  const appsReady = shell != null && shell.shellWorkspaceId === workspace.id;
-  const apps = appsReady && shell ? workspaceApps(shell.forSlot("sidebar")) : [];
-
   return (
     <div className="h-full overflow-y-auto" data-testid="workspace-overview-page">
       <div className="max-w-6xl mx-auto px-8 py-10">
@@ -112,7 +123,7 @@ export function WorkspaceOverviewPage() {
               {workspace.name}
             </h1>
             <p className="mt-2 text-sm text-muted-foreground italic">
-              {describeWorkspace(workspace, appsReady ? apps.length : null)}
+              {describeWorkspace(workspace, apps ? apps.length : null)}
             </p>
           </div>
           <Link
@@ -141,7 +152,7 @@ export function WorkspaceOverviewPage() {
         <div className="text-2xs font-bold tracking-[0.08em] uppercase text-muted-foreground mb-3">
           Available apps
         </div>
-        {!appsReady ? (
+        {apps === null ? (
           <AppGridSkeleton />
         ) : apps.length === 0 ? (
           <div

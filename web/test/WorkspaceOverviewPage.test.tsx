@@ -16,7 +16,7 @@
 // never-resolving promise so it sits in its skeleton and doesn't interfere.
 // ---------------------------------------------------------------------------
 
-import { afterEach, describe, expect, mock, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import type { WorkspaceInfo } from "../src/context/WorkspaceContext";
 import type { PlacementEntry } from "../src/types";
 import { realClient } from "./setup";
@@ -46,6 +46,7 @@ const { WorkspaceOverviewPage } = await import("../src/pages/WorkspaceOverviewPa
 const { WorkspaceProvider } = await import("../src/context/WorkspaceContext");
 const { ShellProvider } = await import("../src/context/ShellContext");
 const { toSlug } = await import("../src/lib/workspace-slug");
+const { __resetWorkspaceAppsCache } = await import("../src/lib/workspace-apps-cache");
 
 interface Mounted {
   container: HTMLDivElement;
@@ -53,9 +54,15 @@ interface Mounted {
 }
 
 let mounted: Mounted | null = null;
+beforeEach(() => {
+  // The last-known-apps cache is module-level — isolate each test so the
+  // skeleton/empty/grid states aren't decided by a prior test's cached set.
+  __resetWorkspaceAppsCache();
+});
 afterEach(() => {
   mounted?.unmount();
   mounted = null;
+  __resetWorkspaceAppsCache();
 });
 
 async function mount(element: React.ReactElement): Promise<Mounted> {
@@ -169,5 +176,24 @@ describe("WorkspaceOverviewPage — app grid three states", () => {
 
     const page = findByTestId(mounted.container, "workspace-overview-page");
     expect(page?.textContent).toContain("2 apps installed, 2 members");
+  });
+
+  test("a revisit paints the workspace's last-known apps, not a skeleton, while the shell catches up", async () => {
+    // First visit with the shell ready caches this workspace's app set.
+    mounted = await mount(
+      harness(WS.id, [appPlacement({ route: "crm", label: "CRM", resourceUri: "ui://crm/main" })]),
+    );
+    expect(findByTestId(mounted.container, "workspace-overview-app-grid")).not.toBeNull();
+    mounted.unmount();
+    mounted = null;
+
+    // Revisit while the shell still lags (shellWorkspaceId !== WS.id) AND
+    // `forSlot` returns nothing for it yet: the cached set paints immediately,
+    // so the grid never flashes a skeleton on a switch back. (This is the
+    // anti-glitch contract — without the cache this would be the skeleton.)
+    mounted = await mount(harness("ws_other", []));
+    expect(findByTestId(mounted.container, "workspace-overview-apps-skeleton")).toBeNull();
+    expect(findByTestId(mounted.container, "workspace-overview-app-grid")).not.toBeNull();
+    expect(findAllByTestId(mounted.container, "workspace-overview-app-card")).toHaveLength(1);
   });
 });
