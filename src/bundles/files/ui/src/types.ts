@@ -21,12 +21,6 @@ export interface ListResult {
 
 export type FilterKey = "all" | "images" | "documents" | "data" | "fonts";
 
-/**
- * Which room's files the list shows. "current" scopes to the room the shell
- * is focused on (the default); "all" is the deliberate cross-room view.
- */
-export type RoomScope = "current" | "all";
-
 export interface TagCount {
   tag: string;
   count: number;

@@ -329,7 +329,7 @@ describe("files bundle", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Room (workspace) filtering — the list scopes to the focused room before the
+// Workspace filtering — the list scopes to the focused workspace before the
 // limit, mirroring the conversation-list filter.
 // ---------------------------------------------------------------------------
 
@@ -356,16 +356,16 @@ function listFiles(result: ToolResult): string[] {
   return listOut(result).files.map((f) => f.id);
 }
 
-describe("files room filtering", () => {
+describe("files workspace filtering", () => {
   async function seed(): Promise<void> {
     const store = createFileStore(join(workDir, "files"));
     await store.ensureFilesDir();
     await store.appendRegistry(fileEntry({ id: "fl_helix", workspaceId: "ws_helix" }));
     await store.appendRegistry(fileEntry({ id: "fl_acme", workspaceId: "ws_acme" }));
-    await store.appendRegistry(fileEntry({ id: "fl_legacy" })); // no stamped room
+    await store.appendRegistry(fileEntry({ id: "fl_legacy" })); // no stamped workspace
   }
 
-  test("workspaceId scopes to that room, excluding other rooms and roomless files", async () => {
+  test("workspaceId scopes to that workspace, excluding other workspaces and unstamped files", async () => {
     await seed();
     const res = await source.execute("list", { workspaceId: "ws_helix" });
     expect(res.isError).toBe(false);
@@ -373,7 +373,7 @@ describe("files room filtering", () => {
     expect(listOut(res).totalCount).toBe(1);
   });
 
-  test("includeUnstamped folds roomless files into the personal room", async () => {
+  test("includeUnstamped folds unstamped files into the personal workspace", async () => {
     await seed();
     const res = await source.execute("list", {
       workspaceId: "ws_user_u1",
@@ -382,13 +382,13 @@ describe("files room filtering", () => {
     expect(listFiles(res)).toEqual(["fl_legacy"]);
   });
 
-  test("no workspaceId returns all rooms' files", async () => {
+  test("no workspaceId returns all workspaces' files", async () => {
     await seed();
     const res = await source.execute("list", {});
     expect(listFiles(res).sort()).toEqual(["fl_acme", "fl_helix", "fl_legacy"]);
   });
 
-  test("the room filter runs before the limit (no post-pagination under-count)", async () => {
+  test("the workspace filter runs before the limit (no post-pagination under-count)", async () => {
     const store = createFileStore(join(workDir, "files"));
     await store.ensureFilesDir();
     // 25 Acme files newer than one older Helix file.
@@ -410,13 +410,13 @@ describe("files room filtering", () => {
     const globalPage = await source.execute("list", { limit: 20 });
     expect(listFiles(globalPage)).not.toContain("fl_helix_old");
 
-    // Room-scoped: the limit applies to Helix's set, so its file is returned.
+    // Workspace-scoped: the limit applies to Helix's set, so its file is returned.
     const helix = await source.execute("list", { limit: 20, workspaceId: "ws_helix" });
     expect(listFiles(helix)).toEqual(["fl_helix_old"]);
     expect(listOut(helix).totalCount).toBe(1);
   });
 
-  test("search returns totalCount and stays cross-room (deliberate, until search is room-scoped)", async () => {
+  test("search returns totalCount and stays cross-workspace (deliberate, until search is workspace-scoped)", async () => {
     const store = createFileStore(join(workDir, "files"));
     await store.ensureFilesDir();
     await store.appendRegistry(
@@ -429,8 +429,8 @@ describe("files room filtering", () => {
     const res = await source.execute("search", { query: "report" });
     expect(res.isError).toBe(false);
     const out = listOut(res);
-    // Cross-room: matches from BOTH rooms come back — search is not room-scoped
-    // yet (mirrors the conversation app; room-scoping search is a follow-up).
+    // Cross-workspace: matches from BOTH workspaces come back — search is not workspace-scoped
+    // yet (mirrors the conversation app; workspace-scoping search is a follow-up).
     expect(out.files.map((f) => f.id).sort()).toEqual(["fl_a", "fl_h"]);
     // The renamed count field is populated on the search path too.
     expect(out.totalCount).toBe(2);

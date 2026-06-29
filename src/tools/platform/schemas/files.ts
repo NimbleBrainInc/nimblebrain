@@ -22,13 +22,13 @@ export const FilesListInput = Type.Object({
   workspaceId: Type.Optional(
     Type.String({
       description:
-        "Filter: only files that ran in this room (workspace). Applied before the limit, so the page reflects the room's set. Omit for all rooms.",
+        "Filter: only files created in this workspace. Applied before the limit, so the page reflects the workspace's set. Omit to list across all workspaces.",
     }),
   ),
   includeUnstamped: Type.Optional(
     Type.Boolean({
       description:
-        "When workspaceId is set, also include files with no stamped room — legacy files belong to the personal room. Default false.",
+        "When workspaceId is set, also include files with no stamped workspace — legacy files belong to the personal workspace. Default false.",
     }),
   ),
 });

@@ -4,28 +4,25 @@ import { DetailOverlay } from "./DetailOverlay";
 import { FileGrid } from "./FileGrid";
 import { collectTags, TYPE_FILTERS } from "./format";
 import { Header } from "./Header";
-import type { FileEntry, FilterKey, ListResult, RoomScope } from "./types";
+import type { FileEntry, FilterKey, ListResult } from "./types";
 
 const SEARCH_DEBOUNCE_MS = 300;
 
 export function Dashboard() {
   const synapse = useSynapse();
   const { pickFiles } = useFileUpload();
-  // The room the shell is focused on — the binding for the default room-scoped
-  // list. Pushed by the host via hostContext.
+  // The workspace the shell is focused on — the list scopes to it. Pushed by
+  // the host via hostContext.
   const { workspace } = useHostContext<{
     workspace?: { id: string; name: string; isPersonal?: boolean };
   }>();
   // Primitives (not the workspace object, whose identity churns per push) so
-  // `loadFiles` only re-runs when the room actually changes.
-  const roomId = workspace?.id;
-  const roomIsPersonal = workspace?.isPersonal === true;
+  // `loadFiles` only re-runs when the workspace actually changes.
+  const workspaceId = workspace?.id;
+  const workspaceIsPersonal = workspace?.isPersonal === true;
 
   const [files, setFiles] = useState<FileEntry[]>([]);
   const [totalCount, setTotalCount] = useState(0);
-  // Default to the focused room — the list matches where you are. "All rooms"
-  // is the deliberate cross-room escape hatch.
-  const [roomScope, setRoomScope] = useState<RoomScope>("current");
   const [activeFilter, setActiveFilter] = useState<FilterKey>("all");
   const [activeTag, setActiveTag] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
@@ -41,15 +38,15 @@ export function Dashboard() {
     setLoading(true);
     setError(null);
     try {
-      // Scope to the focused room server-side so the limit applies to the
-      // room's set. "All rooms" omits the params; legacy roomless files belong
-      // to the personal room, so include them only when the room is personal.
+      // The list tool is identity-owned — it returns every file the user owns,
+      // across all workspaces — so scope it to the workspace we're in. Legacy
+      // files with no stamped workspace belong to the personal workspace.
       const args: { limit: number; workspaceId?: string; includeUnstamped?: boolean } = {
         limit: 200,
       };
-      if (roomScope === "current" && roomId) {
-        args.workspaceId = roomId;
-        if (roomIsPersonal) args.includeUnstamped = true;
+      if (workspaceId) {
+        args.workspaceId = workspaceId;
+        if (workspaceIsPersonal) args.includeUnstamped = true;
       }
       const result = await synapse.callTool<typeof args, ListResult>("list", args);
       if (result.isError) {
@@ -63,7 +60,7 @@ export function Dashboard() {
     } finally {
       setLoading(false);
     }
-  }, [synapse, roomScope, roomId, roomIsPersonal]);
+  }, [synapse, workspaceId, workspaceIsPersonal]);
 
   const searchFiles = useCallback(
     async (query: string) => {
@@ -184,9 +181,6 @@ export function Dashboard() {
         searchQuery={searchQuery}
         uploading={uploading}
         tags={tags}
-        roomName={workspace?.name}
-        roomScope={roomScope}
-        onSelectRoomScope={setRoomScope}
         onSelectFilter={setActiveFilter}
         onToggleTag={(tag) => setActiveTag((current) => (current === tag ? null : tag))}
         onSearchInput={handleSearchInput}
