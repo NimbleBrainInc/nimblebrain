@@ -13,7 +13,7 @@ When your manifest declares a resource URI like `ui://dashboard`, NimbleBrain re
 
 The flow:
 
-1. User navigates to your app (e.g., `/app/@myorg/my-app`).
+1. User navigates to your app (e.g., `/app/my-app`).
 2. The web client requests `GET /v1/apps/my-app/resources/primary`.
 3. The platform resolves `"primary"` to your first placement's `resourceUri`.
 4. The platform calls `resources/read` on your MCP server for that URI.
