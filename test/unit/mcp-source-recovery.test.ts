@@ -83,6 +83,12 @@ describe("policyFor — recovery policy", () => {
     expect(policyFor("auth-lost", idem)).toBe("surface");
     expect(policyFor("auth-lost", task)).toBe("surface");
   });
+
+  it("timeout always surfaces (never restarts), regardless of idempotency", () => {
+    expect(policyFor("timeout", idem)).toBe("surface");
+    expect(policyFor("timeout", task)).toBe("surface");
+    expect(policyFor("timeout", reauthable)).toBe("surface");
+  });
 });
 
 describe("execute (tools/call) — unified recovery", () => {

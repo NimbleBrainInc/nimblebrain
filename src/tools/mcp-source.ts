@@ -2158,16 +2158,21 @@ export type ConnectionFailure =
 
 /**
  * Classify a thrown error into a connection-failure class. Order matters:
- * `session-lost` and `transient` are checked first (most specific), then
- * `auth-lost`, then the standard protocol codes, then recognized torn-transport
- * shapes, with `unknown` as the residue.
+ * `session-lost` (by message) is checked first, then the `-32001` `timeout`, then
+ * `transient`, `auth-lost`, the standard protocol codes, and recognized
+ * torn-transport shapes, with `unknown` as the residue.
  *
  * - **session-lost** — the server forgot our Streamable-HTTP session (it rolled).
- *   Matched on the "session not found" MESSAGE (plus the `-32001` code), NOT the
- *   HTTP status: the fleet servers' Python SDK returns it as HTTP 404 with a
+ *   Matched on the "session not found" MESSAGE, NOT the HTTP status or code: the
+ *   fleet servers' Python SDK returns it as HTTP 404 with a
  *   `{"code":-32600,"message":"Session not found"}` body (so the client's
  *   `StreamableHTTPError.code` is 404 and the `-32600` is body text), but remote
  *   bundles are untrusted/heterogeneous — the message is the reliable signal.
+ * - **timeout** — `McpError(-32001, "Request timed out")`: the request was sent
+ *   but the response is slow (the tool, not the transport). Surfaces, never
+ *   restarts — restarting strands the source's other tools without speeding the
+ *   slow one (#581). Checked after the session message so a `-32001` carrying
+ *   session text still classifies session-lost.
  * - **transient** — a mid-roll gateway blip (502/503/504, `bad_gateway`). Back off.
  * - **auth-lost** — a rejected credential. Detectable only as `UnauthorizedError`;
  *   note its recovery *policy* is config-dependent — a static-auth remote can't
