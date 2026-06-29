@@ -1,15 +1,15 @@
 /**
- * The cross-room conversation caches (the locator, and via the same hook the
+ * The cross-workspace conversation caches (the locator, and via the same hook the
  * conversations-tool index) must invalidate on every write AND on workspace
  * archive-delete — otherwise list views freeze on update / ghost on delete, and
- * a resume could re-create a deleted room's directory.
+ * a resume could re-create a deleted workspace's directory.
  */
 
 import { afterAll, beforeAll, expect, test } from "bun:test";
 import { existsSync, mkdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { roomConversationsDir } from "../../../src/conversation/paths.ts";
+import { workspaceConversationsDir } from "../../../src/conversation/paths.ts";
 import { Runtime } from "../../../src/runtime/runtime.ts";
 import { createEchoModel } from "../../helpers/echo-model.ts";
 
@@ -47,7 +47,7 @@ test("an append refreshes the locator summary (list is not frozen)", async () =>
   expect(list.totalCount).toBe(1);
   const afterTurn1 = list.conversations[0]?.messageCount ?? 0;
 
-  // Resume — a second turn appends to the same file via the room store.
+  // Resume — a second turn appends to the same file via the workspace store.
   await runtime.chat({
     message: "second",
     conversationId: convId,
@@ -62,14 +62,14 @@ test("an append refreshes the locator summary (list is not frozen)", async () =>
   expect(list.conversations[0]?.messageCount ?? 0).toBeGreaterThan(afterTurn1);
 });
 
-test("workspace delete clears its conversations from the list (no ghost) and does not re-create the room", async () => {
+test("workspace delete clears its conversations from the list (no ghost) and does not re-create the workspace", async () => {
   // Sanity: the conversation is live and resolvable before the delete.
   expect(await runtime.resolveConversationStore(convId)).not.toBeNull();
 
   await runtime.getWorkspaceStore().delete(wsId);
 
   // The locator invalidated (via the membership-change hook), so a rebuild no
-  // longer lists the archived room's conversation.
+  // longer lists the archived workspace's conversation.
   const list = await runtime.listConversations({}, { userId: ALICE.id });
   expect(list.conversations.find((c) => c.id === convId)).toBeUndefined();
 
@@ -77,6 +77,6 @@ test("workspace delete clears its conversations from the list (no ghost) and doe
   // archived path (whose constructor would mkdir it back into existence).
   expect(await runtime.resolveConversationStore(convId)).toBeNull();
 
-  // The room's conversation dir was NOT re-created under workspaces/.
-  expect(existsSync(roomConversationsDir(workDir, wsId, ALICE.id))).toBe(false);
+  // The workspace's conversation dir was NOT re-created under workspaces/.
+  expect(existsSync(workspaceConversationsDir(workDir, wsId, ALICE.id))).toBe(false);
 });

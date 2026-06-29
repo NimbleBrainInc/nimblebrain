@@ -4,7 +4,7 @@
  * The lint exports its AST predicates so we can exercise them directly — no
  * subprocess, no fixture-on-disk dance. Each predicate is tested against a
  * small parsed snippet that either matches (a flat construction) or doesn't
- * (the room-owned shape, or an unrelated path). Same shape as
+ * (the workspace-owned shape, or an unrelated path). Same shape as
  * `check-credential-paths.test.ts` and `check-tool-namespace.test.ts`.
  */
 
@@ -51,7 +51,7 @@ describe("check-conversation-paths — isFlatConversationJoin", () => {
     expect(isFlatConversationJoin(call!)).toBe(true);
   });
 
-  test("does NOT match `join(workDir, 'workspaces', wsId, 'conversations', file)` (room-owned)", () => {
+  test("does NOT match `join(workDir, 'workspaces', wsId, 'conversations', file)` (workspace-owned)", () => {
     const src = parse(`const path = join(workDir, "workspaces", wsId, "conversations", file);`);
     const call = findFirst(src, ts.isCallExpression);
     expect(isFlatConversationJoin(call!)).toBe(false);
@@ -96,7 +96,7 @@ describe("check-conversation-paths — isFlatConversationTemplate", () => {
     expect(isFlatConversationTemplate(node!)).toBe(true);
   });
 
-  test("does NOT match a template that spells out the room-owned conversation path", () => {
+  test("does NOT match a template that spells out the workspace-owned conversation path", () => {
     const src = parse(
       "const p = `${workDir}/workspaces/${wsId}/conversations/${ownerId}/${id}.jsonl`;",
     );
@@ -118,7 +118,7 @@ describe("check-conversation-paths — isFlatConversationStringLiteral", () => {
     expect(isFlatConversationStringLiteral(node!)).toBe(true);
   });
 
-  test("does NOT match the room-owned conversation file literal", () => {
+  test("does NOT match the workspace-owned conversation file literal", () => {
     const src = parse(`const p = "/work/workspaces/ws_a/conversations/user_x/foo.jsonl";`);
     const node = findFirst(src, ts.isStringLiteral);
     expect(isFlatConversationStringLiteral(node!)).toBe(false);
@@ -139,11 +139,11 @@ describe("check-conversation-paths — isFlatConversationStringLiteral", () => {
 
 describe("check-conversation-paths — script self-invocation", () => {
   test("runs end-to-end against src/ and speaks the inverted contract", async () => {
-    // The room-storage migration is in flight: src/ may still contain flat
+    // The workspace-storage migration is in flight: src/ may still contain flat
     // conversation constructions (the runtime is being de-flatted
     // concurrently), so the script may legitimately exit 0 (clean) or 1
     // (flat paths still present). Either way it must run to completion and
-    // emit the room-owned guidance. The exhaustive match/no-match contract
+    // emit the workspace-owned guidance. The exhaustive match/no-match contract
     // is covered by the predicate unit tests above.
     const proc = Bun.spawn({
       cmd: ["bun", "run", "scripts/check-conversation-paths.ts"],
@@ -157,7 +157,7 @@ describe("check-conversation-paths — script self-invocation", () => {
     if (exitCode === 0) {
       expect(stdout).toContain("No flat conversation paths");
     } else {
-      expect(stderr).toContain("roomConversationsDir");
+      expect(stderr).toContain("workspaceConversationsDir");
     }
   });
 });

@@ -3,7 +3,7 @@
  *
  * Built on startup by scanning all JSONL file headers. Kept fresh one of two
  * ways: `fs.watch` (`startWatching`, for a single flat directory) OR — when the
- * index spans the recursive room layout, where a root watcher can't see nested
+ * index spans the recursive workspace layout, where a root watcher can't see nested
  * writes — an external `invalidate()` signal followed by a `refresh()` full
  * rebuild on the next read. The runtime drives the latter from its
  * conversation-change hook (every write + workspace delete).
@@ -38,9 +38,9 @@ export interface IndexEntry {
    */
   ownerId: string | null;
   /**
-   * The room (workspace) the conversation ran in. `null` for legacy files
+   * The workspace (workspace) the conversation ran in. `null` for legacy files
    * with no stamped workspace — a consumer reads that as the owner's
-   * personal room. The room-scoped conversation list keys off this.
+   * personal workspace. The workspace-scoped conversation list keys off this.
    */
   workspaceId: string | null;
 }
@@ -52,9 +52,9 @@ export interface ListOptions {
   sortBy?: "created" | "updated";
   dateFrom?: string; // ISO 8601
   dateTo?: string; // ISO 8601
-  /** Scope to one room. Applied before pagination so the limit applies to the room's set. */
+  /** Scope to one workspace. Applied before pagination so the limit applies to the workspace's set. */
   workspaceId?: string;
-  /** With `workspaceId`, include roomless (legacy) entries — they belong to the personal room. */
+  /** With `workspaceId`, include workspaceless (legacy) entries — they belong to the personal workspace. */
   includeUnstamped?: boolean;
 }
 
@@ -104,7 +104,7 @@ export class ConversationIndex {
   /**
    * Mark the index stale. The next `refresh()` rebuilds from disk. Used when an
    * external signal (the runtime's conversation-change hook) reports a write or
-   * a workspace delete the index can't observe itself — the recursive room
+   * a workspace delete the index can't observe itself — the recursive workspace
    * layout defeats `fs.watch`, so the index cannot rely on the watcher for
    * updates or deletions.
    */
@@ -191,12 +191,12 @@ export class ConversationIndex {
       items = items.filter((e) => e.ownerId === access.userId);
     }
 
-    // Room filter — scope to one workspace BEFORE pagination, so the limit
-    // applies to the room's set rather than slicing a global page and then
-    // dropping out-of-room entries (which under-counts a room whose chats
-    // aren't in the global most-recent page). A roomless (legacy) entry
-    // belongs to the personal room, so it's included only when the caller
-    // asks for it via `includeUnstamped` (set when the focused room is personal).
+    // Workspace filter — scope to one workspace BEFORE pagination, so the limit
+    // applies to the workspace's set rather than slicing a global page and then
+    // dropping out-of-workspace entries (which under-counts a workspace whose chats
+    // aren't in the global most-recent page). A workspaceless (legacy) entry
+    // belongs to the personal workspace, so it's included only when the caller
+    // asks for it via `includeUnstamped` (set when the focused workspace is personal).
     if (options?.workspaceId) {
       const wsId = options.workspaceId;
       const includeUnstamped = options.includeUnstamped ?? false;

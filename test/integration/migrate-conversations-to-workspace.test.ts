@@ -3,14 +3,14 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
-  roomConversationsDir,
+  workspaceConversationsDir,
   runConversationsDir,
 } from "../../src/conversation/paths.ts";
-import { migrateConversationsToRoom } from "../../scripts/migrate-conversations-to-room.ts";
+import { migrateConversationsToWorkspace } from "../../scripts/migrate-conversations-to-workspace.ts";
 import { personalWorkspaceIdFor } from "../../src/workspace/workspace-store.ts";
 
 /**
- * Round-trip coverage for the flat → room-owned conversation migration. Does
+ * Round-trip coverage for the flat → workspace-owned conversation migration. Does
  * real filesystem I/O against a throwaway work-dir, hence `test/integration/`.
  */
 
@@ -41,7 +41,7 @@ function seedFlat(workDir: string, meta: SeedMeta): string {
   return file;
 }
 
-describe("migrate-conversations-to-room", () => {
+describe("migrate-conversations-to-workspace", () => {
   let workDir: string;
 
   // The four seeded conversations and their expected destinations.
@@ -55,16 +55,16 @@ describe("migrate-conversations-to-room", () => {
   let runDest: string;
 
   beforeEach(() => {
-    workDir = mkdtempSync(join(tmpdir(), "nb-conv-room-migrate-"));
+    workDir = mkdtempSync(join(tmpdir(), "nb-conv-workspace-migrate-"));
 
-    // (a) explicit workspaceId + owner → that room's owner partition.
+    // (a) explicit workspaceId + owner → that workspace's owner partition.
     helixSrc = seedFlat(workDir, {
       id: CONV_HELIX,
       createdAt: "2026-01-01T00:00:00.000Z",
       ownerId: OWNER,
       workspaceId: "ws_helix",
     });
-    helixDest = join(roomConversationsDir(workDir, "ws_helix", OWNER), `${CONV_HELIX}.jsonl`);
+    helixDest = join(workspaceConversationsDir(workDir, "ws_helix", OWNER), `${CONV_HELIX}.jsonl`);
 
     // (b) no workspaceId → owner's personal workspace.
     personalSrc = seedFlat(workDir, {
@@ -73,11 +73,11 @@ describe("migrate-conversations-to-room", () => {
       ownerId: OTHER_OWNER,
     });
     personalDest = join(
-      roomConversationsDir(workDir, personalWorkspaceIdFor(OTHER_OWNER), OTHER_OWNER),
+      workspaceConversationsDir(workDir, personalWorkspaceIdFor(OTHER_OWNER), OTHER_OWNER),
       `${CONV_PERSONAL}.jsonl`,
     );
 
-    // (c) automation run → that room's `_runs/<automationId>/` partition.
+    // (c) automation run → that workspace's `_runs/<automationId>/` partition.
     runSrc = seedFlat(workDir, {
       id: CONV_RUN,
       createdAt: "2026-01-03T00:00:00.000Z",
@@ -99,7 +99,7 @@ describe("migrate-conversations-to-room", () => {
   });
 
   test("dry-run plans every move but writes nothing", () => {
-    const summary = migrateConversationsToRoom(workDir, { write: false });
+    const summary = migrateConversationsToWorkspace(workDir, { write: false });
 
     expect(summary.moved).toBe(3);
     expect(summary.skippedOwnerless).toBe(1);
@@ -116,10 +116,10 @@ describe("migrate-conversations-to-room", () => {
     expect(existsSync(join(workDir, ".migration-lock"))).toBe(false);
   });
 
-  test("--write moves each conversation to its exact room-owned path", () => {
+  test("--write moves each conversation to its exact workspace-owned path", () => {
     const before = readFileSync(helixSrc, "utf-8");
 
-    const summary = migrateConversationsToRoom(workDir, { write: true });
+    const summary = migrateConversationsToWorkspace(workDir, { write: true });
 
     expect(summary.moved).toBe(3);
     expect(summary.skippedOwnerless).toBe(1);
@@ -144,8 +144,8 @@ describe("migrate-conversations-to-room", () => {
   });
 
   test("a second --write run is idempotent (0 moves)", () => {
-    migrateConversationsToRoom(workDir, { write: true });
-    const second = migrateConversationsToRoom(workDir, { write: true });
+    migrateConversationsToWorkspace(workDir, { write: true });
+    const second = migrateConversationsToWorkspace(workDir, { write: true });
 
     expect(second.moved).toBe(0);
     expect(second.skippedExisting).toBe(0);
@@ -157,11 +157,11 @@ describe("migrate-conversations-to-room", () => {
   test("crash recovery: a pre-existing destination removes the stale flat source", () => {
     // Simulate a prior partial run: the dest already exists, the flat source
     // was never unlinked.
-    mkdirSync(roomConversationsDir(workDir, "ws_helix", OWNER), { recursive: true });
+    mkdirSync(workspaceConversationsDir(workDir, "ws_helix", OWNER), { recursive: true });
     writeFileSync(helixDest, readFileSync(helixSrc, "utf-8"), "utf-8");
     expect(existsSync(helixSrc)).toBe(true);
 
-    const summary = migrateConversationsToRoom(workDir, { write: true });
+    const summary = migrateConversationsToWorkspace(workDir, { write: true });
 
     // helix counted as already-migrated; its stale flat source is removed.
     expect(summary.skippedExisting).toBe(1);

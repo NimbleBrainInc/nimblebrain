@@ -1,16 +1,15 @@
 /**
- * The single sanctioned construction (and parse) site for room-partitioned
+ * The single sanctioned construction (and parse) site for workspace-partitioned
  * conversation paths. Mirrors how `namespacedToolName` is the only site for
  * `ws_<id>-` tool names: every conversation directory is built and parsed here,
  * so the on-disk layout has exactly one definition.
  *
- * The room owns the directory (see `research/SPEC-permission-boundaries.md`
- * §2.3): a conversation lives under the workspace it runs in, with the owner as
- * a privacy sub-partition. The path is the binding — `Conversation.workspaceId`
+ * The workspace owns the directory: a conversation lives under the workspace it
+ * runs in, with the owner as a privacy sub-partition. The path is the binding — `Conversation.workspaceId`
  * is a denormalised convenience, the directory is authoritative.
  *
  *   workspaces/<wsId>/conversations/<ownerId>/<convId>.jsonl          private user chats
- *   workspaces/<wsId>/conversations/_runs/<automationId>/<convId>.jsonl  automation runs (room-visible)
+ *   workspaces/<wsId>/conversations/_runs/<automationId>/<convId>.jsonl  automation runs (workspace-visible)
  *
  * This file is on the allow-list of `check:workspace-paths` (it defines the
  * `workspaces/<wsId>/...` conversation layout) and is the only site
@@ -26,10 +25,10 @@ const CONVERSATIONS_SEGMENT = "conversations";
 const WORKSPACES_SEGMENT = "workspaces";
 
 /**
- * Directory holding a user's private conversations in one room:
+ * Directory holding a user's private conversations in one workspace:
  * `{workDir}/workspaces/<wsId>/conversations/<ownerId>`.
  */
-export function roomConversationsDir(workDir: string, wsId: string, ownerId: string): string {
+export function workspaceConversationsDir(workDir: string, wsId: string, ownerId: string): string {
   // `_runs` is reserved for the automation-run partition; an ownerId equal to it
   // would make `parseConversationPath` misread that user's chats as automation
   // runs. Opaque OIDC/email ids never collide, but fail closed if one ever does.
@@ -42,9 +41,9 @@ export function roomConversationsDir(workDir: string, wsId: string, ownerId: str
 }
 
 /**
- * Directory holding an automation's run conversations in one room:
- * `{workDir}/workspaces/<wsId>/conversations/_runs/<automationId>`. Room-visible
- * (the automation is a room artifact), distinct from the private `<ownerId>/`
+ * Directory holding an automation's run conversations in one workspace:
+ * `{workDir}/workspaces/<wsId>/conversations/_runs/<automationId>`. Workspace-visible
+ * (the automation is a workspace artifact), distinct from the private `<ownerId>/`
  * partition.
  */
 export function runConversationsDir(workDir: string, wsId: string, automationId: string): string {
@@ -72,7 +71,7 @@ export interface ParsedConversationPath {
  * conversation file or directory path. Returns `null` for a path that is not
  * under a `workspaces/<wsId>/conversations/...` subtree (e.g. a legacy flat
  * `conversations/<convId>.jsonl`), so the locator can skip it. The path is the
- * authority; this is how the locator recovers a conversation's room without
+ * authority; this is how the locator recovers a conversation's workspace without
  * reading the file.
  */
 export function parseConversationPath(absPath: string): ParsedConversationPath | null {

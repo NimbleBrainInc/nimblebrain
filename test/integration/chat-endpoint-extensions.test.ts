@@ -2,7 +2,7 @@ import { describe, expect, it, afterAll } from "bun:test";
 import { existsSync, rmSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { roomConversationsDir } from "../../src/conversation/paths.ts";
+import { workspaceConversationsDir } from "../../src/conversation/paths.ts";
 import { Runtime } from "../../src/runtime/runtime.ts";
 import { surfaceTools } from "../../src/tools/surfacing.ts";
 import { createEchoModel } from "../helpers/echo-model.ts";
@@ -176,9 +176,9 @@ describe("ChatRequest.metadata — conversation persistence", () => {
       expect(conv).not.toBeNull();
       expect(conv!.metadata).toEqual({ source: "automation", id: "test-123" });
 
-      // Verify it's actually in the JSONL file's first line under the room's
+      // Verify it's actually in the JSONL file's first line under the workspace's
       // owner partition (dev owner `usr_default`, focused on TEST_WORKSPACE_ID).
-      const convDir = roomConversationsDir(workDir, TEST_WORKSPACE_ID, "usr_default");
+      const convDir = workspaceConversationsDir(workDir, TEST_WORKSPACE_ID, "usr_default");
       const files = require("fs").readdirSync(convDir).filter((f: string) => f.endsWith(".jsonl"));
       expect(files.length).toBeGreaterThan(0);
       const content = readFileSync(join(convDir, files[0]!), "utf-8");

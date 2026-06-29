@@ -37,7 +37,7 @@ export class ConversationAccessDeniedError extends Error {
  * runtime can't authorize access on it.
  *
  * Operator action is manual: an ownerless file has no derivable owner, so no
- * migration can recover it — `migrate:conversations-to-room` skips ownerless
+ * migration can recover it — `migrate:conversations-to-workspace` skips ownerless
  * files rather than guessing. Recovery is to stamp an `ownerId` on the file's
  * line-1 metadata (when the owner is known) or remove the file. Without this
  * typed error, the unwrapped `Error("missing ownerId in ...")` from

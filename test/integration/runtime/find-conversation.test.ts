@@ -1,16 +1,16 @@
 /**
- * Integration tests for `Runtime.findConversation` — the cross-room
+ * Integration tests for `Runtime.findConversation` — the cross-workspace
  * accessor that resolves a conversation by id through the locator.
  *
- * Conversations are room-owned:
+ * Conversations are workspace-owned:
  * `{workDir}/workspaces/<wsId>/conversations/<ownerId>/<convId>.jsonl`.
  *
  * Covers:
- *  - `findConversation(id)` resolves a conversation that exists in its room.
+ *  - `findConversation(id)` resolves a conversation that exists in its workspace.
  *  - `findConversation(id)` returns null when the conversation doesn't exist.
  *  - `findConversation(id, access)` returns null for foreign owner
  *    (same shape as not-found — no existence leak).
- *  - Chat lands under the focused room's owner partition.
+ *  - Chat lands under the focused workspace's owner partition.
  *  - `/v1/conversations/:id/events` works without `X-Workspace-Id`.
  */
 
@@ -22,7 +22,7 @@ import { tmpdir } from "node:os";
 
 import type { ServerHandle } from "../../../src/api/server.ts";
 import { startServer } from "../../../src/api/server.ts";
-import { roomConversationsDir } from "../../../src/conversation/paths.ts";
+import { workspaceConversationsDir } from "../../../src/conversation/paths.ts";
 import { createTestAuthAdapter, TEST_IDENTITY } from "../../helpers/test-auth-adapter.ts";
 import { Runtime } from "../../../src/runtime/runtime.ts";
 import { createEchoModel } from "../../helpers/echo-model.ts";
@@ -47,7 +47,7 @@ describe("Runtime.findConversation", () => {
     expect(runtime).toBeDefined();
   });
 
-  test("resolves an existing conversation from its room store", async () => {
+  test("resolves an existing conversation from its workspace store", async () => {
     const result = await runtime.chat({
       message: "alice's note",
       workspaceId: TEST_WORKSPACE_ID,
@@ -83,17 +83,17 @@ describe("Runtime.findConversation", () => {
     expect(foundForAlice!.id).toBe(aliceConv.conversationId);
   });
 
-  test("chat writes the conversation file under the focused room's owner partition", async () => {
+  test("chat writes the conversation file under the focused workspace's owner partition", async () => {
     const result = await runtime.chat({
       message: "where does this land",
       workspaceId: TEST_WORKSPACE_ID,
       identity: ALICE,
     });
-    const roomPath = join(
-      roomConversationsDir(workDir, TEST_WORKSPACE_ID, ALICE.id),
+    const workspacePath = join(
+      workspaceConversationsDir(workDir, TEST_WORKSPACE_ID, ALICE.id),
       `${result.conversationId}.jsonl`,
     );
-    const s = await stat(roomPath);
+    const s = await stat(workspacePath);
     expect(s.isFile()).toBe(true);
   });
 
@@ -305,12 +305,12 @@ describe("/v1/conversations/:id/events — dev mode (no provider)", () => {
 //
 // A file lacking `ownerId` is pre-migration state. The locator resolves by
 // PATH (it never reads file contents), so an ownerless file resolves to its
-// room on both routes, and `store.load` is the one place ownership/validity is
+// workspace on both routes, and `store.load` is the one place ownership/validity is
 // checked — it throws the typed `ConversationCorruptedError`. So both the read
 // route (`/v1/conversations/:id/events`) and the chat resume path (`/v1/chat`)
 // surface a clean 422 with the migration command, never a 500.
 //
-// The ownerless file is planted at the exact room path the resume resolves
+// The ownerless file is planted at the exact workspace path the resume resolves
 // (TEST_WORKSPACE_ID + the authenticated caller's owner partition).
 // ---------------------------------------------------------------------------
 
@@ -338,11 +338,11 @@ describe("ownerless conversation file — no 500s", () => {
     });
     baseUrl = `http://localhost:${handle.port}`;
 
-    // Plant an ownerless file at the room path the resume path reads:
+    // Plant an ownerless file at the workspace path the resume path reads:
     // `workspaces/<TEST_WORKSPACE_ID>/conversations/<callerId>/<convId>.jsonl`.
     // The locator skips it (no ownerId), so the read route 404s; the resume
-    // path reads it directly via the room store and 422s.
-    const convDir = roomConversationsDir(workDir, TEST_WORKSPACE_ID, TEST_IDENTITY.id);
+    // path reads it directly via the workspace store and 422s.
+    const convDir = workspaceConversationsDir(workDir, TEST_WORKSPACE_ID, TEST_IDENTITY.id);
     mkdirSync(convDir, { recursive: true });
     const meta = {
       id: convId,

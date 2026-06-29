@@ -1,28 +1,28 @@
 /**
  * Process-wide conversation locator.
  *
- * Conversations are room-owned — each lives under
+ * Conversations are workspace-owned — each lives under
  * `workspaces/<wsId>/conversations/<ownerId>/<convId>.jsonl` (or, for automation
- * runs, `.../conversations/_runs/<automationId>/`). The per-room
- * `EventSourcedConversationStore` operates within one room+owner directory and
- * knows nothing of rooms. The locator is the one component that sees ACROSS
- * rooms: it answers two questions the runtime needs that a single-dir store
+ * runs, `.../conversations/_runs/<automationId>/`). The per-workspace
+ * `EventSourcedConversationStore` operates within one workspace+owner directory and
+ * knows nothing of workspaces. The locator is the one component that sees ACROSS
+ * workspaces: it answers two questions the runtime needs that a single-dir store
  * cannot —
  *
  *   1. **load-by-id:** `convId → { wsId, ownerId }`, so a context-free load
  *      (deep link, history fetch, `conversations__get`) can construct the right
- *      room store. The hot chat path already knows its room from the request and
+ *      workspace store. The hot chat path already knows its workspace from the request and
  *      never consults the locator.
- *   2. **list:** the owner's "All rooms" view (every workspace they belong to)
- *      and the room-scoped view (one `workspaceId`), from one structure. The
- *      path is the wall (room filter); ownership is the access gate.
+ *   2. **list:** the owner's "All workspaces" view (every workspace they belong to)
+ *      and the workspace-scoped view (one `workspaceId`), from one structure. The
+ *      path is the wall (workspace filter); ownership is the access gate.
  *
  * **Freshness without recursive watch.** `fs.watch({recursive:true})` is not
  * supported on Linux, so correctness must NOT depend on a watcher. Instead the
  * runtime calls `invalidate()` on every conversation create/delete, and reads
- * repopulate just-in-time. The scan is a targeted walk of each room's
+ * repopulate just-in-time. The scan is a targeted walk of each workspace's
  * `conversations/` subtree (never the whole workspace tree), reusing the
- * conversation header parser so summaries match the per-room index exactly.
+ * conversation header parser so summaries match the per-workspace index exactly.
  */
 
 import { readdirSync } from "node:fs";
@@ -40,7 +40,7 @@ import type {
 
 /** Where a conversation lives — the locator's resolution result. */
 export interface ConversationLocation {
-  /** The room (workspace) the conversation is stored under. */
+  /** The workspace the conversation is stored under. */
   wsId: string;
   /** The owner sub-partition, or `null` for an automation-run conversation. */
   ownerId: string | null;
@@ -73,7 +73,7 @@ export class ConversationLocator {
   }
 
   /**
-   * Resolve a conversation id to its room + owner. `undefined` if no room holds
+   * Resolve a conversation id to its workspace + owner. `undefined` if no workspace holds
    * it. Resolution is a PATH operation, NOT a content one: the filename is the
    * convId and `parseConversationPath` recovers `{ wsId, ownerId }` from the
    * directory. So this is a readdir-only walk — it never reads or parses a file,
@@ -100,9 +100,9 @@ export class ConversationLocator {
   }
 
   /**
-   * List conversations across rooms. `options.workspaceId` restricts to one
-   * room (the room-scoped view); omit for the owner's All-rooms view. `access`
-   * is the ownership gate — orthogonal to the room filter.
+   * List conversations across workspaces. `options.workspaceId` restricts to one
+   * workspace (the workspace-scoped view); omit for the owner's All-workspaces view. `access`
+   * is the ownership gate — orthogonal to the workspace filter.
    */
   async list(
     options?: ListOptions,
@@ -191,10 +191,10 @@ function safeReaddir(dir: string): string[] {
 }
 
 /**
- * Absolute paths of every conversation JSONL across all rooms, via the same
- * targeted walk the locator uses (each room's `conversations/` owner and
+ * Absolute paths of every conversation JSONL across all workspaces, via the same
+ * targeted walk the locator uses (each workspace's `conversations/` owner and
  * `_runs/` partitions). For read-side consumers that need the raw files
- * spanning rooms (e.g. the usage aggregator), without building the full index.
+ * spanning workspaces (e.g. the usage aggregator), without building the full index.
  */
 export function listAllConversationFiles(workspacesRoot: string): string[] {
   const out: string[] = [];

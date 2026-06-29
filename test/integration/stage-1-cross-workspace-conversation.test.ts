@@ -31,7 +31,7 @@ import { tmpdir } from "node:os";
 import type { ServerHandle } from "../../src/api/server.ts";
 import { startServer } from "../../src/api/server.ts";
 import { canAccess } from "../../src/conversation/index-cache.ts";
-import { roomConversationsDir } from "../../src/conversation/paths.ts";
+import { workspaceConversationsDir } from "../../src/conversation/paths.ts";
 import type {
   CreateUserInput,
   CreateUserResult,
@@ -143,9 +143,9 @@ describe("Stage 1 — conversations outlive their workspace context", () => {
 
   test("a conversation created in workspace A survives Alice being removed from A", async () => {
     // 1. Alice POSTs a chat in shared_a — produces a conversation that is
-    //    room-owned under her personal room (the identity-bound chat surface
+    //    workspace-owned under her personal workspace (the identity-bound chat surface
     //    stores under the session/personal workspace; the X-Workspace-Id
-    //    header scopes the prompt briefing, not the conversation's room).
+    //    header scopes the prompt briefing, not the conversation's workspace).
     const createRes = await fetch(`${baseUrl}/v1/chat`, {
       method: "POST",
       headers: {
@@ -160,14 +160,14 @@ describe("Stage 1 — conversations outlive their workspace context", () => {
     const convId = createBody.conversationId;
     expect(convId).toMatch(/^conv_[a-f0-9]{16}$/);
 
-    // The conversation is room-owned: its file lives under the workspace it
-    // ran in (`workspaces/<sharedA>/conversations/<ownerId>/`) — the room owns
+    // The conversation is workspace-owned: its file lives under the workspace it
+    // ran in (`workspaces/<sharedA>/conversations/<ownerId>/`) — the workspace owns
     // the directory — and NOT in a flat top-level `conversations/` dir. The
     // owner partition is what makes it survive removal: dropping Alice from
     // sharedA's member list doesn't touch her conversation file.
-    const roomPath = join(roomConversationsDir(workDir, sharedA, ALICE.id), `${convId}.jsonl`);
+    const workspacePath = join(workspaceConversationsDir(workDir, sharedA, ALICE.id), `${convId}.jsonl`);
     const flatPath = join(workDir, "conversations", `${convId}.jsonl`);
-    expect((await stat(roomPath)).isFile()).toBe(true);
+    expect((await stat(workspacePath)).isFile()).toBe(true);
     let flatExists = true;
     try {
       await stat(flatPath);
@@ -187,8 +187,8 @@ describe("Stage 1 — conversations outlive their workspace context", () => {
     const loaded = await runtime.findConversation(convId, { userId: ALICE.id });
     expect(loaded).not.toBeNull();
     expect(loaded?.ownerId).toBe(ALICE.id);
-    // The conversation is room-owned by the workspace it ran in: the metadata
-    // `workspaceId` records that room (`sharedA`, the focused `X-Workspace-Id`),
+    // The conversation is workspace-owned by the workspace it ran in: the metadata
+    // `workspaceId` records that workspace (`sharedA`, the focused `X-Workspace-Id`),
     // which is also where its file lives. Ownership — not workspace membership —
     // is the access gate, so the conversation outlives Alice's removal from it.
     expect(loaded?.workspaceId).toBe(sharedA);
@@ -247,7 +247,7 @@ describe("Stage 1 — conversations outlive their workspace context", () => {
     //    sharedB (post-removal). The conversation's ROOM is fixed at create
     //    (sharedA) and does NOT migrate when continued from a different
     //    focused workspace: on resume the store is resolved from the
-    //    conversation's own path, so both turns land in the sharedA room and
+    //    conversation's own path, so both turns land in the sharedA workspace and
     //    `workspaceId` stays sharedA. The X-Workspace-Id of the second turn
     //    scopes that turn's tools/briefing, not where the conversation lives.
     const store = await runtime.resolveConversationStore(convId);

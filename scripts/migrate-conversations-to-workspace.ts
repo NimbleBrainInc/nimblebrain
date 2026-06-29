@@ -1,26 +1,26 @@
 #!/usr/bin/env bun
 
 /**
- * One-time migration: flat conversation store → the room-owned layout.
+ * One-time migration: flat conversation store → the workspace-owned layout.
  *
  * The single user-scoped store at `{workDir}/conversations/<convId>.jsonl`
- * predates the room-owned layout, where a conversation lives under the
+ * predates the workspace-owned layout, where a conversation lives under the
  * workspace it runs in with the owner as a privacy sub-partition (see
  * `src/conversation/paths.ts` and `research/SPEC-permission-boundaries.md`):
  *
  *   workspaces/<wsId>/conversations/<ownerId>/<convId>.jsonl          private user chats
  *   workspaces/<wsId>/conversations/_runs/<automationId>/<convId>.jsonl  automation runs
  *
- * This walks the flat dir and moves each file to its room-owned home. The
- * destination room is `meta.workspaceId` when set, else the owner's personal
+ * This walks the flat dir and moves each file to its workspace-owned home. The
+ * destination workspace is `meta.workspaceId` when set, else the owner's personal
  * workspace; an automation run (line-1 `metadata.source === "task"` with an
- * `metadata.automationId`) lands in that room's `_runs/<automationId>/`
+ * `metadata.automationId`) lands in that workspace's `_runs/<automationId>/`
  * partition instead of the owner partition.
  *
  * Usage:
- *   bun run migrate:conversations-to-room                  # dry-run (default)
- *   bun run migrate:conversations-to-room --write          # apply the moves
- *   bun run migrate:conversations-to-room --work-dir /abs  # target a work-dir
+ *   bun run migrate:conversations-to-workspace                  # dry-run (default)
+ *   bun run migrate:conversations-to-workspace --write          # apply the moves
+ *   bun run migrate:conversations-to-workspace --work-dir /abs  # target a work-dir
  *
  * Safe by default: a dry-run prints the planned moves, writes nothing, and
  * exits 0. `--write` (or `--apply`) performs the moves under the work-dir's
@@ -43,14 +43,14 @@ import { basename, join } from "node:path";
 import {
   type ParsedConversationPath,
   parseConversationPath,
-  roomConversationsDir,
   runConversationsDir,
+  workspaceConversationsDir,
 } from "../src/conversation/paths.ts";
 import { CONVERSATION_ID_RE } from "../src/conversation/types.ts";
 import { personalWorkspaceIdFor } from "../src/workspace/workspace-store.ts";
 import { acquireMigrationLock } from "./lib/migration-lock.ts";
 
-const MIGRATION_NAME = "conversations-to-room";
+const MIGRATION_NAME = "conversations-to-workspace";
 
 /** Line-1 metadata shape this migration reads from each flat JSONL file. */
 interface FlatConversationMeta {
@@ -100,16 +100,16 @@ function emptySummary(): MigrationSummary {
   };
 }
 
-/** Where one flat conversation file belongs in the room-owned layout. */
+/** Where one flat conversation file belongs in the workspace-owned layout. */
 function destDirFor(workDir: string, meta: FlatConversationMeta, ownerId: string): string {
   const wsId = meta.workspaceId ?? personalWorkspaceIdFor(ownerId);
   const m = meta.metadata;
   // An automation run is `source === "task"` with a present automationId; it
-  // lands in the room-visible `_runs/<automationId>/` partition, not the owner's.
+  // lands in the workspace-visible `_runs/<automationId>/` partition, not the owner's.
   if (m?.source === "task" && typeof m.automationId === "string" && m.automationId.length > 0) {
     return runConversationsDir(workDir, wsId, m.automationId);
   }
-  return roomConversationsDir(workDir, wsId, ownerId);
+  return workspaceConversationsDir(workDir, wsId, ownerId);
 }
 
 /**
@@ -127,10 +127,10 @@ function atomicMove(srcFile: string, destDir: string, destFile: string, content:
 
 /**
  * Plan (and, when `write`, perform) the move of every flat conversation file
- * under `{workDir}/conversations/` into the room-owned layout. Pure read in
+ * under `{workDir}/conversations/` into the workspace-owned layout. Pure read in
  * dry-run; acquires the work-dir migration lock for the write path.
  */
-export function migrateConversationsToRoom(
+export function migrateConversationsToWorkspace(
   workDir: string,
   opts: { write: boolean },
 ): MigrationSummary {
@@ -171,7 +171,7 @@ export function migrateConversationsToRoom(
       }
 
       // Ownerless files predate the owner invariant: with no owner there is no
-      // room (and no `_runs` owner) to migrate into. Skip, count, warn once.
+      // workspace (and no `_runs` owner) to migrate into. Skip, count, warn once.
       if (!meta.ownerId) {
         summary.skippedOwnerless++;
         continue;
@@ -200,8 +200,8 @@ export function migrateConversationsToRoom(
   return summary;
 }
 
-/** Human-readable room label for a planned destination, for the dry-run log. */
-function roomLabel(destFile: string): string {
+/** Human-readable workspace label for a planned destination, for the dry-run log. */
+function workspaceLabel(destFile: string): string {
   const parsed: ParsedConversationPath | null = parseConversationPath(destFile);
   if (!parsed) return destFile;
   if (parsed.automationId) return `${parsed.wsId} · _runs/${parsed.automationId}`;
@@ -221,15 +221,15 @@ function main(): void {
   const write = args.includes("--write") || args.includes("--apply");
   const workDir = resolveWorkDir(args);
 
-  const summary = migrateConversationsToRoom(workDir, { write });
+  const summary = migrateConversationsToWorkspace(workDir, { write });
 
   const verb = write ? "Moved" : "Would move";
   for (const plan of summary.plans) {
     if (plan.action === "move") {
-      console.log(`  ${write ? "✓" : "·"} ${verb} ${plan.convId} → ${roomLabel(plan.to)}`);
+      console.log(`  ${write ? "✓" : "·"} ${verb} ${plan.convId} → ${workspaceLabel(plan.to)}`);
     } else {
       console.log(
-        `  ${write ? "✓" : "·"} ${plan.convId} already at ${roomLabel(plan.to)} — ` +
+        `  ${write ? "✓" : "·"} ${plan.convId} already at ${workspaceLabel(plan.to)} — ` +
           `${write ? "removed" : "would remove"} stale flat copy`,
       );
     }
@@ -238,7 +238,7 @@ function main(): void {
   if (summary.skippedOwnerless > 0) {
     console.warn(
       `\n  ! ${summary.skippedOwnerless} ownerless conversation file(s) left in place — ` +
-        "they predate the owner invariant (no ownerId → no room to migrate into). Manual triage: " +
+        "they predate the owner invariant (no ownerId → no workspace to migrate into). Manual triage: " +
         "add an ownerId to each file's line-1 metadata and re-run, or remove the files.",
     );
   }
@@ -263,7 +263,7 @@ function main(): void {
 }
 
 // Gate the CLI side effect on direct invocation so tests can import
-// `migrateConversationsToRoom` without running the argv/console path.
+// `migrateConversationsToWorkspace` without running the argv/console path.
 if (import.meta.main) {
   main();
 }

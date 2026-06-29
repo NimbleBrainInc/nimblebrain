@@ -15,9 +15,9 @@ export interface ListInput {
   sortBy?: "created" | "updated";
   dateFrom?: string;
   dateTo?: string;
-  /** Scope to one room. Applied before the limit so the page reflects the room's set. */
+  /** Scope to one workspace. Applied before the limit so the page reflects the workspace's set. */
   workspaceId?: string;
-  /** With `workspaceId`, also include roomless (legacy) chats — they belong to the personal room. */
+  /** With `workspaceId`, also include workspaceless (legacy) chats — they belong to the personal workspace. */
   includeUnstamped?: boolean;
 }
 

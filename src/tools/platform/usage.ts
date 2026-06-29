@@ -102,8 +102,8 @@ export function createUsageSource(runtime: Runtime, eventSink: EventSink): McpSo
           const period = args.period ?? "month";
           const groupBy = args.groupBy ?? "day";
 
-          // Conversations are room-owned; usage spans every workspace a user
-          // touched, so aggregate over the conversation files across all rooms.
+          // Conversations are workspace-owned; usage spans every workspace a user
+          // touched, so aggregate over the conversation files across all workspaces.
           const files = listAllConversationFiles(runtime.getWorkspaceStore().getWorkspacesDir());
           const report = await aggregateUsage(files, period, groupBy, {
             from: args.from,

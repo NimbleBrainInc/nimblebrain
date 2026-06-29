@@ -116,7 +116,7 @@ describe("windowMessages", () => {
 			msgs.push(textMsg(role as "user" | "assistant", `Message number ${i} ${"x".repeat(80)}`));
 		}
 
-		// Budget: first message (~25 tokens) + room for ~10 more messages (~250 tokens)
+		// Budget: first message (~25 tokens) + workspace for ~10 more messages (~250 tokens)
 		const budget = 300;
 		const result = windowMessages(msgs, budget);
 

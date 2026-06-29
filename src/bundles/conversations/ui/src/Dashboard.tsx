@@ -4,15 +4,15 @@ import { ConversationList } from "./ConversationList";
 import { groupByDate } from "./dateUtils";
 import { Header } from "./Header";
 import { SearchResults } from "./SearchResults";
-import type { FilterKey, ListResult, RoomScope, SearchResultData } from "./types";
+import type { FilterKey, ListResult, SearchResultData } from "./types";
 
 type View = "list" | "search";
 
 export function Dashboard() {
   const synapse = useSynapse();
   const action = useAction();
-  // Both pushed by the host via hostContext: `workspace` is the room the shell
-  // is focused on (the binding for the default room-scoped list);
+  // Both pushed by the host via hostContext: `workspace` is the workspace the
+  // shell is focused on (the binding for the workspace-scoped list);
   // `streamingConversationIds` are the chats with an in-flight assistant turn
   // in this tab (drive the live per-row indicator).
   const { streamingConversationIds, workspace } = useHostContext<{
@@ -24,16 +24,13 @@ export function Dashboard() {
     [streamingConversationIds],
   );
   // Primitives (not the workspace object, whose identity churns per push) so the
-  // room-scoped `loadList` only re-runs when the room actually changes.
-  const roomId = workspace?.id;
-  const roomIsPersonal = workspace?.isPersonal === true;
+  // workspace-scoped `loadList` only re-runs when the workspace actually changes.
+  const workspaceId = workspace?.id;
+  const workspaceIsPersonal = workspace?.isPersonal === true;
 
   const [view, setView] = useState<View>("list");
   const [conversations, setConversations] = useState<ListResult["conversations"]>([]);
   const [activeFilter, setActiveFilter] = useState<FilterKey>("all");
-  // Default to the focused room — the list matches where you are. "All rooms"
-  // is the deliberate cross-room escape hatch.
-  const [roomScope, setRoomScope] = useState<RoomScope>("current");
   const [searchQuery, setSearchQuery] = useState("");
   const [searchResults, setSearchResults] = useState<SearchResultData | null>(null);
   const [loading, setLoading] = useState(true);
@@ -48,14 +45,13 @@ export function Dashboard() {
       if (!opts?.background) setLoading(true);
       setError(null);
       try {
-        // Scope to the focused room server-side, so the limit applies to the
-        // room's set rather than slicing a global page we'd then filter down.
-        // "All rooms" omits the params; legacy roomless chats belong to the
-        // personal room, so include them only when the focused room is personal.
-        const args: { workspaceId?: string; includeUnstamped?: boolean } =
-          roomScope === "current" && roomId
-            ? { workspaceId: roomId, ...(roomIsPersonal ? { includeUnstamped: true } : {}) }
-            : {};
+        // Always scope to the focused workspace server-side (no cross-workspace
+        // view), so the limit applies to the workspace's set rather than
+        // slicing a global page. Legacy unstamped chats belong to the
+        // personal workspace, so include them only when the focus is personal.
+        const args: { workspaceId?: string; includeUnstamped?: boolean } = workspaceId
+          ? { workspaceId, ...(workspaceIsPersonal ? { includeUnstamped: true } : {}) }
+          : {};
         const result = await synapse.callTool<typeof args, ListResult>("list", args);
         if (result.isError) {
           setError("Failed to load conversations");
@@ -68,7 +64,7 @@ export function Dashboard() {
         if (!opts?.background) setLoading(false);
       }
     },
-    [synapse, roomScope, roomId, roomIsPersonal],
+    [synapse, workspaceId, workspaceIsPersonal],
   );
 
   const runSearch = useCallback(
@@ -98,8 +94,8 @@ export function Dashboard() {
     [synapse],
   );
 
-  // Initial load — and reloads whenever the room scope or focused room
-  // changes, since `loadList` now carries the room params (it's in its deps).
+  // Initial load — and reloads whenever the focused workspace changes, since
+  // `loadList` now carries the workspace param (it's in its deps).
   useEffect(() => {
     loadList();
   }, [loadList]);
@@ -197,8 +193,8 @@ export function Dashboard() {
     [action],
   );
 
-  // `conversations` is already room-scoped by the server (see `loadList`), so
-  // group it directly.
+  // `conversations` is already workspace-scoped by the server (see `loadList`),
+  // so group it directly.
   const groups = useMemo(
     () => (loading ? [] : groupByDate(conversations)),
     [loading, conversations],
@@ -214,9 +210,7 @@ export function Dashboard() {
         activeFilter={activeFilter}
         isSearching={isSearching}
         searchQuery={searchQuery}
-        roomName={workspace?.name}
-        roomScope={roomScope}
-        onSelectRoomScope={setRoomScope}
+        workspaceName={workspace?.name}
         onSelectFilter={handleSelectFilter}
         onSearchInput={handleSearchInput}
         onSearchSubmit={handleSearchSubmit}

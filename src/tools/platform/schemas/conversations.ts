@@ -25,13 +25,13 @@ export const ConversationsListInput = Type.Object({
   workspaceId: Type.Optional(
     Type.String({
       description:
-        "Filter: only conversations that ran in this room (workspace). Applied before the limit, so the page reflects the room's set. Omit for all rooms.",
+        "Filter: only conversations that ran in this workspace (workspace). Applied before the limit, so the page reflects the workspace's set. Omit for all workspaces.",
     }),
   ),
   includeUnstamped: Type.Optional(
     Type.Boolean({
       description:
-        "When workspaceId is set, also include conversations with no stamped room — legacy chats belong to the personal room. Default false.",
+        "When workspaceId is set, also include conversations with no stamped workspace — legacy chats belong to the personal workspace. Default false.",
     }),
   ),
 });

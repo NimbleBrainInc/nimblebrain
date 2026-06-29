@@ -946,12 +946,12 @@ export function createCoreToolDefs(runtime: Runtime): InProcessTool[] {
                   const convId = getRequestContext()?.conversationId;
                   if (!convId) return;
                   // The foreground briefing runs inside the caller's
-                  // conversation, whose room is this focused workspace + owner —
-                  // so append by path directly (O(1)), never a cross-room
+                  // conversation, whose workspace is this focused workspace + owner —
+                  // so append by path directly (O(1)), never a cross-workspace
                   // `locate` walk. Guard the append so a missed aux.usage event
                   // can never break briefing generation.
                   try {
-                    runtime.roomConversationStore(wsId, identity.id).appendEvent(convId, {
+                    runtime.workspaceConversationStore(wsId, identity.id).appendEvent(convId, {
                       ts: new Date().toISOString(),
                       type: "aux.usage",
                       source: "briefing",
