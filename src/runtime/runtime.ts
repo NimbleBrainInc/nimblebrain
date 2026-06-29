@@ -2837,12 +2837,12 @@ export class Runtime {
       ...store,
       saveFile: async (data, filename, mimeType) => {
         const result = await store.saveFile(data, filename, mimeType);
-        locator.remember(result.id, wsId);
+        locator.remember(ownerId, result.id, wsId);
         return result;
       },
       deleteFile: async (id) => {
         await store.deleteFile(id);
-        locator.forget(id);
+        locator.forget(ownerId, id);
       },
     };
   }

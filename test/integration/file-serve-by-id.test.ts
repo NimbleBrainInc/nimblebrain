@@ -18,13 +18,15 @@ import { existsSync, mkdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { type ServerHandle, startServer } from "../../src/api/server.ts";
+import { DEV_IDENTITY } from "../../src/identity/providers/dev.ts";
 import { Runtime } from "../../src/runtime/runtime.ts";
 import { createEchoModel } from "../helpers/echo-model.ts";
 import { provisionTestWorkspace } from "../helpers/test-workspace.ts";
 
-const testDir = join(tmpdir(), `nb-file-serve-by-conversation-${Date.now()}`);
+const testDir = join(tmpdir(), `nb-file-serve-by-id-${Date.now()}`);
 
 const WORKSPACE_A = "ws_workspace_a";
+const OWNER = DEV_IDENTITY.id;
 
 let runtime: Runtime;
 let handle: ServerHandle;
@@ -76,5 +78,26 @@ describe("GET /v1/files resolves the workspace from the file id", () => {
     // A bogus (well-formed) id resolves to no partition → 404.
     const missing = await fetch(`${baseUrl}/v1/files/fl_${"0".repeat(24)}`);
     expect(missing.status).toBe(404);
+  });
+
+  it("self-heals a stale memo entry: a wrong cached workspace recovers via disk", async () => {
+    // The serve path peeks the memo first; under `replicas > 1` another process
+    // can move/remove a file out from under this process's cache. Simulate a
+    // stale hit by poisoning the memo with a workspace the file is NOT in, then
+    // assert the download still 200s — proving the memo read fails, the entry is
+    // dropped, and the disk re-resolve recovers the real workspace (A).
+    const born = await runtime.chat({ message: "hi", workspaceId: WORKSPACE_A });
+    const form = new FormData();
+    form.append("file", new Blob(["heal me"], { type: "text/plain" }), "heal.txt");
+    form.append("conversationId", born.conversationId);
+    const upload = await fetch(`${baseUrl}/v1/resources`, { method: "POST", body: form });
+    const fileId: string = (await upload.json()).files[0].id;
+
+    // Poison the cache: claim the file lives somewhere it doesn't.
+    runtime.getFileLocator().remember(OWNER, fileId, "ws_does_not_exist");
+
+    const res = await fetch(`${baseUrl}/v1/files/${fileId}`);
+    expect(res.status).toBe(200);
+    expect(await res.text()).toBe("heal me");
   });
 });

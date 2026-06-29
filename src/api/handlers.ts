@@ -1726,9 +1726,7 @@ export async function handleFileServe(
   const ownerId = runtime.resolveRequestUserId(identity);
   const locator = runtime.getFileLocator();
 
-  const serve = async (): Promise<Response | null> => {
-    const wsId = await locator.locate(ownerId, fileId);
-    if (!wsId) return null;
+  const readAt = async (wsId: string): Promise<Response | null> => {
     try {
       const file = await runtime.getWorkspaceFileStore(wsId, ownerId).readFile(fileId);
       const safeName = sanitizeFilename(file.filename);
@@ -1739,18 +1737,24 @@ export async function handleFileServe(
         },
       });
     } catch {
-      return null; // not at the resolved location
+      return null; // not at this location
     }
   };
 
-  let response = await serve();
-  if (!response) {
-    // A memo hit can go stale (out-of-process delete). Drop it and re-resolve
-    // from disk once before giving up — the memo is an optimization, not truth.
-    locator.forget(fileId);
-    response = await serve();
+  // Memo fast-path. A stale hit (file moved/removed out of this process under
+  // `replicas > 1`) self-heals: drop it and fall through to the disk resolve.
+  const cached = locator.peek(ownerId, fileId);
+  if (cached) {
+    const hit = await readAt(cached);
+    if (hit) return hit;
+    locator.forget(ownerId, fileId);
   }
-  return response ?? apiError(404, "not_found", "File not found");
+
+  // Disk-authoritative: one owner-scoped walk, memoised. Absent ⇒ 404 (a pure
+  // miss walks once and stops — no retry, since there's nothing to heal).
+  const wsId = await locator.resolve(ownerId, fileId);
+  if (!wsId) return apiError(404, "not_found", "File not found");
+  return (await readAt(wsId)) ?? apiError(404, "not_found", "File not found");
 }
 
 // --- Chat Body Parsing ---
