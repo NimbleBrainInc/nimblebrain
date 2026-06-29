@@ -11,9 +11,24 @@
  */
 
 import { type AutomationRunTrigger, isTransientError } from "./scheduler.ts";
-import type { Automation, AutomationRun } from "./types.ts";
+import type {
+  Automation,
+  AutomationRun,
+  AutomationRunResult,
+  RunFileRef,
+  RunToolCall,
+} from "./types.ts";
 
 const DEFAULT_TIMEOUT_MS = 120_000;
+
+/** Max chars of the deliverable kept in the run-list `resultPreview`. The full
+ *  output lives in the `AutomationRunResult` sidecar. */
+const PREVIEW_MAX_CHARS = 280;
+
+function truncate(text: string): string {
+  if (text.length <= PREVIEW_MAX_CHARS) return text;
+  return `${text.slice(0, PREVIEW_MAX_CHARS)}…`;
+}
 
 // ---------------------------------------------------------------------------
 // Shared types
@@ -62,13 +77,26 @@ export interface TaskFnRequest {
   signal?: AbortSignal;
 }
 
+/** One tool call from a task run (matches runtime `TaskResult.toolCalls[]`). */
+export interface TaskFnToolCall {
+  id: string;
+  name: string;
+  input: unknown;
+  output: string;
+  ok: boolean;
+  ms: number;
+  /** Structured failure reason when `ok === false`. */
+  errorReason?: string;
+}
+
 /** Minimal task result shape (matches runtime `TaskResult`). */
 export interface TaskFnResult {
   /** The deliverable — the agent's final assistant message. */
   output: string;
-  /** Traceability anchor — the fresh conversation backing this task. */
-  conversationId: string;
-  toolCalls: Array<Record<string, unknown>>;
+  /** Traceability anchor — the id of this run (the runtime generates a
+   *  `run_<12hex>` id). The automation run adopts this id directly. */
+  runId: string;
+  toolCalls: TaskFnToolCall[];
   stopReason: string;
   usage: { inputTokens: number; outputTokens: number; iterations: number };
 }
@@ -242,20 +270,81 @@ function mapResultToRun(
   }
 
   return {
-    id: `run_${crypto.randomUUID().slice(0, 12)}`,
+    // Adopt the runtime's runId verbatim — the run, its index summary, and its
+    // result sidecar all key off the same id (no second uuid generated here).
+    id: data.runId,
     automationId: automation.id,
     startedAt,
     completedAt: new Date().toISOString(),
     status,
-    conversationId: data.conversationId,
     inputTokens: data.usage.inputTokens,
     outputTokens: data.usage.outputTokens,
     toolCalls: Array.isArray(data.toolCalls) ? data.toolCalls.length : 0,
     iterations: data.usage.iterations,
-    resultPreview: data.output || undefined,
+    // Truncated preview for the run list; the full deliverable lives in the
+    // AutomationRunResult sidecar (see `buildRunResult`).
+    resultPreview: data.output ? truncate(data.output) : undefined,
     stopReason,
     ...(error ? { error } : {}),
   };
+}
+
+/**
+ * Build the full run result (the deliverable) from a task result. This is the
+ * sidecar to the lightweight {@link AutomationRun} summary: the untruncated
+ * output, the activity log, and refs to any files the run wrote.
+ */
+export function buildRunResult(automation: Automation, data: TaskFnResult): AutomationRunResult {
+  const toolCalls = Array.isArray(data.toolCalls) ? data.toolCalls : [];
+  const activityLog: RunToolCall[] = toolCalls.map((tc) => ({
+    id: typeof tc.id === "string" ? tc.id : String(tc.id ?? ""),
+    name: typeof tc.name === "string" ? tc.name : String(tc.name ?? ""),
+    input: tc.input,
+    output: typeof tc.output === "string" ? tc.output : String(tc.output ?? ""),
+    ok: tc.ok === true,
+    ms: typeof tc.ms === "number" ? tc.ms : 0,
+  }));
+  return {
+    runId: data.runId,
+    automationId: automation.id,
+    completedAt: new Date().toISOString(),
+    output: data.output,
+    activityLog,
+    outputFiles: extractOutputFiles(toolCalls),
+    usage: {
+      inputTokens: data.usage.inputTokens,
+      outputTokens: data.usage.outputTokens,
+      iterations: data.usage.iterations,
+    },
+    stopReason: data.stopReason as AutomationRun["stopReason"],
+  };
+}
+
+/**
+ * Best-effort enrichment: recover refs to files the run wrote. A `files__create`
+ * tool call (bare or workspace-namespaced) that succeeded returns `{id, filename}`
+ * — parse it into a {@link RunFileRef}. Never throws; parse failures are swallowed.
+ */
+export function extractOutputFiles(toolCalls: TaskFnResult["toolCalls"]): RunFileRef[] {
+  if (!Array.isArray(toolCalls)) return [];
+  const refs: RunFileRef[] = [];
+  for (const tc of toolCalls) {
+    const name = typeof tc.name === "string" ? tc.name : "";
+    if (!(name === "files__create" || name.endsWith("files__create"))) continue;
+    if (tc.ok !== true) continue;
+    try {
+      const parsed = JSON.parse(typeof tc.output === "string" ? tc.output : "") as Record<
+        string,
+        unknown
+      >;
+      if (parsed && typeof parsed.id === "string" && typeof parsed.filename === "string") {
+        refs.push({ id: parsed.id, filename: parsed.filename });
+      }
+    } catch {
+      // swallow — output-file extraction is best-effort, never load-bearing
+    }
+  }
+  return refs;
 }
 
 /**
@@ -308,7 +397,7 @@ export function createDirectExecutor(
     automation: Automation,
     externalSignal?: AbortSignal,
     trigger: AutomationRunTrigger = "scheduled",
-  ): Promise<AutomationRun> {
+  ): Promise<{ run: AutomationRun; result: AutomationRunResult | null }> {
     const startedAt = new Date().toISOString();
     const timeoutMs = automation.maxRunDurationMs ?? DEFAULT_TIMEOUT_MS;
     const ctx = getContext(automation, trigger);
@@ -355,13 +444,18 @@ export function createDirectExecutor(
         signal: runController.signal,
       });
       const run = mapResultToRun(automation, startedAt, data);
+      // Build the result sidecar from the same data — non-null on every normal
+      // return, INCLUDING the aborted-partial path below (the partial usage and
+      // activity log accumulated before the abort are still a real deliverable
+      // worth persisting).
+      const result = buildRunResult(automation, data);
       // An aborted run comes back as a normal result (stopReason "aborted")
       // carrying the partial usage accumulated before the abort — see
       // runtime.executeTask. The task layer can't know WHY it was aborted, so
       // classify it here from our own cancellation flags: external cancel wins
       // over the timeout for the same reason it does in the throw path below.
       // The run keeps its real inputTokens/outputTokens/toolCalls/iterations
-      // and conversationId instead of the 0/0/0/0 a synthesized record carries.
+      // and runId instead of the 0/0/0/0 a synthesized record carries.
       if (data.stopReason === "aborted") {
         if (externallyAborted) {
           run.status = "cancelled";
@@ -376,12 +470,13 @@ export function createDirectExecutor(
         // field carries the operational outcome. Record the engine's stop as
         // "other" (no natural completion) to keep the persisted record valid.
         run.stopReason = "other";
+        result.stopReason = "other";
         // Match the synthesized-record path (`Scheduler.dispatchRun`) so the two
         // ways a run can end up timeout/cancelled carry identical metadata. The
         // field is currently write-only; setting it keeps the paths from drifting
         // if a future reader (e.g. retry policy) starts consuming it.
       }
-      return run;
+      return { run, result };
     } catch (err) {
       // Reaching here now means a genuine non-abort failure, OR an abort that
       // still surfaced as a throw (defensive: a real process kill, or any path

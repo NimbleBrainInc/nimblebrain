@@ -11,7 +11,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { ConversationLocator } from "../../../src/conversation/locator.ts";
-import { workspaceConversationsDir, runConversationsDir } from "../../../src/conversation/paths.ts";
+import { workspaceConversationsDir } from "../../../src/conversation/paths.ts";
 
 let workDir: string;
 
@@ -56,17 +56,10 @@ test("locate resolves a conversation to its workspace + owner", async () => {
   expect(loc).toBeDefined();
   expect(loc?.wsId).toBe("ws_helix");
   expect(loc?.ownerId).toBe("usr_alice");
-  expect(loc?.automationId).toBeNull();
 });
 
 test("locate returns undefined for an unknown id", async () => {
   expect(await locator().locate("conv_ffffffffffffffff")).toBeUndefined();
-});
-
-test("workspaceConversationsDir rejects the reserved _runs ownerId", () => {
-  // A user whose ownerId were literally `_runs` would have their chats misparsed
-  // as automation runs — fail closed rather than collide.
-  expect(() => workspaceConversationsDir(workDir, "ws_helix", "_runs")).toThrow(/reserved/);
 });
 
 test("locate resolves by path alone — it never reads/parses file content", async () => {
@@ -81,16 +74,6 @@ test("locate resolves by path alone — it never reads/parses file content", asy
   const loc = await locator().locate(id);
   expect(loc?.wsId).toBe("ws_helix");
   expect(loc?.ownerId).toBe("usr_alice");
-});
-
-test("an automation-run conversation resolves with its automationId, ownerId null", async () => {
-  const id = convId();
-  writeConversation(runConversationsDir(workDir, "ws_helix", "auto_x"), id, "usr_alice", "ws_helix");
-
-  const loc = await locator().locate(id);
-  expect(loc?.wsId).toBe("ws_helix");
-  expect(loc?.automationId).toBe("auto_x");
-  expect(loc?.ownerId).toBeNull();
 });
 
 test("workspace-scoped list returns only the focused workspace; all-workspaces returns every workspace", async () => {

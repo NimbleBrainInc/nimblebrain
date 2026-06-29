@@ -20,7 +20,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { NoopEventSink } from "../../../../src/adapters/noop-events.ts";
 import { EventSourcedConversationStore } from "../../../../src/conversation/event-sourced-store.ts";
 import { ConversationLocator } from "../../../../src/conversation/locator.ts";
-import { workspaceConversationsDir, runConversationsDir } from "../../../../src/conversation/paths.ts";
+import { workspaceConversationsDir } from "../../../../src/conversation/paths.ts";
 import type {
   ConversationAccessContext,
   ConversationListResult,
@@ -95,9 +95,7 @@ class FakeRuntime {
     const loc = await this._locator.locate(convId);
     if (!loc) return null;
     return new EventSourcedConversationStore({
-      dir: loc.automationId
-        ? runConversationsDir(this.workDir, loc.wsId, loc.automationId)
-        : workspaceConversationsDir(this.workDir, loc.wsId, loc.ownerId ?? ""),
+      dir: workspaceConversationsDir(this.workDir, loc.wsId, loc.ownerId ?? ""),
     });
   }
   async findConversation(id: string, access?: ConversationAccessContext): Promise<unknown> {

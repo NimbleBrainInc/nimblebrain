@@ -9,11 +9,15 @@
  * executor function injected at construction time.
  */
 
-import { existsSync, readdirSync } from "node:fs";
-import { join } from "node:path";
 import { Cron } from "croner";
-import { appendRun, loadDefinitions, saveDefinitions } from "./store.ts";
-import type { Automation, AutomationRun } from "./types.ts";
+import {
+  appendRun,
+  loadAllAutomations,
+  loadAutomation,
+  saveAutomation,
+  saveRunResult,
+} from "./store.ts";
+import type { Automation, AutomationRun, AutomationRunResult } from "./types.ts";
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -51,20 +55,26 @@ const TRANSIENT_PATTERNS: RegExp[] = [
  */
 export type AutomationRunTrigger = "scheduled" | "manual";
 
-/** The executor function that the scheduler delegates to. */
+/**
+ * The executor function that the scheduler delegates to. Returns the run summary
+ * AND the full run result (the deliverable). `result` is null only when the
+ * executor had no clean data (the abort/timeout-as-throw path is handled via
+ * rejection, not this shape).
+ */
 export type Executor = (
   automation: Automation,
   signal: AbortSignal,
   trigger: AutomationRunTrigger,
-) => Promise<AutomationRun>;
+) => Promise<{ run: AutomationRun; result: AutomationRunResult | null }>;
 
 export interface SchedulerConfig {
   /**
-   * Root per-user directory (`{workDir}/users`). The scheduler is multi-owner:
-   * it scans `{usersDir}/<ownerId>/automations/` for every user and fires each
-   * automation as its owner. Automations are identity-owned (Phase C).
+   * The runtime work directory (`{workDir}`). The scheduler is multi-workspace:
+   * it scans `{workDir}/workspaces/<wsId>/automations/<ownerId>/` across every
+   * workspace and owner and fires each automation as its owner, focused on its
+   * provenance workspace. Automations are workspace-owned (the path is the wall).
    */
-  usersDir: string;
+  workDir: string;
   /** Maximum concurrent automation runs. Default: 2. */
   maxConcurrentRuns?: number;
   /** Default timezone for cron expressions. Default: system timezone. */
@@ -195,9 +205,10 @@ function getTimezoneOffsetMs(tz: string, date: Date): number {
 
 export class Scheduler {
   /**
-   * Loaded automations across every owner, keyed by `${ownerId}/${id}` — see
-   * `keyOf`. Composite-keyed (not bare id) because automation ids are
-   * kebab-case and collide across owners. `activeRuns` uses the same key.
+   * Loaded automations across every workspace + owner, keyed by
+   * `${wsId}/${ownerId}/${id}` — see `keyOf`. Composite-keyed (not bare id)
+   * because automation ids are kebab-case and collide across workspaces/owners.
+   * `activeRuns` uses the same key.
    */
   private definitions: Map<string, Automation> = new Map();
   private readonly activeRuns: Map<string, AbortController> = new Map();
@@ -214,52 +225,33 @@ export class Scheduler {
     this.maxConcurrentRuns = config.maxConcurrentRuns ?? 2;
   }
 
-  /** Composite key for the cross-owner definitions/activeRuns maps. */
-  private static keyOf(automation: Pick<Automation, "id" | "ownerId">): string {
-    return `${automation.ownerId ?? ""}/${automation.id}`;
-  }
-
-  /** The owner's identity-scoped automations store dir. */
-  private storeDirFor(ownerId: string): string {
-    return join(this.config.usersDir, ownerId, "automations");
+  /** Composite key for the cross-workspace/owner definitions/activeRuns maps. */
+  private static keyOf(automation: Pick<Automation, "id" | "ownerId" | "workspaceId">): string {
+    return `${automation.workspaceId ?? ""}/${automation.ownerId ?? ""}/${automation.id}`;
   }
 
   /**
-   * Load every owner's automations into one composite-keyed map. Scans
-   * `{usersDir}/<ownerId>/automations/`. An automation's `ownerId` is stamped
-   * at create + migration; we defensively backfill from the directory name so
-   * a legacy record can't land keyed under `""`.
+   * Load every workspace + owner's automations into one composite-keyed map via
+   * `store.loadAllAutomations` (which scans every workspace + owner dir and
+   * backfills `workspaceId`/`ownerId` from the path — the directory is the
+   * binding).
    */
   private loadAll(): Map<string, Automation> {
     const all = new Map<string, Automation>();
-    let owners: string[];
-    try {
-      owners = readdirSync(this.config.usersDir, { withFileTypes: true })
-        .filter((d) => d.isDirectory())
-        .map((d) => d.name);
-    } catch {
-      return all; // usersDir not created yet — nothing scheduled
-    }
-    for (const ownerId of owners) {
-      const dir = this.storeDirFor(ownerId);
-      if (!existsSync(join(dir, "automations.json"))) continue;
-      for (const auto of loadDefinitions(dir).values()) {
-        if (typeof auto.ownerId !== "string" || auto.ownerId.length === 0) {
-          auto.ownerId = ownerId;
-        }
-        all.set(Scheduler.keyOf(auto), auto);
-      }
+    for (const auto of loadAllAutomations(this.config.workDir)) {
+      all.set(Scheduler.keyOf(auto), auto);
     }
     return all;
   }
 
-  /** Rebuild one owner's on-disk store from the in-memory composite map. */
-  private persistOwner(ownerId: string): void {
-    const map = new Map<string, Automation>();
-    for (const auto of this.definitions.values()) {
-      if (auto.ownerId === ownerId) map.set(auto.id, auto);
-    }
-    saveDefinitions(map, this.storeDirFor(ownerId));
+  /**
+   * Persist one automation to its own `<id>.json` under its provenance
+   * workspace + owner. No-op if the automation lacks a workspace or owner
+   * (defensive — every loaded automation carries both via the path backfill).
+   */
+  private persistAutomation(auto: Automation): void {
+    if (!auto.workspaceId || !auto.ownerId) return;
+    saveAutomation(this.config.workDir, auto.workspaceId, auto.ownerId, auto);
   }
 
   // -----------------------------------------------------------------------
@@ -283,17 +275,17 @@ export class Scheduler {
    */
   private seedNextRunAt(): void {
     const now = Date.now();
-    const dirtyOwners = new Set<string>();
+    const dirty: Automation[] = [];
     for (const auto of this.definitions.values()) {
-      if (auto.enabled && !auto.nextRunAt && auto.ownerId) {
+      if (auto.enabled && !auto.nextRunAt && auto.ownerId && auto.workspaceId) {
         const next = computeNextRunAt(auto, now, this.config.defaultTimezone);
         if (next !== null) {
           auto.nextRunAt = new Date(next).toISOString();
-          dirtyOwners.add(auto.ownerId);
+          dirty.push(auto);
         }
       }
     }
-    for (const ownerId of dirtyOwners) this.persistOwner(ownerId);
+    for (const auto of dirty) this.persistAutomation(auto);
   }
 
   /**
@@ -311,9 +303,9 @@ export class Scheduler {
   }
 
   /**
-   * Re-scan every owner's store and re-arm the timer. Called after a tool
-   * mutates an automation (create/update/delete) so the timer reflects the
-   * change. Multi-owner: always re-reads the full `users/*` set.
+   * Re-scan every workspace + owner's store and re-arm the timer. Called after
+   * a tool mutates an automation (create/update/delete) so the timer reflects
+   * the change. Multi-workspace: always re-reads every workspace + owner store.
    */
   reload(): void {
     this.definitions = this.loadAll();
@@ -328,8 +320,8 @@ export class Scheduler {
    * Trigger an immediate run of a specific automation, bypassing schedule
    * and backoff checks. Respects concurrency guards.
    */
-  async runNow(ownerId: string, automationId: string): Promise<AutomationRun | null> {
-    const key = Scheduler.keyOf({ id: automationId, ownerId });
+  async runNow(wsId: string, ownerId: string, automationId: string): Promise<AutomationRun | null> {
+    const key = Scheduler.keyOf({ id: automationId, ownerId, workspaceId: wsId });
     const auto = this.definitions.get(key);
     if (!auto) {
       const keys = Array.from(this.definitions.keys());
@@ -365,8 +357,10 @@ export class Scheduler {
   /**
    * Cancel an active automation run. Returns true if cancelled, false if not running.
    */
-  cancelRun(ownerId: string, automationId: string): boolean {
-    const controller = this.activeRuns.get(Scheduler.keyOf({ id: automationId, ownerId }));
+  cancelRun(wsId: string, ownerId: string, automationId: string): boolean {
+    const controller = this.activeRuns.get(
+      Scheduler.keyOf({ id: automationId, ownerId, workspaceId: wsId }),
+    );
     if (!controller) return false;
     controller.abort();
     return true;
@@ -475,9 +469,13 @@ export class Scheduler {
     const startedAt = new Date().toISOString();
 
     try {
-      const run = await this.executor(auto, controller.signal, trigger);
+      const { run, result } = await this.executor(auto, controller.signal, trigger);
       this.activeRuns.delete(key);
       this.updateAfterRun(auto, run);
+      // Persist the full deliverable sidecar alongside the run summary. Present
+      // for both the scheduled and manual (runNow) paths; null only when the
+      // executor had no clean data (it rejected instead — see the catch below).
+      if (result) this.persistRunResult(auto, result);
       return run;
     } catch (err) {
       this.activeRuns.delete(key);
@@ -514,18 +512,19 @@ export class Scheduler {
    * a run is in flight).
    */
   updateAfterRun(automation: Automation, run: AutomationRun): void {
+    const wsId = automation.workspaceId;
     const ownerId = automation.ownerId;
-    if (!ownerId) return; // defensive — every fired automation carries its owner
-    const storeDir = this.storeDirFor(ownerId);
+    if (!wsId || !ownerId) return; // defensive — every fired automation carries both
 
-    // Re-read ONLY this owner's store to pick up concurrent changes (pause,
-    // config edits) without clobbering other owners' in-memory state.
-    const ownerMap = loadDefinitions(storeDir);
-    const auto = ownerMap.get(automation.id);
+    // Re-read THIS automation's own file to pick up concurrent changes (pause,
+    // config edits) without clobbering them. Per-automation files mean a
+    // concurrent edit to a sibling automation can never be lost here.
+    const auto = loadAutomation(this.config.workDir, wsId, ownerId, automation.id);
     if (!auto) return;
-    // Stamp the authoritative owner (the store dir IS the owner) — same
+    // Stamp the authoritative workspace + owner (the path IS the binding) — same
     // backfill `loadAll` does on read, so `keyOf(auto)` below matches the
-    // composite key the timer loaded under and heals any owner-less disk record.
+    // composite key the timer loaded under and heals any record missing them.
+    auto.workspaceId = wsId;
     auto.ownerId = ownerId;
 
     const now = Date.now();
@@ -618,11 +617,20 @@ export class Scheduler {
       }
     }
 
-    // Persist to the owner's store, then sync the single in-memory entry so
-    // the timer sees the new nextRunAt without re-scanning every owner.
-    appendRun(automation.id, run, storeDir);
-    saveDefinitions(ownerMap, storeDir);
+    // Persist the run summary + the updated definition, then sync the single
+    // in-memory entry so the timer sees the new nextRunAt without re-scanning.
+    appendRun(this.config.workDir, wsId, ownerId, automation.id, run);
+    saveAutomation(this.config.workDir, wsId, ownerId, auto);
     this.definitions.set(Scheduler.keyOf(auto), auto);
+  }
+
+  /**
+   * Persist a run's full result sidecar under the automation's provenance
+   * workspace + owner. No-op when either is missing (defensive).
+   */
+  private persistRunResult(auto: Automation, result: AutomationRunResult): void {
+    if (!auto.workspaceId || !auto.ownerId) return;
+    saveRunResult(this.config.workDir, auto.workspaceId, auto.ownerId, auto.id, result);
   }
 
   /**
@@ -642,18 +650,18 @@ export class Scheduler {
       iterations: 0,
       error: reason,
     };
+    const wsId = auto.workspaceId;
     const ownerId = auto.ownerId;
-    if (!ownerId) return run; // defensive — can't locate the owner's store
-    const storeDir = this.storeDirFor(ownerId);
-    appendRun(auto.id, run, storeDir);
+    if (!wsId || !ownerId) return run; // defensive — can't locate the store
+    appendRun(this.config.workDir, wsId, ownerId, auto.id, run);
 
     // Advance nextRunAt so this automation isn't immediately "due" again.
-    // Re-read ONLY this owner's store to avoid overwriting concurrent changes.
-    const ownerMap = loadDefinitions(storeDir);
-    const fresh = ownerMap.get(auto.id);
+    // Re-read THIS automation's file to avoid overwriting concurrent changes.
+    const fresh = loadAutomation(this.config.workDir, wsId, ownerId, auto.id);
     if (fresh) {
-      // Stamp the authoritative owner (see updateAfterRun) so the composite
-      // key stays consistent with what `loadAll` keyed under.
+      // Stamp the authoritative workspace + owner (see updateAfterRun) so the
+      // composite key stays consistent with what `loadAll` keyed under.
+      fresh.workspaceId = wsId;
       fresh.ownerId = ownerId;
       const nextRun = computeNextRunAt(fresh, now, this.config.defaultTimezone);
       if (nextRun !== null) {
@@ -663,7 +671,7 @@ export class Scheduler {
         fresh.nextRunAt = new Date(effectiveNext).toISOString();
       }
       fresh.updatedAt = new Date(now).toISOString();
-      saveDefinitions(ownerMap, storeDir);
+      saveAutomation(this.config.workDir, wsId, ownerId, fresh);
       this.definitions.set(Scheduler.keyOf(fresh), fresh);
     }
 

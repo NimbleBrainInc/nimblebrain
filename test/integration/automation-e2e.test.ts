@@ -6,32 +6,34 @@
  * correct metadata structure.
  *
  * Uses the exported tool handler functions directly with a test harness
- * that wires up store, scheduler, and mock executor.
+ * that wires up the workspace-owned store, the scheduler, and a mock executor.
  */
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdirSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import type {
-	Automation,
-	AutomationRun,
-} from "../../src/bundles/automations/src/types.ts";
-import {
-	loadDefinitions,
-	saveDefinitions,
-	appendRun,
-	readRuns,
-} from "../../src/bundles/automations/src/store.ts";
 import { Scheduler } from "../../src/bundles/automations/src/scheduler.ts";
 import {
 	handleCreate,
-	handleList,
 	handleRun,
 	handleRuns,
 	handleStatus,
 	type ToolContext,
 } from "../../src/bundles/automations/src/server.ts";
+import {
+	deleteAutomationDefinition,
+	loadOwnerAutomations,
+	readAllRuns,
+	readRunResult,
+	readRuns,
+	saveAutomation,
+} from "../../src/bundles/automations/src/store.ts";
+import type {
+	Automation,
+	AutomationRun,
+	AutomationRunResult,
+} from "../../src/bundles/automations/src/types.ts";
 import type { AutomationsRunOutput } from "../../src/tools/platform/schemas/automations.ts";
 
 // ---------------------------------------------------------------------------
@@ -39,12 +41,11 @@ import type { AutomationsRunOutput } from "../../src/tools/platform/schemas/auto
 // ---------------------------------------------------------------------------
 
 const TMP_DIR = join(tmpdir(), `automation-e2e-${Date.now()}`);
-// Automations are identity-owned: stored at `{workDir}/users/{owner}/
-// automations/`, the scheduler scans `{workDir}/users/*`. The harness acts as
-// one owner.
+// Automations are workspace-owned: stored at
+// `{workDir}/workspaces/<wsId>/automations/<ownerId>/`, the scheduler scans
+// `{workDir}/workspaces/*`. The harness acts as one workspace + owner.
+const WS = "ws_test";
 const OWNER = "usr_test";
-const USERS_DIR = join(TMP_DIR, "users");
-const OWNER_STORE = join(USERS_DIR, OWNER, "automations");
 
 /** Records of what the mock executor received. */
 let executorCalls: Array<{ automation: Automation; signal: AbortSignal; trigger: string }>;
@@ -59,7 +60,6 @@ function defaultExecutorResult(auto: Automation): AutomationRun {
 		startedAt: new Date().toISOString(),
 		completedAt: new Date().toISOString(),
 		status: "success",
-		conversationId: `conv_${auto.id}`,
 		inputTokens: 150,
 		outputTokens: 80,
 		toolCalls: 3,
@@ -85,6 +85,22 @@ function expectSyncRun(result: AutomationsRunOutput): AutomationRun {
 	);
 }
 
+function loadDefs(): Map<string, Automation> {
+	return loadOwnerAutomations(TMP_DIR, WS, OWNER);
+}
+
+function saveDefs(map: Map<string, Automation>): void {
+	const onDisk = loadOwnerAutomations(TMP_DIR, WS, OWNER);
+	for (const auto of map.values()) {
+		if (!auto.workspaceId) auto.workspaceId = WS;
+		if (!auto.ownerId) auto.ownerId = OWNER;
+		saveAutomation(TMP_DIR, WS, OWNER, auto);
+	}
+	for (const id of onDisk.keys()) {
+		if (!map.has(id)) deleteAutomationDefinition(TMP_DIR, WS, OWNER, id);
+	}
+}
+
 function createHarness(): ToolContext {
 	executorCalls = [];
 	executorResult = defaultExecutorResult;
@@ -93,27 +109,45 @@ function createHarness(): ToolContext {
 		automation: Automation,
 		signal: AbortSignal,
 		trigger: string,
-	): Promise<AutomationRun> => {
+	): Promise<{ run: AutomationRun; result: AutomationRunResult | null }> => {
 		executorCalls.push({ automation, signal, trigger });
 		const run = executorResult(automation);
-		appendRun(automation.id, run, OWNER_STORE);
-		return run;
+		const result: AutomationRunResult = {
+			runId: run.id,
+			automationId: automation.id,
+			completedAt: run.completedAt ?? new Date().toISOString(),
+			output: run.resultPreview ?? "",
+			activityLog: [],
+			outputFiles: [],
+			usage: {
+				inputTokens: run.inputTokens,
+				outputTokens: run.outputTokens,
+				iterations: run.iterations,
+			},
+			stopReason: run.stopReason,
+		};
+		// The scheduler (updateAfterRun) persists the run summary + result sidecar.
+		return { run, result };
 	};
 
 	scheduler = new Scheduler(executor, {
-		usersDir: USERS_DIR,
+		workDir: TMP_DIR,
 		defaultTimezone: "Pacific/Honolulu",
 	});
 	scheduler.start();
 
 	return {
-		definitions: () => loadDefinitions(OWNER_STORE),
-		save: (defs) => saveDefinitions(defs, OWNER_STORE),
+		definitions: () => loadDefs(),
+		save: (defs) => saveDefs(defs),
 		reloadScheduler: () => scheduler.reload(),
-		runNow: (id) => scheduler.runNow(OWNER, id),
-		storeDir: OWNER_STORE,
+		runNow: (id) => scheduler.runNow(WS, OWNER, id),
+		cancelRun: (id) => scheduler.cancelRun(WS, OWNER, id),
+		readRuns: (id, opts) => readRuns(TMP_DIR, WS, OWNER, id, opts),
+		readAllRuns: (opts) => readAllRuns(TMP_DIR, WS, OWNER, opts),
+		readRunResult: (id, runId) => readRunResult(TMP_DIR, WS, OWNER, id, runId),
 		defaultTimezone: "Pacific/Honolulu",
 		currentUserId: OWNER,
+		currentWorkspaceId: WS,
 	};
 }
 
@@ -134,7 +168,6 @@ describe("automation e2e: create -> run -> verify", () => {
 	test("create automation, trigger via run handler, run history shows success", async () => {
 		const ctx = createHarness();
 
-		// Step 1: Create automation
 		const createResult = handleCreate(
 			{
 				manifest: {
@@ -150,15 +183,10 @@ describe("automation e2e: create -> run -> verify", () => {
 		expect(createResult.created).toBe(true);
 		expect(createResult.automation.id).toBe("daily-summary");
 
-		// Step 2: Trigger via run handler
 		const run = expectSyncRun(await handleRun({ name: "Daily Summary" }, ctx));
-		// `handleRun` is typed as AutomationsRunOutput; expectSyncRun narrows
-		// to the synchronous-completion shape for this fast-executor test.
-
 		expect(run.status).toBe("success");
 		expect(run.automationId).toBe("daily-summary");
 
-		// Step 3: Verify run history
 		const runsResult = handleRuns(
 			{ automationId: "daily-summary" },
 			ctx,
@@ -167,9 +195,12 @@ describe("automation e2e: create -> run -> verify", () => {
 		expect(runsResult.total).toBeGreaterThanOrEqual(1);
 		const latestRun = runsResult.runs[0]!;
 		expect(latestRun.status).toBe("success");
-		expect(latestRun.conversationId).toContain("conv_");
 		expect(latestRun.toolCalls).toBe(3);
 		expect(latestRun.iterations).toBe(2);
+		// A run is no longer a conversation — it leaves a result sidecar instead.
+		const result = ctx.readRunResult("daily-summary", latestRun.id);
+		expect(result).not.toBeNull();
+		expect(result!.usage.iterations).toBe(2);
 	});
 
 	test("create automation, trigger, executor receives correct metadata structure", async () => {
@@ -193,7 +224,6 @@ describe("automation e2e: create -> run -> verify", () => {
 
 		await handleRun({ name: "Weekly Report" }, ctx);
 
-		// Verify the executor received the full automation object
 		expect(executorCalls.length).toBe(1);
 		const received = executorCalls[0]!.automation;
 		expect(received.id).toBe("weekly-report");
@@ -206,19 +236,13 @@ describe("automation e2e: create -> run -> verify", () => {
 		expect(received.schedule.type).toBe("interval");
 		expect(received.schedule.intervalMs).toBe(3_600_000);
 
-		// Signal should not be aborted
 		expect(executorCalls[0]!.signal.aborted).toBe(false);
 
-		// The `run` tool is a user-triggered (manual) dispatch — it must NOT be
-		// treated as a scheduled run.
+		// The `run` tool is a user-triggered (manual) dispatch.
 		expect(executorCalls[0]!.trigger).toBe("manual");
 	});
 
 	test("allowedTools passed through to executor when set on the stored automation", async () => {
-		// `allowedTools` is no longer in the LLM-facing schema (it's a
-		// leaky literal-tool-name affinity). Operators set it by directly
-		// editing the stored Automation. This test seeds the store
-		// directly to exercise the executor pass-through behavior.
 		const ctx = createHarness();
 
 		handleCreate(
@@ -260,12 +284,11 @@ describe("automation e2e: run records metrics", () => {
 		const ctx = createHarness();
 
 		executorResult = (auto: Automation): AutomationRun => ({
-			id: `run_metrics_test`,
+			id: `run_${crypto.randomUUID().slice(0, 12)}`,
 			automationId: auto.id,
 			startedAt: new Date().toISOString(),
 			completedAt: new Date().toISOString(),
 			status: "success",
-			conversationId: "conv_metrics",
 			inputTokens: 500,
 			outputTokens: 200,
 			toolCalls: 7,
@@ -307,19 +330,16 @@ describe("automation e2e: run records metrics", () => {
 			ctx,
 		);
 
-		// Before run
 		const beforeStatus = handleStatus({ name: "Status Check" }, ctx) as {
 			automation: Automation;
 		};
 		expect(beforeStatus.automation.runCount).toBe(0);
 		expect(beforeStatus.automation.lastRunStatus).toBeUndefined();
 
-		// Run it
 		await handleRun({ name: "Status Check" }, ctx);
 
-		// After run: scheduler.updateAfterRun updates the definition
-		const afterDefs = loadDefinitions(OWNER_STORE);
-		const updated = afterDefs.get("status-check")!;
+		// After run: scheduler.updateAfterRun updates the definition on disk.
+		const updated = loadDefs().get("status-check")!;
 		expect(updated.runCount).toBe(1);
 		expect(updated.lastRunStatus).toBe("success");
 		expect(updated.consecutiveErrors).toBe(0);

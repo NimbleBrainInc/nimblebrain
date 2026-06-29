@@ -1,10 +1,10 @@
 /**
  * Automation tool handlers + helpers for the in-process `automations` platform
  * source (`src/tools/platform/automations.ts`). Exposes the create / update /
- * delete / list / status / runs / run / cancel handlers and the `ToolContext`
- * they run against. The former standalone stdio MCP server was removed when
- * automations moved in-process and identity-owned; this file is handlers +
- * formatting only.
+ * delete / list / status / runs / run_result / run / cancel handlers and the
+ * `ToolContext` they run against. The former standalone stdio MCP server was
+ * removed when automations moved in-process and workspace-owned; this file is
+ * handlers + formatting only.
  */
 
 import { Cron } from "croner";
@@ -14,12 +14,13 @@ import type {
   AutomationsCancelOutput,
   AutomationsListOutput,
   AutomationsRunOutput,
+  AutomationsRunResultOutput,
   AutomationsRunsOutput,
   AutomationsStatusOutput,
 } from "../../../tools/platform/schemas/automations.ts";
 import { createAutomation, deleteAutomation, updateAutomation } from "./domain.ts";
-import { readAllRuns, readRuns } from "./store.ts";
-import type { Automation, AutomationRun, ScheduleSpec } from "./types.ts";
+import type { ReadRunsOptions } from "./store.ts";
+import type { Automation, AutomationRun, AutomationRunResult, ScheduleSpec } from "./types.ts";
 
 // ---------------------------------------------------------------------------
 // Configuration
@@ -238,7 +239,12 @@ export interface ToolContext {
   reloadScheduler: () => void;
   runNow: (automationId: string) => Promise<AutomationRun | null>;
   cancelRun: (automationId: string) => boolean;
-  storeDir: string;
+  /** Read one automation's run history (workspace + owner bound at construction). */
+  readRuns: (automationId: string, opts?: ReadRunsOptions) => AutomationRun[];
+  /** Read run history across this owner's automations in the focused workspace. */
+  readAllRuns: (opts?: ReadRunsOptions) => AutomationRun[];
+  /** Read one run's full result sidecar (the deliverable). */
+  readRunResult: (automationId: string, runId: string) => AutomationRunResult | null;
   defaultTimezone: string;
   /** Workspace default model (for cost estimation when automation.model is null). */
   defaultModel?: string;
@@ -457,7 +463,7 @@ export function handleStatus(
   const limit = (args.limit as number) ?? 5;
   const now = Date.now();
 
-  const runs = readRuns(automation.id, { limit }, ctx.storeDir);
+  const runs = ctx.readRuns(automation.id, { limit });
 
   const cost = estimateCost(automation, ctx.defaultModel);
 
@@ -497,12 +503,40 @@ export function handleRuns(args: Record<string, unknown>, ctx: ToolContext): Aut
   let runs: AutomationRun[];
 
   if (automationId) {
-    runs = readRuns(automationId, { limit, status, since }, ctx.storeDir);
+    runs = ctx.readRuns(automationId, { limit, status, since });
   } else {
-    runs = readAllRuns({ limit, status, since }, ctx.storeDir);
+    runs = ctx.readAllRuns({ limit, status, since });
   }
 
   return { runs, total: runs.length };
+}
+
+/**
+ * Fetch a single run's full result (the deliverable) — the untruncated output,
+ * the activity log of every tool call, and refs to any files the run wrote.
+ * The run-list summary (`handleRuns`/`handleStatus`) carries only a truncated
+ * preview; this is how a caller pulls the whole thing.
+ */
+export function handleRunResult(
+  args: Record<string, unknown>,
+  ctx: ToolContext,
+): AutomationsRunResultOutput {
+  const name = args.name as string;
+  if (!name) throw new Error("Missing required field: name");
+  const runId = args.runId as string;
+  if (!runId) throw new Error("Missing required field: runId");
+
+  const defs = ctx.definitions();
+  const automation = findByName(defs, name);
+  if (!automation) {
+    throw new Error(`Automation not found: "${name}"`);
+  }
+
+  const result = ctx.readRunResult(automation.id, runId);
+  if (!result) {
+    throw new Error(`Run result not found: "${runId}" for automation "${name}".`);
+  }
+  return result;
 }
 
 /**
@@ -542,7 +576,7 @@ export async function handleRun(
   // `Scheduler.dispatchRun` synthesizes a failure record for any
   // executor throw and returns it — so the EXECUTOR side never rejects.
   // BUT `updateAfterRun` (called from `dispatchRun` after the executor
-  // settles) does filesystem I/O — `appendRun` + `saveDefinitions` — and
+  // settles) does filesystem I/O — `appendRun` + `saveAutomation` — and
   // can reject on disk-full, EBUSY, or permission flaps. In the
   // synchronous-completion path the rejection surfaces through
   // Promise.race and our outer catch handles it; in the dispatched path

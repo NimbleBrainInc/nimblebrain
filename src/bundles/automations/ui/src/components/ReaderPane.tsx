@@ -1,8 +1,8 @@
-import { useAction } from "@nimblebrain/synapse/react";
-import { useState } from "react";
+import { useCallTool } from "@nimblebrain/synapse/react";
+import { useEffect, useState } from "react";
 import { BackArrowIcon } from "../icons.tsx";
 import { renderMarkdown } from "../markdown.ts";
-import type { AutomationRun, AutomationSummary } from "../types.ts";
+import type { AutomationRun, AutomationRunResult, AutomationSummary } from "../types.ts";
 import { formatDuration, formatTokens, relativeTime, statusDotClass } from "../utils.ts";
 
 const STATUS_LABEL: Record<string, string> = {
@@ -31,8 +31,35 @@ export function ReaderPane({
   /** Return to the rail (used at narrow widths where rail and reader stack). */
   onBack?: () => void;
 }) {
-  const action = useAction();
+  const runResultTool = useCallTool<AutomationRunResult>("run_result");
   const [copied, setCopied] = useState(false);
+  const [result, setResult] = useState<AutomationRunResult | null>(null);
+
+  const automationName = automation?.name || run?.automationId || "unknown";
+
+  // Fetch the full run result (deliverable + activity log + output files) for a
+  // terminal run. The run-list summary only carries a truncated preview; the
+  // sidecar holds the whole thing. Best-effort: a missing sidecar (legacy run,
+  // deleted automation) just leaves us with the preview.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: runResultTool.call is stable; re-fetch only when the selected run or its automation changes
+  useEffect(() => {
+    setResult(null);
+    if (!run || run.status === "running" || run.status === "skipped") return;
+    if (!automation) return; // orphaned run — no automation to resolve by name
+    const runId = run.id;
+    let cancelled = false;
+    runResultTool
+      .call({ name: automationName, runId })
+      .then((res) => {
+        if (!cancelled) setResult((res.data as AutomationRunResult) ?? null);
+      })
+      .catch(() => {
+        // No sidecar (legacy/partial run) — fall back to the summary preview.
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [run, automation, automationName]);
 
   if (!run) {
     return (
@@ -47,28 +74,24 @@ export function ReaderPane({
     );
   }
 
-  const automationName = automation?.name || run.automationId || "unknown";
   const dotClass = statusDotClass(run.status, true);
   const statusLabel = STATUS_LABEL[run.status] || run.status;
   const orphan = !automation;
-  // Pre-0.x records were capped at 500 chars on disk; show a small note on
-  // those legacy runs so it's clear why the output looks chopped.
-  const legacyTruncated = !run.error && (run.resultPreview?.length ?? 0) === 500;
+  // Prefer the full deliverable from the result sidecar; fall back to the
+  // truncated summary preview while it loads or when no sidecar exists.
+  const output = result?.output ?? run.resultPreview ?? "";
+  const activityLog = result?.activityLog ?? [];
+  const outputFiles = result?.outputFiles ?? [];
 
   async function handleCopy() {
-    if (!run?.resultPreview) return;
+    if (!output) return;
     try {
-      await navigator.clipboard.writeText(run.resultPreview);
+      await navigator.clipboard.writeText(output);
       setCopied(true);
       setTimeout(() => setCopied(false), 1500);
     } catch {
       // clipboard may be unavailable in some contexts; silent
     }
-  }
-
-  function handleOpenConversation() {
-    if (!run?.conversationId) return;
-    action("openConversation", { id: run.conversationId });
   }
 
   return (
@@ -107,7 +130,7 @@ export function ReaderPane({
             {formatDuration(run.startedAt, run.completedAt)}
             <span className="reader-head-dot">·</span>
             {formatTokens(run.inputTokens)} in / {formatTokens(run.outputTokens)} out
-            {run.toolCalls > 0 && (
+            {(run.toolCalls ?? 0) > 0 && (
               <>
                 <span className="reader-head-dot">·</span>
                 {run.toolCalls} tool {run.toolCalls === 1 ? "call" : "calls"}
@@ -118,19 +141,18 @@ export function ReaderPane({
           </div>
         </div>
         <div className="reader-actions">
-          {run.resultPreview && (
+          {output && (
             <button type="button" className="btn" onClick={handleCopy}>
               {copied ? "Copied" : "Copy"}
             </button>
           )}
           {!orphan && (
-            <button type="button" className="btn" onClick={() => onRerun(automationName)}>
+            <button
+              type="button"
+              className="btn btn-accent"
+              onClick={() => onRerun(automationName)}
+            >
               Re-run
-            </button>
-          )}
-          {run.conversationId && (
-            <button type="button" className="btn btn-accent" onClick={handleOpenConversation}>
-              Open conversation →
             </button>
           )}
         </div>
@@ -141,7 +163,7 @@ export function ReaderPane({
           <div className="reader-error">
             <div className="reader-error-label">Error</div>
             <pre className="reader-error-body">{run.error}</pre>
-            {run.resultPreview && (
+            {output && (
               <>
                 <div className="reader-error-label" style={{ marginTop: 14 }}>
                   Output before failure
@@ -149,33 +171,51 @@ export function ReaderPane({
                 <div
                   className="out-md"
                   // biome-ignore lint/security/noDangerouslySetInnerHtml: sanitized via DOMPurify in renderMarkdown
-                  dangerouslySetInnerHTML={{
-                    __html: renderMarkdown(run.resultPreview),
-                  }}
+                  dangerouslySetInnerHTML={{ __html: renderMarkdown(output) }}
                 />
               </>
             )}
           </div>
-        ) : run.resultPreview ? (
-          <>
-            <div
-              className="out-md"
-              // biome-ignore lint/security/noDangerouslySetInnerHtml: sanitized via DOMPurify in renderMarkdown
-              dangerouslySetInnerHTML={{
-                __html: renderMarkdown(run.resultPreview),
-              }}
-            />
-            {legacyTruncated && (
-              <div className="reader-truncation-note">
-                This run is from an older build that capped output at 500 chars. Re-run for the full
-                output.
-              </div>
-            )}
-          </>
+        ) : output ? (
+          <div
+            className="out-md"
+            // biome-ignore lint/security/noDangerouslySetInnerHtml: sanitized via DOMPurify in renderMarkdown
+            dangerouslySetInnerHTML={{ __html: renderMarkdown(output) }}
+          />
         ) : run.status === "running" ? (
           <div className="reader-empty-desc">This run is still in progress.</div>
         ) : (
           <div className="reader-empty-desc">No output captured for this run.</div>
+        )}
+
+        {outputFiles.length > 0 && (
+          <div className="reader-files">
+            <div className="reader-section-label">Files produced</div>
+            <ul className="reader-file-list">
+              {outputFiles.map((f) => (
+                <li key={f.id} className="reader-file">
+                  {f.filename}
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
+
+        {activityLog.length > 0 && (
+          <details className="reader-activity">
+            <summary className="reader-section-label">
+              Activity log ({activityLog.length} tool {activityLog.length === 1 ? "call" : "calls"})
+            </summary>
+            <ul className="reader-activity-list">
+              {activityLog.map((tc) => (
+                <li key={tc.id} className="reader-activity-item">
+                  <span className={`dot ${tc.ok ? "dot-success" : "dot-failure"}`} />
+                  <span className="reader-activity-name">{tc.name}</span>
+                  <span className="reader-activity-ms">{tc.ms}ms</span>
+                </li>
+              ))}
+            </ul>
+          </details>
         )}
 
         <div className="reader-footer-meta">

@@ -3,9 +3,10 @@
  * agent invocation primitive that sits beside `runtime.chat()`.
  *
  * These tests pin the contract differences from chat:
- *  - Each call creates a FRESH conversation (no resume path).
- *  - The deliverable persists to the conversation (so the UI's
- *    "Open conversation →" affordance can show it).
+ *  - A task leaves a RUN, not a conversation: each call returns a fresh
+ *    `runId` and writes NO conversation (no resume path).
+ *  - The deliverable rides back on `TaskResult.output`; the caller (the
+ *    automations bundle) persists the run result sidecar.
  *  - `workspaceId` set    → focused workspace tool scope.
  *  - `workspaceId` absent → the orchestrator still routes a namespaced
  *                            cross-workspace tool call (dispatch
@@ -98,7 +99,7 @@ describe("runtime.executeTask", () => {
     return { personalWsId, sharedWsId: SHARED_WS_ID };
   }
 
-  it("returns a deliverable and a fresh conversation id on the happy path", async () => {
+  it("returns a deliverable and a runId on the happy path", async () => {
     // Echo model: no scripted responses → falls back to echoing the
     // last user message. The task prompt is the user message, so the
     // returned output should contain the prompt back.
@@ -111,12 +112,13 @@ describe("runtime.executeTask", () => {
     });
 
     expect(result.output).toContain("summarize today's activity");
-    expect(result.conversationId).toMatch(/^[a-z0-9_-]+$/i);
+    // A task leaves a runId (its traceability anchor), NOT a conversation id.
+    expect(result.runId).toMatch(/^run_[a-z0-9_-]+$/i);
     expect(result.stopReason).toBe("complete");
     expect(result.usage.iterations).toBeGreaterThan(0);
   });
 
-  it("each call writes a NEW conversation (no resume path)", async () => {
+  it("each call gets a distinct runId (no resume path)", async () => {
     runtime = await bootRuntime(undefined);
     await provisionWorkspaces(runtime);
 
@@ -129,10 +131,10 @@ describe("runtime.executeTask", () => {
       identity: { id: TEST_USER_ID, displayName: TEST_USER_DISPLAY },
     });
 
-    expect(first.conversationId).not.toBe(second.conversationId);
+    expect(first.runId).not.toBe(second.runId);
   });
 
-  it("persists the deliverable to the backing conversation", async () => {
+  it("does NOT write a conversation — a task leaves a run, not a chat", async () => {
     runtime = await bootRuntime(undefined);
     await provisionWorkspaces(runtime);
 
@@ -141,24 +143,12 @@ describe("runtime.executeTask", () => {
       identity: { id: TEST_USER_ID, displayName: TEST_USER_DISPLAY },
     });
 
-    // The conversation is reachable via the runtime's conversation store
-    // and must carry the assistant message holding the deliverable.
-    const store = await runtime.resolveConversationStore(result.conversationId);
-    const convo = await store!.load(result.conversationId);
-    expect(convo).not.toBeNull();
-    const history = await store!.history(convo!);
-    const assistantMessages = history.filter((m) => m.role === "assistant");
-    expect(assistantMessages.length).toBeGreaterThan(0);
-    // The deliverable in result.output matches what was persisted.
-    const persistedText = assistantMessages
-      .flatMap((m) =>
-        Array.isArray(m.content)
-          ? m.content.filter((c: { type: string }) => c.type === "text")
-          : [],
-      )
-      .map((c: { text: string }) => c.text)
-      .join("");
-    expect(persistedText).toContain(result.output);
+    // The deliverable rides back on the result, not a persisted conversation.
+    expect(result.output.length).toBeGreaterThan(0);
+    // Nothing is persisted under the runId (it is not a conversation id).
+    const store = await runtime.resolveConversationStore(result.runId);
+    const convo = store ? await store.load(result.runId) : null;
+    expect(convo).toBeNull();
   });
 
   it("with workspaceId set, focused workspace's tools are surfaced", async () => {
@@ -240,7 +230,7 @@ describe("runtime.executeTask", () => {
     expect(result.toolCalls[0]?.output).toMatch(/not a member|denied|access|bounded/i);
   });
 
-  it("returns partial usage + conversationId tagged 'aborted' when the run is aborted mid-flight", async () => {
+  it("returns partial usage + runId tagged 'aborted' when the run is aborted mid-flight", async () => {
     // Pins the event-shape contract the per-run usage accumulator in
     // runtime.executeTask depends on. The accumulator reads `data.usage`
     // off `llm.done` and counts `tool.done`; if either shape drifts it
@@ -300,12 +290,12 @@ describe("runtime.executeTask", () => {
     expect(result.usage.iterations).toBeGreaterThan(0);
     expect(result.toolCalls.length).toBeGreaterThan(0);
     expect(result.toolCalls[0]?.name).toBe(namespacedPing);
-    // A real conversation anchor for post-mortem (the gap the synthesized
+    // A real run anchor for post-mortem (the gap the synthesized
     // 0/0/0/0 record left behind).
-    expect(result.conversationId).toMatch(/^[a-z0-9_-]+$/i);
+    expect(result.runId).toMatch(/^run_[a-z0-9_-]+$/i);
   });
 
-  it("stamps source: 'task' on the conversation metadata", async () => {
+  it("creates no conversation even when caller passes metadata", async () => {
     runtime = await bootRuntime(undefined);
     await provisionWorkspaces(runtime);
 
@@ -315,12 +305,12 @@ describe("runtime.executeTask", () => {
       metadata: { automationId: "auto_test_123" },
     });
 
-    const store = await runtime.resolveConversationStore(result.conversationId);
-    const convo = await store!.load(result.conversationId);
-    expect(convo).not.toBeNull();
-    expect(convo!.metadata?.source).toBe("task");
-    // Caller's metadata passes through alongside the source tag.
-    expect(convo!.metadata?.automationId).toBe("auto_test_123");
+    // A task is not a conversation: the caller's metadata has nowhere to be
+    // persisted as a chat, and no conversation is written under the runId.
+    expect(result.runId).toMatch(/^run_[a-z0-9_-]+$/i);
+    const store = await runtime.resolveConversationStore(result.runId);
+    const convo = store ? await store.load(result.runId) : null;
+    expect(convo).toBeNull();
   });
 
   it("loads the focused workspace's `always` skill into Layer 3 (parity with chat path)", async () => {
@@ -350,18 +340,29 @@ describe("runtime.executeTask", () => {
       `---\nname: ${SKILL_NAME}\ndescription: workflow for the shared workspace\nmetadata:\n  nimblebrain:\n    loading-strategy: dynamic\n    tool-affinity: ["nb__*"]\n    priority: 30\n---\n\nAlways answer in plain English.\n`,
     );
 
-    const result = await runtime.executeTask({
-      prompt: "do a thing",
-      identity: { id: TEST_USER_ID, displayName: TEST_USER_DISPLAY },
-      workspaceId: SHARED_WS_ID,
-    });
+    // A task writes no conversation, so the `skills.loaded` telemetry is
+    // observed off the engine event stream via a per-request sink instead of
+    // a persisted conversation log.
+    const captured: EngineEvent[] = [];
+    const captureSink: EventSink = {
+      emit(event: EngineEvent): void {
+        captured.push(event);
+      },
+    };
 
-    const store = await runtime.resolveConversationStore(result.conversationId);
-    const events = await store!.readEvents(result.conversationId);
-    const skillsLoaded = events.find((e) => e.type === "skills.loaded");
+    await runtime.executeTask(
+      {
+        prompt: "do a thing",
+        identity: { id: TEST_USER_ID, displayName: TEST_USER_DISPLAY },
+        workspaceId: SHARED_WS_ID,
+      },
+      captureSink,
+    );
+
+    const skillsLoaded = captured.find((e) => e.type === "skills.loaded");
     expect(skillsLoaded).toBeDefined();
 
-    const payload = skillsLoaded as unknown as {
+    const payload = skillsLoaded!.data as unknown as {
       skills: Array<{ id: string; scope: string; loadedBy: string }>;
     };
     const expectedPath = join(sharedSkillsDir, `${SKILL_NAME}.md`);

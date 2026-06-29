@@ -99,7 +99,7 @@ afterEach(() => {
 function makeDirectTaskFn(): TaskFn {
 	return async (req): Promise<TaskFnResult> => ({
 		output: `echo: ${req.prompt}`,
-		conversationId: "conv_test",
+		runId: "run_test000000",
 		toolCalls: [],
 		stopReason: "complete",
 		usage: { inputTokens: 100, outputTokens: 50, iterations: 1 },
@@ -138,7 +138,7 @@ describe("createDirectExecutor", () => {
 			capturedIdentity = req.identity;
 			return {
 				output: "ok",
-				conversationId: "conv_test",
+				runId: "run_test000000",
 				toolCalls: [],
 				stopReason: "complete",
 				usage: { inputTokens: 100, outputTokens: 50, iterations: 1 },
@@ -164,7 +164,7 @@ describe("createDirectExecutor", () => {
 			capturedRequest = req as unknown as Record<string, unknown>;
 			return {
 				output: "ok",
-				conversationId: "conv_test",
+				runId: "run_test000000",
 				toolCalls: [],
 				stopReason: "complete",
 				usage: { inputTokens: 100, outputTokens: 50, iterations: 1 },
@@ -195,7 +195,7 @@ describe("createDirectExecutor — stopReason → status", () => {
 	function taskFnWithStop(stopReason: string): TaskFn {
 		return async (): Promise<TaskFnResult> => ({
 			output: "done",
-			conversationId: "conv_test",
+			runId: "run_test000000",
 			toolCalls: [],
 			stopReason,
 			usage: { inputTokens: 10, outputTokens: 5, iterations: 1 },
@@ -204,7 +204,7 @@ describe("createDirectExecutor — stopReason → status", () => {
 
 	async function statusFor(stopReason: string): Promise<string> {
 		const executor = createDirectExecutor(taskFnWithStop(stopReason), () => ({}));
-		const run = await executor(makeAutomation());
+		const { run } = await executor(makeAutomation());
 		return run.status;
 	}
 
@@ -244,7 +244,7 @@ describe("createDirectExecutor — connector-unreachable de-masking", () => {
 	function taskFnWithToolCalls(toolCalls: Array<Record<string, unknown>>): TaskFn {
 		return async (): Promise<TaskFnResult> => ({
 			output: "I documented the gap in the deliverable.",
-			conversationId: "conv_test",
+			runId: "run_test000000",
 			toolCalls,
 			stopReason: "complete",
 			usage: { inputTokens: 10, outputTokens: 5, iterations: 1 },
@@ -253,7 +253,8 @@ describe("createDirectExecutor — connector-unreachable de-masking", () => {
 
 	async function runWith(toolCalls: Array<Record<string, unknown>>): Promise<AutomationRun> {
 		const executor = createDirectExecutor(taskFnWithToolCalls(toolCalls), () => ({}));
-		return executor(makeAutomation());
+		const { run } = await executor(makeAutomation());
+		return run;
 	}
 
 	test("complete + unknown_tool_source → failure naming the tool", async () => {
@@ -364,7 +365,7 @@ describe("createDirectExecutor — aborted run preserves partial usage", () => {
 			});
 			return {
 				output: "",
-				conversationId: "conv_partial",
+				runId: "run_partial0001",
 				toolCalls: [
 					{ id: "t1", name: "gmail__send_message", input: {}, output: "sent", ok: true, ms: 80 },
 				],
@@ -374,19 +375,25 @@ describe("createDirectExecutor — aborted run preserves partial usage", () => {
 		};
 	}
 
-	test("wall-clock timeout records status=timeout with the real counters and conversationId", async () => {
+	test("wall-clock timeout records status=timeout with the real counters and runId; result is non-null", async () => {
 		const executor = createDirectExecutor(abortingTaskFn(), () => ({ workspaceId: "ws_test" }));
-		const run = await executor(makeAutomation({ maxRunDurationMs: 30 }));
+		const { run, result } = await executor(makeAutomation({ maxRunDurationMs: 30 }));
 
 		expect(run.status).toBe("timeout");
 		expect(run.inputTokens).toBe(4096);
 		expect(run.outputTokens).toBe(512);
 		expect(run.iterations).toBe(4);
 		expect(run.toolCalls).toBe(1);
-		expect(run.conversationId).toBe("conv_partial");
+		// The run adopts the runtime's runId verbatim.
+		expect(run.id).toBe("run_partial0001");
 		expect(run.error).toMatch(/timed out after/);
 		// "aborted" is not a valid persisted stopReason — normalized to "other".
 		expect(run.stopReason).toBe("other");
+		// The aborted-partial path still builds a result sidecar from the partial data.
+		expect(result).not.toBeNull();
+		expect(result!.runId).toBe("run_partial0001");
+		expect(result!.usage.iterations).toBe(4);
+		expect(result!.stopReason).toBe("other");
 	});
 
 	test("external cancel records status=cancelled with the real counters", async () => {
@@ -394,14 +401,19 @@ describe("createDirectExecutor — aborted run preserves partial usage", () => {
 		// aborts the run controller immediately; the timer never fires.
 		const externalSignal = AbortSignal.abort();
 		const executor = createDirectExecutor(abortingTaskFn(), () => ({ workspaceId: "ws_test" }));
-		const run = await executor(makeAutomation({ maxRunDurationMs: 600_000 }), externalSignal);
+		const { run, result } = await executor(
+			makeAutomation({ maxRunDurationMs: 600_000 }),
+			externalSignal,
+		);
 
 		expect(run.status).toBe("cancelled");
 		expect(run.inputTokens).toBe(4096);
 		expect(run.outputTokens).toBe(512);
 		expect(run.iterations).toBe(4);
-		expect(run.conversationId).toBe("conv_partial");
+		expect(run.id).toBe("run_partial0001");
 		expect(run.error).toBe("Cancelled by user");
+		expect(result).not.toBeNull();
+		expect(result!.runId).toBe("run_partial0001");
 	});
 });
 
@@ -448,8 +460,8 @@ describe("createDirectExecutor — recursive-call guard", () => {
 			allowedTools: ["files__*", "skills__list", "conversations__search"],
 		});
 
-		const result = await executor(automation);
-		expect(result.status).toBe("success");
+		const { run } = await executor(automation);
+		expect(run.status).toBe("success");
 	});
 
 	test("forwards a combined signal into taskFn so timeouts cancel in-flight task work", async () => {
@@ -483,7 +495,7 @@ describe("createDirectExecutor — recursive-call guard", () => {
 			}
 			return {
 				output: "ok",
-				conversationId: "conv_test",
+				runId: "run_test000000",
 				toolCalls: [],
 				stopReason: "complete",
 				usage: { inputTokens: 100, outputTokens: 50, iterations: 1 },

@@ -346,7 +346,7 @@ function appendEntry(
 function workspaceLabel(destDir: string): string {
   const parsed: ParsedFilesPath | null = parseFilesPath(join(destDir, "registry.jsonl"));
   if (!parsed) return destDir;
-  return `${parsed.wsId} · ${parsed.ownerId ?? "_runs"}`;
+  return `${parsed.wsId} · ${parsed.ownerId}`;
 }
 
 function resolveWorkDir(args: string[]): string {

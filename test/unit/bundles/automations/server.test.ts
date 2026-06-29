@@ -6,9 +6,13 @@ import type {
 	AutomationRun,
 } from "../../../../src/bundles/automations/src/types.ts";
 import {
-	loadDefinitions,
-	saveDefinitions,
 	appendRun,
+	deleteAutomationDefinition,
+	loadOwnerAutomations,
+	readAllRuns,
+	readRunResult,
+	readRuns,
+	saveAutomation,
 } from "../../../../src/bundles/automations/src/store.ts";
 import {
 	formatSchedule,
@@ -25,6 +29,32 @@ import {
 	validateAutomationFields,
 	type ToolContext,
 } from "../../../../src/bundles/automations/src/server.ts";
+
+const WS = "ws_test";
+const OWNER = "usr_test";
+
+/** Load this test's single workspace+owner automations. */
+function loadDefs(): Map<string, Automation> {
+	return loadOwnerAutomations(TMP_DIR, WS, OWNER);
+}
+
+/** Reconcile a definitions map to the per-automation store (write each, delete removed). */
+function saveDefs(map: Map<string, Automation>): void {
+	const onDisk = loadOwnerAutomations(TMP_DIR, WS, OWNER);
+	for (const auto of map.values()) {
+		if (!auto.workspaceId) auto.workspaceId = WS;
+		if (!auto.ownerId) auto.ownerId = OWNER;
+		saveAutomation(TMP_DIR, WS, OWNER, auto);
+	}
+	for (const id of onDisk.keys()) {
+		if (!map.has(id)) deleteAutomationDefinition(TMP_DIR, WS, OWNER, id);
+	}
+}
+
+/** Append a run summary for this test's workspace+owner. */
+function seedRun(automationId: string, run: AutomationRun): void {
+	appendRun(TMP_DIR, WS, OWNER, automationId, run);
+}
 
 // ---------------------------------------------------------------------------
 // Test helpers
@@ -58,24 +88,23 @@ let savedDefs: Map<string, Automation>;
 let schedulerReloaded: boolean;
 
 function makeCtx(overrides?: Partial<ToolContext>): ToolContext {
-	savedDefs = loadDefinitions(TMP_DIR);
+	savedDefs = loadDefs();
 	schedulerReloaded = false;
 
 	return {
-		definitions: () => loadDefinitions(TMP_DIR),
+		definitions: () => loadDefs(),
 		save: (defs) => {
-			saveDefinitions(defs, TMP_DIR);
+			saveDefs(defs);
 			savedDefs = defs;
 		},
 		reloadScheduler: () => {
 			schedulerReloaded = true;
 		},
 		runNow: async (automationId: string): Promise<AutomationRun | null> => {
-			const defs = loadDefinitions(TMP_DIR);
-			const auto = defs.get(automationId);
+			const auto = loadDefs().get(automationId);
 			if (!auto) return null;
 			const run: AutomationRun = {
-				id: `run_test_${Date.now()}`,
+				id: `run_test${Date.now()}`,
 				automationId,
 				startedAt: new Date().toISOString(),
 				completedAt: new Date().toISOString(),
@@ -86,11 +115,13 @@ function makeCtx(overrides?: Partial<ToolContext>): ToolContext {
 				iterations: 1,
 				resultPreview: "Test run completed",
 			};
-			appendRun(automationId, run, TMP_DIR);
+			seedRun(automationId, run);
 			return run;
 		},
 		cancelRun: (_automationId: string) => false,
-		storeDir: TMP_DIR,
+		readRuns: (id, opts) => readRuns(TMP_DIR, WS, OWNER, id, opts),
+		readAllRuns: (opts) => readAllRuns(TMP_DIR, WS, OWNER, opts),
+		readRunResult: (id, runId) => readRunResult(TMP_DIR, WS, OWNER, id, runId),
 		defaultTimezone: "Pacific/Honolulu",
 		...overrides,
 	};
@@ -491,7 +522,7 @@ describe("handleStatus", () => {
 			}),
 		];
 		for (const run of runs) {
-			appendRun("status-test", run, TMP_DIR);
+			seedRun("status-test", run);
 		}
 
 		const result = handleStatus({ name: "Status Test", limit: 5 }, ctx) as {
@@ -527,34 +558,22 @@ describe("handleRuns", () => {
 			ctx,
 		);
 
-		appendRun(
-			"run-filter-test",
-			makeRun({
+		seedRun("run-filter-test", makeRun({
 				automationId: "run-filter-test",
 				status: "success",
 				startedAt: "2025-06-15T10:00:00.000Z",
-			}),
-			TMP_DIR,
-		);
-		appendRun(
-			"run-filter-test",
-			makeRun({
+			}));
+		seedRun("run-filter-test", makeRun({
 				automationId: "run-filter-test",
 				status: "failure",
 				error: "oops",
 				startedAt: "2025-06-15T11:00:00.000Z",
-			}),
-			TMP_DIR,
-		);
-		appendRun(
-			"run-filter-test",
-			makeRun({
+			}));
+		seedRun("run-filter-test", makeRun({
 				automationId: "run-filter-test",
 				status: "success",
 				startedAt: "2025-06-15T12:00:00.000Z",
-			}),
-			TMP_DIR,
-		);
+			}));
 
 		const result = handleRuns(
 			{ automationId: "run-filter-test", status: "failure" },
@@ -570,8 +589,8 @@ describe("handleRuns", () => {
 		handleCreate(createArgs("A", "p", { type: "interval", intervalMs: 60_000 }), ctx);
 		handleCreate(createArgs("B", "p", { type: "interval", intervalMs: 60_000 }), ctx);
 
-		appendRun("a", makeRun({ automationId: "a", startedAt: "2025-06-15T10:00:00.000Z" }), TMP_DIR);
-		appendRun("b", makeRun({ automationId: "b", startedAt: "2025-06-15T11:00:00.000Z" }), TMP_DIR);
+		seedRun("a", makeRun({ automationId: "a", startedAt: "2025-06-15T10:00:00.000Z" }));
+		seedRun("b", makeRun({ automationId: "b", startedAt: "2025-06-15T11:00:00.000Z" }));
 
 		const result = handleRuns({}, ctx) as { runs: AutomationRun[]; total: number };
 		expect(result.total).toBe(2);
@@ -671,11 +690,7 @@ describe("delete preserves run history", () => {
 			ctx,
 		);
 
-		appendRun(
-			"deletable",
-			makeRun({ automationId: "deletable", status: "success" }),
-			TMP_DIR,
-		);
+		seedRun("deletable", makeRun({ automationId: "deletable", status: "success" }));
 
 		handleDelete({ name: "Deletable" }, ctx);
 
@@ -726,13 +741,13 @@ describe("handleUpdate — re-enable clears disable state", () => {
 		);
 
 		// Simulate auto-disable by writing directly
-		const defs = loadDefinitions(TMP_DIR);
+		const defs = loadDefs();
 		const auto = defs.get("disabled-test")!;
 		auto.enabled = false;
 		auto.disabledAt = new Date().toISOString();
 		auto.disabledReason = "Auto-disabled after 10 consecutive failures";
 		auto.consecutiveErrors = 10;
-		saveDefinitions(defs, TMP_DIR);
+		saveDefs(defs);
 
 		// Re-enable
 		const result = handleUpdate(
@@ -786,12 +801,12 @@ describe("handleList — disable info", () => {
 		);
 
 		// Simulate auto-disable
-		const defs = loadDefinitions(TMP_DIR);
+		const defs = loadDefs();
 		const auto = defs.get("list-disabled")!;
 		auto.enabled = false;
 		auto.disabledAt = new Date().toISOString();
 		auto.disabledReason = "Token budget exceeded";
-		saveDefinitions(defs, TMP_DIR);
+		saveDefs(defs);
 
 		const result = handleList({}, ctx) as Record<string, unknown>;
 		const automations = result.automations as Array<Record<string, unknown>>;
@@ -1024,7 +1039,10 @@ describe("automation ownership", () => {
 		expect(result.automation.workspaceId).toBe("ws_ops");
 	});
 
-	test("automations without ownerId continue to work", () => {
+	test("create without an explicit context still binds owner+workspace from the store path", () => {
+		// Automations are workspace-owned: even when the create context carries no
+		// currentUserId/currentWorkspaceId, the save path stamps the binding from
+		// the dir the automation is written to (the path is the wall).
 		const ctx = makeCtx(); // no currentUserId or currentWorkspaceId
 		const result = handleCreate(
 			createArgs("Legacy Automation", "do something", {
@@ -1035,7 +1053,7 @@ describe("automation ownership", () => {
 		) as { automation: Automation; created: boolean };
 
 		expect(result.created).toBe(true);
-		expect(result.automation.ownerId).toBeUndefined();
-		expect(result.automation.workspaceId).toBeUndefined();
+		expect(result.automation.ownerId).toBe(OWNER);
+		expect(result.automation.workspaceId).toBe(WS);
 	});
 });

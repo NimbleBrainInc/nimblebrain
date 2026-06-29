@@ -26,7 +26,7 @@ import { EventSourcedConversationStore } from "../conversation/event-sourced-sto
 import { JsonlConversationStore } from "../conversation/jsonl-store.ts";
 import { ConversationLocator } from "../conversation/locator.ts";
 import { InMemoryConversationStore } from "../conversation/memory-store.ts";
-import { runConversationsDir, workspaceConversationsDir } from "../conversation/paths.ts";
+import { workspaceConversationsDir } from "../conversation/paths.ts";
 import type {
   Conversation,
   ConversationAccessContext,
@@ -1896,37 +1896,14 @@ export class Runtime {
       ...(requestIdentity.displayName ? { displayName: requestIdentity.displayName } : {}),
     });
     await this.ensureWorkspaceRegistry(sessionWsId);
-    // The run conversation lives in its provenance workspace (the focused workspace,
-    // or the owner's personal workspace when unfocused). When an automation id is
-    // threaded it lands in that workspace's `_runs/<automationId>/` partition
-    // (workspace-visible); otherwise the owner partition.
-    const provWsId = request.workspaceId ?? sessionWsId;
-    const automationId =
-      typeof request.metadata?.automationId === "string"
-        ? request.metadata.automationId
-        : undefined;
-    // TODO(PR3): thread the automation id through the scheduler→executeTask
-    // contract so every scheduled run lands in `_runs/<automationId>/`.
-    const store: EventSourcedConversationStore = automationId
-      ? this.runConversationStore(provWsId, automationId)
-      : this.workspaceConversationStore(provWsId, ownerId);
+    // A task is a one-shot run, not a conversation: it produces a deliverable
+    // (the caller — the automations bundle — persists the run result), so
+    // nothing is written to a conversation store and there is no resume path.
+    // `runId` is the run's traceability anchor: stamped on the request context
+    // for audit/file correlation and returned to the caller as the id under
+    // which it persists the result.
+    const runId = `run_${crypto.randomUUID().slice(0, 12)}`;
     const sessionWorkspace = await this._workspaceStore.get(sessionWsId);
-
-    // Always create a fresh conversation per task. No resume path —
-    // `TaskRequest` has no `conversationId` field by design.
-    const conversation = await store.create({
-      ownerId,
-      workspaceId: provWsId,
-      ...(automationId ? { automationId } : {}),
-      metadata: { source: "task", ...(request.metadata ?? {}) },
-    });
-
-    await store.append(conversation, {
-      role: "user",
-      content: [{ type: "text", text: request.prompt }],
-      timestamp: new Date().toISOString(),
-      userId: requestIdentity.id,
-    });
 
     // Workspace briefing (apps + overlays + workspace context). Same shape
     // as chat: gated on `focusedWsId`. When absent the briefing layers are
@@ -2052,12 +2029,18 @@ export class Runtime {
     }
     resolvedModelString = resolveModelString(resolvedModelString);
 
-    // Load the freshly-appended user message. Rehydration happens once below,
-    // after compaction (no-op here since there are typically no file refs —
-    // the rehydrate call is a pass-through for shape consistency with the
-    // engine's message contract).
-    const history = await store.history(conversation);
+    // The task's single input message — no conversation, no history, no resume.
+    // Rehydration below is a pass-through for shape consistency with the engine's
+    // message contract (it only does work if the prompt carries file refs).
     const fileStore = this.getWorkspaceFileStore(request.workspaceId ?? sessionWsId, ownerId);
+    const taskMessages: StoredMessage[] = [
+      {
+        role: "user",
+        content: [{ type: "text", text: request.prompt }],
+        timestamp: new Date().toISOString(),
+        userId: requestIdentity.id,
+      },
+    ];
 
     const resolvedMaxOutputTokens = resolveMaxOutputTokens({
       configValue: this.config.maxOutputTokens,
@@ -2085,26 +2068,8 @@ export class Runtime {
       maxOutputTokens: resolvedMaxOutputTokens,
     });
 
-    // History compaction (opt-in): when the conversation has outgrown its
-    // budget, fold the oldest turns into a summary so the prefix re-anchors
-    // once here instead of windowing — and busting the cache — every turn.
-    // No-op unless `features.compaction` is on and the store is event-sourced;
-    // best-effort, so a summarizer failure falls back to the full history.
-    //
-    // Plan/persist compaction on the RAW (un-rehydrated) history, then
-    // rehydrate the result exactly once — rehydration inlines file bytes,
-    // which the ts-keyed compaction estimate and summarizer transcript must
-    // not see. NOTE: because the trigger estimate runs pre-rehydration, large
-    // file extractions aren't counted toward the threshold, so compaction can
-    // under-fire relative to true prompt size; the overflow windowing path
-    // below still bounds the hard context limit.
-    const compactedHistory = await this.maybeCompactHistory(
-      store,
-      conversation.id,
-      history,
-      messageBudget.budget,
-    );
-    const messages = await rehydrateUserResources(compactedHistory ?? history, fileStore, {
+    // No compaction: a task has a single-message history, never near budget.
+    const messages = await rehydrateUserResources(taskMessages, fileStore, {
       model: resolvedModelString,
       maxExtractedTextSize: this.getFilesConfig().maxExtractedTextSize,
     });
@@ -2151,37 +2116,18 @@ export class Runtime {
       // Connector-skill overlays — same focused-workspace scoping as the
       // layer-3 pool; surfaced once into history, never the system prefix.
       connectorSkillCandidates: this.loadConnectorSkillCandidates(focusedWsId ?? sessionWsId),
-      // Computed from the UN-rehydrated history — rehydrate strips the synthetic
-      // marker's metadata, so the engine can't recover the already-injected set
-      // from the messages it receives. This is what makes surface-ONCE hold
-      // across turns on the real chat path.
-      alreadyInjectedConnectorSkills: this.collectInjectedConnectorSkills(
-        compactedHistory ?? history,
-      ),
+      // A fresh task has a single user message and no prior history, so no
+      // connector skill has been injected yet — the set is empty.
+      alreadyInjectedConnectorSkills: this.collectInjectedConnectorSkills(taskMessages),
       ...(request.signal ? { signal: request.signal } : {}),
     };
 
-    // Event store routing — same as chat: the task's per-call workspace store is
-    // always the sink; the `this.eventStore` branch is vestigial (always null).
-    // TODO(cleanup): collapse with the chat path (see `_chatInner`).
-    const isWorkspaceRequest =
-      store instanceof EventSourcedConversationStore && store !== this.store;
-    let activeEventStore: EventSourcedConversationStore | null = null;
-    if (isWorkspaceRequest) {
-      if (this.eventStore) this.eventStore.setActiveConversation("");
-      activeEventStore = store as EventSourcedConversationStore;
-      activeEventStore.setActiveConversation(conversation.id);
-    } else if (this.eventStore) {
-      activeEventStore = this.eventStore;
-      this.eventStore.setActiveConversation(conversation.id);
-    }
-
+    // No conversation store: a task run isn't persisted as a chat. The sinks are
+    // the optional per-request sink, the default telemetry events, and the usage
+    // accumulator below.
     const sinks: EventSink[] = requestSink
       ? [requestSink, this.defaultEvents]
       : [this.defaultEvents];
-    if (isWorkspaceRequest) {
-      sinks.push(store as EventSourcedConversationStore);
-    }
 
     // Per-run usage accumulator. The engine returns its cumulative usage only
     // on a clean exit; on an abort it throws and discards it (engine.ts run.error
@@ -2191,7 +2137,7 @@ export class Runtime {
     // it emits (same llm.done/tool.done shape PostHogEventSink reads) and retain
     // it across the throw, letting a timed-out automation report the work it
     // actually did instead of 0/0/0/0. Drops with the process — a real SIGKILL
-    // still reports zero (the on-disk conversation JSONL remains the post-mortem).
+    // still reports zero (the persisted run result is the post-mortem).
     const partial = { inputTokens: 0, outputTokens: 0, iterations: 0, llmMs: 0 };
     const partialToolCalls: TaskResult["toolCalls"] = [];
     const usageAccumulator: EventSink = {
@@ -2245,9 +2191,11 @@ export class Runtime {
         workspaceAgents: sessionWorkspace?.agents ?? null,
         workspaceModelOverride: sessionWorkspace?.models ?? null,
       },
-      conversationId: conversation.id,
+      // The run's correlation id (no conversation exists) — stamps audit/file
+      // records so a file the run creates is traceable back to it.
+      conversationId: runId,
       // Files created/read by identity-door `files__*` tools land in the focused
-      // workspace (the conversation's workspace), not the personal `sessionWsId` scope.
+      // (provenance) workspace, not the personal `sessionWsId` scope.
       fileWorkspaceId: request.workspaceId ?? sessionWsId,
     };
     engineConfig.toolPromotion = this.buildToolPromotionFactory();
@@ -2267,7 +2215,7 @@ export class Runtime {
       if (!engineConfig.signal?.aborted) throw err;
       return {
         output: "",
-        conversationId: conversation.id,
+        runId,
         toolCalls: partialToolCalls,
         stopReason: "aborted",
         usage: {
@@ -2290,31 +2238,12 @@ export class Runtime {
       iterations: result.iterations,
     };
 
-    // Persist assistant message (the deliverable) so the conversation
-    // trace is complete and the UI's "Open conversation →" affordance
-    // shows the full output. Same eventStoreHandled gate as chat().
-    const eventStoreHandled = !!activeEventStore;
-    if (!eventStoreHandled) {
-      await store.append(conversation, {
-        role: "assistant",
-        content: result.output
-          ? [{ type: "text", text: result.output }]
-          : [{ type: "text", text: "(tool use only)" }],
-        timestamp: new Date().toISOString(),
-        metadata: {
-          skill: null,
-          toolCalls: result.toolCalls,
-          usage: result.usage,
-          model,
-          llmMs: result.llmMs,
-          iterations: result.iterations,
-        },
-      });
-    }
-
+    // No conversation to persist — the deliverable (output), the activity log
+    // (toolCalls), and the usage are returned to the caller, which persists the
+    // run result. Nothing is written to a conversation store.
     return {
       output: result.output,
-      conversationId: conversation.id,
+      runId,
       toolCalls: result.toolCalls,
       stopReason: result.stopReason,
       usage,
@@ -3044,18 +2973,6 @@ export class Runtime {
   }
 
   /**
-   * Conversation store for an automation's run conversations in one workspace
-   * (`workspaces/<wsId>/conversations/_runs/<automationId>/`, workspace-visible).
-   */
-  runConversationStore(wsId: string, automationId: string): EventSourcedConversationStore {
-    return new EventSourcedConversationStore({
-      dir: runConversationsDir(resolveWorkDir(this.config), wsId, automationId),
-      logLevel: this.config.logging?.level ?? "normal",
-      onMutate: () => this.notifyConversationsChanged(),
-    });
-  }
-
-  /**
    * Resolve a conversation id to the workspace store that holds it, or `null` if no
    * workspace contains it. The single bridge from a bare `convId` (deep link,
    * history fetch, event append) to its workspace-owned store.
@@ -3063,9 +2980,7 @@ export class Runtime {
   async resolveConversationStore(convId: string): Promise<EventSourcedConversationStore | null> {
     const loc = await this.getConversationLocator().locate(convId);
     if (!loc) return null;
-    return loc.automationId
-      ? this.runConversationStore(loc.wsId, loc.automationId)
-      : this.workspaceConversationStore(loc.wsId, loc.ownerId ?? "");
+    return this.workspaceConversationStore(loc.wsId, loc.ownerId ?? "");
   }
 
   /**
@@ -3099,12 +3014,7 @@ export class Runtime {
       // Cross-workspace deep-link: resolve by path (a readdir-only walk, no reads).
       const loc = await this.getConversationLocator().locate(conversationId);
       if (loc) {
-        // An automation-run conversation (no owner partition) resolves to its
-        // `_runs/` store — never split-brain a fresh file into the owner
-        // partition under the same id.
-        const store = loc.automationId
-          ? this.runConversationStore(loc.wsId, loc.automationId)
-          : this.workspaceConversationStore(loc.wsId, loc.ownerId ?? ownerId);
+        const store = this.workspaceConversationStore(loc.wsId, loc.ownerId ?? ownerId);
         return { store, convWsId: loc.wsId };
       }
     }

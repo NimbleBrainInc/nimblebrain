@@ -125,22 +125,22 @@ describe("Security Hardening Regression Tests", () => {
 
 		it("rejects null byte injection in automation ID", () => {
 			const run = makeRun({ automationId: "valid\x00../../etc/passwd" });
-			expect(() => appendRun("valid\x00../../etc/passwd", run, tmpDir)).toThrow(
-				/Invalid automation ID/,
-			);
+			expect(() =>
+				appendRun(tmpDir, "ws_test", "usr_test", "valid\x00../../etc/passwd", run),
+			).toThrow(/Invalid automation id/i);
 		});
 
 		it("rejects URL-encoded path traversal in automation ID", () => {
 			const run = makeRun({ automationId: "%2e%2e%2fpasswd" });
-			expect(() => appendRun("%2e%2e%2fpasswd", run, tmpDir)).toThrow(
-				/Invalid automation ID/,
-			);
+			expect(() =>
+				appendRun(tmpDir, "ws_test", "usr_test", "%2e%2e%2fpasswd", run),
+			).toThrow(/Invalid automation id/i);
 		});
 
 		it("validation applies to readRuns with traversal payload", () => {
-			expect(() => readRuns("../../../etc/shadow", undefined, tmpDir)).toThrow(
-				/Invalid automation ID/,
-			);
+			expect(() =>
+				readRuns(tmpDir, "ws_test", "usr_test", "../../../etc/shadow"),
+			).toThrow(/Invalid automation id/i);
 		});
 	});
 

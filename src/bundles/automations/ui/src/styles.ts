@@ -426,6 +426,23 @@ body {
   font-family: 'SF Mono', 'Fira Code', 'Fira Mono', monospace;
   color: var(--nb-color-danger, #dc2626);
 }
+.reader-section-label {
+  font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px;
+  color: var(--color-text-secondary, #737373); margin-bottom: 6px; cursor: default;
+}
+.reader-files { margin-top: 22px; }
+.reader-file-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
+.reader-file {
+  font-size: 13px; font-family: var(--font-mono, ui-monospace, monospace);
+  color: var(--color-text-primary, #171717);
+}
+.reader-activity { margin-top: 22px; }
+.reader-activity > summary { cursor: pointer; }
+.reader-activity-list { list-style: none; margin: 8px 0 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
+.reader-activity-item { display: flex; align-items: center; gap: 8px; font-size: 12.5px; }
+.reader-activity-name { font-family: var(--font-mono, ui-monospace, monospace); color: var(--color-text-primary, #171717); }
+.reader-activity-ms { margin-left: auto; color: var(--color-text-secondary, #737373); font-size: 11px; }
+
 .reader-footer-meta {
   display: flex; gap: 16px; flex-wrap: wrap; margin-top: 22px; padding-top: 12px;
   border-top: 1px solid var(--color-border-primary, #e5e5e5);

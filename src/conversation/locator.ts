@@ -2,8 +2,7 @@
  * Process-wide conversation locator.
  *
  * Conversations are workspace-owned — each lives under
- * `workspaces/<wsId>/conversations/<ownerId>/<convId>.jsonl` (or, for automation
- * runs, `.../conversations/_runs/<automationId>/`). The per-workspace
+ * `workspaces/<wsId>/conversations/<ownerId>/<convId>.jsonl`. The per-workspace
  * `EventSourcedConversationStore` operates within one workspace+owner directory and
  * knows nothing of workspaces. The locator is the one component that sees ACROSS
  * workspaces: it answers two questions the runtime needs that a single-dir store
@@ -30,7 +29,7 @@ import { readFile } from "node:fs/promises";
 import { basename, join } from "node:path";
 import { log } from "../observability/log.ts";
 import { canAccess, parseFileHeader } from "./index-cache.ts";
-import { parseConversationPath, RUN_PARTITION_SEGMENT } from "./paths.ts";
+import { parseConversationPath } from "./paths.ts";
 import type {
   ConversationAccessContext,
   ConversationListResult,
@@ -42,10 +41,8 @@ import type {
 export interface ConversationLocation {
   /** The workspace the conversation is stored under. */
   wsId: string;
-  /** The owner sub-partition, or `null` for an automation-run conversation. */
-  ownerId: string | null;
-  /** The automation id for a `_runs/<automationId>/` conversation; else `null`. */
-  automationId: string | null;
+  /** The owner sub-partition. */
+  ownerId: string;
   /** Absolute path to the conversation's JSONL file. */
   filePath: string;
 }
@@ -91,7 +88,6 @@ export class ConversationLocator {
         return {
           wsId: loc.wsId,
           ownerId: loc.ownerId,
-          automationId: loc.automationId,
           filePath,
         };
       }
@@ -165,7 +161,6 @@ export class ConversationLocator {
           accessOwnerId: parsed.summary.ownerId,
           wsId: loc.wsId,
           ownerId: loc.ownerId,
-          automationId: loc.automationId,
           filePath,
         });
       } catch {
@@ -192,25 +187,19 @@ function safeReaddir(dir: string): string[] {
 
 /**
  * Absolute paths of every conversation JSONL across all workspaces, via the same
- * targeted walk the locator uses (each workspace's `conversations/` owner and
- * `_runs/` partitions). For read-side consumers that need the raw files
- * spanning workspaces (e.g. the usage aggregator), without building the full index.
+ * targeted walk the locator uses (each workspace's `conversations/<ownerId>/`
+ * partitions). For read-side consumers that need the raw files spanning
+ * workspaces (e.g. the usage aggregator), without building the full index.
  */
 export function listAllConversationFiles(workspacesRoot: string): string[] {
   const out: string[] = [];
   for (const wsId of safeReaddir(workspacesRoot)) {
     if (!isWorkspaceDir(wsId)) continue;
     const convRoot = join(workspacesRoot, wsId, "conversations");
-    for (const partition of safeReaddir(convRoot)) {
-      const partitionDir = join(convRoot, partition);
-      const leafDirs =
-        partition === RUN_PARTITION_SEGMENT
-          ? safeReaddir(partitionDir).map((automationId) => join(partitionDir, automationId))
-          : [partitionDir];
-      for (const leaf of leafDirs) {
-        for (const f of safeReaddir(leaf)) {
-          if (f.endsWith(".jsonl")) out.push(join(leaf, f));
-        }
+    for (const ownerId of safeReaddir(convRoot)) {
+      const ownerDir = join(convRoot, ownerId);
+      for (const f of safeReaddir(ownerDir)) {
+        if (f.endsWith(".jsonl")) out.push(join(ownerDir, f));
       }
     }
   }

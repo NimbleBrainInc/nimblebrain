@@ -77,15 +77,11 @@ export interface ConversationListResult {
  * `ownerId` is required — the conversation is owned by exactly one user.
  * `workspaceId` is the workspace the chat is born in (the binding moment is the
  * first message); it determines the storage directory and is fixed for the
- * conversation's life — there is no mid-chat workspace switching. When `automationId`
- * is set the conversation is an automation run and lands in that workspace's
- * `_runs/<automationId>/` partition instead of the owner partition.
+ * conversation's life — there is no mid-chat workspace switching.
  */
 export interface CreateConversationOptions {
   workspaceId?: string;
   ownerId: string;
-  /** When set, this is an automation run — stored under `_runs/<automationId>/`. */
-  automationId?: string;
   metadata?: Record<string, unknown>;
   /** Create with a specific id instead of a generated one. Used by the
    *  detached-turn path so the conversation id is known to the caller before

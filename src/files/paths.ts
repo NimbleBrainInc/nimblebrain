@@ -14,7 +14,6 @@
  *
  *   workspaces/<wsId>/files/<ownerId>/registry.jsonl        per-owner catalog
  *   workspaces/<wsId>/files/<ownerId>/<fileId>_<name>       owner-private bytes
- *   workspaces/<wsId>/files/_runs/<automationId>/<fileId>   automation outputs (PR 3; reserved here)
  *
  * This file is on the allow-list of `check:workspace-paths` (it defines the
  * `workspaces/<wsId>/files/...` layout) and is the only site `check:file-paths`
@@ -22,9 +21,6 @@
  */
 
 import { join, sep } from "node:path";
-
-/** Reserved owner-partition segment for automation file outputs (PR 3). */
-export const RUN_PARTITION_SEGMENT = "_runs";
 
 const FILES_SEGMENT = "files";
 const WORKSPACES_SEGMENT = "workspaces";
@@ -34,45 +30,18 @@ const WORKSPACES_SEGMENT = "workspaces";
  * `{workDir}/workspaces/<wsId>/files/<ownerId>`.
  */
 export function workspaceFilesDir(workDir: string, wsId: string, ownerId: string): string {
-  // `_runs` is reserved for automation outputs; an ownerId equal to it would
-  // make `parseFilesPath` misread that user's files as automation runs. Opaque
-  // OIDC/email ids never collide, but fail closed if one ever does.
-  if (ownerId === RUN_PARTITION_SEGMENT) {
-    throw new Error(
-      `[files-paths] ownerId "${RUN_PARTITION_SEGMENT}" is reserved for automation runs`,
-    );
-  }
   return join(workDir, WORKSPACES_SEGMENT, wsId, FILES_SEGMENT, ownerId);
-}
-
-/**
- * Directory holding an automation's file outputs in one workspace:
- * `{workDir}/workspaces/<wsId>/files/_runs/<automationId>`. Reserved for PR 3;
- * nothing writes here yet.
- */
-export function runFilesDir(workDir: string, wsId: string, automationId: string): string {
-  return join(
-    workDir,
-    WORKSPACES_SEGMENT,
-    wsId,
-    FILES_SEGMENT,
-    RUN_PARTITION_SEGMENT,
-    automationId,
-  );
 }
 
 /** What a parsed file path resolves to. */
 export interface ParsedFilesPath {
   wsId: string;
-  /** The owner sub-partition, or `null` for an automation-run file. */
-  ownerId: string | null;
-  /** The automation id, for a `_runs/<automationId>/` file; else `null`. */
-  automationId: string | null;
+  ownerId: string;
 }
 
 /**
- * Inverse of the builders: recover `{ wsId, ownerId, automationId }` from a file
- * path under a `workspaces/<wsId>/files/...` subtree. Returns `null` for a path
+ * Inverse of the builder: recover `{ wsId, ownerId }` from a file path under a
+ * `workspaces/<wsId>/files/<ownerId>/...` subtree. Returns `null` for a path
  * that isn't one (e.g. a legacy `users/<id>/files/...` path). Used by the
  * migration and tests to label destinations. Note: a per-owner
  * `<ownerId>/registry.jsonl` parses as an owner-partition path (ownerId set,
@@ -84,12 +53,7 @@ export function parseFilesPath(absPath: string): ParsedFilesPath | null {
   if (wsIdx === -1) return null;
   const wsId = segments[wsIdx + 1];
   const filesSeg = segments[wsIdx + 2];
-  const partition = segments[wsIdx + 3];
-  if (!wsId || filesSeg !== FILES_SEGMENT || !partition) return null;
-  if (partition === RUN_PARTITION_SEGMENT) {
-    const automationId = segments[wsIdx + 4];
-    if (!automationId) return null;
-    return { wsId, ownerId: null, automationId };
-  }
-  return { wsId, ownerId: partition, automationId: null };
+  const ownerId = segments[wsIdx + 3];
+  if (!wsId || filesSeg !== FILES_SEGMENT || !ownerId) return null;
+  return { wsId, ownerId };
 }
