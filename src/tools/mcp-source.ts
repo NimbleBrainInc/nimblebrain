@@ -2090,43 +2090,142 @@ export function isMcpResourceMiss(err: unknown): boolean {
 }
 
 /**
- * A *session* loss — the remote server forgot our Streamable-HTTP session (it
- * rolled / restarted) — as opposed to a torn transport or an application error.
- * Recoverable by a fresh `initialize`, so it warrants re-establish + retry.
+ * The **connection-level** failure classes — properties of the source's
+ * connection, independent of which op (`tools/call`, `resources/read`, …) threw.
+ * This is the only thing classifiable from a throw regardless of op. The
+ * application-outcome question ("server answered, but with a miss / an error?")
+ * is op-DEPENDENT — the same wire code (`-32601`, `-32602`) is a resource miss on
+ * `resources/read` but a method/param error on `tools/call` — so it lives in a
+ * separate, op-scoped classifier (`isMcpResourceMiss` for reads), NOT here. See
+ * `research/SPEC-mcp-source-recovery.md` §3.1.
  *
- * Wire shape (this is NOT a JSON-RPC code on `err.code`): the server answers a
- * request carrying a stale `Mcp-Session-Id` with HTTP 404 and a JSON-RPC
- * `-32001 "Session not found"` body. The SDK's StreamableHTTPClientTransport
- * never parses that body — it throws a `StreamableHTTPError` whose `.code` is
- * the HTTP status (404) and whose `.message` carries the `-32001` / "Session
- * not found" text. So match status + message together; a code-only match on
- * -32001 silently never fires on the canonical path. Defensively also accept a
- * non-canonical server that returns the error inside an HTTP-200 JSON-RPC body
- * (surfacing as `err.code === -32001`).
+ * `source-absent` (a registry-lookup miss before any call) and `credential-lost`
+ * (a `ConnectionRevalidator` probe verdict) are deliberately absent: they are not
+ * thrown errors, so they cannot be classified from one. They reach recovery as
+ * detector *signals*, and `policyFor` accepts them as kinds — but they are never
+ * outputs of `classifyConnectionFailure`.
  */
-export function isSessionLost(err: unknown): boolean {
-  if (err === null || typeof err !== "object") return false;
+export type ConnectionFailure =
+  | "session-lost"
+  | "transient"
+  | "transport-dead"
+  | "auth-lost"
+  | "none";
+
+/**
+ * Classify a thrown error into a connection-failure class. Order is load-bearing
+ * for behavior-preservation: `session-lost` and `transient` use the exact prior
+ * predicate logic and are tested first, so the `isSessionLost` / `isTransientTransport`
+ * wrappers below stay byte-identical to their pre-extraction behavior.
+ *
+ * - **session-lost** — the server forgot our Streamable-HTTP session (it rolled).
+ *   Wire shape (NOT a JSON-RPC code on `err.code`): a request on a stale
+ *   `Mcp-Session-Id` gets HTTP 404 + a `-32001 "Session not found"` body, which the
+ *   SDK throws as a `StreamableHTTPError` whose `.code` is the status (404) and
+ *   whose `.message` carries the `-32001`/text. Match status + message together; a
+ *   code-only match on -32001 silently never fires on the canonical path.
+ * - **transient** — a mid-roll gateway blip (502/503/504, `bad_gateway`). Back off.
+ * - **auth-lost** — a rejected credential. Detectable only as `UnauthorizedError`;
+ *   note its *policy* is config-dependent (a static-auth remote can't reauth), so
+ *   `policyFor` takes `hasReauthableProvider`.
+ * - **transport-dead** — the connection is torn (closed / refused / timed out).
+ * - **none** — not a connection failure; ask the op-scoped outcome classifier.
+ */
+export function classifyConnectionFailure(err: unknown): ConnectionFailure {
+  if (err === null || typeof err !== "object") return "none";
   const code = (err as { code?: unknown }).code;
-  if (code === -32001) return true;
   const message = (err as { message?: unknown }).message;
   const msg = typeof message === "string" ? message : "";
-  return code === 404 && /session not found/i.test(msg);
+
+  // session-lost — exact prior `isSessionLost` logic, checked first.
+  if (code === -32001 || (code === 404 && /session not found/i.test(msg))) {
+    return "session-lost";
+  }
+  // transient — exact prior `isTransientTransport` logic, checked second.
+  if (
+    code === 502 ||
+    code === 503 ||
+    code === 504 ||
+    /bad[ _]gateway|service unavailable|gateway time-?out/i.test(msg)
+  ) {
+    return "transient";
+  }
+  if (err instanceof UnauthorizedError) return "auth-lost";
+  if (
+    code === -32000 ||
+    /connection closed|fetch failed|socket hang ?up|terminated|network error|econnre(set|fused)|timed? ?out/i.test(
+      msg,
+    )
+  ) {
+    return "transport-dead";
+  }
+  return "none";
+}
+
+/** @see classifyConnectionFailure — the canonical detector; this is a named view of it. */
+export function isSessionLost(err: unknown): boolean {
+  return classifyConnectionFailure(err) === "session-lost";
+}
+
+/** @see classifyConnectionFailure — the canonical detector; this is a named view of it. */
+export function isTransientTransport(err: unknown): boolean {
+  return classifyConnectionFailure(err) === "transient";
 }
 
 /**
- * A *transient* transport failure a remote MCP server emits mid-roll — a load
- * balancer 502/503/504 while pods are not yet ready, or a `bad_gateway` body.
- * Distinct from a stale session (server up, forgot us) and from a permanent
- * error: back off and re-establish rather than surface it. Matches the HTTP
- * status on `StreamableHTTPError.code` and the gateway-error message shapes.
+ * The recovery action a failure class maps to. Flat union = pure data: the
+ * execution wrapper (Phase 2) interprets it; this table just decides.
+ *
+ * - `surface` — return the error / null to the caller
+ * - `retry` — back off, retry the same op (no re-establish)
+ * - `reinit-retry` — re-run the MCP `initialize`, then retry
+ * - `restart-retry` — `stop()` + `start()`, then retry
+ * - `reauth` — flip to `reauth_required`, surface a Reconnect; do NOT loop
+ * - `re-register` — re-add the source to the registry, then retry
+ * - `re-register-only` — re-add the source, then surface (non-idempotent op)
  */
-export function isTransientTransport(err: unknown): boolean {
-  if (err === null || typeof err !== "object") return false;
-  const code = (err as { code?: unknown }).code;
-  if (code === 502 || code === 503 || code === 504) return true;
-  const message = (err as { message?: unknown }).message;
-  const msg = typeof message === "string" ? message : "";
-  return /bad[ _]gateway|service unavailable|gateway time-?out/i.test(msg);
+export type RecoveryAction =
+  | "surface"
+  | "retry"
+  | "reinit-retry"
+  | "restart-retry"
+  | "reauth"
+  | "re-register"
+  | "re-register-only";
+
+/** Kinds the policy table decides over: connection failures + the two detector
+ *  signals that are not thrown errors. `"none"` never reaches policy. */
+export type RecoveryKind = Exclude<ConnectionFailure, "none"> | "source-absent" | "credential-lost";
+
+/**
+ * Pure policy: `(kind, context) → action`. `idempotent` is false for
+ * task-augmented `tools/call` (retrying would duplicate server-side state — the
+ * invariant at `execute`'s task branch), so non-idempotent failures surface
+ * rather than retry. `hasReauthableProvider` is a property of the *source*, not
+ * the error: a 401 on an OAuth remote is recoverable by reauth, the same 401 on a
+ * static-auth remote is not (it falls through to a transport restart). See
+ * `research/SPEC-mcp-source-recovery.md` §3.2. No caller yet — Phase 2 wires the
+ * `withRecovery` wrapper through this; Phase 1 establishes and tests the contract.
+ */
+export function policyFor(
+  kind: RecoveryKind,
+  ctx: { idempotent: boolean; hasReauthableProvider: boolean },
+): RecoveryAction {
+  switch (kind) {
+    case "session-lost":
+      return ctx.idempotent ? "reinit-retry" : "surface";
+    case "transient":
+      return ctx.idempotent ? "retry" : "surface";
+    case "transport-dead":
+      return ctx.idempotent ? "restart-retry" : "surface";
+    case "auth-lost":
+      if (ctx.hasReauthableProvider) return "reauth";
+      return ctx.idempotent ? "restart-retry" : "surface";
+    case "credential-lost":
+      return "reauth";
+    case "source-absent":
+      return ctx.idempotent ? "re-register" : "re-register-only";
+  }
 }
 
 /**
