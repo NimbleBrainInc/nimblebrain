@@ -34,8 +34,17 @@ function makeMockRemoteSource(
       return startedAt !== null ? Date.now() - startedAt : null;
     },
     async restart() {
-      // Should NOT be called for remote sources
-      throw new Error("restart() should not be called for remote sources");
+      // HealthMonitor reconnects remote sources through restart() (→ tryRestart)
+      // so the tick shares the source's in-flight-restart guard with inline
+      // session recovery. restart() drives the same stop()+start() cycle and
+      // returns a boolean — it never throws.
+      await mock.stop();
+      try {
+        await mock.start();
+        return true;
+      } catch {
+        return false;
+      }
     },
     async stop() {
       mock.stopCalls++;
@@ -115,7 +124,7 @@ function eventData(collector: { events: EngineEvent[] }): Record<string, unknown
 }
 
 describe("HealthMonitor — remote sources", () => {
-  it("detects crashed remote source and reconnects via stop+start", async () => {
+  it("detects crashed remote source and reconnects via restart() (stop+start)", async () => {
     const source = makeMockRemoteSource("remote-bundle");
     const sink = makeEventCollector();
     const monitor = new HealthMonitor([source], sink, { checkIntervalMs: 60_000, baseDelayMs: 1 });
@@ -136,7 +145,7 @@ describe("HealthMonitor — remote sources", () => {
       expect(data.remote).toBe(true);
     }
 
-    // Should have used stop+start, not restart()
+    // restart() drove one stop()+start() reconnect cycle.
     expect(source.stopCalls).toBe(1);
     expect(source.startCalls).toBe(1);
 
@@ -300,7 +309,7 @@ describe("HealthMonitor — remote sources", () => {
       expect(ev.remote).toBeUndefined();
     }
 
-    // Remote used stop+start, stdio used restart()
+    // Remote reconnect drove one stop()+start() via restart(); stdio used restart().
     expect(remote.stopCalls).toBe(1);
     expect(remote.startCalls).toBe(1);
     expect(stdio.restartCalls).toBe(1);
