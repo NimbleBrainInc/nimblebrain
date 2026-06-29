@@ -2102,7 +2102,7 @@ export function isMcpResourceMiss(err: unknown): boolean {
  * `source-absent` (a registry-lookup miss before any call) and `credential-lost`
  * (a `ConnectionRevalidator` probe verdict) are deliberately absent: they are not
  * thrown errors, so they cannot be classified from one. They reach recovery as
- * detector *signals*, and `policyFor` accepts them as kinds — but they are never
+ * detector *signals* (handled by the recovery policy in Phase 2), never as
  * outputs of `classifyConnectionFailure`.
  */
 export type ConnectionFailure =
@@ -2126,8 +2126,8 @@ export type ConnectionFailure =
  *   code-only match on -32001 silently never fires on the canonical path.
  * - **transient** — a mid-roll gateway blip (502/503/504, `bad_gateway`). Back off.
  * - **auth-lost** — a rejected credential. Detectable only as `UnauthorizedError`;
- *   note its *policy* is config-dependent (a static-auth remote can't reauth), so
- *   `policyFor` takes `hasReauthableProvider`.
+ *   note its recovery *policy* is config-dependent — a static-auth remote can't
+ *   reauth — but that decision is Phase 2's (see the SPEC §3.2), not this function's.
  * - **transport-dead** — the connection is torn (closed / refused / timed out).
  * - **none** — not a connection failure; ask the op-scoped outcome classifier.
  */
@@ -2170,62 +2170,6 @@ export function isSessionLost(err: unknown): boolean {
 /** @see classifyConnectionFailure — the canonical detector; this is a named view of it. */
 export function isTransientTransport(err: unknown): boolean {
   return classifyConnectionFailure(err) === "transient";
-}
-
-/**
- * The recovery action a failure class maps to. Flat union = pure data: the
- * execution wrapper (Phase 2) interprets it; this table just decides.
- *
- * - `surface` — return the error / null to the caller
- * - `retry` — back off, retry the same op (no re-establish)
- * - `reinit-retry` — re-run the MCP `initialize`, then retry
- * - `restart-retry` — `stop()` + `start()`, then retry
- * - `reauth` — flip to `reauth_required`, surface a Reconnect; do NOT loop
- * - `re-register` — re-add the source to the registry, then retry
- * - `re-register-only` — re-add the source, then surface (non-idempotent op)
- */
-export type RecoveryAction =
-  | "surface"
-  | "retry"
-  | "reinit-retry"
-  | "restart-retry"
-  | "reauth"
-  | "re-register"
-  | "re-register-only";
-
-/** Kinds the policy table decides over: connection failures + the two detector
- *  signals that are not thrown errors. `"none"` never reaches policy. */
-export type RecoveryKind = Exclude<ConnectionFailure, "none"> | "source-absent" | "credential-lost";
-
-/**
- * Pure policy: `(kind, context) → action`. `idempotent` is false for
- * task-augmented `tools/call` (retrying would duplicate server-side state — the
- * invariant at `execute`'s task branch), so non-idempotent failures surface
- * rather than retry. `hasReauthableProvider` is a property of the *source*, not
- * the error: a 401 on an OAuth remote is recoverable by reauth, the same 401 on a
- * static-auth remote is not (it falls through to a transport restart). See
- * `research/SPEC-mcp-source-recovery.md` §3.2. No caller yet — Phase 2 wires the
- * `withRecovery` wrapper through this; Phase 1 establishes and tests the contract.
- */
-export function policyFor(
-  kind: RecoveryKind,
-  ctx: { idempotent: boolean; hasReauthableProvider: boolean },
-): RecoveryAction {
-  switch (kind) {
-    case "session-lost":
-      return ctx.idempotent ? "reinit-retry" : "surface";
-    case "transient":
-      return ctx.idempotent ? "retry" : "surface";
-    case "transport-dead":
-      return ctx.idempotent ? "restart-retry" : "surface";
-    case "auth-lost":
-      if (ctx.hasReauthableProvider) return "reauth";
-      return ctx.idempotent ? "restart-retry" : "surface";
-    case "credential-lost":
-      return "reauth";
-    case "source-absent":
-      return ctx.idempotent ? "re-register" : "re-register-only";
-  }
 }
 
 /**

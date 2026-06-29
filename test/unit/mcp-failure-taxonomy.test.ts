@@ -6,14 +6,11 @@ import {
   type ConnectionFailure,
   isSessionLost,
   isTransientTransport,
-  policyFor,
-  type RecoveryAction,
-  type RecoveryKind,
 } from "../../src/tools/mcp-source.ts";
 
 /**
  * Phase 1 of the recovery redesign (research/SPEC-mcp-source-recovery.md): the
- * failure taxonomy + policy as pure, tested data. Two invariants:
+ * connection-failure taxonomy as pure, tested data. Two invariants:
  *  1. classifyConnectionFailure is OP-INDEPENDENT — it returns only
  *     connection-level classes; application outcomes (resource-miss vs app-error)
  *     are op-scoped and stay in isMcpResourceMiss. So the resource-"miss" wire
@@ -21,6 +18,9 @@ import {
  *  2. isSessionLost / isTransientTransport are now thin views of the classifier
  *     and MUST stay byte-identical to their pre-extraction behavior (the
  *     readResource contract in mcp-source-resource-errors.test.ts depends on it).
+ *
+ * The recovery *policy* (what to do with each class) lands in Phase 2 with the
+ * `withRecovery` wrapper that consumes it — abstractions ship with their caller.
  */
 describe("classifyConnectionFailure — op-independent connection classes", () => {
   const sessionLost404 = {
@@ -89,55 +89,6 @@ describe("isSessionLost / isTransientTransport — thin views, behavior preserve
     expect(isTransientTransport({ code: 404, message: "Session not found" })).toBe(false);
     expect(isTransientTransport(new Error("Connection closed"))).toBe(false);
     expect(isTransientTransport(null)).toBe(false);
-  });
-});
-
-describe("policyFor — pure recovery policy table", () => {
-  const idem = { idempotent: true, hasReauthableProvider: false };
-  const task = { idempotent: false, hasReauthableProvider: false };
-
-  it("idempotent connection failures recover; non-idempotent (task) surface", () => {
-    expect(policyFor("session-lost", idem)).toBe("reinit-retry");
-    expect(policyFor("session-lost", task)).toBe("surface");
-    expect(policyFor("transient", idem)).toBe("retry");
-    expect(policyFor("transient", task)).toBe("surface");
-    expect(policyFor("transport-dead", idem)).toBe("restart-retry");
-    expect(policyFor("transport-dead", task)).toBe("surface");
-  });
-
-  it("auth-lost is config-dependent: reauth only when a reauthable provider exists", () => {
-    expect(policyFor("auth-lost", { idempotent: true, hasReauthableProvider: true })).toBe("reauth");
-    expect(policyFor("auth-lost", { idempotent: false, hasReauthableProvider: true })).toBe("reauth");
-    // static-auth remote (no provider): can't reauth — falls to transport handling
-    expect(policyFor("auth-lost", { idempotent: true, hasReauthableProvider: false })).toBe(
-      "restart-retry",
-    );
-    expect(policyFor("auth-lost", { idempotent: false, hasReauthableProvider: false })).toBe(
-      "surface",
-    );
-  });
-
-  it("detector-signal kinds: credential-lost reauths, source-absent re-registers", () => {
-    expect(policyFor("credential-lost", idem)).toBe("reauth");
-    expect(policyFor("credential-lost", task)).toBe("reauth");
-    expect(policyFor("source-absent", idem)).toBe("re-register");
-    expect(policyFor("source-absent", task)).toBe("re-register-only");
-  });
-
-  it("is total over every RecoveryKind (no kind returns undefined)", () => {
-    const kinds: RecoveryKind[] = [
-      "session-lost",
-      "transient",
-      "transport-dead",
-      "auth-lost",
-      "source-absent",
-      "credential-lost",
-    ];
-    const actions: RecoveryAction[] = kinds.flatMap((k) => [
-      policyFor(k, { idempotent: true, hasReauthableProvider: true }),
-      policyFor(k, { idempotent: false, hasReauthableProvider: false }),
-    ]);
-    expect(actions.every((a) => typeof a === "string")).toBe(true);
   });
 });
 
