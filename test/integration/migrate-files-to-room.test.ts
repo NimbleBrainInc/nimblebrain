@@ -124,21 +124,71 @@ describe("migrate-files-to-room", () => {
     expect(second.users).toBe(0);
   });
 
-  test("crash recovery: a pre-existing destination removes the stale identity source", () => {
-    // Simulate a prior partial run: the dest registry exists, the identity
-    // source was never unlinked.
+  test("a disjoint dest registry (post-deploy upload) is MERGED, not overwritten", async () => {
+    // A fresh upload landed AFTER deploy but BEFORE migration: the destination
+    // registry holds only that new row (file B), while the legacy identity
+    // source still holds the pre-existing row (file A). The migration must
+    // APPEND A's rows onto the dest registry — a move-or-drop would orphan A
+    // (its blob moves, but its registry entry is lost).
     const aliceDest = destFilesDir(workDir, ALICE);
     mkdirSync(aliceDest, { recursive: true });
-    const aliceSrcRegistry = join(workDir, "users", ALICE, "files", "registry.jsonl");
-    writeFileSync(join(aliceDest, "registry.jsonl"), readFileSync(aliceSrcRegistry, "utf-8"));
-    expect(existsSync(aliceSrcRegistry)).toBe(true);
+
+    // Seed a DIFFERENT entry (file B) directly into the dest partition, as a
+    // post-deploy upload would have.
+    const bBody = "alice post-deploy upload";
+    const bDiskName = `${BOB_FILE_ID}_upload.txt`;
+    writeFileSync(join(aliceDest, bDiskName), bBody, "utf-8");
+    const bRow = {
+      id: BOB_FILE_ID,
+      filename: "upload.txt",
+      mimeType: "text/plain",
+      size: Buffer.byteLength(bBody),
+      tags: [],
+      source: "chat",
+      conversationId: null,
+      createdAt: "2026-02-02T00:00:00.000Z",
+      description: null,
+      ownerId: ALICE,
+      workspaceId: personalWorkspaceIdFor(ALICE),
+    };
+    writeFileSync(join(aliceDest, "registry.jsonl"), `${JSON.stringify(bRow)}\n`, "utf-8");
 
     const summary = migrateFilesToRoom(workDir, { write: true });
 
-    // Alice's registry counted as already-migrated; its stale source is removed.
+    // Exactly one registry was appended onto an existing dest registry.
+    expect(summary.merged).toBe(1);
+
+    // The merged dest registry holds BOTH the pre-existing entry (A) and the
+    // post-deploy upload (B). Read via the store so dedupe/scope match prod.
+    const store = createFileStore(aliceDest);
+    const ids = (await store.readRegistry()).map((e) => e.id).sort();
+    expect(ids).toEqual([ALICE_FILE_ID, BOB_FILE_ID].sort());
+
+    // A's blob made it across (its entry would otherwise be a dangling ref).
+    expect(existsSync(join(aliceDest, `${ALICE_FILE_ID}_doc.txt`))).toBe(true);
+    expect((await store.readFile(ALICE_FILE_ID)).data.toString("utf-8")).toBe("alice secret");
+
+    // The stale identity source registry is consumed by the merge.
+    expect(existsSync(join(workDir, "users", ALICE, "files", "registry.jsonl"))).toBe(false);
+  });
+
+  test("crash recovery: a pre-existing destination blob removes the stale identity source", () => {
+    // Simulate a prior partial run: the content-addressed dest BLOB exists, the
+    // identity source was never unlinked. (The registry is an append-log and is
+    // merged, not skipped — see the merge test above; this covers the blob's
+    // move-or-drop path.)
+    const aliceDest = destFilesDir(workDir, ALICE);
+    mkdirSync(aliceDest, { recursive: true });
+    const aliceSrcBlob = join(workDir, "users", ALICE, "files", `${ALICE_FILE_ID}_doc.txt`);
+    writeFileSync(join(aliceDest, `${ALICE_FILE_ID}_doc.txt`), readFileSync(aliceSrcBlob, "utf-8"));
+    expect(existsSync(aliceSrcBlob)).toBe(true);
+
+    const summary = migrateFilesToRoom(workDir, { write: true });
+
+    // Alice's blob counted as already-migrated; its stale source is removed.
     expect(summary.skippedExisting).toBe(1);
-    expect(existsSync(aliceSrcRegistry)).toBe(false);
-    // Alice's blob + both of Bob's files still move normally.
+    expect(existsSync(aliceSrcBlob)).toBe(false);
+    // Alice's registry + both of Bob's files still move normally.
     expect(summary.moved).toBe(3);
   });
 });

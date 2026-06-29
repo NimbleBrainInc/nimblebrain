@@ -1137,8 +1137,17 @@ export class Runtime {
     // locator (authoritative). The room owns the directory; the path is the
     // boundary. This is a SEPARATE axis from `toolsWsId` (tool/skill/app scope)
     // below — the conversation room is fixed at create, the tool scope is not.
-    const roomWsId = request.workspaceId ?? sessionWsId;
-    const { store } = await this.resolveChatStore(request.conversationId, roomWsId, ownerId);
+    const requestRoomWsId = request.workspaceId ?? sessionWsId;
+    // `roomWsId` is authoritative: on a cross-room resume `resolveChatStore`
+    // relocates to the room the conversation actually lives in. The create
+    // stamp (below) and the file partition (~line 1502) follow it, not the
+    // request header — otherwise a resumed chat's attachments resolve in the
+    // wrong partition and silently vanish.
+    const { store, roomWsId } = await this.resolveChatStore(
+      request.conversationId,
+      requestRoomWsId,
+      ownerId,
+    );
 
     // Load the personal workspace config for agents / models override.
     // Pre-Stage-2 this looked up the request's `workspaceId`; that field

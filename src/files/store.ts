@@ -103,6 +103,11 @@ export function createFileStore(filesDir: string): FileStore {
    * alone — absent reads as `private`, and nothing consults it in v1.
    */
   function withScope(entry: FileEntry): FileEntry {
+    // Known limitation: when `parseFilePath(filesDir)` yields no scope — a
+    // non-workspace scratch/test path that isn't `workspaceFilesDir`-shaped —
+    // entries pass through with `ownerId`/`workspaceId` un-backfilled. This is
+    // intentional leniency for scratch stores; production always constructs the
+    // store from `workspaceFilesDir`, so `scope` is never null there.
     if (!scope) return entry;
     if (entry.ownerId && entry.workspaceId) return entry;
     return {

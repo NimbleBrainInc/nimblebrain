@@ -32,7 +32,15 @@
  * a crash or a partial run reports zero moves.
  */
 
-import { existsSync, mkdirSync, readdirSync, renameSync, unlinkSync } from "node:fs";
+import {
+  appendFileSync,
+  existsSync,
+  mkdirSync,
+  readdirSync,
+  readFileSync,
+  renameSync,
+  unlinkSync,
+} from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { workspaceFilesDir } from "../src/files/paths.ts";
@@ -41,20 +49,30 @@ import { acquireMigrationLock } from "./lib/migration-lock.ts";
 
 const MIGRATION_NAME = "files-to-room";
 
+/** The per-(wsId, ownerId) append-log of file metadata — merged, never moved. */
+const REGISTRY_FILENAME = "registry.jsonl";
+
 /** A single file's planned (dry-run) or performed (write) disposition. */
 interface MovePlan {
   userId: string;
   from: string;
   to: string;
-  /** `move` — relocate to a fresh dest; `existing` — dest already present, drop the stale source. */
-  action: "move" | "existing";
+  /**
+   * `move` — relocate to a fresh dest; `existing` — a content-addressed blob is
+   * already at the dest, drop the stale source; `merge` — append the source
+   * registry's rows onto an existing dest registry (it is an append-log, so the
+   * two can hold disjoint entries).
+   */
+  action: "move" | "existing" | "merge";
 }
 
 export interface MigrationSummary {
   /** Files relocated to a fresh destination (or that would be, in dry-run). */
   moved: number;
-  /** Files whose destination already existed — treated as already-migrated. */
+  /** Blobs whose destination already existed — treated as already-migrated. */
   skippedExisting: number;
+  /** Registries appended onto an existing destination registry. */
+  merged: number;
   /** Distinct users whose files dir held at least one entry to migrate. */
   users: number;
   /** The per-file dispositions, for printing / assertions. */
@@ -62,7 +80,7 @@ export interface MigrationSummary {
 }
 
 function emptySummary(): MigrationSummary {
-  return { moved: 0, skippedExisting: 0, users: 0, plans: [] };
+  return { moved: 0, skippedExisting: 0, merged: 0, users: 0, plans: [] };
 }
 
 /**
@@ -109,9 +127,25 @@ export function migrateFilesToRoom(workDir: string, opts: { write: boolean }): M
         const srcFile = join(srcDir, name);
         const destFile = join(destDir, name);
 
+        // registry.jsonl is an append-log, not content-addressed: a fresh upload
+        // between deploy and migration creates a dest registry holding only the
+        // new row, while the source registry holds the pre-existing rows. Merge
+        // by appending the source rows (readRegistry dedupes by id, last-write
+        // wins) — never move-or-drop it, which would orphan the pre-existing
+        // files (their blobs move, but their registry entries are lost).
+        if (name === REGISTRY_FILENAME && existsSync(destFile)) {
+          summary.plans.push({ userId, from: srcFile, to: destFile, action: "merge" });
+          if (opts.write) {
+            appendFileSync(destFile, readFileSync(srcFile));
+            unlinkSync(srcFile);
+          }
+          summary.merged++;
+          continue;
+        }
+
         if (existsSync(destFile)) {
-          // Already migrated (a prior crash/partial run, or a re-run). The
-          // canonical copy is the dest; the identity source is stale.
+          // A content-addressed blob already at the dest (a prior partial run, or
+          // a re-run). The dest is canonical; drop the stale source.
           summary.skippedExisting++;
           summary.plans.push({ userId, from: srcFile, to: destFile, action: "existing" });
           if (opts.write) unlinkSync(srcFile);
