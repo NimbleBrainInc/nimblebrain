@@ -4,6 +4,8 @@
 
 Self-hosted platform for MCP Apps and agent automations, built on Bun. Agentic loop + MCP bundle management + interactive UI host + cron-scheduled automations + skill-driven prompt composition + HTTP API + web client.
 
+> This file is the operating manual — *how to work here* (build, conventions, gotchas). The domain model — *what the nouns mean and the invariants* — lives in [`CONTEXT.md`](./CONTEXT.md); architectural decisions — *why it's this way* — live in [`adr/`](./adr). Domain facts belong in `CONTEXT.md`; reference them from here rather than restating them.
+
 ## Build & Verify
 
 ```bash
