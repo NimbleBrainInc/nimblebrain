@@ -142,4 +142,47 @@ describe("ChatProvider re-scopes the panel on a workspace switch", () => {
 
     act(() => root.unmount());
   });
+
+  test("A → home (null focus) → A keeps the conversation (null is held, not reset)", () => {
+    mountHarness();
+    expect(observedConversationId).toBe("conv_existing");
+
+    // Navigate to a home / identity route — no focused workspace. Must NOT clear
+    // (and must NOT update the tracked focus), so returning re-scopes correctly.
+    act(() => {
+      mockActiveWorkspace = null;
+      forceRerender?.();
+    });
+    expect(observedConversationId).toBe("conv_existing");
+
+    // Back to the SAME workspace A — still the same conversation, untouched.
+    act(() => {
+      mockActiveWorkspace = { id: "ws_a", name: "Alpha" };
+      forceRerender?.();
+    });
+    expect(observedConversationId).toBe("conv_existing");
+
+    act(() => root.unmount());
+  });
+
+  test("A → home (null focus) → B re-scopes (the held focus is A, B differs)", () => {
+    mountHarness();
+    expect(observedConversationId).toBe("conv_existing");
+
+    // Through home (null) — held.
+    act(() => {
+      mockActiveWorkspace = null;
+      forceRerender?.();
+    });
+    expect(observedConversationId).toBe("conv_existing");
+
+    // Arrive at a DIFFERENT workspace B — re-scopes against the held focus (A).
+    act(() => {
+      mockActiveWorkspace = { id: "ws_b", name: "Bravo" };
+      forceRerender?.();
+    });
+    expect(observedConversationId).toBeNull();
+
+    act(() => root.unmount());
+  });
 });
