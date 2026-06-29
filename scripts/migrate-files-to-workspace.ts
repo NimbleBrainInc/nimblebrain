@@ -67,8 +67,9 @@ interface MovePlan {
   ownerId: string;
   /** `bytes` — a live file (byte file + optional sidecar); `tombstone` — a delete record. */
   kind: "bytes" | "tombstone";
-  /** `move` — relocate to a fresh dest; `existing` — already migrated, drop the stale source. */
-  action: "move" | "existing";
+  /** `move` — relocate to a fresh dest; `existing` — already migrated, drop the
+   *  stale source; `recover` — bytes at dest but registry line missing, append it. */
+  action: "move" | "existing" | "recover";
   /** The owner partition the entry lands in. */
   to: string;
 }
@@ -78,6 +79,10 @@ export interface FileMigrationSummary {
   moved: number;
   /** Entries skipped because the destination already has them — already-migrated. */
   skippedExisting: number;
+  /** Files whose bytes reached the destination but whose registry line didn't (a
+   *  crash between the byte move and the registry append); the append is finished
+   *  on this run so the bytes become readable instead of orphaned. */
+  recoveredPartial: number;
   /** Live entries left in place because their byte file is missing on disk. */
   skippedMissingBytes: number;
   /** Entries whose id isn't a servable file id (fails `FILE_ID_RE`) — malformed,
@@ -93,6 +98,7 @@ function emptySummary(): FileMigrationSummary {
   return {
     moved: 0,
     skippedExisting: 0,
+    recoveredPartial: 0,
     skippedMissingBytes: 0,
     skippedInvalidId: 0,
     skippedUnreadable: 0,
@@ -222,13 +228,15 @@ export function migrateFilesToWorkspace(
         const ids = destIds(destRegistry);
 
         const srcByteName = sourceNames.find((n) => n.startsWith(`${fileId}_`));
+        const dropStaleSource = (): void => {
+          if (srcByteName) unlinkSync(join(userFilesDir, srcByteName));
+          const srcSidecar = join(userFilesDir, `${fileId}.extracted.json`);
+          if (existsSync(srcSidecar)) unlinkSync(srcSidecar);
+        };
 
-        // Already migrated: the dest registry records this id, or its bytes are
-        // already at the destination (a prior crash between the byte move and
-        // the registry append). The dest copy is canonical; drop stale source.
-        const destHasBytes =
-          existsSync(destDir) && readdirSync(destDir).some((n) => n.startsWith(`${fileId}_`));
-        if (ids.has(fileId) || destHasBytes) {
+        // Fully migrated: the dest registry already records this id. The dest
+        // copy is canonical; drop the stale source.
+        if (ids.has(fileId)) {
           summary.skippedExisting++;
           summary.plans.push({
             fileId,
@@ -238,10 +246,33 @@ export function migrateFilesToWorkspace(
             action: "existing",
             to: destDir,
           });
+          if (opts.write) dropStaleSource();
+          continue;
+        }
+
+        // Partial-crash recovery: the bytes reached the destination but the
+        // registry append didn't (the process died between the two). The store
+        // is registry-driven, so without the line the bytes are UNREADABLE — and
+        // a naive "dest has bytes ⇒ already migrated" skip would delete the
+        // source and orphan them forever. Finish the append (we hold the entry),
+        // then drop the stale source. Tombstones carry no bytes, so a live
+        // entry is the only thing that reaches here.
+        const destHasBytes =
+          existsSync(destDir) && readdirSync(destDir).some((n) => n.startsWith(`${fileId}_`));
+        if (destHasBytes) {
+          summary.recoveredPartial++;
+          summary.plans.push({
+            fileId,
+            wsId,
+            ownerId: userId,
+            kind: "bytes",
+            action: "recover",
+            to: destDir,
+          });
           if (opts.write) {
-            if (srcByteName) unlinkSync(join(userFilesDir, srcByteName));
-            const srcSidecar = join(userFilesDir, `${fileId}.extracted.json`);
-            if (existsSync(srcSidecar)) unlinkSync(srcSidecar);
+            appendEntry(destDir, destRegistry, entry, userId, wsId);
+            ids.add(fileId);
+            dropStaleSource();
           }
           continue;
         }
@@ -340,6 +371,11 @@ function main(): void {
       console.log(
         `  ${write ? "✓" : "·"} ${verb} ${what} ${plan.fileId} → ${workspaceLabel(plan.to)}`,
       );
+    } else if (plan.action === "recover") {
+      console.log(
+        `  ${write ? "✓" : "·"} ${plan.fileId} bytes at ${workspaceLabel(plan.to)} but registry ` +
+          `line missing — ${write ? "appended" : "would append"} (partial-crash recovery)`,
+      );
     } else {
       console.log(
         `  ${write ? "✓" : "·"} ${plan.fileId} already at ${workspaceLabel(plan.to)} — ` +
@@ -365,9 +401,16 @@ function main(): void {
   if (summary.skippedUnreadable > 0) {
     console.warn(`  ! ${summary.skippedUnreadable} registry line(s) skipped — unparseable JSON.`);
   }
+  if (summary.recoveredPartial > 0) {
+    console.warn(
+      `  ! ${summary.recoveredPartial} file(s) recovered from a partial prior run — bytes were at ` +
+        `the destination but the registry line was missing; ${write ? "appended it" : "would append it"}.`,
+    );
+  }
 
   console.log(
     `\n${summary.moved} ${write ? "moved" : "to move"} · ` +
+      `${summary.recoveredPartial} recovered · ` +
       `${summary.skippedExisting} already migrated · ` +
       `${summary.skippedMissingBytes} missing bytes · ` +
       `${summary.skippedInvalidId + summary.skippedUnreadable} unmigratable`,

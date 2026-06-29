@@ -200,4 +200,53 @@ describe("migrate-files-to-workspace", () => {
       rmSync(legacyDir, { recursive: true, force: true });
     }
   });
+
+  // Partial-crash recovery: a prior run moved the bytes to the destination but
+  // died before appending the registry line. The store is registry-driven, so
+  // the bytes are unreadable until the line exists — and a "dest has bytes ⇒
+  // already migrated" skip would delete the source and orphan them. The re-run
+  // must finish the append, not skip.
+  test("recovers a file whose bytes are at the dest but whose registry line is missing", () => {
+    const crashDir = mkdtempSync(join(tmpdir(), "nb-files-crash-"));
+    try {
+      const fileId = "fl_000000000000000000000099";
+      const src = userFilesDir(crashDir);
+      mkdirSync(src, { recursive: true });
+      // Source registry still lists the file (we never rewrite the source registry).
+      writeFileSync(
+        join(src, "registry.jsonl"),
+        `${JSON.stringify(entry({ id: fileId, filename: "half.txt", mimeType: "text/plain", workspaceId: "ws_helix" }))}\n`,
+        "utf-8",
+      );
+      // Bytes already at the destination owner partition; NO dest registry line.
+      const dest = workspaceFilesDir(crashDir, "ws_helix", OWNER);
+      mkdirSync(dest, { recursive: true });
+      writeFileSync(join(dest, byteName(fileId, "half.txt")), Buffer.from("half"));
+      // Source bytes also still present (the crash was before the source unlink).
+      writeFileSync(join(src, byteName(fileId, "half.txt")), Buffer.from("half"));
+
+      const summary = migrateFilesToWorkspace(crashDir, { write: true });
+      expect(summary.recoveredPartial).toBe(1);
+      expect(summary.skippedExisting).toBe(0);
+
+      // The dest registry line now exists, so the store can read the file.
+      const destRegistry = readFileSync(join(dest, "registry.jsonl"), "utf-8")
+        .trim()
+        .split("\n")
+        .map((l) => JSON.parse(l) as FileEntry);
+      const recovered = destRegistry.find((e) => e.id === fileId);
+      expect(recovered).toBeDefined();
+      expect(recovered?.ownerId).toBe(OWNER);
+      expect(recovered?.workspaceId).toBe("ws_helix");
+      // Stale source bytes were dropped.
+      expect(existsSync(join(src, byteName(fileId, "half.txt")))).toBe(false);
+
+      // And it's idempotent: a second run now sees the line and skips.
+      const second = migrateFilesToWorkspace(crashDir, { write: true });
+      expect(second.recoveredPartial).toBe(0);
+      expect(second.skippedExisting).toBe(1);
+    } finally {
+      rmSync(crashDir, { recursive: true, force: true });
+    }
+  });
 });

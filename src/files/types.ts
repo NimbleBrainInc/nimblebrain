@@ -28,12 +28,20 @@ export interface FileEntry {
    * (`workspaces/<wsId>/files/<ownerId>/`), so the DIRECTORY is the authority —
    * this field is a convenience the migration stamps for audit / future
    * cross-owner views. Absent on entries created without it.
+   *
+   * ADVISORY ONLY — never resolve a file by this field. The owner partition the
+   * store is constructed with (via `getWorkspaceFileStore(wsId, ownerId)`) is
+   * the storage key; this denormalised copy can drift from it and must not be
+   * trusted to locate bytes.
    */
   ownerId?: string;
   /**
    * Denormalised workspace the file lives in. Stored under
    * `workspaces/<workspaceId>/files/<ownerId>/`, so the path is authoritative
    * and this field is the convenience. Absent on legacy/identity-era records.
+   *
+   * ADVISORY ONLY — see `ownerId`. The workspace comes from the ambient request
+   * (`RequestContext.fileWorkspaceId`), never from this field.
    */
   workspaceId?: string;
   deleted?: true;
