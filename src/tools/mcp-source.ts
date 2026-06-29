@@ -2160,11 +2160,11 @@ export type ConnectionFailure =
  * shapes, with `unknown` as the residue.
  *
  * - **session-lost** — the server forgot our Streamable-HTTP session (it rolled).
- *   Wire shape (NOT a JSON-RPC code on `err.code`): a request on a stale
- *   `Mcp-Session-Id` gets HTTP 404 + a `-32001 "Session not found"` body, which the
- *   SDK throws as a `StreamableHTTPError` whose `.code` is the status (404) and
- *   whose `.message` carries the `-32001`/text. Match status + message together; a
- *   code-only match on -32001 silently never fires on the canonical path.
+ *   Matched on the "session not found" MESSAGE (plus the `-32001` code), NOT the
+ *   HTTP status: the fleet servers' Python SDK returns it as HTTP 404 with a
+ *   `{"code":-32600,"message":"Session not found"}` body (so the client's
+ *   `StreamableHTTPError.code` is 404 and the `-32600` is body text), but remote
+ *   bundles are untrusted/heterogeneous — the message is the reliable signal.
  * - **transient** — a mid-roll gateway blip (502/503/504, `bad_gateway`). Back off.
  * - **auth-lost** — a rejected credential. Detectable only as `UnauthorizedError`;
  *   note its recovery *policy* is config-dependent — a static-auth remote can't
@@ -2187,11 +2187,20 @@ export function classifyConnectionFailure(err: unknown): ConnectionFailure {
   const message = (err as { message?: unknown }).message;
   const msg = typeof message === "string" ? message : "";
 
-  // session-lost — exact prior `isSessionLost` logic, checked first. NOTE the SDK
-  // also uses -32001 for RequestTimeout; a timeout is recover-eligible too, so the
-  // overlap is benign — but the tool path caps replays at one (see recover) so a
-  // server that processed-then-timed-out isn't re-sent repeatedly.
-  if (code === -32001 || (code === 404 && /session not found/i.test(msg))) {
+  // session-lost — checked first (most specific). Match the "session not found"
+  // MESSAGE regardless of the HTTP status / JSON-RPC code, because the signal is
+  // the server's text, not the envelope: the fleet servers' Python MCP SDK returns
+  // it as HTTP 404 with a `{"code":-32600,"message":"Session not found"}` body
+  // (so the SDK client's StreamableHTTPError has `code === 404`), but a remote
+  // bundle is untrusted and heterogeneous — another server (or the same one in
+  // HTTP-200 + JSON-RPC-error mode) could surface it as `McpError(-32600)` or a
+  // non-404 status. Gating on the status would silently strand those. Matching the
+  // message also takes precedence over the `-32600 → none` branch below, so a
+  // session loss carrying the -32600 code still recovers instead of surfacing.
+  // (`-32001` is the canonical session-expired code; the SDK also reuses it for
+  // RequestTimeout — both are recover-eligible, and the tool path caps replays at
+  // one, so a processed-then-timed-out call isn't re-sent repeatedly.)
+  if (code === -32001 || /session not found/i.test(msg)) {
     return "session-lost";
   }
   // transient — exact prior `isTransientTransport` logic, checked second.

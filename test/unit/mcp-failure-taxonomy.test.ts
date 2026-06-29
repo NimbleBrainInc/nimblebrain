@@ -27,6 +27,28 @@ describe("classifyConnectionFailure — op-independent connection classes", () =
     );
   });
 
+  it("classifies the REAL production session-loss shape, status-independent", () => {
+    // Ground truth (mcp/server/streamable_http_manager.py): the fleet servers'
+    // Python SDK returns an unknown session as HTTP 404 with a -32600 body. The
+    // client wraps it as StreamableHTTPError(code=404, message="...session not
+    // found..."). The -32600 is body text, NOT err.code.
+    const realProd = {
+      code: 404,
+      message:
+        'Streamable HTTP error: Error POSTing to endpoint: {"jsonrpc":"2.0","id":"server-error","error":{"code":-32600,"message":"Session not found"}}',
+    };
+    expect(classifyConnectionFailure(realProd)).toBe("session-lost");
+    // Same loss carried as an in-body JSON-RPC error (HTTP 200) → McpError(-32600).
+    // The message match must win over the `-32600 → none` branch, or we'd strand it.
+    expect(classifyConnectionFailure(new McpError(-32600, "Session not found"))).toBe(
+      "session-lost",
+    );
+    // A non-spec remote returning the loss under a different status still recovers.
+    expect(classifyConnectionFailure({ code: 400, message: "Session not found" })).toBe(
+      "session-lost",
+    );
+  });
+
   it("classifies transient gateway failures (status + message shapes)", () => {
     for (const code of [502, 503, 504]) {
       expect(classifyConnectionFailure({ code, message: "x" })).toBe("transient");

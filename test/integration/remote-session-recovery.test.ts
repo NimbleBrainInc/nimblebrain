@@ -61,14 +61,16 @@ function startRollingServer(): MockRollingServer {
 			if (sid) {
 				const existing = transports.get(sid);
 				if (existing) return existing.handleRequest(req);
-				// Stale session (server rolled). The canonical wire shape: HTTP 404
-				// with a JSON-RPC `-32001 "Session not found"` body. The SDK client
-				// surfaces this as `StreamableHTTPError(404, "...Session not found...")`.
+				// Stale session (server rolled). This is the REAL wire shape the fleet
+				// servers' Python MCP SDK emits (streamable_http_manager.py): HTTP 404
+				// with a `{"code":-32600,"message":"Session not found"}` body and the
+				// `id:"server-error"` sentinel. The SDK client surfaces it as
+				// `StreamableHTTPError(404, "...Session not found...")`.
 				return new Response(
 					JSON.stringify({
 						jsonrpc: "2.0",
-						error: { code: -32001, message: "Session not found" },
-						id: null,
+						id: "server-error",
+						error: { code: -32600, message: "Session not found" },
 					}),
 					{ status: 404, headers: { "content-type": "application/json" } },
 				);
