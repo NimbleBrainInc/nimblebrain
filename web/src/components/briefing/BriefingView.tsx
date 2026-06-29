@@ -19,7 +19,6 @@ import { cn } from "../../lib/utils";
 
 interface BriefingViewProps {
   briefing: BriefingOutput | null;
-  loading: boolean;
   error: string | null;
   onRetry: () => void;
   /** Invoked when a section's action is clicked (navigate / startChat). */
@@ -83,16 +82,6 @@ function Eyebrow() {
   );
 }
 
-function Skeleton() {
-  return (
-    <div className="mt-3 space-y-2.5" aria-hidden>
-      <div className="h-3 w-2/3 rounded bg-muted-foreground/20 animate-pulse" />
-      <div className="h-3 w-1/2 rounded bg-muted-foreground/20 animate-pulse" />
-      <div className="h-3 w-3/5 rounded bg-muted-foreground/20 animate-pulse" />
-    </div>
-  );
-}
-
 function SectionGroup({
   label,
   items,
@@ -137,14 +126,16 @@ function SectionGroup({
   );
 }
 
-export function BriefingView({ briefing, loading, error, onRetry, onAction }: BriefingViewProps) {
+export function BriefingView({ briefing, error, onRetry, onAction }: BriefingViewProps) {
   const hasSections = (briefing?.sections.length ?? 0) > 0;
 
+  // While the briefing loads there's no skeleton — the section just shows its
+  // label and fills in when the (per-workspace, slow LLM) summary resolves, so
+  // a workspace switch never flashes a pulsing placeholder. A revisit is
+  // instant (the briefing is cached); only a first visit has the brief gap.
   return (
     <section data-testid="workspace-briefing">
       <Eyebrow />
-
-      {loading && !briefing && <Skeleton />}
 
       {error && (
         <div

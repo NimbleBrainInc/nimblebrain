@@ -98,7 +98,7 @@ function makeBriefing(overrides: Partial<BriefingOutput> = {}): BriefingOutput {
 describe("BriefingView", () => {
   test("renders the lede and section texts, inline markdown as <strong>", async () => {
     mounted = await mount(
-      <BriefingView briefing={makeBriefing()} loading={false} error={null} onRetry={() => {}} />,
+      <BriefingView briefing={makeBriefing()} error={null} onRetry={() => {}} />,
     );
     const text = mounted.container.textContent ?? "";
     expect(text).toContain("Two things need a look");
@@ -112,7 +112,7 @@ describe("BriefingView", () => {
 
   test("orders categories attention → recent → upcoming", async () => {
     mounted = await mount(
-      <BriefingView briefing={makeBriefing()} loading={false} error={null} onRetry={() => {}} />,
+      <BriefingView briefing={makeBriefing()} error={null} onRetry={() => {}} />,
     );
     const text = mounted.container.textContent ?? "";
     const attention = text.indexOf("Needs attention");
@@ -128,7 +128,6 @@ describe("BriefingView", () => {
     mounted = await mount(
       <BriefingView
         briefing={makeBriefing()}
-        loading={false}
         error={null}
         onRetry={() => {}}
         onAction={() => {
@@ -148,7 +147,6 @@ describe("BriefingView", () => {
     mounted = await mount(
       <BriefingView
         briefing={makeBriefing()}
-        loading={false}
         error={null}
         onRetry={() => {}}
         onAction={() => {}}
@@ -162,7 +160,6 @@ describe("BriefingView", () => {
     mounted = await mount(
       <BriefingView
         briefing={makeBriefing({ sections: [], state: "all-clear", lede: "" })}
-        loading={false}
         error={null}
         onRetry={() => {}}
       />,
@@ -175,7 +172,6 @@ describe("BriefingView", () => {
     mounted = await mount(
       <BriefingView
         briefing={null}
-        loading={false}
         error="boom"
         onRetry={() => {
           calls++;

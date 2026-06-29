@@ -30,7 +30,9 @@ mock.module("../src/api/client", () => ({
     }),
 }));
 
-const { useWorkspaceBriefing } = await import("../src/hooks/useWorkspaceBriefing");
+const { useWorkspaceBriefing, __resetBriefingCache } = await import(
+  "../src/hooks/useWorkspaceBriefing"
+);
 
 /** Resolve the Nth callTool with a briefing whose greeting tags its origin. */
 function resolveCall(i: number, greeting: string): void {
@@ -52,9 +54,11 @@ const flush = () => act(async () => { await Promise.resolve(); });
 
 beforeEach(() => {
   calls = [];
+  __resetBriefingCache(); // the cache is module-level; isolate each test
 });
 afterEach(() => {
   calls = [];
+  __resetBriefingCache();
 });
 
 describe("useWorkspaceBriefing", () => {
@@ -122,6 +126,30 @@ describe("useWorkspaceBriefing", () => {
     });
     await flush();
     expect(result.current.briefing?.greeting).toBe("bravo");
+  });
+
+  test("revisiting a cached workspace paints instantly, no loading flash (stale-while-revalidate)", async () => {
+    const { result, rerender } = renderHook(({ ws }: { ws: string }) => useWorkspaceBriefing(ws), {
+      initialProps: { ws: "ws_a" },
+    });
+    await act(async () => {
+      resolveCall(0, "alpha");
+    }); // ws_a cached
+    await act(async () => {
+      rerender({ ws: "ws_b" });
+    });
+    await act(async () => {
+      resolveCall(1, "bravo");
+    }); // ws_b cached
+
+    // Switch BACK to ws_a — the cached briefing shows immediately, with no
+    // loading skeleton, while a silent revalidation fires in the background.
+    await act(async () => {
+      rerender({ ws: "ws_a" });
+    });
+    expect(result.current.briefing?.greeting).toBe("alpha");
+    expect(result.current.loading).toBe(false);
+    expect(calls.length).toBe(3); // the silent revalidate
   });
 
   test("does not fetch when there is no active workspace", () => {

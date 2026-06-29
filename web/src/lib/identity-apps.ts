@@ -1,17 +1,19 @@
 // ---------------------------------------------------------------------------
 // Identity apps (web mirror)
 //
-// Kernel "identity apps" are owned by the user and hosted OUTSIDE any
-// workspace. They route through the identity door (a bare `<source>__<tool>`
-// name), render at a top-level root route (e.g. `/conversations`), and
-// dispatch their tool calls bare — no `ws_<id>-` prefix.
+// Kernel "identity apps" are owned by the user: their TOOLS dispatch through
+// the identity door as a bare `<source>__<tool>` name — no `ws_<id>-` prefix.
+// Their VIEW, however, is workspace-scoped — every list is one workspace's
+// (the focused workspace; there is no cross-workspace view), so the view
+// renders at `/w/<slug>/<serverName>`. The slug is the focused workspace =
+// view scope; it is NOT the tool namespace (the bridge keeps dispatching these
+// tools bare, keyed on `isIdentityApp`, regardless of the URL).
 //
 // This set MIRRORS the backend identity-source set (`Runtime.getIdentitySource`
 // in `src/runtime/runtime.ts`). It is keyed by **source / server name** — the
 // value the resource host (`/v1/apps/:name/...`) and the bridge use — not the
 // placement route. Keep the two tiers in lockstep: a source is identity-scoped
-// on both or neither. Set: `conversations`, `files` (Phase B), `automations`
-// (Phase C).
+// on both or neither. Set: `conversations`, `files`, `automations`.
 //
 // The web tier can't import from `src/`, so this is a hand-kept mirror — the
 // same arrangement as `web/src/lib/namespaced-tool.ts`.
@@ -30,10 +32,20 @@ export function isIdentityApp(serverName: string): boolean {
 }
 
 /**
- * The top-level root route an identity app renders at — its source name as a
- * path segment (e.g. `conversations` → `/conversations`). Identity apps live
- * outside any workspace, so they never carry a `/w/<slug>` prefix.
+ * The path segment an identity app occupies under its workspace route — just
+ * the source name (e.g. `conversations`). Registered as a child of `/w/:slug`
+ * in the router, alongside `app/<route>` for workspace apps.
  */
-export function identityAppRoute(serverName: string): string {
-  return `/${serverName}`;
+export function identityAppSegment(serverName: string): string {
+  return serverName;
+}
+
+/**
+ * The absolute route an identity app's view renders at within a workspace:
+ * `/w/<slug>/<serverName>`. The slug is the focused workspace (view scope) —
+ * the tool dispatch stays bare (see the header). Use for nav links; the router
+ * registers the relative `identityAppSegment` under the `/w/:slug` guard.
+ */
+export function identityAppRoute(serverName: string, slug: string): string {
+  return `/w/${slug}/${identityAppSegment(serverName)}`;
 }

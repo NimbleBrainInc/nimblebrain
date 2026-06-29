@@ -29,11 +29,13 @@ export function WorkspaceAppIconsProvider({
   children: ReactNode;
 }) {
   const [icons, setIcons] = useState<Map<string, string>>(() => new Map());
+  const [connectorCount, setConnectorCount] = useState<number | undefined>(undefined);
 
   const refresh = useCallback(async () => {
     try {
       const { installed } = await getInstalledConnectors({ scope: "workspace" });
       setIcons(iconMapFromInstalled(installed));
+      setConnectorCount(installed.length);
     } catch {
       // Icons are decorative. On a failed fetch keep whatever we have and
       // let the letter-avatar fallback cover the gaps — never block the
@@ -65,8 +67,8 @@ export function WorkspaceAppIconsProvider({
   });
 
   const value = useMemo<WorkspaceAppIconsValue>(
-    () => ({ iconFor: (serverName: string) => icons.get(serverName) }),
-    [icons],
+    () => ({ iconFor: (serverName: string) => icons.get(serverName), connectorCount }),
+    [icons, connectorCount],
   );
 
   return (

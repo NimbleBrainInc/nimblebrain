@@ -217,16 +217,16 @@ describe("ToolCallProvenance", () => {
 // ---------------------------------------------------------------------------
 
 describe("audit: no .split(\"/\") in new T013 components", () => {
-  test("ToolCallProvenance + ComposerFooter + WorkspaceSection have zero matches", async () => {
-    // The sidebar workspace-nav set went through two redesigns post-
-    // T013 (left rail, then labelled vertical section). WorkspaceSection
-    // is the current structural guard for the workspaces surface.
+  test("ToolCallProvenance + ComposerFooter + WorkspaceNav have zero matches", async () => {
+    // The sidebar workspace surface went through several redesigns post-T013
+    // (left rail → labelled vertical section → the workspace tree).
+    // WorkspaceNav is the current structural guard for the workspaces surface.
     const root = join(import.meta.dir, "..");
     const targets = [
       "src/components/chat/ToolCallProvenance.tsx",
       "src/components/chat/ComposerFooter.tsx",
       "src/components/chat/Composer.tsx",
-      "src/components/shell/WorkspaceSection.tsx",
+      "src/components/shell/WorkspaceNav.tsx",
     ];
     const offenders: string[] = [];
     for (const rel of targets) {
