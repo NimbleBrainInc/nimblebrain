@@ -55,6 +55,10 @@ describe("McpSource.readResource — log scoping (no probe spam)", () => {
         throw err;
       },
     };
+    // A torn transport now routes through recovery; with no backoff slots it
+    // exhausts immediately (no real stop()/start(), no sleeps) and surfaces —
+    // exactly the terminal (logged null / silent null) these tests assert.
+    (source as unknown as { recoveryDelaysMs: readonly number[] }).recoveryDelaysMs = [];
     return source;
   }
 

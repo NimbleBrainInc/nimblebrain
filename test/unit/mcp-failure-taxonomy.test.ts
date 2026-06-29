@@ -58,12 +58,32 @@ describe("classifyConnectionFailure — op-independent connection classes", () =
     expect(classifyConnectionFailure(new Error("Request timed out"))).toBe("transport-dead");
   });
 
-  it("returns 'none' for application outcomes — those are op-scoped, not connection failures", () => {
-    // resource-"miss" wire codes are NOT connection failures (isMcpResourceMiss owns them, per op).
-    expect(classifyConnectionFailure(new McpError(-32002, "Resource not found"))).toBe("none");
+  it("returns 'none' for standard JSON-RPC protocol errors the server answered with", () => {
+    // The transport is fine; restarting won't change the answer. (resource-miss
+    // codes are also op-scoped — isMcpResourceMiss owns them per op.)
+    expect(classifyConnectionFailure(new McpError(-32700, "Parse error"))).toBe("none");
+    expect(classifyConnectionFailure(new McpError(-32600, "Invalid request"))).toBe("none");
     expect(classifyConnectionFailure(new McpError(-32601, "Method not found"))).toBe("none");
     expect(classifyConnectionFailure(new McpError(-32602, "Invalid params"))).toBe("none");
-    expect(classifyConnectionFailure(new Error("the tool said no"))).toBe("none");
+    expect(classifyConnectionFailure(new McpError(-32603, "Internal error"))).toBe("none");
+    expect(classifyConnectionFailure(new McpError(-32002, "Resource not found"))).toBe("none");
+  });
+
+  it("classifies recognized torn-transport shapes as transport-dead", () => {
+    expect(classifyConnectionFailure(new McpError(-32000, "Connection closed"))).toBe(
+      "transport-dead",
+    );
+    expect(classifyConnectionFailure(new Error("write EPIPE"))).toBe("transport-dead");
+    expect(classifyConnectionFailure(new Error("read ECONNRESET"))).toBe("transport-dead");
+  });
+
+  it("classifies an unclassifiable throw as 'unknown' (caller decides recover vs surface)", () => {
+    // Not a standard protocol error, not a recognized transport shape — e.g. a
+    // 429, a server-defined code, or a malformed-result parse error. The tool
+    // path recovers these; reads surface them. See recover()'s recoverUnknown.
+    expect(classifyConnectionFailure({ code: 429, message: "Too Many Requests" })).toBe("unknown");
+    expect(classifyConnectionFailure(new McpError(-32050, "custom server error"))).toBe("unknown");
+    expect(classifyConnectionFailure(new Error("Unexpected token < in JSON"))).toBe("unknown");
   });
 
   it("is null/non-object safe", () => {
