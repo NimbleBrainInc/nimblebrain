@@ -1415,7 +1415,7 @@ export class Runtime {
         : { id: narratedWsId }
       : undefined;
 
-    // Workspace identity/persona override — follows the focused workspace too.
+    // Workspace identity/persona override — follows the conversation's workspace too.
     const identityOverride = activeWorkspace?.identity
       ? makeIdentitySkill(activeWorkspace.identity)
       : null;
