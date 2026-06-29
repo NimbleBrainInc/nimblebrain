@@ -14,6 +14,9 @@ const DEFAULT_CONFIG: FileConfig = {
   maxExtractedTextSize: 204_800,
 };
 
+const WS = "ws_test";
+const OWNER = "owner_test";
+
 let workDir: string;
 
 beforeEach(async () => {
@@ -42,7 +45,7 @@ describe("Integration: upload text file → ingest → verify extracted content"
     const textContent = "The quick brown fox jumps over the lazy dog.";
     const files = [makeFile(textContent, "notes.txt", "text/plain")];
 
-    const result = await ingestFiles(files, "conv_int_1", store, DEFAULT_CONFIG);
+    const result = await ingestFiles(files, "conv_int_1", store, DEFAULT_CONFIG, WS, OWNER);
 
     // No errors
     expect(result.errors).toHaveLength(0);
@@ -78,7 +81,7 @@ describe("Integration: upload PNG image → ingest → verify resource_link cont
     ]);
     const files = [makeFile(pngHeader, "screenshot.png", "image/png")];
 
-    const result = await ingestFiles(files, "conv_int_2", store, DEFAULT_CONFIG);
+    const result = await ingestFiles(files, "conv_int_2", store, DEFAULT_CONFIG, WS, OWNER);
 
     expect(result.errors).toHaveLength(0);
     expect(result.fileRefs).toHaveLength(1);
@@ -102,7 +105,7 @@ describe("Integration: upload PDF → ingest → verify resource_link without ex
     const store = createFileStore(join(workDir, "files"));
     const files = [makeFile(Buffer.from("%PDF-1.4\n%%EOF"), "report.pdf", "application/pdf")];
 
-    const result = await ingestFiles(files, "conv_int_pdf", store, DEFAULT_CONFIG);
+    const result = await ingestFiles(files, "conv_int_pdf", store, DEFAULT_CONFIG, WS, OWNER);
 
     expect(result.errors).toHaveLength(0);
     expect(result.fileRefs).toHaveLength(1);
@@ -124,7 +127,7 @@ describe("Integration: backward compat — no files → empty result", () => {
   test("empty files array returns empty contentParts, fileRefs, and no errors", async () => {
     const store = createFileStore(join(workDir, "files"));
 
-    const result = await ingestFiles([], "conv_int_3", store, DEFAULT_CONFIG);
+    const result = await ingestFiles([], "conv_int_3", store, DEFAULT_CONFIG, WS, OWNER);
 
     expect(result.contentParts).toHaveLength(0);
     expect(result.fileRefs).toHaveLength(0);
@@ -145,6 +148,8 @@ describe("Integration: FileStore save → registry → read round-trip", () => {
     // Register in the registry
     const entry: FileEntry = {
       id: saved.id,
+      workspaceId: WS,
+      ownerId: OWNER,
       filename: "payload.bin",
       mimeType: "application/octet-stream",
       size: saved.size,
@@ -188,6 +193,8 @@ describe("Integration: files bundle write → read round-trip (filesystem)", () 
     // Append registry entry (mimicking bundle registry append)
     const entry: FileEntry = {
       id: fileId,
+      workspaceId: WS,
+      ownerId: OWNER,
       filename,
       mimeType: "text/markdown",
       size: content.length,
@@ -218,6 +225,8 @@ describe("Integration: files bundle search by filename", () => {
     const entries: FileEntry[] = [
       {
         id: "fl_alpha",
+        workspaceId: WS,
+        ownerId: OWNER,
         filename: "quarterly-report.pdf",
         mimeType: "application/pdf",
         size: 100,
@@ -229,6 +238,8 @@ describe("Integration: files bundle search by filename", () => {
       },
       {
         id: "fl_beta",
+        workspaceId: WS,
+        ownerId: OWNER,
         filename: "meeting-notes.txt",
         mimeType: "text/plain",
         size: 50,
@@ -240,6 +251,8 @@ describe("Integration: files bundle search by filename", () => {
       },
       {
         id: "fl_gamma",
+        workspaceId: WS,
+        ownerId: OWNER,
         filename: "annual-report.pdf",
         mimeType: "application/pdf",
         size: 200,
@@ -272,6 +285,8 @@ describe("Integration: files bundle delete (tombstone)", () => {
 
     const entry: FileEntry = {
       id: "fl_to_delete",
+      workspaceId: WS,
+      ownerId: OWNER,
       filename: "temp.txt",
       mimeType: "text/plain",
       size: 10,
@@ -306,7 +321,7 @@ describe("Integration: validation — reject oversized file", () => {
       makeFile("this content is definitely longer than sixteen bytes", "big.txt", "text/plain"),
     ];
 
-    const result = await ingestFiles(files, "conv_int_v1", store, config);
+    const result = await ingestFiles(files, "conv_int_v1", store, config, WS, OWNER);
 
     expect(result.errors).toHaveLength(1);
     expect(result.errors[0]).toContain("exceeds limit");
@@ -322,7 +337,7 @@ describe("Integration: validation — reject disallowed MIME type", () => {
       makeFile("#!/bin/bash\nrm -rf /", "malicious.exe", "application/x-executable"),
     ];
 
-    const result = await ingestFiles(files, "conv_int_v2", store, DEFAULT_CONFIG);
+    const result = await ingestFiles(files, "conv_int_v2", store, DEFAULT_CONFIG, WS, OWNER);
 
     expect(result.errors).toHaveLength(1);
     expect(result.errors[0]).toContain("disallowed type");

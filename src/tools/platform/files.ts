@@ -1,7 +1,7 @@
 /**
  * Files platform source — in-process MCP server backing the caller's
- * identity-owned file store (`users/{userId}/files/`; Phase B). `files` is a
- * kernel identity source, so its tools dispatch bare through the identity
+ * workspace-owned file store (`workspaces/<wsId>/files/<ownerId>/`). `files` is
+ * a kernel identity source, so its tools dispatch bare through the identity
  * door. Files are persisted via a JSONL registry and on-disk binary storage.
  *
  * Both this tool source and the chat multipart ingest path
@@ -24,6 +24,7 @@ import type { FileStore } from "../../files/store.ts";
 import type { FileEntry } from "../../files/types.ts";
 import { fileIdToUri, uriToFileId } from "../../files/uri.ts";
 import type { Runtime } from "../../runtime/runtime.ts";
+import { personalWorkspaceIdFor } from "../../workspace/workspace-store.ts";
 import {
   type DynamicResourceEntry,
   defineInProcessApp,
@@ -47,6 +48,12 @@ import {
 // ---------------------------------------------------------------------------
 // Tool handler helpers
 // ---------------------------------------------------------------------------
+
+/** The workspace + owner a tool call resolves its store under. */
+interface FileScope {
+  wsId: string;
+  ownerId: string;
+}
 
 interface ListInput {
   limit?: number;
@@ -317,7 +324,11 @@ interface CreateInput {
   body: string;
 }
 
-async function handleCreate(store: FileStore, args: CreateInput): Promise<object> {
+async function handleCreate(
+  store: FileStore,
+  scope: FileScope,
+  args: CreateInput,
+): Promise<object> {
   // TODO: apply the same MIME allowlist as chat-multipart ingest
   // (`ALLOWED_MIMES` in `src/files/ingest.ts`). The tool currently accepts
   // any `mimeType` the LLM supplies; the chat path rejects anything
@@ -343,6 +354,11 @@ async function handleCreate(store: FileStore, args: CreateInput): Promise<object
     conversationId: null,
     createdAt: new Date().toISOString(),
     description: manifest.description ?? null,
+    // Path-authoritative (§2.3), stamped at creation. `visibility` defaults to
+    // private — v1 is private-only; `shared` is dormant groundwork.
+    workspaceId: scope.wsId,
+    ownerId: scope.ownerId,
+    visibility: "private",
   };
   await store.appendRegistry(entry);
   return { id: saved.id, filename: manifest.filename, size: saved.size };
@@ -395,21 +411,25 @@ async function handleDelete(store: FileStore, args: { id: string }): Promise<obj
 /** Create the "files" platform source — in-process MCP server. */
 export function createFilesSource(runtime: Runtime, eventSink: EventSink): McpSource {
   /**
-   * Resolve the caller's identity-scoped file store. Files are identity-owned
-   * (Phase B): the store lives at `users/{userId}/files/`, not in any
-   * workspace. `files` is a kernel identity source, so the dispatcher always
-   * runs these tools with an authenticated identity in the request context;
-   * absence is a misrouted call, not a recoverable state.
+   * Resolve the workspace + owner this call stores under. Owner comes through
+   * the one shared rule (`resolveRequestUserId`) — the same path the REST file
+   * handlers and chat rehydration use, so "who am I" never drifts between
+   * sources. The workspace is the focused workspace (`X-Workspace-Id` in the
+   * request context), or the owner's personal workspace when there's no focus —
+   * mirroring how a chat resolves its room (`request.workspaceId ?? personal`).
+   * Fail-closed in production (the owner resolver throws when an identity
+   * provider is configured but the request carries no identity).
    */
+  function getScope(): FileScope {
+    const ownerId = runtime.resolveRequestUserId(runtime.getCurrentIdentity() ?? undefined);
+    const wsId = runtime.getCurrentWorkspaceId() ?? personalWorkspaceIdFor(ownerId);
+    return { wsId, ownerId };
+  }
+
+  /** The workspace-owned store for the current request's scope. */
   function getStore(): FileStore {
-    // Resolve the owner through the one shared rule (`resolveRequestUserId`) —
-    // the same path automations' source, the REST file handlers, and chat
-    // rehydration use, so "who am I" never drifts between sources. Fail-closed
-    // in production (throws when an identity provider is configured but the
-    // request carries no identity); DEV_IDENTITY only in dev.
-    return runtime.getFileStore(
-      runtime.resolveRequestUserId(runtime.getCurrentIdentity() ?? undefined),
-    );
+    const { wsId, ownerId } = getScope();
+    return runtime.getFileStore(wsId, ownerId);
   }
 
   function ok(data: object): ToolResult {
@@ -490,7 +510,14 @@ export function createFilesSource(runtime: Runtime, eventSink: EventSink): McpSo
       inputSchema: FilesCreateInput,
       handler: async (input: Record<string, unknown>): Promise<ToolResult> => {
         try {
-          return ok(await handleCreate(getStore(), input as unknown as CreateInput));
+          const scope = getScope();
+          return ok(
+            await handleCreate(
+              runtime.getFileStore(scope.wsId, scope.ownerId),
+              scope,
+              input as unknown as CreateInput,
+            ),
+          );
         } catch (err) {
           return fail(err instanceof Error ? err.message : String(err));
         }

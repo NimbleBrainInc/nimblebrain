@@ -32,10 +32,11 @@ export function toolRoutes(ctx: AppContext) {
     .get("/v1/shell", requireWorkspace(ctx.workspaceStore), (c) =>
       handleShell(ctx.runtime, c.var.workspaceId),
     )
-    .get("/v1/files/:fileId", (c) => {
-      // Files are identity-owned (Phase B) — no workspace needed; the store is
-      // resolved from the authenticated identity.
+    .get("/v1/files/:fileId", optionalWorkspace(ctx.workspaceStore), (c) => {
+      // Files are workspace-owned: the focused workspace (`X-Workspace-Id`,
+      // validated by optionalWorkspace) selects the partition, falling back to
+      // the caller's personal workspace when no header is sent.
       const fileId = decodeURIComponent(c.req.param("fileId"));
-      return handleFileServe(fileId, ctx.runtime, ctx.features, c.var.identity);
+      return handleFileServe(fileId, ctx.runtime, ctx.features, c.var.identity, c.var.workspaceId);
     });
 }

@@ -2,6 +2,7 @@ import { randomBytes } from "node:crypto";
 import { appendFile, mkdir, readdir, readFile, unlink, writeFile } from "node:fs/promises";
 import { basename, join, relative, resolve } from "node:path";
 import { resolveMimeType } from "./mime.ts";
+import { parseFilePath } from "./paths.ts";
 import type { ExtractedTextSidecar, FileEntry } from "./types.ts";
 
 /**
@@ -80,15 +81,36 @@ export interface FileStore {
 /**
  * Create a file store rooted at `filesDir`.
  *
- * Files are identity-owned (Phase B): `filesDir` must be a resolved,
- * identity-scoped path (`users/{userId}/files/`). Construct it only through
- * `Runtime.getFileStore(userId)` — the single sanctioned path, enforced by
- * `check:file-paths`. Passing a workspace-scoped path (the pre-Phase-B
- * `getWorkspaceScopedDir(wsId)/files`) silos files per workspace, the exact
- * bug this migration removes.
+ * Files are workspace-owned: `filesDir` is a resolved, workspace-partitioned
+ * path (`workspaces/<wsId>/files/<ownerId>/`; see `src/files/paths.ts`).
+ * Construct it only through `Runtime.getFileStore(wsId, ownerId)` — the single
+ * sanctioned path, enforced by `check:file-paths`.
+ *
+ * The store derives its scope from the path (`parseFilePath`): the directory is
+ * authoritative for `workspaceId` + `ownerId` (§2.3). On read, entries that
+ * lack those fields — legacy rows migrated by a pure move — are backfilled from
+ * the path so they self-heal without a registry rewrite. `null` for a path that
+ * isn't workspace-partitioned (e.g. a unit-test scratch dir) just disables the
+ * backfill.
  */
 export function createFileStore(filesDir: string): FileStore {
   const registryPath = join(filesDir, "registry.jsonl");
+  const scope = parseFilePath(filesDir);
+
+  /**
+   * Backfill the path-authoritative scope onto an entry whose `ownerId` /
+   * `workspaceId` are absent (a migrated legacy row). `visibility` is left
+   * alone — absent reads as `private`, and nothing consults it in v1.
+   */
+  function withScope(entry: FileEntry): FileEntry {
+    if (!scope) return entry;
+    if (entry.ownerId && entry.workspaceId) return entry;
+    return {
+      ...entry,
+      ownerId: entry.ownerId || scope.ownerId,
+      workspaceId: entry.workspaceId || scope.wsId,
+    };
+  }
 
   async function ensureFilesDir(): Promise<void> {
     await mkdir(filesDir, { recursive: true });
@@ -178,7 +200,8 @@ export function createFileStore(filesDir: string): FileStore {
     }
     return Array.from(latest.values())
       .filter((e) => !e.deleted)
-      .map(withResolvedMime);
+      .map(withResolvedMime)
+      .map(withScope);
   }
 
   async function findEntry(id: string): Promise<FileEntry | null> {
@@ -188,7 +211,7 @@ export function createFileStore(filesDir: string): FileStore {
       if (entry.id === id) found = entry;
     }
     if (!found || found.deleted) return null;
-    return withResolvedMime(found);
+    return withScope(withResolvedMime(found));
   }
 
   /**

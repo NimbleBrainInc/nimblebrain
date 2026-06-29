@@ -13,6 +13,9 @@ const DEFAULT_CONFIG: FileConfig = {
   maxExtractedTextSize: 204_800,
 };
 
+const WS = "ws_test";
+const OWNER = "owner_test";
+
 let workDir: string;
 
 beforeEach(async () => {
@@ -39,7 +42,7 @@ describe("ingestFiles", () => {
   test("text file produces extracted text content part", async () => {
     const store = createFileStore(join(workDir, "files"));
     const files = [makeFile("hello world", "test.txt", "text/plain")];
-    const result = await ingestFiles(files, "conv_1", store, DEFAULT_CONFIG);
+    const result = await ingestFiles(files, "conv_1", store, DEFAULT_CONFIG, WS, OWNER);
 
     expect(result.errors).toHaveLength(0);
     expect(result.fileRefs).toHaveLength(1);
@@ -59,7 +62,7 @@ describe("ingestFiles", () => {
     // exact-Set lookup against the parameter-suffixed value.
     const store = createFileStore(join(workDir, "files"));
     const files = [makeFile("charset content", "with-charset.txt", "text/plain;charset=utf-8")];
-    const result = await ingestFiles(files, "conv_1", store, DEFAULT_CONFIG);
+    const result = await ingestFiles(files, "conv_1", store, DEFAULT_CONFIG, WS, OWNER);
 
     expect(result.errors).toHaveLength(0);
     expect(result.fileRefs).toHaveLength(1);
@@ -77,7 +80,7 @@ describe("ingestFiles", () => {
       0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a,
     ]);
     const files = [makeFile(pngHeader, "photo.png", "image/png")];
-    const result = await ingestFiles(files, "conv_1", store, DEFAULT_CONFIG);
+    const result = await ingestFiles(files, "conv_1", store, DEFAULT_CONFIG, WS, OWNER);
 
     expect(result.errors).toHaveLength(0);
     expect(result.fileRefs).toHaveLength(1);
@@ -100,7 +103,7 @@ describe("ingestFiles", () => {
   test("binary file (zip) produces metadata-only notice", async () => {
     const store = createFileStore(join(workDir, "files"));
     const files = [makeFile("fake zip data", "archive.zip", "application/zip")];
-    const result = await ingestFiles(files, "conv_1", store, DEFAULT_CONFIG);
+    const result = await ingestFiles(files, "conv_1", store, DEFAULT_CONFIG, WS, OWNER);
 
     expect(result.errors).toHaveLength(0);
     expect(result.fileRefs).toHaveLength(1);
@@ -123,7 +126,7 @@ describe("ingestFiles", () => {
       makeFile("b", "b.txt", "text/plain"),
       makeFile("c", "c.txt", "text/plain"),
     ];
-    const result = await ingestFiles(files, "conv_1", store, config);
+    const result = await ingestFiles(files, "conv_1", store, config, WS, OWNER);
 
     expect(result.errors).toHaveLength(1);
     expect(result.errors[0]).toContain("Too many files");
@@ -134,7 +137,7 @@ describe("ingestFiles", () => {
     const store = createFileStore(join(workDir, "files"));
     const config: FileConfig = { ...DEFAULT_CONFIG, maxFileSize: 10 };
     const files = [makeFile("this is longer than 10 bytes", "big.txt", "text/plain")];
-    const result = await ingestFiles(files, "conv_1", store, config);
+    const result = await ingestFiles(files, "conv_1", store, config, WS, OWNER);
 
     expect(result.errors).toHaveLength(1);
     expect(result.errors[0]).toContain("exceeds limit");
@@ -145,7 +148,7 @@ describe("ingestFiles", () => {
     const store = createFileStore(join(workDir, "files"));
     const config: FileConfig = { ...DEFAULT_CONFIG, maxTotalSize: 10 };
     const files = [makeFile("this is longer than 10 bytes", "big.txt", "text/plain")];
-    const result = await ingestFiles(files, "conv_1", store, config);
+    const result = await ingestFiles(files, "conv_1", store, config, WS, OWNER);
 
     expect(result.errors).toHaveLength(1);
     expect(result.errors[0]).toContain("Total file size");
@@ -155,7 +158,7 @@ describe("ingestFiles", () => {
   test("rejects disallowed MIME type", async () => {
     const store = createFileStore(join(workDir, "files"));
     const files = [makeFile("#!/bin/bash", "evil.sh", "application/x-executable")];
-    const result = await ingestFiles(files, "conv_1", store, DEFAULT_CONFIG);
+    const result = await ingestFiles(files, "conv_1", store, DEFAULT_CONFIG, WS, OWNER);
 
     expect(result.errors).toHaveLength(1);
     expect(result.errors[0]).toContain("disallowed type");
@@ -168,7 +171,7 @@ describe("ingestFiles", () => {
       makeFile("csv data", "data.csv", "text/csv"),
       makeFile("zip content", "archive.zip", "application/zip"),
     ];
-    const result = await ingestFiles(files, "conv_1", store, DEFAULT_CONFIG);
+    const result = await ingestFiles(files, "conv_1", store, DEFAULT_CONFIG, WS, OWNER);
 
     expect(result.errors).toHaveLength(0);
     expect(result.fileRefs).toHaveLength(2);
@@ -178,7 +181,7 @@ describe("ingestFiles", () => {
   test("each ingested file gets a registry entry with source chat", async () => {
     const store = createFileStore(join(workDir, "files"));
     const files = [makeFile("hello", "test.txt", "text/plain")];
-    await ingestFiles(files, "conv_42", store, DEFAULT_CONFIG);
+    await ingestFiles(files, "conv_42", store, DEFAULT_CONFIG, WS, OWNER);
 
     const registry = await store.readRegistry();
     expect(registry).toHaveLength(1);
@@ -194,7 +197,7 @@ describe("ingestFiles", () => {
       makeFile("not a real pdf", "broken.pdf", "application/pdf"),
       makeFile("good text", "good.txt", "text/plain"),
     ];
-    const result = await ingestFiles(files, "conv_1", store, DEFAULT_CONFIG);
+    const result = await ingestFiles(files, "conv_1", store, DEFAULT_CONFIG, WS, OWNER);
 
     expect(result.errors).toHaveLength(0);
     expect(result.fileRefs).toHaveLength(2);
@@ -209,7 +212,7 @@ describe("ingestFiles", () => {
     const files = [
       makeFile('{"key": "value"}', "config.json", "application/json"),
     ];
-    const result = await ingestFiles(files, "conv_1", store, DEFAULT_CONFIG);
+    const result = await ingestFiles(files, "conv_1", store, DEFAULT_CONFIG, WS, OWNER);
 
     expect(result.fileRefs[0].extracted).toBe(true);
     const textPart = result.contentParts.find(

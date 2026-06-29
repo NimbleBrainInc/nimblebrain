@@ -39,7 +39,7 @@ import { validateToolInput } from "../tools/validate-input.ts";
 import { estimateCost } from "../usage/cost.ts";
 import { bytesToBase64 } from "../util/base64.ts";
 import { PersonalWorkspaceInvariantError } from "../workspace/errors.ts";
-import type { WorkspaceStore } from "../workspace/workspace-store.ts";
+import { personalWorkspaceIdFor, type WorkspaceStore } from "../workspace/workspace-store.ts";
 import type { ConversationEventManager } from "./conversation-events.ts";
 import type { SseEventManager } from "./events.ts";
 import { artifactResolutionsTotal } from "./metrics.ts";
@@ -1701,12 +1701,15 @@ export function sanitizeFilename(name: string): string {
 const FILE_ID_RE = /^fl_(?:[a-f0-9]{24}|[a-z0-9]+_[a-f0-9]{8})$/;
 
 /** Handle GET /v1/files/:fileId — serve a stored file from the caller's
- * identity store (files are identity-owned; Phase B). */
+ * workspace-owned store (`workspaces/<wsId>/files/<ownerId>/`). `workspaceId`
+ * is the focused workspace (`X-Workspace-Id`), or the owner's personal
+ * workspace when unfocused — the same partition the file was stored under. */
 export async function handleFileServe(
   fileId: string,
   runtime: Runtime,
   features: ResolvedFeatures,
   identity: UserIdentity | undefined,
+  workspaceId: string | undefined,
 ): Promise<Response> {
   if (!features.fileContext) {
     return apiError(404, "not_found", "Not found");
@@ -1716,7 +1719,8 @@ export async function handleFileServe(
     return apiError(400, "bad_request", "Invalid file ID format");
   }
 
-  const store = runtime.getFileStore(runtime.resolveRequestUserId(identity));
+  const ownerId = runtime.resolveRequestUserId(identity);
+  const store = runtime.getFileStore(workspaceId ?? personalWorkspaceIdFor(ownerId), ownerId);
   try {
     const file = await store.readFile(fileId);
     const safeName = sanitizeFilename(file.filename);
@@ -1868,17 +1872,20 @@ async function parseMultipartChatBody(
 
   // Ingest files: validate, store, extract text, build content parts.
   //
-  // Files are identity-owned (Phase B): ingest writes to the uploader's
-  // identity store (`users/{userId}/files/`), the SAME store `runtime.chat()`
-  // reads from when it rehydrates the conversation — resolved through the one
-  // owner rule so an upload can't land in a store the read won't look in.
-  // `X-Workspace-Id` does not route file storage; it still threads into
-  // `ChatRequest.workspaceId` (the focused workspace, for prompt scoping).
-  const store = runtime.getFileStore(runtime.resolveRequestUserId(identity));
+  // Files are workspace-owned: ingest writes to the conversation's room
+  // partition (`workspaces/<wsId>/files/<ownerId>/`), the SAME partition
+  // `runtime.chat()` reads from when it rehydrates the conversation. `wsId` is
+  // the focused workspace (`X-Workspace-Id`) or the owner's personal workspace
+  // when unfocused — matching how `chat()` resolves its room (`request.
+  // workspaceId ?? sessionWsId`), so an upload can't land in a partition the
+  // read won't look in.
+  const ownerId = runtime.resolveRequestUserId(identity);
+  const wsId = workspaceId ?? personalWorkspaceIdFor(ownerId);
+  const store = runtime.getFileStore(wsId, ownerId);
   const filesConfig = runtime.getFilesConfig();
   // Use conversationId if provided, otherwise a placeholder (will be replaced by runtime.chat)
   const convId = (typeof conversationId === "string" && conversationId) || "pending";
-  const ingestResult = await ingestFiles(uploadedFiles, convId, store, filesConfig);
+  const ingestResult = await ingestFiles(uploadedFiles, convId, store, filesConfig, wsId, ownerId);
 
   if (ingestResult.errors.length > 0) {
     return apiError(400, "file_upload_error", "File upload failed", {
@@ -1935,6 +1942,7 @@ export async function handleResourceUpload(
   runtime: Runtime,
   features: ResolvedFeatures,
   identity: UserIdentity | undefined,
+  workspaceId: string | undefined,
 ): Promise<Response> {
   if (!features.fileContext) {
     return apiError(404, "not_found", "Not found");
@@ -2016,7 +2024,9 @@ export async function handleResourceUpload(
   const conversationId =
     typeof conversationIdRaw === "string" && conversationIdRaw ? conversationIdRaw : null;
 
-  const store = runtime.getFileStore(runtime.resolveRequestUserId(identity));
+  const ownerId = runtime.resolveRequestUserId(identity);
+  const wsId = workspaceId ?? personalWorkspaceIdFor(ownerId);
+  const store = runtime.getFileStore(wsId, ownerId);
   const entries: FileEntry[] = [];
   const errors: string[] = [];
 
@@ -2042,6 +2052,10 @@ export async function handleResourceUpload(
       conversationId,
       createdAt: new Date().toISOString(),
       description,
+      // Path-authoritative scope (§2.3), stamped at creation; private by default.
+      workspaceId: wsId,
+      ownerId,
+      visibility: "private",
     };
     await store.appendRegistry(entry);
     entries.push(entry);

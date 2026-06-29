@@ -1,27 +1,39 @@
 #!/usr/bin/env bun
 /**
- * Lint: files are identity-owned and reached through one constructor.
+ * Lint: files are workspace-owned — never built at the identity level.
  *
- * Phase B moved files from the per-workspace store
- * (`{workDir}/workspaces/{wsId}/files/`) to the identity store
- * (`{workDir}/users/{userId}/files/`). To keep that single, two things are
- * enforced in `src/`:
+ * A file lives under the workspace it was created in, with the owner as a
+ * privacy sub-partition:
  *
- *   1. `createFileStore(...)` is called only in `src/runtime/runtime.ts` —
- *      via `Runtime.getFileStore(userId)` (the sanctioned identity-scoped
- *      constructor) and the host-resources resolver closure. Any other call
- *      site builds a store off a path the caller chose, which is how files
- *      drifted back into a workspace silo.
- *   2. `join(getWorkspaceScopedDir(...), ..., "files")` — building a
- *      workspace-scoped files dir by hand — is forbidden anywhere in `src/`.
+ *   workspaces/<wsId>/files/<ownerId>/   a member's files (private by default)
  *
- * Allowed: a `// lint-ok:file-path` marker on a line just above the call,
- * for the rare future case the constructor genuinely can't cover.
+ * The identity-owned `{workDir}/users/<userId>/files/` layout is gone. Any new
+ * occurrence of identity-level file construction — `getDataPath("files")` on an
+ * `IdentityContext`, or joining `"files"` directly onto a non-workspace root —
+ * is a regression: it drops the workspace wall the permission model depends on
+ * (§2.3).
  *
- * Scope: `src/**\/*.ts`. Tests and `scripts/` are out of scope (the
- * migration deliberately reads the old workspace-scoped layout).
+ * What this script flags:
+ *   - `x.getDataPath("files")` / `getDataPath("files")` — the identity store
+ *     constructor. Files are no longer identity-owned.
+ *   - `join(...)` whose `"files"` segment is NOT qualified by a workspace root
+ *     before it (neither a literal `"workspaces", <wsId>` pair nor a
+ *     workspace-scoped base like `this.workspacesRoot` / `getWorkspaceScopedDir()`).
  *
- * Exports its AST predicates for the self-test under `test/unit/scripts/`.
+ * What it allows:
+ *   - `src/files/paths.ts` — the single sanctioned construction (and parse)
+ *     site for the `workspaces/<wsId>/files/<ownerId>` layout. It *is* the
+ *     definition this lint protects. Build the dir via `workspaceFilesDir()`.
+ *   - `scripts/migrate-files-to-room.ts` — it must read the legacy
+ *     `{workDir}/users/<userId>/files/` SOURCE paths to move them into the
+ *     workspace-owned layout (and it lives under `scripts/`, out of the src
+ *     scan anyway).
+ *   - A `// lint-ok:file-path` marker on a line just above the construction,
+ *     for the rare future case the typed helper genuinely can't cover.
+ *
+ * Scope: `src/**\/*.ts`. Tests and `scripts/` are out of scope.
+ *
+ * Exports its AST predicates for a potential self-test under `test/unit/scripts/`.
  */
 
 import { readFileSync } from "node:fs";
@@ -33,11 +45,19 @@ const ROOT = join(import.meta.dirname ?? __dirname, "..");
 const SRC_ROOT = join(ROOT, "src");
 const ALLOW_MARKER = "lint-ok:file-path";
 
-// `runtime.ts` owns FileStore construction: the `getFileStore` method (the
-// sanctioned identity-scoped constructor) and the host-resources resolver
-// closure both legitimately call `createFileStore`.
-const CREATE_STORE_ALLOWED_FILES = new Set(
-  ["runtime/runtime.ts"].map((f) => f.split("/").join(sep)),
+// Files (relative to repo root) that legitimately reference the file layout —
+// either because they DEFINE the workspace-owned layout, or because they
+// migrate data off the identity one. The lint would otherwise fight the
+// definitions it exists to protect.
+const ALLOWED_FILES = new Set(
+  [
+    // The single sanctioned site that builds + parses the workspace-owned
+    // `workspaces/<wsId>/files/<ownerId>` layout.
+    "src/files/paths.ts",
+    // Migrates files off the identity layout — reads the old
+    // `{workDir}/users/<userId>/files/` source paths to relocate them.
+    "scripts/migrate-files-to-room.ts",
+  ].map((f) => f.split("/").join(sep)),
 );
 
 interface Violation {
@@ -48,6 +68,7 @@ interface Violation {
   reason: string;
 }
 
+/** The callee's simple name for `f(...)` / `x.f(...)`, else `null`. */
 function calleeName(node: ts.CallExpression): string | null {
   const callee = node.expression;
   return ts.isIdentifier(callee)
@@ -57,33 +78,70 @@ function calleeName(node: ts.CallExpression): string | null {
       : null;
 }
 
-/** True iff `node` is a `createFileStore(...)` call. */
-export function isCreateFileStoreCall(node: ts.CallExpression): boolean {
-  return calleeName(node) === "createFileStore";
+/** The static string value of a string / no-substitution-template literal, else `null`. */
+function staticText(node: ts.Expression | undefined): string | null {
+  if (!node) return null;
+  if (ts.isStringLiteral(node) || ts.isNoSubstitutionTemplateLiteral(node)) return node.text;
+  return null;
 }
 
-/** True iff `node` is `getWorkspaceScopedDir(...)` / `x.getWorkspaceScopedDir(...)`. */
-function isGetWorkspaceScopedDirCall(node: ts.CallExpression): boolean {
-  return calleeName(node) === "getWorkspaceScopedDir";
+const WORKSPACE_RE = /workspace/i;
+
+/**
+ * True iff `node` carries a workspace-root signal — a `"workspaces"`-ish string
+ * literal, or an identifier / property / call whose name references a workspace
+ * (`this.workspacesRoot`, `getWorkspaceScopedDir()`, …). Used to decide whether
+ * a `"files"` segment is already workspace-scoped rather than identity-level.
+ */
+function referencesWorkspaces(node: ts.Expression | undefined): boolean {
+  if (!node) return false;
+  const text = staticText(node);
+  if (text !== null) return WORKSPACE_RE.test(text);
+  if (ts.isIdentifier(node)) return WORKSPACE_RE.test(node.text);
+  if (ts.isPropertyAccessExpression(node)) return WORKSPACE_RE.test(node.name.text);
+  if (ts.isCallExpression(node)) {
+    const name = calleeName(node);
+    return name !== null && WORKSPACE_RE.test(name);
+  }
+  return false;
+}
+
+/** True iff any argument before `idx` qualifies the path with a workspace root. */
+function hasWorkspaceQualifierBefore(args: ts.NodeArray<ts.Expression>, idx: number): boolean {
+  for (let i = 0; i < idx; i++) {
+    if (referencesWorkspaces(args[i])) return true;
+  }
+  return false;
 }
 
 /**
- * True iff `node` is `join(getWorkspaceScopedDir(...), ..., "files")` — a
- * hand-built workspace-scoped files dir. The first arg is the workspace-scoped
- * root; any literal `"files"` argument anywhere in the `join` trips it.
+ * Returns true iff `node` is `join(...)` building an identity-level / flat files
+ * path — a `"files"` string-literal argument that is NOT qualified by a
+ * workspace root before it. `join(usersDir, userId, "files")` flags;
+ * `join(workDir, "workspaces", wsId, "files", ownerId)` and
+ * `join(this.workspacesRoot, wsId, "files")` do not (already workspace-scoped).
+ *
+ * Exported for a self-test under `test/unit/scripts/`.
  */
-export function isWorkspaceScopedFilesJoin(node: ts.CallExpression): boolean {
+export function isUnscopedFilesJoin(node: ts.CallExpression): boolean {
   if (calleeName(node) !== "join") return false;
   const args = node.arguments;
-  const firstIsWsScoped =
-    args.length > 0 &&
-    args[0] !== undefined &&
-    ts.isCallExpression(args[0]) &&
-    isGetWorkspaceScopedDirCall(args[0]);
-  if (!firstIsWsScoped) return false;
-  return args.some(
-    (a) => (ts.isStringLiteral(a) || ts.isNoSubstitutionTemplateLiteral(a)) && a.text === "files",
-  );
+  for (let j = 0; j < args.length; j++) {
+    if (staticText(args[j]) !== "files") continue;
+    if (!hasWorkspaceQualifierBefore(args, j)) return true;
+  }
+  return false;
+}
+
+/**
+ * True iff `node` is `getDataPath("files")` / `x.getDataPath("files")` — the
+ * `IdentityContext` constructor for the identity-owned files dir.
+ *
+ * Exported for a self-test under `test/unit/scripts/`.
+ */
+export function isIdentityFilesGetDataPath(node: ts.CallExpression): boolean {
+  if (calleeName(node) !== "getDataPath") return false;
+  return staticText(node.arguments[0]) === "files";
 }
 
 function hasAllowMarker(node: ts.Node, sourceFile: ts.SourceFile, src: string): boolean {
@@ -108,8 +166,8 @@ function hasAllowMarker(node: ts.Node, sourceFile: ts.SourceFile, src: string): 
 }
 
 function scanFile(absPath: string, violations: Violation[]): void {
-  const relPath = relative(SRC_ROOT, absPath);
-  const createStoreAllowed = CREATE_STORE_ALLOWED_FILES.has(relPath);
+  const relPath = relative(ROOT, absPath);
+  if (ALLOWED_FILES.has(relPath)) return;
   const src = readFileSync(absPath, "utf-8");
   const sourceFile = ts.createSourceFile(
     absPath,
@@ -133,10 +191,10 @@ function scanFile(absPath: string, violations: Violation[]): void {
 
   function visit(node: ts.Node): void {
     if (ts.isCallExpression(node)) {
-      if (isCreateFileStoreCall(node) && !createStoreAllowed) {
-        record(node, "createFileStore() outside runtime.ts — use runtime.getFileStore(userId)");
-      } else if (isWorkspaceScopedFilesJoin(node)) {
-        record(node, 'join(getWorkspaceScopedDir(...), ..., "files") — files are identity-owned');
+      if (isIdentityFilesGetDataPath(node)) {
+        record(node, 'getDataPath("files") — files are workspace-owned, not identity-owned');
+      } else if (isUnscopedFilesJoin(node)) {
+        record(node, 'join(..., "files") not under a workspace root — files are workspace-owned');
       }
     }
     ts.forEachChild(node, visit);
@@ -159,22 +217,22 @@ async function main(): Promise<void> {
   }
 
   if (violations.length > 0) {
-    console.error(
-      `✗ Found ${violations.length} workspace-scoped / unsanctioned file path(s) in src/:\n`,
-    );
+    console.error(`✗ Found ${violations.length} identity-level / unscoped file path(s) in src/:\n`);
     for (const v of violations) {
       console.error(`  ${v.file}:${v.line}:${v.column} — ${v.reason}`);
       console.error(`    ${v.snippet}\n`);
     }
-    console.error("Phase B: files are identity-owned at `{workDir}/users/{userId}/files/`.");
-    console.error("Build a store only via `runtime.getFileStore(userId)`.");
+    console.error("Files are workspace-owned: `workspaces/<wsId>/files/<ownerId>/` (§2.3).");
     console.error(
-      `Legitimate exceptions (rare) require a // ${ALLOW_MARKER} comment on the line above.`,
+      "Build the directory via `workspaceFilesDir()` (src/files/paths.ts) or `runtime.getFileStore(wsId, ownerId)` — never the identity `users/<userId>/files/` path.",
+    );
+    console.error(
+      `Legitimate exceptions (rare) require a // ${ALLOW_MARKER} comment on the line above the construction.`,
     );
     process.exit(1);
   }
 
-  console.log(`✓ No workspace-scoped file paths in ${scanned} src/ files`);
+  console.log(`✓ No identity-level file paths in ${scanned} src/ files`);
 }
 
 if (import.meta.main) {

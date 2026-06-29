@@ -38,11 +38,18 @@ export function resourceRoutes(ctx: AppContext) {
             identity: c.var.identity,
           }),
       )
-      // Uploads write to the caller's identity store (files are identity-owned;
-      // Phase B), so a workspace isn't required. `optionalWorkspace` still
-      // validates an `X-Workspace-Id` if the synapse bridge sends one.
+      // Uploads write to the workspace-owned store. The focused workspace
+      // (`X-Workspace-Id`, validated by `optionalWorkspace`) selects the
+      // partition; absent it, the upload lands in the caller's personal
+      // workspace.
       .post("/v1/resources", optionalWorkspace(ctx.workspaceStore), uploadLimit, (c) =>
-        handleResourceUpload(c.req.raw, ctx.runtime, ctx.features, c.var.identity),
+        handleResourceUpload(
+          c.req.raw,
+          ctx.runtime,
+          ctx.features,
+          c.var.identity,
+          c.var.workspaceId,
+        ),
       )
       .get("/v1/apps/:name/resources/*", optionalWorkspace(ctx.workspaceStore), (c) => {
         const name = decodeURIComponent(c.req.param("name"));

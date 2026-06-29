@@ -4,7 +4,11 @@ import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { createFileStore, sanitizeFilename } from "../../../src/files/store.ts";
+import { workspaceFilesDir } from "../../../src/files/paths.ts";
 import type { FileEntry } from "../../../src/files/types.ts";
+
+const WS = "ws_test";
+const OWNER = "owner_test";
 
 let workDir: string;
 
@@ -36,6 +40,8 @@ describe("FileStore", () => {
     // Register so readFile can look up mimeType
     const entry: FileEntry = {
       id: saved.id,
+      workspaceId: WS,
+      ownerId: OWNER,
       filename: "data.bin",
       mimeType: "application/octet-stream",
       size: saved.size,
@@ -77,6 +83,8 @@ describe("FileStore", () => {
     const store = createFileStore(join(workDir, "files"));
     const entry: FileEntry = {
       id: "fl_test_001",
+      workspaceId: WS,
+      ownerId: OWNER,
       filename: "hello.txt",
       mimeType: "text/plain",
       size: 5,
@@ -102,6 +110,8 @@ describe("FileStore", () => {
 
     const entry1: FileEntry = {
       id: "fl_a",
+      workspaceId: WS,
+      ownerId: OWNER,
       filename: "a.txt",
       mimeType: "text/plain",
       size: 1,
@@ -113,6 +123,8 @@ describe("FileStore", () => {
     };
     const entry2: FileEntry = {
       id: "fl_b",
+      workspaceId: WS,
+      ownerId: OWNER,
       filename: "b.txt",
       mimeType: "text/plain",
       size: 2,
@@ -198,6 +210,8 @@ describe("FileStore — read-time MIME recovery", () => {
     const saved = await store.saveFile(Buffer.from("= Heading\n"), filename, "text/plain");
     const entry: FileEntry = {
       id: saved.id,
+      workspaceId: WS,
+      ownerId: OWNER,
       filename,
       // The bug: stored as opaque binary despite being text.
       mimeType: "application/octet-stream",
@@ -246,6 +260,8 @@ describe("FileStore — read-time MIME recovery", () => {
     const saved = await store.saveFile(Buffer.from("x"), "photo.png", "image/png");
     await store.appendRegistry({
       id: saved.id,
+      workspaceId: WS,
+      ownerId: OWNER,
       filename: "photo.png",
       mimeType: "image/png",
       size: saved.size,
@@ -265,5 +281,79 @@ describe("FileStore — read-time MIME recovery", () => {
     await store.deleteFile(id);
     expect(await store.findEntry(id)).toBeNull();
     expect(await store.readRegistry()).toHaveLength(0);
+  });
+});
+
+describe("FileStore — path-authoritative scope backfill", () => {
+  // A store rooted at `workspaces/<wsId>/files/<ownerId>/` derives its scope
+  // from the path. Legacy entries that a pure move relocated (no owner/ws on the
+  // row) are backfilled from that path on read — they self-heal without a
+  // registry rewrite. See `withScope` in store.ts and §2.3.
+
+  /** Append a legacy-shaped row (no owner/ws fields) straight to the registry. */
+  async function seedLegacy(filesDir: string, filename: string): Promise<string> {
+    const store = createFileStore(filesDir);
+    const saved = await store.saveFile(Buffer.from("hello"), filename, "text/plain");
+    // The cast lets us write a row missing the now-required scope fields — the
+    // exact shape a pre-migration registry holds on disk.
+    await store.appendRegistry({
+      id: saved.id,
+      filename,
+      mimeType: "text/plain",
+      size: saved.size,
+      tags: [],
+      source: "chat",
+      conversationId: null,
+      createdAt: new Date().toISOString(),
+      description: null,
+    } as FileEntry);
+    return saved.id;
+  }
+
+  test("findEntry backfills ownerId + workspaceId from the path", async () => {
+    const filesDir = workspaceFilesDir(workDir, WS, OWNER);
+    const id = await seedLegacy(filesDir, "legacy.txt");
+    const entry = await createFileStore(filesDir).findEntry(id);
+    expect(entry?.workspaceId).toBe(WS);
+    expect(entry?.ownerId).toBe(OWNER);
+  });
+
+  test("readRegistry backfills the scope for list/search consumers", async () => {
+    const filesDir = workspaceFilesDir(workDir, WS, OWNER);
+    await seedLegacy(filesDir, "legacy.txt");
+    const [entry] = await createFileStore(filesDir).readRegistry();
+    expect(entry?.workspaceId).toBe(WS);
+    expect(entry?.ownerId).toBe(OWNER);
+  });
+
+  test("a non-workspace path leaves the row untouched (no scope to backfill)", async () => {
+    const filesDir = join(workDir, "files");
+    const id = await seedLegacy(filesDir, "legacy.txt");
+    const entry = await createFileStore(filesDir).findEntry(id);
+    // parseFilePath returns null for a flat dir → backfill is a no-op.
+    expect(entry?.workspaceId).toBeUndefined();
+    expect(entry?.ownerId).toBeUndefined();
+  });
+
+  test("an entry that already carries a scope is not overwritten by the path", async () => {
+    const filesDir = workspaceFilesDir(workDir, WS, OWNER);
+    const store = createFileStore(filesDir);
+    const saved = await store.saveFile(Buffer.from("x"), "owned.txt", "text/plain");
+    await store.appendRegistry({
+      id: saved.id,
+      filename: "owned.txt",
+      mimeType: "text/plain",
+      size: saved.size,
+      tags: [],
+      source: "chat",
+      conversationId: null,
+      createdAt: new Date().toISOString(),
+      description: null,
+      workspaceId: "ws_explicit",
+      ownerId: "owner_explicit",
+    });
+    const entry = await store.findEntry(saved.id);
+    expect(entry?.workspaceId).toBe("ws_explicit");
+    expect(entry?.ownerId).toBe("owner_explicit");
   });
 });

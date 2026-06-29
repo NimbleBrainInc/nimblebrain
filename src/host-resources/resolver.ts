@@ -53,11 +53,11 @@ export interface ListResourcesParams {
 
 /**
  * The single chokepoint a bundle's inbound `ai.nimblebrain/resources/*`
- * request goes through. Wraps the session user's identity `FileStore` (today;
- * future schemes like `entities://` would land here as additional read/list
- * paths). Files are identity-owned (Phase B): every read/list resolves against
- * the FileStore of the user whose session the bundle is running in — never
- * against any wsId the URI might encode, and never a workspace silo.
+ * request goes through. Wraps the workspace `FileStore` for the workspace the
+ * bundle runs in (today; future schemes like `entities://` would land here as
+ * additional read/list paths). Files are workspace-owned: every read/list
+ * resolves against the store for `ctx.workspaceId` with the session user as the
+ * owner sub-partition — never against any wsId the URI might encode.
  */
 export interface HostResourcesResolver {
   read(uri: string, ctx: HostResourceContext): Promise<ReadResourceResult>;
@@ -71,20 +71,20 @@ export interface HostResourcesResolver {
  * `files__read` exactly. Audit events ride the platform's existing
  * event sink alongside other tool activity.
  *
- * `getFileStore` resolves the caller's identity store; it takes no workspace
- * because files are identity-owned. `ctx.workspaceId` survives on read/list
- * for audit logging (which workspace the bundle ran in), not for storage.
+ * `getFileStore(wsId)` resolves the store for the bundle's workspace
+ * (`ctx.workspaceId`), with the session user as the owner sub-partition. Files
+ * are workspace-owned, so the workspace is path-authoritative.
  */
 export class FileBackedHostResourcesResolver implements HostResourcesResolver {
   constructor(
-    private readonly getFileStore: () => FileStore,
+    private readonly getFileStore: (wsId: string) => FileStore,
     private readonly maxReadSize: number = HOST_RESOURCES_MAX_READ_SIZE,
   ) {}
 
   async read(uri: string, ctx: HostResourceContext): Promise<ReadResourceResult> {
     const start = Date.now();
     const fileId = this.requireFileScheme(uri);
-    const store = this.getFileStore();
+    const store = this.getFileStore(ctx.workspaceId);
 
     let result: Awaited<ReturnType<typeof store.readFile>>;
     try {
@@ -137,11 +137,9 @@ export class FileBackedHostResourcesResolver implements HostResourcesResolver {
   }
 
   async list(params: ListResourcesParams, ctx: HostResourceContext): Promise<ListResourcesResult> {
-    // Identity-scoped: returns every file the session user owns, across all
-    // their workspaces — a broadening vs. the pre-identity per-workspace list.
-    // In-bounds under the install-time bundle-trust model (same user's data, no
-    // cross-user leak). If the shared-workspace threat model tightens, bound
-    // this to the bundle's provenance workspace via `entry.workspaceId`.
+    // Workspace-scoped: returns the session user's files in the workspace the
+    // bundle runs in (`ctx.workspaceId`) — the store is partitioned by that
+    // workspace, so this never crosses the workspace wall.
     if (params.filter?.scheme && params.filter.scheme !== FILE_URI_SCHEME) {
       throw new McpError(ErrorCode.InvalidParams, "Unsupported URI scheme", {
         scheme: params.filter.scheme,
@@ -159,7 +157,7 @@ export class FileBackedHostResourcesResolver implements HostResourcesResolver {
       });
     }
 
-    const store = this.getFileStore();
+    const store = this.getFileStore(ctx.workspaceId);
     const all = await store.readRegistry();
 
     const filteredByMime = params.filter?.mimeType

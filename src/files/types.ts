@@ -12,7 +12,12 @@ export interface ExtractedTextSidecar {
   truncated: boolean;
 }
 
-/** Identity-owned file entry stored in registry.jsonl (`users/{userId}/files/`). */
+/**
+ * A file entry, stored in registry.jsonl under the workspace it belongs to:
+ * `workspaces/<wsId>/files/<ownerId>/` (see `src/files/paths.ts`). The path is
+ * authoritative for `workspaceId` + `ownerId`; the fields are a denormalised
+ * convenience the store backfills from the path on read.
+ */
 export interface FileEntry {
   id: string;
   filename: string;
@@ -23,13 +28,16 @@ export interface FileEntry {
   conversationId: string | null;
   createdAt: string;
   description: string | null;
+  /** The workspace this file lives in. Path-authoritative (§2.3). */
+  workspaceId: string;
+  /** The identity that owns it — the privacy principal. Path-authoritative (§2.3). */
+  ownerId: string;
   /**
-   * Provenance breadcrumb (Phase B): the workspace whose tools were in scope
-   * when this file was created. Informational only — files are identity-owned,
-   * so this is NEVER the storage key (mirrors `Conversation.workspaceId`).
-   * Absent on files created before the field existed.
+   * Who can see it within its workspace. Absent reads as `private` (fail-closed).
+   * v1 is private-only; `shared` is reserved groundwork (no read path consults it
+   * yet). Never crosses the workspace wall.
    */
-  workspaceId?: string;
+  visibility?: "private" | "shared";
   deleted?: true;
   deletedAt?: string;
 }

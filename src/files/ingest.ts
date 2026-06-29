@@ -113,13 +113,18 @@ function humanSize(bytes: number): string {
  * Validate and ingest uploaded files into the workspace file store.
  *
  * For each valid file: stores it, registers metadata, extracts text when
- * applicable, and builds content parts for the LLM message.
+ * applicable, and builds content parts for the LLM message. `wsId` + `ownerId`
+ * are the store's path-authoritative scope (§2.3), stamped on each registry
+ * entry at creation; `store` must already be rooted at that
+ * `workspaces/<wsId>/files/<ownerId>/` partition.
  */
 export async function ingestFiles(
   files: UploadedFile[],
   conversationId: string,
   store: FileStore,
   config: FileConfig,
+  wsId: string,
+  ownerId: string,
 ): Promise<IngestResult> {
   const errors: string[] = [];
   const contentParts: ContentPart[] = [];
@@ -169,6 +174,11 @@ export async function ingestFiles(
       conversationId,
       createdAt: new Date().toISOString(),
       description: null,
+      // Path-authoritative scope (§2.3), stamped at creation. `visibility`
+      // defaults to private — v1 is private-only.
+      workspaceId: wsId,
+      ownerId,
+      visibility: "private",
     };
     await store.appendRegistry(entry);
 
