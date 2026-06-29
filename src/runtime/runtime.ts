@@ -58,6 +58,7 @@ import type {
   ToolSchema,
 } from "../engine/types.ts";
 import { CONNECTOR_SKILL_SYNTHETIC } from "../engine/types.ts";
+import { workspaceFilesDir } from "../files/paths.ts";
 import { rehydrateUserResources } from "../files/rehydrate.ts";
 import { createFileStore, type FileStore } from "../files/store.ts";
 import { DEFAULT_FILE_CONFIG, type FileConfig } from "../files/types.ts";
@@ -461,25 +462,27 @@ export class Runtime {
     // `setBundleMcpDepsFactory`, other install paths consume via
     // `Runtime.getBundleMcpDeps(wsId)`.
     const hostResourcesWorkDir = resolveWorkDir(config);
-    // Files are identity-owned (Phase B): a bundle's `files://` read/list
-    // resolves against the SESSION USER's store (`users/{userId}/files/`), not
-    // the workspace the bundle runs in. The resolver fires inside the request
+    // Files are workspace-owned: a bundle's `files://` read/list resolves in the
+    // workspace the bundle runs in (`ctx.workspaceId`, passed by the resolver)
+    // under the session user's partition. The resolver fires inside the request
     // context the orchestrator set up for the bundle's tool call, so the
     // identity is in scope here; we resolve it with the same rule `chat()` uses
     // (`resolveRequestOwnerId`) so reads see exactly the files the agent does.
-    // Memoize per user — FileStore is cheap closures today, but per-call
-    // construction would leak if it ever gains state (fd handles, watchers).
+    // Memoize per (workspace, user) — FileStore is cheap closures today, but
+    // per-call construction would leak if it gained state (fd handles, watchers).
     const hostResourcesFileStoreCache = new Map<string, ReturnType<typeof createFileStore>>();
-    const hostResourcesResolver = new FileBackedHostResourcesResolver(() => {
+    const hostResourcesResolver = new FileBackedHostResourcesResolver((wsId: string) => {
+      // Files are workspace-owned: the resolver passes the bundle's request
+      // workspace (`ctx.workspaceId`) so a `files://` read resolves there only.
       const userId = resolveRequestOwnerId(
         getRequestContext()?.identity,
         identityProvider !== null,
       );
-      const cached = hostResourcesFileStoreCache.get(userId);
+      const cacheKey = `${wsId}:${userId}`;
+      const cached = hostResourcesFileStoreCache.get(cacheKey);
       if (cached) return cached;
-      const idCtx = new IdentityContext({ userId, workDir: hostResourcesWorkDir });
-      const store = createFileStore(idCtx.getDataPath("files"));
-      hostResourcesFileStoreCache.set(userId, store);
+      const store = createFileStore(workspaceFilesDir(hostResourcesWorkDir, wsId, userId));
+      hostResourcesFileStoreCache.set(cacheKey, store);
       return store;
     });
     const hostResourcesRateLimit = new TokenBucketRateLimit();
@@ -1492,11 +1495,11 @@ export class Runtime {
     // where the storage shape (URI references) meets the model-call
     // shape (inline bytes) — see `src/files/rehydrate.ts`.
     const history = await store.history(conversation);
-    // File store is identity-scoped (Phase B): every file the user owns lives
-    // at `users/{userId}/files/`, regardless of which workspace it was created
-    // in. A `files://` URI persisted in any conversation resolves here against
-    // the owner's single store — there is no per-workspace file silo to miss.
-    const fileStore = this.getFileStore(ownerId);
+    // Files are workspace-owned: rehydrate a `files://` URI from the
+    // conversation's own workspace (`request.workspaceId ?? sessionWsId`, the
+    // same workspace the upload landed in) under the owner's partition — never
+    // another workspace's store.
+    const fileStore = this.getWorkspaceFileStore(request.workspaceId ?? sessionWsId, ownerId);
 
     // Resolve maxOutputTokens FIRST — resolveThinking needs it to clamp the
     // thinking budget so visible-content headroom is always preserved.
@@ -1706,6 +1709,9 @@ export class Runtime {
         workspaceModelOverride: sessionWorkspace?.models ?? null,
       },
       conversationId: conversation.id,
+      // Files created/read by identity-door `files__*` tools land in the focused
+      // room (the conversation's room), not the personal `sessionWsId` scope.
+      fileWorkspaceId: request.workspaceId ?? sessionWsId,
     };
     engineConfig.toolPromotion = this.buildToolPromotionFactory();
 
@@ -2051,7 +2057,7 @@ export class Runtime {
     // the rehydrate call is a pass-through for shape consistency with the
     // engine's message contract).
     const history = await store.history(conversation);
-    const fileStore = this.getFileStore(ownerId);
+    const fileStore = this.getWorkspaceFileStore(request.workspaceId ?? sessionWsId, ownerId);
 
     const resolvedMaxOutputTokens = resolveMaxOutputTokens({
       configValue: this.config.maxOutputTokens,
@@ -2240,6 +2246,9 @@ export class Runtime {
         workspaceModelOverride: sessionWorkspace?.models ?? null,
       },
       conversationId: conversation.id,
+      // Files created/read by identity-door `files__*` tools land in the focused
+      // room (the conversation's room), not the personal `sessionWsId` scope.
+      fileWorkspaceId: request.workspaceId ?? sessionWsId,
     };
     engineConfig.toolPromotion = this.buildToolPromotionFactory();
 
@@ -2864,14 +2873,15 @@ export class Runtime {
   }
 
   /**
-   * The identity-scoped file store for a user (`users/{userId}/files/`).
-   * Files are identity-owned (Phase B), so this is the single sanctioned
-   * `FileStore` constructor outside the store module itself — `check:file-paths`
-   * rejects any workspace-scoped files dir. Cheap (closures over a path); not
-   * memoized here because callers are per-request.
+   * The workspace-owned file store for one owner in one workspace
+   * (`workspaces/<wsId>/files/<ownerId>/`). Files are workspace-owned, so the
+   * workspace is the boundary: this is the single sanctioned `FileStore`
+   * constructor outside the store module itself — `check:file-paths` rejects the
+   * identity-scoped files dir. Cheap (closures over a path); not memoized here
+   * because callers are per-request.
    */
-  getFileStore(userId: string): FileStore {
-    return createFileStore(this.getIdentityContext(userId).getDataPath("files"));
+  getWorkspaceFileStore(wsId: string, ownerId: string): FileStore {
+    return createFileStore(workspaceFilesDir(resolveWorkDir(this.config), wsId, ownerId));
   }
 
   /** Get the ToolRegistry for the current request's workspace (from AsyncLocalStorage context). */

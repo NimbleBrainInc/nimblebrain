@@ -1,5 +1,6 @@
 import { File as FileIcon, FileText, Image } from "lucide-react";
 import { useState } from "react";
+import { fileUrl } from "../api/client";
 
 export interface FileAttachmentData {
   id: string;
@@ -43,7 +44,7 @@ export function FileAttachment({ file }: Props) {
           className="block cursor-pointer"
         >
           <img
-            src={`/v1/files/${file.id}`}
+            src={fileUrl(file.id)}
             alt={file.filename}
             loading="lazy"
             onError={() => setImgError(true)}

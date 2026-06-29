@@ -51,6 +51,9 @@ const ALLOWED_FILES = new Set(
     // Defines the `workspaces/<wsId>/conversations/...` room-owned conversation
     // layout — the one sanctioned site that hand-builds that subtree.
     "conversation/paths.ts",
+    // Defines the `workspaces/<wsId>/files/...` workspace-owned file layout —
+    // the one sanctioned site that hand-builds that subtree (`workspaceFilesDir`).
+    "files/paths.ts",
   ].map((f) => f.split("/").join(sep)),
 );
 

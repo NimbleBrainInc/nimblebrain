@@ -818,6 +818,10 @@ function createServer(
       const identityCtx: RequestContext = {
         identity: sessionCtx.identity ?? null,
         scope: { kind: "identity" },
+        // Files are workspace-owned: a `files__*` call resolves in the request's
+        // validated workspace; undefined (no / non-member header) ⇒ the file
+        // tool denies, consistent with the resources wall.
+        fileWorkspaceId: mcpRequestWorkspace.getStore(),
       };
       const idResult = await runWithRequestContext(identityCtx, () =>
         routed.source.execute(bare, (args ?? {}) as Record<string, unknown>),
@@ -1021,6 +1025,9 @@ function createServer(
     const identityReqCtx: RequestContext = {
       identity: sessionCtx.identity ?? null,
       scope: { kind: "identity" },
+      // Files are workspace-owned: `files://` resolves in the request's
+      // validated workspace; undefined ⇒ not found (the resources wall denies).
+      fileWorkspaceId: mcpRequestWorkspace.getStore(),
     };
     for (const sourceName of IDENTITY_SOURCES) {
       const src = runtime.getIdentitySource(sourceName);

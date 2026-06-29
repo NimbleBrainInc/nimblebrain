@@ -173,7 +173,10 @@ describe("chat multipart upload ↔ files__* visibility (bug 4)", () => {
     const id = files.find((f) => f.filename === "served.bin")?.id;
     expect(id).toBeDefined();
 
-    const res = await fetch(`${baseUrl}/v1/files/${id}`, {
+    // Files are workspace-owned: the serve URL names the workspace as `?ws=`. The upload
+    // landed in the chat's workspace (`workspaceId ?? personal`), which here is the
+    // dev user's personal workspace.
+    const res = await fetch(`${baseUrl}/v1/files/${id}?ws=${PERSONAL_WS_ID}`, {
       headers: { "X-Workspace-Id": PERSONAL_WS_ID },
     });
     expect(res.status).toBe(200);
@@ -186,10 +189,12 @@ describe("chat multipart upload ↔ files__* visibility (bug 4)", () => {
     // format). Same for the legacy scheme. This pins the compatibility
     // guarantee against a future "simplify the regex" PR that might silently
     // break historical file links baked into conversation JSONL.
+    // Files are workspace-owned: `?ws=` carries the workspace so the request gets past the
+    // workspace gate and reaches the id-shape validator under test.
     const newShape = "fl_aaaaaaaaaaaaaaaaaaaaaaaa"; // 24 hex chars
     const legacyShape = "fl_mo7gybgy_5ad5f8a8"; // base36 + 8 hex, from the anchor bug report
     for (const id of [newShape, legacyShape]) {
-      const res = await fetch(`${baseUrl}/v1/files/${id}`, {
+      const res = await fetch(`${baseUrl}/v1/files/${id}?ws=${PERSONAL_WS_ID}`, {
         headers: { "X-Workspace-Id": PERSONAL_WS_ID },
       });
       expect(res.status).toBe(404);
@@ -198,7 +203,7 @@ describe("chat multipart upload ↔ files__* visibility (bug 4)", () => {
     }
 
     // Negative control: malformed id gets rejected at the regex, 400.
-    const bad = await fetch(`${baseUrl}/v1/files/not-a-valid-id`, {
+    const bad = await fetch(`${baseUrl}/v1/files/not-a-valid-id?ws=${PERSONAL_WS_ID}`, {
       headers: { "X-Workspace-Id": PERSONAL_WS_ID },
     });
     expect(bad.status).toBe(400);

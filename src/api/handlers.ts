@@ -7,6 +7,7 @@ import type { EngineEvent, EventSink } from "../engine/types.ts";
 import { ingestFiles, isAllowedMime, type UploadedFile } from "../files/ingest.ts";
 import { resolveMimeType } from "../files/mime.ts";
 import type { FileEntry } from "../files/types.ts";
+import { FILE_ID_RE } from "../files/uri.ts";
 import {
   ArtifactNotFoundError,
   ArtifactTooLargeError,
@@ -40,6 +41,7 @@ import { estimateCost } from "../usage/cost.ts";
 import { bytesToBase64 } from "../util/base64.ts";
 import { PersonalWorkspaceInvariantError } from "../workspace/errors.ts";
 import type { WorkspaceStore } from "../workspace/workspace-store.ts";
+import { personalWorkspaceIdFor } from "../workspace/workspace-store.ts";
 import type { ConversationEventManager } from "./conversation-events.ts";
 import type { SseEventManager } from "./events.ts";
 import { artifactResolutionsTotal } from "./metrics.ts";
@@ -925,16 +927,20 @@ export async function handleReadResource(
     return apiError(400, "bad_request", "'server' is required");
   }
 
-  // Identity sources (conversations, files) live OUTSIDE any workspace —
-  // they're reached through the identity door, the same decision the
-  // orchestrator and `handleToolCall` make. Their resources (e.g. a file's
-  // `files://<id>` bytes) read from the identity host, authorized by the
-  // session identity; a stale X-Workspace-Id is irrelevant. Without this an
-  // identity-source read 403s ("not available in this workspace") because the
-  // source isn't in any workspace registry.
+  // Identity sources (conversations, files, automations) live OUTSIDE any
+  // workspace registry — they're reached through the identity door, the same
+  // decision the orchestrator and `handleToolCall` make. But files are
+  // workspace-owned, so a `files://<id>` read resolves in the request's focused
+  // workspace (`options.workspaceId`, or the caller's personal workspace when
+  // unfocused), set via `fileWorkspaceId`. conversations/automations ignore it.
   const { identity } = options ?? {};
   if (runtime.getIdentitySource(server)) {
-    const reqCtx: RequestContext = { identity: identity ?? null, scope: { kind: "identity" } };
+    const reqCtx: RequestContext = {
+      identity: identity ?? null,
+      scope: { kind: "identity" },
+      fileWorkspaceId:
+        options?.workspaceId ?? personalWorkspaceIdFor(runtime.resolveRequestUserId(identity)),
+    };
     const resource = await runWithRequestContext(reqCtx, () =>
       runtime.readIdentityAppResource(server, uri),
     );
@@ -1134,6 +1140,10 @@ export async function handleToolCall(
   const reqCtx: RequestContext = {
     identity: identity ?? null,
     scope,
+    // Files are workspace-owned: an identity-door `files__*` call lands in the
+    // focused workspace (validated `X-Workspace-Id`) or the caller's personal
+    // workspace when unfocused. Ignored by the other identity tools.
+    fileWorkspaceId: workspaceId ?? personalWorkspaceIdFor(runtime.resolveRequestUserId(identity)),
   };
 
   // Audit log
@@ -1691,22 +1701,16 @@ export function sanitizeFilename(name: string): string {
   return name.replace(/["\r\n\x00-\x1f]/g, "_");
 }
 
-/**
- * Regex for valid file IDs.
- *  - New scheme: `fl_<24 hex chars>` (randomBytes(12).hex).
- *  - Legacy scheme: `fl_<base36 timestamp>_<8 hex>` from the pre-unification
- *    chat ingest path; kept accepted so historical file links keep working
- *    while aliases.ts (migration) remaps them.
- */
-const FILE_ID_RE = /^fl_(?:[a-f0-9]{24}|[a-z0-9]+_[a-f0-9]{8})$/;
-
-/** Handle GET /v1/files/:fileId — serve a stored file from the caller's
- * identity store (files are identity-owned; Phase B). */
+/** Handle GET /v1/files/:fileId?ws=<wsId> — serve a stored file from the
+ * workspace it lives in. Files are workspace-owned; the URL must carry the
+ * workspace (`?ws=`) because a browser GET can't send the `X-Workspace-Id`
+ * header. */
 export async function handleFileServe(
   fileId: string,
   runtime: Runtime,
   features: ResolvedFeatures,
   identity: UserIdentity | undefined,
+  workspaceId: string | undefined,
 ): Promise<Response> {
   if (!features.fileContext) {
     return apiError(404, "not_found", "Not found");
@@ -1716,7 +1720,22 @@ export async function handleFileServe(
     return apiError(400, "bad_request", "Invalid file ID format");
   }
 
-  const store = runtime.getFileStore(runtime.resolveRequestUserId(identity));
+  if (!workspaceId) {
+    return apiError(
+      400,
+      "workspace_required",
+      "Files are workspace-owned — pass ?ws=<workspaceId>",
+    );
+  }
+
+  // `?ws=` is taken at face value WITHOUT a membership check on purpose — do not
+  // add one. The store is rooted at the caller's OWN `<ownerId>` partition, so a
+  // forged `?ws=<other>` can only ever reach files the caller themselves wrote
+  // into that workspace (none, if they're not a member). The workspace is a
+  // storage-routing hint here, not an authorization axis — the owner partition is
+  // the gate. (Membership-gated surfaces use `optionalWorkspace`; a browser GET
+  // can't send the header, which is why this route reads the query param.)
+  const store = runtime.getWorkspaceFileStore(workspaceId, runtime.resolveRequestUserId(identity));
   try {
     const file = await store.readFile(fileId);
     const safeName = sanitizeFilename(file.filename);
@@ -1868,13 +1887,15 @@ async function parseMultipartChatBody(
 
   // Ingest files: validate, store, extract text, build content parts.
   //
-  // Files are identity-owned (Phase B): ingest writes to the uploader's
-  // identity store (`users/{userId}/files/`), the SAME store `runtime.chat()`
-  // reads from when it rehydrates the conversation — resolved through the one
-  // owner rule so an upload can't land in a store the read won't look in.
-  // `X-Workspace-Id` does not route file storage; it still threads into
-  // `ChatRequest.workspaceId` (the focused workspace, for prompt scoping).
-  const store = runtime.getFileStore(runtime.resolveRequestUserId(identity));
+  // Files are workspace-owned: ingest writes to the focused workspace
+  // (`workspaceId ?? personal`) under the uploader's owner partition — the SAME
+  // workspace `runtime.chat()` rehydrates from (`request.workspaceId ??
+  // sessionWsId`), so an upload can't land in a workspace the read won't look in.
+  const uploadOwner = runtime.resolveRequestUserId(identity);
+  const store = runtime.getWorkspaceFileStore(
+    workspaceId ?? personalWorkspaceIdFor(uploadOwner),
+    uploadOwner,
+  );
   const filesConfig = runtime.getFilesConfig();
   // Use conversationId if provided, otherwise a placeholder (will be replaced by runtime.chat)
   const convId = (typeof conversationId === "string" && conversationId) || "pending";
@@ -1925,16 +1946,17 @@ function json(data: unknown, status = 200): Response {
  * by the bridge's `synapse/request-file` flow so the iframe never has
  * to base64-encode bytes into a tool-call argument.
  *
- * Workspace isolation comes from `workspaceId` (set by requireWorkspace
- * from authenticated identity, never from request input) flowing into
- * `getWorkspaceScopedDir` — bytes physically land under the workspace's
- * own directory.
+ * Workspace isolation comes from `workspaceId` (the validated `X-Workspace-Id`,
+ * or the caller's personal workspace when unfocused) flowing into
+ * `getWorkspaceFileStore` — bytes physically land under that workspace's own
+ * `files/<ownerId>/` partition.
  */
 export async function handleResourceUpload(
   request: Request,
   runtime: Runtime,
   features: ResolvedFeatures,
   identity: UserIdentity | undefined,
+  workspaceId: string | undefined,
 ): Promise<Response> {
   if (!features.fileContext) {
     return apiError(404, "not_found", "Not found");
@@ -2016,7 +2038,11 @@ export async function handleResourceUpload(
   const conversationId =
     typeof conversationIdRaw === "string" && conversationIdRaw ? conversationIdRaw : null;
 
-  const store = runtime.getFileStore(runtime.resolveRequestUserId(identity));
+  const uploadOwner = runtime.resolveRequestUserId(identity);
+  const store = runtime.getWorkspaceFileStore(
+    workspaceId ?? personalWorkspaceIdFor(uploadOwner),
+    uploadOwner,
+  );
   const entries: FileEntry[] = [];
   const errors: string[] = [];
 

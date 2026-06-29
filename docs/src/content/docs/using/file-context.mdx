@@ -36,7 +36,7 @@ When you attach a file to a message:
 3. The extracted text is included as context in the conversation
 4. The agent can reference the file content when responding
 
-Files are **owned by you**, not by a single workspace. A `files://<id>` reference resolves against your identity store no matter which workspace you were in when the file was uploaded.
+Files **live in the workspace you upload them to**, under your own private partition — another member of that workspace can't see your files, and a file uploaded in one workspace isn't reachable from another. A `files://<id>` reference resolves within the workspace the conversation belongs to.
 
 <Aside type="note">
   Images are sent directly to the model for visual analysis — the agent can describe what it sees, read text in screenshots, interpret charts, and more. This requires a vision-capable model (for example, Claude). Text-based formats are extracted and included as text alongside your message.

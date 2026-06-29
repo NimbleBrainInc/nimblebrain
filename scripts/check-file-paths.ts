@@ -1,25 +1,28 @@
 #!/usr/bin/env bun
 /**
- * Lint: files are identity-owned and reached through one constructor.
+ * Lint: files are workspace-owned and reached through one constructor.
  *
- * Phase B moved files from the per-workspace store
- * (`{workDir}/workspaces/{wsId}/files/`) to the identity store
- * (`{workDir}/users/{userId}/files/`). To keep that single, two things are
- * enforced in `src/`:
+ * Files live under the workspace that owns them, with the owner as a privacy
+ * sub-partition (`{workDir}/workspaces/<wsId>/files/<ownerId>/`). To keep that
+ * single, two things are enforced in `src/`:
  *
  *   1. `createFileStore(...)` is called only in `src/runtime/runtime.ts` —
- *      via `Runtime.getFileStore(userId)` (the sanctioned identity-scoped
+ *      via `Runtime.getWorkspaceFileStore(wsId, ownerId)` (the sanctioned workspace-scoped
  *      constructor) and the host-resources resolver closure. Any other call
  *      site builds a store off a path the caller chose, which is how files
- *      drifted back into a workspace silo.
- *   2. `join(getWorkspaceScopedDir(...), ..., "files")` — building a
- *      workspace-scoped files dir by hand — is forbidden anywhere in `src/`.
+ *      drift out of the workspace-owned layout.
+ *   2. `getIdentityContext(...).getDataPath("files")` /
+ *      `new IdentityContext(...).getDataPath("files")` — reaching the legacy
+ *      identity-owned files dir (`users/<userId>/files`) — is forbidden
+ *      anywhere in `src/`. The owning workspace, not the caller's identity, decides
+ *      where a file lives; the dir comes only from `workspaceFilesDir()` in
+ *      `src/files/paths.ts`.
  *
  * Allowed: a `// lint-ok:file-path` marker on a line just above the call,
  * for the rare future case the constructor genuinely can't cover.
  *
  * Scope: `src/**\/*.ts`. Tests and `scripts/` are out of scope (the
- * migration deliberately reads the old workspace-scoped layout).
+ * migration deliberately reads the old identity-scoped layout).
  *
  * Exports its AST predicates for the self-test under `test/unit/scripts/`.
  */
@@ -33,9 +36,11 @@ const ROOT = join(import.meta.dirname ?? __dirname, "..");
 const SRC_ROOT = join(ROOT, "src");
 const ALLOW_MARKER = "lint-ok:file-path";
 
-// `runtime.ts` owns FileStore construction: the `getFileStore` method (the
-// sanctioned identity-scoped constructor) and the host-resources resolver
-// closure both legitimately call `createFileStore`.
+// `runtime.ts` owns FileStore construction: the `getWorkspaceFileStore` method (the
+// sanctioned workspace-scoped constructor) and the host-resources resolver closure
+// both legitimately call `createFileStore`. `src/files/paths.ts` defines
+// `workspaceFilesDir` (the only sanctioned dir builder) and is never a call site for
+// `createFileStore`, so it needs no exemption here.
 const CREATE_STORE_ALLOWED_FILES = new Set(
   ["runtime/runtime.ts"].map((f) => f.split("/").join(sep)),
 );
@@ -62,28 +67,45 @@ export function isCreateFileStoreCall(node: ts.CallExpression): boolean {
   return calleeName(node) === "createFileStore";
 }
 
-/** True iff `node` is `getWorkspaceScopedDir(...)` / `x.getWorkspaceScopedDir(...)`. */
-function isGetWorkspaceScopedDirCall(node: ts.CallExpression): boolean {
-  return calleeName(node) === "getWorkspaceScopedDir";
+/**
+ * True iff `expr` produces an `IdentityContext` directly — a call to
+ * `getIdentityContext(...)` / `x.getIdentityContext(...)`, or a
+ * `new IdentityContext(...)` / `IdentityContext(...)` construction.
+ */
+function chainsFromIdentityContext(expr: ts.Expression): boolean {
+  if (ts.isCallExpression(expr)) {
+    const name = calleeName(expr);
+    return name === "getIdentityContext" || name === "IdentityContext";
+  }
+  if (ts.isNewExpression(expr)) {
+    const target = expr.expression;
+    const name = ts.isIdentifier(target)
+      ? target.text
+      : ts.isPropertyAccessExpression(target)
+        ? target.name.text
+        : null;
+    return name === "IdentityContext" || name === "getIdentityContext";
+  }
+  return false;
 }
 
 /**
- * True iff `node` is `join(getWorkspaceScopedDir(...), ..., "files")` — a
- * hand-built workspace-scoped files dir. The first arg is the workspace-scoped
- * root; any literal `"files"` argument anywhere in the `join` trips it.
+ * True iff `node` is `<identityCtx>.getDataPath("files", ...)` — reaching the
+ * legacy identity-owned files dir. Matches only when the `getDataPath` receiver
+ * chains directly from `getIdentityContext`/`IdentityContext` and the first
+ * argument is the string literal `"files"`.
  */
-export function isWorkspaceScopedFilesJoin(node: ts.CallExpression): boolean {
-  if (calleeName(node) !== "join") return false;
-  const args = node.arguments;
-  const firstIsWsScoped =
-    args.length > 0 &&
-    args[0] !== undefined &&
-    ts.isCallExpression(args[0]) &&
-    isGetWorkspaceScopedDirCall(args[0]);
-  if (!firstIsWsScoped) return false;
-  return args.some(
-    (a) => (ts.isStringLiteral(a) || ts.isNoSubstitutionTemplateLiteral(a)) && a.text === "files",
-  );
+export function isIdentityFilesDataPath(node: ts.CallExpression): boolean {
+  const callee = node.expression;
+  if (!ts.isPropertyAccessExpression(callee)) return false;
+  if (callee.name.text !== "getDataPath") return false;
+  const first = node.arguments[0];
+  const firstIsFiles =
+    first !== undefined &&
+    (ts.isStringLiteral(first) || ts.isNoSubstitutionTemplateLiteral(first)) &&
+    first.text === "files";
+  if (!firstIsFiles) return false;
+  return chainsFromIdentityContext(callee.expression);
 }
 
 function hasAllowMarker(node: ts.Node, sourceFile: ts.SourceFile, src: string): boolean {
@@ -134,9 +156,15 @@ function scanFile(absPath: string, violations: Violation[]): void {
   function visit(node: ts.Node): void {
     if (ts.isCallExpression(node)) {
       if (isCreateFileStoreCall(node) && !createStoreAllowed) {
-        record(node, "createFileStore() outside runtime.ts — use runtime.getFileStore(userId)");
-      } else if (isWorkspaceScopedFilesJoin(node)) {
-        record(node, 'join(getWorkspaceScopedDir(...), ..., "files") — files are identity-owned');
+        record(
+          node,
+          "createFileStore() outside runtime.ts — use runtime.getWorkspaceFileStore(wsId, ownerId)",
+        );
+      } else if (isIdentityFilesDataPath(node)) {
+        record(
+          node,
+          'getIdentityContext(...).getDataPath("files") — files are workspace-owned; use workspaceFilesDir()',
+        );
       }
     }
     ts.forEachChild(node, visit);
@@ -160,21 +188,25 @@ async function main(): Promise<void> {
 
   if (violations.length > 0) {
     console.error(
-      `✗ Found ${violations.length} workspace-scoped / unsanctioned file path(s) in src/:\n`,
+      `✗ Found ${violations.length} identity-owned / unsanctioned file path(s) in src/:\n`,
     );
     for (const v of violations) {
       console.error(`  ${v.file}:${v.line}:${v.column} — ${v.reason}`);
       console.error(`    ${v.snippet}\n`);
     }
-    console.error("Phase B: files are identity-owned at `{workDir}/users/{userId}/files/`.");
-    console.error("Build a store only via `runtime.getFileStore(userId)`.");
+    console.error(
+      "Files are workspace-owned at `{workDir}/workspaces/<wsId>/files/<ownerId>/` — build the dir only",
+    );
+    console.error(
+      "via `workspaceFilesDir()` (src/files/paths.ts) and the store via `runtime.getWorkspaceFileStore(wsId, ownerId)`.",
+    );
     console.error(
       `Legitimate exceptions (rare) require a // ${ALLOW_MARKER} comment on the line above.`,
     );
     process.exit(1);
   }
 
-  console.log(`✓ No workspace-scoped file paths in ${scanned} src/ files`);
+  console.log(`✓ No identity-owned file paths in ${scanned} src/ files`);
 }
 
 if (import.meta.main) {
