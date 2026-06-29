@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useReducer, useRef, useState } from "react";
 import type { BriefingOutput } from "../_generated/platform-schemas/home";
 import { callTool } from "../api/client";
 import { parseToolResult } from "../api/tool-result";
@@ -41,10 +41,13 @@ export function __resetBriefingCache(): void {
  * first-party shell code per the API-audiences split in `CLAUDE.md`.
  */
 export function useWorkspaceBriefing(workspaceId: string | undefined): UseWorkspaceBriefing {
-  const [briefing, setBriefing] = useState<BriefingOutput | null>(() =>
-    workspaceId ? (briefingCache.get(workspaceId) ?? null) : null,
-  );
-  const [loading, setLoading] = useState(false);
+  // `bump` forces a re-render when the async fetch fills the module cache; both
+  // `briefing` and `loading` are then read from the cache DURING render (below),
+  // keyed on the CURRENT workspaceId. That render-time read is what kills the
+  // switch flash: an effect-backed value paints one frame of the previous
+  // workspace's briefing (or a blank gap) under the new header before the effect
+  // catches up — a render-time value is correct on the very first frame.
+  const [, bump] = useReducer((n: number) => n + 1, 0);
   const [error, setError] = useState<string | null>(null);
   // Monotonic request id — drops responses that resolve after a newer fetch
   // (workspace switched, or a refresh raced the initial load).
@@ -54,11 +57,6 @@ export function useWorkspaceBriefing(workspaceId: string | undefined): UseWorksp
     async (forceRefresh: boolean) => {
       if (!workspaceId) return;
       const seq = ++reqRef.current;
-      // Block with a skeleton only when there's nothing cached to show for this
-      // workspace (or the user explicitly forced a regen). A revalidation
-      // behind a cached briefing stays silent — that's what makes a revisit
-      // seamless instead of flashing the loading state.
-      if (forceRefresh || !briefingCache.has(workspaceId)) setLoading(true);
       setError(null);
       try {
         const result = await callTool(
@@ -69,37 +67,34 @@ export function useWorkspaceBriefing(workspaceId: string | undefined): UseWorksp
         const out = parseToolResult<BriefingOutput>(result);
         if (seq === reqRef.current) {
           briefingCache.set(workspaceId, out);
-          setBriefing(out);
+          bump();
         }
       } catch (err) {
         if (seq === reqRef.current) {
           setError(err instanceof Error ? err.message : "Failed to load briefing");
         }
-      } finally {
-        if (seq === reqRef.current) setLoading(false);
       }
     },
     [workspaceId],
   );
 
-  // On workspace change: paint the cached briefing immediately when we have one
-  // (no skeleton), or clear to null when we don't — so a switch never shows the
-  // previous workspace's briefing under the new X-Workspace-Id header. Then
-  // (re)fetch: a cache hit revalidates silently, a miss shows its skeleton.
+  // (Re)fetch when the workspace changes. A cached workspace revalidates
+  // silently (the derived `loading` below is already false because its entry is
+  // cached); an uncached one shows the skeleton until the fetch fills it.
   useEffect(() => {
     setError(null);
-    if (!workspaceId) {
-      setBriefing(null);
-      setLoading(false);
-      return;
-    }
-    setBriefing(briefingCache.get(workspaceId) ?? null);
-    void load(false);
+    if (workspaceId) void load(false);
   }, [workspaceId, load]);
 
   const refresh = useCallback(() => {
     void load(true);
   }, [load]);
 
+  // Both derived from the cache at render time, keyed on the current workspace —
+  // so a switch is correct on the first painted frame: a revisit shows its
+  // cached briefing with no flash, and a first visit shows the skeleton with no
+  // blank gap. The skeleton (loading) is only "nothing cached yet, no error".
+  const briefing = workspaceId ? (briefingCache.get(workspaceId) ?? null) : null;
+  const loading = workspaceId != null && !briefingCache.has(workspaceId) && error === null;
   return { briefing, loading, error, refresh };
 }
