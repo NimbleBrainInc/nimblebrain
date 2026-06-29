@@ -179,6 +179,34 @@ describe("readResource — unified recovery (new behaviors)", () => {
     }
   });
 
+  it("a genuine miss discovered AFTER recovery stays a silent null (no spurious log)", async () => {
+    // session lost → restart succeeds → the retry finds the resource genuinely
+    // absent (-32002). That's a clean miss, not a failure: null, no warn log —
+    // parity with the pre-unification readResourceWithRecovery.
+    let calls = 0;
+    const sessionLost = {
+      code: 404,
+      message: 'Error POSTing to endpoint: {"code":-32001,"message":"Session not found"}',
+    };
+    const source = remoteSource({
+      readResource: () => {
+        calls++;
+        if (calls === 1) return Promise.reject(sessionLost);
+        return Promise.reject(new McpError(-32002, "Resource not found"));
+      },
+    });
+    const restart = spyRestart(source, true);
+    const spy = spyOn(console, "error").mockImplementation(() => {});
+    try {
+      expect(await source.readResource("ui://svc/main", { logFailures: true })).toBeNull();
+      expect(restart).toHaveBeenCalledTimes(1);
+      expect(spy.mock.calls.some((c) => String(c[0]).includes("readResource failed"))).toBe(false);
+    } finally {
+      spy.mockRestore();
+      restart.mockRestore();
+    }
+  });
+
   it("does NOT restart or crash the source on an unclassifiable read error (no restart-storm)", async () => {
     // A malformed result / 429 / server-defined code is `unknown`; a read must
     // surface it as null — never tear down + re-init or mark the whole source

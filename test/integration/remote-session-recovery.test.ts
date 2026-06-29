@@ -17,8 +17,8 @@ import { McpSource } from "../../src/tools/mcp-source.ts";
  *
  * Unlike the unit test (which hand-builds the error shape), this drives the real
  * MCP SDK client transport against a real Streamable-HTTP server, so it proves
- * `isSessionLost` matches the actual `StreamableHTTPError` the SDK throws on the
- * canonical 404 + "-32001 Session not found" wire shape.
+ * `classifyConnectionFailure` matches the actual `StreamableHTTPError` the SDK
+ * throws on the canonical 404 + "-32001 Session not found" wire shape.
  */
 
 const UI_HTML = "<html><body>main</body></html>";

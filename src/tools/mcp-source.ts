@@ -1308,15 +1308,16 @@ export class McpSource implements ToolSource {
       miss?: (err: unknown) => T;
     },
   ): Promise<T> {
-    // The server answered "not here" — an application outcome, not a connection
-    // failure. Never recover from it (it's op-scoped; only reads pass `miss`).
-    if (shape.miss && isMcpResourceMiss(firstErr)) return shape.miss(firstErr);
-
     const hasReauthableProvider = this.mode.type === "remote" && this.mode.authProvider != null;
     const delays = this.recoveryDelaysMs ?? shape.delays;
     let err = firstErr;
 
     for (let attempt = 0; attempt <= delays.length; attempt++) {
+      // The server answered "not here" — an application outcome, not a connection
+      // failure. Checked each iteration (only reads pass `miss`): a genuine miss
+      // discovered AFTER a successful re-establish stays a silent null, matching
+      // the pre-unification behavior, instead of logging a spurious read failure.
+      if (shape.miss && isMcpResourceMiss(err)) return shape.miss(err);
       const classified = classifyConnectionFailure(err);
       // An `unknown` throw is recoverable only where the caller opts in (tool path);
       // elsewhere it's surfaced like a protocol error.
@@ -2153,10 +2154,10 @@ export type ConnectionFailure =
   | "none";
 
 /**
- * Classify a thrown error into a connection-failure class. Order is load-bearing
- * for behavior-preservation: `session-lost` and `transient` use the exact prior
- * predicate logic and are tested first, so the `isSessionLost` / `isTransientTransport`
- * wrappers below stay byte-identical to their pre-extraction behavior.
+ * Classify a thrown error into a connection-failure class. Order matters:
+ * `session-lost` and `transient` are checked first (most specific), then
+ * `auth-lost`, then the standard protocol codes, then recognized torn-transport
+ * shapes, with `unknown` as the residue.
  *
  * - **session-lost** — the server forgot our Streamable-HTTP session (it rolled).
  *   Wire shape (NOT a JSON-RPC code on `err.code`): a request on a stale
@@ -2226,16 +2227,6 @@ export function classifyConnectionFailure(err: unknown): ConnectionFailure {
   }
   // Couldn't positively classify it — let the caller decide (recover vs surface).
   return "unknown";
-}
-
-/** @see classifyConnectionFailure — the canonical detector; this is a named view of it. */
-export function isSessionLost(err: unknown): boolean {
-  return classifyConnectionFailure(err) === "session-lost";
-}
-
-/** @see classifyConnectionFailure — the canonical detector; this is a named view of it. */
-export function isTransientTransport(err: unknown): boolean {
-  return classifyConnectionFailure(err) === "transient";
 }
 
 /**

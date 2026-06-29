@@ -4,23 +4,15 @@ import { describe, expect, it } from "bun:test";
 import {
   classifyConnectionFailure,
   type ConnectionFailure,
-  isSessionLost,
-  isTransientTransport,
 } from "../../src/tools/mcp-source.ts";
 
 /**
- * Phase 1 of the recovery redesign (research/SPEC-mcp-source-recovery.md): the
- * connection-failure taxonomy as pure, tested data. Two invariants:
- *  1. classifyConnectionFailure is OP-INDEPENDENT — it returns only
- *     connection-level classes; application outcomes (resource-miss vs app-error)
- *     are op-scoped and stay in isMcpResourceMiss. So the resource-"miss" wire
- *     codes (-32002/-32601/-32602) classify as "none" here.
- *  2. isSessionLost / isTransientTransport are now thin views of the classifier
- *     and MUST stay byte-identical to their pre-extraction behavior (the
- *     readResource contract in mcp-source-resource-errors.test.ts depends on it).
- *
- * The recovery *policy* (what to do with each class) lands in Phase 2 with the
- * `withRecovery` wrapper that consumes it — abstractions ship with their caller.
+ * The connection-failure taxonomy (research/SPEC-mcp-source-recovery.md) as pure,
+ * tested data. `classifyConnectionFailure` is OP-INDEPENDENT — it returns only
+ * connection-level classes; application outcomes (resource-miss vs app-error) are
+ * op-scoped and stay in `isMcpResourceMiss`, so the resource-"miss" wire codes
+ * (-32002/-32601/-32602) classify as "none" here. The recovery *policy* (what to
+ * do with each class) is `policyFor`, consumed by `McpSource.recover`.
  */
 describe("classifyConnectionFailure — op-independent connection classes", () => {
   const sessionLost404 = {
@@ -90,25 +82,6 @@ describe("classifyConnectionFailure — op-independent connection classes", () =
     expect(classifyConnectionFailure(null)).toBe("none");
     expect(classifyConnectionFailure(undefined)).toBe("none");
     expect(classifyConnectionFailure("nope")).toBe("none");
-  });
-});
-
-describe("isSessionLost / isTransientTransport — thin views, behavior preserved", () => {
-  it("isSessionLost is exactly the session-lost class", () => {
-    expect(isSessionLost({ code: 404, message: "Session not found" })).toBe(true);
-    expect(isSessionLost(new McpError(-32001, "Session not found"))).toBe(true);
-    expect(isSessionLost({ code: 404, message: "Not Found" })).toBe(false);
-    expect(isSessionLost(new McpError(-32002, "Resource not found"))).toBe(false);
-    expect(isSessionLost(new Error("Connection closed"))).toBe(false);
-    expect(isSessionLost(null)).toBe(false);
-  });
-
-  it("isTransientTransport is exactly the transient class", () => {
-    for (const code of [502, 503, 504]) expect(isTransientTransport({ code, message: "x" })).toBe(true);
-    expect(isTransientTransport({ message: '{"error":"bad_gateway"}' })).toBe(true);
-    expect(isTransientTransport({ code: 404, message: "Session not found" })).toBe(false);
-    expect(isTransientTransport(new Error("Connection closed"))).toBe(false);
-    expect(isTransientTransport(null)).toBe(false);
   });
 });
 
