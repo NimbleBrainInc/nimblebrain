@@ -74,25 +74,42 @@ function lastUserText(opts: LanguageModelV3CallOptions): string {
   return "";
 }
 
+/** What the model saw on a turn: the serialized prompt and the active tool names. */
+interface Captured {
+  prompt: string;
+  tools: string[];
+}
+
 /**
- * Echo model that records the full prompt of any turn whose authored user text
- * is `RESUME_MSG` into `captured`. Keying on the resume message keeps async
- * auto-title generation (a separate model call on the born chat) out of the
- * capture, so the assertion reads exactly the resume turn's prompt.
+ * Echo model that records the full prompt AND the active tool list of any turn
+ * whose authored user text is `RESUME_MSG` into `captured`. Keying on the resume
+ * message keeps async auto-title generation (a separate model call on the born
+ * chat) out of the capture, so the assertion reads exactly the resume turn.
+ *
+ * Capturing `opts.tools` lets the test assert the workspace tool surface
+ * DIRECTLY (the namespaced `ws_<id>-…` names the model can call), not only
+ * transitively through the `## Workspace` narration block.
  */
-function createCapturingModel(captured: string[]): LanguageModelV3 {
+function createCapturingModel(captured: Captured[]): LanguageModelV3 {
   const echo = createEchoModel();
+  const record = (opts: LanguageModelV3CallOptions): void => {
+    if (lastUserText(opts) !== RESUME_MSG) return;
+    captured.push({
+      prompt: serializePrompt(opts),
+      tools: (opts.tools ?? []).map((t) => t.name),
+    });
+  };
   return {
     specificationVersion: "v3",
     provider: "echo",
     modelId: "echo-1",
     supportedUrls: {},
     doGenerate: (opts) => {
-      if (lastUserText(opts) === RESUME_MSG) captured.push(serializePrompt(opts));
+      record(opts);
       return echo.doGenerate(opts);
     },
     doStream: (opts) => {
-      if (lastUserText(opts) === RESUME_MSG) captured.push(serializePrompt(opts));
+      record(opts);
       return echo.doStream(opts);
     },
   };
@@ -102,7 +119,7 @@ describe("cross-workspace resume scopes the session's workspace to the conversat
   it("an UNFOCUSED resume of a workspace-A conversation tells the model it is in A, not at home", async () => {
     const workDir = join(testDir, "unfocused");
     mkdirSync(workDir, { recursive: true });
-    const captured: string[] = [];
+    const captured: Captured[] = [];
 
     const runtime = await Runtime.start({
       model: { provider: "custom", adapter: createCapturingModel(captured) },
@@ -120,7 +137,8 @@ describe("cross-workspace resume scopes the session's workspace to the conversat
     await runtime.chat({ message: RESUME_MSG, conversationId: born.conversationId });
 
     expect(captured.length).toBeGreaterThan(0);
-    const prompt = captured.at(-1) ?? "";
+    const turn = captured.at(-1);
+    const prompt = turn?.prompt ?? "";
 
     // The model is told it is in workspace A — the conversation's own workspace.
     expect(prompt).toContain("## Workspace");
@@ -131,13 +149,21 @@ describe("cross-workspace resume scopes the session's workspace to the conversat
     expect(prompt).not.toContain("not in any single workspace");
     expect(prompt).not.toContain(PERSONAL);
 
+    // Direct tool-surface assertion: the workspace-namespaced tools the model can
+    // call are workspace A's (`ws_workspace_a-…`), never the unfocused request's
+    // personal workspace (`ws_user_…-…`). Independent of the narration block.
+    const wsTools = (turn?.tools ?? []).filter((t) => t.startsWith("ws_"));
+    expect(wsTools.length).toBeGreaterThan(0);
+    expect(wsTools.some((t) => t.startsWith(`${WORKSPACE_A}-`))).toBe(true);
+    expect(wsTools.some((t) => t.startsWith(`${PERSONAL}-`))).toBe(false);
+
     await runtime.shutdown();
   });
 
   it("resuming a workspace-A conversation while FOCUSED on workspace B tells the model it is in A, not B", async () => {
     const workDir = join(testDir, "cross-focus");
     mkdirSync(workDir, { recursive: true });
-    const captured: string[] = [];
+    const captured: Captured[] = [];
 
     const runtime = await Runtime.start({
       model: { provider: "custom", adapter: createCapturingModel(captured) },
@@ -160,7 +186,8 @@ describe("cross-workspace resume scopes the session's workspace to the conversat
     });
 
     expect(captured.length).toBeGreaterThan(0);
-    const prompt = captured.at(-1) ?? "";
+    const turn = captured.at(-1);
+    const prompt = turn?.prompt ?? "";
 
     expect(prompt).toContain("## Workspace");
     expect(prompt).toContain(WORKSPACE_A);
@@ -168,6 +195,15 @@ describe("cross-workspace resume scopes the session's workspace to the conversat
     // The focused workspace (B) must NOT leak into the resumed A-conversation.
     expect(prompt).not.toContain(WORKSPACE_B);
     expect(prompt).not.toContain(WORKSPACE_B_NAME);
+
+    // Direct tool-surface assertion: the namespaced tools are workspace A's, and
+    // the focused workspace B's tools (`ws_workspace_b-…`) are NOT reachable —
+    // the wall follows the conversation, not the request. Reverting the seal
+    // surfaces `ws_workspace_b-…` here and fails.
+    const wsTools = (turn?.tools ?? []).filter((t) => t.startsWith("ws_"));
+    expect(wsTools.length).toBeGreaterThan(0);
+    expect(wsTools.some((t) => t.startsWith(`${WORKSPACE_A}-`))).toBe(true);
+    expect(wsTools.some((t) => t.startsWith(`${WORKSPACE_B}-`))).toBe(false);
 
     await runtime.shutdown();
   });
