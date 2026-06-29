@@ -100,6 +100,28 @@ describe("execute (tools/call) — unified recovery", () => {
     }
   });
 
+  it("surfaces a request timeout WITHOUT restarting the source (no #581 cascade)", async () => {
+    // A slow tool that times out must NOT restart the bundle — that would tear it
+    // down for its sibling tools. Surface a clean error; source stays alive + no crash.
+    const events: EngineEvent[] = [];
+    const sink: EventSink = { emit: (e) => events.push(e) };
+    const source = remoteSource({
+      callTool: () => Promise.reject(new McpError(-32001, "Request timed out")),
+      sink,
+    });
+    const restart = spyRestart(source, true);
+    try {
+      const result = await source.execute("web_fetch", {});
+      expect(result.isError).toBe(true);
+      expect(restart).not.toHaveBeenCalled(); // timeout → surface, never restart
+      expect(events.filter((e) => (e.data as { event?: string }).event === "source.crashed")).toHaveLength(
+        0,
+      );
+    } finally {
+      restart.mockRestore();
+    }
+  });
+
   it("recovers a torn transport: re-establish + retry returns the result", async () => {
     let calls = 0;
     const source = remoteSource({
