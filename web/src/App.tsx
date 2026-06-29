@@ -40,7 +40,7 @@ import { useEvents } from "./hooks/useEvents";
 import { useShell } from "./hooks/useShell";
 import { bootstrapWorkspacesToInfo } from "./lib/bootstrap";
 import { forwardConversationTitleToIframes } from "./lib/forward-conversation-title";
-import { identityAppRoute, isIdentityApp } from "./lib/identity-apps";
+import { identityAppSegment, isIdentityApp } from "./lib/identity-apps";
 import { recoverFromWorkspaceError } from "./lib/workspace-recovery";
 import { toSlug } from "./lib/workspace-slug";
 import { GlobalHomePage } from "./pages/GlobalHomePage";
@@ -359,14 +359,15 @@ function AuthenticatedAppContent({
   // now `GlobalHomePage` (workspace-agnostic) and `/w/<slug>/` is
   // `WorkspaceOverviewPage` (app grid). The bundle-home concept stays in
   // the placement registry for now in case a future surface needs it.
-  // Identity apps (conversations, …) are also excluded — they render at a
-  // top-level root route outside any workspace (see `identityAppPlacements`).
+  // Identity apps (conversations, …) are also excluded from the app grid set —
+  // they render at their own segment under `/w/<slug>` (see
+  // `identityAppPlacements`), not as `app/<route>`.
   const appPlacements = allRoutable.filter((p) => p.route !== "/" && !isIdentityApp(p.serverName));
 
-  // Identity apps — owned by the user, hosted OUTSIDE any workspace, each at
-  // its own top-level route (e.g. `/conversations`). They route through the
-  // identity door (the bridge dispatches their tools bare), so they don't
-  // belong under `/w/<slug>`.
+  // Identity apps — owned by the user; their tools dispatch bare through the
+  // identity door, but their VIEW is workspace-scoped (every list is one
+  // workspace's), so each renders at `/w/<slug>/<serverName>` under the same
+  // workspace guard as the overview / apps / settings.
   const identityAppPlacements = allRoutable.filter((p) => isIdentityApp(p.serverName));
 
   return (
@@ -395,6 +396,18 @@ function AuthenticatedAppContent({
             <Route path="/w/:slug" element={<WorkspaceRouteGuard />}>
               {/* Workspace overview — header + app grid. */}
               <Route index element={<WorkspaceOverviewPage />} />
+              {/* Identity views (Conversations / Automations / Files) — each at
+                  its own segment (e.g. `/w/<slug>/conversations`). The view is
+                  workspace-scoped (the slug = the focused workspace); the tools
+                  still dispatch bare through the identity door (see the bridge,
+                  keyed on `isIdentityApp`, not the URL). */}
+              {identityAppPlacements.map((p) => (
+                <Route
+                  key={p.route}
+                  path={identityAppSegment(p.serverName)}
+                  element={<AppWithChat placement={p} onNavigate={handleNavigate} />}
+                />
+              ))}
               {/* Apps within workspace */}
               {appPlacements.map((p) => (
                 <Route
@@ -417,15 +430,14 @@ function AuthenticatedAppContent({
               </Route>
             </Route>
 
-            {/* Identity apps — owned by the user, hosted OUTSIDE any
-                workspace, each at a top-level route (e.g. /conversations).
-                They dispatch their tools bare through the identity door; no
-                /w/<slug> prefix, no workspace required to load. */}
+            {/* Back-compat: the identity views used to live at top-level
+                (`/conversations`, …). Redirect those to the same view under the
+                focused workspace so old bookmarks / links keep working. */}
             {identityAppPlacements.map((p) => (
               <Route
                 key={p.route}
-                path={identityAppRoute(p.serverName)}
-                element={<AppWithChat placement={p} onNavigate={handleNavigate} />}
+                path={`/${identityAppSegment(p.serverName)}/*`}
+                element={<IdentityViewRedirect segment={identityAppSegment(p.serverName)} />}
               />
             ))}
 
@@ -508,6 +520,19 @@ function AuthenticatedAppContent({
       </ShellLayout>
     </ShellProvider>
   );
+}
+
+/**
+ * Redirects a legacy top-level identity-view URL (`/conversations`, …) to the
+ * same view under the focused workspace (`/w/<slug>/conversations`). The
+ * identity views moved under `/w/:slug` when they became workspace-scoped; this
+ * keeps old bookmarks and shared links working. With no focused workspace yet
+ * (shouldn't happen post-bootstrap), fall back to home.
+ */
+function IdentityViewRedirect({ segment }: { segment: string }) {
+  const { activeWorkspace } = useWorkspaceContext();
+  if (!activeWorkspace) return <Navigate to="/" replace />;
+  return <Navigate to={`/w/${toSlug(activeWorkspace.id)}/${segment}`} replace />;
 }
 
 /**

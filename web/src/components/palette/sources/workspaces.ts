@@ -6,8 +6,8 @@
 // useful "go to its overview", and keeping it means the default empty-query
 // view always has content rather than going blank in a single-workspace org).
 // The focused row is marked "current" and sorted last. Selecting a workspace
-// mirrors WorkspaceSection's equality-guarded setActiveWorkspace, then
-// navigates to its overview.
+// mirrors WorkspaceNav's equality-guarded setActiveWorkspace, then navigates to
+// its overview.
 // ---------------------------------------------------------------------------
 
 import { getWorkspaceAvatar } from "../../../lib/workspace-avatar";

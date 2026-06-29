@@ -1,5 +1,10 @@
 import { describe, expect, it } from "bun:test";
-import { IDENTITY_APP_SOURCES, identityAppRoute, isIdentityApp } from "../src/lib/identity-apps";
+import {
+  IDENTITY_APP_SOURCES,
+  identityAppRoute,
+  identityAppSegment,
+  isIdentityApp,
+} from "../src/lib/identity-apps";
 
 // The web mirror of the backend identity-source set. These pin the contract
 // the bridge + sidebar + router depend on; keep this in lockstep with
@@ -24,10 +29,18 @@ describe("identity-apps", () => {
     expect(isIdentityApp("@nimblebraininc/conversations")).toBe(false);
   });
 
-  it("maps an identity app to its top-level root route", () => {
-    expect(identityAppRoute("conversations")).toBe("/conversations");
-    expect(identityAppRoute("files")).toBe("/files");
-    expect(identityAppRoute("automations")).toBe("/automations");
+  it("the route segment is the bare source name (relative under /w/:slug)", () => {
+    expect(identityAppSegment("conversations")).toBe("conversations");
+    expect(identityAppSegment("files")).toBe("files");
+    expect(identityAppSegment("automations")).toBe("automations");
+  });
+
+  it("maps an identity app to its workspace-scoped view route", () => {
+    // The view is workspace-scoped now (the slug = the focused workspace); the
+    // tools still dispatch bare through the identity door.
+    expect(identityAppRoute("conversations", "helix")).toBe("/w/helix/conversations");
+    expect(identityAppRoute("files", "user_u1")).toBe("/w/user_u1/files");
+    expect(identityAppRoute("automations", "acme")).toBe("/w/acme/automations");
   });
 
   it("identity set is exactly { conversations, files, automations }", () => {

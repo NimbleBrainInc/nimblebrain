@@ -5,7 +5,7 @@
 // `APPS` group in the sidebar. That section is gone; this page is the
 // full app grid + workspace metadata. The sidebar now shows a top-N
 // quick-list under the focused workspace and links here via "View all N
-// apps" (see WorkspaceSection) — both surfaces read the same app set
+// apps" (see WorkspaceNav) — both surfaces read the same app set
 // through `workspaceApps()` so the grid and the count agree.
 //
 // App data source: `forSlot("sidebar")` → `workspaceApps()`, which keeps
