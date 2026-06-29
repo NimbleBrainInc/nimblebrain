@@ -1,7 +1,12 @@
 import { McpError } from "@modelcontextprotocol/sdk/types.js";
 import { describe, expect, it, spyOn } from "bun:test";
 import { NoopEventSink } from "../../src/adapters/noop-events.ts";
-import { isMcpResourceMiss, McpSource } from "../../src/tools/mcp-source.ts";
+import {
+  isMcpResourceMiss,
+  isSessionLost,
+  isTransientTransport,
+  McpSource,
+} from "../../src/tools/mcp-source.ts";
 
 /**
  * `readResource` must distinguish a genuine "resource not here" from a transport
@@ -127,5 +132,154 @@ describe("McpSource.readResource — log scoping (no probe spam)", () => {
     const transport = makeSourceWithThrowingClient(new Error("Connection closed"));
     expect(await miss.readResource("ui://x")).toBeNull();
     expect(await transport.readResource("ui://x", { logFailures: true })).toBeNull();
+  });
+});
+
+/**
+ * Classifiers that gate remote-session self-heal (issue #571). The canonical
+ * wire shape for a forgotten Streamable-HTTP session is HTTP 404 with the
+ * `-32001 "Session not found"` text inside the SDK's StreamableHTTPError
+ * message — NOT a JSON-RPC `-32600` (as the issue first guessed) and NOT a
+ * numeric `-32001` on `err.code`. A code-only matcher silently never fires on
+ * that path, so these lock the real shape down.
+ */
+describe("isSessionLost — forgotten remote session", () => {
+  it("matches the canonical 404 + 'Session not found' StreamableHTTPError shape", () => {
+    expect(
+      isSessionLost({
+        code: 404,
+        message:
+          'Streamable HTTP error: Error POSTing to endpoint: {"code":-32001,"message":"Session not found"}',
+      }),
+    ).toBe(true);
+  });
+
+  it("matches a -32001 code from a non-canonical HTTP-200 JSON-RPC body", () => {
+    expect(isSessionLost(new McpError(-32001, "Session not found"))).toBe(true);
+  });
+
+  it("does NOT match a generic 404 (e.g. wrong URL) with no session text", () => {
+    expect(isSessionLost({ code: 404, message: "Not Found" })).toBe(false);
+  });
+
+  it("does NOT match a resource miss or a plain transport error", () => {
+    expect(isSessionLost(new McpError(-32002, "Resource not found"))).toBe(false);
+    expect(isSessionLost(new Error("Connection closed"))).toBe(false);
+  });
+
+  it("is null/non-object safe", () => {
+    expect(isSessionLost(null)).toBe(false);
+    expect(isSessionLost(undefined)).toBe(false);
+    expect(isSessionLost("nope")).toBe(false);
+  });
+});
+
+describe("isTransientTransport — mid-roll gateway blip", () => {
+  it("matches gateway HTTP statuses on err.code", () => {
+    for (const code of [502, 503, 504]) {
+      expect(isTransientTransport({ code, message: "x" })).toBe(true);
+    }
+  });
+
+  it("matches gateway-error message shapes", () => {
+    expect(isTransientTransport({ message: '{"error":"bad_gateway"}' })).toBe(true);
+    expect(isTransientTransport(new Error("Service Unavailable"))).toBe(true);
+    expect(isTransientTransport(new Error("Gateway Timeout"))).toBe(true);
+  });
+
+  it("does NOT match a stale session or a plain transport error", () => {
+    expect(isTransientTransport({ code: 404, message: "Session not found" })).toBe(false);
+    expect(isTransientTransport(new Error("Connection closed"))).toBe(false);
+  });
+
+  it("is null/non-object safe", () => {
+    expect(isTransientTransport(null)).toBe(false);
+    expect(isTransientTransport("nope")).toBe(false);
+  });
+});
+
+/**
+ * The recovery half of issue #571: a remote bundle's `ui://` read must
+ * re-initialize the session and retry after the server rolls, rather than
+ * returning a null that strands the sidebar until a manual runtime bounce.
+ * `tryRestart` is mocked so these stay unit-level (no real network / Bun.serve);
+ * the faithful end-to-end roll is exercised in integration.
+ */
+describe("McpSource.readResource — remote session self-heal (issue #571)", () => {
+  const sessionLost = {
+    code: 404,
+    message: 'Error POSTing to endpoint: {"code":-32001,"message":"Session not found"}',
+  };
+
+  function makeSource(readResource: () => Promise<unknown>): McpSource {
+    const source = new McpSource(
+      "stub",
+      { type: "remote", url: new URL("http://localhost:0/mcp") },
+      new NoopEventSink(),
+    );
+    (source as unknown as { client: { readResource: () => Promise<unknown> } }).client = {
+      readResource,
+    };
+    return source;
+  }
+
+  it("re-initializes the session and retries on 'Session not found', returning content", async () => {
+    let calls = 0;
+    const source = makeSource(async () => {
+      calls++;
+      if (calls === 1) throw sessionLost;
+      return { contents: [{ uri: "ui://stub/main", text: "<html>ok</html>" }] };
+    });
+    const restart = spyOn(
+      source as unknown as { tryRestart: () => Promise<boolean> },
+      "tryRestart",
+    ).mockResolvedValue(true);
+    try {
+      const result = await source.readResource("ui://stub/main", { logFailures: true });
+      expect(restart).toHaveBeenCalledTimes(1);
+      expect(result).toEqual({ text: "<html>ok</html>", mimeType: undefined, meta: undefined });
+    } finally {
+      restart.mockRestore();
+    }
+  });
+
+  it("does NOT restart on a genuine resource miss", async () => {
+    const source = makeSource(async () => {
+      throw new McpError(-32002, "Resource not found");
+    });
+    const restart = spyOn(
+      source as unknown as { tryRestart: () => Promise<boolean> },
+      "tryRestart",
+    ).mockResolvedValue(true);
+    try {
+      expect(await source.readResource("ui://stub/main", { logFailures: true })).toBeNull();
+      expect(restart).not.toHaveBeenCalled();
+    } finally {
+      restart.mockRestore();
+    }
+  });
+
+  it("exhausts retries, returns null, and marks the source dead for HealthMonitor", async () => {
+    const source = makeSource(async () => {
+      throw sessionLost;
+    });
+    const restart = spyOn(
+      source as unknown as { tryRestart: () => Promise<boolean> },
+      "tryRestart",
+    ).mockResolvedValue(false);
+    const spy = spyOn(console, "error").mockImplementation(() => {});
+    try {
+      expect(await source.readResource("ui://stub/main", { logFailures: true })).toBeNull();
+      // One re-establish attempt per backoff slot.
+      expect(restart).toHaveBeenCalledTimes(3);
+      // Escalated to HealthMonitor: emitSourceCrashed flipped `dead`, so a stale
+      // session that never closed the transport is now sweepable.
+      expect(
+        (source as unknown as { _isDeadForTesting: () => boolean })._isDeadForTesting(),
+      ).toBe(true);
+    } finally {
+      spy.mockRestore();
+      restart.mockRestore();
+    }
   });
 });
