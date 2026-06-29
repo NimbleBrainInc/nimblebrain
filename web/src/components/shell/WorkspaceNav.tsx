@@ -155,8 +155,11 @@ export function WorkspaceNav({ collapsed = false }: WorkspaceNavProps) {
   );
 }
 
-// A workspace disclosure node: the header row (chevron + avatar + name), and —
-// when it's the focused workspace — its nested contents.
+// A workspace disclosure node: the header row (chevron + avatar + name) and its
+// nested contents. The contents stay mounted whether or not the node is focused
+// so that BOTH expand and collapse animate — the wrapper transitions its height
+// (grid-rows 0fr↔1fr, the pure-CSS route to/from `auto`) plus a fade. On a
+// switch the leaving node collapses while the entering node expands, in sync.
 function WorkspaceTreeNode({
   workspace,
   focused,
@@ -173,7 +176,25 @@ function WorkspaceTreeNode({
       data-workspace-id={workspace.id}
     >
       <WorkspaceHeaderRow workspace={workspace} focused={focused} onSelect={onSelect} />
-      {focused && <WorkspaceContents workspace={workspace} />}
+      <div
+        // grid-rows 0fr→1fr animates height to/from content size; the inner
+        // `overflow-hidden` + `min-h-0` clips during the transition. Honors
+        // reduced-motion.
+        className={cn(
+          "grid transition-[grid-template-rows,opacity] duration-200 ease-out motion-reduce:transition-none",
+          focused ? "grid-rows-[1fr] opacity-100" : "grid-rows-[0fr] opacity-0",
+        )}
+        data-testid="sidebar-workspace-contents"
+        data-workspace-id={workspace.id}
+        data-expanded={focused ? "true" : "false"}
+        // Collapsed contents are inert — removed from tab order + the
+        // accessibility tree, so only the focused node's views are reachable.
+        inert={focused ? undefined : true}
+      >
+        <div className="min-h-0 overflow-hidden">
+          <WorkspaceContents workspace={workspace} focused={focused} />
+        </div>
+      </div>
     </div>
   );
 }
@@ -285,9 +306,11 @@ function WorkspaceAvatarButton({
   );
 }
 
-// The focused workspace's subtree: identity views, then APPS, then CONNECTORS.
-// Indented under the header with a connecting rule (Notion/Linear tree look).
-function WorkspaceContents({ workspace }: { workspace: WorkspaceInfo }) {
+// A workspace's subtree: identity views, then APPS, then CONNECTORS. Indented
+// under the header with a connecting rule (Notion/Linear tree look). Rendered
+// for every node (so collapse animates), but only the focused node shows its
+// apps + a live connector count — a collapsed node is mid-transition and hidden.
+function WorkspaceContents({ workspace, focused }: { workspace: WorkspaceInfo; focused: boolean }) {
   const shell = useShellContext();
   const { iconFor, connectorCount } = useWorkspaceAppIcons();
   const slug = toSlug(workspace.id);
@@ -314,11 +337,7 @@ function WorkspaceContents({ workspace }: { workspace: WorkspaceInfo }) {
   const hasAppOverflow = apps.length > shownApps.length;
 
   return (
-    <div
-      className="ml-[18px] mr-2 mb-1 mt-px flex flex-col border-l border-sidebar-foreground/10 pl-2"
-      data-testid="sidebar-workspace-contents"
-      data-workspace-id={workspace.id}
-    >
+    <div className="ml-[18px] mr-2 mb-1 mt-px flex flex-col border-l border-sidebar-foreground/10 pl-2">
       {identityViews.map((p) => (
         <NestedNavLink
           key={p.resourceUri}
@@ -357,13 +376,14 @@ function WorkspaceContents({ workspace }: { workspace: WorkspaceInfo }) {
       <SubLabel>Connectors</SubLabel>
       {/* Connectors — the workspace's installed tools. Routes to its settings
           tab; sub-routes (browse, detail) keep it lit, so not `end`. The count
-          is the focused workspace's installed connectors (this subtree only
-          renders for the focused workspace, which is what the provider holds). */}
+          is the focused workspace's installed connectors (the provider holds
+          one workspace's set); a collapsed node omits it to avoid showing the
+          focused workspace's number on a different row mid-collapse. */}
       <NestedNavLink
         to={`/w/${slug}/settings/connectors`}
         icon="plug"
         label="Connectors"
-        count={connectorCount}
+        count={focused ? connectorCount : undefined}
       />
     </div>
   );

@@ -220,10 +220,13 @@ describe("WorkspaceNav — ordering + single-expand", () => {
     );
     expect(ids).toEqual(["ws_user_u1", "ws_acme", "ws_helix"]);
 
-    // Exactly one expanded subtree — the focused (Personal) one.
+    // Every node's contents stay mounted (so collapse can animate), but
+    // exactly one is expanded — the focused (Personal) one.
     const contents = byTestId(mounted.container, "sidebar-workspace-contents");
-    expect(contents).toHaveLength(1);
-    expect(contents[0]?.getAttribute("data-workspace-id")).toBe("ws_user_u1");
+    expect(contents).toHaveLength(3);
+    const expanded = contents.filter((c) => c.getAttribute("data-expanded") === "true");
+    expect(expanded).toHaveLength(1);
+    expect(expanded[0]?.getAttribute("data-workspace-id")).toBe("ws_user_u1");
 
     const headers = headerById(mounted.container);
     expect(headers["ws_user_u1"]?.getAttribute("data-focused")).toBe("true");
@@ -272,12 +275,15 @@ describe("WorkspaceNav — focused on a shared workspace", () => {
       connectorCount: 4,
     });
 
-    // Only Helix is expanded.
-    const contents = byTestId(mounted.container, "sidebar-workspace-contents");
-    expect(contents).toHaveLength(1);
-    expect(contents[0]?.getAttribute("data-workspace-id")).toBe("ws_helix");
+    // Only Helix is expanded (all three nodes' contents are mounted).
+    const expanded = byTestId(mounted.container, "sidebar-workspace-contents").filter(
+      (c) => c.getAttribute("data-expanded") === "true",
+    );
+    expect(expanded).toHaveLength(1);
+    expect(expanded[0]?.getAttribute("data-workspace-id")).toBe("ws_helix");
 
-    // Helix's apps nest under it, routed into the workspace.
+    // Helix's apps nest under it, routed into the workspace. Apps render only
+    // under the focused node, so these are unambiguously Helix's.
     const appRows = byTestId(mounted.container, "sidebar-workspace-app");
     expect(appRows.map((r) => r.getAttribute("data-app-route")).sort()).toEqual([
       "people",
