@@ -4,6 +4,7 @@ import { join } from "node:path";
 import {
 	automationFilePath,
 	automationRunIndexPath,
+	automationRunResultPath,
 	automationRunsDir,
 	workspaceAutomationsDir,
 } from "../../../../src/bundles/automations/src/paths.ts";
@@ -11,7 +12,6 @@ import {
 	appendRun,
 	deleteAutomation,
 	deleteAutomationDefinition,
-	detectOrphans,
 	loadAllAutomations,
 	loadAutomation,
 	loadOwnerAutomations,
@@ -20,7 +20,6 @@ import {
 	readRuns,
 	saveAutomation,
 	saveRunResult,
-	updateRun,
 } from "../../../../src/bundles/automations/src/store.ts";
 import type {
 	Automation,
@@ -222,44 +221,6 @@ describe("runs", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Update run
-// ---------------------------------------------------------------------------
-
-describe("updateRun", () => {
-	test("updates status from running to success", () => {
-		const run = makeRun({ id: "run_upd", status: "running", completedAt: undefined });
-		appendRun(TMP_DIR, WS, OWNER, "test-auto", run);
-
-		updateRun(TMP_DIR, WS, OWNER, "test-auto", {
-			...run,
-			status: "success",
-			completedAt: "2025-06-01T01:00:00.000Z",
-		});
-
-		const runs = readRuns(TMP_DIR, WS, OWNER, "test-auto");
-		expect(runs.length).toBe(1);
-		expect(runs[0]!.status).toBe("success");
-		expect(runs[0]!.completedAt).toBe("2025-06-01T01:00:00.000Z");
-	});
-
-	test("updates last matching line when multiple runs exist", () => {
-		appendRun(TMP_DIR, WS, OWNER, "test-auto", makeRun({ id: "run_same", status: "running" }));
-		appendRun(TMP_DIR, WS, OWNER, "test-auto", makeRun({ id: "run_other", status: "success" }));
-
-		updateRun(TMP_DIR, WS, OWNER, "test-auto", makeRun({ id: "run_same", status: "failure", error: "Something broke" }));
-
-		const runs = readRuns(TMP_DIR, WS, OWNER, "test-auto");
-		const matched = runs.find((r) => r.id === "run_same");
-		expect(matched!.status).toBe("failure");
-		expect(matched!.error).toBe("Something broke");
-	});
-
-	test("no-op when index does not exist", () => {
-		updateRun(TMP_DIR, WS, OWNER, "nonexistent", makeRun({ id: "run_x" }));
-	});
-});
-
-// ---------------------------------------------------------------------------
 // Run results (the deliverable sidecar)
 // ---------------------------------------------------------------------------
 
@@ -281,41 +242,6 @@ describe("run results", () => {
 
 	test("readRunResult returns null for an invalid runId (no throw)", () => {
 		expect(readRunResult(TMP_DIR, WS, OWNER, "test-auto", "../../etc/passwd")).toBeNull();
-	});
-});
-
-// ---------------------------------------------------------------------------
-// Orphan detection
-// ---------------------------------------------------------------------------
-
-describe("detectOrphans", () => {
-	test("marks running runs without completedAt as failure", () => {
-		appendRun(TMP_DIR, WS, OWNER, "test-auto", makeRun({ id: "run_orphan", status: "running", completedAt: undefined }));
-
-		expect(detectOrphans(TMP_DIR, WS, OWNER)).toBe(1);
-
-		const runs = readRuns(TMP_DIR, WS, OWNER, "test-auto");
-		expect(runs[0]!.status).toBe("failure");
-		expect(runs[0]!.error).toContain("Orphaned run");
-		expect(runs[0]!.completedAt).toBeDefined();
-	});
-
-	test("does not touch completed running runs", () => {
-		appendRun(TMP_DIR, WS, OWNER, "test-auto", makeRun({ id: "run_completed", status: "running", completedAt: "2025-06-01T01:00:00.000Z" }));
-
-		expect(detectOrphans(TMP_DIR, WS, OWNER)).toBe(0);
-		expect(readRuns(TMP_DIR, WS, OWNER, "test-auto")[0]!.status).toBe("running");
-	});
-
-	test("handles multiple orphans across automations in one owner dir", () => {
-		appendRun(TMP_DIR, WS, OWNER, "auto-a", makeRun({ id: "run_o1", automationId: "auto-a", status: "running", completedAt: undefined }));
-		appendRun(TMP_DIR, WS, OWNER, "auto-b", makeRun({ id: "run_o2", automationId: "auto-b", status: "running", completedAt: undefined }));
-
-		expect(detectOrphans(TMP_DIR, WS, OWNER)).toBe(2);
-	});
-
-	test("returns 0 when no runs directory exists", () => {
-		expect(detectOrphans(TMP_DIR, WS, "usr_empty")).toBe(0);
 	});
 });
 
@@ -350,6 +276,32 @@ describe("pruning", () => {
 		const parsed = resultLines.map((l) => JSON.parse(l) as AutomationRun);
 		expect(parsed.find((r) => r.id === "run_0000")).toBeUndefined();
 		expect(parsed.find((r) => r.id === "run_1000")).toBeDefined();
+	});
+
+	test("prunes a dropped run's result sidecar alongside the index line", () => {
+		mkdirSync(automationRunsDir(TMP_DIR, WS, OWNER, "prune-test"), { recursive: true });
+		// Seed a full index plus a result sidecar for the oldest run.
+		const lines: string[] = [];
+		for (let i = 0; i < 1000; i++) {
+			lines.push(
+				JSON.stringify(
+					makeRun({
+						id: `run_${String(i).padStart(4, "0")}`,
+						automationId: "prune-test",
+						startedAt: new Date(Date.parse("2025-01-01T00:00:00Z") + i * 1000).toISOString(),
+					}),
+				),
+			);
+		}
+		writeFileSync(automationRunIndexPath(TMP_DIR, WS, OWNER, "prune-test"), `${lines.join("\n")}\n`);
+		saveRunResult(TMP_DIR, WS, OWNER, "prune-test", makeResult({ runId: "run_0000", automationId: "prune-test" }));
+		const oldestSidecar = automationRunResultPath(TMP_DIR, WS, OWNER, "prune-test", "run_0000");
+		expect(existsSync(oldestSidecar)).toBe(true);
+
+		// Appending a 1001st run drops run_0000 from the index — its sidecar goes too.
+		appendRun(TMP_DIR, WS, OWNER, "prune-test", makeRun({ id: "run_1000", automationId: "prune-test", startedAt: "2025-02-01T00:00:00.000Z" }));
+
+		expect(existsSync(oldestSidecar)).toBe(false);
 	});
 });
 
@@ -450,9 +402,5 @@ describe("automation id validation", () => {
 
 	test("validation applies to readRuns", () => {
 		expect(() => readRuns(TMP_DIR, WS, OWNER, "../../etc/passwd")).toThrow(/Invalid automation id/i);
-	});
-
-	test("validation applies to updateRun", () => {
-		expect(() => updateRun(TMP_DIR, WS, OWNER, "../../etc/passwd", makeRun())).toThrow(/Invalid automation id/i);
 	});
 });

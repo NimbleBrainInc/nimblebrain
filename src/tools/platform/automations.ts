@@ -1,5 +1,3 @@
-import { type Dirent, readdirSync } from "node:fs";
-import { join } from "node:path";
 import {
   createDirectExecutor,
   type ExecutorContext,
@@ -20,7 +18,6 @@ import {
 } from "../../bundles/automations/src/server.ts";
 import {
   deleteAutomationDefinition,
-  detectOrphans,
   loadOwnerAutomations,
   readAllRuns,
   readRunResult,
@@ -95,33 +92,7 @@ export async function createAutomationsSource(
   eventSink: EventSink,
 ): Promise<McpSource> {
   const workDir = runtime.getWorkDir();
-  const workspacesDir = join(workDir, "workspaces");
   const defaultTimezone = process.env.NB_TIMEZONE ?? "Pacific/Honolulu";
-
-  // Detect and fix orphaned runs from previous crashes, across every workspace
-  // + owner store (automations are workspace-owned — the path is the wall).
-  let orphanCount = 0;
-  try {
-    for (const ws of readdirSync(workspacesDir, { withFileTypes: true })) {
-      if (!ws.isDirectory()) continue;
-      const ownersDir = join(workspacesDir, ws.name, "automations");
-      let owners: Dirent[];
-      try {
-        owners = readdirSync(ownersDir, { withFileTypes: true });
-      } catch {
-        continue; // no automations in this workspace
-      }
-      for (const owner of owners) {
-        if (!owner.isDirectory()) continue;
-        orphanCount += detectOrphans(workDir, ws.name, owner.name);
-      }
-    }
-  } catch {
-    // workspaces/ not created yet — nothing to sweep.
-  }
-  if (orphanCount > 0) {
-    process.stderr.write(`[automations] Fixed ${orphanCount} orphaned run(s)\n`);
-  }
 
   // Direct executor: calls runtime.executeTask() in-process — the unattended
   // sibling of chat() that frames the agent as producing a deliverable, not a

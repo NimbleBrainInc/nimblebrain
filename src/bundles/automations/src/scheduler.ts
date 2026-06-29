@@ -306,6 +306,11 @@ export class Scheduler {
    * Re-scan every workspace + owner's store and re-arm the timer. Called after
    * a tool mutates an automation (create/update/delete) so the timer reflects
    * the change. Multi-workspace: always re-reads every workspace + owner store.
+   *
+   * This is a full-tenant filesystem rescan on every mutation. Acceptable under
+   * the one-process-per-tenant model (a tenant's automation count is small); if
+   * a tenant ever accrues enough automations for the rescan to matter, switch to
+   * a per-(wsId,ownerId) incremental reload keyed off the mutation.
    */
   reload(): void {
     this.definitions = this.loadAll();

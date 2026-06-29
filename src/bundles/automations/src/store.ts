@@ -16,6 +16,7 @@
 import { randomBytes } from "node:crypto";
 import {
   appendFileSync,
+  type Dirent,
   existsSync,
   mkdirSync,
   readdirSync,
@@ -83,7 +84,7 @@ export function loadOwnerAutomations(
 ): Map<string, Automation> {
   const dir = workspaceAutomationsDir(workDir, wsId, ownerId);
   const map = new Map<string, Automation>();
-  let entries: import("node:fs").Dirent[];
+  let entries: Dirent[];
   try {
     entries = readdirSync(dir, { withFileTypes: true });
   } catch {
@@ -233,46 +234,26 @@ export function appendRun(
 
   appendFileSync(filePath, `${JSON.stringify(run)}\n`);
 
-  // Prune if over limit
+  // Prune if over limit. Drop the oldest summary lines AND their result
+  // sidecars together, so the run dir's total size stays bounded — not just the
+  // index (an unpruned pile of `<runId>.result.json` would defeat the cap).
   const content = readFileSync(filePath, "utf-8").trimEnd();
   const lines = content.split("\n");
   if (lines.length > MAX_RUN_LINES) {
+    const dropped = lines.slice(0, lines.length - MAX_RUN_LINES);
     const trimmed = lines.slice(lines.length - MAX_RUN_LINES);
     writeFileSync(filePath, `${trimmed.join("\n")}\n`);
-  }
-}
-
-/**
- * Update the last line in the run index that matches `run.id`. Rewrites the file
- * with the updated line. No-op when the index doesn't exist.
- */
-export function updateRun(
-  workDir: string,
-  wsId: string,
-  ownerId: string,
-  automationId: string,
-  run: AutomationRun,
-): void {
-  const filePath = automationRunIndexPath(workDir, wsId, ownerId, automationId);
-  if (!existsSync(filePath)) return;
-
-  const content = readFileSync(filePath, "utf-8").trimEnd();
-  if (!content) return;
-
-  const lines = content.split("\n");
-  for (let i = lines.length - 1; i >= 0; i--) {
-    try {
-      const parsed = JSON.parse(lines[i]!) as AutomationRun;
-      if (parsed.id === run.id) {
-        lines[i] = JSON.stringify(run);
-        break;
+    for (const line of dropped) {
+      try {
+        const old = JSON.parse(line) as AutomationRun;
+        if (old.id) {
+          unlinkSync(automationRunResultPath(workDir, wsId, ownerId, automationId, old.id));
+        }
+      } catch {
+        // malformed line, or the sidecar is missing/already gone — best-effort
       }
-    } catch {
-      // skip malformed
     }
   }
-
-  writeFileSync(filePath, `${lines.join("\n")}\n`);
 }
 
 // ---------------------------------------------------------------------------
@@ -414,64 +395,4 @@ export function readRunResult(
   } catch {
     return null;
   }
-}
-
-// ---------------------------------------------------------------------------
-// Orphan Detection
-// ---------------------------------------------------------------------------
-
-/**
- * Sweep one owner's run indices for runs left `running` with no `completedAt`
- * (process exited mid-run) and mark them `failure`. Returns the count fixed.
- */
-export function detectOrphans(workDir: string, wsId: string, ownerId: string): number {
-  const runsRoot = ownerRunsRoot(workDir, wsId, ownerId);
-  let automationIds: string[];
-  try {
-    automationIds = readdirSync(runsRoot, { withFileTypes: true })
-      .filter((d) => d.isDirectory())
-      .map((d) => d.name);
-  } catch {
-    return 0;
-  }
-
-  let orphanCount = 0;
-  for (const id of automationIds) {
-    try {
-      validateAutomationId(id);
-    } catch {
-      continue;
-    }
-    const filePath = automationRunIndexPath(workDir, wsId, ownerId, id);
-    if (!existsSync(filePath)) continue;
-    const content = readFileSync(filePath, "utf-8").trimEnd();
-    if (!content) continue;
-
-    const lines = content.split("\n");
-    let modified = false;
-    for (let i = 0; i < lines.length; i++) {
-      try {
-        const run = JSON.parse(lines[i]!) as AutomationRun;
-        if (run.status === "running" && !run.completedAt) {
-          const updated: AutomationRun = {
-            ...run,
-            status: "failure",
-            completedAt: new Date().toISOString(),
-            error: "Orphaned run detected on startup (process exited while running)",
-          };
-          lines[i] = JSON.stringify(updated);
-          modified = true;
-          orphanCount++;
-        }
-      } catch {
-        // skip malformed
-      }
-    }
-
-    if (modified) {
-      writeFileSync(filePath, `${lines.join("\n")}\n`);
-    }
-  }
-
-  return orphanCount;
 }
