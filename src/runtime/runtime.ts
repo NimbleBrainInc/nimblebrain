@@ -1131,7 +1131,7 @@ export class Runtime {
     });
     await this.ensureWorkspaceRegistry(sessionWsId);
 
-    // The conversation's ROOM — the binding. A chat is born in the focused
+    // The conversation's workspace — the binding. A chat is born in the focused
     // workspace, or the caller's personal workspace when there's no focus
     // (`request.workspaceId ?? sessionWsId`), and stays there for its whole
     // life. On resume the workspace is read from the conversation's own path via the

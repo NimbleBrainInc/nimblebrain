@@ -40,7 +40,7 @@ import type {
 
 /** Where a conversation lives — the locator's resolution result. */
 export interface ConversationLocation {
-  /** The workspace (workspace) the conversation is stored under. */
+  /** The workspace the conversation is stored under. */
   wsId: string;
   /** The owner sub-partition, or `null` for an automation-run conversation. */
   ownerId: string | null;

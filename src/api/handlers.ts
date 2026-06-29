@@ -2068,8 +2068,6 @@ export async function handleResourceUpload(
       conversationId,
       createdAt: new Date().toISOString(),
       description,
-      // Groundwork: every record is private by default — written, not read in v1.
-      visibility: "private",
     };
     await store.appendRegistry(entry);
     entries.push(entry);

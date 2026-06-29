@@ -152,9 +152,6 @@ export class EventSourcedConversationStore implements ConversationStore, EventSi
       lastModel: null,
       ownerId: options.ownerId,
       format: "events",
-      // Groundwork: every record is private by default. Written,
-      // never read in v1 — the `<ownerId>` path partition is the live boundary.
-      visibility: "private",
       ...(options.workspaceId ? { workspaceId: options.workspaceId } : {}),
       ...(options.metadata ? { metadata: options.metadata } : {}),
     };

@@ -346,8 +346,6 @@ async function handleCreate(store: FileStore, args: CreateInput): Promise<object
     conversationId: null,
     createdAt: new Date().toISOString(),
     description: manifest.description ?? null,
-    // Groundwork: every record is private by default — written, not read in v1.
-    visibility: "private",
   };
   await store.appendRegistry(entry);
   return { id: saved.id, filename: manifest.filename, size: saved.size };

@@ -138,7 +138,7 @@ export function isFlatConversationJoin(node: ts.CallExpression): boolean {
 /** A `conversations` path segment anywhere in an assembled path. */
 const CONV_SEGMENT_RE = /(^|\/)conversations(\/|$)/;
 /** The workspace-owned shape: `workspaces/<id>/conversations`. */
-const ROOM_CONV_RE = /workspaces\/[^/]+\/conversations(\/|$)/;
+const WORKSPACE_CONV_RE = /workspaces\/[^/]+\/conversations(\/|$)/;
 /** A flat conversation FILE literal: `…/conversations/<convId>.jsonl`. */
 const FLAT_CONV_FILE_RE = /(^|\/)conversations\/[^/]+\.jsonl$/;
 
@@ -160,7 +160,7 @@ export function isFlatConversationTemplate(node: ts.TemplateExpression): boolean
     assembled += span.literal.text;
   }
   if (!CONV_SEGMENT_RE.test(assembled)) return false;
-  return !ROOM_CONV_RE.test(assembled);
+  return !WORKSPACE_CONV_RE.test(assembled);
 }
 
 /**
@@ -176,7 +176,7 @@ export function isFlatConversationStringLiteral(node: ts.StringLiteral): boolean
   const text = node.text;
   if (text.includes("://")) return false;
   if (!FLAT_CONV_FILE_RE.test(text)) return false;
-  return !ROOM_CONV_RE.test(text);
+  return !WORKSPACE_CONV_RE.test(text);
 }
 
 function hasAllowMarker(node: ts.Node, sourceFile: ts.SourceFile, src: string): boolean {

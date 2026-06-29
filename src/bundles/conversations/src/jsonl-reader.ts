@@ -28,7 +28,7 @@ export interface ConversationMeta {
   lastModel: string | null;
   ownerId?: string;
   /**
-   * The workspace (workspace) the conversation ran in — the breadcrumb the
+   * The workspace the conversation ran in — the breadcrumb the
    * runtime stamps on the line-1 header at create time. Absent on legacy
    * files written before workspace stamping; a consumer treats absent as
    * the owner's personal workspace.

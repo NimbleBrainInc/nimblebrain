@@ -193,10 +193,10 @@ export interface Conversation {
   workspaceId?: string;
   /**
    * Who can see this conversation. `private` (owner-only, default) |
-   * `shared` (the workspace's members). **Groundwork: written `private` on
-   * create, never read in v1** — the `<ownerId>` path partition is the live
-   * boundary. Absent reads as `private` (fail-closed). Visibility never crosses
-   * the workspace wall.
+   * `shared` (the workspace's members). **Reserved forward-compat field — not
+   * yet written or read in v1**; the `<ownerId>` path partition is the live
+   * boundary, and absent reads as `private` (fail-closed). Visibility never
+   * crosses the workspace wall.
    */
   visibility?: "private" | "shared";
   /** Arbitrary caller-provided metadata. Stored in JSONL first line, never validated. */
