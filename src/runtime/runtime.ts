@@ -2069,11 +2069,10 @@ export class Runtime {
     // the rehydrate call is a pass-through for shape consistency with the
     // engine's message contract).
     const history = await store.history(conversation);
-    // Rehydrate from the conversation's own workspace (`provWsId`, the workspace
-    // the run conversation and its files were created in) — the same partition a
-    // task upload would land in. A task never resumes, so this equals the request
-    // workspace today, but anchoring on the conversation's workspace keeps the
-    // read aligned with the write by construction.
+    // Rehydrate from `provWsId` — for a task that's the request workspace, which
+    // equals the workspace the run conversation and its files were created in (a
+    // task never resumes, so it cannot diverge the way a chat resume can).
+    // Anchoring the read here keeps it aligned with the write by construction.
     const fileStore = this.getWorkspaceFileStore(provWsId, ownerId);
 
     const resolvedMaxOutputTokens = resolveMaxOutputTokens({

@@ -1913,18 +1913,16 @@ async function parseMultipartChatBody(
   // the focused/personal workspace.
   const uploadOwner = runtime.resolveRequestUserId(identity);
   const fallbackWsId = workspaceId ?? personalWorkspaceIdFor(uploadOwner);
-  // Use conversationId if provided, otherwise a placeholder (will be replaced by runtime.chat)
-  const convId = (typeof conversationId === "string" && conversationId) || "pending";
-  const wsId = await runtime.resolveConversationWorkspaceId(
-    convId === "pending" ? undefined : convId,
-    fallbackWsId,
-    uploadOwner,
-  );
+  // The real conversation id, or undefined when the chat doesn't exist yet
+  // (`runtime.chat()` stamps the id later; `ingestFiles` gets a "pending"
+  // placeholder for the FileEntry until then).
+  const convId = (typeof conversationId === "string" && conversationId) || undefined;
+  const wsId = await runtime.resolveConversationWorkspaceId(convId, fallbackWsId, uploadOwner);
   const store = runtime.getWorkspaceFileStore(wsId, uploadOwner);
   const filesConfig = runtime.getFilesConfig();
   const ingestResult = await ingestFiles(
     uploadedFiles,
-    convId,
+    convId ?? "pending",
     store,
     filesConfig,
     wsId,
