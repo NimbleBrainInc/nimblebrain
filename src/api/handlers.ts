@@ -1728,6 +1728,13 @@ export async function handleFileServe(
     );
   }
 
+  // `?ws=` is taken at face value WITHOUT a membership check on purpose — do not
+  // add one. The store is rooted at the caller's OWN `<ownerId>` partition, so a
+  // forged `?ws=<other>` can only ever reach files the caller themselves wrote
+  // into that workspace (none, if they're not a member). The workspace is a
+  // storage-routing hint here, not an authorization axis — the owner partition is
+  // the gate. (Membership-gated surfaces use `optionalWorkspace`; a browser GET
+  // can't send the header, which is why this route reads the query param.)
   const store = runtime.getWorkspaceFileStore(workspaceId, runtime.resolveRequestUserId(identity));
   try {
     const file = await store.readFile(fileId);
