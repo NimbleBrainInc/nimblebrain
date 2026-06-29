@@ -178,10 +178,13 @@ function WorkspaceTreeNode({
       <WorkspaceHeaderRow workspace={workspace} focused={focused} onSelect={onSelect} />
       <div
         // grid-rows 0fr→1fr animates height to/from content size; the inner
-        // `overflow-hidden` + `min-h-0` clips during the transition. Honors
-        // reduced-motion.
+        // `overflow-hidden` + `min-h-0` clips during the transition. This is an
+        // in-place disclosure (no slide/parallax), so it plays even under
+        // prefers-reduced-motion — that setting targets large-scale motion, and
+        // suppressing this would leave the chevron rotating while the panel
+        // snapped, which reads as broken.
         className={cn(
-          "grid transition-[grid-template-rows,opacity] duration-200 ease-out motion-reduce:transition-none",
+          "grid transition-[grid-template-rows,opacity] duration-300 ease-out",
           focused ? "grid-rows-[1fr] opacity-100" : "grid-rows-[0fr] opacity-0",
         )}
         data-testid="sidebar-workspace-contents"
