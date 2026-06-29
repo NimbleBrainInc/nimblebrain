@@ -166,20 +166,20 @@ describe("handleReadResource", () => {
     expect(calls).toEqual([{ server: "calendar", uri: "custom://whatever/123", workspaceId: "w1" }]);
   });
 
-  it("routes an identity source to readIdentityAppResource, resolving files in the focused room", async () => {
+  it("routes an identity source to readIdentityAppResource, resolving files in the focused workspace", async () => {
     const calls: Array<{ server: string; uri: string }> = [];
     const runtime = makeStubRuntime({
       identitySources: ["files"],
       resource: { text: "hello world\n", mimeType: "text/plain" },
       captureIdentityCall: (c) => calls.push(c),
     });
-    // Files are room-owned: the source is still reached through the identity
-    // door (no workspace registry), but the read resolves in the focused room,
+    // Files are workspace-owned: the source is still reached through the identity
+    // door (no workspace registry), but the read resolves in the focused workspace,
     // threaded via fileWorkspaceId.
     const res = await handleReadResource(
       req({ server: "files", uri: "files://fl_abc" }),
       runtime,
-      { workspaceId: "ws_room1" },
+      { workspaceId: "ws_a" },
     );
     expect(res.status).toBe(200);
     const body = await res.json();
@@ -190,7 +190,7 @@ describe("handleReadResource", () => {
   it("returns 404 when an identity resource is missing", async () => {
     const runtime = makeStubRuntime({ identitySources: ["files"], resource: null });
     const res = await handleReadResource(req({ server: "files", uri: "files://fl_x" }), runtime, {
-      workspaceId: "ws_room1",
+      workspaceId: "ws_a",
     });
     expect(res.status).toBe(404);
     const body = await res.json();

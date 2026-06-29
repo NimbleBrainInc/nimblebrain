@@ -33,7 +33,7 @@ export function toolRoutes(ctx: AppContext) {
       handleShell(ctx.runtime, c.var.workspaceId),
     )
     .get("/v1/files/:fileId", (c) => {
-      // Files are room-owned: the URL carries the room as `?ws=<wsId>` (the web
+      // Files are workspace-owned: the URL carries the workspace as `?ws=<wsId>` (the web
       // client appends the active workspace; a browser GET can't send a header).
       const fileId = decodeURIComponent(c.req.param("fileId"));
       return handleFileServe(fileId, ctx.runtime, ctx.features, c.var.identity, c.req.query("ws"));

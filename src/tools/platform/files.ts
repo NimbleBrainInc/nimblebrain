@@ -1,8 +1,10 @@
 /**
  * Files platform source — in-process MCP server backing the caller's
- * identity-owned file store (`users/{userId}/files/`; Phase B). `files` is a
+ * workspace-owned file store (`workspaces/<wsId>/files/<ownerId>/`). `files` is a
  * kernel identity source, so its tools dispatch bare through the identity
- * door. Files are persisted via a JSONL registry and on-disk binary storage.
+ * door — but storage is workspace-owned, so the workspace comes from the request context
+ * (`fileWorkspaceId`; see `getStore`). Files are persisted via a per-owner JSONL
+ * registry and on-disk binary storage.
  *
  * Both this tool source and the chat multipart ingest path
  * (`src/api/handlers.ts::handleChat` / `handleChatStream`) share a single
@@ -155,7 +157,7 @@ async function handleRead(
 
   // The resource_link is the durable, byte-free reference. Every result
   // includes one so any resource_link-aware consumer can locate the
-  // identity-owned `files://` resource without re-reading through this tool.
+  // workspace-owned `files://` resource without re-reading through this tool.
   // Today `extractTextForModel` filters these out of the LLM-bound text,
   // which is what we want: the model receives the human text block; the
   // link rides alongside for tool-result metadata, UI rendering, and a
@@ -396,11 +398,13 @@ async function handleDelete(store: FileStore, args: { id: string }): Promise<obj
 /** Create the "files" platform source — in-process MCP server. */
 export function createFilesSource(runtime: Runtime, eventSink: EventSink): McpSource {
   /**
-   * Resolve the caller's identity-scoped file store. Files are identity-owned
-   * (Phase B): the store lives at `users/{userId}/files/`, not in any
-   * workspace. `files` is a kernel identity source, so the dispatcher always
-   * runs these tools with an authenticated identity in the request context;
-   * absence is a misrouted call, not a recoverable state.
+   * Resolve the caller's workspace-owned file store. Files live at
+   * `workspaces/<wsId>/files/<ownerId>/`, so this needs both the owner (the
+   * authenticated identity) and the workspace. `files` dispatches through the
+   * identity door, where `scope.workspaceId` is the personal/session workspace —
+   * so the FOCUSED workspace rides `RequestContext.fileWorkspaceId` (set on both
+   * doors). No workspace in scope (e.g. an external `/mcp` call with no header) ⇒
+   * deny rather than guess a workspace.
    */
   function getStore(): FileStore {
     // Resolve the owner through the one shared rule (`resolveRequestUserId`) —
@@ -409,15 +413,15 @@ export function createFilesSource(runtime: Runtime, eventSink: EventSink): McpSo
     // in production (throws when an identity provider is configured but the
     // request carries no identity); DEV_IDENTITY only in dev.
     const ownerId = runtime.resolveRequestUserId(runtime.getCurrentIdentity() ?? undefined);
-    // Files are room-owned: the room comes from the request context's
+    // Files are workspace-owned: the workspace comes from the request context's
     // `fileWorkspaceId` (set on both doors), NOT `scope.workspaceId` (which is
-    // the personal/session workspace on the identity door). Deny when no room is
+    // the personal/session workspace on the identity door). Deny when no workspace is
     // in scope — e.g. an external `/mcp` call with no `X-Workspace-Id`.
     const wsId = getRequestContext()?.fileWorkspaceId;
     if (!wsId) {
-      throw new Error("files: no workspace in scope (files are room-owned)");
+      throw new Error("files: no workspace in scope (files are workspace-owned)");
     }
-    return runtime.getRoomFileStore(wsId, ownerId);
+    return runtime.getWorkspaceFileStore(wsId, ownerId);
   }
 
   function ok(data: object): ToolResult {

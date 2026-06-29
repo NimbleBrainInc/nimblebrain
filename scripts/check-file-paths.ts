@@ -1,21 +1,21 @@
 #!/usr/bin/env bun
 /**
- * Lint: files are room-owned and reached through one constructor.
+ * Lint: files are workspace-owned and reached through one constructor.
  *
- * Files live under the room that owns them, with the owner as a privacy
+ * Files live under the workspace that owns them, with the owner as a privacy
  * sub-partition (`{workDir}/workspaces/<wsId>/files/<ownerId>/`). To keep that
  * single, two things are enforced in `src/`:
  *
  *   1. `createFileStore(...)` is called only in `src/runtime/runtime.ts` —
- *      via `Runtime.getRoomFileStore(wsId, ownerId)` (the sanctioned room-scoped
+ *      via `Runtime.getWorkspaceFileStore(wsId, ownerId)` (the sanctioned workspace-scoped
  *      constructor) and the host-resources resolver closure. Any other call
  *      site builds a store off a path the caller chose, which is how files
- *      drift out of the room-owned layout.
+ *      drift out of the workspace-owned layout.
  *   2. `getIdentityContext(...).getDataPath("files")` /
  *      `new IdentityContext(...).getDataPath("files")` — reaching the legacy
  *      identity-owned files dir (`users/<userId>/files`) — is forbidden
- *      anywhere in `src/`. The owning room, not the caller's identity, decides
- *      where a file lives; the dir comes only from `roomFilesDir()` in
+ *      anywhere in `src/`. The owning workspace, not the caller's identity, decides
+ *      where a file lives; the dir comes only from `workspaceFilesDir()` in
  *      `src/files/paths.ts`.
  *
  * Allowed: a `// lint-ok:file-path` marker on a line just above the call,
@@ -36,10 +36,10 @@ const ROOT = join(import.meta.dirname ?? __dirname, "..");
 const SRC_ROOT = join(ROOT, "src");
 const ALLOW_MARKER = "lint-ok:file-path";
 
-// `runtime.ts` owns FileStore construction: the `getRoomFileStore` method (the
-// sanctioned room-scoped constructor) and the host-resources resolver closure
+// `runtime.ts` owns FileStore construction: the `getWorkspaceFileStore` method (the
+// sanctioned workspace-scoped constructor) and the host-resources resolver closure
 // both legitimately call `createFileStore`. `src/files/paths.ts` defines
-// `roomFilesDir` (the only sanctioned dir builder) and is never a call site for
+// `workspaceFilesDir` (the only sanctioned dir builder) and is never a call site for
 // `createFileStore`, so it needs no exemption here.
 const CREATE_STORE_ALLOWED_FILES = new Set(
   ["runtime/runtime.ts"].map((f) => f.split("/").join(sep)),
@@ -158,12 +158,12 @@ function scanFile(absPath: string, violations: Violation[]): void {
       if (isCreateFileStoreCall(node) && !createStoreAllowed) {
         record(
           node,
-          "createFileStore() outside runtime.ts — use runtime.getRoomFileStore(wsId, ownerId)",
+          "createFileStore() outside runtime.ts — use runtime.getWorkspaceFileStore(wsId, ownerId)",
         );
       } else if (isIdentityFilesDataPath(node)) {
         record(
           node,
-          'getIdentityContext(...).getDataPath("files") — files are room-owned; use roomFilesDir()',
+          'getIdentityContext(...).getDataPath("files") — files are workspace-owned; use workspaceFilesDir()',
         );
       }
     }
@@ -195,10 +195,10 @@ async function main(): Promise<void> {
       console.error(`    ${v.snippet}\n`);
     }
     console.error(
-      "Files are room-owned at `{workDir}/workspaces/<wsId>/files/<ownerId>/` — build the dir only",
+      "Files are workspace-owned at `{workDir}/workspaces/<wsId>/files/<ownerId>/` — build the dir only",
     );
     console.error(
-      "via `roomFilesDir()` (src/files/paths.ts) and the store via `runtime.getRoomFileStore(wsId, ownerId)`.",
+      "via `workspaceFilesDir()` (src/files/paths.ts) and the store via `runtime.getWorkspaceFileStore(wsId, ownerId)`.",
     );
     console.error(
       `Legitimate exceptions (rare) require a // ${ALLOW_MARKER} comment on the line above.`,

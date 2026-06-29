@@ -38,9 +38,9 @@ export function resourceRoutes(ctx: AppContext) {
             identity: c.var.identity,
           }),
       )
-      // Uploads write to the focused room (the validated `X-Workspace-Id`, or
-      // the caller's personal room when unfocused), under the owner partition —
-      // files are room-owned. `optionalWorkspace` validates the header.
+      // Uploads write to the focused workspace (the validated `X-Workspace-Id`, or
+      // the caller's personal workspace when unfocused), under the owner partition —
+      // files are workspace-owned. `optionalWorkspace` validates the header.
       .post("/v1/resources", optionalWorkspace(ctx.workspaceStore), uploadLimit, (c) =>
         handleResourceUpload(
           c.req.raw,

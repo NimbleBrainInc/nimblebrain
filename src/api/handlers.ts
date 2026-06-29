@@ -930,9 +930,9 @@ export async function handleReadResource(
   // Identity sources (conversations, files, automations) live OUTSIDE any
   // workspace registry — they're reached through the identity door, the same
   // decision the orchestrator and `handleToolCall` make. But files are
-  // room-owned, so a `files://<id>` read resolves in the request's focused room
-  // (`options.workspaceId`, or the caller's personal room when unfocused), set
-  // via `fileWorkspaceId`. conversations/automations ignore that field.
+  // workspace-owned, so a `files://<id>` read resolves in the request's focused
+  // workspace (`options.workspaceId`, or the caller's personal workspace when
+  // unfocused), set via `fileWorkspaceId`. conversations/automations ignore it.
   const { identity } = options ?? {};
   if (runtime.getIdentitySource(server)) {
     const reqCtx: RequestContext = {
@@ -1140,9 +1140,9 @@ export async function handleToolCall(
   const reqCtx: RequestContext = {
     identity: identity ?? null,
     scope,
-    // Files are room-owned: an identity-door `files__*` call lands in the
-    // focused room (validated `X-Workspace-Id`) or the caller's personal room
-    // when unfocused. Ignored by the other identity tools.
+    // Files are workspace-owned: an identity-door `files__*` call lands in the
+    // focused workspace (validated `X-Workspace-Id`) or the caller's personal
+    // workspace when unfocused. Ignored by the other identity tools.
     fileWorkspaceId: workspaceId ?? personalWorkspaceIdFor(runtime.resolveRequestUserId(identity)),
   };
 
@@ -1701,9 +1701,10 @@ export function sanitizeFilename(name: string): string {
   return name.replace(/["\r\n\x00-\x1f]/g, "_");
 }
 
-/** Handle GET /v1/files/:fileId?ws=<wsId> — serve a stored file from the room it
- * lives in. Files are room-owned; the URL must carry the room (`?ws=`) because a
- * browser GET can't send the `X-Workspace-Id` header. */
+/** Handle GET /v1/files/:fileId?ws=<wsId> — serve a stored file from the
+ * workspace it lives in. Files are workspace-owned; the URL must carry the
+ * workspace (`?ws=`) because a browser GET can't send the `X-Workspace-Id`
+ * header. */
 export async function handleFileServe(
   fileId: string,
   runtime: Runtime,
@@ -1720,10 +1721,14 @@ export async function handleFileServe(
   }
 
   if (!workspaceId) {
-    return apiError(400, "workspace_required", "Files are room-owned — pass ?ws=<workspaceId>");
+    return apiError(
+      400,
+      "workspace_required",
+      "Files are workspace-owned — pass ?ws=<workspaceId>",
+    );
   }
 
-  const store = runtime.getRoomFileStore(workspaceId, runtime.resolveRequestUserId(identity));
+  const store = runtime.getWorkspaceFileStore(workspaceId, runtime.resolveRequestUserId(identity));
   try {
     const file = await store.readFile(fileId);
     const safeName = sanitizeFilename(file.filename);
@@ -1875,12 +1880,12 @@ async function parseMultipartChatBody(
 
   // Ingest files: validate, store, extract text, build content parts.
   //
-  // Files are room-owned: ingest writes to the focused room
+  // Files are workspace-owned: ingest writes to the focused workspace
   // (`workspaceId ?? personal`) under the uploader's owner partition — the SAME
-  // room `runtime.chat()` rehydrates from (its `roomWsId = request.workspaceId
-  // ?? sessionWsId`), so an upload can't land in a room the read won't look in.
+  // workspace `runtime.chat()` rehydrates from (`request.workspaceId ??
+  // sessionWsId`), so an upload can't land in a workspace the read won't look in.
   const uploadOwner = runtime.resolveRequestUserId(identity);
-  const store = runtime.getRoomFileStore(
+  const store = runtime.getWorkspaceFileStore(
     workspaceId ?? personalWorkspaceIdFor(uploadOwner),
     uploadOwner,
   );
@@ -1934,10 +1939,10 @@ function json(data: unknown, status = 200): Response {
  * by the bridge's `synapse/request-file` flow so the iframe never has
  * to base64-encode bytes into a tool-call argument.
  *
- * Workspace isolation comes from `workspaceId` (set by requireWorkspace
- * from authenticated identity, never from request input) flowing into
- * `getWorkspaceScopedDir` — bytes physically land under the workspace's
- * own directory.
+ * Workspace isolation comes from `workspaceId` (the validated `X-Workspace-Id`,
+ * or the caller's personal workspace when unfocused) flowing into
+ * `getWorkspaceFileStore` — bytes physically land under that workspace's own
+ * `files/<ownerId>/` partition.
  */
 export async function handleResourceUpload(
   request: Request,
@@ -2027,7 +2032,7 @@ export async function handleResourceUpload(
     typeof conversationIdRaw === "string" && conversationIdRaw ? conversationIdRaw : null;
 
   const uploadOwner = runtime.resolveRequestUserId(identity);
-  const store = runtime.getRoomFileStore(
+  const store = runtime.getWorkspaceFileStore(
     workspaceId ?? personalWorkspaceIdFor(uploadOwner),
     uploadOwner,
   );

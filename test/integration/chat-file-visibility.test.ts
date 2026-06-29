@@ -173,8 +173,8 @@ describe("chat multipart upload ↔ files__* visibility (bug 4)", () => {
     const id = files.find((f) => f.filename === "served.bin")?.id;
     expect(id).toBeDefined();
 
-    // Files are room-owned: the serve URL names the room as `?ws=`. The upload
-    // landed in the chat's room (`workspaceId ?? personal`), which here is the
+    // Files are workspace-owned: the serve URL names the workspace as `?ws=`. The upload
+    // landed in the chat's workspace (`workspaceId ?? personal`), which here is the
     // dev user's personal workspace.
     const res = await fetch(`${baseUrl}/v1/files/${id}?ws=${PERSONAL_WS_ID}`, {
       headers: { "X-Workspace-Id": PERSONAL_WS_ID },
@@ -189,7 +189,7 @@ describe("chat multipart upload ↔ files__* visibility (bug 4)", () => {
     // format). Same for the legacy scheme. This pins the compatibility
     // guarantee against a future "simplify the regex" PR that might silently
     // break historical file links baked into conversation JSONL.
-    // Files are room-owned: `?ws=` carries the room so the request gets past the
+    // Files are workspace-owned: `?ws=` carries the workspace so the request gets past the
     // workspace gate and reaches the id-shape validator under test.
     const newShape = "fl_aaaaaaaaaaaaaaaaaaaaaaaa"; // 24 hex chars
     const legacyShape = "fl_mo7gybgy_5ad5f8a8"; // base36 + 8 hex, from the anchor bug report

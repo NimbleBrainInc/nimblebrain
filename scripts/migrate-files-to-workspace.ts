@@ -1,12 +1,12 @@
 #!/usr/bin/env bun
 
 /**
- * One-time migration: identity-owned file store → the room-owned layout.
+ * One-time migration: identity-owned file store → the workspace-owned layout.
  *
  * Files used to live under the user's identity partition at
  * `{workDir}/users/<userId>/files/` — a per-user `registry.jsonl` catalog, the
  * byte files (`<fileId>_<sanitizedName>`), and the extracted-text sidecars
- * (`<fileId>.extracted.json`). The room now owns the directory (see
+ * (`<fileId>.extracted.json`). The workspace now owns the directory (see
  * `src/files/paths.ts` and `research/SPEC-permission-boundaries.md`): a file
  * lives under the workspace it belongs to, with the owner as a privacy
  * sub-partition that is self-contained — its own registry, bytes, and sidecars:
@@ -16,7 +16,7 @@
  *   workspaces/<wsId>/files/<ownerId>/<fileId>.extracted.json   extracted text
  *
  * This walks each `users/<userId>/files/` directory and relocates every catalog
- * entry to its room-owned home. The destination room is the entry's
+ * entry to its workspace-owned home. The destination workspace is the entry's
  * `workspaceId` when set, else the user's personal workspace; the owner is the
  * user. The byte file and sidecar move to the owner partition and the entry —
  * stamped with `ownerId`/`workspaceId` — is appended to that partition's
@@ -24,9 +24,9 @@
  * so deletes survive the migration.
  *
  * Usage:
- *   bun run migrate:files-to-room                  # dry-run (default)
- *   bun run migrate:files-to-room --write          # apply the moves
- *   bun run migrate:files-to-room --work-dir /abs  # target a work-dir
+ *   bun run migrate:files-to-workspace                  # dry-run (default)
+ *   bun run migrate:files-to-workspace --write          # apply the moves
+ *   bun run migrate:files-to-workspace --work-dir /abs  # target a work-dir
  *
  * Safe by default: a dry-run prints the planned moves, writes nothing, and
  * exits 0. `--write` (or `--apply`) performs the moves under the work-dir's
@@ -49,7 +49,7 @@ import {
 } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { type ParsedFilesPath, parseFilesPath, roomFilesDir } from "../src/files/paths.ts";
+import { type ParsedFilesPath, parseFilesPath, workspaceFilesDir } from "../src/files/paths.ts";
 import type { FileEntry } from "../src/files/types.ts";
 // The ONE servable-file-id validator — shared with the serve handler so a
 // legacy `fl_<base36>_<8 hex>` id the runtime still serves can never be skipped
@@ -58,7 +58,7 @@ import { FILE_ID_RE } from "../src/files/uri.ts";
 import { personalWorkspaceIdFor } from "../src/workspace/workspace-store.ts";
 import { acquireMigrationLock } from "./lib/migration-lock.ts";
 
-const MIGRATION_NAME = "files-to-room";
+const MIGRATION_NAME = "files-to-workspace";
 
 /** A single entry's planned (dry-run) or performed (write) disposition. */
 interface MovePlan {
@@ -175,11 +175,11 @@ function userIdsWithFiles(workDir: string): string[] {
 
 /**
  * Plan (and, when `write`, perform) the relocation of every identity-owned file
- * entry into its room-owned owner partition. Pure read in dry-run; acquires the
+ * entry into its workspace-owned owner partition. Pure read in dry-run; acquires the
  * work-dir migration lock for the write path. Returned summary is exported for
  * the integration test.
  */
-export function migrateFilesToRoom(
+export function migrateFilesToWorkspace(
   workDir: string,
   opts: { write: boolean },
 ): FileMigrationSummary {
@@ -217,7 +217,7 @@ export function migrateFilesToRoom(
         }
 
         const wsId = entry.workspaceId ?? personalWorkspaceIdFor(userId);
-        const destDir = roomFilesDir(workDir, wsId, userId);
+        const destDir = workspaceFilesDir(workDir, wsId, userId);
         const destRegistry = join(destDir, "registry.jsonl");
         const ids = destIds(destRegistry);
 
@@ -298,7 +298,7 @@ export function migrateFilesToRoom(
   return summary;
 }
 
-/** Append the entry, stamped with its owner/room, to the dest owner registry. */
+/** Append the entry, stamped with its owner/workspace, to the dest owner registry. */
 function appendEntry(
   destDir: string,
   destRegistry: string,
@@ -311,8 +311,8 @@ function appendEntry(
   appendFileSync(destRegistry, `${JSON.stringify(stamped)}\n`, "utf-8");
 }
 
-/** Human-readable room label for a planned destination, for the dry-run log. */
-function roomLabel(destDir: string): string {
+/** Human-readable workspace label for a planned destination, for the dry-run log. */
+function workspaceLabel(destDir: string): string {
   const parsed: ParsedFilesPath | null = parseFilesPath(join(destDir, "registry.jsonl"));
   if (!parsed) return destDir;
   return `${parsed.wsId} · ${parsed.ownerId ?? "_runs"}`;
@@ -331,16 +331,18 @@ function main(): void {
   const write = args.includes("--write") || args.includes("--apply");
   const workDir = resolveWorkDir(args);
 
-  const summary = migrateFilesToRoom(workDir, { write });
+  const summary = migrateFilesToWorkspace(workDir, { write });
 
   const verb = write ? "Moved" : "Would move";
   for (const plan of summary.plans) {
     const what = plan.kind === "tombstone" ? "tombstone" : "file";
     if (plan.action === "move") {
-      console.log(`  ${write ? "✓" : "·"} ${verb} ${what} ${plan.fileId} → ${roomLabel(plan.to)}`);
+      console.log(
+        `  ${write ? "✓" : "·"} ${verb} ${what} ${plan.fileId} → ${workspaceLabel(plan.to)}`,
+      );
     } else {
       console.log(
-        `  ${write ? "✓" : "·"} ${plan.fileId} already at ${roomLabel(plan.to)} — ` +
+        `  ${write ? "✓" : "·"} ${plan.fileId} already at ${workspaceLabel(plan.to)} — ` +
           `${write ? "removed" : "would remove"} stale identity copy`,
       );
     }
@@ -376,7 +378,7 @@ function main(): void {
 }
 
 // Gate the CLI side effect on direct invocation so tests can import
-// `migrateFilesToRoom` without running the argv/console path.
+// `migrateFilesToWorkspace` without running the argv/console path.
 if (import.meta.main) {
   main();
 }

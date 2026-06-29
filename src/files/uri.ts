@@ -1,5 +1,5 @@
 /**
- * URI scheme for identity-owned files.
+ * URI scheme for workspace-owned files.
  *
  * Files persisted via the `FileStore` (`src/files/store.ts`) are addressable
  * as MCP resources at `files://<id>`. This is the canonical shape used in MCP
@@ -7,11 +7,11 @@
  * messages — the blob lives in the file store, the conversation log only
  * carries the URI.
  *
- * Files are room-owned: a `FileStore` is built against one owner's partition in
- * one room (`workspaces/<wsId>/files/<ownerId>/`). The `files://fl_…` URI stays
- * bare — it does NOT encode the room or owner; the room comes from the ambient
+ * Files are workspace-owned: a `FileStore` is built against one owner's partition in
+ * one workspace (`workspaces/<wsId>/files/<ownerId>/`). The `files://fl_…` URI stays
+ * bare — it does NOT encode the workspace or owner; the workspace comes from the ambient
  * request (`RequestContext.fileWorkspaceId`), and the owner from the request
- * identity. File ids are globally unique, so the URI resolves once the room is
+ * identity. File ids are globally unique, so the URI resolves once the workspace is
  * known.
  */
 

@@ -48,12 +48,12 @@ export interface RequestContext {
    */
   conversationId?: string;
   /**
-   * The room that owns files created or read in this request — the focused
+   * The workspace that owns files created or read in this request — the focused
    * workspace. Orthogonal to `scope`, and set on BOTH doors: identity-door
    * `files__*` tools need it because `scope.workspaceId` is the personal/session
-   * workspace, not the focused room. Absent ⇒ no room in scope (e.g. an external
+   * workspace, not the focused workspace. Absent ⇒ no workspace in scope (e.g. an external
    * `/mcp` request with no `X-Workspace-Id`): file storage denies rather than
-   * guessing a room.
+   * guessing a workspace.
    */
   fileWorkspaceId?: string;
   toolPromotion?: ToolPromotionControls;

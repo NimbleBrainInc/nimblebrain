@@ -12,7 +12,7 @@ export interface ExtractedTextSidecar {
   truncated: boolean;
 }
 
-/** File entry in the room registry (`workspaces/<wsId>/files/registry.jsonl`). */
+/** File entry in the workspace registry (`workspaces/<wsId>/files/registry.jsonl`). */
 export interface FileEntry {
   id: string;
   filename: string;
@@ -31,7 +31,7 @@ export interface FileEntry {
    */
   ownerId?: string;
   /**
-   * Denormalised room the file lives in. Stored under
+   * Denormalised workspace the file lives in. Stored under
    * `workspaces/<workspaceId>/files/<ownerId>/`, so the path is authoritative
    * and this field is the convenience. Absent on legacy/identity-era records.
    */

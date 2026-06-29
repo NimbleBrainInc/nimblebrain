@@ -1,15 +1,15 @@
 /**
- * The single sanctioned construction (and parse) site for room-partitioned file
+ * The single sanctioned construction (and parse) site for workspace-partitioned file
  * paths. Mirrors `src/conversation/paths.ts`: every file directory is built and
  * parsed here, so the on-disk layout has exactly one definition.
  *
- * The room owns the directory (see `research/SPEC-permission-boundaries.md`
+ * The workspace owns the directory (see `research/SPEC-permission-boundaries.md`
  * §2.3): a file lives under the workspace it was created in, with the owner as a
  * privacy sub-partition. Each owner partition is self-contained — it holds the
  * bytes, the per-owner `registry.jsonl` catalog, and the extracted-text
  * sidecars — so a `FileStore` rooted at the owner partition (like the
- * conversation store) gets owner-isolation and cross-room denial by
- * construction. A `files://<id>` URI stays bare; the room comes from the
+ * conversation store) gets owner-isolation and cross-workspace denial by
+ * construction. A `files://<id>` URI stays bare; the workspace comes from the
  * ambient request, never the URI.
  *
  *   workspaces/<wsId>/files/<ownerId>/registry.jsonl        per-owner catalog
@@ -18,7 +18,7 @@
  *
  * This file is on the allow-list of `check:workspace-paths` (it defines the
  * `workspaces/<wsId>/files/...` layout) and is the only site `check:file-paths`
- * permits to construct a room files dir.
+ * permits to construct a workspace files dir.
  */
 
 import { join, sep } from "node:path";
@@ -30,10 +30,10 @@ const FILES_SEGMENT = "files";
 const WORKSPACES_SEGMENT = "workspaces";
 
 /**
- * Directory holding one owner's files in one room:
+ * Directory holding one owner's files in one workspace:
  * `{workDir}/workspaces/<wsId>/files/<ownerId>`.
  */
-export function roomFilesDir(workDir: string, wsId: string, ownerId: string): string {
+export function workspaceFilesDir(workDir: string, wsId: string, ownerId: string): string {
   // `_runs` is reserved for automation outputs; an ownerId equal to it would
   // make `parseFilesPath` misread that user's files as automation runs. Opaque
   // OIDC/email ids never collide, but fail closed if one ever does.
@@ -46,7 +46,7 @@ export function roomFilesDir(workDir: string, wsId: string, ownerId: string): st
 }
 
 /**
- * Directory holding an automation's file outputs in one room:
+ * Directory holding an automation's file outputs in one workspace:
  * `{workDir}/workspaces/<wsId>/files/_runs/<automationId>`. Reserved for PR 3;
  * nothing writes here yet.
  */

@@ -2,13 +2,13 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { roomFilesDir } from "../../src/files/paths.ts";
+import { workspaceFilesDir } from "../../src/files/paths.ts";
 import type { FileEntry } from "../../src/files/types.ts";
-import { migrateFilesToRoom } from "../../scripts/migrate-files-to-room.ts";
+import { migrateFilesToWorkspace } from "../../scripts/migrate-files-to-workspace.ts";
 import { personalWorkspaceIdFor } from "../../src/workspace/workspace-store.ts";
 
 /**
- * Round-trip coverage for the identity → room-owned file migration. Does real
+ * Round-trip coverage for the identity → workspace-owned file migration. Does real
  * filesystem I/O against a throwaway work-dir, hence `test/integration/`.
  */
 
@@ -43,7 +43,7 @@ function byteName(id: string, filename: string): string {
   return `${id}_${filename}`;
 }
 
-describe("migrate-files-to-room", () => {
+describe("migrate-files-to-workspace", () => {
   let workDir: string;
 
   // Source byte files.
@@ -61,11 +61,11 @@ describe("migrate-files-to-room", () => {
   let personalRegistry: string;
 
   beforeEach(() => {
-    workDir = mkdtempSync(join(tmpdir(), "nb-files-room-migrate-"));
+    workDir = mkdtempSync(join(tmpdir(), "nb-files-workspace-migrate-"));
     const dir = userFilesDir(workDir);
     mkdirSync(dir, { recursive: true });
 
-    // (a) explicit workspaceId → that room's owner partition; has a sidecar.
+    // (a) explicit workspaceId → that workspace's owner partition; has a sidecar.
     const helixEntry = entry({ id: FL_HELIX, filename: "report.pdf", workspaceId: "ws_helix" });
     // (b) no workspaceId → the owner's personal workspace.
     const personalEntry = entry({ id: FL_PERSONAL, filename: "notes.txt", mimeType: "text/plain" });
@@ -92,8 +92,8 @@ describe("migrate-files-to-room", () => {
     );
     writeFileSync(personalByteSrc, Buffer.from("txt"));
 
-    helixDir = roomFilesDir(workDir, "ws_helix", OWNER);
-    personalDir = roomFilesDir(workDir, personalWorkspaceIdFor(OWNER), OWNER);
+    helixDir = workspaceFilesDir(workDir, "ws_helix", OWNER);
+    personalDir = workspaceFilesDir(workDir, personalWorkspaceIdFor(OWNER), OWNER);
     helixByteDest = join(helixDir, byteName(FL_HELIX, "report.pdf"));
     helixSidecarDest = join(helixDir, `${FL_HELIX}.extracted.json`);
     personalByteDest = join(personalDir, byteName(FL_PERSONAL, "notes.txt"));
@@ -106,7 +106,7 @@ describe("migrate-files-to-room", () => {
   });
 
   test("dry-run plans every move but writes nothing", () => {
-    const summary = migrateFilesToRoom(workDir, { write: false });
+    const summary = migrateFilesToWorkspace(workDir, { write: false });
 
     expect(summary.moved).toBe(3); // helix bytes, personal bytes, tombstone record
     expect(summary.skippedMissingBytes).toBe(1);
@@ -120,13 +120,13 @@ describe("migrate-files-to-room", () => {
     expect(existsSync(join(workDir, ".migration-lock"))).toBe(false);
   });
 
-  test("--write moves bytes + sidecar to the exact room-owned path and stamps the entry", () => {
-    const summary = migrateFilesToRoom(workDir, { write: true });
+  test("--write moves bytes + sidecar to the exact workspace-owned path and stamps the entry", () => {
+    const summary = migrateFilesToWorkspace(workDir, { write: true });
 
     expect(summary.moved).toBe(3);
     expect(summary.skippedMissingBytes).toBe(1);
 
-    // Bytes + sidecar now live at the precise paths roomFilesDir computes.
+    // Bytes + sidecar now live at the precise paths workspaceFilesDir computes.
     expect(existsSync(helixByteDest)).toBe(true);
     expect(existsSync(helixSidecarDest)).toBe(true);
     expect(existsSync(personalByteDest)).toBe(true);
@@ -137,7 +137,7 @@ describe("migrate-files-to-room", () => {
     expect(existsSync(helixSidecarSrc)).toBe(false);
     expect(existsSync(personalByteSrc)).toBe(false);
 
-    // The dest registry has the helix entry stamped with owner + room.
+    // The dest registry has the helix entry stamped with owner + workspace.
     const helixEntries = readFileSync(helixRegistry, "utf-8")
       .trim()
       .split("\n")
@@ -146,7 +146,7 @@ describe("migrate-files-to-room", () => {
     expect(helix?.ownerId).toBe(OWNER);
     expect(helix?.workspaceId).toBe("ws_helix");
 
-    // The tombstone survives in the personal-room registry.
+    // The tombstone survives in the personal-workspace registry.
     const personalEntries = readFileSync(personalRegistry, "utf-8")
       .trim()
       .split("\n")
@@ -160,8 +160,8 @@ describe("migrate-files-to-room", () => {
   });
 
   test("a second --write run is idempotent (0 moves)", () => {
-    migrateFilesToRoom(workDir, { write: true });
-    const second = migrateFilesToRoom(workDir, { write: true });
+    migrateFilesToWorkspace(workDir, { write: true });
+    const second = migrateFilesToWorkspace(workDir, { write: true });
 
     expect(second.moved).toBe(0);
     expect(second.skippedExisting).toBe(3); // helix, personal, tombstone
@@ -189,11 +189,11 @@ describe("migrate-files-to-room", () => {
       );
       writeFileSync(join(dir, byteName(legacyId, "old.txt")), Buffer.from("legacy"));
 
-      const summary = migrateFilesToRoom(legacyDir, { write: true });
+      const summary = migrateFilesToWorkspace(legacyDir, { write: true });
       expect(summary.skippedInvalidId).toBe(0);
       expect(summary.moved).toBe(1);
 
-      const dest = join(roomFilesDir(legacyDir, personalWorkspaceIdFor(OWNER), OWNER), byteName(legacyId, "old.txt"));
+      const dest = join(workspaceFilesDir(legacyDir, personalWorkspaceIdFor(OWNER), OWNER), byteName(legacyId, "old.txt"));
       expect(existsSync(dest)).toBe(true);
       expect(readFileSync(dest).toString()).toBe("legacy");
     } finally {

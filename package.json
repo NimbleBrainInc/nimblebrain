@@ -83,7 +83,7 @@
     "sync-models": "bun run src/model/sync-models.ts",
     "migrate:skill-frontmatter": "bun run scripts/migrate-skill-frontmatter.ts",
     "migrate:conversations-to-room": "bun run scripts/migrate-conversations-to-room.ts",
-    "migrate:files-to-room": "bun run scripts/migrate-files-to-room.ts"
+    "migrate:files-to-workspace": "bun run scripts/migrate-files-to-workspace.ts"
   },
   "devDependencies": {
     "@biomejs/biome": "^2.4.10",

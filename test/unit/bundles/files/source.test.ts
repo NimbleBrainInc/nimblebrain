@@ -12,7 +12,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { NoopEventSink } from "../../../../src/adapters/noop-events.ts";
-import { roomFilesDir } from "../../../../src/files/paths.ts";
+import { workspaceFilesDir } from "../../../../src/files/paths.ts";
 import { createFileStore } from "../../../../src/files/store.ts";
 import { createFilesSource } from "../../../../src/tools/platform/files.ts";
 import type { ContentBlock, ToolResult } from "../../../../src/engine/types.ts";
@@ -21,7 +21,7 @@ import type { Runtime } from "../../../../src/runtime/runtime.ts";
 import type { McpSource } from "../../../../src/tools/mcp-source.ts";
 import type { FilesReadPdfPagesOutput } from "../../../../src/tools/platform/schemas/files.ts";
 
-/** The owner and focused room every handler call in this file runs as. */
+/** The owner and focused workspace every handler call in this file runs as. */
 const OWNER_ID = "usr_test";
 const WS_ID = "ws_user_usr_test";
 
@@ -60,24 +60,24 @@ function findResourceLink(result: ToolResult): {
 }
 
 function makeRuntime(workDir: string): Runtime {
-  // Files are room-owned: the source resolves its store via
-  // `getRoomFileStore(fileWorkspaceId, resolveRequestUserId(getCurrentIdentity()))`,
-  // where the room comes from the request context (see `exec`) and the owner
-  // from the current identity. The mock roots each store at the matching room
+  // Files are workspace-owned: the source resolves its store via
+  // `getWorkspaceFileStore(fileWorkspaceId, resolveRequestUserId(getCurrentIdentity()))`,
+  // where the workspace comes from the request context (see `exec`) and the owner
+  // from the current identity. The mock roots each store at the matching workspace
   // partition so the on-disk round-trip is exercised faithfully.
   return {
     getCurrentIdentity: () => ({ id: OWNER_ID }),
     resolveRequestUserId: (identity?: { id: string }) => identity?.id ?? OWNER_ID,
-    getRoomFileStore: (wsId: string, ownerId: string) =>
-      createFileStore(roomFilesDir(workDir, wsId, ownerId)),
+    getWorkspaceFileStore: (wsId: string, ownerId: string) =>
+      createFileStore(workspaceFilesDir(workDir, wsId, ownerId)),
     getFilesConfig: () => ({ maxExtractedTextSize: 204_800 }),
   } as unknown as Runtime;
 }
 
 /**
  * Run a files tool the way the runtime does during a chat: inside a request
- * context whose `fileWorkspaceId` names the focused room. Without it the
- * room-owned store has no room in scope and `getStore()` throws.
+ * context whose `fileWorkspaceId` names the focused workspace. Without it the
+ * workspace-owned store has no workspace in scope and `getStore()` throws.
  */
 function exec(tool: string, args: Record<string, unknown>): Promise<ToolResult> {
   return runWithRequestContext(

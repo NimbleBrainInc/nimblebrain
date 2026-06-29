@@ -80,14 +80,14 @@ export interface FileStore {
 /**
  * Create a file store rooted at `filesDir`.
  *
- * Files are room-owned: `filesDir` is one owner's partition in one room,
+ * Files are workspace-owned: `filesDir` is one owner's partition in one workspace,
  * `workspaces/<wsId>/files/<ownerId>/` (the registry, bytes, and sidecars all
- * live in it — self-contained, so the store needs no owner/room logic). Build it
- * only through `Runtime.getRoomFileStore(wsId, ownerId)` via
- * `roomFilesDir(...)` from `src/files/paths.ts` — the single sanctioned path,
+ * live in it — self-contained, so the store needs no owner/workspace logic). Build it
+ * only through `Runtime.getWorkspaceFileStore(wsId, ownerId)` via
+ * `workspaceFilesDir(...)` from `src/files/paths.ts` — the single sanctioned path,
  * enforced by `check:file-paths`. Because the store sees only one owner's
- * partition in one room, owner-isolation and cross-room denial hold by
- * construction (an id created in another owner's partition or another room is
+ * partition in one workspace, owner-isolation and cross-workspace denial hold by
+ * construction (an id created in another owner's partition or another workspace is
  * simply not on disk here).
  */
 export function createFileStore(filesDir: string): FileStore {

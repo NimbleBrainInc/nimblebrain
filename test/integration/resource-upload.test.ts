@@ -61,7 +61,7 @@ describe("POST /v1/resources", () => {
     expect(entry.mimeType.split(";")[0]).toBe("text/plain");
     expect(entry.size).toBe(11);
 
-    // Bytes land under the ROOM store (files are room-owned) — keyed by the
+    // Bytes land under the workspace store (files are workspace-owned) — keyed by the
     // focused workspace (the X-Workspace-Id sent above) with the uploader as
     // the owner sub-partition: `workspaces/{wsId}/files/{ownerId}/`. The dev
     // server authenticates as DEV_IDENTITY.

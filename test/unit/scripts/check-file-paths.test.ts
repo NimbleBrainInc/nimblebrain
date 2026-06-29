@@ -4,7 +4,7 @@
  * The lint exports its AST predicates so we can exercise them directly — no
  * subprocess, no fixture-on-disk dance. Each predicate is tested against a small
  * parsed snippet that either matches (a forbidden construction) or doesn't (the
- * sanctioned room-owned shape). Same shape as `check-conversation-paths.test.ts`.
+ * sanctioned workspace-owned shape). Same shape as `check-conversation-paths.test.ts`.
  */
 
 import { describe, expect, test } from "bun:test";
@@ -43,16 +43,16 @@ describe("check-file-paths — isCreateFileStoreCall", () => {
     expect(isCreateFileStoreCall(call!)).toBe(true);
   });
 
-  test("matches `createFileStore(roomFilesDir(workDir, wsId, ownerId))` (the sanctioned shape — allowed only by file)", () => {
+  test("matches `createFileStore(workspaceFilesDir(workDir, wsId, ownerId))` (the sanctioned shape — allowed only by file)", () => {
     // The predicate flags every call; runtime.ts is exempted by the allow-list,
     // not by the predicate. Here we only assert the predicate fires.
-    const src = parse(`const s = createFileStore(roomFilesDir(workDir, wsId, ownerId));`);
+    const src = parse(`const s = createFileStore(workspaceFilesDir(workDir, wsId, ownerId));`);
     const call = findFirst(src, ts.isCallExpression);
     expect(isCreateFileStoreCall(call!)).toBe(true);
   });
 
-  test("does NOT match an unrelated call `roomFilesDir(workDir, wsId, ownerId)`", () => {
-    const src = parse(`const dir = roomFilesDir(workDir, wsId, ownerId);`);
+  test("does NOT match an unrelated call `workspaceFilesDir(workDir, wsId, ownerId)`", () => {
+    const src = parse(`const dir = workspaceFilesDir(workDir, wsId, ownerId);`);
     const call = findFirst(src, ts.isCallExpression);
     expect(isCreateFileStoreCall(call!)).toBe(false);
   });
@@ -122,20 +122,20 @@ describe("check-file-paths — isIdentityFilesDataPath", () => {
     expect(isIdentityFilesDataPath(call!)).toBe(false);
   });
 
-  test("does NOT match the sanctioned `roomFilesDir(workDir, wsId, ownerId)`", () => {
-    const src = parse(`const dir = roomFilesDir(workDir, wsId, ownerId);`);
+  test("does NOT match the sanctioned `workspaceFilesDir(workDir, wsId, ownerId)`", () => {
+    const src = parse(`const dir = workspaceFilesDir(workDir, wsId, ownerId);`);
     const call = findFirst(src, ts.isCallExpression);
     expect(isIdentityFilesDataPath(call!)).toBe(false);
   });
 });
 
 describe("check-file-paths — script self-invocation", () => {
-  test("runs end-to-end against src/ and speaks the room-owned contract", async () => {
-    // The room-storage migration is in flight: src/ may still contain legacy
+  test("runs end-to-end against src/ and speaks the workspace-owned contract", async () => {
+    // The workspace-storage migration is in flight: src/ may still contain legacy
     // identity-owned file paths (the runtime is being de-identity-ed
     // concurrently), so the script may legitimately exit 0 (clean) or 1
     // (legacy paths still present). Either way it must run to completion and
-    // emit the room-owned guidance. The exhaustive contract is covered by the
+    // emit the workspace-owned guidance. The exhaustive contract is covered by the
     // predicate unit tests above.
     const proc = Bun.spawn({
       cmd: ["bun", "run", "scripts/check-file-paths.ts"],
@@ -149,7 +149,7 @@ describe("check-file-paths — script self-invocation", () => {
     if (exitCode === 0) {
       expect(stdout).toContain("No identity-owned file paths");
     } else {
-      expect(stderr).toContain("roomFilesDir");
+      expect(stderr).toContain("workspaceFilesDir");
     }
   });
 });
