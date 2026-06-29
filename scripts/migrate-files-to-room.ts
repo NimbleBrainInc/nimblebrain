@@ -187,6 +187,10 @@ function main(): void {
     const room = `ws_user_${plan.userId} · ${plan.userId}`;
     if (plan.action === "move") {
       console.log(`  ${write ? "✓" : "·"} ${verb} ${plan.userId}/${basename(plan.from)} → ${room}`);
+    } else if (plan.action === "merge") {
+      console.log(
+        `  ${write ? "✓" : "·"} ${plan.userId}/${basename(plan.from)} ${write ? "merged" : "would merge"} into ${room}'s registry`,
+      );
     } else {
       console.log(
         `  ${write ? "✓" : "·"} ${plan.userId}/${basename(plan.from)} already at ${room} — ` +
@@ -197,6 +201,7 @@ function main(): void {
 
   console.log(
     `\n${summary.moved} ${write ? "moved" : "to move"} · ` +
+      `${summary.merged} registr${summary.merged === 1 ? "y" : "ies"} merged · ` +
       `${summary.skippedExisting} already migrated · ` +
       `${summary.users} user(s)`,
   );

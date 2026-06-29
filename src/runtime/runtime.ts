@@ -477,7 +477,7 @@ export class Runtime {
         getRequestContext()?.identity,
         identityProvider !== null,
       );
-      const cacheKey = `${wsId} ${userId}`;
+      const cacheKey = `${wsId} ${userId}`;
       const cached = hostResourcesFileStoreCache.get(cacheKey);
       if (cached) return cached;
       const store = createFileStore(workspaceFilesDir(hostResourcesWorkDir, wsId, userId));
@@ -3072,6 +3072,30 @@ export class Runtime {
     return loc.automationId
       ? this.runConversationStore(loc.wsId, loc.automationId)
       : this.roomConversationStore(loc.wsId, loc.ownerId ?? "");
+  }
+
+  /**
+   * The workspace a conversation lives in — for code outside the chat path (the
+   * upload handlers) that must write a file into the SAME partition `chat()`
+   * reads from when it rehydrates. Mirrors `resolveChatStore`'s room resolution:
+   * probe the focused/personal room directly, then the locator. A conversation
+   * not yet on disk (a new chat) is born in `fallbackWsId`. Without this the
+   * upload would partition by the request header while the read partitions by
+   * the conversation's room — they disagree on a cross-room resume and the
+   * attachment silently vanishes.
+   */
+  async resolveConversationRoomWsId(
+    conversationId: string | undefined,
+    fallbackWsId: string,
+    ownerId: string,
+  ): Promise<string> {
+    if (conversationId) {
+      const directDir = roomConversationsDir(resolveWorkDir(this.config), fallbackWsId, ownerId);
+      if (existsSync(join(directDir, `${conversationId}.jsonl`))) return fallbackWsId;
+      const loc = await this.getConversationLocator().locate(conversationId);
+      if (loc) return loc.wsId;
+    }
+    return fallbackWsId;
   }
 
   /**

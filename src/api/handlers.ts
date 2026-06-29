@@ -1872,20 +1872,30 @@ async function parseMultipartChatBody(
 
   // Ingest files: validate, store, extract text, build content parts.
   //
-  // Files are workspace-owned: ingest writes to the conversation's room
-  // partition (`workspaces/<wsId>/files/<ownerId>/`), the SAME partition
-  // `runtime.chat()` reads from when it rehydrates the conversation. `wsId` is
-  // the focused workspace (`X-Workspace-Id`) or the owner's personal workspace
-  // when unfocused — matching how `chat()` resolves its room (`request.
-  // workspaceId ?? sessionWsId`), so an upload can't land in a partition the
-  // read won't look in.
+  // Files are workspace-owned: ingest writes to the conversation's AUTHORITATIVE
+  // room — the SAME partition `runtime.chat()` reads from when it rehydrates.
+  // The room is resolved from the conversation (probe + locator), not the request
+  // header: on a cross-room resume the two differ, and a header-partitioned upload
+  // would land in a partition the read never looks in (the attachment vanishes).
+  // A new conversation (no id yet) is born in the focused/personal workspace.
   const ownerId = runtime.resolveRequestUserId(identity);
-  const wsId = workspaceId ?? personalWorkspaceIdFor(ownerId);
-  const store = runtime.getFileStore(wsId, ownerId);
-  const filesConfig = runtime.getFilesConfig();
-  // Use conversationId if provided, otherwise a placeholder (will be replaced by runtime.chat)
+  const fallbackWsId = workspaceId ?? personalWorkspaceIdFor(ownerId);
   const convId = (typeof conversationId === "string" && conversationId) || "pending";
-  const ingestResult = await ingestFiles(uploadedFiles, convId, store, filesConfig, wsId, ownerId);
+  const roomWsId = await runtime.resolveConversationRoomWsId(
+    convId === "pending" ? undefined : convId,
+    fallbackWsId,
+    ownerId,
+  );
+  const store = runtime.getFileStore(roomWsId, ownerId);
+  const filesConfig = runtime.getFilesConfig();
+  const ingestResult = await ingestFiles(
+    uploadedFiles,
+    convId,
+    store,
+    filesConfig,
+    roomWsId,
+    ownerId,
+  );
 
   if (ingestResult.errors.length > 0) {
     return apiError(400, "file_upload_error", "File upload failed", {
@@ -2025,7 +2035,15 @@ export async function handleResourceUpload(
     typeof conversationIdRaw === "string" && conversationIdRaw ? conversationIdRaw : null;
 
   const ownerId = runtime.resolveRequestUserId(identity);
-  const wsId = workspaceId ?? personalWorkspaceIdFor(ownerId);
+  const fallbackWsId = workspaceId ?? personalWorkspaceIdFor(ownerId);
+  // A resource upload attached to a conversation lands in that conversation's
+  // authoritative room (the partition the read uses); a standalone app upload
+  // (no conversationId) lands in the focused/personal workspace.
+  const wsId = await runtime.resolveConversationRoomWsId(
+    conversationId ?? undefined,
+    fallbackWsId,
+    ownerId,
+  );
   const store = runtime.getFileStore(wsId, ownerId);
   const entries: FileEntry[] = [];
   const errors: string[] = [];
