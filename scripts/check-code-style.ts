@@ -133,30 +133,28 @@ function extractContainmentTags(source: ts.SourceFile): string[] {
 
 function checkContainmentTagOpens(): CheckResult {
   const rule = "containment-tags-via-wrapContained";
-  const file = join(SRC_ROOT, "prompt", "compose.ts");
-  const content = readFileSync(file, "utf-8");
-  const source = ts.createSourceFile(file, content, ts.ScriptTarget.Latest, true);
 
-  const tags = extractContainmentTags(source);
+  // The `ContainmentTag` union and `wrapContained` live in compose.ts; derive
+  // the allow-list from the union there so the rule and the type stay in
+  // lockstep. The check itself scans EVERY source file — a hand-rolled open in
+  // any other module (e.g. the `effective_context` tool's historical branch)
+  // is the same breakout class, so the guarantee is only structural if the
+  // scan is project-wide rather than one hardcoded file.
+  const composeFile = join(SRC_ROOT, "prompt", "compose.ts");
+  const composeContent = readFileSync(composeFile, "utf-8");
+  const composeSource = ts.createSourceFile(
+    composeFile,
+    composeContent,
+    ts.ScriptTarget.Latest,
+    true,
+  );
+  const tags = extractContainmentTags(composeSource);
   if (tags.length === 0) {
     return {
       rule,
       violations: [`  ${COMPOSE_REL}  could not find ContainmentTag union to derive allow-list`],
     };
   }
-
-  // Find the body range of `wrapContained` — the one place these literals are
-  // allowed (the open, the escaped close, and the close all live here).
-  let allowedStart = -1;
-  let allowedEnd = -1;
-  function findWrap(node: ts.Node): void {
-    if (ts.isFunctionDeclaration(node) && node.name?.text === "wrapContained" && node.body) {
-      allowedStart = node.body.getStart(source);
-      allowedEnd = node.body.getEnd();
-    }
-    ts.forEachChild(node, findWrap);
-  }
-  findWrap(source);
 
   // Matches an open `<tag>`, a close `</tag>`, or a regex-escaped close
   // `<\/tag` — case-insensitive and whitespace-tolerant, the same surface the
@@ -166,27 +164,51 @@ function checkContainmentTagOpens(): CheckResult {
   const detector = new RegExp(`<\\\\?\\s*/?\\s*(?:${tagAlt})\\b`, "i");
 
   const violations: string[] = [];
-  function visit(node: ts.Node): void {
-    if (
-      ts.isStringLiteral(node) ||
-      ts.isNoSubstitutionTemplateLiteral(node) ||
-      ts.isTemplateExpression(node) ||
-      ts.isRegularExpressionLiteral(node)
-    ) {
-      const start = node.getStart(source);
-      const inWrap = allowedStart >= 0 && start >= allowedStart && node.getEnd() <= allowedEnd;
-      if (!inWrap) {
-        const text = node.getText(source);
-        if (detector.test(text)) {
+  const glob = new Glob("**/*.ts");
+  for (const file of glob.scanSync({ cwd: SRC_ROOT, absolute: true })) {
+    const rel = relative(ROOT, file);
+    // Skip vendored deps and bundle subtrees, matching the other passes.
+    if (rel.includes("/node_modules/") || rel.startsWith("src/bundles/")) continue;
+    const content = file === composeFile ? composeContent : readFileSync(file, "utf-8");
+    const source =
+      file === composeFile
+        ? composeSource
+        : ts.createSourceFile(file, content, ts.ScriptTarget.Latest, true);
+
+    // The literal tags are allowed in exactly one place: the body of
+    // `wrapContained` (the open, the escaped close, and the close all live
+    // there). That exclusion exists only in the file that defines the
+    // primitive; everywhere else any containment-tag literal is a violation.
+    let allowedStart = -1;
+    let allowedEnd = -1;
+    function findWrap(node: ts.Node): void {
+      if (ts.isFunctionDeclaration(node) && node.name?.text === "wrapContained" && node.body) {
+        allowedStart = node.body.getStart(source);
+        allowedEnd = node.body.getEnd();
+      }
+      ts.forEachChild(node, findWrap);
+    }
+    findWrap(source);
+
+    function visit(node: ts.Node): void {
+      if (
+        ts.isStringLiteral(node) ||
+        ts.isNoSubstitutionTemplateLiteral(node) ||
+        ts.isTemplateExpression(node) ||
+        ts.isRegularExpressionLiteral(node)
+      ) {
+        const start = node.getStart(source);
+        const inWrap = allowedStart >= 0 && start >= allowedStart && node.getEnd() <= allowedEnd;
+        if (!inWrap && detector.test(node.getText(source))) {
           const { line } = ts.getLineAndCharacterOfPosition(source, start);
           const lineText = content.split("\n")[line]?.trim() ?? "";
-          violations.push(`  ${COMPOSE_REL}:${line + 1}  ${lineText}`);
+          violations.push(`  ${rel}:${line + 1}  ${lineText}`);
         }
       }
+      ts.forEachChild(node, visit);
     }
-    ts.forEachChild(node, visit);
+    visit(source);
   }
-  visit(source);
 
   return { rule, violations };
 }

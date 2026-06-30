@@ -41,9 +41,11 @@ export type ContainmentTag =
 export function wrapContained(tag: ContainmentTag, body: string): string {
   // `tag` values are fixed lowercase `[a-z-]` literals — no regex metachars to
   // escape. Do NOT widen `ContainmentTag` to include a regex metacharacter
-  // without escaping it here. The `gi` + `\s*` form normalises every realistic
-  // close variant to the single safe `&lt;/${tag}>`.
-  const closing = new RegExp(`</\\s*${tag}\\s*>`, "gi");
+  // without escaping it here. The `gi` flag plus `\s*` around the `/` and tag
+  // normalise every realistic close variant — `</TAG>`, `</tag >`, `< /tag>`,
+  // `</ tag>`, `</tag\n>` — to the single safe `&lt;/${tag}>`, since the
+  // consumer is a fuzzy LLM parser rather than a conforming XML reader.
+  const closing = new RegExp(`<\\s*/\\s*${tag}\\s*>`, "gi");
   const safe = body.replace(closing, `&lt;/${tag}>`);
   return `<${tag}>\n${safe}\n</${tag}>`;
 }

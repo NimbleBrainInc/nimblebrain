@@ -46,6 +46,7 @@ import {
   type Layer3SkillEntry,
   type TracedLayer,
   type WorkspaceContext,
+  wrapContained,
 } from "../../prompt/compose.ts";
 import { getRequestContext } from "../../runtime/request-context.ts";
 import { makeIdentitySkill, type Runtime } from "../../runtime/runtime.ts";
@@ -367,7 +368,7 @@ async function composeHistorical(
         bodyRows.push(`_scope: ${entry.scope}; loaded: ${entry.loadedBy} — ${entry.reason}_`);
         bodyRows.push(`_hash: ${audit.hashStatus}_`);
         bodyRows.push("");
-        bodyRows.push(`<layer3-skill>\n${audit.body}\n</layer3-skill>`);
+        bodyRows.push(wrapContained("layer3-skill", audit.body));
         bodyRows.push("");
       }
       totalTokens += entry.tokens;

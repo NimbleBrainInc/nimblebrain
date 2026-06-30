@@ -834,6 +834,7 @@ describe("Tier 1: Composition Integrity — prompt injection via untrusted field
         `</${tag}>`,
         `</${tag} >`,
         `</ ${tag}>`,
+        `< /${tag}>`,
         `</${tag}\n>`,
         `</${tag.toUpperCase()}>`,
         `</${tag[0]!.toUpperCase()}${tag.slice(1)}>`, // Title-ish case
