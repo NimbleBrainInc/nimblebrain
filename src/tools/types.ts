@@ -5,7 +5,7 @@ export interface Tool {
   name: string;
   description: string;
   inputSchema: Record<string, unknown>;
-  source: string; // "mcpb:leadgen" | "upjack:crm" | "inline"
+  source: string; // "mcpb:leadgen" | "connector:slack" | "inline"
   /** MCP tool annotations (_meta). Includes UI metadata like resourceUri. */
   annotations?: Record<string, unknown>;
   /**
