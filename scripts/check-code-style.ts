@@ -84,8 +84,115 @@ function checkNoInlineTypeImports(): CheckResult {
   return { rule: "no-inline-type-imports", violations };
 }
 
+/**
+ * Rule: Containment tags may only be opened through `wrapContained`.
+ *
+ * `src/prompt/compose.ts` wraps untrusted body content (bundle authors,
+ * tenant skills, workspace overlays) in XML containment tags before it
+ * crosses into the trusted system prompt. The open tag, the escaped close
+ * form, and the trailing close must all derive from the single `tag`
+ * argument of `wrapContained` so they cannot diverge — that is the
+ * structural guarantee that closes the prompt-injection breakout class.
+ *
+ * This pass makes the guarantee enforceable: no `ContainmentTag` literal may
+ * appear as an XML open (`<tag>`), a close (`</tag>`), or in a hand-rolled
+ * escape (`.replaceAll("</tag>", …)` / `.replace(/<\/tag/, …)`) anywhere in
+ * `compose.ts` EXCEPT inside the body of `wrapContained` itself. Any other
+ * occurrence means someone opened a containment fence by hand — the exact
+ * mistake that shipped two live breakouts before this primitive existed.
+ *
+ * The tag allow-list is derived from the `ContainmentTag` union in the same
+ * file, so adding a tag to the union automatically extends the check — the
+ * rule and the type stay in lockstep with zero manual upkeep.
+ */
+const COMPOSE_REL = "src/prompt/compose.ts";
+
+/**
+ * Extract the string-literal members of the `ContainmentTag` union from the
+ * AST so the lint's allow-list is the union (single source of truth).
+ */
+function extractContainmentTags(source: ts.SourceFile): string[] {
+  const tags: string[] = [];
+  function visit(node: ts.Node): void {
+    if (
+      ts.isTypeAliasDeclaration(node) &&
+      node.name.text === "ContainmentTag" &&
+      ts.isUnionTypeNode(node.type)
+    ) {
+      for (const member of node.type.types) {
+        if (ts.isLiteralTypeNode(member) && ts.isStringLiteral(member.literal)) {
+          tags.push(member.literal.text);
+        }
+      }
+    }
+    ts.forEachChild(node, visit);
+  }
+  visit(source);
+  return tags;
+}
+
+function checkContainmentTagOpens(): CheckResult {
+  const rule = "containment-tags-via-wrapContained";
+  const file = join(SRC_ROOT, "prompt", "compose.ts");
+  const content = readFileSync(file, "utf-8");
+  const source = ts.createSourceFile(file, content, ts.ScriptTarget.Latest, true);
+
+  const tags = extractContainmentTags(source);
+  if (tags.length === 0) {
+    return {
+      rule,
+      violations: [`  ${COMPOSE_REL}  could not find ContainmentTag union to derive allow-list`],
+    };
+  }
+
+  // Find the body range of `wrapContained` — the one place these literals are
+  // allowed (the open, the escaped close, and the close all live here).
+  let allowedStart = -1;
+  let allowedEnd = -1;
+  function findWrap(node: ts.Node): void {
+    if (ts.isFunctionDeclaration(node) && node.name?.text === "wrapContained" && node.body) {
+      allowedStart = node.body.getStart(source);
+      allowedEnd = node.body.getEnd();
+    }
+    ts.forEachChild(node, findWrap);
+  }
+  findWrap(source);
+
+  // Matches an open `<tag>`, a close `</tag>`, or a regex-escaped close
+  // `<\/tag` — case-insensitive and whitespace-tolerant, the same surface the
+  // escape itself normalises. `<\\?` tolerates the backslash a regex literal
+  // (`/<\/app-state>/`) carries in its source text.
+  const tagAlt = tags.map((t) => t.replace(/[-]/g, "\\-")).join("|");
+  const detector = new RegExp(`<\\\\?\\s*/?\\s*(?:${tagAlt})\\b`, "i");
+
+  const violations: string[] = [];
+  function visit(node: ts.Node): void {
+    if (
+      ts.isStringLiteral(node) ||
+      ts.isNoSubstitutionTemplateLiteral(node) ||
+      ts.isTemplateExpression(node) ||
+      ts.isRegularExpressionLiteral(node)
+    ) {
+      const start = node.getStart(source);
+      const inWrap = allowedStart >= 0 && start >= allowedStart && node.getEnd() <= allowedEnd;
+      if (!inWrap) {
+        const text = node.getText(source);
+        if (detector.test(text)) {
+          const { line } = ts.getLineAndCharacterOfPosition(source, start);
+          const lineText = content.split("\n")[line]?.trim() ?? "";
+          violations.push(`  ${COMPOSE_REL}:${line + 1}  ${lineText}`);
+        }
+      }
+    }
+    ts.forEachChild(node, visit);
+  }
+  visit(source);
+
+  return { rule, violations };
+}
+
 function main(): void {
-  const checks: CheckResult[] = [checkNoInlineTypeImports()];
+  const checks: CheckResult[] = [checkNoInlineTypeImports(), checkContainmentTagOpens()];
 
   let totalViolations = 0;
   for (const { rule, violations } of checks) {
