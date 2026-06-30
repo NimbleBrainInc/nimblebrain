@@ -1,6 +1,7 @@
 import { textContent } from "../engine/content-helpers.ts";
 import type { ToolCall, ToolResult, ToolRouter, ToolSchema } from "../engine/types.ts";
 import { log } from "../observability/log.ts";
+import { assertToolAllowed } from "../permissions/assert-tool-allowed.ts";
 import type { PermissionStore } from "../permissions/permission-store.ts";
 import type { McpSource } from "./mcp-source.ts";
 import { rankToolSearchResults } from "./search-ranking.ts";
@@ -209,26 +210,12 @@ export class ToolRegistry implements ToolRouter {
       };
     }
 
-    // Permission gate: when configured, look up the per-tool policy
-    // for the connector. Stage 2: every source is workspace-scoped —
-    // the legacy user-pool path was deleted along with `UserPoolSource`.
+    // Permission gate: when configured, consult the shared workspace
+    // connector-permission check — the same one the chat engine and /mcp
+    // doors run, so a `disallow` is denied identically on every door.
     if (this.permissionStore && this.wsId) {
-      const owner = { scope: "workspace" as const, wsId: this.wsId };
-      const policy = await this.permissionStore.get(owner, prefix, localName);
-      if (policy === "disallow") {
-        return {
-          content: textContent(
-            `Tool "${prefix}__${localName}" is disabled by policy. Adjust in Settings → Connectors → ${prefix} → Configure.`,
-          ),
-          isError: true,
-          structuredContent: {
-            error: "tool_permission_denied",
-            connector: prefix,
-            tool: localName,
-            scope: owner.scope,
-          },
-        };
-      }
+      const denied = await assertToolAllowed(this.permissionStore, this.wsId, prefix, localName);
+      if (denied) return denied;
     }
 
     return source.execute(localName, call.input, signal);

@@ -32,6 +32,7 @@
 
 import type { ToolSchema } from "../engine/types.ts";
 import type { IdentityContext } from "../identity/context.ts";
+import type { PermissionStore } from "../permissions/permission-store.ts";
 import { parseNamespacedToolName, UnknownNamespacedToolName } from "../tools/namespace.ts";
 import type { ToolSource } from "../tools/types.ts";
 import type { WorkspaceContext } from "../workspace/context.ts";
@@ -190,6 +191,16 @@ export interface OrchestratorRuntime {
 
   /** Fresh `IdentityContext` for the authenticated identity. No workspace. */
   getIdentityContext(identityId: string): IdentityContext;
+
+  /**
+   * The workspace connector-permission store. Callers that dispatch a
+   * workspace-scoped tool consult it (via `assertToolAllowed`) to enforce an
+   * operator's per-tool `disallow` before `source.execute`. Optional: test
+   * stubs and non-production runtimes may omit it, in which case the
+   * permission gate is skipped (allow) — the production `Runtime` always
+   * provides it via `getPermissionStore`.
+   */
+  getPermissionStore?(): PermissionStore;
 
   /**
    * The walled tool surface for a session bounded to `wsId`: that workspace's

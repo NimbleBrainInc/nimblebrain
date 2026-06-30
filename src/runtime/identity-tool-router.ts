@@ -36,6 +36,7 @@ import {
   type OrchestratorRuntime,
   routeToolCall,
 } from "../orchestrator/index.ts";
+import { assertToolAllowed } from "../permissions/assert-tool-allowed.ts";
 import {
   getRequestContext,
   type RequestContext,
@@ -147,9 +148,29 @@ export class IdentityToolRouter implements ToolRouter {
     // `routed.toolName` is the inner `<source>__<tool>` form (the
     // namespace primitive only strips the `ws_<id>-` prefix).
     // `ToolSource.execute` takes the bare local tool name (no source
-    // prefix) — mirroring `ToolRegistry.execute`'s contract.
+    // prefix) — mirroring `ToolRegistry.execute`'s contract. Split on the
+    // FIRST `__` so `sourcePrefix` is the connector/source name.
     const sepIndex = routed.toolName.indexOf("__");
+    const sourcePrefix = sepIndex >= 0 ? routed.toolName.slice(0, sepIndex) : routed.toolName;
     const bareToolName = sepIndex >= 0 ? routed.toolName.slice(sepIndex + 2) : routed.toolName;
+
+    // Connector permission gate. The engine door must honor an operator's
+    // per-tool `disallow` just like the REST registry gate does — otherwise a
+    // tool an admin disabled stays callable by the agent loop. Only
+    // workspace-routed calls carry a connector permission; identity-door tools
+    // (conversations / files / automations) have none — allow them through.
+    if (routed.kind === "workspace") {
+      const permissionStore = this.runtime.getPermissionStore?.();
+      if (permissionStore) {
+        const denied = await assertToolAllowed(
+          permissionStore,
+          routed.context.workspaceId,
+          sourcePrefix,
+          bareToolName,
+        );
+        if (denied) return denied;
+      }
+    }
 
     // Restamp the per-call scope from the ROUTED namespace, not ambient
     // state. Workspace agent / model overrides ride along on the workspace
