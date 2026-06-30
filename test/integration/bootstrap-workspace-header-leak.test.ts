@@ -1,21 +1,30 @@
 /**
- * Regression: `GET /v1/bootstrap` must NOT enforce workspace membership.
+ * Regression guard for the Hono **wildcard-leak** class: a sub-app's `.use("*")`
+ * middleware flattens into a `/*` matcher that runs for every route mounted
+ * AFTER it on the same app, silently attaching that middleware to sibling routes
+ * that never asked for it. This file has caught two instances:
  *
- * Bootstrap is the discovery surface — it permissively defaults the focused
- * workspace and never rejects an authenticated user over the `X-Workspace-Id`
- * header. A prior bug had `conversationEventRoutes` attach its
- * `optionalWorkspace` middleware via `.use("*")`; Hono flattens that into a
- * `/*` matcher that runs for every route mounted after it — including
- * `/v1/bootstrap`. The membership check (403 for a non-member workspace) then
- * leaked onto bootstrap and hard-locked-out any user whose remembered
- * workspace they'd lost access to.
+ *   1. `conversationEventRoutes`' `optionalWorkspace` `.use("*")` leaked FORWARD
+ *      onto `/v1/bootstrap` and hard-locked-out any user whose remembered
+ *      workspace they'd lost access to (bootstrap is a discovery surface — it
+ *      must NOT 403 on a stale `X-Workspace-Id`). Fixed by per-route middleware.
+ *   2. `chatRoutes`' `optionalWorkspace` `.use("*")` leaked FORWARD onto
+ *      `/v1/events` (identity-scoped, mounted after chat at `app.ts`), giving it
+ *      a spurious membership 403. Fixed by requiring the workspace per-route on
+ *      the chat send routes and dropping the chat-router wildcard.
  *
- * This test pins the contract end-to-end through the real Hono app:
- *   - bootstrap + a non-member `X-Workspace-Id` → 200 (permissive)
- *   - a genuine data endpoint + the same header → 403 (enforcement intact)
+ * Authorization correctness per endpoint, pinned end-to-end through the real app:
+ *   - `GET  /v1/bootstrap` + non-member header → 200 (permissive; no backward leak)
+ *   - `POST /v1/chat`       + absent header → 400, + non-member header → 403
+ *     (enforces BY DESIGN — `requireWorkspace`, not a wildcard leak)
+ *   - `GET  /v1/events`     + non-member header → NOT 403 (identity-scoped: it
+ *     authorizes by identity and filters fan-out by server-computed membership,
+ *     so it must ignore the header; a 403 here means the chat-router wildcard
+ *     leaked forward again)
  *
- * The pairing is the point: the fix is surgical, not a blanket "ignore the
- * header everywhere".
+ * The `/v1/events` case is the forward-leak guard the chat-door refactor would
+ * otherwise have removed — reintroducing any `.use("*")` on a router mounted
+ * before `eventRoutes` makes it 403 again, and this catches it.
  */
 
 import { mkdirSync, rmSync } from "node:fs";
@@ -127,14 +136,70 @@ describe("bootstrap does not enforce workspace membership (middleware-leak regre
     expect(body.activeWorkspace).not.toBe(foreignWs);
   });
 
-  test("a data endpoint still rejects the same non-member X-Workspace-Id (403)", async () => {
-    const res = await fetch(`${baseUrl}/v1/events`, {
+  test("a workspace-scoped data endpoint rejects the same non-member X-Workspace-Id (403)", async () => {
+    const res = await fetch(`${baseUrl}/v1/chat`, {
+      method: "POST",
       headers: {
+        "Content-Type": "application/json",
         Authorization: `Bearer ${ALICE_TOKEN}`,
         "X-Workspace-Id": foreignWs,
       },
+      body: JSON.stringify({ message: "hello" }),
     });
+    // `/v1/chat` requires the workspace (requireWorkspace), so a non-member
+    // header is rejected at the door before the turn runs.
     expect(res.status).toBe(403);
-    await res.body?.cancel();
+    const body = (await res.json()) as { error: string };
+    expect(body.error).toBe("workspace_error");
+  });
+
+  test("the chat door rejects an ABSENT workspace header (400) — the headline 'require it'", async () => {
+    // The actual point of the refactor: no `X-Workspace-Id` is a 400 at the door,
+    // not a silent default to the caller's personal workspace. Covered at the
+    // resolver level in unit tests; this pins it end-to-end through the route.
+    const res = await fetch(`${baseUrl}/v1/chat`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${ALICE_TOKEN}`,
+      },
+      body: JSON.stringify({ message: "hello" }),
+    });
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as { error: string };
+    expect(body.error).toBe("workspace_error");
+  });
+
+  test("the identity-scoped event stream does NOT 403 on a non-member header (forward-leak guard)", async () => {
+    // `/v1/events` authorizes by identity and filters fan-out by server-computed
+    // membership, so it must IGNORE `X-Workspace-Id`. A non-member header opens
+    // the stream (the foreign workspace's events simply never fan out); a 403
+    // here means the chat router's `.use("*")` leaked forward onto it again.
+    //
+    // The leak resolves a 403 IMMEDIATELY (a JSON error, no stream). A clean
+    // response is an SSE stream whose headers, in this harness, don't flush until
+    // the first byte — so we abort shortly after connecting and assert only that
+    // we did NOT get the fast 403. (Asserting an exact 200 would race the SSE
+    // header flush; "not 403" is the precise regression signature.)
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 1000);
+    let status: number | null = null;
+    try {
+      const res = await fetch(`${baseUrl}/v1/events`, {
+        headers: {
+          Authorization: `Bearer ${ALICE_TOKEN}`,
+          "X-Workspace-Id": foreignWs,
+        },
+        signal: ctrl.signal,
+      });
+      status = res.status;
+      await res.body?.cancel();
+    } catch (err) {
+      // AbortError = the stream opened and we cancelled it (i.e. not a fast 403).
+      if ((err as Error).name !== "AbortError") throw err;
+    } finally {
+      clearTimeout(timer);
+    }
+    expect(status).not.toBe(403);
   });
 });
