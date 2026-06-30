@@ -15,8 +15,8 @@
  *
  * Authorization correctness per endpoint, pinned end-to-end through the real app:
  *   - `GET  /v1/bootstrap` + non-member header → 200 (permissive; no backward leak)
- *   - `POST /v1/chat`       + non-member header → 403 (enforces BY DESIGN —
- *     `requireWorkspace`, not a wildcard leak)
+ *   - `POST /v1/chat`       + absent header → 400, + non-member header → 403
+ *     (enforces BY DESIGN — `requireWorkspace`, not a wildcard leak)
  *   - `GET  /v1/events`     + non-member header → NOT 403 (identity-scoped: it
  *     authorizes by identity and filters fan-out by server-computed membership,
  *     so it must ignore the header; a 403 here means the chat-router wildcard
@@ -149,6 +149,23 @@ describe("bootstrap does not enforce workspace membership (middleware-leak regre
     // `/v1/chat` requires the workspace (requireWorkspace), so a non-member
     // header is rejected at the door before the turn runs.
     expect(res.status).toBe(403);
+    const body = (await res.json()) as { error: string };
+    expect(body.error).toBe("workspace_error");
+  });
+
+  test("the chat door rejects an ABSENT workspace header (400) — the headline 'require it'", async () => {
+    // The actual point of the refactor: no `X-Workspace-Id` is a 400 at the door,
+    // not a silent default to the caller's personal workspace. Covered at the
+    // resolver level in unit tests; this pins it end-to-end through the route.
+    const res = await fetch(`${baseUrl}/v1/chat`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${ALICE_TOKEN}`,
+      },
+      body: JSON.stringify({ message: "hello" }),
+    });
+    expect(res.status).toBe(400);
     const body = (await res.json()) as { error: string };
     expect(body.error).toBe("workspace_error");
   });
