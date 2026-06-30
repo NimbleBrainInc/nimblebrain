@@ -152,28 +152,6 @@
       "default": false,
       "description": "Allow HTTP (non-TLS) remote bundle connections. Dev only."
     },
-    "store": {
-      "description": "Conversation storage backend.",
-      "oneOf": [
-        {
-          "type": "object",
-          "required": ["type", "dir"],
-          "properties": {
-            "type": { "const": "jsonl" },
-            "dir": { "type": "string", "description": "Directory for JSONL conversation files." }
-          },
-          "additionalProperties": false
-        },
-        {
-          "type": "object",
-          "required": ["type"],
-          "properties": {
-            "type": { "const": "memory" }
-          },
-          "additionalProperties": false
-        }
-      ]
-    },
     "models": {
       "type": "object",
       "description": "Role-based model slots.",

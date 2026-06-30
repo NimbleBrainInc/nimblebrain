@@ -268,7 +268,7 @@ Conversations are workspace-owned. Every turn is written to a per-conversation J
 ~/.nimblebrain/workspaces/<wsId>/conversations/<ownerId>/<convId>.jsonl
 ```
 
-The owner (`ownerId`) is the authorization principal — only they can read or resume the conversation — while the workspace (`wsId`) is where it is stored. Persistence does not depend on any top-level `store` setting; programmatic/SDK embedding can supply an in-memory `ConversationStore` instead.
+The owner (`ownerId`) is the authorization principal — only they can read or resume the conversation — while the workspace (`wsId`) is where it is stored. Persistence is automatic; there is nothing to configure.
 
 ### JSONL format
 

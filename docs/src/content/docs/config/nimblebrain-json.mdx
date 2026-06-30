@@ -100,7 +100,6 @@ A sibling `nimblebrain.overrides.json` next to the resolved config file is **dee
 | `maxToolResultSize` | `integer` | `1000000` | Max characters for a single tool result. `0` disables the cap. |
 | `thinking` | `"off" \| "adaptive" \| "enabled"` | — | Extended-thinking mode for reasoning-capable models. `off`: never reason. `adaptive`: model decides per call. `enabled`: always reason (cap with `thinkingBudgetTokens`). Typically set via the admin `set_model_config` tool, which writes it to `nimblebrain.overrides.json`. |
 | `thinkingBudgetTokens` | `integer` | — | Token budget when `thinking: "enabled"`. Counts toward `maxOutputTokens`. Anthropic requires a minimum of 1,024. |
-| `store` | `object` | event-sourced (`jsonl` via CLI) | Conversation storage backend. See [store](#store). |
 | `sessionStore` | `object` | `{ "type": "memory", "ttlSeconds": 28800 }` | MCP session metadata store for `/mcp`. See [sessionStore](#sessionstore). |
 | `logging` | `object` | — | Structured logging config. See [logging](#logging). |
 | `http` | `object` | `{ "port": 27247, "host": "127.0.0.1" }` | HTTP server config. Omit for programmatic-only use. |
@@ -158,40 +157,9 @@ Each provider key is optional. If a provider's `apiKey` is omitted, the SDK fall
   Prefer environment variables for API keys in production. Config files end up in version control and backup snapshots by accident.
 </Aside>
 
-## store
+## Conversation storage
 
-Conversations are **workspace-owned and persisted automatically** — you do not configure where they live. Every turn is written to a per-conversation JSONL file at `{workDir}/workspaces/<wsId>/conversations/<ownerId>/<convId>.jsonl` in the **event-sourced** format (one append-only event log per conversation), which is what enables crash-resilient run replay and history [compaction](/config/features/). Legacy message-format JSONL files are still read. This persistence does not depend on the `store` setting below.
-
-The optional top-level `store` field sets the runtime's boot-time `ConversationStore` handle. **It does not change where conversations are stored** — that is always workspace-owned, as above — so most deployments omit it. It defaults to in-memory and is reserved for programmatic embedding of the runtime as a library.
-
-<Tabs>
-  <TabItem label="In-memory (default)">
-    ```json
-    {
-      "store": { "type": "memory" }
-    }
-    ```
-
-    The default. The platform's workspace-owned conversation persistence is unaffected; this only governs the embedded `ConversationStore` handle.
-  </TabItem>
-  <TabItem label="JSONL">
-    ```json
-    {
-      "store": {
-        "type": "jsonl",
-        "dir": "~/.nimblebrain/conversations"
-      }
-    }
-    ```
-
-    Provides a file-backed `ConversationStore` for programmatic embedding at the given `dir`.
-  </TabItem>
-</Tabs>
-
-| Field | Type | Required | Description |
-|-------|------|----------|-------------|
-| `type` | `"jsonl"` \| `"memory"` | Yes | `ConversationStore` backend for embedded use. Defaults to `memory`. |
-| `dir` | `string` | JSONL only | Directory for the embedded JSONL store's files. |
+Conversations are **workspace-owned and persisted automatically** — there is nothing to configure. Every turn is written to a per-conversation JSONL file at `{workDir}/workspaces/<wsId>/conversations/<ownerId>/<convId>.jsonl` in the **event-sourced** format (one append-only event log per conversation), which is what enables crash-resilient run replay and history [compaction](/config/features/). Legacy message-format JSONL files are still read.
 
 ## sessionStore
 

@@ -251,7 +251,6 @@ describe("config validation", () => {
   it("passes validation on a full valid config", () => {
     const configPath = writeTestConfig("valid-full.json", {
       model: { provider: "anthropic", apiKey: "sk-test" },
-      store: { type: "jsonl", dir: "/tmp/convos" },
       defaultModel: "claude-opus-4-6",
       maxIterations: 20,
       maxInputTokens: 100000,

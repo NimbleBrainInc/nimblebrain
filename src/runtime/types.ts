@@ -1,7 +1,6 @@
 import type { LanguageModelV3 } from "@ai-sdk/provider";
 import type { FeatureFlags } from "../config/features.ts";
 import type { ConfirmationGate } from "../config/privilege.ts";
-import type { ConversationStore } from "../conversation/types.ts";
 import type { EventSink } from "../engine/types.ts";
 import type { ContentPart, FileReference } from "../files/types.ts";
 import type { UserIdentity } from "../identity/provider.ts";
@@ -43,12 +42,6 @@ export interface RuntimeConfig {
 
   /** Directories to scan for skill files. */
   skillDirs?: string[];
-
-  /** Conversation storage. Default: in-memory. */
-  store?:
-    | { type: "jsonl"; dir: string }
-    | { type: "memory" }
-    | { type: "custom"; adapter: ConversationStore };
 
   /** Role-based model slots. Takes precedence over `defaultModel`. */
   models?: ModelSlots;
