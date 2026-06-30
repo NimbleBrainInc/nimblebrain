@@ -1332,13 +1332,15 @@ export class McpSource implements ToolSource {
         return shape.reauth(err);
       }
       if (action === "surface") {
-        // Giving up on a genuine connection failure we won't retry (a
-        // non-idempotent op — e.g. a task-augmented call whose transport broke).
-        // Mark the source crashed so HealthMonitor heals it for later calls; the
-        // transport is actually broken even though we don't retry this call.
-        // `auth-lost` is a credential problem, not a transport crash — excluded,
-        // so a static-auth 401 surfaces without thrashing restarts.
-        if (kind !== "auth-lost") this.emitSourceCrashed(String(err));
+        // Mark the source crashed ONLY for a genuine connection-down class we
+        // won't retry (e.g. a task-augmented call whose transport broke), so
+        // HealthMonitor heals it for later calls. A `timeout` (the tool is slow,
+        // transport is fine) and `auth-lost` (a credential problem) are NOT the
+        // transport crashing — restarting the source for them would tear it down
+        // for its other tools (the #581 cascade), so they surface without it.
+        if (kind === "session-lost" || kind === "transient" || kind === "transport-dead") {
+          this.emitSourceCrashed(String(err));
+        }
         return shape.surface(err);
       }
       // action === "recover": re-establish + retry, riding the roll window.
@@ -2150,21 +2152,27 @@ export type ConnectionFailure =
   | "transient"
   | "transport-dead"
   | "auth-lost"
+  | "timeout"
   | "unknown"
   | "none";
 
 /**
  * Classify a thrown error into a connection-failure class. Order matters:
- * `session-lost` and `transient` are checked first (most specific), then
- * `auth-lost`, then the standard protocol codes, then recognized torn-transport
- * shapes, with `unknown` as the residue.
+ * `session-lost` (by message) is checked first, then the `-32001` `timeout`, then
+ * `transient`, `auth-lost`, the standard protocol codes, and recognized
+ * torn-transport shapes, with `unknown` as the residue.
  *
  * - **session-lost** — the server forgot our Streamable-HTTP session (it rolled).
- *   Matched on the "session not found" MESSAGE (plus the `-32001` code), NOT the
- *   HTTP status: the fleet servers' Python SDK returns it as HTTP 404 with a
+ *   Matched on the "session not found" MESSAGE, NOT the HTTP status or code: the
+ *   fleet servers' Python SDK returns it as HTTP 404 with a
  *   `{"code":-32600,"message":"Session not found"}` body (so the client's
  *   `StreamableHTTPError.code` is 404 and the `-32600` is body text), but remote
  *   bundles are untrusted/heterogeneous — the message is the reliable signal.
+ * - **timeout** — `McpError(-32001, "Request timed out")`: the request was sent
+ *   but the response is slow (the tool, not the transport). Surfaces, never
+ *   restarts — restarting strands the source's other tools without speeding the
+ *   slow one (#581). Checked after the session message so a `-32001` carrying
+ *   session text still classifies session-lost.
  * - **transient** — a mid-roll gateway blip (502/503/504, `bad_gateway`). Back off.
  * - **auth-lost** — a rejected credential. Detectable only as `UnauthorizedError`;
  *   note its recovery *policy* is config-dependent — a static-auth remote can't
@@ -2197,11 +2205,24 @@ export function classifyConnectionFailure(err: unknown): ConnectionFailure {
   // non-404 status. Gating on the status would silently strand those. Matching the
   // message also takes precedence over the `-32600 → none` branch below, so a
   // session loss carrying the -32600 code still recovers instead of surfacing.
-  // (`-32001` is the canonical session-expired code; the SDK also reuses it for
-  // RequestTimeout — both are recover-eligible, and the tool path caps replays at
-  // one, so a processed-then-timed-out call isn't re-sent repeatedly.)
-  if (code === -32001 || /session not found/i.test(msg)) {
+  if (/session not found/i.test(msg)) {
     return "session-lost";
+  }
+  // timeout — the SDK throws `McpError(-32001, "Request timed out")` when a call
+  // exceeds the request timeout. This is NOT a session loss (that's the message
+  // above) and NOT a transport crash: the request was sent, the response is just
+  // slow. Restarting abandons the in-flight call and tears the source down for
+  // every other tool, but can't make a slow tool faster — so it surfaces (policy),
+  // never restarts. A transport that actually closes or errors still recovers via
+  // its own signal (onclose → `emitSourceCrashed`; ECONNRESET / "fetch failed" /
+  // -32000 → `transport-dead`). NOTE there is no liveness probe, so a half-open
+  // socket whose ONLY symptom is a client-side -32001 is not auto-reaped today —
+  // but restarting wouldn't speed up a slow tool anyway (that IS the #581 cascade);
+  // a real liveness probe is the fix for that narrow case. Checked after the
+  // session-message match so an artificial -32001+session-text still classifies
+  // session-lost. (See #581 — a tool timeout was cascading bundle restarts in prod.)
+  if (code === -32001) {
+    return "timeout";
   }
   // transient — a mid-roll gateway blip (502/503/504, `bad_gateway`). Back off.
   if (
@@ -2267,6 +2288,10 @@ export function policyFor(
   ctx: { idempotent: boolean; hasReauthableProvider: boolean },
 ): RecoveryAction {
   if (kind === "auth-lost") return ctx.hasReauthableProvider ? "reauth" : "surface";
+  // A request timeout never restarts (the tool is slow, not the transport broken;
+  // restarting would tear the source down for its other tools). Surface it so the
+  // agent can decide — retry a smaller batch, or the tool should be task-augmented.
+  if (kind === "timeout") return "surface";
   // session-lost / transient / transport-dead: re-establishable iff the op is safe to repeat.
   return ctx.idempotent ? "recover" : "surface";
 }

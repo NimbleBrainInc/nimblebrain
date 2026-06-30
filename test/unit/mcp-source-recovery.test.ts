@@ -83,6 +83,12 @@ describe("policyFor — recovery policy", () => {
     expect(policyFor("auth-lost", idem)).toBe("surface");
     expect(policyFor("auth-lost", task)).toBe("surface");
   });
+
+  it("timeout always surfaces (never restarts), regardless of idempotency", () => {
+    expect(policyFor("timeout", idem)).toBe("surface");
+    expect(policyFor("timeout", task)).toBe("surface");
+    expect(policyFor("timeout", reauthable)).toBe("surface");
+  });
 });
 
 describe("execute (tools/call) — unified recovery", () => {
@@ -95,6 +101,28 @@ describe("execute (tools/call) — unified recovery", () => {
       const result = await source.execute("do_thing", {});
       expect(result.isError).toBe(true);
       expect(restart).not.toHaveBeenCalled(); // -32601 is "none" → surface, never restart
+    } finally {
+      restart.mockRestore();
+    }
+  });
+
+  it("surfaces a request timeout WITHOUT restarting the source (no #581 cascade)", async () => {
+    // A slow tool that times out must NOT restart the bundle — that would tear it
+    // down for its sibling tools. Surface a clean error; source stays alive + no crash.
+    const events: EngineEvent[] = [];
+    const sink: EventSink = { emit: (e) => events.push(e) };
+    const source = remoteSource({
+      callTool: () => Promise.reject(new McpError(-32001, "Request timed out")),
+      sink,
+    });
+    const restart = spyRestart(source, true);
+    try {
+      const result = await source.execute("web_fetch", {});
+      expect(result.isError).toBe(true);
+      expect(restart).not.toHaveBeenCalled(); // timeout → surface, never restart
+      expect(events.filter((e) => (e.data as { event?: string }).event === "source.crashed")).toHaveLength(
+        0,
+      );
     } finally {
       restart.mockRestore();
     }

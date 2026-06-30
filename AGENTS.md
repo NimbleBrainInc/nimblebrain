@@ -402,6 +402,7 @@ These cause production bugs if violated:
 - Bridge must guard listeners with `destroyed` flag (React StrictMode double-mounts)
 - `SlotRenderer` effect depends only on `placementKey` (callbacks via refs, not deps)
 - Shell components must not consume `ChatContext` (use `ChatConfigContext` instead)
+- The chat panel is **workspace-scoped**: `ChatProvider` (`web/src/context/ChatContext.tsx`) watches the route-derived focus workspace and, on a real workspace→workspace switch, clears the open conversation via the narrow `newConversation()` (a fresh draft slice) — NOT `chatStore.reset()` (that is the identity-change broad reset). A conversation belongs to one workspace, so the panel doesn't carry it into another. `null` focus (home/identity routes) is held, not reset, so `A→home→A` keeps context while `A→B` re-scopes. Opening a conversation from within its own workspace doesn't change focus, so it isn't cleared.
 - `setAuthToken` in `web/src/api/client.ts` fires a registered lifecycle handler on real changes only (equality-guarded). The bridge MCP client registers `resetMcpBridgeClient` here at module load to drop its identity-bound session on logout. `setActiveWorkspaceId` is also equality-guarded but does NOT fire the handler — per Stage 2 / Q3 the `/mcp` session is identity-bound, so workspace switches reuse the same session and dispatch context via the per-request `X-Workspace-Id` header. Stateless callers (REST helpers) read the current values per-request and need no hook.
 
 ## Auto-Generated Files
