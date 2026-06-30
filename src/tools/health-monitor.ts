@@ -1,18 +1,18 @@
 import type { EventSink } from "../engine/types.ts";
 import type { McpSource } from "./mcp-source.ts";
 
-export type BundleState = "healthy" | "restarting" | "dead";
+export type ProcessLiveness = "healthy" | "restarting" | "dead";
 
 export interface BundleHealth {
   name: string;
-  state: BundleState;
+  state: ProcessLiveness;
   uptime: number | null;
   restartCount: number;
 }
 
 interface BundleRecord {
   source: McpSource;
-  state: BundleState;
+  state: ProcessLiveness;
   restartCount: number;
 }
 
@@ -44,7 +44,7 @@ export class HealthMonitor {
     this.baseDelayMs = opts.baseDelayMs ?? DEFAULT_BASE_DELAY_MS;
     this.records = sources.map((source) => ({
       source,
-      state: "healthy" as BundleState,
+      state: "healthy" as ProcessLiveness,
       restartCount: 0,
     }));
   }
