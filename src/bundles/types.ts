@@ -316,8 +316,9 @@ export interface HostManifestMeta {
    * check at runtime and fall back gracefully (e.g. structured tool error
    * teaching the agent to retry with inline content).
    *
-   * Presence of this field requires `host_version: "1.1"` (enforced by
-   * the JSON Schema's `if/then`).
+   * This field belongs to `host_version: "1.1"` by convention. The host
+   * is forward-compatible and does not reject a version/field mismatch —
+   * nothing in the JSON Schema binds the two.
    */
   host_capabilities?: Record<string, HostCapabilityRequirement>;
 }

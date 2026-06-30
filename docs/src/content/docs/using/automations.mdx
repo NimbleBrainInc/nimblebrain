@@ -20,9 +20,9 @@ An automation has:
 
 ## Who an automation runs as
 
-Automations are **owned by the user who creates them**, not by a workspace. A scheduled run fires as its owner, focused on the workspace it was created in, but with full reach across every workspace that owner belongs to.
+Each automation is **owned by a workspace and a user** — it lives at `workspaces/<wsId>/automations/<ownerId>/`, and that path is the wall. A scheduled run fires as its owner, focused on the workspace it was created in, and is walled to that **provenance workspace**: it reaches only the tools and connectors installed there, with no reach into the owner's other workspaces.
 
-This has one practical consequence: if an automation needs to reach a connector (for example, to post to Teams or Slack), that connector must be installed in a **shared** workspace the owner is a member of. A connector that lives only in someone's personal workspace is never reachable by another user's automation.
+This has one practical consequence: if an automation needs to reach a connector (for example, to post to Teams or Slack), that connector must be installed in the **same workspace the automation was created in**. A connector connected only in another workspace — including the owner's personal workspace — is never reachable by that automation, and a run that tries is recorded as a failure.
 
 <Aside type="note">
 Automation runs use your **timezone** for cron scheduling. The default is `Pacific/Honolulu`, overridable by the operator with the `NB_TIMEZONE` environment variable. A schedule can also carry its own IANA timezone.
@@ -75,5 +75,5 @@ Every run is recorded with its status, start and completion times, iteration cou
 ## What's next
 
 - [Chat](/using/chat) — the interactive counterpart to a scheduled run
-- [Connectors](/using/connectors) — install the connectors an automation posts to in a shared workspace
-- [Workspaces](/using/workspaces) — owner reach and shared-workspace semantics
+- [Connectors](/using/connectors) — install the connectors an automation posts to in its own workspace
+- [Workspaces](/using/workspaces) — workspace ownership and the per-workspace wall

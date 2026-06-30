@@ -5,7 +5,7 @@ description: Structured JSONL logging configuration and log format reference.
 
 import { Aside } from '@astrojs/starlight/components';
 
-NimbleBrain writes structured logs as JSONL (one JSON object per line) to daily rolling log files. These logs capture LLM latency, tool execution times, cache token usage, per-tool statistics, and estimated costs.
+NimbleBrain writes a structured workspace event log as JSONL (one JSON object per line) to daily rolling log files. These logs capture workspace-level events — bundle lifecycle, skill and file changes, data and config mutations, tool-surface changes, and audit signals.
 
 ## Configuration
 
@@ -41,25 +41,25 @@ Structured logging is enabled by default. To disable it:
 
 ## Log file naming
 
-Log files follow a daily rolling pattern:
+Log files follow a daily rolling pattern under a `workspace/` subdirectory of `dir`:
 
 ```
-{dir}/nimblebrain-YYYY-MM-DD.jsonl
+{dir}/workspace/YYYY-MM-DD.jsonl
 ```
 
 A new file is created automatically each day. Examples:
 
 ```
-~/.nimblebrain/logs/nimblebrain-2026-03-25.jsonl
-~/.nimblebrain/logs/nimblebrain-2026-03-26.jsonl
+~/.nimblebrain/logs/workspace/2026-03-25.jsonl
+~/.nimblebrain/logs/workspace/2026-03-26.jsonl
 ```
 
 ## Log entry format
 
-Every log line is a JSON object with at minimum a timestamp and event type:
+Every log line is a JSON object: a timestamp, the event type, and the event's own data fields spread alongside them.
 
 ```json
-{"ts":"2026-03-25T14:30:00.123Z","event":"run.start","runId":"abc123","model":"anthropic:claude-sonnet-4-6"}
+{"ts":"2026-03-25T14:30:00.123Z","event":"bundle.installed","serverName":"postgres","bundleName":"@nimblebraininc/postgres","version":"1.2.0"}
 ```
 
 ### Common fields
@@ -67,107 +67,89 @@ Every log line is a JSON object with at minimum a timestamp and event type:
 | Field | Type | Description |
 |-------|------|-------------|
 | `ts` | `string` | ISO 8601 timestamp of when the event was recorded. |
-| `event` | `string` | Event type (e.g., `run.start`, `tool.done`, `run.done`). |
-| `sid` | `string` | Conversation ID, present when the log sink has a conversation context. |
-| `runId` | `string` | Unique identifier for the agent run. Correlates all events in a single request. |
+| `event` | `string` | Event type (e.g., `bundle.installed`, `data.changed`, `audit.permission_denied`). |
+
+Remaining fields vary by event type — they are the event's payload, written inline.
 
 ### Event types
 
-The following events are logged. `text.delta` events are excluded to avoid log noise.
+Only workspace-level events are written to this log; conversation streaming events (`text.delta`, `tool.start`, and the like) are not.
 
-**`run.start`** — An agent run begins.
-
-```json
-{"ts":"2026-03-25T14:30:00.123Z","event":"run.start","runId":"abc123","model":"anthropic:claude-sonnet-4-6","sid":"conv-456"}
-```
-
-**`iteration.done`** — One LLM call + tool execution cycle completes.
+**Bundle lifecycle** — `bundle.installed`, `bundle.uninstalled`, `bundle.upgraded`, `bundle.crashed`, `bundle.recovered`, `bundle.dead`. Track connectors entering, leaving, and changing health in the workspace.
 
 ```json
-{"ts":"2026-03-25T14:30:01.456Z","event":"iteration.done","runId":"abc123","llmMs":823,"cacheCreationTokens":1200,"cacheReadTokens":4500}
+{"ts":"2026-03-25T14:30:00.123Z","event":"bundle.installed","wsId":"ws_product","serverName":"postgres","bundleName":"@nimblebraininc/postgres","version":"1.2.0","trustScore":92}
 ```
 
-**`tool.done`** — A tool call finishes.
+**`data.changed`** — A tool mutated workspace data. Carries the `server` and `tool` that wrote, and `source: "agent"` when emitted from the agent's tool dispatch.
 
 ```json
-{"ts":"2026-03-25T14:30:01.200Z","event":"tool.done","runId":"abc123","name":"postgres__query","ms":45,"ok":true}
+{"ts":"2026-03-25T14:30:01.200Z","event":"data.changed","source":"agent","server":"tasks","tool":"create_task"}
 ```
 
-**`run.done`** — The agent run completes. This is the summary record with accumulated metrics.
+**`config.changed`** — Workspace configuration was modified.
+
+**`skill.created`, `skill.updated`, `skill.deleted`** — A workspace skill or context file changed. Carry the skill's `id` (filesystem path), `name`, and `scope`.
 
 ```json
-{
-  "ts": "2026-03-25T14:30:02.789Z",
-  "event": "run.done",
-  "runId": "abc123",
-  "sid": "conv-456",
-  "inputTokens": 12500,
-  "outputTokens": 1830,
-  "cacheCreationTokens": 1200,
-  "cacheReadTokens": 4500,
-  "llmMs": 1650,
-  "toolMs": 320,
-  "toolCalls": 3,
-  "toolErrors": 0,
-  "costUsd": 0.004215,
-  "toolStats": {
-    "postgres__query": { "count": 2, "totalMs": 250 },
-    "filesystem__read_file": { "count": 1, "totalMs": 70 }
-  }
-}
+{"ts":"2026-03-25T14:30:02.000Z","event":"skill.created","id":"/skills/triage/SKILL.md","name":"triage","scope":"workspace","type":"skill"}
 ```
 
-**`run.error`** — The agent run failed with an error.
+**`file.created`, `file.deleted`** — A workspace file was added or removed. `file.created` carries `id`, `filename`, `mimeType`, and `size`.
 
 ```json
-{"ts":"2026-03-25T14:30:03.000Z","event":"run.error","runId":"abc123","error":"Token budget exceeded"}
+{"ts":"2026-03-25T14:30:03.000Z","event":"file.created","id":"file_abc","filename":"report.pdf","mimeType":"application/pdf","size":20184}
 ```
 
-### run.done summary fields
+**`tool.promoted`, `tool.released`** — A tool entered or left the active tool set. Carry the `runId` and `toolName`; `tool.released` adds `reason: "evicted"` when the engine reclaimed a slot under the active-tool cap.
 
-The `run.done` event accumulates metrics across all iterations in the run:
+```json
+{"ts":"2026-03-25T14:30:04.000Z","event":"tool.promoted","runId":"abc123","toolName":"postgres__query"}
+```
 
-| Field | Type | Description |
-|-------|------|-------------|
-| `inputTokens` | `number` | Total input tokens consumed. |
-| `outputTokens` | `number` | Total output tokens generated. |
-| `cacheCreationTokens` | `number` | Tokens written to prompt cache during this run. |
-| `cacheReadTokens` | `number` | Tokens read from prompt cache (cache hits). |
-| `llmMs` | `number` | Total milliseconds spent in LLM calls. |
-| `toolMs` | `number` | Total milliseconds spent executing tools. |
-| `toolCalls` | `number` | Total number of tool calls made. |
-| `toolErrors` | `number` | Number of tool calls that returned errors. |
-| `costUsd` | `number` | Estimated cost in USD, based on the model's token pricing. |
-| `toolStats` | `object` | Per-tool breakdown: `{ "toolName": { "count": N, "totalMs": N } }`. Only present when at least one tool was called. |
+**`bridge.tool.done`** — A bridged tool call completed.
+
+**`http.error`** — An HTTP-level error surfaced in the workspace.
+
+**`audit.auth_failure`** — Authentication failed for a request. Carries `ip`, `method`, and `path`.
+
+```json
+{"ts":"2026-03-25T14:30:05.000Z","event":"audit.auth_failure","ip":"203.0.113.7","method":"POST","path":"/api/chat"}
+```
+
+**`audit.permission_denied`** — A user declined a tool's confirmation prompt. Carries the `tool`, the unprefixed `action`, and the `target` (or `null`).
+
+```json
+{"ts":"2026-03-25T14:30:06.000Z","event":"audit.permission_denied","tool":"tasks__delete","action":"delete","target":"task-42"}
+```
 
 ## Querying logs
 
 Log files are plain JSONL, so you can use standard command-line tools:
 
 ```bash
-# Total cost for today
-cat ~/.nimblebrain/logs/nimblebrain-2026-03-25.jsonl \
-  | jq -s '[.[] | select(.event == "run.done") | .costUsd] | add'
+# Bundles installed today
+cat ~/.nimblebrain/logs/workspace/2026-03-25.jsonl \
+  | jq 'select(.event == "bundle.installed") | {bundleName, version}'
 
-# Slowest tool calls
-cat ~/.nimblebrain/logs/nimblebrain-2026-03-25.jsonl \
-  | jq 'select(.event == "tool.done") | {name, ms}' \
-  | jq -s 'sort_by(-.ms) | .[0:5]'
+# Audit events only
+cat ~/.nimblebrain/logs/workspace/2026-03-25.jsonl \
+  | jq 'select(.event | startswith("audit."))'
 
-# Errors only
-cat ~/.nimblebrain/logs/nimblebrain-2026-03-25.jsonl \
-  | jq 'select(.event == "run.error")'
+# Count events by type
+cat ~/.nimblebrain/logs/workspace/2026-03-25.jsonl \
+  | jq -s 'group_by(.event) | map({event: .[0].event, count: length})'
 ```
 
 <Aside type="tip">
-  For programmatic cost tracking, query the agent's `usage__report` tool instead of parsing the JSONL logs directly.
+  This log captures workspace events, not per-run token usage or cost. For run-level token counts and estimated cost, query the agent's `usage__report` tool instead.
 </Aside>
 
 ## Log rotation
 
-NimbleBrain does not delete old log files. Each day creates a new file, so you can manage retention with standard tools:
+A new file is created each day. Set `retentionDays` to have NimbleBrain delete log files older than that threshold on startup. Without it, files accumulate and you can manage retention with standard tools:
 
 ```bash
-# Delete logs older than 30 days
-find ~/.nimblebrain/logs -name "nimblebrain-*.jsonl" -mtime +30 -delete
+# Delete workspace logs older than 30 days
+find ~/.nimblebrain/logs/workspace -name "*.jsonl" -mtime +30 -delete
 ```

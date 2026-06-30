@@ -77,7 +77,7 @@ These fields apply to all bundle types.
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
 | `env` | `object` | `{}` | Environment variables passed to the bundle process. Each key-value pair is a string. |
-| `protected` | `boolean` | `false` | When `true`, the bundle cannot be uninstalled through the connectors / apps management tools or the API. |
+| `allowedEnv` | `string[]` | `[]` | Names of host environment variables to pass through to the bundle process, on top of the safe default allowlist. `NB_API_KEY` and `NB_INTERNAL_TOKEN` are always denied. |
 | `trustScore` | `number \| null` | `null` | MTF trust score (0--100) recorded at install time. Set automatically by the install flow. |
 | `ui` | `object \| null` | `null` | UI metadata from the bundle manifest. Set automatically at install time. |
 
@@ -93,8 +93,7 @@ Use `env` to inject secrets or configuration into a bundle process:
       "env": {
         "DATABASE_URL": "postgres://localhost:5432/mydb",
         "PG_MAX_CONNECTIONS": "10"
-      },
-      "protected": true
+      }
     }
   ]
 }
@@ -113,9 +112,9 @@ The `ui` field is populated automatically when you install a bundle that declare
   "ui": {
     "name": "Tasks",
     "icon": "clipboard",
-    "primaryView": {
-      "resourceUri": "ui://tasks/index.html"
-    }
+    "placements": [
+      { "slot": "main", "resourceUri": "ui://tasks/index.html" }
+    ]
   }
 }
 ```
@@ -124,7 +123,7 @@ The `ui` field is populated automatically when you install a bundle that declare
 |-------|------|-------------|
 | `ui.name` | `string` | Human-readable app name shown in the sidebar. |
 | `ui.icon` | `string` | Emoji or icon identifier. |
-| `ui.primaryView.resourceUri` | `string` | `ui://` resource URI for the app's full-page view. |
+| `ui.placements` | `array` | Placement declarations (each a `slot` plus a `ui://` resource URI) that register the app's views. |
 
 ## Remote transport configuration
 
@@ -222,8 +221,7 @@ A `workspace.json` `bundles` array with all three bundle types:
   "bundles": [
     {
       "name": "@nimblebraininc/postgres",
-      "env": { "DATABASE_URL": "postgres://localhost:5432/mydb" },
-      "protected": true
+      "env": { "DATABASE_URL": "postgres://localhost:5432/mydb" }
     },
     {
       "path": "./my-local-server"

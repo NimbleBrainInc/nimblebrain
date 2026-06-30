@@ -5,7 +5,7 @@ description: Use NimbleBrain's tools from Claude Desktop, Claude Code, Cursor, o
 
 import { Aside, Tabs, TabItem, Steps } from '@astrojs/starlight/components';
 
-NimbleBrain can act as a tool server for external apps that speak the MCP protocol, like Claude Desktop, Claude Code, Cursor, or VS Code. Point a client at your instance once and every tool from every app installed in your workspaces becomes available inside that client, without switching to the web UI.
+NimbleBrain can act as a tool server for external apps that speak the MCP protocol, like Claude Desktop, Claude Code, Cursor, or VS Code. Point a client at your instance, name a workspace, and every tool from every app installed there becomes available inside that client, without switching to the web UI.
 
 NimbleBrain exposes a single programmatic surface for this: the `/mcp` Streamable HTTP endpoint. For the protocol-level reference (methods, sessions, OAuth discovery), see [The /mcp Endpoint](/connect/mcp-endpoint).
 
@@ -27,13 +27,12 @@ Clients that support MCP OAuth discovery (Claude Code, Claude Desktop, Cursor) h
 ## What you need
 
 - **Instance URL** — the address of your NimbleBrain instance (for example, `https://your-team.nimblebrain.ai`). Append `/mcp` to form the endpoint URL.
-
-That is all the client config needs. You do not set a workspace header.
+- **Workspace ID** — the `X-Workspace-Id` header that scopes the session to one workspace. Find it under **Settings → This Workspace → General** in the "MCP Connection" card.
 
 <Aside type="note" title="Where workspace context comes from">
-NimbleBrain `/mcp` sessions are bound to your **identity**, not to a single workspace. Your tool list aggregates across every workspace you belong to. Each tool name carries its own workspace scope: a workspace tool is named `ws_<id>-<source>__<tool>` (for example, `ws_1a2b...-crm__search`), so the call routes to the right workspace by name. Identity-owned tools (`conversations__*`, `files__*`, `automations__*`) are bare and live outside any workspace.
+A NimbleBrain `/mcp` session is bound to your **identity**, but each request names its workspace with the `X-Workspace-Id` header — validated against your membership. `tools/list` returns that workspace's tools (named `ws_<id>-<source>__<tool>`, for example `ws_1a2b...-crm__search`) plus your identity tools (`conversations__*`, `files__*`, `automations__*`, which are bare). A `tools/call` to any **other** workspace is refused with `-32602 workspace_access_denied`.
 
-You do **not** set an `X-Workspace-Id` header. The endpoint ignores it. If you need a specific workspace's ID for reference, find it under **Settings → This Workspace → General** in the "MCP Connection" card.
+If you send no `X-Workspace-Id` (or one you aren't a member of), the session exposes identity tools only. Clients that can't set a header still get a usable, identity-scoped surface.
 </Aside>
 
 <Aside type="note">
@@ -90,7 +89,7 @@ Any client that implements Streamable HTTP transport and either OAuth 2.0 (RFC 9
 
 ## What's exposed
 
-When an external client connects, it gets the tools installed across your workspaces, the same tools the agent uses in the web UI. The client sees a flat tool list; NimbleBrain routes each call to the right app internally based on the namespaced tool name.
+When an external client connects, it gets the tools installed in the workspace it named with `X-Workspace-Id`, plus your identity tools — the same tools the agent uses in the web UI. The client sees a flat tool list; NimbleBrain routes each call to the right app internally based on the namespaced tool name.
 
 Two filters apply:
 

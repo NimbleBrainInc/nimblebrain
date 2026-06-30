@@ -60,35 +60,13 @@ Uninstall a bundle through the agent or the web UI:
 The agent uses `manage_connectors` (the `uninstall` action). There is no CLI command for this.
 
 Uninstalling a bundle:
-1. Checks the `protected` flag — rejects if protected
-2. Stops the MCP server process
-3. Removes the source from the tool registry
-4. Removes the entry from `nimblebrain.json` atomically
-5. Clears the bundle's [credential file](/config/credentials/) for this workspace (best-effort; a failure logs a warning but doesn't block the uninstall)
-6. Emits a `bundle.uninstalled` event
+1. Stops the MCP server process
+2. Removes the source from the tool registry
+3. Removes the entry from `nimblebrain.json` atomically
+4. Clears the bundle's [credential file](/config/credentials/) for this workspace (best-effort; a failure logs a warning but doesn't block the uninstall)
+5. Emits a `bundle.uninstalled` event
 
-Bundle **data** (Upjack entity state, bundle-owned files under `{workDir}/workspaces/{wsId}/data/{bundle}`) is preserved. Only credentials are cleared. Credentials in other workspaces are untouched.
-
-## Protected bundles
-
-Mark a bundle as protected in `nimblebrain.json` to prevent it from being uninstalled:
-
-```json
-{
-  "bundles": [
-    {
-      "name": "@nimblebraininc/ipinfo",
-      "protected": true
-    }
-  ]
-}
-```
-
-Attempting to uninstall a protected bundle produces an error:
-
-```
-Cannot uninstall "ipinfo": bundle is protected
-```
+Every connector is user-removable — install and uninstall are symmetric for all bundle classes, with no exempt or pinned bundles. Bundle **data** (Upjack entity state, bundle-owned files under `{workDir}/workspaces/{wsId}/data/{bundle}`) is preserved. Only credentials are cleared. Credentials in other workspaces are untouched.
 
 ## Trust scores
 

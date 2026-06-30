@@ -24,19 +24,20 @@ A connected service is **shared by everyone in the workspace** — its tools are
 4. Sign in and approve the requested access. You're returned to NimbleBrain, and the connector's row updates to **Connected** once the handshake settles.
 </Steps>
 
-Installing or connecting a service requires the **Admin** or **Owner** role in the workspace.
+Installing or connecting a service requires the **admin** role in the workspace.
 
 On a connector's **Configure** page you can see who you're connected as, **Disconnect** (reversible — reconnecting re-runs the sign-in flow), and review or adjust which of the connector's tools are allowed.
 
-## The three auth modes
+## The four auth modes
 
-Connectors authenticate in one of three ways. As an end user you rarely need to care which — the **Install / Connect** button does the right thing — but it helps to know what's happening:
+Connectors authenticate in one of four ways. As an end user you rarely need to care which — the **Install / Connect** button does the right thing — but it helps to know what's happening:
 
 | Mode | What it means | What you do |
 |------|---------------|-------------|
 | **dcr** | Dynamic Client Registration. The platform registers an OAuth client with the vendor on the fly. | Click **Install**, sign in. No setup. |
 | **static** | The vendor requires a pre-registered OAuth app. A workspace admin configures the app's client ID and secret once. | An admin clicks **Set up** first; after that, everyone connects with **Install**. |
 | **composio** | The service is brokered through Composio, a managed-connector provider. | Click **Install**. OAuth toolkits send you through the vendor's sign-in; API-key toolkits open a short form where you paste the service's API key (and any region/host it needs). Requires the platform operator to have configured Composio. |
+| **provider** | A platform-managed connector whose credential is minted server-side by a named credential provider — no vendor sign-in, no operator OAuth app, no per-user secret. | Click **Install**. The platform produces the credential for you; there is nothing to enter. |
 
 For a **static**-auth connector that hasn't been set up yet, non-admins see "Operator setup required" until an admin completes the one-time **Set up** step.
 

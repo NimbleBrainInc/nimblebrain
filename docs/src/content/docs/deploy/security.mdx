@@ -42,10 +42,10 @@ For the OIDC and WorkOS adapters, sign-in is an authorization-code flow, not a l
 
 ### Failed authentication logging
 
-Every failed authentication attempt is logged to stderr with the client IP and timestamp:
+Every failed authentication attempt is logged to stderr with the client IP in a structured field:
 
 ```
-[nimblebrain] AUTH FAIL ip=203.0.113.42 timestamp=2026-03-25T22:00:00.000Z
+[auth] authentication failed { ip: "203.0.113.42" }
 ```
 
 The IP comes from the `X-Forwarded-For` header (set by your reverse proxy) or `"direct"` for direct connections. Monitor these logs for brute-force attempts.
@@ -278,23 +278,6 @@ MCP bundles run as subprocesses with access to the filesystem and network inside
 
 Each bundle in the mpak registry has an MTF (mpak Trust Framework) trust score from 0 to 100. The score is stored in `nimblebrain.json` alongside the bundle entry and displayed in the web UI's app list.
 
-### Protected bundles
-
-Mark bundles as `protected` in your configuration to prevent the agent from uninstalling them:
-
-```json title="nimblebrain.json"
-{
-  "bundles": [
-    {
-      "name": "@nimblebraininc/ipinfo",
-      "protected": true
-    }
-  ]
-}
-```
-
-A protected bundle cannot be uninstalled through the connectors catalog (`manage_connectors`). You must edit the workspace configuration and restart to remove it.
-
 ### Bundle isolation
 
 Bundles run as child processes inside the platform container. They share the container's filesystem, network namespace, and user. To limit blast radius:
@@ -315,6 +298,5 @@ Use this checklist before exposing NimbleBrain to any network:
 | TLS enabled | `curl -I https://nb.example.com` returns a valid certificate |
 | `X-Forwarded-For` header set by proxy | Check auth failure logs for real IPs, not `"direct"` |
 | Bundle list reviewed | `cat nimblebrain.json` — only bundles you trust are listed |
-| Critical bundles marked `protected` | Check for `"protected": true` on bundles you don't want the agent to remove |
 | Firewall restricts inbound ports | Only 443 (HTTPS) and 22 (SSH) reachable from the internet |
 | Backups configured | Test your volume backup and restore procedure |

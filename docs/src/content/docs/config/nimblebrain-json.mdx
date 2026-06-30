@@ -55,7 +55,6 @@ A sibling `nimblebrain.overrides.json` next to the resolved config file is **dee
   "maxHistoryMessages": 40,
   "maxToolResultSize":  1000000,
 
-  "store":   { "type": "jsonl", "dir": "~/.nimblebrain/conversations" },
   "logging": { "dir": "~/.nimblebrain/logs", "disabled": false, "level": "normal", "retentionDays": 30 },
   "http":    { "port": 27247, "host": "127.0.0.1" },
 
@@ -161,10 +160,21 @@ Each provider key is optional. If a provider's `apiKey` is omitted, the SDK fall
 
 ## store
 
-Choose where conversations are persisted. **The CLI (`bun run start`) defaults to `jsonl`** — conversations persist across restarts at `{workDir}/conversations/`. In-memory is the fallback only for programmatic embedding where no `store` is given.
+Conversations are **workspace-owned and persisted automatically** — you do not configure where they live. Every turn is written to a per-conversation JSONL file at `{workDir}/workspaces/<wsId>/conversations/<ownerId>/<convId>.jsonl` in the **event-sourced** format (one append-only event log per conversation), which is what enables crash-resilient run replay and history [compaction](/config/features/). Legacy message-format JSONL files are still read. This persistence does not depend on the `store` setting below.
+
+The optional top-level `store` field sets the runtime's boot-time `ConversationStore` handle. **It does not change where conversations are stored** — that is always workspace-owned, as above — so most deployments omit it. It defaults to in-memory and is reserved for programmatic embedding of the runtime as a library.
 
 <Tabs>
-  <TabItem label="JSONL (default for the CLI)">
+  <TabItem label="In-memory (default)">
+    ```json
+    {
+      "store": { "type": "memory" }
+    }
+    ```
+
+    The default. The platform's workspace-owned conversation persistence is unaffected; this only governs the embedded `ConversationStore` handle.
+  </TabItem>
+  <TabItem label="JSONL">
     ```json
     {
       "store": {
@@ -174,23 +184,14 @@ Choose where conversations are persisted. **The CLI (`bun run start`) defaults t
     }
     ```
 
-    File-backed conversations in `{workDir}/conversations/`. New conversations are written in the **event-sourced** JSONL format (one append-only event log per conversation), which is what enables crash-resilient run replay and history [compaction](/config/features/). Legacy message-format JSONL files are still read.
-  </TabItem>
-  <TabItem label="In-memory">
-    ```json
-    {
-      "store": { "type": "memory" }
-    }
-    ```
-
-    Conversations are lost when the process exits. Only the fallback for programmatic use with no configured store.
+    Provides a file-backed `ConversationStore` for programmatic embedding at the given `dir`.
   </TabItem>
 </Tabs>
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
-| `type` | `"jsonl"` \| `"memory"` | Yes | Storage backend. The CLI defaults to `jsonl`. |
-| `dir` | `string` | JSONL only | Directory for conversation JSONL files. |
+| `type` | `"jsonl"` \| `"memory"` | Yes | `ConversationStore` backend for embedded use. Defaults to `memory`. |
+| `dir` | `string` | JSONL only | Directory for the embedded JSONL store's files. |
 
 ## sessionStore
 

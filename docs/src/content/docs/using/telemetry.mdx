@@ -15,8 +15,7 @@ Telemetry events fall into four categories:
 
 | Event | Properties |
 |-------|-----------|
-| `cli.command` | Command name (`serve` or `dev`), flag names only (never values), NimbleBrain version, OS, architecture, Bun version |
-| `cli.startup` | Command, bundle count, skill count, startup time in ms |
+| `cli.startup` | Mode (`serve`), bundle count, startup time in ms |
 
 ### Agent loop events
 
@@ -109,7 +108,7 @@ On first run, when the `.telemetry-id` file is created, NimbleBrain prints this 
 ```
 NimbleBrain collects anonymous usage telemetry to improve the platform.
 No personal data, conversation content, or file paths are ever sent.
-Set NB_TELEMETRY_DISABLED=1 to disable.  Learn more: https://nimblebrain.ai/telemetry
+Set NB_TELEMETRY_DISABLED=1 (or DO_NOT_TRACK=1) to disable.  Learn more: https://nimblebrain.ai/telemetry
 ```
 
 This notice appears exactly once per work directory.

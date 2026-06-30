@@ -13,16 +13,16 @@ When your manifest declares a resource URI like `ui://dashboard`, NimbleBrain re
 
 The flow:
 
-1. User navigates to your app (e.g., `/app/@myorg/my-app`).
+1. User navigates to your app (e.g., `/app/my-app`).
 2. The web client requests `GET /v1/apps/my-app/resources/primary`.
-3. The platform resolves `"primary"` to your `primaryView.resourceUri`.
+3. The platform resolves `"primary"` to your first placement's `resourceUri`.
 4. The platform calls `resources/read` on your MCP server for that URI.
 5. The HTML response is returned to the web client and loaded into an iframe.
 6. The [MCP App Bridge](/apps/bridge) initializes via `postMessage`.
 
-## The `primaryView`
+## The main view
 
-The `primaryView` is the main HTML page for your app. Declare it in your manifest:
+The main view is the primary HTML page for your app. Declare it as a `"main"` placement in your manifest — placements are what the host registers and routes from:
 
 ```json
 {
@@ -31,15 +31,20 @@ The `primaryView` is the main HTML page for your app. Declare it in your manifes
       "host_version": "1.0",
       "name": "My App",
       "icon": "database",
-      "primaryView": {
-        "resourceUri": "ui://dashboard"
-      }
+      "placements": [
+        {
+          "slot": "main",
+          "resourceUri": "ui://dashboard",
+          "route": "my-app",
+          "label": "My App"
+        }
+      ]
     }
   }
 }
 ```
 
-Your MCP server must register a resource handler for `ui://dashboard` that returns an HTML string.
+The virtual `primary` path derives from the **first declared placement's** `resourceUri`, so the shell can load this view without knowing its URI. Your MCP server must register a resource handler for `ui://dashboard` that returns an HTML string.
 
 ### Python (FastMCP)
 

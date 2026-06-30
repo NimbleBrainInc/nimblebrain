@@ -75,7 +75,7 @@ That's it. Once installed in a workspace, anything saved via `set_custom_instruc
 
 ## Settings panel (optional but recommended)
 
-If you want a UI surface where the user edits their instructions (versus only the agent setting them via tool call), declare a top-level `settings` object in your manifest. This is a sibling of `placements`, not a placement slot:
+If you want a UI surface where the user edits their instructions (versus only the agent setting them via tool call), declare a `"settings"` placement in your manifest — a settings section is a placement slot, not a separate object:
 
 ```json title="manifest.json"
 {
@@ -84,12 +84,14 @@ If you want a UI surface where the user edits their instructions (versus only th
       "host_version": "1.0",
       "name": "My App",
       "icon": "list-checks",
-      "settings": {
-        "id": "my-app",
-        "label": "My App",
-        "icon": "list-checks",
-        "resourceUri": "ui://my-app/settings"
-      }
+      "placements": [
+        {
+          "slot": "settings",
+          "resourceUri": "ui://my-app/settings",
+          "label": "My App",
+          "icon": "list-checks"
+        }
+      ]
     }
   }
 }
@@ -97,7 +99,7 @@ If you want a UI surface where the user edits their instructions (versus only th
 
 Then publish the panel HTML at `ui://my-app/settings` and call your tools via the iframe bridge. NimbleBrain shows the panel under **Settings → This Workspace → Apps → My App**.
 
-See the [Manifest reference](/apps/manifest/#settings-object) for the `settings` object shape and the [MCP App Bridge](/apps/bridge/) page for iframe → tool call wiring.
+See the [Manifest reference](/apps/manifest/#settings-sections) for the `"settings"` placement shape and the [MCP App Bridge](/apps/bridge/) page for iframe → tool call wiring.
 
 ## Why this convention
 
@@ -109,5 +111,5 @@ See the [Manifest reference](/apps/manifest/#settings-object) for the `settings`
 ## Related
 
 - [Workspace and org-level overlays](/guide/settings/) — managed by the host, not by your bundle. Set via the `instructions__write_instructions` system tool or the workspace/org settings UI.
-- [Manifest reference](/apps/manifest/) — full `_meta["ai.nimblebrain/host"]` schema, including the top-level `settings` object.
+- [Manifest reference](/apps/manifest/) — full `_meta["ai.nimblebrain/host"]` schema, including the `"settings"` placement slot.
 - [Placements & Navigation](/apps/placements/) — sidebar and main slots for your app's views.

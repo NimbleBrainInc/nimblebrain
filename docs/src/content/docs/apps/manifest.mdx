@@ -5,7 +5,7 @@ description: Complete reference for the _meta["ai.nimblebrain/host"] manifest ex
 
 import { Aside } from '@astrojs/starlight/components';
 
-NimbleBrain reads host metadata from the `_meta["ai.nimblebrain/host"]` key in your MCPB `manifest.json`. This is where you declare your app's name, icon, category, sidebar placements, briefing facets, and settings section.
+NimbleBrain reads host metadata from the `_meta["ai.nimblebrain/host"]` key in your MCPB `manifest.json`. This is where you declare your app's name, icon, placements (sidebar items, main views, and settings sections), and briefing facets.
 
 ## Full manifest structure
 
@@ -32,27 +32,23 @@ NimbleBrain reads host metadata from the `_meta["ai.nimblebrain/host"]` key in y
       "host_version": "1.0",
       "name": "My App",
       "icon": "database",
-      "category": "custom",
-      "primaryView": {
-        "resourceUri": "ui://dashboard"
-      },
       "placements": [
         {
-          "slot": "sidebar",
-          "resourceUri": "ui://nav",
+          "slot": "main",
+          "resourceUri": "ui://dashboard",
           "priority": 50,
           "label": "My App",
           "icon": "database",
           "route": "my-app",
-          "size": "compact"
+          "size": "full"
+        },
+        {
+          "slot": "settings",
+          "resourceUri": "ui://settings",
+          "label": "My App",
+          "icon": "settings"
         }
-      ],
-      "settings": {
-        "id": "my-app",
-        "label": "My App",
-        "icon": "settings",
-        "resourceUri": "ui://settings"
-      }
+      ]
     }
   }
 }
@@ -86,36 +82,28 @@ These fields are defined by the [MCPB specification](https://github.com/modelcon
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
-| `host_version` | `string` | Yes | Schema version: `"1.0"` or `"1.1"`. `1.1` adds the `host_capabilities` block (declaring it requires `host_version: "1.1"`, enforced by the schema). |
-| `name` | `string` | Yes | Display name shown in the sidebar and app list. |
-| `icon` | `string` | Yes | [Lucide icon](https://lucide.dev/icons) name in kebab-case (e.g., `"database"`, `"message-square"`, `"hand"`). |
-| `category` | `string` | No | App category: `"sales"`, `"marketing"`, `"operations"`, `"research"`, `"finance"`, `"hr"`, `"engineering"`, `"support"`, or `"custom"`. |
-| `primaryView` | `object` | No | The main view loaded when a user navigates to your app. |
-| `primaryView.resourceUri` | `string` | Yes (if `primaryView` set) | `ui://` URI for the main view (e.g., `"ui://dashboard"`). |
-| `placements` | `PlacementDeclaration[]` | No | Explicit shell layout placement declarations. See [Placements](/apps/placements). |
-| `settings` | `object` | No | Settings section contributed by this bundle. See [settings object](#settings-object) below. |
+| `host_version` | `string` | Yes | Host extension contract version: `"1.0"` or `"1.1"`. `1.1` is the version that adds the `host_capabilities` block — set it when you declare that block. |
+| `name` | `string` | Recommended | Display name shown in the sidebar and app list. Without a `name` the host surfaces no UI for the bundle, so it's required in practice for any app with a presence in the shell. |
+| `icon` | `string` | No | [Lucide icon](https://lucide.dev/icons) name in kebab-case (e.g., `"database"`, `"message-square"`, `"hand"`). Defaults to `""`. |
+| `category` | `string` | No | Reserved, free-form string. Not currently consumed by the host — declare it only as forward-looking metadata. |
+| `placements` | `PlacementDeclaration[]` | No | Shell layout placement declarations — sidebar items, main views, and settings sections. See [Placements](/apps/placements). |
 | `briefing` | `object` | No | Daily briefing contribution. See [briefing](#briefing-object) below. |
-| `host_capabilities` | `object` | No | NimbleBrain host capabilities this bundle requires or prefers. Requires `host_version: "1.1"`. See [Host Capabilities](/apps/host-capabilities). |
+| `host_capabilities` | `object` | No | NimbleBrain host capabilities this bundle requires or prefers. Declare `host_version: "1.1"` alongside it. See [Host Capabilities](/apps/host-capabilities). |
 
-### `settings` object
+### Settings sections
 
-`settings` is a **top-level field** on `_meta["ai.nimblebrain/host"]` — a sibling of `placements`, not a placement slot. Declaring it contributes a tab to the settings UI under **Settings → This Workspace → Apps → &lt;your app&gt;**.
-
-| Field | Type | Required | Description |
-|-------|------|----------|-------------|
-| `settings.id` | `string` | Yes | Unique section ID across all bundles. |
-| `settings.label` | `string` | Yes | Tab label in the settings UI. |
-| `settings.icon` | `string` | Yes | Lucide icon name for the settings tab. |
-| `settings.resourceUri` | `string` | Yes | `ui://` URI that renders the settings section HTML. |
+A settings section is a placement with `slot: "settings"`, not a separate top-level object. Add an entry to `placements` and the host renders it as a tab under **Settings → This Workspace → Apps → &lt;your app&gt;**, served from the placement's `resourceUri`:
 
 ```json
-"settings": {
-  "id": "my-app",
+{
+  "slot": "settings",
+  "resourceUri": "ui://settings",
   "label": "My App",
-  "icon": "settings",
-  "resourceUri": "ui://settings"
+  "icon": "settings"
 }
 ```
+
+The `resourceUri` points at the `ui://` page that renders the settings HTML; `label` and `icon` set the tab's appearance. See [Placements](/apps/placements) for the full `PlacementDeclaration` shape.
 
 ### `briefing` object
 
@@ -187,7 +175,7 @@ Each entry in the `placements` array:
 
 | Field | Type | Required | Default | Description |
 |-------|------|----------|---------|-------------|
-| `slot` | `string` | Yes | — | Shell slot to fill: `"sidebar"`, `"sidebar.apps"`, `"sidebar.bottom"`, or `"main"`. See [Placements](/apps/placements). |
+| `slot` | `string` | Yes | — | Shell slot to fill: `"sidebar"`, `"sidebar.apps"`, `"sidebar.bottom"`, `"main"`, or `"settings"`. See [Placements](/apps/placements). |
 | `resourceUri` | `string` | Yes | — | `ui://` URI served by this MCP server. |
 | `priority` | `number` | No | `100` | Sort order within the slot. Lower values appear first. |
 | `label` | `string` | No | — | Human-readable label for sidebar items and tabs. |
@@ -195,7 +183,7 @@ Each entry in the `placements` array:
 | `route` | `string` | No | — | Route path for `"main"` slot placements. Registers as `/app/<route>`. |
 | `size` | `"compact" \| "full" \| "auto"` | No | — | Size hint for the slot renderer. |
 
-## How `primaryView` and `placements` interact
+## Registering your main view
 
 `placements` is what the shell renders and routes from. To give your app a navigable main view, declare a `"main"` slot placement with a `route`:
 
@@ -212,6 +200,8 @@ Each entry in the `placements` array:
 ```
 
 The virtual `primary` resource path resolves to the **first declared placement's** `resourceUri`, so the shell can load your main view without knowing its URI ahead of time. See [UI Resources](/apps/ui-resources) for how `primary` resolves.
+
+The schema also accepts a `primaryView` object for back-compat, but the host does not consume it — placements are the source of truth for what is registered and routed. Declare a `"main"` placement, not `primaryView`.
 
 <Aside type="tip">
 Declare at least one `"main"` placement with a `route` so users can navigate to your app. Add `"sidebar.*"` or `"sidebar.bottom"` placements when you need sidebar widgets or pinned items.
@@ -247,9 +237,14 @@ The smallest manifest that registers a UI view:
       "host_version": "1.0",
       "name": "Hello",
       "icon": "hand",
-      "primaryView": {
-        "resourceUri": "ui://index"
-      }
+      "placements": [
+        {
+          "slot": "main",
+          "resourceUri": "ui://index",
+          "route": "hello",
+          "label": "Hello"
+        }
+      ]
     }
   }
 }
