@@ -94,6 +94,7 @@ import {
   UnknownToolSource,
   WorkspaceAccessDenied,
 } from "../orchestrator/index.ts";
+import { assertToolAllowed } from "../permissions/assert-tool-allowed.ts";
 import { type RequestContext, runWithRequestContext } from "../runtime/request-context.ts";
 import type { Runtime } from "../runtime/runtime.ts";
 import { IDENTITY_SOURCES } from "../tools/identity-sources.ts";
@@ -868,6 +869,30 @@ function createServer(
     const sourceName = sepIndex >= 0 ? innerToolName.slice(0, sepIndex) : null;
     const localName = sepIndex >= 0 ? innerToolName.slice(sepIndex + 2) : innerToolName;
     const wsId = workspaceContext.workspaceId;
+
+    // Connector permission gate. Runs BEFORE the task-vs-inline negotiation
+    // below so an operator's `disallow` is honored whether or not the tool is
+    // task-augmented — a disallowed task tool must be denied just like an
+    // inline one. Mirrors the engine door (`IdentityToolRouter`) and the REST
+    // registry gate, so all three doors enforce the same workspace policy.
+    if (sourceName) {
+      const denied = await assertToolAllowed(
+        runtime.getPermissionStore(),
+        wsId,
+        sourceName,
+        localName,
+      );
+      if (denied) {
+        return {
+          content: denied.content,
+          ...(denied.structuredContent !== undefined
+            ? { structuredContent: denied.structuredContent }
+            : {}),
+          isError: denied.isError,
+        };
+      }
+    }
+
     const wsRegistry = runtime.getRegistryForWorkspace(wsId);
     const taskAwareSource = sourceName ? wsRegistry.findTaskAwareSource(sourceName) : null;
     // Inspect the cached tool definition (if the source is MCP-backed) to
