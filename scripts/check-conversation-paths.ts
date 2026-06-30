@@ -24,9 +24,6 @@
  *   - `src/conversation/paths.ts` — the single sanctioned construction (and
  *     parse) site for the `workspaces/<wsId>/conversations/...` layout. It *is*
  *     the definition this lint protects.
- *   - `scripts/migrate-conversations-to-workspace.ts` — it must read the legacy flat
- *     `{workDir}/conversations/<id>.jsonl` SOURCE paths in order to move them
- *     into the workspace-owned layout.
  *   - Workspace-scoped joins off a workspace root (`join(this.workspacesRoot, wsId,
  *     "conversations")`) — the `"conversations"` segment is already under a
  *     workspace, so these are the intended shape, not the flat one.
@@ -46,18 +43,14 @@ const ROOT = join(import.meta.dirname ?? __dirname, "..");
 const SRC_ROOT = join(ROOT, "src");
 const ALLOW_MARKER = "lint-ok:conversation-path";
 
-// Files (relative to repo root) that legitimately reference the flat layout —
-// either because they DEFINE the workspace-owned layout, or because they migrate
-// data off the flat one. The lint would otherwise fight the definitions it
-// exists to protect.
+// Files (relative to repo root) that legitimately reference the flat layout
+// because they DEFINE the workspace-owned layout. The lint would otherwise
+// fight the definitions it exists to protect.
 const ALLOWED_FILES = new Set(
   [
     // The single sanctioned site that builds + parses the workspace-owned
     // `workspaces/<wsId>/conversations/...` layout.
     "src/conversation/paths.ts",
-    // Migrates conversations off the flat layout — reads the old
-    // `{workDir}/conversations/<id>.jsonl` source paths to relocate them.
-    "scripts/migrate-conversations-to-workspace.ts",
   ].map((f) => f.split("/").join(sep)),
 );
 
