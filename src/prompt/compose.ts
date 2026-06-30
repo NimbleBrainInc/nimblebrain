@@ -6,6 +6,51 @@ import type { Skill } from "../skills/types.ts";
 const SEPARATOR = "\n\n---\n\n";
 
 /**
+ * The closed set of containment tags the composer may open around untrusted
+ * body content. Membership here is the allow-list: you cannot wrap content in
+ * a tag that is not in this union — an unknown tag is a compile error, which
+ * kills the wrong-tag copy-paste class at type-check time.
+ */
+export type ContainmentTag =
+  | "context-skill"
+  | "runtime-context"
+  | "app-instructions"
+  | "app-custom-instructions"
+  | "app-description"
+  | "app-guide"
+  | "app-state"
+  | "org-instructions"
+  | "workspace-instructions"
+  | "layer3-skill"
+  | "connector-skill"
+  | "skill-instructions";
+
+/**
+ * Wrap untrusted `body` in `<tag>…</tag>`, neutralising every closing form of
+ * `tag` inside `body` so the body cannot break out of containment. The open
+ * tag, the escaped close form, and the trailing close are all derived from the
+ * single `tag` argument — they are incapable of diverging. Returns the FULL
+ * block (open + escaped body + close); callers never write the literal tag.
+ *
+ * The escape is case-insensitive and whitespace-tolerant on purpose: the
+ * parser on the other side is an LLM, not a conforming XML reader, and it will
+ * honor `</TAG>`, `</tag >`, `</ tag>`, `</tag\n>` as closes that an
+ * exact-substring `replaceAll` would pass straight through. This is the
+ * security-load-bearing behavior.
+ */
+export function wrapContained(tag: ContainmentTag, body: string): string {
+  // `tag` values are fixed lowercase `[a-z-]` literals — no regex metachars to
+  // escape. Do NOT widen `ContainmentTag` to include a regex metacharacter
+  // without escaping it here. The `gi` flag plus `\s*` around the `/` and tag
+  // normalise every realistic close variant — `</TAG>`, `</tag >`, `< /tag>`,
+  // `</ tag>`, `</tag\n>` — to the single safe `&lt;/${tag}>`, since the
+  // consumer is a fuzzy LLM parser rather than a conforming XML reader.
+  const closing = new RegExp(`<\\s*/\\s*${tag}\\s*>`, "gi");
+  const safe = body.replace(closing, `&lt;/${tag}>`);
+  return `<${tag}>\n${safe}\n</${tag}>`;
+}
+
+/**
  * A single section of the composed system prompt, captured with provenance.
  *
  * The traced compose pipeline (`composeSystemPromptTraced`) emits one
@@ -365,8 +410,7 @@ export function composeSystemPromptTraced(
   // render raw in Layer 0 above.)
   for (const ctx of userContext) {
     if (ctx.body) {
-      const safe = ctx.body.replaceAll("</context-skill>", "&lt;/context-skill>");
-      const text = `<context-skill>\n${safe}\n</context-skill>`;
+      const text = wrapContained("context-skill", ctx.body);
       layers.push({
         kind: "user_context_skill",
         id: ctx.sourcePath || `nb:user-context:${ctx.manifest.name}`,
@@ -546,7 +590,7 @@ export function composeSystemPromptTraced(
 
   // Layer 4: Matched skill (legacy SkillMatcher path).
   if (matchedSkill?.body) {
-    const text = `<skill-instructions>\n${matchedSkill.body}\n</skill-instructions>`;
+    const text = wrapContained("skill-instructions", matchedSkill.body);
     layers.push({
       kind: "matched_skill",
       id: matchedSkill.sourcePath || `nb:matched-skill:${matchedSkill.manifest.name}`,
@@ -614,9 +658,7 @@ export function composeSystemSegments(
   // not user authorship. Escape any forged closing tag, same discipline as the
   // per-block tags (which keep their own escapes inside `volatileBody`).
   const volatileHead =
-    volatileBody.length > 0
-      ? `<runtime-context>\n${volatileBody.replaceAll("</runtime-context>", "&lt;/runtime-context>")}\n</runtime-context>`
-      : "";
+    volatileBody.length > 0 ? wrapContained("runtime-context", volatileBody) : "";
   return {
     stableSystem,
     volatileHead,
@@ -649,25 +691,20 @@ function formatAppsSection(apps: PromptAppInfo[], hasProxiedTools?: boolean): st
     const trustLabel = app.trustScore != null ? ` — MTF Score: ${app.trustScore}` : "";
     lines.push(`- ${app.name} (${uiLabel})${trustLabel}`);
     if (app.description) {
-      lines.push(`  <app-description>${app.description}</app-description>`);
+      lines.push(wrapContained("app-description", app.description));
     }
     if (app.instructions) {
       // Neutralize any attempt by the bundle author to close the containment
       // tag early and inject a forged system section. We do NOT strip
       // arbitrary XML, only the specific tag we use for containment.
-      const safe = app.instructions.replaceAll("</app-instructions>", "&lt;/app-instructions>");
-      lines.push(`  <app-instructions>\n${safe}\n  </app-instructions>`);
+      lines.push(wrapContained("app-instructions", app.instructions));
     }
     if (app.customInstructions && app.customInstructions.trim().length > 0) {
       // Mirror the `<app-instructions>` containment escape byte-for-byte —
       // this is a prompt-injection mitigation. The overlay text comes from
       // the workspace admin (via the platform instructions store), not from
       // the bundle author, but the same containment guarantee applies.
-      const safe = app.customInstructions.replaceAll(
-        "</app-custom-instructions>",
-        "&lt;/app-custom-instructions>",
-      );
-      lines.push(`  <app-custom-instructions>\n${safe}\n  </app-custom-instructions>`);
+      lines.push(wrapContained("app-custom-instructions", app.customInstructions));
     }
   }
   lines.push(
@@ -713,8 +750,7 @@ function formatFocusedAppSection(focusedApp: FocusedAppInfo): string {
     // cannot break out of containment. Matches the pattern used for
     // `<app-state>` (l. 584), `<app-instructions>` (l. 494), and
     // `<layer3-skill>` (l. 632).
-    const safeGuide = focusedApp.skillResource.replaceAll("</app-guide>", "&lt;/app-guide>");
-    lines.push(`<app-guide>\n${safeGuide}\n</app-guide>`);
+    lines.push(wrapContained("app-guide", focusedApp.skillResource));
     if (focusedApp.referenceResourceUri) {
       lines.push("");
       lines.push(
@@ -750,8 +786,7 @@ function formatAppStateSection(appState: AppStateInfo): string | null {
     inner = `${stateJson.slice(0, MAX_STATE_TOKENS * 4)}\n[state truncated — ask user for details]`;
   }
 
-  const escaped = inner.replaceAll("</app-state>", "&lt;/app-state>");
-  return `## Current App State\nLast updated: ${appState.updatedAt}\n\n<app-state>\n${escaped}\n</app-state>`;
+  return `## Current App State\nLast updated: ${appState.updatedAt}\n\n${wrapContained("app-state", inner)}`;
 }
 
 /**
@@ -764,10 +799,9 @@ function formatAppStateSection(appState: AppStateInfo): string | null {
  * injection from a writer who tries to break out of containment.
  */
 function formatScopeOverlay(heading: string, body: string): string {
-  const tag =
+  const tag: ContainmentTag =
     heading === "Organization Instructions" ? "org-instructions" : "workspace-instructions";
-  const safe = body.replaceAll(`</${tag}>`, `&lt;/${tag}>`);
-  return `## ${heading}\n\n<${tag}>\n${safe}\n</${tag}>`;
+  return `## ${heading}\n\n${wrapContained(tag, body)}`;
 }
 
 /**
@@ -784,9 +818,8 @@ function formatLayer3SkillsSection(entries: Layer3SkillEntry[]): string | null {
     const safeName = sanitizeLineField(entry.name);
     const safeScope = sanitizeLineField(entry.scope);
     const safeReason = sanitizeLineField(entry.reason);
-    const safeBody = entry.body.replaceAll("</layer3-skill>", "&lt;/layer3-skill>");
     const provenance = `_${safeName}_ — scope: ${safeScope}; loaded: ${entry.loadedBy} (${safeReason})`;
-    blocks.push(`### ${safeName}\n\n${provenance}\n\n<layer3-skill>\n${safeBody}\n</layer3-skill>`);
+    blocks.push(`### ${safeName}\n\n${provenance}\n\n${wrapContained("layer3-skill", entry.body)}`);
   }
   if (blocks.length === 0) return null;
   return `## Skills\n\n${blocks.join("\n\n")}`;
@@ -809,9 +842,8 @@ function formatLayer3SkillsSection(entries: Layer3SkillEntry[]): string | null {
 export function formatConnectorSkillBlock(name: string, scope: string, body: string): string {
   const safeName = sanitizeLineField(name);
   const safeScope = sanitizeLineField(scope);
-  const safeBody = body.replaceAll("</connector-skill>", "&lt;/connector-skill>");
   const provenance = `_${safeName}_ — scope: ${safeScope}; surfaced on first matching connector tool call`;
-  return `${provenance}\n\n<connector-skill>\n${safeBody}\n</connector-skill>`;
+  return `${provenance}\n\n${wrapContained("connector-skill", body)}`;
 }
 
 /**
