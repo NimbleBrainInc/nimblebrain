@@ -1,25 +1,25 @@
 /**
- * Stage 1 E2E — the load-bearing claim of the cross-workspace refactor:
+ * E2E — conversation access after the owner is removed from its workspace.
  *
- *   **Conversations outlive their workspace context.**
+ *   **Read stays, resume is denied.**
  *
- * A user can hold a conversation that was created against workspace A.
- * If the user is later removed from workspace A, they still own that
- * conversation — it lives at `{workDir}/conversations/{id}.jsonl`, not
- * `{workDir}/workspaces/A/...`. The conversation remains readable, but
- * any attempt to continue chatting in workspace A is refused at the
- * HTTP boundary with the standard non-member error.
+ * A conversation lives inside the workspace it was created in
+ * (`workspaces/<wsId>/conversations/<ownerId>/...`) and is sealed to it: on
+ * resume the session's tools/skills/apps resolve in that workspace. So once the
+ * owner is removed from that workspace:
+ *   - READ stays owner-gated — they can still load their own authored
+ *     conversation (`findConversation`, the SSE event stream).
+ *   - RESUME is denied — continuing the chat would grant the workspace's tools to
+ *     someone offboarded from it, so the membership gate refuses it (`403`),
+ *     regardless of which workspace the request is focused on.
  *
- * The Stage 1 spec phrases this as "tool calls referencing the left
- * workspace fail with `unauthorized`". Stage 2 introduces multi-
- * workspace tool aggregation; Stage 1's promise is narrower — single
- * workspace per chat, but the conversation itself is user-scoped. This
- * test pins the achievable Stage 1 claim end-to-end through the HTTP
- * layer, where workspace membership is actually enforced.
+ * This replaces the earlier "conversations outlive their workspace context"
+ * stance, which dated from when conversations lived at flat top-level storage
+ * outside any workspace. They now live inside the workspace (and are archived
+ * with it on delete), so access is bound to current membership for active use.
  *
- * Secondary assertion: `canAccess` is a pure ownership check that does
- * not consult workspace membership, so the user's access to their own
- * conversation is unaffected by membership changes.
+ * Secondary assertion: `canAccess` is a pure ownership check (the READ gate) and
+ * does not consult workspace membership — read access is unaffected by removal.
  */
 
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
@@ -87,7 +87,7 @@ class TokenAuthAdapter implements IdentityProvider {
 // Test suite
 // ---------------------------------------------------------------------------
 
-describe("Stage 1 — conversations outlive their workspace context", () => {
+describe("conversation access after the owner is removed from its workspace", () => {
   const ALICE_TOKEN = "alice-e2e-token-1234567890";
   const workDir = join(tmpdir(), `nb-stage1-e2e-${Date.now()}`);
   let runtime: Runtime;
@@ -141,11 +141,10 @@ describe("Stage 1 — conversations outlive their workspace context", () => {
     rmSync(workDir, { recursive: true, force: true });
   });
 
-  test("a conversation created in workspace A survives Alice being removed from A", async () => {
-    // 1. Alice POSTs a chat in shared_a — produces a conversation that is
-    //    workspace-owned under her personal workspace (the identity-bound chat surface
-    //    stores under the session/personal workspace; the X-Workspace-Id
-    //    header scopes the prompt briefing, not the conversation's workspace).
+  test("an owned conversation in A stays readable but cannot be resumed after Alice leaves A", async () => {
+    // 1. Alice POSTs a chat in shared_a — produces a conversation born in the
+    //    focused workspace (the `X-Workspace-Id`, sharedA), stored under
+    //    `workspaces/<sharedA>/conversations/<ownerId>/` and sealed to it (#584).
     const createRes = await fetch(`${baseUrl}/v1/chat`, {
       method: "POST",
       headers: {
@@ -182,15 +181,14 @@ describe("Stage 1 — conversations outlive their workspace context", () => {
     const wsStore = runtime.getWorkspaceStore();
     await wsStore.removeMember(sharedA, ALICE.id);
 
-    // 3. The conversation is still readable via `findConversation` —
-    //    ownership is the gate, not workspace membership.
+    // 3. READ stays owner-gated — `findConversation` still loads it after removal.
+    //    Reading your own authored conversation does not consult workspace
+    //    membership; only RESUME does (step 6).
     const loaded = await runtime.findConversation(convId, { userId: ALICE.id });
     expect(loaded).not.toBeNull();
     expect(loaded?.ownerId).toBe(ALICE.id);
-    // The conversation is workspace-owned by the workspace it ran in: the metadata
-    // `workspaceId` records that workspace (`sharedA`, the focused `X-Workspace-Id`),
-    // which is also where its file lives. Ownership — not workspace membership —
-    // is the access gate, so the conversation outlives Alice's removal from it.
+    // The conversation is workspace-owned: its metadata `workspaceId` records the
+    // workspace it lives in (`sharedA`), where its file also lives.
     expect(loaded?.workspaceId).toBe(sharedA);
 
     // 4. SSE event stream on the conversation also still works —
@@ -220,12 +218,12 @@ describe("Stage 1 — conversations outlive their workspace context", () => {
     expect(refusedBody.error).toBe("workspace_error");
     expect(refusedBody.message).toMatch(/not a member/i);
 
-    // 6. Continuing the same conversation in a DIFFERENT workspace
-    //    Alice is still a member of works. The conversation is
-    //    user-scoped; the workspace context selects tools, not the
-    //    conversation. (Stage 2 adds multi-workspace tool aggregation
-    //    inside a single chat turn — Stage 1's promise is just that
-    //    the conversation survives the workspace change.)
+    // 6. RESUME is denied — even focused on a DIFFERENT workspace Alice IS a
+    //    member of (sharedB passes the door's membership check). The conversation
+    //    is sealed to sharedA, so resolution would bind tools to sharedA, which
+    //    Alice was removed from. The membership gate refuses with a 403, NOT a
+    //    silent continuation. (This is the resume analog of step 5's HTTP-boundary
+    //    refusal, but on the conversation's OWN workspace rather than the header's.)
     const continueRes = await fetch(`${baseUrl}/v1/chat`, {
       method: "POST",
       headers: {
@@ -238,25 +236,20 @@ describe("Stage 1 — conversations outlive their workspace context", () => {
         conversationId: convId,
       }),
     });
-    expect(continueRes.status).toBe(200);
-    const continueBody = (await continueRes.json()) as { conversationId: string };
-    expect(continueBody.conversationId).toBe(convId);
+    expect(continueRes.status).toBe(403);
+    const continueBody = (await continueRes.json()) as { error: string };
+    expect(continueBody.error).toBe("conversation_access_denied");
 
-    // 7. The conversation now has two turns recorded — one created while
-    //    focused on sharedA (pre-removal), one continued while focused on
-    //    sharedB (post-removal). The conversation's ROOM is fixed at create
-    //    (sharedA) and does NOT migrate when continued from a different
-    //    focused workspace: on resume the store is resolved from the
-    //    conversation's own path, so both turns land in the sharedA workspace and
-    //    `workspaceId` stays sharedA. The X-Workspace-Id of the second turn
-    //    scopes that turn's tools/briefing, not where the conversation lives.
+    // 7. The denied resume left the conversation untouched: still one turn,
+    //    still in sharedA, and the refused message was never appended.
     const store = await runtime.resolveConversationStore(convId);
     const conv = (await store!.load(convId)) ?? null;
     expect(conv).not.toBeNull();
     if (conv) {
-      const messages = await store!.history(conv);
-      expect(messages.length).toBeGreaterThanOrEqual(2);
       expect(conv.workspaceId).toBe(sharedA);
+      const messages = await store!.history(conv);
+      const texts = JSON.stringify(messages);
+      expect(texts).not.toContain("continuing in workspace B");
     }
   });
 });
