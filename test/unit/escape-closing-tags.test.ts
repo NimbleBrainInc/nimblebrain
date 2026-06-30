@@ -11,6 +11,7 @@ describe("escapeClosingTags", () => {
     for (const close of [
       "</user-message>",
       "< /user-message>",
+      "<\n/user-message>",
       "</ user-message>",
       "<  /user-message>",
       "</\nuser-message>",
