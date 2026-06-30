@@ -20,10 +20,21 @@ describe("classifyConnectionFailure — op-independent connection classes", () =
     message: 'Error POSTing to endpoint: {"code":-32001,"message":"Session not found"}',
   };
 
-  it("classifies session loss (canonical 404 + a non-canonical -32001)", () => {
+  it("classifies session loss by message (status/code-independent)", () => {
     expect(classifyConnectionFailure(sessionLost404)).toBe("session-lost");
+    // The session-message match wins even when the code is -32001 (which alone is a timeout).
     expect(classifyConnectionFailure(new McpError(-32001, "Session not found"))).toBe(
       "session-lost",
+    );
+  });
+
+  it("classifies a request timeout (-32001) as 'timeout', NOT session-lost or transport-dead", () => {
+    // The SDK throws McpError(-32001, "Request timed out") on a request timeout.
+    // It's the tool being slow, not a session loss or a broken transport — so it
+    // must surface (policyFor), never restart the source (#581 cascade).
+    expect(classifyConnectionFailure(new McpError(-32001, "Request timed out"))).toBe("timeout");
+    expect(classifyConnectionFailure({ code: -32001, message: "MCP error -32001: Request timed out" })).toBe(
+      "timeout",
     );
   });
 
