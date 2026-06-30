@@ -12,10 +12,19 @@
  *
  * This test pins the contract end-to-end through the real Hono app:
  *   - bootstrap + a non-member `X-Workspace-Id` → 200 (permissive)
- *   - a genuine data endpoint + the same header → 403 (enforcement intact)
+ *   - a workspace-scoped data endpoint (`POST /v1/chat`) + the same header → 403
+ *     (enforcement intact, by design — `/v1/chat` requires the workspace)
+ *
+ * (`GET /v1/events` is NOT a workspace-gated endpoint: it authorizes by identity
+ * and filters fan-out by server-computed membership, so it ignores the header.
+ * Its prior 403 came from the chat router's `.use("*")` leaking forward — the
+ * very wildcard-leak class this file guards against — so it isn't asserted here.)
  *
  * The pairing is the point: the fix is surgical, not a blanket "ignore the
- * header everywhere".
+ * header everywhere". `/v1/chat` is used as the enforcing representative because
+ * it genuinely requires the workspace; an earlier version of this test used
+ * `/v1/events`, whose 403 actually came from the chat router's `.use("*")`
+ * leaking forward — the very wildcard-leak class this file guards against.
  */
 
 import { mkdirSync, rmSync } from "node:fs";
@@ -127,14 +136,20 @@ describe("bootstrap does not enforce workspace membership (middleware-leak regre
     expect(body.activeWorkspace).not.toBe(foreignWs);
   });
 
-  test("a data endpoint still rejects the same non-member X-Workspace-Id (403)", async () => {
-    const res = await fetch(`${baseUrl}/v1/events`, {
+  test("a workspace-scoped data endpoint rejects the same non-member X-Workspace-Id (403)", async () => {
+    const res = await fetch(`${baseUrl}/v1/chat`, {
+      method: "POST",
       headers: {
+        "Content-Type": "application/json",
         Authorization: `Bearer ${ALICE_TOKEN}`,
         "X-Workspace-Id": foreignWs,
       },
+      body: JSON.stringify({ message: "hello" }),
     });
+    // `/v1/chat` requires the workspace (requireWorkspace), so a non-member
+    // header is rejected at the door before the turn runs.
     expect(res.status).toBe(403);
-    await res.body?.cancel();
+    const body = (await res.json()) as { error: string };
+    expect(body.error).toBe("workspace_error");
   });
 });

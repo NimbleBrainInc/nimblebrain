@@ -939,14 +939,15 @@ export class Runtime {
     // Same strict production-vs-dev owner rule as `chat()` and the REST
     // handlers — one shared resolver, no forked copy to drift out of sync.
     const ownerId = resolveRequestOwnerId(request.identity, this._identityProvider !== null);
-    // `workspaceId` is the FOCUSED workspace (the `/w/:slug` the user is
-    // viewing), optional — exactly as the sync `chat()` path treats it. On a
-    // home / identity route there's no focus, so the turn is identity-level;
-    // fall back to the caller's personal workspace for the conversation
-    // metadata breadcrumb, matching `chat()`'s `sessionWsId` resolution. This
-    // is delegated to `chat()` below, which re-resolves the same fallback for
-    // tool scope. (Pre-Stage-2 this hard-threw; that surfaced as a raw 500 on
-    // a legitimate workspaceless chat-start.)
+    // `workspaceId` names the workspace this turn acts from. The HTTP chat door
+    // REQUIRES it (`requireWorkspace` on `/v1/chat*`), so it's always present for
+    // HTTP callers; the `?? personal` default below serves only embedded / dev /
+    // CLI callers (and dev-mode requests, where the middleware passes through
+    // without an identity) that drive the runtime directly without a header.
+    // It's the conversation metadata breadcrumb here and is delegated to `chat()`
+    // below, which re-resolves the same default for tool scope. (Pre-Stage-2 the
+    // missing-workspace case hard-threw a raw 500 on chat-start; the default
+    // keeps the embedded path working.)
     const wsId = request.workspaceId ?? personalWorkspaceIdFor(ownerId);
     const createOpts: CreateConversationOptions = {
       ownerId,
@@ -1134,9 +1135,11 @@ export class Runtime {
     await this.ensureWorkspaceRegistry(sessionWsId);
 
     // The conversation's workspace — the binding, and the ONE workspace this
-    // turn resolves against. A chat is born in the focused workspace, or the
-    // caller's personal workspace when there's no focus (`request.workspaceId ??
-    // sessionWsId`), and stays there for its whole life. On resume the workspace
+    // turn resolves against. A chat is born in the focused workspace
+    // (`request.workspaceId`, REQUIRED on the HTTP chat door so it's always
+    // present there), or the caller's personal workspace when absent — the
+    // embedded / dev path only (`?? sessionWsId`) — and stays there for its
+    // whole life. On resume the workspace
     // is read from the conversation's own path via the locator (authoritative),
     // NOT from the request header — so a conversation answered while you're
     // focused elsewhere still resolves its own tools, skills, apps, files, and
