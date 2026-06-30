@@ -142,10 +142,9 @@ describe("conversation access after the owner is removed from its workspace", ()
   });
 
   test("an owned conversation in A stays readable but cannot be resumed after Alice leaves A", async () => {
-    // 1. Alice POSTs a chat in shared_a — produces a conversation that is
-    //    workspace-owned under her personal workspace (the identity-bound chat surface
-    //    stores under the session/personal workspace; the X-Workspace-Id
-    //    header scopes the prompt briefing, not the conversation's workspace).
+    // 1. Alice POSTs a chat in shared_a — produces a conversation born in the
+    //    focused workspace (the `X-Workspace-Id`, sharedA), stored under
+    //    `workspaces/<sharedA>/conversations/<ownerId>/` and sealed to it (#584).
     const createRes = await fetch(`${baseUrl}/v1/chat`, {
       method: "POST",
       headers: {
