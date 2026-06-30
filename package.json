@@ -80,10 +80,7 @@
     "format": "bunx @biomejs/biome format --write src/ web/src/ instrument/ scripts/",
     "format:check": "bunx @biomejs/biome format src/ web/src/ instrument/ scripts/",
     "sync-models": "bun run src/model/sync-models.ts",
-    "migrate:skill-frontmatter": "bun run scripts/migrate-skill-frontmatter.ts",
-    "migrate:conversations-to-workspace": "bun run scripts/migrate-conversations-to-workspace.ts",
-    "migrate:files-to-workspace": "bun run scripts/migrate-files-to-workspace.ts",
-    "migrate:automations-to-workspace": "bun run scripts/migrate-automations-to-workspace.ts"
+    "migrate:skill-frontmatter": "bun run scripts/migrate-skill-frontmatter.ts"
   },
   "devDependencies": {
     "@biomejs/biome": "^2.4.10",
