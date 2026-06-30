@@ -2,7 +2,6 @@ import { AlertCircle, Check, ChevronDown, Copy, RotateCcw, Zap } from "lucide-re
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Streamdown } from "streamdown";
 import type { ChatMessage, PreparingTool, StreamingState } from "../hooks/useChat";
-import { participantColor } from "../lib/participant-colors";
 import type { DisplayDetail } from "../lib/tool-display";
 import { BlockTimeline } from "./BlockTimeline";
 import { FileAttachment } from "./FileAttachment";
@@ -115,28 +114,6 @@ function CopyButton({ content }: { content: string }) {
   );
 }
 
-/**
- * Returns true when a speaker label should be shown (Option C: minimal attribution).
- * Only labels messages from other participants, and only on speaker transitions.
- */
-function shouldShowSpeaker(
-  msg: ChatMessage,
-  idx: number,
-  messages: ChatMessage[],
-  currentUserId?: string,
-): boolean {
-  if (msg.role !== "user") return false;
-  if (!msg.userId) return false;
-  if (msg.userId === currentUserId) return false;
-  // Find the previous user message to detect speaker change
-  for (let i = idx - 1; i >= 0; i--) {
-    if (messages[i].role === "user") {
-      return messages[i].userId !== msg.userId;
-    }
-  }
-  return true; // First user message from someone other than current user
-}
-
 interface MessageListProps {
   messages: ChatMessage[];
   isStreaming: boolean;
@@ -145,10 +122,6 @@ interface MessageListProps {
   preparingTool?: PreparingTool | null;
   displayDetail: DisplayDetail;
   compact?: boolean;
-  /** Current user's ID — messages from this user get no speaker label. */
-  currentUserId?: string;
-  /** Map of userId → display name for participant labels. */
-  participantMap?: Map<string, string>;
   /** Called when the user clicks "Try again" on an errored message. */
   onRetry?: () => void;
 }
@@ -254,8 +227,6 @@ export function MessageList({
   preparingTool,
   displayDetail,
   compact = false,
-  currentUserId,
-  participantMap,
   onRetry,
 }: MessageListProps) {
   const { scrollRef, bottomRef, isAtBottom, scrollToBottom } = useSmartScroll(messages);
@@ -322,28 +293,7 @@ export function MessageList({
                 }`}
               >
                 {msg.role === "user" ? (
-                  <div
-                    className={`pl-4 border-l-2 break-words whitespace-pre-wrap ${
-                      msg.userId && msg.userId !== currentUserId ? "" : "border-border"
-                    }`}
-                    style={
-                      msg.userId && msg.userId !== currentUserId
-                        ? { borderLeftColor: participantColor(msg.userId) }
-                        : undefined
-                    }
-                  >
-                    {shouldShowSpeaker(msg, idx, messages, currentUserId) && (
-                      <div
-                        className="flex items-center gap-1.5 mb-1 text-2xs font-medium"
-                        style={{ color: participantColor(msg.userId!) }}
-                      >
-                        <span
-                          className="w-1.5 h-1.5 rounded-full inline-block"
-                          style={{ background: participantColor(msg.userId!) }}
-                        />
-                        {participantMap?.get(msg.userId!) ?? msg.userId}
-                      </div>
-                    )}
+                  <div className="pl-4 border-l-2 border-border break-words whitespace-pre-wrap">
                     {contextPrefix && (
                       <details className="mb-1">
                         <summary className="text-3xs opacity-60 cursor-pointer select-none">

@@ -28,7 +28,6 @@ export interface ChatConfigContextValue {
   refreshConfig: () => void;
   preferences: ConfigInfo["preferences"];
   currentUserId?: string;
-  participantMap: Map<string, string>;
 }
 
 const ChatConfigContext = createContext<ChatConfigContextValue | null>(null);
@@ -156,7 +155,6 @@ export function ChatProvider({
   const [preferences, setPreferences] = useState<ConfigInfo["preferences"]>(
     initialConfig?.preferences,
   );
-  const [participantMap, setParticipantMap] = useState<Map<string, string>>(new Map());
 
   const fetchConfig = useCallback(() => {
     callTool("nb", "get_config")
@@ -190,32 +188,6 @@ export function ChatProvider({
     if (!initialConfig) fetchConfig();
   }, [fetchConfig, initialConfig]);
 
-  // Fetch workspace users once on mount to build participantMap (userId → displayName)
-  useEffect(() => {
-    callTool("nb", "manage_users", { action: "list" })
-      .then((result) => {
-        let raw: unknown = result.structuredContent;
-        if (!raw && result.content?.[0]?.text) {
-          try {
-            raw = JSON.parse(result.content[0].text);
-          } catch {
-            raw = {};
-          }
-        }
-        const data = raw as { users?: Array<{ id: string; displayName: string }> };
-        if (data.users) {
-          const map = new Map<string, string>();
-          for (const u of data.users) {
-            map.set(u.id, u.displayName);
-          }
-          setParticipantMap(map);
-        }
-      })
-      .catch(() => {
-        // Non-critical — speaker labels will fall back to userId
-      });
-  }, []);
-
   const setSelectedModel = useCallback((model: string | null) => {
     setSelectedModelState(model);
     if (model) {
@@ -247,7 +219,6 @@ export function ChatProvider({
       refreshConfig: fetchConfig,
       preferences,
       currentUserId,
-      participantMap,
     }),
     [
       selectedModel,
@@ -257,7 +228,6 @@ export function ChatProvider({
       fetchConfig,
       preferences,
       currentUserId,
-      participantMap,
     ],
   );
 

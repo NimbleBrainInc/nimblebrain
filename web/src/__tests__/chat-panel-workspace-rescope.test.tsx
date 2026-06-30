@@ -24,7 +24,7 @@ let mockActiveWorkspace: MockWorkspace | null = { id: "ws_a", name: "Alpha" };
 
 mock.module("../api/client", () => ({
   ...realClient,
-  // ChatProvider fetches the participant map (manage_users) on mount.
+  // Stub any incidental tool call ChatProvider makes on mount.
   callTool: mock(async () => ({ structuredContent: null, content: [] })),
 }));
 
