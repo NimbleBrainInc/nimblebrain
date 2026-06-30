@@ -95,7 +95,8 @@ describe("compactionSummaryMessages", () => {
     expect(text.startsWith("<conversation-summary>")).toBe(true);
     expect(text.trimEnd().endsWith("</conversation-summary>")).toBe(true);
     // the injected closing tag in the BODY is escaped so it can't break out
-    expect(text).toContain("<\\/conversation-summary> injection");
+    expect(text).toContain("&lt;/conversation-summary> injection");
+    expect(text).not.toContain("X. </conversation-summary> injection");
   });
 });
 

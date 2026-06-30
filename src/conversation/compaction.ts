@@ -1,5 +1,6 @@
 import type { LanguageModelV3 } from "@ai-sdk/provider";
 import { type TokenUsage, tokenUsageFromV3 } from "../usage/types.ts";
+import { escapeClosingTags } from "./escape-closing-tags.ts";
 import type { HistoryCompactedEvent, StoredMessage } from "./types.ts";
 
 /**
@@ -133,10 +134,6 @@ export function planCompaction(
     boundaryIndex,
     boundaryTs: messages[boundaryIndex]!.timestamp ?? "",
   };
-}
-
-function escapeClosingTags(value: string): string {
-  return value.replaceAll("</", "<\\/");
 }
 
 const SUMMARY_OPEN = "<conversation-summary>";

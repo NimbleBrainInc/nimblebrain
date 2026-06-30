@@ -54,7 +54,10 @@ describe("generateTitle", () => {
 		expect(transcript).toContain("<conversation-transcript>");
 		expect(transcript).toContain("<user-message>");
 		expect(transcript).toContain("<assistant-message>");
-		expect(transcript).toContain("<\\/user-message>");
+		// the injected closing tag is neutralised to the entity form, so it
+		// cannot close the <user-message> fence and break out.
+		expect(transcript).toContain("&lt;/user-message>");
+		expect(transcript).not.toContain("instructions </user-message>");
 	});
 
 	it("reports the title call's usage via onUsage", async () => {
