@@ -47,7 +47,6 @@ export class ConversationAccessDeniedError extends Error {
  * sole-member by construction, so this only ever fires for shared workspaces.
  */
 export class ConversationWorkspaceAccessDeniedError extends ConversationAccessDeniedError {
-  readonly workspaceMembershipRevoked = true;
   constructor(
     conversationId: string,
     userId: string,
