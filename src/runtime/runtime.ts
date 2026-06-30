@@ -121,7 +121,11 @@ import type { ResourceData, Tool, ToolSource } from "../tools/types.ts";
 import { WorkspaceContext } from "../workspace/context.ts";
 import { ensureUserWorkspace } from "../workspace/provisioning.ts";
 import { personalWorkspaceIdFor, WorkspaceStore } from "../workspace/workspace-store.ts";
-import { ConversationAccessDeniedError, RunInProgressError } from "./errors.ts";
+import {
+  ConversationAccessDeniedError,
+  ConversationWorkspaceAccessDeniedError,
+  RunInProgressError,
+} from "./errors.ts";
 import { IdentityToolRouter } from "./identity-tool-router.ts";
 import { PlacementRegistry } from "./placement-registry.ts";
 import {
@@ -958,7 +962,7 @@ export class Runtime {
     // Resolve the conversation's workspace store: the conversation's own workspace on
     // resume (authoritative, from the locator), or the workspace it's born in
     // (`wsId`) for a new conversation. The workspace owns the directory.
-    const { store } = await this.resolveChatStore(request.conversationId, wsId, ownerId);
+    const { store, convWsId } = await this.resolveChatStore(request.conversationId, wsId, ownerId);
 
     // Reserve the run (throws RunInProgressError if one is already active). The
     // returned signal is the RunBus's — NOT the HTTP request's — so a client
@@ -982,6 +986,12 @@ export class Runtime {
       const existing = await store.load(request.conversationId);
       if (existing && existing.ownerId !== ownerId) {
         throw new ConversationAccessDeniedError(request.conversationId, ownerId);
+      }
+      // Second authz gate (resume): the owner must still be a member of the
+      // conversation's workspace — runs before `begin`, so a removed member never
+      // reserves a run. Mirrors the `chat()` path; reads stay owner-gated.
+      if (existing) {
+        await this.assertOwnerIsWorkspaceMember(request.conversationId, convWsId, ownerId);
       }
       signal = this.runBus.begin(request.conversationId);
       try {
@@ -1195,6 +1205,14 @@ export class Runtime {
       const existing = await store.load(request.conversationId);
       if (existing && existing.ownerId !== ownerId) {
         throw new ConversationAccessDeniedError(request.conversationId, ownerId);
+      }
+      // Resume requires CURRENT membership of the conversation's workspace — not
+      // just ownership. Resuming binds tools/skills/apps to `convWsId`, so a
+      // member offboarded from that workspace must not be able to continue acting
+      // in it (reads stay owner-gated). New conversations skip this: `convWsId` is
+      // the focused workspace, already membership-validated at the door.
+      if (existing) {
+        await this.assertOwnerIsWorkspaceMember(request.conversationId, convWsId, ownerId);
       }
       conversation = existing ?? (await store.create(createOpts));
     } else {
@@ -3048,6 +3066,33 @@ export class Runtime {
     );
     const store = this.workspaceConversationStore(wsId, loc?.ownerId ?? ownerId);
     return { store, convWsId: wsId };
+  }
+
+  /**
+   * Resume authorization — the second gate, after ownership. A conversation is
+   * sealed to its workspace (`convWsId`): on resume the session's tools, skills,
+   * apps, and context all resolve there. So resuming as a non-member would hand
+   * someone offboarded from that workspace its tools — ambient authority into a
+   * workspace they were removed from. Require CURRENT membership of the
+   * conversation's workspace to RESUME (reads stay owner-gated — a removed member
+   * can still read their own authored conversation).
+   *
+   * This is a per-RESUME check (once per conversation load), not the per-call
+   * membership scan the wall forbids — it lands at session establishment, exactly
+   * where the wall says the workspace must be membership-validated. Personal
+   * workspaces are sole-member by construction, so they never gate.
+   */
+  private async assertOwnerIsWorkspaceMember(
+    conversationId: string,
+    convWsId: string,
+    ownerId: string,
+  ): Promise<void> {
+    if (convWsId === personalWorkspaceIdFor(ownerId)) return;
+    const ws = await this._workspaceStore.get(convWsId);
+    const stillMember = ws?.members.some((m) => m.userId === ownerId) ?? false;
+    if (!stillMember) {
+      throw new ConversationWorkspaceAccessDeniedError(conversationId, ownerId, convWsId);
+    }
   }
 
   /**

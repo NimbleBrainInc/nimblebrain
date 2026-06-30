@@ -31,6 +31,34 @@ export class ConversationAccessDeniedError extends Error {
 }
 
 /**
+ * Thrown when the owner of a conversation tries to RESUME it but is no longer a
+ * member of the workspace the conversation lives in. A conversation is sealed to
+ * its workspace (its tools/skills/apps resolve there), so resuming it as a
+ * non-member would hand someone offboarded from that workspace its tools —
+ * ambient authority into a workspace they were removed from. Ownership is
+ * necessary but not sufficient on resume: continued membership is also required.
+ *
+ * Reads stay owner-gated (a removed member can still READ their own authored
+ * conversation); this gates only the active/resume path. Subclasses
+ * `ConversationAccessDeniedError` so it inherits the same
+ * `403 conversation_access_denied` HTTP mapping (the caller learns only "no
+ * access"), while staying a distinct type so logs/telemetry/tests can tell an
+ * offboarding denial from an ownership denial. Personal workspaces are
+ * sole-member by construction, so this only ever fires for shared workspaces.
+ */
+export class ConversationWorkspaceAccessDeniedError extends ConversationAccessDeniedError {
+  readonly workspaceMembershipRevoked = true;
+  constructor(
+    conversationId: string,
+    userId: string,
+    public readonly conversationWorkspaceId: string,
+  ) {
+    super(conversationId, userId);
+    this.name = "ConversationWorkspaceAccessDeniedError";
+  }
+}
+
+/**
  * Thrown when a conversation file on disk fails the Stage 1 invariant
  * check at load time — specifically, a pre-migration file that lacks
  * `ownerId`. The store can't synthesize an owner safely and the chat

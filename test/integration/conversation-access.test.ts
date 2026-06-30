@@ -137,6 +137,9 @@ describe("runtime.chat — single-owner ownership check", () => {
       workDir,
     });
     await provisionTestWorkspace(runtime);
+    // Alice resumes conversations in TEST_WORKSPACE_ID, which now requires
+    // current membership of the conversation's workspace.
+    await runtime.getWorkspaceStore().addMember(TEST_WORKSPACE_ID, ALICE.id, "member");
   });
 
   afterAll(async () => {
