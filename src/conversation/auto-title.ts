@@ -1,5 +1,6 @@
 import type { LanguageModelV3 } from "@ai-sdk/provider";
 import { type TokenUsage, tokenUsageFromV3 } from "../usage/types.ts";
+import { escapeClosingTags } from "./escape-closing-tags.ts";
 
 /**
  * Generate a short conversation title using the provided model.
@@ -60,10 +61,6 @@ function formatTitleTranscript(userMessage: string, assistantResponse: string): 
     "</assistant-message>",
     "</conversation-transcript>",
   ].join("\n");
-}
-
-function escapeClosingTags(value: string): string {
-  return value.replaceAll("</", "<\\/");
 }
 
 export function sanitizeGeneratedTitle(rawTitle: string, userMessage: string): string {
