@@ -60,8 +60,8 @@ export interface ToolResult {
    * Forwarding lives at the two serialization boundaries, not per-source:
    * `defineInProcessApp` (every in-process tool, incl. system tools + delegate)
    * and `McpSource` (bundle results, inline + task paths). A direct `ToolSource`
-   * that returns a `ToolResult` with no boundary in between (e.g. `UpjackSource`)
-   * carries `_meta` natively — no forwarding needed. So any tool, in-process or
+   * that returns a `ToolResult` with no boundary in between carries `_meta`
+   * natively — no forwarding needed. So any tool, in-process or
    * bundle, can opt into a `_meta` hint and have it reach the engine.
    */
   _meta?: Record<string, unknown>;
