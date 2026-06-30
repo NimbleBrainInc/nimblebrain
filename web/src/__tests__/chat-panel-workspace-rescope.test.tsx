@@ -147,8 +147,12 @@ describe("ChatProvider re-scopes the panel on a workspace switch", () => {
     mountHarness();
     expect(observedConversationId).toBe("conv_existing");
 
-    // Navigate to a home / identity route — no focused workspace. Must NOT clear
-    // (and must NOT update the tracked focus), so returning re-scopes correctly.
+    // Home / identity route — no focused workspace. Nulling the active workspace
+    // is a faithful proxy for navigating off `/w/:slug`: `ChatProvider` derives
+    // `focusWorkspaceId = pathname.startsWith("/w/") ? activeWorkspace?.id ?? null : null`,
+    // so both a non-`/w/` route and a null active workspace yield the same
+    // `focusWorkspaceId === null` the effect branches on. Must NOT clear (and must
+    // NOT update the tracked focus), so returning re-scopes correctly.
     act(() => {
       mockActiveWorkspace = null;
       forceRerender?.();

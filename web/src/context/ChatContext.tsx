@@ -111,6 +111,14 @@ export function ChatProvider({
   // the last real workspace, so A→home→B still re-scopes on arrival at B, while
   // A→home→A does not. Opening a conversation from within its own workspace
   // doesn't change the focus, so it never trips this.
+  //
+  // Corollary of triggering off the transition (not the open conversation):
+  // arriving INTO a workspace always yields a fresh draft. If a B-conversation
+  // was opened from a home/identity route (focus null) and the user then
+  // navigates into B, the held focus (A) → B transition re-scopes and clears it.
+  // Acceptable: with the conversation list now workspace-scoped, opening a chat
+  // from outside its workspace is unusual, and a fresh draft on arrival is the
+  // consistent, race-free behavior.
   const lastWorkspaceFocusRef = useRef(focusWorkspaceId);
   const { newConversation } = chat;
   useEffect(() => {
