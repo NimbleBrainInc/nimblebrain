@@ -44,10 +44,15 @@
 	handle {
 		encode zstd gzip
 		root * /srv
-		# Content-hashed build output (index-<hash>.js/.css) is immutable — cache hard.
-		# index.html itself falls through uncached so a new deploy is picked up at once.
+		# Content-hashed build output (index-<hash>.js/.css) is immutable — cache forever.
 		@immutable path /assets/*
 		header @immutable Cache-Control "public, max-age=31536000, immutable"
+		# The HTML entry (and any non-hashed file) must revalidate every load: a deploy
+		# rewrites index.html to point at the new hashed chunks, so it has to be re-fetched
+		# to be picked up — no-cache forces an ETag revalidation instead of leaving it to
+		# heuristic cache freshness, which could otherwise serve a stale app after a deploy.
+		@html not path /assets/*
+		header @html Cache-Control "no-cache"
 		try_files {path} /index.html
 		file_server
 	}
