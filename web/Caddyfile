@@ -38,8 +38,16 @@
 		header Cache-Control "no-store"
 		respond `window.__NB_CONFIG__ = {"tenantId":"{$NB_TENANT_ID:}","environment":"{$NB_SENTRY_ENV:}","release":"{$NB_VERSION:}","sentry":{"dsn":"{$NB_SENTRY_DSN:}","enabled":"{$NB_SENTRY_ENABLED:false}","tracesSampleRate":"{$NB_SENTRY_TRACES_SAMPLE_RATE:0}"},"posthog":{"key":"{$NB_POSTHOG_KEY:}","enabled":"{$NB_POSTHOG_ENABLED:false}"}};` 200
 	}
+	# Static SPA assets. Compression + immutable caching are scoped to THIS handler
+	# only — deliberately not applied to the reverse-proxied /v1 and /mcp routes,
+	# whose SSE/streamable-HTTP responses must not be buffered by an encoder.
 	handle {
+		encode zstd gzip
 		root * /srv
+		# Content-hashed build output (index-<hash>.js/.css) is immutable — cache hard.
+		# index.html itself falls through uncached so a new deploy is picked up at once.
+		@immutable path /assets/*
+		header @immutable Cache-Control "public, max-age=31536000, immutable"
 		try_files {path} /index.html
 		file_server
 	}
