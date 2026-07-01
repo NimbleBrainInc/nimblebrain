@@ -1,0 +1,30 @@
+name: Caddyfile CI
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "web/Caddyfile"
+      - ".github/workflows/caddyfile-ci.yml"
+  push:
+    branches: [main]
+    paths:
+      - "web/Caddyfile"
+      - ".github/workflows/caddyfile-ci.yml"
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
+  cancel-in-progress: true
+
+jobs:
+  validate-caddyfile:
+    name: Validate Caddyfile
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: Validate web/Caddyfile
+        run: |
+          docker run --rm \
+            -v "$PWD/web/Caddyfile:/etc/caddy/Caddyfile:ro" \
+            caddy:2-alpine \
+            caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile
