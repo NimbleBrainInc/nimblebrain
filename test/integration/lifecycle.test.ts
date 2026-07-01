@@ -418,54 +418,6 @@ describe("BundleLifecycleManager — start and stop", () => {
 describe("BundleLifecycleManager — state transitions", () => {
 	beforeEach(setupTestDir);
 
-	it("recordCrash transitions to crashed and emits event", async () => {
-		const bundleDir = createEchoBundleOnDisk(join(testDir, "echo-crash"));
-		const registry = new ToolRegistry();
-		const sink = makeEventCollector();
-		const lifecycle = new BundleLifecycleManager(sink, undefined);
-
-		const instance = await lifecycle.installLocal(bundleDir, registry, "ws_test");
-		expect(instance.state).toBe("running");
-
-		lifecycle.recordCrash(instance.serverName, "ws_test");
-		expect(instance.state).toBe("crashed");
-		expect(eventTypes(sink)).toContain("bundle.crashed");
-
-		await registry.removeSource(instance.serverName);
-	}, 15_000);
-
-	it("recordRecovery transitions crashed to running and emits event", async () => {
-		const bundleDir = createEchoBundleOnDisk(join(testDir, "echo-recover"));
-		const registry = new ToolRegistry();
-		const sink = makeEventCollector();
-		const lifecycle = new BundleLifecycleManager(sink, undefined);
-
-		const instance = await lifecycle.installLocal(bundleDir, registry, "ws_test");
-		lifecycle.recordCrash(instance.serverName, "ws_test");
-
-		lifecycle.recordRecovery(instance.serverName, "ws_test");
-		expect(instance.state).toBe("running");
-		expect(eventTypes(sink)).toContain("bundle.recovered");
-
-		await registry.removeSource(instance.serverName);
-	}, 15_000);
-
-	it("recordDead transitions to dead and emits event", async () => {
-		const bundleDir = createEchoBundleOnDisk(join(testDir, "echo-dead"));
-		const registry = new ToolRegistry();
-		const sink = makeEventCollector();
-		const lifecycle = new BundleLifecycleManager(sink, undefined);
-
-		const instance = await lifecycle.installLocal(bundleDir, registry, "ws_test");
-		lifecycle.recordCrash(instance.serverName, "ws_test");
-
-		lifecycle.recordDead(instance.serverName, "ws_test");
-		expect(instance.state).toBe("dead");
-		expect(eventTypes(sink)).toContain("bundle.dead");
-
-		await registry.removeSource(instance.serverName);
-	}, 15_000);
-
 	it("dead bundle requires explicit startBundle to run again", async () => {
 		const bundleDir = createEchoBundleOnDisk(join(testDir, "echo-dead-restart"));
 		const registry = new ToolRegistry();
@@ -473,7 +425,7 @@ describe("BundleLifecycleManager — state transitions", () => {
 		const lifecycle = new BundleLifecycleManager(sink, undefined);
 
 		const instance = await lifecycle.installLocal(bundleDir, registry, "ws_test");
-		lifecycle.recordDead(instance.serverName, "ws_test");
+		lifecycle.transition(instance, "dead");
 		expect(instance.state).toBe("dead");
 
 		// Explicit startBundle should bring it back
@@ -750,33 +702,6 @@ describe("BundleLifecycleManager — error resilience", () => {
 
 		expect(lifecycle.getInstance("nonexistent", "ws_test")).toBeUndefined();
 	});
-
-	it("recordCrash on unknown server does not throw", () => {
-		const sink = makeEventCollector();
-		const lifecycle = new BundleLifecycleManager(sink, undefined);
-
-		// Should not throw — graceful no-op for unknown server
-		expect(() => lifecycle.recordCrash("unknown-server", "ws_test")).not.toThrow();
-	});
-
-	it("state machine rejects invalid transitions", async () => {
-		const bundleDir = createEchoBundleOnDisk(join(testDir, "echo-invalid-transition"));
-		const registry = new ToolRegistry();
-		const sink = makeEventCollector();
-		const lifecycle = new BundleLifecycleManager(sink, undefined);
-
-		const instance = await lifecycle.installLocal(bundleDir, registry, "ws_test");
-
-		// running → recordRecovery should be a no-op (can't recover if not crashed)
-		lifecycle.recordRecovery(instance.serverName, "ws_test");
-		expect(instance.state).toBe("running"); // Should remain running
-
-		// running → recordDead should transition (crash + dead)
-		lifecycle.recordDead(instance.serverName, "ws_test");
-		expect(instance.state).toBe("dead");
-
-		await registry.removeSource(instance.serverName);
-	}, 15_000);
 
 	it("config file is not corrupted when installLocal fails mid-operation", async () => {
 		const configPath = join(testDir, "nimblebrain-resilience.json");

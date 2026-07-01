@@ -1074,48 +1074,6 @@ export class BundleLifecycleManager {
   }
 
   /**
-   * Record a crash detected by HealthMonitor.
-   * Emits bundle.crashed event and updates state.
-   */
-  recordCrash(serverName: string, wsId: string): void {
-    const instance = this.instances.get(`${serverName}|${wsId}`);
-    if (!instance) return;
-    this.transition(instance, "crashed");
-    this.eventSink.emit({
-      type: "bundle.crashed",
-      data: { wsId, serverName, bundleName: instance.bundleName },
-    });
-  }
-
-  /**
-   * Record a successful recovery by HealthMonitor.
-   * Emits bundle.recovered event and updates state.
-   */
-  recordRecovery(serverName: string, wsId: string): void {
-    const instance = this.instances.get(`${serverName}|${wsId}`);
-    if (!instance) return;
-    this.transition(instance, "running");
-    this.eventSink.emit({
-      type: "bundle.recovered",
-      data: { wsId, serverName, bundleName: instance.bundleName },
-    });
-  }
-
-  /**
-   * Record that a bundle has exhausted restart attempts.
-   * Emits bundle.dead event and updates state.
-   */
-  recordDead(serverName: string, wsId: string): void {
-    const instance = this.instances.get(`${serverName}|${wsId}`);
-    if (!instance) return;
-    this.transition(instance, "dead");
-    this.eventSink.emit({
-      type: "bundle.dead",
-      data: { wsId, serverName, bundleName: instance.bundleName },
-    });
-  }
-
-  /**
    * Record a Connection state transition for a URL bundle. Owns:
    *   - Updating the named Connection's state on the BundleInstance
    *   - Recomputing `BundleInstance.state` via `summarizeConnectionState`
