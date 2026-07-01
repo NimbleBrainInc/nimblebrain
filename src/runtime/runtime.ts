@@ -23,9 +23,7 @@ import { createPrivilegeHook, NoopConfirmationGate } from "../config/privilege.t
 import { generateTitle } from "../conversation/auto-title.ts";
 import { compactConversationMessages } from "../conversation/compaction.ts";
 import { EventSourcedConversationStore } from "../conversation/event-sourced-store.ts";
-import { JsonlConversationStore } from "../conversation/jsonl-store.ts";
 import { type ConversationLocation, ConversationLocator } from "../conversation/locator.ts";
-import { InMemoryConversationStore } from "../conversation/memory-store.ts";
 import { workspaceConversationsDir } from "../conversation/paths.ts";
 import type {
   Conversation,
@@ -242,11 +240,9 @@ class DelegateTracker implements EventSink {
 
 export class Runtime {
   private resolveModelFn: (modelString: string) => LanguageModelV3;
-  private store: ConversationStore;
   private skillMatcher: SkillMatcher;
   private config: RuntimeConfig;
   private contextSkills: Skill[];
-  private eventStore: EventSourcedConversationStore | null;
   /** Process-wide convId → workspace resolver; lazily built over the workspaces root. */
   private _conversationLocator?: ConversationLocator;
   private _fileLocator?: FileLocator;
@@ -342,11 +338,9 @@ export class Runtime {
 
   private constructor(
     resolveModelFn: (modelString: string) => LanguageModelV3,
-    store: ConversationStore,
     skillMatcher: SkillMatcher,
     config: RuntimeConfig,
     contextSkills: Skill[],
-    eventStore: EventSourcedConversationStore | null,
     hooks: EngineHooks,
     defaultEvents: EventSink,
     lifecycle: BundleLifecycleManager,
@@ -363,11 +357,9 @@ export class Runtime {
     currentWorkspaceId: () => string | null,
   ) {
     this.resolveModelFn = resolveModelFn;
-    this.store = store;
     this.skillMatcher = skillMatcher;
     this.config = config;
     this.contextSkills = contextSkills;
-    this.eventStore = eventStore;
     this.hooks = hooks;
     this.defaultEvents = defaultEvents;
     this.lifecycle = lifecycle;
@@ -422,7 +414,7 @@ export class Runtime {
     const workspaceStore = new WorkspaceStore(workDir);
     const identityProvider = createIdentityProvider(instanceConfig, userStore, workspaceStore);
 
-    const { events: baseEvents, eventStore } = buildEventSink(config);
+    const baseEvents = buildEventSink(config);
 
     // Create delegate tracker and include it in the event pipeline
     const delegateTracker = new DelegateTracker();
@@ -430,9 +422,6 @@ export class Runtime {
     // memory whether or not `/metrics` is scraped, so it's safe in a local
     // `bun run dev` with no Prometheus/k8s.
     const sinkList: EventSink[] = [baseEvents, delegateTracker, new MetricsEventSink()];
-    if (eventStore) {
-      sinkList.push(eventStore);
-    }
     if (telemetryManager.isEnabled()) {
       sinkList.push(new PostHogEventSink(telemetryManager));
     }
@@ -678,7 +667,6 @@ export class Runtime {
       // resolved `maxOutputTokens`). See `resolveMessageBudget`.
     };
 
-    const store = buildStore(config);
     const { contextSkills, skillMatcher } = buildSkills(config);
 
     // Request-scoped context — all identity/workspace reads go through AsyncLocalStorage.
@@ -719,11 +707,9 @@ export class Runtime {
     // Create Runtime with empty workspace registries first — needed by system tools
     const rt = new Runtime(
       resolveModelFn,
-      store,
       skillMatcher,
       config,
       contextSkills,
-      eventStore,
       hooks,
       events,
       lifecycle,
@@ -1658,25 +1644,10 @@ export class Runtime {
       ...(request.signal ? { signal: request.signal } : {}),
     };
 
-    // Conversations are workspace-owned, so `store` (from `resolveChatStore`) is
-    // always a per-call workspace store and is always the event sink. The
-    // `this.eventStore`/`this.store` sentinel path below is VESTIGIAL —
-    // `this.eventStore` is always null and `isWorkspaceRequest` always true.
-    // TODO(cleanup): collapse to "always use the per-call workspace store" and drop
-    // the boot-store fields. Deferred from this PR because removing `this.store`
-    // is entangled with the `config.store` "embedding-only" story (also deferred).
-    const isWorkspaceRequest =
-      store instanceof EventSourcedConversationStore && store !== this.store;
-    let activeEventStore: EventSourcedConversationStore | null = null;
-    if (isWorkspaceRequest) {
-      // Disable global store for this request, use workspace store instead
-      if (this.eventStore) this.eventStore.setActiveConversation("");
-      activeEventStore = store as EventSourcedConversationStore;
-      activeEventStore.setActiveConversation(conversation.id);
-    } else if (this.eventStore) {
-      activeEventStore = this.eventStore;
-      this.eventStore.setActiveConversation(conversation.id);
-    }
+    // Conversations are workspace-owned: `store` (from `resolveChatStore`) is the
+    // per-call workspace event store, and is both the active event sink for this
+    // turn's engine events and a member of the per-request sink chain.
+    store.setActiveConversation(conversation.id);
 
     // Build per-request sink chain. The engine itself returns cumulative
     // usage and llmMs in its EngineResult — no need for a side-channel
@@ -1684,9 +1655,7 @@ export class Runtime {
     const sinks: EventSink[] = requestSink
       ? [requestSink, this.defaultEvents]
       : [this.defaultEvents];
-    if (isWorkspaceRequest) {
-      sinks.push(store as EventSourcedConversationStore);
-    }
+    sinks.push(store);
 
     const model = engineConfig.model;
     const resolvedModel = this.resolveModelFn(model);
@@ -1777,28 +1746,9 @@ export class Runtime {
       iterations: result.iterations,
     };
 
-    // If an event store handled the engine events (via emit()), the llm.response
-    // events are already in the conversation file — no need for a separate append.
-    // Only append the assistant message explicitly when no event store was active
-    // (e.g., logging disabled, or legacy store without EventSink).
-    const eventStoreHandled = !!activeEventStore;
-    if (!eventStoreHandled) {
-      await store.append(conversation, {
-        role: "assistant",
-        content: result.output
-          ? [{ type: "text", text: result.output }]
-          : [{ type: "text", text: "(tool use only)" }],
-        timestamp: new Date().toISOString(),
-        metadata: {
-          skill: skill?.manifest.name ?? null,
-          toolCalls: result.toolCalls,
-          usage: result.usage,
-          model,
-          llmMs: result.llmMs,
-          iterations: result.iterations,
-        },
-      });
-    }
+    // The workspace event store persisted the engine events (including the
+    // assistant turn) via emit() as they streamed, so there is no separate
+    // assistant-message append here.
 
     // Fire-and-forget title generation on first turn (use "fast" slot for cost
     // savings). Decoupled from the turn lifecycle: when it resolves we persist
@@ -4118,10 +4068,12 @@ function initWorkDir(config: RuntimeConfig): void {
   syncCoreSkills(resolvedWorkDir);
 }
 
-function buildEventSink(config: RuntimeConfig): {
-  events: EventSink;
-  eventStore: EventSourcedConversationStore | null;
-} {
+// Build the boot-time event sink: operator-supplied sinks plus the daily
+// workspace log. Conversation event persistence is NOT wired here — conversations
+// are workspace-owned, so each chat/task turn routes its engine events through its
+// own per-call workspace store (see `_chatInner`). There is no flat top-level
+// conversation store.
+function buildEventSink(config: RuntimeConfig): EventSink {
   const sinks: EventSink[] = config.events ? [...config.events] : [];
   if (!config.logging?.disabled) {
     const workDir = resolveWorkDir(config);
@@ -4130,23 +4082,7 @@ function buildEventSink(config: RuntimeConfig): {
     // Workspace events (bundle lifecycle, bridge calls, audit) go to daily workspace log
     sinks.push(new WorkspaceLogSink({ dir: logDir, retentionDays }));
   }
-  const events: EventSink = sinks.length > 0 ? new MultiEventSink(sinks) : new NoopEventSink();
-  // No boot-time conversation event store: conversations are workspace-owned, so
-  // every chat/task turn routes engine events through its own per-call workspace
-  // store (the `isWorkspaceRequest` sink, always taken now). `this.eventStore`
-  // stays null; there is no flat top-level conversations dir.
-  return { events, eventStore: null };
-}
-
-function buildStore(config: RuntimeConfig): ConversationStore {
-  if (config.store?.type === "memory") return new InMemoryConversationStore();
-  if (config.store?.type === "jsonl") return new JsonlConversationStore(config.store.dir);
-  if (config.store?.type === "custom") return config.store.adapter;
-  // Default: conversations are workspace-owned (per-call workspace stores), so there is
-  // no flat top-level store. `this.store` is only the sentinel the chat path
-  // compares against (`store !== this.store` ⇒ use the per-call workspace store as
-  // the event sink), so an in-memory placeholder is correct and never written.
-  return new InMemoryConversationStore();
+  return sinks.length > 0 ? new MultiEventSink(sinks) : new NoopEventSink();
 }
 
 function buildSkills(config: RuntimeConfig): {

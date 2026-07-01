@@ -165,7 +165,6 @@ export function loadConfig(flags: CliFlags = {}): RuntimeConfig {
     model: fileConfig.model ?? { provider: "anthropic" },
     providers: fileConfig.providers as RuntimeConfig["providers"],
     allowInsecureRemotes: fileConfig.allowInsecureRemotes as boolean | undefined,
-    store: fileConfig.store,
     models: fileConfig.models as RuntimeConfig["models"],
     defaultModel: flags.model ?? fileConfig.defaultModel,
     maxIterations: fileConfig.maxIterations,
