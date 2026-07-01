@@ -3,8 +3,8 @@ import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useSta
 import { useChatConfigContext, useChatContext } from "../context/ChatContext";
 import type { ChatMessage } from "../hooks/useChat";
 import type { DisplayDetail } from "../lib/tool-display";
-import { Composer } from "./chat/Composer";
 import { KeyboardShortcutsModal } from "./KeyboardShortcutsModal";
+import { MessageInput } from "./MessageInput";
 import { MessageList } from "./MessageList";
 import { SkillsPopover } from "./SkillsPopover";
 
@@ -226,17 +226,12 @@ export const ChatPanel = forwardRef<ChatPanelRef, ChatPanelProps>(function ChatP
       />
 
       <div ref={inputWrapperRef} className={compact ? "px-4" : "max-w-4xl w-full mx-auto px-8"}>
-        <Composer
+        <MessageInput
           onSend={sendMessage}
           disabled={isStreaming}
           onNewConversation={handleNewChat}
           streamingState={streamingState}
           onStop={stop}
-          // Compact (popover/embedded) ChatPanel hides the footer —
-          // the breadcrumb strip is sized for the full chat surface,
-          // and stealing rows from the embedded composer made the
-          // tool-call view feel cramped in QA.
-          hideFooter={compact}
         />
       </div>
 
