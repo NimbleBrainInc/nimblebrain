@@ -3,8 +3,8 @@ import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useSta
 import { useChatConfigContext, useChatContext } from "../context/ChatContext";
 import type { ChatMessage } from "../hooks/useChat";
 import type { DisplayDetail } from "../lib/tool-display";
-import { Composer } from "./chat/Composer";
 import { KeyboardShortcutsModal } from "./KeyboardShortcutsModal";
+import { MessageInput } from "./MessageInput";
 import { MessageList } from "./MessageList";
 import { SkillsPopover } from "./SkillsPopover";
 
@@ -226,7 +226,7 @@ export const ChatPanel = forwardRef<ChatPanelRef, ChatPanelProps>(function ChatP
       />
 
       <div ref={inputWrapperRef} className={compact ? "px-4" : "max-w-4xl w-full mx-auto px-8"}>
-        <Composer
+        <MessageInput
           onSend={sendMessage}
           disabled={isStreaming}
           onNewConversation={handleNewChat}
