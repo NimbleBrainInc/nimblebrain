@@ -232,11 +232,6 @@ export const ChatPanel = forwardRef<ChatPanelRef, ChatPanelProps>(function ChatP
           onNewConversation={handleNewChat}
           streamingState={streamingState}
           onStop={stop}
-          // Compact (popover/embedded) ChatPanel hides the footer —
-          // the breadcrumb strip is sized for the full chat surface,
-          // and stealing rows from the embedded composer made the
-          // tool-call view feel cramped in QA.
-          hideFooter={compact}
         />
       </div>
 

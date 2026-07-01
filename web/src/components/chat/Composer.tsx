@@ -1,23 +1,13 @@
 // ---------------------------------------------------------------------------
-// Composer — Stage 2 / T013
+// Composer — thin wrapper around MessageInput.
 //
-// Thin wrapper around the existing MessageInput that mounts the new
-// ComposerFooter below the input. Created as a new file (rather than
-// modifying MessageInput in place) so the legacy ChatPanel + ChatDock
-// callers that don't want the footer can keep using `MessageInput`
-// directly; ChatPanel migrates to this wrapper.
-//
-// Why a wrapper and not inline-in-ChatPanel: the footer's
-// "viewing line" + "TOOLS FROM" line are a self-contained breadcrumb
-// surface with their own context dependencies (WorkspaceContext,
-// ToolWorkspacesContext, react-router). Bundling them with the
-// input here keeps the chrome predicable — a future "show the
-// composer somewhere else" caller gets the footer automatically.
+// Keeps the chat input as a named seam (own container + test id) so
+// ChatPanel and any future caller mount it uniformly, and a later
+// composer-level affordance (toolbar, breadcrumb) has one place to land.
 // ---------------------------------------------------------------------------
 
 import type { StreamingState } from "../../hooks/useChat";
 import { MessageInput } from "../MessageInput";
-import { ComposerFooter } from "./ComposerFooter";
 
 export interface ComposerProps {
   onSend: (text: string, files?: File[]) => void;
@@ -26,11 +16,6 @@ export interface ComposerProps {
   streamingState?: StreamingState;
   /** Stop the in-flight turn — wired to the Stop button in MessageInput. */
   onStop?: () => void;
-  /**
-   * Hide the footer (e.g. for embedded / popover compositions where
-   * vertical space is at a premium). Default: show.
-   */
-  hideFooter?: boolean;
 }
 
 export function Composer({
@@ -39,7 +24,6 @@ export function Composer({
   onNewConversation,
   streamingState,
   onStop,
-  hideFooter = false,
 }: ComposerProps) {
   return (
     <div className="flex flex-col" data-testid="composer">
@@ -50,7 +34,6 @@ export function Composer({
         streamingState={streamingState}
         onStop={onStop}
       />
-      {!hideFooter && <ComposerFooter />}
     </div>
   );
 }
