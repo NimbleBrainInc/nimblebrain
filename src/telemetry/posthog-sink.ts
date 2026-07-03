@@ -173,30 +173,5 @@ export class PostHogEventSink implements EventSink {
       });
       return;
     }
-
-    if (type === "bundle.crashed") {
-      this.telemetry.capture("bundle.crashed", {
-        source: detectSource(data),
-        uptime_ms: (data.uptimeMs as number) ?? 0,
-        restart_count: (data.restartCount as number) ?? 0,
-      });
-      return;
-    }
-
-    if (type === "bundle.recovered") {
-      this.telemetry.capture("bundle.recovered", {
-        source: detectSource(data),
-        downtime_ms: (data.downtimeMs as number) ?? 0,
-      });
-      return;
-    }
-
-    if (type === "bundle.dead") {
-      this.telemetry.capture("bundle.dead", {
-        source: detectSource(data),
-        restart_count: (data.restartCount as number) ?? 0,
-      });
-      return;
-    }
   }
 }

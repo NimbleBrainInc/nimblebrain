@@ -76,9 +76,6 @@ const SSE_ROUTES: Partial<Record<EngineEventType, SseRoute>> = {
   // event drops at the boundary below.
   "bundle.installed": { scope: "workspace", wsIdField: "wsId" },
   "bundle.uninstalled": { scope: "workspace", wsIdField: "wsId" },
-  "bundle.crashed": { scope: "workspace", wsIdField: "wsId" },
-  "bundle.recovered": { scope: "workspace", wsIdField: "wsId" },
-  "bundle.dead": { scope: "workspace", wsIdField: "wsId" },
   // Per-principal connection state — workspace-scoped. Drives the
   // pending-auth banner; without forwarding here, the banner never auto-clears
   // after a user completes interactive OAuth.

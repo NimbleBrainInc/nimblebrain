@@ -72,7 +72,7 @@ describe("SseEventManager event buffer", () => {
 		});
 
 		mgr.broadcast("data.changed", { source: "test" });
-		mgr.broadcast("bundle.crashed", { name: "bad" });
+		mgr.broadcast("bundle.installed", { name: "bad" });
 
 		expect(received).toHaveLength(2);
 		expect(received[0]).toEqual({
@@ -80,7 +80,7 @@ describe("SseEventManager event buffer", () => {
 			data: { source: "test" },
 		});
 		expect(received[1]).toEqual({
-			event: "bundle.crashed",
+			event: "bundle.installed",
 			data: { name: "bad" },
 		});
 	});

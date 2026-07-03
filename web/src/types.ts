@@ -119,23 +119,6 @@ export interface BundleUninstalledEvent {
   name: string;
 }
 
-export interface BundleCrashedEvent {
-  wsId: string;
-  name: string;
-  restartAttempt: number;
-}
-
-export interface BundleRecoveredEvent {
-  wsId: string;
-  name: string;
-}
-
-export interface BundleDeadEvent {
-  wsId: string;
-  name: string;
-  message: string;
-}
-
 export interface ConnectionStateChangedEvent {
   wsId: string;
   serverName: string;
@@ -174,9 +157,6 @@ export interface ConversationTitleEvent {
 export interface SseEventMap {
   "bundle.installed": BundleInstalledEvent;
   "bundle.uninstalled": BundleUninstalledEvent;
-  "bundle.crashed": BundleCrashedEvent;
-  "bundle.recovered": BundleRecoveredEvent;
-  "bundle.dead": BundleDeadEvent;
   "connection.state_changed": ConnectionStateChangedEvent;
   "data.changed": DataChangedEvent;
   "conversation.title": ConversationTitleEvent;

@@ -500,17 +500,17 @@ describe("SSE Event Manager", () => {
 			data: { runId: "test" },
 		});
 
-		// Emit a bundle.crashed event — SHOULD be forwarded
+		// Emit a bundle.installed event — SHOULD be forwarded
 		manager.emit({
-			type: "bundle.crashed",
+			type: "bundle.installed",
 			data: { wsId: "ws_test", serverName: "weather", bundleName: "@test/weather" },
 		});
 
 		const { value } = await reader.read();
 		const text = new TextDecoder().decode(value);
 
-		// Should only contain the bundle.crashed event
-		expect(text).toContain("event: bundle.crashed");
+		// Should only contain the bundle.installed event
+		expect(text).toContain("event: bundle.installed");
 		expect(text).not.toContain("run.start");
 
 		reader.cancel();

@@ -89,9 +89,6 @@ describe("WorkspaceLogSink", () => {
     const workspaceTypes = [
       "bundle.installed",
       "bundle.uninstalled",
-      "bundle.crashed",
-      "bundle.recovered",
-      "bundle.dead",
       "data.changed",
       "config.changed",
       "skill.created",
