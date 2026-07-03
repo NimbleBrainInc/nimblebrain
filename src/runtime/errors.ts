@@ -58,6 +58,27 @@ export class ConversationWorkspaceAccessDeniedError extends ConversationAccessDe
 }
 
 /**
+ * Thrown by `executeTask` when an automation fires but its owner is no longer a
+ * member of the automation's provenance workspace. An automation runs *as its
+ * owner*, walled to the workspace it was created in — so a removed owner must
+ * not keep acting in that workspace (the automations analog of the conversation
+ * resume gate). The stable `code` lets the automations scheduler recognize this
+ * outcome and record the run as **skipped** (not a failure — no consecutive-error
+ * count, no auto-disable) so the automation self-heals if the owner is re-added.
+ * Personal workspaces are sole-member by construction, so this never fires there.
+ */
+export class WorkspaceMembershipRevokedError extends Error {
+  readonly code = "workspace_membership_revoked";
+  constructor(
+    public readonly userId: string,
+    public readonly workspaceId: string,
+  ) {
+    super(`User ${userId} is no longer a member of workspace ${workspaceId}`);
+    this.name = "WorkspaceMembershipRevokedError";
+  }
+}
+
+/**
  * Thrown when a conversation file on disk fails the Stage 1 invariant
  * check at load time — specifically, a pre-migration file that lacks
  * `ownerId`. The store can't synthesize an owner safely and the chat

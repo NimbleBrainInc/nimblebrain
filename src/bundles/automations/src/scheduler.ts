@@ -486,19 +486,41 @@ export class Scheduler {
       this.activeRuns.delete(key);
       const isAbort = err instanceof DOMException && err.name === "AbortError";
       const errorMsg = err instanceof Error ? err.message : String(err);
-      const isTimeout = !isAbort && errorMsg.includes("timed out");
+      // Owner removed from the automation's provenance workspace: the runtime
+      // denied the run (`executeTask` throws `WorkspaceMembershipRevokedError`).
+      // Record it as SKIPPED, not a failure — it must not count toward
+      // consecutiveErrors or trip the auto-disable, so the automation self-heals
+      // the moment the owner is re-added. Matched by the error's stable `code`,
+      // which crosses the in-process runtime→bundle boundary intact.
+      const isMembershipRevoked =
+        !isAbort && (err as { code?: string })?.code === "workspace_membership_revoked";
+      const isTimeout = !isAbort && !isMembershipRevoked && errorMsg.includes("timed out");
+      const status: AutomationRun["status"] = isAbort
+        ? "cancelled"
+        : isMembershipRevoked
+          ? "skipped"
+          : isTimeout
+            ? "timeout"
+            : "failure";
+      const suffix = isAbort
+        ? "cancel"
+        : isMembershipRevoked
+          ? "skip"
+          : isTimeout
+            ? "timeout"
+            : "err";
       const failedRun: AutomationRun = {
-        id: `run_${Date.now()}_${isAbort ? "cancel" : isTimeout ? "timeout" : "err"}`,
+        id: `run_${Date.now()}_${suffix}`,
         automationId: auto.id,
         startedAt,
         completedAt: new Date().toISOString(),
-        status: isAbort ? "cancelled" : isTimeout ? "timeout" : "failure",
+        status,
         inputTokens: 0,
         outputTokens: 0,
         toolCalls: 0,
         iterations: 0,
         error: isAbort ? "Cancelled by user" : errorMsg,
-        transient: isAbort ? false : isTransientError(errorMsg),
+        transient: isAbort || isMembershipRevoked ? false : isTransientError(errorMsg),
       };
       this.updateAfterRun(auto, failedRun);
       return failedRun;
