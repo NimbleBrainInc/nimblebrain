@@ -95,7 +95,6 @@ describe("ChatConfigContext", () => {
 		expect(result.current.configuredProviders).toEqual([]);
 		expect(result.current.defaultModel).toBe("");
 		expect(typeof result.current.refreshConfig).toBe("function");
-		expect(result.current.participantMap).toBeInstanceOf(Map);
 	});
 
 	it("throws when used outside a ChatProvider", () => {

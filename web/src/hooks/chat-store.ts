@@ -842,6 +842,10 @@ export function createChatStore(): ChatStore {
       role: "user",
       content: params.text,
       timestamp: new Date().toISOString(),
+      // `userId` is intentional forward-compat plumbing (Stage 4 sharing), not
+      // dead code: it has no UI consumer today (single-owner → userId is always
+      // the current user, so the removed speaker labels never showed), but the
+      // per-message author id is round-tripped end to end. Keep it.
       ...(params.currentUserId ? { userId: params.currentUserId } : {}),
       ...(userFiles && userFiles.length > 0 ? { files: userFiles } : {}),
     };

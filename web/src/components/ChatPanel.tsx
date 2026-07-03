@@ -1,6 +1,6 @@
 import { ArrowLeft, Check, Keyboard, Maximize2, Minimize2, RotateCcw, X } from "lucide-react";
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useState } from "react";
-import { useChatConfigContext, useChatContext } from "../context/ChatContext";
+import { useChatContext } from "../context/ChatContext";
 import type { ChatMessage } from "../hooks/useChat";
 import type { DisplayDetail } from "../lib/tool-display";
 import { KeyboardShortcutsModal } from "./KeyboardShortcutsModal";
@@ -49,7 +49,6 @@ export const ChatPanel = forwardRef<ChatPanelRef, ChatPanelProps>(function ChatP
   const [showShortcuts, setShowShortcuts] = useState(false);
   const [copiedId, setCopiedId] = useState(false);
   const { conversationId, title, streamingState, preparingTool, stop } = useChatContext();
-  const { currentUserId, participantMap } = useChatConfigContext();
 
   // Prefer the server-generated title (updates live when it arrives); fall back
   // to the first user message, stripping markdown syntax, until then.
@@ -220,8 +219,6 @@ export const ChatPanel = forwardRef<ChatPanelRef, ChatPanelProps>(function ChatP
         preparingTool={preparingTool}
         displayDetail={displayDetail}
         compact={compact}
-        currentUserId={currentUserId}
-        participantMap={participantMap}
         onRetry={onRetry}
       />
 
