@@ -75,7 +75,7 @@ Remaining fields vary by event type — they are the event's payload, written in
 
 Only workspace-level events are written to this log; conversation streaming events (`text.delta`, `tool.start`, and the like) are not.
 
-**Bundle lifecycle** — `bundle.installed`, `bundle.uninstalled`, `bundle.upgraded`, `bundle.crashed`, `bundle.recovered`, `bundle.dead`. Track connectors entering, leaving, and changing health in the workspace.
+**Bundle lifecycle** — `bundle.installed`, `bundle.uninstalled`, `bundle.upgraded`. Track connectors entering, leaving, and upgrading in the workspace.
 
 ```json
 {"ts":"2026-03-25T14:30:00.123Z","event":"bundle.installed","wsId":"ws_product","serverName":"postgres","bundleName":"@nimblebraininc/postgres","version":"1.2.0","trustScore":92}
