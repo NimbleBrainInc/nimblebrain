@@ -103,9 +103,6 @@ describe("EngineEventType", () => {
 		const newEvents: EngineEventType[] = [
 			"bundle.installed",
 			"bundle.uninstalled",
-			"bundle.crashed",
-			"bundle.recovered",
-			"bundle.dead",
 			"data.changed",
 			"tool.progress",
 		];
@@ -114,7 +111,7 @@ describe("EngineEventType", () => {
 		for (const evt of newEvents) {
 			expect(typeof evt).toBe("string");
 		}
-		expect(newEvents).toHaveLength(7);
+		expect(newEvents).toHaveLength(4);
 	});
 
 	it("includes all original event types", () => {

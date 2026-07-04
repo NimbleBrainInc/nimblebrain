@@ -108,13 +108,13 @@ describe("SseEventManager — routing table", () => {
       data: { wsId: "ws_a", serverName: "ipinfo", bundleName: "@nb/ipinfo" },
     });
     mgr.emit({
-      type: "bundle.crashed",
+      type: "bundle.uninstalled",
       data: { wsId: "ws_b", serverName: "granola", bundleName: "https://x" },
     });
     await flush();
 
     expect(wsA.events).toEqual(["bundle.installed"]);
-    expect(wsB.events).toEqual(["bundle.crashed"]);
+    expect(wsB.events).toEqual(["bundle.uninstalled"]);
   });
 
   test("workspace-scoped event with missing wsId is dropped (no global fan-out)", async () => {

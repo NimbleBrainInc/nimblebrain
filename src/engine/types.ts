@@ -154,9 +154,6 @@ export type EngineEventType =
   | "bundle.installed"
   | "bundle.uninstalled"
   | "bundle.upgraded"
-  | "bundle.crashed"
-  | "bundle.recovered"
-  | "bundle.dead"
   /**
    * Per-principal connection state change for a remote URL bundle.
    * Payload: { wsId, serverName, principalId, state, authorizationUrl? }.

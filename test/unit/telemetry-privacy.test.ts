@@ -178,30 +178,6 @@ describe("Telemetry Privacy", () => {
           manifest: { name: "tasks" },
         },
       },
-      "bundle.crashed": {
-        telemetryEvent: "bundle.crashed",
-        allowed: new Set(["source", "uptime_ms", "restart_count", ...COMMON_KEYS]),
-        engineType: "bundle.crashed",
-        emitData: {
-          name: "@nimblebraininc/tasks",
-          path: "/Users/john/bundles/tasks",
-          uptimeMs: 5000,
-          restartCount: 2,
-          error: "Segmentation fault",
-          stderr: "Error: cannot read /Users/john/.config/secret",
-        },
-      },
-      "bundle.dead": {
-        telemetryEvent: "bundle.dead",
-        allowed: new Set(["source", "restart_count", ...COMMON_KEYS]),
-        engineType: "bundle.dead",
-        emitData: {
-          name: "@nimblebraininc/tasks",
-          path: "/Users/john/bundles/tasks",
-          restartCount: 5,
-          error: "Max restarts exceeded",
-        },
-      },
       "bundle.uninstalled": {
         telemetryEvent: "bundle.uninstalled",
         allowed: new Set(["source", ...COMMON_KEYS]),
@@ -210,16 +186,6 @@ describe("Telemetry Privacy", () => {
           name: "@nimblebraininc/tasks",
           path: "/Users/john/bundles/tasks",
           version: "1.2.3",
-        },
-      },
-      "bundle.recovered": {
-        telemetryEvent: "bundle.recovered",
-        allowed: new Set(["source", "downtime_ms", ...COMMON_KEYS]),
-        engineType: "bundle.recovered",
-        emitData: {
-          name: "@nimblebraininc/tasks",
-          path: "/Users/john/bundles/tasks",
-          downtimeMs: 1200,
         },
       },
     };
@@ -294,23 +260,6 @@ describe("Telemetry Privacy", () => {
         trustScore: 80,
       });
 
-      emit(sink, "bundle.crashed", {
-        name: "@nimblebraininc/tasks",
-        uptimeMs: 1000,
-        restartCount: 1,
-        stderr: "C:\\Users\\john\\AppData\\error.log",
-      });
-
-      emit(sink, "bundle.dead", {
-        name: "@nimblebraininc/tasks",
-        restartCount: 5,
-      });
-
-      emit(sink, "bundle.recovered", {
-        name: "@nimblebraininc/tasks",
-        downtimeMs: 500,
-      });
-
       emit(sink, "bundle.uninstalled", {
         name: "@nimblebraininc/tasks",
         path: "/Users/john/bundles",
@@ -380,20 +329,6 @@ describe("Telemetry Privacy", () => {
       }
     });
 
-    it("bundle.crashed does not contain bundle name", () => {
-      emit(sink, "bundle.crashed", {
-        name: "@nimblebraininc/tasks",
-        uptimeMs: 3000,
-        restartCount: 1,
-      });
-
-      const captured = lastCaptured(client);
-      expect(captured).toBeDefined();
-
-      for (const value of Object.values(captured.properties)) {
-        expect(String(value)).not.toContain("@nimblebraininc/tasks");
-      }
-    });
   });
 
   // -----------------------------------------------------------------------
@@ -469,9 +404,6 @@ describe("Telemetry Privacy", () => {
           { type: "run.done", data: { runId: "r1", stopReason: "complete", inputTokens: 100, outputTokens: 50 } },
           { type: "run.error", data: { runId: "r2", error: new Error("fail") } },
           { type: "bundle.installed", data: { name: "test", trustScore: 50 } },
-          { type: "bundle.crashed", data: { name: "test", uptimeMs: 100, restartCount: 1 } },
-          { type: "bundle.dead", data: { name: "test", restartCount: 3 } },
-          { type: "bundle.recovered", data: { name: "test", downtimeMs: 200 } },
           { type: "bundle.uninstalled", data: { name: "test" } },
         ];
 

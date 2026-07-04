@@ -577,7 +577,7 @@ Bundles can be installed per-workspace (tracked via `BundleInstance.wsId`). Each
 
 ### SSE Event Streams
 
-**Workspace-level** (`GET /v1/events`): Events: `bundle.installed`, `bundle.uninstalled`, `bundle.crashed`, `bundle.recovered`, `bundle.dead`, `data.changed`, `config.changed`, `skill.created`, `skill.updated`, `skill.deleted`, `file.created`, `file.deleted`, `bridge.tool.call`, `bridge.tool.done`, `heartbeat` (30s).
+**Workspace-level** (`GET /v1/events`): Events: `bundle.installed`, `bundle.uninstalled`, `data.changed`, `config.changed`, `skill.created`, `skill.updated`, `skill.deleted`, `file.created`, `file.deleted`, `bridge.tool.call`, `bridge.tool.done`, `heartbeat` (30s).
 
 **Per-conversation** (`GET /v1/conversations/:id/events`): For multi-participant chat. Security: `requireAuth` → `requireWorkspace` → `canAccess()`. Events: `user.message`, `text.delta`, `tool.start`, `tool.done`, `llm.done`, `done`, `heartbeat`. Sender excluded from own broadcast.
 
