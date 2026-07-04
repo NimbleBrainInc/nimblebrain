@@ -16,6 +16,7 @@ import { join } from "node:path";
 import { DEV_IDENTITY } from "../../../src/identity/providers/dev.ts";
 import { WorkspaceMembershipRevokedError } from "../../../src/runtime/errors.ts";
 import { Runtime } from "../../../src/runtime/runtime.ts";
+import { personalWorkspaceIdFor } from "../../../src/workspace/workspace-store.ts";
 import { createEchoModel } from "../../helpers/echo-model.ts";
 import { provisionTestWorkspace } from "../../helpers/test-workspace.ts";
 
@@ -67,7 +68,7 @@ describe("executeTask requires current membership of the automation's provenance
     const runtime = await startRuntime("personal");
     const personal = await runtime.executeTask({
       prompt: "personal task",
-      workspaceId: `ws_user_${OWNER}`,
+      workspaceId: personalWorkspaceIdFor(OWNER),
     });
     expect(personal.output).toBeDefined();
 

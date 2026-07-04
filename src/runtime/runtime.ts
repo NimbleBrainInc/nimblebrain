@@ -3031,6 +3031,18 @@ export class Runtime {
   }
 
   /**
+   * True if `ownerId` may currently act in `wsId`. Personal workspaces are
+   * sole-member by construction (always true); shared workspaces require current
+   * membership. The shared "is this owner still allowed in this workspace" check
+   * behind both the conversation-resume gate and the automation-run gate.
+   */
+  private async isOwnerWorkspaceMember(wsId: string, ownerId: string): Promise<boolean> {
+    if (wsId === personalWorkspaceIdFor(ownerId)) return true;
+    const ws = await this._workspaceStore.get(wsId);
+    return ws?.members.some((m) => m.userId === ownerId) ?? false;
+  }
+
+  /**
    * Resume authorization — the second gate, after ownership. A conversation is
    * sealed to its workspace (`convWsId`): on resume the session's tools, skills,
    * apps, and context all resolve there. So resuming as a non-member would hand
@@ -3044,18 +3056,6 @@ export class Runtime {
    * where the wall says the workspace must be membership-validated. Personal
    * workspaces are sole-member by construction, so they never gate.
    */
-  /**
-   * True if `ownerId` may currently act in `wsId`. Personal workspaces are
-   * sole-member by construction (always true); shared workspaces require current
-   * membership. The shared "is this owner still allowed in this workspace" check
-   * behind both the conversation-resume gate and the automation-run gate.
-   */
-  private async isOwnerWorkspaceMember(wsId: string, ownerId: string): Promise<boolean> {
-    if (wsId === personalWorkspaceIdFor(ownerId)) return true;
-    const ws = await this._workspaceStore.get(wsId);
-    return ws?.members.some((m) => m.userId === ownerId) ?? false;
-  }
-
   private async assertOwnerIsWorkspaceMember(
     conversationId: string,
     convWsId: string,
