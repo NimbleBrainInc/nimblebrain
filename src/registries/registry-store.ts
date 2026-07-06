@@ -320,47 +320,72 @@ function validateRegistryConfigs(raw: unknown[], source: string): RegistryConfig
   for (let i = 0; i < raw.length; i++) {
     const c = raw[i] as Partial<RegistryConfig> | undefined;
     const tag = `${source}[${i}${c?.id ? `:${c.id}` : ""}]`;
-    if (!c || typeof c !== "object") {
-      log.warn(`[registries] ${tag} dropped — not an object`);
-      continue;
-    }
-    if (typeof c.id !== "string" || c.id.length === 0) {
-      log.warn(`[registries] ${tag} dropped — id missing`);
-      continue;
-    }
-    if (seen.has(c.id)) {
-      log.warn(`[registries] ${tag} dropped — duplicate id`);
-      continue;
-    }
-    if (typeof c.name !== "string" || c.name.length === 0) {
-      log.warn(`[registries] ${tag} dropped — name missing`);
-      continue;
-    }
-    if (c.type !== "static" && c.type !== "mpak" && c.type !== "mcp" && c.type !== "custom-url") {
-      log.warn(`[registries] ${tag} dropped — type must be static|mpak|mcp|custom-url`);
-      continue;
-    }
-    let scopes: string[] | undefined;
-    if (c.scopes !== undefined) {
-      if (
-        !Array.isArray(c.scopes) ||
-        !c.scopes.every((s) => typeof s === "string" && s.length > 0)
-      ) {
-        log.warn(`[registries] ${tag} dropped — scopes must be an array of non-empty strings`);
-        continue;
-      }
-      scopes = c.scopes;
-    }
-    seen.add(c.id);
-    out.push({
-      id: c.id,
-      name: c.name,
-      type: c.type,
-      enabled: c.enabled !== false,
-      ...(typeof c.url === "string" ? { url: c.url } : {}),
-      ...(scopes ? { scopes } : {}),
-      ...(c.locked === true ? { locked: true } : {}),
-    });
+    const parsed = parseRegistryConfig(c, tag, seen);
+    if (parsed) out.push(parsed);
   }
   return out;
+}
+
+/** True when the value is one of the supported registry source types. */
+function isValidRegistryType(t: unknown): t is RegistryConfig["type"] {
+  return t === "static" || t === "mpak" || t === "mcp" || t === "custom-url";
+}
+
+/**
+ * Validate the optional `scopes` field. Returns the array when present
+ * and well-formed, `undefined` when the field is absent (valid), or
+ * `null` when malformed (logs the rejection under `tag`).
+ */
+function parseScopes(c: Partial<RegistryConfig>, tag: string): string[] | undefined | null {
+  if (c.scopes === undefined) return undefined;
+  if (!Array.isArray(c.scopes) || !c.scopes.every((s) => typeof s === "string" && s.length > 0)) {
+    log.warn(`[registries] ${tag} dropped — scopes must be an array of non-empty strings`);
+    return null;
+  }
+  return c.scopes;
+}
+
+/**
+ * Validate one raw entry into a `RegistryConfig`, or `null` when it's
+ * malformed (each rejection logged under `tag`). Registers the accepted
+ * id in `seen` so a later duplicate is dropped; the id is recorded only
+ * once every field check has passed, matching the reject-then-skip flow.
+ */
+function parseRegistryConfig(
+  c: Partial<RegistryConfig> | undefined,
+  tag: string,
+  seen: Set<string>,
+): RegistryConfig | null {
+  if (!c || typeof c !== "object") {
+    log.warn(`[registries] ${tag} dropped — not an object`);
+    return null;
+  }
+  if (typeof c.id !== "string" || c.id.length === 0) {
+    log.warn(`[registries] ${tag} dropped — id missing`);
+    return null;
+  }
+  if (seen.has(c.id)) {
+    log.warn(`[registries] ${tag} dropped — duplicate id`);
+    return null;
+  }
+  if (typeof c.name !== "string" || c.name.length === 0) {
+    log.warn(`[registries] ${tag} dropped — name missing`);
+    return null;
+  }
+  if (!isValidRegistryType(c.type)) {
+    log.warn(`[registries] ${tag} dropped — type must be static|mpak|mcp|custom-url`);
+    return null;
+  }
+  const scopes = parseScopes(c, tag);
+  if (scopes === null) return null;
+  seen.add(c.id);
+  return {
+    id: c.id,
+    name: c.name,
+    type: c.type,
+    enabled: c.enabled !== false,
+    ...(typeof c.url === "string" ? { url: c.url } : {}),
+    ...(scopes ? { scopes } : {}),
+    ...(c.locked === true ? { locked: true } : {}),
+  };
 }
