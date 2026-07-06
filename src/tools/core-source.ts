@@ -39,6 +39,225 @@ import { BriefingGenerator } from "../services/briefing-generator.ts";
 import { renderBriefingText } from "../services/briefing-render.ts";
 import type { BriefingOutput } from "../services/home-types.ts";
 
+// --- set_model_config helpers -------------------------------------------------
+// The handler is a linear validate → normalize → merge → write pipeline; each
+// stage is factored out so no single function carries the whole decision tree.
+// Validators return an error message (surfaced as an `isError` tool result) or
+// null when the field is absent or valid.
+
+const MODEL_SLOTS = ["default", "fast", "reasoning"];
+
+/** Org-admin gate. Dev mode (no identity provider) bypasses. */
+function checkModelConfigAccess(runtime: Runtime): string | null {
+  if (runtime.getIdentityProvider() === null) return null;
+  const identity = runtime.getCurrentIdentity();
+  if (!identity) {
+    return (
+      "set_model_config requires an authenticated identity. " +
+      "Calls without a request context (e.g. background jobs) cannot configure platform-wide model settings."
+    );
+  }
+  if (!ORG_ADMIN_ROLES.has(identity.orgRole)) {
+    return "Only org admins or owners can change model configuration. The model config affects every workspace.";
+  }
+  return null;
+}
+
+/**
+ * Normalize the `clear*` boolean sentinels into the canonical `null` the merge
+ * logic understands. Mutates `input` in place (each tool call owns its input).
+ * Returns an error message if mutually-exclusive fields were combined.
+ */
+function normalizeModelConfigClears(input: Record<string, unknown>): string | null {
+  if (input.clearThinking === true) {
+    if (input.thinking !== undefined && input.thinking !== null) {
+      return "Cannot set both `thinking` and `clearThinking`. Use one or the other.";
+    }
+    if (input.thinkingBudgetTokens !== undefined && input.thinkingBudgetTokens !== null) {
+      return (
+        "Cannot set `thinkingBudgetTokens` while clearing `thinking` — " +
+        "clearing the mode also clears the budget. Drop one or the other."
+      );
+    }
+    input.thinking = null;
+  }
+  if (input.clearThinkingBudget === true) {
+    if (input.thinkingBudgetTokens !== undefined && input.thinkingBudgetTokens !== null) {
+      return "Cannot set both `thinkingBudgetTokens` and `clearThinkingBudget`. Use one or the other.";
+    }
+    input.thinkingBudgetTokens = null;
+  }
+  return null;
+}
+
+/** Validate a positive-integer field. `max` omitted ⇒ "positive integer" wording. */
+function positiveIntFieldError(
+  value: unknown,
+  label: string,
+  min: number,
+  max?: number,
+): string | null {
+  if (value === undefined) return null;
+  const n = Number(value);
+  if (!Number.isInteger(n) || n < min || (max !== undefined && n > max)) {
+    return max !== undefined
+      ? `${label} must be an integer between ${min} and ${max}.`
+      : `${label} must be a positive integer.`;
+  }
+  return null;
+}
+
+function validateModelSlots(input: Record<string, unknown>, runtime: Runtime): string | null {
+  if (input.models !== undefined && typeof input.models === "object") {
+    for (const [slot, value] of Object.entries(input.models as Record<string, unknown>)) {
+      if (!MODEL_SLOTS.includes(slot)) {
+        return `Unknown model slot "${slot}". Valid slots: default, fast, reasoning.`;
+      }
+      if (!isModelAllowed(String(value), runtime.getProviderConfigs())) {
+        return `Invalid model "${String(value)}" for slot "${slot}". Either the provider is not configured or the model is not in the allowlist. Configured providers: ${runtime.getConfiguredProviders().join(", ")}`;
+      }
+    }
+  }
+  if (input.defaultModel !== undefined) {
+    const model = String(input.defaultModel);
+    if (!isModelAllowed(model, runtime.getProviderConfigs())) {
+      return `Invalid model "${model}". Either the provider is not configured or the model is not in the allowlist. Configured providers: ${runtime.getConfiguredProviders().join(", ")}`;
+    }
+  }
+  return null;
+}
+
+function validateModelConfigLimits(input: Record<string, unknown>): string | null {
+  return (
+    positiveIntFieldError(input.maxIterations, "maxIterations", 1, 50) ??
+    positiveIntFieldError(input.maxInputTokens, "maxInputTokens", 1) ??
+    positiveIntFieldError(input.maxOutputTokens, "maxOutputTokens", 1)
+  );
+}
+
+/**
+ * Cross-field rule: thinking="enabled" needs a budget, from this patch or the
+ * effective (seed+override) config — otherwise the Anthropic SDK silently
+ * downgrades to its 1,024-token minimum. A patch that clears the budget forces
+ * the effective read to null so the check mirrors the post-merge state.
+ */
+function validateThinkingEnabledBudget(
+  input: Record<string, unknown>,
+  runtime: Runtime,
+): string | null {
+  if (input.thinking !== "enabled") return null;
+  const clearingBudget = input.thinkingBudgetTokens === null;
+  const patchBudget =
+    !clearingBudget && input.thinkingBudgetTokens !== undefined
+      ? Number(input.thinkingBudgetTokens)
+      : undefined;
+  const effectiveBudget = clearingBudget
+    ? undefined
+    : runtime.getRuntimeConfig().thinkingBudgetTokens;
+  if (patchBudget == null && effectiveBudget == null) {
+    return (
+      'thinking="enabled" requires thinkingBudgetTokens (≥ 1024). ' +
+      "Provide a budget alongside enabled, or use adaptive instead."
+    );
+  }
+  return null;
+}
+
+function validateModelConfigThinking(
+  input: Record<string, unknown>,
+  runtime: Runtime,
+): string | null {
+  if (input.thinking !== undefined && input.thinking !== null) {
+    const v = String(input.thinking);
+    if (v !== "off" && v !== "adaptive" && v !== "enabled") {
+      return 'thinking must be "off", "adaptive", "enabled", or null (clear override).';
+    }
+  }
+  if (input.thinkingBudgetTokens !== undefined && input.thinkingBudgetTokens !== null) {
+    const n = Number(input.thinkingBudgetTokens);
+    if (!Number.isInteger(n) || n < 1024) {
+      return "thinkingBudgetTokens must be a positive integer ≥ 1024 (Anthropic minimum).";
+    }
+  }
+  return validateThinkingEnabledBudget(input, runtime);
+}
+
+/** All of set_model_config's input validation, in order. */
+function validateModelConfigPatch(
+  input: Record<string, unknown>,
+  runtime: Runtime,
+): string | null {
+  return (
+    validateModelSlots(input, runtime) ??
+    validateModelConfigLimits(input) ??
+    validateModelConfigThinking(input, runtime)
+  );
+}
+
+/** Merge the validated patch into the on-disk override object (mutates `existing`). */
+function mergeModelConfigOverride(
+  existing: Record<string, unknown>,
+  input: Record<string, unknown>,
+): void {
+  if (input.models !== undefined && typeof input.models === "object") {
+    if (!existing.models || typeof existing.models !== "object") existing.models = {};
+    const existingModels = existing.models as Record<string, unknown>;
+    for (const [slot, value] of Object.entries(input.models as Record<string, unknown>)) {
+      existingModels[slot] = String(value);
+    }
+  }
+  if (input.defaultModel !== undefined) existing.defaultModel = String(input.defaultModel);
+  if (input.maxIterations !== undefined) existing.maxIterations = Number(input.maxIterations);
+  if (input.maxInputTokens !== undefined) existing.maxInputTokens = Number(input.maxInputTokens);
+  if (input.maxOutputTokens !== undefined) existing.maxOutputTokens = Number(input.maxOutputTokens);
+  // null = clear the operator override; undefined = leave alone.
+  if (input.thinking === null) {
+    delete existing.thinking;
+    // Clearing the mode also clears the budget — a budget without a mode is meaningless.
+    delete existing.thinkingBudgetTokens;
+  } else if (input.thinking !== undefined) {
+    existing.thinking = String(input.thinking);
+  }
+  if (input.thinkingBudgetTokens === null) {
+    delete existing.thinkingBudgetTokens;
+  } else if (input.thinkingBudgetTokens !== undefined) {
+    existing.thinkingBudgetTokens = Number(input.thinkingBudgetTokens);
+  }
+}
+
+/** Build the live-runtime `updateConfig` patch from the validated input. */
+function buildModelConfigRuntimePatch(input: Record<string, unknown>): Record<string, unknown> {
+  const modelsPatch =
+    input.models !== undefined && typeof input.models === "object"
+      ? Object.fromEntries(
+          Object.entries(input.models as Record<string, unknown>).map(([k, v]) => [k, String(v)]),
+        )
+      : undefined;
+  const thinkingPatch =
+    input.thinking === undefined
+      ? {}
+      : input.thinking === null
+        ? { thinking: null, thinkingBudgetTokens: null }
+        : { thinking: String(input.thinking) as "off" | "adaptive" | "enabled" };
+  const budgetPatch =
+    input.thinkingBudgetTokens === undefined || input.thinking === null
+      ? {}
+      : input.thinkingBudgetTokens === null
+        ? { thinkingBudgetTokens: null }
+        : { thinkingBudgetTokens: Number(input.thinkingBudgetTokens) };
+  return {
+    ...(modelsPatch ? { models: modelsPatch } : {}),
+    ...(input.defaultModel !== undefined ? { defaultModel: String(input.defaultModel) } : {}),
+    ...(input.maxIterations !== undefined ? { maxIterations: Number(input.maxIterations) } : {}),
+    ...(input.maxInputTokens !== undefined ? { maxInputTokens: Number(input.maxInputTokens) } : {}),
+    ...(input.maxOutputTokens !== undefined
+      ? { maxOutputTokens: Number(input.maxOutputTokens) }
+      : {}),
+    ...thinkingPatch,
+    ...budgetPatch,
+  };
+}
+
 /**
  * Factory that creates core platform management tool definitions.
  * Each tool is a thin wrapper delegating to Runtime methods.
@@ -222,38 +441,11 @@ export function createCoreToolDefs(runtime: Runtime): InProcessTool[] {
       },
       handler: async (input): Promise<ToolResult> => {
         try {
-          // Org-admin gate: `set_model_config` writes to the platform-wide
-          // `nimblebrain.json` (instance-level config). The settings UI hides
-          // this tool behind an org_admin RouteGuard, but the backend is the
-          // security boundary — the tool itself enforces the role so any
-          // caller (agent, external MCP client) can't bypass the UI gate.
-          // Dev mode (no identity provider) bypasses, matching the rest of
-          // the platform's dev-mode convention.
-          //
-          // The two failure modes are distinguished so future debug logs
-          // make non-user code paths (cron, automations triggered without
-          // a request context) obvious — they fail with "no identity"
-          // rather than the misleading "wrong role" message.
-          if (runtime.getIdentityProvider() !== null) {
-            const identity = runtime.getCurrentIdentity();
-            if (!identity) {
-              return {
-                content: textContent(
-                  "set_model_config requires an authenticated identity. " +
-                    "Calls without a request context (e.g. background jobs) cannot configure platform-wide model settings.",
-                ),
-                isError: true,
-              };
-            }
-            if (!ORG_ADMIN_ROLES.has(identity.orgRole)) {
-              return {
-                content: textContent(
-                  "Only org admins or owners can change model configuration. The model config affects every workspace.",
-                ),
-                isError: true,
-              };
-            }
-          }
+          // Org-admin gate: `set_model_config` writes platform-wide config, so
+          // the tool (not just the UI) is the security boundary — any caller
+          // (agent, external MCP client) is role-checked here.
+          const accessError = checkModelConfigAccess(runtime);
+          if (accessError) return { content: textContent(accessError), isError: true };
 
           // Writes go to the override file, NOT the Helm-managed seed.
           // The init container overwrites the seed on every deploy, so any
@@ -269,145 +461,15 @@ export function createCoreToolDefs(runtime: Runtime): InProcessTool[] {
             };
           }
 
-          // Normalize the `clear*` booleans into the canonical null sentinel
-          // the merge logic below already understands. The schema previously
-          // expressed "revert to default" as `type: ["string","null"]` with
-          // a null in the enum — Gemini rejects enums on non-string types,
-          // breaking every tool call on Google-only tenants. Booleans are
-          // the LCD-clean way to expose the same semantic across providers.
-          //
-          // Note: this mutates the caller's `input` object so downstream
-          // branches read the normalized null. Safe today because each
-          // tool call has its own input. If we ever batch/replay tool
-          // calls, switch to a local copy.
-          if (input.clearThinking === true) {
-            if (input.thinking !== undefined && input.thinking !== null) {
-              return {
-                content: textContent(
-                  "Cannot set both `thinking` and `clearThinking`. Use one or the other.",
-                ),
-                isError: true,
-              };
-            }
-            // `clearThinking` clears BOTH thinking and the budget (a budget
-            // without a mode is meaningless). Setting `thinkingBudgetTokens`
-            // alongside `clearThinking` would produce an orphan budget on
-            // disk: the merge below deletes both fields when thinking is
-            // null, then re-sets the budget from the patch. Live runtime
-            // stays consistent (the handler's updateConfig call clears
-            // both) but disk diverges, surfacing at next restart. Reject
-            // the combination at the input boundary instead.
-            if (input.thinkingBudgetTokens !== undefined && input.thinkingBudgetTokens !== null) {
-              return {
-                content: textContent(
-                  "Cannot set `thinkingBudgetTokens` while clearing `thinking` — " +
-                    "clearing the mode also clears the budget. Drop one or the other.",
-                ),
-                isError: true,
-              };
-            }
-            input.thinking = null;
-          }
-          if (input.clearThinkingBudget === true) {
-            if (input.thinkingBudgetTokens !== undefined && input.thinkingBudgetTokens !== null) {
-              return {
-                content: textContent(
-                  "Cannot set both `thinkingBudgetTokens` and `clearThinkingBudget`. Use one or the other.",
-                ),
-                isError: true,
-              };
-            }
-            input.thinkingBudgetTokens = null;
-          }
+          // Normalize the `clear*` booleans into the canonical `null` sentinel
+          // the merge logic understands (booleans keep the schema string-typed,
+          // which Gemini requires). Mutates `input`; safe because each tool call
+          // owns its input.
+          const clearError = normalizeModelConfigClears(input);
+          if (clearError) return { content: textContent(clearError), isError: true };
 
-          // Validate inputs
-          if (input.models !== undefined && typeof input.models === "object") {
-            const modelsObj = input.models as Record<string, unknown>;
-            for (const [slot, value] of Object.entries(modelsObj)) {
-              if (!["default", "fast", "reasoning"].includes(slot)) {
-                return {
-                  content: textContent(
-                    `Unknown model slot "${slot}". Valid slots: default, fast, reasoning.`,
-                  ),
-                  isError: true,
-                };
-              }
-              const model = String(value);
-              if (!isModelAllowed(model, runtime.getProviderConfigs())) {
-                const providers = runtime.getConfiguredProviders();
-                return {
-                  content: textContent(
-                    `Invalid model "${model}" for slot "${slot}". Either the provider is not configured or the model is not in the allowlist. Configured providers: ${providers.join(", ")}`,
-                  ),
-                  isError: true,
-                };
-              }
-            }
-          }
-          if (input.defaultModel !== undefined) {
-            const model = String(input.defaultModel);
-            if (!isModelAllowed(model, runtime.getProviderConfigs())) {
-              const providers = runtime.getConfiguredProviders();
-              return {
-                content: textContent(
-                  `Invalid model "${model}". Either the provider is not configured or the model is not in the allowlist. Configured providers: ${providers.join(", ")}`,
-                ),
-                isError: true,
-              };
-            }
-          }
-          if (input.maxIterations !== undefined) {
-            const n = Number(input.maxIterations);
-            if (!Number.isInteger(n) || n < 1 || n > 50) {
-              return {
-                content: textContent("maxIterations must be an integer between 1 and 50."),
-                isError: true,
-              };
-            }
-          }
-          if (input.maxInputTokens !== undefined) {
-            const n = Number(input.maxInputTokens);
-            if (!Number.isInteger(n) || n < 1) {
-              return {
-                content: textContent("maxInputTokens must be a positive integer."),
-                isError: true,
-              };
-            }
-          }
-          if (input.maxOutputTokens !== undefined) {
-            const n = Number(input.maxOutputTokens);
-            if (!Number.isInteger(n) || n < 1) {
-              return {
-                content: textContent("maxOutputTokens must be a positive integer."),
-                isError: true,
-              };
-            }
-          }
-          // `null` is the explicit "clear my override" sentinel — distinct
-          // from `undefined` (skip this field). Validate string values
-          // against the enum; pass through nulls unchanged.
-          if (input.thinking !== undefined && input.thinking !== null) {
-            const v = String(input.thinking);
-            if (v !== "off" && v !== "adaptive" && v !== "enabled") {
-              return {
-                content: textContent(
-                  'thinking must be "off", "adaptive", "enabled", or null (clear override).',
-                ),
-                isError: true,
-              };
-            }
-          }
-          if (input.thinkingBudgetTokens !== undefined && input.thinkingBudgetTokens !== null) {
-            const n = Number(input.thinkingBudgetTokens);
-            if (!Number.isInteger(n) || n < 1024) {
-              return {
-                content: textContent(
-                  "thinkingBudgetTokens must be a positive integer ≥ 1024 (Anthropic minimum).",
-                ),
-                isError: true,
-              };
-            }
-          }
+          const validationError = validateModelConfigPatch(input, runtime);
+          if (validationError) return { content: textContent(validationError), isError: true };
 
           // Read current override file (the one we'll patch and write back).
           // The seed file is read separately by the runtime loader; we only
@@ -421,115 +483,15 @@ export function createCoreToolDefs(runtime: Runtime): InProcessTool[] {
             // start with empty overrides.
           }
 
-          // Cross-field validation: thinking="enabled" requires a budget,
-          // either from this patch or already in the *effective* config
-          // (seed + overrides). Without one, the Anthropic SDK silently
-          // downgrades to its 1,024-token minimum — almost certainly not
-          // the operator's intent. Force the explicit choice.
-          //
-          // Edge case: when the patch is *clearing* the budget
-          // (thinkingBudgetTokens=null), the merge below deletes the
-          // override-side budget. After clear, the effective budget falls
-          // back to the seed's budget (if any). The validator must mirror
-          // that — read the merged effective state from the runtime, not
-          // just the override file.
-          if (input.thinking === "enabled") {
-            const clearingBudget = input.thinkingBudgetTokens === null;
-            const patchBudget =
-              !clearingBudget && input.thinkingBudgetTokens !== undefined
-                ? Number(input.thinkingBudgetTokens)
-                : undefined;
-            const effectiveBudget = clearingBudget
-              ? undefined
-              : runtime.getRuntimeConfig().thinkingBudgetTokens;
-            if (patchBudget == null && effectiveBudget == null) {
-              return {
-                content: textContent(
-                  'thinking="enabled" requires thinkingBudgetTokens (≥ 1024). ' +
-                    "Provide a budget alongside enabled, or use adaptive instead.",
-                ),
-                isError: true,
-              };
-            }
-          }
+          mergeModelConfigOverride(existing, input);
 
-          // Merge only allowed fields
-          if (input.models !== undefined && typeof input.models === "object") {
-            const modelsObj = input.models as Record<string, unknown>;
-            if (!existing.models || typeof existing.models !== "object") {
-              existing.models = {};
-            }
-            const existingModels = existing.models as Record<string, unknown>;
-            for (const [slot, value] of Object.entries(modelsObj)) {
-              existingModels[slot] = String(value);
-            }
-          }
-          if (input.defaultModel !== undefined) existing.defaultModel = String(input.defaultModel);
-          if (input.maxIterations !== undefined)
-            existing.maxIterations = Number(input.maxIterations);
-          if (input.maxInputTokens !== undefined)
-            existing.maxInputTokens = Number(input.maxInputTokens);
-          if (input.maxOutputTokens !== undefined)
-            existing.maxOutputTokens = Number(input.maxOutputTokens);
-          // null = clear the operator override; undefined = leave alone.
-          if (input.thinking === null) {
-            delete existing.thinking;
-            // Clearing the mode also clears the budget — a budget without
-            // a mode is meaningless and would otherwise hang around.
-            delete existing.thinkingBudgetTokens;
-          } else if (input.thinking !== undefined) {
-            existing.thinking = String(input.thinking);
-          }
-          if (input.thinkingBudgetTokens === null) {
-            delete existing.thinkingBudgetTokens;
-          } else if (input.thinkingBudgetTokens !== undefined) {
-            existing.thinkingBudgetTokens = Number(input.thinkingBudgetTokens);
-          }
           // Atomic write of the override file: write to temp file, then rename.
           const tmpPath = `${configOverridePath}.tmp.${Date.now()}`;
           await writeFile(tmpPath, `${JSON.stringify(existing, null, 2)}\n`, "utf-8");
           await rename(tmpPath, configOverridePath);
 
-          // Apply changes to live runtime config
-          const modelsPatch =
-            input.models !== undefined && typeof input.models === "object"
-              ? Object.fromEntries(
-                  Object.entries(input.models as Record<string, unknown>).map(([k, v]) => [
-                    k,
-                    String(v),
-                  ]),
-                )
-              : undefined;
-          runtime.updateConfig({
-            ...(modelsPatch ? { models: modelsPatch } : {}),
-            ...(input.defaultModel !== undefined
-              ? { defaultModel: String(input.defaultModel) }
-              : {}),
-            ...(input.maxIterations !== undefined
-              ? { maxIterations: Number(input.maxIterations) }
-              : {}),
-            ...(input.maxInputTokens !== undefined
-              ? { maxInputTokens: Number(input.maxInputTokens) }
-              : {}),
-            ...(input.maxOutputTokens !== undefined
-              ? { maxOutputTokens: Number(input.maxOutputTokens) }
-              : {}),
-            // `null` is the clear-override sentinel. It propagates to
-            // updateConfig as null so the live runtime drops the field
-            // alongside the disk write.
-            ...(input.thinking !== undefined
-              ? input.thinking === null
-                ? { thinking: null, thinkingBudgetTokens: null }
-                : {
-                    thinking: String(input.thinking) as "off" | "adaptive" | "enabled",
-                  }
-              : {}),
-            ...(input.thinkingBudgetTokens !== undefined && input.thinking !== null
-              ? input.thinkingBudgetTokens === null
-                ? { thinkingBudgetTokens: null }
-                : { thinkingBudgetTokens: Number(input.thinkingBudgetTokens) }
-              : {}),
-          });
+          // Apply the same patch to the live runtime config.
+          runtime.updateConfig(buildModelConfigRuntimePatch(input));
 
           // Emit config.changed event
           const eventSink = runtime.getEventSink();
