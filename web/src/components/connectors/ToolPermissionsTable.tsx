@@ -6,6 +6,11 @@ import {
   type ToolPolicy,
 } from "../../api/client";
 
+/** Human-readable message for a thrown value, whether or not it is an Error. */
+function errorMessage(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
+}
+
 /**
  * Per-tool permission table for an installed connector. Reads every
  * tool the connector exposes (live `tools/list`) and pairs each with
@@ -36,19 +41,18 @@ export function ToolPermissionsTable({ serverName }: { serverName: string }) {
       try {
         setLoading(true);
         setError(null);
-        // Single combined call replaces the previous two-call shape
-        // (list_tools + get_permissions). Server-side runs the two
-        // reads in parallel; this halves the page-load REST traffic
-        // for the table.
+        // One combined call fetches tools and permissions together; the
+        // server runs the two reads in parallel, halving the table's
+        // page-load REST traffic.
         const res = await listConnectorToolsWithPermissions(serverName, "workspace");
         if (cancelled) return;
         setTools(res.tools);
         setPolicies(res.permissions);
+        setLoading(false);
       } catch (err) {
         if (cancelled) return;
-        setError(err instanceof Error ? err.message : String(err));
-      } finally {
-        if (!cancelled) setLoading(false);
+        setError(errorMessage(err));
+        setLoading(false);
       }
     })();
     return () => {
@@ -68,7 +72,7 @@ export function ToolPermissionsTable({ serverName }: { serverName: string }) {
       await setConnectorPermissions(serverName, "workspace", { [toolName]: next });
     } catch (err) {
       setPolicies((p) => ({ ...p, [toolName]: prev }));
-      setError(err instanceof Error ? err.message : String(err));
+      setError(errorMessage(err));
     } finally {
       setSavingTool(null);
     }
@@ -84,7 +88,7 @@ export function ToolPermissionsTable({ serverName }: { serverName: string }) {
       await setConnectorPermissions(serverName, "workspace", all);
     } catch (err) {
       setPolicies(prev);
-      setError(err instanceof Error ? err.message : String(err));
+      setError(errorMessage(err));
     }
   };
 
@@ -128,50 +132,78 @@ export function ToolPermissionsTable({ serverName }: { serverName: string }) {
   // bundles (rare). After load, only render with content.
   if (!loading && !error && tools.length === 0) return null;
 
+  if (loading) {
+    return (
+      <section className="space-y-3">
+        {header}
+        <p className="text-sm text-muted-foreground">Loading tools…</p>
+      </section>
+    );
+  }
+
+  if (error) {
+    return (
+      <section className="space-y-3">
+        {header}
+        <p className="text-sm text-destructive">Failed to load tools: {error}</p>
+      </section>
+    );
+  }
+
   return (
     <section className="space-y-3">
       {header}
-      {loading ? (
-        <p className="text-sm text-muted-foreground">Loading tools…</p>
-      ) : error ? (
-        <p className="text-sm text-destructive">Failed to load tools: {error}</p>
-      ) : (
-        <ul className="border-t border-border/60">
-          {tools.map((tool) => {
-            const policy = policyFor(tool.name);
-            const summary = summarizeToolDescription(tool.description);
-            return (
-              <li
-                key={tool.name}
-                className="flex items-center justify-between gap-4 py-2.5 border-b border-border/60"
-              >
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-center gap-2">
-                    <span className="text-sm font-mono">{tool.name}</span>
-                    {savingTool === tool.name && (
-                      <span className="text-3xs text-muted-foreground">saving…</span>
-                    )}
-                  </div>
-                  {summary && (
-                    <p
-                      className="text-xs text-muted-foreground mt-0.5 truncate"
-                      title={tool.description}
-                    >
-                      {summary}
-                    </p>
-                  )}
-                </div>
-                <PolicyToggle
-                  policy={policy}
-                  onAllow={() => updatePolicy(tool.name, "allow")}
-                  onDisallow={() => updatePolicy(tool.name, "disallow")}
-                />
-              </li>
-            );
-          })}
-        </ul>
-      )}
+      <ul className="border-t border-border/60">
+        {tools.map((tool) => (
+          <ToolPermissionRow
+            key={tool.name}
+            tool={tool}
+            policy={policyFor(tool.name)}
+            saving={savingTool === tool.name}
+            onSetPolicy={updatePolicy}
+          />
+        ))}
+      </ul>
     </section>
+  );
+}
+
+/**
+ * One tool row: name, transient saving hint, a one-line summary, and the
+ * Allow/Disallow toggle. Lives at module scope so its per-row conditionals
+ * stay out of the table component's complexity budget.
+ */
+function ToolPermissionRow({
+  tool,
+  policy,
+  saving,
+  onSetPolicy,
+}: {
+  tool: ConnectorTool;
+  policy: ToolPolicy;
+  saving: boolean;
+  onSetPolicy: (toolName: string, next: ToolPolicy) => void;
+}) {
+  const summary = summarizeToolDescription(tool.description);
+  return (
+    <li className="flex items-center justify-between gap-4 py-2.5 border-b border-border/60">
+      <div className="flex-1 min-w-0">
+        <div className="flex items-center gap-2">
+          <span className="text-sm font-mono">{tool.name}</span>
+          {saving && <span className="text-3xs text-muted-foreground">saving…</span>}
+        </div>
+        {summary && (
+          <p className="text-xs text-muted-foreground mt-0.5 truncate" title={tool.description}>
+            {summary}
+          </p>
+        )}
+      </div>
+      <PolicyToggle
+        policy={policy}
+        onAllow={() => onSetPolicy(tool.name, "allow")}
+        onDisallow={() => onSetPolicy(tool.name, "disallow")}
+      />
+    </li>
   );
 }
 
