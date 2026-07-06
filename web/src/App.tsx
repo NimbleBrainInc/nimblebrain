@@ -538,33 +538,37 @@ function ActionBridge({
   resolveRef.current = resolveAppRoute;
 
   useEffect(() => {
+    // Dispatch table keyed by action name. Each handler reads current state
+    // through the refs, so the listener registers once and unknown actions
+    // no-op. Params carry the event detail (id, prompt, name, route).
+    const actions: Record<string, (params: Record<string, unknown>) => void> = {
+      openConversation(params) {
+        if (params.id) chatPanelRef.current.openPanel(params.id as string);
+      },
+      startChat(params) {
+        chatPanelRef.current.openPanel();
+        const prompt = params.prompt as string | undefined;
+        if (prompt) chatRef.current.sendMessage(prompt);
+      },
+      openApp(params) {
+        const name = params.name as string | undefined;
+        if (!name) return;
+        const route = resolveRef.current(name);
+        if (route) navigateRef.current(route);
+      },
+      navigate(params) {
+        if (params.route) navigateRef.current(params.route as string);
+      },
+    };
+
     const handler = (e: Event) => {
       const detail = (e as CustomEvent).detail;
       if (!detail?.action) return;
-
+      // Own-key guard so an inherited name (constructor/__proto__) on the event
+      // detail can't resolve to an Object.prototype member; unknown actions no-op.
       const action = detail.action as string;
-      const params = detail as Record<string, unknown>;
-
-      switch (action) {
-        case "openConversation":
-          if (params.id) chatPanelRef.current.openPanel(params.id as string);
-          break;
-        case "startChat": {
-          chatPanelRef.current.openPanel();
-          const prompt = params.prompt as string | undefined;
-          if (prompt) chatRef.current.sendMessage(prompt);
-          break;
-        }
-        case "openApp": {
-          const name = params.name as string | undefined;
-          if (!name) break;
-          const route = resolveRef.current(name);
-          if (route) navigateRef.current(route);
-          break;
-        }
-        case "navigate":
-          if (params.route) navigateRef.current(params.route as string);
-          break;
+      if (Object.prototype.hasOwnProperty.call(actions, action)) {
+        actions[action]?.(detail as Record<string, unknown>);
       }
     };
 

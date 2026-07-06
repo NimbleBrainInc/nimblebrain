@@ -2518,30 +2518,8 @@ export class Runtime {
     const skills: DiscoveredSkill[] = [];
     const { resources, ok } = await unwrapped.listResources();
     for (const resource of resources) {
-      if (!isSkillEntrypointUri(resource.uri)) continue;
-      let text: string | undefined;
-      try {
-        text = (await unwrapped.readResource(resource.uri))?.text;
-      } catch {
-        // A single unreadable skill resource must not sink the whole discovery.
-        continue;
-      }
-      if (!text) continue;
-      const parsed = parseSkillMarkdown(resource.uri, text);
-      // Token budget: cap the body (heading-aware, so a trailing "rules"
-      // section isn't sliced mid-rule — a production tool-selection failure).
-      const capped = truncateMarkdownToBudget(parsed.body, MAX_SKILL_BODY_CHARS);
-      if (capped.truncated) {
-        log.warn(
-          `[skill] server skill truncated to ${MAX_SKILL_BODY_CHARS} chars (${capped.sectionsOmitted} section(s) omitted) — ${resource.uri}`,
-        );
-      }
-      skills.push({
-        uri: resource.uri,
-        name: parsed.name,
-        description: parsed.description,
-        body: capped.body,
-      });
+      const skill = await this.readSkillResource(unwrapped, resource.uri);
+      if (skill) skills.push(skill);
     }
     // Cache only a COMPLETE enumeration: a transport error mid-`resources/list`
     // (`ok: false`) leaves a partial result, and pinning it empty for the 5-minute
@@ -2550,6 +2528,37 @@ export class Runtime {
       this.skillResourceCache.set(serverName, { skills, fetchedAt: Date.now() });
     }
     return skills;
+  }
+
+  /** Read one skill entrypoint resource into a parsed, budget-capped `DiscoveredSkill`, or `undefined` when the URI isn't a skill entrypoint or the resource is unreadable/empty. */
+  private async readSkillResource(
+    source: McpSource,
+    uri: string,
+  ): Promise<DiscoveredSkill | undefined> {
+    if (!isSkillEntrypointUri(uri)) return undefined;
+    let text: string | undefined;
+    try {
+      text = (await source.readResource(uri))?.text;
+    } catch {
+      // A single unreadable skill resource must not sink the whole discovery.
+      return undefined;
+    }
+    if (!text) return undefined;
+    const parsed = parseSkillMarkdown(uri, text);
+    // Token budget: cap the body (heading-aware, so a trailing "rules"
+    // section isn't sliced mid-rule — a production tool-selection failure).
+    const capped = truncateMarkdownToBudget(parsed.body, MAX_SKILL_BODY_CHARS);
+    if (capped.truncated) {
+      log.warn(
+        `[skill] server skill truncated to ${MAX_SKILL_BODY_CHARS} chars (${capped.sectionsOmitted} section(s) omitted) — ${uri}`,
+      );
+    }
+    return {
+      uri,
+      name: parsed.name,
+      description: parsed.description,
+      body: capped.body,
+    };
   }
 
   /** Check if an MCP source exposes a specific resource URI. */

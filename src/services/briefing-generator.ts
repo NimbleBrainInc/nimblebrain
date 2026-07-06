@@ -145,6 +145,12 @@ function shortCallProviderOptions(modelString: string | null): SharedV3ProviderO
   }
 }
 
+/** Parsed briefing payload as returned by JSON.parse, before caller-side shape validation. */
+type BriefingResult = { lede: string; sections: BriefingSection[] };
+
+/** Mutable state threaded through the truncation-repair character scan. */
+type ScanState = { opens: string[]; inString: boolean; escaped: boolean };
+
 export class BriefingGenerator {
   constructor(
     private model: LanguageModelV3,
@@ -355,56 +361,26 @@ export class BriefingGenerator {
     return userPayload;
   }
 
-  private parseJson(
-    text: string,
-    truncated = false,
-  ): { lede: string; sections: BriefingSection[] } | null {
-    // Extract JSON from the response, stripping any markdown fences or surrounding text.
-    const fenceMatch = text.match(/```(?:json)?\s*\n?([\s\S]*?)```/);
-    let jsonStr: string;
-    if (fenceMatch) {
-      jsonStr = (fenceMatch[1] ?? "").trim();
-    } else {
-      // Strip opening fence if present but unclosed (truncated response)
-      const openFence = text.match(/^```(?:json)?\s*\n?/);
-      jsonStr = openFence ? text.slice(openFence[0].length).trim() : text.trim();
-    }
+  private parseJson(text: string, truncated = false): BriefingResult | null {
+    const jsonStr = this.stripJsonFences(text);
 
-    // Attempt 1: parse as-is
-    try {
-      return JSON.parse(jsonStr);
-    } catch {
-      // continue to fallbacks
-    }
+    // Attempt 1: parse as-is.
+    const asIs = this.safeParse(jsonStr);
+    if (asIs !== undefined) return asIs;
 
-    // Attempt 1b: strip trailing commas (common LLM JSON error) and retry
+    // Attempt 1b: strip trailing commas (a common LLM JSON error) and retry.
     const cleaned = jsonStr.replace(/,\s*([}\]])/g, "$1");
     if (cleaned !== jsonStr) {
-      try {
-        return JSON.parse(cleaned);
-      } catch {
-        // continue to fallbacks
-      }
+      const reparsed = this.safeParse(cleaned);
+      if (reparsed !== undefined) return reparsed;
     }
 
-    // Attempt 2: extract the outermost complete JSON object
+    // Attempt 2: extract the outermost complete JSON object.
     const braceStart = jsonStr.indexOf("{");
-    const braceEnd = jsonStr.lastIndexOf("}");
-    if (braceStart !== -1 && braceEnd > braceStart) {
-      const extracted = jsonStr.slice(braceStart, braceEnd + 1);
-      try {
-        return JSON.parse(extracted);
-      } catch {
-        // try with trailing comma cleanup
-        try {
-          return JSON.parse(extracted.replace(/,\s*([}\]])/g, "$1"));
-        } catch {
-          // continue to repair
-        }
-      }
-    }
+    const extracted = this.parseExtractedObject(jsonStr, braceStart);
+    if (extracted !== undefined) return extracted;
 
-    // Attempt 3: repair truncated JSON — close open structures
+    // Attempt 3: repair truncated JSON — close open structures.
     if (truncated && braceStart !== -1) {
       const repaired = this.repairTruncatedJson(jsonStr.slice(braceStart));
       if (repaired) return repaired;
@@ -413,46 +389,48 @@ export class BriefingGenerator {
     return null;
   }
 
+  /** Strip markdown fences (closed, or a truncated-open leading fence) from an LLM JSON response. */
+  private stripJsonFences(text: string): string {
+    const fenceMatch = text.match(/```(?:json)?\s*\n?([\s\S]*?)```/);
+    if (fenceMatch) return (fenceMatch[1] ?? "").trim();
+    const openFence = text.match(/^```(?:json)?\s*\n?/);
+    return openFence ? text.slice(openFence[0].length).trim() : text.trim();
+  }
+
+  /** JSON.parse that yields undefined (never a valid JSON value) instead of throwing. */
+  private safeParse(str: string): BriefingResult | undefined {
+    try {
+      return JSON.parse(str) as BriefingResult;
+    } catch {
+      return undefined;
+    }
+  }
+
+  /** Attempt 2: parse the substring between the first `{` and last `}`, with a trailing-comma retry. */
+  private parseExtractedObject(jsonStr: string, braceStart: number): BriefingResult | undefined {
+    const braceEnd = jsonStr.lastIndexOf("}");
+    if (braceStart === -1 || braceEnd <= braceStart) return undefined;
+    const extracted = jsonStr.slice(braceStart, braceEnd + 1);
+    const direct = this.safeParse(extracted);
+    if (direct !== undefined) return direct;
+    return this.safeParse(extracted.replace(/,\s*([}\]])/g, "$1"));
+  }
+
   /**
    * Attempt to repair truncated JSON by trimming to the last complete value
    * boundary, then closing remaining open structures.
    * Only called when we know the response was cut short (finishReason: "length").
    */
-  private repairTruncatedJson(json: string): { lede: string; sections: BriefingSection[] } | null {
+  private repairTruncatedJson(json: string): BriefingResult | null {
     // Trim back to the last `}` or `]` — this drops any partially written
-    // object/array entry and leaves us at a clean structural boundary.
+    // object/array entry and leaves us at a clean structural boundary, then
+    // strips any trailing comma after that last complete value.
     const lastBrace = Math.max(json.lastIndexOf("}"), json.lastIndexOf("]"));
     if (lastBrace === -1) return null;
-    let trimmed = json.slice(0, lastBrace + 1);
+    const trimmed = json.slice(0, lastBrace + 1).replace(/,\s*$/, "");
 
-    // Strip any trailing comma after the last complete value
-    trimmed = trimmed.replace(/,\s*$/, "");
-
-    // Count open/close brackets and braces to determine what to append
-    const opens: string[] = [];
-    let inString = false;
-    let escaped = false;
-    for (const ch of trimmed) {
-      if (escaped) {
-        escaped = false;
-        continue;
-      }
-      if (ch === "\\") {
-        escaped = true;
-        continue;
-      }
-      if (ch === '"') {
-        inString = !inString;
-        continue;
-      }
-      if (inString) continue;
-      if (ch === "{") opens.push("}");
-      else if (ch === "[") opens.push("]");
-      else if (ch === "}" || ch === "]") opens.pop();
-    }
-
-    // Close remaining structures in reverse order
-    const closed = trimmed + opens.reverse().join("");
+    // Close remaining open structures in reverse order.
+    const closed = trimmed + this.unclosedBrackets(trimmed).reverse().join("");
     try {
       const parsed = JSON.parse(closed);
       if (typeof parsed.lede === "string" && Array.isArray(parsed.sections)) {
@@ -462,6 +440,33 @@ export class BriefingGenerator {
       // repair failed
     }
     return null;
+  }
+
+  /** Collect the still-open bracket/brace closers in `text`, outermost last. */
+  private unclosedBrackets(text: string): string[] {
+    const state: ScanState = { opens: [], inString: false, escaped: false };
+    for (const ch of text) this.scanChar(state, ch);
+    return state.opens;
+  }
+
+  /** Fold one character into the truncation-repair bracket-scan state. */
+  private scanChar(state: ScanState, ch: string): void {
+    if (state.escaped) {
+      state.escaped = false;
+      return;
+    }
+    if (ch === "\\") {
+      state.escaped = true;
+      return;
+    }
+    if (ch === '"') {
+      state.inString = !state.inString;
+      return;
+    }
+    if (state.inString) return;
+    if (ch === "{") state.opens.push("}");
+    else if (ch === "[") state.opens.push("]");
+    else if (ch === "}" || ch === "]") state.opens.pop();
   }
 
   private deriveState(sections: BriefingSection[]): BriefingState {

@@ -1,5 +1,5 @@
 import { extractText, REHYDRATE_TRUNCATED_SUFFIX } from "./extract.ts";
-import type { FileStore } from "./store.ts";
+import type { FileStore, SaveFileResult } from "./store.ts";
 import type { ContentPart, FileConfig, FileEntry, FileReference, IngestResult } from "./types.ts";
 import { fileIdToUri } from "./uri.ts";
 
@@ -109,6 +109,133 @@ function humanSize(bytes: number): string {
   return `${(bytes / 1_048_576).toFixed(1)} MB`;
 }
 
+/** Per-file ingest outcome: content parts, an optional registry reference, and an optional validation error. */
+interface FileIngest {
+  parts: ContentPart[];
+  ref?: FileReference;
+  error?: string;
+}
+
+/** Extract a text content part for extractable files, or persist a PDF's text sidecar; returns whether a text part was produced. */
+async function extractInto(
+  file: UploadedFile,
+  saved: SaveFileResult,
+  store: FileStore,
+  config: FileConfig,
+  parts: ContentPart[],
+): Promise<boolean> {
+  if (isExtractable(file.mimeType)) {
+    const result = await extractText(file.data, file.mimeType, config.maxExtractedTextSize);
+    if (!result) return false;
+    parts.push({
+      type: "text",
+      text: `--- Attached: ${file.filename} (${saved.id}, ${humanSize(saved.size)}) ---\n${result.text}`,
+    });
+    return true;
+  }
+  if (isPdf(file.mimeType)) {
+    // Populate the extracted-text sidecar so rehydrate's text-fallback
+    // path (historical / unsupported-model / oversize) is O(text read)
+    // instead of O(reload bytes + re-run unpdf) on every turn. Uses the
+    // rehydrate-suffix variant so a cache hit at rehydrate time
+    // produces byte-identical content to a live extraction. Best-effort:
+    // a failed extraction here just means rehydrate will retry live.
+    const result = await extractText(file.data, file.mimeType, config.maxExtractedTextSize, {
+      truncatedSuffix: REHYDRATE_TRUNCATED_SUFFIX,
+    });
+    if (result) {
+      await store.writeExtractedText(saved.id, {
+        text: result.text,
+        maxSize: config.maxExtractedTextSize,
+        truncated: result.truncated,
+      });
+    }
+  }
+  return false;
+}
+
+/** Validate, store, register, extract, and assemble the content parts + reference for a single uploaded file. */
+async function ingestOneFile(
+  file: UploadedFile,
+  conversationId: string,
+  store: FileStore,
+  config: FileConfig,
+  wsId: string | undefined,
+  ownerId: string | undefined,
+): Promise<FileIngest> {
+  const parts: ContentPart[] = [];
+
+  // Validate individual file size
+  if (file.data.length > config.maxFileSize) {
+    return {
+      parts,
+      error: `File "${file.filename}" (${humanSize(file.data.length)}) exceeds limit of ${humanSize(config.maxFileSize)}`,
+    };
+  }
+
+  // Validate MIME type
+  if (!isAllowedMime(file.mimeType)) {
+    return { parts, error: `File "${file.filename}" has disallowed type: ${file.mimeType}` };
+  }
+
+  // Store the file
+  const saved = await store.saveFile(file.data, file.filename, file.mimeType);
+
+  // Register in registry
+  const entry: FileEntry = {
+    id: saved.id,
+    filename: file.filename,
+    mimeType: file.mimeType,
+    size: saved.size,
+    tags: [],
+    source: "chat",
+    conversationId,
+    createdAt: new Date().toISOString(),
+    description: null,
+    ...(ownerId ? { ownerId } : {}),
+    ...(wsId ? { workspaceId: wsId } : {}),
+  };
+  await store.appendRegistry(entry);
+
+  // Extract text if possible
+  const extracted = await extractInto(file, saved, store, config, parts);
+
+  // Rehydratable files → MCP `resource_link` content part. The runtime
+  // turns supported resource links into AI SDK V3 `file` parts (with bytes
+  // loaded from the FileStore) at the `model.doStream` boundary, so binary
+  // content survives multi-turn agentic loops without the conversation log
+  // carrying bytes or extracted PDF text inline.
+  if (isImage(file.mimeType) || isPdf(file.mimeType)) {
+    parts.push({
+      type: "resource_link",
+      uri: fileIdToUri(saved.id),
+      mimeType: file.mimeType,
+      name: file.filename,
+    });
+  } else if (!extracted) {
+    // Non-extractable, non-image file. Surface a text hint so the model
+    // knows what's attached and can call `files__read` if it needs the
+    // bytes. (Extractable files already inserted their content above;
+    // images are addressable via the `resource_link` block.)
+    parts.push({
+      type: "text",
+      text: `--- Attached: ${file.filename} (${saved.id}, ${humanSize(saved.size)}) — binary file, use files__read to access ---`,
+    });
+  }
+
+  // Build file reference for conversation metadata
+  return {
+    parts,
+    ref: {
+      id: saved.id,
+      filename: file.filename,
+      mimeType: file.mimeType,
+      size: saved.size,
+      extracted,
+    },
+  };
+}
+
 /**
  * Validate and ingest uploaded files into the workspace file store.
  *
@@ -146,100 +273,17 @@ export async function ingestFiles(
   }
 
   for (const file of files) {
-    // Validate individual file size
-    if (file.data.length > config.maxFileSize) {
-      errors.push(
-        `File "${file.filename}" (${humanSize(file.data.length)}) exceeds limit of ${humanSize(config.maxFileSize)}`,
-      );
-      continue;
-    }
-
-    // Validate MIME type
-    if (!isAllowedMime(file.mimeType)) {
-      errors.push(`File "${file.filename}" has disallowed type: ${file.mimeType}`);
-      continue;
-    }
-
-    // Store the file
-    const saved = await store.saveFile(file.data, file.filename, file.mimeType);
-
-    // Register in registry
-    const entry: FileEntry = {
-      id: saved.id,
-      filename: file.filename,
-      mimeType: file.mimeType,
-      size: saved.size,
-      tags: [],
-      source: "chat",
+    const { parts, ref, error } = await ingestOneFile(
+      file,
       conversationId,
-      createdAt: new Date().toISOString(),
-      description: null,
-      ...(ownerId ? { ownerId } : {}),
-      ...(wsId ? { workspaceId: wsId } : {}),
-    };
-    await store.appendRegistry(entry);
-
-    // Extract text if possible
-    let extracted = false;
-    if (isExtractable(file.mimeType)) {
-      const result = await extractText(file.data, file.mimeType, config.maxExtractedTextSize);
-      if (result) {
-        extracted = true;
-        contentParts.push({
-          type: "text",
-          text: `--- Attached: ${file.filename} (${saved.id}, ${humanSize(saved.size)}) ---\n${result.text}`,
-        });
-      }
-    } else if (isPdf(file.mimeType)) {
-      // Populate the extracted-text sidecar so rehydrate's text-fallback
-      // path (historical / unsupported-model / oversize) is O(text read)
-      // instead of O(reload bytes + re-run unpdf) on every turn. Uses the
-      // rehydrate-suffix variant so a cache hit at rehydrate time
-      // produces byte-identical content to a live extraction. Best-effort:
-      // a failed extraction here just means rehydrate will retry live.
-      const result = await extractText(file.data, file.mimeType, config.maxExtractedTextSize, {
-        truncatedSuffix: REHYDRATE_TRUNCATED_SUFFIX,
-      });
-      if (result) {
-        await store.writeExtractedText(saved.id, {
-          text: result.text,
-          maxSize: config.maxExtractedTextSize,
-          truncated: result.truncated,
-        });
-      }
-    }
-
-    // Rehydratable files → MCP `resource_link` content part. The runtime
-    // turns supported resource links into AI SDK V3 `file` parts (with bytes
-    // loaded from the FileStore) at the `model.doStream` boundary, so binary
-    // content survives multi-turn agentic loops without the conversation log
-    // carrying bytes or extracted PDF text inline.
-    if (isImage(file.mimeType) || isPdf(file.mimeType)) {
-      contentParts.push({
-        type: "resource_link",
-        uri: fileIdToUri(saved.id),
-        mimeType: file.mimeType,
-        name: file.filename,
-      });
-    } else if (!extracted) {
-      // Non-extractable, non-image file. Surface a text hint so the model
-      // knows what's attached and can call `files__read` if it needs the
-      // bytes. (Extractable files already inserted their content above;
-      // images are addressable via the `resource_link` block.)
-      contentParts.push({
-        type: "text",
-        text: `--- Attached: ${file.filename} (${saved.id}, ${humanSize(saved.size)}) — binary file, use files__read to access ---`,
-      });
-    }
-
-    // Build file reference for conversation metadata
-    fileRefs.push({
-      id: saved.id,
-      filename: file.filename,
-      mimeType: file.mimeType,
-      size: saved.size,
-      extracted,
-    });
+      store,
+      config,
+      wsId,
+      ownerId,
+    );
+    if (error) errors.push(error);
+    contentParts.push(...parts);
+    if (ref) fileRefs.push(ref);
   }
 
   return { contentParts, fileRefs, errors };

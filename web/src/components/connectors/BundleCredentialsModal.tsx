@@ -78,7 +78,7 @@ export function BundleCredentialsModal({
     return null;
   }
 
-  const onClear = async () => {
+  const onClear = () => {
     // Two-step inline confirm. `confirm()` is browser-suppressible
     // (Chrome's "block dialogs" toggle silently swallows it) and the
     // user has hit that no-op. First click arms; second click runs.
@@ -86,55 +86,16 @@ export function BundleCredentialsModal({
       setConfirmingClear(true);
       return;
     }
-    setClearing(true);
-    setError(null);
-    try {
-      const res = await clearBundleUserConfig(installed.serverName);
-      onSaved(res.populated);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
-      setClearing(false);
-      setConfirmingClear(false);
-    }
+    void clearConfig({ installed, onSaved, setError, setClearing, setConfirmingClear });
   };
 
-  const submit = async (e: React.FormEvent) => {
+  const submit = (e: React.FormEvent) => {
     e.preventDefault();
-    // Only fields the user actually typed into get sent. An empty
-    // string in `values` after an explicit clear-affordance is a v2
-    // concern; v1's "Clear configuration" link nukes the whole file.
-    const fields: Record<string, string> = {};
-    for (const [k, v] of Object.entries(values)) {
-      if (v.length > 0) fields[k] = v;
-    }
-    if (Object.keys(fields).length === 0) {
-      onClose();
-      return;
-    }
-    setBusy(true);
-    setError(null);
-    try {
-      const res = await setBundleUserConfig(installed.serverName, fields);
-      // Credentials saved but bundle didn't respawn cleanly (e.g.,
-      // required field still missing). Surface the underlying error
-      // and keep the modal open — closing would hide the signal that
-      // the bundle is now in a degraded state. Saved values stay
-      // saved; the user can either fix the bad input or cancel.
-      if (!res.respawn.ok) {
-        setError(
-          `Saved, but the bundle failed to restart: ${res.respawn.error ?? "unknown error"}`,
-        );
-        setBusy(false);
-        return;
-      }
-      onSaved(res.populated);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
-      setBusy(false);
-    }
+    void saveBundleConfig({ installed, values, onClose, onSaved, setBusy, setError });
   };
 
   const connectorName = installed.catalog?.name ?? installed.serverName;
+  const controlsDisabled = busy || clearing;
 
   return (
     // biome-ignore lint/a11y/noStaticElementInteractions: backdrop click-to-dismiss is a mouse convenience; keyboard users dismiss via ESC
@@ -160,18 +121,15 @@ export function BundleCredentialsModal({
         </p>
 
         <form onSubmit={submit} className="mt-4 space-y-3">
-          {fieldKeys.map((key, idx) => (
-            <BundleField
-              key={key}
-              fieldKey={key}
-              field={schema[key] as BundleUserConfigField}
-              isPopulated={populated[key] === true}
-              value={values[key] ?? ""}
-              onChange={(v) => setValues((prev) => ({ ...prev, [key]: v }))}
-              busy={busy}
-              inputRef={idx === 0 ? firstFieldRef : undefined}
-            />
-          ))}
+          <BundleFieldList
+            fieldKeys={fieldKeys}
+            schema={schema}
+            populated={populated}
+            values={values}
+            busy={busy}
+            firstFieldRef={firstFieldRef}
+            onFieldChange={(key, v) => setValues((prev) => ({ ...prev, [key]: v }))}
+          />
           {error && <p className="text-xs text-destructive">{error}</p>}
 
           <div className="flex items-center justify-between gap-3 pt-2">
@@ -180,22 +138,12 @@ export function BundleCredentialsModal({
                 so a fresh first-time setup doesn't tempt them with a
                 no-op destructive link. */}
             {anyPopulated ? (
-              <button
-                type="button"
-                onClick={onClear}
-                disabled={busy || clearing}
-                className={
-                  confirmingClear
-                    ? "text-xs font-medium text-destructive hover:underline underline-offset-4 disabled:opacity-60"
-                    : "text-xs text-muted-foreground hover:text-destructive hover:underline underline-offset-4 disabled:opacity-60"
-                }
-              >
-                {clearing
-                  ? "Clearing…"
-                  : confirmingClear
-                    ? "Click again to clear all credentials"
-                    : "Clear configuration"}
-              </button>
+              <ClearConfigButton
+                confirmingClear={confirmingClear}
+                clearing={clearing}
+                disabled={controlsDisabled}
+                onClear={onClear}
+              />
             ) : (
               <span />
             )}
@@ -205,11 +153,11 @@ export function BundleCredentialsModal({
                 variant="outline"
                 size="sm"
                 onClick={onClose}
-                disabled={busy || clearing}
+                disabled={controlsDisabled}
               >
                 Cancel
               </Button>
-              <Button type="submit" size="sm" disabled={busy || clearing}>
+              <Button type="submit" size="sm" disabled={controlsDisabled}>
                 {busy ? "Saving…" : "Save"}
               </Button>
             </div>
@@ -217,6 +165,153 @@ export function BundleCredentialsModal({
         </form>
       </div>
     </div>
+  );
+}
+
+/**
+ * Persist the credentials the user typed into `values`. Only fields
+ * with a non-empty value are sent; an all-empty submit closes the
+ * modal untouched. A save that succeeds but fails to respawn the
+ * bundle keeps the modal open with the underlying error surfaced.
+ */
+async function saveBundleConfig({
+  installed,
+  values,
+  onClose,
+  onSaved,
+  setBusy,
+  setError,
+}: {
+  installed: InstalledConnector;
+  values: Record<string, string>;
+  onClose: () => void;
+  onSaved: (populated: Record<string, boolean>) => void;
+  setBusy: (v: boolean) => void;
+  setError: (v: string | null) => void;
+}) {
+  // Only fields the user actually typed into get sent. An empty
+  // string in `values` after an explicit clear-affordance is a v2
+  // concern; v1's "Clear configuration" link nukes the whole file.
+  const fields: Record<string, string> = {};
+  for (const [k, v] of Object.entries(values)) {
+    if (v.length > 0) fields[k] = v;
+  }
+  if (Object.keys(fields).length === 0) {
+    onClose();
+    return;
+  }
+  setBusy(true);
+  setError(null);
+  try {
+    const res = await setBundleUserConfig(installed.serverName, fields);
+    // Credentials saved but bundle didn't respawn cleanly (e.g.,
+    // required field still missing). Surface the underlying error
+    // and keep the modal open — closing would hide the signal that
+    // the bundle is now in a degraded state. Saved values stay
+    // saved; the user can either fix the bad input or cancel.
+    if (!res.respawn.ok) {
+      setError(`Saved, but the bundle failed to restart: ${res.respawn.error ?? "unknown error"}`);
+      setBusy(false);
+      return;
+    }
+    onSaved(res.populated);
+  } catch (err) {
+    setError(err instanceof Error ? err.message : String(err));
+    setBusy(false);
+  }
+}
+
+/** Nuke the whole `user_config` file for the connector, surfacing any failure inline. */
+async function clearConfig({
+  installed,
+  onSaved,
+  setError,
+  setClearing,
+  setConfirmingClear,
+}: {
+  installed: InstalledConnector;
+  onSaved: (populated: Record<string, boolean>) => void;
+  setError: (v: string | null) => void;
+  setClearing: (v: boolean) => void;
+  setConfirmingClear: (v: boolean) => void;
+}) {
+  setClearing(true);
+  setError(null);
+  try {
+    const res = await clearBundleUserConfig(installed.serverName);
+    onSaved(res.populated);
+  } catch (err) {
+    setError(err instanceof Error ? err.message : String(err));
+    setClearing(false);
+    setConfirmingClear(false);
+  }
+}
+
+/** Render the schema's fields in order, wiring the first one to the focus ref. */
+function BundleFieldList({
+  fieldKeys,
+  schema,
+  populated,
+  values,
+  busy,
+  firstFieldRef,
+  onFieldChange,
+}: {
+  fieldKeys: string[];
+  schema: Record<string, BundleUserConfigField>;
+  populated: Record<string, boolean>;
+  values: Record<string, string>;
+  busy: boolean;
+  firstFieldRef: React.RefObject<HTMLInputElement | null>;
+  onFieldChange: (key: string, v: string) => void;
+}) {
+  return (
+    <>
+      {fieldKeys.map((key, idx) => (
+        <BundleField
+          key={key}
+          fieldKey={key}
+          field={schema[key] as BundleUserConfigField}
+          isPopulated={populated[key] === true}
+          value={values[key] ?? ""}
+          onChange={(v) => onFieldChange(key, v)}
+          busy={busy}
+          inputRef={idx === 0 ? firstFieldRef : undefined}
+        />
+      ))}
+    </>
+  );
+}
+
+/** Destructive clear control: two-step confirm plus an in-flight "Clearing…" label. */
+function ClearConfigButton({
+  confirmingClear,
+  clearing,
+  disabled,
+  onClear,
+}: {
+  confirmingClear: boolean;
+  clearing: boolean;
+  disabled: boolean;
+  onClear: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClear}
+      disabled={disabled}
+      className={
+        confirmingClear
+          ? "text-xs font-medium text-destructive hover:underline underline-offset-4 disabled:opacity-60"
+          : "text-xs text-muted-foreground hover:text-destructive hover:underline underline-offset-4 disabled:opacity-60"
+      }
+    >
+      {clearing
+        ? "Clearing…"
+        : confirmingClear
+          ? "Click again to clear all credentials"
+          : "Clear configuration"}
+    </button>
   );
 }
 

@@ -250,6 +250,230 @@ function useSmartScroll(messages: ChatMessage[]) {
   return { scrollRef, isAtBottom, scrollToBottom };
 }
 
+/** One user message body: optional app-context disclosure, file chips, and the italic message text. */
+function UserMessage({
+  contextPrefix,
+  files,
+  displayContent,
+}: {
+  contextPrefix: string | null;
+  files: ChatMessage["files"];
+  displayContent: string;
+}) {
+  return (
+    <div className="pl-4 border-l-2 border-border break-words whitespace-pre-wrap">
+      {contextPrefix && (
+        <details className="mb-1">
+          <summary className="text-3xs opacity-60 cursor-pointer select-none">App Context</summary>
+          <span className="block text-3xs opacity-60 mt-0.5">{contextPrefix}</span>
+        </details>
+      )}
+      {files && files.length > 0 && (
+        <div className="flex flex-wrap gap-2 mb-2">
+          {files.map((file) => (
+            <FileAttachment key={file.id} file={file} />
+          ))}
+        </div>
+      )}
+      <span className="presence-user-message italic">{displayContent}</span>
+    </div>
+  );
+}
+
+/** Run-level stop-reason notice shown under an assistant turn. */
+function StopReasonNotice({ stopReason }: { stopReason: string }) {
+  return (
+    <div className="flex items-start gap-2 px-3 py-2 rounded-sm bg-muted/50 border border-border text-sm text-muted-foreground">
+      <AlertCircle className="w-4 h-4 mt-0.5 shrink-0" />
+      <span>{stopReasonMessage(stopReason)}</span>
+    </div>
+  );
+}
+
+/** Inline error notice with an optional retry button and a collapsible detail. */
+function ErrorNotice({ error, onRetry }: { error: string; onRetry?: () => void }) {
+  return (
+    <div className="px-3 py-2.5 rounded-sm bg-destructive/10 border border-destructive/20 text-sm">
+      <div className="flex items-center gap-2">
+        <AlertCircle className="w-4 h-4 shrink-0 text-destructive" />
+        <span className="flex-1 text-foreground">
+          Something went wrong. You can try again or continue the conversation.
+        </span>
+        {onRetry && (
+          <button
+            type="button"
+            onClick={onRetry}
+            className="inline-flex items-center gap-1.5 px-2.5 py-1 text-xs font-medium rounded-sm border border-border bg-card hover:bg-muted text-foreground transition-colors shrink-0"
+          >
+            <RotateCcw className="w-3 h-3" />
+            Try again
+          </button>
+        )}
+      </div>
+      <details className="mt-1.5 ml-6">
+        <summary className="text-xs text-muted-foreground cursor-pointer select-none hover:text-foreground transition-colors">
+          Details
+        </summary>
+        <p className="text-xs text-muted-foreground mt-1 font-mono break-all">{error}</p>
+      </details>
+    </div>
+  );
+}
+
+/** One assistant message body: block timeline (or legacy Streamdown), file chips, and stop/error notices. */
+function AssistantMessage({
+  msg,
+  displayContent,
+  isLast,
+  isStreaming,
+  streamingState,
+  preparingTool,
+  displayDetail,
+  onRetry,
+}: {
+  msg: ChatMessage;
+  displayContent: string;
+  isLast: boolean;
+  isStreaming: boolean;
+  streamingState: StreamingState;
+  preparingTool?: PreparingTool | null;
+  displayDetail: DisplayDetail;
+  onRetry?: () => void;
+}) {
+  // The newest message is the live one while streaming — it animates and drives
+  // the current-message affordances in BlockTimeline.
+  const isCurrent = isStreaming && isLast;
+  return (
+    <div className="w-full break-words min-w-0 overflow-hidden flex flex-col gap-3">
+      {msg.blocks ? (
+        <BlockTimeline
+          blocks={msg.blocks}
+          isCurrentMessage={isCurrent}
+          streamingState={streamingState}
+          preparingTool={preparingTool ?? null}
+          displayDetail={displayDetail}
+        />
+      ) : (
+        // Legacy / pre-block-model conversations: render the serialized message
+        // content as one Streamdown block. The block model has been the engine's
+        // emission shape for some time, so this branch is essentially
+        // history-only; kept for archived JSONLs that don't have `blocks` populated.
+        <div className="min-h-[1em]">
+          <Streamdown
+            className="streamdown-container presence-assistant-message"
+            isAnimating={isCurrent}
+            linkSafety={linkSafety}
+          >
+            {displayContent}
+          </Streamdown>
+        </div>
+      )}
+      {/* File attachments */}
+      {msg.files && msg.files.length > 0 && (
+        <div className="flex flex-wrap gap-2">
+          {msg.files.map((file) => (
+            <FileAttachment key={file.id} file={file} />
+          ))}
+        </div>
+      )}
+      {/* Stop reason notice */}
+      {msg.stopReason && <StopReasonNotice stopReason={msg.stopReason} />}
+      {/* Inline error notice */}
+      {msg.error && <ErrorNotice error={msg.error} onRetry={onRetry} />}
+      {/* Inline app views are rendered within their tool block above */}
+    </div>
+  );
+}
+
+/**
+ * Hover chrome — copy button + timestamp + token count. Absolutely positioned so
+ * it overlays into the existing gap between messages instead of reserving dead
+ * vertical space. Aligned to the same edge as the message bubble.
+ * `whitespace-nowrap` keeps the row single-line regardless of how narrow the
+ * parent bubble gets (short messages otherwise force text to wrap since the
+ * absolute child inherits the parent's shrink-to-fit width).
+ */
+function MessageFooter({
+  msg,
+  displayContent,
+  showTimestamp,
+}: {
+  msg: ChatMessage;
+  displayContent: string;
+  showTimestamp: boolean;
+}) {
+  return (
+    <div
+      className={`absolute top-full ${msg.role === "user" ? "right-0" : "left-0"} mt-1 flex items-center gap-2 whitespace-nowrap opacity-0 group-hover:opacity-100 metadata-hover transition-opacity duration-200`}
+    >
+      <CopyButton content={displayContent} />
+      {showTimestamp && msg.timestamp && (
+        <span className="text-3xs text-muted-foreground">{formatRelativeTime(msg.timestamp)}</span>
+      )}
+      {msg.usage && <UsageChip usage={msg.usage} />}
+    </div>
+  );
+}
+
+/** One chat row: derives the app-context slice, then renders the role body and hover footer. */
+function MessageItem({
+  msg,
+  isNew,
+  isLast,
+  isStreaming,
+  streamingState,
+  preparingTool,
+  displayDetail,
+  onRetry,
+}: {
+  msg: ChatMessage;
+  isNew: boolean;
+  isLast: boolean;
+  isStreaming: boolean;
+  streamingState: StreamingState;
+  preparingTool?: PreparingTool | null;
+  displayDetail: DisplayDetail;
+  onRetry?: () => void;
+}) {
+  const contextMatch = msg.role === "user" ? msg.content.match(APP_CONTEXT_RE) : null;
+  const contextPrefix = contextMatch ? contextMatch[0].trim() : null;
+  const displayContent = contextMatch ? msg.content.slice(contextMatch[0].length) : msg.content;
+  const showTimestamp =
+    displayDetail === "verbose" || (displayDetail === "balanced" && !!msg.timestamp);
+
+  return (
+    <div
+      // scroll-mt-6 leaves room above when a message scrolls to the top
+      // (block:start); scroll-mb-10 leaves room below when it scrolls to
+      // the bottom (block:end) so the hover footer — timestamp · copy ·
+      // tokens, which hangs below the box at `top-full` — stays in view.
+      className={`group relative flex flex-col scroll-mt-6 scroll-mb-10 ${isNew ? "presence-message-enter" : ""} ${
+        msg.role === "user" ? "max-w-[80%] self-end items-end" : "w-full self-start items-start"
+      }`}
+    >
+      {msg.role === "user" ? (
+        <UserMessage
+          contextPrefix={contextPrefix}
+          files={msg.files}
+          displayContent={displayContent}
+        />
+      ) : (
+        <AssistantMessage
+          msg={msg}
+          displayContent={displayContent}
+          isLast={isLast}
+          isStreaming={isStreaming}
+          streamingState={streamingState}
+          preparingTool={preparingTool}
+          displayDetail={displayDetail}
+          onRetry={onRetry}
+        />
+      )}
+      <MessageFooter msg={msg} displayContent={displayContent} showTimestamp={showTimestamp} />
+    </div>
+  );
+}
+
 export function MessageList({
   messages,
   isStreaming,
@@ -297,145 +521,20 @@ export function MessageList({
     <div className="relative flex-1 min-h-0">
       <div ref={scrollRef} className="h-full overflow-y-auto">
         <div className={`py-6 flex flex-col gap-10 ${compact ? "px-4" : "px-8 max-w-4xl mx-auto"}`}>
-          {messages.map((msg, idx) => {
-            const contextMatch = msg.role === "user" ? msg.content.match(APP_CONTEXT_RE) : null;
-            const contextPrefix = contextMatch ? contextMatch[0].trim() : null;
-            const displayContent = contextMatch
-              ? msg.content.slice(contextMatch[0].length)
-              : msg.content;
-
-            const showTimestamp =
-              displayDetail === "verbose" || (displayDetail === "balanced" && msg.timestamp);
-
-            return (
-              <div
-                // biome-ignore lint/suspicious/noArrayIndexKey: messages lack stable IDs and don't reorder
-                key={idx}
-                // scroll-mt-6 leaves room above when a message scrolls to the top
-                // (block:start); scroll-mb-10 leaves room below when it scrolls to
-                // the bottom (block:end) so the hover footer — timestamp · copy ·
-                // tokens, which hangs below the box at `top-full` — stays in view.
-                className={`group relative flex flex-col scroll-mt-6 scroll-mb-10 ${idx >= initialCountRef.current ? "presence-message-enter" : ""} ${
-                  msg.role === "user"
-                    ? "max-w-[80%] self-end items-end"
-                    : "w-full self-start items-start"
-                }`}
-              >
-                {msg.role === "user" ? (
-                  <div className="pl-4 border-l-2 border-border break-words whitespace-pre-wrap">
-                    {contextPrefix && (
-                      <details className="mb-1">
-                        <summary className="text-3xs opacity-60 cursor-pointer select-none">
-                          App Context
-                        </summary>
-                        <span className="block text-3xs opacity-60 mt-0.5">{contextPrefix}</span>
-                      </details>
-                    )}
-                    {msg.files && msg.files.length > 0 && (
-                      <div className="flex flex-wrap gap-2 mb-2">
-                        {msg.files.map((file) => (
-                          <FileAttachment key={file.id} file={file} />
-                        ))}
-                      </div>
-                    )}
-                    <span className="presence-user-message italic">{displayContent}</span>
-                  </div>
-                ) : (
-                  <div className="w-full break-words min-w-0 overflow-hidden flex flex-col gap-3">
-                    {msg.blocks ? (
-                      <BlockTimeline
-                        blocks={msg.blocks}
-                        isCurrentMessage={isStreaming && idx === messages.length - 1}
-                        streamingState={streamingState}
-                        preparingTool={preparingTool ?? null}
-                        displayDetail={displayDetail}
-                      />
-                    ) : (
-                      // Legacy / pre-block-model conversations: render the
-                      // serialized message content as one Streamdown block.
-                      // The block model has been the engine's emission shape
-                      // for some time, so this branch is essentially
-                      // history-only; kept for archived JSONLs that don't
-                      // have `blocks` populated.
-                      <div className="min-h-[1em]">
-                        <Streamdown
-                          className="streamdown-container presence-assistant-message"
-                          isAnimating={isStreaming && idx === messages.length - 1}
-                          linkSafety={linkSafety}
-                        >
-                          {displayContent}
-                        </Streamdown>
-                      </div>
-                    )}
-                    {/* File attachments */}
-                    {msg.files && msg.files.length > 0 && (
-                      <div className="flex flex-wrap gap-2">
-                        {msg.files.map((file) => (
-                          <FileAttachment key={file.id} file={file} />
-                        ))}
-                      </div>
-                    )}
-                    {/* Stop reason notice */}
-                    {msg.stopReason && (
-                      <div className="flex items-start gap-2 px-3 py-2 rounded-sm bg-muted/50 border border-border text-sm text-muted-foreground">
-                        <AlertCircle className="w-4 h-4 mt-0.5 shrink-0" />
-                        <span>{stopReasonMessage(msg.stopReason)}</span>
-                      </div>
-                    )}
-                    {/* Inline error notice */}
-                    {msg.error && (
-                      <div className="px-3 py-2.5 rounded-sm bg-destructive/10 border border-destructive/20 text-sm">
-                        <div className="flex items-center gap-2">
-                          <AlertCircle className="w-4 h-4 shrink-0 text-destructive" />
-                          <span className="flex-1 text-foreground">
-                            Something went wrong. You can try again or continue the conversation.
-                          </span>
-                          {onRetry && (
-                            <button
-                              type="button"
-                              onClick={onRetry}
-                              className="inline-flex items-center gap-1.5 px-2.5 py-1 text-xs font-medium rounded-sm border border-border bg-card hover:bg-muted text-foreground transition-colors shrink-0"
-                            >
-                              <RotateCcw className="w-3 h-3" />
-                              Try again
-                            </button>
-                          )}
-                        </div>
-                        <details className="mt-1.5 ml-6">
-                          <summary className="text-xs text-muted-foreground cursor-pointer select-none hover:text-foreground transition-colors">
-                            Details
-                          </summary>
-                          <p className="text-xs text-muted-foreground mt-1 font-mono break-all">
-                            {msg.error}
-                          </p>
-                        </details>
-                      </div>
-                    )}
-                    {/* Inline app views are rendered within their tool block above */}
-                  </div>
-                )}
-                {/* Hover chrome — copy button + timestamp + token count.
-                    Absolutely positioned so it overlays into the existing
-                    gap between messages instead of reserving dead vertical
-                    space. Aligned to the same edge as the message bubble.
-                    `whitespace-nowrap` keeps the row single-line regardless
-                    of how narrow the parent bubble gets (short messages
-                    otherwise force text to wrap since the absolute child
-                    inherits the parent's shrink-to-fit width). */}
-                <div
-                  className={`absolute top-full ${msg.role === "user" ? "right-0" : "left-0"} mt-1 flex items-center gap-2 whitespace-nowrap opacity-0 group-hover:opacity-100 metadata-hover transition-opacity duration-200`}
-                >
-                  <CopyButton content={displayContent} />
-                  {showTimestamp && msg.timestamp && (
-                    <span className="text-3xs text-muted-foreground">
-                      {formatRelativeTime(msg.timestamp)}
-                    </span>
-                  )}
-                  {msg.usage && <UsageChip usage={msg.usage} />}
-                </div>
-              </div>
-            );
-          })}
+          {messages.map((msg, idx) => (
+            <MessageItem
+              // biome-ignore lint/suspicious/noArrayIndexKey: messages lack stable IDs and don't reorder
+              key={idx}
+              msg={msg}
+              isNew={idx >= initialCountRef.current}
+              isLast={idx === messages.length - 1}
+              isStreaming={isStreaming}
+              streamingState={streamingState}
+              preparingTool={preparingTool}
+              displayDetail={displayDetail}
+              onRetry={onRetry}
+            />
+          ))}
           {/* Spacer: ensures any message can scroll to the top of the viewport */}
           <div className="min-h-[60vh] shrink-0" />
         </div>

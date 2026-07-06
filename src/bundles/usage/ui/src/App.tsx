@@ -67,7 +67,153 @@ function shortModel(m: string): string {
   return m.replace(/^(anthropic:|openai:|google:)/, "").replace(/-\d{8}$/, "");
 }
 
+/** Sum of input, output, and cache-read tokens (cache writes excluded), tolerant of missing fields. */
+function billableTokens(tok: TokenBreakdown): number {
+  return (tok.input || 0) + (tok.output || 0) + (tok.cacheRead || 0);
+}
+
 /* ---------- components ---------- */
+
+/** Period and group-by selectors that drive the report query. */
+function Controls({
+  period,
+  groupBy,
+  isPending,
+  onPeriodChange,
+  onGroupByChange,
+}: {
+  period: Period;
+  groupBy: GroupBy;
+  isPending: boolean;
+  onPeriodChange: (value: Period) => void;
+  onGroupByChange: (value: GroupBy) => void;
+}) {
+  return (
+    <div className="controls">
+      <select
+        value={period}
+        onChange={(e) => onPeriodChange(e.target.value as Period)}
+        disabled={isPending}
+      >
+        <option value="day">Today</option>
+        <option value="week">Last 7 days</option>
+        <option value="month">This month</option>
+        <option value="all">All time</option>
+      </select>
+      <select
+        value={groupBy}
+        onChange={(e) => onGroupByChange(e.target.value as GroupBy)}
+        disabled={isPending}
+      >
+        <option value="day">By day</option>
+        <option value="model">By model</option>
+        <option value="conversation">By conversation</option>
+      </select>
+    </div>
+  );
+}
+
+/** A labeled value row within a stat card's detail breakdown. */
+function StatRow({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="row">
+      <span>{label}</span>
+      <span>{value}</span>
+    </div>
+  );
+}
+
+/** Top-line summary cards: total cost, tokens, LLM calls, and conversations. */
+function StatsGrid({ totals }: { totals: UsageTotals }) {
+  const tok = totals.tokens;
+  const cost = totals.cost;
+  return (
+    <div className="stats-grid">
+      <div className="stat">
+        <div className="stat-value">{fmtCost(cost.total || 0)}</div>
+        <div className="stat-label">Total Cost</div>
+        <div className="stat-detail">
+          <StatRow label="Input" value={fmtCost(cost.input || 0)} />
+          <StatRow label="Output" value={fmtCost(cost.output || 0)} />
+          <StatRow label="Cache read" value={fmtCost(cost.cacheRead || 0)} />
+          <StatRow label="Cache write" value={fmtCost(cost.cacheWrite || 0)} />
+        </div>
+      </div>
+
+      <div className="stat">
+        <div className="stat-value">{fmtTok(billableTokens(tok))}</div>
+        <div className="stat-label">Tokens</div>
+        <div className="stat-detail">
+          <StatRow label="Input" value={fmtTok(tok.input || 0)} />
+          <StatRow label="Output" value={fmtTok(tok.output || 0)} />
+          <StatRow label="Cache read" value={fmtTok(tok.cacheRead || 0)} />
+        </div>
+      </div>
+
+      <div className="stat">
+        <div className="stat-value">{totals.llmCalls || 0}</div>
+        <div className="stat-label">LLM Calls</div>
+      </div>
+
+      <div className="stat">
+        <div className="stat-value">{totals.conversations || 0}</div>
+        <div className="stat-label">Conversations</div>
+      </div>
+    </div>
+  );
+}
+
+/** Rows for the "By Model" table body, or a single empty-state row when there is no data. */
+function ModelRows({ models }: { models: ModelUsage[] }) {
+  if (models.length === 0) {
+    return (
+      <tr>
+        <td colSpan={4} className="empty">
+          No data
+        </td>
+      </tr>
+    );
+  }
+  return (
+    <>
+      {models.map((m) => (
+        <tr key={m.model}>
+          <td>{shortModel(m.model)}</td>
+          <td className="right">{fmtTok(billableTokens(m.tokens))}</td>
+          <td className="right">{fmtCost(m.cost.total)}</td>
+          <td className="right">{m.llmCalls}</td>
+        </tr>
+      ))}
+    </>
+  );
+}
+
+/** Rows for the breakdown table body, or a single empty-state row when the period has no data. */
+function BreakdownRows({ breakdown }: { breakdown: BreakdownEntry[] }) {
+  if (breakdown.length === 0) {
+    return (
+      <tr>
+        <td colSpan={6} className="empty">
+          No data for this period
+        </td>
+      </tr>
+    );
+  }
+  return (
+    <>
+      {breakdown.map((d) => (
+        <tr key={d.key}>
+          <td>{d.key}</td>
+          <td className="right">{fmtTok(d.tokens.input)}</td>
+          <td className="right">{fmtTok(d.tokens.output)}</td>
+          <td className="right">{fmtTok(d.tokens.cacheRead)}</td>
+          <td className="right">{fmtCost(d.cost.total)}</td>
+          <td className="right">{d.llmCalls}</td>
+        </tr>
+      ))}
+    </>
+  );
+}
 
 function Dashboard() {
   const [period, setPeriod] = useState<Period>("week");
@@ -115,91 +261,20 @@ function Dashboard() {
     );
   }
 
-  const t = data.totals;
-  const tok = t.tokens;
-  const cost = t.cost;
-  const totalTok = (tok.input || 0) + (tok.output || 0) + (tok.cacheRead || 0);
-
   return (
     <div className="page">
       <div className="header">
         <h1>Usage</h1>
-        <div className="controls">
-          <select
-            value={period}
-            onChange={(e) => setPeriod(e.target.value as Period)}
-            disabled={isPending}
-          >
-            <option value="day">Today</option>
-            <option value="week">Last 7 days</option>
-            <option value="month">This month</option>
-            <option value="all">All time</option>
-          </select>
-          <select
-            value={groupBy}
-            onChange={(e) => setGroupBy(e.target.value as GroupBy)}
-            disabled={isPending}
-          >
-            <option value="day">By day</option>
-            <option value="model">By model</option>
-            <option value="conversation">By conversation</option>
-          </select>
-        </div>
+        <Controls
+          period={period}
+          groupBy={groupBy}
+          isPending={isPending}
+          onPeriodChange={setPeriod}
+          onGroupByChange={setGroupBy}
+        />
       </div>
 
-      <div className="stats-grid">
-        <div className="stat">
-          <div className="stat-value">{fmtCost(cost.total || 0)}</div>
-          <div className="stat-label">Total Cost</div>
-          <div className="stat-detail">
-            <div className="row">
-              <span>Input</span>
-              <span>{fmtCost(cost.input || 0)}</span>
-            </div>
-            <div className="row">
-              <span>Output</span>
-              <span>{fmtCost(cost.output || 0)}</span>
-            </div>
-            <div className="row">
-              <span>Cache read</span>
-              <span>{fmtCost(cost.cacheRead || 0)}</span>
-            </div>
-            <div className="row">
-              <span>Cache write</span>
-              <span>{fmtCost(cost.cacheWrite || 0)}</span>
-            </div>
-          </div>
-        </div>
-
-        <div className="stat">
-          <div className="stat-value">{fmtTok(totalTok)}</div>
-          <div className="stat-label">Tokens</div>
-          <div className="stat-detail">
-            <div className="row">
-              <span>Input</span>
-              <span>{fmtTok(tok.input || 0)}</span>
-            </div>
-            <div className="row">
-              <span>Output</span>
-              <span>{fmtTok(tok.output || 0)}</span>
-            </div>
-            <div className="row">
-              <span>Cache read</span>
-              <span>{fmtTok(tok.cacheRead || 0)}</span>
-            </div>
-          </div>
-        </div>
-
-        <div className="stat">
-          <div className="stat-value">{t.llmCalls || 0}</div>
-          <div className="stat-label">LLM Calls</div>
-        </div>
-
-        <div className="stat">
-          <div className="stat-value">{t.conversations || 0}</div>
-          <div className="stat-label">Conversations</div>
-        </div>
-      </div>
+      <StatsGrid totals={data.totals} />
 
       <div className="section">
         <h2>By Model</h2>
@@ -213,26 +288,7 @@ function Dashboard() {
             </tr>
           </thead>
           <tbody>
-            {data.models.length === 0 ? (
-              <tr>
-                <td colSpan={4} className="empty">
-                  No data
-                </td>
-              </tr>
-            ) : (
-              data.models.map((m) => (
-                <tr key={m.model}>
-                  <td>{shortModel(m.model)}</td>
-                  <td className="right">
-                    {fmtTok(
-                      (m.tokens.input || 0) + (m.tokens.output || 0) + (m.tokens.cacheRead || 0),
-                    )}
-                  </td>
-                  <td className="right">{fmtCost(m.cost.total)}</td>
-                  <td className="right">{m.llmCalls}</td>
-                </tr>
-              ))
-            )}
+            <ModelRows models={data.models} />
           </tbody>
         </table>
       </div>
@@ -251,24 +307,7 @@ function Dashboard() {
             </tr>
           </thead>
           <tbody>
-            {data.breakdown.length === 0 ? (
-              <tr>
-                <td colSpan={6} className="empty">
-                  No data for this period
-                </td>
-              </tr>
-            ) : (
-              data.breakdown.map((d) => (
-                <tr key={d.key}>
-                  <td>{d.key}</td>
-                  <td className="right">{fmtTok(d.tokens.input)}</td>
-                  <td className="right">{fmtTok(d.tokens.output)}</td>
-                  <td className="right">{fmtTok(d.tokens.cacheRead)}</td>
-                  <td className="right">{fmtCost(d.cost.total)}</td>
-                  <td className="right">{d.llmCalls}</td>
-                </tr>
-              ))
-            )}
+            <BreakdownRows breakdown={data.breakdown} />
           </tbody>
         </table>
       </div>

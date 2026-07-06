@@ -34,6 +34,51 @@ const DEFAULT_ALLOWLIST = new Set([
 /** Vars that are never passed to bundles, even if explicitly requested. */
 const HARD_DENY = new Set(["NB_API_KEY", "NB_INTERNAL_TOKEN"]);
 
+/** Copy DEFAULT_ALLOWLIST vars present in the host env into result. */
+function applyDefaultAllowlist(
+  result: Record<string, string>,
+  processEnv: Record<string, string | undefined>,
+): void {
+  for (const key of DEFAULT_ALLOWLIST) {
+    const val = processEnv[key];
+    if (val !== undefined) {
+      result[key] = val;
+    }
+  }
+}
+
+/** Copy operator-allowed host vars into result, skipping hard-denied ones. */
+function applyBundleAllowedEnv(
+  result: Record<string, string>,
+  processEnv: Record<string, string | undefined>,
+  bundleAllowedEnv: string[],
+): void {
+  for (const key of bundleAllowedEnv) {
+    if (HARD_DENY.has(key)) {
+      log.warn(`[env-filter] Denied passing ${key} to bundle — hard-deny list`);
+      continue;
+    }
+    const val = processEnv[key];
+    if (val !== undefined) {
+      result[key] = val;
+    }
+  }
+}
+
+/** Merge bundle-declared manifest env on top, skipping hard-denied keys. */
+function applyManifestEnv(
+  result: Record<string, string>,
+  manifestEnv: Record<string, string>,
+): void {
+  for (const [key, val] of Object.entries(manifestEnv)) {
+    if (HARD_DENY.has(key)) {
+      log.warn(`[env-filter] Denied manifest env ${key} — hard-deny list`);
+      continue;
+    }
+    result[key] = val;
+  }
+}
+
 /**
  * Build a filtered env object for a bundle process.
  *
@@ -50,36 +95,16 @@ export function filterEnvForBundle(
   const result: Record<string, string> = {};
 
   // 1. Pick default allowlist vars from host env
-  for (const key of DEFAULT_ALLOWLIST) {
-    const val = processEnv[key];
-    if (val !== undefined) {
-      result[key] = val;
-    }
-  }
+  applyDefaultAllowlist(result, processEnv);
 
   // 2. Add explicitly allowed vars (respecting hard deny)
   if (bundleAllowedEnv) {
-    for (const key of bundleAllowedEnv) {
-      if (HARD_DENY.has(key)) {
-        log.warn(`[env-filter] Denied passing ${key} to bundle — hard-deny list`);
-        continue;
-      }
-      const val = processEnv[key];
-      if (val !== undefined) {
-        result[key] = val;
-      }
-    }
+    applyBundleAllowedEnv(result, processEnv, bundleAllowedEnv);
   }
 
   // 3. Merge manifest env on top (bundle's own mcp_config.env values)
   if (manifestEnv) {
-    for (const [key, val] of Object.entries(manifestEnv)) {
-      if (HARD_DENY.has(key)) {
-        log.warn(`[env-filter] Denied manifest env ${key} — hard-deny list`);
-        continue;
-      }
-      result[key] = val;
-    }
+    applyManifestEnv(result, manifestEnv);
   }
 
   return result;

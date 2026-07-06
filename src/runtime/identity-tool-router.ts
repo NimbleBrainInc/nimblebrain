@@ -34,6 +34,7 @@ import type { ToolCall, ToolResult, ToolRouter, ToolSchema } from "../engine/typ
 import {
   mapOrchestratorErrorToToolResult,
   type OrchestratorRuntime,
+  type RoutedToolCall,
   routeToolCall,
 } from "../orchestrator/index.ts";
 import { assertToolAllowed } from "../permissions/assert-tool-allowed.ts";
@@ -84,6 +85,56 @@ export interface IdentityToolRouterOptions {
   onWorkspaceDispatch?: WorkspaceDispatchHook;
 }
 
+/**
+ * Split a routed inner tool name (`<source>__<tool>`) into its source prefix and
+ * bare tool name (split on the FIRST `__`; no separator ⇒ both are the whole name).
+ */
+function splitInnerToolName(innerName: string): {
+  sourcePrefix: string;
+  bareToolName: string;
+} {
+  const sepIndex = innerName.indexOf("__");
+  if (sepIndex < 0) return { sourcePrefix: innerName, bareToolName: innerName };
+  return {
+    sourcePrefix: innerName.slice(0, sepIndex),
+    bareToolName: innerName.slice(sepIndex + 2),
+  };
+}
+
+/** Build the routed request scope, carrying workspace agent/model overrides from the ambient scope onto a workspace route. */
+function buildPerCallScope(
+  routed: RoutedToolCall,
+  outerScope: RequestScope | undefined,
+): RequestScope {
+  if (routed.kind !== "workspace") return { kind: "identity" };
+  const outerWorkspace = outerScope?.kind === "workspace" ? outerScope : null;
+  return {
+    kind: "workspace",
+    workspaceId: routed.context.workspaceId,
+    workspaceAgents: outerWorkspace?.workspaceAgents ?? null,
+    workspaceModelOverride: outerWorkspace?.workspaceModelOverride ?? null,
+  };
+}
+
+/** Rebuild the per-call context from the ambient one, swapping in the routed scope and carrying forward the orthogonal request fields. */
+function buildPerCallContext(
+  outer: RequestContext | undefined,
+  scope: RequestScope,
+): RequestContext {
+  return {
+    identity: outer?.identity ?? null,
+    scope,
+    ...(outer?.conversationId !== undefined ? { conversationId: outer.conversationId } : {}),
+    // `fileWorkspaceId` is orthogonal to `scope` and rides through the restamp:
+    // identity-door `files__*` tools resolve their workspace-owned store from
+    // this field (NOT `scope.workspaceId`, which is the personal/session
+    // workspace on the identity door). Dropping it here would leave the file
+    // tools with no workspace in scope even when the chat set one.
+    ...(outer?.fileWorkspaceId !== undefined ? { fileWorkspaceId: outer.fileWorkspaceId } : {}),
+    ...(outer?.toolPromotion !== undefined ? { toolPromotion: outer.toolPromotion } : {}),
+  };
+}
+
 export class IdentityToolRouter implements ToolRouter {
   private readonly identityId: string;
   private readonly workspaceId: string;
@@ -129,7 +180,7 @@ export class IdentityToolRouter implements ToolRouter {
    * errors propagate to the engine's `run.error` path.
    */
   async execute(call: ToolCall, signal?: AbortSignal): Promise<ToolResult> {
-    let routed: Awaited<ReturnType<typeof routeToolCall>>;
+    let routed: RoutedToolCall;
     try {
       routed = await routeToolCall({
         identityId: this.identityId,
@@ -145,32 +196,14 @@ export class IdentityToolRouter implements ToolRouter {
       this.onWorkspaceDispatch(call.id, routed.context.workspaceId);
     }
 
-    // `routed.toolName` is the inner `<source>__<tool>` form (the
-    // namespace primitive only strips the `ws_<id>-` prefix).
-    // `ToolSource.execute` takes the bare local tool name (no source
-    // prefix) — mirroring `ToolRegistry.execute`'s contract. Split on the
-    // FIRST `__` so `sourcePrefix` is the connector/source name.
-    const sepIndex = routed.toolName.indexOf("__");
-    const sourcePrefix = sepIndex >= 0 ? routed.toolName.slice(0, sepIndex) : routed.toolName;
-    const bareToolName = sepIndex >= 0 ? routed.toolName.slice(sepIndex + 2) : routed.toolName;
+    // `routed.toolName` is the inner `<source>__<tool>` form (the namespace
+    // primitive only strips the `ws_<id>-` prefix). `ToolSource.execute` takes
+    // the bare local tool name (no source prefix) — mirroring
+    // `ToolRegistry.execute`'s contract.
+    const { sourcePrefix, bareToolName } = splitInnerToolName(routed.toolName);
 
-    // Connector permission gate. The engine door must honor an operator's
-    // per-tool `disallow` just like the REST registry gate does — otherwise a
-    // tool an admin disabled stays callable by the agent loop. Only
-    // workspace-routed calls carry a connector permission; identity-door tools
-    // (conversations / files / automations) have none — allow them through.
-    if (routed.kind === "workspace") {
-      const permissionStore = this.runtime.getPermissionStore?.();
-      if (permissionStore) {
-        const denied = await assertToolAllowed(
-          permissionStore,
-          routed.context.workspaceId,
-          sourcePrefix,
-          bareToolName,
-        );
-        if (denied) return denied;
-      }
-    }
+    const denied = await this.connectorPermissionDenial(routed, sourcePrefix, bareToolName);
+    if (denied) return denied;
 
     // Restamp the per-call scope from the ROUTED namespace, not ambient
     // state. Workspace agent / model overrides ride along on the workspace
@@ -179,31 +212,36 @@ export class IdentityToolRouter implements ToolRouter {
     // nullable workspaceId to leak; `requireWorkspaceId()` hard-fails on
     // an identity-scoped call by construction.
     const outer = getRequestContext();
-    const outerScope = outer?.scope;
-    const perCallScope: RequestScope =
-      routed.kind === "workspace"
-        ? {
-            kind: "workspace",
-            workspaceId: routed.context.workspaceId,
-            workspaceAgents: outerScope?.kind === "workspace" ? outerScope.workspaceAgents : null,
-            workspaceModelOverride:
-              outerScope?.kind === "workspace" ? outerScope.workspaceModelOverride : null,
-          }
-        : { kind: "identity" };
-    const perCallCtx: RequestContext = {
-      identity: outer?.identity ?? null,
-      scope: perCallScope,
-      ...(outer?.conversationId !== undefined ? { conversationId: outer.conversationId } : {}),
-      // `fileWorkspaceId` is orthogonal to `scope` and rides through the restamp:
-      // identity-door `files__*` tools resolve their workspace-owned store from
-      // this field (NOT `scope.workspaceId`, which is the personal/session
-      // workspace on the identity door). Dropping it here would leave the file
-      // tools with no workspace in scope even when the chat set one.
-      ...(outer?.fileWorkspaceId !== undefined ? { fileWorkspaceId: outer.fileWorkspaceId } : {}),
-      ...(outer?.toolPromotion !== undefined ? { toolPromotion: outer.toolPromotion } : {}),
-    };
+    const perCallScope = buildPerCallScope(routed, outer?.scope);
+    const perCallCtx = buildPerCallContext(outer, perCallScope);
     return runWithRequestContext(perCallCtx, () =>
       routed.source.execute(bareToolName, call.input, signal),
+    );
+  }
+
+  /**
+   * Connector permission gate for workspace-routed calls — returns the denial
+   * result when an operator set the tool's policy to `disallow`, else `null`.
+   *
+   * The engine door must honor an operator's per-tool `disallow` just like the
+   * REST registry gate does — otherwise a tool an admin disabled stays callable
+   * by the agent loop. Only workspace-routed calls carry a connector permission;
+   * identity-door tools (conversations / files / automations) have none — those
+   * pass through (`null`).
+   */
+  private async connectorPermissionDenial(
+    routed: RoutedToolCall,
+    sourcePrefix: string,
+    bareToolName: string,
+  ): Promise<ToolResult | null> {
+    if (routed.kind !== "workspace") return null;
+    const permissionStore = this.runtime.getPermissionStore?.();
+    if (!permissionStore) return null;
+    return assertToolAllowed(
+      permissionStore,
+      routed.context.workspaceId,
+      sourcePrefix,
+      bareToolName,
     );
   }
 }

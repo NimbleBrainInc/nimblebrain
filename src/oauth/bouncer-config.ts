@@ -160,6 +160,21 @@ function readAndValidate(env: NodeJS.ProcessEnv): BouncerMode | null {
     throw new Error("[oauth bouncer] internal: presence check failed unexpectedly");
   }
 
+  validateCallbackUrl(callbackUrl);
+
+  if (!ALLOWED_TID_PATTERN.test(tid)) {
+    throw new Error(
+      `[oauth bouncer] ${TENANT_ID_ENV}="${tid}" does not match the DNS-label grammar required for tenant ids in bouncer mode`,
+    );
+  }
+
+  const tenantKey = decodeTenantKey(tenantKeyB64);
+
+  return { callbackUrl, tid, tenantKey };
+}
+
+/** Rejects a callback URL that is not absolute http(s) landing on the expected callback path. */
+function validateCallbackUrl(callbackUrl: string): void {
   // URL must be absolute https (or http for localhost-style dev only).
   // Reject anything else — the vendor will reject non-https URIs anyway,
   // and we'd rather fail at boot than at the first OAuth flow.
@@ -184,13 +199,10 @@ function readAndValidate(env: NodeJS.ProcessEnv): BouncerMode | null {
       `[oauth bouncer] ${CALLBACK_URL_ENV} must end with "${EXPECTED_CALLBACK_PATH}" (got "${parsedUrl.pathname}"). The platform's session-binding cookie is scoped to this path; a divergent URL silently breaks every OAuth flow.`,
     );
   }
+}
 
-  if (!ALLOWED_TID_PATTERN.test(tid)) {
-    throw new Error(
-      `[oauth bouncer] ${TENANT_ID_ENV}="${tid}" does not match the DNS-label grammar required for tenant ids in bouncer mode`,
-    );
-  }
-
+/** Decodes the base64 tenant key and rejects wrong-length or placeholder buffers. */
+function decodeTenantKey(tenantKeyB64: string): Buffer {
   let tenantKey: Buffer;
   try {
     tenantKey = Buffer.from(tenantKeyB64, "base64");
@@ -211,6 +223,5 @@ function readAndValidate(env: NodeJS.ProcessEnv): BouncerMode | null {
       `[oauth bouncer] ${TENANT_KEY_ENV} is a placeholder pattern (all 0x00 or all 0xff); ensure HKDF derivation ran during onboarding`,
     );
   }
-
-  return { callbackUrl, tid, tenantKey };
+  return tenantKey;
 }

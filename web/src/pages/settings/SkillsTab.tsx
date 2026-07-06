@@ -1,5 +1,5 @@
 import { Lightbulb, Trash2, User } from "lucide-react";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { type RefObject, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { Streamdown } from "streamdown";
 import type { ToolInput } from "../../_generated/platform-schemas/catalog";
@@ -50,11 +50,52 @@ type SkillsBrowserProps =
 
 type WritableScope = "org" | "workspace" | "user";
 
+interface ScopeConfig {
+  isWorkspaceSurface: boolean;
+  lockedScope: "org" | "user" | undefined;
+  initialScopeFilter: Scope | "all";
+  createLockedScope: WritableScope;
+}
+
+/** Resolve the scope values a surface / lockedScope combination implies. */
+function resolveScopeConfig(props: SkillsBrowserProps): ScopeConfig {
+  if (props.surface === "workspace") {
+    return {
+      isWorkspaceSurface: true,
+      lockedScope: undefined,
+      initialScopeFilter: "all",
+      createLockedScope: "workspace",
+    };
+  }
+  return {
+    isWorkspaceSurface: false,
+    lockedScope: props.lockedScope,
+    initialScopeFilter: props.lockedScope,
+    createLockedScope: props.lockedScope,
+  };
+}
+
+/** Sub-header copy naming which scope's rules this view manages. */
+function headerDescription(lockedScope: "org" | "user" | undefined, isWorkspaceSurface: boolean) {
+  if (lockedScope === "org") return "Organization-wide rules. These apply to every workspace.";
+  if (isWorkspaceSurface)
+    return "Rules that shape what your agent says and how it works in this workspace.";
+  return "Rules that shape your agent's behavior.";
+}
+
+/** The loaded detail matching `editingId`, or null while it's absent/stale. */
+function matchingDetail(editingId: string | null, detail: ReadSkill | null): ReadSkill | null {
+  return editingId && detail?.id === editingId ? detail : null;
+}
+
+/** Whether the edit view is still waiting on the detail read for `editingId`. */
+function isDetailPending(editingId: string | null, detail: ReadSkill | null): boolean {
+  return editingId !== null && (!detail || detail.id !== editingId);
+}
+
 export function SkillsBrowser(props: SkillsBrowserProps) {
-  const isWorkspaceSurface = props.surface === "workspace";
-  const lockedScope = isWorkspaceSurface ? undefined : props.lockedScope;
-  const initialScopeFilter: Scope | "all" = isWorkspaceSurface ? "all" : lockedScope!;
-  const createLockedScope: WritableScope = isWorkspaceSurface ? "workspace" : lockedScope!;
+  const { isWorkspaceSurface, lockedScope, initialScopeFilter, createLockedScope } =
+    resolveScopeConfig(props);
 
   const [skills, setSkills] = useState<ListedSkill[]>([]);
   const [loading, setLoading] = useState(true);
@@ -250,11 +291,10 @@ export function SkillsBrowser(props: SkillsBrowserProps) {
   );
 
   if (view === "edit") {
-    const existing = editingId && detail?.id === editingId ? detail : null;
     return (
       <EditView
-        existing={existing}
-        loading={editingId !== null && (!detail || detail.id !== editingId)}
+        existing={matchingDetail(editingId, detail)}
+        loading={isDetailPending(editingId, detail)}
         pending={actionPending}
         error={error}
         onCancel={cancelEdit}
@@ -267,13 +307,7 @@ export function SkillsBrowser(props: SkillsBrowserProps) {
     <div className="max-w-3xl mx-auto space-y-6">
       <SettingsPageHeader
         title="Skills"
-        description={
-          lockedScope === "org"
-            ? "Organization-wide rules. These apply to every workspace."
-            : isWorkspaceSurface
-              ? "Rules that shape what your agent says and how it works in this workspace."
-              : "Rules that shape your agent's behavior."
-        }
+        description={headerDescription(lockedScope, isWorkspaceSurface)}
         icon={<Lightbulb className="h-5 w-5" />}
       />
 
@@ -305,61 +339,31 @@ export function SkillsBrowser(props: SkillsBrowserProps) {
       {skills.length > 0 &&
         grouped.map((group, idx) => {
           const inherited = isWorkspaceSurface && group.scope !== "workspace";
-          const activeCount = group.skills.filter((s) => s.status === "active").length;
-          if (inherited) {
-            return (
-              <InheritedSection
-                key={group.scope}
-                flush={idx === 0}
-                title={
-                  group.scope === "org"
-                    ? "From your organization"
-                    : group.scope === "bundle"
-                      ? "From the system"
-                      : `From ${group.scope}`
-                }
-                rules={group.skills}
-                deepLinkLabel={group.scope === "org" ? "Edit in org settings" : undefined}
-                deepLinkTo={group.scope === "org" ? "/org/skills" : undefined}
-                ambient={group.scope === "bundle"}
-                expandedId={selectedId}
-                onSelect={handleSelect}
-                detail={detail}
-                detailLoading={detailLoading}
-              />
-            );
-          }
-          // Own (editable) section title — `group.scope` always matches
-          // one of these three because the list fetch is pre-scoped.
-          const ownTitle = isWorkspaceSurface
-            ? "From your workspace"
-            : group.scope === "org"
-              ? "Organization rules"
-              : "Your rules";
-          return (
-            <Section
+          return inherited ? (
+            <InheritedSkillGroup
               key={group.scope}
+              group={group}
               flush={idx === 0}
-              title={ownTitle}
-              action={<span className="text-xs text-muted-foreground">{activeCount} active</span>}
-            >
-              <div className="divide-y divide-border">
-                {group.skills.map((s) => (
-                  <Rule
-                    key={s.id}
-                    skill={s}
-                    expanded={selectedId === s.id}
-                    detail={selectedId === s.id ? detail : null}
-                    detailLoading={selectedId === s.id && detailLoading}
-                    onSelect={() => handleSelect(s.id)}
-                    onToggle={() => handleToggle(s)}
-                    onEdit={() => startEdit(s.id)}
-                    onDelete={() => handleDelete(s.id)}
-                    pending={actionPending}
-                  />
-                ))}
-              </div>
-            </Section>
+              expandedId={selectedId}
+              onSelect={handleSelect}
+              detail={detail}
+              detailLoading={detailLoading}
+            />
+          ) : (
+            <OwnSkillGroup
+              key={group.scope}
+              group={group}
+              flush={idx === 0}
+              isWorkspaceSurface={isWorkspaceSurface}
+              selectedId={selectedId}
+              detail={detail}
+              detailLoading={detailLoading}
+              actionPending={actionPending}
+              onSelect={handleSelect}
+              onToggle={handleToggle}
+              onEdit={startEdit}
+              onDelete={handleDelete}
+            />
           );
         })}
 
@@ -400,6 +404,111 @@ function groupByScope(skills: ListedSkill[], opts?: { excludeUser?: boolean }): 
   }
   for (const list of map.values()) list.sort((a, b) => a.name.localeCompare(b.name));
   return order.filter((s) => map.has(s)).map((scope) => ({ scope, skills: map.get(scope)! }));
+}
+
+const INHERITED_TITLES: Partial<Record<Scope, string>> = {
+  org: "From your organization",
+  bundle: "From the system",
+};
+
+/** Section heading for an inherited (read-only) group. */
+function inheritedTitle(scope: Scope): string {
+  return INHERITED_TITLES[scope] ?? `From ${scope}`;
+}
+
+/**
+ * Section heading for the operator's own (editable) group. `scope` always
+ * matches one of these because the list fetch is pre-scoped.
+ */
+function ownTitle(scope: Scope, isWorkspaceSurface: boolean): string {
+  if (isWorkspaceSurface) return "From your workspace";
+  return scope === "org" ? "Organization rules" : "Your rules";
+}
+
+/** Read-only inherited group (org / system) — derives heading and deep link from scope. */
+function InheritedSkillGroup({
+  group,
+  flush,
+  expandedId,
+  onSelect,
+  detail,
+  detailLoading,
+}: {
+  group: GroupedSkills;
+  flush: boolean;
+  expandedId: string | null;
+  onSelect: (id: string) => void;
+  detail: ReadSkill | null;
+  detailLoading: boolean;
+}) {
+  const isOrg = group.scope === "org";
+  return (
+    <InheritedSection
+      flush={flush}
+      title={inheritedTitle(group.scope)}
+      rules={group.skills}
+      deepLinkLabel={isOrg ? "Edit in org settings" : undefined}
+      deepLinkTo={isOrg ? "/org/skills" : undefined}
+      ambient={group.scope === "bundle"}
+      expandedId={expandedId}
+      onSelect={onSelect}
+      detail={detail}
+      detailLoading={detailLoading}
+    />
+  );
+}
+
+/** Editable own group (workspace / org / user) — renders a Rule per skill. */
+function OwnSkillGroup({
+  group,
+  flush,
+  isWorkspaceSurface,
+  selectedId,
+  detail,
+  detailLoading,
+  actionPending,
+  onSelect,
+  onToggle,
+  onEdit,
+  onDelete,
+}: {
+  group: GroupedSkills;
+  flush: boolean;
+  isWorkspaceSurface: boolean;
+  selectedId: string | null;
+  detail: ReadSkill | null;
+  detailLoading: boolean;
+  actionPending: boolean;
+  onSelect: (id: string) => void;
+  onToggle: (skill: ListedSkill) => void;
+  onEdit: (id: string) => void;
+  onDelete: (id: string) => void;
+}) {
+  const activeCount = group.skills.filter((s) => s.status === "active").length;
+  return (
+    <Section
+      flush={flush}
+      title={ownTitle(group.scope, isWorkspaceSurface)}
+      action={<span className="text-xs text-muted-foreground">{activeCount} active</span>}
+    >
+      <div className="divide-y divide-border">
+        {group.skills.map((s) => (
+          <Rule
+            key={s.id}
+            skill={s}
+            expanded={selectedId === s.id}
+            detail={selectedId === s.id ? detail : null}
+            detailLoading={selectedId === s.id && detailLoading}
+            onSelect={() => onSelect(s.id)}
+            onToggle={() => onToggle(s)}
+            onEdit={() => onEdit(s.id)}
+            onDelete={() => onDelete(s.id)}
+            pending={actionPending}
+          />
+        ))}
+      </div>
+    </Section>
+  );
 }
 
 // ── Rule row ─────────────────────────────────────────────────────────────
@@ -738,6 +847,112 @@ function slugifyName(input: string): string {
     .replace(/^[-_]+|[-_]+$/g, "");
 }
 
+/** Header title for the edit view across its loading / new / edit states. */
+function editViewTitle(loading: boolean, isNew: boolean): string {
+  if (loading) return "Loading…";
+  return isNew ? "A new rule for your agent" : "Edit this rule";
+}
+
+/** Name input with a slug hint (new) or an immutability note (edit). */
+function RuleNameField({
+  name,
+  isNew,
+  slug,
+  showSlugHint,
+  nameRef,
+  onChange,
+}: {
+  name: string;
+  isNew: boolean;
+  slug: string;
+  showSlugHint: boolean;
+  nameRef: RefObject<HTMLInputElement | null>;
+  onChange: (value: string) => void;
+}) {
+  return (
+    <div className="space-y-2">
+      <label className="block text-sm font-medium" htmlFor="rule-name">
+        Name it
+      </label>
+      <Input
+        id="rule-name"
+        ref={nameRef}
+        value={name}
+        onChange={(e) => onChange(e.target.value)}
+        placeholder="Voice rules"
+        disabled={!isNew}
+        className={isNew ? "" : "font-mono"}
+      />
+      {showSlugHint && (
+        <p className="text-xs text-muted-foreground">
+          Saved as <span className="font-mono">{slug}</span>
+        </p>
+      )}
+      {!isNew && (
+        <p className="text-xs text-muted-foreground">
+          Names are immutable — they're the filename on disk.
+        </p>
+      )}
+    </div>
+  );
+}
+
+/** Collapsible advanced controls — currently just the priority knob. */
+function AdvancedSection({
+  open,
+  priority,
+  onToggle,
+  onPriorityChange,
+}: {
+  open: boolean;
+  priority: number;
+  onToggle: () => void;
+  onPriorityChange: (value: number) => void;
+}) {
+  return (
+    <div>
+      <button
+        type="button"
+        onClick={onToggle}
+        className="text-sm text-muted-foreground hover:text-foreground inline-flex items-center gap-2"
+      >
+        <span
+          className={cn(
+            "inline-block text-muted-foreground/60 transition-transform",
+            open && "rotate-90",
+          )}
+        >
+          ▸
+        </span>
+        Advanced
+      </button>
+      {open && (
+        <div className="mt-4 pl-5 space-y-4 border-l border-border">
+          <div className="space-y-1">
+            <label className="block text-sm font-medium" htmlFor="priority">
+              Priority
+            </label>
+            <div className="flex items-baseline gap-3">
+              <input
+                id="priority"
+                type="number"
+                min={11}
+                max={99}
+                value={priority}
+                onChange={(e) => onPriorityChange(parseInt(e.target.value, 10) || 50)}
+                className="text-sm bg-background border-b border-border pb-1 w-20 outline-none focus:border-foreground"
+              />
+              <span className="text-xs text-muted-foreground">
+                11–99, lower = read first (default 50)
+              </span>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function EditView({
   existing,
   loading,
@@ -790,7 +1005,7 @@ function EditView({
   return (
     <div className="max-w-3xl mx-auto space-y-6">
       <SettingsPageHeader
-        title={loading ? "Loading…" : isNew ? "A new rule for your agent" : "Edit this rule"}
+        title={editViewTitle(loading, isNew)}
         // `onBack` (not `back`) because EditView is component state on
         // SkillsBrowser, not a routed sub-page — the URL stays on
         // .../skills while editing. A router Link would navigate UP the
@@ -808,30 +1023,14 @@ function EditView({
 
       {!loading && (
         <div className="space-y-6">
-          <div className="space-y-2">
-            <label className="block text-sm font-medium" htmlFor="rule-name">
-              Name it
-            </label>
-            <Input
-              id="rule-name"
-              ref={nameRef}
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              placeholder="Voice rules"
-              disabled={!isNew}
-              className={isNew ? "" : "font-mono"}
-            />
-            {showSlugHint && (
-              <p className="text-xs text-muted-foreground">
-                Saved as <span className="font-mono">{slug}</span>
-              </p>
-            )}
-            {!isNew && (
-              <p className="text-xs text-muted-foreground">
-                Names are immutable — they're the filename on disk.
-              </p>
-            )}
-          </div>
+          <RuleNameField
+            name={name}
+            isNew={isNew}
+            slug={slug}
+            showSlugHint={showSlugHint}
+            nameRef={nameRef}
+            onChange={setName}
+          />
 
           <div className="space-y-2">
             <label className="block text-sm font-medium" htmlFor="rule-body">
@@ -850,46 +1049,12 @@ function EditView({
             </p>
           </div>
 
-          <div>
-            <button
-              type="button"
-              onClick={() => setAdvancedOpen((v) => !v)}
-              className="text-sm text-muted-foreground hover:text-foreground inline-flex items-center gap-2"
-            >
-              <span
-                className={cn(
-                  "inline-block text-muted-foreground/60 transition-transform",
-                  advancedOpen && "rotate-90",
-                )}
-              >
-                ▸
-              </span>
-              Advanced
-            </button>
-            {advancedOpen && (
-              <div className="mt-4 pl-5 space-y-4 border-l border-border">
-                <div className="space-y-1">
-                  <label className="block text-sm font-medium" htmlFor="priority">
-                    Priority
-                  </label>
-                  <div className="flex items-baseline gap-3">
-                    <input
-                      id="priority"
-                      type="number"
-                      min={11}
-                      max={99}
-                      value={priority}
-                      onChange={(e) => setPriority(parseInt(e.target.value, 10) || 50)}
-                      className="text-sm bg-background border-b border-border pb-1 w-20 outline-none focus:border-foreground"
-                    />
-                    <span className="text-xs text-muted-foreground">
-                      11–99, lower = read first (default 50)
-                    </span>
-                  </div>
-                </div>
-              </div>
-            )}
-          </div>
+          <AdvancedSection
+            open={advancedOpen}
+            priority={priority}
+            onToggle={() => setAdvancedOpen((v) => !v)}
+            onPriorityChange={setPriority}
+          />
         </div>
       )}
 

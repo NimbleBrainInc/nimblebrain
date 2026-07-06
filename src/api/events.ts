@@ -164,6 +164,20 @@ export function deriveDataChangedTarget(
   return { server, tool };
 }
 
+/** Frame an SSE event into its `event:`/`data:` wire encoding. */
+function frameSseEvent(eventType: string, data: Record<string, unknown>): Uint8Array {
+  return encoder.encode(`event: ${eventType}\ndata: ${JSON.stringify(data)}\n\n`);
+}
+
+/** Whether a client should receive an event scoped to `wsId` (undefined = unscoped broadcast). */
+function clientReceives(client: SseClient, wsId: string | undefined): boolean {
+  if (wsId === undefined) return true;
+  // `undefined` memberships is the legacy firehose (all events); an explicit
+  // set requires the wsId to be a member.
+  const memberships = client.workspaceMemberships;
+  return memberships === undefined || memberships.has(wsId);
+}
+
 /**
  * SSE Event Manager for the workspace-level event stream.
  *
@@ -348,44 +362,51 @@ export class SseEventManager implements EventSink {
    *   - Otherwise → skip.
    */
   broadcast(eventType: string, data: Record<string, unknown>, wsId?: string): void {
-    const message = `event: ${eventType}\ndata: ${JSON.stringify(data)}\n\n`;
-    const encoded = encoder.encode(message);
+    this.fanOut(frameSseEvent(eventType, data), wsId);
+    this.bufferEvent(eventType, data);
+    this.notifyLocal(eventType, data);
+  }
 
+  /** Enqueue an encoded frame to every eligible client, pruning closed ones. */
+  private fanOut(encoded: Uint8Array, wsId: string | undefined): void {
     for (const [id, client] of this.clients) {
       if (client.closed) {
         this.clients.delete(id);
         continue;
       }
-      if (wsId !== undefined) {
-        const memberships = client.workspaceMemberships;
-        // `undefined` = legacy firehose; any non-undefined set requires
-        // explicit membership to deliver.
-        if (memberships !== undefined && !memberships.has(wsId)) continue;
-      }
-      try {
-        client.controller.enqueue(encoded);
-      } catch (err) {
-        // Client disconnected — log before cleanup
-        log.warn("[events] SSE write failed", {
-          error: err instanceof Error ? err.message : String(err),
-        });
-        this.closeClient(client);
-        this.clients.delete(id);
-      }
+      if (!clientReceives(client, wsId)) continue;
+      this.deliver(id, client, encoded);
     }
+  }
 
-    // Buffer the event
-    const buffered: BufferedEvent = {
-      event: eventType,
-      data,
-      timestamp: new Date().toISOString(),
-    };
+  /** Enqueue a frame to one client, closing and pruning it if the write throws. */
+  private deliver(id: string, client: SseClient, encoded: Uint8Array): void {
+    try {
+      client.controller.enqueue(encoded);
+    } catch (err) {
+      // Client disconnected — log before cleanup
+      log.warn("[events] SSE write failed", {
+        error: err instanceof Error ? err.message : String(err),
+      });
+      this.closeClient(client);
+      this.clients.delete(id);
+    }
+  }
+
+  /** Append an event to the bounded buffer, evicting the oldest at capacity. */
+  private bufferEvent(eventType: string, data: Record<string, unknown>): void {
     if (this.eventBuffer.length >= this.MAX_BUFFER_SIZE) {
       this.eventBuffer.shift();
     }
-    this.eventBuffer.push(buffered);
+    this.eventBuffer.push({
+      event: eventType,
+      data,
+      timestamp: new Date().toISOString(),
+    });
+  }
 
-    // Notify local listeners
+  /** Notify in-process listeners registered via `onEvent`. */
+  private notifyLocal(eventType: string, data: Record<string, unknown>): void {
     for (const cb of this.localListeners) {
       cb(eventType, data);
     }

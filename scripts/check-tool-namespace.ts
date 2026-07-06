@@ -143,6 +143,31 @@ export function isNamespacedToolTemplate(node: ts.TemplateExpression): boolean {
   return false;
 }
 
+/** Text of a string or no-substitution-template literal, else null. */
+function literalText(node: ts.Node): string | null {
+  return ts.isStringLiteral(node) || ts.isNoSubstitutionTemplateLiteral(node) ? node.text : null;
+}
+
+/** Flattens a `+` chain into its operand nodes, in source order. */
+function flattenPlusChain(node: ts.BinaryExpression): ts.Node[] {
+  const operands: ts.Node[] = [];
+  const collect = (n: ts.Node): void => {
+    if (ts.isBinaryExpression(n) && n.operatorToken.kind === ts.SyntaxKind.PlusToken) {
+      collect(n.left);
+      collect(n.right);
+    } else {
+      operands.push(n);
+    }
+  };
+  collect(node);
+  return operands;
+}
+
+/** True for the `ws_` prefix literal: bare `"ws_"` or a partial id with no separator yet. */
+function isWsPrefixLiteral(text: string): boolean {
+  return text === "ws_" || (text.startsWith("ws_") && !text.includes("-"));
+}
+
 /**
  * Walks a `+` chain and returns true iff some operand is a literal
  * `"ws_"` AND a later operand (anywhere in the chain) is the literal
@@ -157,38 +182,22 @@ export function isNamespacedToolTemplate(node: ts.TemplateExpression): boolean {
  */
 export function isNamespacedToolBinaryConcat(node: ts.BinaryExpression): boolean {
   if (node.operatorToken.kind !== ts.SyntaxKind.PlusToken) return false;
-  const operands: ts.Node[] = [];
-  function collect(n: ts.Node): void {
-    if (ts.isBinaryExpression(n) && n.operatorToken.kind === ts.SyntaxKind.PlusToken) {
-      collect(n.left);
-      collect(n.right);
-    } else {
-      operands.push(n);
-    }
-  }
-  collect(node);
+  const operands = flattenPlusChain(node);
 
   let sawWsPrefix = -1;
-  let sawSepAfter = false;
   for (let i = 0; i < operands.length; i++) {
     const op = operands[i];
-    if (!op) continue;
-    const text = ts.isStringLiteral(op) || ts.isNoSubstitutionTemplateLiteral(op) ? op.text : null;
+    const text = op ? literalText(op) : null;
     if (text === null) continue;
     if (sawWsPrefix < 0) {
       // Either exactly "ws_" or a literal beginning with "ws_" and
       // ending mid-id (no separator yet).
-      if (text === "ws_" || (text.startsWith("ws_") && !text.includes("-"))) {
-        sawWsPrefix = i;
-      }
-    } else if (i > sawWsPrefix) {
-      if (text.startsWith("-")) {
-        sawSepAfter = true;
-        break;
-      }
+      if (isWsPrefixLiteral(text)) sawWsPrefix = i;
+    } else if (i > sawWsPrefix && text.startsWith("-")) {
+      return true;
     }
   }
-  return sawWsPrefix >= 0 && sawSepAfter;
+  return false;
 }
 
 // ── Parse predicate (b) ─────────────────────────────────────────────
@@ -211,9 +220,7 @@ export function isNamespacedSplit(node: ts.CallExpression): boolean {
   if (!NAMESPACED_BINDING_RE.test(receiver.text)) return false;
   const [arg] = node.arguments;
   if (!arg) return false;
-  const argText =
-    ts.isStringLiteral(arg) || ts.isNoSubstitutionTemplateLiteral(arg) ? arg.text : null;
-  return argText === "-";
+  return literalText(arg) === "-";
 }
 
 // ── Walker scaffolding (same shape as check-conversation-paths.ts) ──
@@ -279,6 +286,37 @@ function scanFile(absPath: string, scanRoot: string, violations: Violation[]): v
   visit(sourceFile);
 }
 
+/** True for paths outside scope: deps, build output, type decls, tests, generated mirrors. */
+function isExcludedPath(abs: string): boolean {
+  if (abs.includes("/node_modules/") || abs.includes("/dist/")) return true;
+  if (abs.endsWith(".d.ts")) return true;
+  // Tests construct/parse the shape deliberately (fixtures) — out of scope,
+  // matching the platform-side `test/` exclusion.
+  if (abs.includes("/__tests__/") || abs.endsWith(".test.ts") || abs.endsWith(".test.tsx")) {
+    return true;
+  }
+  // Generated mirrors of the workspace-id pattern are not hand-written.
+  return abs.includes("/_generated/");
+}
+
+/** Prints every violation with guidance to stderr and exits non-zero. */
+function reportViolations(violations: Violation[]): never {
+  console.error(
+    `✗ Found ${violations.length} hand-built namespaced tool name(s) in src/ + web/src/:\n`,
+  );
+  for (const v of violations) {
+    console.error(`  ${v.file}:${v.line}:${v.column} — ${v.reason}`);
+    console.error(`    ${v.snippet}\n`);
+  }
+  console.error("Cross-workspace tool names must flow through `namespacedToolName(wsId, name)` /");
+  console.error("`parseNamespacedToolName(s)` — `src/tools/namespace.ts` (platform) or");
+  console.error("`web/src/lib/namespaced-tool.ts` (web mirror).");
+  console.error(
+    `Legitimate exceptions (rare) require a // ${ALLOW_MARKER} comment on the line above the construction.`,
+  );
+  process.exit(1);
+}
+
 async function main(): Promise<void> {
   const violations: Violation[] = [];
   // `.tsx` included so the web client's React components are covered, not just
@@ -289,38 +327,13 @@ async function main(): Promise<void> {
   for (const scanRoot of SCAN_ROOTS) {
     for await (const rel of glob.scan({ cwd: scanRoot })) {
       const abs = join(scanRoot, rel);
-      if (abs.includes("/node_modules/") || abs.includes("/dist/")) continue;
-      if (abs.endsWith(".d.ts")) continue;
-      // Tests construct/parse the shape deliberately (fixtures) — out of scope,
-      // matching the platform-side `test/` exclusion.
-      if (abs.includes("/__tests__/") || abs.endsWith(".test.ts") || abs.endsWith(".test.tsx")) {
-        continue;
-      }
-      // Generated mirrors of the workspace-id pattern are not hand-written.
-      if (abs.includes("/_generated/")) continue;
+      if (isExcludedPath(abs)) continue;
       scanned++;
       scanFile(abs, scanRoot, violations);
     }
   }
 
-  if (violations.length > 0) {
-    console.error(
-      `✗ Found ${violations.length} hand-built namespaced tool name(s) in src/ + web/src/:\n`,
-    );
-    for (const v of violations) {
-      console.error(`  ${v.file}:${v.line}:${v.column} — ${v.reason}`);
-      console.error(`    ${v.snippet}\n`);
-    }
-    console.error(
-      "Cross-workspace tool names must flow through `namespacedToolName(wsId, name)` /",
-    );
-    console.error("`parseNamespacedToolName(s)` — `src/tools/namespace.ts` (platform) or");
-    console.error("`web/src/lib/namespaced-tool.ts` (web mirror).");
-    console.error(
-      `Legitimate exceptions (rare) require a // ${ALLOW_MARKER} comment on the line above the construction.`,
-    );
-    process.exit(1);
-  }
+  if (violations.length > 0) reportViolations(violations);
 
   console.log(`✓ No hand-built namespaced tool names in ${scanned} src/ + web/src/ files`);
 }

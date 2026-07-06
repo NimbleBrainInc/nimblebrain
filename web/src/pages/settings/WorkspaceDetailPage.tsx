@@ -60,6 +60,12 @@ function formatDate(iso?: string): string {
   }
 }
 
+/** Resolves a route slug to a workspace id, tolerating a missing "ws_" prefix. */
+function resolveWorkspaceId(slug: string | undefined): string | undefined {
+  if (!slug) return undefined;
+  return slug.startsWith("ws_") ? slug : `ws_${slug}`;
+}
+
 /**
  * Org-admin "manage another workspace" page. Composite layout (back-nav +
  * three sections) so we don't jam it into a generic FormPage / ListPage —
@@ -69,7 +75,7 @@ function formatDate(iso?: string): string {
  */
 export function WorkspaceDetailPage() {
   const { slug } = useParams<{ slug: string }>();
-  const id = slug ? (slug.startsWith("ws_") ? slug : `ws_${slug}`) : undefined;
+  const id = resolveWorkspaceId(slug);
   const session = useSession();
   const isOrgAdmin = ADMIN_ROLES.has(session?.user?.orgRole ?? "");
 
@@ -254,121 +260,42 @@ export function WorkspaceDetailPage() {
         icon={<Users className="h-4 w-4" />}
         action={
           isWsAdmin ? (
-            <Button
-              size="sm"
-              variant={showAdd ? "outline" : "default"}
-              onClick={() => {
+            <AddMemberButton
+              showAdd={showAdd}
+              onToggle={() => {
                 setShowAdd(!showAdd);
                 setAddError(null);
               }}
-            >
-              {showAdd ? (
-                "Cancel"
-              ) : (
-                <>
-                  <Plus className="mr-1 h-4 w-4" />
-                  Add Member
-                </>
-              )}
-            </Button>
+            />
           ) : null
         }
       >
         <div className="space-y-4">
           {showAdd ? (
-            <Card>
-              <CardContent className="py-4 space-y-4">
-                <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-                  <div className="space-y-1.5">
-                    <Label htmlFor="add-member-user">User</Label>
-                    {availableUsers.length === 0 ? (
-                      <p className="text-sm text-muted-foreground py-2">
-                        All users are already members of this workspace.
-                      </p>
-                    ) : (
-                      <Select
-                        id="add-member-user"
-                        value={addUserId}
-                        onChange={(e) => setAddUserId(e.target.value)}
-                      >
-                        <option value="">Select a user...</option>
-                        {availableUsers.map((u) => (
-                          <option key={u.id} value={u.id}>
-                            {u.displayName} ({u.email})
-                          </option>
-                        ))}
-                      </Select>
-                    )}
-                  </div>
-                  <div className="space-y-1.5">
-                    <Label htmlFor="add-member-role">Role</Label>
-                    <Select
-                      id="add-member-role"
-                      value={addRole}
-                      onChange={(e) => setAddRole(e.target.value as "member" | "admin")}
-                    >
-                      <option value="member">Member</option>
-                      <option value="admin">Admin</option>
-                    </Select>
-                  </div>
-                </div>
-                {addError ? <InlineError message={addError} /> : null}
-                <Button size="sm" onClick={handleAdd} disabled={adding || !addUserId}>
-                  {adding ? "Adding..." : "Add Member"}
-                </Button>
-              </CardContent>
-            </Card>
+            <AddMemberForm
+              availableUsers={availableUsers}
+              addUserId={addUserId}
+              setAddUserId={setAddUserId}
+              addRole={addRole}
+              setAddRole={setAddRole}
+              addError={addError}
+              adding={adding}
+              onAdd={handleAdd}
+            />
           ) : null}
 
           {members.length === 0 ? (
             <EmptyState message="No members in this workspace." />
           ) : (
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Display Name</TableHead>
-                  <TableHead>Email</TableHead>
-                  <TableHead>Role</TableHead>
-                  {isWsAdmin && <TableHead className="w-[60px]" />}
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {members.map((m) => {
-                  const user = userMap.get(m.userId);
-                  const isLastAdmin = m.role === "admin" && adminCount <= 1;
-                  const isSelfLastAdmin = m.userId === currentUserId && isLastAdmin;
-                  const isRemoving = removingId === m.userId;
-
-                  return (
-                    <TableRow key={m.userId}>
-                      <TableCell className="font-medium">{user?.displayName ?? m.userId}</TableCell>
-                      <TableCell>{user?.email ?? "—"}</TableCell>
-                      <TableCell>
-                        <RoleBadge role={m.role} />
-                      </TableCell>
-                      {isWsAdmin && (
-                        <TableCell>
-                          <Button
-                            size="sm"
-                            variant="ghost"
-                            disabled={isSelfLastAdmin || isRemoving}
-                            title={
-                              isSelfLastAdmin
-                                ? "Cannot remove the last admin"
-                                : `Remove ${user?.displayName ?? m.userId}`
-                            }
-                            onClick={() => handleRemove(m.userId)}
-                            className="h-8 w-8 p-0 text-muted-foreground hover:text-destructive"
-                          >
-                            <Trash2 className="h-4 w-4" />
-                          </Button>
-                        </TableCell>
-                      )}
-                    </TableRow>
-                  );
-                })}
-              </TableBody>
-            </Table>
+            <MembersTable
+              members={members}
+              userMap={userMap}
+              isWsAdmin={isWsAdmin}
+              adminCount={adminCount}
+              currentUserId={currentUserId}
+              removingId={removingId}
+              onRemove={handleRemove}
+            />
           )}
         </div>
       </Section>
@@ -393,22 +320,176 @@ export function WorkspaceDetailPage() {
       </Section>
 
       <Section title="Installed Bundles" icon={<Package className="h-4 w-4" />}>
-        {!workspace?.bundles || workspace.bundles.length === 0 ? (
-          <EmptyState message="No bundles installed." />
-        ) : (
-          <div className="space-y-2">
-            {workspace.bundles.map((b, i) => (
-              <Card key={b.name ?? b.path ?? i}>
-                <CardContent className="py-3 px-4">
-                  <span className="text-sm font-medium">
-                    {b.name ?? b.path ?? "Unknown bundle"}
-                  </span>
-                </CardContent>
-              </Card>
-            ))}
-          </div>
-        )}
+        <BundlesList bundles={workspace?.bundles} />
       </Section>
+    </div>
+  );
+}
+
+/** Toggle button in the Members section header for opening the add-member form. */
+function AddMemberButton({ showAdd, onToggle }: { showAdd: boolean; onToggle: () => void }) {
+  return (
+    <Button size="sm" variant={showAdd ? "outline" : "default"} onClick={onToggle}>
+      {showAdd ? (
+        "Cancel"
+      ) : (
+        <>
+          <Plus className="mr-1 h-4 w-4" />
+          Add Member
+        </>
+      )}
+    </Button>
+  );
+}
+
+/** Card form for adding a user to the workspace with a chosen role. */
+function AddMemberForm({
+  availableUsers,
+  addUserId,
+  setAddUserId,
+  addRole,
+  setAddRole,
+  addError,
+  adding,
+  onAdd,
+}: {
+  availableUsers: UserInfo[];
+  addUserId: string;
+  setAddUserId: (value: string) => void;
+  addRole: "member" | "admin";
+  setAddRole: (value: "member" | "admin") => void;
+  addError: string | null;
+  adding: boolean;
+  onAdd: () => void;
+}) {
+  return (
+    <Card>
+      <CardContent className="py-4 space-y-4">
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+          <div className="space-y-1.5">
+            <Label htmlFor="add-member-user">User</Label>
+            {availableUsers.length === 0 ? (
+              <p className="text-sm text-muted-foreground py-2">
+                All users are already members of this workspace.
+              </p>
+            ) : (
+              <Select
+                id="add-member-user"
+                value={addUserId}
+                onChange={(e) => setAddUserId(e.target.value)}
+              >
+                <option value="">Select a user...</option>
+                {availableUsers.map((u) => (
+                  <option key={u.id} value={u.id}>
+                    {u.displayName} ({u.email})
+                  </option>
+                ))}
+              </Select>
+            )}
+          </div>
+          <div className="space-y-1.5">
+            <Label htmlFor="add-member-role">Role</Label>
+            <Select
+              id="add-member-role"
+              value={addRole}
+              onChange={(e) => setAddRole(e.target.value as "member" | "admin")}
+            >
+              <option value="member">Member</option>
+              <option value="admin">Admin</option>
+            </Select>
+          </div>
+        </div>
+        {addError ? <InlineError message={addError} /> : null}
+        <Button size="sm" onClick={onAdd} disabled={adding || !addUserId}>
+          {adding ? "Adding..." : "Add Member"}
+        </Button>
+      </CardContent>
+    </Card>
+  );
+}
+
+/** Table of workspace members with per-row remove controls for admins. */
+function MembersTable({
+  members,
+  userMap,
+  isWsAdmin,
+  adminCount,
+  currentUserId,
+  removingId,
+  onRemove,
+}: {
+  members: Member[];
+  userMap: Map<string, UserInfo>;
+  isWsAdmin: boolean;
+  adminCount: number;
+  currentUserId: string | undefined;
+  removingId: string | null;
+  onRemove: (userId: string) => void;
+}) {
+  return (
+    <Table>
+      <TableHeader>
+        <TableRow>
+          <TableHead>Display Name</TableHead>
+          <TableHead>Email</TableHead>
+          <TableHead>Role</TableHead>
+          {isWsAdmin && <TableHead className="w-[60px]" />}
+        </TableRow>
+      </TableHeader>
+      <TableBody>
+        {members.map((m) => {
+          const user = userMap.get(m.userId);
+          const isLastAdmin = m.role === "admin" && adminCount <= 1;
+          const isSelfLastAdmin = m.userId === currentUserId && isLastAdmin;
+          const isRemoving = removingId === m.userId;
+
+          return (
+            <TableRow key={m.userId}>
+              <TableCell className="font-medium">{user?.displayName ?? m.userId}</TableCell>
+              <TableCell>{user?.email ?? "—"}</TableCell>
+              <TableCell>
+                <RoleBadge role={m.role} />
+              </TableCell>
+              {isWsAdmin && (
+                <TableCell>
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    disabled={isSelfLastAdmin || isRemoving}
+                    title={
+                      isSelfLastAdmin
+                        ? "Cannot remove the last admin"
+                        : `Remove ${user?.displayName ?? m.userId}`
+                    }
+                    onClick={() => onRemove(m.userId)}
+                    className="h-8 w-8 p-0 text-muted-foreground hover:text-destructive"
+                  >
+                    <Trash2 className="h-4 w-4" />
+                  </Button>
+                </TableCell>
+              )}
+            </TableRow>
+          );
+        })}
+      </TableBody>
+    </Table>
+  );
+}
+
+/** Renders the installed-bundle cards, or an empty state when none are present. */
+function BundlesList({ bundles }: { bundles?: Array<{ name?: string; path?: string }> }) {
+  if (!bundles || bundles.length === 0) {
+    return <EmptyState message="No bundles installed." />;
+  }
+  return (
+    <div className="space-y-2">
+      {bundles.map((b, i) => (
+        <Card key={b.name ?? b.path ?? i}>
+          <CardContent className="py-3 px-4">
+            <span className="text-sm font-medium">{b.name ?? b.path ?? "Unknown bundle"}</span>
+          </CardContent>
+        </Card>
+      ))}
     </div>
   );
 }

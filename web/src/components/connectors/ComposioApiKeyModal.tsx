@@ -4,6 +4,29 @@ import { Button } from "../ui/button";
 import { Input } from "../ui/input";
 
 /**
+ * Required unless explicitly opted out — mirrors the server's
+ * `required !== false` default-deny in connect_api_key.
+ */
+const isRequired = (f: ComposioField) => f.required !== false;
+
+/** Trim `values` against `fields`, returning the connect payload or the first missing-required-field error. */
+function collectComposioPayload(
+  fields: ComposioField[],
+  values: Record<string, string>,
+): { payload: Record<string, string> } | { error: string } {
+  const payload: Record<string, string> = {};
+  for (const f of fields) {
+    const v = (values[f.key] ?? "").trim();
+    if (!v) {
+      if (isRequired(f)) return { error: `${f.title} is required.` };
+      continue;
+    }
+    payload[f.key] = v;
+  }
+  return { payload };
+}
+
+/**
  * Field-collection modal for a non-redirect (API-key) Composio connector.
  * The sibling of {@link OperatorSetupModal}: instead of an OAuth round-trip,
  * the user pastes the connector's declared `fields` (e.g. a PostHog personal
@@ -56,28 +79,17 @@ export function ComposioApiKeyModal({
 
   if (!open) return null;
 
-  // Required unless explicitly opted out — mirrors the server's
-  // `required !== false` default-deny in connect_api_key.
-  const isRequired = (f: ComposioField) => f.required !== false;
-
   const submit = async () => {
     if (busy) return;
-    const payload: Record<string, string> = {};
-    for (const f of fields) {
-      const v = (values[f.key] ?? "").trim();
-      if (!v) {
-        if (isRequired(f)) {
-          setError(`${f.title} is required.`);
-          return;
-        }
-        continue;
-      }
-      payload[f.key] = v;
+    const result = collectComposioPayload(fields, values);
+    if ("error" in result) {
+      setError(result.error);
+      return;
     }
     setBusy(true);
     setError(null);
     try {
-      await connectComposioApiKey(catalogId, payload);
+      await connectComposioApiKey(catalogId, result.payload);
       onConnected();
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));

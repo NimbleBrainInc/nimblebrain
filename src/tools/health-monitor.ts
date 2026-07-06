@@ -83,25 +83,9 @@ export class HealthMonitor {
     // Dead is terminal — no more restart attempts
     if (record.state === "dead") return;
 
-    // Skip if source is alive. A source that has stayed up for at least one
-    // full check interval has demonstrably recovered, so clear the
-    // consecutive-failure counter: `MAX_RESTARTS` must bound CONSECUTIVE
-    // failures, not lifetime drops, and the exponential backoff must start
-    // fresh for the next independent crash episode. Without this, a remote
-    // connector that periodically drops and cleanly reconnects (e.g. a
-    // server that idle-closes long-lived streams) accrues restarts across
-    // its whole life and is wrongly killed after `MAX_RESTARTS` total drops
-    // despite every reconnect succeeding. The reset is gated on SUSTAINED
-    // uptime, not a single successful reconnect, on purpose: a source that
-    // recovers then immediately re-drops never earns the reset, so it still
-    // escalates to `dead` instead of looping forever.
+    // Alive sources need no restart; a sustained-uptime source resets backoff.
     if (record.source.isAlive()) {
-      if (record.restartCount > 0) {
-        const uptime = record.source.uptime();
-        if (uptime !== null && uptime >= this.checkIntervalMs) {
-          record.restartCount = 0;
-        }
-      }
+      this.resetBackoffIfRecovered(record);
       return;
     }
 
@@ -124,70 +108,81 @@ export class HealthMonitor {
     const remote = isRemoteSource(record.source);
 
     // Source is down — emit crashed event
-    this.eventSink.emit({
-      type: "run.error",
-      data: {
-        source: record.source.name,
-        event: "bundle.crashed",
-        ...(remote ? { remote: true } : {}),
-      },
-    });
+    this.emitBundleEvent(record, "bundle.crashed", remote);
 
     // Check if we've exhausted restart attempts
     if (record.restartCount >= MAX_RESTARTS) {
       record.state = "dead";
-      this.eventSink.emit({
-        type: "run.error",
-        data: {
-          source: record.source.name,
-          event: "bundle.dead",
-          ...(remote ? { remote: true } : {}),
-        },
-      });
+      this.emitBundleEvent(record, "bundle.dead", remote);
       return;
     }
 
-    // Attempt restart with exponential backoff
+    await this.attemptRestart(record, remote);
+  }
+
+  /**
+   * Clear the consecutive-failure counter once a recovered source has
+   * sustained a full check interval of uptime.
+   */
+  private resetBackoffIfRecovered(record: BundleRecord): void {
+    // `MAX_RESTARTS` must bound CONSECUTIVE failures, not lifetime drops, and
+    // the exponential backoff must start fresh for the next independent crash
+    // episode. Without this, a remote connector that periodically drops and
+    // cleanly reconnects (e.g. a server that idle-closes long-lived streams)
+    // accrues restarts across its whole life and is wrongly killed after
+    // `MAX_RESTARTS` total drops despite every reconnect succeeding. The reset
+    // is gated on SUSTAINED uptime, not a single successful reconnect, on
+    // purpose: a source that recovers then immediately re-drops never earns the
+    // reset, so it still escalates to `dead` instead of looping forever.
+    if (record.restartCount === 0) return;
+    const uptime = record.source.uptime();
+    if (uptime !== null && uptime >= this.checkIntervalMs) {
+      record.restartCount = 0;
+    }
+  }
+
+  /** Restart a downed source after exponential backoff, updating state on the outcome. */
+  private async attemptRestart(record: BundleRecord, remote: boolean): Promise<void> {
     record.state = "restarting";
     const delay = this.baseDelayMs * 2 ** record.restartCount;
     record.restartCount++;
 
-    this.eventSink.emit({
-      type: "run.error",
-      data: {
-        source: record.source.name,
-        event: "bundle.restarting",
-        attempt: record.restartCount,
-        delayMs: delay,
-        ...(remote ? { remote: true } : {}),
-      },
+    this.emitBundleEvent(record, "bundle.restarting", remote, {
+      attempt: record.restartCount,
+      delayMs: delay,
     });
 
     await sleep(delay);
 
-    let ok: boolean;
-    if (remote) {
-      // Remote sources: reconnect via transport stop+start cycle
-      ok = await this.reconnectRemote(record.source);
-    } else {
-      // Stdio sources: restart subprocess
-      ok = await record.source.restart();
-    }
+    // Remote sources reconnect via transport stop+start cycle; stdio sources
+    // restart the subprocess.
+    const ok = remote ? await this.reconnectRemote(record.source) : await record.source.restart();
 
     if (ok) {
       record.state = "healthy";
-      this.eventSink.emit({
-        type: "run.error",
-        data: {
-          source: record.source.name,
-          event: "bundle.recovered",
-          ...(remote ? { remote: true } : {}),
-        },
-      });
+      this.emitBundleEvent(record, "bundle.recovered", remote);
     } else {
       // Restart failed — check again on next cycle (might hit max)
       record.state = "restarting";
     }
+  }
+
+  /** Emit a `run.error` lifecycle event for a bundle, flagging remote sources. */
+  private emitBundleEvent(
+    record: BundleRecord,
+    event: string,
+    remote: boolean,
+    extra: Record<string, unknown> = {},
+  ): void {
+    this.eventSink.emit({
+      type: "run.error",
+      data: {
+        source: record.source.name,
+        event,
+        ...extra,
+        ...(remote ? { remote: true } : {}),
+      },
+    });
   }
 
   /**

@@ -40,6 +40,198 @@ function formatDate(iso?: string): string {
   }
 }
 
+/** Inline form for naming and submitting a new workspace. */
+function CreateWorkspaceForm({
+  name,
+  onNameChange,
+  onSubmit,
+  creating,
+  error,
+}: {
+  name: string;
+  onNameChange: (value: string) => void;
+  onSubmit: () => void;
+  creating: boolean;
+  error: string | null;
+}) {
+  return (
+    <>
+      <div className="space-y-1.5 max-w-sm">
+        <Label htmlFor="create-ws-name">Workspace Name</Label>
+        <Input
+          id="create-ws-name"
+          value={name}
+          onChange={(e) => onNameChange(e.target.value)}
+          placeholder="My Workspace"
+          onKeyDown={(e) => {
+            if (e.key === "Enter" && name.trim()) onSubmit();
+          }}
+        />
+      </div>
+      {error ? <InlineError message={error} /> : null}
+      <Button size="sm" onClick={onSubmit} disabled={creating || !name.trim()}>
+        {creating ? "Creating..." : "Create Workspace"}
+      </Button>
+    </>
+  );
+}
+
+/** Empty-state message with an admin call-to-action to create the first workspace. */
+function WorkspacesEmpty({
+  isAdmin,
+  showCreate,
+  onStartCreate,
+}: {
+  isAdmin: boolean;
+  showCreate: boolean;
+  onStartCreate: () => void;
+}) {
+  return (
+    <EmptyState
+      message={isAdmin ? "No workspaces yet." : "No workspaces available."}
+      action={
+        isAdmin && !showCreate ? (
+          <Button size="sm" variant="outline" onClick={onStartCreate}>
+            Create the first workspace
+          </Button>
+        ) : null
+      }
+    />
+  );
+}
+
+/** Retry control shown when the workspace list fails to load. */
+function WorkspacesRetry({ onRetry }: { onRetry: () => void }) {
+  return (
+    <div className="flex justify-center pt-2">
+      <Button size="sm" variant="outline" onClick={onRetry}>
+        Retry
+      </Button>
+    </div>
+  );
+}
+
+/** Single workspace table row; opens on click and (for admins) exposes a delete action. */
+function WorkspaceRow({
+  workspace,
+  isAdmin,
+  isDeleting,
+  onOpen,
+  onDelete,
+}: {
+  workspace: Workspace;
+  isAdmin: boolean;
+  isDeleting: boolean;
+  onOpen: () => void;
+  onDelete: () => void;
+}) {
+  return (
+    <TableRow className="cursor-pointer" onClick={onOpen}>
+      <TableCell className="font-medium">{workspace.name}</TableCell>
+      <TableCell>{workspace.memberCount}</TableCell>
+      <TableCell>{workspace.bundles?.length ?? 0}</TableCell>
+      <TableCell className="text-muted-foreground">{formatDate(workspace.createdAt)}</TableCell>
+      {isAdmin && (
+        <TableCell>
+          <Button
+            size="sm"
+            variant="ghost"
+            disabled={isDeleting}
+            title={`Delete ${workspace.name}`}
+            onClick={(e) => {
+              e.stopPropagation();
+              onDelete();
+            }}
+            className="h-8 w-8 p-0 text-muted-foreground hover:text-destructive"
+          >
+            <Trash2 className="h-4 w-4" />
+          </Button>
+        </TableCell>
+      )}
+    </TableRow>
+  );
+}
+
+/** Table listing all workspaces with member, bundle, and created-date columns. */
+function WorkspacesTable({
+  workspaces,
+  isAdmin,
+  deletingId,
+  onOpen,
+  onDelete,
+}: {
+  workspaces: Workspace[];
+  isAdmin: boolean;
+  deletingId: string | null;
+  onOpen: (workspaceId: string) => void;
+  onDelete: (workspaceId: string, name: string) => void;
+}) {
+  return (
+    <Table>
+      <TableHeader>
+        <TableRow>
+          <TableHead>Name</TableHead>
+          <TableHead>Members</TableHead>
+          <TableHead>Bundles</TableHead>
+          <TableHead>Created</TableHead>
+          {isAdmin && <TableHead className="w-[60px]" />}
+        </TableRow>
+      </TableHeader>
+      <TableBody>
+        {workspaces.map((ws) => (
+          <WorkspaceRow
+            key={ws.id}
+            workspace={ws}
+            isAdmin={isAdmin}
+            isDeleting={deletingId === ws.id}
+            onOpen={() => onOpen(ws.id)}
+            onDelete={() => onDelete(ws.id, ws.name)}
+          />
+        ))}
+      </TableBody>
+    </Table>
+  );
+}
+
+/** Chooses between empty-state, retry, and the populated table for the workspace list. */
+function WorkspacesContent({
+  workspaces,
+  error,
+  isAdmin,
+  showCreate,
+  deletingId,
+  onStartCreate,
+  onRetry,
+  onOpen,
+  onDelete,
+}: {
+  workspaces: Workspace[];
+  error: string | null;
+  isAdmin: boolean;
+  showCreate: boolean;
+  deletingId: string | null;
+  onStartCreate: () => void;
+  onRetry: () => void;
+  onOpen: (workspaceId: string) => void;
+  onDelete: (workspaceId: string, name: string) => void;
+}) {
+  if (workspaces.length === 0) {
+    if (error) return <WorkspacesRetry onRetry={onRetry} />;
+    return (
+      <WorkspacesEmpty isAdmin={isAdmin} showCreate={showCreate} onStartCreate={onStartCreate} />
+    );
+  }
+  return (
+    <WorkspacesTable
+      workspaces={workspaces}
+      isAdmin={isAdmin}
+      deletingId={deletingId}
+      onOpen={onOpen}
+      onDelete={onDelete}
+    />
+  );
+}
+
 export function WorkspacesTab() {
   const session = useSession();
   const navigate = useNavigate();
@@ -127,106 +319,32 @@ export function WorkspacesTab() {
                 setCreateError(null);
               },
               form: (
-                <>
-                  <div className="space-y-1.5 max-w-sm">
-                    <Label htmlFor="create-ws-name">Workspace Name</Label>
-                    <Input
-                      id="create-ws-name"
-                      value={createName}
-                      onChange={(e) => setCreateName(e.target.value)}
-                      placeholder="My Workspace"
-                      onKeyDown={(e) => {
-                        if (e.key === "Enter" && createName.trim()) handleCreate();
-                      }}
-                    />
-                  </div>
-                  {createError ? <InlineError message={createError} /> : null}
-                  <Button
-                    size="sm"
-                    onClick={handleCreate}
-                    disabled={creating || !createName.trim()}
-                  >
-                    {creating ? "Creating..." : "Create Workspace"}
-                  </Button>
-                </>
+                <CreateWorkspaceForm
+                  name={createName}
+                  onNameChange={setCreateName}
+                  onSubmit={handleCreate}
+                  creating={creating}
+                  error={createError}
+                />
               ),
             }
           : undefined
       }
     >
-      {workspaces.length === 0 && !error ? (
-        <EmptyState
-          message={isAdmin ? "No workspaces yet." : "No workspaces available."}
-          action={
-            isAdmin && !showCreate ? (
-              <Button size="sm" variant="outline" onClick={() => setShowCreate(true)}>
-                Create the first workspace
-              </Button>
-            ) : null
-          }
-        />
-      ) : workspaces.length === 0 && error ? (
-        <div className="flex justify-center pt-2">
-          <Button
-            size="sm"
-            variant="outline"
-            onClick={() => {
-              setLoading(true);
-              fetchWorkspaces();
-            }}
-          >
-            Retry
-          </Button>
-        </div>
-      ) : (
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead>Name</TableHead>
-              <TableHead>Members</TableHead>
-              <TableHead>Bundles</TableHead>
-              <TableHead>Created</TableHead>
-              {isAdmin && <TableHead className="w-[60px]" />}
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {workspaces.map((ws) => {
-              const isDeleting = deletingId === ws.id;
-              return (
-                <TableRow
-                  key={ws.id}
-                  className="cursor-pointer"
-                  onClick={() => navigate(`/org/workspaces/${ws.id.replace(/^ws_/, "")}`)}
-                >
-                  <TableCell className="font-medium">{ws.name}</TableCell>
-                  <TableCell>{ws.memberCount}</TableCell>
-                  <TableCell>{ws.bundles?.length ?? 0}</TableCell>
-                  <TableCell className="text-muted-foreground">
-                    {formatDate(ws.createdAt)}
-                  </TableCell>
-                  {isAdmin && (
-                    <TableCell>
-                      <Button
-                        size="sm"
-                        variant="ghost"
-                        disabled={isDeleting}
-                        title={`Delete ${ws.name}`}
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          handleDelete(ws.id, ws.name);
-                        }}
-                        className="h-8 w-8 p-0 text-muted-foreground hover:text-destructive"
-                      >
-                        <Trash2 className="h-4 w-4" />
-                      </Button>
-                    </TableCell>
-                  )}
-                </TableRow>
-              );
-            })}
-          </TableBody>
-        </Table>
-      )}
+      <WorkspacesContent
+        workspaces={workspaces}
+        error={error}
+        isAdmin={isAdmin}
+        showCreate={showCreate}
+        deletingId={deletingId}
+        onStartCreate={() => setShowCreate(true)}
+        onRetry={() => {
+          setLoading(true);
+          fetchWorkspaces();
+        }}
+        onOpen={(id) => navigate(`/org/workspaces/${id.replace(/^ws_/, "")}`)}
+        onDelete={handleDelete}
+      />
     </SettingsListPage>
   );
 }

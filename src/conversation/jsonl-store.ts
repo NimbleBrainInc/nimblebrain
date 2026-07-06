@@ -28,6 +28,17 @@ function uniqueTmpSuffix(): string {
   return `${Date.now()}.${++tmpCounter}`;
 }
 
+/** Model recorded by the last assistant message that carries one, else null. */
+function lastAssistantModel(messages: StoredMessage[]): string | null {
+  let model: string | null = null;
+  for (const msg of messages) {
+    if (msg.role === "assistant" && msg.metadata?.model) {
+      model = msg.metadata.model;
+    }
+  }
+  return model;
+}
+
 export class JsonlConversationStore implements ConversationStore {
   private index = new ConversationIndex();
   /**
@@ -246,36 +257,33 @@ export class JsonlConversationStore implements ConversationStore {
 
     // If there are messages to copy, rewrite the new file with them
     if (messagesToCopy.length > 0) {
-      // Token totals derive from messages at read time; carry lastModel.
-      for (const msg of messagesToCopy) {
-        if (msg.role === "assistant" && msg.metadata?.model) {
-          newConv.lastModel = msg.metadata.model;
-        }
-      }
-      // Update updatedAt to last message timestamp
-      newConv.updatedAt =
-        messagesToCopy[messagesToCopy.length - 1]?.timestamp ?? new Date().toISOString();
-
-      // Defence-in-depth: rebuilt-from-history shouldn't carry bytes,
-      // but assert before stringify so an in-memory source that does
-      // can't poison the forked file.
-      for (const msg of messagesToCopy) {
-        assertNoBinaryPayloads(msg, `fork.message(${msg.role})`);
-      }
-      const lines = [JSON.stringify(newConv)];
-      for (const msg of messagesToCopy) {
-        lines.push(JSON.stringify(msg));
-      }
-
-      const path = this.path(newConv.id);
-      const tmpPath = `${path}.tmp.${uniqueTmpSuffix()}`;
-      await writeFile(tmpPath, lines.map((l) => `${l}\n`).join(""));
-      await rename(tmpPath, path);
-
-      this.index.invalidate();
+      await this.writeForked(newConv, messagesToCopy);
     }
 
     return newConv;
+  }
+
+  /** Persist a forked conversation's metadata + copied messages atomically. */
+  private async writeForked(conv: Conversation, messages: StoredMessage[]): Promise<void> {
+    // Token totals derive from messages at read time; carry lastModel forward.
+    conv.lastModel = lastAssistantModel(messages) ?? conv.lastModel;
+    // updatedAt tracks the last copied message's timestamp.
+    conv.updatedAt = messages[messages.length - 1]?.timestamp ?? new Date().toISOString();
+
+    // Defence-in-depth: rebuilt-from-history shouldn't carry bytes,
+    // but assert before stringify so an in-memory source that does
+    // can't poison the forked file.
+    for (const msg of messages) {
+      assertNoBinaryPayloads(msg, `fork.message(${msg.role})`);
+    }
+
+    const lines = [JSON.stringify(conv), ...messages.map((msg) => JSON.stringify(msg))];
+    const path = this.path(conv.id);
+    const tmpPath = `${path}.tmp.${uniqueTmpSuffix()}`;
+    await writeFile(tmpPath, lines.map((l) => `${l}\n`).join(""));
+    await rename(tmpPath, path);
+
+    this.index.invalidate();
   }
 
   private path(id: string): string {

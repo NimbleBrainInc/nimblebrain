@@ -8,6 +8,49 @@ import type { FilterKey, ListResult, SearchResultData } from "./types";
 
 type View = "list" | "search";
 
+/** Build the `list` tool args for the focused workspace; personal focus also includes legacy unstamped chats. */
+function buildListArgs(
+  workspaceId?: string,
+  workspaceIsPersonal?: boolean,
+): { workspaceId?: string; includeUnstamped?: boolean } {
+  if (!workspaceId) return {};
+  if (workspaceIsPersonal) return { workspaceId, includeUnstamped: true };
+  return { workspaceId };
+}
+
+/** Normalize a thrown value to a message, falling back when it isn't an Error. */
+function errorMessage(err: unknown, fallback: string): string {
+  return err instanceof Error ? err.message : fallback;
+}
+
+/** Parse a raw postMessage payload into a conversation-title patch, or null when it isn't one. */
+function parseTitleEvent(data: unknown): { conversationId: string; title: string } | null {
+  if (!data || typeof data !== "object") return null;
+  const msg = data as { jsonrpc?: unknown; method?: unknown; params?: unknown };
+  if (msg.jsonrpc !== "2.0" || msg.method !== "synapse/conversation-title") return null;
+  const params = msg.params;
+  if (!params || typeof params !== "object") return null;
+  const conversationId = (params as { conversationId?: unknown }).conversationId;
+  const title = (params as { title?: unknown }).title;
+  if (typeof conversationId !== "string" || typeof title !== "string") return null;
+  return { conversationId, title };
+}
+
+/** Return `conversations` with the matching row's title replaced, or the same array when no row matches. */
+function patchConversationTitle(
+  conversations: ListResult["conversations"],
+  conversationId: string,
+  title: string,
+): ListResult["conversations"] {
+  let changed = false;
+  const next = conversations.map((c) => {
+    if (c.id !== conversationId) return c;
+    changed = true;
+    return { ...c, title };
+  });
+  return changed ? next : conversations;
+}
+
 export function Dashboard() {
   const synapse = useSynapse();
   const action = useAction();
@@ -45,13 +88,10 @@ export function Dashboard() {
       if (!opts?.background) setLoading(true);
       setError(null);
       try {
-        // Always scope to the focused workspace server-side (no cross-workspace
-        // view), so the limit applies to the workspace's set rather than
-        // slicing a global page. Legacy unstamped chats belong to the
-        // personal workspace, so include them only when the focus is personal.
-        const args: { workspaceId?: string; includeUnstamped?: boolean } = workspaceId
-          ? { workspaceId, ...(workspaceIsPersonal ? { includeUnstamped: true } : {}) }
-          : {};
+        // Scope to the focused workspace server-side (no cross-workspace view), so
+        // the limit applies to the workspace's set rather than slicing a global
+        // page; personal focus also pulls in legacy unstamped chats (buildListArgs).
+        const args = buildListArgs(workspaceId, workspaceIsPersonal);
         const result = await synapse.callTool<typeof args, ListResult>("list", args);
         if (result.isError) {
           setError("Failed to load conversations");
@@ -59,7 +99,7 @@ export function Dashboard() {
         }
         setConversations(result.data.conversations || []);
       } catch (err) {
-        setError(err instanceof Error ? err.message : "Failed to load conversations");
+        setError(errorMessage(err, "Failed to load conversations"));
       } finally {
         if (!opts?.background) setLoading(false);
       }
@@ -86,7 +126,7 @@ export function Dashboard() {
         }
         setSearchResults(result.data);
       } catch (err) {
-        setError(err instanceof Error ? err.message : "Search failed");
+        setError(errorMessage(err, "Search failed"));
       } finally {
         if (!opts?.background) setLoading(false);
       }
@@ -127,23 +167,9 @@ export function Dashboard() {
   // `method` it doesn't recognize, so there's no double-handling.
   useEffect(() => {
     const handler = (event: MessageEvent) => {
-      const msg = event.data;
-      if (!msg || typeof msg !== "object") return;
-      if (msg.jsonrpc !== "2.0" || msg.method !== "synapse/conversation-title") return;
-      const params = msg.params;
-      if (!params || typeof params !== "object") return;
-      const conversationId = (params as { conversationId?: unknown }).conversationId;
-      const title = (params as { title?: unknown }).title;
-      if (typeof conversationId !== "string" || typeof title !== "string") return;
-      setConversations((prev) => {
-        let changed = false;
-        const next = prev.map((c) => {
-          if (c.id !== conversationId) return c;
-          changed = true;
-          return { ...c, title };
-        });
-        return changed ? next : prev;
-      });
+      const patch = parseTitleEvent(event.data);
+      if (!patch) return;
+      setConversations((prev) => patchConversationTitle(prev, patch.conversationId, patch.title));
     };
     window.addEventListener("message", handler);
     return () => window.removeEventListener("message", handler);

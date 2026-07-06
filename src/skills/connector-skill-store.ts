@@ -14,7 +14,7 @@
  * calls the loader per turn and hands the pool to the engine.
  */
 
-import { existsSync, readdirSync, rmdirSync, unlinkSync } from "node:fs";
+import { type Dirent, existsSync, readdirSync, rmdirSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
 import type { ConnectorSkillCandidate } from "../engine/types.ts";
 import { parseSkillContent, parseSkillFile } from "./loader.ts";
@@ -105,27 +105,20 @@ export function readConnectorSkillCandidates(
 ): ConnectorSkillCandidate[] {
   if (!existsSync(connectorSkillsDir)) return [];
   const out: ConnectorSkillCandidate[] = [];
-  for (const server of safeReadDir(connectorSkillsDir)) {
-    if (!server.isDirectory()) continue;
-    const serverDir = join(connectorSkillsDir, server.name);
-    for (const entry of safeReadDir(serverDir)) {
-      if (!entry.isFile() || !entry.name.toLowerCase().endsWith(".md")) continue;
-      const skill = parseSkillFile(join(serverDir, entry.name), { cap: false });
-      if (!skill) continue;
-      // Skip empty-body overlays — nothing to surface, and emitting on them
-      // would never dedup (the store drops the empty event). Defense for any
-      // empty file that predates the materialize-time guard.
-      if (!skill.body.trim()) continue;
-      const affinity = skill.manifest.toolAffinity?.length
-        ? skill.manifest.toolAffinity
-        : [`${server.name}__*`];
-      out.push({
-        name: skill.manifest.name,
-        body: skill.body,
-        scope: CONNECTOR_SKILL_SCOPE,
-        toolAffinity: affinity,
-      });
-    }
+  for (const { serverName, skill } of iterConnectorOverlays(connectorSkillsDir)) {
+    // Skip empty-body overlays — nothing to surface, and emitting on them
+    // would never dedup (the store drops the empty event). Defense for any
+    // empty file that predates the materialize-time guard.
+    if (!skill.body.trim()) continue;
+    const affinity = skill.manifest.toolAffinity?.length
+      ? skill.manifest.toolAffinity
+      : [`${serverName}__*`];
+    out.push({
+      name: skill.manifest.name,
+      body: skill.body,
+      scope: CONNECTOR_SKILL_SCOPE,
+      toolAffinity: affinity,
+    });
   }
   return out;
 }
@@ -173,22 +166,14 @@ export interface ConnectorOverlayInfo {
 export function listConnectorOverlays(connectorSkillsDir: string): ConnectorOverlayInfo[] {
   if (!existsSync(connectorSkillsDir)) return [];
   const out: ConnectorOverlayInfo[] = [];
-  for (const server of safeReadDir(connectorSkillsDir)) {
-    if (!server.isDirectory()) continue;
-    const serverDir = join(connectorSkillsDir, server.name);
-    for (const entry of safeReadDir(serverDir)) {
-      if (!entry.isFile() || !entry.name.toLowerCase().endsWith(".md")) continue;
-      const path = join(serverDir, entry.name);
-      const skill = parseSkillFile(path, { cap: false });
-      if (!skill) continue;
-      out.push({
-        server: server.name,
-        name: skill.manifest.name,
-        ...(skill.manifest.description ? { description: skill.manifest.description } : {}),
-        ...(skill.manifest.provenance?.source ? { source: skill.manifest.provenance.source } : {}),
-        path,
-      });
-    }
+  for (const { serverName, path, skill } of iterConnectorOverlays(connectorSkillsDir)) {
+    out.push({
+      server: serverName,
+      name: skill.manifest.name,
+      ...(skill.manifest.description ? { description: skill.manifest.description } : {}),
+      ...(skill.manifest.provenance?.source ? { source: skill.manifest.provenance.source } : {}),
+      path,
+    });
   }
   return out;
 }
@@ -198,5 +183,25 @@ function safeReadDir(dir: string) {
     return readdirSync(dir, { withFileTypes: true });
   } catch {
     return [];
+  }
+}
+
+/** True when a dir entry is a regular `*.md` file (case-insensitive). */
+function isMarkdownFile(entry: Dirent): boolean {
+  return entry.isFile() && entry.name.toLowerCase().endsWith(".md");
+}
+
+/** Yield each parseable `<server>/<skill>.md` overlay under `connectorSkillsDir`. */
+function* iterConnectorOverlays(connectorSkillsDir: string) {
+  for (const server of safeReadDir(connectorSkillsDir)) {
+    if (!server.isDirectory()) continue;
+    const serverDir = join(connectorSkillsDir, server.name);
+    for (const entry of safeReadDir(serverDir)) {
+      if (!isMarkdownFile(entry)) continue;
+      const path = join(serverDir, entry.name);
+      const skill = parseSkillFile(path, { cap: false });
+      if (!skill) continue;
+      yield { serverName: server.name, path, skill };
+    }
   }
 }

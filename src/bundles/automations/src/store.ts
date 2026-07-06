@@ -68,6 +68,17 @@ function ownerRunsRoot(workDir: string, wsId: string, ownerId: string): string {
   return join(workspaceAutomationsDir(workDir, wsId, ownerId), RUNS_SEGMENT);
 }
 
+/** Immediate subdirectory names of `dir`; empty when the dir is absent or unreadable. */
+function listSubdirNames(dir: string): string[] {
+  try {
+    return readdirSync(dir, { withFileTypes: true })
+      .filter((d) => d.isDirectory())
+      .map((d) => d.name);
+  } catch {
+    return [];
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Definitions — one bare Automation object per `<id>.json`
 // ---------------------------------------------------------------------------
@@ -173,41 +184,41 @@ export function deleteAutomation(workDir: string, wsId: string, ownerId: string,
  * authoritatively from the path (`parseAutomationPath`), and backfill those onto
  * each record when the stored value is missing — the directory is the binding.
  */
+/** Stamp the directory binding onto a record when its stored wsId/ownerId is missing. */
+function backfillBinding(auto: Automation, wsId: string, ownerId: string): void {
+  if (typeof auto.workspaceId !== "string" || auto.workspaceId.length === 0) {
+    auto.workspaceId = wsId;
+  }
+  if (typeof auto.ownerId !== "string" || auto.ownerId.length === 0) {
+    auto.ownerId = ownerId;
+  }
+}
+
+/** One owner's automations, with wsId/ownerId recovered from the path binding and backfilled. */
+function loadOwnerAutomationsResolved(
+  workDir: string,
+  wsId: string,
+  ownerId: string,
+): Automation[] {
+  // Recover the binding from the path, not the record.
+  const parsed = parseAutomationPath(workspaceAutomationsDir(workDir, wsId, ownerId));
+  const resolvedWsId = parsed?.wsId ?? wsId;
+  const resolvedOwnerId = parsed?.ownerId ?? ownerId;
+  const owned: Automation[] = [];
+  for (const auto of loadOwnerAutomations(workDir, resolvedWsId, resolvedOwnerId).values()) {
+    backfillBinding(auto, resolvedWsId, resolvedOwnerId);
+    owned.push(auto);
+  }
+  return owned;
+}
+
 export function loadAllAutomations(workDir: string): Automation[] {
   const wsRoot = join(workDir, WORKSPACES_SEGMENT);
   const out: Automation[] = [];
-  let workspaces: string[];
-  try {
-    workspaces = readdirSync(wsRoot, { withFileTypes: true })
-      .filter((d) => d.isDirectory())
-      .map((d) => d.name);
-  } catch {
-    return out; // workspaces root not created yet
-  }
-  for (const wsId of workspaces) {
+  for (const wsId of listSubdirNames(wsRoot)) {
     const autoRoot = join(wsRoot, wsId, AUTOMATIONS_SEGMENT);
-    let owners: string[];
-    try {
-      owners = readdirSync(autoRoot, { withFileTypes: true })
-        .filter((d) => d.isDirectory())
-        .map((d) => d.name);
-    } catch {
-      continue; // no automations in this workspace
-    }
-    for (const ownerId of owners) {
-      // Recover the binding from the path, not the record.
-      const parsed = parseAutomationPath(workspaceAutomationsDir(workDir, wsId, ownerId));
-      const resolvedWsId = parsed?.wsId ?? wsId;
-      const resolvedOwnerId = parsed?.ownerId ?? ownerId;
-      for (const auto of loadOwnerAutomations(workDir, resolvedWsId, resolvedOwnerId).values()) {
-        if (typeof auto.workspaceId !== "string" || auto.workspaceId.length === 0) {
-          auto.workspaceId = resolvedWsId;
-        }
-        if (typeof auto.ownerId !== "string" || auto.ownerId.length === 0) {
-          auto.ownerId = resolvedOwnerId;
-        }
-        out.push(auto);
-      }
+    for (const ownerId of listSubdirNames(autoRoot)) {
+      out.push(...loadOwnerAutomationsResolved(workDir, wsId, ownerId));
     }
   }
   return out;

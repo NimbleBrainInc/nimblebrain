@@ -73,36 +73,64 @@ import { log } from "../observability/log.ts";
  * the agent loop keeps running.
  */
 export function toolSchemaForLlm(raw: unknown, toolName?: string): Record<string, unknown> {
-  if (raw === null || raw === undefined) {
+  const source = asObjectSchema(raw, toolName);
+  if (source === null) {
     return emptyObjectSchema();
   }
+
+  const composed = applyRootComposition({ ...source }, toolName);
+  return normalizeRoot(composed);
+}
+
+/**
+ * Coerce raw input to a plain-object schema, or null when it can't be one.
+ * Both null/undefined (tool declares no input) and any other non-object
+ * (upstream bug, warned) collapse to null so the caller returns an empty
+ * object schema.
+ */
+function asObjectSchema(raw: unknown, toolName?: string): Record<string, unknown> | null {
+  if (raw === null || raw === undefined) return null;
   if (typeof raw !== "object" || Array.isArray(raw)) {
-    const actual = Array.isArray(raw) ? "array" : typeof raw;
-    log.warn(
-      `[engine] toolSchemaForLlm: non-object inputSchema for tool ${
-        toolName ? `"${toolName}"` : "<unknown>"
-      } (got ${actual}); coercing to empty object schema. ` +
-        "This indicates an upstream bug in the tool source.",
-    );
-    return emptyObjectSchema();
+    warnNonObjectSchema(raw, toolName);
+    return null;
   }
+  return raw as Record<string, unknown>;
+}
 
-  let schema: Record<string, unknown> = { ...(raw as Record<string, unknown>) };
+/** Log an upstream-bug warning for a non-object tool inputSchema. */
+function warnNonObjectSchema(raw: unknown, toolName?: string): void {
+  const actual = Array.isArray(raw) ? "array" : typeof raw;
+  log.warn(
+    `[engine] toolSchemaForLlm: non-object inputSchema for tool ${
+      toolName ? `"${toolName}"` : "<unknown>"
+    } (got ${actual}); coercing to empty object schema. ` +
+      "This indicates an upstream bug in the tool source.",
+  );
+}
 
+/** Rewrite a root-level oneOf/anyOf/allOf into a flat object schema; no-op when none is present. */
+function applyRootComposition(
+  schema: Record<string, unknown>,
+  toolName?: string,
+): Record<string, unknown> {
   if (Array.isArray(schema.oneOf) && schema.oneOf.length > 0) {
-    schema = collapseToFirstBranch(schema, "oneOf", toolName);
-  } else if (Array.isArray(schema.anyOf) && schema.anyOf.length > 0) {
-    schema = collapseToFirstBranch(schema, "anyOf", toolName);
-  } else if (Array.isArray(schema.allOf) && schema.allOf.length > 0) {
-    schema = mergeAllOf(schema);
+    return collapseToFirstBranch(schema, "oneOf", toolName);
   }
+  if (Array.isArray(schema.anyOf) && schema.anyOf.length > 0) {
+    return collapseToFirstBranch(schema, "anyOf", toolName);
+  }
+  if (Array.isArray(schema.allOf) && schema.allOf.length > 0) {
+    return mergeAllOf(schema);
+  }
+  return schema;
+}
 
+/** Strip root keywords no provider accepts and guarantee object type plus a plain-object properties. */
+function normalizeRoot(schema: Record<string, unknown>): Record<string, unknown> {
   if ("enum" in schema) delete schema.enum;
   if ("not" in schema) delete schema.not;
-
   if (schema.type !== "object") schema.type = "object";
   if (!isPlainObject(schema.properties)) schema.properties = {};
-
   return schema;
 }
 

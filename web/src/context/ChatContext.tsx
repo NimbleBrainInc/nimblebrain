@@ -13,7 +13,7 @@ import { callTool } from "../api/client";
 import { chatStore } from "../hooks/chat-store";
 import type { UseChatReturn } from "../hooks/useChat";
 import { useChat } from "../hooks/useChat";
-import type { AppContext, ConfigInfo } from "../types";
+import type { AppContext, ConfigInfo, ToolCallResult } from "../types";
 import { useWorkspaceContext } from "./WorkspaceContext";
 
 // ---------------------------------------------------------------------------
@@ -41,6 +41,20 @@ export interface ChatContextValue extends Omit<UseChatReturn, "sendMessage"> {
 }
 
 const ChatContext = createContext<ChatContextValue | null>(null);
+
+/** Extract the config payload from a get_config result, preferring structuredContent over the first text block (parsed as JSON, else the raw block). */
+function extractConfigPayload(result: ToolCallResult): unknown {
+  const raw = result.structuredContent;
+  if (raw) return raw;
+  const block = result.content?.[0];
+  if (!block) return raw;
+  if (!block.text) return block;
+  try {
+    return JSON.parse(block.text);
+  } catch {
+    return block;
+  }
+}
 
 // ---------------------------------------------------------------------------
 // Provider
@@ -159,21 +173,7 @@ export function ChatProvider({
   const fetchConfig = useCallback(() => {
     callTool("nb", "get_config")
       .then((result) => {
-        // Prefer structuredContent; fall back to parsing first text block
-        let raw: unknown = result.structuredContent;
-        if (!raw && result.content?.[0]) {
-          const block = result.content[0];
-          if (block.text) {
-            try {
-              raw = JSON.parse(block.text);
-            } catch {
-              raw = block;
-            }
-          } else {
-            raw = block;
-          }
-        }
-        const data = raw as ConfigInfo;
+        const data = extractConfigPayload(result) as ConfigInfo;
         setConfiguredProviders(data.configuredProviders);
         setDefaultModel(data.defaultModel);
         if (data.preferences) setPreferences(data.preferences);

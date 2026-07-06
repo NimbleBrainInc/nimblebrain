@@ -50,20 +50,80 @@ interface CacheEntry {
 }
 const cache = new Map<string, CacheEntry>();
 
+/** One page of the search response: raw entries plus the cursor to the next page. */
+interface SearchPage {
+  servers?: unknown[];
+  metadata?: { next_cursor?: string };
+}
+
+/** Build an mpak SDK client, honoring an operator base-URL override when present. */
+function createClient(baseUrl: string | undefined): MpakClient {
+  return new MpakClient({
+    timeout: REQUEST_TIMEOUT_MS,
+    ...(baseUrl ? { registryUrl: baseUrl } : {}),
+  });
+}
+
+/** Fetch one page of servers, wrapping any SDK failure in a registry-fetch error. */
+async function searchPage(client: MpakClient, cursor: string | undefined): Promise<SearchPage> {
+  try {
+    return (await client.searchServers({
+      limit: PAGE_LIMIT,
+      ...(cursor ? { cursor } : {}),
+    })) as SearchPage;
+  } catch (err) {
+    throw new Error(
+      `mpak registry fetch failed: ${err instanceof Error ? err.message : String(err)}`,
+    );
+  }
+}
+
+/** Best-effort display name for an entry that failed validation. */
+function entryName(c: unknown): string {
+  if (c && typeof c === "object" && typeof (c as { name?: unknown }).name === "string") {
+    return (c as { name: string }).name;
+  }
+  return "<unnamed>";
+}
+
+/** Validate raw entries in order, pushing valid ServerDetails and logging drops. */
+function collectValid(candidates: unknown[], valid: ServerDetail[]): void {
+  for (const c of candidates) {
+    const result = validateServerDetail(c);
+    if (!result.valid) {
+      log.warn(
+        `[mpak-source] entry "${entryName(c)}" dropped — invalid ServerDetail: ${result.errors.join("; ")}`,
+      );
+      continue;
+    }
+    valid.push(c as ServerDetail);
+  }
+}
+
+/**
+ * Log the pagination-ceiling warning, naming the registry so an operator
+ * looking at logs can correlate which one got truncated — a deployment
+ * with multiple mpak rows (different scopes, self-hosted vs public, etc.)
+ * can't tell from a generic message alone.
+ */
+function warnPageCeiling(baseUrl: string | undefined): void {
+  const where = baseUrl ?? "<sdk-default>";
+  log.warn(
+    `[mpak-source] page ceiling hit for ${where} (${MAX_PAGES} × ${PAGE_LIMIT} = ${MAX_PAGES * PAGE_LIMIT} entries); remaining results truncated. Raise MAX_PAGES if this is a legitimate large registry.`,
+  );
+}
+
 async function fetchServers(baseUrl: string | undefined): Promise<ServerDetail[]> {
   const now = Date.now();
   const cacheKey = baseUrl ?? DEFAULT_KEY;
   const cached = cache.get(cacheKey);
   if (cached && cached.expiresAt > now) return cached.servers;
 
-  const client = new MpakClient({
-    timeout: REQUEST_TIMEOUT_MS,
-    ...(baseUrl ? { registryUrl: baseUrl } : {}),
-  });
+  const client = createClient(baseUrl);
 
   // Paginate via `metadata.next_cursor` (per ServerListResponseSchema in
-  // @nimblebrain/mpak-schemas). The previous single-page fetch silently
-  // truncated at PAGE_LIMIT — that compounds with the directory's
+  // @nimblebrain/mpak-schemas). A single-page fetch would silently
+  // truncate at PAGE_LIMIT — that compounds with the directory's
   // post-fetch scope filter, so a `scopes: ["nimblebraininc"]` config
   // could see *zero* matches if the first page happened to be all
   // non-`nimblebraininc` entries. Loop until the registry signals "no
@@ -74,51 +134,14 @@ async function fetchServers(baseUrl: string | undefined): Promise<ServerDetail[]
   let pages = 0;
   while (true) {
     pages++;
-    let response: {
-      servers?: unknown[];
-      metadata?: { next_cursor?: string };
-    };
-    try {
-      response = (await client.searchServers({
-        limit: PAGE_LIMIT,
-        ...(cursor ? { cursor } : {}),
-      })) as {
-        servers?: unknown[];
-        metadata?: { next_cursor?: string };
-      };
-    } catch (err) {
-      throw new Error(
-        `mpak registry fetch failed: ${err instanceof Error ? err.message : String(err)}`,
-      );
-    }
-
+    const response = await searchPage(client, cursor);
     const candidates = Array.isArray(response.servers) ? response.servers : [];
-    for (const c of candidates) {
-      const result = validateServerDetail(c);
-      if (!result.valid) {
-        const name =
-          c && typeof c === "object" && typeof (c as { name?: unknown }).name === "string"
-            ? (c as { name: string }).name
-            : "<unnamed>";
-        log.warn(
-          `[mpak-source] entry "${name}" dropped — invalid ServerDetail: ${result.errors.join("; ")}`,
-        );
-        continue;
-      }
-      valid.push(c as ServerDetail);
-    }
+    collectValid(candidates, valid);
 
     cursor = response.metadata?.next_cursor;
     if (!cursor) break;
     if (pages >= MAX_PAGES) {
-      // Surface the URL so an operator looking at logs can correlate
-      // which registry got truncated — a deployment with multiple
-      // mpak rows (different scopes, self-hosted vs public, etc.)
-      // can't tell from a generic message alone.
-      const where = baseUrl ?? "<sdk-default>";
-      log.warn(
-        `[mpak-source] page ceiling hit for ${where} (${MAX_PAGES} × ${PAGE_LIMIT} = ${MAX_PAGES * PAGE_LIMIT} entries); remaining results truncated. Raise MAX_PAGES if this is a legitimate large registry.`,
-      );
+      warnPageCeiling(baseUrl);
       break;
     }
   }

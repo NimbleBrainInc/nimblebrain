@@ -24,6 +24,79 @@ function mpakUrl(bundleName: string): string | null {
   return null;
 }
 
+type AppRowProps = {
+  app: OrgApp;
+  latest: string | undefined;
+  isUpgrading: boolean;
+  upgradeError: string | undefined;
+  onUpgrade: (bundleName: string) => void;
+};
+
+// Bundle-name cell: links to the mpak package page for scoped bundles, plain text otherwise.
+function AppNameCell({ bundleName }: { bundleName: string }) {
+  const href = mpakUrl(bundleName);
+  if (!href) {
+    return <>{bundleName}</>;
+  }
+  return (
+    <a
+      href={href}
+      target="_blank"
+      rel="noopener noreferrer"
+      className="text-primary underline-offset-4 hover:underline"
+    >
+      {bundleName}
+    </a>
+  );
+}
+
+// Update cell: shows "Up to date", or the version delta with an Update button and any upgrade error.
+function AppUpdateCell({ app, latest, isUpgrading, upgradeError, onUpgrade }: AppRowProps) {
+  if (!latest) {
+    return <span className="text-xs text-muted-foreground">Up to date</span>;
+  }
+  return (
+    <div className="flex items-center justify-end gap-2">
+      <span className="text-xs text-muted-foreground">
+        {app.version} → {latest}
+      </span>
+      <Button
+        variant="outline"
+        size="sm"
+        disabled={isUpgrading}
+        onClick={() => onUpgrade(app.bundleName)}
+      >
+        {isUpgrading ? "Updating…" : "Update"}
+      </Button>
+      {upgradeError && <span className="text-xs text-destructive">{upgradeError}</span>}
+    </div>
+  );
+}
+
+// One installed-app row: name, version, workspace count, and update controls.
+function AppRow({ app, latest, isUpgrading, upgradeError, onUpgrade }: AppRowProps) {
+  return (
+    <TableRow>
+      <TableCell className="font-mono text-xs">
+        <AppNameCell bundleName={app.bundleName} />
+      </TableCell>
+      <TableCell className="font-mono text-xs">{app.version || "—"}</TableCell>
+      <TableCell className="text-right text-xs text-muted-foreground">
+        {app.workspaceCount}
+      </TableCell>
+      <TableCell className="text-right">
+        <AppUpdateCell
+          app={app}
+          latest={latest}
+          isUpgrading={isUpgrading}
+          upgradeError={upgradeError}
+          onUpgrade={onUpgrade}
+        />
+      </TableCell>
+    </TableRow>
+  );
+}
+
 /**
  * Org → About — platform info plus org-wide management of installed registry
  * apps.
@@ -165,56 +238,16 @@ export function OrgAboutTab() {
               </TableRow>
             </TableHeader>
             <TableBody>
-              {apps.map((app) => {
-                const href = mpakUrl(app.bundleName);
-                const latest = updates.get(app.bundleName);
-                const isUpgrading = upgrading.has(app.bundleName);
-                const upgradeError = upgradeErrors.get(app.bundleName);
-                return (
-                  <TableRow key={app.bundleName}>
-                    <TableCell className="font-mono text-xs">
-                      {href ? (
-                        <a
-                          href={href}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="text-primary underline-offset-4 hover:underline"
-                        >
-                          {app.bundleName}
-                        </a>
-                      ) : (
-                        app.bundleName
-                      )}
-                    </TableCell>
-                    <TableCell className="font-mono text-xs">{app.version || "—"}</TableCell>
-                    <TableCell className="text-right text-xs text-muted-foreground">
-                      {app.workspaceCount}
-                    </TableCell>
-                    <TableCell className="text-right">
-                      {latest ? (
-                        <div className="flex items-center justify-end gap-2">
-                          <span className="text-xs text-muted-foreground">
-                            {app.version} → {latest}
-                          </span>
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            disabled={isUpgrading}
-                            onClick={() => handleUpgrade(app.bundleName)}
-                          >
-                            {isUpgrading ? "Updating…" : "Update"}
-                          </Button>
-                          {upgradeError && (
-                            <span className="text-xs text-destructive">{upgradeError}</span>
-                          )}
-                        </div>
-                      ) : (
-                        <span className="text-xs text-muted-foreground">Up to date</span>
-                      )}
-                    </TableCell>
-                  </TableRow>
-                );
-              })}
+              {apps.map((app) => (
+                <AppRow
+                  key={app.bundleName}
+                  app={app}
+                  latest={updates.get(app.bundleName)}
+                  isUpgrading={upgrading.has(app.bundleName)}
+                  upgradeError={upgradeErrors.get(app.bundleName)}
+                  onUpgrade={handleUpgrade}
+                />
+              ))}
             </TableBody>
           </Table>
         )}

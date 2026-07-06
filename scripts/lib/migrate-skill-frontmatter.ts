@@ -87,55 +87,70 @@ function resolveStrategy(rawStrategy: unknown, type: unknown): SkillLoadingStrat
   return type === "context" ? "always" : "dynamic";
 }
 
-/**
- * Project legacy parsed frontmatter → the canonical runtime `SkillManifest`.
- * Unknown/dropped fields are simply not carried over.
- */
-export function migrateFrontmatterToManifest(legacy: Record<string, unknown>): SkillManifest {
-  const meta = isRecord(legacy.metadata) ? legacy.metadata : {};
+/** Legacy top-level `priority` — carried only when numeric, else the default 50. */
+function resolvePriority(legacy: Record<string, unknown>): number {
+  return typeof legacy.priority === "number" ? legacy.priority : 50;
+}
 
-  const loadingStrategy = resolveStrategy(
-    legacy["loading-strategy"] ?? legacy.loading_strategy,
-    legacy.type,
-  );
+/** `disabled` only when explicitly set (top-level or under metadata); otherwise `active`. */
+function resolveStatus(
+  legacy: Record<string, unknown>,
+  meta: Record<string, unknown>,
+): SkillStatus {
+  return (legacy.status ?? meta.status) === "disabled" ? "disabled" : "active";
+}
 
-  const priority = typeof legacy.priority === "number" ? legacy.priority : 50;
-
-  const rawStatus = legacy.status ?? meta.status;
-  const status: SkillStatus = rawStatus === "disabled" ? "disabled" : "active";
-
-  const toolAffinity = asStringArray(
-    legacy["applies-to-tools"] ?? legacy.appliesToTools ?? meta["applies-to-tools"],
-  );
-  const triggers = asStringArray(meta.triggers);
-  const allowedTools = asStringArray(legacy["allowed-tools"] ?? legacy.allowedTools);
-  const author = typeof meta.author === "string" ? meta.author : undefined;
-  // `version` is a canonical conventional field (`metadata.version`) the runtime
-  // models and round-trips through create — so carry it across rather than drop
-  // it. Legacy authored it top-level; the canonical home is `metadata.version`.
+/** Legacy top-level `version` or `metadata.version` — the canonical home is `metadata.version`. */
+function resolveVersion(
+  legacy: Record<string, unknown>,
+  meta: Record<string, unknown>,
+): string | undefined {
   const versionRaw = legacy.version ?? meta.version;
-  const version = typeof versionRaw === "string" ? versionRaw : undefined;
+  return typeof versionRaw === "string" ? versionRaw : undefined;
+}
 
-  // Fold legacy `keywords` into the description rather than dropping them — the
-  // catalog/retrieval activation signal must survive the cutover (the standard
-  // keeps "when to use" terms in the description). Idempotent: a migrated file
-  // is canonical (no `keywords`), so it's never re-folded.
+/** Description with legacy `metadata.keywords` folded in and clamped to the schema's 1024 cap. */
+function foldKeywordsIntoDescription(
+  legacy: Record<string, unknown>,
+  meta: Record<string, unknown>,
+): string {
+  // The catalog/retrieval activation signal must survive the cutover (the standard
+  // keeps "when to use" terms in the description). Idempotent: a migrated file is
+  // canonical (no `keywords`), so it's never re-folded. The clamp keeps folding
+  // from pushing a migrated skill past validation (the loader would else skip it).
   const keywords = asStringArray(meta.keywords);
   const baseDescription = String(legacy.description ?? "");
   const folded =
     keywords && keywords.length > 0
       ? `${baseDescription} Use when the user mentions: ${keywords.join(", ")}.`.trim()
       : baseDescription;
-  // Clamp to the schema's 1024 description cap so folding keywords can't push a
-  // migrated skill past validation (the loader would otherwise skip it).
-  const description = folded.length > 1024 ? `${folded.slice(0, 1021)}...` : folded;
+  return folded.length > 1024 ? `${folded.slice(0, 1021)}...` : folded;
+}
 
+/** The optional canonical fields, each carried over only when present and correctly typed. */
+function buildOptionalManifestFields(
+  legacy: Record<string, unknown>,
+  meta: Record<string, unknown>,
+): Partial<
+  Pick<
+    SkillManifest,
+    | "toolAffinity"
+    | "triggers"
+    | "allowedTools"
+    | "license"
+    | "compatibility"
+    | "author"
+    | "version"
+  >
+> {
+  const toolAffinity = asStringArray(
+    legacy["applies-to-tools"] ?? legacy.appliesToTools ?? meta["applies-to-tools"],
+  );
+  const triggers = asStringArray(meta.triggers);
+  const allowedTools = asStringArray(legacy["allowed-tools"] ?? legacy.allowedTools);
+  const author = typeof meta.author === "string" ? meta.author : undefined;
+  const version = resolveVersion(legacy, meta);
   return {
-    name: String(legacy.name ?? ""),
-    description,
-    loadingStrategy,
-    priority,
-    status,
     ...(toolAffinity ? { toolAffinity } : {}),
     ...(triggers ? { triggers } : {}),
     ...(allowedTools ? { allowedTools } : {}),
@@ -143,6 +158,28 @@ export function migrateFrontmatterToManifest(legacy: Record<string, unknown>): S
     ...(typeof legacy.compatibility === "string" ? { compatibility: legacy.compatibility } : {}),
     ...(author ? { author } : {}),
     ...(version ? { version } : {}),
+  };
+}
+
+/**
+ * Project legacy parsed frontmatter → the canonical runtime `SkillManifest`.
+ * Unknown/dropped fields are simply not carried over.
+ */
+export function migrateFrontmatterToManifest(legacy: Record<string, unknown>): SkillManifest {
+  const meta: Record<string, unknown> = isRecord(legacy.metadata) ? legacy.metadata : {};
+
+  const loadingStrategy = resolveStrategy(
+    legacy["loading-strategy"] ?? legacy.loading_strategy,
+    legacy.type,
+  );
+
+  return {
+    name: String(legacy.name ?? ""),
+    description: foldKeywordsIntoDescription(legacy, meta),
+    loadingStrategy,
+    priority: resolvePriority(legacy),
+    status: resolveStatus(legacy, meta),
+    ...buildOptionalManifestFields(legacy, meta),
   };
 }
 

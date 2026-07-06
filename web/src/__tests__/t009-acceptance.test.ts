@@ -33,6 +33,7 @@
 // ---------------------------------------------------------------------------
 
 import { describe, expect, mock, test } from "bun:test";
+import type { Dirent } from "node:fs";
 import { readdir, readFile } from "node:fs/promises";
 import { join } from "node:path";
 
@@ -151,34 +152,62 @@ describe("WorkspaceSwitcher / WorkspaceSelector teardown", () => {
   });
 });
 
-async function findOffenders(
-  root: string,
-  needles: string[],
+/** True for a TypeScript source filename (`.ts` / `.tsx`). */
+function isSourceFile(name: string): boolean {
+  return /\.(ts|tsx)$/.test(name);
+}
+
+/** The first needle contained in `body`, or `null` when none match. */
+function firstNeedleIn(body: string, needles: string[]): string | null {
+  for (const needle of needles) {
+    if (body.includes(needle)) return needle;
+  }
+  return null;
+}
+
+/** Route one directory entry: push sub-dirs to `stack` (minus `skipDirNames`), source files to `files`. */
+function visitEntry(
+  ent: Dirent,
+  dir: string,
+  stack: string[],
+  files: string[],
   skipDirNames: string[],
-): Promise<string[]> {
-  const offenders: string[] = [];
+): void {
+  const path = join(dir, ent.name);
+  if (ent.isDirectory()) {
+    if (!skipDirNames.includes(ent.name)) stack.push(path);
+    return;
+  }
+  if (!ent.isFile()) return;
+  if (isSourceFile(ent.name)) files.push(path);
+}
+
+/** All `.ts`/`.tsx` files under `root`, skipping directories named in `skipDirNames`. */
+async function collectSourceFiles(root: string, skipDirNames: string[]): Promise<string[]> {
+  const files: string[] = [];
   const stack = [root];
   while (stack.length > 0) {
     const dir = stack.pop();
     if (!dir) continue;
     const entries = await readdir(dir, { withFileTypes: true });
     for (const ent of entries) {
-      const path = join(dir, ent.name);
-      if (ent.isDirectory()) {
-        if (skipDirNames.includes(ent.name)) continue;
-        stack.push(path);
-        continue;
-      }
-      if (!ent.isFile()) continue;
-      if (!/\.(ts|tsx)$/.test(ent.name)) continue;
-      const body = await readFile(path, "utf-8");
-      for (const needle of needles) {
-        if (body.includes(needle)) {
-          offenders.push(`${path}: contains "${needle}"`);
-          break;
-        }
-      }
+      visitEntry(ent, dir, stack, files, skipDirNames);
     }
+  }
+  return files;
+}
+
+/** Source files under `root` that contain any of `needles`, one message per offending file. */
+async function findOffenders(
+  root: string,
+  needles: string[],
+  skipDirNames: string[],
+): Promise<string[]> {
+  const offenders: string[] = [];
+  for (const path of await collectSourceFiles(root, skipDirNames)) {
+    const body = await readFile(path, "utf-8");
+    const hit = firstNeedleIn(body, needles);
+    if (hit) offenders.push(`${path}: contains "${hit}"`);
   }
   return offenders;
 }

@@ -120,6 +120,46 @@ export function createWorkspaceRegistry(
 // Workspace-scoped bundle startup
 // ---------------------------------------------------------------------------
 
+/** URL bundle variant of `BundleRef` (the remote-connector shape). */
+type UrlBundleRef = Extract<BundleRef, { url: string }>;
+
+/**
+ * Whether a boot-time URL bundle already has credentials to auto-start with.
+ *
+ * Composio bundles carry header auth but STILL need a per-user connect, so they
+ * route to the composio probe (checked FIRST — they're also static-auth by
+ * transport, but must not skip the connect gate). Other static-auth sources
+ * (provider / bearer / header) carry their own credential and mint/present on
+ * demand — boot-start them. Only OAuth bundles gate on persisted tokens.
+ */
+function urlBundleHasBootAuth(
+  bundle: UrlBundleRef,
+  wsId: string,
+  serverName: string,
+  workDir: string,
+): boolean {
+  if (bundle.composio) {
+    return hasPersistedComposioConnection(workDir, wsId, bundle.composio.connectorId);
+  }
+  return bundleHasStaticAuth(bundle) || hasPersistedWorkspaceOAuthTokens(workDir, wsId, serverName);
+}
+
+/** Placeholder inventory entry for a URL bundle skipped at boot (no tokens yet). */
+function skippedUrlBundleEntry(
+  entry: ProcessInventoryEntry,
+  bundle: UrlBundleRef,
+): ProcessInventoryEntry {
+  return {
+    ...entry,
+    meta: {
+      version: "remote",
+      ui: bundle.ui ?? null,
+      briefing: null,
+      type: "plain" as const,
+    },
+  };
+}
+
 /**
  * Start all bundles across all workspaces, returning a per-workspace ToolRegistry.
  *
@@ -228,32 +268,15 @@ export async function startWorkspaceBundles(
     // Stage 2: every URL bundle is workspace-scoped (the legacy
     // `oauthScope: "user"` literal was deleted). Personal connectors
     // bind to the owning user's personal workspace at install time.
-    if ("url" in entry.bundle) {
-      // Composio bundles carry header auth but STILL need a per-user connect, so
-      // they route to the composio probe (check FIRST — they're also static-auth
-      // by transport, but must not skip the connect gate). Other static-auth
-      // sources (provider / bearer / header) carry their own credential and
-      // mint/present on demand — boot-start them. Only OAuth bundles gate on
-      // persisted tokens.
-      const hasAuth = entry.bundle.composio
-        ? hasPersistedComposioConnection(workDir, entry.wsId, entry.bundle.composio.connectorId)
-        : bundleHasStaticAuth(entry.bundle) ||
-          hasPersistedWorkspaceOAuthTokens(workDir, entry.wsId, entry.serverName);
-      if (!hasAuth) {
-        log.info(
-          `[bundles] Skipping boot start for URL bundle "${entry.serverName}" — no tokens yet (state: not_authenticated)`,
-        );
-        resultEntries[idx] = {
-          ...entry,
-          meta: {
-            version: "remote",
-            ui: entry.bundle.ui ?? null,
-            briefing: null,
-            type: "plain" as const,
-          },
-        };
-        return;
-      }
+    if (
+      "url" in entry.bundle &&
+      !urlBundleHasBootAuth(entry.bundle, entry.wsId, entry.serverName, workDir)
+    ) {
+      log.info(
+        `[bundles] Skipping boot start for URL bundle "${entry.serverName}" — no tokens yet (state: not_authenticated)`,
+      );
+      resultEntries[idx] = skippedUrlBundleEntry(entry, entry.bundle);
+      return;
     }
 
     try {

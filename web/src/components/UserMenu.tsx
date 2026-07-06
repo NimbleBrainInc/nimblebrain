@@ -55,6 +55,166 @@ interface UserMenuProps {
   dropdownDirection?: "up" | "down";
 }
 
+/** Colored initials chip standing in for the user's avatar. */
+function Avatar({
+  displayName,
+  email,
+  bg,
+  fg,
+}: {
+  displayName: string;
+  email: string;
+  bg: string;
+  fg: string;
+}) {
+  return (
+    <span
+      className={cn(
+        "inline-flex items-center justify-center font-semibold shrink-0 select-none rounded-sm",
+        "w-7 h-7 text-xs",
+      )}
+      style={{ backgroundColor: bg, color: fg }}
+    >
+      {initials(displayName ?? "", email ?? "")}
+    </span>
+  );
+}
+
+/** Name/email lines plus the open/close chevron, shown when the sidebar is expanded. */
+function TriggerDetails({
+  label,
+  displayName,
+  email,
+  open,
+}: {
+  label: string;
+  displayName: string;
+  email: string;
+  open: boolean;
+}) {
+  return (
+    <>
+      <div className="flex-1 min-w-0 text-left">
+        <div className="truncate font-medium text-sidebar-foreground leading-tight">{label}</div>
+        {displayName && email && displayName !== email && (
+          <div className="truncate text-2xs text-sidebar-foreground/50 leading-tight">{email}</div>
+        )}
+      </div>
+      <ChevronUp
+        className={cn(
+          "shrink-0 w-4 h-4 text-sidebar-foreground/50 transition-transform duration-200",
+          open ? "rotate-0" : "rotate-180",
+        )}
+      />
+    </>
+  );
+}
+
+/** Absolute-position classes for the popover given collapse state and open direction. */
+function dropdownPositionClass(collapsed: boolean, dropdownDirection: "up" | "down"): string {
+  if (collapsed) {
+    return cn("left-full ml-2 w-56", dropdownDirection === "up" ? "bottom-0" : "top-0");
+  }
+  return cn(
+    "left-0 right-0 w-full min-w-[200px]",
+    dropdownDirection === "up" ? "bottom-full mb-1" : "top-full mt-1",
+  );
+}
+
+/** Identity header at the top of the popover (collapsed only — expanded shows it in the trigger). */
+function DropdownIdentityHeader({ label, email }: { label: string; email: string }) {
+  return (
+    <div className="px-3 py-2.5 border-b border-sidebar-border">
+      <div className="truncate text-sm font-medium text-sidebar-foreground">{label}</div>
+      {email && email !== label && (
+        <div className="truncate text-2xs text-sidebar-foreground/50">{email}</div>
+      )}
+    </div>
+  );
+}
+
+/** Action list inside the popover: profile settings, organization (admins), and sign out. */
+function DropdownActions({
+  isOrgAdmin,
+  onProfile,
+  onOrgSettings,
+  onSignOut,
+}: {
+  isOrgAdmin: boolean;
+  onProfile: () => void;
+  onOrgSettings: () => void;
+  onSignOut: () => void;
+}) {
+  return (
+    <div className="p-1">
+      <button
+        type="button"
+        onClick={onProfile}
+        className="flex items-center gap-2.5 w-full rounded-sm px-2 py-2 text-sm text-left transition-all duration-150 text-sidebar-foreground hover:bg-sidebar-foreground/5"
+      >
+        <UserCog className="w-4 h-4 text-sidebar-foreground/60" />
+        <span>Profile settings</span>
+      </button>
+      {isOrgAdmin && (
+        <button
+          type="button"
+          onClick={onOrgSettings}
+          className="flex items-center gap-2.5 w-full rounded-sm px-2 py-2 text-sm text-left transition-all duration-150 text-sidebar-foreground hover:bg-sidebar-foreground/5"
+        >
+          <Building2 className="w-4 h-4 text-sidebar-foreground/60" />
+          <span>Organization</span>
+        </button>
+      )}
+      <button
+        type="button"
+        onClick={onSignOut}
+        className="flex items-center gap-2.5 w-full rounded-sm px-2 py-2 text-sm text-left transition-all duration-150 text-sidebar-foreground hover:bg-sidebar-foreground/5"
+      >
+        <LogOut className="w-4 h-4 text-sidebar-foreground/60" />
+        <span>Sign out</span>
+      </button>
+    </div>
+  );
+}
+
+/** The account popover: optional identity header stacked over the action list. */
+function AccountDropdown({
+  collapsed,
+  dropdownDirection,
+  label,
+  email,
+  isOrgAdmin,
+  onProfile,
+  onOrgSettings,
+  onSignOut,
+}: {
+  collapsed: boolean;
+  dropdownDirection: "up" | "down";
+  label: string;
+  email: string;
+  isOrgAdmin: boolean;
+  onProfile: () => void;
+  onOrgSettings: () => void;
+  onSignOut: () => void;
+}) {
+  return (
+    <div
+      className={cn(
+        "absolute z-50 rounded-sm border border-sidebar-border bg-sidebar shadow-lg ws-dropdown-enter",
+        dropdownPositionClass(collapsed, dropdownDirection),
+      )}
+    >
+      {collapsed && <DropdownIdentityHeader label={label} email={email} />}
+      <DropdownActions
+        isOrgAdmin={isOrgAdmin}
+        onProfile={onProfile}
+        onOrgSettings={onOrgSettings}
+        onSignOut={onSignOut}
+      />
+    </div>
+  );
+}
+
 /**
  * Identity-bound menu at the top-left of the shell sidebar.
  *
@@ -136,87 +296,23 @@ export const UserMenu = memo(function UserMenu({
           collapsed ? "justify-center p-1.5" : "gap-2.5 px-2 py-2",
         )}
       >
-        <span
-          className={cn(
-            "inline-flex items-center justify-center font-semibold shrink-0 select-none rounded-sm",
-            "w-7 h-7 text-xs",
-          )}
-          style={{ backgroundColor: bg, color: fg }}
-        >
-          {initials(displayName ?? "", email ?? "")}
-        </span>
+        <Avatar displayName={displayName} email={email} bg={bg} fg={fg} />
         {!collapsed && (
-          <>
-            <div className="flex-1 min-w-0 text-left">
-              <div className="truncate font-medium text-sidebar-foreground leading-tight">
-                {label}
-              </div>
-              {displayName && email && displayName !== email && (
-                <div className="truncate text-2xs text-sidebar-foreground/50 leading-tight">
-                  {email}
-                </div>
-              )}
-            </div>
-            <ChevronUp
-              className={cn(
-                "shrink-0 w-4 h-4 text-sidebar-foreground/50 transition-transform duration-200",
-                open ? "rotate-0" : "rotate-180",
-              )}
-            />
-          </>
+          <TriggerDetails label={label} displayName={displayName} email={email} open={open} />
         )}
       </button>
 
       {open && (
-        <div
-          className={cn(
-            "absolute z-50 rounded-sm border border-sidebar-border bg-sidebar shadow-lg ws-dropdown-enter",
-            collapsed
-              ? cn("left-full ml-2 w-56", dropdownDirection === "up" ? "bottom-0" : "top-0")
-              : cn(
-                  "left-0 right-0 w-full min-w-[200px]",
-                  dropdownDirection === "up" ? "bottom-full mb-1" : "top-full mt-1",
-                ),
-          )}
-        >
-          {/* Identity header (collapsed only — expanded already shows it in the trigger) */}
-          {collapsed && (
-            <div className="px-3 py-2.5 border-b border-sidebar-border">
-              <div className="truncate text-sm font-medium text-sidebar-foreground">{label}</div>
-              {email && email !== label && (
-                <div className="truncate text-2xs text-sidebar-foreground/50">{email}</div>
-              )}
-            </div>
-          )}
-          <div className="p-1">
-            <button
-              type="button"
-              onClick={goToProfile}
-              className="flex items-center gap-2.5 w-full rounded-sm px-2 py-2 text-sm text-left transition-all duration-150 text-sidebar-foreground hover:bg-sidebar-foreground/5"
-            >
-              <UserCog className="w-4 h-4 text-sidebar-foreground/60" />
-              <span>Profile settings</span>
-            </button>
-            {isOrgAdmin && (
-              <button
-                type="button"
-                onClick={goToOrgSettings}
-                className="flex items-center gap-2.5 w-full rounded-sm px-2 py-2 text-sm text-left transition-all duration-150 text-sidebar-foreground hover:bg-sidebar-foreground/5"
-              >
-                <Building2 className="w-4 h-4 text-sidebar-foreground/60" />
-                <span>Organization</span>
-              </button>
-            )}
-            <button
-              type="button"
-              onClick={handleLogout}
-              className="flex items-center gap-2.5 w-full rounded-sm px-2 py-2 text-sm text-left transition-all duration-150 text-sidebar-foreground hover:bg-sidebar-foreground/5"
-            >
-              <LogOut className="w-4 h-4 text-sidebar-foreground/60" />
-              <span>Sign out</span>
-            </button>
-          </div>
-        </div>
+        <AccountDropdown
+          collapsed={collapsed}
+          dropdownDirection={dropdownDirection}
+          label={label}
+          email={email}
+          isOrgAdmin={isOrgAdmin}
+          onProfile={goToProfile}
+          onOrgSettings={goToOrgSettings}
+          onSignOut={handleLogout}
+        />
       )}
     </div>
   );

@@ -124,6 +124,15 @@ function backoffDelayMs(attempt: number, baseDelayMs: number, rng: () => number)
   return Math.floor(exp * (0.5 + rng() * 0.5));
 }
 
+/** Why a refresh attempt wants to retry — carries the data its log line needs. */
+type RetryReason = { kind: "response"; status: number } | { kind: "network"; message: string };
+
+/** Outcome of one refresh attempt: hand back the response, retry, or rethrow. */
+type AttemptResult =
+  | { kind: "return"; res: Response }
+  | { kind: "retry"; reason: RetryReason }
+  | { kind: "throw"; err: unknown };
+
 /**
  * Build a `fetch` that retries transient OAuth refresh-token failures in place.
  * Pass as the `fetch:` option to a remote OAuth transport.
@@ -135,6 +144,45 @@ export function createOAuthRefreshFetch(options: OAuthRefreshFetchOptions = {}):
   const sleep = options.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
   const rng = options.rng ?? Math.random;
 
+  /** Run one refresh POST and classify it: return the response, retry, or rethrow. */
+  const runRefreshAttempt = async (
+    url: string | URL,
+    init: RequestInit | undefined,
+    isLast: boolean,
+  ): Promise<AttemptResult> => {
+    try {
+      const res = await doFetch(url, init);
+      if (!isLast && (await isTransientRefreshResponse(res))) {
+        return { kind: "retry", reason: { kind: "response", status: res.status } };
+      }
+      return { kind: "return", res };
+    } catch (err) {
+      // A thrown fetch is network-level (connection drop, TLS reset, DNS, abort).
+      // Retrying is safe EXCEPT one unavoidable window: if the prior attempt
+      // actually reached the server and rotated the refresh token (rotating IdPs),
+      // but the response was lost on the wire, the retry re-sends the now-stale
+      // token → `invalid_grant` → reauth. That is inherent to retrying a refresh
+      // (not idempotent under rotation), and it is strictly NARROWER than reauth
+      // on every transient blip — here only the lost-response-after-rotation case
+      // does, and the same lost response would reauth without any retry.
+      if (isLast) return { kind: "throw", err };
+      const message = err instanceof Error ? err.message : String(err);
+      return { kind: "retry", reason: { kind: "network", message } };
+    }
+  };
+
+  /** Warn about the impending retry and sleep out this attempt's jittered backoff. */
+  const logAndSleepBeforeRetry = async (attempt: number, reason: RetryReason): Promise<void> => {
+    const delay = backoffDelayMs(attempt, baseDelayMs, rng);
+    const retry = `retry ${attempt}/${maxAttempts - 1} in ${delay}ms`;
+    const message =
+      reason.kind === "response"
+        ? `[oauth] token refresh transient failure (status=${reason.status}) — ${retry}`
+        : `[oauth] token refresh network error — ${retry}: ${reason.message}`;
+    log.warn(message);
+    await sleep(delay);
+  };
+
   // The (retrying) refresh POST, run once. A thrown fetch is network-level
   // (connection drop, TLS reset, DNS, abort) — always transient; a transient
   // response (5xx/429/transient OAuth code) is retried within budget. On
@@ -142,37 +190,10 @@ export function createOAuthRefreshFetch(options: OAuthRefreshFetchOptions = {}):
   // SDK sees a real failure and its reauth path can fire.
   const refreshWithRetry = async (url: string | URL, init?: RequestInit): Promise<Response> => {
     for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-      const isLast = attempt >= maxAttempts;
-      try {
-        const res = await doFetch(url, init);
-        if (!isLast && (await isTransientRefreshResponse(res))) {
-          const delay = backoffDelayMs(attempt, baseDelayMs, rng);
-          log.warn(
-            `[oauth] token refresh transient failure (status=${res.status}) — ` +
-              `retry ${attempt}/${maxAttempts - 1} in ${delay}ms`,
-          );
-          await sleep(delay);
-          continue;
-        }
-        return res;
-      } catch (err) {
-        // A thrown fetch is network-level (connection drop, TLS reset, DNS,
-        // abort). Retrying is safe EXCEPT one unavoidable window: if the prior
-        // attempt actually reached the server and rotated the refresh token
-        // (rotating IdPs), but the response was lost on the wire, the retry
-        // re-sends the now-stale token → `invalid_grant` → reauth. That is
-        // inherent to retrying a refresh (not idempotent under rotation), and it
-        // is strictly NARROWER than the pre-fix behavior where *every* transient
-        // blip flipped to reauth — here only the lost-response-after-rotation
-        // case does, and the same lost response would reauth without any retry.
-        if (isLast) throw err;
-        const delay = backoffDelayMs(attempt, baseDelayMs, rng);
-        log.warn(
-          `[oauth] token refresh network error — retry ${attempt}/${maxAttempts - 1} ` +
-            `in ${delay}ms: ${err instanceof Error ? err.message : String(err)}`,
-        );
-        await sleep(delay);
-      }
+      const outcome = await runRefreshAttempt(url, init, attempt >= maxAttempts);
+      if (outcome.kind === "return") return outcome.res;
+      if (outcome.kind === "throw") throw outcome.err;
+      await logAndSleepBeforeRetry(attempt, outcome.reason);
     }
     // Unreachable: the final attempt either returns or throws above.
     throw new Error("oauth refresh fetch: retry loop exited without result");

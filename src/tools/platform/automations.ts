@@ -75,6 +75,27 @@ export function resolveExecutorContext(
   };
 }
 
+/** Reconcile an automation map against the owner's on-disk store: write each (stamping its workspace + owner binding) and drop definitions no longer in the map. */
+function saveOwnerAutomations(
+  workDir: string,
+  wsId: string,
+  owner: string,
+  map: Map<string, Automation>,
+): void {
+  const onDisk = loadOwnerAutomations(workDir, wsId, owner);
+  for (const auto of map.values()) {
+    // Stamp the binding so a scheduled run resolves the same workspace + owner.
+    if (!auto.workspaceId) auto.workspaceId = wsId;
+    if (!auto.ownerId) auto.ownerId = owner;
+    saveAutomation(workDir, wsId, owner, auto);
+  }
+  for (const id of onDisk.keys()) {
+    // Definition-only removal — a deleted automation's run history (audit
+    // trail) is preserved (`deleteAutomation` is the hard-purge variant).
+    if (!map.has(id)) deleteAutomationDefinition(workDir, wsId, owner, id);
+  }
+}
+
 /**
  * Create the "automations" platform source — an in-process MCP server.
  * Migrated from the former standalone MCP server at
@@ -143,20 +164,7 @@ export async function createAutomationsSource(
       // per-automation store. `definitions` reads every `*.json` in the owner
       // dir; `save` reconciles the map against disk (write each, delete removed).
       definitions: () => loadOwnerAutomations(workDir, wsId, owner),
-      save: (map) => {
-        const onDisk = loadOwnerAutomations(workDir, wsId, owner);
-        for (const auto of map.values()) {
-          // Stamp the binding so a scheduled run resolves the same workspace + owner.
-          if (!auto.workspaceId) auto.workspaceId = wsId;
-          if (!auto.ownerId) auto.ownerId = owner;
-          saveAutomation(workDir, wsId, owner, auto);
-        }
-        for (const id of onDisk.keys()) {
-          // Definition-only removal — a deleted automation's run history (audit
-          // trail) is preserved (`deleteAutomation` is the hard-purge variant).
-          if (!map.has(id)) deleteAutomationDefinition(workDir, wsId, owner, id);
-        }
-      },
+      save: (map) => saveOwnerAutomations(workDir, wsId, owner, map),
       reloadScheduler: () => scheduler.reload(),
       runNow: (id) => scheduler.runNow(wsId, owner, id),
       cancelRun: (id) => scheduler.cancelRun(wsId, owner, id),

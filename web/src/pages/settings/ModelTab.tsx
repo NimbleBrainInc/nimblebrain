@@ -33,6 +33,24 @@ interface Feedback {
   message: string;
 }
 
+// Qualify bare model ids (legacy disk state from older UI versions that wrote
+// `m.id` without the `provider:` prefix). Without this, those bare ids don't
+// match any option value and the dropdown shows the placeholder even though
+// routing works at runtime via the catalog fallback in `resolveModelString`.
+// Re-saving with a qualified value also migrates the persisted state.
+/** Resolve a possibly-bare model id to a fully-qualified `provider:id` using the catalog. */
+function qualifyModelId(
+  id: string | undefined,
+  availableModels: Record<string, ModelEntry[]>,
+): string {
+  if (!id) return "";
+  if (id.includes(":")) return id;
+  for (const [provider, models] of Object.entries(availableModels)) {
+    if (models.some((m) => m.id === id)) return `${provider}:${id}`;
+  }
+  return id; // unknown — leave as-is so the field still shows the value
+}
+
 function ModelSelect({
   id,
   label,
@@ -96,20 +114,8 @@ export function ModelTab() {
     callTool("nb", "get_config")
       .then((res) => {
         const config = parseToolResult<ModelConfig>(res);
-        // Qualify bare model ids (legacy disk state from older UI versions
-        // that wrote `m.id` without the `provider:` prefix). Without this,
-        // those bare ids don't match any option value and the dropdown
-        // shows the placeholder even though routing works at runtime via
-        // the catalog fallback in `resolveModelString`. Re-saving with a
-        // qualified value also migrates the persisted state.
-        const qualify = (id: string | undefined): string => {
-          if (!id) return "";
-          if (id.includes(":")) return id;
-          for (const [provider, models] of Object.entries(config.availableModels ?? {})) {
-            if (models.some((m) => m.id === id)) return `${provider}:${id}`;
-          }
-          return id; // unknown — leave as-is so the field still shows the value
-        };
+        const qualify = (id: string | undefined) =>
+          qualifyModelId(id, config.availableModels ?? {});
         setDefaultModel(qualify(config.models.default));
         setFastModel(qualify(config.models.fast));
         setReasoningModel(qualify(config.models.reasoning));

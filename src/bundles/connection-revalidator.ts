@@ -39,9 +39,11 @@ import { log } from "../observability/log.ts";
 import {
   bundleProviderId,
   type ConnectionHealthProbe,
+  type ConnectionLiveness,
   type ProbeTarget,
 } from "./connection-probe.ts";
 import type { BundleLifecycleManager } from "./lifecycle.ts";
+import type { BundleInstance } from "./types.ts";
 
 const DEFAULT_INTERVAL_MS = 300_000; // 5 min
 const DEFAULT_CONCURRENCY = 8;
@@ -130,61 +132,9 @@ export class ConnectionRevalidator {
       const targets = this.collectTargets();
       if (targets.length === 0) return;
 
-      const verdicts = new Array<"live" | "credential_lost" | "indeterminate">(targets.length);
-      let errors = 0;
-      await this.forEachBounded(targets, async (t, i) => {
-        const probe = this.probes.get(bundleProviderId(t.ref) ?? "");
-        if (!probe) {
-          verdicts[i] = "indeterminate";
-          return;
-        }
-        const v = await probe.probe(t, signal ?? neverAbort());
-        verdicts[i] = v;
-        if (v === "indeterminate") errors++;
-      });
-
-      // Update streaks; collect connections that crossed the flip threshold.
-      const seen = new Set<string>();
-      const candidates: Candidate[] = [];
-      for (let i = 0; i < targets.length; i++) {
-        const t = targets[i] as ProbeTarget;
-        const key = streakKey(t);
-        seen.add(key);
-        const v = verdicts[i];
-        if (v === "live") {
-          this.degradedStreak.delete(key);
-        } else if (v === "credential_lost") {
-          const next = (this.degradedStreak.get(key) ?? 0) + 1;
-          this.degradedStreak.set(key, next);
-          if (next >= FLIP_THRESHOLD) candidates.push({ target: t, key });
-        }
-        // indeterminate: leave the streak untouched (preserve across one bad sweep).
-      }
-      // Drop streaks for connections no longer present/running — keep the map bounded.
-      for (const key of this.degradedStreak.keys()) {
-        if (!seen.has(key)) this.degradedStreak.delete(key);
-      }
-
-      // Circuit breaker: a mass flip is more likely an upstream fault than a
-      // real mass revocation. Abort the sweep, flip nothing, and reset the
-      // candidates' streaks so they must re-confirm from scratch.
-      const breakerLimit = Math.max(
-        FLAP_BREAKER_ABS,
-        Math.ceil(targets.length * FLAP_BREAKER_FRACTION),
-      );
-      let flipped = 0;
-      if (candidates.length > breakerLimit) {
-        for (const c of candidates) this.degradedStreak.delete(c.key);
-        log.error(
-          `[connection-revalidator] FLAP STORM: ${candidates.length}/${targets.length} connections ` +
-            `would flip to reauth_required in one sweep — aborting, keeping all state (likely an ` +
-            `upstream provider fault, not mass revocation). Streaks reset.`,
-        );
-      } else {
-        for (const c of candidates) {
-          if (this.flip(c)) flipped++;
-        }
-      }
+      const { verdicts, errors } = await this.runProbes(targets, signal);
+      const candidates = this.updateStreaks(targets, verdicts);
+      const flipped = this.applyCandidates(candidates, targets.length);
 
       log.info(
         `[connection-revalidator] swept checked=${targets.length} ` +
@@ -199,6 +149,85 @@ export class ConnectionRevalidator {
     } finally {
       this.sweeping = false;
     }
+  }
+
+  /** Probe every target under the concurrency cap; returns per-index verdicts and the probe-error count. */
+  private async runProbes(
+    targets: ProbeTarget[],
+    signal: AbortSignal | undefined,
+  ): Promise<{ verdicts: ConnectionLiveness[]; errors: number }> {
+    const verdicts = new Array<ConnectionLiveness>(targets.length);
+    let errors = 0;
+    await this.forEachBounded(targets, async (t, i) => {
+      const probe = this.probes.get(bundleProviderId(t.ref) ?? "");
+      if (!probe) {
+        verdicts[i] = "indeterminate";
+        return;
+      }
+      const v = await probe.probe(t, signal ?? neverAbort());
+      verdicts[i] = v;
+      if (v === "indeterminate") errors++;
+    });
+    return { verdicts, errors };
+  }
+
+  /** Fold verdicts into the anti-flap streak map and prune vanished keys; returns threshold-crossing connections. */
+  private updateStreaks(targets: ProbeTarget[], verdicts: ConnectionLiveness[]): Candidate[] {
+    const seen = new Set<string>();
+    const candidates: Candidate[] = [];
+    for (let i = 0; i < targets.length; i++) {
+      const t = targets[i] as ProbeTarget;
+      const key = streakKey(t);
+      seen.add(key);
+      if (this.recordVerdict(key, verdicts[i])) candidates.push({ target: t, key });
+    }
+    // Drop streaks for connections no longer present/running — keep the map bounded.
+    this.pruneStreaks(seen);
+    return candidates;
+  }
+
+  /** Apply one verdict to a connection's streak; true once it reaches the flip threshold. */
+  private recordVerdict(key: string, verdict: ConnectionLiveness | undefined): boolean {
+    if (verdict === "live") {
+      this.degradedStreak.delete(key);
+      return false;
+    }
+    if (verdict === "credential_lost") {
+      const next = (this.degradedStreak.get(key) ?? 0) + 1;
+      this.degradedStreak.set(key, next);
+      return next >= FLIP_THRESHOLD;
+    }
+    // indeterminate (or unset): leave the streak untouched (preserve across one bad sweep).
+    return false;
+  }
+
+  /** Drop streaks for connections no longer present/running — keeps the map bounded. */
+  private pruneStreaks(seen: Set<string>): void {
+    for (const key of this.degradedStreak.keys()) {
+      if (!seen.has(key)) this.degradedStreak.delete(key);
+    }
+  }
+
+  /** Flip threshold-crossing candidates; a mass flip trips the breaker (flip nothing, reset streaks). */
+  private applyCandidates(candidates: Candidate[], checked: number): number {
+    // Circuit breaker: a mass flip is more likely an upstream fault than a
+    // real mass revocation. Abort the sweep, flip nothing, and reset the
+    // candidates' streaks so they must re-confirm from scratch.
+    const breakerLimit = Math.max(FLAP_BREAKER_ABS, Math.ceil(checked * FLAP_BREAKER_FRACTION));
+    if (candidates.length > breakerLimit) {
+      for (const c of candidates) this.degradedStreak.delete(c.key);
+      log.error(
+        `[connection-revalidator] FLAP STORM: ${candidates.length}/${checked} connections ` +
+          `would flip to reauth_required in one sweep — aborting, keeping all state (likely an ` +
+          `upstream provider fault, not mass revocation). Streaks reset.`,
+      );
+      return 0;
+    }
+    let flipped = 0;
+    for (const c of candidates) {
+      if (this.flip(c)) flipped++;
+    }
+    return flipped;
   }
 
   /** Apply one flip. Re-checks the connection is STILL running at flip time —
@@ -225,29 +254,38 @@ export class ConnectionRevalidator {
   private collectTargets(): ProbeTarget[] {
     const out: ProbeTarget[] = [];
     for (const inst of this.lifecycle.getInstances()) {
-      const ref = inst.ref;
-      const providerId = bundleProviderId(ref);
-      if (!providerId || !this.probes.has(providerId) || !ref) continue;
-
-      const conns = inst.connections;
-      if (conns && conns.size > 0) {
-        for (const conn of conns.values()) {
-          if (conn.state === "running") {
-            out.push({
-              serverName: inst.serverName,
-              wsId: inst.wsId,
-              principalId: conn.principalId,
-              ref,
-            });
-          }
-        }
-      } else if (inst.state === "running") {
-        // No per-principal map (shouldn't happen for a running URL bundle) —
-        // fall back to the workspace principal.
-        out.push({ serverName: inst.serverName, wsId: inst.wsId, principalId: "_workspace", ref });
-      }
+      out.push(...this.instanceTargets(inst));
     }
     return out;
+  }
+
+  /** `running` probe targets for one instance — empty when its provider has no registered probe. */
+  private instanceTargets(inst: BundleInstance): ProbeTarget[] {
+    const ref = inst.ref;
+    const providerId = bundleProviderId(ref);
+    if (!providerId || !this.probes.has(providerId) || !ref) return [];
+
+    const conns = inst.connections;
+    if (conns && conns.size > 0) {
+      const out: ProbeTarget[] = [];
+      for (const conn of conns.values()) {
+        if (conn.state === "running") {
+          out.push({
+            serverName: inst.serverName,
+            wsId: inst.wsId,
+            principalId: conn.principalId,
+            ref,
+          });
+        }
+      }
+      return out;
+    }
+    if (inst.state === "running") {
+      // No per-principal map (shouldn't happen for a running URL bundle) —
+      // fall back to the workspace principal.
+      return [{ serverName: inst.serverName, wsId: inst.wsId, principalId: "_workspace", ref }];
+    }
+    return [];
   }
 
   /** Bounded worker pool — inlined to avoid a bundles→runtime import cycle. */

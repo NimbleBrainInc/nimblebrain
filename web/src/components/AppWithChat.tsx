@@ -51,6 +51,21 @@ let restoredLastConversation = false;
  */
 const initialSavedStreamingIds = getSavedStreamingIds();
 
+/** Reopen the last-viewed conversation (per-tab) and re-probe the ones that were streaming before reload, so in-flight turns resume their viewer and streaming dots. */
+function restoreSavedConversation(chat: ReturnType<typeof useChatContext>) {
+  const saved = getSavedConversationId();
+  // Hydrate without forcing the panel open — its visibility is restored
+  // independently from ChatPanelContext's persisted state. When the panel
+  // is (re)opened it shows this conversation.
+  if (saved) void chat.loadConversation(saved);
+  // Restore background streaming dots: probe each conversation that was
+  // generating before reload. Still-active ones light up; finished ones
+  // self-heal (probe → not active → no dot).
+  for (const id of initialSavedStreamingIds) {
+    if (id !== saved) chatStore.probeConversation(id);
+  }
+}
+
 interface AppWithChatProps {
   placement: PlacementEntry;
   onNavigate: (route: string) => void;
@@ -96,20 +111,9 @@ export function AppWithChat({ placement, onNavigate, forceRefresh }: AppWithChat
       openPanel(chatId);
       return;
     }
-    if (!restoredLastConversation) {
-      restoredLastConversation = true;
-      const saved = getSavedConversationId();
-      // Hydrate without forcing the panel open — its visibility is restored
-      // independently from ChatPanelContext's persisted state. When the panel
-      // is (re)opened it shows this conversation.
-      if (saved) void chat.loadConversation(saved);
-      // Restore background streaming dots: probe each conversation that was
-      // generating before reload. Still-active ones light up; finished ones
-      // self-heal (probe → not active → no dot).
-      for (const id of initialSavedStreamingIds) {
-        if (id !== saved) chatStore.probeConversation(id);
-      }
-    }
+    if (restoredLastConversation) return;
+    restoredLastConversation = true;
+    restoreSavedConversation(chat);
   }, []);
 
   // Persist the active conversation id (per-tab) so a reload can reopen it.

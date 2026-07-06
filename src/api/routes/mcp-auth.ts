@@ -1,5 +1,5 @@
 import { createHash, timingSafeEqual } from "node:crypto";
-import { Hono } from "hono";
+import { type Context, Hono } from "hono";
 import { WORKSPACE_PRINCIPAL_ID } from "../../bundles/connection.ts";
 import { getBouncerMode } from "../../oauth/bouncer-config.ts";
 import {
@@ -109,16 +109,8 @@ export function mcpAuthRoutes(ctx: AppContext) {
     requireAuth(ctx.authOptions),
     requireWorkspace(ctx.workspaceStore),
     async (c) => {
-      let body: { serverName?: unknown };
-      try {
-        body = await c.req.json();
-      } catch {
-        return apiError(400, "bad_request", "Body must be JSON.");
-      }
-      const serverName = typeof body.serverName === "string" ? body.serverName : "";
-      if (!serverName) {
-        return apiError(400, "bad_request", "serverName is required.");
-      }
+      const serverName = await parseServerName(c);
+      if (serverName instanceof Response) return serverName;
 
       const wsId = c.var.workspaceId;
       const lifecycle = ctx.runtime.getLifecycle();
@@ -135,89 +127,23 @@ export function mcpAuthRoutes(ctx: AppContext) {
       // or undefined post-Stage-2.
       const principalId = WORKSPACE_PRINCIPAL_ID;
 
-      let authorizationUrl: string;
-      try {
-        const callbackUrl = mcpAuthCallbackUrl();
-        const result = await lifecycle.startAuth(serverName, wsId, principalId, {
-          workDir: ctx.runtime.getWorkDir(),
-          callbackUrl,
-          allowInsecureRemotes: ctx.runtime.getAllowInsecureRemotes(),
-        });
-        authorizationUrl = result.authorizationUrl;
-      } catch (err) {
-        // Don't leak SDK / DNS / TLS details in the response body.
-        // Workspace-authed callers, but the surface is wide and the
-        // body crosses trust boundaries (proxies, browser dev tools,
-        // HAR export). Log raw server-side; return a generic shape.
-        const msg = err instanceof Error ? err.message : String(err);
-        log.warn(`[mcp-auth] startAuth failed for ${serverName} in ${wsId}: ${msg}`);
-        return apiError(
-          500,
-          "auth_start_failed",
-          "Failed to start OAuth flow. Check server logs for details.",
-        );
-      }
+      const started = await startAuthorization(ctx, serverName, wsId, principalId);
+      if (started instanceof Response) return started;
 
-      // Extract `state` from the URL the SDK built. We bind the user's
-      // browser session to this state via a hashed cookie so a leaked
-      // `state` value alone can't let a different session land tokens.
-      let urlObj: URL;
-      try {
-        urlObj = new URL(authorizationUrl);
-      } catch {
-        return apiError(500, "internal_error", "Captured authorization URL is invalid.");
-      }
-      const state = urlObj.searchParams.get("state");
-      if (!state) {
-        return apiError(
-          500,
-          "internal_error",
-          "Authorization URL is missing required state parameter.",
-        );
-      }
-
-      // In bouncer mode, wrap the SDK-generated state in a signed
-      // envelope so the bouncer can route the callback back to this
-      // tenant. The inner state is what's bound to the cookie and what
-      // `oauth-flow-registry` is keyed on — both unchanged. The vendor
-      // sees only the wrapped value.
-      const bouncer = getBouncerMode();
-      if (bouncer) {
-        try {
-          const wrapped = signEnvelope({
-            tid: bouncer.tid,
-            inner: state,
-            tenantKey: bouncer.tenantKey,
-          });
-          urlObj.searchParams.set("state", wrapped);
-          authorizationUrl = urlObj.toString();
-        } catch (err) {
-          // signEnvelope rejects inputs that violate the envelope's
-          // own contract (oversize inner, invalid tid). Both are
-          // pre-validated above (tid at config load, inner from the
-          // SDK), so reaching here implies a regression elsewhere.
-          // Match the error posture of the startAuth catch above:
-          // log the cause, surface a generic 500.
-          const msg = err instanceof Error ? err.message : String(err);
-          log.warn(`[mcp-auth] envelope wrap failed for ${serverName} in ${wsId}: ${msg}`);
-          return apiError(500, "internal_error", "Failed to wrap OAuth state.");
-        }
-      }
+      // Bind the user's browser session to the SDK-built `state` via a
+      // hashed cookie so a leaked `state` value alone can't let a
+      // different session land tokens; in bouncer mode the outbound URL
+      // carries a signed-envelope wrapping of that same inner state.
+      const prepared = prepareAuthorization(started, serverName, wsId);
+      if (prepared instanceof Response) return prepared;
+      const { authorizationUrl, state } = prepared;
 
       const stateHash = sha256Hex(state);
 
       // Cookie scoped to /v1/mcp-auth/callback so it's only sent on the
       // return leg. HttpOnly + SameSite=Lax matches the existing session
       // cookie posture; Secure when not on localhost.
-      const cookieParts = [
-        `nb_oauth_state=${stateHash}`,
-        "HttpOnly",
-        "SameSite=Lax",
-        "Path=/v1/mcp-auth/callback",
-        "Max-Age=900",
-      ];
-      if (ctx.secureCookies) cookieParts.push("Secure");
-      c.header("Set-Cookie", cookieParts.join("; "));
+      c.header("Set-Cookie", buildOAuthStateCookie(stateHash, 900, ctx.secureCookies));
 
       return c.json({ authorizationUrl });
     },
@@ -237,75 +163,15 @@ export function mcpAuthRoutes(ctx: AppContext) {
     c.header("Cache-Control", "no-store");
     c.header("Pragma", "no-cache");
 
-    const code = c.req.query("code");
-    const wireState = c.req.query("state");
-    const error = c.req.query("error");
+    const params = readCallbackParams(c);
+    if (params instanceof Response) return params;
+    const { code, wireState } = params;
 
-    if (error) {
-      return c.html(
-        `<html><body><h3>Authorization failed</h3><pre>${escapeHtml(error)}</pre></body></html>`,
-        400,
-      );
-    }
-    if (!code || !wireState) {
-      return c.text("missing code or state", 400);
-    }
+    const state = recoverInnerState(c, wireState);
+    if (state instanceof Response) return state;
 
-    // In bouncer mode the URL state arrives wrapped — unwrap it to
-    // recover the inner state, which is what the cookie binding and
-    // flow registry are keyed on. In direct mode (single-instance
-    // self-hosts) the wire state is the inner state. We refuse to
-    // unwrap an inner-shaped state in bouncer mode: a callback that
-    // bypassed the bouncer is either a stale flow from before bouncer
-    // mode was enabled (rare, user should re-initiate) or an attacker
-    // probing the platform's direct hostname.
-    const bouncer = getBouncerMode();
-    let state: string;
-    if (bouncer) {
-      if (!wireState.startsWith(`${ENVELOPE_VERSION}.`)) {
-        return c.html(
-          "<html><body><h3>Authorization state envelope missing.</h3>" +
-            "<p>Re-initiate the connection from NimbleBrain.</p></body></html>",
-          400,
-        );
-      }
-      try {
-        const payload = verifyEnvelopeAsTenant({
-          wire: wireState,
-          tenantKey: bouncer.tenantKey,
-          expectedTid: bouncer.tid,
-        });
-        state = payload.inner;
-      } catch (err) {
-        // Log the specific failure code for ops, but show the user a
-        // generic message — leaking which check failed gives an attacker
-        // an oracle for probing the envelope format.
-        const code = err instanceof EnvelopeError ? err.code : "unknown";
-        log.warn(`[mcp-auth] bouncer envelope verification failed: ${code}`);
-        return c.html(
-          "<html><body><h3>Authorization session invalid.</h3>" +
-            "<p>Re-initiate the connection from NimbleBrain.</p></body></html>",
-          400,
-        );
-      }
-    } else {
-      state = wireState;
-    }
-
-    // Session-binding check: the cookie set by /initiate must match the
-    // URL state. Without this, a leaked state value (referrer header,
-    // browser history, network log) could let an attacker drop tokens
-    // into someone else's flow. The cookie is a sha256 of state — bound
-    // to the originating session, can't be derived from the URL alone.
-    const expected = sha256Hex(state);
-    const cookieValue = readCookie(c.req.header("cookie"), "nb_oauth_state");
-    if (!cookieValue || !timingSafeEqualHex(cookieValue, expected)) {
-      return c.html(
-        "<html><body><h3>Authorization session mismatch.</h3>" +
-          "<p>Re-initiate the connection from NimbleBrain.</p></body></html>",
-        400,
-      );
-    }
+    const mismatch = verifyStateCookie(c, state);
+    if (mismatch) return mismatch;
 
     // Recover the workspace the flow was initiated in *before* resolving
     // (which deletes the registry entry), so we can land the user back on
@@ -323,36 +189,235 @@ export function mcpAuthRoutes(ctx: AppContext) {
     // Every connector lands on the workspace Connectors page. Stage 2
     // collapsed user-scope into the owner's personal workspace; per-
     // workspace dispatch needs no additional branching here.
+    return renderSuccessPage(c, flowWsId, ctx.secureCookies);
+  });
 
-    // Clear the one-shot state cookie so a refresh of this page can't
-    // be used as a replay vector.
-    const expireParts = [
-      "nb_oauth_state=",
-      "HttpOnly",
-      "SameSite=Lax",
-      "Path=/v1/mcp-auth/callback",
-      "Max-Age=0",
-    ];
-    if (ctx.secureCookies) expireParts.push("Secure");
-    c.header("Set-Cookie", expireParts.join("; "));
+  return app;
+}
 
-    // Auto-redirect back to the workspace Connectors page. The user came
-    // from NimbleBrain and was navigated away to the OAuth provider in
-    // their existing tab — telling them to "close this tab" is wrong
-    // because they'd lose NimbleBrain entirely. We bring them home, to the
-    // same `/w/<slug>` workspace the flow was initiated in. `flowWsId` is
-    // non-null here (resolveWithCode succeeded just above ⟹ the flow
-    // existed when we peeked it).
-    const returnUrl = workspaceConnectorsUrl(flowWsId ?? "");
-    const safeReturnUrl = escapeHtml(returnUrl);
-    // Override the platform-default CSP (`default-src 'none'`) for this
-    // response only. Without this the inline <style> below is blocked and
-    // the page renders unstyled in any deployment that doesn't override
-    // NB_CSP — i.e. all of them. The hash pins us to exactly the bytes
-    // we serve.
-    c.header("Content-Security-Policy", SUCCESS_PAGE_CSP);
+// ── /initiate + /callback concern helpers ─────────────────────────
+//
+// Each returns either its success value or a ready-to-send `Response`
+// (guards return `Response | null`); the handler forwards the
+// `Response` (`instanceof Response`) and otherwise proceeds. The
+// validation order and every status code / error string are the same
+// as an inline implementation — these only move code, not behavior.
+
+/** Parse the initiate body and validate `serverName` is a non-empty string, else an error Response. */
+async function parseServerName(c: Context<AppEnv>): Promise<string | Response> {
+  let body: { serverName?: unknown };
+  try {
+    body = await c.req.json();
+  } catch {
+    return apiError(400, "bad_request", "Body must be JSON.");
+  }
+  const serverName = typeof body.serverName === "string" ? body.serverName : "";
+  if (!serverName) {
+    return apiError(400, "bad_request", "serverName is required.");
+  }
+  return serverName;
+}
+
+/** Start the outbound OAuth flow via the bundle lifecycle, returning the SDK authorization URL or an error Response. */
+async function startAuthorization(
+  ctx: AppContext,
+  serverName: string,
+  wsId: string,
+  principalId: string,
+): Promise<string | Response> {
+  try {
+    const callbackUrl = mcpAuthCallbackUrl();
+    const result = await ctx.runtime.getLifecycle().startAuth(serverName, wsId, principalId, {
+      workDir: ctx.runtime.getWorkDir(),
+      callbackUrl,
+      allowInsecureRemotes: ctx.runtime.getAllowInsecureRemotes(),
+    });
+    return result.authorizationUrl;
+  } catch (err) {
+    // Don't leak SDK / DNS / TLS details in the response body.
+    // Workspace-authed callers, but the surface is wide and the
+    // body crosses trust boundaries (proxies, browser dev tools,
+    // HAR export). Log raw server-side; return a generic shape.
+    const msg = err instanceof Error ? err.message : String(err);
+    log.warn(`[mcp-auth] startAuth failed for ${serverName} in ${wsId}: ${msg}`);
+    return apiError(
+      500,
+      "auth_start_failed",
+      "Failed to start OAuth flow. Check server logs for details.",
+    );
+  }
+}
+
+/** Parse the SDK authorization URL, extract its `state`, and (in bouncer mode) wrap that state in a signed envelope — returning the final URL and inner state, or an error Response. */
+function prepareAuthorization(
+  authorizationUrl: string,
+  serverName: string,
+  wsId: string,
+): { authorizationUrl: string; state: string } | Response {
+  let urlObj: URL;
+  try {
+    urlObj = new URL(authorizationUrl);
+  } catch {
+    return apiError(500, "internal_error", "Captured authorization URL is invalid.");
+  }
+  const state = urlObj.searchParams.get("state");
+  if (!state) {
+    return apiError(
+      500,
+      "internal_error",
+      "Authorization URL is missing required state parameter.",
+    );
+  }
+
+  // In bouncer mode, wrap the SDK-generated state in a signed
+  // envelope so the bouncer can route the callback back to this
+  // tenant. The inner state is what's bound to the cookie and what
+  // `oauth-flow-registry` is keyed on — both unchanged. The vendor
+  // sees only the wrapped value.
+  const bouncer = getBouncerMode();
+  if (!bouncer) {
+    return { authorizationUrl, state };
+  }
+  try {
+    const wrapped = signEnvelope({
+      tid: bouncer.tid,
+      inner: state,
+      tenantKey: bouncer.tenantKey,
+    });
+    urlObj.searchParams.set("state", wrapped);
+    return { authorizationUrl: urlObj.toString(), state };
+  } catch (err) {
+    // signEnvelope rejects inputs that violate the envelope's
+    // own contract (oversize inner, invalid tid). Both are
+    // pre-validated above (tid at config load, inner from the
+    // SDK), so reaching here implies a regression elsewhere.
+    // Match the error posture of the startAuth catch above:
+    // log the cause, surface a generic 500.
+    const msg = err instanceof Error ? err.message : String(err);
+    log.warn(`[mcp-auth] envelope wrap failed for ${serverName} in ${wsId}: ${msg}`);
+    return apiError(500, "internal_error", "Failed to wrap OAuth state.");
+  }
+}
+
+/** Serialize the `nb_oauth_state` cookie scoped to the callback path; `Secure` is appended when cookies are secure. */
+function buildOAuthStateCookie(value: string, maxAge: number, secure: boolean): string {
+  const parts = [
+    `nb_oauth_state=${value}`,
+    "HttpOnly",
+    "SameSite=Lax",
+    "Path=/v1/mcp-auth/callback",
+    `Max-Age=${maxAge}`,
+  ];
+  if (secure) parts.push("Secure");
+  return parts.join("; ");
+}
+
+/** Read `code` / `state` from the callback query, surfacing the provider `error` param or missing params as an error Response. */
+function readCallbackParams(c: Context<AppEnv>): { code: string; wireState: string } | Response {
+  const code = c.req.query("code");
+  const wireState = c.req.query("state");
+  const error = c.req.query("error");
+
+  if (error) {
     return c.html(
-      `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Authorization complete</title>
+      `<html><body><h3>Authorization failed</h3><pre>${escapeHtml(error)}</pre></body></html>`,
+      400,
+    );
+  }
+  if (!code || !wireState) {
+    return c.text("missing code or state", 400);
+  }
+  return { code, wireState };
+}
+
+/** Recover the inner OAuth state: unwrap the signed envelope in bouncer mode (rejecting an unwrapped or invalid envelope), else the wire state verbatim. Returns the inner state or an error Response. */
+function recoverInnerState(c: Context<AppEnv>, wireState: string): string | Response {
+  // In bouncer mode the URL state arrives wrapped — unwrap it to
+  // recover the inner state, which is what the cookie binding and
+  // flow registry are keyed on. In direct mode (single-instance
+  // self-hosts) the wire state is the inner state. We refuse to
+  // unwrap an inner-shaped state in bouncer mode: a callback that
+  // bypassed the bouncer is either a stale flow from before bouncer
+  // mode was enabled (rare, user should re-initiate) or an attacker
+  // probing the platform's direct hostname.
+  const bouncer = getBouncerMode();
+  if (!bouncer) {
+    return wireState;
+  }
+  if (!wireState.startsWith(`${ENVELOPE_VERSION}.`)) {
+    return c.html(
+      "<html><body><h3>Authorization state envelope missing.</h3>" +
+        "<p>Re-initiate the connection from NimbleBrain.</p></body></html>",
+      400,
+    );
+  }
+  try {
+    const payload = verifyEnvelopeAsTenant({
+      wire: wireState,
+      tenantKey: bouncer.tenantKey,
+      expectedTid: bouncer.tid,
+    });
+    return payload.inner;
+  } catch (err) {
+    // Log the specific failure code for ops, but show the user a
+    // generic message — leaking which check failed gives an attacker
+    // an oracle for probing the envelope format.
+    const code = err instanceof EnvelopeError ? err.code : "unknown";
+    log.warn(`[mcp-auth] bouncer envelope verification failed: ${code}`);
+    return c.html(
+      "<html><body><h3>Authorization session invalid.</h3>" +
+        "<p>Re-initiate the connection from NimbleBrain.</p></body></html>",
+      400,
+    );
+  }
+}
+
+/** Reject unless the `nb_oauth_state` cookie is a constant-time match for the state's sha256; returns an error Response on mismatch, else null. */
+function verifyStateCookie(c: Context<AppEnv>, state: string): Response | null {
+  // Session-binding check: the cookie set by /initiate must match the
+  // URL state. Without this, a leaked state value (referrer header,
+  // browser history, network log) could let an attacker drop tokens
+  // into someone else's flow. The cookie is a sha256 of state — bound
+  // to the originating session, can't be derived from the URL alone.
+  const expected = sha256Hex(state);
+  const cookieValue = readCookie(c.req.header("cookie"), "nb_oauth_state");
+  if (!cookieValue || !timingSafeEqualHex(cookieValue, expected)) {
+    return c.html(
+      "<html><body><h3>Authorization session mismatch.</h3>" +
+        "<p>Re-initiate the connection from NimbleBrain.</p></body></html>",
+      400,
+    );
+  }
+  return null;
+}
+
+/** Clear the one-shot state cookie, set the success-page CSP, and return the redirect-home confirmation HTML. */
+function renderSuccessPage(
+  c: Context<AppEnv>,
+  flowWsId: string | null,
+  secureCookies: boolean,
+): Response {
+  // Clear the one-shot state cookie so a refresh of this page can't
+  // be used as a replay vector.
+  c.header("Set-Cookie", buildOAuthStateCookie("", 0, secureCookies));
+
+  // Auto-redirect back to the workspace Connectors page. The user came
+  // from NimbleBrain and was navigated away to the OAuth provider in
+  // their existing tab — telling them to "close this tab" is wrong
+  // because they'd lose NimbleBrain entirely. We bring them home, to the
+  // same `/w/<slug>` workspace the flow was initiated in. `flowWsId` is
+  // non-null here (resolveWithCode succeeded just above ⟹ the flow
+  // existed when we peeked it).
+  const returnUrl = workspaceConnectorsUrl(flowWsId ?? "");
+  const safeReturnUrl = escapeHtml(returnUrl);
+  // Override the platform-default CSP (`default-src 'none'`) for this
+  // response only. Without this the inline <style> below is blocked and
+  // the page renders unstyled in any deployment that doesn't override
+  // NB_CSP — i.e. all of them. The hash pins us to exactly the bytes
+  // we serve.
+  c.header("Content-Security-Policy", SUCCESS_PAGE_CSP);
+  return c.html(
+    `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Authorization complete</title>
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <meta http-equiv="refresh" content="1;url=${safeReturnUrl}">
 <style>${SUCCESS_PAGE_STYLE}</style></head>
@@ -361,10 +426,7 @@ export function mcpAuthRoutes(ctx: AppContext) {
 <div class="wm"><svg viewBox="0 0 12 12" aria-hidden="true"><path d="M6 0L12 6L6 12L0 6Z" fill="#d4620a"/></svg>NimbleBrain</div>
 <p class="fb">not redirecting? <a href="${safeReturnUrl}">go back &rarr;</a></p>
 </body></html>`,
-    );
-  });
-
-  return app;
+  );
 }
 
 function sha256Hex(input: string): string {

@@ -27,6 +27,91 @@ export function resolveEnvTemplate(value: string): string {
   return value.replace(/\$\{([A-Z_][A-Z0-9_]*)\}/g, (_, key: string) => process.env[key] ?? "");
 }
 
+/** Build the outgoing header map (arbitrary + static auth) with `${ENV_VAR}` resolved in one pass. */
+function buildRequestHeaders(config?: RemoteTransportConfig): Record<string, string> {
+  const headers: Record<string, string> = { ...(config?.headers ?? {}) };
+
+  if (config?.auth?.type === "bearer") {
+    headers.Authorization = `Bearer ${config.auth.token}`;
+  } else if (config?.auth?.type === "header") {
+    headers[config.auth.name] = config.auth.value;
+  }
+
+  // Single resolution pass over all headers (auth-derived + arbitrary): the
+  // regex is narrow enough that literal `${...}` strings outside the env-var
+  // shape pass through unchanged.
+  for (const [k, v] of Object.entries(headers)) {
+    headers[k] = resolveEnvTemplate(v);
+  }
+
+  return headers;
+}
+
+/** Resolve a `provider`-auth credential: merge its headers into `headers` and return its minting fetch. */
+function applyProviderAuth(
+  config: RemoteTransportConfig | undefined,
+  headers: Record<string, string>,
+  workspaceId?: string,
+): FetchLike | undefined {
+  // Provider-backed machine-plane auth: a named credential provider produces a
+  // `fetch` (or headers) for this connection. NOT a static header (the built-in
+  // `minted` provider re-mints a short-lived token on expiry / 401) and NOT
+  // OAuth (no interactive flow). The provider + its `config` are opaque here;
+  // the kernel just asks for a credential. Fail loud if the named provider isn't
+  // registered — a downstream 401 would not name the cause.
+  if (config?.auth?.type !== "provider") return undefined;
+
+  const provider = getCredentialProvider(config.auth.provider);
+  if (!provider) {
+    throw new Error(
+      `transport auth provider "${config.auth.provider}" is not registered ` +
+        "(call registerBuiltinCredentialProviders() at the composition root)",
+    );
+  }
+
+  const credential = provider.credentialFor(workspaceId, config.auth.config);
+  if (credential.headers) {
+    for (const [k, v] of Object.entries(credential.headers)) headers[k] = v;
+  }
+  return credential.fetch;
+}
+
+/** OAuth provider applies only when no static auth is configured — static auth is the explicit contract. */
+function selectAuthProvider(
+  config: RemoteTransportConfig | undefined,
+  authProvider?: OAuthClientProvider,
+): OAuthClientProvider | undefined {
+  return config?.auth && config.auth.type !== "none" ? undefined : authProvider;
+}
+
+/** Transport fetch: the minting fetch, else an OAuth-refresh fetch for an OAuth connector, else none. */
+function selectTransportFetch(
+  mintingFetch: FetchLike | undefined,
+  effectiveAuthProvider: OAuthClientProvider | undefined,
+): FetchLike | undefined {
+  // For an OAuth connector (no static auth, no minting provider), wrap the
+  // transport's `fetch` so transient token-endpoint refresh failures are
+  // retried in place instead of bubbling up as a fabricated `UnauthorizedError`
+  // that wrongly flips the connection to `reauth_required`. The SDK threads
+  // this `fetch` into its refresh POST, the one seam where the
+  // transient-vs-dead-token distinction is still recoverable — see
+  // `oauth-refresh-fetch.ts`. `mintingFetch` and OAuth are mutually exclusive
+  // (a `provider` auth is not `none`, so `effectiveAuthProvider` is unset when
+  // `mintingFetch` is set), so the `??` never drops a minting fetch.
+  return mintingFetch ?? (effectiveAuthProvider ? createOAuthRefreshFetch() : undefined);
+}
+
+/** Streamable-HTTP reconnection options derived from config, or undefined when not configured. */
+function buildReconnectionOptions(config?: RemoteTransportConfig) {
+  if (!config?.reconnection) return undefined;
+  return {
+    maxReconnectionDelay: config.reconnection.maxReconnectionDelay ?? 30_000,
+    initialReconnectionDelay: config.reconnection.initialReconnectionDelay ?? 1_000,
+    reconnectionDelayGrowFactor: 1.5,
+    maxRetries: config.reconnection.maxRetries ?? 5,
+  };
+}
+
 /**
  * Create a remote MCP transport from a URL and optional config.
  * Default transport: Streamable HTTP. Use type: "sse" for legacy SSE servers.
@@ -63,58 +148,10 @@ export function createRemoteTransport(
     allowInsecure?: boolean;
   },
 ): Transport {
-  const headers: Record<string, string> = { ...(config?.headers ?? {}) };
-
-  if (config?.auth?.type === "bearer") {
-    headers.Authorization = `Bearer ${config.auth.token}`;
-  } else if (config?.auth?.type === "header") {
-    headers[config.auth.name] = config.auth.value;
-  }
-  // Single resolution pass over all headers (auth-derived + arbitrary).
-  // Drops the previous double-pass — the explicit auth-branch resolves
-  // above were just doing what this loop already does.
-  for (const [k, v] of Object.entries(headers)) {
-    headers[k] = resolveEnvTemplate(v);
-  }
-
-  // Provider-backed machine-plane auth: a named credential provider produces a
-  // `fetch` (or headers) for this connection. NOT a static header (the built-in
-  // `minted` provider re-mints a short-lived token on expiry / 401) and NOT
-  // OAuth (no interactive flow). The provider + its `config` are opaque here;
-  // the kernel just asks for a credential. Fail loud if the named provider isn't
-  // registered — a downstream 401 would not name the cause.
-  let mintingFetch: FetchLike | undefined;
-  if (config?.auth?.type === "provider") {
-    const provider = getCredentialProvider(config.auth.provider);
-    if (!provider) {
-      throw new Error(
-        `transport auth provider "${config.auth.provider}" is not registered ` +
-          "(call registerBuiltinCredentialProviders() at the composition root)",
-      );
-    }
-    const credential = provider.credentialFor(opts?.workspaceId, config.auth.config);
-    if (credential.headers) {
-      for (const [k, v] of Object.entries(credential.headers)) headers[k] = v;
-    }
-    mintingFetch = credential.fetch;
-  }
-
-  // Only wire the OAuth provider if no static auth is configured. Static
-  // auth is the simpler, explicit contract — don't second-guess it.
-  const effectiveAuthProvider =
-    config?.auth && config.auth.type !== "none" ? undefined : authProvider;
-
-  // For an OAuth connector (no static auth, no minting provider), wrap the
-  // transport's `fetch` so transient token-endpoint refresh failures are
-  // retried in place instead of bubbling up as a fabricated `UnauthorizedError`
-  // that wrongly flips the connection to `reauth_required`. The SDK threads
-  // this `fetch` into its refresh POST, the one seam where the
-  // transient-vs-dead-token distinction is still recoverable — see
-  // `oauth-refresh-fetch.ts`. `mintingFetch` and OAuth are mutually exclusive
-  // (a `provider` auth is not `none`, so `effectiveAuthProvider` is unset when
-  // `mintingFetch` is set), so the `??` never drops a minting fetch.
-  const transportFetch: FetchLike | undefined =
-    mintingFetch ?? (effectiveAuthProvider ? createOAuthRefreshFetch() : undefined);
+  const headers = buildRequestHeaders(config);
+  const mintingFetch = applyProviderAuth(config, headers, opts?.workspaceId);
+  const effectiveAuthProvider = selectAuthProvider(config, authProvider);
+  const transportFetch = selectTransportFetch(mintingFetch, effectiveAuthProvider);
 
   // SSRF redirect guard: the SDK transports follow redirects automatically
   // (fetch default `redirect: "follow"`). For a tenant-supplied remote URL,
@@ -143,14 +180,7 @@ export function createRemoteTransport(
     requestInit,
     authProvider: effectiveAuthProvider,
     fetch: guardedFetch,
-    reconnectionOptions: config?.reconnection
-      ? {
-          maxReconnectionDelay: config.reconnection.maxReconnectionDelay ?? 30_000,
-          initialReconnectionDelay: config.reconnection.initialReconnectionDelay ?? 1_000,
-          reconnectionDelayGrowFactor: 1.5,
-          maxRetries: config.reconnection.maxRetries ?? 5,
-        }
-      : undefined,
+    reconnectionOptions: buildReconnectionOptions(config),
     sessionId: config?.sessionId,
   });
 }

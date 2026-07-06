@@ -101,50 +101,73 @@ export function createManageWorkspacesTool(ctx: ManageWorkspacesContext): InProc
 
       // Workspace CRUD + admin recovery — requires org admin
       if (["create", "update", "delete", "list", "claim_admin"].includes(action)) {
-        const identity = ctx.getIdentity();
-        if (!isAdmin(identity)) return permissionDenied();
-
-        switch (action) {
-          case "create":
-            return handleCreate(ctx, input);
-          case "update":
-            return handleUpdate(ctx, input);
-          case "delete":
-            return handleDelete(ctx, input);
-          case "list":
-            return handleList(ctx);
-          case "claim_admin":
-            return handleClaimAdmin(ctx, identity, input);
-        }
+        return dispatchWorkspaceAction(ctx, action, input);
       }
 
       // Member management — requires workspace admin or org admin
       if (["add_member", "remove_member", "update_member", "list_members"].includes(action)) {
-        if (!ctx.userStore) {
-          return { content: textContent("Member management not available."), isError: true };
-        }
-        const workspaceId = input.workspaceId ? String(input.workspaceId) : undefined;
-        if (!workspaceId) {
-          return { content: textContent("workspaceId is required."), isError: true };
-        }
-        if (!(await canManageMembers(ctx as ManageMembersContext, workspaceId))) {
-          return memberPermissionDenied();
-        }
-        switch (action) {
-          case "add_member":
-            return handleAddMember(ctx as ManageMembersContext, workspaceId, input);
-          case "remove_member":
-            return handleRemoveMember(ctx as ManageMembersContext, workspaceId, input);
-          case "update_member":
-            return handleUpdateMember(ctx as ManageMembersContext, workspaceId, input);
-          case "list_members":
-            return handleListMembers(ctx as ManageMembersContext, workspaceId);
-        }
+        return dispatchMemberAction(ctx, action, input);
       }
 
       return { content: textContent(`Unknown action: ${action}`), isError: true };
     },
   };
+}
+
+/** Gate workspace CRUD + claim_admin on org admin, then route to its handler. */
+async function dispatchWorkspaceAction(
+  ctx: ManageWorkspacesContext,
+  action: string,
+  input: Record<string, unknown>,
+): Promise<ToolResult> {
+  const identity = ctx.getIdentity();
+  if (!isAdmin(identity)) return permissionDenied();
+
+  switch (action) {
+    case "create":
+      return handleCreate(ctx, input);
+    case "update":
+      return handleUpdate(ctx, input);
+    case "delete":
+      return handleDelete(ctx, input);
+    case "list":
+      return handleList(ctx);
+    case "claim_admin":
+      return handleClaimAdmin(ctx, identity, input);
+    default:
+      return { content: textContent(`Unknown action: ${action}`), isError: true };
+  }
+}
+
+/** Validate the store + workspaceId, gate on workspace-admin membership, then route to its handler. */
+async function dispatchMemberAction(
+  ctx: ManageWorkspacesContext,
+  action: string,
+  input: Record<string, unknown>,
+): Promise<ToolResult> {
+  if (!ctx.userStore) {
+    return { content: textContent("Member management not available."), isError: true };
+  }
+  const workspaceId = input.workspaceId ? String(input.workspaceId) : undefined;
+  if (!workspaceId) {
+    return { content: textContent("workspaceId is required."), isError: true };
+  }
+  if (!(await canManageMembers(ctx as ManageMembersContext, workspaceId))) {
+    return memberPermissionDenied();
+  }
+
+  switch (action) {
+    case "add_member":
+      return handleAddMember(ctx as ManageMembersContext, workspaceId, input);
+    case "remove_member":
+      return handleRemoveMember(ctx as ManageMembersContext, workspaceId, input);
+    case "update_member":
+      return handleUpdateMember(ctx as ManageMembersContext, workspaceId, input);
+    case "list_members":
+      return handleListMembers(ctx as ManageMembersContext, workspaceId);
+    default:
+      return { content: textContent(`Unknown action: ${action}`), isError: true };
+  }
 }
 
 // ── Action handlers ───────────────────────────────────────────────
@@ -505,6 +528,19 @@ function personalWorkspaceInvariantToolResult(err: PersonalWorkspaceInvariantErr
   };
 }
 
+/** Map a thrown mutation error to a ToolResult, preserving the personal-workspace invariant marker. */
+function mutationErrorResult(err: unknown, action: string): ToolResult {
+  if (err instanceof PersonalWorkspaceInvariantError) {
+    return personalWorkspaceInvariantToolResult(err);
+  }
+  return {
+    content: textContent(
+      `Failed to ${action}: ${err instanceof Error ? err.message : String(err)}`,
+    ),
+    isError: true,
+  };
+}
+
 /** @deprecated Member management is now handled by manage_workspaces. Kept for test coverage of handler logic. */
 export function createManageMembersTool(ctx: ManageMembersContext): InProcessTool {
   return {
@@ -638,6 +674,22 @@ async function activeAdminCount(members: WorkspaceMember[], userStore: UserStore
   return users.filter((u) => !u?.deletedAt).length;
 }
 
+/** Block acting on the workspace's last active admin; returns the error ToolResult, or null to proceed. */
+async function lastActiveAdminGuard(
+  ctx: ManageMembersContext,
+  members: WorkspaceMember[],
+  userId: string,
+  message: string,
+): Promise<ToolResult | null> {
+  // Only guard when the target is an active admin — acting on an already
+  // deactivated admin can't drop the active-admin count below the minimum.
+  const targetUser = await ctx.userStore.get(userId);
+  if (!targetUser?.deletedAt && (await activeAdminCount(members, ctx.userStore)) <= 1) {
+    return { content: textContent(message), isError: true };
+  }
+  return null;
+}
+
 async function handleRemoveMember(
   ctx: ManageMembersContext,
   workspaceId: string,
@@ -750,15 +802,13 @@ async function handleUpdateMember(
   }
 
   if (target.role === "admin" && role === "member") {
-    // Only guard when the target is an active admin — demoting an already
-    // deactivated admin can't drop the active-admin count below the minimum.
-    const targetUser = await ctx.userStore.get(userId);
-    if (!targetUser?.deletedAt && (await activeAdminCount(ws.members, ctx.userStore)) <= 1) {
-      return {
-        content: textContent("Cannot demote the last workspace admin."),
-        isError: true,
-      };
-    }
+    const guard = await lastActiveAdminGuard(
+      ctx,
+      ws.members,
+      userId,
+      "Cannot demote the last workspace admin.",
+    );
+    if (guard) return guard;
   }
 
   try {
@@ -774,15 +824,7 @@ async function handleUpdateMember(
       isError: false,
     };
   } catch (err) {
-    if (err instanceof PersonalWorkspaceInvariantError) {
-      return personalWorkspaceInvariantToolResult(err);
-    }
-    return {
-      content: textContent(
-        `Failed to update member: ${err instanceof Error ? err.message : String(err)}`,
-      ),
-      isError: true,
-    };
+    return mutationErrorResult(err, "update member");
   }
 }
 
