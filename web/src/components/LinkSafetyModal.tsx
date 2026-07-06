@@ -45,6 +45,10 @@ export function LinkSafetyModal({ isOpen, onClose, onConfirm, url }: LinkSafetyM
   const [copied, setCopied] = useState(false);
   const modalRef = useRef<HTMLDivElement>(null);
   const copyRef = useRef<HTMLButtonElement>(null);
+  const copyResetTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+
+  // Cancel a pending "Copied → Copy" revert if the modal unmounts first.
+  useEffect(() => () => clearTimeout(copyResetTimer.current), []);
 
   // Esc to dismiss + lock body scroll while open. Focus lands on the
   // non-destructive action (Copy), so Enter never navigates by accident.
@@ -82,7 +86,7 @@ export function LinkSafetyModal({ isOpen, onClose, onConfirm, url }: LinkSafetyM
     try {
       await navigator.clipboard.writeText(url);
       setCopied(true);
-      setTimeout(() => setCopied(false), 1500);
+      copyResetTimer.current = setTimeout(() => setCopied(false), 1500);
     } catch {
       // Clipboard unavailable (insecure context / denied) — leave state as-is.
     }

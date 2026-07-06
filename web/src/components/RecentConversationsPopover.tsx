@@ -15,14 +15,10 @@ interface RecentConversation {
   id: string;
   title: string | null;
   preview: string;
-  createdAt: string;
   updatedAt: string;
-  workspaceId: string | null;
 }
 interface RecentListResult {
   conversations: RecentConversation[];
-  nextCursor: string | null;
-  totalCount: number;
 }
 
 const RECENT_LIMIT = 10;
