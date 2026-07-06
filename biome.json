@@ -11,7 +11,7 @@
     "rules": {
       "recommended": true,
       "complexity": {
-        "noExcessiveCognitiveComplexity": { "level": "error", "options": { "maxAllowedComplexity": 25 } }
+        "noExcessiveCognitiveComplexity": { "level": "error", "options": { "maxAllowedComplexity": 20 } }
       },
       "style": {
         "noNonNullAssertion": "off"
