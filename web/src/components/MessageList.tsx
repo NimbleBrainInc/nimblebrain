@@ -138,7 +138,6 @@ const BOTTOM_THRESHOLD = 50;
  */
 function useSmartScroll(messages: ChatMessage[]) {
   const scrollRef = useRef<HTMLDivElement>(null);
-  const bottomRef = useRef<HTMLDivElement>(null);
   const [isAtBottom, setIsAtBottom] = useState(true);
   // Track the conversation identity to detect loads vs sends.
   // We use the first message's timestamp as a fingerprint — it changes when
@@ -146,24 +145,54 @@ function useSmartScroll(messages: ChatMessage[]) {
   const prevConversationKeyRef = useRef<string | null>(null);
   const prevMessageCountRef = useRef(0);
 
+  // "Bottom" is the newest message resting at the viewport bottom — NOT the raw
+  // scroll end. The list keeps a 60vh trailing spacer (headroom so a fresh
+  // question can scroll to the top), and resting in that spacer would show blank
+  // space below the content. So both the flag and the scroll key off the last
+  // message element, never `scrollHeight`. DOM order is [...messages, spacer], so
+  // the last message is at index messages.length - 1.
+  const lastMessageEl = useCallback(
+    () => scrollRef.current?.firstElementChild?.children[messages.length - 1] as HTMLElement | null,
+    [messages.length],
+  );
+
   const checkIsAtBottom = useCallback(() => {
     const el = scrollRef.current;
-    if (!el) return true;
-    return el.scrollHeight - el.scrollTop - el.clientHeight <= BOTTOM_THRESHOLD;
-  }, []);
+    const last = lastMessageEl();
+    if (!el || !last) return true;
+    // At bottom ⇔ none of the newest message sits below the fold.
+    return (
+      last.getBoundingClientRect().bottom - el.getBoundingClientRect().bottom <= BOTTOM_THRESHOLD
+    );
+  }, [lastMessageEl]);
 
-  const scrollToBottom = useCallback((behavior: ScrollBehavior = "smooth") => {
-    bottomRef.current?.scrollIntoView({ behavior });
-  }, []);
+  const scrollToBottom = useCallback(
+    (behavior: ScrollBehavior = "smooth") => {
+      lastMessageEl()?.scrollIntoView({ behavior, block: "end" });
+    },
+    [lastMessageEl],
+  );
 
-  // Track scroll position
+  // Keep isAtBottom accurate so the jump-to-bottom chevron reflects reality.
+  // The scroll container renders only once there are messages, so attach when it
+  // mounts. A 'scroll' listener catches the user scrolling; a ResizeObserver on
+  // the content catches streaming growth, which appends below the fold WITHOUT
+  // firing a scroll event. Both only set the flag — neither scrolls, honoring the
+  // "don't chase streaming content" rule below.
+  const hasMessages = messages.length > 0;
   useEffect(() => {
     const el = scrollRef.current;
-    if (!el) return;
-    const handleScroll = () => setIsAtBottom(checkIsAtBottom());
-    el.addEventListener("scroll", handleScroll, { passive: true });
-    return () => el.removeEventListener("scroll", handleScroll);
-  }, [checkIsAtBottom]);
+    if (!hasMessages || !el) return;
+    const update = () => setIsAtBottom(checkIsAtBottom());
+    update();
+    el.addEventListener("scroll", update, { passive: true });
+    const ro = new ResizeObserver(update);
+    if (el.firstElementChild) ro.observe(el.firstElementChild);
+    return () => {
+      el.removeEventListener("scroll", update);
+      ro.disconnect();
+    };
+  }, [hasMessages, checkIsAtBottom]);
 
   // React to message changes
   useEffect(() => {
@@ -218,7 +247,7 @@ function useSmartScroll(messages: ChatMessage[]) {
     }
   }, [messages]);
 
-  return { scrollRef, bottomRef, isAtBottom, scrollToBottom };
+  return { scrollRef, isAtBottom, scrollToBottom };
 }
 
 export function MessageList({
@@ -230,7 +259,7 @@ export function MessageList({
   compact = false,
   onRetry,
 }: MessageListProps) {
-  const { scrollRef, bottomRef, isAtBottom, scrollToBottom } = useSmartScroll(messages);
+  const { scrollRef, isAtBottom, scrollToBottom } = useSmartScroll(messages);
 
   // Scroll to bottom when streaming ends with a stop reason notice.
   // The `done` event updates the last message in place (no length change),
@@ -405,7 +434,6 @@ export function MessageList({
           })}
           {/* Spacer: ensures any message can scroll to the top of the viewport */}
           <div className="min-h-[60vh] shrink-0" />
-          <div ref={bottomRef} />
         </div>
       </div>
 
