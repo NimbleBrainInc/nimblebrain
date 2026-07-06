@@ -116,126 +116,14 @@ export async function createSystemTools(
         const query = String(input.query ?? "");
 
         // Runtime feature flag checks (tool is always registered, scope is gated)
-        if (scope === "tools" && features && !features.toolDiscovery) {
-          return { content: textContent("Tool discovery is disabled."), isError: true };
-        }
-        if (scope === "registry" && features && !features.bundleDiscovery) {
-          return { content: textContent("Bundle discovery is disabled."), isError: true };
-        }
+        const gateError = checkSearchScopeGate(scope, features);
+        if (gateError) return gateError;
 
         if (scope === "registry") {
-          try {
-            // Route agent discovery through the SAME method Browse uses —
-            // ConnectorDirectory.servers(). It fetches every enabled source,
-            // applies each registry's OWN scopes per-source (so mixed-scope
-            // multi-registry configs filter exactly as Browse does), runs
-            // the icon/URL safety scrub, caches, and aggregates errors. We
-            // take just the mpak-sourced bundles and keyword-match them. One
-            // method, not two parallel fetch/filter paths, so the scope
-            // filtering can't drift.
-            //
-            // No runtime (non-agent/test paths) ⇒ no directory ⇒ no results;
-            // the production agent always has one.
-            const directory = runtime?.getConnectorDirectory();
-            const aggregated = directory ? await directory.servers() : null;
-            const mpakBundles = (aggregated?.servers ?? [])
-              .filter((s) => s.source.type === "mpak")
-              .map((s) => s.detail);
-            const results = matchServersByQuery(mpakBundles, query);
-            if (results.length === 0) {
-              // Distinguish "registry unreachable" from "no such bundle".
-              // servers() aggregates per-source fetch failures into `errors`
-              // instead of throwing, so an mpak outage (5xx / timeout / DNS)
-              // yields zero bundles silently. If an mpak source errored and we
-              // got nothing back, surface a failure — matching the
-              // pre-refactor throw — rather than telling the agent the bundle
-              // doesn't exist.
-              const mpakIds = new Set(
-                (await runtime?.getRegistryStore().list())
-                  ?.filter((r) => r.type === "mpak")
-                  .map((r) => r.id),
-              );
-              // `mpakBundles.length === 0` is global across all mpak rows:
-              // with multiple mpak registries where one is up (returning
-              // bundles) and the down one held the queried bundle, this
-              // reports "No bundles found" rather than a failure. Acceptable —
-              // it matches Browse's partial-results semantics, and a single
-              // mpak registry is the norm.
-              const mpakDown =
-                mpakBundles.length === 0 &&
-                (aggregated?.errors ?? []).some((e) => mpakIds.has(e.registryId));
-              if (mpakDown)
-                return {
-                  content: textContent(`Failed to search mpak registry for "${query}".`),
-                  isError: true,
-                };
-              return {
-                content: textContent(`No bundles found for "${query}".`),
-                isError: false,
-              };
-            }
-            const lines = [`Found ${results.length} result(s) for "${query}":\n`];
-            for (const r of results) {
-              const id = r.packages?.[0]?.identifier ?? r.name;
-              lines.push(`- **${id}** ${r.version} [bundle]: ${r.description ?? ""}`);
-            }
-            return { content: textContent(lines.join("\n")), isError: false };
-          } catch {
-            return {
-              content: textContent(`Failed to search mpak registry for "${query}".`),
-              isError: true,
-            };
-          }
+          return searchRegistry(runtime, query);
         }
-
         // scope === "tools" (default)
-        const q = query.toLowerCase().trim();
-        // Identity-level discovery: search the identity's full
-        // cross-workspace tool union (the aggregator), not just the
-        // calling workspace. The aggregator namespaces nb__search per
-        // workspace, so the model may invoke any workspace's copy — all
-        // must see everything the identity can reach, else a tool
-        // installed in another workspace (e.g. a CRM in ws_mat) is
-        // invisible to this copy. Falls back to the current workspace
-        // when there's no identity in scope (non-identity-bound paths).
-        const discoverable = runtime
-          ? await runtime.listDiscoverableTools()
-          : await getRegistry().availableTools();
-        const all = discoverable.filter(
-          (t) =>
-            toolEligibilityCtx?.isToolEligible(t) ?? !t.annotations?.["ai.nimblebrain/internal"],
-        );
-        if (!q) return groupToolsBySource(all);
-        const matches = rankToolSearchResults(all, q);
-        if (matches.length === 0)
-          // Mark non-advancing (out-of-band, via `_meta`) so repeated empty
-          // searches trip the loop supervisor even as the model varies the
-          // query each call — which otherwise yields a fresh fingerprint every
-          // time and never trips.
-          return {
-            content: textContent(`No tools matched "${query}".`),
-            isError: false,
-            _meta: { [NON_ADVANCING_META_KEY]: true },
-          };
-        const shown = matches.slice(0, 25);
-        // Return matches as DATA only — search never mutates the active tool
-        // set. Tool definitions are wire position 0 (before system and
-        // history), so adding one rewrites the whole cached prefix on the next
-        // call. Promoting speculatively pays that rewrite for tools the model
-        // may never call; instead the model activates a tool it commits to
-        // using via nb__manage_tools — one append-only round-trip (reads the
-        // warm prefix, writes a small delta) in place of a speculative
-        // full-prefix rewrite. This result rides the message tail, the
-        // cache-safe channel.
-        const suffix = matches.length > shown.length ? ` (showing top ${shown.length})` : "";
-        const lines = [`Found ${matches.length} tool(s) for "${query}"${suffix}:\n`];
-        for (const t of shown) lines.push(`- **${t.name}**: ${t.description}`);
-        lines.push("\nTo call one, activate it with nb__manage_tools first.");
-        return {
-          content: textContent(lines.join("\n")),
-          structuredContent: { tools: shown.map((t) => ({ name: t.name })) },
-          isError: false,
-        };
+        return searchTools(runtime, getRegistry, toolEligibilityCtx, query);
       },
     },
     createReadResourceTool(getRegistry),
@@ -360,28 +248,8 @@ function createReadResourceTool(getRegistry: () => ToolRegistry): InProcessTool 
       const errors: string[] = [];
       for (const source of registry.getSources()) {
         if (!(source instanceof McpSource)) continue;
-        try {
-          const data = await source.readResource(uri);
-          if (data == null) continue;
-          if (typeof data.text === "string") {
-            const full = data.text;
-            const truncated = full.length > READ_RESOURCE_MAX_CHARS;
-            const body = truncated
-              ? `${full.slice(0, READ_RESOURCE_MAX_CHARS)}\n\n[truncated — resource exceeds ${READ_RESOURCE_MAX_CHARS} chars]`
-              : full;
-            return { content: textContent(body), isError: false };
-          }
-          if (data.blob) {
-            return {
-              content: textContent(
-                `[binary resource, ${data.blob.length} bytes, mimeType=${data.mimeType ?? "unknown"}]`,
-              ),
-              isError: false,
-            };
-          }
-        } catch (err) {
-          errors.push(`${source.name}: ${err instanceof Error ? err.message : String(err)}`);
-        }
+        const found = await readResourceFromSource(source, uri, errors);
+        if (found) return found;
       }
 
       const detail = errors.length ? ` Errors: ${errors.join("; ")}` : "";
@@ -391,6 +259,46 @@ function createReadResourceTool(getRegistry: () => ToolRegistry): InProcessTool 
       };
     },
   };
+}
+
+/**
+ * Read `uri` from one McpSource. Returns the formatted result when the source
+ * resolves it, or null to keep scanning (unresolved, or a fetch error recorded
+ * into `errors`).
+ */
+async function readResourceFromSource(
+  source: McpSource,
+  uri: string,
+  errors: string[],
+): Promise<ToolResult | null> {
+  try {
+    const data = await source.readResource(uri);
+    if (data == null) return null;
+    if (typeof data.text === "string") {
+      return formatResourceText(data.text);
+    }
+    if (data.blob) {
+      return {
+        content: textContent(
+          `[binary resource, ${data.blob.length} bytes, mimeType=${data.mimeType ?? "unknown"}]`,
+        ),
+        isError: false,
+      };
+    }
+    return null;
+  } catch (err) {
+    errors.push(`${source.name}: ${err instanceof Error ? err.message : String(err)}`);
+    return null;
+  }
+}
+
+/** Format a text resource body, truncating past READ_RESOURCE_MAX_CHARS. */
+function formatResourceText(full: string): ToolResult {
+  const truncated = full.length > READ_RESOURCE_MAX_CHARS;
+  const body = truncated
+    ? `${full.slice(0, READ_RESOURCE_MAX_CHARS)}\n\n[truncated — resource exceeds ${READ_RESOURCE_MAX_CHARS} chars]`
+    : full;
+  return { content: textContent(body), isError: false };
 }
 
 /**
@@ -426,24 +334,7 @@ function createStatusTool(
       const nameQuery = input.name ? String(input.name) : null;
 
       try {
-        if (scope === "bundles") {
-          return await handleBundleStatus(getRegistry, nameQuery);
-        }
-
-        if (scope === "skills") {
-          const wsId = runtime?.requireWorkspaceId();
-          if (!runtime || !wsId) {
-            return { content: textContent("Skill status not available."), isError: false };
-          }
-          return await handleSkillStatus(runtime, getSkills, nameQuery, wsId);
-        }
-
-        if (scope === "config") {
-          return handleConfigStatus(runtime);
-        }
-
-        // Default: overview
-        return await handleOverviewStatus(getRegistry, getSkills, runtime);
+        return await resolveStatusScope(scope, nameQuery, getRegistry, getSkills, runtime);
       } catch (err) {
         return {
           content: textContent(
@@ -456,6 +347,30 @@ function createStatusTool(
   };
 }
 
+/** Dispatch a `status` call to the handler for its scope (default: overview). */
+async function resolveStatusScope(
+  scope: string,
+  nameQuery: string | null,
+  getRegistry: () => ToolRegistry,
+  getSkills: GetSkillsFn | undefined,
+  runtime: Runtime | undefined,
+): Promise<ToolResult> {
+  if (scope === "bundles") {
+    return handleBundleStatus(getRegistry, nameQuery);
+  }
+  if (scope === "skills") {
+    const wsId = runtime?.requireWorkspaceId();
+    if (!runtime || !wsId) {
+      return { content: textContent("Skill status not available."), isError: false };
+    }
+    return handleSkillStatus(runtime, getSkills, nameQuery, wsId);
+  }
+  if (scope === "config") {
+    return handleConfigStatus(runtime);
+  }
+  return handleOverviewStatus(getRegistry, getSkills, runtime);
+}
+
 async function handleBundleStatus(
   getRegistry: () => ToolRegistry,
   nameQuery: string | null,
@@ -465,28 +380,8 @@ async function handleBundleStatus(
   const entries: string[] = [];
 
   for (const source of sources) {
-    const serverName = source.name;
-    if (!query && !(source instanceof McpSource)) continue;
-    if (query && !serverName.toLowerCase().includes(query)) continue;
-
-    const tools = await source.tools();
-    const manifest = await readManifestForSource(serverName);
-
-    const lines: string[] = [];
-    lines.push(`**${manifest?.name ?? serverName}**`);
-    if (manifest?.version) lines.push(`  Version: ${manifest.version}`);
-    if (manifest?.description) lines.push(`  Description: ${manifest.description}`);
-    if (manifest?.author?.name) lines.push(`  Author: ${manifest.author.name}`);
-    lines.push(`  Tools: ${tools.length}`);
-
-    if (source instanceof McpSource) {
-      const alive = source.isAlive();
-      const uptime = source.uptime();
-      lines.push(`  Status: ${alive ? "healthy" : "down"}`);
-      if (uptime !== null) lines.push(`  Uptime: ${formatUptime(uptime)}`);
-    }
-
-    entries.push(lines.join("\n"));
+    const entry = await buildBundleStatusEntry(source, query);
+    if (entry) entries.push(entry);
   }
 
   if (entries.length === 0) {
@@ -498,6 +393,35 @@ async function handleBundleStatus(
     };
   }
   return { content: textContent(entries.join("\n\n")), isError: false };
+}
+
+/** Format one bundle's status block, or null when the source is filtered out. */
+async function buildBundleStatusEntry(
+  source: ReturnType<ToolRegistry["getSources"]>[number],
+  query: string | null,
+): Promise<string | null> {
+  const serverName = source.name;
+  if (!query && !(source instanceof McpSource)) return null;
+  if (query && !serverName.toLowerCase().includes(query)) return null;
+
+  const tools = await source.tools();
+  const manifest = await readManifestForSource(serverName);
+
+  const lines: string[] = [];
+  lines.push(`**${manifest?.name ?? serverName}**`);
+  if (manifest?.version) lines.push(`  Version: ${manifest.version}`);
+  if (manifest?.description) lines.push(`  Description: ${manifest.description}`);
+  if (manifest?.author?.name) lines.push(`  Author: ${manifest.author.name}`);
+  lines.push(`  Tools: ${tools.length}`);
+
+  if (source instanceof McpSource) {
+    const alive = source.isAlive();
+    const uptime = source.uptime();
+    lines.push(`  Status: ${alive ? "healthy" : "down"}`);
+    if (uptime !== null) lines.push(`  Uptime: ${formatUptime(uptime)}`);
+  }
+
+  return lines.join("\n");
 }
 
 async function handleSkillStatus(
@@ -517,17 +441,7 @@ async function handleSkillStatus(
 
   // Single skill detail view
   if (nameQuery) {
-    const all = [...context, ...layer3.map((s) => s.skill), ...matchable];
-    const skill = all.find((s) => s.manifest.name.toLowerCase() === nameQuery.toLowerCase());
-    if (!skill) {
-      return {
-        content: textContent(
-          `No skill found with name "${nameQuery}". Use status with scope "skills" to list all.`,
-        ),
-        isError: true,
-      };
-    }
-    return { content: textContent(formatSkillDetail(skill)), isError: false };
+    return skillDetailResult(context, layer3, matchable, nameQuery);
   }
 
   // Overview: categorize all skills
@@ -545,33 +459,50 @@ async function handleSkillStatus(
   // Layer 3 is the conditional channel: only tool-affinity skills load here.
   // `always` skills compose into the context channel (shown in the sections above).
   const toolAffined = layer3.filter((s) => !coreNames.has(s.skill.manifest.name));
-  const sections: string[] = [];
 
-  if (coreContext.length > 0) {
-    const lines = ["## Core Skills (immutable)"];
-    for (const s of coreContext) lines.push(formatSkillSummary(s));
-    sections.push(lines.join("\n"));
-  }
-  if (userContext.length > 0) {
-    const lines = ["## User Context Skills (always active)"];
-    for (const s of userContext) lines.push(formatSkillSummary(s));
-    sections.push(lines.join("\n"));
-  }
-  if (toolAffined.length > 0) {
-    const lines = ["## Tool-Affined Skills (active)"];
-    for (const s of toolAffined) lines.push(formatLayer3Summary(s));
-    sections.push(lines.join("\n"));
-  }
-  if (matchable.length > 0) {
-    const lines = ["## Matchable Skills (triggered)"];
-    for (const s of matchable) lines.push(formatMatchableSummary(s));
-    sections.push(lines.join("\n"));
-  }
+  const sections = [
+    buildSkillSection("## Core Skills (immutable)", coreContext, formatSkillSummary),
+    buildSkillSection("## User Context Skills (always active)", userContext, formatSkillSummary),
+    buildSkillSection("## Tool-Affined Skills (active)", toolAffined, formatLayer3Summary),
+    buildSkillSection("## Matchable Skills (triggered)", matchable, formatMatchableSummary),
+  ].filter((s): s is string => s !== null);
 
   if (sections.length === 0) {
     return { content: textContent("No skills loaded."), isError: false };
   }
   return { content: textContent(sections.join("\n\n")), isError: false };
+}
+
+/** Single-skill detail view for status(scope="skills", name=...). */
+function skillDetailResult(
+  context: readonly Skill[],
+  layer3: readonly SelectedSkill[],
+  matchable: readonly Skill[],
+  nameQuery: string,
+): ToolResult {
+  const all = [...context, ...layer3.map((s) => s.skill), ...matchable];
+  const skill = all.find((s) => s.manifest.name.toLowerCase() === nameQuery.toLowerCase());
+  if (!skill) {
+    return {
+      content: textContent(
+        `No skill found with name "${nameQuery}". Use status with scope "skills" to list all.`,
+      ),
+      isError: true,
+    };
+  }
+  return { content: textContent(formatSkillDetail(skill)), isError: false };
+}
+
+/** Build a "## Heading" + formatted-line section, or null when there's nothing to show. */
+function buildSkillSection<T>(
+  heading: string,
+  items: T[],
+  format: (item: T) => string,
+): string | null {
+  if (items.length === 0) return null;
+  const lines = [heading];
+  for (const item of items) lines.push(format(item));
+  return lines.join("\n");
 }
 
 function handleConfigStatus(runtime?: Runtime): ToolResult {
@@ -763,6 +694,142 @@ function groupToolsBySource(all: Array<{ name: string; description: string }>): 
   return {
     content: textContent(lines.join("\n")),
     structuredContent: { tools: all.map((t) => ({ name: t.name })) },
+    isError: false,
+  };
+}
+
+/** Feature-flag gate for `search`: an error result when the scope is disabled, else null. */
+function checkSearchScopeGate(scope: string, features?: ResolvedFeatures): ToolResult | null {
+  if (scope === "tools" && features && !features.toolDiscovery) {
+    return { content: textContent("Tool discovery is disabled."), isError: true };
+  }
+  if (scope === "registry" && features && !features.bundleDiscovery) {
+    return { content: textContent("Bundle discovery is disabled."), isError: true };
+  }
+  return null;
+}
+
+/** `search` scope=registry — keyword-match mpak bundles from the connector directory. */
+async function searchRegistry(runtime: Runtime | undefined, query: string): Promise<ToolResult> {
+  try {
+    // Route agent discovery through the SAME method Browse uses —
+    // ConnectorDirectory.servers(). It fetches every enabled source,
+    // applies each registry's OWN scopes per-source (so mixed-scope
+    // multi-registry configs filter exactly as Browse does), runs
+    // the icon/URL safety scrub, caches, and aggregates errors. We
+    // take just the mpak-sourced bundles and keyword-match them. One
+    // method, not two parallel fetch/filter paths, so the scope
+    // filtering can't drift.
+    //
+    // No runtime (non-agent/test paths) ⇒ no directory ⇒ no results;
+    // the production agent always has one.
+    const directory = runtime?.getConnectorDirectory();
+    const aggregated = directory ? await directory.servers() : null;
+    const mpakBundles = (aggregated?.servers ?? [])
+      .filter((s) => s.source.type === "mpak")
+      .map((s) => s.detail);
+    const results = matchServersByQuery(mpakBundles, query);
+    if (results.length === 0) {
+      // Distinguish "registry unreachable" from "no such bundle".
+      // servers() aggregates per-source fetch failures into `errors`
+      // instead of throwing, so an mpak outage (5xx / timeout / DNS)
+      // yields zero bundles silently. If an mpak source errored and we
+      // got nothing back, surface a failure — matching the
+      // pre-refactor throw — rather than telling the agent the bundle
+      // doesn't exist.
+      const mpakIds = new Set(
+        (await runtime?.getRegistryStore().list())
+          ?.filter((r) => r.type === "mpak")
+          .map((r) => r.id),
+      );
+      // `mpakBundles.length === 0` is global across all mpak rows:
+      // with multiple mpak registries where one is up (returning
+      // bundles) and the down one held the queried bundle, this
+      // reports "No bundles found" rather than a failure. Acceptable —
+      // it matches Browse's partial-results semantics, and a single
+      // mpak registry is the norm.
+      const mpakDown =
+        mpakBundles.length === 0 &&
+        (aggregated?.errors ?? []).some((e) => mpakIds.has(e.registryId));
+      if (mpakDown)
+        return {
+          content: textContent(`Failed to search mpak registry for "${query}".`),
+          isError: true,
+        };
+      return {
+        content: textContent(`No bundles found for "${query}".`),
+        isError: false,
+      };
+    }
+    const lines = [`Found ${results.length} result(s) for "${query}":\n`];
+    for (const r of results) {
+      const id = r.packages?.[0]?.identifier ?? r.name;
+      lines.push(`- **${id}** ${r.version} [bundle]: ${r.description ?? ""}`);
+    }
+    return { content: textContent(lines.join("\n")), isError: false };
+  } catch {
+    return {
+      content: textContent(`Failed to search mpak registry for "${query}".`),
+      isError: true,
+    };
+  }
+}
+
+/**
+ * `search` scope=tools — rank installed tools by keyword over the identity's
+ * full cross-workspace union. Returns matches as DATA only; never mutates the
+ * active tool set.
+ */
+async function searchTools(
+  runtime: Runtime | undefined,
+  getRegistry: () => ToolRegistry,
+  toolEligibilityCtx: ToolEligibilityContext | undefined,
+  query: string,
+): Promise<ToolResult> {
+  const q = query.toLowerCase().trim();
+  // Identity-level discovery: search the identity's full
+  // cross-workspace tool union (the aggregator), not just the
+  // calling workspace. The aggregator namespaces nb__search per
+  // workspace, so the model may invoke any workspace's copy — all
+  // must see everything the identity can reach, else a tool
+  // installed in another workspace (e.g. a CRM in ws_mat) is
+  // invisible to this copy. Falls back to the current workspace
+  // when there's no identity in scope (non-identity-bound paths).
+  const discoverable = runtime
+    ? await runtime.listDiscoverableTools()
+    : await getRegistry().availableTools();
+  const all = discoverable.filter(
+    (t) => toolEligibilityCtx?.isToolEligible(t) ?? !t.annotations?.["ai.nimblebrain/internal"],
+  );
+  if (!q) return groupToolsBySource(all);
+  const matches = rankToolSearchResults(all, q);
+  if (matches.length === 0)
+    // Mark non-advancing (out-of-band, via `_meta`) so repeated empty
+    // searches trip the loop supervisor even as the model varies the
+    // query each call — which otherwise yields a fresh fingerprint every
+    // time and never trips.
+    return {
+      content: textContent(`No tools matched "${query}".`),
+      isError: false,
+      _meta: { [NON_ADVANCING_META_KEY]: true },
+    };
+  const shown = matches.slice(0, 25);
+  // Return matches as DATA only — search never mutates the active tool
+  // set. Tool definitions are wire position 0 (before system and
+  // history), so adding one rewrites the whole cached prefix on the next
+  // call. Promoting speculatively pays that rewrite for tools the model
+  // may never call; instead the model activates a tool it commits to
+  // using via nb__manage_tools — one append-only round-trip (reads the
+  // warm prefix, writes a small delta) in place of a speculative
+  // full-prefix rewrite. This result rides the message tail, the
+  // cache-safe channel.
+  const suffix = matches.length > shown.length ? ` (showing top ${shown.length})` : "";
+  const lines = [`Found ${matches.length} tool(s) for "${query}"${suffix}:\n`];
+  for (const t of shown) lines.push(`- **${t.name}**: ${t.description}`);
+  lines.push("\nTo call one, activate it with nb__manage_tools first.");
+  return {
+    content: textContent(lines.join("\n")),
+    structuredContent: { tools: shown.map((t) => ({ name: t.name })) },
     isError: false,
   };
 }
