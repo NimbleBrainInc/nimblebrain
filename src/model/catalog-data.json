@@ -248,7 +248,7 @@
           "cacheWrite": 3.75
         },
         "limits": {
-          "context": 1000000,
+          "context": 200000,
           "output": 64000
         },
         "capabilities": {
@@ -274,7 +274,7 @@
           "cacheWrite": 3.75
         },
         "limits": {
-          "context": 1000000,
+          "context": 200000,
           "output": 64000
         },
         "capabilities": {
