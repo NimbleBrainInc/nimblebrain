@@ -206,17 +206,9 @@ export function defineInProcessApp(
           const tool = tools.find((t) => t.name === toolName);
           if (!tool) {
             const available = tools.map((t) => t.name).join(", ");
-            return {
-              content: [
-                {
-                  type: "text" as const,
-                  text: JSON.stringify({
-                    error: `Unknown tool "${toolName}" in source "${name}". Available: ${available}`,
-                  }),
-                },
-              ],
-              isError: true,
-            };
+            return errorResult(
+              `Unknown tool "${toolName}" in source "${name}". Available: ${available}`,
+            );
           }
 
           // Coerce nested string-encoded object/array values before
@@ -227,30 +219,11 @@ export function defineInProcessApp(
           const input = coerceInputForSchema(rawInput, tool.inputSchema);
           const validation = validateToolInput(input, tool.inputSchema);
           if (!validation.valid) {
-            return {
-              content: [
-                {
-                  type: "text" as const,
-                  text: JSON.stringify({
-                    error: `Invalid arguments for "${tool.name}": ${validation.error}`,
-                  }),
-                },
-              ],
-              isError: true,
-            };
+            return errorResult(`Invalid arguments for "${tool.name}": ${validation.error}`);
           }
 
           const result = await tool.handler(input);
-          return {
-            content: result.content,
-            ...(result.structuredContent ? { structuredContent: result.structuredContent } : {}),
-            ...(result.isError ? { isError: true } : {}),
-            // Forward result `_meta` onto the wire so it round-trips back to
-            // the caller as `ToolResult._meta` (e.g. the supervisor's
-            // non-advancing hint). `CallToolResult._meta` is a loose object, so
-            // arbitrary reverse-DNS keys survive the round-trip.
-            ...(result._meta ? { _meta: result._meta } : {}),
-          };
+          return toInProcessCallResult(result);
         });
 
         if (hasResources) {
@@ -277,41 +250,16 @@ export function defineInProcessApp(
             return { resources: [...staticEntries, ...dynamicEntries] };
           });
 
-          // resources/read — return one `contents[]` entry. Strings are HTML
-          // by convention; structured entries pass through `_meta`. Missing
-          // URIs raise `-32602` which the SDK transports as a JSON-RPC
-          // error, matching how external MCP servers signal not-found.
-          //
-          // Lookup order: static map → resourceHandler fallback. The handler
-          // returning `null` is treated as not-found (same shape as missing
-          // static entries). Function-form `text` is awaited here so the body
-          // can be assembled lazily on each read.
+          // resources/read — resolve the URI, then shape one `contents[]`
+          // entry. A missing URI raises `-32602`, which the SDK transports as a
+          // JSON-RPC error, matching how external MCP servers signal not-found.
           server.setRequestHandler(ReadResourceRequestSchema, async (request) => {
             const uri = request.params.uri;
-            let value = resources.get(uri);
-            if (value === undefined && resourceHandler) {
-              const resolved = await resourceHandler(uri);
-              if (resolved !== null) value = resolved;
-            }
+            const value = await resolveResourceValue(uri, resources, resourceHandler);
             if (value === undefined) {
               throw new McpError(ErrorCode.InvalidParams, `Resource not found: ${uri}`, { uri });
             }
-            if (typeof value === "string") {
-              return {
-                contents: [{ uri, mimeType: "text/html", text: value }],
-              };
-            }
-            const entry: Record<string, unknown> = { uri };
-            if (value.mimeType) entry.mimeType = value.mimeType;
-            if (value.blob) {
-              // SDK schema accepts base64-encoded blob strings.
-              entry.blob = bytesToBase64(value.blob);
-            } else {
-              const text = value.text;
-              entry.text = typeof text === "function" ? await text() : (text ?? "");
-            }
-            if (value.meta) entry._meta = value.meta;
-            return { contents: [entry] };
+            return { contents: [await buildResourceContents(uri, value)] };
           });
 
           // resources/templates/list — only registered when templates are
@@ -336,6 +284,77 @@ export function defineInProcessApp(
     },
     eventSink,
   );
+}
+
+// ── tools/call + resources/read shaping helpers ────────────────────────────
+
+/** Build an `isError: true` tool result carrying a JSON `{ error }` payload. */
+function errorResult(error: string) {
+  return {
+    content: [{ type: "text" as const, text: JSON.stringify({ error }) }],
+    isError: true,
+  };
+}
+
+/**
+ * Shape an engine `ToolResult` into the MCP `tools/call` wire result.
+ *
+ * Forwards result `_meta` onto the wire so it round-trips back to the caller as
+ * `ToolResult._meta` (e.g. the supervisor's non-advancing hint).
+ * `CallToolResult._meta` is a loose object, so arbitrary reverse-DNS keys
+ * survive the round-trip.
+ */
+function toInProcessCallResult(result: ToolResult) {
+  return {
+    content: result.content,
+    ...(result.structuredContent ? { structuredContent: result.structuredContent } : {}),
+    ...(result.isError ? { isError: true } : {}),
+    ...(result._meta ? { _meta: result._meta } : {}),
+  };
+}
+
+/**
+ * Resolve a resource URI to its value: the static map first, then the async
+ * `resourceHandler` fallback. The handler returning `null` is treated as
+ * not-found — same as a missing static entry, both surfacing here as `undefined`.
+ */
+async function resolveResourceValue(
+  uri: string,
+  resources: Map<string, InProcessResource>,
+  resourceHandler: ((uri: string) => Promise<InProcessResource | null>) | undefined,
+): Promise<InProcessResource | undefined> {
+  const value = resources.get(uri);
+  if (value !== undefined) return value;
+  if (resourceHandler) {
+    const resolved = await resourceHandler(uri);
+    if (resolved !== null) return resolved;
+  }
+  return undefined;
+}
+
+/**
+ * Shape one resolved resource into an MCP `contents[]` entry. Strings are HTML
+ * by convention; structured entries pass through `_meta`. Function-form `text`
+ * is awaited here so the body can be assembled lazily on each read.
+ */
+async function buildResourceContents(
+  uri: string,
+  value: InProcessResource,
+): Promise<Record<string, unknown>> {
+  if (typeof value === "string") {
+    return { uri, mimeType: "text/html", text: value };
+  }
+  const entry: Record<string, unknown> = { uri };
+  if (value.mimeType) entry.mimeType = value.mimeType;
+  if (value.blob) {
+    // SDK schema accepts base64-encoded blob strings.
+    entry.blob = bytesToBase64(value.blob);
+  } else {
+    const text = value.text;
+    entry.text = typeof text === "function" ? await text() : (text ?? "");
+  }
+  if (value.meta) entry._meta = value.meta;
+  return entry;
 }
 
 /**
