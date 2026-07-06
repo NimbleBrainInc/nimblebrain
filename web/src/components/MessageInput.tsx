@@ -1,6 +1,5 @@
 import { ArrowUp, Paperclip, Square } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { StreamingState } from "../hooks/useChat";
 import { FileAttachmentChips } from "./FileAttachmentChips";
 
 const MAX_TEXTAREA_HEIGHT = 200;
@@ -9,20 +8,12 @@ interface MessageInputProps {
   onSend: (text: string, files?: File[]) => void;
   disabled: boolean;
   onNewConversation?: () => void;
-  /** Drives the ambient "breathing" border while a turn is in flight. */
-  streamingState?: StreamingState;
   /** Stop the in-flight turn. When provided, the send button becomes a Stop
    *  button while a turn is streaming. */
   onStop?: () => void;
 }
 
-export function MessageInput({
-  onSend,
-  disabled,
-  onNewConversation,
-  streamingState,
-  onStop,
-}: MessageInputProps) {
+export function MessageInput({ onSend, disabled, onNewConversation, onStop }: MessageInputProps) {
   const [text, setText] = useState("");
   const [isFocused, setIsFocused] = useState(false);
   const [attachedFiles, setAttachedFiles] = useState<File[]>([]);
@@ -152,29 +143,25 @@ export function MessageInput({
     [addFiles],
   );
 
-  const isActive =
-    streamingState === "thinking" ||
-    streamingState === "working" ||
-    streamingState === "analyzing" ||
-    streamingState === "preparing";
   const canSend = (text.trim() || attachedFiles.length > 0) && !disabled;
 
   return (
     <div className="py-3 shrink-0">
       {/* biome-ignore lint/a11y/noStaticElementInteractions: drag-and-drop container for file uploads */}
       <div
-        // At rest the composer recesses into a borderless muted well — no hard
-        // line above the input. It earns a raised card (border + shadow) only
-        // when engaged: focused, receiving a drop, or breathing during a turn.
+        // The raised card + blue ring shows only when the input is actually
+        // usable — focused AND not mid-turn. While a turn runs the input is
+        // disabled, so it recedes to the same quiet muted well as its resting
+        // state: a disabled control should read as inactive, not lit up. The
+        // "working" cue lives in the conversation ("Thinking…" + the streaming
+        // reply) and the Stop button, not the input box.
         className={`rounded-lg border transition-all duration-200 ${
           isDragOver
             ? "bg-card border-primary shadow-lg shadow-primary/20"
-            : isActive && !isFocused
-              ? "bg-card input-breathing"
-              : isFocused
-                ? "bg-card border-ring shadow-lg shadow-ring/10"
-                : "bg-muted border-transparent"
-        } ${disabled ? "opacity-60" : ""}`}
+            : isFocused && !disabled
+              ? "bg-card border-ring shadow-lg shadow-ring/10"
+              : "bg-muted border-transparent"
+        }`}
         role="presentation"
         onDragOver={handleDragOver}
         onDragLeave={handleDragLeave}

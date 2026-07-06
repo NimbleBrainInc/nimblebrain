@@ -233,7 +233,6 @@ export const ChatPanel = forwardRef<ChatPanelRef, ChatPanelProps>(function ChatP
           onSend={sendMessage}
           disabled={isStreaming}
           onNewConversation={handleNewChat}
-          streamingState={streamingState}
           onStop={stop}
         />
       </div>

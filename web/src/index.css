@@ -286,18 +286,6 @@
   50% { opacity: 1; }
 }
 
-/* Breathing input glow — ambient state cue during thinking/working. Warm is
-   the brand "look here" accent, so the composer wears it while a turn runs. */
-.input-breathing {
-  border-color: var(--warm) !important;
-  animation: breathing-glow 3s ease-in-out infinite;
-}
-
-@keyframes breathing-glow {
-  0%, 100% { box-shadow: 0 0 0 1px var(--warm), 0 0 8px 0 color-mix(in oklch, var(--warm) 15%, transparent); }
-  50% { box-shadow: 0 0 0 1px var(--warm), 0 0 16px 2px color-mix(in oklch, var(--warm) 8%, transparent); }
-}
-
 /* ───────────────────────────────────────────────────────────────────────
  * Turn activity pill — single status + tool surface for an assistant turn
  *
@@ -686,7 +674,7 @@
   flex-shrink: 0;
 }
 .live-cursor__label {
-  color: var(--muted-foreground);
+  color: var(--warm);
   font-weight: 500;
 }
 
