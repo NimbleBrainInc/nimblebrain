@@ -82,6 +82,48 @@ export function mainRepoRootFor(worktreeRoot: string): string | null {
   }
 }
 
+/** True when the value is wrapped in matching single or double quotes. */
+function isQuotedValue(value: string): boolean {
+  return (
+    (value.startsWith('"') && value.endsWith('"') && value.length >= 2) ||
+    (value.startsWith("'") && value.endsWith("'") && value.length >= 2)
+  );
+}
+
+/** Unwrap quotes, else strip a trailing ` # comment` from an unquoted value. */
+function parseDotenvValue(value: string): string {
+  if (isQuotedValue(value)) return value.slice(1, -1);
+  // Strip trailing ` # comment` from unquoted values to match Bun. The
+  // boundary is `whitespace + #` so we don't truncate values that
+  // legitimately contain `#` mid-token (e.g. a base64 chunk with no
+  // surrounding whitespace).
+  const inlineComment = value.search(/\s+#/);
+  if (inlineComment !== -1) return value.slice(0, inlineComment).trimEnd();
+  return value;
+}
+
+/** Strip a leading `export ` from the key, or null when it holds whitespace. */
+function parseDotenvKey(rawKey: string): string | null {
+  // Strip a leading `export ` so source-able `.env` files work; matches
+  // Bun's loader. A key that still contains whitespace afterward is
+  // malformed (e.g. accidental `FOO BAR=baz`) — reject it rather than
+  // store a never-fetchable variable.
+  const key = rawKey.trim().replace(/^export\s+/, "");
+  if (/\s/.test(key)) return null;
+  return key;
+}
+
+/** Parse one `.env` line into a `[key, value]` pair, or null to skip it. */
+function parseDotenvLine(rawLine: string): [string, string] | null {
+  const line = rawLine.trim();
+  if (!line || line.startsWith("#")) return null;
+  const eq = line.indexOf("=");
+  if (eq <= 0) return null; // no `=` or starts with `=` — skip
+  const key = parseDotenvKey(line.slice(0, eq));
+  if (key === null) return null;
+  return [key, parseDotenvValue(line.slice(eq + 1).trim())];
+}
+
 /**
  * Parse `.env` content into a key → value map. Designed to match
  * Bun's built-in `.env` loader behavior where it matters for
@@ -108,35 +150,8 @@ export function mainRepoRootFor(worktreeRoot: string): string | null {
 export function parseDotenv(content: string): Map<string, string> {
   const out = new Map<string, string>();
   for (const rawLine of content.split("\n")) {
-    const line = rawLine.trim();
-    if (!line || line.startsWith("#")) continue;
-    const eq = line.indexOf("=");
-    if (eq <= 0) continue; // no `=` or starts with `=` — skip
-    let key = line.slice(0, eq).trim();
-    // Strip a leading `export ` so source-able `.env` files work.
-    // Matches Bun's loader.
-    key = key.replace(/^export\s+/, "");
-    // A key that still contains whitespace after the export strip is
-    // malformed (e.g. accidental `FOO BAR=baz`); skip rather than
-    // store a never-fetchable variable.
-    if (/\s/.test(key)) continue;
-    let value = line.slice(eq + 1).trim();
-    const isQuoted =
-      (value.startsWith('"') && value.endsWith('"') && value.length >= 2) ||
-      (value.startsWith("'") && value.endsWith("'") && value.length >= 2);
-    if (isQuoted) {
-      value = value.slice(1, -1);
-    } else {
-      // Strip trailing ` # comment` from unquoted values to match Bun.
-      // The boundary is `whitespace + #` so we don't truncate values
-      // that legitimately contain `#` mid-token (e.g. a base64 chunk
-      // with no surrounding whitespace).
-      const inlineComment = value.search(/\s+#/);
-      if (inlineComment !== -1) {
-        value = value.slice(0, inlineComment).trimEnd();
-      }
-    }
-    out.set(key, value);
+    const parsed = parseDotenvLine(rawLine);
+    if (parsed) out.set(parsed[0], parsed[1]);
   }
   return out;
 }
