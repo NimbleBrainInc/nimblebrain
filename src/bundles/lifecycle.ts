@@ -49,6 +49,27 @@ import type {
   RemoteTransportConfig,
 } from "./types.ts";
 
+/** The URL-bundle member of the `BundleRef` union (carries `url`, OAuth config, transport). */
+type UrlBundleRef = Extract<BundleRef, { url: string }>;
+
+/** Resolved pre-registered OAuth client (Track A), with the secret dereferenced to a string. */
+type StaticOAuthClient = {
+  clientId: string;
+  clientSecret?: string;
+  tokenEndpointAuthMethod?: "none" | "client_secret_post" | "client_secret_basic";
+};
+
+/** Manifest-derived metadata `seedInstance` accepts for an already-running bundle. */
+type SeedManifestMeta = {
+  manifestName?: string;
+  version: string;
+  description?: string;
+  ui: BundleUiMeta | null;
+  briefing?: BriefingBlock | null;
+  type: "upjack" | "plain";
+  upjackNamespace?: string;
+};
+
 // ---------------------------------------------------------------------------
 // Hard-error on legacy `oauthScope: "user"` records read from disk.
 // ---------------------------------------------------------------------------
@@ -633,13 +654,7 @@ export class BundleLifecycleManager {
     this.registerPlacements(sourceName, instance.ui, wsId);
 
     // Atomic config write
-    if (this.configPath) {
-      const entry: Record<string, unknown> = { url, serverName: sourceName };
-      if (transportConfig) entry.transport = transportConfig;
-      if (ui) entry.ui = ui;
-      if (trustScore != null) entry.trustScore = trustScore;
-      atomicConfigAdd(this.configPath, entry);
-    }
+    this.persistRemoteBundleEntry(url, sourceName, transportConfig, ui, trustScore);
 
     // Re-key in case sourceName differs from the input serverName.
     if (sourceName !== serverName) {
@@ -666,6 +681,22 @@ export class BundleLifecycleManager {
     return instance;
   }
 
+  /** Atomically persist a remote bundle's config entry (no-op when no config path is set). */
+  private persistRemoteBundleEntry(
+    url: string,
+    serverName: string,
+    transportConfig: RemoteTransportConfig | undefined,
+    ui: BundleUiMeta | null | undefined,
+    trustScore: number | null | undefined,
+  ): void {
+    if (!this.configPath) return;
+    const entry: Record<string, unknown> = { url, serverName };
+    if (transportConfig) entry.transport = transportConfig;
+    if (ui) entry.ui = ui;
+    if (trustScore != null) entry.trustScore = trustScore;
+    atomicConfigAdd(this.configPath, entry);
+  }
+
   // ---- Uninstall ---------------------------------------------------------
 
   /**
@@ -679,20 +710,7 @@ export class BundleLifecycleManager {
    * 5. Data is NOT deleted
    */
   async uninstall(nameOrPath: string, registry: ToolRegistry, wsId: string): Promise<void> {
-    // Resolve by (serverName, wsId) first; fall back to bundleName match within
-    // this workspace. Lookups are always workspace-scoped — uninstalling in one
-    // workspace must not affect another workspace's instance of the same bundle.
-    let serverName = deriveServerName(nameOrPath);
-    let instance = this.instances.get(`${serverName}|${wsId}`);
-    if (!instance) {
-      for (const inst of this.instances.values()) {
-        if (inst.wsId === wsId && inst.bundleName === nameOrPath) {
-          serverName = inst.serverName;
-          instance = inst;
-          break;
-        }
-      }
-    }
+    const { serverName, instance } = this.resolveUninstallTarget(nameOrPath, wsId);
 
     // Stop server, remove from registry. Every connector is user-removable
     // (no `protected` guard — install/uninstall is symmetric for all classes).
@@ -725,76 +743,7 @@ export class BundleLifecycleManager {
     // Credentials are config, not data — they should not persist across
     // uninstalls. Data directories are preserved (step 6).
     if (instance) {
-      const workDir = defaultWorkDir();
-      try {
-        await new WorkspaceContext({ wsId: instance.wsId, workDir })
-          .getCredentialStore()
-          .clearAll(instance.bundleName);
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err);
-        process.stderr.write(
-          `[lifecycle] Failed to clear credentials for ${instance.bundleName} in ${instance.wsId}: ${msg}\n`,
-        );
-      }
-      // Drop the OAuth state dir as defense-in-depth. URL bundles
-      // route through `disconnect` first (which now invalidates "all"
-      // including client.json) — but stdio bundles never had OAuth
-      // state, and any leftover from a partial earlier disconnect
-      // shouldn't survive an uninstall. Worst case the dir is already
-      // gone; rmSync with `force` is a no-op then.
-      try {
-        const oauthDir = new WorkspaceContext({
-          wsId: instance.wsId,
-          workDir,
-        }).getDataPath("credentials", "mcp-oauth", serverName);
-        rmSync(oauthDir, { recursive: true, force: true });
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err);
-        process.stderr.write(
-          `[lifecycle] Failed to clear OAuth state for ${serverName} in ${instance.wsId}: ${msg}\n`,
-        );
-      }
-      // Composio-backed bundles use a parallel credential namespace
-      // (`composio/<connectorId>/connection.json`) AND have upstream
-      // state at Composio (the connected account holding the
-      // vendor's OAuth tokens). The mcp-oauth rmSync above doesn't
-      // touch either. Without this block, uninstall-without-prior-
-      // disconnect (the realistic flow — users don't disconnect
-      // first) would leak local disk state and leave the upstream
-      // account ACTIVE forever. `cleanupComposioBundle` runs the
-      // same revoke-then-delete pair `disconnect` uses; the
-      // additional rmSync below removes the now-empty connector
-      // subdirectory to match the mcp-oauth posture.
-      const composioRef =
-        instance.ref && "composio" in instance.ref ? instance.ref.composio : undefined;
-      if (composioRef) {
-        try {
-          await cleanupComposioBundle({
-            workDir,
-            wsId: instance.wsId,
-            connectorId: composioRef.connectorId,
-          });
-        } catch (err) {
-          // cleanupComposioBundle never throws by contract; guard
-          // anyway so an SDK exception can't sink the uninstall.
-          const msg = err instanceof Error ? err.message : String(err);
-          process.stderr.write(
-            `[lifecycle] Failed to revoke Composio bundle "${serverName}" in ${instance.wsId}: ${msg}\n`,
-          );
-        }
-        try {
-          const composioDir = new WorkspaceContext({
-            wsId: instance.wsId,
-            workDir,
-          }).getDataPath("credentials", "composio", connectorSlug(composioRef.connectorId));
-          rmSync(composioDir, { recursive: true, force: true });
-        } catch (err) {
-          const msg = err instanceof Error ? err.message : String(err);
-          process.stderr.write(
-            `[lifecycle] Failed to clear composio dir for ${serverName} in ${instance.wsId}: ${msg}\n`,
-          );
-        }
-      }
+      await this.cleanupBundleCredentials(instance, serverName);
     }
 
     // Step 4d — Remove materialized connector-skill overlays. Keyed on
@@ -814,6 +763,115 @@ export class BundleLifecycleManager {
       type: "bundle.uninstalled",
       data: { serverName, bundleName: nameOrPath, wsId },
     });
+  }
+
+  /**
+   * Resolve the `(serverName, instance)` an uninstall targets. Resolves by
+   * `(serverName, wsId)` first; falls back to a `bundleName` match within this
+   * workspace. Lookups are always workspace-scoped — uninstalling in one
+   * workspace must not affect another workspace's instance of the same bundle.
+   */
+  private resolveUninstallTarget(
+    nameOrPath: string,
+    wsId: string,
+  ): { serverName: string; instance: BundleInstance | undefined } {
+    const serverName = deriveServerName(nameOrPath);
+    const direct = this.instances.get(`${serverName}|${wsId}`);
+    if (direct) return { serverName, instance: direct };
+    for (const inst of this.instances.values()) {
+      if (inst.wsId === wsId && inst.bundleName === nameOrPath) {
+        return { serverName: inst.serverName, instance: inst };
+      }
+    }
+    return { serverName, instance: undefined };
+  }
+
+  /**
+   * Best-effort teardown of a bundle's workspace-scoped credentials on
+   * uninstall: the credential store, the mcp-oauth state dir, and — for
+   * Composio-backed bundles — the upstream connected account plus its local
+   * connector dir. Credentials are config, not data; data dirs are preserved.
+   * Every step is guarded so one failure can't sink the others.
+   */
+  private async cleanupBundleCredentials(
+    instance: BundleInstance,
+    serverName: string,
+  ): Promise<void> {
+    const workDir = defaultWorkDir();
+    try {
+      await new WorkspaceContext({ wsId: instance.wsId, workDir })
+        .getCredentialStore()
+        .clearAll(instance.bundleName);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      process.stderr.write(
+        `[lifecycle] Failed to clear credentials for ${instance.bundleName} in ${instance.wsId}: ${msg}\n`,
+      );
+    }
+    // Drop the OAuth state dir as defense-in-depth. URL bundles route through
+    // `disconnect` first (which now invalidates "all" including client.json) —
+    // but stdio bundles never had OAuth state, and any leftover from a partial
+    // earlier disconnect shouldn't survive an uninstall. Worst case the dir is
+    // already gone; rmSync with `force` is a no-op then.
+    try {
+      const oauthDir = new WorkspaceContext({
+        wsId: instance.wsId,
+        workDir,
+      }).getDataPath("credentials", "mcp-oauth", serverName);
+      rmSync(oauthDir, { recursive: true, force: true });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      process.stderr.write(
+        `[lifecycle] Failed to clear OAuth state for ${serverName} in ${instance.wsId}: ${msg}\n`,
+      );
+    }
+    const composioRef =
+      instance.ref && "composio" in instance.ref ? instance.ref.composio : undefined;
+    if (composioRef) {
+      await this.cleanupComposioCredentials(instance, serverName, composioRef.connectorId, workDir);
+    }
+  }
+
+  /**
+   * Revoke a Composio-backed bundle's upstream connected account and drop its
+   * local connector credential dir. Composio bundles use a parallel credential
+   * namespace (`composio/<connectorId>/connection.json`) AND hold upstream state
+   * at Composio (the connected account with the vendor's OAuth tokens); the
+   * mcp-oauth teardown touches neither. Without this, uninstall-without-prior-
+   * disconnect (the realistic flow — users don't disconnect first) would leak
+   * local disk state and leave the upstream account ACTIVE forever.
+   * `cleanupComposioBundle` runs the same revoke-then-delete pair `disconnect`
+   * uses; the rmSync removes the now-empty connector subdirectory to match the
+   * mcp-oauth posture. Best-effort — each step is guarded.
+   */
+  private async cleanupComposioCredentials(
+    instance: BundleInstance,
+    serverName: string,
+    connectorId: string,
+    workDir: string,
+  ): Promise<void> {
+    try {
+      await cleanupComposioBundle({ workDir, wsId: instance.wsId, connectorId });
+    } catch (err) {
+      // cleanupComposioBundle never throws by contract; guard anyway so an SDK
+      // exception can't sink the uninstall.
+      const msg = err instanceof Error ? err.message : String(err);
+      process.stderr.write(
+        `[lifecycle] Failed to revoke Composio bundle "${serverName}" in ${instance.wsId}: ${msg}\n`,
+      );
+    }
+    try {
+      const composioDir = new WorkspaceContext({
+        wsId: instance.wsId,
+        workDir,
+      }).getDataPath("credentials", "composio", connectorSlug(connectorId));
+      rmSync(composioDir, { recursive: true, force: true });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      process.stderr.write(
+        `[lifecycle] Failed to clear composio dir for ${serverName} in ${instance.wsId}: ${msg}\n`,
+      );
+    }
   }
 
   // ---- Upgrade -----------------------------------------------------------
@@ -1255,37 +1313,10 @@ export class BundleLifecycleManager {
     await this.teardownConnectionSource(serverName, wsId, principalId);
 
     // Resolve pre-registered OAuth client config (Track A: oauthClient
-    // + scopes + additionalAuthorizationParams). Both scopes use the
-    // same credential-store dereference path.
+    // + scopes + additionalAuthorizationParams). Dereferences the client
+    // secret from the workspace credential store when present.
     const ref = instance.ref;
-    let staticClient:
-      | {
-          clientId: string;
-          clientSecret?: string;
-          tokenEndpointAuthMethod?: "none" | "client_secret_post" | "client_secret_basic";
-        }
-      | undefined;
-    if (ref.oauthClient) {
-      let resolvedSecret: string | undefined;
-      if (ref.oauthClient.clientSecret) {
-        const secretStore = new FileCredentialStore(opts.workDir);
-        const wrapped = await secretStore.get(wsId, ref.oauthClient.clientSecret.key);
-        if (!wrapped) {
-          throw new Error(
-            `[lifecycle] OAuth client_secret not found at credential key "${ref.oauthClient.clientSecret.key}" for ${serverName} — ` +
-              `configure it in the workspace's Connections settings (web UI)`,
-          );
-        }
-        resolvedSecret = wrapped.reveal();
-      }
-      staticClient = {
-        clientId: ref.oauthClient.clientId,
-        ...(resolvedSecret ? { clientSecret: resolvedSecret } : {}),
-        ...(ref.oauthClient.tokenEndpointAuthMethod
-          ? { tokenEndpointAuthMethod: ref.oauthClient.tokenEndpointAuthMethod }
-          : {}),
-      };
-    }
+    const staticClient = await resolveStaticClientConfig(ref, wsId, serverName, opts.workDir);
 
     // Construct provider with our pending-auth callback. The callback
     // fires synchronously inside `redirectToAuthorization` BEFORE the
@@ -1314,21 +1345,15 @@ export class BundleLifecycleManager {
     // place of the opaque wsId. Best-effort — falls back to the id.
     const ownerDisplayName = await resolveWorkspaceDisplayName(opts.workDir, wsId);
 
-    const provider = new WorkspaceOAuthProvider({
-      owner: { type: "workspace", wsId },
-      ...(ownerDisplayName ? { ownerDisplayName } : {}),
+    const provider = this.buildWorkspaceOAuthProvider({
       serverName,
-      workDir: opts.workDir,
-      // Workspace-scoped tokens route the credential directory through
-      // the typed handle.
-      workspaceContext: new WorkspaceContext({ wsId, workDir: opts.workDir }),
-      callbackUrl: opts.callbackUrl,
-      allowInsecureRemotes: opts.allowInsecureRemotes === true,
-      headlessAuthProbe: ref.headlessAuthProbe === true,
-      // Fleet tenant binding. Safe to pass for every server: the provider only
-      // attaches an assertion when the token endpoint's origin matches this
-      // issuer (the fleet authorizer), never to a vendor.
-      ...fleetIssuerOption(),
+      wsId,
+      principalId,
+      opts,
+      ref,
+      ownerDisplayName,
+      staticClient,
+      providerAbort,
       onInteractiveAuthRequired: (url) => {
         capturedAuthUrl = url;
         this.recordConnectionStateChange(serverName, wsId, principalId, "pending_auth", {
@@ -1336,19 +1361,6 @@ export class BundleLifecycleManager {
         });
         resolveAuthUrl(url);
       },
-      // Mid-session auth loss on this connection (a tool call hit
-      // UnauthorizedError because the refresh token was rejected). Flip to
-      // reauth_required so the UI offers "Reconnect" instead of silently
-      // failing every call. No authorizationUrl — Reconnect re-initiates.
-      onAuthLost: () => {
-        this.recordConnectionStateChange(serverName, wsId, principalId, "reauth_required");
-      },
-      ...(staticClient ? { staticClient } : {}),
-      ...(ref.scopes ? { scopes: ref.scopes } : {}),
-      ...(ref.additionalAuthorizationParams
-        ? { additionalAuthorizationParams: ref.additionalAuthorizationParams }
-        : {}),
-      abortSignal: providerAbort.signal,
     });
     const source = new McpSource(
       serverName,
@@ -1393,50 +1405,15 @@ export class BundleLifecycleManager {
     // running and reject the auth URL promise (caller wasn't expecting
     // that path; they should re-list installed connectors to refresh
     // state).
-    void source
-      .start()
-      .then(() => {
-        this.recordConnectionStateChange(serverName, wsId, principalId, "running");
-        if (!capturedAuthUrl) {
-          rejectAuthUrl(
-            new Error(
-              `[lifecycle] ${serverName} for ${principalId} connected without interactive auth — already authenticated`,
-            ),
-          );
-        }
-      })
-      .catch((err) => {
-        // The SDK's OAuth error classes (InvalidGrantError, InvalidClientError,
-        // …) carry their detail in `.name` with an EMPTY `.message`, so fall
-        // back to the name — otherwise the surfaced diagnostic is blank, which
-        // is nearly as useless as swallowing it.
-        const msg = err instanceof Error ? err.message || err.name : String(err);
-        // Always surface the failure. The interactive path (capturedAuthUrl
-        // set) used to be swallowed here: if the background start() failed
-        // AFTER the auth URL was returned — the token exchange or reconnect
-        // threw once the user came back, or the pending flow timed out — the
-        // connection was left stuck in `pending_auth` ("Connecting…") forever
-        // with no log and no tokens. Log it and move the connection to `dead`
-        // (+ lastError) so the UI offers a recoverable Reconnect instead of
-        // an indefinite spinner.
-        log.warn(
-          `[lifecycle] startAuth: ${serverName} start failed for ${principalId} in ${wsId}: ${msg}`,
-        );
-        this.recordConnectionStateChange(serverName, wsId, principalId, "dead", {
-          lastError: msg,
-        });
-        // `authUrlPromise` already resolved on the interactive path, so a
-        // reject there is a no-op; only the headless / pre-auth failure path
-        // (no captured URL) still needs the caller's promise rejected.
-        if (!capturedAuthUrl) {
-          rejectAuthUrl(err instanceof Error ? err : new Error(msg));
-        }
-      })
-      .finally(() => {
-        // Disarm interactive auth — subsequent (background) reconnects of this
-        // long-lived source must NOT drive a browser flow.
-        provider.setInteractiveAuthAllowed(false);
-      });
+    this.startAuthBackground({
+      source,
+      provider,
+      serverName,
+      wsId,
+      principalId,
+      getCapturedAuthUrl: () => capturedAuthUrl,
+      rejectAuthUrl,
+    });
 
     // Race the auth URL signal against a hard timeout. 15s is generous —
     // the provider's redirect probe + the SDK's metadata fetch + DCR
@@ -1468,6 +1445,131 @@ export class BundleLifecycleManager {
       providerAbort.abort();
       throw err;
     }
+  }
+
+  /**
+   * Construct the workspace-scoped OAuth provider for a `startAuth` flow,
+   * wiring the caller's interactive-auth callback and a reauth_required hook
+   * for mid-session auth loss. Tokens route through the workspace credential
+   * handle; the abort signal cancels in-flight fetches on give-up.
+   */
+  private buildWorkspaceOAuthProvider(args: {
+    serverName: string;
+    wsId: string;
+    principalId: string;
+    opts: { workDir: string; callbackUrl: string; allowInsecureRemotes?: boolean };
+    ref: UrlBundleRef;
+    ownerDisplayName: string | undefined;
+    staticClient: StaticOAuthClient | undefined;
+    providerAbort: AbortController;
+    onInteractiveAuthRequired: (url: string) => void;
+  }): WorkspaceOAuthProvider {
+    const {
+      serverName,
+      wsId,
+      principalId,
+      opts,
+      ref,
+      ownerDisplayName,
+      staticClient,
+      providerAbort,
+      onInteractiveAuthRequired,
+    } = args;
+    return new WorkspaceOAuthProvider({
+      owner: { type: "workspace", wsId },
+      ...(ownerDisplayName ? { ownerDisplayName } : {}),
+      serverName,
+      workDir: opts.workDir,
+      // Workspace-scoped tokens route the credential directory through
+      // the typed handle.
+      workspaceContext: new WorkspaceContext({ wsId, workDir: opts.workDir }),
+      callbackUrl: opts.callbackUrl,
+      allowInsecureRemotes: opts.allowInsecureRemotes === true,
+      headlessAuthProbe: ref.headlessAuthProbe === true,
+      // Fleet tenant binding. Safe to pass for every server: the provider only
+      // attaches an assertion when the token endpoint's origin matches this
+      // issuer (the fleet authorizer), never to a vendor.
+      ...fleetIssuerOption(),
+      onInteractiveAuthRequired,
+      // Mid-session auth loss on this connection (a tool call hit
+      // UnauthorizedError because the refresh token was rejected). Flip to
+      // reauth_required so the UI offers "Reconnect" instead of silently
+      // failing every call. No authorizationUrl — Reconnect re-initiates.
+      onAuthLost: () => {
+        this.recordConnectionStateChange(serverName, wsId, principalId, "reauth_required");
+      },
+      ...(staticClient ? { staticClient } : {}),
+      ...(ref.scopes ? { scopes: ref.scopes } : {}),
+      ...(ref.additionalAuthorizationParams
+        ? { additionalAuthorizationParams: ref.additionalAuthorizationParams }
+        : {}),
+      abortSignal: providerAbort.signal,
+    });
+  }
+
+  /**
+   * Kick off the fire-and-forget `source.start()` for a `startAuth` flow. On
+   * success transitions to `running` (and, for the headless / pre-authenticated
+   * path with no captured URL, rejects the caller's auth-URL promise); on
+   * failure logs, transitions to `dead` with the error, and rejects the promise
+   * on the pre-auth path. Always disarms interactive auth so a later background
+   * reconnect of this long-lived source can't drive a browser flow.
+   */
+  private startAuthBackground(args: {
+    source: McpSource;
+    provider: WorkspaceOAuthProvider;
+    serverName: string;
+    wsId: string;
+    principalId: string;
+    getCapturedAuthUrl: () => string | undefined;
+    rejectAuthUrl: (err: Error) => void;
+  }): void {
+    const { source, provider, serverName, wsId, principalId, getCapturedAuthUrl, rejectAuthUrl } =
+      args;
+    void source
+      .start()
+      .then(() => {
+        this.recordConnectionStateChange(serverName, wsId, principalId, "running");
+        if (!getCapturedAuthUrl()) {
+          rejectAuthUrl(
+            new Error(
+              `[lifecycle] ${serverName} for ${principalId} connected without interactive auth — already authenticated`,
+            ),
+          );
+        }
+      })
+      .catch((err) => {
+        // The SDK's OAuth error classes (InvalidGrantError, InvalidClientError,
+        // …) carry their detail in `.name` with an EMPTY `.message`, so fall
+        // back to the name — otherwise the surfaced diagnostic is blank, which
+        // is nearly as useless as swallowing it.
+        const msg = err instanceof Error ? err.message || err.name : String(err);
+        // Always surface the failure. The interactive path (capturedAuthUrl
+        // set) used to be swallowed here: if the background start() failed
+        // AFTER the auth URL was returned — the token exchange or reconnect
+        // threw once the user came back, or the pending flow timed out — the
+        // connection was left stuck in `pending_auth` ("Connecting…") forever
+        // with no log and no tokens. Log it and move the connection to `dead`
+        // (+ lastError) so the UI offers a recoverable Reconnect instead of
+        // an indefinite spinner.
+        log.warn(
+          `[lifecycle] startAuth: ${serverName} start failed for ${principalId} in ${wsId}: ${msg}`,
+        );
+        this.recordConnectionStateChange(serverName, wsId, principalId, "dead", {
+          lastError: msg,
+        });
+        // `authUrlPromise` already resolved on the interactive path, so a
+        // reject there is a no-op; only the headless / pre-auth failure path
+        // (no captured URL) still needs the caller's promise rejected.
+        if (!getCapturedAuthUrl()) {
+          rejectAuthUrl(err instanceof Error ? err : new Error(msg));
+        }
+      })
+      .finally(() => {
+        // Disarm interactive auth — subsequent (background) reconnects of this
+        // long-lived source must NOT drive a browser flow.
+        provider.setInteractiveAuthAllowed(false);
+      });
   }
 
   /**
@@ -1974,17 +2076,7 @@ export class BundleLifecycleManager {
     serverName: string,
     bundleName: string,
     ref: BundleRef,
-    manifestMeta:
-      | {
-          manifestName?: string;
-          version: string;
-          description?: string;
-          ui: BundleUiMeta | null;
-          briefing?: BriefingBlock | null;
-          type: "upjack" | "plain";
-          upjackNamespace?: string;
-        }
-      | undefined,
+    manifestMeta: SeedManifestMeta | undefined,
     wsId: string,
     dataDir?: string,
     /** Per-workspace ToolRegistry. Optional for backward compat with
@@ -1992,21 +2084,6 @@ export class BundleLifecycleManager {
     registry?: ToolRegistry,
   ): void {
     void registry; // registry is no longer used; kept for caller backward compat
-    // Resolve entity data root from dataDir + upjack namespace. `dataDir` is
-    // already the canonical bundle-data parent (slug = manifest.name) thanks
-    // to `resolveBundleDataDirForRef` at every caller — buildProcessInventory,
-    // installLocal, installNamed, installBundleInWorkspace. No re-derivation
-    // here: launcher and reader agree by construction.
-    const entityDataRoot =
-      dataDir && manifestMeta?.upjackNamespace
-        ? join(dataDir, manifestMeta.upjackNamespace, "data")
-        : undefined;
-
-    // Resolve oauthScope for URL bundles. Post-Stage-2 the only legal
-    // value is `"workspace"`; the disk-read boundary
-    // (`buildProcessInventory`) hard-errors on legacy `"user"` records.
-    const oauthScope: BundleInstance["oauthScope"] | undefined =
-      "url" in ref ? "workspace" : undefined;
 
     // Track A: validate authorize-URL params at the seed boundary.
     // Catches reserved-key collisions (client_id, state, PKCE, scope, etc.)
@@ -2015,79 +2092,57 @@ export class BundleLifecycleManager {
       validateAdditionalAuthorizationParams(ref.additionalAuthorizationParams);
     }
 
-    const instance: BundleInstance = {
-      serverName,
-      // Prefer the scoped manifest name over the config label (filesystem path)
-      bundleName: manifestMeta?.manifestName ?? bundleName,
-      // Config key for reliable uninstall — the original value from nimblebrain.json
-      configKey: bundleName,
-      version: manifestMeta?.version ?? "unknown",
-      description: manifestMeta?.description,
-      state: "running",
-      trustScore: ref.trustScore ?? null,
-      ui: ref.ui ?? manifestMeta?.ui ?? null,
-      briefing: manifestMeta?.briefing ?? null,
-      type: manifestMeta?.type ?? "plain",
-      wsId,
-      // Derive the install channel from the persisted ref shape so both the
-      // connector-install path and the boot reload (which both seed here) get
-      // it with no migration — `check_updates`/`upgrade` filter on this.
-      installSource: "name" in ref ? "registry" : "url" in ref ? "remote" : "local",
-      ...(oauthScope !== undefined ? { oauthScope } : {}),
-      ...(entityDataRoot !== undefined ? { entityDataRoot } : {}),
-      // URL bundles only — needed to reconstruct McpSources on-demand
-      // (URL, transport config, oauthClient + scopes). Stored as an
-      // opaque copy.
-      ...("url" in ref ? { ref: { ...ref } } : {}),
-    };
-    const key = `${serverName}|${wsId}`;
-    this.instances.set(key, instance);
+    const instance = buildSeededInstance(serverName, bundleName, ref, manifestMeta, wsId, dataDir);
+    this.instances.set(`${serverName}|${wsId}`, instance);
 
     // For URL bundles, derive the boot-time Connection state.
     if ("url" in ref) {
-      // Workspace-scope. Boot-time outcomes, in priority order:
-      //   1. The OAuth provider's interactive callback fired during boot
-      //      (RT was persisted but rejected — the SDK fell back to the
-      //      interactive branch and the URL was buffered). Record
-      //      `reauth_required` with the captured URL so the UI shows a
-      //      "Reconnect" affordance instead of "Connect".
-      //   2. No tokens exist on disk → record `not_authenticated`. The
-      //      bundle is silently installed; the user discovers it on the
-      //      Connections page and clicks Connect to initiate OAuth.
-      //   3. Tokens exist and source.start() succeeded → record
-      //      `running`.
-      const pendingAuthUrl = consumePendingAuth(wsId, serverName);
-      if (pendingAuthUrl) {
-        this.recordConnectionStateChange(serverName, wsId, "_workspace", "reauth_required", {
-          authorizationUrl: pendingAuthUrl,
-        });
-      } else {
-        const workDir = defaultWorkDir();
-        // Composio-backed connectors live in a parallel credential
-        // namespace — the user-presence signal is
-        // `credentials/composio/<connectorId>/connection.json`, not
-        // the mcp-oauth tokens.json. Bundles carry the catalog id
-        // forward on `ref.composio.connectorId` so this probe is
-        // local; we don't need the catalog to derive the path.
-        // Composio bundles carry header auth but STILL need a per-user connect,
-        // so they route to the composio probe (check FIRST). Other static-auth
-        // sources (provider / bearer / header) carry their own credential and
-        // auto-connect — no interactive Connect step — so they must not seed
-        // `not_authenticated` (which the UI renders as a "Connect" button that
-        // would spin a bogus OAuth flow). A surviving entry here means boot-start
-        // succeeded (failed starts are filtered before seedInstance runs), so
-        // `running` is accurate.
-        const hasAuth =
-          "composio" in ref && ref.composio
-            ? hasPersistedComposioConnection(workDir, wsId, ref.composio.connectorId)
-            : bundleHasStaticAuth(ref) ||
-              hasPersistedWorkspaceOAuthTokens(workDir, wsId, serverName);
-        if (!hasAuth) {
-          this.recordConnectionStateChange(serverName, wsId, "_workspace", "not_authenticated");
-        } else {
-          this.recordConnectionStateChange(serverName, wsId, "_workspace", "running");
-        }
-      }
+      this.seedUrlConnectionState(serverName, wsId, ref);
+    }
+  }
+
+  /**
+   * Derive and record the boot-time Connection state for a seeded URL bundle.
+   * Outcomes, in priority order:
+   *   1. The OAuth provider's interactive callback fired during boot (RT was
+   *      persisted but rejected — the SDK fell back to the interactive branch
+   *      and the URL was buffered). Record `reauth_required` with the captured
+   *      URL so the UI shows a "Reconnect" affordance instead of "Connect".
+   *   2. No persisted auth on disk → record `not_authenticated`. The bundle is
+   *      silently installed; the user discovers it on the Connections page and
+   *      clicks Connect to initiate OAuth.
+   *   3. Auth present and source.start() succeeded → record `running`.
+   */
+  private seedUrlConnectionState(serverName: string, wsId: string, ref: UrlBundleRef): void {
+    const pendingAuthUrl = consumePendingAuth(wsId, serverName);
+    if (pendingAuthUrl) {
+      this.recordConnectionStateChange(serverName, wsId, "_workspace", "reauth_required", {
+        authorizationUrl: pendingAuthUrl,
+      });
+      return;
+    }
+
+    const workDir = defaultWorkDir();
+    // Composio-backed connectors live in a parallel credential namespace — the
+    // user-presence signal is `credentials/composio/<connectorId>/connection.json`,
+    // not the mcp-oauth tokens.json. Bundles carry the catalog id forward on
+    // `ref.composio.connectorId` so this probe is local; we don't need the
+    // catalog to derive the path. Composio bundles carry header auth but STILL
+    // need a per-user connect, so they route to the composio probe (check
+    // FIRST). Other static-auth sources (provider / bearer / header) carry their
+    // own credential and auto-connect — no interactive Connect step — so they
+    // must not seed `not_authenticated` (which the UI renders as a "Connect"
+    // button that would spin a bogus OAuth flow). A surviving entry here means
+    // boot-start succeeded (failed starts are filtered before seedInstance
+    // runs), so `running` is accurate.
+    const hasAuth =
+      "composio" in ref && ref.composio
+        ? hasPersistedComposioConnection(workDir, wsId, ref.composio.connectorId)
+        : bundleHasStaticAuth(ref) || hasPersistedWorkspaceOAuthTokens(workDir, wsId, serverName);
+    if (!hasAuth) {
+      this.recordConnectionStateChange(serverName, wsId, "_workspace", "not_authenticated");
+    } else {
+      this.recordConnectionStateChange(serverName, wsId, "_workspace", "running");
     }
   }
 }
@@ -2117,6 +2172,94 @@ interface UpjackScheduleDeclaration {
 // ---------------------------------------------------------------------------
 // Internal helpers
 // ---------------------------------------------------------------------------
+
+/** Derive the install channel from a persisted BundleRef's shape. */
+function deriveInstallSource(ref: BundleRef): NonNullable<BundleInstance["installSource"]> {
+  if ("name" in ref) return "registry";
+  if ("url" in ref) return "remote";
+  return "local";
+}
+
+/**
+ * Build the `BundleInstance` `seedInstance` records for an already-running
+ * bundle. Derives `entityDataRoot` from `dataDir` + upjack namespace, resolves
+ * `oauthScope` for URL bundles (post-Stage-2 the only legal value is
+ * `"workspace"`), and the install channel from the ref shape. `dataDir` is
+ * already the canonical bundle-data parent (slug = manifest.name) thanks to
+ * `resolveBundleDataDirForRef` at every caller, so no re-derivation here.
+ */
+function buildSeededInstance(
+  serverName: string,
+  bundleName: string,
+  ref: BundleRef,
+  manifestMeta: SeedManifestMeta | undefined,
+  wsId: string,
+  dataDir: string | undefined,
+): BundleInstance {
+  const entityDataRoot =
+    dataDir && manifestMeta?.upjackNamespace
+      ? join(dataDir, manifestMeta.upjackNamespace, "data")
+      : undefined;
+
+  const oauthScope: BundleInstance["oauthScope"] | undefined =
+    "url" in ref ? "workspace" : undefined;
+
+  return {
+    serverName,
+    // Prefer the scoped manifest name over the config label (filesystem path)
+    bundleName: manifestMeta?.manifestName ?? bundleName,
+    // Config key for reliable uninstall — the original value from nimblebrain.json
+    configKey: bundleName,
+    version: manifestMeta?.version ?? "unknown",
+    description: manifestMeta?.description,
+    state: "running",
+    trustScore: ref.trustScore ?? null,
+    ui: ref.ui ?? manifestMeta?.ui ?? null,
+    briefing: manifestMeta?.briefing ?? null,
+    type: manifestMeta?.type ?? "plain",
+    wsId,
+    installSource: deriveInstallSource(ref),
+    ...(oauthScope !== undefined ? { oauthScope } : {}),
+    ...(entityDataRoot !== undefined ? { entityDataRoot } : {}),
+    // URL bundles only — needed to reconstruct McpSources on-demand
+    // (URL, transport config, oauthClient + scopes). Stored as an
+    // opaque copy.
+    ...("url" in ref ? { ref: { ...ref } } : {}),
+  };
+}
+
+/**
+ * Resolve a URL bundle's pre-registered OAuth client (Track A) for `startAuth`,
+ * dereferencing the client secret from the workspace credential store when
+ * present. Returns undefined when the bundle has no static client (DCR path).
+ */
+async function resolveStaticClientConfig(
+  ref: UrlBundleRef,
+  wsId: string,
+  serverName: string,
+  workDir: string,
+): Promise<StaticOAuthClient | undefined> {
+  if (!ref.oauthClient) return undefined;
+  let resolvedSecret: string | undefined;
+  if (ref.oauthClient.clientSecret) {
+    const secretStore = new FileCredentialStore(workDir);
+    const wrapped = await secretStore.get(wsId, ref.oauthClient.clientSecret.key);
+    if (!wrapped) {
+      throw new Error(
+        `[lifecycle] OAuth client_secret not found at credential key "${ref.oauthClient.clientSecret.key}" for ${serverName} — ` +
+          `configure it in the workspace's Connections settings (web UI)`,
+      );
+    }
+    resolvedSecret = wrapped.reveal();
+  }
+  return {
+    clientId: ref.oauthClient.clientId,
+    ...(resolvedSecret ? { clientSecret: resolvedSecret } : {}),
+    ...(ref.oauthClient.tokenEndpointAuthMethod
+      ? { tokenEndpointAuthMethod: ref.oauthClient.tokenEndpointAuthMethod }
+      : {}),
+  };
+}
 
 function createInstance(
   serverName: string,
