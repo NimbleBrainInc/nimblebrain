@@ -124,6 +124,7 @@ import {
   ConversationAccessDeniedError,
   ConversationWorkspaceAccessDeniedError,
   RunInProgressError,
+  WorkspaceMembershipRevokedError,
 } from "./errors.ts";
 import { IdentityToolRouter } from "./identity-tool-router.ts";
 import { PlacementRegistry } from "./placement-registry.ts";
@@ -1609,6 +1610,17 @@ export class Runtime {
     const ownerId = resolveRequestOwnerId(request.identity, this._identityProvider !== null);
     const requestIdentity = request.identity ?? DEV_IDENTITY;
 
+    // Provenance membership gate. An automation fires AS its owner, walled to its
+    // provenance workspace (`request.workspaceId`). Membership there is validated
+    // at create, NOT per run — so a since-removed owner would otherwise keep
+    // acting in a workspace they left (its tools/connectors). Deny the run before
+    // any setup or tool binding. Thrown early so the scheduler records it as a
+    // skipped run (self-heals if the owner is re-added); personal workspaces are
+    // sole-member, so they never gate.
+    if (request.workspaceId && !(await this.isOwnerWorkspaceMember(request.workspaceId, ownerId))) {
+      throw new WorkspaceMembershipRevokedError(ownerId, request.workspaceId);
+    }
+
     // Session workspace (personal) — used for the silent dispatch reqCtx,
     // file store, and the workspace-agents / model overrides lookup. Never
     // narrated by the task prompt; the prompt only mentions the focused
@@ -3051,6 +3063,18 @@ export class Runtime {
   }
 
   /**
+   * True if `ownerId` may currently act in `wsId`. Personal workspaces are
+   * sole-member by construction (always true); shared workspaces require current
+   * membership. The shared "is this owner still allowed in this workspace" check
+   * behind both the conversation-resume gate and the automation-run gate.
+   */
+  private async isOwnerWorkspaceMember(wsId: string, ownerId: string): Promise<boolean> {
+    if (wsId === personalWorkspaceIdFor(ownerId)) return true;
+    const ws = await this._workspaceStore.get(wsId);
+    return ws?.members.some((m) => m.userId === ownerId) ?? false;
+  }
+
+  /**
    * Resume authorization — the second gate, after ownership. A conversation is
    * sealed to its workspace (`convWsId`): on resume the session's tools, skills,
    * apps, and context all resolve there. So resuming as a non-member would hand
@@ -3069,10 +3093,7 @@ export class Runtime {
     convWsId: string,
     ownerId: string,
   ): Promise<void> {
-    if (convWsId === personalWorkspaceIdFor(ownerId)) return;
-    const ws = await this._workspaceStore.get(convWsId);
-    const stillMember = ws?.members.some((m) => m.userId === ownerId) ?? false;
-    if (!stillMember) {
+    if (!(await this.isOwnerWorkspaceMember(convWsId, ownerId))) {
       throw new ConversationWorkspaceAccessDeniedError(conversationId, ownerId, convWsId);
     }
   }

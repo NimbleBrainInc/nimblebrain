@@ -199,6 +199,45 @@ function getTimezoneOffsetMs(tz: string, date: Date): number {
   return new Date(utcStr).getTime() - new Date(tzStr).getTime();
 }
 
+/**
+ * How a thrown run maps to a persisted failure record. One guard-clause row per
+ * outcome keeps `status`, the id `suffix`, the `error` text, and the `transient`
+ * flag together so they can't drift apart.
+ */
+function classifyRunFailure(err: unknown): {
+  status: AutomationRun["status"];
+  suffix: string;
+  error: string;
+  transient: boolean;
+} {
+  if (err instanceof DOMException && err.name === "AbortError") {
+    return { status: "cancelled", suffix: "cancel", error: "Cancelled by user", transient: false };
+  }
+  const errorMsg = err instanceof Error ? err.message : String(err);
+  // Owner removed from the automation's provenance workspace: the runtime denied
+  // the run (`executeTask` throws `WorkspaceMembershipRevokedError`). SKIPPED, not a
+  // failure — it must not count toward consecutiveErrors or trip the auto-disable,
+  // so the automation self-heals the moment the owner is re-added. Matched by the
+  // error's stable `code`, which crosses the in-process runtime→bundle boundary.
+  if ((err as { code?: string })?.code === "workspace_membership_revoked") {
+    return { status: "skipped", suffix: "skip", error: errorMsg, transient: false };
+  }
+  if (errorMsg.includes("timed out")) {
+    return {
+      status: "timeout",
+      suffix: "timeout",
+      error: errorMsg,
+      transient: isTransientError(errorMsg),
+    };
+  }
+  return {
+    status: "failure",
+    suffix: "err",
+    error: errorMsg,
+    transient: isTransientError(errorMsg),
+  };
+}
+
 // ---------------------------------------------------------------------------
 // State-update helpers (mutate the passed automation in place)
 // ---------------------------------------------------------------------------
@@ -585,21 +624,19 @@ export class Scheduler {
       return run;
     } catch (err) {
       this.activeRuns.delete(key);
-      const isAbort = err instanceof DOMException && err.name === "AbortError";
-      const errorMsg = err instanceof Error ? err.message : String(err);
-      const isTimeout = !isAbort && errorMsg.includes("timed out");
+      const { status, suffix, error, transient } = classifyRunFailure(err);
       const failedRun: AutomationRun = {
-        id: `run_${Date.now()}_${isAbort ? "cancel" : isTimeout ? "timeout" : "err"}`,
+        id: `run_${Date.now()}_${suffix}`,
         automationId: auto.id,
         startedAt,
         completedAt: new Date().toISOString(),
-        status: isAbort ? "cancelled" : isTimeout ? "timeout" : "failure",
+        status,
         inputTokens: 0,
         outputTokens: 0,
         toolCalls: 0,
         iterations: 0,
-        error: isAbort ? "Cancelled by user" : errorMsg,
-        transient: isAbort ? false : isTransientError(errorMsg),
+        error,
+        transient,
       };
       this.updateAfterRun(auto, failedRun);
       return failedRun;
