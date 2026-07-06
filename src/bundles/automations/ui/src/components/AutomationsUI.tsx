@@ -275,123 +275,43 @@ export function AutomationsUI() {
         </div>
       </div>
 
-      {error && (
-        <div style={{ padding: "0 20px" }}>
-          <div className="error-banner">{error}</div>
-        </div>
-      )}
+      <ErrorBanner error={error} />
 
       <div className="two-pane" data-show={paneShow}>
         <aside className="rail">
-          <div className="rail-section">
-            <span>Automations</span>
-            {automations.length > 0 && (
-              <span
-                style={{
-                  fontSize: 11,
-                  color: "var(--color-text-secondary, #737373)",
-                  textTransform: "none",
-                  letterSpacing: 0,
-                  fontWeight: 400,
-                }}
-              >
-                {automations.length}
-              </span>
-            )}
-          </div>
-          {loading ? (
-            <div style={{ padding: "4px 16px" }}>
-              <SkeletonCards count={2} />
-            </div>
-          ) : automations.length === 0 ? (
-            <div className="rail-empty">
-              No automations yet. Start from a template:
-              <div className="template-grid" style={{ marginTop: 8 }}>
-                {TEMPLATES.map((t) => (
-                  <button
-                    type="button"
-                    key={t.id}
-                    className={`template-card${t.id === "custom" ? " dashed" : ""}`}
-                    onClick={() => pickTemplate(t)}
-                  >
-                    <span className="template-card-name">{t.name}</span>
-                    <span className="template-card-desc">{t.description}</span>
-                  </button>
-                ))}
-              </div>
-            </div>
-          ) : (
-            automations.map((a) => (
-              <RailAutomationItem
-                key={a.id}
-                automation={a}
-                active={selectedAutomation === a.name}
-                onClick={() => setSelectedAutomation(a.name)}
-              />
-            ))
-          )}
+          <RailSection label="Automations" count={automations.length} />
+          <AutomationsList
+            loading={loading}
+            automations={automations}
+            selectedAutomation={selectedAutomation}
+            onSelectAutomation={(name) => setSelectedAutomation(name)}
+            onPickTemplate={pickTemplate}
+          />
 
-          <div className="rail-section">
-            <span>Recent Runs</span>
-            {runs.length > 0 && (
-              <span
-                style={{
-                  fontSize: 11,
-                  color: "var(--color-text-secondary, #737373)",
-                  textTransform: "none",
-                  letterSpacing: 0,
-                  fontWeight: 400,
-                }}
-              >
-                {runs.length}
-              </span>
-            )}
-          </div>
-          {runsLoading && runs.length === 0 ? (
-            <div style={{ padding: "4px 16px" }}>
-              <SkeletonRows count={3} />
-            </div>
-          ) : runs.length === 0 ? (
-            <div className="rail-empty">No runs yet.</div>
-          ) : (
-            runs.map((run) => (
-              <RailRunItem
-                key={run.id}
-                run={run}
-                automationName={automationNameById.get(run.automationId)}
-                active={selectedRunId === run.id}
-                onClick={() => {
-                  setSelectedRunId(run.id);
-                  setUserOpenedReader(true);
-                }}
-              />
-            ))
-          )}
+          <RailSection label="Recent Runs" count={runs.length} />
+          <RunsList
+            runs={runs}
+            runsLoading={runsLoading}
+            selectedRunId={selectedRunId}
+            automationNameById={automationNameById}
+            onSelectRun={(id) => {
+              setSelectedRunId(id);
+              setUserOpenedReader(true);
+            }}
+          />
         </aside>
 
-        {runs.length === 0 && !runsLoading && !loading ? (
-          <div className="reader">
-            <div className="reader-empty">
-              <ClockIcon />
-              <div className="reader-empty-title" style={{ marginTop: 12 }}>
-                No runs yet
-              </div>
-              <div className="reader-empty-desc">
-                {automations.length === 0
-                  ? "Create an automation from a template in the left panel to get started."
-                  : "Your automations haven't run yet. Pick one and Run now, or wait for the schedule."}
-              </div>
-            </div>
-          </div>
-        ) : (
-          <ReaderPane
-            run={selectedRun}
-            automation={selectedRunAutomation}
-            onRerun={handleRunNow}
-            onOpenConfig={(name) => setSelectedAutomation(name)}
-            onBack={() => setUserOpenedReader(false)}
-          />
-        )}
+        <ReaderArea
+          runs={runs}
+          runsLoading={runsLoading}
+          loading={loading}
+          automations={automations}
+          selectedRun={selectedRun}
+          selectedRunAutomation={selectedRunAutomation}
+          onRerun={handleRunNow}
+          onOpenConfig={(name) => setSelectedAutomation(name)}
+          onBack={() => setUserOpenedReader(false)}
+        />
       </div>
 
       {confirmDelete && (
@@ -402,5 +322,181 @@ export function AutomationsUI() {
         />
       )}
     </div>
+  );
+}
+
+/** Padded error banner shown above the two-pane layout; renders nothing when there is no error. */
+function ErrorBanner({ error }: { error: string | null }) {
+  if (!error) return null;
+  return (
+    <div style={{ padding: "0 20px" }}>
+      <div className="error-banner">{error}</div>
+    </div>
+  );
+}
+
+/** Rail section header with an optional right-aligned count badge (hidden when count is zero). */
+function RailSection({ label, count }: { label: string; count: number }) {
+  return (
+    <div className="rail-section">
+      <span>{label}</span>
+      {count > 0 && (
+        <span
+          style={{
+            fontSize: 11,
+            color: "var(--color-text-secondary, #737373)",
+            textTransform: "none",
+            letterSpacing: 0,
+            fontWeight: 400,
+          }}
+        >
+          {count}
+        </span>
+      )}
+    </div>
+  );
+}
+
+/** Rail body for automations — skeletons while loading, a template picker when empty, else the list. */
+function AutomationsList({
+  loading,
+  automations,
+  selectedAutomation,
+  onSelectAutomation,
+  onPickTemplate,
+}: {
+  loading: boolean;
+  automations: AutomationSummary[];
+  selectedAutomation: string | null;
+  onSelectAutomation: (name: string) => void;
+  onPickTemplate: (t: (typeof TEMPLATES)[0]) => void;
+}) {
+  if (loading) {
+    return (
+      <div style={{ padding: "4px 16px" }}>
+        <SkeletonCards count={2} />
+      </div>
+    );
+  }
+  if (automations.length === 0) {
+    return (
+      <div className="rail-empty">
+        No automations yet. Start from a template:
+        <div className="template-grid" style={{ marginTop: 8 }}>
+          {TEMPLATES.map((t) => (
+            <button
+              type="button"
+              key={t.id}
+              className={`template-card${t.id === "custom" ? " dashed" : ""}`}
+              onClick={() => onPickTemplate(t)}
+            >
+              <span className="template-card-name">{t.name}</span>
+              <span className="template-card-desc">{t.description}</span>
+            </button>
+          ))}
+        </div>
+      </div>
+    );
+  }
+  return (
+    <>
+      {automations.map((a) => (
+        <RailAutomationItem
+          key={a.id}
+          automation={a}
+          active={selectedAutomation === a.name}
+          onClick={() => onSelectAutomation(a.name)}
+        />
+      ))}
+    </>
+  );
+}
+
+/** Rail body for recent runs — skeletons on first load, an empty note, else the run list. */
+function RunsList({
+  runs,
+  runsLoading,
+  selectedRunId,
+  automationNameById,
+  onSelectRun,
+}: {
+  runs: AutomationRun[];
+  runsLoading: boolean;
+  selectedRunId: string | null;
+  automationNameById: Map<string, string>;
+  onSelectRun: (id: string) => void;
+}) {
+  if (runsLoading && runs.length === 0) {
+    return (
+      <div style={{ padding: "4px 16px" }}>
+        <SkeletonRows count={3} />
+      </div>
+    );
+  }
+  if (runs.length === 0) {
+    return <div className="rail-empty">No runs yet.</div>;
+  }
+  return (
+    <>
+      {runs.map((run) => (
+        <RailRunItem
+          key={run.id}
+          run={run}
+          automationName={automationNameById.get(run.automationId)}
+          active={selectedRunId === run.id}
+          onClick={() => onSelectRun(run.id)}
+        />
+      ))}
+    </>
+  );
+}
+
+/** Right pane — a "no runs yet" placeholder until runs exist, otherwise the run reader. */
+function ReaderArea({
+  runs,
+  runsLoading,
+  loading,
+  automations,
+  selectedRun,
+  selectedRunAutomation,
+  onRerun,
+  onOpenConfig,
+  onBack,
+}: {
+  runs: AutomationRun[];
+  runsLoading: boolean;
+  loading: boolean;
+  automations: AutomationSummary[];
+  selectedRun: AutomationRun | null;
+  selectedRunAutomation: AutomationSummary | undefined;
+  onRerun: (name: string) => void;
+  onOpenConfig: (name: string) => void;
+  onBack: () => void;
+}) {
+  if (runs.length === 0 && !runsLoading && !loading) {
+    return (
+      <div className="reader">
+        <div className="reader-empty">
+          <ClockIcon />
+          <div className="reader-empty-title" style={{ marginTop: 12 }}>
+            No runs yet
+          </div>
+          <div className="reader-empty-desc">
+            {automations.length === 0
+              ? "Create an automation from a template in the left panel to get started."
+              : "Your automations haven't run yet. Pick one and Run now, or wait for the schedule."}
+          </div>
+        </div>
+      </div>
+    );
+  }
+  return (
+    <ReaderPane
+      run={selectedRun}
+      automation={selectedRunAutomation}
+      onRerun={onRerun}
+      onOpenConfig={onOpenConfig}
+      onBack={onBack}
+    />
   );
 }
