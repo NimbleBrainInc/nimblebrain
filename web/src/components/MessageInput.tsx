@@ -268,7 +268,12 @@ export function MessageInput({
               <Paperclip style={{ width: 16, height: 16 }} />
             </button>
           </div>
-          <SendButton disabled={disabled} canSend={!!canSend} onSubmit={handleSend} onStop={onStop} />
+          <SendButton
+            disabled={disabled}
+            canSend={!!canSend}
+            onSubmit={handleSend}
+            onStop={onStop}
+          />
         </div>
       </div>
 
