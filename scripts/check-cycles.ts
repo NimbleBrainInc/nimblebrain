@@ -20,42 +20,47 @@ interface Violation {
 
 const violations: Violation[] = [];
 
+/** Recursively list .ts files under a directory, or an empty list if it can't be read. */
+function listTsFiles(dir: string): string[] {
+  try {
+    const entries = readdirSync(dir, { recursive: true }) as unknown as string[];
+    return entries.filter((file) => file.endsWith(".ts"));
+  } catch {
+    return [];
+  }
+}
+
+/** Record every forbidden import found in a file's source lines. */
+function scanForViolations(
+  relPath: string,
+  content: string,
+  forbiddenPatterns: Array<{ pattern: RegExp; description: string }>,
+) {
+  const lines = content.split("\n");
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i]!;
+    if (!line.includes("from ")) continue;
+
+    for (const { pattern } of forbiddenPatterns) {
+      if (pattern.test(line)) {
+        violations.push({ file: relPath, line: i + 1, importPath: line.trim() });
+      }
+    }
+  }
+}
+
+/** Flag forbidden imports in every non-exempt .ts file under a directory tree. */
 function checkDir(
   dir: string,
   forbiddenPatterns: Array<{ pattern: RegExp; description: string }>,
   allowedFiles: Set<string>,
 ) {
-  let files: string[];
-  try {
-    files = readdirSync(dir, { recursive: true }) as unknown as string[];
-  } catch {
-    return;
-  }
-
-  for (const file of files) {
-    if (!file.endsWith(".ts")) continue;
+  for (const file of listTsFiles(dir)) {
     const fullPath = join(dir, file);
     const relPath = relative(SRC, fullPath);
-
     if (allowedFiles.has(relPath)) continue;
 
-    const content = readFileSync(fullPath, "utf-8");
-    const lines = content.split("\n");
-
-    for (let i = 0; i < lines.length; i++) {
-      const line = lines[i]!;
-      if (!line.includes("from ")) continue;
-
-      for (const { pattern } of forbiddenPatterns) {
-        if (pattern.test(line)) {
-          violations.push({
-            file: relPath,
-            line: i + 1,
-            importPath: line.trim(),
-          });
-        }
-      }
-    }
+    scanForViolations(relPath, readFileSync(fullPath, "utf-8"), forbiddenPatterns);
   }
 }
 
