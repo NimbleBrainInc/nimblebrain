@@ -37,6 +37,50 @@ function activeOwnerCount(users: User[]): number {
   return users.filter((u) => u.orgRole === "owner" && !u.deletedAt).length;
 }
 
+// ── Shared helpers ────────────────────────────────────────────────
+
+const ORG_ROLES = ["owner", "admin", "member"];
+
+/** True when the value is one of the accepted org roles. */
+function isValidOrgRole(role: string): boolean {
+  return ORG_ROLES.includes(role);
+}
+
+/** Error result for an org role outside the accepted set. */
+function invalidOrgRoleResult(role: string): ToolResult {
+  return {
+    content: textContent(`Invalid orgRole: ${role}. Must be owner, admin, or member.`),
+    isError: true,
+  };
+}
+
+/** Error result when no user matches the given id. */
+function userNotFoundResult(userId: string): ToolResult {
+  return {
+    content: textContent(`User not found: ${userId}`),
+    isError: true,
+  };
+}
+
+/** Error result wrapping a thrown error behind an action phrase. */
+function failureResult(action: string, err: unknown): ToolResult {
+  return {
+    content: textContent(
+      `Failed to ${action}: ${err instanceof Error ? err.message : String(err)}`,
+    ),
+    isError: true,
+  };
+}
+
+/** True when this live owner is the only active owner left in the org. */
+async function isLastActiveOwner(ctx: ManageUsersContext, user: User): Promise<boolean> {
+  if (user.orgRole !== "owner" || user.deletedAt) {
+    return false;
+  }
+  const allUsers = await ctx.userStore.list();
+  return activeOwnerCount(allUsers) <= 1;
+}
+
 // ── Tool factory ──────────────────────────────────────────────────
 
 export function createManageUsersTool(ctx: ManageUsersContext): InProcessTool {
@@ -119,11 +163,8 @@ async function handleCreate(
   }
 
   const orgRole = input.orgRole ? String(input.orgRole) : "member";
-  if (!["owner", "admin", "member"].includes(orgRole)) {
-    return {
-      content: textContent(`Invalid orgRole: ${orgRole}. Must be owner, admin, or member.`),
-      isError: true,
-    };
+  if (!isValidOrgRole(orgRole)) {
+    return invalidOrgRoleResult(orgRole);
   }
 
   try {
@@ -169,13 +210,41 @@ async function handleCreate(
       isError: false,
     };
   } catch (err) {
-    return {
-      content: textContent(
-        `Failed to create user: ${err instanceof Error ? err.message : String(err)}`,
-      ),
-      isError: true,
-    };
+    return failureResult("create user", err);
   }
+}
+
+type PatchResult = { patch: Record<string, unknown> } | { error: ToolResult };
+
+/** Build the update patch from input, or an error result for an invalid orgRole. */
+function buildUserPatch(input: Record<string, unknown>): PatchResult {
+  const patch: Record<string, unknown> = {};
+  if (input.email !== undefined) patch.email = String(input.email);
+  if (input.displayName !== undefined) patch.displayName = String(input.displayName);
+  if (input.orgRole !== undefined) {
+    const orgRole = String(input.orgRole);
+    if (!isValidOrgRole(orgRole)) {
+      return { error: invalidOrgRoleResult(orgRole) };
+    }
+    patch.orgRole = orgRole;
+  }
+  return { patch };
+}
+
+/** True when applying this patch would demote the org's last active owner. */
+async function wouldOrphanLastOwner(
+  ctx: ManageUsersContext,
+  userId: string,
+  patch: Record<string, unknown>,
+): Promise<boolean> {
+  if (!patch.orgRole || patch.orgRole === "owner") {
+    return false;
+  }
+  const currentUser = await ctx.userStore.get(userId);
+  if (!currentUser) {
+    return false;
+  }
+  return isLastActiveOwner(ctx, currentUser);
 }
 
 async function handleUpdate(
@@ -190,19 +259,11 @@ async function handleUpdate(
     };
   }
 
-  const patch: Record<string, unknown> = {};
-  if (input.email !== undefined) patch.email = String(input.email);
-  if (input.displayName !== undefined) patch.displayName = String(input.displayName);
-  if (input.orgRole !== undefined) {
-    const orgRole = String(input.orgRole);
-    if (!["owner", "admin", "member"].includes(orgRole)) {
-      return {
-        content: textContent(`Invalid orgRole: ${orgRole}. Must be owner, admin, or member.`),
-        isError: true,
-      };
-    }
-    patch.orgRole = orgRole;
+  const built = buildUserPatch(input);
+  if ("error" in built) {
+    return built.error;
   }
+  const { patch } = built;
 
   if (Object.keys(patch).length === 0) {
     return {
@@ -213,27 +274,18 @@ async function handleUpdate(
 
   try {
     // Safety check: cannot downgrade the last active owner
-    if (patch.orgRole && patch.orgRole !== "owner") {
-      const currentUser = await ctx.userStore.get(userId);
-      if (currentUser?.orgRole === "owner" && !currentUser.deletedAt) {
-        const allUsers = await ctx.userStore.list();
-        if (activeOwnerCount(allUsers) <= 1) {
-          return {
-            content: textContent(
-              "Cannot change the role of the last owner. Promote another user to owner first.",
-            ),
-            isError: false,
-          };
-        }
-      }
+    if (await wouldOrphanLastOwner(ctx, userId, patch)) {
+      return {
+        content: textContent(
+          "Cannot change the role of the last owner. Promote another user to owner first.",
+        ),
+        isError: false,
+      };
     }
 
     const updated = await ctx.userStore.update(userId, patch);
     if (!updated) {
-      return {
-        content: textContent(`User not found: ${userId}`),
-        isError: true,
-      };
+      return userNotFoundResult(userId);
     }
 
     const userData = {
@@ -251,12 +303,7 @@ async function handleUpdate(
       isError: false,
     };
   } catch (err) {
-    return {
-      content: textContent(
-        `Failed to update user: ${err instanceof Error ? err.message : String(err)}`,
-      ),
-      isError: true,
-    };
+    return failureResult("update user", err);
   }
 }
 
@@ -276,22 +323,14 @@ async function handleDelete(
     // Safety check: cannot delete the last owner
     const user = await ctx.userStore.get(userId);
     if (!user) {
-      return {
-        content: textContent(`User not found: ${userId}`),
-        isError: true,
-      };
+      return userNotFoundResult(userId);
     }
 
-    if (user.orgRole === "owner" && !user.deletedAt) {
-      const allUsers = await ctx.userStore.list();
-      if (activeOwnerCount(allUsers) <= 1) {
-        return {
-          content: textContent(
-            "Cannot delete the last owner. Promote another user to owner first.",
-          ),
-          isError: false,
-        };
-      }
+    if (await isLastActiveOwner(ctx, user)) {
+      return {
+        content: textContent("Cannot delete the last owner. Promote another user to owner first."),
+        isError: false,
+      };
     }
 
     // Soft delete: stamp a tombstone and revoke access, but keep the record so
@@ -300,10 +339,7 @@ async function handleDelete(
     // the user later mints a new ID, orphaning all prior workspace memberships.
     const deactivated = await ctx.userStore.softDelete(userId);
     if (!deactivated) {
-      return {
-        content: textContent(`User not found: ${userId}`),
-        isError: true,
-      };
+      return userNotFoundResult(userId);
     }
 
     // Drop any cached identity so the access revocation takes effect immediately.
@@ -317,12 +353,7 @@ async function handleDelete(
       isError: false,
     };
   } catch (err) {
-    return {
-      content: textContent(
-        `Failed to deactivate user: ${err instanceof Error ? err.message : String(err)}`,
-      ),
-      isError: true,
-    };
+    return failureResult("deactivate user", err);
   }
 }
 
@@ -341,10 +372,7 @@ async function handleRestore(
   try {
     const restored = await ctx.userStore.restore(userId);
     if (!restored) {
-      return {
-        content: textContent(`User not found: ${userId}`),
-        isError: true,
-      };
+      return userNotFoundResult(userId);
     }
 
     ctx.provider?.invalidateUser?.(userId);
@@ -355,12 +383,7 @@ async function handleRestore(
       isError: false,
     };
   } catch (err) {
-    return {
-      content: textContent(
-        `Failed to restore user: ${err instanceof Error ? err.message : String(err)}`,
-      ),
-      isError: true,
-    };
+    return failureResult("restore user", err);
   }
 }
 
@@ -381,11 +404,6 @@ async function handleList(ctx: ManageUsersContext): Promise<ToolResult> {
       isError: false,
     };
   } catch (err) {
-    return {
-      content: textContent(
-        `Failed to list users: ${err instanceof Error ? err.message : String(err)}`,
-      ),
-      isError: true,
-    };
+    return failureResult("list users", err);
   }
 }
