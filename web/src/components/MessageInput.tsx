@@ -8,12 +8,20 @@ interface MessageInputProps {
   onSend: (text: string, files?: File[]) => void;
   disabled: boolean;
   onNewConversation?: () => void;
+  /** Open the keyboard-shortcuts dialog — the footer "?" affordance. */
+  onShowShortcuts?: () => void;
   /** Stop the in-flight turn. When provided, the send button becomes a Stop
    *  button while a turn is streaming. */
   onStop?: () => void;
 }
 
-export function MessageInput({ onSend, disabled, onNewConversation, onStop }: MessageInputProps) {
+export function MessageInput({
+  onSend,
+  disabled,
+  onNewConversation,
+  onShowShortcuts,
+  onStop,
+}: MessageInputProps) {
   const [text, setText] = useState("");
   const [isFocused, setIsFocused] = useState(false);
   const [attachedFiles, setAttachedFiles] = useState<File[]>([]);
@@ -259,6 +267,18 @@ export function MessageInput({ onSend, disabled, onNewConversation, onStop }: Me
           </kbd>{" "}
           close
         </span>
+        {onShowShortcuts && (
+          <button
+            type="button"
+            onClick={onShowShortcuts}
+            className="hover:text-foreground transition-colors"
+          >
+            <kbd className="px-1 py-0.5 font-mono bg-muted rounded border border-border text-3xs">
+              ?
+            </kbd>{" "}
+            shortcuts
+          </button>
+        )}
       </div>
     </div>
   );

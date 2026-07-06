@@ -1,4 +1,4 @@
-import { ArrowLeft, Check, Keyboard, Maximize2, Minimize2, RotateCcw, X } from "lucide-react";
+import { ArrowLeft, Check, Maximize2, Minimize2, SquarePen, X } from "lucide-react";
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useState } from "react";
 import { useChatContext } from "../context/ChatContext";
 import type { ChatMessage } from "../hooks/useChat";
@@ -162,52 +162,53 @@ export const ChatPanel = forwardRef<ChatPanelRef, ChatPanelProps>(function ChatP
             )}
           </button>
         </div>
-        <div className="flex items-center gap-1 shrink-0">
-          <RecentConversationsPopover
-            activeConversationId={conversationId}
-            onOpen={loadConversation}
-          />
-          <button
-            onClick={handleNewChat}
-            type="button"
-            disabled={isStreaming}
-            aria-label="New conversation"
-            className="p-1.5 hover:bg-muted rounded-sm transition-all text-muted-foreground hover:text-foreground disabled:opacity-50 disabled:cursor-not-allowed"
-          >
-            <RotateCcw style={{ width: 16, height: 16 }} />
-          </button>
+        {/* Grouped by altitude: conversation actions · skills · window controls.
+            Learn-once shortcuts live on the composer's "?" footer, not here. */}
+        <div className="flex items-center gap-2 shrink-0">
+          <div className="flex items-center gap-0.5">
+            <RecentConversationsPopover
+              activeConversationId={conversationId}
+              onOpen={loadConversation}
+            />
+            <button
+              onClick={handleNewChat}
+              type="button"
+              disabled={isStreaming}
+              aria-label="New chat"
+              title="New chat"
+              className="p-1.5 hover:bg-muted rounded-sm transition-all text-muted-foreground hover:text-foreground disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              <SquarePen style={{ width: 16, height: 16 }} />
+            </button>
+          </div>
           <SkillsPopover conversationId={conversationId} />
-          <button
-            onClick={() => setShowShortcuts(true)}
-            type="button"
-            aria-label="Keyboard shortcuts"
-            className="p-1.5 hover:bg-muted rounded-sm transition-all text-muted-foreground hover:text-foreground"
-          >
-            <Keyboard style={{ width: 16, height: 16 }} />
-          </button>
-          {onFullscreen && (
-            <button
-              onClick={onFullscreen}
-              type="button"
-              aria-label={isFullscreen ? "Exit fullscreen" : "Fullscreen"}
-              className="p-1.5 hover:bg-muted rounded-sm transition-all text-muted-foreground hover:text-foreground"
-            >
-              {isFullscreen ? (
-                <Minimize2 style={{ width: 16, height: 16 }} />
-              ) : (
-                <Maximize2 style={{ width: 16, height: 16 }} />
+          {(onFullscreen || onClose) && (
+            <div className="flex items-center gap-0.5">
+              {onFullscreen && (
+                <button
+                  onClick={onFullscreen}
+                  type="button"
+                  aria-label={isFullscreen ? "Exit fullscreen" : "Fullscreen"}
+                  className="p-1.5 hover:bg-muted rounded-sm transition-all text-muted-foreground hover:text-foreground"
+                >
+                  {isFullscreen ? (
+                    <Minimize2 style={{ width: 16, height: 16 }} />
+                  ) : (
+                    <Maximize2 style={{ width: 16, height: 16 }} />
+                  )}
+                </button>
               )}
-            </button>
-          )}
-          {onClose && (
-            <button
-              onClick={onClose}
-              type="button"
-              aria-label="Close"
-              className="p-1.5 hover:bg-muted rounded-sm transition-all text-muted-foreground hover:text-foreground"
-            >
-              <X style={{ width: 16, height: 16 }} />
-            </button>
+              {onClose && (
+                <button
+                  onClick={onClose}
+                  type="button"
+                  aria-label="Close"
+                  className="p-1.5 hover:bg-muted rounded-sm transition-all text-muted-foreground hover:text-foreground"
+                >
+                  <X style={{ width: 16, height: 16 }} />
+                </button>
+              )}
+            </div>
           )}
         </div>
       </header>
@@ -233,6 +234,7 @@ export const ChatPanel = forwardRef<ChatPanelRef, ChatPanelProps>(function ChatP
           onSend={sendMessage}
           disabled={isStreaming}
           onNewConversation={handleNewChat}
+          onShowShortcuts={() => setShowShortcuts(true)}
           onStop={stop}
         />
       </div>
