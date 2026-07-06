@@ -344,138 +344,214 @@ export function composeSystemPromptTraced(
   layer3Skills?: Layer3SkillEntry[],
   mode: ComposeMode = "chat",
 ): ComposedPrompt {
-  const layers: Array<Omit<TracedLayer, "segment">> = [];
+  const layers: PendingLayer[] = [];
 
-  // Layer 0a (task mode only): TASK_IDENTITY contract. Prepended before
-  // any core skill so the framing is read first. The runtime owns this
-  // layer — bundles cannot remove or override it by wrapping the user
-  // message. Workspace `soul.md` and similar core skills still layer in
-  // below; their domain identity composes with, not against, the task
-  // contract.
-  if (mode === "task") {
-    layers.push({
+  // Layer 0a (task mode) then Layer 0 (core identity), with the default-identity
+  // fallback applied only when neither produced content. In task mode the
+  // TASK_IDENTITY layer already supplies framing, so `layers` is non-empty here
+  // and the fallback is skipped — the two would give the model contradictory
+  // role definitions.
+  layers.push(...taskIdentityLayers(mode));
+  const { core, user } = partitionContextSkills(contextSkills);
+  layers.push(...coreContextLayers(core));
+  if (layers.length === 0) {
+    layers.push(defaultIdentityLayer());
+  }
+
+  // Layer 1: tenant-authored user context (priority > threshold).
+  layers.push(...userContextLayers(user));
+
+  // Layer 1.5a: stable user identity. Layer 1.5b: always-emitted volatile date.
+  layers.push(...userIdentityLayers(userPrefs));
+  layers.push(...currentDateLayers(userPrefs));
+
+  // Layer 1.6: Participants section — removed in Stage 1 (single-owner
+  // conversations). Returns in Stage 4 with policy-gated sharing.
+
+  // Layers 1.7 → 4, in prompt order: workspace context, org/workspace overlays,
+  // Layer 3 skills, installed apps, app state, focused app, matched skill.
+  layers.push(...workspaceContextLayers(workspaceContext));
+  layers.push(...overlayLayers(overlays));
+  layers.push(...layer3SkillsLayers(layer3Skills));
+  layers.push(...appsLayers(apps, hasProxiedTools));
+  layers.push(...appStateLayers(appState));
+  layers.push(...focusedAppLayers(focusedApp));
+  layers.push(...matchedSkillLayers(matchedSkill));
+
+  // Stamp the volatility tier from the layer kind (single source of truth for
+  // the stable/volatile classification — see `composeSystemSegments`).
+  const tagged: TracedLayer[] = layers.map((l) => ({
+    ...l,
+    segment: VOLATILE_KINDS.has(l.kind) ? "volatile" : "stable",
+  }));
+  const text = tagged.map((l) => l.text).join(SEPARATOR);
+  const totalTokens = tagged.reduce((sum, l) => sum + l.tokens, 0);
+  return { text, layers: tagged, totalTokens };
+}
+
+/** A composed layer before its volatility `segment` is stamped in the final pass. */
+type PendingLayer = Omit<TracedLayer, "segment">;
+
+/**
+ * Layer 0a (task mode only): the TASK_IDENTITY contract, prepended before any
+ * core skill so the framing is read first. The runtime owns this layer — bundles
+ * cannot remove or override it by wrapping the user message. Workspace `soul.md`
+ * and similar core skills still layer in below; their domain identity composes
+ * with, not against, the task contract.
+ */
+function taskIdentityLayers(mode: ComposeMode): PendingLayer[] {
+  if (mode !== "task") return [];
+  return [
+    {
       kind: "task_identity",
       id: "nb:task-identity",
       source: "platform task-mode contract",
       text: TASK_IDENTITY,
       tokens: approxTokens(TASK_IDENTITY),
-    });
-  }
+    },
+  ];
+}
 
-  // Separate core context (priority ≤ threshold) from user context (priority > threshold).
-  const coreContext: Skill[] = [];
-  const userContext: Skill[] = [];
+/** Split context skills into core (priority ≤ threshold) and user (priority > threshold) buckets. */
+function partitionContextSkills(contextSkills: Skill[]): { core: Skill[]; user: Skill[] } {
+  const core: Skill[] = [];
+  const user: Skill[] = [];
   for (const ctx of contextSkills) {
     if (ctx.manifest.priority <= CORE_PRIORITY_THRESHOLD) {
-      coreContext.push(ctx);
+      core.push(ctx);
     } else {
-      userContext.push(ctx);
+      user.push(ctx);
     }
   }
+  return { core, user };
+}
 
-  // Layer 0: Core context bodies (identity layer). One row per skill so
-  // a debug reader can attribute identity content to the file it came
-  // from (soul.md, capabilities.md, etc.).
+/**
+ * Layer 0: core context bodies (identity layer). One row per skill so a debug
+ * reader can attribute identity content to the file it came from (soul.md,
+ * capabilities.md, etc.).
+ */
+function coreContextLayers(coreContext: Skill[]): PendingLayer[] {
+  const layers: PendingLayer[] = [];
   for (const ctx of coreContext) {
-    if (ctx.body) {
-      layers.push({
-        kind: "core_skill",
-        id: ctx.sourcePath || `core:${ctx.manifest.name}`,
-        source: ctx.sourcePath || `core skill "${ctx.manifest.name}"`,
-        text: ctx.body,
-        tokens: approxTokens(ctx.body),
-      });
-    }
-  }
-
-  // Fallback to default identity if no core context skills produced
-  // content. In task mode the TASK_IDENTITY layer above already supplies
-  // the framing, so skip the DEFAULT_IDENTITY fallback — the two would
-  // give the model contradictory role definitions.
-  if (layers.length === 0) {
+    if (!ctx.body) continue;
     layers.push({
-      kind: "default_identity",
-      id: "nb:default-identity",
-      source: "platform default (no core context skills loaded)",
-      text: DEFAULT_IDENTITY,
-      tokens: approxTokens(DEFAULT_IDENTITY),
+      kind: "core_skill",
+      id: ctx.sourcePath || `core:${ctx.manifest.name}`,
+      source: ctx.sourcePath || `core skill "${ctx.manifest.name}"`,
+      text: ctx.body,
+      tokens: approxTokens(ctx.body),
     });
   }
+  return layers;
+}
 
-  // Layer 1: User context bodies (priority > 10, loading-strategy: always).
-  // These are tenant-authored — org/workspace/user "rules" from the settings
-  // UI — so each body is wrapped in <context-skill> containment with its
-  // closing tag escaped, the same prompt-injection discipline as <layer3-skill>
-  // and <app-*>. (Core identity skills, priority ≤ threshold, are vendored and
-  // render raw in Layer 0 above.)
+/** Platform default identity — the fallback when no core-context skill produced content. */
+function defaultIdentityLayer(): PendingLayer {
+  return {
+    kind: "default_identity",
+    id: "nb:default-identity",
+    source: "platform default (no core context skills loaded)",
+    text: DEFAULT_IDENTITY,
+    tokens: approxTokens(DEFAULT_IDENTITY),
+  };
+}
+
+/**
+ * Layer 1: user context bodies (priority > 10, loading-strategy: always). These
+ * are tenant-authored — org/workspace/user "rules" from the settings UI — so each
+ * body is wrapped in <context-skill> containment with its closing tag escaped, the
+ * same prompt-injection discipline as <layer3-skill> and <app-*>. (Core identity
+ * skills, priority ≤ threshold, are vendored and render raw in Layer 0.)
+ */
+function userContextLayers(userContext: Skill[]): PendingLayer[] {
+  const layers: PendingLayer[] = [];
   for (const ctx of userContext) {
-    if (ctx.body) {
-      const text = wrapContained("context-skill", ctx.body);
-      layers.push({
-        kind: "user_context_skill",
-        id: ctx.sourcePath || `nb:user-context:${ctx.manifest.name}`,
-        source: ctx.sourcePath || `user context skill "${ctx.manifest.name}"`,
-        text,
-        tokens: approxTokens(text),
-      });
-    }
-  }
-
-  // Layer 1.5a: User identity (name, timezone, locale) — STABLE, stays in the
-  // cached system prefix. Skipped when no identity fields are set (no empty
-  // `## User` heading).
-  const identityText = formatUserIdentity(userPrefs);
-  if (identityText) {
+    if (!ctx.body) continue;
+    const text = wrapContained("context-skill", ctx.body);
     layers.push({
+      kind: "user_context_skill",
+      id: ctx.sourcePath || `nb:user-context:${ctx.manifest.name}`,
+      source: ctx.sourcePath || `user context skill "${ctx.manifest.name}"`,
+      text,
+      tokens: approxTokens(text),
+    });
+  }
+  return layers;
+}
+
+/**
+ * Layer 1.5a: user identity (name, timezone, locale) — STABLE, stays in the
+ * cached system prefix. Empty when no identity fields are set (no empty `## User`
+ * heading).
+ */
+function userIdentityLayers(userPrefs?: UserPrefs): PendingLayer[] {
+  const identityText = formatUserIdentity(userPrefs);
+  if (!identityText) return [];
+  return [
+    {
       kind: "user_prefs",
       id: "nb:user-prefs",
       source: "runtime — user identity",
       text: identityText,
       tokens: approxTokens(identityText),
-    });
-  }
+    },
+  ];
+}
 
-  // Layer 1.5b: Current date — VOLATILE (changes every turn). Its own layer so
-  // it rides the latest user message instead of busting the 1h-cached system
-  // block. Always emitted so the model knows "today".
+/**
+ * Layer 1.5b: current date — VOLATILE (changes every turn). Its own layer so it
+ * rides the latest user message instead of busting the 1h-cached system block.
+ * Always emitted so the model knows "today".
+ */
+function currentDateLayers(userPrefs?: UserPrefs): PendingLayer[] {
   const dateText = formatCurrentDate(userPrefs);
-  layers.push({
-    kind: "current_date",
-    id: "nb:current-date",
-    source: "runtime — current date",
-    text: dateText,
-    tokens: approxTokens(dateText),
-  });
+  return [
+    {
+      kind: "current_date",
+      id: "nb:current-date",
+      source: "runtime — current date",
+      text: dateText,
+      tokens: approxTokens(dateText),
+    },
+  ];
+}
 
-  // Layer 1.6: Participants section — removed in Stage 1 (single-owner
-  // conversations). Returns in Stage 4 with policy-gated sharing.
-
-  // Layer 1.7: Workspace context. Either the focused workspace, or — at the
-  // identity-level home (no focus) — an EXPLICIT statement that there's no
-  // current workspace. The explicit form matters: without it the prompt is
-  // silent on scope, and an agent asked "which workspace am I in?" reaches for
-  // a workspace-namespaced tool and reports an arbitrary one.
+/**
+ * Layer 1.7: workspace context. Either the focused workspace, or — at the
+ * identity-level home (no focus) — an EXPLICIT statement that there's no current
+ * workspace. The explicit form matters: without it the prompt is silent on scope,
+ * and an agent asked "which workspace am I in?" reaches for a workspace-namespaced
+ * tool and reports an arbitrary one.
+ */
+function workspaceContextLayers(workspaceContext?: WorkspaceContext): PendingLayer[] {
   if (workspaceContext) {
     const wsText = formatWorkspaceContext(workspaceContext);
-    layers.push({
-      kind: "workspace_context",
-      id: "nb:workspace-context",
-      source: `runtime — workspace ${workspaceContext.id}`,
-      text: wsText,
-      tokens: approxTokens(wsText),
-    });
-  } else {
-    const wsText = formatNoWorkspaceContext();
-    layers.push({
+    return [
+      {
+        kind: "workspace_context",
+        id: "nb:workspace-context",
+        source: `runtime — workspace ${workspaceContext.id}`,
+        text: wsText,
+        tokens: approxTokens(wsText),
+      },
+    ];
+  }
+  const wsText = formatNoWorkspaceContext();
+  return [
+    {
       kind: "workspace_context",
       id: "nb:no-workspace-context",
       source: "runtime — identity-level home (no focused workspace)",
       text: wsText,
       tokens: approxTokens(wsText),
-    });
-  }
+    },
+  ];
+}
 
-  // Layer 1.8: Org / workspace instruction overlays.
+/** Layer 1.8: org- and workspace-tier instruction overlays, each skipped when blank. */
+function overlayLayers(overlays?: OverlayLayers): PendingLayer[] {
+  const layers: PendingLayer[] = [];
   if (overlays?.org && overlays.org.trim().length > 0) {
     const text = formatScopeOverlay("Organization Instructions", overlays.org);
     layers.push({
@@ -496,48 +572,57 @@ export function composeSystemPromptTraced(
       tokens: approxTokens(text),
     });
   }
+  return layers;
+}
 
-  // Layer 1.9: Layer 3 skills section. One TracedLayer for the whole
-  // section; per-skill detail in `subItems` so the debug tool can filter
-  // / inspect / hash-verify each skill independently. Empty list skips
-  // the section entirely (no marker, no row).
-  if (layer3Skills && layer3Skills.length > 0) {
-    const section = formatLayer3SkillsSection(layer3Skills);
-    if (section) {
-      layers.push({
-        kind: "layer3_skills",
-        id: "nb:layer3-skills",
-        source: `layer 3 skills (${layer3Skills.length} loaded)`,
-        text: section,
-        tokens: approxTokens(section),
-        subItems: layer3Skills
-          .filter((entry) => entry.body && entry.body.trim().length > 0)
-          .map((entry) => {
-            const bundle = deriveBundleFromSkillPath(entry.sourcePath);
-            return {
-              kind: "layer3_skill" as const,
-              id: entry.sourcePath ?? `nb:layer3:${entry.name}`,
-              source: entry.sourcePath ?? entry.name,
-              ...(bundle !== undefined ? { bundle } : {}),
-              metadata: {
-                name: entry.name,
-                scope: entry.scope,
-                loadedBy: entry.loadedBy,
-                reason: entry.reason,
-              },
-            };
-          }),
-      });
-    }
-  }
+/**
+ * Layer 1.9: Layer 3 skills section. One TracedLayer for the whole section;
+ * per-skill detail in `subItems` so the debug tool can filter / inspect /
+ * hash-verify each skill independently. Empty when the list is empty or the
+ * formatted section is null (no marker, no row).
+ */
+function layer3SkillsLayers(layer3Skills?: Layer3SkillEntry[]): PendingLayer[] {
+  if (!layer3Skills || !(layer3Skills.length > 0)) return [];
+  const section = formatLayer3SkillsSection(layer3Skills);
+  if (!section) return [];
+  return [
+    {
+      kind: "layer3_skills",
+      id: "nb:layer3-skills",
+      source: `layer 3 skills (${layer3Skills.length} loaded)`,
+      text: section,
+      tokens: approxTokens(section),
+      subItems: layer3Skills
+        .filter((entry) => entry.body && entry.body.trim().length > 0)
+        .map((entry) => {
+          const bundle = deriveBundleFromSkillPath(entry.sourcePath);
+          return {
+            kind: "layer3_skill" as const,
+            id: entry.sourcePath ?? `nb:layer3:${entry.name}`,
+            source: entry.sourcePath ?? entry.name,
+            ...(bundle !== undefined ? { bundle } : {}),
+            metadata: {
+              name: entry.name,
+              scope: entry.scope,
+              loadedBy: entry.loadedBy,
+              reason: entry.reason,
+            },
+          };
+        }),
+    },
+  ];
+}
 
-  // Layer 2: Installed apps section. One TracedLayer for the section;
-  // per-app detail in `subItems`. Each subItem carries the bundle name
-  // so a `bundle` filter on the debug tool can pick out a single app's
-  // contribution from the section text.
-  if (apps && apps.length > 0) {
-    const text = formatAppsSection(apps, hasProxiedTools);
-    layers.push({
+/**
+ * Layer 2: installed apps section. One TracedLayer for the section; per-app
+ * detail in `subItems`. Each subItem carries the bundle name so a `bundle` filter
+ * on the debug tool can pick out a single app's contribution from the section text.
+ */
+function appsLayers(apps?: PromptAppInfo[], hasProxiedTools?: boolean): PendingLayer[] {
+  if (!apps || !(apps.length > 0)) return [];
+  const text = formatAppsSection(apps, hasProxiedTools);
+  return [
+    {
       kind: "apps",
       id: "nb:apps",
       source: `installed apps (${apps.length})`,
@@ -557,58 +642,59 @@ export function composeSystemPromptTraced(
           ui: app.ui,
         },
       })),
-    });
-  }
+    },
+  ];
+}
 
-  // Layer 2.5: Active app state (Synapse Feature 2). May return null if
-  // the trust score is below threshold — skip the layer in that case.
-  if (appState) {
-    const stateSection = formatAppStateSection(appState);
-    if (stateSection) {
-      layers.push({
-        kind: "app_state",
-        id: "nb:app-state",
-        source: "runtime — focused-app state",
-        text: stateSection,
-        tokens: approxTokens(stateSection),
-      });
-    }
-  }
+/**
+ * Layer 2.5: active app state (Synapse Feature 2). Empty when there's no app
+ * state, or when `formatAppStateSection` returns null (trust score below
+ * threshold) — skip the layer in that case.
+ */
+function appStateLayers(appState?: AppStateInfo): PendingLayer[] {
+  if (!appState) return [];
+  const stateSection = formatAppStateSection(appState);
+  if (!stateSection) return [];
+  return [
+    {
+      kind: "app_state",
+      id: "nb:app-state",
+      source: "runtime — focused-app state",
+      text: stateSection,
+      tokens: approxTokens(stateSection),
+    },
+  ];
+}
 
-  // Layer 3: Focused app section.
-  if (focusedApp) {
-    const text = formatFocusedAppSection(focusedApp);
-    layers.push({
+/** Layer 3: focused app section — the app the user is viewing alongside the chat. */
+function focusedAppLayers(focusedApp?: FocusedAppInfo): PendingLayer[] {
+  if (!focusedApp) return [];
+  const text = formatFocusedAppSection(focusedApp);
+  return [
+    {
       kind: "focused_app",
       id: "nb:focused-app",
       source: `focused app: ${focusedApp.name}`,
       text,
       tokens: approxTokens(text),
       bundle: focusedApp.name,
-    });
-  }
+    },
+  ];
+}
 
-  // Layer 4: Matched skill (legacy SkillMatcher path).
-  if (matchedSkill?.body) {
-    const text = wrapContained("skill-instructions", matchedSkill.body);
-    layers.push({
+/** Layer 4: matched skill (legacy SkillMatcher path), wrapped in <skill-instructions> containment. */
+function matchedSkillLayers(matchedSkill?: Skill | null): PendingLayer[] {
+  if (!matchedSkill?.body) return [];
+  const text = wrapContained("skill-instructions", matchedSkill.body);
+  return [
+    {
       kind: "matched_skill",
       id: matchedSkill.sourcePath || `nb:matched-skill:${matchedSkill.manifest.name}`,
       source: matchedSkill.sourcePath ?? `matched skill "${matchedSkill.manifest.name}"`,
       text,
       tokens: approxTokens(text),
-    });
-  }
-
-  // Stamp the volatility tier from the layer kind (single source of truth for
-  // the stable/volatile classification — see `composeSystemSegments`).
-  const tagged: TracedLayer[] = layers.map((l) => ({
-    ...l,
-    segment: VOLATILE_KINDS.has(l.kind) ? "volatile" : "stable",
-  }));
-  const text = tagged.map((l) => l.text).join(SEPARATOR);
-  const totalTokens = tagged.reduce((sum, l) => sum + l.tokens, 0);
-  return { text, layers: tagged, totalTokens };
+    },
+  ];
 }
 
 /**
