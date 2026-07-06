@@ -23,6 +23,63 @@ const MAX_HEIGHT = 600;
 // causes the iframe to report the full viewport height instead of content height.
 const INLINE_SIZING_CSS = `<style>html,body{height:auto!important;min-height:0!important;overflow:hidden!important;margin:0!important}</style>`;
 
+/** Inject inline auto-sizing CSS into app HTML so full-page templates size to content, not the viewport. */
+function buildSizedHtml(html: string): string {
+  const headPattern = /<head([^>]*)>/i;
+  return headPattern.test(html)
+    ? html.replace(headPattern, (m) => `${m}\n${INLINE_SIZING_CSS}`)
+    : `${INLINE_SIZING_CSS}\n${html}`;
+}
+
+/** Keep the iframe height synced to its rendered body content (capped at MAX_HEIGHT) via a ResizeObserver. */
+function observeContentHeight(
+  iframe: HTMLIFrameElement,
+  isCancelled: () => boolean,
+  setHeight: (h: number) => void,
+  roRef: { current: ResizeObserver | null },
+): void {
+  const body = iframe.contentDocument?.body;
+  if (!body) return;
+
+  const syncHeight = () => {
+    if (isCancelled()) return;
+    const h = Math.min(body.scrollHeight, MAX_HEIGHT);
+    if (h > 0) {
+      setHeight(h);
+      iframe.style.height = `${h}px`;
+    }
+  };
+
+  syncHeight();
+
+  const ro = new ResizeObserver(syncHeight);
+  ro.observe(body);
+  roRef.current = ro;
+}
+
+/** On iframe load, clear the loading state and begin auto-sizing to content on the next frame. */
+function attachAutoSizeOnLoad(
+  iframe: HTMLIFrameElement,
+  isCancelled: () => boolean,
+  setLoading: (v: boolean) => void,
+  setHeight: (h: number) => void,
+  roRef: { current: ResizeObserver | null },
+): void {
+  iframe.addEventListener(
+    "load",
+    () => {
+      if (isCancelled()) return;
+      setLoading(false);
+
+      requestAnimationFrame(() => {
+        if (isCancelled()) return;
+        observeContentHeight(iframe, isCancelled, setHeight, roRef);
+      });
+    },
+    { once: true },
+  );
+}
+
 export function InlineAppView({ appName, resourceUri, toolResult }: InlineAppViewProps) {
   // Separate ref for iframe DOM — never let React manage this node's children
   const iframeContainerRef = useRef<HTMLDivElement>(null);
@@ -62,10 +119,7 @@ export function InlineAppView({ appName, resourceUri, toolResult }: InlineAppVie
 
         // Inject auto-sizing CSS before creating the iframe so full-page app
         // templates don't expand to viewport height when rendered inline.
-        const headPattern = /<head([^>]*)>/i;
-        const sizedHtml = headPattern.test(html)
-          ? html.replace(headPattern, (m) => `${m}\n${INLINE_SIZING_CSS}`)
-          : `${INLINE_SIZING_CSS}\n${html}`;
+        const sizedHtml = buildSizedHtml(html);
 
         const iframe = createAppIframe(sizedHtml, appName, {
           connectDomains: metaUi?.csp?.connectDomains,
@@ -105,37 +159,8 @@ export function InlineAppView({ appName, resourceUri, toolResult }: InlineAppVie
         // After the iframe loads: auto-size based on actual rendered content.
         // ResizeObserver on the body fires whenever content height changes,
         // so async data loads and dynamic content are handled automatically.
-        iframe.addEventListener(
-          "load",
-          () => {
-            if (cancelled) return;
-            setLoading(false);
-
-            requestAnimationFrame(() => {
-              if (cancelled) return;
-              const body = iframe.contentDocument?.body;
-              if (!body) return;
-
-              const syncHeight = () => {
-                if (cancelled) return;
-                const h = Math.min(body.scrollHeight, MAX_HEIGHT);
-                if (h > 0) {
-                  setHeight(h);
-                  iframe.style.height = `${h}px`;
-                }
-              };
-
-              syncHeight();
-
-              const ro = new ResizeObserver(syncHeight);
-              ro.observe(body);
-              roRef.current = ro;
-            });
-
-            // Tool result is sent when the widget confirms handshake via onInitialized callback
-          },
-          { once: true },
-        );
+        // Tool result is sent separately when the widget confirms handshake via onInitialized.
+        attachAutoSizeOnLoad(iframe, () => cancelled, setLoading, setHeight, roRef);
       } catch (err) {
         if (cancelled) return;
         const msg = err instanceof Error ? err.message : "Failed to load inline view";
