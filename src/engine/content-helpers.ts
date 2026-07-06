@@ -65,6 +65,24 @@ function isUserOnly(block: ContentBlock): boolean {
   return annotations.audience.includes("user") && !annotations.audience.includes("assistant");
 }
 
+/** Char-level size of an embedded `resource` block's inline text or blob payload. */
+function resourceBlockSize(block: ContentBlock): number {
+  const res = (block as Record<string, unknown>).resource as Record<string, unknown> | undefined;
+  if (typeof res?.text === "string") return res.text.length;
+  if (typeof res?.blob === "string") return res.blob.length;
+  return 0;
+}
+
+/** Char-level size contribution of a single ContentBlock, by block type. */
+function blockSize(block: ContentBlock): number {
+  if (block.type === "text" && "text" in block) return (block as TextContent).text.length;
+  if (block.type === "image" && "data" in block) {
+    return ((block as Record<string, unknown>).data as string)?.length ?? 0;
+  }
+  if (block.type === "resource" && "resource" in block) return resourceBlockSize(block);
+  return JSON.stringify(block).length;
+}
+
 /**
  * Estimate the total char-level size of a ContentBlock array.
  * Used to guard against oversized tool results before they propagate
@@ -73,19 +91,7 @@ function isUserOnly(block: ContentBlock): boolean {
 export function estimateContentSize(blocks: ContentBlock[]): number {
   let size = 0;
   for (const block of blocks) {
-    if (block.type === "text" && "text" in block) {
-      size += (block as TextContent).text.length;
-    } else if (block.type === "image" && "data" in block) {
-      size += ((block as Record<string, unknown>).data as string)?.length ?? 0;
-    } else if (block.type === "resource" && "resource" in block) {
-      const res = (block as Record<string, unknown>).resource as
-        | Record<string, unknown>
-        | undefined;
-      if (typeof res?.text === "string") size += res.text.length;
-      else if (typeof res?.blob === "string") size += res.blob.length;
-    } else {
-      size += JSON.stringify(block).length;
-    }
+    size += blockSize(block);
   }
   return size;
 }
