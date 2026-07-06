@@ -45,6 +45,7 @@ import {
   deriveBundleFromSkillPath,
   type Layer3SkillEntry,
   type TracedLayer,
+  type TracedSubItem,
   type WorkspaceContext,
   wrapContained,
 } from "../../prompt/compose.ts";
@@ -110,12 +111,7 @@ export function createComposeSource(runtime: Runtime, eventSink: EventSink): Mcp
           // conversation in scope (set by `runtime.chat()` via RequestContext).
           // Without either, fail explicitly: the tool can't compose for
           // "no conversation in particular."
-          const argConvId =
-            typeof args.conversation_id === "string" && args.conversation_id.length > 0
-              ? args.conversation_id
-              : undefined;
-          const ctxConvId = getRequestContext()?.conversationId;
-          const convId = argConvId ?? ctxConvId;
+          const convId = resolveConvId(args);
           if (!convId) {
             return errorResult(
               "conversation_id is required when called outside a chat — no current " +
@@ -149,7 +145,7 @@ export function createComposeSource(runtime: Runtime, eventSink: EventSink): Mcp
             isError: false,
           };
         } catch (err) {
-          return errorResult(err instanceof Error ? err.message : String(err));
+          return errorResult(errorMessage(err));
         }
       },
     },
@@ -310,19 +306,15 @@ async function composeHistorical(
     throw new Error(`Conversation not found: ${convId}`);
   }
 
-  const skillsLoaded = events.find(
-    (e): e is SkillsLoadedEvent => e.type === "skills.loaded" && e.runId === runId,
-  );
-  // Read for `totalTokens` only — the run's full prompt token count is the
-  // honest answer for historical mode (vs. just the L3 sum from
-  // skillsLoaded). The event's other fields (per-source breakdown,
-  // exclusions) are recorded but intentionally not surfaced here; the
-  // L3-only view is the design contract for historical mode v1, and
-  // surfacing the rest would imply we can reconstruct the layers we can't.
-  // A future "rich historical mode" PR could expand this.
-  const contextAssembled = events.find(
-    (e): e is ContextAssembledEvent => e.type === "context.assembled" && e.runId === runId,
-  );
+  const skillsLoaded = findSkillsLoaded(events, runId);
+  // `context.assembled` is read for `totalTokens` only — the run's full
+  // prompt token count is the honest answer for historical mode (vs. just
+  // the L3 sum from skillsLoaded). The event's other fields (per-source
+  // breakdown, exclusions) are recorded but intentionally not surfaced
+  // here; the L3-only view is the design contract for historical mode v1,
+  // and surfacing the rest would imply we can reconstruct the layers we
+  // can't. A future "rich historical mode" PR could expand this.
+  const contextAssembled = findContextAssembled(events, runId);
 
   if (!skillsLoaded && !contextAssembled) {
     throw new Error(
@@ -338,83 +330,133 @@ async function composeHistorical(
       "Drop `run_id` for live mode to see the full current composition.",
   ];
 
-  const layers: TracedLayer[] = [];
-  let totalTokens = 0;
+  // Reconstruct the layer-3 layer from the recorded event (appending any
+  // per-skill drift warnings). No `skills.loaded` → no layers.
+  const l3 = skillsLoaded ? buildLayer3Layer(skillsLoaded, runId, warnings) : null;
+  const layers: TracedLayer[] = l3 ? [l3.layer] : [];
 
-  if (skillsLoaded) {
-    const subItems: TracedLayer["subItems"] = [];
-    const bodyRows: string[] = [`## Skills (historical, run ${runId})`, ""];
-
-    for (const entry of skillsLoaded.skills) {
-      const audit = auditL3Skill(entry);
-      if (audit.warning) warnings.push(audit.warning);
-      subItems.push({
-        kind: "layer3_skill",
-        id: entry.id,
-        source: audit.body !== null ? entry.id : `${entry.id} (body unavailable)`,
-        ...(audit.bundle ? { bundle: audit.bundle } : {}),
-        metadata: {
-          scope: entry.scope,
-          loadedBy: entry.loadedBy,
-          reason: entry.reason,
-          tokens: entry.tokens,
-          recordedHash: entry.contentHash,
-          hashStatus: audit.hashStatus,
-          ...(audit.snapshotPath ? { snapshotPath: audit.snapshotPath } : {}),
-        },
-      });
-      if (audit.body !== null) {
-        bodyRows.push(`### ${entry.id}`);
-        bodyRows.push(`_scope: ${entry.scope}; loaded: ${entry.loadedBy} — ${entry.reason}_`);
-        bodyRows.push(`_hash: ${audit.hashStatus}_`);
-        bodyRows.push("");
-        bodyRows.push(wrapContained("layer3-skill", audit.body));
-        bodyRows.push("");
-      }
-      totalTokens += entry.tokens;
-    }
-
-    layers.push({
-      kind: "layer3_skills",
-      segment: "stable",
-      id: "nb:layer3-skills",
-      source: `layer 3 skills as of run ${runId}`,
-      text: bodyRows.join("\n"),
-      tokens: skillsLoaded.totalTokens,
-      subItems,
-    });
-  }
-
-  // If context.assembled gave us a more accurate total-token count for the
-  // run, prefer it (skillsLoaded.totalTokens is just the L3 sum).
-  if (contextAssembled?.totalTokens) {
-    totalTokens = contextAssembled.totalTokens;
-  }
-
-  // Prefix the joined text with a banner so anyone reading `text` directly
-  // (instead of the structured `layers` array) sees this is a partial
-  // reconstruction, not the full prompt as recorded. Live mode's `text`
-  // IS the full prompt; historical mode's `text` is layer-3-only by design,
-  // and a programmatic caller treating it as "the prompt" without reading
-  // `warnings[]` would silently get an L3 slice.
-  const HISTORICAL_BANNER =
-    "[historical mode — layer 3 only. Identity, prefs, overlays, apps, focused-app, " +
-    "and app-state are not reconstructed from events. Use live mode for the full " +
-    "current composition; see warnings[] for details.]";
-  const composedText =
-    layers.length > 0
-      ? `${HISTORICAL_BANNER}\n\n---\n\n${layers.map((l) => l.text).join("\n\n---\n\n")}`
-      : HISTORICAL_BANNER;
+  // Prefer context.assembled's total (the full run prompt) when present and
+  // non-zero; else fall back to the L3 entry-token sum (0 when no skills
+  // loaded). skillsLoaded.totalTokens is just the L3 sum, so the layer's own
+  // `tokens` carries it while the response total prefers the run-wide count.
+  const totalTokens = contextAssembled?.totalTokens || l3?.entryTokensSum || 0;
 
   return {
     mode: "historical",
     conversationId: convId,
     runId,
     totalTokens,
-    text: composedText,
+    text: buildHistoricalText(layers),
     layers,
     warnings,
   };
+}
+
+/** Find the run's recorded `skills.loaded` event, or undefined. */
+function findSkillsLoaded(
+  events: ConversationEvent[],
+  runId: string,
+): SkillsLoadedEvent | undefined {
+  return events.find(
+    (e): e is SkillsLoadedEvent => e.type === "skills.loaded" && e.runId === runId,
+  );
+}
+
+/** Find the run's recorded `context.assembled` event, or undefined. */
+function findContextAssembled(
+  events: ConversationEvent[],
+  runId: string,
+): ContextAssembledEvent | undefined {
+  return events.find(
+    (e): e is ContextAssembledEvent => e.type === "context.assembled" && e.runId === runId,
+  );
+}
+
+/**
+ * Reconstruct the layer-3 skills layer from a recorded `skills.loaded`
+ * event: audit each skill against its current source, collect per-skill
+ * subItems and body rows, and append any drift warnings. Returns the layer
+ * plus the summed per-entry token count.
+ */
+function buildLayer3Layer(
+  skillsLoaded: SkillsLoadedEvent,
+  runId: string,
+  warnings: string[],
+): { layer: TracedLayer; entryTokensSum: number } {
+  const subItems: TracedLayer["subItems"] = [];
+  const bodyRows: string[] = [`## Skills (historical, run ${runId})`, ""];
+  let entryTokensSum = 0;
+
+  for (const entry of skillsLoaded.skills) {
+    const audit = auditL3Skill(entry);
+    if (audit.warning) warnings.push(audit.warning);
+    subItems.push(auditToSubItem(entry, audit));
+    bodyRows.push(...layer3BodyRows(entry, audit));
+    entryTokensSum += entry.tokens;
+  }
+
+  const layer: TracedLayer = {
+    kind: "layer3_skills",
+    segment: "stable",
+    id: "nb:layer3-skills",
+    source: `layer 3 skills as of run ${runId}`,
+    text: bodyRows.join("\n"),
+    tokens: skillsLoaded.totalTokens,
+    subItems,
+  };
+  return { layer, entryTokensSum };
+}
+
+/** Shape a recorded skill entry and its audit into a layer-3 subItem. */
+function auditToSubItem(
+  entry: SkillsLoadedEvent["skills"][number],
+  audit: L3SkillAudit,
+): TracedSubItem {
+  return {
+    kind: "layer3_skill",
+    id: entry.id,
+    source: audit.body !== null ? entry.id : `${entry.id} (body unavailable)`,
+    ...(audit.bundle ? { bundle: audit.bundle } : {}),
+    metadata: {
+      scope: entry.scope,
+      loadedBy: entry.loadedBy,
+      reason: entry.reason,
+      tokens: entry.tokens,
+      recordedHash: entry.contentHash,
+      hashStatus: audit.hashStatus,
+      ...(audit.snapshotPath ? { snapshotPath: audit.snapshotPath } : {}),
+    },
+  };
+}
+
+/** Markdown body rows for one skill; empty when the body isn't available. */
+function layer3BodyRows(entry: SkillsLoadedEvent["skills"][number], audit: L3SkillAudit): string[] {
+  if (audit.body === null) return [];
+  return [
+    `### ${entry.id}`,
+    `_scope: ${entry.scope}; loaded: ${entry.loadedBy} — ${entry.reason}_`,
+    `_hash: ${audit.hashStatus}_`,
+    "",
+    wrapContained("layer3-skill", audit.body),
+    "",
+  ];
+}
+
+/**
+ * Join the historical layer texts under a banner marking this as a
+ * layer-3-only partial reconstruction (banner alone when no layers). Live
+ * mode's `text` is the full prompt; historical `text` is L3-only by design,
+ * so a programmatic caller treating it as "the prompt" without reading
+ * `warnings[]` would silently get an L3 slice.
+ */
+function buildHistoricalText(layers: TracedLayer[]): string {
+  const HISTORICAL_BANNER =
+    "[historical mode — layer 3 only. Identity, prefs, overlays, apps, focused-app, " +
+    "and app-state are not reconstructed from events. Use live mode for the full " +
+    "current composition; see warnings[] for details.]";
+  return layers.length > 0
+    ? `${HISTORICAL_BANNER}\n\n---\n\n${layers.map((l) => l.text).join("\n\n---\n\n")}`
+    : HISTORICAL_BANNER;
 }
 
 interface L3SkillAudit {
@@ -630,6 +672,20 @@ export function applyBundleFilter(response: ComposeResponse, bundle: string): vo
 
 function errorResult(message: string): ToolResult {
   return { content: textContent(message), isError: true };
+}
+
+/** Resolve the target conversation id: a non-empty `conversation_id` arg wins, else the in-scope conversation. */
+function resolveConvId(args: ComposeArgs): string | undefined {
+  const argConvId =
+    typeof args.conversation_id === "string" && args.conversation_id.length > 0
+      ? args.conversation_id
+      : undefined;
+  return argConvId ?? getRequestContext()?.conversationId;
+}
+
+/** Extract a human-readable message from a thrown value. */
+function errorMessage(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
 }
 
 /**
