@@ -24,8 +24,10 @@ import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { NoopEventSink } from "../../src/adapters/noop-events.ts";
+import { reconstructMessages } from "../../src/conversation/event-reconstructor.ts";
 import { Runtime } from "../../src/runtime/runtime.ts";
 import { McpSource } from "../../src/tools/mcp-source.ts";
+import { namespacedToolName } from "../../src/tools/namespace.ts";
 import { createEchoModel } from "../helpers/echo-model.ts";
 import { TEST_WORKSPACE_ID, provisionTestWorkspace } from "../helpers/test-workspace.ts";
 
@@ -283,5 +285,135 @@ describe("bundle-skill adapter — end-to-end", () => {
       (s) => s.id === "skill://test/SKILL.md",
     );
     expect(bundleEntry).toBeUndefined();
+  });
+});
+
+/**
+ * Mid-turn promotion path.
+ *
+ * Turn-start Layer-3 selection only matches the tools active at turn start, so a
+ * server whose tool is behind PROGRESSIVE DISCLOSURE — activated mid-turn via
+ * `nb__manage_tools` — never matches, and its bundle skill never loads. The fix
+ * feeds bundle skills into the surface-once connector-skill channel and fires it
+ * on tool PROMOTION, so the guidance arrives the moment the tool goes live.
+ *
+ * This uses its own Runtime with a SCRIPTED model (the shared capturing model
+ * has no response queue): turn 1 promotes the fixture tool, turn 2 finishes
+ * WITHOUT calling it — proving the skill surfaces on promotion, before any
+ * tool.start.
+ */
+const promoDir = join(tmpdir(), `nimblebrain-bundle-skills-promo-${Date.now()}`);
+let promoRuntime: Runtime;
+let promoSource: McpSource;
+
+// The fixture tool is not in the turn-start active set (behind progressive
+// disclosure); the model promotes it by its workspace-namespaced name.
+const PROMOTED_TOOL = namespacedToolName(TEST_WORKSPACE_ID, "ai-nimblebrain-test-mcp__doit");
+const MANAGE_TOOLS = namespacedToolName(TEST_WORKSPACE_ID, "nb__manage_tools");
+
+describe("bundle-skill adapter — mid-turn tool promotion", () => {
+  beforeAll(async () => {
+    mkdirSync(promoDir, { recursive: true });
+
+    const model = createEchoModel({
+      responses: [
+        // Turn 1: promote the fixture tool mid-turn. Its tools are NOT in the
+        // turn-start active set, so turn-start Layer-3 selection missed the skill.
+        {
+          toolCalls: [
+            {
+              toolCallId: "call-promote",
+              toolName: MANAGE_TOOLS,
+              input: JSON.stringify({ add: [PROMOTED_TOOL] }),
+            },
+          ],
+        },
+        // Turn 2: finish WITHOUT calling the promoted tool — the skill must
+        // already have surfaced on promotion (not at a later tool.start).
+        { text: "done" },
+      ],
+    });
+
+    promoRuntime = await Runtime.start({
+      model: { provider: "custom", adapter: model },
+      noDefaultBundles: true,
+      logging: { disabled: true },
+      workDir: promoDir,
+      telemetry: { enabled: false },
+    });
+    await provisionTestWorkspace(promoRuntime);
+
+    const bundleDir = createSkillFixtureBundle(join(promoDir, "bundle"));
+    promoSource = new McpSource(
+      "ai-nimblebrain-test-mcp",
+      {
+        type: "stdio",
+        spawn: {
+          command: "node",
+          args: [join(bundleDir, "server.cjs")],
+          env: process.env as Record<string, string>,
+        },
+      },
+      new NoopEventSink(),
+    );
+    await promoSource.start();
+    promoRuntime.getRegistryForWorkspace(TEST_WORKSPACE_ID).addSource(promoSource);
+  });
+
+  afterAll(async () => {
+    try {
+      await promoSource.stop();
+    } catch {
+      // already stopped
+    }
+    await promoRuntime.shutdown();
+    if (existsSync(promoDir)) rmSync(promoDir, { recursive: true });
+  });
+
+  it("surfaces the bundle skill when its tool is promoted mid-turn (not in the turn-start set)", async () => {
+    const chat = await promoRuntime.chat({
+      workspaceId: TEST_WORKSPACE_ID,
+      message: "do the thing",
+      // Pre-filter the turn-start active set down to system tools only: the
+      // fixture tool is excluded, so it's behind progressive disclosure. It stays
+      // in the workspace registry, so `nb__manage_tools` can still promote it.
+      allowedTools: ["nb__manage_tools"],
+    });
+
+    const store = await promoRuntime.resolveConversationStore(chat.conversationId);
+    const events = await store!.readEvents(chat.conversationId);
+
+    // Regression precondition: the bundle skill did NOT load at turn start — its
+    // tool wasn't active, so turn-start Layer-3 selection couldn't match it.
+    const skillsLoaded = events.find((e) => e.type === "skills.loaded") as unknown as
+      | { skills: Array<{ id: string }> }
+      | undefined;
+    const turnStartBundle = skillsLoaded?.skills.find((s) => s.id === "skill://test/SKILL.md");
+    expect(turnStartBundle).toBeUndefined();
+
+    // The fixture tool was promoted mid-turn via nb__manage_tools (tool.promoted
+    // itself is transient telemetry the store doesn't persist; the manage_tools
+    // result is the persisted proof it went live).
+    const manageDone = events.find(
+      (e) => e.type === "tool.done" && (e as unknown as { name?: string }).name === MANAGE_TOOLS,
+    ) as unknown as { output?: string } | undefined;
+    expect(manageDone?.output).toContain("Promoted 1/1");
+
+    // The bundle skill surfaced via the connector-skill channel ON PROMOTION —
+    // this is the exact regression the fix closes.
+    const injected = events.find((e) => e.type === "connector.skill.injected") as unknown as
+      | { skillName: string; skillBody: string; scope: string; toolName: string }
+      | undefined;
+    expect(injected).toBeDefined();
+    expect(injected?.skillName).toBe("bundle:ai-nimblebrain-test-mcp:test");
+    expect(injected?.skillBody).toContain("How to use the test server");
+
+    // And it rides the conversation history as a `<connector-skill>` block —
+    // the surface-once channel, never the cached system prefix.
+    const historyText = reconstructMessages(events)
+      .flatMap((m) => m.content)
+      .map((p) => ("text" in p ? p.text : ""))
+      .join("\n");
+    expect(historyText).toContain("<connector-skill");
   });
 });

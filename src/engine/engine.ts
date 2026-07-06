@@ -663,6 +663,19 @@ export class AgentEngine {
         promotedLastUsed.set(toolName, ++useCounter);
         this.events.emit({ type: "tool.promoted", data: { runId, toolName } });
 
+        // A promoted tool makes its server's capability live mid-turn — surface that
+        // server's skill guidance once, now, so the model has the workflow before it
+        // starts using the tools (not only when the first one is called at tool.start).
+        // Delivery rides the history tail (cache-safe — never the frozen prefix), so the
+        // guidance reaches the model on the NEXT turn — matching how progressive disclosure
+        // unfolds (promote in turn N, call in N+1), not same-iteration.
+        this.injectConnectorSkillOverlays(
+          runId,
+          toolName,
+          connectorSkillCandidates,
+          injectedConnectorSkills,
+        );
+
         // Backstop: cap active tools by evicting LRU agent-promoted entries.
         // Initial tools are exempt because they're not in `promotedLastUsed`.
         this.evictPromotedToolsToCap(
