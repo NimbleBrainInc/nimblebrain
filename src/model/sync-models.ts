@@ -15,6 +15,26 @@ const API_URL = "https://models.dev/api.json";
 const SUPPORTED_PROVIDERS = ["anthropic", "openai", "google"];
 const OUTPUT_PATH = join(dirname(new URL(import.meta.url).pathname), "catalog-data.json");
 
+// Models present upstream that the platform deliberately does not surface —
+// excluded from the catalog entirely, so they can't be selected in the picker
+// or pointed at by a tenant model slot. Format: "<provider>:<modelId>".
+const MANUAL_EXCLUSIONS = new Set<string>([
+  // Anthropic's premium research tier ($10/$50 per 1M) — not offered on the platform.
+  "anthropic:claude-fable-5",
+]);
+
+// Upstream reports each model's maximum limits, but some maxima are only
+// reachable with a capability the platform doesn't enable. Sonnet 4.5's 1M
+// context requires the `context-1m-2025-08-07` beta header, which the runtime
+// never sends (the provider is built with a bare `createAnthropic({ apiKey })`).
+// Pin such models to the limit the platform can actually use so the message
+// budget resolver doesn't over-pack and trip a provider 400. Sonnet 4.6+ ship
+// 1M as GA (headerless) and are left untouched. Format: "<provider>:<modelId>".
+const MANUAL_LIMIT_OVERRIDES: Record<string, { context?: number; output?: number }> = {
+  "anthropic:claude-sonnet-4-5": { context: 200000 },
+  "anthropic:claude-sonnet-4-5-20250929": { context: 200000 },
+};
+
 // Models the upstream API hasn't flagged yet but we know are scheduled for shutdown.
 // Format: "<provider>:<modelId>". Remove an entry once models.dev catches up.
 const MANUAL_DEPRECATIONS = new Set<string>([
@@ -39,7 +59,7 @@ const MANUAL_DEPRECATIONS = new Set<string>([
   "openai:o4-mini",
 ]);
 
-interface RawModel {
+export interface RawModel {
   id: string;
   name: string;
   family?: string;
@@ -67,7 +87,7 @@ interface RawModel {
   status?: string;
 }
 
-interface RawProvider {
+export interface RawProvider {
   id: string;
   name: string;
   models: Record<string, RawModel>;
@@ -145,7 +165,7 @@ function toCatalogModel(providerId: string, modelId: string, raw: RawModel): Cat
 }
 
 /** Build a provider's catalog models, sorted by ID and skipping models without pricing. */
-function buildProviderModels(
+export function buildProviderModels(
   providerId: string,
   provider: RawProvider,
 ): Record<string, CatalogModel> {
@@ -156,7 +176,12 @@ function buildProviderModels(
   for (const [modelId, raw] of entries) {
     // Skip models with no cost data (embeddings, etc. without pricing)
     if (!raw.cost?.input && !raw.cost?.output) continue;
-    models[modelId] = toCatalogModel(providerId, modelId, raw);
+    // Skip models the platform deliberately does not surface.
+    if (MANUAL_EXCLUSIONS.has(`${providerId}:${modelId}`)) continue;
+    const model = toCatalogModel(providerId, modelId, raw);
+    const limitOverride = MANUAL_LIMIT_OVERRIDES[`${providerId}:${modelId}`];
+    if (limitOverride) model.limits = { ...model.limits, ...limitOverride };
+    models[modelId] = model;
   }
 
   return models;
@@ -197,7 +222,10 @@ async function main() {
   console.log(`\nWrote ${OUTPUT_PATH} (${totalModels} models, ${sizeKB}KB)`);
 }
 
-main().catch((err) => {
-  console.error("Error:", err.message);
-  process.exit(1);
-});
+// Guard so importing this module (e.g. from tests) doesn't hit the network.
+if (import.meta.main) {
+  main().catch((err) => {
+    console.error("Error:", err.message);
+    process.exit(1);
+  });
+}
