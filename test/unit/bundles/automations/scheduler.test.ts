@@ -123,6 +123,13 @@ function createMockExecutor(result?: AutomationRun): Executor {
 	}) as Executor;
 }
 
+/** Executor that throws — exercises `dispatchRun`'s catch/classification path. */
+function createThrowingExecutor(err: unknown): Executor {
+	return mock(async () => {
+		throw err;
+	}) as Executor;
+}
+
 /** Create a delayed executor that resolves after a given delay (or never, until signaled). */
 function createBlockingExecutor(): {
 	executor: Executor;
@@ -675,6 +682,35 @@ describe("Scheduler — backoff", () => {
 
 	afterEach(() => {
 		rmSync(tmpDir, { recursive: true, force: true });
+	});
+
+	it("records a membership-revoked run as skipped, not a failure (self-heals)", async () => {
+		// The runtime denies an automation whose owner was removed from its
+		// provenance workspace by throwing an error with this stable code. The
+		// scheduler must classify it as SKIPPED, so it does NOT increment
+		// consecutiveErrors or trip the auto-disable — the automation resumes the
+		// moment the owner is re-added.
+		const auto = makeAutomation({
+			consecutiveErrors: 3,
+			nextRunAt: new Date(Date.now() - 1000).toISOString(),
+		});
+		const defs = new Map<string, Automation>();
+		defs.set(auto.id, auto);
+		seedDefs(tmpDir, defs);
+
+		const revoked = Object.assign(new Error("owner removed from workspace"), {
+			code: "workspace_membership_revoked",
+		});
+		const scheduler = new Scheduler(createThrowingExecutor(revoked), { workDir: tmpDir });
+		scheduler.start();
+		const run = await scheduler.runNow(WS, OWNER, auto.id);
+		scheduler.stop();
+
+		expect(run?.status).toBe("skipped");
+		const updated = defOf(scheduler, auto.id)!;
+		// consecutiveErrors unchanged (not bumped to 4), automation still enabled.
+		expect(updated.consecutiveErrors).toBe(3);
+		expect(updated.enabled).toBe(true);
 	});
 
 	it("after 1 failure, next run delayed by 30s", async () => {
