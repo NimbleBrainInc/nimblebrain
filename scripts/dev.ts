@@ -85,21 +85,24 @@ async function waitForHealth(port: number, opts: { timeoutMs: number }): Promise
   throw new Error(`API did not become ready within ${opts.timeoutMs}ms`);
 }
 
-async function runDev(options: DevOptions): Promise<void> {
-  const { port, noWeb, config, debug, app: appPath, appPort = 5173 } = options;
-  const children: Subprocess[] = [];
-
-  // The runtime entry, relative to this script (scripts/ -> ../src/cli/index.ts).
-  const cliEntry = join(import.meta.dir, "..", "src", "cli", "index.ts");
-
-  // --- API server with bun --watch ---
+/** Build the `bun --watch` API-server argv from the dev options. */
+function buildApiArgs(
+  cliEntry: string,
+  port: number,
+  config: string | undefined,
+  debug: boolean,
+): string[] {
   const apiArgs = ["bun", "--watch", cliEntry, "serve", "--port", String(port)];
   // Only pass --config if explicitly provided — otherwise let serve use defaults
   if (config) {
     apiArgs.push("--config", resolve(config));
   }
   if (debug) apiArgs.push("--debug");
+  return apiArgs;
+}
 
+/** Build the dev-mode env, auto-filling NB_WEB_URL for the post-OAuth SPA bounce. */
+function buildDevEnv(noWeb: boolean): Record<string, string | undefined> {
   // Auto-derive NB_WEB_URL so the API knows where to bounce the user
   // back after an OAuth callback. Without this, the callback can only
   // redirect to NB_API_URL (the API port), which doesn't serve the SPA
@@ -114,20 +117,18 @@ async function runDev(options: DevOptions): Promise<void> {
     const webPort = process.env.NB_WEB_PORT ?? "27246";
     devEnv.NB_WEB_URL = `http://localhost:${webPort}`;
   }
+  return devEnv;
+}
 
-  log.info("[dev] Starting API server with file watching...");
-  const apiProc = spawn({
-    cmd: apiArgs,
-    stdout: "pipe",
-    stderr: "pipe",
-    env: devEnv,
-  });
-  children.push(apiProc);
+/** Track a child for shutdown and stream its stdout/stderr under a log prefix. */
+function pipeChild(children: Subprocess[], proc: Subprocess, prefix: string): void {
+  children.push(proc);
+  prefixLines(proc.stdout as ReadableStream<Uint8Array>, prefix, process.stdout);
+  prefixLines(proc.stderr as ReadableStream<Uint8Array>, prefix, process.stderr);
+}
 
-  // Pipe API output with [api] prefix
-  prefixLines(apiProc.stdout as ReadableStream<Uint8Array>, "[api]", process.stdout);
-  prefixLines(apiProc.stderr as ReadableStream<Uint8Array>, "[api]", process.stderr);
-
+/** Gate on API readiness; on timeout, SIGTERM the API child and exit the process. */
+async function waitForApiReadyOrExit(apiProc: Subprocess, port: number): Promise<void> {
   // Gate Vite spawns on API readiness. Without this, Vite proxies fire requests
   // into a not-yet-listening API and the user sees ECONNREFUSED stack traces
   // until bundles finish loading.
@@ -144,64 +145,82 @@ async function runDev(options: DevOptions): Promise<void> {
     }
     process.exit(1);
   }
+}
 
-  // --- Web dev server (unless --no-web) ---
-  let webProc: Subprocess | undefined;
+/** Start the Vite web dev server unless disabled or missing, tracking it under [web]. */
+function startWebServer(noWeb: boolean, children: Subprocess[]): Subprocess | undefined {
+  if (noWeb) return undefined;
+
   const webDir = join(process.cwd(), "web");
-
-  if (!noWeb) {
-    if (!existsSync(join(webDir, "package.json"))) {
-      log.info("[dev] Warning: web/package.json not found. Skipping web dev server.");
-    } else {
-      log.info("[dev] Starting web dev server...");
-      webProc = spawn({
-        cmd: ["bun", "run", "dev"],
-        cwd: webDir,
-        stdout: "pipe",
-        stderr: "pipe",
-        env: { ...process.env },
-      });
-      children.push(webProc);
-
-      prefixLines(webProc.stdout as ReadableStream<Uint8Array>, "[web]", process.stdout);
-      prefixLines(webProc.stderr as ReadableStream<Uint8Array>, "[web]", process.stderr);
-    }
+  if (!existsSync(join(webDir, "package.json"))) {
+    log.info("[dev] Warning: web/package.json not found. Skipping web dev server.");
+    return undefined;
   }
 
-  // --- App dev server (when --app is specified) ---
-  if (appPath) {
-    const resolvedAppPath = resolve(appPath);
-    const manifestPath = join(resolvedAppPath, "manifest.json");
+  log.info("[dev] Starting web dev server...");
+  const webProc = spawn({
+    cmd: ["bun", "run", "dev"],
+    cwd: webDir,
+    stdout: "pipe",
+    stderr: "pipe",
+    env: { ...process.env },
+  });
+  pipeChild(children, webProc, "[web]");
+  return webProc;
+}
 
-    if (!existsSync(manifestPath)) {
-      log.info(`[dev] Warning: ${manifestPath} not found. Skipping app dev server.`);
-    } else {
-      try {
-        const manifest = JSON.parse(readFileSync(manifestPath, "utf-8"));
-        const appNameFromManifest = manifest.name ?? "unknown-app";
-        const devUrl = `http://localhost:${appPort}`;
+/** Start the app's Vite dev server for --app, registering dev mode and tracking it under [app]. */
+function startAppServer(
+  appPath: string | undefined,
+  appPort: number,
+  children: Subprocess[],
+): void {
+  if (!appPath) return;
 
-        setAppDevMode(appNameFromManifest, devUrl);
-        log.info(`[dev] Starting app dev server for ${appNameFromManifest} on port ${appPort}...`);
-
-        const appProc = spawn({
-          cmd: ["npx", "vite", "--port", String(appPort)],
-          cwd: resolvedAppPath,
-          stdout: "pipe",
-          stderr: "pipe",
-          env: { ...process.env },
-        });
-        children.push(appProc);
-
-        prefixLines(appProc.stdout as ReadableStream<Uint8Array>, "[app]", process.stdout);
-        prefixLines(appProc.stderr as ReadableStream<Uint8Array>, "[app]", process.stderr);
-      } catch (err) {
-        log.info(`[dev] Failed to read app manifest: ${err}`);
-      }
-    }
+  const resolvedAppPath = resolve(appPath);
+  const manifestPath = join(resolvedAppPath, "manifest.json");
+  if (!existsSync(manifestPath)) {
+    log.info(`[dev] Warning: ${manifestPath} not found. Skipping app dev server.`);
+    return;
   }
 
-  // --- Shutdown handling ---
+  try {
+    const manifest = JSON.parse(readFileSync(manifestPath, "utf-8"));
+    const appNameFromManifest = manifest.name ?? "unknown-app";
+    const devUrl = `http://localhost:${appPort}`;
+
+    setAppDevMode(appNameFromManifest, devUrl);
+    log.info(`[dev] Starting app dev server for ${appNameFromManifest} on port ${appPort}...`);
+
+    const appProc = spawn({
+      cmd: ["npx", "vite", "--port", String(appPort)],
+      cwd: resolvedAppPath,
+      stdout: "pipe",
+      stderr: "pipe",
+      env: { ...process.env },
+    });
+    pipeChild(children, appProc, "[app]");
+  } catch (err) {
+    log.info(`[dev] Failed to read app manifest: ${err}`);
+  }
+}
+
+/** Send a signal to every tracked child, ignoring already-dead ones. */
+function signalChildren(children: Subprocess[], signal: "SIGTERM" | "SIGKILL"): void {
+  for (const child of children) {
+    try {
+      child.kill(signal);
+    } catch {
+      // Already dead
+    }
+  }
+}
+
+/**
+ * Install SIGINT/SIGTERM handlers that SIGTERM all children (SIGKILL after 5s);
+ * returns a reader for the shutting-down flag.
+ */
+function installShutdown(children: Subprocess[]): () => boolean {
   let shuttingDown = false;
 
   const shutdown = () => {
@@ -212,23 +231,11 @@ async function runDev(options: DevOptions): Promise<void> {
     shuttingDown = true;
     log.info("\n[dev] Shutting down...");
 
-    for (const child of children) {
-      try {
-        child.kill("SIGTERM");
-      } catch {
-        // Already dead
-      }
-    }
+    signalChildren(children, "SIGTERM");
 
     // Force kill after 5s
     setTimeout(() => {
-      for (const child of children) {
-        try {
-          child.kill("SIGKILL");
-        } catch {
-          // Already dead
-        }
-      }
+      signalChildren(children, "SIGKILL");
       process.exit(1);
     }, 5000);
   };
@@ -236,10 +243,44 @@ async function runDev(options: DevOptions): Promise<void> {
   process.on("SIGINT", shutdown);
   process.on("SIGTERM", shutdown);
 
+  return () => shuttingDown;
+}
+
+async function runDev(options: DevOptions): Promise<void> {
+  const { port, noWeb, config, debug, app: appPath, appPort = 5173 } = options;
+  const children: Subprocess[] = [];
+
+  // The runtime entry, relative to this script (scripts/ -> ../src/cli/index.ts).
+  const cliEntry = join(import.meta.dir, "..", "src", "cli", "index.ts");
+
+  // --- API server with bun --watch ---
+  const apiArgs = buildApiArgs(cliEntry, port, config, debug);
+  const devEnv = buildDevEnv(noWeb);
+
+  log.info("[dev] Starting API server with file watching...");
+  const apiProc = spawn({
+    cmd: apiArgs,
+    stdout: "pipe",
+    stderr: "pipe",
+    env: devEnv,
+  });
+  pipeChild(children, apiProc, "[api]");
+
+  await waitForApiReadyOrExit(apiProc, port);
+
+  // --- Web dev server (unless --no-web) ---
+  const webProc = startWebServer(noWeb, children);
+
+  // --- App dev server (when --app is specified) ---
+  startAppServer(appPath, appPort, children);
+
+  // --- Shutdown handling ---
+  const isShuttingDown = installShutdown(children);
+
   // Wait for API process to exit (bun --watch keeps it alive)
   const apiExitCode = await apiProc.exited;
 
-  if (!shuttingDown) {
+  if (!isShuttingDown()) {
     log.info(`[dev] API server exited with code ${apiExitCode}`);
 
     // Clean up web process if still running
