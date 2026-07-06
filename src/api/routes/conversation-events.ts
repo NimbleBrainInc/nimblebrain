@@ -32,12 +32,45 @@
 
 import { Hono } from "hono";
 import { CONVERSATION_ID_RE } from "../../conversation/types.ts";
+import type { UserIdentity } from "../../identity/provider.ts";
 import { DEV_IDENTITY } from "../../identity/providers/dev.ts";
 import { ConversationCorruptedError } from "../../runtime/errors.ts";
 import { requireAuth } from "../middleware/auth.ts";
 import { errorLog } from "../middleware/error-log.ts";
 import { optionalWorkspace } from "../middleware/workspace.ts";
 import { type AppContext, type AppEnv, apiError } from "../types.ts";
+
+/** Resolve the caller id, falling back to DEV_IDENTITY only when no identity provider is configured. */
+function resolveCallerId(identity: UserIdentity | undefined, ctx: AppContext): string | null {
+  return identity?.id ?? (ctx.runtime.getIdentityProvider() ? null : DEV_IDENTITY.id);
+}
+
+/** Look up a conversation, surfacing a `ConversationCorruptedError` as a value instead of a throw. */
+async function findConversationOrCorrupted(ctx: AppContext, conversationId: string) {
+  return ctx.runtime.findConversation(conversationId).catch((err) => {
+    if (err instanceof ConversationCorruptedError) {
+      return err;
+    }
+    throw err;
+  });
+}
+
+/** Parse the client's `afterSeq` resume cursor, defaulting to 0 for absent or non-finite input. */
+function parseAfterSeq(raw: string | undefined): number {
+  const afterSeq = raw ? Number.parseInt(raw, 10) : 0;
+  return Number.isFinite(afterSeq) ? afterSeq : 0;
+}
+
+/** Wrap an SSE stream in a `Response` with event-stream headers. */
+function sseResponse(stream: ReadableStream<Uint8Array>): Response {
+  return new Response(stream, {
+    headers: {
+      "Content-Type": "text/event-stream",
+      "Cache-Control": "no-cache",
+      Connection: "keep-alive",
+    },
+  });
+}
 
 export function conversationEventRoutes(ctx: AppContext) {
   // Middleware is chained on the route itself, NOT via `.use("*")`. Hono
@@ -63,7 +96,6 @@ export function conversationEventRoutes(ctx: AppContext) {
       if (!CONVERSATION_ID_RE.test(conversationId)) {
         return apiError(400, "bad_request", "Invalid conversationId format");
       }
-      const identity = c.var.identity;
 
       // Resolve the caller id. Authenticated request → identity.id.
       // Dev mode (no identity provider configured) → fall back to
@@ -71,7 +103,7 @@ export function conversationEventRoutes(ctx: AppContext) {
       // under usr_default are readable. Misconfigured production
       // (provider exists but middleware didn't populate identity) →
       // 401 instead of pooling reads under a sentinel user.
-      const callerId = identity?.id ?? (ctx.runtime.getIdentityProvider() ? null : DEV_IDENTITY.id);
+      const callerId = resolveCallerId(c.var.identity, ctx);
       if (!callerId) {
         return apiError(401, "authentication_required", "Authentication required.");
       }
@@ -84,12 +116,7 @@ export function conversationEventRoutes(ctx: AppContext) {
       // files lacking `ownerId` (operator forgot one of the two
       // migrations). Map that to a clean 422 with the migration
       // command in the message instead of letting it bubble as 500.
-      const conversation = await ctx.runtime.findConversation(conversationId).catch((err) => {
-        if (err instanceof ConversationCorruptedError) {
-          return err;
-        }
-        throw err;
-      });
+      const conversation = await findConversationOrCorrupted(ctx, conversationId);
       if (conversation instanceof ConversationCorruptedError) {
         return apiError(422, "conversation_corrupted", conversation.message, {
           conversationId: conversation.conversationId,
@@ -112,12 +139,8 @@ export function conversationEventRoutes(ctx: AppContext) {
 
       // Resume point: the client passes the highest sequence number it has
       // already rendered (0 / absent = full replay of the in-flight turn).
-      const afterSeqRaw = c.req.query("afterSeq");
-      const afterSeq = afterSeqRaw ? Number.parseInt(afterSeqRaw, 10) : 0;
-      const replay = ctx.runtime.getTurnReplay(
-        conversationId,
-        Number.isFinite(afterSeq) ? afterSeq : 0,
-      );
+      const afterSeq = parseAfterSeq(c.req.query("afterSeq"));
+      const replay = ctx.runtime.getTurnReplay(conversationId, afterSeq);
 
       // Create the SSE stream. The manager replays the buffered in-flight turn
       // (events with seq > afterSeq) before registering for live fan-out, so a
@@ -133,13 +156,7 @@ export function conversationEventRoutes(ctx: AppContext) {
         },
       );
 
-      return new Response(stream, {
-        headers: {
-          "Content-Type": "text/event-stream",
-          "Cache-Control": "no-cache",
-          Connection: "keep-alive",
-        },
-      });
+      return sseResponse(stream);
     },
   );
 }
