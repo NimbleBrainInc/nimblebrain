@@ -233,7 +233,7 @@ function createReadResourceTool(getRegistry: () => ToolRegistry): InProcessTool 
         uri: {
           type: "string",
           description:
-            "Resource URI to read (e.g. skill://solar5estrella/usage, ui://myapp/guide, instructions://workspace, <bundle>://instructions).",
+            "Resource URI to read (e.g. skill://myapp/SKILL.md, ui://myapp/guide, instructions://workspace, <bundle>://instructions).",
         },
       },
       required: ["uri"],
