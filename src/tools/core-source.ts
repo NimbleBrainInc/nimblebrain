@@ -183,10 +183,7 @@ function validateModelConfigThinking(
 }
 
 /** All of set_model_config's input validation, in order. */
-function validateModelConfigPatch(
-  input: Record<string, unknown>,
-  runtime: Runtime,
-): string | null {
+function validateModelConfigPatch(input: Record<string, unknown>, runtime: Runtime): string | null {
   return (
     validateModelSlots(input, runtime) ??
     validateModelConfigLimits(input) ??
