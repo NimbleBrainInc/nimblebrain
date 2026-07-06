@@ -39,6 +39,54 @@ function extractSnippet(text: string, matchStart: number, queryLength: number): 
   return snippet;
 }
 
+/** Read a file as UTF-8 text, returning null if it cannot be read. */
+async function readFileSafe(filePath: string): Promise<string | null> {
+  try {
+    return await readFile(filePath, "utf-8");
+  } catch {
+    return null;
+  }
+}
+
+/** Extract plain text from a message JSON line, falling back to the raw line if it is not valid JSON. */
+function extractMessageText(line: string): string {
+  try {
+    const msg = JSON.parse(line) as { content?: unknown };
+    if (typeof msg.content === "string") {
+      return msg.content;
+    }
+    if (Array.isArray(msg.content)) {
+      return msg.content
+        .filter((b: { type?: string; text?: string }) => b.type === "text" && b.text)
+        .map((b: { text: string }) => b.text)
+        .join(" ");
+    }
+  } catch {
+    // Not valid JSON — search raw line
+  }
+  return line;
+}
+
+/** Scan a file's message lines (skipping the line-0 metadata) for the query and build up to MAX_SNIPPETS_PER_CONVERSATION snippets. */
+function collectSnippets(raw: string, query: string, queryLower: string): MatchSnippet[] {
+  // Skip line 0 (metadata), search message lines only
+  const lines = raw.split("\n");
+  const matches: MatchSnippet[] = [];
+
+  for (let i = 1; i < lines.length && matches.length < MAX_SNIPPETS_PER_CONVERSATION; i++) {
+    const line = lines[i]!;
+    if (!line.toLowerCase().includes(queryLower)) continue;
+
+    const text = extractMessageText(line);
+    const pos = text.toLowerCase().indexOf(queryLower);
+    if (pos < 0) continue;
+
+    matches.push({ snippet: extractSnippet(text, pos, query.length) });
+  }
+
+  return matches;
+}
+
 export async function handleSearch(
   input: SearchInput,
   index: ConversationIndex,
@@ -58,49 +106,11 @@ export async function handleSearch(
   for (const entry of allConversations.conversations) {
     if (results.length >= limit) break;
 
-    let raw: string;
-    try {
-      raw = await readFile(entry.filePath, "utf-8");
-    } catch {
-      continue;
-    }
+    const raw = await readFileSafe(entry.filePath);
+    if (raw === null) continue;
+    if (!raw.toLowerCase().includes(queryLower)) continue;
 
-    const rawLower = raw.toLowerCase();
-    if (!rawLower.includes(queryLower)) continue;
-
-    // File contains the query — extract snippets from matching message lines
-    // Skip line 0 (metadata), search message lines only
-    const lines = raw.split("\n");
-    const matches: MatchSnippet[] = [];
-
-    for (let i = 1; i < lines.length && matches.length < MAX_SNIPPETS_PER_CONVERSATION; i++) {
-      const line = lines[i]!;
-      const lineLower = line.toLowerCase();
-      if (!lineLower.includes(queryLower)) continue;
-
-      // Extract plain text from the message JSON
-      let text = line;
-      try {
-        const msg = JSON.parse(line) as { content?: unknown };
-        if (typeof msg.content === "string") {
-          text = msg.content;
-        } else if (Array.isArray(msg.content)) {
-          text = msg.content
-            .filter((b: { type?: string; text?: string }) => b.type === "text" && b.text)
-            .map((b: { text: string }) => b.text)
-            .join(" ");
-        }
-      } catch {
-        // Not valid JSON — search raw line
-      }
-
-      const textLower = text.toLowerCase();
-      const pos = textLower.indexOf(queryLower);
-      if (pos < 0) continue;
-
-      matches.push({ snippet: extractSnippet(text, pos, query.length) });
-    }
-
+    const matches = collectSnippets(raw, query, queryLower);
     if (matches.length > 0) {
       results.push({
         id: entry.id,
