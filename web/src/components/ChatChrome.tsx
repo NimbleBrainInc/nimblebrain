@@ -33,6 +33,62 @@ const DEFAULT_WIDTH = 380;
 const TRANSITION_STANDARD = "300ms cubic-bezier(0.33, 1, 0.68, 1)";
 const TRANSITION_FULLSCREEN = "350ms cubic-bezier(0.4, 0, 0.2, 1)";
 
+/** Fullscreen panel width: it fills the viewport minus the room the sidebar currently occupies. */
+function fullscreenPanelWidth(sidebarState: "expanded" | "collapsed" | "hidden"): string {
+  if (sidebarState === "hidden") return "100%";
+  if (sidebarState === "collapsed") return "calc(100% - var(--sidebar-width-collapsed))";
+  return "calc(100% - var(--sidebar-width))";
+}
+
+/** Resolve the chat panel's rendered width from device, panel, and sidebar state. */
+function resolvePanelWidth({
+  isMobile,
+  isFullscreen,
+  sidebarState,
+  panelWidth,
+}: {
+  isMobile: boolean;
+  isFullscreen: boolean;
+  sidebarState: "expanded" | "collapsed" | "hidden";
+  panelWidth: number;
+}): string | number {
+  if (isMobile) return "100%";
+  if (isFullscreen) return fullscreenPanelWidth(sidebarState);
+  return panelWidth;
+}
+
+/** Floating chat toggle shown when the panel is closed; badges the unread assistant-message count. */
+function ChatToggleButton({
+  visible,
+  unreadCount,
+  onOpen,
+}: {
+  visible: boolean;
+  unreadCount: number;
+  onOpen: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onOpen}
+      className="fixed bottom-6 right-6 z-40 flex items-center justify-center w-12 h-12 rounded-full bg-warm text-warm-foreground shadow-lg hover:bg-warm-hover transition-all duration-200"
+      style={{
+        opacity: visible ? 1 : 0,
+        transition: "opacity 200ms ease-in, background-color 200ms",
+      }}
+      title="Chat (⌘K)"
+      data-testid="chat-chrome-open-button"
+    >
+      <MessageSquare className="w-5 h-5" />
+      {unreadCount > 0 && (
+        <span className="absolute -top-1 -right-1 w-5 h-5 rounded-full bg-destructive text-destructive-foreground text-xs flex items-center justify-center">
+          {unreadCount}
+        </span>
+      )}
+    </button>
+  );
+}
+
 export function ChatChrome() {
   const { panelState, panelWidth, setPanelWidth, openPanel, closePanel, toggleFullscreen } =
     useChatPanelContext();
@@ -100,38 +156,52 @@ export function ChatChrome() {
 
   // Keyboard shortcuts — Esc closes, ⌘K toggles, ⌘⇧K toggles fullscreen.
   useEffect(() => {
+    // Esc — close the panel when it's open; left to the browser when already closed.
+    function handleEscape(e: KeyboardEvent) {
+      if (panelState === "closed") return;
+      e.preventDefault();
+      closePanel();
+    }
+
+    // ⌘⇧K — toggle fullscreen, opening the panel first when it's closed, then focus the composer.
+    function toggleFullscreenShortcut() {
+      if (panelState === "closed") {
+        openPanel();
+        toggleFullscreen();
+        setTimeout(() => panelRef.current?.requestInputFocus(), 350);
+      } else {
+        toggleFullscreen();
+        setTimeout(() => panelRef.current?.requestInputFocus(), 100);
+      }
+    }
+
+    // ⌘K — open the panel (focusing the composer once it settles) or close it.
+    function togglePanelShortcut() {
+      if (panelState === "closed") {
+        openPanel();
+        setTimeout(() => panelRef.current?.requestInputFocus(), 350);
+      } else {
+        closePanel();
+      }
+    }
+
     function handleKeyDown(e: KeyboardEvent) {
       const mod = e.metaKey || e.ctrlKey;
 
       if (e.key === "Escape") {
-        if (panelState !== "closed") {
-          e.preventDefault();
-          closePanel();
-        }
+        handleEscape(e);
         return;
       }
 
       if (mod && e.shiftKey && (e.key === "K" || e.key === "k")) {
         e.preventDefault();
-        if (panelState === "closed") {
-          openPanel();
-          toggleFullscreen();
-          setTimeout(() => panelRef.current?.requestInputFocus(), 350);
-        } else {
-          toggleFullscreen();
-          setTimeout(() => panelRef.current?.requestInputFocus(), 100);
-        }
+        toggleFullscreenShortcut();
         return;
       }
 
       if (mod && e.key === "k") {
         e.preventDefault();
-        if (panelState === "closed") {
-          openPanel();
-          setTimeout(() => panelRef.current?.requestInputFocus(), 350);
-        } else {
-          closePanel();
-        }
+        togglePanelShortcut();
         return;
       }
     }
@@ -156,29 +226,23 @@ export function ChatChrome() {
   const isSidebar = panelState === "sidebar";
   const isFullscreen = panelState === "fullscreen";
   const isOpen = isSidebar || isFullscreen;
+  const transitionTiming = isFullscreen ? TRANSITION_FULLSCREEN : TRANSITION_STANDARD;
+  const panelWidthValue = resolvePanelWidth({
+    isMobile,
+    isFullscreen,
+    sidebarState: sidebar.state,
+    panelWidth,
+  });
 
   return (
     <>
       {/* Floating chat toggle — visible when panel is closed */}
       {panelState === "closed" && (
-        <button
-          type="button"
-          onClick={() => openPanel()}
-          className="fixed bottom-6 right-6 z-40 flex items-center justify-center w-12 h-12 rounded-full bg-warm text-warm-foreground shadow-lg hover:bg-warm-hover transition-all duration-200"
-          style={{
-            opacity: buttonVisible ? 1 : 0,
-            transition: "opacity 200ms ease-in, background-color 200ms",
-          }}
-          title="Chat (⌘K)"
-          data-testid="chat-chrome-open-button"
-        >
-          <MessageSquare className="w-5 h-5" />
-          {unreadCount > 0 && (
-            <span className="absolute -top-1 -right-1 w-5 h-5 rounded-full bg-destructive text-destructive-foreground text-xs flex items-center justify-center">
-              {unreadCount}
-            </span>
-          )}
-        </button>
+        <ChatToggleButton
+          visible={buttonVisible}
+          unreadCount={unreadCount}
+          onOpen={() => openPanel()}
+        />
       )}
 
       {/* Chat panel — full-width on mobile, fixed sidebar on desktop */}
@@ -186,19 +250,9 @@ export function ChatChrome() {
         className="fixed top-0 right-0 h-full z-10 bg-background"
         data-testid="chat-chrome-panel"
         style={{
-          width: isMobile
-            ? "100%"
-            : isFullscreen
-              ? sidebar.state === "hidden"
-                ? "100%"
-                : sidebar.state === "collapsed"
-                  ? "calc(100% - var(--sidebar-width-collapsed))"
-                  : "calc(100% - var(--sidebar-width))"
-              : panelWidth,
+          width: panelWidthValue,
           transform: isOpen ? "translateX(0)" : "translateX(100%)",
-          transition: `transform ${
-            isFullscreen ? TRANSITION_FULLSCREEN : TRANSITION_STANDARD
-          }, width ${isFullscreen ? TRANSITION_FULLSCREEN : TRANSITION_STANDARD}`,
+          transition: `transform ${transitionTiming}, width ${transitionTiming}`,
         }}
       >
         <ChatPanel
