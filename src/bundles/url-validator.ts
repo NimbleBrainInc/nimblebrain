@@ -118,6 +118,69 @@ function isInClusterHostname(hostname: string): boolean {
   return bare.endsWith(".svc.cluster.local") || bare.endsWith(".svc");
 }
 
+/** Reject URLs carrying embedded credentials (url.username or url.password). */
+function assertNoEmbeddedCredentials(url: URL): void {
+  if (url.username || url.password) {
+    throw new Error(`Remote bundle URL must not contain embedded credentials: ${url.toString()}`);
+  }
+}
+
+/** Reject private/reserved hostnames (loopback excepted), before any protocol handling. */
+function assertNotPrivateAddress(url: URL): void {
+  // Always rejected, even with allowInsecure / fleetInternal. Runs ABOVE the
+  // protocol check so a raw private IP can never be reached over http, even for
+  // a fleet source.
+  if (isPrivateHostname(url.hostname) && !isLocalhostHostname(url.hostname)) {
+    throw new Error(`Remote bundle URL resolves to a private/reserved address: ${url.hostname}`);
+  }
+}
+
+/** Build the HTTPS-required error message, hinting at the dev flag for localhost. */
+function insecureProtocolMessage(url: URL): string {
+  return (
+    `Remote bundle URL must use HTTPS (got ${url.protocol}//${url.hostname}). ` +
+    (isLocalhostHostname(url.hostname)
+      ? 'Set "allowInsecureRemotes": true in nimblebrain.json for local development.'
+      : "Non-HTTPS remote connections are not permitted.")
+  );
+}
+
+/** Allow plain HTTP only for in-cluster fleet sources or dev-mode localhost; otherwise reject. */
+function assertAllowedHttp(
+  url: URL,
+  opts: { allowInsecure: boolean; fleetInternal: boolean },
+): void {
+  // Operator-provisioned fleet sources (provider auth) may reach in-cluster
+  // services over plain HTTP — the fleet's trust boundary is NetworkPolicy +
+  // the verified token (ARCHITECTURE P4), not TLS. This is a production posture
+  // scoped to the cluster DNS suffix, NOT the dev-only `allowInsecure` flag, and
+  // it cannot be self-selected by a tenant (a `provider` auth config comes from
+  // the vetted catalog entry, never tenant input).
+  if (opts.fleetInternal && isInClusterHostname(url.hostname)) {
+    return;
+  }
+  if (opts.allowInsecure && isLocalhostHostname(url.hostname)) {
+    return; // HTTP localhost allowed in dev mode
+  }
+  throw new Error(insecureProtocolMessage(url));
+}
+
+/** Enforce the HTTPS-only policy, with scoped HTTP exceptions for fleet and dev localhost. */
+function assertAllowedProtocol(
+  url: URL,
+  opts: { allowInsecure: boolean; fleetInternal: boolean },
+): void {
+  if (url.protocol === "https:") {
+    return; // HTTPS is always allowed
+  }
+  if (url.protocol === "http:") {
+    assertAllowedHttp(url, opts);
+    return;
+  }
+  // Reject any other protocol
+  throw new Error(`Remote bundle URL uses unsupported protocol: ${url.protocol}`);
+}
+
 /**
  * Validate a URL for use as a remote bundle endpoint.
  *
@@ -135,44 +198,7 @@ export function validateBundleUrl(
   const allowInsecure = opts?.allowInsecure ?? false;
   const fleetInternal = opts?.fleetInternal ?? false;
 
-  // Reject embedded credentials
-  if (url.username || url.password) {
-    throw new Error(`Remote bundle URL must not contain embedded credentials: ${url.toString()}`);
-  }
-
-  // Reject private/reserved hostnames (always, even with allowInsecure /
-  // fleetInternal). Stays ABOVE the protocol check so a raw private IP can never
-  // be reached over http, even for a fleet source.
-  if (isPrivateHostname(url.hostname) && !isLocalhostHostname(url.hostname)) {
-    throw new Error(`Remote bundle URL resolves to a private/reserved address: ${url.hostname}`);
-  }
-
-  // Protocol check
-  if (url.protocol === "https:") {
-    return; // HTTPS is always allowed
-  }
-
-  if (url.protocol === "http:") {
-    // Operator-provisioned fleet sources (provider auth) may reach in-cluster
-    // services over plain HTTP — the fleet's trust boundary is NetworkPolicy +
-    // the verified token (ARCHITECTURE P4), not TLS. This is a production posture
-    // scoped to the cluster DNS suffix, NOT the dev-only `allowInsecure` flag, and
-    // it cannot be self-selected by a tenant (a `provider` auth config comes from
-    // the vetted catalog entry, never tenant input).
-    if (fleetInternal && isInClusterHostname(url.hostname)) {
-      return;
-    }
-    if (allowInsecure && isLocalhostHostname(url.hostname)) {
-      return; // HTTP localhost allowed in dev mode
-    }
-    throw new Error(
-      `Remote bundle URL must use HTTPS (got ${url.protocol}//${url.hostname}). ` +
-        (isLocalhostHostname(url.hostname)
-          ? 'Set "allowInsecureRemotes": true in nimblebrain.json for local development.'
-          : "Non-HTTPS remote connections are not permitted."),
-    );
-  }
-
-  // Reject any other protocol
-  throw new Error(`Remote bundle URL uses unsupported protocol: ${url.protocol}`);
+  assertNoEmbeddedCredentials(url);
+  assertNotPrivateAddress(url);
+  assertAllowedProtocol(url, { allowInsecure, fleetInternal });
 }
