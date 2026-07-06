@@ -83,12 +83,14 @@ function base64UrlDecode(input: string): Uint8Array {
   return bytes;
 }
 
-function parseJwt(token: string): {
+interface ParsedJwt {
   header: JwtHeader;
   payload: WorkosJwtPayload;
   signatureInput: Uint8Array;
   signature: Uint8Array;
-} | null {
+}
+
+function parseJwt(token: string): ParsedJwt | null {
   const parts = token.split(".");
   if (parts.length !== 3) return null;
 
@@ -256,7 +258,7 @@ export class WorkosIdentityProvider implements IdentityProvider {
     const parsed = parseJwt(token);
     if (!parsed) return this.reject("malformed_jwt");
 
-    const { header, payload, signatureInput, signature } = parsed;
+    const { header, payload } = parsed;
 
     if (header.alg !== "RS256") return this.reject("bad_alg", { alg: header.alg });
 
@@ -268,56 +270,14 @@ export class WorkosIdentityProvider implements IdentityProvider {
     // Must have sub (WorkOS user ID)
     if (typeof payload.sub !== "string") return this.reject("missing_sub");
 
-    // Route verification based on issuer: AuthKit MCP OAuth vs WorkOS User Management
+    // Route verification based on issuer: AuthKit MCP OAuth vs WorkOS User Management.
+    // Both branches route their rejections through reject() so failures carry the
+    // same reason field and severity — one reason-keyed view covers both issuers.
     const authkitIssuer = this.authkitDomain ? `https://${this.authkitDomain}.authkit.app` : null;
-
-    let identity: UserIdentity | null = null;
-
-    if (authkitIssuer && payload.iss === authkitIssuer) {
-      // AuthKit-issued JWT (from MCP OAuth flow) — verify against AuthKit JWKS.
-      // Routed through reject() so AuthKit failures carry the same reason field
-      // and severity as the User Management branch below — one reason-keyed view
-      // covers both issuers (getAuthkitJwks still logs its own stale-cache
-      // diagnostics independently).
-      const keys = await this.getAuthkitJwks();
-      if (!keys) return this.reject("authkit_jwks_unavailable", { sub: payload.sub });
-
-      const verified = await this.verifySignature(header, signatureInput, signature, keys);
-      if (!verified) return this.reject("authkit_bad_signature", { sub: payload.sub });
-
-      identity = await this.resolveUser(payload.sub);
-    } else {
-      // WorkOS User Management JWT (from session cookie / existing flow)
-      // Validate org_id matches configured organization. This is the silent
-      // gate behind the involuntary-logout incident: a refreshed token whose
-      // org_id drifted from the configured org (see refreshToken) lands here
-      // and was, until instrumented, indistinguishable from any other 401.
-      if (this.organizationId && payload.org_id !== this.organizationId) {
-        // `claimed_org` is the org_id from the JWT payload — note this gate runs
-        // BEFORE signature verification (pre-existing order), so it is unverified
-        // input. It's safe to log (a forged value only ever lands here or fails
-        // the sig check next) but an operator must not treat it as authoritative.
-        return this.reject("org_mismatch", {
-          sub: payload.sub,
-          claimed_org: payload.org_id ?? null,
-          expected_org: this.organizationId,
-        });
-      }
-
-      // Verify signature against WorkOS JWKS
-      const keys = await this.getJwks();
-      if (!keys) return this.reject("jwks_unavailable", { sub: payload.sub });
-
-      const verified = await this.verifySignature(header, signatureInput, signature, keys);
-      // A signature failure is the most security-relevant rejection (forged or
-      // tampered token, or a JWKS-rotation mismatch). Name it so a spike is
-      // visible — symmetric with the AuthKit branch's logged failure above, and
-      // covering the 0-candidate case where verifySignature itself stays silent.
-      if (!verified) return this.reject("bad_signature", { sub: payload.sub });
-
-      // Resolve user from WorkOS
-      identity = await this.resolveUser(payload.sub);
-    }
+    const identity =
+      authkitIssuer && payload.iss === authkitIssuer
+        ? await this.verifyAuthkitToken(parsed, payload.sub)
+        : await this.verifyUserManagementToken(parsed, payload.sub);
 
     // Enforce the invariant "authenticated user has ≥1 workspace" on every
     // successful auth — covers the AuthKit/MCP-OAuth path (which never hits
@@ -331,6 +291,60 @@ export class WorkosIdentityProvider implements IdentityProvider {
       });
     }
     return identity;
+  }
+
+  /**
+   * Verify an AuthKit-issued JWT (MCP OAuth flow) against the AuthKit JWKS, then resolve the user.
+   */
+  private async verifyAuthkitToken(parsed: ParsedJwt, sub: string): Promise<UserIdentity | null> {
+    const { header, signatureInput, signature } = parsed;
+    // getAuthkitJwks still logs its own stale-cache diagnostics independently.
+    const keys = await this.getAuthkitJwks();
+    if (!keys) return this.reject("authkit_jwks_unavailable", { sub });
+
+    const verified = await this.verifySignature(header, signatureInput, signature, keys);
+    if (!verified) return this.reject("authkit_bad_signature", { sub });
+
+    return this.resolveUser(sub);
+  }
+
+  /**
+   * Verify a WorkOS User Management JWT (org gate then WorkOS JWKS signature), then resolve the user.
+   */
+  private async verifyUserManagementToken(
+    parsed: ParsedJwt,
+    sub: string,
+  ): Promise<UserIdentity | null> {
+    const { header, payload, signatureInput, signature } = parsed;
+
+    // Validate org_id matches configured organization. This is the silent gate
+    // behind the involuntary-logout incident: a refreshed token whose org_id
+    // drifted from the configured org (see refreshToken) lands here and was,
+    // until instrumented, indistinguishable from any other 401.
+    if (this.organizationId && payload.org_id !== this.organizationId) {
+      // `claimed_org` is the org_id from the JWT payload — this gate runs BEFORE
+      // signature verification, so it is unverified input. It's safe to log (a
+      // forged value only ever lands here or fails the sig check next) but an
+      // operator must not treat it as authoritative.
+      return this.reject("org_mismatch", {
+        sub,
+        claimed_org: payload.org_id ?? null,
+        expected_org: this.organizationId,
+      });
+    }
+
+    // Verify signature against WorkOS JWKS
+    const keys = await this.getJwks();
+    if (!keys) return this.reject("jwks_unavailable", { sub });
+
+    const verified = await this.verifySignature(header, signatureInput, signature, keys);
+    // A signature failure is the most security-relevant rejection (forged or
+    // tampered token, or a JWKS-rotation mismatch). Name it so a spike is
+    // visible — covering the 0-candidate case where verifySignature stays silent.
+    if (!verified) return this.reject("bad_signature", { sub });
+
+    // Resolve user from WorkOS
+    return this.resolveUser(sub);
   }
 
   async exchangeCode(code: string, codeVerifier?: string): Promise<TokenResult> {
