@@ -198,66 +198,76 @@ function coerceValue(value: unknown, schema: Schema): unknown {
   const effective = effectiveSchemaFor(schema);
   if (!effective) return value;
 
+  if (typeof value === "string") return coerceString(value, effective);
+  if (isPlainObject(value) && declaresType(effective, "object")) {
+    return coerceObjectProperties(value, effective);
+  }
+  if (Array.isArray(value) && declaresType(effective, "array")) {
+    return coerceArrayItems(value, effective);
+  }
+  return value;
+}
+
+/** Recover a string into the object/array/scalar type its schema declares; pass through otherwise. */
+function coerceString(value: string, effective: Record<string, unknown>): unknown {
   // String → object/array recovery via schema-declared expected type.
-  if (typeof value === "string") {
-    const wantObject = declaresType(effective, "object");
-    const wantArray = declaresType(effective, "array");
-    if (wantObject || wantArray) {
-      const parsed = tryJsonParse(value);
-      if (parsed !== undefined) {
-        // Recurse so a nested misencoding inside the just-parsed value
-        // also unwinds. The `parsed` shape may itself need further
-        // coercion (object whose property is also string-encoded).
-        return coerceValue(parsed, effective);
-      }
-      // Parse failed — leave as string. Validator will surface the
-      // content-aware error ("must be object", "must be array").
-      return value;
+  const wantObject = declaresType(effective, "object");
+  const wantArray = declaresType(effective, "array");
+  if (wantObject || wantArray) {
+    const parsed = tryJsonParse(value);
+    if (parsed !== undefined) {
+      // Recurse so a nested misencoding inside the just-parsed value
+      // also unwinds. The `parsed` shape may itself need further
+      // coercion (object whose property is also string-encoded).
+      return coerceValue(parsed, effective);
     }
-    // String → number/boolean recovery. Only when the schema can't already
-    // accept a string (a `string` or `string | number` param takes the value
-    // as-is, so coercing it would change a legitimate value's type).
-    // (`effective` is non-null past the line 196 guard.)
-    if (!declaresType(effective, "string")) {
-      const scalar = coerceScalarString(value, effective);
-      if (scalar !== undefined) return scalar;
-    }
+    // Parse failed — leave as string. Validator will surface the
+    // content-aware error ("must be object", "must be array").
     return value;
   }
-
-  // Walk into objects: coerce each declared property by its sub-schema.
-  if (isPlainObject(value) && declaresType(effective, "object")) {
-    const properties = effective.properties as Record<string, Schema> | undefined;
-    if (!properties) return value;
-    let mutated: Record<string, unknown> | undefined;
-    for (const key of Object.keys(value)) {
-      const subSchema = properties[key];
-      if (!subSchema) continue;
-      const coerced = coerceValue(value[key], subSchema);
-      if (coerced !== value[key]) {
-        if (!mutated) mutated = { ...value };
-        mutated[key] = coerced;
-      }
-    }
-    return mutated ?? value;
+  // String → number/boolean recovery. Only when the schema can't already
+  // accept a string (a `string` or `string | number` param takes the value
+  // as-is, so coercing it would change a legitimate value's type).
+  if (!declaresType(effective, "string")) {
+    const scalar = coerceScalarString(value, effective);
+    if (scalar !== undefined) return scalar;
   }
-
-  // Walk into arrays: coerce each element by `items`.
-  if (Array.isArray(value) && declaresType(effective, "array")) {
-    const items = effective.items as Schema;
-    if (!items) return value;
-    let mutated: unknown[] | undefined;
-    for (let i = 0; i < value.length; i++) {
-      const coerced = coerceValue(value[i], items);
-      if (coerced !== value[i]) {
-        if (!mutated) mutated = [...value];
-        mutated[i] = coerced;
-      }
-    }
-    return mutated ?? value;
-  }
-
   return value;
+}
+
+/** Walk an object, coercing each declared property by its sub-schema; copies only when something changed. */
+function coerceObjectProperties(
+  value: Record<string, unknown>,
+  effective: Record<string, unknown>,
+): unknown {
+  const properties = effective.properties as Record<string, Schema> | undefined;
+  if (!properties) return value;
+  let mutated: Record<string, unknown> | undefined;
+  for (const key of Object.keys(value)) {
+    const subSchema = properties[key];
+    if (!subSchema) continue;
+    const coerced = coerceValue(value[key], subSchema);
+    if (coerced !== value[key]) {
+      if (!mutated) mutated = { ...value };
+      mutated[key] = coerced;
+    }
+  }
+  return mutated ?? value;
+}
+
+/** Walk an array, coercing each element by `items`; copies only when something changed. */
+function coerceArrayItems(value: unknown[], effective: Record<string, unknown>): unknown {
+  const items = effective.items as Schema;
+  if (!items) return value;
+  let mutated: unknown[] | undefined;
+  for (let i = 0; i < value.length; i++) {
+    const coerced = coerceValue(value[i], items);
+    if (coerced !== value[i]) {
+      if (!mutated) mutated = [...value];
+      mutated[i] = coerced;
+    }
+  }
+  return mutated ?? value;
 }
 
 /**
