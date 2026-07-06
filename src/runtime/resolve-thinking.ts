@@ -47,6 +47,42 @@ function safeThinkingBudget(maxOutputTokens: number, requestedBudget?: number): 
   return ceiling;
 }
 
+/** Budget for `enabled`: safe cap when the output budget is known, else the operator value or the floor. */
+function enabledBudget(maxOutputTokens?: number, requestedBudget?: number): number {
+  if (maxOutputTokens != null) {
+    return safeThinkingBudget(maxOutputTokens, requestedBudget);
+  }
+  if (requestedBudget != null && requestedBudget > 0) {
+    return requestedBudget;
+  }
+  return MIN_THINKING_BUDGET_TOKENS;
+}
+
+/** Adaptive carries an operator budget only when positive; the Anthropic adapter currently drops it, but a future provider may honor it. */
+function adaptiveThinking(configBudgetTokens?: number): ResolvedThinking {
+  if (configBudgetTokens != null && configBudgetTokens > 0) {
+    return { mode: "adaptive", budgetTokens: configBudgetTokens };
+  }
+  return { mode: "adaptive" };
+}
+
+/** Resolve an operator override (`configMode`) into its thinking shape; `enabled` always carries a safe budget. */
+function resolveOverride(
+  input: ResolveThinkingInput,
+  configMode: "off" | "adaptive" | "enabled",
+): ResolvedThinking {
+  if (configMode === "off") {
+    return { mode: "off" };
+  }
+  if (configMode === "adaptive") {
+    return adaptiveThinking(input.configBudgetTokens);
+  }
+  return {
+    mode: "enabled",
+    budgetTokens: enabledBudget(input.maxOutputTokens, input.configBudgetTokens),
+  };
+}
+
 /**
  * Resolve the effective thinking mode for an LLM call.
  *
@@ -72,31 +108,7 @@ function safeThinkingBudget(maxOutputTokens: number, requestedBudget?: number): 
  */
 export function resolveThinking(input: ResolveThinkingInput): ResolvedThinking | undefined {
   if (input.configMode != null) {
-    if (input.configMode === "off") {
-      return { mode: "off" };
-    }
-    if (input.configMode === "adaptive") {
-      // Adaptive: provider picks the budget; we can't cap it. Pass any
-      // operator-supplied budget through verbatim — the engine's Anthropic
-      // adapter currently drops it for adaptive, but a future provider
-      // (or SDK update) may honor it.
-      return {
-        mode: "adaptive",
-        ...(input.configBudgetTokens != null && input.configBudgetTokens > 0
-          ? { budgetTokens: input.configBudgetTokens }
-          : {}),
-      };
-    }
-    // enabled: always carry a budget so visible-output headroom is preserved.
-    return {
-      mode: "enabled",
-      budgetTokens:
-        input.maxOutputTokens != null
-          ? safeThinkingBudget(input.maxOutputTokens, input.configBudgetTokens)
-          : input.configBudgetTokens && input.configBudgetTokens > 0
-            ? input.configBudgetTokens
-            : MIN_THINKING_BUDGET_TOKENS,
-    };
+    return resolveOverride(input, input.configMode);
   }
 
   const supportsReasoning = input.model
@@ -105,16 +117,11 @@ export function resolveThinking(input: ResolveThinkingInput): ResolvedThinking |
 
   if (!supportsReasoning) return undefined;
 
-  // Default for reasoning models: enabled with a capped budget. The previous
-  // default was `adaptive`; production showed Opus 4.7 routinely consumed
-  // the whole 16K output budget on internal thinking and produced empty
-  // turns on long-context document tasks. Switching to `enabled` with an
-  // explicit cap restores user-visible output.
+  // Default for reasoning models: enabled with a capped budget so the model
+  // can't spend the whole output budget on internal thinking and emit no
+  // visible content.
   return {
     mode: "enabled",
-    budgetTokens:
-      input.maxOutputTokens != null
-        ? safeThinkingBudget(input.maxOutputTokens)
-        : MIN_THINKING_BUDGET_TOKENS,
+    budgetTokens: enabledBudget(input.maxOutputTokens),
   };
 }
