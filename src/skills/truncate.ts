@@ -94,6 +94,38 @@ function truncateSingleSection(section: string, maxChars: number): string {
   return slice;
 }
 
+/** Build the trailing marker naming how many whole sections were dropped. */
+function omittedMarker(omitted: number): string {
+  return `\n\n[truncated: ${omitted} section${omitted === 1 ? "" : "s"} omitted]`;
+}
+
+/** Truncate the overlong first section in place, marking the rest omitted. */
+function truncateOverlongFirstSection(sections: string[], budget: number): TruncateResult {
+  const head = truncateSingleSection(sections[0]!, budget);
+  const omitted = sections.length - 1; // everything after the (partial) first section
+  const marker = omitted > 0 ? omittedMarker(omitted) : "\n\n[truncated]";
+  return { body: head + marker, truncated: true, sectionsOmitted: omitted };
+}
+
+/** Keep whole sections in order until the next would exceed budget. */
+function walkSections(sections: string[], budget: number): { kept: string[]; omitted: number } {
+  const kept: string[] = [];
+  let total = 0;
+  let omitted = 0;
+  for (let i = 0; i < sections.length; i++) {
+    const section = sections[i]!;
+    // +1 for the implicit newline join between sections (split removed them).
+    const next = total + section.length + (kept.length > 0 ? 1 : 0);
+    if (next > budget) {
+      omitted = sections.length - i;
+      break;
+    }
+    kept.push(section);
+    total = next;
+  }
+  return { kept, omitted };
+}
+
 /**
  * Truncate markdown content to fit within `maxChars`, preferring section
  * boundaries over mid-string slicing.
@@ -122,34 +154,11 @@ export function truncateMarkdownToBudget(content: string, maxChars: number): Tru
   // Edge case: the first section alone is over budget. Fall back to
   // intra-section truncation at a paragraph/line break.
   if (sections.length > 0 && sections[0]!.length > effectiveBudget) {
-    const head = truncateSingleSection(sections[0]!, effectiveBudget);
-    const omitted = sections.length - 1; // everything after the (partial) first section
-    const marker =
-      omitted > 0
-        ? `\n\n[truncated: ${omitted} section${omitted === 1 ? "" : "s"} omitted]`
-        : "\n\n[truncated]";
-    return {
-      body: head + marker,
-      truncated: true,
-      sectionsOmitted: omitted,
-    };
+    return truncateOverlongFirstSection(sections, effectiveBudget);
   }
 
   // Walk sections, accumulating until adding the next would exceed budget.
-  const kept: string[] = [];
-  let total = 0;
-  let omitted = 0;
-  for (let i = 0; i < sections.length; i++) {
-    const section = sections[i]!;
-    // +1 for the implicit newline join between sections (split removed them).
-    const next = total + section.length + (kept.length > 0 ? 1 : 0);
-    if (next > effectiveBudget) {
-      omitted = sections.length - i;
-      break;
-    }
-    kept.push(section);
-    total = next;
-  }
+  const { kept, omitted } = walkSections(sections, effectiveBudget);
 
   const body = kept.join("\n");
   if (omitted === 0) {
@@ -157,9 +166,8 @@ export function truncateMarkdownToBudget(content: string, maxChars: number): Tru
     // but mathematically possible with the marker reserve. Return as-is.
     return { body, truncated: false, sectionsOmitted: 0 };
   }
-  const marker = `\n\n[truncated: ${omitted} section${omitted === 1 ? "" : "s"} omitted]`;
   return {
-    body: body + marker,
+    body: body + omittedMarker(omitted),
     truncated: true,
     sectionsOmitted: omitted,
   };
