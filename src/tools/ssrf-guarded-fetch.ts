@@ -47,21 +47,13 @@ export function createSsrfGuardedFetch(
 
   return async (input, init) => {
     let currentUrl = typeof input === "string" ? new URL(input) : new URL(input.toString());
-    let currentInit: RequestInit = { ...init };
-
-    // Buffer a non-string body once so it can be replayed across redirect hops
-    // (a 307/308 re-sends the same body). JSON-RPC bodies are already strings,
-    // so this is a no-op on the hot path.
-    const rawBody = currentInit.body;
-    if (rawBody != null && typeof rawBody !== "string") {
-      currentInit.body = await new Response(rawBody).text();
-    }
+    let currentInit = await bufferReplayableBody({ ...init });
 
     for (let hop = 0; hop <= MAX_REDIRECT_HOPS; hop++) {
-      // Redirects are same-origin only (enforced below), so the configured
-      // endpoint's opts — including `fleetInternal` for an operator-vetted
-      // in-cluster http source — apply unchanged on every hop. This validation
-      // is a backstop; the same-origin rule below is the primary control.
+      // Redirects are same-origin only (enforced in `resolveRedirect`), so the
+      // configured endpoint's opts — including `fleetInternal` for an
+      // operator-vetted in-cluster http source — apply unchanged on every hop.
+      // This validation is a backstop; the same-origin rule is the primary control.
       validateBundleUrl(currentUrl, {
         allowInsecure: opts.allowInsecure,
         fleetInternal: opts.fleetInternal,
@@ -69,38 +61,69 @@ export function createSsrfGuardedFetch(
 
       const res = await doFetch(currentUrl, { ...currentInit, redirect: "manual" });
 
-      // Not a redirect — hand the response back as the SDK expects.
-      if (res.status < 300 || res.status >= 400) return res;
+      const outcome = resolveRedirect(res, currentUrl, currentInit);
+      if (!outcome.follow) return outcome.response;
 
-      const location = res.headers.get("location");
-      if (!location) return res; // 3xx with no Location: nothing to follow.
-
-      const next = new URL(location, currentUrl);
-
-      // Follow SAME-ORIGIN redirects only; refuse anything cross-origin. A
-      // cross-origin bounce is both the SSRF pivot (to a host we don't control,
-      // or an internal one) AND a credential-leak vector: we re-issue the
-      // request with its original headers, which carry Authorization /
-      // minted-fleet / API-key credentials. WHATWG `fetch` strips those across
-      // origins precisely because the new origin is a different trust scope —
-      // this manual loop must not regress that protection. A legitimate
-      // JSON-RPC endpoint needs at most a same-origin redirect (trailing-slash
-      // or path normalization); same origin = same trust scope, so replaying
-      // credentials there is safe.
-      if (next.origin !== currentUrl.origin) {
-        throw new Error(
-          `SSRF guard: refusing cross-origin redirect from ${currentUrl.origin} to ${next.origin}`,
-        );
-      }
-
-      // Per fetch semantics, a 303 turns the follow-up into a bodyless GET;
-      // 307/308 preserve method and body. We only need to drop the body on 303.
-      if (res.status === 303) {
-        currentInit = { ...currentInit, method: "GET", body: undefined };
-      }
-      currentUrl = next;
+      currentUrl = outcome.url;
+      currentInit = outcome.init;
     }
 
     throw new Error(`SSRF guard: remote endpoint exceeded ${MAX_REDIRECT_HOPS} redirect hops`);
   };
+}
+
+/**
+ * The result of inspecting one `redirect: "manual"` response: either a terminal
+ * response to hand back to the caller, or the next same-origin hop to follow.
+ */
+type RedirectOutcome =
+  | { follow: false; response: Response }
+  | { follow: true; url: URL; init: RequestInit };
+
+/** Buffer a non-string request body to a string so it survives replay across 307/308 redirect hops. */
+async function bufferReplayableBody(init: RequestInit): Promise<RequestInit> {
+  // Buffer a non-string body once so it can be replayed across redirect hops
+  // (a 307/308 re-sends the same body). JSON-RPC bodies are already strings,
+  // so this is a no-op on the hot path.
+  const rawBody = init.body;
+  if (rawBody == null || typeof rawBody === "string") return init;
+  return { ...init, body: await new Response(rawBody).text() };
+}
+
+/** Classify a manual-redirect response as terminal or a same-origin hop to follow; throw on a cross-origin bounce. */
+function resolveRedirect(
+  res: Response,
+  currentUrl: URL,
+  currentInit: RequestInit,
+): RedirectOutcome {
+  // Not a redirect — hand the response back as the SDK expects.
+  if (res.status < 300 || res.status >= 400) return { follow: false, response: res };
+
+  const location = res.headers.get("location");
+  if (!location) return { follow: false, response: res }; // 3xx with no Location: nothing to follow.
+
+  const next = new URL(location, currentUrl);
+
+  // Follow SAME-ORIGIN redirects only; refuse anything cross-origin. A
+  // cross-origin bounce is both the SSRF pivot (to a host we don't control,
+  // or an internal one) AND a credential-leak vector: we re-issue the
+  // request with its original headers, which carry Authorization /
+  // minted-fleet / API-key credentials. WHATWG `fetch` strips those across
+  // origins precisely because the new origin is a different trust scope —
+  // this manual loop must not regress that protection. A legitimate
+  // JSON-RPC endpoint needs at most a same-origin redirect (trailing-slash
+  // or path normalization); same origin = same trust scope, so replaying
+  // credentials there is safe.
+  if (next.origin !== currentUrl.origin) {
+    throw new Error(
+      `SSRF guard: refusing cross-origin redirect from ${currentUrl.origin} to ${next.origin}`,
+    );
+  }
+
+  // Per fetch semantics, a 303 turns the follow-up into a bodyless GET;
+  // 307/308 preserve method and body. We only need to drop the body on 303.
+  const nextInit =
+    res.status === 303 ? { ...currentInit, method: "GET", body: undefined } : currentInit;
+
+  return { follow: true, url: next, init: nextInit };
 }
