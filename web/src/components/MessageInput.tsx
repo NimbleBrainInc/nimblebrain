@@ -16,6 +16,62 @@ interface MessageInputProps {
   onStop?: () => void;
 }
 
+/** Border/shadow class for the input container given its interaction state. */
+function inputStateClass(isDragOver: boolean, isActive: boolean, isFocused: boolean): string {
+  if (isDragOver) return "border-primary shadow-lg shadow-primary/20";
+  if (isActive && !isFocused) return "input-breathing";
+  if (isFocused) return "border-ring shadow-lg shadow-ring/10";
+  return "border-input shadow-lg shadow-border/20";
+}
+
+/** Placeholder copy for the textarea based on drag/disabled state. */
+function inputPlaceholder(isDragOver: boolean, disabled: boolean): string {
+  if (isDragOver) return "Drop files here...";
+  if (disabled) return "Waiting for response...";
+  return "Ask anything...";
+}
+
+/** Send button, or a Stop button while a turn is streaming. */
+function SendButton({
+  disabled,
+  canSend,
+  onSubmit,
+  onStop,
+}: {
+  disabled: boolean;
+  canSend: boolean;
+  onSubmit: () => void;
+  onStop?: () => void;
+}) {
+  if (disabled && onStop) {
+    return (
+      <button
+        onClick={onStop}
+        type="button"
+        aria-label="Stop generating"
+        className="shrink-0 flex items-center justify-center w-8 h-8 rounded-sm transition-all duration-200 bg-primary hover:bg-primary/80 text-primary-foreground"
+      >
+        <Square style={{ width: 14, height: 14 }} fill="currentColor" />
+      </button>
+    );
+  }
+  return (
+    <button
+      onClick={onSubmit}
+      disabled={!canSend}
+      type="button"
+      aria-label="Send message"
+      className={`shrink-0 flex items-center justify-center w-8 h-8 rounded-sm transition-all duration-200 ${
+        canSend
+          ? "bg-primary hover:bg-primary/80 text-primary-foreground"
+          : "bg-muted text-muted-foreground cursor-not-allowed"
+      }`}
+    >
+      <ArrowUp style={{ width: 18, height: 18 }} />
+    </button>
+  );
+}
+
 export function MessageInput({
   onSend,
   disabled,
@@ -163,15 +219,11 @@ export function MessageInput({
     <div className="py-3 shrink-0">
       {/* biome-ignore lint/a11y/noStaticElementInteractions: drag-and-drop container for file uploads */}
       <div
-        className={`rounded-lg border transition-all duration-200 bg-card ${
-          isDragOver
-            ? "border-primary shadow-lg shadow-primary/20"
-            : isActive && !isFocused
-              ? "input-breathing"
-              : isFocused
-                ? "border-ring shadow-lg shadow-ring/10"
-                : "border-input shadow-lg shadow-border/20"
-        } ${disabled ? "opacity-60" : ""}`}
+        className={`rounded-lg border transition-all duration-200 bg-card ${inputStateClass(
+          isDragOver,
+          isActive,
+          isFocused,
+        )} ${disabled ? "opacity-60" : ""}`}
         role="presentation"
         onDragOver={handleDragOver}
         onDragLeave={handleDragLeave}
@@ -188,13 +240,7 @@ export function MessageInput({
             onPaste={handlePaste}
             onFocus={() => setIsFocused(true)}
             onBlur={() => setIsFocused(false)}
-            placeholder={
-              isDragOver
-                ? "Drop files here..."
-                : disabled
-                  ? "Waiting for response..."
-                  : "Ask anything..."
-            }
+            placeholder={inputPlaceholder(isDragOver, disabled)}
             disabled={disabled}
             rows={1}
             style={{ minHeight: "28px", maxHeight: "200px" }}
@@ -222,30 +268,7 @@ export function MessageInput({
               <Paperclip style={{ width: 16, height: 16 }} />
             </button>
           </div>
-          {disabled && onStop ? (
-            <button
-              onClick={onStop}
-              type="button"
-              aria-label="Stop generating"
-              className="shrink-0 flex items-center justify-center w-8 h-8 rounded-sm transition-all duration-200 bg-primary hover:bg-primary/80 text-primary-foreground"
-            >
-              <Square style={{ width: 14, height: 14 }} fill="currentColor" />
-            </button>
-          ) : (
-            <button
-              onClick={handleSend}
-              disabled={!canSend}
-              type="button"
-              aria-label="Send message"
-              className={`shrink-0 flex items-center justify-center w-8 h-8 rounded-sm transition-all duration-200 ${
-                canSend
-                  ? "bg-primary hover:bg-primary/80 text-primary-foreground"
-                  : "bg-muted text-muted-foreground cursor-not-allowed"
-              }`}
-            >
-              <ArrowUp style={{ width: 18, height: 18 }} />
-            </button>
-          )}
+          <SendButton disabled={disabled} canSend={!!canSend} onSubmit={handleSend} onStop={onStop} />
         </div>
       </div>
 
