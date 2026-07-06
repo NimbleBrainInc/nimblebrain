@@ -87,6 +87,7 @@ import { composeSystemSegments } from "../prompt/compose.ts";
 import { ConnectorDirectory } from "../registries/directory.ts";
 import { RegistryStore, warnIfCuratedCatalogEmpty } from "../registries/registry-store.ts";
 import {
+  BUNDLE_SKILL_SCOPE,
   type DiscoveredSkill,
   isSkillEntrypointUri,
   parseSkillMarkdown,
@@ -1465,7 +1466,13 @@ export class Runtime {
       // Connector-skill overlays for the conversation's own workspace — surfaced
       // once into history by the engine on a matching connector tool call, never
       // into the system prefix. Same workspace scoping as the layer-3 pool.
-      connectorSkillCandidates: this.loadConnectorSkillCandidates(convWsId),
+      // Merge SEP-2640 bundle skills as candidates too, so a server's skill is
+      // delivered mid-turn when its tools are progressively disclosed (promotion),
+      // not only at turn-start via <layer3-skill> (which misses mid-turn promotion).
+      connectorSkillCandidates: [
+        ...this.loadConnectorSkillCandidates(convWsId),
+        ...(await this.loadBundleSkillCandidates(convWsId, request.appContext?.serverName)),
+      ],
       // From the UN-rehydrated history — this is what makes surface-ONCE hold
       // across turns on the real chat path.
       alreadyInjectedConnectorSkills: this.collectInjectedConnectorSkills(effectiveHistory),
@@ -1832,7 +1839,12 @@ export class Runtime {
       contextAssembled,
       // Connector-skill overlays — same focused-workspace scoping as the
       // layer-3 pool; surfaced once into history, never the system prefix.
-      connectorSkillCandidates: this.loadConnectorSkillCandidates(workWsId),
+      // Bundle skills (SEP-2640) join as candidates so a promoted server's skill
+      // surfaces mid-turn, not only at turn-start. Tasks carry no appContext.
+      connectorSkillCandidates: [
+        ...this.loadConnectorSkillCandidates(workWsId),
+        ...(await this.loadBundleSkillCandidates(workWsId)),
+      ],
       // A fresh task has a single user message and no prior history, so no
       // connector skill has been injected yet — the set is empty.
       alreadyInjectedConnectorSkills: this.collectInjectedConnectorSkills(taskMessages),
@@ -3689,6 +3701,26 @@ export class Runtime {
   loadConnectorSkillCandidates(wsId: string): ConnectorSkillCandidate[] {
     const dir = this.getWorkspaceContext(wsId).getDataPath(CONNECTOR_SKILLS_SUBDIR);
     return readConnectorSkillCandidates(dir);
+  }
+
+  /** SEP-2640 bundle skills as surface-once connector-skill candidates, so a server's
+   *  skill can be delivered mid-turn when its tools are progressively disclosed (not only
+   *  at turn-start via <layer3-skill>). Mirrors selectRequestLayer3's loadBundleSkills
+   *  exclusion (the entered app's skill rides <app-guide>, not this channel). */
+  private async loadBundleSkillCandidates(
+    wsId: string,
+    appContextServerName?: string,
+  ): Promise<ConnectorSkillCandidate[]> {
+    const skills = await this.loadBundleSkills(
+      wsId,
+      appContextServerName ? { appContextServerName } : {},
+    );
+    return skills.map((s) => ({
+      name: s.manifest.name,
+      body: s.body,
+      scope: s.manifest.scope ?? BUNDLE_SKILL_SCOPE,
+      toolAffinity: s.manifest.toolAffinity ?? [],
+    }));
   }
 
   /**
