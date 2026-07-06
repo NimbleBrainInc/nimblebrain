@@ -148,17 +148,24 @@ export async function handleChat(
 
     return json(responseBody);
   } catch (err) {
-    if (err instanceof RunInProgressError) {
-      return runInProgressResponse(err.conversationId);
-    }
-    if (err instanceof ConversationAccessDeniedError) {
-      return conversationAccessDeniedResponse(err.conversationId);
-    }
-    if (err instanceof ConversationCorruptedError) {
-      return conversationCorruptedResponse(err);
-    }
+    const mapped = mapChatTurnError(err);
+    if (mapped) return mapped;
     throw err;
   }
+}
+
+/** Map a chat-turn error to its HTTP response, or null to rethrow. */
+function mapChatTurnError(err: unknown): Response | null {
+  if (err instanceof RunInProgressError) {
+    return runInProgressResponse(err.conversationId);
+  }
+  if (err instanceof ConversationAccessDeniedError) {
+    return conversationAccessDeniedResponse(err.conversationId);
+  }
+  if (err instanceof ConversationCorruptedError) {
+    return conversationCorruptedResponse(err);
+  }
+  return null;
 }
 
 function runInProgressResponse(conversationId: string): Response {
@@ -610,6 +617,32 @@ export function handleHealth(healthMonitor: HealthMonitor | null): Response {
   });
 }
 
+/**
+ * Serve a ui:// resource from an identity app (conversations, …) for GET
+ * /v1/apps/:name/resources/:path. Identity apps live OUTSIDE any workspace and
+ * read from the kernel identity source; "primary" resolves to the source's
+ * first declared placement.
+ */
+async function serveIdentityAppResource(
+  runtime: Runtime,
+  appName: string,
+  resourcePath: string,
+  identitySource: ToolSource,
+): Promise<Response> {
+  let resolvedPath = resourcePath;
+  if (resourcePath === "primary") {
+    const primaryUri = resolveSourcePrimaryResourceUri(identitySource);
+    if (primaryUri) resolvedPath = primaryUri.replace(/^ui:\/\//, "");
+  }
+  const resource = await runtime.readIdentityAppResource(appName, resolvedPath);
+  if (resource === null) {
+    return apiError(404, "resource_not_found", `Resource "ui://${resourcePath}" not found`, {
+      resource: `ui://${resourcePath}`,
+    });
+  }
+  return json({ contents: [buildResourceEnvelopeEntry(`ui://${resolvedPath}`, resource)] });
+}
+
 /** Handle GET /v1/apps/:name/resources/:path — fetch a ui:// resource. */
 export async function handleResourceProxy(
   appName: string,
@@ -635,18 +668,7 @@ export async function handleResourceProxy(
   // location to authorize against.
   const identitySource = runtime.getIdentitySource(appName);
   if (identitySource) {
-    let resolvedPath = resourcePath;
-    if (resourcePath === "primary") {
-      const primaryUri = resolveSourcePrimaryResourceUri(identitySource);
-      if (primaryUri) resolvedPath = primaryUri.replace(/^ui:\/\//, "");
-    }
-    const resource = await runtime.readIdentityAppResource(appName, resolvedPath);
-    if (resource === null) {
-      return apiError(404, "resource_not_found", `Resource "ui://${resourcePath}" not found`, {
-        resource: `ui://${resourcePath}`,
-      });
-    }
-    return json({ contents: [buildResourceEnvelopeEntry(`ui://${resolvedPath}`, resource)] });
+    return serveIdentityAppResource(runtime, appName, resourcePath, identitySource);
   }
 
   // Workspace apps — resolve the workspace and authorize membership. Both
@@ -859,6 +881,83 @@ async function resolveRestSourceWorkspace(
 }
 
 /**
+ * Read an `artifact://` URI as the viewing workspace for POST /v1/resources/read.
+ * RLS in the data plane is the enforcement point — a second workspace's read is
+ * denied and surfaces as 404 (absent and forbidden are indistinguishable).
+ */
+async function readArtifactResource(
+  uri: string,
+  workspaceId: string | undefined,
+): Promise<Response> {
+  if (!workspaceId) {
+    return apiError(400, "bad_request", "artifact:// reads require a workspace context");
+  }
+  const resolver = getArtifactResolver();
+  try {
+    const result = await resolver.read(uri, workspaceId);
+    artifactResolutionsTotal.inc({ result: "ok" });
+    return json(result as Record<string, unknown>);
+  } catch (err) {
+    return mapArtifactReadError(err, uri, workspaceId);
+  }
+}
+
+/** Map an artifact-resolver read error to its HTTP response, tagging the resolution metric. */
+function mapArtifactReadError(err: unknown, uri: string, workspaceId: string): Response {
+  // A malformed `artifact://` id is client input, not a server fault: 400,
+  // and never warn-log it — a hostile/typo'd URI must not spam the logs.
+  if (err instanceof InvalidArtifactUriError) {
+    artifactResolutionsTotal.inc({ result: "malformed" });
+    log.debug("host-resources", `[artifact] rejected malformed URI ${uri}: ${err.message}`);
+    return apiError(400, "bad_request", "Malformed artifact:// URI", { uri });
+  }
+  if (err instanceof ArtifactNotFoundError) {
+    // High-signal: the host emitted this link and now can't resolve it —
+    // most often a cross-workspace reference RLS-denied at the data plane.
+    // The 404 is otherwise silent; this counter is the fleet-level signal.
+    artifactResolutionsTotal.inc({ result: "not_found" });
+    return apiError(404, "resource_not_found", `Resource "${uri}" not found`, { uri });
+  }
+  if (err instanceof ArtifactTooLargeError) {
+    artifactResolutionsTotal.inc({ result: "too_large" });
+    return apiError(413, "resource_too_large", err.message, { uri });
+  }
+  artifactResolutionsTotal.inc({ result: "error" });
+  log.warn(
+    `[artifact] read ${uri} (ws=${workspaceId}) failed: ${err instanceof Error ? err.message : String(err)}`,
+  );
+  return apiError(502, "resource_read_failed", "Failed to resolve artifact", { uri });
+}
+
+/**
+ * Read a resource from a kernel identity source (conversations, files,
+ * automations) for POST /v1/resources/read. Files are workspace-owned, so a
+ * `files://<id>` read resolves in the request's focused workspace (or the
+ * caller's personal workspace when unfocused); conversations/automations ignore it.
+ */
+async function readIdentitySourceResource(
+  runtime: Runtime,
+  server: string,
+  uri: string,
+  options: { workspaceId?: string; identity?: UserIdentity } | undefined,
+): Promise<Response> {
+  const identity = options?.identity;
+  const reqCtx: RequestContext = {
+    identity: identity ?? null,
+    scope: { kind: "identity" },
+    fileWorkspaceId:
+      options?.workspaceId ?? personalWorkspaceIdFor(runtime.resolveRequestUserId(identity)),
+  };
+  const resource = await runWithRequestContext(reqCtx, () =>
+    runtime.readIdentityAppResource(server, uri),
+  );
+  if (resource === null) {
+    return apiError(404, "resource_not_found", `Resource "${uri}" not found`, { server, uri });
+  }
+  return json({ contents: [buildResourceEnvelopeEntry(uri, resource)] });
+}
+
+/**
  * Handle POST /v1/resources/read — MCP resources/read proxy.
  *
  * Body: { server, uri }
@@ -887,40 +986,7 @@ export async function handleReadResource(
   // artifact — the read is denied and surfaces as 404 (absent and forbidden are
   // intentionally indistinguishable, so a guessed id can't probe inventory).
   if (isArtifactUri(uri)) {
-    const ws = options?.workspaceId;
-    if (!ws) {
-      return apiError(400, "bad_request", "artifact:// reads require a workspace context");
-    }
-    const resolver = getArtifactResolver();
-    try {
-      const result = await resolver.read(uri, ws);
-      artifactResolutionsTotal.inc({ result: "ok" });
-      return json(result as Record<string, unknown>);
-    } catch (err) {
-      // A malformed `artifact://` id is client input, not a server fault: 400,
-      // and never warn-log it — a hostile/typo'd URI must not spam the logs.
-      if (err instanceof InvalidArtifactUriError) {
-        artifactResolutionsTotal.inc({ result: "malformed" });
-        log.debug("host-resources", `[artifact] rejected malformed URI ${uri}: ${err.message}`);
-        return apiError(400, "bad_request", "Malformed artifact:// URI", { uri });
-      }
-      if (err instanceof ArtifactNotFoundError) {
-        // High-signal: the host emitted this link and now can't resolve it —
-        // most often a cross-workspace reference RLS-denied at the data plane.
-        // The 404 is otherwise silent; this counter is the fleet-level signal.
-        artifactResolutionsTotal.inc({ result: "not_found" });
-        return apiError(404, "resource_not_found", `Resource "${uri}" not found`, { uri });
-      }
-      if (err instanceof ArtifactTooLargeError) {
-        artifactResolutionsTotal.inc({ result: "too_large" });
-        return apiError(413, "resource_too_large", err.message, { uri });
-      }
-      artifactResolutionsTotal.inc({ result: "error" });
-      log.warn(
-        `[artifact] read ${uri} (ws=${ws}) failed: ${err instanceof Error ? err.message : String(err)}`,
-      );
-      return apiError(502, "resource_read_failed", "Failed to resolve artifact", { uri });
-    }
+    return readArtifactResource(uri, options?.workspaceId);
   }
 
   if (!server || typeof server !== "string") {
@@ -935,19 +1001,7 @@ export async function handleReadResource(
   // unfocused), set via `fileWorkspaceId`. conversations/automations ignore it.
   const { identity } = options ?? {};
   if (runtime.getIdentitySource(server)) {
-    const reqCtx: RequestContext = {
-      identity: identity ?? null,
-      scope: { kind: "identity" },
-      fileWorkspaceId:
-        options?.workspaceId ?? personalWorkspaceIdFor(runtime.resolveRequestUserId(identity)),
-    };
-    const resource = await runWithRequestContext(reqCtx, () =>
-      runtime.readIdentityAppResource(server, uri),
-    );
-    if (resource === null) {
-      return apiError(404, "resource_not_found", `Resource "${uri}" not found`, { server, uri });
-    }
-    return json({ contents: [buildResourceEnvelopeEntry(uri, resource)] });
+    return readIdentitySourceResource(runtime, server, uri, options);
   }
 
   // Workspace scoping. A qualified `ws_<id>-<source>` server resolves to its
@@ -996,6 +1050,276 @@ export async function handleReadResource(
   return json({ contents: [buildResourceEnvelopeEntry(uri, resource)] });
 }
 
+/** Parse + validate a POST /v1/tools/call envelope, or return an error Response. */
+function parseToolCallEnvelope(
+  body: Record<string, unknown>,
+): { server: string; tool: string; args?: Record<string, unknown> } | Response {
+  const envelopeCheck = validateAgainst(body, ToolCallRequestEnvelope);
+  if (!envelopeCheck.ok) {
+    return apiError(400, "bad_request", envelopeCheck.reason ?? "Invalid request envelope");
+  }
+  const {
+    server,
+    tool,
+    arguments: args,
+  } = body as {
+    server: string;
+    tool: string;
+    arguments?: Record<string, unknown>;
+  };
+  return { server, tool, args };
+}
+
+interface ToolCallTarget {
+  source: ToolSource | undefined;
+  scope: RequestScope;
+  workspaceRegistry: ToolRegistry | undefined;
+  /**
+   * The bare source name the registry is keyed on. For a qualified
+   * `ws_<id>-<source>` server it's the `<source>` portion; for a bare
+   * identity/workspace source it's `server` unchanged.
+   */
+  resolvedSourceName: string;
+}
+
+/**
+ * Resolve the source through the two doors — the same decision the orchestrator
+ * makes for `/mcp` (`routeToolCall`). Identity sources dispatch with identity
+ * scope; everything else resolves through the workspace registry (membership +
+ * per-workspace permission gating on execute). Returns an error Response for the
+ * bare-source-no-workspace and unknown-source cases.
+ */
+async function resolveToolCallTarget(
+  runtime: Runtime,
+  server: string,
+  tool: string,
+  identitySource: ToolSource | undefined,
+  identity: UserIdentity | undefined,
+  workspaceId: string | undefined,
+): Promise<{ ok: true; target: ToolCallTarget } | { ok: false; response: Response }> {
+  if (identitySource) {
+    return {
+      ok: true,
+      target: {
+        source: identitySource,
+        scope: { kind: "identity" },
+        workspaceRegistry: undefined,
+        resolvedSourceName: server,
+      },
+    };
+  }
+  // A qualified `ws_<id>-<source>` resolves to its own workspace by name +
+  // membership (cross-workspace tool surfaced via nb__search); a bare source
+  // uses the ambient X-Workspace-Id. Same resolution as the resource read.
+  const resolved = await resolveRestSourceWorkspace(runtime, server, identity, workspaceId, () =>
+    apiError(400, "workspace_required", `Tool "${tool}" requires a workspace`, { server, tool }),
+  );
+  if (!resolved.ok) return { ok: false, response: resolved.response };
+  const workspaceRegistry = await runtime.ensureWorkspaceRegistry(resolved.workspaceId);
+  if (!workspaceRegistry.hasSource(resolved.sourceName)) {
+    return {
+      ok: false,
+      response: apiError(404, "tool_not_found", `Tool "${tool}" not found on server "${server}"`, {
+        server,
+        tool,
+      }),
+    };
+  }
+  const source = workspaceRegistry.getSources().find((s) => s.name === resolved.sourceName);
+  return {
+    ok: true,
+    target: {
+      source,
+      scope: {
+        kind: "workspace",
+        workspaceId: resolved.workspaceId,
+        workspaceAgents: null,
+        workspaceModelOverride: null,
+      },
+      workspaceRegistry,
+      resolvedSourceName: resolved.sourceName,
+    },
+  };
+}
+
+/**
+ * Normalize `tool` to the registry's `<bareSource>__<tool>` form. It may arrive
+ * bare, source-prefixed, or fully qualified (`ws_<id>-…` from the bridge) — strip
+ * a leading qualified-server prefix first, then ensure the bare-source prefix.
+ */
+function normalizeRestToolName(tool: string, server: string, resolvedSourceName: string): string {
+  let innerTool = tool;
+  if (innerTool.startsWith(`${server}__`)) innerTool = innerTool.slice(server.length + 2);
+  return innerTool.startsWith(`${resolvedSourceName}__`)
+    ? innerTool
+    : `${resolvedSourceName}__${innerTool}`;
+}
+
+/**
+ * Validate a REST tools/call against the source's declared JSON Schema, coercing
+ * nested string-encoded values first (see src/tools/coerce-input.ts). Returns the
+ * coerced arguments, or an error Response (tool-not-found / invalid-input).
+ */
+async function validateRestToolInput(
+  source: ToolSource,
+  toolName: string,
+  tool: string,
+  server: string,
+  args: Record<string, unknown>,
+): Promise<{ ok: true; coercedArgs: Record<string, unknown> } | { ok: false; response: Response }> {
+  try {
+    const tools = await source.tools();
+    const toolDef = tools.find((t) => t.name === toolName);
+    if (!toolDef) {
+      return {
+        ok: false,
+        response: apiError(
+          404,
+          "tool_not_found",
+          `Tool "${tool}" not found on server "${server}"`,
+          {
+            server,
+            tool,
+          },
+        ),
+      };
+    }
+    if (!toolDef.inputSchema) return { ok: true, coercedArgs: args };
+    const coercedArgs = coerceInputForSchema(args, toolDef.inputSchema);
+    const validation = validateToolInput(coercedArgs, toolDef.inputSchema);
+    if (!validation.valid) {
+      return {
+        ok: false,
+        response: apiError(
+          400,
+          "invalid_input",
+          `Invalid arguments for "${tool}": ${validation.error}`,
+          {
+            tool: toolName,
+            errors: validation.errors,
+          },
+        ),
+      };
+    }
+    return { ok: true, coercedArgs };
+  } catch {
+    return { ok: false, response: json({ error: "tool_not_found", server, tool }, 404) };
+  }
+}
+
+/** Build the per-request AsyncLocalStorage context for a REST tools/call. */
+function buildRestToolCallContext(
+  identity: UserIdentity | undefined,
+  scope: RequestScope,
+  workspaceId: string | undefined,
+  runtime: Runtime,
+): RequestContext {
+  return {
+    identity: identity ?? null,
+    scope,
+    // Files are workspace-owned: an identity-door `files__*` call lands in the
+    // focused workspace (validated `X-Workspace-Id`) or the caller's personal
+    // workspace when unfocused. Ignored by the other identity tools.
+    fileWorkspaceId: workspaceId ?? personalWorkspaceIdFor(runtime.resolveRequestUserId(identity)),
+  };
+}
+
+/**
+ * Dispatch a resolved REST tools/call: identity door straight to the source with
+ * the bare tool name (owner-gated in the handler); workspace door through the
+ * registry (per-workspace permission gating).
+ */
+function dispatchRestToolCall(
+  identitySource: ToolSource | undefined,
+  workspaceRegistry: ToolRegistry | undefined,
+  toolName: string,
+  callId: string,
+  coercedArgs: Record<string, unknown>,
+): Promise<Awaited<ReturnType<ToolRegistry["execute"]>>> {
+  if (identitySource) {
+    return identitySource.execute(toolName.slice(toolName.indexOf("__") + 2), coercedArgs);
+  }
+  // A non-identity source always resolved a workspace registry above (or we
+  // 400'd); the guard narrows the type without a non-null assertion.
+  if (!workspaceRegistry) throw new Error("workspace registry missing for workspace tool");
+  return workspaceRegistry.execute({ id: callId, name: toolName, input: coercedArgs });
+}
+
+/** Emit bridge.tool.call (pre-execution) to the ephemeral SSE + durable event sinks. */
+function emitBridgeToolCall(
+  sseManager: SseEventManager | undefined,
+  eventSink: EventSink | undefined,
+  toolName: string,
+  callId: string,
+  server: string,
+  identity: UserIdentity | undefined,
+  scope: RequestScope,
+): void {
+  const event = {
+    type: "bridge.tool.call" as const,
+    data: {
+      name: toolName,
+      id: callId,
+      server,
+      userId: identity?.id ?? null,
+      workspaceId: scope.kind === "workspace" ? scope.workspaceId : null,
+    },
+  };
+  sseManager?.emit(event);
+  eventSink?.emit(event);
+}
+
+/** Emit bridge.tool.done (post-execution) to the ephemeral SSE + durable event sinks. */
+function emitBridgeToolDone(
+  sseManager: SseEventManager | undefined,
+  eventSink: EventSink | undefined,
+  toolName: string,
+  callId: string,
+  ok: boolean,
+  ms: number,
+  identity: UserIdentity | undefined,
+  scope: RequestScope,
+): void {
+  const event = {
+    type: "bridge.tool.done" as const,
+    data: {
+      name: toolName,
+      id: callId,
+      ok,
+      ms,
+      userId: identity?.id ?? null,
+      workspaceId: scope.kind === "workspace" ? scope.workspaceId : null,
+    },
+  };
+  sseManager?.emit(event);
+  eventSink?.emit(event);
+}
+
+/**
+ * Recognize a PersonalWorkspaceInvariantError encoded in the tool result and map
+ * it to a clean 422 (same body as the direct-throw path), or null when the result
+ * isn't that shape. The error class doesn't survive the in-process MCP
+ * serialization boundary, so workspace-mgmt tool handlers encode it as
+ * `structuredContent.error === "personal_workspace_invariant"`.
+ */
+function personalWorkspaceInvariantResultResponse(
+  result: Awaited<ReturnType<ToolRegistry["execute"]>>,
+): Response | null {
+  if (!result.isError || !isPersonalWorkspaceInvariantToolResult(result.structuredContent)) {
+    return null;
+  }
+  const sc = result.structuredContent;
+  return apiError(
+    422,
+    "personal_workspace_invariant",
+    typeof sc.message === "string" ? sc.message : "Personal-workspace invariant violated",
+    {
+      workspaceId: sc.workspaceId,
+      reason: sc.reason,
+    },
+  );
+}
+
 /** Handle POST /v1/tools/call — direct tool invocation. */
 export async function handleToolCall(
   request: Request,
@@ -1011,75 +1335,34 @@ export async function handleToolCall(
   const body = await parseJsonBody(request);
   if (body instanceof Response) return body;
 
-  const envelopeCheck = validateAgainst(body, ToolCallRequestEnvelope);
-  if (!envelopeCheck.ok) {
-    return apiError(400, "bad_request", envelopeCheck.reason ?? "Invalid request envelope");
-  }
-  const {
-    server,
-    tool,
-    arguments: args,
-  } = body as {
-    server: string;
-    tool: string;
-    arguments?: Record<string, unknown>;
-  };
+  const envelope = parseToolCallEnvelope(body);
+  if (envelope instanceof Response) return envelope;
+  const { server, tool, args } = envelope;
 
-  const { sseManager, eventSink, identity, workspaceId } = options ?? {};
+  const sseManager = options?.sseManager;
+  const eventSink = options?.eventSink;
+  const identity = options?.identity;
+  const workspaceId = options?.workspaceId;
 
   // Resolve the source through the two doors — the same decision the
   // orchestrator makes for `/mcp` (`routeToolCall`). Identity sources
   // (conversations, …) are owned by the user and live OUTSIDE any workspace:
-  // they resolve from the identity-source set and dispatch with identity
-  // scope, regardless of any (stale) X-Workspace-Id. Everything else resolves
-  // through the workspace registry and keeps its per-workspace permission
-  // gating on execute. Without this, a REST call to an identity source 404s
-  // ("not found on server") because the workspace registry no longer holds it.
+  // they dispatch with identity scope, regardless of any (stale) X-Workspace-Id.
+  // Everything else resolves through the workspace registry and keeps its
+  // per-workspace permission gating on execute.
   const identitySource = runtime.getIdentitySource(server);
-  let workspaceRegistry: ToolRegistry | undefined;
-  let source: ToolSource | undefined;
-  let scope: RequestScope;
-  // The bare source name the registry is keyed on. For a qualified
-  // `ws_<id>-<source>` server it's the `<source>` portion; for a bare
-  // identity/workspace source it's `server` unchanged.
-  let resolvedSourceName = server;
-  if (identitySource) {
-    source = identitySource;
-    scope = { kind: "identity" };
-  } else {
-    // A qualified `ws_<id>-<source>` resolves to its own workspace by name +
-    // membership (cross-workspace tool surfaced via nb__search); a bare source
-    // uses the ambient X-Workspace-Id. Same resolution as the resource read.
-    const resolved = await resolveRestSourceWorkspace(runtime, server, identity, workspaceId, () =>
-      apiError(400, "workspace_required", `Tool "${tool}" requires a workspace`, { server, tool }),
-    );
-    if (!resolved.ok) return resolved.response;
-    resolvedSourceName = resolved.sourceName;
-    workspaceRegistry = await runtime.ensureWorkspaceRegistry(resolved.workspaceId);
-    if (!workspaceRegistry.hasSource(resolvedSourceName)) {
-      return apiError(404, "tool_not_found", `Tool "${tool}" not found on server "${server}"`, {
-        server,
-        tool,
-      });
-    }
-    source = workspaceRegistry.getSources().find((s) => s.name === resolvedSourceName);
-    scope = {
-      kind: "workspace",
-      workspaceId: resolved.workspaceId,
-      workspaceAgents: null,
-      workspaceModelOverride: null,
-    };
-  }
+  const targetResult = await resolveToolCallTarget(
+    runtime,
+    server,
+    tool,
+    identitySource,
+    identity,
+    workspaceId,
+  );
+  if (!targetResult.ok) return targetResult.response;
+  const { source, scope, workspaceRegistry, resolvedSourceName } = targetResult.target;
 
-  // Normalize `tool` to the registry's `<bareSource>__<tool>` form. It may
-  // arrive bare ("preview"), source-prefixed ("calendar__main"), or fully
-  // qualified ("ws_<id>-calendar__main" from the bridge) — strip a leading
-  // qualified-server prefix first, then ensure the bare-source prefix.
-  let innerTool = tool;
-  if (innerTool.startsWith(`${server}__`)) innerTool = innerTool.slice(server.length + 2);
-  const toolName = innerTool.startsWith(`${resolvedSourceName}__`)
-    ? innerTool
-    : `${resolvedSourceName}__${innerTool}`;
+  const toolName = normalizeRestToolName(tool, server, resolvedSourceName);
 
   // Coerced args flow through to execute below — validation and execution must
   // see the same shape. Defaults to the raw args; replaced with the
@@ -1087,37 +1370,9 @@ export async function handleToolCall(
   let coercedArgs: Record<string, unknown> = args ?? {};
 
   if (source) {
-    try {
-      const tools = await source.tools();
-      const toolDef = tools.find((t) => t.name === toolName);
-      if (!toolDef) {
-        return apiError(404, "tool_not_found", `Tool "${tool}" not found on server "${server}"`, {
-          server,
-          tool,
-        });
-      }
-
-      // Validate input against the tool's declared JSON Schema. Coerce
-      // first to recover nested string-encoded object/array values — see
-      // src/tools/coerce-input.ts.
-      if (toolDef.inputSchema) {
-        coercedArgs = coerceInputForSchema(coercedArgs, toolDef.inputSchema);
-        const validation = validateToolInput(coercedArgs, toolDef.inputSchema);
-        if (!validation.valid) {
-          return apiError(
-            400,
-            "invalid_input",
-            `Invalid arguments for "${tool}": ${validation.error}`,
-            {
-              tool: toolName,
-              errors: validation.errors,
-            },
-          );
-        }
-      }
-    } catch {
-      return json({ error: "tool_not_found", server, tool }, 404);
-    }
+    const validated = await validateRestToolInput(source, toolName, tool, server, coercedArgs);
+    if (!validated.ok) return validated.response;
+    coercedArgs = validated.coercedArgs;
   }
 
   // Feature flag gate — reject calls to disabled tools (defense-in-depth layer 2)
@@ -1137,32 +1392,14 @@ export async function handleToolCall(
   // Build per-request context for AsyncLocalStorage (concurrency-safe). The
   // scope is the resolved door — identity for a kernel identity source,
   // workspace otherwise — never a nullable workspace.
-  const reqCtx: RequestContext = {
-    identity: identity ?? null,
-    scope,
-    // Files are workspace-owned: an identity-door `files__*` call lands in the
-    // focused workspace (validated `X-Workspace-Id`) or the caller's personal
-    // workspace when unfocused. Ignored by the other identity tools.
-    fileWorkspaceId: workspaceId ?? personalWorkspaceIdFor(runtime.resolveRequestUserId(identity)),
-  };
+  const reqCtx = buildRestToolCallContext(identity, scope, workspaceId, runtime);
 
   // Audit log
   log.info(`[api] tools/call server=${server} tool=${tool} identity=${identity?.id ?? "none"}`);
   const callId = `api_${crypto.randomUUID().slice(0, 8)}`;
 
   // Emit bridge.tool.call before execution (ephemeral SSE + durable event sink)
-  const bridgeCallEvent = {
-    type: "bridge.tool.call" as const,
-    data: {
-      name: toolName,
-      id: callId,
-      server,
-      userId: identity?.id ?? null,
-      workspaceId: scope.kind === "workspace" ? scope.workspaceId : null,
-    },
-  };
-  sseManager?.emit(bridgeCallEvent);
-  eventSink?.emit(bridgeCallEvent);
+  emitBridgeToolCall(sseManager, eventSink, toolName, callId, server, identity, scope);
 
   const t0 = performance.now();
   let result: Awaited<ReturnType<ToolRegistry["execute"]>> | undefined;
@@ -1175,30 +1412,12 @@ export async function handleToolCall(
     // Identity tools have no workspace registry — dispatch straight to the
     // source with the bare tool name (owner-gated in the handler), mirroring
     // the `/mcp` identity branch.
-    result = await runWithRequestContext(reqCtx, () => {
-      if (identitySource) {
-        return identitySource.execute(toolName.slice(toolName.indexOf("__") + 2), coercedArgs);
-      }
-      // A non-identity source always resolved a workspace registry above (or
-      // we 400'd); the guard narrows the type without a non-null assertion.
-      if (!workspaceRegistry) throw new Error("workspace registry missing for workspace tool");
-      return workspaceRegistry.execute({ id: callId, name: toolName, input: coercedArgs });
-    });
+    result = await runWithRequestContext(reqCtx, () =>
+      dispatchRestToolCall(identitySource, workspaceRegistry, toolName, callId, coercedArgs),
+    );
   } catch (err) {
     const ms = Math.round(performance.now() - t0);
-    const failEvent = {
-      type: "bridge.tool.done" as const,
-      data: {
-        name: toolName,
-        id: callId,
-        ok: false,
-        ms,
-        userId: identity?.id ?? null,
-        workspaceId: scope.kind === "workspace" ? scope.workspaceId : null,
-      },
-    };
-    sseManager?.emit(failEvent);
-    eventSink?.emit(failEvent);
+    emitBridgeToolDone(sseManager, eventSink, toolName, callId, false, ms, identity, scope);
     // Typed invariant errors get mapped to clean HTTP status codes
     // (mirrors how /v1/chat handles ConversationCorruptedError). The
     // direct-throw path (in-process tool that bubbles up to here without
@@ -1212,42 +1431,15 @@ export async function handleToolCall(
     throw err;
   }
 
-  // Recognize a PersonalWorkspaceInvariantError encoded in the tool
-  // result. The error class doesn't survive the in-process MCP
-  // serialization boundary (handler throws → SDK catches → JSON-RPC
-  // error → SDK client throws a generic McpError), so workspace-mgmt
-  // tool handlers encode it as `structuredContent.error === "personal_
-  // workspace_invariant"` with `reason` + `workspaceId`. We unwrap that
-  // here so callers (web shell, external MCP clients) see a clean 422
-  // with the same structured body as the direct-throw path above.
-  if (result.isError && isPersonalWorkspaceInvariantToolResult(result.structuredContent)) {
-    const sc = result.structuredContent;
-    return apiError(
-      422,
-      "personal_workspace_invariant",
-      typeof sc.message === "string" ? sc.message : "Personal-workspace invariant violated",
-      {
-        workspaceId: sc.workspaceId,
-        reason: sc.reason,
-      },
-    );
-  }
+  // Recognize a PersonalWorkspaceInvariantError encoded in the tool result so
+  // callers (web shell, external MCP clients) see a clean 422 with the same
+  // structured body as the direct-throw path above.
+  const invariantResponse = personalWorkspaceInvariantResultResponse(result);
+  if (invariantResponse) return invariantResponse;
 
   const ms = Math.round(performance.now() - t0);
   // Emit bridge.tool.done after execution (ephemeral SSE + durable event sink)
-  const doneEvent = {
-    type: "bridge.tool.done" as const,
-    data: {
-      name: toolName,
-      id: callId,
-      ok: !result.isError,
-      ms,
-      userId: identity?.id ?? null,
-      workspaceId: scope.kind === "workspace" ? scope.workspaceId : null,
-    },
-  };
-  sseManager?.emit(doneEvent);
-  eventSink?.emit(doneEvent);
+  emitBridgeToolDone(sseManager, eventSink, toolName, callId, !result.isError, ms, identity, scope);
 
   // NOTE: Do NOT emit data.changed here. This endpoint is the MCP App Bridge
   // proxy — tool calls initiated by iframes. The iframe already knows about
@@ -1523,6 +1715,63 @@ export async function handleOidcAuthorize(provider: IdentityProvider): Promise<R
   return Response.redirect(authUrl.toString(), 302);
 }
 
+/** Build the `nb_session` Set-Cookie value (adds `Secure` when serving over HTTPS). */
+function sessionCookie(accessToken: string, secure: boolean): string {
+  const parts = [`nb_session=${accessToken}`, "HttpOnly", "SameSite=Lax", "Path=/", "Max-Age=3600"];
+  if (secure) parts.push("Secure");
+  return parts.join("; ");
+}
+
+/** Build the `nb_refresh` Set-Cookie value (adds `Secure` when serving over HTTPS). */
+function refreshCookie(refreshToken: string, secure: boolean): string {
+  const parts = [
+    `nb_refresh=${refreshToken}`,
+    "HttpOnly",
+    "SameSite=Lax",
+    "Path=/v1/auth",
+    "Max-Age=2592000",
+  ];
+  if (secure) parts.push("Secure");
+  return parts.join("; ");
+}
+
+/** Read the `nb_refresh` token from the request Cookie header, or null. */
+function readRefreshCookie(request: Request): string | null {
+  const cookieHeader = request.headers.get("cookie") ?? "";
+  for (const part of cookieHeader.split(";")) {
+    const trimmed = part.trim();
+    if (trimmed.startsWith("nb_refresh=")) return trimmed.slice("nb_refresh=".length);
+  }
+  return null;
+}
+
+/** Map a token-refresh failure to its HTTP response: rejected → 401, transient → 503. */
+function mapOidcRefreshError(err: unknown): Response {
+  // The provider classifies the failure (it owns its SDK's error shapes); we
+  // only map that verdict to a status. A `rejected` refresh means the session
+  // is genuinely dead → 401, the client logs out and re-authenticates. Any
+  // other failure is transient/infrastructural → 503 `refresh_unavailable`,
+  // which the client treats as "keep the session and retry" rather than
+  // logging a valid user out over a network blip or a deploy-time 5xx. (This
+  // is the server-side half of the same fix as fetch-with-refresh.ts.)
+  if (err instanceof RefreshTokenError && err.kind === "rejected") {
+    // Expected (session expired/revoked). Log terse, no stack.
+    log.warn(
+      "[nimblebrain] Token refresh rejected (session expired) — client will re-authenticate",
+    );
+    return apiError(401, "refresh_failed", "Token refresh failed");
+  }
+  // Transient: log at error so a misconfig (e.g. invalid_client) or an
+  // unmapped code surfaces to an operator instead of hiding in the client's
+  // soft-retry loop. Retry-After completes the 503's HTTP semantics.
+  const reason = err instanceof Error ? err.message : String(err);
+  const code = err instanceof RefreshTokenError ? err.code : undefined;
+  log.error("[nimblebrain] Token refresh unavailable", { reason, code });
+  return apiError(503, "refresh_unavailable", "Token refresh temporarily unavailable", undefined, {
+    "Retry-After": "1",
+  });
+}
+
 /**
  * Handle GET /v1/auth/callback — verify state against server-side store,
  * exchange code with PKCE verifier, and set session cookies.
@@ -1538,6 +1787,10 @@ export async function handleOidcCallback(
   }
 
   const url = new URL(request.url);
+  // Where the browser lands on any failure (or success): the caller-supplied app
+  // origin, else the request origin.
+  const fallbackRedirect = appOrigin ?? url.origin;
+
   const code = url.searchParams.get("code");
   if (!code) {
     return apiError(400, "bad_request", "Missing authorization code");
@@ -1547,8 +1800,7 @@ export async function handleOidcCallback(
   const returnedState = url.searchParams.get("state");
   if (!returnedState) {
     log.error("[nimblebrain] OAuth callback missing state parameter");
-    const errorRedirect = appOrigin ?? url.origin;
-    return Response.redirect(`${errorRedirect}?error=auth_failed`, 302);
+    return Response.redirect(`${fallbackRedirect}?error=auth_failed`, 302);
   }
 
   cleanupPendingFlows();
@@ -1556,8 +1808,7 @@ export async function handleOidcCallback(
   const pendingFlow = pendingAuthFlows.get(returnedState);
   if (!pendingFlow) {
     log.error("[nimblebrain] OAuth state mismatch — possible CSRF attack or expired flow");
-    const errorRedirect = appOrigin ?? url.origin;
-    return Response.redirect(`${errorRedirect}?error=auth_failed`, 302);
+    return Response.redirect(`${fallbackRedirect}?error=auth_failed`, 302);
   }
 
   // Consume the state — one-time use
@@ -1567,36 +1818,16 @@ export async function handleOidcCallback(
     // Exchange code with the PKCE verifier — provider forwards it to the authorization server
     const result = await provider.exchangeCode(code, pendingFlow.codeVerifier);
 
-    const redirectUrl = appOrigin ?? url.origin;
-    const secure = secureCookies;
-
-    const sessionParts = [
-      `nb_session=${result.accessToken}`,
-      "HttpOnly",
-      "SameSite=Lax",
-      "Path=/",
-      "Max-Age=3600",
-    ];
-    if (secure) sessionParts.push("Secure");
-
     const mutableRes = new Response(null, {
       status: 302,
       headers: {
-        Location: redirectUrl,
-        "Set-Cookie": sessionParts.join("; "),
+        Location: fallbackRedirect,
+        "Set-Cookie": sessionCookie(result.accessToken, secureCookies),
       },
     });
 
     if (result.refreshToken) {
-      const refreshParts = [
-        `nb_refresh=${result.refreshToken}`,
-        "HttpOnly",
-        "SameSite=Lax",
-        "Path=/v1/auth",
-        "Max-Age=2592000",
-      ];
-      if (secure) refreshParts.push("Secure");
-      mutableRes.headers.append("Set-Cookie", refreshParts.join("; "));
+      mutableRes.headers.append("Set-Cookie", refreshCookie(result.refreshToken, secureCookies));
     }
 
     return mutableRes;
@@ -1604,8 +1835,7 @@ export async function handleOidcCallback(
     log.error("[nimblebrain] Auth callback failed", {
       error: err instanceof Error ? err.message : String(err),
     });
-    const errorRedirect = appOrigin ?? url.origin;
-    return Response.redirect(`${errorRedirect}?error=auth_failed`, 302);
+    return Response.redirect(`${fallbackRedirect}?error=auth_failed`, 302);
   }
 }
 
@@ -1619,16 +1849,7 @@ export async function handleOidcRefresh(
     return apiError(400, "not_configured", "OIDC auth not configured");
   }
 
-  const cookieHeader = request.headers.get("cookie") ?? "";
-  let refreshToken: string | null = null;
-  for (const part of cookieHeader.split(";")) {
-    const trimmed = part.trim();
-    if (trimmed.startsWith("nb_refresh=")) {
-      refreshToken = trimmed.slice("nb_refresh=".length);
-      break;
-    }
-  }
-
+  const refreshToken = readRefreshCookie(request);
   if (!refreshToken) {
     return apiError(401, "no_refresh_token", "No refresh token");
   }
@@ -1636,60 +1857,16 @@ export async function handleOidcRefresh(
   try {
     const result = await provider.refreshToken(refreshToken);
 
-    const secure = secureCookies;
-    const sessionParts = [
-      `nb_session=${result.accessToken}`,
-      "HttpOnly",
-      "SameSite=Lax",
-      "Path=/",
-      "Max-Age=3600",
-    ];
-    if (secure) sessionParts.push("Secure");
-
     const res = json({ ok: true });
-    res.headers.set("Set-Cookie", sessionParts.join("; "));
+    res.headers.set("Set-Cookie", sessionCookie(result.accessToken, secureCookies));
 
     if (result.refreshToken) {
-      const refreshParts = [
-        `nb_refresh=${result.refreshToken}`,
-        "HttpOnly",
-        "SameSite=Lax",
-        "Path=/v1/auth",
-        "Max-Age=2592000",
-      ];
-      if (secure) refreshParts.push("Secure");
-      res.headers.append("Set-Cookie", refreshParts.join("; "));
+      res.headers.append("Set-Cookie", refreshCookie(result.refreshToken, secureCookies));
     }
 
     return res;
   } catch (err) {
-    // The provider classifies the failure (it owns its SDK's error shapes); we
-    // only map that verdict to a status. A `rejected` refresh means the session
-    // is genuinely dead → 401, the client logs out and re-authenticates. Any
-    // other failure is transient/infrastructural → 503 `refresh_unavailable`,
-    // which the client treats as "keep the session and retry" rather than
-    // logging a valid user out over a network blip or a deploy-time 5xx. (This
-    // is the server-side half of the same fix as fetch-with-refresh.ts.)
-    if (err instanceof RefreshTokenError && err.kind === "rejected") {
-      // Expected (session expired/revoked). Log terse, no stack.
-      log.warn(
-        "[nimblebrain] Token refresh rejected (session expired) — client will re-authenticate",
-      );
-      return apiError(401, "refresh_failed", "Token refresh failed");
-    }
-    // Transient: log at error so a misconfig (e.g. invalid_client) or an
-    // unmapped code surfaces to an operator instead of hiding in the client's
-    // soft-retry loop. Retry-After completes the 503's HTTP semantics.
-    const reason = err instanceof Error ? err.message : String(err);
-    const code = err instanceof RefreshTokenError ? err.code : undefined;
-    log.error("[nimblebrain] Token refresh unavailable", { reason, code });
-    return apiError(
-      503,
-      "refresh_unavailable",
-      "Token refresh temporarily unavailable",
-      undefined,
-      { "Retry-After": "1" },
-    );
+    return mapOidcRefreshError(err);
   }
 }
 
@@ -1806,53 +1983,14 @@ async function parseChatBody(
   };
 }
 
+/** Form-data as produced by `Request.formData()` (avoids naming the DOM-less `FormData` global). */
+type MultipartForm = Awaited<ReturnType<Request["formData"]>>;
+
 /**
- * Parse a multipart/form-data chat request with file uploads.
- * Extracts message, optional fields, and uploaded files.
+ * Collect uploaded files from a chat multipart body. FormDataEntryValue is
+ * `string | File` in Bun; without the DOM lib we duck-type the file parts.
  */
-async function parseMultipartChatBody(
-  request: Request,
-  runtime: Runtime,
-  identity?: UserIdentity,
-  workspaceId?: string,
-): Promise<ChatRequest | Response> {
-  let formData: Awaited<ReturnType<typeof request.formData>>;
-  try {
-    formData = await request.formData();
-  } catch {
-    return apiError(400, "bad_request", "Invalid multipart form data");
-  }
-
-  const messageRaw = formData.get("message");
-  // Allow empty/missing message when files are attached (validated after file collection)
-  const message = typeof messageRaw === "string" ? messageRaw : "";
-
-  const conversationId = formData.get("conversationId");
-  // Reject a malformed conversationId before it reaches store path-building
-  // / ingestFiles (convId feeds the file-store path). The JSON surface gets
-  // this from the ChatRequestBody schema pattern; multipart parses raw, so
-  // validate the same shape here. Mirrors the canonical conv_<16 hex> regex.
-  if (
-    typeof conversationId === "string" &&
-    conversationId &&
-    !CONVERSATION_ID_RE.test(conversationId)
-  ) {
-    return apiError(400, "bad_request", "Invalid conversationId format");
-  }
-  const model = formData.get("model");
-
-  let appContext: { appName: string; serverName: string } | undefined;
-  const appContextRaw = formData.get("appContext");
-  if (typeof appContextRaw === "string" && appContextRaw) {
-    try {
-      appContext = JSON.parse(appContextRaw);
-    } catch {
-      return apiError(400, "bad_request", "appContext must be a valid JSON string");
-    }
-  }
-
-  // Collect uploaded files — FormDataEntryValue is string | File in Bun.
-  // TypeScript without DOM lib doesn't know File, so we check via duck typing.
+async function collectMultipartChatFiles(formData: MultipartForm): Promise<UploadedFile[]> {
   const uploadedFiles: UploadedFile[] = [];
   for (const [_key, value] of formData.entries()) {
     if (typeof value === "string") continue;
@@ -1872,24 +2010,107 @@ async function parseMultipartChatBody(
       mimeType: resolveMimeType(entry.name, entry.type),
     });
   }
+  return uploadedFiles;
+}
+
+/** Parse the optional `appContext` JSON field: value, undefined (absent), or an error Response. */
+function parseMultipartAppContext(
+  raw: unknown,
+): { appName: string; serverName: string } | undefined | Response {
+  if (typeof raw !== "string" || !raw) return undefined;
+  try {
+    return JSON.parse(raw);
+  } catch {
+    return apiError(400, "bad_request", "appContext must be a valid JSON string");
+  }
+}
+
+/**
+ * Reject a malformed multipart `conversationId` (400) before it reaches store
+ * path-building / ingestFiles. The JSON surface gets this from the
+ * ChatRequestBody schema pattern; multipart parses raw, so validate the same
+ * canonical `conv_<16 hex>` shape here. Null when absent or valid.
+ */
+function invalidMultipartConversationId(conversationId: unknown): Response | null {
+  if (
+    typeof conversationId === "string" &&
+    conversationId &&
+    !CONVERSATION_ID_RE.test(conversationId)
+  ) {
+    return apiError(400, "bad_request", "Invalid conversationId format");
+  }
+  return null;
+}
+
+/**
+ * Assemble the ChatRequest fields shared by the text-only and file-ingest
+ * multipart paths. The focused workspace (`X-Workspace-Id`) threads into
+ * `ChatRequest.workspaceId` for prompt scoping — see `parseChatBody`.
+ */
+function multipartChatRequestBase(
+  message: string,
+  conversationId: unknown,
+  model: unknown,
+  appContext: { appName: string; serverName: string } | undefined,
+  workspaceId: string | undefined,
+  identity: UserIdentity | undefined,
+): ChatRequest {
+  return {
+    message,
+    conversationId: typeof conversationId === "string" ? conversationId : undefined,
+    model: typeof model === "string" ? model : undefined,
+    appContext,
+    ...(workspaceId !== undefined ? { workspaceId } : {}),
+    ...(identity ? { identity } : {}),
+  };
+}
+
+/**
+ * Parse a multipart/form-data chat request with file uploads.
+ * Extracts message, optional fields, and uploaded files.
+ */
+async function parseMultipartChatBody(
+  request: Request,
+  runtime: Runtime,
+  identity?: UserIdentity,
+  workspaceId?: string,
+): Promise<ChatRequest | Response> {
+  let formData: MultipartForm;
+  try {
+    formData = await request.formData();
+  } catch {
+    return apiError(400, "bad_request", "Invalid multipart form data");
+  }
+
+  const messageRaw = formData.get("message");
+  // Allow empty/missing message when files are attached (validated after file collection)
+  const message = typeof messageRaw === "string" ? messageRaw : "";
+
+  const conversationId = formData.get("conversationId");
+  const badConversationId = invalidMultipartConversationId(conversationId);
+  if (badConversationId) return badConversationId;
+  const model = formData.get("model");
+
+  const appContext = parseMultipartAppContext(formData.get("appContext"));
+  if (appContext instanceof Response) return appContext;
+
+  const uploadedFiles = await collectMultipartChatFiles(formData);
 
   // Require either a non-empty message or at least one uploaded file
   if (!message && uploadedFiles.length === 0) {
     return apiError(400, "bad_request", "message or file attachment is required");
   }
 
-  // If no files, treat as a plain text request (no ingest needed). The
-  // focused workspace (`X-Workspace-Id`) threads into `ChatRequest.workspaceId`
-  // for prompt scoping — see `parseChatBody`.
+  // If no files, treat as a plain text request (no ingest needed).
   if (uploadedFiles.length === 0) {
-    return {
+    return multipartChatRequestBase(
       message,
-      conversationId: typeof conversationId === "string" ? conversationId : undefined,
-      model: typeof model === "string" ? model : undefined,
+      conversationId,
+      model,
       appContext,
-      ...(workspaceId !== undefined ? { workspaceId } : {}),
-      ...(identity ? { identity } : {}),
-    };
+      workspaceId,
+      identity,
+    );
   }
 
   // Ingest files: validate, store, extract text, build content parts.
@@ -1925,14 +2146,9 @@ async function parseMultipartChatBody(
     });
   }
   return {
-    message,
-    conversationId: typeof conversationId === "string" ? conversationId : undefined,
-    model: typeof model === "string" ? model : undefined,
-    appContext,
+    ...multipartChatRequestBase(message, conversationId, model, appContext, workspaceId, identity),
     contentParts: ingestResult.contentParts,
     fileRefs: ingestResult.fileRefs,
-    ...(workspaceId !== undefined ? { workspaceId } : {}),
-    ...(identity ? { identity } : {}),
   };
 }
 
@@ -1958,39 +2174,12 @@ function json(data: unknown, status = 200): Response {
 }
 
 /**
- * Handle POST /v1/resources — multipart file upload to the workspace
- * file store. Stores each uploaded file, registers it, returns the
- * resulting FileEntry list. This is the byte-transport entry point used
- * by the bridge's `synapse/request-file` flow so the iframe never has
- * to base64-encode bytes into a tool-call argument.
- *
- * Workspace isolation comes from `workspaceId` (the validated `X-Workspace-Id`,
- * or the caller's personal workspace when unfocused) flowing into
- * `getWorkspaceFileStore` — bytes physically land under that workspace's own
- * `files/<ownerId>/` partition.
+ * Collect uploaded files from a resource-upload multipart body. Files MUST be
+ * sent under the `file` or `files` key; other non-string entries (e.g. a Blob
+ * accidentally appended under `tags`) are ignored rather than silently treated
+ * as uploads. Returns an error Response on a malformed part.
  */
-export async function handleResourceUpload(
-  request: Request,
-  runtime: Runtime,
-  features: ResolvedFeatures,
-  identity: UserIdentity | undefined,
-  workspaceId: string | undefined,
-): Promise<Response> {
-  if (!features.fileContext) {
-    return apiError(404, "not_found", "Not found");
-  }
-
-  let formData: Awaited<ReturnType<typeof request.formData>>;
-  try {
-    formData = await request.formData();
-  } catch {
-    return apiError(400, "bad_request", "Invalid multipart form data");
-  }
-
-  // Files MUST be sent under the `file` or `files` key. Other non-string
-  // entries (e.g. a Blob accidentally appended under `tags`) are ignored
-  // rather than silently treated as uploads — caller surprises in upload
-  // contracts age badly.
+async function collectResourceUploads(formData: MultipartForm): Promise<UploadedFile[] | Response> {
   const uploads: UploadedFile[] = [];
   try {
     for (const [key, value] of formData.entries()) {
@@ -2014,6 +2203,109 @@ export async function handleResourceUpload(
   } catch {
     return apiError(400, "bad_request", "Malformed file entry in multipart body");
   }
+  return uploads;
+}
+
+/** Parse the optional `tags` field as a JSON array of strings ([] when absent), or an error Response. */
+function parseResourceUploadTags(raw: unknown): string[] | Response {
+  if (typeof raw !== "string" || !raw) return [];
+  try {
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed) || !parsed.every((t) => typeof t === "string")) {
+      return apiError(400, "bad_request", "tags must be a JSON array of strings");
+    }
+    return parsed;
+  } catch {
+    return apiError(400, "bad_request", "tags must be a valid JSON array");
+  }
+}
+
+/** A multipart text field as a non-empty string, or null. */
+function optionalStringField(raw: unknown): string | null {
+  return typeof raw === "string" && raw ? raw : null;
+}
+
+/** Validate size/MIME, store, and register each upload; returns the saved entries + per-file rejection reasons. */
+async function persistResourceUploads(
+  uploads: UploadedFile[],
+  config: ReturnType<Runtime["getFilesConfig"]>,
+  store: ReturnType<Runtime["getWorkspaceFileStore"]>,
+  meta: {
+    tags: string[];
+    description: string | null;
+    conversationId: string | null;
+    uploadOwner: string;
+    wsId: string;
+  },
+): Promise<{ entries: FileEntry[]; errors: string[] }> {
+  const entries: FileEntry[] = [];
+  const errors: string[] = [];
+  for (const file of uploads) {
+    if (file.data.length > config.maxFileSize) {
+      errors.push(
+        `File "${file.filename}" (${file.data.length} bytes) exceeds per-file limit of ${config.maxFileSize}`,
+      );
+      continue;
+    }
+    if (!isAllowedMime(file.mimeType)) {
+      errors.push(`File "${file.filename}" has disallowed type: ${file.mimeType}`);
+      continue;
+    }
+    const saved = await store.saveFile(file.data, file.filename, file.mimeType);
+    const entry: FileEntry = {
+      id: saved.id,
+      filename: file.filename,
+      mimeType: file.mimeType,
+      size: saved.size,
+      tags: meta.tags,
+      source: "app",
+      conversationId: meta.conversationId,
+      createdAt: new Date().toISOString(),
+      description: meta.description,
+      // Stamp the resolved workspace/owner the bytes physically landed in (the
+      // conversation's authoritative workspace) — advisory denormalisation that
+      // lets the upload response report where the file lives.
+      ownerId: meta.uploadOwner,
+      workspaceId: meta.wsId,
+    };
+    await store.appendRegistry(entry);
+    entries.push(entry);
+  }
+  return { entries, errors };
+}
+
+/**
+ * Handle POST /v1/resources — multipart file upload to the workspace
+ * file store. Stores each uploaded file, registers it, returns the
+ * resulting FileEntry list. This is the byte-transport entry point used
+ * by the bridge's `synapse/request-file` flow so the iframe never has
+ * to base64-encode bytes into a tool-call argument.
+ *
+ * Workspace isolation comes from `workspaceId` (the validated `X-Workspace-Id`,
+ * or the caller's personal workspace when unfocused) flowing into
+ * `getWorkspaceFileStore` — bytes physically land under that workspace's own
+ * `files/<ownerId>/` partition.
+ */
+export async function handleResourceUpload(
+  request: Request,
+  runtime: Runtime,
+  features: ResolvedFeatures,
+  identity: UserIdentity | undefined,
+  workspaceId: string | undefined,
+): Promise<Response> {
+  if (!features.fileContext) {
+    return apiError(404, "not_found", "Not found");
+  }
+
+  let formData: MultipartForm;
+  try {
+    formData = await request.formData();
+  } catch {
+    return apiError(400, "bad_request", "Invalid multipart form data");
+  }
+
+  const uploads = await collectResourceUploads(formData);
+  if (uploads instanceof Response) return uploads;
 
   if (uploads.length === 0) {
     return apiError(400, "bad_request", "No files in request (use the 'file' or 'files' field)");
@@ -2034,27 +2326,13 @@ export async function handleResourceUpload(
     });
   }
 
-  // Optional metadata applied to every uploaded file. The picker flow
-  // sends none of these today; they exist so future callers (agent
-  // tools, drag-drop with tag) don't need a follow-up tool call.
-  let tags: string[] = [];
-  const tagsRaw = formData.get("tags");
-  if (typeof tagsRaw === "string" && tagsRaw) {
-    try {
-      const parsed = JSON.parse(tagsRaw);
-      if (!Array.isArray(parsed) || !parsed.every((t) => typeof t === "string")) {
-        return apiError(400, "bad_request", "tags must be a JSON array of strings");
-      }
-      tags = parsed;
-    } catch {
-      return apiError(400, "bad_request", "tags must be a valid JSON array");
-    }
-  }
-  const descriptionRaw = formData.get("description");
-  const description = typeof descriptionRaw === "string" && descriptionRaw ? descriptionRaw : null;
-  const conversationIdRaw = formData.get("conversationId");
-  const conversationId =
-    typeof conversationIdRaw === "string" && conversationIdRaw ? conversationIdRaw : null;
+  // Optional metadata applied to every uploaded file. The picker flow sends
+  // none of these today; they exist so future callers (agent tools, drag-drop
+  // with tag) don't need a follow-up tool call.
+  const tags = parseResourceUploadTags(formData.get("tags"));
+  if (tags instanceof Response) return tags;
+  const description = optionalStringField(formData.get("description"));
+  const conversationId = optionalStringField(formData.get("conversationId"));
 
   const uploadOwner = runtime.resolveRequestUserId(identity);
   const fallbackWsId = workspaceId ?? personalWorkspaceIdFor(uploadOwner);
@@ -2067,40 +2345,14 @@ export async function handleResourceUpload(
     uploadOwner,
   );
   const store = runtime.getWorkspaceFileStore(wsId, uploadOwner);
-  const entries: FileEntry[] = [];
-  const errors: string[] = [];
 
-  for (const file of uploads) {
-    if (file.data.length > config.maxFileSize) {
-      errors.push(
-        `File "${file.filename}" (${file.data.length} bytes) exceeds per-file limit of ${config.maxFileSize}`,
-      );
-      continue;
-    }
-    if (!isAllowedMime(file.mimeType)) {
-      errors.push(`File "${file.filename}" has disallowed type: ${file.mimeType}`);
-      continue;
-    }
-    const saved = await store.saveFile(file.data, file.filename, file.mimeType);
-    const entry: FileEntry = {
-      id: saved.id,
-      filename: file.filename,
-      mimeType: file.mimeType,
-      size: saved.size,
-      tags,
-      source: "app",
-      conversationId,
-      createdAt: new Date().toISOString(),
-      description,
-      // Stamp the resolved workspace/owner the bytes physically landed in (the
-      // conversation's authoritative workspace) — advisory denormalisation that
-      // lets the upload response report where the file lives.
-      ownerId: uploadOwner,
-      workspaceId: wsId,
-    };
-    await store.appendRegistry(entry);
-    entries.push(entry);
-  }
+  const { entries, errors } = await persistResourceUploads(uploads, config, store, {
+    tags,
+    description,
+    conversationId,
+    uploadOwner,
+    wsId,
+  });
 
   if (entries.length === 0) {
     return apiError(400, "file_upload_error", "All uploads were rejected", { errors });
