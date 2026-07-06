@@ -83,61 +83,62 @@ function resolveConfigPath(flags: CliFlags): string {
   return resolve(DEFAULT_CONFIG_FILE);
 }
 
-/** Load RuntimeConfig from a nimblebrain.json file, merged with CLI flags. */
-export function loadConfig(flags: CliFlags = {}): RuntimeConfig {
-  const configPath = resolveConfigPath(flags);
-  const configOverridePath = deriveOverridePath(configPath);
+/** File-derived config: RuntimeConfig fields plus any extra keys read off disk. */
+type FileConfig = Partial<RuntimeConfig> & Record<string, unknown>;
 
-  let seedConfig: Record<string, unknown> = {};
+/** Read+validate the seed config, auto-creating a default when its dir exists. */
+function loadSeedConfig(configPath: string, flags: CliFlags): Record<string, unknown> {
   if (existsSync(configPath)) {
-    const raw = readFileSync(configPath, "utf-8");
-    seedConfig = JSON.parse(raw);
+    const seedConfig: Record<string, unknown> = JSON.parse(readFileSync(configPath, "utf-8"));
     validateConfig(seedConfig, configPath);
-  } else if (flags.config) {
+    return seedConfig;
+  }
+  if (flags.config) {
     // Explicit --config/-c path must exist
     throw new Error(`Config file not found: ${configPath}`);
-  } else {
-    // Auto-create default config if the parent directory exists
-    if (existsSync(dirname(configPath))) {
-      writeFileSync(configPath, `${JSON.stringify(DEFAULT_CONFIG_CONTENT, null, 2)}\n`, "utf-8");
-    }
   }
-
-  // Layer the override file (if present) over the seed. The override is
-  // user-managed (set_model_config writes here) and preserved across
-  // deploys; the seed is operator-managed and overwritten on every deploy
-  // by the init container. Override values win on every key.
-  let fileConfig: Partial<RuntimeConfig> & Record<string, unknown> =
-    seedConfig as Partial<RuntimeConfig> & Record<string, unknown>;
-  if (existsSync(configOverridePath)) {
-    try {
-      const overrideRaw = readFileSync(configOverridePath, "utf-8");
-      const override = JSON.parse(overrideRaw) as Record<string, unknown>;
-      // Suppress unknown-key warnings: the override file's vocabulary
-      // (thinking, thinkingBudgetTokens) is not yet in the published
-      // JSON schema, and warning every boot for every tenant that's
-      // run set_model_config is noise. Structural errors still throw.
-      validateConfig(override, configOverridePath, { warnUnknownKeys: false });
-      const overrideKeys = Object.keys(override);
-      if (overrideKeys.length > 0) {
-        fileConfig = mergeConfigs(seedConfig, override) as Partial<RuntimeConfig> &
-          Record<string, unknown>;
-        log.error(
-          `[config] Applied ${overrideKeys.length} runtime override${overrideKeys.length === 1 ? "" : "s"} from ${configOverridePath}: ${overrideKeys.join(", ")}`,
-        );
-      }
-    } catch (err) {
-      // A malformed override file should NOT take down startup — the seed
-      // is still valid and the operator can fix the override file later.
-      // Log loudly so the divergence is visible.
-      log.error(
-        `[config] Failed to load override file ${configOverridePath}: ${err instanceof Error ? err.message : String(err)}. Using seed config only.`,
-      );
-    }
+  // Auto-create default config if the parent directory exists
+  if (existsSync(dirname(configPath))) {
+    writeFileSync(configPath, `${JSON.stringify(DEFAULT_CONFIG_CONTENT, null, 2)}\n`, "utf-8");
   }
+  return {};
+}
 
-  // Strip workspace-owned fields — these now live in workspace.json.
-  // Even if someone manually adds them to nimblebrain.json, they're ignored.
+/** Layer the user-managed override file over the operator seed; override keys win. */
+function applyOverride(
+  seedConfig: Record<string, unknown>,
+  configOverridePath: string,
+): FileConfig {
+  const fileConfig = seedConfig as FileConfig;
+  if (!existsSync(configOverridePath)) return fileConfig;
+  // A malformed override file must NOT take down startup — the seed is still
+  // valid and the operator can fix the override later. Log loudly on failure.
+  try {
+    const override = JSON.parse(readFileSync(configOverridePath, "utf-8")) as Record<
+      string,
+      unknown
+    >;
+    // Suppress unknown-key warnings: the override file's vocabulary (thinking,
+    // thinkingBudgetTokens) is not yet in the published JSON schema, and warning
+    // every boot for every tenant that's run set_model_config is noise.
+    // Structural errors still throw.
+    validateConfig(override, configOverridePath, { warnUnknownKeys: false });
+    const overrideKeys = Object.keys(override);
+    if (overrideKeys.length === 0) return fileConfig;
+    log.error(
+      `[config] Applied ${overrideKeys.length} runtime override${overrideKeys.length === 1 ? "" : "s"} from ${configOverridePath}: ${overrideKeys.join(", ")}`,
+    );
+    return mergeConfigs(seedConfig, override) as FileConfig;
+  } catch (err) {
+    log.error(
+      `[config] Failed to load override file ${configOverridePath}: ${err instanceof Error ? err.message : String(err)}. Using seed config only.`,
+    );
+    return fileConfig;
+  }
+}
+
+/** Delete workspace-owned fields; they now live in workspace.json and are ignored here. */
+function stripWorkspaceFields(fileConfig: FileConfig): void {
   delete fileConfig.bundles;
   delete fileConfig.agents;
   delete fileConfig.skillDirs;
@@ -145,8 +146,10 @@ export function loadConfig(flags: CliFlags = {}): RuntimeConfig {
   delete fileConfig.home;
   delete fileConfig.noDefaultBundles;
   delete fileConfig.skills; // legacy field
+}
 
-  // Deprecation warnings for removed fields
+/** Emit deprecation warnings for removed fields still present in the file. */
+function warnDeprecatedFields(fileConfig: FileConfig, configPath: string): void {
   if ("identity" in fileConfig) {
     log.error(
       `[config] Warning: "identity" is deprecated in ${configPath}. Use a context skill (type: "context") instead.`,
@@ -157,6 +160,33 @@ export function loadConfig(flags: CliFlags = {}): RuntimeConfig {
       `[config] Warning: "contextFile" is deprecated in ${configPath}. Use a context skill (type: "context") instead.`,
     );
   }
+}
+
+/** Resolve workDir (NB_WORK_DIR > file > flag default), absolutized at load. */
+function absoluteWorkDir(fileConfig: FileConfig, flags: CliFlags): string | undefined {
+  // Absolutize so the value survives crossing process boundaries (e.g. as
+  // `MPAK_WORKSPACE` to bundle subprocesses with a different cwd) without the
+  // two ends resolving against different bases. The undefined case is
+  // preserved — `resolveWorkDir(config)` in runtime.ts falls back to
+  // `DEFAULT_WORK_DIR`, which is already absolute.
+  const raw =
+    process.env.NB_WORK_DIR ?? (fileConfig.workDir as string | undefined) ?? flags.defaultWorkDir;
+  return raw === undefined ? undefined : resolve(raw);
+}
+
+/** Load RuntimeConfig from a nimblebrain.json file, merged with CLI flags. */
+export function loadConfig(flags: CliFlags = {}): RuntimeConfig {
+  const configPath = resolveConfigPath(flags);
+  const configOverridePath = deriveOverridePath(configPath);
+
+  // The seed is operator-managed and overwritten on every deploy by the init
+  // container; the override is user-managed (set_model_config writes it) and
+  // preserved across deploys. Override values win on every key.
+  const seedConfig = loadSeedConfig(configPath, flags);
+  const fileConfig = applyOverride(seedConfig, configOverridePath);
+
+  stripWorkspaceFields(fileConfig);
+  warnDeprecatedFields(fileConfig, configPath);
 
   // CLI flags override file config — workspace-owned fields (bundles, agents,
   // skillDirs, preferences, home, noDefaultBundles) are intentionally omitted;
@@ -182,18 +212,7 @@ export function loadConfig(flags: CliFlags = {}): RuntimeConfig {
     // Pass config path for bundle install/uninstall persistence
     configPath,
     configOverridePath,
-    // Absolutize at load so the value can be passed across process boundaries
-    // (e.g. as `MPAK_WORKSPACE` to bundle subprocesses with a different cwd)
-    // without the two ends resolving against different bases. The undefined
-    // case is preserved — `resolveWorkDir(config)` in runtime.ts falls back to
-    // `DEFAULT_WORK_DIR`, which is already absolute.
-    workDir: ((): string | undefined => {
-      const raw =
-        process.env.NB_WORK_DIR ??
-        (fileConfig.workDir as string | undefined) ??
-        flags.defaultWorkDir;
-      return raw === undefined ? undefined : resolve(raw);
-    })(),
+    workDir: absoluteWorkDir(fileConfig, flags),
     telemetry: fileConfig.telemetry as RuntimeConfig["telemetry"],
   };
 
