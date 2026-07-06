@@ -237,7 +237,7 @@ describe("System Tools", () => {
 		});
 	});
 
-	it("search with scope=tools caps broad matches at the top 25 results", async () => {
+	it("search with scope=tools caps broad matches at the top 10 results", async () => {
 		const registry = await makeManyMatchingToolsRegistry(30);
 		const systemTools = await createSystemTools(() => registry);
 		const result = await systemTools.execute("search", {
@@ -247,11 +247,11 @@ describe("System Tools", () => {
 
 		expect(result.isError).toBe(false);
 		expect(extractText(result.content)).toContain(
-			'Found 30 tool(s) for "common" (showing top 25):',
+			'Found 30 tool(s) for "common" (showing top 10):',
 		);
-		expect(getStructured<{ tools?: Array<{ name: string }> }>(result)?.tools).toHaveLength(25);
-		expect(extractText(result.content)).toContain("many__common_tool_24");
-		expect(extractText(result.content)).not.toContain("many__common_tool_25");
+		expect(getStructured<{ tools?: Array<{ name: string }> }>(result)?.tools).toHaveLength(10);
+		// exactly 10 result bullets — none beyond the cap
+		expect(extractText(result.content).match(/- \*\*/g)?.length).toBe(10);
 	});
 
 	it("search with scope=tools and empty query returns all tools grouped", async () => {
