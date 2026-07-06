@@ -108,12 +108,16 @@ function releaseLock(lockPath: string): void {
   }
 }
 
-function main(): void {
-  const args = process.argv.slice(2);
-  const write = args.includes("--write");
-  const roots = args.filter((a) => !a.startsWith("--"));
+/** Parse CLI argv into the write flag and the root dirs (defaulting to cwd). */
+function parseArgs(argv: string[]): { write: boolean; roots: string[] } {
+  const write = argv.includes("--write");
+  const roots = argv.filter((a) => !a.startsWith("--"));
   if (roots.length === 0) roots.push(process.cwd());
+  return { write, roots };
+}
 
+/** Migrate every root, holding the write-lock only on the destructive path. */
+function collectOutcomes(roots: string[], write: boolean): Outcome[] {
   const all: Outcome[] = [];
   for (const root of roots) {
     const resolved = resolve(root);
@@ -125,23 +129,41 @@ function main(): void {
       if (lock) releaseLock(lock);
     }
   }
+  return all;
+}
 
+/** Print the per-file lines and the summary tally for a completed run. */
+function report(all: Outcome[], write: boolean): void {
   const changed = all.filter((o) => o.status === "changed");
   const errors = all.filter((o) => o.status === "error");
 
   const verb = write ? "Migrated" : "Would migrate";
-  for (const o of changed) console.log(`  ${write ? "✓" : "·"} ${verb}: ${o.path}`);
+  const mark = write ? "✓" : "·";
+  for (const o of changed) console.log(`  ${mark} ${verb}: ${o.path}`);
   for (const o of errors) console.error(`  × Failed: ${o.path} — ${o.detail}`);
 
+  const state = write ? "migrated" : "pending";
+  const canonical = all.length - changed.length - errors.length;
   console.log(
-    `\n${all.length} skill file(s) scanned · ${changed.length} ${
-      write ? "migrated" : "pending"
-    } · ${all.length - changed.length - errors.length} already canonical · ${errors.length} error(s)`,
+    `\n${all.length} skill file(s) scanned · ${changed.length} ${state} · ${canonical} already canonical · ${errors.length} error(s)`,
   );
+}
 
-  if (errors.length > 0) process.exit(1);
-  // Dry-run with pending changes exits non-zero so CI can gate on it.
-  if (!write && changed.length > 0) process.exit(1);
+/** Exit code: non-zero on any error, or on a dry-run with pending changes (CI gate). */
+function exitCode(all: Outcome[], write: boolean): number {
+  const errors = all.filter((o) => o.status === "error").length;
+  const changed = all.filter((o) => o.status === "changed").length;
+  if (errors > 0) return 1;
+  if (!write && changed > 0) return 1;
+  return 0;
+}
+
+function main(): void {
+  const { write, roots } = parseArgs(process.argv.slice(2));
+  const all = collectOutcomes(roots, write);
+  report(all, write);
+  const code = exitCode(all, write);
+  if (code !== 0) process.exit(code);
 }
 
 main();
