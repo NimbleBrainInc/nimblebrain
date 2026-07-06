@@ -2,6 +2,7 @@ import { AlertCircle, Check, ChevronDown, Copy, RotateCcw, Zap } from "lucide-re
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Streamdown } from "streamdown";
 import type { ChatMessage, PreparingTool, StreamingState } from "../hooks/useChat";
+import { linkSafety } from "../lib/streamdown-config";
 import type { DisplayDetail } from "../lib/tool-display";
 import { BlockTimeline } from "./BlockTimeline";
 import { FileAttachment } from "./FileAttachment";
@@ -137,7 +138,6 @@ const BOTTOM_THRESHOLD = 50;
  */
 function useSmartScroll(messages: ChatMessage[]) {
   const scrollRef = useRef<HTMLDivElement>(null);
-  const bottomRef = useRef<HTMLDivElement>(null);
   const [isAtBottom, setIsAtBottom] = useState(true);
   // Track the conversation identity to detect loads vs sends.
   // We use the first message's timestamp as a fingerprint — it changes when
@@ -145,24 +145,54 @@ function useSmartScroll(messages: ChatMessage[]) {
   const prevConversationKeyRef = useRef<string | null>(null);
   const prevMessageCountRef = useRef(0);
 
+  // "Bottom" is the newest message resting at the viewport bottom — NOT the raw
+  // scroll end. The list keeps a 60vh trailing spacer (headroom so a fresh
+  // question can scroll to the top), and resting in that spacer would show blank
+  // space below the content. So both the flag and the scroll key off the last
+  // message element, never `scrollHeight`. DOM order is [...messages, spacer], so
+  // the last message is at index messages.length - 1.
+  const lastMessageEl = useCallback(
+    () => scrollRef.current?.firstElementChild?.children[messages.length - 1] as HTMLElement | null,
+    [messages.length],
+  );
+
   const checkIsAtBottom = useCallback(() => {
     const el = scrollRef.current;
-    if (!el) return true;
-    return el.scrollHeight - el.scrollTop - el.clientHeight <= BOTTOM_THRESHOLD;
-  }, []);
+    const last = lastMessageEl();
+    if (!el || !last) return true;
+    // At bottom ⇔ none of the newest message sits below the fold.
+    return (
+      last.getBoundingClientRect().bottom - el.getBoundingClientRect().bottom <= BOTTOM_THRESHOLD
+    );
+  }, [lastMessageEl]);
 
-  const scrollToBottom = useCallback((behavior: ScrollBehavior = "smooth") => {
-    bottomRef.current?.scrollIntoView({ behavior });
-  }, []);
+  const scrollToBottom = useCallback(
+    (behavior: ScrollBehavior = "smooth") => {
+      lastMessageEl()?.scrollIntoView({ behavior, block: "end" });
+    },
+    [lastMessageEl],
+  );
 
-  // Track scroll position
+  // Keep isAtBottom accurate so the jump-to-bottom chevron reflects reality.
+  // The scroll container renders only once there are messages, so attach when it
+  // mounts. A 'scroll' listener catches the user scrolling; a ResizeObserver on
+  // the content catches streaming growth, which appends below the fold WITHOUT
+  // firing a scroll event. Both only set the flag — neither scrolls, honoring the
+  // "don't chase streaming content" rule below.
+  const hasMessages = messages.length > 0;
   useEffect(() => {
     const el = scrollRef.current;
-    if (!el) return;
-    const handleScroll = () => setIsAtBottom(checkIsAtBottom());
-    el.addEventListener("scroll", handleScroll, { passive: true });
-    return () => el.removeEventListener("scroll", handleScroll);
-  }, [checkIsAtBottom]);
+    if (!hasMessages || !el) return;
+    const update = () => setIsAtBottom(checkIsAtBottom());
+    update();
+    el.addEventListener("scroll", update, { passive: true });
+    const ro = new ResizeObserver(update);
+    if (el.firstElementChild) ro.observe(el.firstElementChild);
+    return () => {
+      el.removeEventListener("scroll", update);
+      ro.disconnect();
+    };
+  }, [hasMessages, checkIsAtBottom]);
 
   // React to message changes
   useEffect(() => {
@@ -183,7 +213,7 @@ function useSmartScroll(messages: ChatMessage[]) {
     if (conversationKey !== prevKey && messages.length > 1) {
       // Use double-rAF to ensure the DOM has rendered the messages. Scroll the
       // last real message to the viewport bottom (not the trailing 60vh
-      // spacer / bottomRef, which would leave the last turn off-screen).
+      // spacer, which would leave the last turn off-screen).
       requestAnimationFrame(() => {
         requestAnimationFrame(() => {
           const container = scrollRef.current;
@@ -217,7 +247,7 @@ function useSmartScroll(messages: ChatMessage[]) {
     }
   }, [messages]);
 
-  return { scrollRef, bottomRef, isAtBottom, scrollToBottom };
+  return { scrollRef, isAtBottom, scrollToBottom };
 }
 
 export function MessageList({
@@ -229,7 +259,7 @@ export function MessageList({
   compact = false,
   onRetry,
 }: MessageListProps) {
-  const { scrollRef, bottomRef, isAtBottom, scrollToBottom } = useSmartScroll(messages);
+  const { scrollRef, isAtBottom, scrollToBottom } = useSmartScroll(messages);
 
   // Scroll to bottom when streaming ends with a stop reason notice.
   // The `done` event updates the last message in place (no length change),
@@ -265,12 +295,7 @@ export function MessageList({
 
   return (
     <div className="relative flex-1 min-h-0">
-      <div
-        ref={scrollRef}
-        className={`h-full overflow-y-auto transition-colors duration-[2000ms] ${
-          isStreaming ? "chat-ambient-warm" : ""
-        }`}
-      >
+      <div ref={scrollRef} className="h-full overflow-y-auto">
         <div className={`py-6 flex flex-col gap-10 ${compact ? "px-4" : "px-8 max-w-4xl mx-auto"}`}>
           {messages.map((msg, idx) => {
             const contextMatch = msg.role === "user" ? msg.content.match(APP_CONTEXT_RE) : null;
@@ -286,7 +311,11 @@ export function MessageList({
               <div
                 // biome-ignore lint/suspicious/noArrayIndexKey: messages lack stable IDs and don't reorder
                 key={idx}
-                className={`group relative flex flex-col scroll-mt-6 ${idx >= initialCountRef.current ? "presence-message-enter" : ""} ${
+                // scroll-mt-6 leaves room above when a message scrolls to the top
+                // (block:start); scroll-mb-10 leaves room below when it scrolls to
+                // the bottom (block:end) so the hover footer — timestamp · copy ·
+                // tokens, which hangs below the box at `top-full` — stays in view.
+                className={`group relative flex flex-col scroll-mt-6 scroll-mb-10 ${idx >= initialCountRef.current ? "presence-message-enter" : ""} ${
                   msg.role === "user"
                     ? "max-w-[80%] self-end items-end"
                     : "w-full self-start items-start"
@@ -332,6 +361,7 @@ export function MessageList({
                         <Streamdown
                           className="streamdown-container presence-assistant-message"
                           isAnimating={isStreaming && idx === messages.length - 1}
+                          linkSafety={linkSafety}
                         >
                           {displayContent}
                         </Streamdown>
@@ -408,7 +438,6 @@ export function MessageList({
           })}
           {/* Spacer: ensures any message can scroll to the top of the viewport */}
           <div className="min-h-[60vh] shrink-0" />
-          <div ref={bottomRef} />
         </div>
       </div>
 

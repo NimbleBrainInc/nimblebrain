@@ -27,6 +27,7 @@ import { Download, FileWarning } from "lucide-react";
 import { useMemo } from "react";
 import { Streamdown } from "streamdown";
 import { isMarkdownMime, normalizeMime } from "../lib/artifact-kind";
+import { linkSafety } from "../lib/streamdown-config";
 
 export interface ArtifactRendererProps {
   /** Declared (or resolved) media type of the artifact body. */
@@ -86,7 +87,10 @@ export function ArtifactRenderer({
       // execute raw HTML embedded in the source. Exactly the property we need
       // for attacker-influenced report text.
       return (
-        <Streamdown className="streamdown-container presence-assistant-message">
+        <Streamdown
+          className="streamdown-container presence-assistant-message"
+          linkSafety={linkSafety}
+        >
           {text ?? ""}
         </Streamdown>
       );

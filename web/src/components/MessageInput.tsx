@@ -1,6 +1,5 @@
 import { ArrowUp, Paperclip, Square } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { StreamingState } from "../hooks/useChat";
 import { FileAttachmentChips } from "./FileAttachmentChips";
 
 const MAX_TEXTAREA_HEIGHT = 200;
@@ -9,8 +8,8 @@ interface MessageInputProps {
   onSend: (text: string, files?: File[]) => void;
   disabled: boolean;
   onNewConversation?: () => void;
-  /** Drives the ambient "breathing" border while a turn is in flight. */
-  streamingState?: StreamingState;
+  /** Open the keyboard-shortcuts dialog — the footer "?" affordance. */
+  onShowShortcuts?: () => void;
   /** Stop the in-flight turn. When provided, the send button becomes a Stop
    *  button while a turn is streaming. */
   onStop?: () => void;
@@ -20,7 +19,7 @@ export function MessageInput({
   onSend,
   disabled,
   onNewConversation,
-  streamingState,
+  onShowShortcuts,
   onStop,
 }: MessageInputProps) {
   const [text, setText] = useState("");
@@ -152,26 +151,25 @@ export function MessageInput({
     [addFiles],
   );
 
-  const isActive =
-    streamingState === "thinking" ||
-    streamingState === "working" ||
-    streamingState === "analyzing" ||
-    streamingState === "preparing";
   const canSend = (text.trim() || attachedFiles.length > 0) && !disabled;
 
   return (
     <div className="py-3 shrink-0">
       {/* biome-ignore lint/a11y/noStaticElementInteractions: drag-and-drop container for file uploads */}
       <div
-        className={`rounded-lg border transition-all duration-200 bg-card ${
+        // The raised card + blue ring shows only when the input is actually
+        // usable — focused AND not mid-turn. While a turn runs the input is
+        // disabled, so it recedes to the same quiet muted well as its resting
+        // state: a disabled control should read as inactive, not lit up. The
+        // "working" cue lives in the conversation ("Thinking…" + the streaming
+        // reply) and the Stop button, not the input box.
+        className={`rounded-lg border transition-all duration-200 ${
           isDragOver
-            ? "border-primary shadow-lg shadow-primary/20"
-            : isActive && !isFocused
-              ? "input-breathing"
-              : isFocused
-                ? "border-ring shadow-lg shadow-ring/10"
-                : "border-input shadow-lg shadow-border/20"
-        } ${disabled ? "opacity-60" : ""}`}
+            ? "bg-card border-primary shadow-lg shadow-primary/20"
+            : isFocused && !disabled
+              ? "bg-card border-ring shadow-lg shadow-ring/10"
+              : "bg-muted border-transparent"
+        }`}
         role="presentation"
         onDragOver={handleDragOver}
         onDragLeave={handleDragLeave}
@@ -269,6 +267,18 @@ export function MessageInput({
           </kbd>{" "}
           close
         </span>
+        {onShowShortcuts && (
+          <button
+            type="button"
+            onClick={onShowShortcuts}
+            className="hover:text-foreground transition-colors"
+          >
+            <kbd className="px-1 py-0.5 font-mono bg-muted rounded border border-border text-3xs">
+              ?
+            </kbd>{" "}
+            shortcuts
+          </button>
+        )}
       </div>
     </div>
   );
