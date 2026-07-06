@@ -92,12 +92,6 @@ describe("loadConfig", () => {
     });
   });
 
-  it("loads maxHistoryMessages from config file", () => {
-    const configPath = writeTestConfig("history.json", { maxHistoryMessages: 120 });
-    const config = loadConfig({ config: configPath });
-    expect(config.maxHistoryMessages).toBe(120);
-  });
-
   it("loads maxToolResultSize from config file", () => {
     const configPath = writeTestConfig("tool-result.json", { maxToolResultSize: 250000 });
     const config = loadConfig({ config: configPath });

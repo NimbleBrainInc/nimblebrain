@@ -107,29 +107,6 @@ export function applyReasoningReplayPolicy(
 }
 
 /**
- * Limit conversation history by message group count.
- * Keeps the first message (initial user request) plus the most recent
- * `maxGroups` message groups. Tool call/result pairs count as one group.
- *
- * Applied before token-based windowing as a fast, predictable cut.
- */
-export function sliceHistory(
-  messages: LanguageModelV3Message[],
-  maxGroups: number,
-): LanguageModelV3Message[] {
-  if (messages.length <= 2) return messages;
-
-  const first = messages[0]!;
-  const rest = messages.slice(1);
-  const groups = groupMessages(rest);
-
-  if (groups.length <= maxGroups) return messages;
-
-  const kept = groups.slice(-maxGroups);
-  return [first, ...kept.flat()];
-}
-
-/**
  * Sliding window for conversation messages.
  * Keeps the first message (often system context/initial user message) and
  * the most recent messages that fit within the token budget.
