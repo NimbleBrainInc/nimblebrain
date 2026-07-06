@@ -2,6 +2,7 @@ import { AlertCircle, Check, ChevronDown, Copy, RotateCcw, Zap } from "lucide-re
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Streamdown } from "streamdown";
 import type { ChatMessage, PreparingTool, StreamingState } from "../hooks/useChat";
+import { linkSafety } from "../lib/streamdown-config";
 import type { DisplayDetail } from "../lib/tool-display";
 import { BlockTimeline } from "./BlockTimeline";
 import { FileAttachment } from "./FileAttachment";
@@ -332,6 +333,7 @@ export function MessageList({
                         <Streamdown
                           className="streamdown-container presence-assistant-message"
                           isAnimating={isStreaming && idx === messages.length - 1}
+                          linkSafety={linkSafety}
                         >
                           {displayContent}
                         </Streamdown>

@@ -14,6 +14,7 @@ import { Button } from "../../components/ui/button";
 import { Card, CardContent } from "../../components/ui/card";
 import { Input } from "../../components/ui/input";
 import { Textarea } from "../../components/ui/textarea";
+import { linkSafety } from "../../lib/streamdown-config";
 import { parseToolResponse } from "../../lib/tool-response";
 import { cn } from "../../lib/utils";
 import { RequireActiveWorkspace, Section, SettingsPageHeader } from "./components";
@@ -513,7 +514,10 @@ function Rule({
           {!detailLoading && detail && detail.id === skill.id && (
             <>
               <div className="max-w-prose text-sm text-foreground/80">
-                <Streamdown className="streamdown-container presence-assistant-message">
+                <Streamdown
+                  className="streamdown-container presence-assistant-message"
+                  linkSafety={linkSafety}
+                >
                   {detail.content}
                 </Streamdown>
               </div>
