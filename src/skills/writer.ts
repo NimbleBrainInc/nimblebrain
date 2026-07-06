@@ -36,6 +36,46 @@ export class SkillFrontmatterValidationError extends Error {
 // prevent partial writes from corrupting existing files.
 // ---------------------------------------------------------------------------
 
+/** Serialize provenance to its kebab-case frontmatter block (origin plus optional fields, in order). */
+function provenanceToFrontmatter(
+  p: NonNullable<SkillManifest["provenance"]>,
+): Record<string, unknown> {
+  const prov: Record<string, unknown> = { origin: p.origin };
+  if (p.conversationId) prov["conversation-id"] = p.conversationId;
+  if (p.createdBy) prov["created-by"] = p.createdBy;
+  if (p.createdAt) prov["created-at"] = p.createdAt;
+  if (p.updatedAt) prov["updated-at"] = p.updatedAt;
+  if (p.source) prov.source = p.source;
+  return prov;
+}
+
+/** Build the `metadata.nimblebrain.*` block: runtime config plus optional affinity/triggers/provenance. */
+function nimblebrainToFrontmatter(manifest: SkillManifest): Record<string, unknown> {
+  const nb: Record<string, unknown> = {
+    "loading-strategy": manifest.loadingStrategy,
+    priority: manifest.priority,
+    status: manifest.status,
+  };
+  if (manifest.toolAffinity && manifest.toolAffinity.length > 0) {
+    nb["tool-affinity"] = manifest.toolAffinity;
+  }
+  if (manifest.triggers && manifest.triggers.length > 0) {
+    nb.triggers = manifest.triggers;
+  }
+  if (manifest.provenance) {
+    nb.provenance = provenanceToFrontmatter(manifest.provenance);
+  }
+  return nb;
+}
+
+/** Build the `metadata` block: nested `nimblebrain` config plus optional author/version. */
+function metadataToFrontmatter(manifest: SkillManifest): Record<string, unknown> {
+  const metadata: Record<string, unknown> = { nimblebrain: nimblebrainToFrontmatter(manifest) };
+  if (manifest.author) metadata.author = manifest.author;
+  if (manifest.version) metadata.version = manifest.version;
+  return metadata;
+}
+
 /**
  * Convert a SkillManifest into the canonical on-disk frontmatter shape:
  * standard fields top-level (`name`, `description`, `license`, `compatibility`,
@@ -55,34 +95,7 @@ function manifestToFrontmatter(manifest: SkillManifest): Record<string, unknown>
   if (manifest.allowedTools && manifest.allowedTools.length > 0) {
     fm["allowed-tools"] = manifest.allowedTools.join(" ");
   }
-
-  const nb: Record<string, unknown> = {
-    "loading-strategy": manifest.loadingStrategy,
-    priority: manifest.priority,
-    status: manifest.status,
-  };
-  if (manifest.toolAffinity && manifest.toolAffinity.length > 0) {
-    nb["tool-affinity"] = manifest.toolAffinity;
-  }
-  if (manifest.triggers && manifest.triggers.length > 0) {
-    nb.triggers = manifest.triggers;
-  }
-  if (manifest.provenance) {
-    const p = manifest.provenance;
-    const prov: Record<string, unknown> = { origin: p.origin };
-    if (p.conversationId) prov["conversation-id"] = p.conversationId;
-    if (p.createdBy) prov["created-by"] = p.createdBy;
-    if (p.createdAt) prov["created-at"] = p.createdAt;
-    if (p.updatedAt) prov["updated-at"] = p.updatedAt;
-    if (p.source) prov.source = p.source;
-    nb.provenance = prov;
-  }
-
-  const metadata: Record<string, unknown> = { nimblebrain: nb };
-  if (manifest.author) metadata.author = manifest.author;
-  if (manifest.version) metadata.version = manifest.version;
-  fm.metadata = metadata;
-
+  fm.metadata = metadataToFrontmatter(manifest);
   return fm;
 }
 
