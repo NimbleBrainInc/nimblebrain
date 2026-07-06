@@ -5,6 +5,7 @@ import { artifactResolutionsTotal, recordLlmUsage } from "../api/metrics.ts";
 import { textContent } from "../engine/content-helpers.ts";
 import type { ToolResult } from "../engine/types.ts";
 import {
+  type ArtifactListItem,
   type ArtifactListOptions,
   ArtifactNotFoundError,
   ArtifactTooLargeError,
@@ -20,6 +21,7 @@ import {
   runWithRequestContext,
 } from "../runtime/request-context.ts";
 import type { Runtime } from "../runtime/runtime.ts";
+import type { TokenUsage } from "../usage/types.ts";
 import { canWriteWorkspaceScoped } from "../workspace/authz.ts";
 import type { InProcessTool } from "./in-process-app.ts";
 
@@ -255,6 +257,273 @@ function buildModelConfigRuntimePatch(input: Record<string, unknown>): Record<st
   };
 }
 
+// --- set_preferences helpers --------------------------------------------------
+
+const PREFERENCE_FIELDS = ["displayName", "timezone", "locale", "theme"];
+
+/** Coerce the allowed preference inputs into a string patch, skipping unset fields. */
+function buildPreferencesPatch(input: Record<string, unknown>): Record<string, string> {
+  const patch: Record<string, string> = {};
+  for (const [key, value] of Object.entries(input)) {
+    if (PREFERENCE_FIELDS.includes(key) && value !== undefined) {
+      patch[key] = String(value);
+    }
+  }
+  return patch;
+}
+
+// --- list_artifacts / read_artifact helpers -----------------------------------
+
+type ArtifactReadResult = Awaited<ReturnType<ReturnType<typeof getArtifactResolver>["read"]>>;
+
+/** Pull the validated list filters (type/cursor/limit) from raw tool input. */
+function buildArtifactListOptions(input: Record<string, unknown>): ArtifactListOptions {
+  const opts: ArtifactListOptions = {};
+  if (typeof input.type === "string" && input.type.trim()) opts.type = input.type.trim();
+  if (typeof input.cursor === "string" && input.cursor.trim()) opts.cursor = input.cursor.trim();
+  if (typeof input.limit === "number" && Number.isFinite(input.limit)) opts.limit = input.limit;
+  return opts;
+}
+
+/** Render the human-readable artifact list, with a pagination hint when more remain. */
+function renderArtifactListText(items: ArtifactListItem[], nextCursor: string | undefined): string {
+  const lines = items.map(
+    (a) => `- ${a.title ?? a.artifactId} — ${a.type} (${a.createdAt}) → ${a.uri}`,
+  );
+  return items.length
+    ? `${items.length} artifact(s):\n${lines.join("\n")}${
+        nextCursor ? "\n\n(more available — pass cursor to continue)" : ""
+      }`
+    : "No artifacts found in this workspace.";
+}
+
+/** Coerce raw tool input into a canonical artifact:// URI, or null when absent. */
+function normalizeArtifactUri(input: Record<string, unknown>): string | null {
+  const raw = typeof input.uri === "string" ? input.uri.trim() : "";
+  if (!raw) return null;
+  return raw.startsWith("artifact://") ? raw : `artifact://${raw}`;
+}
+
+/** Flatten resolved artifact contents into text, tagging binary parts. */
+function renderArtifactContentText(contents: ArtifactReadResult["contents"]): string {
+  return contents
+    .map((c) =>
+      "text" in c && typeof c.text === "string"
+        ? c.text
+        : "blob" in c
+          ? `[binary artifact, mimeType=${c.mimeType ?? "unknown"}]`
+          : "",
+    )
+    .join("");
+}
+
+/**
+ * Map a read failure to its metric label + tool error result. Same label
+ * granularity as the UI read path (handlers.ts) so
+ * `nb_artifact_resolutions_total{result}` means one thing across both resolution
+ * sites: a malformed id (client/model input) and an over-cap body are not server
+ * errors and must not inflate `error`.
+ */
+function artifactReadErrorResult(err: unknown, uri: string): ToolResult {
+  if (err instanceof InvalidArtifactUriError) {
+    artifactResolutionsTotal.inc({ result: "malformed" });
+    return { content: textContent(`Malformed artifact URI "${uri}".`), isError: true };
+  }
+  if (err instanceof ArtifactNotFoundError) {
+    artifactResolutionsTotal.inc({ result: "not_found" });
+    return {
+      content: textContent(
+        `Artifact "${uri}" not found in this workspace (it may not exist, or belong to another workspace).`,
+      ),
+      isError: true,
+    };
+  }
+  if (err instanceof ArtifactTooLargeError) {
+    artifactResolutionsTotal.inc({ result: "too_large" });
+    return { content: textContent(err.message), isError: true };
+  }
+  artifactResolutionsTotal.inc({ result: "error" });
+  return {
+    content: textContent(
+      `Failed to read artifact: ${err instanceof Error ? err.message : String(err)}`,
+    ),
+    isError: true,
+  };
+}
+
+// --- briefing helpers ---------------------------------------------------------
+
+/** The authenticated caller resolved by the runtime for the current request. */
+type CurrentIdentity = NonNullable<ReturnType<Runtime["getCurrentIdentity"]>>;
+/** The workspace's home/briefing config (user name, timezone, cache TTL). */
+type HomeConfig = ReturnType<Runtime["getHomeConfig"]>;
+
+/**
+ * Build the briefing tool result. `content` carries the rendered briefing (the
+ * only field the model sees — the engine never feeds `structuredContent` to the
+ * prompt), prefixed with the status note. `structuredContent` keeps the typed
+ * payload for the dashboard.
+ */
+function briefingOk(briefing: BriefingOutput, note: string): ToolResult {
+  return {
+    content: textContent(`${note}\n\n${renderBriefingText(briefing)}`),
+    structuredContent: briefing as unknown as Record<string, unknown>,
+    isError: false,
+  };
+}
+
+/** Get or create the per-workspace briefing cache. */
+function getBriefingCache(
+  caches: Map<string, BriefingCache>,
+  wsId: string,
+  cacheTtlMinutes: number,
+): BriefingCache {
+  let cache = caches.get(wsId);
+  if (!cache) {
+    cache = new BriefingCache(cacheTtlMinutes);
+    caches.set(wsId, cache);
+  }
+  return cache;
+}
+
+/**
+ * Persist a briefing generation's token usage. The fast-slot generation emits no
+ * llm.response, so usage lands as an aux.usage event. The metric fires for every
+ * generation (including the background refresh, which has no conversation to
+ * attribute to — Prometheus captures the cost the aux.usage event can't); the
+ * event only appends when a foreground conversation is in context.
+ */
+function recordBriefingUsage(
+  runtime: Runtime,
+  wsId: string,
+  identity: CurrentIdentity,
+  modelString: string,
+  usage: TokenUsage,
+  llmMs: number,
+): void {
+  recordLlmUsage("briefing", modelString ?? "unknown", usage);
+  const convId = getRequestContext()?.conversationId;
+  if (!convId) return;
+  // The foreground briefing runs inside the caller's conversation, whose
+  // workspace is this focused workspace + owner — so append by path directly
+  // (O(1)), never a cross-workspace `locate` walk. Guard the append so a missed
+  // aux.usage event can never break briefing generation.
+  try {
+    runtime.workspaceConversationStore(wsId, identity.id).appendEvent(convId, {
+      ts: new Date().toISOString(),
+      type: "aux.usage",
+      source: "briefing",
+      model: modelString ?? "unknown",
+      usage,
+      llmMs,
+    });
+  } catch {
+    // best-effort: usage attribution, not correctness
+  }
+}
+
+/**
+ * Collect activity + facets, then run the fast model (the slow part). Reads
+ * request-scoped state (workspace, identity, model slot), so it must run inside a
+ * request context — the foreground request's, or the re-established one for the
+ * background refresh.
+ */
+async function generateBriefing(
+  runtime: Runtime,
+  wsId: string,
+  identity: CurrentIdentity,
+  homeConfig: HomeConfig,
+): Promise<BriefingOutput> {
+  const since = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+  const until = new Date().toISOString();
+  const collector = new ActivityCollector({
+    logDir: join(runtime.getWorkspaceScopedDir(wsId), "logs"),
+    conversations: {
+      kind: "store",
+      store: { list: (o, a) => runtime.listConversations(o, a) },
+    },
+    access: { userId: identity.id },
+  });
+  const activity = await collector.collect({ since });
+  const registry = runtime.getRegistryForCurrentWorkspace();
+  const instances = runtime.getBundleInstancesForWorkspace(wsId);
+  const facetContext = await collectBriefingFacets(instances, registry, { since, until });
+  const modelString = runtime.getModelSlot("fast");
+  const generator = new BriefingGenerator(
+    runtime.resolveModel(modelString),
+    modelString,
+    {
+      userName: homeConfig.userName,
+      timezone: homeConfig.timezone,
+      cacheTtlMinutes: homeConfig.cacheTtlMinutes,
+    },
+    (usage, llmMs) => recordBriefingUsage(runtime, wsId, identity, modelString, usage, llmMs),
+  );
+  return generator.generate(activity, facetContext);
+}
+
+/**
+ * Serve a briefing from cache when one is available: fresh → instant; stale →
+ * serve-stale while scheduling a background refresh. Returns null when nothing is
+ * cached and the caller must generate synchronously.
+ */
+function serveCachedBriefing(
+  runtime: Runtime,
+  briefingCache: BriefingCache,
+  wsId: string,
+  identity: CurrentIdentity,
+  homeConfig: HomeConfig,
+): ToolResult | null {
+  // Fresh cache → instant.
+  const fresh = briefingCache.get();
+  if (fresh) return briefingOk(fresh, "Briefing retrieved from cache.");
+
+  // Stale-while-revalidate: serve the last (expired) briefing immediately and
+  // regenerate in the BACKGROUND, so the dashboard never waits on the LLM after
+  // the first generation.
+  const stale = briefingCache.getStale();
+  if (!stale) return null;
+  scheduleBriefingRefresh(runtime, briefingCache, wsId, identity, homeConfig);
+  return briefingOk(stale, "Briefing (refreshing in background).");
+}
+
+/**
+ * Stale-while-revalidate: kick off a single background regeneration, guarded so a
+ * burst of dashboard loads during the regen window can't fan out into N
+ * concurrent fast-model calls (thundering herd on a hot path). The bg task
+ * re-establishes the workspace request context — `collectBriefingFacets`
+ * dispatches facet tools via `registry.execute`, which read `requireWorkspaceId()`
+ * / identity from that context.
+ */
+function scheduleBriefingRefresh(
+  runtime: Runtime,
+  briefingCache: BriefingCache,
+  wsId: string,
+  identity: CurrentIdentity,
+  homeConfig: HomeConfig,
+): void {
+  if (!briefingCache.beginRefresh()) return;
+  const bgCtx: RequestContext = {
+    identity,
+    scope: {
+      kind: "workspace",
+      workspaceId: wsId,
+      workspaceAgents: null,
+      workspaceModelOverride: null,
+    },
+  };
+  void runWithRequestContext(bgCtx, () => generateBriefing(runtime, wsId, identity, homeConfig))
+    .then((b) => briefingCache.set(b))
+    .catch((err) =>
+      log.warn(
+        `[briefing] background refresh failed for ${wsId}: ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      ),
+    )
+    .finally(() => briefingCache.endRefresh());
+}
+
 /**
  * Factory that creates core platform management tool definitions.
  * Each tool is a thin wrapper delegating to Runtime methods.
@@ -262,6 +531,9 @@ function buildModelConfigRuntimePatch(input: Record<string, unknown>): Record<st
  * passes them to `defineInProcessApp` to build the in-process MCP server.
  */
 export function createCoreToolDefs(runtime: Runtime): InProcessTool[] {
+  // Per-workspace briefing caches keyed by workspace ID (or "_global" for dev mode).
+  const briefingCaches = new Map<string, BriefingCache>();
+
   const toolDefs: InProcessTool[] = [
     {
       name: "list_apps",
@@ -535,13 +807,7 @@ export function createCoreToolDefs(runtime: Runtime): InProcessTool[] {
             return { content: textContent("No authenticated user."), isError: true };
           }
 
-          const allowed = ["displayName", "timezone", "locale", "theme"];
-          const patch: Record<string, string> = {};
-          for (const [key, value] of Object.entries(input)) {
-            if (allowed.includes(key) && value !== undefined) {
-              patch[key] = String(value);
-            }
-          }
+          const patch = buildPreferencesPatch(input);
           if (Object.keys(patch).length === 0) {
             return { content: textContent("No valid preference fields provided."), isError: true };
           }
@@ -711,23 +977,12 @@ export function createCoreToolDefs(runtime: Runtime): InProcessTool[] {
       handler: async (input): Promise<ToolResult> => {
         try {
           const wsId = runtime.requireWorkspaceId();
-          const opts: ArtifactListOptions = {};
-          if (typeof input.type === "string" && input.type.trim()) opts.type = input.type.trim();
-          if (typeof input.cursor === "string" && input.cursor.trim())
-            opts.cursor = input.cursor.trim();
-          if (typeof input.limit === "number" && Number.isFinite(input.limit))
-            opts.limit = input.limit;
-          const { items, nextCursor } = await getArtifactResolver().list(wsId, opts);
-          const lines = items.map(
-            (a) => `- ${a.title ?? a.artifactId} — ${a.type} (${a.createdAt}) → ${a.uri}`,
+          const { items, nextCursor } = await getArtifactResolver().list(
+            wsId,
+            buildArtifactListOptions(input),
           );
-          const text = items.length
-            ? `${items.length} artifact(s):\n${lines.join("\n")}${
-                nextCursor ? "\n\n(more available — pass cursor to continue)" : ""
-              }`
-            : "No artifacts found in this workspace.";
           return {
-            content: textContent(text),
+            content: textContent(renderArtifactListText(items, nextCursor)),
             structuredContent: { artifacts: items, ...(nextCursor ? { nextCursor } : {}) },
             isError: false,
           };
@@ -756,236 +1011,77 @@ export function createCoreToolDefs(runtime: Runtime): InProcessTool[] {
         required: ["uri"],
       },
       handler: async (input): Promise<ToolResult> => {
-        const raw = typeof input.uri === "string" ? input.uri.trim() : "";
-        if (!raw) {
+        const uri = normalizeArtifactUri(input);
+        if (!uri) {
           return { content: textContent("uri is required"), isError: true };
         }
-        const uri = raw.startsWith("artifact://") ? raw : `artifact://${raw}`;
         try {
           const wsId = runtime.requireWorkspaceId();
           const result = await getArtifactResolver().read(uri, wsId);
-          const text = result.contents
-            .map((c) =>
-              "text" in c && typeof c.text === "string"
-                ? c.text
-                : "blob" in c
-                  ? `[binary artifact, mimeType=${c.mimeType ?? "unknown"}]`
-                  : "",
-            )
-            .join("");
+          const text = renderArtifactContentText(result.contents);
           artifactResolutionsTotal.inc({ result: "ok" });
           return { content: textContent(text || "[empty artifact]"), isError: false };
         } catch (err) {
-          // Same label granularity as the UI read path (handlers.ts) so
-          // `nb_artifact_resolutions_total{result}` means one thing across both
-          // resolution sites: a malformed id (client/model input) and an
-          // over-cap body are not server errors and must not inflate `error`.
-          if (err instanceof InvalidArtifactUriError) {
-            artifactResolutionsTotal.inc({ result: "malformed" });
-            return { content: textContent(`Malformed artifact URI "${uri}".`), isError: true };
-          }
-          if (err instanceof ArtifactNotFoundError) {
-            artifactResolutionsTotal.inc({ result: "not_found" });
+          return artifactReadErrorResult(err, uri);
+        }
+      },
+    },
+    // --- Briefing tool (in-process, uses runtime model resolver) ---
+    {
+      name: "briefing",
+      description:
+        "Generate a personalized activity briefing for the workspace using the fast model slot. Returns a summary of recent activity, upcoming items, and anything needing attention. May take a few seconds.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          force_refresh: {
+            type: "boolean",
+            description: "Bypass cache and regenerate. Default: false.",
+          },
+        },
+      },
+      handler: async (input): Promise<ToolResult> => {
+        try {
+          const homeConfig = runtime.getHomeConfig();
+          const wsId = runtime.requireWorkspaceId();
+
+          // Conversations live at the user level (post-Stage 1); the activity
+          // collector reads the top-level store with an ownership filter so
+          // the briefing stays scoped to the caller, not the whole deployment.
+          const identity = runtime.getCurrentIdentity();
+          if (!identity) {
             return {
-              content: textContent(
-                `Artifact "${uri}" not found in this workspace (it may not exist, or belong to another workspace).`,
-              ),
+              content: textContent("Briefing requires an authenticated identity."),
               isError: true,
             };
           }
-          if (err instanceof ArtifactTooLargeError) {
-            artifactResolutionsTotal.inc({ result: "too_large" });
-            return { content: textContent(err.message), isError: true };
-          }
-          artifactResolutionsTotal.inc({ result: "error" });
+
+          const briefingCache = getBriefingCache(briefingCaches, wsId, homeConfig.cacheTtlMinutes);
+
+          // Skip the cache entirely on force_refresh; otherwise serve a fresh or
+          // stale-while-revalidating result if one is cached.
+          const cached = input.force_refresh
+            ? null
+            : serveCachedBriefing(runtime, briefingCache, wsId, identity, homeConfig);
+          if (cached) return cached;
+
+          // No cached briefing yet (first generation), or an explicit
+          // force_refresh: generate synchronously. generate() throws on LLM
+          // failure → the outer catch turns it into an isError result, which
+          // the home UI renders as a retry state.
+          const briefing = await generateBriefing(runtime, wsId, identity, homeConfig);
+          briefingCache.set(briefing);
+          return briefingOk(briefing, "Briefing generated.");
+        } catch (err) {
           return {
             content: textContent(
-              `Failed to read artifact: ${err instanceof Error ? err.message : String(err)}`,
+              `Failed to generate briefing: ${err instanceof Error ? err.message : String(err)}`,
             ),
             isError: true,
           };
         }
       },
     },
-    // --- Briefing tool (in-process, uses runtime model resolver) ---
-    (() => {
-      // Per-workspace caches keyed by workspace ID (or "_global" for dev mode)
-      const caches = new Map<string, BriefingCache>();
-
-      return {
-        name: "briefing",
-        description:
-          "Generate a personalized activity briefing for the workspace using the fast model slot. Returns a summary of recent activity, upcoming items, and anything needing attention. May take a few seconds.",
-        inputSchema: {
-          type: "object",
-          properties: {
-            force_refresh: {
-              type: "boolean",
-              description: "Bypass cache and regenerate. Default: false.",
-            },
-          },
-        },
-        handler: async (input): Promise<ToolResult> => {
-          try {
-            const homeConfig = runtime.getHomeConfig();
-            const wsId = runtime.requireWorkspaceId();
-
-            // Conversations live at the user level (post-Stage 1); the activity
-            // collector reads the top-level store with an ownership filter so
-            // the briefing stays scoped to the caller, not the whole deployment.
-            const identity = runtime.getCurrentIdentity();
-            if (!identity) {
-              return {
-                content: textContent("Briefing requires an authenticated identity."),
-                isError: true,
-              };
-            }
-
-            // Per-workspace cache
-            let cache = caches.get(wsId);
-            if (!cache) {
-              cache = new BriefingCache(homeConfig.cacheTtlMinutes);
-              caches.set(wsId, cache);
-            }
-            const briefingCache = cache;
-
-            // `content` carries the rendered briefing (the only field the model
-            // sees — the engine never feeds `structuredContent` to the prompt),
-            // prefixed with the status note. `structuredContent` keeps the typed
-            // payload for the dashboard, unchanged.
-            const ok = (briefing: BriefingOutput, note: string): ToolResult => ({
-              content: textContent(`${note}\n\n${renderBriefingText(briefing)}`),
-              structuredContent: briefing as unknown as Record<string, unknown>,
-              isError: false,
-            });
-
-            // The actual generation: collect activity + facets, then run the
-            // fast model (the slow part). Reads request-scoped state (workspace,
-            // identity, model slot), so it must run inside a request context —
-            // the foreground request's, or the re-established one for the
-            // background refresh below.
-            const runGeneration = async (): Promise<BriefingOutput> => {
-              const since = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
-              const until = new Date().toISOString();
-              const collector = new ActivityCollector({
-                logDir: join(runtime.getWorkspaceScopedDir(wsId), "logs"),
-                conversations: {
-                  kind: "store",
-                  store: { list: (o, a) => runtime.listConversations(o, a) },
-                },
-                access: { userId: identity.id },
-              });
-              const activity = await collector.collect({ since });
-              const registry = runtime.getRegistryForCurrentWorkspace();
-              const instances = runtime.getBundleInstancesForWorkspace(wsId);
-              const facetContext = await collectBriefingFacets(instances, registry, {
-                since,
-                until,
-              });
-              const modelString = runtime.getModelSlot("fast");
-              const generator = new BriefingGenerator(
-                runtime.resolveModel(modelString),
-                modelString,
-                {
-                  userName: homeConfig.userName,
-                  timezone: homeConfig.timezone,
-                  cacheTtlMinutes: homeConfig.cacheTtlMinutes,
-                },
-                // The briefing's fast-slot generation emits no llm.response, so
-                // persist its usage as an aux.usage event. Foreground generation
-                // runs in the caller's conversation; the background SWR refresh
-                // (bgCtx) has no conversationId, so it's skipped here — a known
-                // workspace-scoped gap with no conversation to attribute to.
-                (usage, llmMs) => {
-                  // Metric fires for every briefing generation, including the
-                  // background refresh — Prometheus has no conversation to
-                  // attribute to, so it captures the cost the aux.usage event
-                  // (below) can't.
-                  recordLlmUsage("briefing", modelString ?? "unknown", usage);
-                  const convId = getRequestContext()?.conversationId;
-                  if (!convId) return;
-                  // The foreground briefing runs inside the caller's
-                  // conversation, whose workspace is this focused workspace + owner —
-                  // so append by path directly (O(1)), never a cross-workspace
-                  // `locate` walk. Guard the append so a missed aux.usage event
-                  // can never break briefing generation.
-                  try {
-                    runtime.workspaceConversationStore(wsId, identity.id).appendEvent(convId, {
-                      ts: new Date().toISOString(),
-                      type: "aux.usage",
-                      source: "briefing",
-                      model: modelString ?? "unknown",
-                      usage,
-                      llmMs,
-                    });
-                  } catch {
-                    // best-effort: usage attribution, not correctness
-                  }
-                },
-              );
-              return generator.generate(activity, facetContext);
-            };
-
-            if (!input.force_refresh) {
-              // Fresh cache → instant.
-              const fresh = briefingCache.get();
-              if (fresh) return ok(fresh, "Briefing retrieved from cache.");
-
-              // Stale-while-revalidate: serve the last (expired) briefing
-              // immediately and regenerate in the BACKGROUND, so the dashboard
-              // never waits on the LLM after the first generation. The bg task
-              // re-establishes the workspace request context (captured here) —
-              // `collectBriefingFacets` dispatches facet tools via
-              // `registry.execute`, which read `requireWorkspaceId()` / identity
-              // from that context.
-              const stale = briefingCache.getStale();
-              if (stale) {
-                // Only one background regeneration at a time — a burst of
-                // dashboard loads during the regen window must not fan out into
-                // N concurrent fast-model calls (thundering herd on a hot path).
-                if (briefingCache.beginRefresh()) {
-                  const bgCtx: RequestContext = {
-                    identity,
-                    scope: {
-                      kind: "workspace",
-                      workspaceId: wsId,
-                      workspaceAgents: null,
-                      workspaceModelOverride: null,
-                    },
-                  };
-                  void runWithRequestContext(bgCtx, runGeneration)
-                    .then((b) => briefingCache.set(b))
-                    .catch((err) =>
-                      log.warn(
-                        `[briefing] background refresh failed for ${wsId}: ${
-                          err instanceof Error ? err.message : String(err)
-                        }`,
-                      ),
-                    )
-                    .finally(() => briefingCache.endRefresh());
-                }
-                return ok(stale, "Briefing (refreshing in background).");
-              }
-            }
-
-            // No cached briefing yet (first generation), or an explicit
-            // force_refresh: generate synchronously. generate() throws on LLM
-            // failure → the outer catch turns it into an isError result, which
-            // the home UI renders as a retry state.
-            const briefing = await runGeneration();
-            briefingCache.set(briefing);
-            return ok(briefing, "Briefing generated.");
-          } catch (err) {
-            return {
-              content: textContent(
-                `Failed to generate briefing: ${err instanceof Error ? err.message : String(err)}`,
-              ),
-              isError: true,
-            };
-          }
-        },
-      } satisfies InProcessTool;
-    })(),
   ];
 
   return toolDefs;
