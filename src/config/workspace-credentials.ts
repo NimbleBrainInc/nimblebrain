@@ -364,6 +364,55 @@ export interface ResolveUserConfigOpts extends ResolveUserConfigInput {
   workDir: string;
 }
 
+/** Prompt every field via the gate and persist non-empty responses (TUI configure flow). */
+async function promptAndPersistUserConfig(
+  wsId: string,
+  workDir: string,
+  bundleName: string,
+  fieldNames: string[],
+  userConfigSchema: Record<string, UserConfigFieldDef>,
+  gate: ConfirmationGate,
+): Promise<Record<string, string>> {
+  // Skipped prompts don't get persisted and don't end up in the result — the
+  // SDK's required-field check catches that downstream.
+  const resolved: Record<string, string> = {};
+  for (const key of fieldNames) {
+    const field = userConfigSchema[key];
+    if (!field) continue;
+    const prompted = await gate.promptConfigValue({
+      key,
+      title: field.title,
+      description: field.description,
+      sensitive: field.sensitive,
+      required: field.required,
+    });
+    if (typeof prompted === "string" && prompted.length > 0) {
+      await saveCredential(wsId, bundleName, key, prompted, workDir);
+      resolved[key] = prompted;
+    }
+  }
+  return resolved;
+}
+
+/** Read the workspace store and return only the schema fields with non-empty string values. */
+async function readStoredUserConfig(
+  wsId: string,
+  bundleName: string,
+  workDir: string,
+  fieldNames: string[],
+): Promise<Record<string, string>> {
+  // The SDK handles mcp_config.env aliases, manifest defaults, and required-field
+  // validation from here. See `mpak-sdk`'s `gatherUserConfig` for the rest of the
+  // resolution chain.
+  const stored = (await readCredentials(wsId, bundleName, workDir)) ?? {};
+  const resolved: Record<string, string> = {};
+  for (const key of fieldNames) {
+    const v = stored[key];
+    if (typeof v === "string" && v.length > 0) resolved[key] = v;
+  }
+  return resolved;
+}
+
 async function resolveUserConfigImpl(
   wsId: string,
   workDir: string,
@@ -377,40 +426,20 @@ async function resolveUserConfigImpl(
 
   const interactive = gate?.supportsInteraction === true;
 
-  // TUI configure flow: prompt every field, persist, return whatever the
-  // user provided. Skipped prompts don't get persisted and don't end up in
-  // the result — the SDK's required-field check catches that downstream.
+  // TUI configure flow: prompt for and persist every field.
   if (forcePrompt && interactive && gate) {
-    const resolved: Record<string, string> = {};
-    for (const key of fieldNames) {
-      const field = userConfigSchema[key];
-      if (!field) continue;
-      const prompted = await gate.promptConfigValue({
-        key,
-        title: field.title,
-        description: field.description,
-        sensitive: field.sensitive,
-        required: field.required,
-      });
-      if (typeof prompted === "string" && prompted.length > 0) {
-        await saveCredential(wsId, bundleName, key, prompted, workDir);
-        resolved[key] = prompted;
-      }
-    }
-    return resolved;
+    return promptAndPersistUserConfig(
+      wsId,
+      workDir,
+      bundleName,
+      fieldNames,
+      userConfigSchema,
+      gate,
+    );
   }
 
-  // Default: read workspace store, return non-empty string values. The SDK
-  // handles mcp_config.env aliases, manifest defaults, and required-field
-  // validation from here. See `mpak-sdk`'s `gatherUserConfig` for the rest
-  // of the resolution chain.
-  const stored = (await readCredentials(wsId, bundleName, workDir)) ?? {};
-  const resolved: Record<string, string> = {};
-  for (const key of fieldNames) {
-    const v = stored[key];
-    if (typeof v === "string" && v.length > 0) resolved[key] = v;
-  }
-  return resolved;
+  // Default: resolve from the workspace store.
+  return readStoredUserConfig(wsId, bundleName, workDir, fieldNames);
 }
 
 // ── WorkspaceCredentialStore (preferred API) ──────────────────────
