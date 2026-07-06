@@ -33,7 +33,7 @@
  * Applied ONLY on the prompt-load path (`parseSkillFileGuarded` passes
  * `{ cap: true }`); every read/inspect/round-trip caller gets the full stored
  * body by default, so editing never persists a truncated file. Also caps the
- * bundle `skill://<name>/usage` body. Tune against a measured baseline.
+ * server `skill://<name>/SKILL.md` body. Tune against a measured baseline.
  */
 export const MAX_SKILL_BODY_CHARS = 12_000;
 

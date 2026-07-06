@@ -19,7 +19,10 @@ describe("skills.loaded payload — bundle skill entry", () => {
   test("synthesized bundle skill produces a well-formed payload entry", () => {
     const skill = synthesizeBundleSkill({
       serverName: "synapse-collateral",
+      skillName: "collateral",
+      description: "",
       body: "# How to use Collateral\n\nBody.",
+      uri: "skill://collateral/SKILL.md",
     });
     const selected = selectLayer3Skills({
       skills: [skill],
@@ -31,8 +34,9 @@ describe("skills.loaded payload — bundle skill entry", () => {
     expect(payload.skills).toHaveLength(1);
 
     const entry = payload.skills[0]!;
-    // `id` is the sourcePath — the URI tells operators where this came from.
-    expect(entry.id).toBe("skill://synapse-collateral/usage");
+    // `id` is the sourcePath — the discovered SKILL.md URI tells operators where
+    // this came from.
+    expect(entry.id).toBe("skill://collateral/SKILL.md");
     // `scope: bundle` so web (amber chip) and active_for filtering work.
     expect(entry.scope).toBe("bundle");
     // Layer 3 — selected via tool affinity, not vendored Layer 1.
@@ -50,8 +54,20 @@ describe("skills.loaded payload — bundle skill entry", () => {
   });
 
   test("multiple bundle skills sum tokens into payload total", () => {
-    const a = synthesizeBundleSkill({ serverName: "a", body: "alpha body" });
-    const b = synthesizeBundleSkill({ serverName: "b", body: "beta body" });
+    const a = synthesizeBundleSkill({
+      serverName: "a",
+      skillName: "a",
+      description: "",
+      body: "alpha body",
+      uri: "skill://a/SKILL.md",
+    });
+    const b = synthesizeBundleSkill({
+      serverName: "b",
+      skillName: "b",
+      description: "",
+      body: "beta body",
+      uri: "skill://b/SKILL.md",
+    });
     const selected = selectLayer3Skills({
       skills: [a, b],
       activeTools: ["a__tool", "b__tool"],
