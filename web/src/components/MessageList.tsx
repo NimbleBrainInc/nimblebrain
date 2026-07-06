@@ -311,7 +311,11 @@ export function MessageList({
               <div
                 // biome-ignore lint/suspicious/noArrayIndexKey: messages lack stable IDs and don't reorder
                 key={idx}
-                className={`group relative flex flex-col scroll-mt-6 ${idx >= initialCountRef.current ? "presence-message-enter" : ""} ${
+                // scroll-mt-6 leaves room above when a message scrolls to the top
+                // (block:start); scroll-mb-10 leaves room below when it scrolls to
+                // the bottom (block:end) so the hover footer — timestamp · copy ·
+                // tokens, which hangs below the box at `top-full` — stays in view.
+                className={`group relative flex flex-col scroll-mt-6 scroll-mb-10 ${idx >= initialCountRef.current ? "presence-message-enter" : ""} ${
                   msg.role === "user"
                     ? "max-w-[80%] self-end items-end"
                     : "w-full self-start items-start"
