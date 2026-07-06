@@ -49,6 +49,28 @@ export function hostMetaToUiMeta(hostMeta: HostManifestMeta | undefined): Bundle
   return ui;
 }
 
+/** Validate a placement's slot and `ui://` resourceUri; return its authority, or null if malformed. */
+function placementAuthority(p: PlacementDeclaration): string | null {
+  if (!p || typeof p.slot !== "string" || p.slot.trim() === "") return null;
+  if (typeof p.resourceUri !== "string") return null;
+  const m = /^ui:\/\/([^/]+)\/(.+)$/.exec(p.resourceUri);
+  if (!m) return null;
+  const [, auth, path] = m;
+  if (!auth || !path || path.includes("..")) return null;
+  return auth;
+}
+
+/** Copy a validated placement's fields into a fresh object, bounding label/icon and gating optional fields. */
+function sanitizePlacementFields(p: PlacementDeclaration): PlacementDeclaration {
+  const safe: PlacementDeclaration = { slot: p.slot, resourceUri: p.resourceUri };
+  if (typeof p.priority === "number") safe.priority = p.priority;
+  if (typeof p.label === "string") safe.label = p.label.slice(0, PLACEMENT_STRING_MAX);
+  if (typeof p.icon === "string") safe.icon = p.icon.slice(0, PLACEMENT_STRING_MAX);
+  if (typeof p.route === "string") safe.route = p.route;
+  if (p.size === "compact" || p.size === "full" || p.size === "auto") safe.size = p.size;
+  return safe;
+}
+
 /**
  * Validate + sanitize server-declared placements. A server's declared chrome is
  * untrusted input even when sourced from the operator catalog, so this runs at
@@ -85,21 +107,11 @@ export function sanitizePlacements(
   let authority: string | null = null;
   const out: PlacementDeclaration[] = [];
   for (const p of placements) {
-    if (!p || typeof p.slot !== "string" || p.slot.trim() === "") continue;
-    if (typeof p.resourceUri !== "string") continue;
-    const m = /^ui:\/\/([^/]+)\/(.+)$/.exec(p.resourceUri);
-    if (!m) continue;
-    const [, auth, path] = m;
-    if (!auth || !path || path.includes("..")) continue;
+    const auth = placementAuthority(p);
+    if (auth === null) continue;
     if (authority === null) authority = auth;
     else if (auth !== authority) continue; // internal consistency: one authority per declaration
-    const safe: PlacementDeclaration = { slot: p.slot, resourceUri: p.resourceUri };
-    if (typeof p.priority === "number") safe.priority = p.priority;
-    if (typeof p.label === "string") safe.label = p.label.slice(0, PLACEMENT_STRING_MAX);
-    if (typeof p.icon === "string") safe.icon = p.icon.slice(0, PLACEMENT_STRING_MAX);
-    if (typeof p.route === "string") safe.route = p.route;
-    if (p.size === "compact" || p.size === "full" || p.size === "auto") safe.size = p.size;
-    out.push(safe);
+    out.push(sanitizePlacementFields(p));
   }
   return out;
 }
