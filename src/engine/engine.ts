@@ -666,6 +666,9 @@ export class AgentEngine {
         // A promoted tool makes its server's capability live mid-turn — surface that
         // server's skill guidance once, now, so the model has the workflow before it
         // starts using the tools (not only when the first one is called at tool.start).
+        // Delivery rides the history tail (cache-safe — never the frozen prefix), so the
+        // guidance reaches the model on the NEXT turn — matching how progressive disclosure
+        // unfolds (promote in turn N, call in N+1), not same-iteration.
         this.injectConnectorSkillOverlays(
           runId,
           toolName,
