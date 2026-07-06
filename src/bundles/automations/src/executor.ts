@@ -320,6 +320,25 @@ export function buildRunResult(automation: Automation, data: TaskFnResult): Auto
   };
 }
 
+/** Parse one successful `files__create` tool call into a file ref, or null. */
+function parseFileRef(tc: TaskFnResult["toolCalls"][number]): RunFileRef | null {
+  const name = typeof tc.name === "string" ? tc.name : "";
+  if (!(name === "files__create" || name.endsWith("files__create"))) return null;
+  if (tc.ok !== true) return null;
+  try {
+    const parsed = JSON.parse(typeof tc.output === "string" ? tc.output : "") as Record<
+      string,
+      unknown
+    >;
+    if (parsed && typeof parsed.id === "string" && typeof parsed.filename === "string") {
+      return { id: parsed.id, filename: parsed.filename };
+    }
+  } catch {
+    // swallow — output-file extraction is best-effort, never load-bearing
+  }
+  return null;
+}
+
 /**
  * Best-effort enrichment: recover refs to files the run wrote. A `files__create`
  * tool call (bare or workspace-namespaced) that succeeded returns `{id, filename}`
@@ -329,20 +348,8 @@ export function extractOutputFiles(toolCalls: TaskFnResult["toolCalls"]): RunFil
   if (!Array.isArray(toolCalls)) return [];
   const refs: RunFileRef[] = [];
   for (const tc of toolCalls) {
-    const name = typeof tc.name === "string" ? tc.name : "";
-    if (!(name === "files__create" || name.endsWith("files__create"))) continue;
-    if (tc.ok !== true) continue;
-    try {
-      const parsed = JSON.parse(typeof tc.output === "string" ? tc.output : "") as Record<
-        string,
-        unknown
-      >;
-      if (parsed && typeof parsed.id === "string" && typeof parsed.filename === "string") {
-        refs.push({ id: parsed.id, filename: parsed.filename });
-      }
-    } catch {
-      // swallow — output-file extraction is best-effort, never load-bearing
-    }
+    const ref = parseFileRef(tc);
+    if (ref !== null) refs.push(ref);
   }
   return refs;
 }
@@ -375,6 +382,59 @@ function mapStopReasonToStatus(stopReason: AutomationRun["stopReason"]): Automat
 // ---------------------------------------------------------------------------
 // Direct executor (in-process, for the platform automations source)
 // ---------------------------------------------------------------------------
+
+/** Link an external abort signal to the run controller; reports whether it (not the timeout) fired, and detaches on cleanup. */
+function linkExternalAbort(
+  controller: AbortController,
+  externalSignal: AbortSignal | undefined,
+): { wasExternal: () => boolean; cleanup: () => void } {
+  let externallyAborted = false;
+  const noop = () => {};
+  if (!externalSignal) return { wasExternal: () => externallyAborted, cleanup: noop };
+
+  const onAbort = () => {
+    externallyAborted = true;
+    controller.abort(externalSignal.reason);
+  };
+  // Already aborted at wiring time: fire synchronously, no listener to detach.
+  if (externalSignal.aborted) {
+    onAbort();
+    return { wasExternal: () => externallyAborted, cleanup: noop };
+  }
+  externalSignal.addEventListener("abort", onAbort, { once: true });
+  return {
+    wasExternal: () => externallyAborted,
+    cleanup: () => externalSignal.removeEventListener("abort", onAbort),
+  };
+}
+
+/** Stamp an aborted run + result sidecar as cancelled (external) or timeout, with matching stop metadata. */
+function classifyAbortedRun(
+  run: AutomationRun,
+  result: AutomationRunResult,
+  opts: { externallyAborted: boolean; automationId: string; timeoutMs: number },
+): void {
+  // External cancel wins over the timeout: the operator-meaningful cause is
+  // "I cancelled", not "the clock ran out". The run keeps its real
+  // usage/toolCalls/iterations and runId — not the 0/0/0/0 a synthesized record
+  // carries.
+  if (opts.externallyAborted) {
+    run.status = "cancelled";
+    run.error = "Cancelled by user";
+    run.transient = false;
+  } else {
+    run.status = "timeout";
+    run.error = `Automation ${opts.automationId} timed out after ${Math.round(opts.timeoutMs / 1000)}s`;
+    run.transient = isTransientError(run.error);
+  }
+  // "aborted" is not part of AutomationRun's stopReason union; the status field
+  // carries the operational outcome. Record the engine's stop as "other" (no
+  // natural completion) to keep the persisted record valid — matching the
+  // synthesized-record path (`Scheduler.dispatchRun`) so both ways a run ends up
+  // timeout/cancelled carry identical metadata.
+  run.stopReason = "other";
+  result.stopReason = "other";
+}
 
 /**
  * Execute a single automation run by calling the task function directly.
@@ -418,25 +478,12 @@ export function createDirectExecutor(
     // doing all the work.
     const runController = new AbortController();
     let timedOut = false;
-    let externallyAborted = false;
     const timeoutTimer = setTimeout(() => {
       timedOut = true;
       runController.abort();
     }, timeoutMs);
 
-    let onExternalAbort: (() => void) | undefined;
-    if (externalSignal) {
-      if (externalSignal.aborted) {
-        externallyAborted = true;
-        runController.abort(externalSignal.reason);
-      } else {
-        onExternalAbort = () => {
-          externallyAborted = true;
-          runController.abort(externalSignal.reason);
-        };
-        externalSignal.addEventListener("abort", onExternalAbort, { once: true });
-      }
-    }
+    const externalAbort = linkExternalAbort(runController, externalSignal);
 
     try {
       const data = await taskFn({
@@ -452,29 +499,13 @@ export function createDirectExecutor(
       // An aborted run comes back as a normal result (stopReason "aborted")
       // carrying the partial usage accumulated before the abort — see
       // runtime.executeTask. The task layer can't know WHY it was aborted, so
-      // classify it here from our own cancellation flags: external cancel wins
-      // over the timeout for the same reason it does in the throw path below.
-      // The run keeps its real inputTokens/outputTokens/toolCalls/iterations
-      // and runId instead of the 0/0/0/0 a synthesized record carries.
+      // classify it here from our own cancellation flags.
       if (data.stopReason === "aborted") {
-        if (externallyAborted) {
-          run.status = "cancelled";
-          run.error = "Cancelled by user";
-          run.transient = false;
-        } else {
-          run.status = "timeout";
-          run.error = `Automation ${automation.id} timed out after ${Math.round(timeoutMs / 1000)}s`;
-          run.transient = isTransientError(run.error);
-        }
-        // "aborted" is not part of AutomationRun's stopReason union; the status
-        // field carries the operational outcome. Record the engine's stop as
-        // "other" (no natural completion) to keep the persisted record valid.
-        run.stopReason = "other";
-        result.stopReason = "other";
-        // Match the synthesized-record path (`Scheduler.dispatchRun`) so the two
-        // ways a run can end up timeout/cancelled carry identical metadata. The
-        // field is currently write-only; setting it keeps the paths from drifting
-        // if a future reader (e.g. retry policy) starts consuming it.
+        classifyAbortedRun(run, result, {
+          externallyAborted: externalAbort.wasExternal(),
+          automationId: automation.id,
+          timeoutMs,
+        });
       }
       return { run, result };
     } catch (err) {
@@ -487,7 +518,7 @@ export function createDirectExecutor(
       // boundary), external-cancel wins — the operator-meaningful cause is
       // "I cancelled", not "the clock ran out at the same moment". Drift here
       // would silently restamp a cancel as a timeout in the run record.
-      if (timedOut && !externallyAborted) {
+      if (timedOut && !externalAbort.wasExternal()) {
         throw new Error(
           `Automation ${automation.id} timed out after ${Math.round(timeoutMs / 1000)}s`,
         );
@@ -495,7 +526,7 @@ export function createDirectExecutor(
       throw err;
     } finally {
       clearTimeout(timeoutTimer);
-      if (onExternalAbort) externalSignal?.removeEventListener("abort", onExternalAbort);
+      externalAbort.cleanup();
     }
   };
 }
