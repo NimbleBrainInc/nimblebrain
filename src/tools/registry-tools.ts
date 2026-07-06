@@ -50,24 +50,13 @@ export function createManageRegistriesTool(ctx: ManageRegistriesContext): InProc
       const store = ctx.runtime.getRegistryStore();
 
       if (action === "list") {
-        const registries = await store.list();
-        return {
-          content: textContent(`Registries: ${registries.length}.`),
-          structuredContent: { registries },
-          isError: false,
-        };
+        return listRegistries(store);
       }
 
-      // All write actions require an admin caller. Reads above already
+      // All write actions require an admin caller. The read above already
       // returned by this point, so the gate is correctly scoped.
-      const identity = ctx.getIdentity();
-      if (!identity || !ORG_ADMIN_ROLES.has(identity.orgRole)) {
-        return {
-          content: textContent("Org admin or owner role required to modify registries."),
-          isError: true,
-          structuredContent: { error: "permission_denied" },
-        };
-      }
+      const denied = requireOrgAdmin(ctx.getIdentity());
+      if (denied) return denied;
 
       const id = String(input.id ?? "");
       if (!id) {
@@ -75,45 +64,84 @@ export function createManageRegistriesTool(ctx: ManageRegistriesContext): InProc
       }
 
       try {
-        switch (action) {
-          case "enable": {
-            const next = await store.update(id, { enabled: true });
-            return {
-              content: textContent(`Enabled "${next.name}".`),
-              structuredContent: { ok: true, registry: next },
-              isError: false,
-            };
-          }
-          case "disable": {
-            const next = await store.update(id, { enabled: false });
-            return {
-              content: textContent(`Disabled "${next.name}".`),
-              structuredContent: { ok: true, registry: next },
-              isError: false,
-            };
-          }
-          case "rename": {
-            const name = String(input.name ?? "");
-            if (!name) return { content: textContent("`name` is required."), isError: true };
-            const next = await store.update(id, { name });
-            return {
-              content: textContent(`Renamed "${id}" to "${name}".`),
-              structuredContent: { ok: true, registry: next },
-              isError: false,
-            };
-          }
-          default:
-            return {
-              content: textContent(`Unknown action "${action}".`),
-              isError: true,
-            };
-        }
+        return await runWriteAction(store, action, id, String(input.name ?? ""));
       } catch (err) {
-        return {
-          content: textContent(err instanceof Error ? err.message : String(err)),
-          isError: true,
-        };
+        return errorResult(err);
       }
     },
+  };
+}
+
+/** The store handle a registry tool operates against. */
+type RegistryStore = ReturnType<Runtime["getRegistryStore"]>;
+
+/** Build the `list` result: every registry, readable by any signed-in user. */
+async function listRegistries(store: RegistryStore): Promise<ToolResult> {
+  const registries = await store.list();
+  return {
+    content: textContent(`Registries: ${registries.length}.`),
+    structuredContent: { registries },
+    isError: false,
+  };
+}
+
+/** Guard write actions: return a denial result for non-admins, else null. */
+function requireOrgAdmin(identity: UserIdentity | null): ToolResult | null {
+  if (!identity || !ORG_ADMIN_ROLES.has(identity.orgRole)) {
+    return {
+      content: textContent("Org admin or owner role required to modify registries."),
+      isError: true,
+      structuredContent: { error: "permission_denied" },
+    };
+  }
+  return null;
+}
+
+/** Dispatch an admin write action (enable/disable/rename) against the store. */
+async function runWriteAction(
+  store: RegistryStore,
+  action: string,
+  id: string,
+  name: string,
+): Promise<ToolResult> {
+  switch (action) {
+    case "enable": {
+      const next = await store.update(id, { enabled: true });
+      return {
+        content: textContent(`Enabled "${next.name}".`),
+        structuredContent: { ok: true, registry: next },
+        isError: false,
+      };
+    }
+    case "disable": {
+      const next = await store.update(id, { enabled: false });
+      return {
+        content: textContent(`Disabled "${next.name}".`),
+        structuredContent: { ok: true, registry: next },
+        isError: false,
+      };
+    }
+    case "rename": {
+      if (!name) return { content: textContent("`name` is required."), isError: true };
+      const next = await store.update(id, { name });
+      return {
+        content: textContent(`Renamed "${id}" to "${name}".`),
+        structuredContent: { ok: true, registry: next },
+        isError: false,
+      };
+    }
+    default:
+      return {
+        content: textContent(`Unknown action "${action}".`),
+        isError: true,
+      };
+  }
+}
+
+/** Normalize a thrown value into an error `ToolResult`. */
+function errorResult(err: unknown): ToolResult {
+  return {
+    content: textContent(err instanceof Error ? err.message : String(err)),
+    isError: true,
   };
 }
