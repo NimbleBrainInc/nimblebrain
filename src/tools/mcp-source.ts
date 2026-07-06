@@ -1543,6 +1543,53 @@ export class McpSource implements ToolSource {
     return { text: JSON.stringify(first), meta };
   }
 
+  /**
+   * Enumerate the server's resources via `resources/list` (best-effort).
+   *
+   * Used for skill discovery (SEP-2640, `io.modelcontextprotocol/skills`): the
+   * runtime lists a source's resources and reads the `skill://<name>/SKILL.md`
+   * entrypoints. Returns `{ resources, ok }`: `ok: false` means the enumeration
+   * couldn't complete cleanly — a transport error mid-list (partial `resources`) or
+   * a torn-down client — so the caller declines to cache it as a stable "no skills"
+   * and retries next turn. Only a genuine successful response — a clean empty page
+   * (no skills / no `resources` capability) or a cap-bounded read — is `ok: true`.
+   * Unlike `readResource`, this probe does NOT route failures through
+   * session recovery — a server that simply doesn't list resources must not
+   * restart-storm the source. Pagination is followed up to a small page cap so a
+   * misbehaving server can't spin the request path.
+   */
+  async listResources(): Promise<{
+    resources: Array<{ uri: string; name?: string; mimeType?: string }>;
+    ok: boolean;
+  }> {
+    if (!this.client) return { resources: [], ok: false }; // torn-down client is transient — retry (cheap no-op)
+    const resources: Array<{ uri: string; name?: string; mimeType?: string }> = [];
+    let cursor: string | undefined;
+    try {
+      for (let page = 0; page < 10; page++) {
+        const result = await this.client.listResources(cursor ? { cursor } : undefined);
+        for (const resource of result.resources ?? []) {
+          resources.push({ uri: resource.uri, name: resource.name, mimeType: resource.mimeType });
+        }
+        cursor = result.nextCursor;
+        if (!cursor) break;
+      }
+      if (cursor) {
+        // Hit the page ceiling with more to read — surface it rather than silently
+        // drop later resources (a skill past the cap would go undiscovered).
+        log.warn("[mcp] listResources hit the 10-page cap; later resources not enumerated", {
+          source: this.name,
+        });
+      }
+    } catch {
+      // A transport error cut the enumeration short: report `ok: false` so the caller
+      // declines to cache this partial as a stable "no skills" (never recover/restart
+      // the source — this is a probe, not the app-surface readResource path).
+      return { resources, ok: false };
+    }
+    return { resources, ok: true };
+  }
+
   /** Expose the underlying MCP client (kept for tests and rare introspection). */
   getClient(): Client | null {
     return this.client;

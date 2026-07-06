@@ -1,4 +1,4 @@
-import { ArrowLeft, Check, Keyboard, Maximize2, Minimize2, RotateCcw, X } from "lucide-react";
+import { ArrowLeft, Check, Maximize2, Minimize2, SquarePen, X } from "lucide-react";
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useState } from "react";
 import { useChatContext } from "../context/ChatContext";
 import type { ChatMessage } from "../hooks/useChat";
@@ -6,6 +6,7 @@ import type { DisplayDetail } from "../lib/tool-display";
 import { KeyboardShortcutsModal } from "./KeyboardShortcutsModal";
 import { MessageInput } from "./MessageInput";
 import { MessageList } from "./MessageList";
+import { RecentConversationsPopover } from "./RecentConversationsPopover";
 import { SkillsPopover } from "./SkillsPopover";
 
 export interface ChatPanelProps {
@@ -29,9 +30,8 @@ export interface ChatPanelRef {
 }
 
 /**
- * Derive the header title: prefer the server-generated title (updates live when
- * it arrives), else the first user message with markdown syntax stripped,
- * truncated to 40 chars with an ellipsis.
+ * Prefer the server-generated title (updates live when it arrives); fall back to
+ * the first user message, stripping markdown, capped at 40 chars with an ellipsis.
  */
 function deriveDisplayTitle(title: string | null, messages: ChatMessage[]): string | null {
   const rawTitle = title ?? messages.find((m) => m.role === "user")?.content ?? null;
@@ -46,14 +46,14 @@ function deriveDisplayTitle(title: string | null, messages: ChatMessage[]): stri
     .replace(/\[(.+?)\]\(.*?\)/g, "$1") // links
     .replace(/\n/g, " ") // newlines to spaces
     .trim();
-  const conversationTitle = plainTitle.slice(0, 40) || null;
-  if (!conversationTitle) return null;
-  return plainTitle.length > 40 ? `${conversationTitle}…` : conversationTitle;
+  const capped = plainTitle.slice(0, 40);
+  if (!capped) return null;
+  return plainTitle.length > 40 ? `${capped}…` : capped;
 }
 
-/** Resolve the display-detail level, preferring the prop then the persisted preference. */
+/** Resolve the display-detail level: explicit prop wins, else the stored preference, else balanced. */
 function resolveDisplayDetail(displayDetailProp?: DisplayDetail): DisplayDetail {
-  if (displayDetailProp != null) return displayDetailProp;
+  if (displayDetailProp) return displayDetailProp;
   const stored = localStorage.getItem("nb:displayDetail");
   if (stored === "quiet" || stored === "balanced" || stored === "verbose") {
     return stored;
@@ -61,36 +61,34 @@ function resolveDisplayDetail(displayDetailProp?: DisplayDetail): DisplayDetail 
   return "balanced";
 }
 
-interface ChatHeaderProps {
-  compact: boolean;
-  onBack?: () => void;
-  conversationId: string | null;
-  onCopyConversationId: () => void;
-  displayTitle: string | null;
-  copiedId: boolean;
-  onNewChat: () => void;
-  isStreaming: boolean;
-  onShowShortcuts: () => void;
-  onFullscreen?: () => void;
-  isFullscreen: boolean;
-  onClose?: () => void;
-}
-
-/** Chat panel header: title (click-to-copy conversation ID) and action buttons. */
+/** Chat panel header: back button, click-to-copy title, and the actions / skills / window-controls group. */
 function ChatHeader({
   compact,
   onBack,
   conversationId,
-  onCopyConversationId,
   displayTitle,
   copiedId,
-  onNewChat,
+  onCopyId,
   isStreaming,
-  onShowShortcuts,
+  onNewChat,
+  onOpenConversation,
   onFullscreen,
-  isFullscreen,
   onClose,
-}: ChatHeaderProps) {
+  isFullscreen,
+}: {
+  compact: boolean;
+  onBack?: () => void;
+  conversationId: string | null;
+  displayTitle: string | null;
+  copiedId: boolean;
+  onCopyId: () => void;
+  isStreaming: boolean;
+  onNewChat: () => void;
+  onOpenConversation: (id: string) => void;
+  onFullscreen?: () => void;
+  onClose?: () => void;
+  isFullscreen: boolean;
+}) {
   return (
     <header
       className={`flex items-center justify-between border-b border-border shrink-0 ${compact ? "h-14 px-4" : "h-14 px-6"}`}
@@ -108,7 +106,7 @@ function ChatHeader({
         )}
         <button
           type="button"
-          onClick={onCopyConversationId}
+          onClick={onCopyId}
           disabled={!conversationId}
           className={`font-heading text-base font-medium text-foreground flex items-center gap-1.5 transition-all duration-200 min-w-0 truncate ${
             conversationId ? "cursor-pointer hover:text-primary active:scale-95" : "cursor-default"
@@ -121,48 +119,53 @@ function ChatHeader({
           )}
         </button>
       </div>
-      <div className="flex items-center gap-1 shrink-0">
-        <button
-          onClick={onNewChat}
-          type="button"
-          disabled={isStreaming}
-          aria-label="New conversation"
-          className="p-1.5 hover:bg-muted rounded-sm transition-all text-muted-foreground hover:text-foreground disabled:opacity-50 disabled:cursor-not-allowed"
-        >
-          <RotateCcw style={{ width: 16, height: 16 }} />
-        </button>
+      {/* Grouped by altitude: conversation actions · skills · window controls.
+          Learn-once shortcuts live on the composer's "?" footer, not here. */}
+      <div className="flex items-center gap-2 shrink-0">
+        <div className="flex items-center gap-0.5">
+          <RecentConversationsPopover
+            activeConversationId={conversationId}
+            onOpen={onOpenConversation}
+          />
+          <button
+            onClick={onNewChat}
+            type="button"
+            disabled={isStreaming}
+            aria-label="New chat"
+            title="New chat"
+            className="p-1.5 hover:bg-muted rounded-sm transition-all text-muted-foreground hover:text-foreground disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            <SquarePen style={{ width: 16, height: 16 }} />
+          </button>
+        </div>
         <SkillsPopover conversationId={conversationId} />
-        <button
-          onClick={onShowShortcuts}
-          type="button"
-          aria-label="Keyboard shortcuts"
-          className="p-1.5 hover:bg-muted rounded-sm transition-all text-muted-foreground hover:text-foreground"
-        >
-          <Keyboard style={{ width: 16, height: 16 }} />
-        </button>
-        {onFullscreen && (
-          <button
-            onClick={onFullscreen}
-            type="button"
-            aria-label={isFullscreen ? "Exit fullscreen" : "Fullscreen"}
-            className="p-1.5 hover:bg-muted rounded-sm transition-all text-muted-foreground hover:text-foreground"
-          >
-            {isFullscreen ? (
-              <Minimize2 style={{ width: 16, height: 16 }} />
-            ) : (
-              <Maximize2 style={{ width: 16, height: 16 }} />
+        {(onFullscreen || onClose) && (
+          <div className="flex items-center gap-0.5">
+            {onFullscreen && (
+              <button
+                onClick={onFullscreen}
+                type="button"
+                aria-label={isFullscreen ? "Exit fullscreen" : "Fullscreen"}
+                className="p-1.5 hover:bg-muted rounded-sm transition-all text-muted-foreground hover:text-foreground"
+              >
+                {isFullscreen ? (
+                  <Minimize2 style={{ width: 16, height: 16 }} />
+                ) : (
+                  <Maximize2 style={{ width: 16, height: 16 }} />
+                )}
+              </button>
             )}
-          </button>
-        )}
-        {onClose && (
-          <button
-            onClick={onClose}
-            type="button"
-            aria-label="Close"
-            className="p-1.5 hover:bg-muted rounded-sm transition-all text-muted-foreground hover:text-foreground"
-          >
-            <X style={{ width: 16, height: 16 }} />
-          </button>
+            {onClose && (
+              <button
+                onClick={onClose}
+                type="button"
+                aria-label="Close"
+                className="p-1.5 hover:bg-muted rounded-sm transition-all text-muted-foreground hover:text-foreground"
+              >
+                <X style={{ width: 16, height: 16 }} />
+              </button>
+            )}
+          </div>
         )}
       </div>
     </header>
@@ -189,9 +192,11 @@ export const ChatPanel = forwardRef<ChatPanelRef, ChatPanelProps>(function ChatP
   const inputWrapperRef = useRef<HTMLDivElement>(null);
   const [showShortcuts, setShowShortcuts] = useState(false);
   const [copiedId, setCopiedId] = useState(false);
-  const { conversationId, title, streamingState, preparingTool, stop } = useChatContext();
+  const { conversationId, title, streamingState, preparingTool, stop, loadConversation } =
+    useChatContext();
 
   const displayTitle = deriveDisplayTitle(title, messages);
+  const displayDetail = resolveDisplayDetail(displayDetailProp);
 
   const handleCopyConversationId = useCallback(() => {
     if (!conversationId) return;
@@ -199,8 +204,6 @@ export const ChatPanel = forwardRef<ChatPanelRef, ChatPanelProps>(function ChatP
     setCopiedId(true);
     setTimeout(() => setCopiedId(false), 1500);
   }, [conversationId]);
-
-  const displayDetail = resolveDisplayDetail(displayDetailProp);
 
   useImperativeHandle(ref, () => ({
     requestInputFocus: () => {
@@ -246,15 +249,15 @@ export const ChatPanel = forwardRef<ChatPanelRef, ChatPanelProps>(function ChatP
         compact={compact}
         onBack={onBack}
         conversationId={conversationId}
-        onCopyConversationId={handleCopyConversationId}
         displayTitle={displayTitle}
         copiedId={copiedId}
-        onNewChat={handleNewChat}
+        onCopyId={handleCopyConversationId}
         isStreaming={isStreaming}
-        onShowShortcuts={() => setShowShortcuts(true)}
+        onNewChat={handleNewChat}
+        onOpenConversation={loadConversation}
         onFullscreen={onFullscreen}
-        isFullscreen={isFullscreen}
         onClose={onClose}
+        isFullscreen={isFullscreen}
       />
 
       {error && (
@@ -278,7 +281,7 @@ export const ChatPanel = forwardRef<ChatPanelRef, ChatPanelProps>(function ChatP
           onSend={sendMessage}
           disabled={isStreaming}
           onNewConversation={handleNewChat}
-          streamingState={streamingState}
+          onShowShortcuts={() => setShowShortcuts(true)}
           onStop={stop}
         />
       </div>

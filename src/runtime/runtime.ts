@@ -86,7 +86,12 @@ import type {
 import { composeSystemSegments } from "../prompt/compose.ts";
 import { ConnectorDirectory } from "../registries/directory.ts";
 import { RegistryStore, warnIfCuratedCatalogEmpty } from "../registries/registry-store.ts";
-import { synthesizeBundleSkill } from "../skills/bundle-skills.ts";
+import {
+  type DiscoveredSkill,
+  isSkillEntrypointUri,
+  parseSkillMarkdown,
+  synthesizeBundleSkill,
+} from "../skills/bundle-skills.ts";
 import {
   CONNECTOR_SKILLS_SUBDIR,
   type ConnectorOverlayInfo,
@@ -315,11 +320,12 @@ export class Runtime {
   /** Getter for current workspace ID (set per-request). */
   private _currentWorkspaceId: (() => string | null) | null = null;
   /**
-   * Cache for `skill://<bundle>/usage` resource fetches. A `null` body is a
-   * sentinel meaning "this bundle does not publish the resource" — without it,
-   * `loadBundleSkills` would re-probe every non-skill bundle on every chat.
+   * Cache of the skills discovered on each MCP source (its `skill://…/SKILL.md`
+   * resources, parsed + truncated). An empty array is the common "this server
+   * publishes no skills" case — without caching it, `loadBundleSkills` would
+   * re-list + re-read every non-skill source on every chat.
    */
-  private skillResourceCache = new Map<string, { content: string | null; fetchedAt: number }>();
+  private skillResourceCache = new Map<string, { skills: DiscoveredSkill[]; fetchedAt: number }>();
   private static readonly SKILL_CACHE_TTL = 5 * 60 * 1000; // 5 minutes
   /**
    * Conversation IDs with an in-flight chat() call. Prevents concurrent runs on
@@ -1279,7 +1285,7 @@ export class Runtime {
     // Layer 3 selection — pick `always` and `dynamic` (tool-affinity) skills
     // based on the active tool set. The merged pool
     // includes platform / workspace / user tier skills (user > workspace >
-    // platform on name collisions). Bundle-exposed `skill://<name>/usage`
+    // platform on name collisions). Server-exposed `skill://<name>/SKILL.md`
     // resources are synthesized into the pool as `dynamic` tool-affinity skills so a
     // workspace-level chat picks them up whenever the bundle's tools are
     // surfaced — no `appContext` scoping required (the prior path only fired
@@ -2078,11 +2084,20 @@ export class Runtime {
     let focusedApp: FocusedAppInfo;
     try {
       const sourceTools = await source.tools();
-      const skillResource = await this.getAppSkillResource(appContext.serverName);
-      const referenceUri = `skill://${appContext.serverName}/reference`;
-      const hasReference = skillResource
-        ? source instanceof McpSource && (await this.hasResource(source, referenceUri))
-        : false;
+      // Primary = the first skill this source lists (resources/list order). For a
+      // multi-skill server, only this primary reaches the focused-app briefing:
+      // loadBundleSkills skips the entered source (dedup), so its other skills don't
+      // surface via Layer-3 while entered. (No server publishes 2+ skills today.)
+      const [primarySkill] = await this.discoverServerSkills(appContext.serverName);
+      const skillResource = primarySkill?.body ?? null;
+      // Companion reference lives beside the skill (SEP-2640 supporting files share
+      // the skill's path), derived from the DISCOVERED URI — never from the source
+      // name, whose reverse-DNS slug won't match the skill's short path.
+      const referenceUri = primarySkill?.uri.replace(/\/SKILL\.md$/, "/reference");
+      const hasReference =
+        referenceUri && source instanceof McpSource
+          ? await this.hasResource(source, referenceUri)
+          : false;
       const bundleInstance = this.lifecycle?.getInstance(appContext.serverName, appWsId);
       focusedApp = {
         name: appContext.appName,
@@ -2091,7 +2106,7 @@ export class Runtime {
           description: t.description,
         })),
         ...(skillResource ? { skillResource } : {}),
-        ...(hasReference ? { referenceResourceUri: referenceUri } : {}),
+        ...(hasReference && referenceUri ? { referenceResourceUri: referenceUri } : {}),
         trustScore: bundleInstance?.trustScore ?? 100,
       };
     } catch {
@@ -2465,24 +2480,30 @@ export class Runtime {
   }
 
   /**
-   * Fetch the `skill://<serverName>/usage` resource for a bundle, with caching.
+   * Discover the skills an MCP server exposes, parsed and truncated, with
+   * caching. Per SEP-2640 (`io.modelcontextprotocol/skills`) a skill is a
+   * `skill://<name>/SKILL.md` markdown resource; the runtime lists the source's
+   * resources (`resources/list`) and reads the ones whose URI is a skill
+   * entrypoint — it never guesses the URI from the source name (that guess,
+   * `skill://<serverName>/usage`, missed every fleet connector whose name is a
+   * reverse-DNS slug).
    *
-   * Negative results (resource absent, source not MCP, transport error) are
-   * cached as a `null` sentinel — the common case is "this bundle has no skill
-   * resource," and re-issuing the read on every chat over a stable bundle set
-   * would N×-multiply the request-path latency.
+   * Empty results (no skill resources, source not MCP, transport error) are
+   * cached — the common case is "this server has no skills," and re-listing on
+   * every chat over a stable source set would N×-multiply the request-path
+   * latency.
    *
    * `SharedSourceRef`-wrapped sources are unwrapped before the `McpSource`
-   * check; shared sources arrive wrapped and would otherwise be
-   * silently invisible to this path.
+   * check; shared sources arrive wrapped and would otherwise be silently
+   * invisible to this path.
    */
-  private async getAppSkillResource(serverName: string): Promise<string | null> {
+  private async discoverServerSkills(serverName: string): Promise<DiscoveredSkill[]> {
     const cached = this.skillResourceCache.get(serverName);
     if (cached && Date.now() - cached.fetchedAt < Runtime.SKILL_CACHE_TTL) {
-      return cached.content;
+      return cached.skills;
     }
 
-    // Search across all workspace registries for the source
+    // Search across all workspace registries for the source.
     let source: ToolSource | undefined;
     for (const reg of this._workspaceRegistries.values()) {
       source = reg.getSources().find((s) => s.name === serverName);
@@ -2490,32 +2511,54 @@ export class Runtime {
     }
     const unwrapped = source instanceof SharedSourceRef ? source.unwrap() : source;
     if (!(unwrapped instanceof McpSource)) {
-      this.skillResourceCache.set(serverName, { content: null, fetchedAt: Date.now() });
-      return null;
+      this.skillResourceCache.set(serverName, { skills: [], fetchedAt: Date.now() });
+      return [];
     }
 
-    let body: string | null = null;
-    try {
-      const resource = await unwrapped.readResource(`skill://${serverName}/usage`);
-      const content = resource?.text ?? null;
-      if (content) {
-        // Token budget: cap at ~3000 tokens (~12000 chars). Heading-aware
-        // so we don't slice mid-sentence (production case: a "rules" appendix
-        // at the end of a SKILL.md was lost mid-rule, breaking the model's
-        // tool-selection logic).
-        const capped = truncateMarkdownToBudget(content, MAX_SKILL_BODY_CHARS);
-        body = capped.body;
-        if (capped.truncated) {
-          log.warn(
-            `[skill] bundle usage skill truncated to ${MAX_SKILL_BODY_CHARS} chars (${capped.sectionsOmitted} section(s) omitted) — ${serverName}`,
-          );
-        }
-      }
-    } catch {
-      // Resource doesn't exist or read failed — fall through to negative cache.
+    const skills: DiscoveredSkill[] = [];
+    const { resources, ok } = await unwrapped.listResources();
+    for (const resource of resources) {
+      const skill = await this.readSkillResource(unwrapped, resource.uri);
+      if (skill) skills.push(skill);
     }
-    this.skillResourceCache.set(serverName, { content: body, fetchedAt: Date.now() });
-    return body;
+    // Cache only a COMPLETE enumeration: a transport error mid-`resources/list`
+    // (`ok: false`) leaves a partial result, and pinning it empty for the 5-minute
+    // TTL would keep the skill dark after the transport recovers. Retry next turn.
+    if (ok) {
+      this.skillResourceCache.set(serverName, { skills, fetchedAt: Date.now() });
+    }
+    return skills;
+  }
+
+  /** Read one skill entrypoint resource into a parsed, budget-capped `DiscoveredSkill`, or `undefined` when the URI isn't a skill entrypoint or the resource is unreadable/empty. */
+  private async readSkillResource(
+    source: McpSource,
+    uri: string,
+  ): Promise<DiscoveredSkill | undefined> {
+    if (!isSkillEntrypointUri(uri)) return undefined;
+    let text: string | undefined;
+    try {
+      text = (await source.readResource(uri))?.text;
+    } catch {
+      // A single unreadable skill resource must not sink the whole discovery.
+      return undefined;
+    }
+    if (!text) return undefined;
+    const parsed = parseSkillMarkdown(uri, text);
+    // Token budget: cap the body (heading-aware, so a trailing "rules"
+    // section isn't sliced mid-rule — a production tool-selection failure).
+    const capped = truncateMarkdownToBudget(parsed.body, MAX_SKILL_BODY_CHARS);
+    if (capped.truncated) {
+      log.warn(
+        `[skill] server skill truncated to ${MAX_SKILL_BODY_CHARS} chars (${capped.sectionsOmitted} section(s) omitted) — ${uri}`,
+      );
+    }
+    return {
+      uri,
+      name: parsed.name,
+      description: parsed.description,
+      body: capped.body,
+    };
   }
 
   /** Check if an MCP source exposes a specific resource URI. */
@@ -2529,20 +2572,21 @@ export class Runtime {
   }
 
   /**
-   * Probe every MCP source in `wsId`'s registry for a `skill://<name>/usage`
-   * resource and synthesize a Layer 3 `Skill` for any that responds. Each
-   * synthesized skill is `dynamic` with tool-affinity `<name>__*`, so it loads via the
-   * standard `selectLayer3Skills` path whenever the bundle's tools are in
-   * the active toolset — no `appContext` required.
+   * Discover every MCP source in `wsId`'s registry that exposes SEP-2640
+   * `skill://<name>/SKILL.md` resources and synthesize a Layer 3 `Skill` for
+   * each. Each synthesized skill is `dynamic` with tool-affinity
+   * `<serverName>__*`, so it loads via the standard `selectLayer3Skills` path
+   * whenever the server's tools are in the active toolset — no `appContext`
+   * required.
    *
-   * Use case: a workspace-level chat where the model needs the bundle's
+   * Use case: a workspace-level chat where the model needs the server's
    * workflow guidance but isn't "entered" into the app. Without this, the
    * skill lived only on the `appContext`-scoped `<app-guide>` path and was
-   * invisible to cross-bundle chats.
+   * invisible to cross-server chats.
    *
-   * Resource fetches reuse `getAppSkillResource`'s 5-minute cache, so this
-   * stays cheap on warm requests. Per-source errors are swallowed (resource
-   * not found is the normal not-published case).
+   * Discovery reuses `discoverServerSkills`'s 5-minute cache, so this stays
+   * cheap on warm requests. Per-source errors are swallowed (no skill resource
+   * is the normal not-published case).
    */
   private async loadBundleSkills(
     wsId: string,
@@ -2561,10 +2605,10 @@ export class Runtime {
     // safely would make the situation worse, not better. Trust is enforced at
     // install time. See `formatFocusedAppSection` for the matching policy on
     // the `<app-guide>` path.
-    // Servers with a materialized connector overlay: skip synthesizing
-    // their `skill://<server>/usage` guidance — the curated overlay supersedes
-    // it (and would otherwise double the guidance under two framings). A bundle
-    // "has an overlay" iff its persisted ref carries a non-empty `skillsLock`.
+    // Servers with a materialized connector overlay: skip synthesizing their
+    // `skill://…/SKILL.md` guidance — the curated overlay supersedes it (and
+    // would otherwise double the guidance under two framings). A server "has an
+    // overlay" iff its persisted ref carries a non-empty `skillsLock`.
     const overlaidServers = new Set(
       this.getBundleInstancesForWorkspace(wsId)
         .filter((i) => i.ref && "skillsLock" in i.ref && (i.ref.skillsLock?.length ?? 0) > 0)
@@ -2580,20 +2624,29 @@ export class Runtime {
       candidates.push(source.name);
     }
 
-    // Parallel fetch: serial probing N-times-multiplied the chat hot-path
-    // latency on workspaces with many non-skill bundles. `getAppSkillResource`
-    // caches both positive and negative results so steady-state cost is zero.
+    // Parallel discovery: serial probing N-times-multiplied the chat hot-path
+    // latency on workspaces with many non-skill servers. `discoverServerSkills`
+    // caches both positive and empty results so steady-state cost is zero. A
+    // server may expose more than one skill, so each candidate yields 0..N.
     const synthesized = await Promise.all(
       candidates.map(async (name) => {
         try {
-          const body = await this.getAppSkillResource(name);
-          return body ? synthesizeBundleSkill({ serverName: name, body }) : null;
+          const skills = await this.discoverServerSkills(name);
+          return skills.map((s) =>
+            synthesizeBundleSkill({
+              serverName: name,
+              skillName: s.name,
+              description: s.description,
+              body: s.body,
+              uri: s.uri,
+            }),
+          );
         } catch {
-          return null;
+          return [];
         }
       }),
     );
-    return synthesized.filter((s): s is Skill => s !== null);
+    return synthesized.flat();
   }
 
   /**
@@ -3695,7 +3748,7 @@ export class Runtime {
    * prompt received the workspace/user-tier set.
    *
    * The pool merges per-conversation tier skills (org + workspace + user, via
-   * {@link loadConversationSkills}) with bundle-exposed `skill://<name>/usage`
+   * {@link loadConversationSkills}) with server-exposed `skill://<name>/SKILL.md`
    * skills from the focused workspace only — a bundle installed there whose
    * tools land in the workspace's tool list must also surface its workflow
    * guidance, else the model gets the namespaced tool name with no

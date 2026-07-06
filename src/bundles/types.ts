@@ -77,7 +77,7 @@ export interface RemoteTransportConfig {
 /**
  * One materialized connector-skill overlay bound to a bundle. Recorded on
  * the bundle's `BundleRef.skillsLock` at install so the dedupe path can tell a
- * bundle HAS a curated overlay (skip its `skill://usage`), and so the binding
+ * bundle HAS a curated overlay (skip its `skill://<name>/SKILL.md`), and so the binding
  * is auditable. Cleanup on uninstall is keyed on `serverName` (it removes the
  * whole `connector-skills/<server>/` dir), not on these entries.
  */

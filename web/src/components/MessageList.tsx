@@ -2,6 +2,7 @@ import { AlertCircle, Check, ChevronDown, Copy, RotateCcw, Zap } from "lucide-re
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Streamdown } from "streamdown";
 import type { ChatMessage, PreparingTool, StreamingState } from "../hooks/useChat";
+import { linkSafety } from "../lib/streamdown-config";
 import type { DisplayDetail } from "../lib/tool-display";
 import { BlockTimeline } from "./BlockTimeline";
 import { FileAttachment } from "./FileAttachment";
@@ -137,7 +138,6 @@ const BOTTOM_THRESHOLD = 50;
  */
 function useSmartScroll(messages: ChatMessage[]) {
   const scrollRef = useRef<HTMLDivElement>(null);
-  const bottomRef = useRef<HTMLDivElement>(null);
   const [isAtBottom, setIsAtBottom] = useState(true);
   // Track the conversation identity to detect loads vs sends.
   // We use the first message's timestamp as a fingerprint — it changes when
@@ -145,24 +145,54 @@ function useSmartScroll(messages: ChatMessage[]) {
   const prevConversationKeyRef = useRef<string | null>(null);
   const prevMessageCountRef = useRef(0);
 
+  // "Bottom" is the newest message resting at the viewport bottom — NOT the raw
+  // scroll end. The list keeps a 60vh trailing spacer (headroom so a fresh
+  // question can scroll to the top), and resting in that spacer would show blank
+  // space below the content. So both the flag and the scroll key off the last
+  // message element, never `scrollHeight`. DOM order is [...messages, spacer], so
+  // the last message is at index messages.length - 1.
+  const lastMessageEl = useCallback(
+    () => scrollRef.current?.firstElementChild?.children[messages.length - 1] as HTMLElement | null,
+    [messages.length],
+  );
+
   const checkIsAtBottom = useCallback(() => {
     const el = scrollRef.current;
-    if (!el) return true;
-    return el.scrollHeight - el.scrollTop - el.clientHeight <= BOTTOM_THRESHOLD;
-  }, []);
+    const last = lastMessageEl();
+    if (!el || !last) return true;
+    // At bottom ⇔ none of the newest message sits below the fold.
+    return (
+      last.getBoundingClientRect().bottom - el.getBoundingClientRect().bottom <= BOTTOM_THRESHOLD
+    );
+  }, [lastMessageEl]);
 
-  const scrollToBottom = useCallback((behavior: ScrollBehavior = "smooth") => {
-    bottomRef.current?.scrollIntoView({ behavior });
-  }, []);
+  const scrollToBottom = useCallback(
+    (behavior: ScrollBehavior = "smooth") => {
+      lastMessageEl()?.scrollIntoView({ behavior, block: "end" });
+    },
+    [lastMessageEl],
+  );
 
-  // Track scroll position
+  // Keep isAtBottom accurate so the jump-to-bottom chevron reflects reality.
+  // The scroll container renders only once there are messages, so attach when it
+  // mounts. A 'scroll' listener catches the user scrolling; a ResizeObserver on
+  // the content catches streaming growth, which appends below the fold WITHOUT
+  // firing a scroll event. Both only set the flag — neither scrolls, honoring the
+  // "don't chase streaming content" rule below.
+  const hasMessages = messages.length > 0;
   useEffect(() => {
     const el = scrollRef.current;
-    if (!el) return;
-    const handleScroll = () => setIsAtBottom(checkIsAtBottom());
-    el.addEventListener("scroll", handleScroll, { passive: true });
-    return () => el.removeEventListener("scroll", handleScroll);
-  }, [checkIsAtBottom]);
+    if (!hasMessages || !el) return;
+    const update = () => setIsAtBottom(checkIsAtBottom());
+    update();
+    el.addEventListener("scroll", update, { passive: true });
+    const ro = new ResizeObserver(update);
+    if (el.firstElementChild) ro.observe(el.firstElementChild);
+    return () => {
+      el.removeEventListener("scroll", update);
+      ro.disconnect();
+    };
+  }, [hasMessages, checkIsAtBottom]);
 
   // React to message changes
   useEffect(() => {
@@ -183,7 +213,7 @@ function useSmartScroll(messages: ChatMessage[]) {
     if (conversationKey !== prevKey && messages.length > 1) {
       // Use double-rAF to ensure the DOM has rendered the messages. Scroll the
       // last real message to the viewport bottom (not the trailing 60vh
-      // spacer / bottomRef, which would leave the last turn off-screen).
+      // spacer, which would leave the last turn off-screen).
       requestAnimationFrame(() => {
         requestAnimationFrame(() => {
           const container = scrollRef.current;
@@ -217,58 +247,40 @@ function useSmartScroll(messages: ChatMessage[]) {
     }
   }, [messages]);
 
-  return { scrollRef, bottomRef, isAtBottom, scrollToBottom };
+  return { scrollRef, isAtBottom, scrollToBottom };
 }
 
-/** Horizontal row of file-attachment chips. */
-function FileAttachments({
-  files,
-  className,
-}: {
-  files: NonNullable<ChatMessage["files"]>;
-  className: string;
-}) {
-  return (
-    <div className={className}>
-      {files.map((file) => (
-        <FileAttachment key={file.id} file={file} />
-      ))}
-    </div>
-  );
-}
-
-/** Collapsed "App Context" prefix shown above a user message. */
-function AppContextDetails({ prefix }: { prefix: string }) {
-  return (
-    <details className="mb-1">
-      <summary className="text-3xs opacity-60 cursor-pointer select-none">App Context</summary>
-      <span className="block text-3xs opacity-60 mt-0.5">{prefix}</span>
-    </details>
-  );
-}
-
-/** User turn: left-ruled bubble with optional app-context prefix and file chips. */
+/** One user message body: optional app-context disclosure, file chips, and the italic message text. */
 function UserMessage({
   contextPrefix,
   files,
   displayContent,
 }: {
   contextPrefix: string | null;
-  files?: ChatMessage["files"];
+  files: ChatMessage["files"];
   displayContent: string;
 }) {
   return (
     <div className="pl-4 border-l-2 border-border break-words whitespace-pre-wrap">
-      {contextPrefix && <AppContextDetails prefix={contextPrefix} />}
+      {contextPrefix && (
+        <details className="mb-1">
+          <summary className="text-3xs opacity-60 cursor-pointer select-none">App Context</summary>
+          <span className="block text-3xs opacity-60 mt-0.5">{contextPrefix}</span>
+        </details>
+      )}
       {files && files.length > 0 && (
-        <FileAttachments files={files} className="flex flex-wrap gap-2 mb-2" />
+        <div className="flex flex-wrap gap-2 mb-2">
+          {files.map((file) => (
+            <FileAttachment key={file.id} file={file} />
+          ))}
+        </div>
       )}
       <span className="presence-user-message italic">{displayContent}</span>
     </div>
   );
 }
 
-/** Run-level stop-reason notice appended below an assistant turn. */
+/** Run-level stop-reason notice shown under an assistant turn. */
 function StopReasonNotice({ stopReason }: { stopReason: string }) {
   return (
     <div className="flex items-start gap-2 px-3 py-2 rounded-sm bg-muted/50 border border-border text-sm text-muted-foreground">
@@ -278,7 +290,7 @@ function StopReasonNotice({ stopReason }: { stopReason: string }) {
   );
 }
 
-/** Inline error notice with a retry affordance and collapsible raw detail. */
+/** Inline error notice with an optional retry button and a collapsible detail. */
 function ErrorNotice({ error, onRetry }: { error: string; onRetry?: () => void }) {
   return (
     <div className="px-3 py-2.5 rounded-sm bg-destructive/10 border border-destructive/20 text-sm">
@@ -308,7 +320,7 @@ function ErrorNotice({ error, onRetry }: { error: string; onRetry?: () => void }
   );
 }
 
-/** Assistant turn: block timeline (or legacy Streamdown), file chips, and notices. */
+/** One assistant message body: block timeline (or legacy Streamdown), file chips, and stop/error notices. */
 function AssistantMessage({
   msg,
   displayContent,
@@ -328,6 +340,8 @@ function AssistantMessage({
   displayDetail: DisplayDetail;
   onRetry?: () => void;
 }) {
+  // The newest message is the live one while streaming — it animates and drives
+  // the current-message affordances in BlockTimeline.
   const isCurrent = isStreaming && isLast;
   return (
     <div className="w-full break-words min-w-0 overflow-hidden flex flex-col gap-3">
@@ -343,60 +357,65 @@ function AssistantMessage({
         // Legacy / pre-block-model conversations: render the serialized message
         // content as one Streamdown block. The block model has been the engine's
         // emission shape for some time, so this branch is essentially
-        // history-only; kept for archived JSONLs that don't have `blocks`
-        // populated.
+        // history-only; kept for archived JSONLs that don't have `blocks` populated.
         <div className="min-h-[1em]">
           <Streamdown
             className="streamdown-container presence-assistant-message"
             isAnimating={isCurrent}
+            linkSafety={linkSafety}
           >
             {displayContent}
           </Streamdown>
         </div>
       )}
+      {/* File attachments */}
       {msg.files && msg.files.length > 0 && (
-        <FileAttachments files={msg.files} className="flex flex-wrap gap-2" />
+        <div className="flex flex-wrap gap-2">
+          {msg.files.map((file) => (
+            <FileAttachment key={file.id} file={file} />
+          ))}
+        </div>
       )}
+      {/* Stop reason notice */}
       {msg.stopReason && <StopReasonNotice stopReason={msg.stopReason} />}
+      {/* Inline error notice */}
       {msg.error && <ErrorNotice error={msg.error} onRetry={onRetry} />}
       {/* Inline app views are rendered within their tool block above */}
     </div>
   );
 }
 
-/** Hover-revealed metadata row: copy button, relative timestamp, and usage chip. */
-function MessageHoverChrome({
-  role,
+/**
+ * Hover chrome — copy button + timestamp + token count. Absolutely positioned so
+ * it overlays into the existing gap between messages instead of reserving dead
+ * vertical space. Aligned to the same edge as the message bubble.
+ * `whitespace-nowrap` keeps the row single-line regardless of how narrow the
+ * parent bubble gets (short messages otherwise force text to wrap since the
+ * absolute child inherits the parent's shrink-to-fit width).
+ */
+function MessageFooter({
+  msg,
   displayContent,
-  displayDetail,
-  timestamp,
-  usage,
+  showTimestamp,
 }: {
-  role: ChatMessage["role"];
+  msg: ChatMessage;
   displayContent: string;
-  displayDetail: DisplayDetail;
-  timestamp?: string;
-  usage?: ChatMessage["usage"];
+  showTimestamp: boolean;
 }) {
-  const showTimestamp = displayDetail === "verbose" || (displayDetail === "balanced" && timestamp);
   return (
-    // Absolutely positioned so it overlays into the existing gap between messages
-    // instead of reserving dead vertical space, aligned to the message's edge.
-    // `whitespace-nowrap` keeps the row single-line however narrow the parent
-    // bubble gets (the absolute child inherits its shrink-to-fit width).
     <div
-      className={`absolute top-full ${role === "user" ? "right-0" : "left-0"} mt-1 flex items-center gap-2 whitespace-nowrap opacity-0 group-hover:opacity-100 metadata-hover transition-opacity duration-200`}
+      className={`absolute top-full ${msg.role === "user" ? "right-0" : "left-0"} mt-1 flex items-center gap-2 whitespace-nowrap opacity-0 group-hover:opacity-100 metadata-hover transition-opacity duration-200`}
     >
       <CopyButton content={displayContent} />
-      {showTimestamp && timestamp && (
-        <span className="text-3xs text-muted-foreground">{formatRelativeTime(timestamp)}</span>
+      {showTimestamp && msg.timestamp && (
+        <span className="text-3xs text-muted-foreground">{formatRelativeTime(msg.timestamp)}</span>
       )}
-      {usage && <UsageChip usage={usage} />}
+      {msg.usage && <UsageChip usage={msg.usage} />}
     </div>
   );
 }
 
-/** One message row: the user or assistant body plus its hover metadata chrome. */
+/** One chat row: derives the app-context slice, then renders the role body and hover footer. */
 function MessageItem({
   msg,
   isNew,
@@ -408,7 +427,6 @@ function MessageItem({
   onRetry,
 }: {
   msg: ChatMessage;
-  /** Rendered after the initial load, so it gets the entrance animation. */
   isNew: boolean;
   isLast: boolean;
   isStreaming: boolean;
@@ -420,10 +438,16 @@ function MessageItem({
   const contextMatch = msg.role === "user" ? msg.content.match(APP_CONTEXT_RE) : null;
   const contextPrefix = contextMatch ? contextMatch[0].trim() : null;
   const displayContent = contextMatch ? msg.content.slice(contextMatch[0].length) : msg.content;
+  const showTimestamp =
+    displayDetail === "verbose" || (displayDetail === "balanced" && !!msg.timestamp);
 
   return (
     <div
-      className={`group relative flex flex-col scroll-mt-6 ${isNew ? "presence-message-enter" : ""} ${
+      // scroll-mt-6 leaves room above when a message scrolls to the top
+      // (block:start); scroll-mb-10 leaves room below when it scrolls to
+      // the bottom (block:end) so the hover footer — timestamp · copy ·
+      // tokens, which hangs below the box at `top-full` — stays in view.
+      className={`group relative flex flex-col scroll-mt-6 scroll-mb-10 ${isNew ? "presence-message-enter" : ""} ${
         msg.role === "user" ? "max-w-[80%] self-end items-end" : "w-full self-start items-start"
       }`}
     >
@@ -445,13 +469,7 @@ function MessageItem({
           onRetry={onRetry}
         />
       )}
-      <MessageHoverChrome
-        role={msg.role}
-        displayContent={displayContent}
-        displayDetail={displayDetail}
-        timestamp={msg.timestamp}
-        usage={msg.usage}
-      />
+      <MessageFooter msg={msg} displayContent={displayContent} showTimestamp={showTimestamp} />
     </div>
   );
 }
@@ -465,7 +483,7 @@ export function MessageList({
   compact = false,
   onRetry,
 }: MessageListProps) {
-  const { scrollRef, bottomRef, isAtBottom, scrollToBottom } = useSmartScroll(messages);
+  const { scrollRef, isAtBottom, scrollToBottom } = useSmartScroll(messages);
 
   // Scroll to bottom when streaming ends with a stop reason notice.
   // The `done` event updates the last message in place (no length change),
@@ -501,12 +519,7 @@ export function MessageList({
 
   return (
     <div className="relative flex-1 min-h-0">
-      <div
-        ref={scrollRef}
-        className={`h-full overflow-y-auto transition-colors duration-[2000ms] ${
-          isStreaming ? "chat-ambient-warm" : ""
-        }`}
-      >
+      <div ref={scrollRef} className="h-full overflow-y-auto">
         <div className={`py-6 flex flex-col gap-10 ${compact ? "px-4" : "px-8 max-w-4xl mx-auto"}`}>
           {messages.map((msg, idx) => (
             <MessageItem
@@ -524,7 +537,6 @@ export function MessageList({
           ))}
           {/* Spacer: ensures any message can scroll to the top of the viewport */}
           <div className="min-h-[60vh] shrink-0" />
-          <div ref={bottomRef} />
         </div>
       </div>
 

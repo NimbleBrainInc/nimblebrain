@@ -1,6 +1,5 @@
 import { ArrowUp, Paperclip, Square } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { StreamingState } from "../hooks/useChat";
 import { FileAttachmentChips } from "./FileAttachmentChips";
 
 const MAX_TEXTAREA_HEIGHT = 200;
@@ -9,74 +8,18 @@ interface MessageInputProps {
   onSend: (text: string, files?: File[]) => void;
   disabled: boolean;
   onNewConversation?: () => void;
-  /** Drives the ambient "breathing" border while a turn is in flight. */
-  streamingState?: StreamingState;
+  /** Open the keyboard-shortcuts dialog — the footer "?" affordance. */
+  onShowShortcuts?: () => void;
   /** Stop the in-flight turn. When provided, the send button becomes a Stop
    *  button while a turn is streaming. */
   onStop?: () => void;
-}
-
-/** Border/shadow class for the input container given its interaction state. */
-function inputStateClass(isDragOver: boolean, isActive: boolean, isFocused: boolean): string {
-  if (isDragOver) return "border-primary shadow-lg shadow-primary/20";
-  if (isActive && !isFocused) return "input-breathing";
-  if (isFocused) return "border-ring shadow-lg shadow-ring/10";
-  return "border-input shadow-lg shadow-border/20";
-}
-
-/** Placeholder copy for the textarea based on drag/disabled state. */
-function inputPlaceholder(isDragOver: boolean, disabled: boolean): string {
-  if (isDragOver) return "Drop files here...";
-  if (disabled) return "Waiting for response...";
-  return "Ask anything...";
-}
-
-/** Send button, or a Stop button while a turn is streaming. */
-function SendButton({
-  disabled,
-  canSend,
-  onSubmit,
-  onStop,
-}: {
-  disabled: boolean;
-  canSend: boolean;
-  onSubmit: () => void;
-  onStop?: () => void;
-}) {
-  if (disabled && onStop) {
-    return (
-      <button
-        onClick={onStop}
-        type="button"
-        aria-label="Stop generating"
-        className="shrink-0 flex items-center justify-center w-8 h-8 rounded-sm transition-all duration-200 bg-primary hover:bg-primary/80 text-primary-foreground"
-      >
-        <Square style={{ width: 14, height: 14 }} fill="currentColor" />
-      </button>
-    );
-  }
-  return (
-    <button
-      onClick={onSubmit}
-      disabled={!canSend}
-      type="button"
-      aria-label="Send message"
-      className={`shrink-0 flex items-center justify-center w-8 h-8 rounded-sm transition-all duration-200 ${
-        canSend
-          ? "bg-primary hover:bg-primary/80 text-primary-foreground"
-          : "bg-muted text-muted-foreground cursor-not-allowed"
-      }`}
-    >
-      <ArrowUp style={{ width: 18, height: 18 }} />
-    </button>
-  );
 }
 
 export function MessageInput({
   onSend,
   disabled,
   onNewConversation,
-  streamingState,
+  onShowShortcuts,
   onStop,
 }: MessageInputProps) {
   const [text, setText] = useState("");
@@ -208,22 +151,25 @@ export function MessageInput({
     [addFiles],
   );
 
-  const isActive =
-    streamingState === "thinking" ||
-    streamingState === "working" ||
-    streamingState === "analyzing" ||
-    streamingState === "preparing";
   const canSend = (text.trim() || attachedFiles.length > 0) && !disabled;
 
   return (
     <div className="py-3 shrink-0">
       {/* biome-ignore lint/a11y/noStaticElementInteractions: drag-and-drop container for file uploads */}
       <div
-        className={`rounded-lg border transition-all duration-200 bg-card ${inputStateClass(
-          isDragOver,
-          isActive,
-          isFocused,
-        )} ${disabled ? "opacity-60" : ""}`}
+        // The raised card + blue ring shows only when the input is actually
+        // usable — focused AND not mid-turn. While a turn runs the input is
+        // disabled, so it recedes to the same quiet muted well as its resting
+        // state: a disabled control should read as inactive, not lit up. The
+        // "working" cue lives in the conversation ("Thinking…" + the streaming
+        // reply) and the Stop button, not the input box.
+        className={`rounded-lg border transition-all duration-200 ${
+          isDragOver
+            ? "bg-card border-primary shadow-lg shadow-primary/20"
+            : isFocused && !disabled
+              ? "bg-card border-ring shadow-lg shadow-ring/10"
+              : "bg-muted border-transparent"
+        }`}
         role="presentation"
         onDragOver={handleDragOver}
         onDragLeave={handleDragLeave}
@@ -240,7 +186,13 @@ export function MessageInput({
             onPaste={handlePaste}
             onFocus={() => setIsFocused(true)}
             onBlur={() => setIsFocused(false)}
-            placeholder={inputPlaceholder(isDragOver, disabled)}
+            placeholder={
+              isDragOver
+                ? "Drop files here..."
+                : disabled
+                  ? "Waiting for response..."
+                  : "Ask anything..."
+            }
             disabled={disabled}
             rows={1}
             style={{ minHeight: "28px", maxHeight: "200px" }}
@@ -268,12 +220,30 @@ export function MessageInput({
               <Paperclip style={{ width: 16, height: 16 }} />
             </button>
           </div>
-          <SendButton
-            disabled={disabled}
-            canSend={!!canSend}
-            onSubmit={handleSend}
-            onStop={onStop}
-          />
+          {disabled && onStop ? (
+            <button
+              onClick={onStop}
+              type="button"
+              aria-label="Stop generating"
+              className="shrink-0 flex items-center justify-center w-8 h-8 rounded-sm transition-all duration-200 bg-primary hover:bg-primary/80 text-primary-foreground"
+            >
+              <Square style={{ width: 14, height: 14 }} fill="currentColor" />
+            </button>
+          ) : (
+            <button
+              onClick={handleSend}
+              disabled={!canSend}
+              type="button"
+              aria-label="Send message"
+              className={`shrink-0 flex items-center justify-center w-8 h-8 rounded-sm transition-all duration-200 ${
+                canSend
+                  ? "bg-primary hover:bg-primary/80 text-primary-foreground"
+                  : "bg-muted text-muted-foreground cursor-not-allowed"
+              }`}
+            >
+              <ArrowUp style={{ width: 18, height: 18 }} />
+            </button>
+          )}
         </div>
       </div>
 
@@ -297,6 +267,18 @@ export function MessageInput({
           </kbd>{" "}
           close
         </span>
+        {onShowShortcuts && (
+          <button
+            type="button"
+            onClick={onShowShortcuts}
+            className="hover:text-foreground transition-colors"
+          >
+            <kbd className="px-1 py-0.5 font-mono bg-muted rounded border border-border text-3xs">
+              ?
+            </kbd>{" "}
+            shortcuts
+          </button>
+        )}
       </div>
     </div>
   );
