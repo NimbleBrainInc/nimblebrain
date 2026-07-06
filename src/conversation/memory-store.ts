@@ -34,6 +34,48 @@ function deriveSummaryTotals(messages: StoredMessage[]): {
   return { usage, costUsd };
 }
 
+/** First user message's text content, or "" when there is none / it is non-string. */
+function firstUserPreview(messages: StoredMessage[]): string {
+  const firstUser = messages.find((m) => m.role === "user");
+  if (!firstUser) return "";
+  return typeof firstUser.content === "string" ? firstUser.content : "";
+}
+
+/** True when the lowercased search term hits the title or the preview. */
+function matchesSearch(title: string | null, preview: string, search: string): boolean {
+  const titleMatch = title?.toLowerCase().includes(search) ?? false;
+  const previewMatch = preview.toLowerCase().includes(search);
+  return titleMatch || previewMatch;
+}
+
+/** Assemble a ConversationSummary (with derived totals) for one conversation. */
+function buildSummary(
+  conversation: Conversation,
+  msgs: StoredMessage[],
+  preview: string,
+): ConversationSummary {
+  const totals = deriveSummaryTotals(msgs);
+  return {
+    id: conversation.id,
+    createdAt: conversation.createdAt,
+    updatedAt: conversation.updatedAt,
+    title: conversation.title,
+    messageCount: msgs.length,
+    preview,
+    totalInputTokens: totals.usage.inputTokens,
+    totalOutputTokens: totals.usage.outputTokens,
+    totalCostUsd: totals.costUsd,
+    ownerId: conversation.ownerId,
+  };
+}
+
+/** Entries after the cursor ID (inclusive skip); all entries when no/unknown cursor. */
+function applyCursor(summaries: ConversationSummary[], cursor?: string): ConversationSummary[] {
+  if (!cursor) return summaries;
+  const idx = summaries.findIndex((s) => s.id === cursor);
+  return idx >= 0 ? summaries.slice(idx + 1) : summaries;
+}
+
 export class InMemoryConversationStore implements ConversationStore {
   private conversations = new Map<string, Conversation>();
   private messages = new Map<string, StoredMessage[]>();
@@ -89,6 +131,20 @@ export class InMemoryConversationStore implements ConversationStore {
     return slice.map((m) => ({ ...m }));
   }
 
+  /** Summary for one conversation, or null when access/search filters exclude it. */
+  private summarize(
+    id: string,
+    conversation: Conversation,
+    access: ConversationAccessContext | undefined,
+    search: string | undefined,
+  ): ConversationSummary | null {
+    if (access && !canAccess({ ownerId: conversation.ownerId }, access)) return null;
+    const msgs = this.messages.get(id) ?? [];
+    const preview = firstUserPreview(msgs);
+    if (search && !matchesSearch(conversation.title, preview, search)) return null;
+    return buildSummary(conversation, msgs, preview);
+  }
+
   async list(
     options?: ListOptions,
     access?: ConversationAccessContext,
@@ -99,35 +155,8 @@ export class InMemoryConversationStore implements ConversationStore {
     const summaries: ConversationSummary[] = [];
 
     for (const [id, conversation] of this.conversations) {
-      if (access && !canAccess({ ownerId: conversation.ownerId }, access)) continue;
-      const msgs = this.messages.get(id) ?? [];
-      const firstUser = msgs.find((m) => m.role === "user");
-      const preview = firstUser
-        ? typeof firstUser.content === "string"
-          ? firstUser.content
-          : ""
-        : "";
-
-      // Apply search filter
-      if (search) {
-        const titleMatch = conversation.title?.toLowerCase().includes(search) ?? false;
-        const previewMatch = preview.toLowerCase().includes(search);
-        if (!titleMatch && !previewMatch) continue;
-      }
-
-      const totals = deriveSummaryTotals(msgs);
-      summaries.push({
-        id: conversation.id,
-        createdAt: conversation.createdAt,
-        updatedAt: conversation.updatedAt,
-        title: conversation.title,
-        messageCount: msgs.length,
-        preview,
-        totalInputTokens: totals.usage.inputTokens,
-        totalOutputTokens: totals.usage.outputTokens,
-        totalCostUsd: totals.costUsd,
-        ownerId: conversation.ownerId,
-      });
+      const summary = this.summarize(id, conversation, access, search);
+      if (summary) summaries.push(summary);
     }
 
     // Sort descending
@@ -136,12 +165,7 @@ export class InMemoryConversationStore implements ConversationStore {
     const totalCount = summaries.length;
 
     // Cursor pagination: skip entries up to and including the cursor ID
-    let items = summaries;
-    if (options?.cursor) {
-      const idx = items.findIndex((s) => s.id === options.cursor);
-      if (idx >= 0) items = items.slice(idx + 1);
-    }
-
+    const items = applyCursor(summaries, options?.cursor);
     const page = items.slice(0, limit);
     const nextCursor =
       page.length === limit && items.length > limit ? (page[page.length - 1]?.id ?? null) : null;
