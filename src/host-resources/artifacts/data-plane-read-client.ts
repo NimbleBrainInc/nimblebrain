@@ -188,6 +188,35 @@ interface ArtifactListEnvelope {
   nextCursor?: unknown;
 }
 
+/** The renderer-facing metadata fields shared by both body-delivery shapes. */
+interface ArtifactMetaFields {
+  mimeType: string;
+  title?: string;
+  sizeBytes?: number;
+}
+
+/** Wrap a thrown fetch rejection as a named, message-preserving read error. */
+function fetchFailure(prefix: string, cause: unknown): ArtifactReadError {
+  return new ArtifactReadError(
+    `${prefix}: ${cause instanceof Error ? cause.message : String(cause)}`,
+  );
+}
+
+/** Best-effort error body for a read-error message — swallowed on failure, truncated to 300 chars. */
+async function errorDetail(res: Response): Promise<string> {
+  return (await res.text().catch(() => "")).slice(0, 300);
+}
+
+/** Project a metadata envelope onto the renderer fields — default the mime type, drop non-finite sizes. */
+function parseArtifactFields(meta: ArtifactMetadataEnvelope): ArtifactMetaFields {
+  const sizeRaw = meta.size_bytes ?? meta.sizeBytes;
+  return {
+    mimeType: firstString(meta.mime_type, meta.mimeType) ?? "application/octet-stream",
+    title: firstString(meta.title),
+    sizeBytes: typeof sizeRaw === "number" && Number.isFinite(sizeRaw) ? sizeRaw : undefined,
+  };
+}
+
 export class ArtifactReadClient {
   private readonly config: ArtifactDataPlaneConfig;
   private readonly cache: ServiceTokenCache;
@@ -214,11 +243,27 @@ export class ArtifactReadClient {
       throw new ArtifactReadError("artifact read requires a workspace (the viewing user's)");
     }
 
-    // Mint-and-attach a workspace-scoped read token via the existing tenant-key
-    // exchange. The minting fetch re-mints on 401/403 (early expiry / rotation)
-    // and never forwards any caller bearer — the token is service-plane,
-    // identity-only, scoped to (tenant, workspace, aud=artifacts, read).
-    const authedFetch = createMintingFetch({
+    const authedFetch = this.mintReadFetch(workspaceId);
+
+    // `baseUrl` is the service ROOT; the versioned API lives under `/v1/artifacts`
+    // (the same convention the writer client appends in code), so one env var
+    // means the same thing for the reader and the writer.
+    const root = this.config.baseUrl.replace(/\/+$/, "");
+    const encodedId = encodeURIComponent(id);
+
+    // (1) Metadata row → (2) body, off the same authed fetch.
+    const fields = await this.fetchMetadata(authedFetch, `${root}/v1/artifacts/${encodedId}`, id);
+    return this.fetchBody(authedFetch, `${root}/v1/artifacts/${encodedId}/content`, id, fields);
+  }
+
+  /**
+   * Build a workspace-scoped, read-only minting fetch over the existing
+   * tenant-key exchange. It re-mints on 401/403 (early expiry / rotation) and
+   * never forwards any caller bearer — the token is service-plane, identity-only,
+   * scoped to (tenant, workspace, aud=artifacts, read).
+   */
+  private mintReadFetch(workspaceId: string): typeof fetch {
+    return createMintingFetch({
       cache: this.cache,
       tokenUrl: this.config.tokenUrl,
       workspace: workspaceId,
@@ -226,17 +271,19 @@ export class ArtifactReadClient {
       scope: ARTIFACTS_READ_SCOPE,
       baseFetch: this.fetchImpl,
     });
+  }
 
-    // `baseUrl` is the service ROOT; the versioned API lives under `/v1/artifacts`
-    // (the same convention the writer client appends in code), so one env var
-    // means the same thing for the reader and the writer.
-    const root = this.config.baseUrl.replace(/\/+$/, "");
-    const encodedId = encodeURIComponent(id);
-    const metaUrl = `${root}/v1/artifacts/${encodedId}`;
-    const contentUrl = `${root}/v1/artifacts/${encodedId}/content`;
-
-    // (1) Metadata row — mime type, title, size. No bytes here; the body comes
-    // from the /content endpoint below.
+  /**
+   * Fetch and parse the metadata row (mime type, title, size — no bytes; the
+   * body comes from the /content endpoint). A 404/403 is collapsed to
+   * {@link ArtifactNotFoundError} so a guessed id can't probe another
+   * workspace's inventory; other failures surface as {@link ArtifactReadError}.
+   */
+  private async fetchMetadata(
+    authedFetch: typeof fetch,
+    metaUrl: string,
+    id: string,
+  ): Promise<ArtifactMetaFields> {
     let metaRes: Response;
     try {
       metaRes = await authedFetch(metaUrl, {
@@ -244,21 +291,15 @@ export class ArtifactReadClient {
         headers: { Accept: "application/json" },
       });
     } catch (cause) {
-      throw new ArtifactReadError(
-        `artifact read request failed: ${cause instanceof Error ? cause.message : String(cause)}`,
-      );
+      throw fetchFailure("artifact read request failed", cause);
     }
 
-    // 404/403 covers both "no such row" and "RLS hid the row from this
-    // workspace" — collapsed on purpose so a guessed id can't be used to probe
-    // another workspace's inventory.
     if (metaRes.status === 404 || metaRes.status === 403) {
       throw new ArtifactNotFoundError(id);
     }
     if (!metaRes.ok) {
-      const detail = await metaRes.text().catch(() => "");
       throw new ArtifactReadError(
-        `artifact read for ${id} failed ${metaRes.status}: ${detail.slice(0, 300)}`,
+        `artifact read for ${id} failed ${metaRes.status}: ${await errorDetail(metaRes)}`,
         metaRes.status,
       );
     }
@@ -269,17 +310,23 @@ export class ArtifactReadClient {
     } catch {
       throw new ArtifactReadError("artifact metadata response was not JSON");
     }
+    return parseArtifactFields(meta);
+  }
 
-    const mimeType = firstString(meta.mime_type, meta.mimeType) ?? "application/octet-stream";
-    const title = firstString(meta.title);
-    const sizeRaw = meta.size_bytes ?? meta.sizeBytes;
-    const sizeBytes = typeof sizeRaw === "number" && Number.isFinite(sizeRaw) ? sizeRaw : undefined;
-
-    // (2) Body. The data plane streams a small inline body directly (200) or
-    // answers a redirect to a short-lived presigned URL for a large (spilled)
-    // body. Read the redirect MANUALLY so the runtime's read bearer is never
-    // replayed to the storage origin and so the presigned URL stays off the
-    // read path (the resolver fetches it unauthenticated).
+  /**
+   * Fetch the body: a small inline body streamed as raw bytes (200), or a
+   * captured presigned-URL redirect for a large (spilled) body (3xx). The
+   * redirect is read MANUALLY so the runtime's read bearer is never replayed to
+   * the storage origin and the presigned URL stays off the read path (the
+   * resolver fetches it unauthenticated). A 404/403 collapses to
+   * {@link ArtifactNotFoundError}.
+   */
+  private async fetchBody(
+    authedFetch: typeof fetch,
+    contentUrl: string,
+    id: string,
+    fields: ArtifactMetaFields,
+  ): Promise<ArtifactReadResult> {
     let contentRes: Response;
     try {
       contentRes = await authedFetch(contentUrl, {
@@ -287,9 +334,7 @@ export class ArtifactReadClient {
         redirect: "manual",
       });
     } catch (cause) {
-      throw new ArtifactReadError(
-        `artifact content request failed: ${cause instanceof Error ? cause.message : String(cause)}`,
-      );
+      throw fetchFailure("artifact content request failed", cause);
     }
 
     if (contentRes.status === 404 || contentRes.status === 403) {
@@ -301,7 +346,7 @@ export class ArtifactReadClient {
     if (contentRes.status >= 300 && contentRes.status < 400) {
       const presignedUrl = contentRes.headers.get("location") ?? undefined;
       if (presignedUrl) {
-        return { mimeType, presignedUrl, title, sizeBytes };
+        return { ...fields, presignedUrl };
       }
       throw new ArtifactReadError(
         `artifact content for ${id} redirected without a Location`,
@@ -310,16 +355,15 @@ export class ArtifactReadClient {
     }
 
     if (!contentRes.ok) {
-      const detail = await contentRes.text().catch(() => "");
       throw new ArtifactReadError(
-        `artifact content for ${id} failed ${contentRes.status}: ${detail.slice(0, 300)}`,
+        `artifact content for ${id} failed ${contentRes.status}: ${await errorDetail(contentRes)}`,
         contentRes.status,
       );
     }
 
     // 200 → small inline body, streamed as raw bytes.
     const body = new Uint8Array(await contentRes.arrayBuffer());
-    return { mimeType, body, title, sizeBytes };
+    return { ...fields, body };
   }
 
   /**
@@ -334,14 +378,7 @@ export class ArtifactReadClient {
     if (!workspaceId) {
       throw new ArtifactReadError("artifact list requires a workspace (the viewing user's)");
     }
-    const authedFetch = createMintingFetch({
-      cache: this.cache,
-      tokenUrl: this.config.tokenUrl,
-      workspace: workspaceId,
-      audience: ARTIFACTS_AUDIENCE,
-      scope: ARTIFACTS_READ_SCOPE,
-      baseFetch: this.fetchImpl,
-    });
+    const authedFetch = this.mintReadFetch(workspaceId);
 
     const root = this.config.baseUrl.replace(/\/+$/, "");
     const params = new URLSearchParams();
@@ -360,14 +397,11 @@ export class ArtifactReadClient {
     try {
       res = await authedFetch(url, { method: "GET", headers: { Accept: "application/json" } });
     } catch (cause) {
-      throw new ArtifactReadError(
-        `artifact list request failed: ${cause instanceof Error ? cause.message : String(cause)}`,
-      );
+      throw fetchFailure("artifact list request failed", cause);
     }
     if (!res.ok) {
-      const detail = await res.text().catch(() => "");
       throw new ArtifactReadError(
-        `artifact list failed ${res.status}: ${detail.slice(0, 300)}`,
+        `artifact list failed ${res.status}: ${await errorDetail(res)}`,
         res.status,
       );
     }
