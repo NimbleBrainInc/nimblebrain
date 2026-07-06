@@ -138,6 +138,129 @@ class FilteredToolRouter implements ToolRouter {
   }
 }
 
+/** Coerce the delegate tool's raw input into typed call parameters. */
+function parseDelegateInput(input: Record<string, unknown>): {
+  task: string;
+  agentName?: string;
+  toolGlobs?: string[];
+  requestedIterations?: number;
+} {
+  return {
+    task: String(input.task ?? ""),
+    agentName: input.agent ? String(input.agent) : undefined,
+    toolGlobs: Array.isArray(input.tools) ? (input.tools as string[]) : undefined,
+    requestedIterations: input.maxIterations ? Number(input.maxIterations) : undefined,
+  };
+}
+
+/** Look up a named agent profile; returns an error message when the name is unknown. */
+function resolveAgentProfile(
+  agents: Record<string, AgentProfile> | undefined,
+  agentName: string | undefined,
+): { profile?: AgentProfile; error?: string } {
+  if (!agentName) return {};
+  const profile = agents?.[agentName];
+  if (!profile) {
+    const available = agents ? Object.keys(agents).join(", ") : "none";
+    return { error: `Unknown agent profile "${agentName}". Available profiles: ${available}` };
+  }
+  return { profile };
+}
+
+/** Cap the child's iteration budget: min(requested or profile or default, parent remaining - 1). */
+function capChildIterations(
+  requestedIterations: number | undefined,
+  profileMaxIterations: number | undefined,
+  parentRemaining: number,
+): number {
+  const baseIterations = requestedIterations ?? profileMaxIterations ?? DEFAULT_CHILD_ITERATIONS;
+  return Math.min(Math.min(baseIterations, MAX_CHILD_ITERATIONS), Math.max(parentRemaining - 1, 1));
+}
+
+/**
+ * Resolve the child engine's INITIAL active tool set. Two sources, two purposes:
+ *
+ *   - `defaultActiveTools()` (`defaultTools`) — focused-workspace tools
+ *     (namespaced) + bare identity tools. Mirrors the chat surface's initial
+ *     active set. Used as the default when no globs are supplied, and as the
+ *     match corpus for BARE globs (`source__*`).
+ *
+ *   - `ctx.tools.availableTools()` — the bound workspace's tools (namespaced)
+ *     plus identity tools. Used as the match corpus for NAMESPACED globs
+ *     (`ws_<id>-...`), which can only target the one workspace the session is
+ *     walled to; a glob naming another workspace matches nothing here and is
+ *     denied at dispatch.
+ *
+ * Bare globs (`["crm__*"]`) match the bound workspace's CRM by its bare inner
+ * name. Mixed glob lists work — each glob expands against the same bounded
+ * corpus and the results union.
+ */
+async function selectChildTools(
+  ctx: DelegateContext,
+  globs: string[] | undefined,
+  defaultTools: ToolSchema[],
+): Promise<ToolSchema[]> {
+  if (!globs || globs.length === 0) return defaultTools;
+  const namespacedGlobs = globs.filter((g) => g.startsWith("ws_"));
+  const bareGlobs = globs.filter((g) => !g.startsWith("ws_"));
+  const fromBare = bareGlobs.length > 0 ? filterTools(defaultTools, bareGlobs) : [];
+  const fromNamespaced =
+    namespacedGlobs.length > 0
+      ? filterTools(await ctx.tools.availableTools(), namespacedGlobs)
+      : [];
+  // Dedupe by canonical (namespaced) name — `filterTools` may return the same
+  // entry under both corpuses if a focused-workspace tool's namespaced form is
+  // matched by a `ws_<focused>-...` glob.
+  const seen = new Set<string>();
+  const childTools: ToolSchema[] = [];
+  for (const t of [...fromBare, ...fromNamespaced]) {
+    if (seen.has(t.name)) continue;
+    seen.add(t.name);
+    childTools.push(t);
+  }
+  return childTools;
+}
+
+/**
+ * Build the child engine's model/token/thinking config for a delegated run.
+ *
+ * Resolves maxOutputTokens FIRST — resolveThinking needs it to clamp the
+ * thinking budget so visible-content headroom is preserved on delegated runs
+ * too. Without this, child agents would fall through to the 1024-token
+ * MIN_THINKING_BUDGET_TOKENS floor regardless of the model's actual output
+ * capacity.
+ *
+ * Passes through the toolPromotion factory so the child engine installs ITS
+ * OWN promotion controls (saving the parent's, restoring on its run's
+ * finally). Without this, AsyncLocalStorage propagates the parent's
+ * reqCtx.toolPromotion and the child's nb__manage_tools calls would mutate the
+ * parent's tool list while leaving the child's own list untouched.
+ */
+function buildChildConfig(
+  ctx: DelegateContext,
+  modelString: string,
+  cappedIterations: number,
+): EngineConfig {
+  const childMaxOutputTokens = resolveMaxOutputTokens({
+    configValue: ctx.configMaxOutputTokens,
+    model: modelString,
+  });
+  const childThinking = resolveThinking({
+    configMode: ctx.configThinking,
+    configBudgetTokens: ctx.configThinkingBudgetTokens,
+    model: modelString,
+    maxOutputTokens: childMaxOutputTokens,
+  });
+  return {
+    model: modelString,
+    maxIterations: cappedIterations,
+    maxInputTokens: ctx.defaultMaxInputTokens,
+    maxOutputTokens: childMaxOutputTokens,
+    ...(childThinking ? { thinking: childThinking } : {}),
+    ...(ctx.toolPromotion ? { toolPromotion: ctx.toolPromotion } : {}),
+  };
+}
+
 /**
  * Creates the nb__delegate InProcessTool.
  * Spawns a child AgentEngine.run() with scoped config when called.
@@ -175,26 +298,12 @@ export function createDelegateTool(ctx: DelegateContext): InProcessTool {
       required: ["task"],
     },
     handler: async (input): Promise<ToolResult> => {
-      const task = String(input.task ?? "");
-      const agentName = input.agent ? String(input.agent) : undefined;
-      const toolGlobs = Array.isArray(input.tools) ? (input.tools as string[]) : undefined;
-      const requestedIterations = input.maxIterations ? Number(input.maxIterations) : undefined;
+      const { task, agentName, toolGlobs, requestedIterations } = parseDelegateInput(input);
 
       try {
         // Resolve agent profile if specified
-        let profile: AgentProfile | undefined;
-        if (agentName) {
-          profile = ctx.agents?.[agentName];
-          if (!profile) {
-            const available = ctx.agents ? Object.keys(ctx.agents).join(", ") : "none";
-            return {
-              content: textContent(
-                `Unknown agent profile "${agentName}". Available profiles: ${available}`,
-              ),
-              isError: true,
-            };
-          }
-        }
+        const { profile, error } = resolveAgentProfile(ctx.agents, agentName);
+        if (error) return { content: textContent(error), isError: true };
 
         // Determine system prompt — use profile's prompt if available,
         // otherwise use a fixed preamble (never the raw task, which could
@@ -206,91 +315,24 @@ export function createDelegateTool(ctx: DelegateContext): InProcessTool {
         const modelString = ctx.resolveSlot(rawModel);
         const model = ctx.resolveModel(modelString);
 
-        // Determine max iterations: min(requested or profile or default, parent remaining - 1)
-        const parentRemaining = ctx.getRemainingIterations();
-        const baseIterations =
-          requestedIterations ?? profile?.maxIterations ?? DEFAULT_CHILD_ITERATIONS;
-        const cappedIterations = Math.min(
-          Math.min(baseIterations, MAX_CHILD_ITERATIONS),
-          Math.max(parentRemaining - 1, 1),
+        const cappedIterations = capChildIterations(
+          requestedIterations,
+          profile?.maxIterations,
+          ctx.getRemainingIterations(),
         );
 
-        // Determine tool access. Two sources, two purposes:
-        //
-        //   - `defaultActiveTools()` — focused-workspace tools (namespaced)
-        //     + bare identity tools. Mirrors the chat surface's initial
-        //     active set. Used as the default when no globs are supplied,
-        //     and as the match corpus for BARE globs (`source__*`).
-        //
-        //   - `ctx.tools.availableTools()` — the bound workspace's tools
-        //     (namespaced) plus identity tools. Used as the match corpus for
-        //     NAMESPACED globs (`ws_<id>-...`), which can only target the one
-        //     workspace the session is walled to; a glob naming another
-        //     workspace matches nothing here and is denied at dispatch.
-        //
-        // Bare globs (`["crm__*"]`) match the bound workspace's CRM by its bare
-        // inner name. Mixed glob lists work — each glob expands against the same
-        // bounded corpus and the results union.
+        // Determine tool access: default set when no globs, else the resolved
+        // glob union. `defaultActiveTools()` is always the default source and
+        // the match corpus for bare globs, so it's fetched unconditionally.
         const globs = toolGlobs ?? profile?.tools;
         const defaultTools = await ctx.defaultActiveTools();
-        let childTools: ToolSchema[];
-        if (globs && globs.length > 0) {
-          const namespacedGlobs = globs.filter((g) => g.startsWith("ws_"));
-          const bareGlobs = globs.filter((g) => !g.startsWith("ws_"));
-          const fromBare = bareGlobs.length > 0 ? filterTools(defaultTools, bareGlobs) : [];
-          const fromNamespaced =
-            namespacedGlobs.length > 0
-              ? filterTools(await ctx.tools.availableTools(), namespacedGlobs)
-              : [];
-          // Dedupe by canonical (namespaced) name — `filterTools` may return
-          // the same entry under both corpuses if a focused-workspace tool's
-          // namespaced form is matched by a `ws_<focused>-...` glob.
-          const seen = new Set<string>();
-          childTools = [];
-          for (const t of [...fromBare, ...fromNamespaced]) {
-            if (seen.has(t.name)) continue;
-            seen.add(t.name);
-            childTools.push(t);
-          }
-        } else {
-          childTools = defaultTools;
-        }
+        const childTools = await selectChildTools(ctx, globs, defaultTools);
 
         // Create child event sink with parent linkage
         const parentRunId = ctx.getParentRunId();
         const childEvents = new ChildEventSink(ctx.events, parentRunId);
 
-        // Resolve maxOutputTokens FIRST — resolveThinking needs it to clamp
-        // the thinking budget so visible-content headroom is preserved on
-        // delegated runs too. Without this, child agents would fall through
-        // to the 1024-token MIN_THINKING_BUDGET_TOKENS floor regardless of
-        // the model's actual output capacity.
-        const childMaxOutputTokens = resolveMaxOutputTokens({
-          configValue: ctx.configMaxOutputTokens,
-          model: modelString,
-        });
-
-        const childThinking = resolveThinking({
-          configMode: ctx.configThinking,
-          configBudgetTokens: ctx.configThinkingBudgetTokens,
-          model: modelString,
-          maxOutputTokens: childMaxOutputTokens,
-        });
-
-        // Create child engine config. Pass through the toolPromotion
-        // factory so the child engine installs ITS OWN promotion controls
-        // (saving the parent's, restoring on its run's finally). Without
-        // this, AsyncLocalStorage propagates the parent's reqCtx.toolPromotion
-        // and the child's nb__manage_tools calls would mutate the parent's
-        // tool list while leaving the child's own list untouched.
-        const childConfig: EngineConfig = {
-          model: modelString,
-          maxIterations: cappedIterations,
-          maxInputTokens: ctx.defaultMaxInputTokens,
-          maxOutputTokens: childMaxOutputTokens,
-          ...(childThinking ? { thinking: childThinking } : {}),
-          ...(ctx.toolPromotion ? { toolPromotion: ctx.toolPromotion } : {}),
-        };
+        const childConfig = buildChildConfig(ctx, modelString, cappedIterations);
 
         // Wrap the parent router in a filtering proxy when tool globs are active.
         // This enforces the allowed-tool set at execution time, not just at schema time,
