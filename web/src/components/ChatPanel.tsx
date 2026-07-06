@@ -6,6 +6,7 @@ import type { DisplayDetail } from "../lib/tool-display";
 import { KeyboardShortcutsModal } from "./KeyboardShortcutsModal";
 import { MessageInput } from "./MessageInput";
 import { MessageList } from "./MessageList";
+import { RecentConversationsPopover } from "./RecentConversationsPopover";
 import { SkillsPopover } from "./SkillsPopover";
 
 export interface ChatPanelProps {
@@ -48,7 +49,8 @@ export const ChatPanel = forwardRef<ChatPanelRef, ChatPanelProps>(function ChatP
   const inputWrapperRef = useRef<HTMLDivElement>(null);
   const [showShortcuts, setShowShortcuts] = useState(false);
   const [copiedId, setCopiedId] = useState(false);
-  const { conversationId, title, streamingState, preparingTool, stop } = useChatContext();
+  const { conversationId, title, streamingState, preparingTool, stop, loadConversation } =
+    useChatContext();
 
   // Prefer the server-generated title (updates live when it arrives); fall back
   // to the first user message, stripping markdown syntax, until then.
@@ -161,6 +163,10 @@ export const ChatPanel = forwardRef<ChatPanelRef, ChatPanelProps>(function ChatP
           </button>
         </div>
         <div className="flex items-center gap-1 shrink-0">
+          <RecentConversationsPopover
+            activeConversationId={conversationId}
+            onOpen={loadConversation}
+          />
           <button
             onClick={handleNewChat}
             type="button"
