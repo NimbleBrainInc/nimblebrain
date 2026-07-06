@@ -307,6 +307,158 @@ export interface AggregateUsageOptions {
 }
 
 /**
+ * Resolve the source into conversation file paths. An explicit list — the
+ * workspace-owned platform path, spanning every workspace a user touched — is
+ * returned as-is; a single directory is enumerated for `.jsonl` files (legacy /
+ * test fixtures). A missing or unreadable directory yields no files.
+ */
+function resolveFilePaths(source: string | string[]): string[] {
+  if (Array.isArray(source)) return source;
+  try {
+    return readdirSync(source)
+      .filter((f) => f.endsWith(".jsonl"))
+      .map((f) => join(source, f));
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Parse one event line into an in-range LLM-call record, or null when the line
+ * is blank, unparseable, not a usage event, or dated outside `range`.
+ */
+function parseUsageRecord(
+  rawLine: string | undefined,
+  sid: string | undefined,
+  ownerId: string | undefined,
+  range: { from: string; to: string },
+): LlmCallRecord | null {
+  const line = rawLine?.trim();
+  if (!line) return null;
+
+  let entry: Record<string, unknown>;
+  try {
+    entry = JSON.parse(line);
+  } catch {
+    return null;
+  }
+
+  // `aux.usage` carries the same {ts, model, usage, llmMs} shape for forked
+  // model calls (compaction summarizer, auto-title) that emit no llm.response —
+  // count them so their cost isn't undercounted.
+  if ((entry.type !== "llm.response" && entry.type !== "aux.usage") || !entry.usage) {
+    return null;
+  }
+
+  const ts = (entry.ts as string) ?? "";
+  if (!isDateInRange(ts.slice(0, 10), range)) return null;
+
+  return {
+    ts,
+    sid,
+    ownerId,
+    model: (entry.model as string) ?? "unknown",
+    usage: entry.usage as TokenUsage,
+    llmMs: (entry.llmMs as number) ?? 0,
+  };
+}
+
+/**
+ * Read one conversation file into its in-range LLM-call records. Line 1 is
+ * metadata (identity / owner attribution); usage date-range filtering is per
+ * event, not by `updatedAt`. Unreadable files and blank or unparseable metadata
+ * yield no records.
+ */
+async function collectRecordsFromFile(
+  filepath: string,
+  range: { from: string; to: string },
+  ownerFilter: string | undefined,
+): Promise<LlmCallRecord[]> {
+  let content: string;
+  try {
+    content = await readFile(filepath, "utf-8");
+  } catch {
+    return [];
+  }
+
+  const lines = content.split("\n");
+  const firstLine = lines[0];
+  if (!firstLine?.trim()) return [];
+
+  let meta: Record<string, unknown>;
+  try {
+    meta = JSON.parse(firstLine);
+  } catch {
+    return [];
+  }
+
+  const sid = meta.id as string | undefined;
+  const ownerId = meta.ownerId as string | undefined;
+
+  // Authorization boundary for the self-view: when an ownerFilter is set, skip
+  // any conversation not owned by that user before reading its events.
+  if (ownerFilter !== undefined && ownerId !== ownerFilter) return [];
+
+  const records: LlmCallRecord[] = [];
+  for (let i = 1; i < lines.length; i++) {
+    const record = parseUsageRecord(lines[i], sid, ownerId, range);
+    if (record) records.push(record);
+  }
+  return records;
+}
+
+/** The mutable accumulators one pass over the records folds into. */
+interface AggregationSink {
+  totals: UsageTotals;
+  conversationIds: Set<string>;
+  modelMap: Map<string, ModelUsage>;
+  breakdownMaps: Map<UsageGroupBy, Map<string, BreakdownAccumulator>>;
+  groupBys: UsageGroupBy[];
+}
+
+/** Get or create the per-model accumulator for `modelKey`. */
+function getModelUsage(map: Map<string, ModelUsage>, modelKey: string): ModelUsage {
+  let usage = map.get(modelKey);
+  if (!usage) {
+    usage = {
+      model: modelKey,
+      tokens: createTokenBreakdown(),
+      cost: createCostBreakdown(),
+      llmCalls: 0,
+    };
+    map.set(modelKey, usage);
+  }
+  return usage;
+}
+
+/** Fold one record's tokens/cost into totals, per-model, and every groupBy breakdown. */
+function accumulateRecord(record: LlmCallRecord, sink: AggregationSink): void {
+  const { tokens, cost } = decomposeUsage(record);
+
+  addTokens(sink.totals.tokens, tokens);
+  addCost(sink.totals.cost, cost);
+  sink.totals.llmMs += record.llmMs;
+  if (record.sid) sink.conversationIds.add(record.sid);
+
+  // Per-model (normalized to strip date suffix and provider prefix)
+  const modelKey = normalizeModel(record.model);
+  const model = getModelUsage(sink.modelMap, modelKey);
+  addTokens(model.tokens, tokens);
+  addCost(model.cost, cost);
+  model.llmCalls++;
+
+  for (const dimension of sink.groupBys) {
+    const map = sink.breakdownMaps.get(dimension)!;
+    const key = groupKeyFor(record, dimension, modelKey);
+    const bucket = getBreakdownAccumulator(map, key);
+    addTokens(bucket.tokens, tokens);
+    addCost(bucket.cost, cost);
+    bucket.llmCalls++;
+    if (record.sid) bucket.sids.add(record.sid);
+  }
+}
+
+/**
  * Aggregate usage from conversation files in a directory.
  *
  * 1. List all .jsonl files in conversationsDir
@@ -326,82 +478,12 @@ export async function aggregateUsage(
   const range = resolveDateRange(period, from, to);
   const groupBys = normalizeGroupBys(groupBy);
 
-  // `source` is either an explicit list of conversation file paths — the
-  // workspace-owned platform path, spanning every workspace a user touched — or a
-  // single flat directory to enumerate (legacy / test fixtures).
-  let filePaths: string[];
-  if (Array.isArray(source)) {
-    filePaths = source;
-  } else {
-    try {
-      filePaths = readdirSync(source)
-        .filter((f) => f.endsWith(".jsonl"))
-        .map((f) => join(source, f));
-    } catch {
-      filePaths = [];
-    }
-  }
-
-  // Collect LLM call records whose event timestamp is in the date range.
+  // Collect LLM call records whose event timestamp is in the date range,
+  // reading files in order so accumulation is deterministic.
   const records: LlmCallRecord[] = [];
-
-  for (const filepath of filePaths) {
-    let content: string;
-    try {
-      content = await readFile(filepath, "utf-8");
-    } catch {
-      continue;
-    }
-
-    const lines = content.split("\n");
-    const firstLine = lines[0];
-    if (!firstLine?.trim()) continue;
-
-    // Parse metadata (line 1) for identity/owner attribution. Usage date
-    // range filtering is done per llm.response event below, not by updatedAt.
-    let meta: Record<string, unknown>;
-    try {
-      meta = JSON.parse(firstLine);
-    } catch {
-      continue;
-    }
-
-    const sid = meta.id as string | undefined;
-    const ownerId = meta.ownerId as string | undefined;
-
-    // Authorization boundary for the self-view: when an ownerFilter is set,
-    // skip any conversation not owned by that user before reading its events.
-    if (ownerFilter !== undefined && ownerId !== ownerFilter) continue;
-
-    // Scan events for llm.response
-    for (let i = 1; i < lines.length; i++) {
-      const line = lines[i]?.trim();
-      if (!line) continue;
-
-      let entry: Record<string, unknown>;
-      try {
-        entry = JSON.parse(line);
-      } catch {
-        continue;
-      }
-
-      // `aux.usage` carries the same {ts, model, usage, llmMs} shape for forked
-      // model calls (compaction summarizer, auto-title) that emit no
-      // llm.response — count them so their cost isn't undercounted.
-      if ((entry.type === "llm.response" || entry.type === "aux.usage") && entry.usage) {
-        const ts = (entry.ts as string) ?? "";
-        if (!isDateInRange(ts.slice(0, 10), range)) continue;
-
-        records.push({
-          ts,
-          sid,
-          ownerId,
-          model: (entry.model as string) ?? "unknown",
-          usage: entry.usage as TokenUsage,
-          llmMs: (entry.llmMs as number) ?? 0,
-        });
-      }
-    }
+  for (const filepath of resolveFilePaths(source)) {
+    const fileRecords = await collectRecordsFromFile(filepath, range, ownerFilter);
+    for (const record of fileRecords) records.push(record);
   }
 
   // Derive totals
@@ -412,56 +494,28 @@ export async function aggregateUsage(
     llmMs: 0,
     conversations: 0,
   };
-  const conversationIds = new Set<string>();
-  const modelMap = new Map<string, ModelUsage>();
-  const breakdownMaps = new Map<UsageGroupBy, Map<string, BreakdownAccumulator>>();
-  for (const dimension of groupBys) breakdownMaps.set(dimension, new Map());
+  const sink: AggregationSink = {
+    totals,
+    conversationIds: new Set<string>(),
+    modelMap: new Map<string, ModelUsage>(),
+    breakdownMaps: new Map<UsageGroupBy, Map<string, BreakdownAccumulator>>(),
+    groupBys,
+  };
+  for (const dimension of groupBys) sink.breakdownMaps.set(dimension, new Map());
 
-  for (const record of records) {
-    const { tokens, cost } = decomposeUsage(record);
+  for (const record of records) accumulateRecord(record, sink);
 
-    addTokens(totals.tokens, tokens);
-    addCost(totals.cost, cost);
-    totals.llmMs += record.llmMs;
-    if (record.sid) conversationIds.add(record.sid);
-
-    // Per-model (normalized to strip date suffix and provider prefix)
-    const modelKey = normalizeModel(record.model);
-    if (!modelMap.has(modelKey)) {
-      modelMap.set(modelKey, {
-        model: modelKey,
-        tokens: createTokenBreakdown(),
-        cost: createCostBreakdown(),
-        llmCalls: 0,
-      });
-    }
-    const m = modelMap.get(modelKey)!;
-    addTokens(m.tokens, tokens);
-    addCost(m.cost, cost);
-    m.llmCalls++;
-
-    for (const dimension of groupBys) {
-      const map = breakdownMaps.get(dimension)!;
-      const key = groupKeyFor(record, dimension, modelKey);
-      const b = getBreakdownAccumulator(map, key);
-      addTokens(b.tokens, tokens);
-      addCost(b.cost, cost);
-      b.llmCalls++;
-      if (record.sid) b.sids.add(record.sid);
-    }
-  }
-
-  totals.conversations = conversationIds.size;
+  totals.conversations = sink.conversationIds.size;
   totals.cacheHitRate = computeCacheHitRate(totals.tokens);
 
-  const models = [...modelMap.values()]
+  const models = [...sink.modelMap.values()]
     .map((m) => {
       m.cacheHitRate = computeCacheHitRate(m.tokens);
       return m;
     })
     .sort((a, b) => b.cost.total - a.cost.total);
   const breakdowns: Partial<Record<UsageGroupBy, BreakdownEntry[]>> = {};
-  for (const [dimension, map] of breakdownMaps) {
+  for (const [dimension, map] of sink.breakdownMaps) {
     breakdowns[dimension] = finalizeBreakdown(map, dimension, period, range);
   }
   const breakdown = breakdowns[groupBys[0]!] ?? [];

@@ -37,6 +37,11 @@ export interface EventConnection {
   close(): void;
 }
 
+/** Per-chunk SSE accumulator: the `event:` name seen so far, awaiting its `data:`. */
+interface SseParserState {
+  currentEvent: string;
+}
+
 const INITIAL_BACKOFF_MS = 1_000;
 const MAX_BACKOFF_MS = 30_000;
 const BACKOFF_MULTIPLIER = 2;
@@ -128,6 +133,99 @@ export function connectEvents(options: ConnectEventsOptions): EventConnection {
     document.addEventListener("visibilitychange", onVisibilityChange);
   }
 
+  /** Route a non-2xx (or 401) response: refresh + reconnect on 401, throw the
+   *  rest to the retry path. Returns true when the body should be read. */
+  async function handleResponse(res: Response): Promise<boolean> {
+    if (res.status === 401) {
+      // Attempt silent token refresh before giving up
+      const refreshed = await refreshSession();
+      if (refreshed) {
+        // Token refreshed — reconnect immediately
+        scheduleReconnect();
+        return false;
+      }
+      onError?.(new Error("SSE auth failed after token refresh"));
+      return false;
+    }
+    if (!res.ok) {
+      throw new Error(`SSE connection failed: ${res.status} ${res.statusText}`);
+    }
+    return true;
+  }
+
+  /** Feed one SSE line into the accumulator: capture `event:`, and on a complete
+   *  `data:` line dispatch the frame to onEvent and reset for the next one. */
+  function consumeLine(line: string, state: SseParserState): void {
+    if (line.startsWith("event: ")) {
+      state.currentEvent = line.slice(7).trim();
+      return;
+    }
+    if (line.startsWith("data: ") && state.currentEvent) {
+      try {
+        const data = JSON.parse(line.slice(6));
+        onEvent(state.currentEvent as SseEventType, data);
+      } catch {
+        // Skip malformed data lines
+      }
+      state.currentEvent = "";
+    }
+  }
+
+  /** Read the SSE body to completion (or close), decoding line-by-line and
+   *  dispatching each complete frame in arrival order. The trailing partial line
+   *  stays buffered across reads; the event accumulator resets each read chunk. */
+  async function pumpStream(reader: ReadableStreamDefaultReader<Uint8Array>): Promise<void> {
+    const decoder = new TextDecoder();
+    let buffer = "";
+
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done || closed) break;
+      markFrame();
+
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split("\n");
+      buffer = lines.pop() ?? "";
+
+      const state: SseParserState = { currentEvent: "" };
+      for (const line of lines) consumeLine(line, state);
+    }
+  }
+
+  /** Post-stream error routing: self-aborts (watchdog/visibility) and generic
+   *  transport failures reconnect; a surfaced 401 tries a token refresh first
+   *  and gives up (onError) only if that fails. */
+  async function handleConnectError(err: unknown): Promise<void> {
+    if (closed) return;
+
+    // AbortError: either a user-initiated close (handled above via
+    // `closed`) or a watchdog/visibility force-reconnect. In the
+    // latter case the connection is dead and we reschedule a fresh
+    // attempt from the same backoff state.
+    if (err instanceof DOMException && err.name === "AbortError") {
+      stopWatchdog();
+      onDisconnect?.();
+      scheduleReconnect();
+      return;
+    }
+
+    stopWatchdog();
+    onDisconnect?.();
+
+    // Auth errors: try refresh before giving up
+    if (err instanceof Error && err.message.includes("401")) {
+      const refreshed = await refreshSession();
+      if (refreshed) {
+        scheduleReconnect();
+        return;
+      }
+      onError?.(err);
+      return;
+    }
+
+    scheduleReconnect();
+  }
+
   async function connect(): Promise<void> {
     if (closed) return;
 
@@ -147,21 +245,7 @@ export function connectEvents(options: ConnectEventsOptions): EventConnection {
         signal: abortController.signal,
       });
 
-      if (res.status === 401) {
-        // Attempt silent token refresh before giving up
-        const refreshed = await refreshSession();
-        if (refreshed) {
-          // Token refreshed — reconnect immediately
-          scheduleReconnect();
-          return;
-        }
-        onError?.(new Error("SSE auth failed after token refresh"));
-        return;
-      }
-
-      if (!res.ok) {
-        throw new Error(`SSE connection failed: ${res.status} ${res.statusText}`);
-      }
+      if (!(await handleResponse(res))) return;
 
       // Connected successfully — reset backoff
       backoff = INITIAL_BACKOFF_MS;
@@ -174,33 +258,7 @@ export function connectEvents(options: ConnectEventsOptions): EventConnection {
       const reader = res.body?.getReader();
       if (!reader) throw new Error("No response body");
 
-      const decoder = new TextDecoder();
-      let buffer = "";
-
-      for (;;) {
-        const { done, value } = await reader.read();
-        if (done || closed) break;
-        markFrame();
-
-        buffer += decoder.decode(value, { stream: true });
-        const lines = buffer.split("\n");
-        buffer = lines.pop() ?? "";
-
-        let currentEvent = "";
-        for (const line of lines) {
-          if (line.startsWith("event: ")) {
-            currentEvent = line.slice(7).trim();
-          } else if (line.startsWith("data: ") && currentEvent) {
-            try {
-              const data = JSON.parse(line.slice(6));
-              onEvent(currentEvent as SseEventType, data);
-            } catch {
-              // Skip malformed data lines
-            }
-            currentEvent = "";
-          }
-        }
-      }
+      await pumpStream(reader);
 
       // Stream ended — reconnect unless closed
       if (!closed) {
@@ -209,34 +267,7 @@ export function connectEvents(options: ConnectEventsOptions): EventConnection {
         scheduleReconnect();
       }
     } catch (err) {
-      if (closed) return;
-
-      // AbortError: either a user-initiated close (handled above via
-      // `closed`) or a watchdog/visibility force-reconnect. In the
-      // latter case the connection is dead and we reschedule a fresh
-      // attempt from the same backoff state.
-      if (err instanceof DOMException && err.name === "AbortError") {
-        stopWatchdog();
-        onDisconnect?.();
-        scheduleReconnect();
-        return;
-      }
-
-      stopWatchdog();
-      onDisconnect?.();
-
-      // Auth errors: try refresh before giving up
-      if (err instanceof Error && err.message.includes("401")) {
-        const refreshed = await refreshSession();
-        if (refreshed) {
-          scheduleReconnect();
-          return;
-        }
-        onError?.(err);
-        return;
-      }
-
-      scheduleReconnect();
+      await handleConnectError(err);
     }
   }
 

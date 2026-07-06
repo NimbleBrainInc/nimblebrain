@@ -39,12 +39,7 @@ function log(msg: string): void {
 /** Convert a ScheduleSpec into a human-readable string. */
 export function formatSchedule(schedule: ScheduleSpec): string {
   if (schedule.type === "interval" && schedule.intervalMs) {
-    const mins = Math.round(schedule.intervalMs / 60_000);
-    if (mins < 60) return `Every ${mins} minute${mins === 1 ? "" : "s"}`;
-    const hrs = Math.round(mins / 60);
-    if (hrs < 24) return `Every ${hrs} hour${hrs === 1 ? "" : "s"}`;
-    const days = Math.round(hrs / 24);
-    return `Every ${days} day${days === 1 ? "" : "s"}`;
+    return formatIntervalSchedule(schedule.intervalMs);
   }
 
   if (schedule.type === "cron" && schedule.expression) {
@@ -52,6 +47,16 @@ export function formatSchedule(schedule: ScheduleSpec): string {
   }
 
   return "Unknown schedule";
+}
+
+/** Render an interval (in ms) as "Every N minutes/hours/days". */
+function formatIntervalSchedule(intervalMs: number): string {
+  const mins = Math.round(intervalMs / 60_000);
+  if (mins < 60) return `Every ${mins} minute${mins === 1 ? "" : "s"}`;
+  const hrs = Math.round(mins / 60);
+  if (hrs < 24) return `Every ${hrs} hour${hrs === 1 ? "" : "s"}`;
+  const days = Math.round(hrs / 24);
+  return `Every ${days} day${days === 1 ? "" : "s"}`;
 }
 
 function formatCronExpression(expr: string, timezone?: string): string {
@@ -277,45 +282,47 @@ export interface ValidatableAutomationFields {
 }
 
 export function validateAutomationFields(args: ValidatableAutomationFields): void {
-  // Schedule validation
-  const schedule = args.schedule;
-  if (schedule) {
-    if (schedule.type === "interval") {
-      if (schedule.intervalMs == null) {
-        throw new Error("intervalMs is required for interval schedules");
-      }
-      if (schedule.intervalMs < 60_000) {
-        throw new Error("Interval must be at least 1 minute (60000ms)");
-      }
+  if (args.schedule) validateSchedule(args.schedule);
+  validateNumericLimits(args);
+}
+
+/** Validate a schedule spec's type-specific fields. Throws on invalid input. */
+function validateSchedule(schedule: ScheduleSpec): void {
+  if (schedule.type === "interval") {
+    if (schedule.intervalMs == null) {
+      throw new Error("intervalMs is required for interval schedules");
     }
-    if (schedule.type === "cron") {
-      if (!schedule.expression) {
-        throw new Error("expression is required for cron schedules");
-      }
-      // Validate cron expression via Croner
-      try {
-        new Cron(schedule.expression);
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err);
-        throw new Error(`Invalid cron expression: ${msg}`);
-      }
+    if (schedule.intervalMs < 60_000) {
+      throw new Error("Interval must be at least 1 minute (60000ms)");
     }
   }
+  if (schedule.type === "cron") {
+    if (!schedule.expression) {
+      throw new Error("expression is required for cron schedules");
+    }
+    validateCronExpression(schedule.expression);
+  }
+}
 
-  // maxIterations validation
-  const { maxIterations } = args;
+/** Validate a cron expression by constructing a Croner instance. Throws on parse error. */
+function validateCronExpression(expression: string): void {
+  try {
+    new Cron(expression);
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    throw new Error(`Invalid cron expression: ${msg}`);
+  }
+}
+
+/** Validate the optional numeric limit fields against their allowed ranges. Throws on out-of-range. */
+function validateNumericLimits(args: ValidatableAutomationFields): void {
+  const { maxIterations, maxInputTokens, maxRunDurationMs } = args;
   if (maxIterations != null && (maxIterations < 1 || maxIterations > MAX_ITERATIONS)) {
     throw new Error(`maxIterations must be between 1 and ${MAX_ITERATIONS}`);
   }
-
-  // maxInputTokens validation
-  const { maxInputTokens } = args;
   if (maxInputTokens != null && (maxInputTokens < 1_000 || maxInputTokens > 1_000_000)) {
     throw new Error("maxInputTokens must be between 1,000 and 1,000,000");
   }
-
-  // maxRunDurationMs validation
-  const { maxRunDurationMs } = args;
   if (maxRunDurationMs != null && (maxRunDurationMs < 10_000 || maxRunDurationMs > 600_000)) {
     throw new Error("maxRunDurationMs must be between 10 seconds and 10 minutes");
   }

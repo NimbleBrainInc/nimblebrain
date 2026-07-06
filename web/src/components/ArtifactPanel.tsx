@@ -15,7 +15,7 @@
 // ---------------------------------------------------------------------------
 
 import { Check, Copy, Download, FileText, Loader2, X } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { type Ref, useEffect, useRef, useState } from "react";
 import { Streamdown } from "streamdown";
 import { ApiClientError, type ReadResourceContent, readResource } from "../api/client";
 import { useArtifactPanel } from "../context/ArtifactPanelContext";
@@ -48,6 +48,58 @@ function downloadFilename(
   return `${base}.${ext}`;
 }
 
+/** Readable text of a resource content item: inline text, or a base64 blob decoded to text; null if neither. */
+function readableBody(first: ReadResourceContent): string | null {
+  if (first.text !== undefined) return first.text;
+  if (first.blob !== undefined) return decodeBlobText(first.blob);
+  return null;
+}
+
+/** Human-readable message for a resource-load failure, preferring the error's own message. */
+function loadErrorMessage(err: unknown): string {
+  if (err instanceof ApiClientError) return err.message;
+  if (err instanceof Error) return err.message;
+  return "Failed to load document";
+}
+
+/** State setters the fetch drives; grouped so the effect can hand them off wholesale. */
+interface ArtifactFetchSinks {
+  setText: (v: string) => void;
+  setMimeType: (v: string | undefined) => void;
+  setError: (v: string) => void;
+  setLoading: (v: boolean) => void;
+}
+
+/**
+ * Fetch a resource's text and push it into panel state, ignoring every result
+ * once `isCancelled()` returns true (the effect that started the fetch has been
+ * superseded or unmounted). `fallbackMime` is the descriptor's MIME, used only
+ * when the fetched content omits its own.
+ */
+async function loadArtifactText(
+  appName: string,
+  uri: string,
+  fallbackMime: string | undefined,
+  isCancelled: () => boolean,
+  sinks: ArtifactFetchSinks,
+): Promise<void> {
+  try {
+    const result = await readResource(appName, uri);
+    if (isCancelled()) return;
+    const first: ReadResourceContent | undefined = result.contents[0];
+    if (!first) throw new Error("No content returned");
+    const body = readableBody(first);
+    if (body === null) throw new Error("Resource has no readable text content");
+    sinks.setText(body);
+    sinks.setMimeType(first.mimeType ?? fallbackMime);
+  } catch (err) {
+    if (isCancelled()) return;
+    sinks.setError(loadErrorMessage(err));
+  } finally {
+    if (!isCancelled()) sinks.setLoading(false);
+  }
+}
+
 export function ArtifactPanel() {
   const { artifact, closeArtifact } = useArtifactPanel();
   const isMobile = useIsMobile();
@@ -75,34 +127,12 @@ export function ArtifactPanel() {
     setMimeType(undefined);
     setCopied(false);
 
-    (async () => {
-      try {
-        const result = await readResource(appName, uri);
-        if (cancelled) return;
-        const first: ReadResourceContent | undefined = result.contents[0];
-        if (!first) throw new Error("No content returned");
-        const body =
-          first.text !== undefined
-            ? first.text
-            : first.blob !== undefined
-              ? decodeBlobText(first.blob)
-              : null;
-        if (body === null) throw new Error("Resource has no readable text content");
-        setText(body);
-        setMimeType(first.mimeType ?? artifact?.mimeType);
-      } catch (err) {
-        if (cancelled) return;
-        const msg =
-          err instanceof ApiClientError
-            ? err.message
-            : err instanceof Error
-              ? err.message
-              : "Failed to load document";
-        setError(msg);
-      } finally {
-        if (!cancelled) setLoading(false);
-      }
-    })();
+    loadArtifactText(appName, uri, artifact?.mimeType, () => cancelled, {
+      setText,
+      setMimeType,
+      setError,
+      setLoading,
+    });
 
     return () => {
       cancelled = true;
@@ -214,80 +244,141 @@ export function ArtifactPanel() {
       >
         {isOpen && (
           <>
-            {/* Header — title + actions. Sticky by virtue of the flex column:
-                the body below scrolls, this stays put. */}
-            <header className="flex shrink-0 items-center gap-2 border-b border-border bg-card px-4 py-3">
-              <FileText className="h-4 w-4 shrink-0 text-muted-foreground" />
-              <div className="min-w-0 flex-1">
-                <h2 className="truncate text-sm font-semibold text-foreground">{title}</h2>
-                {artifact?.description && (
-                  <p className="truncate text-xs text-muted-foreground">{artifact.description}</p>
-                )}
-              </div>
-
-              <button
-                type="button"
-                onClick={onCopy}
-                disabled={text == null}
-                className="inline-flex items-center gap-1.5 rounded-sm border border-border px-2.5 py-1.5 text-xs font-medium text-muted-foreground transition-colors hover:bg-muted/50 hover:text-foreground disabled:opacity-40"
-                aria-label="Copy document to clipboard"
-              >
-                {copied ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}
-                {copied ? "Copied" : "Copy"}
-              </button>
-              <button
-                type="button"
-                onClick={onDownload}
-                disabled={text == null}
-                className="inline-flex items-center gap-1.5 rounded-sm border border-border px-2.5 py-1.5 text-xs font-medium text-muted-foreground transition-colors hover:bg-muted/50 hover:text-foreground disabled:opacity-40"
-                aria-label="Download document"
-              >
-                <Download className="h-3.5 w-3.5" />
-                Download
-              </button>
-              <button
-                ref={closeButtonRef}
-                type="button"
-                onClick={closeArtifact}
-                className="ml-1 inline-flex h-7 w-7 items-center justify-center rounded-sm text-muted-foreground transition-colors hover:bg-muted/50 hover:text-foreground"
-                aria-label="Close document panel"
-              >
-                <X className="h-4 w-4" />
-              </button>
-            </header>
+            <ArtifactHeader
+              title={title}
+              description={artifact?.description}
+              copied={copied}
+              disabled={text == null}
+              onCopy={onCopy}
+              onDownload={onDownload}
+              onClose={closeArtifact}
+              closeButtonRef={closeButtonRef}
+            />
 
             {/* Body — the scrollable reading region. */}
             <div className="min-h-0 flex-1 overflow-y-auto">
-              {loading && (
-                <div className="flex items-center gap-2 px-6 py-8 text-sm text-muted-foreground">
-                  <Loader2 className="h-4 w-4 animate-spin text-processing" />
-                  Loading {title}...
-                </div>
-              )}
-
-              {!loading && error && (
-                <div className="m-6 rounded-sm border border-destructive/20 bg-destructive/5 p-4 text-sm text-destructive">
-                  Failed to load {title}: {error}
-                </div>
-              )}
-
-              {!loading && !error && text != null && (
-                <article className="mx-auto max-w-3xl px-6 py-8">
-                  {renderMarkdown ? (
-                    <Streamdown className="streamdown-container presence-assistant-message">
-                      {text}
-                    </Streamdown>
-                  ) : (
-                    <pre className="whitespace-pre-wrap break-words font-mono text-sm text-foreground">
-                      {text}
-                    </pre>
-                  )}
-                </article>
-              )}
+              <ArtifactBody
+                loading={loading}
+                error={error}
+                text={text}
+                title={title}
+                renderMarkdown={renderMarkdown}
+              />
             </div>
           </>
         )}
       </aside>
     </>
+  );
+}
+
+/**
+ * Panel header — file title, optional description, and copy / download / close
+ * actions. Sticky by virtue of the panel's flex column: the body below scrolls,
+ * this stays put.
+ */
+function ArtifactHeader({
+  title,
+  description,
+  copied,
+  disabled,
+  onCopy,
+  onDownload,
+  onClose,
+  closeButtonRef,
+}: {
+  title: string;
+  description: string | undefined;
+  copied: boolean;
+  disabled: boolean;
+  onCopy: () => void;
+  onDownload: () => void;
+  onClose: () => void;
+  closeButtonRef: Ref<HTMLButtonElement>;
+}) {
+  return (
+    <header className="flex shrink-0 items-center gap-2 border-b border-border bg-card px-4 py-3">
+      <FileText className="h-4 w-4 shrink-0 text-muted-foreground" />
+      <div className="min-w-0 flex-1">
+        <h2 className="truncate text-sm font-semibold text-foreground">{title}</h2>
+        {description && <p className="truncate text-xs text-muted-foreground">{description}</p>}
+      </div>
+
+      <button
+        type="button"
+        onClick={onCopy}
+        disabled={disabled}
+        className="inline-flex items-center gap-1.5 rounded-sm border border-border px-2.5 py-1.5 text-xs font-medium text-muted-foreground transition-colors hover:bg-muted/50 hover:text-foreground disabled:opacity-40"
+        aria-label="Copy document to clipboard"
+      >
+        {copied ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}
+        {copied ? "Copied" : "Copy"}
+      </button>
+      <button
+        type="button"
+        onClick={onDownload}
+        disabled={disabled}
+        className="inline-flex items-center gap-1.5 rounded-sm border border-border px-2.5 py-1.5 text-xs font-medium text-muted-foreground transition-colors hover:bg-muted/50 hover:text-foreground disabled:opacity-40"
+        aria-label="Download document"
+      >
+        <Download className="h-3.5 w-3.5" />
+        Download
+      </button>
+      <button
+        ref={closeButtonRef}
+        type="button"
+        onClick={onClose}
+        className="ml-1 inline-flex h-7 w-7 items-center justify-center rounded-sm text-muted-foreground transition-colors hover:bg-muted/50 hover:text-foreground"
+        aria-label="Close document panel"
+      >
+        <X className="h-4 w-4" />
+      </button>
+    </header>
+  );
+}
+
+/** Panel body for the current fetch state: loading spinner, error banner, or the rendered document. */
+function ArtifactBody({
+  loading,
+  error,
+  text,
+  title,
+  renderMarkdown,
+}: {
+  loading: boolean;
+  error: string | null;
+  text: string | null;
+  title: string;
+  renderMarkdown: boolean;
+}) {
+  if (loading) {
+    return (
+      <div className="flex items-center gap-2 px-6 py-8 text-sm text-muted-foreground">
+        <Loader2 className="h-4 w-4 animate-spin text-processing" />
+        Loading {title}...
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="m-6 rounded-sm border border-destructive/20 bg-destructive/5 p-4 text-sm text-destructive">
+        Failed to load {title}: {error}
+      </div>
+    );
+  }
+
+  if (text == null) return null;
+
+  return (
+    <article className="mx-auto max-w-3xl px-6 py-8">
+      {renderMarkdown ? (
+        <Streamdown className="streamdown-container presence-assistant-message">{text}</Streamdown>
+      ) : (
+        <pre className="whitespace-pre-wrap break-words font-mono text-sm text-foreground">
+          {text}
+        </pre>
+      )}
+    </article>
   );
 }

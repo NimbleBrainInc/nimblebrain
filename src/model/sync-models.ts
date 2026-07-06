@@ -102,6 +102,66 @@ interface CatalogModel {
   deprecated?: boolean;
 }
 
+/** Normalize a raw cost block into the catalog cost shape; optional rates are spread only when present. */
+function toCatalogCost(cost: RawModel["cost"]): CatalogModel["cost"] {
+  return {
+    input: cost?.input ?? 0,
+    output: cost?.output ?? 0,
+    ...(cost?.cache_read != null ? { cacheRead: cost.cache_read } : {}),
+    ...(cost?.cache_write != null ? { cacheWrite: cost.cache_write } : {}),
+    ...(cost?.reasoning != null ? { reasoning: cost.reasoning } : {}),
+  };
+}
+
+/** Whether a model is deprecated per upstream status or our manual shutdown list. */
+function isModelDeprecated(providerId: string, modelId: string, raw: RawModel): boolean {
+  return raw.status === "deprecated" || MANUAL_DEPRECATIONS.has(`${providerId}:${modelId}`);
+}
+
+/** Normalize one raw model into a catalog entry; optional fields are spread only when present. */
+function toCatalogModel(providerId: string, modelId: string, raw: RawModel): CatalogModel {
+  return {
+    id: modelId,
+    name: raw.name || modelId,
+    ...(raw.family ? { family: raw.family } : {}),
+    cost: toCatalogCost(raw.cost),
+    limits: {
+      context: raw.limit?.context ?? 0,
+      output: raw.limit?.output ?? 0,
+    },
+    capabilities: {
+      toolCall: raw.tool_call ?? false,
+      reasoning: raw.reasoning ?? false,
+      attachment: raw.attachment ?? false,
+    },
+    modalities: {
+      input: raw.modalities?.input ?? ["text"],
+      output: raw.modalities?.output ?? ["text"],
+    },
+    ...(raw.knowledge ? { knowledgeCutoff: raw.knowledge } : {}),
+    ...(raw.release_date ? { releaseDate: raw.release_date } : {}),
+    ...(isModelDeprecated(providerId, modelId, raw) ? { deprecated: true } : {}),
+  };
+}
+
+/** Build a provider's catalog models, sorted by ID and skipping models without pricing. */
+function buildProviderModels(
+  providerId: string,
+  provider: RawProvider,
+): Record<string, CatalogModel> {
+  const models: Record<string, CatalogModel> = {};
+
+  // Sort by model ID for stable, review-friendly diffs across sync runs.
+  const entries = Object.entries(provider.models).sort(([a], [b]) => a.localeCompare(b));
+  for (const [modelId, raw] of entries) {
+    // Skip models with no cost data (embeddings, etc. without pricing)
+    if (!raw.cost?.input && !raw.cost?.output) continue;
+    models[modelId] = toCatalogModel(providerId, modelId, raw);
+  }
+
+  return models;
+}
+
 async function main() {
   console.log(`Fetching ${API_URL}...`);
   const response = await fetch(API_URL);
@@ -121,46 +181,7 @@ async function main() {
       continue;
     }
 
-    const models: Record<string, CatalogModel> = {};
-
-    // Sort by model ID for stable, review-friendly diffs across sync runs.
-    const entries = Object.entries(provider.models).sort(([a], [b]) => a.localeCompare(b));
-    for (const [modelId, raw] of entries) {
-      // Skip models with no cost data (embeddings, etc. without pricing)
-      if (!raw.cost?.input && !raw.cost?.output) continue;
-
-      models[modelId] = {
-        id: modelId,
-        name: raw.name || modelId,
-        ...(raw.family ? { family: raw.family } : {}),
-        cost: {
-          input: raw.cost?.input ?? 0,
-          output: raw.cost?.output ?? 0,
-          ...(raw.cost?.cache_read != null ? { cacheRead: raw.cost.cache_read } : {}),
-          ...(raw.cost?.cache_write != null ? { cacheWrite: raw.cost.cache_write } : {}),
-          ...(raw.cost?.reasoning != null ? { reasoning: raw.cost.reasoning } : {}),
-        },
-        limits: {
-          context: raw.limit?.context ?? 0,
-          output: raw.limit?.output ?? 0,
-        },
-        capabilities: {
-          toolCall: raw.tool_call ?? false,
-          reasoning: raw.reasoning ?? false,
-          attachment: raw.attachment ?? false,
-        },
-        modalities: {
-          input: raw.modalities?.input ?? ["text"],
-          output: raw.modalities?.output ?? ["text"],
-        },
-        ...(raw.knowledge ? { knowledgeCutoff: raw.knowledge } : {}),
-        ...(raw.release_date ? { releaseDate: raw.release_date } : {}),
-        ...(raw.status === "deprecated" || MANUAL_DEPRECATIONS.has(`${providerId}:${modelId}`)
-          ? { deprecated: true }
-          : {}),
-      };
-    }
-
+    const models = buildProviderModels(providerId, provider);
     catalog[providerId] = {
       name: provider.name || providerId,
       models,

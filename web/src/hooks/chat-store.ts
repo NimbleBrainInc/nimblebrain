@@ -19,6 +19,7 @@ import type {
   ReasoningDeltaEvent,
   StreamErrorEvent,
   TextDeltaEvent,
+  ToolCallResult,
   ToolDoneEvent,
   ToolPreparingEvent,
   ToolStartEvent,
@@ -250,6 +251,122 @@ const updateTool =
           result: evt.result != null ? (evt.result as ToolResultForUI) : tc.result,
         }
       : tc;
+
+/** Fill in tool results the stream never resolved from the terminal `done` payload. */
+function backfillToolResults(
+  slice: ConversationSlice,
+  resultToolCalls: ChatResult["toolCalls"],
+): void {
+  const outputMap = new Map(resultToolCalls.map((tc) => [tc.id, tc.output]));
+  const backfill = (tc: ToolCallDisplay): ToolCallDisplay => {
+    if (tc.result != null) return tc;
+    const output = outputMap.get(tc.id);
+    return output != null ? { ...tc, result: wrapStringResult(output) } : tc;
+  };
+  for (const block of slice.blocks) {
+    if (block.type === "tool") block.toolCalls = block.toolCalls.map(backfill);
+  }
+  slice.toolCalls = slice.toolCalls.map(backfill);
+}
+
+/** Assemble the finalized assistant message from the terminal `done` payload. */
+function buildFinalAssistantMessage(
+  result: ChatResult,
+  finalBlocks: ContentBlock[],
+  finalTools: ToolCallDisplay[] | undefined,
+  usage: ChatMessage["usage"],
+  resultFiles: MessageFileAttachment[] | undefined,
+): ChatMessage {
+  return {
+    role: "assistant",
+    content: result.response,
+    blocks: finalBlocks,
+    toolCalls: finalTools,
+    usage,
+    ...(result.stopReason && result.stopReason !== "complete"
+      ? { stopReason: result.stopReason }
+      : {}),
+    ...(resultFiles && resultFiles.length > 0 ? { files: resultFiles } : {}),
+  };
+}
+
+/** Flip a slice to streaming when a resume finds a live turn. */
+function markActiveStreaming(slice: ConversationSlice): void {
+  slice.isStreaming = true;
+  if (!slice.streamingState) slice.streamingState = "thinking";
+}
+
+/** Map picked File objects to optimistic pending-attachment metadata. */
+function buildUserFiles(files: File[] | undefined): MessageFileAttachment[] | undefined {
+  return files?.map((f) => ({
+    id: `pending_${f.name}_${f.size}`,
+    filename: f.name,
+    mimeType: f.type || "application/octet-stream",
+    size: f.size,
+    extracted: false,
+  }));
+}
+
+/** Build the optimistic user message shown immediately on send. */
+function buildOptimisticUserMessage(
+  params: StartTurnParams,
+  userFiles: MessageFileAttachment[] | undefined,
+): ChatMessage {
+  return {
+    role: "user",
+    content: params.text,
+    timestamp: new Date().toISOString(),
+    // `userId` is intentional forward-compat plumbing (Stage 4 sharing), not
+    // dead code: it has no UI consumer today (single-owner → userId is always
+    // the current user, so the removed speaker labels never showed), but the
+    // per-message author id is round-tripped end to end. Keep it.
+    ...(params.currentUserId ? { userId: params.currentUserId } : {}),
+    ...(userFiles && userFiles.length > 0 ? { files: userFiles } : {}),
+  };
+}
+
+/** Build the `/v1/chat/start` request body from the slice + send params. */
+function buildChatRequest(slice: ConversationSlice, params: StartTurnParams): ChatRequest {
+  return {
+    message: params.text,
+    ...(slice.conversationId ? { conversationId: slice.conversationId } : {}),
+    ...(params.appContext ? { appContext: params.appContext } : {}),
+    ...(params.model ? { model: params.model } : {}),
+  };
+}
+
+/** A loaded conversation: server metadata plus its reconstructed messages. */
+interface LoadedConversation {
+  metadata: { id: string; ownerId?: string; title?: string | null };
+  messages: ChatMessage[];
+}
+
+/**
+ * Parse a `conversations.get` tool result into conversation metadata + messages.
+ * Throws on an error result; falls back to parsing `content[0].text` as JSON
+ * when the server returned no `structuredContent`.
+ */
+function parseConversationResult(res: ToolCallResult): LoadedConversation {
+  if (res.isError) {
+    const errText = res.content
+      ?.map((b) => b.text ?? "")
+      .filter(Boolean)
+      .join("\n");
+    throw new Error(errText || "Failed to load conversation");
+  }
+  let raw: unknown = res.structuredContent;
+  if (!raw && res.content?.[0]?.text) {
+    try {
+      raw = JSON.parse(res.content[0].text);
+    } catch {
+      raw = {};
+    }
+  }
+  return raw as LoadedConversation;
+}
+
+/** Outcome of reconciling the first `subscribed` frame of a resume. */
+type ResumeOutcome = "handled" | "drop" | "fallthrough";
 
 // ---------------------------------------------------------------------------
 // Key helpers
@@ -492,6 +609,59 @@ export function createChatStore(): ChatStore {
     slice.connection = null;
   }
 
+  /**
+   * Reconcile the first `subscribed` frame of a resume against the loaded disk
+   * tail. Returns:
+   *   - "handled": a live/grace turn was reconciled (state committed) — the
+   *     replay that follows finalizes it.
+   *   - "drop": the run is gone or the tail is already complete — the caller
+   *     should ignore all further replay events for this connection.
+   *   - "fallthrough": no resume reconcile applied; run the server-authoritative
+   *     spinner check.
+   */
+  function reconcileResume(
+    slice: ConversationSlice,
+    info: { isActive: boolean; activeSeq: number },
+    conversationId: string,
+  ): ResumeOutcome {
+    slice.resumeOnSubscribe = false;
+    const pendingTail = hasPendingTail(slice);
+    if (info.isActive || (pendingTail && info.activeSeq > 0)) {
+      // A turn needs reconciling: a live one (`isActive`), or one that
+      // finished in the load→subscribe window but is still in the grace
+      // buffer (`pendingTail && activeSeq>0`). The replay carries the full
+      // trailing turn.
+      //
+      // Trim the disk tail ONLY when it's `pending` — the server's
+      // authoritative "this turn has no terminal event yet" flag, i.e. the
+      // in-flight turn's own partial copy. The replay then rebuilds it
+      // without duplicating. When the tail is NOT pending it's a COMPLETED
+      // prior turn and the active turn simply isn't on disk yet (it began
+      // after this snapshot); keep it and let the replay append the new
+      // turn. Trimming a complete turn here silently drops it — the
+      // resume-race transcript-loss bug.
+      if (pendingTail) trimTrailingTurn(slice);
+      resetScratch(slice);
+      if (info.isActive) markActiveStreaming(slice);
+      commit(slice);
+      return "handled";
+    }
+    if (pendingTail) {
+      // Partial disk tail but the run is gone (grace GC'd) — no replay can
+      // complete it. Refetch the now-complete transcript.
+      closeConnection(slice);
+      void loadConversation(conversationId);
+      return "drop";
+    }
+    if (!slice.isStreaming) {
+      // Complete disk tail (or idle) — ignore any stray grace-buffer replay;
+      // it would duplicate (and flicker) a turn already fully on disk.
+      closeConnection(slice);
+      return "drop";
+    }
+    return "fallthrough";
+  }
+
   function openConnection(slice: ConversationSlice, conversationId: string, resume: boolean): void {
     closeConnection(slice);
     slice.resumeOnSubscribe = resume;
@@ -506,47 +676,12 @@ export function createChatStore(): ChatStore {
       afterSeq: 0,
       onSubscribed: (info) => {
         if (slice.resumeOnSubscribe) {
-          slice.resumeOnSubscribe = false;
-          const pendingTail = hasPendingTail(slice);
-          if (info.isActive || (pendingTail && info.activeSeq > 0)) {
-            // A turn needs reconciling: a live one (`isActive`), or one that
-            // finished in the load→subscribe window but is still in the grace
-            // buffer (`pendingTail && activeSeq>0`). The replay carries the full
-            // trailing turn.
-            //
-            // Trim the disk tail ONLY when it's `pending` — the server's
-            // authoritative "this turn has no terminal event yet" flag, i.e. the
-            // in-flight turn's own partial copy. The replay then rebuilds it
-            // without duplicating. When the tail is NOT pending it's a COMPLETED
-            // prior turn and the active turn simply isn't on disk yet (it began
-            // after this snapshot); keep it and let the replay append the new
-            // turn. Trimming a complete turn here silently drops it — the
-            // resume-race transcript-loss bug.
-            if (pendingTail) trimTrailingTurn(slice);
-            resetScratch(slice);
-            if (info.isActive) {
-              slice.isStreaming = true;
-              if (!slice.streamingState) slice.streamingState = "thinking";
-            }
-            commit(slice);
-            return;
-          }
-          if (pendingTail) {
-            // Partial disk tail but the run is gone (grace GC'd) — no replay can
-            // complete it. Refetch the now-complete transcript.
+          const outcome = reconcileResume(slice, info, conversationId);
+          if (outcome === "drop") {
             dropEvents = true;
-            closeConnection(slice);
-            void loadConversation(conversationId);
             return;
           }
-          if (!slice.isStreaming) {
-            // Complete disk tail (or idle) — ignore any stray grace-buffer
-            // replay; it would duplicate (and flicker) a turn already fully on
-            // disk.
-            dropEvents = true;
-            closeConnection(slice);
-            return;
-          }
+          if (outcome === "handled") return;
         }
         // Server-authoritative reconcile: the server says no turn is running,
         // but we still think we're streaming. Happens when a viewer reconnects
@@ -609,201 +744,208 @@ export function createChatStore(): ChatStore {
 
   // -- stream reducer --
 
+  function handleUserMessage(slice: ConversationSlice, data: unknown): void {
+    const evt = data as { content: string; userId?: string; timestamp?: string };
+    resetScratch(slice);
+    if (slice.pendingEcho) {
+      // Our optimistic user message + assistant placeholder are already in
+      // place; the deltas will fill the placeholder.
+      slice.pendingEcho = false;
+    } else {
+      const userMsg: ChatMessage = {
+        role: "user",
+        content: evt.content,
+        ...(evt.timestamp ? { timestamp: evt.timestamp } : {}),
+        ...(evt.userId ? { userId: evt.userId } : {}),
+      };
+      const assistantMsg: ChatMessage = {
+        role: "assistant",
+        content: "",
+        blocks: [],
+        toolCalls: [],
+        timestamp: new Date().toISOString(),
+      };
+      slice.messages = [...slice.messages, userMsg, assistantMsg];
+    }
+    slice.isStreaming = true;
+    slice.streamingState = "thinking";
+    commit(slice);
+  }
+
+  function handleChatStart(slice: ConversationSlice, data: unknown): void {
+    const evt = data as { conversationId: string };
+    if (evt.conversationId && slice.conversationId !== evt.conversationId) {
+      slice.conversationId = evt.conversationId;
+      aliasSlice(slice, evt.conversationId);
+      commit(slice);
+    }
+  }
+
+  function handleTextDelta(slice: ConversationSlice, data: unknown): void {
+    const evt = data as TextDeltaEvent;
+    slice.streamingState = "streaming";
+    slice.preparingTool = null;
+    const last = slice.blocks[slice.blocks.length - 1];
+    if (last && last.type === "text") last.text += evt.text;
+    else slice.blocks.push({ type: "text", text: evt.text });
+    flush(slice);
+  }
+
+  function handleReasoningDelta(slice: ConversationSlice, data: unknown): void {
+    const evt = data as ReasoningDeltaEvent;
+    slice.streamingState = "streaming";
+    slice.preparingTool = null;
+    const last = slice.blocks[slice.blocks.length - 1];
+    if (last && last.type === "reasoning") last.text += evt.text;
+    else slice.blocks.push({ type: "reasoning", text: evt.text });
+    flush(slice);
+  }
+
+  function handleToolPreparing(slice: ConversationSlice, data: unknown): void {
+    const evt = data as ToolPreparingEvent;
+    slice.streamingState = "preparing";
+    slice.preparingTool = { id: evt.id, name: evt.name };
+    commit(slice);
+  }
+
+  function handleToolStart(slice: ConversationSlice, data: unknown): void {
+    const evt = data as ToolStartEvent;
+    slice.streamingState = "working";
+    slice.preparingTool = null;
+    const newTool: ToolCallDisplay = {
+      id: evt.id,
+      name: evt.name,
+      status: "running",
+      resourceUri: evt.resourceUri,
+      input: evt.input,
+      // Bare source/app name. Parse the namespace first (#354): a naive
+      // `__` split leaves the `ws_<id>-` prefix attached, which fails
+      // registry.hasSource() with a 403 on the resource-read path.
+      appName: appNameFromToolName(evt.name),
+    };
+    slice.toolCalls = [...slice.toolCalls, newTool];
+    const last = slice.blocks[slice.blocks.length - 1];
+    if (last && last.type === "tool") last.toolCalls = [...last.toolCalls, newTool];
+    else slice.blocks.push({ type: "tool", toolCalls: [newTool] });
+    flush(slice);
+  }
+
+  function handleToolDone(slice: ConversationSlice, data: unknown): void {
+    const evt = data as ToolDoneEvent;
+    const updater = updateTool(evt);
+    slice.toolCalls = slice.toolCalls.map(updater);
+    for (const block of slice.blocks) {
+      if (block.type === "tool") block.toolCalls = block.toolCalls.map(updater);
+    }
+    const anyRunning = slice.toolCalls.some((tc) => tc.status === "running");
+    slice.streamingState = anyRunning ? "working" : "analyzing";
+    flush(slice);
+  }
+
+  function handleLlmDone(slice: ConversationSlice, data: unknown): void {
+    const evt = data as LlmDoneEvent;
+    slice.iteration = {
+      n: (slice.iteration?.n ?? 0) + 1,
+      inputTokens: (slice.iteration?.inputTokens ?? 0) + (evt.usage?.inputTokens ?? 0),
+      outputTokens: (slice.iteration?.outputTokens ?? 0) + (evt.usage?.outputTokens ?? 0),
+    };
+    flush(slice);
+  }
+
+  function handleDone(slice: ConversationSlice, data: unknown): void {
+    const result = data as ChatResult;
+    slice.streamingState = null;
+    slice.preparingTool = null;
+    slice.isStreaming = false;
+
+    if (result.toolCalls) {
+      backfillToolResults(slice, result.toolCalls);
+    }
+
+    const finalBlocks = cloneBlocks(slice.blocks);
+    const finalTools = slice.toolCalls.length > 0 ? [...slice.toolCalls] : undefined;
+    const usage = result.usage
+      ? {
+          inputTokens: result.usage.inputTokens,
+          outputTokens: result.usage.outputTokens,
+          cacheReadTokens: result.usage.cacheReadTokens,
+          cacheWriteTokens: result.usage.cacheWriteTokens,
+          reasoningTokens: result.usage.reasoningTokens,
+          model: result.usage.model,
+          llmMs: result.usage.llmMs,
+        }
+      : undefined;
+    // Cast: `files` is attached to the done payload by the server but isn't
+    // on the typed ChatResult — read it defensively.
+    const resultFiles = (result as unknown as Record<string, unknown>).files as
+      | MessageFileAttachment[]
+      | undefined;
+
+    const updated = [...slice.messages];
+    if (updated.length > 0 && updated[updated.length - 1].role === "assistant") {
+      updated[updated.length - 1] = buildFinalAssistantMessage(
+        result,
+        finalBlocks,
+        finalTools,
+        usage,
+        resultFiles,
+      );
+      slice.messages = updated;
+    }
+    resetScratch(slice);
+    commit(slice);
+    closeConnection(slice);
+  }
+
+  function handleError(slice: ConversationSlice, data: unknown): void {
+    const evt = data as StreamErrorEvent;
+    slice.streamingState = null;
+    slice.preparingTool = null;
+    slice.isStreaming = false;
+    const updated = [...slice.messages];
+    const last = updated[updated.length - 1];
+    if (last?.role === "assistant") {
+      updated[updated.length - 1] = { ...last, error: evt.message };
+      slice.messages = updated;
+    } else {
+      slice.error = evt.message;
+    }
+    commit(slice);
+    closeConnection(slice);
+  }
+
+  function handleCancelled(slice: ConversationSlice): void {
+    slice.streamingState = null;
+    slice.preparingTool = null;
+    slice.isStreaming = false;
+    commit(slice);
+    closeConnection(slice);
+  }
+
+  // Per-type reducers. Unlisted types (and `tool.preparing.done`) are
+  // intentional no-ops — the same fall-through the switch had.
+  const STREAM_EVENT_HANDLERS: Record<string, (slice: ConversationSlice, data: unknown) => void> = {
+    "user.message": handleUserMessage,
+    "chat.start": handleChatStart,
+    "text.delta": handleTextDelta,
+    "reasoning.delta": handleReasoningDelta,
+    "tool.preparing": handleToolPreparing,
+    "tool.preparing.done": () => {},
+    "tool.start": handleToolStart,
+    "tool.done": handleToolDone,
+    "llm.done": handleLlmDone,
+    done: handleDone,
+    error: handleError,
+    cancelled: handleCancelled,
+  };
+
   function applyStreamEvent(slice: ConversationSlice, type: string, data: unknown): void {
-    switch (type) {
-      case "user.message": {
-        const evt = data as { content: string; userId?: string; timestamp?: string };
-        resetScratch(slice);
-        if (slice.pendingEcho) {
-          // Our optimistic user message + assistant placeholder are already in
-          // place; the deltas will fill the placeholder.
-          slice.pendingEcho = false;
-        } else {
-          const userMsg: ChatMessage = {
-            role: "user",
-            content: evt.content,
-            ...(evt.timestamp ? { timestamp: evt.timestamp } : {}),
-            ...(evt.userId ? { userId: evt.userId } : {}),
-          };
-          const assistantMsg: ChatMessage = {
-            role: "assistant",
-            content: "",
-            blocks: [],
-            toolCalls: [],
-            timestamp: new Date().toISOString(),
-          };
-          slice.messages = [...slice.messages, userMsg, assistantMsg];
-        }
-        slice.isStreaming = true;
-        slice.streamingState = "thinking";
-        commit(slice);
-        break;
-      }
-      case "chat.start": {
-        const evt = data as { conversationId: string };
-        if (evt.conversationId && slice.conversationId !== evt.conversationId) {
-          slice.conversationId = evt.conversationId;
-          aliasSlice(slice, evt.conversationId);
-          commit(slice);
-        }
-        break;
-      }
-      case "text.delta": {
-        const evt = data as TextDeltaEvent;
-        slice.streamingState = "streaming";
-        slice.preparingTool = null;
-        const last = slice.blocks[slice.blocks.length - 1];
-        if (last && last.type === "text") last.text += evt.text;
-        else slice.blocks.push({ type: "text", text: evt.text });
-        flush(slice);
-        break;
-      }
-      case "reasoning.delta": {
-        const evt = data as ReasoningDeltaEvent;
-        slice.streamingState = "streaming";
-        slice.preparingTool = null;
-        const last = slice.blocks[slice.blocks.length - 1];
-        if (last && last.type === "reasoning") last.text += evt.text;
-        else slice.blocks.push({ type: "reasoning", text: evt.text });
-        flush(slice);
-        break;
-      }
-      case "tool.preparing": {
-        const evt = data as ToolPreparingEvent;
-        slice.streamingState = "preparing";
-        slice.preparingTool = { id: evt.id, name: evt.name };
-        commit(slice);
-        break;
-      }
-      case "tool.preparing.done":
-        break;
-      case "tool.start": {
-        const evt = data as ToolStartEvent;
-        slice.streamingState = "working";
-        slice.preparingTool = null;
-        const newTool: ToolCallDisplay = {
-          id: evt.id,
-          name: evt.name,
-          status: "running",
-          resourceUri: evt.resourceUri,
-          input: evt.input,
-          // Bare source/app name. Parse the namespace first (#354): a naive
-          // `__` split leaves the `ws_<id>-` prefix attached, which fails
-          // registry.hasSource() with a 403 on the resource-read path.
-          appName: appNameFromToolName(evt.name),
-        };
-        slice.toolCalls = [...slice.toolCalls, newTool];
-        const last = slice.blocks[slice.blocks.length - 1];
-        if (last && last.type === "tool") last.toolCalls = [...last.toolCalls, newTool];
-        else slice.blocks.push({ type: "tool", toolCalls: [newTool] });
-        flush(slice);
-        break;
-      }
-      case "tool.done": {
-        const evt = data as ToolDoneEvent;
-        const updater = updateTool(evt);
-        slice.toolCalls = slice.toolCalls.map(updater);
-        for (const block of slice.blocks) {
-          if (block.type === "tool") block.toolCalls = block.toolCalls.map(updater);
-        }
-        const anyRunning = slice.toolCalls.some((tc) => tc.status === "running");
-        slice.streamingState = anyRunning ? "working" : "analyzing";
-        flush(slice);
-        break;
-      }
-      case "llm.done": {
-        const evt = data as LlmDoneEvent;
-        slice.iteration = {
-          n: (slice.iteration?.n ?? 0) + 1,
-          inputTokens: (slice.iteration?.inputTokens ?? 0) + (evt.usage?.inputTokens ?? 0),
-          outputTokens: (slice.iteration?.outputTokens ?? 0) + (evt.usage?.outputTokens ?? 0),
-        };
-        flush(slice);
-        break;
-      }
-      case "done": {
-        const result = data as ChatResult;
-        slice.streamingState = null;
-        slice.preparingTool = null;
-        slice.isStreaming = false;
-
-        if (result.toolCalls) {
-          const outputMap = new Map(result.toolCalls.map((tc) => [tc.id, tc.output]));
-          const backfill = (tc: ToolCallDisplay): ToolCallDisplay => {
-            if (tc.result != null) return tc;
-            const output = outputMap.get(tc.id);
-            return output != null ? { ...tc, result: wrapStringResult(output) } : tc;
-          };
-          for (const block of slice.blocks) {
-            if (block.type === "tool") block.toolCalls = block.toolCalls.map(backfill);
-          }
-          slice.toolCalls = slice.toolCalls.map(backfill);
-        }
-
-        const finalBlocks = cloneBlocks(slice.blocks);
-        const finalTools = slice.toolCalls.length > 0 ? [...slice.toolCalls] : undefined;
-        const usage = result.usage
-          ? {
-              inputTokens: result.usage.inputTokens,
-              outputTokens: result.usage.outputTokens,
-              cacheReadTokens: result.usage.cacheReadTokens,
-              cacheWriteTokens: result.usage.cacheWriteTokens,
-              reasoningTokens: result.usage.reasoningTokens,
-              model: result.usage.model,
-              llmMs: result.usage.llmMs,
-            }
-          : undefined;
-        // Cast: `files` is attached to the done payload by the server but isn't
-        // on the typed ChatResult — read it defensively.
-        const resultFiles = (result as unknown as Record<string, unknown>).files as
-          | MessageFileAttachment[]
-          | undefined;
-
-        const updated = [...slice.messages];
-        if (updated.length > 0 && updated[updated.length - 1].role === "assistant") {
-          updated[updated.length - 1] = {
-            role: "assistant",
-            content: result.response,
-            blocks: finalBlocks,
-            toolCalls: finalTools,
-            usage,
-            ...(result.stopReason && result.stopReason !== "complete"
-              ? { stopReason: result.stopReason }
-              : {}),
-            ...(resultFiles && resultFiles.length > 0 ? { files: resultFiles } : {}),
-          };
-          slice.messages = updated;
-        }
-        resetScratch(slice);
-        commit(slice);
-        closeConnection(slice);
-        break;
-      }
-      case "error": {
-        const evt = data as StreamErrorEvent;
-        slice.streamingState = null;
-        slice.preparingTool = null;
-        slice.isStreaming = false;
-        const updated = [...slice.messages];
-        const last = updated[updated.length - 1];
-        if (last?.role === "assistant") {
-          updated[updated.length - 1] = { ...last, error: evt.message };
-          slice.messages = updated;
-        } else {
-          slice.error = evt.message;
-        }
-        commit(slice);
-        closeConnection(slice);
-        break;
-      }
-      case "cancelled": {
-        slice.streamingState = null;
-        slice.preparingTool = null;
-        slice.isStreaming = false;
-        commit(slice);
-        closeConnection(slice);
-        break;
-      }
+    // Own-key guard so an inherited name (constructor/toString/__proto__) can't
+    // resolve to an Object.prototype member; unknown types no-op as the switch did.
+    // (`Object.prototype.hasOwnProperty.call` rather than `Object.hasOwn` — the web
+    // tsconfig lib target predates ES2022.)
+    if (Object.prototype.hasOwnProperty.call(STREAM_EVENT_HANDLERS, type)) {
+      STREAM_EVENT_HANDLERS[type]?.(slice, data);
     }
   }
 
@@ -831,24 +973,8 @@ export function createChatStore(): ChatStore {
 
     // Optimistic user message + assistant placeholder for snappy UX. The
     // streamed `user.message` echo is consumed (pendingEcho), not duplicated.
-    const userFiles: MessageFileAttachment[] | undefined = params.files?.map((f) => ({
-      id: `pending_${f.name}_${f.size}`,
-      filename: f.name,
-      mimeType: f.type || "application/octet-stream",
-      size: f.size,
-      extracted: false,
-    }));
-    const userMsg: ChatMessage = {
-      role: "user",
-      content: params.text,
-      timestamp: new Date().toISOString(),
-      // `userId` is intentional forward-compat plumbing (Stage 4 sharing), not
-      // dead code: it has no UI consumer today (single-owner → userId is always
-      // the current user, so the removed speaker labels never showed), but the
-      // per-message author id is round-tripped end to end. Keep it.
-      ...(params.currentUserId ? { userId: params.currentUserId } : {}),
-      ...(userFiles && userFiles.length > 0 ? { files: userFiles } : {}),
-    };
+    const userFiles = buildUserFiles(params.files);
+    const userMsg = buildOptimisticUserMessage(params, userFiles);
     const assistantMsg: ChatMessage = {
       role: "assistant",
       content: "",
@@ -859,12 +985,7 @@ export function createChatStore(): ChatStore {
     slice.messages = [...slice.messages, userMsg, assistantMsg];
     commit(slice);
 
-    const req: ChatRequest = {
-      message: params.text,
-      ...(slice.conversationId ? { conversationId: slice.conversationId } : {}),
-      ...(params.appContext ? { appContext: params.appContext } : {}),
-      ...(params.model ? { model: params.model } : {}),
-    };
+    const req = buildChatRequest(slice, params);
 
     let conversationId: string;
     try {
@@ -911,6 +1032,15 @@ export function createChatStore(): ChatStore {
 
   // -- load from disk + attach --
 
+  /** Stamp a load failure onto the slice (if it still exists) and notify. */
+  function handleLoadError(id: string, err: unknown): void {
+    const slc = byKey.get(id);
+    if (slc) {
+      slc.error = err instanceof Error ? err.message : "Failed to load conversation";
+      commit(slc);
+    }
+  }
+
   async function loadConversation(id: string): Promise<void> {
     const existing = byKey.get(id);
     // Already fully loaded and live — keep the stream, don't refetch. A
@@ -927,25 +1057,7 @@ export function createChatStore(): ChatStore {
       const res = await callTool("conversations", "get", { id, expand: "full" });
       const current = byKey.get(id);
       if (!current) return;
-      if (res.isError) {
-        const errText = res.content
-          ?.map((b) => b.text ?? "")
-          .filter(Boolean)
-          .join("\n");
-        throw new Error(errText || "Failed to load conversation");
-      }
-      let raw: unknown = res.structuredContent;
-      if (!raw && res.content?.[0]?.text) {
-        try {
-          raw = JSON.parse(res.content[0].text);
-        } catch {
-          raw = {};
-        }
-      }
-      const parsed = raw as {
-        metadata: { id: string; ownerId?: string; title?: string | null };
-        messages: ChatMessage[];
-      };
+      const parsed = parseConversationResult(res);
       current.conversationId = parsed.metadata.id;
       aliasSlice(current, parsed.metadata.id);
       current.meta = { ownerId: parsed.metadata.ownerId };
@@ -957,11 +1069,7 @@ export function createChatStore(): ChatStore {
       // from the loaded history if the server says one is active).
       openConnection(current, parsed.metadata.id, true);
     } catch (err) {
-      const slc = byKey.get(id);
-      if (slc) {
-        slc.error = err instanceof Error ? err.message : "Failed to load conversation";
-        commit(slc);
-      }
+      handleLoadError(id, err);
     }
   }
 

@@ -118,6 +118,7 @@ import { createSystemTools } from "../tools/system-tools.ts";
 import type { ResourceData, Tool, ToolSource } from "../tools/types.ts";
 import { WorkspaceContext } from "../workspace/context.ts";
 import { ensureUserWorkspace } from "../workspace/provisioning.ts";
+import type { Workspace } from "../workspace/types.ts";
 import { personalWorkspaceIdFor, WorkspaceStore } from "../workspace/workspace-store.ts";
 import {
   ConversationAccessDeniedError,
@@ -130,6 +131,7 @@ import { PlacementRegistry } from "./placement-registry.ts";
 import {
   getRequestContext,
   type RequestContext,
+  type RequestScope,
   runWithRequestContext,
 } from "./request-context.ts";
 import { type BufferedRunEvent, RunBus } from "./run-bus.ts";
@@ -143,7 +145,11 @@ import type {
   TaskResult,
   TurnUsage,
 } from "./types.ts";
-import { createWorkspaceRegistry, startWorkspaceBundles } from "./workspace-runtime.ts";
+import {
+  createWorkspaceRegistry,
+  type ProcessInventoryEntry,
+  startWorkspaceBundles,
+} from "./workspace-runtime.ts";
 
 const DEFAULT_WORK_DIR = join(homedir(), ".nimblebrain");
 const DEFAULT_MODEL = "claude-sonnet-4-6";
@@ -774,16 +780,8 @@ export class Runtime {
     // install paths (connector-tools, boot reload) can pull deps directly.
     rt._bundleMcpDepsFactory = bundleMcpDepsFactory;
 
-    // Register placements declared by platform sources. The helper isolates
-    // the duck-type — `getPlacements()` is on `McpSource` (carrying the
-    // declarations from `defineInProcessApp`) but isn't on the `ToolSource`
-    // interface itself.
-    for (const src of platformSources) {
-      const placements = readSourcePlacements(src);
-      if (placements.length > 0) {
-        placementRegistry.register(src.name, placements);
-      }
-    }
+    // Register placements declared by platform sources.
+    registerPlatformPlacements(placementRegistry, platformSources);
 
     // Partition: workspace registries get every platform source EXCEPT the
     // kernel identity sources (conversations, …). Identity sources stay in
@@ -830,29 +828,13 @@ export class Runtime {
     // each route having to thread the registry through.
     lifecycle.setWorkspaceRegistries(workspaceRegistries);
 
-    // Seed lifecycle instances for workspace bundles. Operators are
-    // expected to have run `bun run migrate:user-creds` (T003) before
-    // deploying Stage 2 — see
-    // the Stage 2 deploy runbook. The
-    // runtime no longer migrates or normalizes legacy `oauthScope: "user"`
-    // records at boot; a legacy ref reaches `seedInstance` only via
-    // `buildProcessInventory` and throws `LegacyOAuthScopeError` there.
-    for (const entry of workspaceBundleEntries) {
-      const { serverName: sn, bundle: ref, meta, wsId, dataDir } = entry;
-      const label = "name" in ref ? ref.name : "url" in ref ? ref.url : ref.path;
-      const wsRegistry = workspaceRegistries.get(wsId);
-      lifecycle.seedInstance(sn, label, ref, meta ?? undefined, wsId, dataDir, wsRegistry);
-
-      const instance = lifecycle.getInstance(sn, wsId);
-      if (instance?.ui?.placements && instance.ui.placements.length > 0) {
-        // Sanitize at boot too — not just at install. Placements persist RAW on
-        // the BundleRef (`instance.ui` is the unfiltered host meta), so a spoof
-        // that `registerPlacements` dropped at install time would otherwise
-        // re-register verbatim here on every restart. Same fail-closed guard.
-        const safe = sanitizePlacements(instance.ui.placements);
-        if (safe.length > 0) placementRegistry.register(sn, safe, wsId);
-      }
-    }
+    // Seed lifecycle instances for workspace bundles.
+    seedWorkspaceBundleInstances(
+      lifecycle,
+      workspaceRegistries,
+      placementRegistry,
+      workspaceBundleEntries,
+    );
 
     // Boot-time visibility: the locked curated registry is the platform's
     // non-empty-Browse guarantee. Warn loudly if its resolved catalog
@@ -1117,19 +1099,7 @@ export class Runtime {
     // does NOT read this value (acceptance criterion: every tool's
     // WorkspaceContext is built from the parsed namespace, not from
     // ChatRequest / conversation metadata).
-    const sessionWsId = personalWorkspaceIdFor(requestIdentity.id);
-    // Ensure the personal workspace exists + has a registry. The normal
-    // login path (`ensureUserWorkspace`) already provisions; this is the
-    // belt-and-suspenders for embedded / dev callers / CLI flows that
-    // never went through HTTP auth. `ensureUserWorkspace` is idempotent
-    // — fast read-path on the warm case (the store hit is cached) and
-    // self-heals any drift, matching production's login posture so the
-    // same code path serves both surfaces.
-    await ensureUserWorkspace(this._workspaceStore, {
-      id: requestIdentity.id,
-      ...(requestIdentity.displayName ? { displayName: requestIdentity.displayName } : {}),
-    });
-    await this.ensureWorkspaceRegistry(sessionWsId);
+    const sessionWsId = await this.prepareSessionWorkspace(requestIdentity);
 
     // The conversation's workspace — the binding, and the ONE workspace this
     // turn resolves against. A chat is born in the focused workspace
@@ -1176,85 +1146,22 @@ export class Runtime {
       ...(request.metadata ? { metadata: request.metadata } : {}),
     };
 
-    // Resume an existing conversation only if the caller owns it.
-    // Conversations are workspace-owned (`workspaces/<wsId>/conversations/<ownerId>/`),
-    // but the path is a privacy partition, not an authorization gate: this
-    // ownerId check is the ONLY barrier between users and each other's
-    // conversations — it runs in the load-bearing chat path, not just at a
-    // higher layer.
-    //
-    // The disambiguation between "doesn't exist" (→ create new) and
-    // "exists but isn't yours" (→ throw) matters: silently creating a
-    // new conversation when the caller passes a foreign id would mask
-    // a takeover attempt as a normal flow.
-    let conversation: Conversation;
-    if (request.conversationId) {
-      const existing = await store.load(request.conversationId);
-      if (existing && existing.ownerId !== ownerId) {
-        throw new ConversationAccessDeniedError(request.conversationId, ownerId);
-      }
-      // Resume requires CURRENT membership of the conversation's workspace — not
-      // just ownership. Resuming binds tools/skills/apps to `convWsId`, so a
-      // member offboarded from that workspace must not be able to continue acting
-      // in it (reads stay owner-gated). New conversations skip this: `convWsId` is
-      // the focused workspace, already membership-validated at the door.
-      if (existing) {
-        await this.assertOwnerIsWorkspaceMember(request.conversationId, convWsId, ownerId);
-      }
-      conversation = existing ?? (await store.create(createOpts));
-    } else {
-      conversation = await store.create(createOpts);
-    }
+    // Resume an existing conversation only if the caller owns it (the ownerId
+    // check is the ONLY barrier between users and each other's conversations —
+    // it runs in the load-bearing chat path, not just at a higher layer), and
+    // requires CURRENT membership of the conversation's workspace on resume.
+    const conversation = await this.loadOrCreateConversation(
+      request,
+      store,
+      createOpts,
+      ownerId,
+      convWsId,
+    );
 
-    // Preserve metadata on resumed conversations (don't overwrite)
-    if (request.metadata && !conversation.metadata) {
-      conversation.metadata = request.metadata;
-    }
-
-    // Build user message content: text + MCP `resource_link` blocks for
-    // attachments. Bytes for binary attachments live in the workspace
-    // FileStore (already persisted by `ingestFiles`); the conversation log
-    // carries only the URI. The runtime rehydrates image links to AI SDK
-    // `file` parts at the `model.doStream` boundary — see `rehydrateUserResources`.
-    type TextPart = { type: "text"; text: string };
-    type ResourceLinkPart = {
-      type: "resource_link";
-      uri: string;
-      mimeType: string;
-      name: string;
-    };
-    const userContent: Array<TextPart | ResourceLinkPart> = [];
-    if (request.message) {
-      userContent.push({ type: "text", text: request.message });
-    }
-    if (request.contentParts?.length) {
-      for (const part of request.contentParts) {
-        if (part.type === "text") {
-          userContent.push({ type: "text", text: part.text });
-        } else if (part.type === "resource_link") {
-          userContent.push({
-            type: "resource_link",
-            uri: part.uri,
-            mimeType: part.mimeType,
-            name: part.name,
-          });
-        }
-      }
-    }
-
-    // Ensure content is never empty — file-only uploads may have no text message
-    if (userContent.length === 0) {
-      const filenames = request.fileRefs?.map((f) => f.filename).join(", ") || "files";
-      userContent.push({ type: "text", text: `[Uploaded: ${filenames}]` });
-    }
-
-    await store.append(conversation, {
-      role: "user",
-      content: userContent,
-      timestamp: new Date().toISOString(),
-      ...(request.identity?.id ? { userId: request.identity.id } : {}),
-      ...(request.fileRefs?.length ? { metadata: { files: request.fileRefs } } : {}),
-    });
+    // Build the user message (text + `resource_link` attachment blocks) and
+    // append it to the conversation log.
+    const userContent = buildUserMessageContent(request);
+    await this.appendUserMessage(store, conversation, userContent, request);
 
     // Every workspace-scoped surface below — the skill pool, the briefing, the
     // tool set — keys off the conversation's own workspace (`convWsId`, resolved
@@ -1292,63 +1199,19 @@ export class Runtime {
     // house rules + identity tools only), and the personal workspace stays the
     // SILENT session bridge, never named. Deterministic + workspace-scoped
     // (same for every member of that workspace).
-    const apps = narratedWsId ? await this.buildAppsList(narratedWsId) : [];
-    // Org overlay always applies (org-level, not workspace-specific); the
-    // workspace overlay only for a real (non-personal) workspace.
-    const liveOverlays = narratedWsId
-      ? await this.readPromptOverlays(narratedWsId)
-      : { org: await this.getInstructionsStore().read({ scope: "org" }), workspace: "" };
+    const { apps, liveOverlays } = await this.buildWorkspaceBriefing(narratedWsId);
 
-    // Build focusedApp when the request is scoped to a specific app (§7 app-aware chat).
-    // The app is resolved in the SAME single workspace the session's tools are
-    // bound to (`convWsId` — see `toolsWsId` below), never a scan across the
-    // identity's other workspaces. The wall applies to the briefing too: it can
-    // only ever describe an app whose tools this session is actually allowed to call.
+    // Build focusedApp/appState/focusedNamespaced when the request is scoped to a
+    // specific app (§7 app-aware chat), resolved in the SAME single workspace the
+    // session's tools are bound to (`convWsId`).
     let focusedApp: FocusedAppInfo | undefined;
-    let focusedAppWsId: string | undefined;
-    if (request.appContext) {
-      const appWsId = convWsId;
-      const reg = this._workspaceRegistries.get(appWsId);
-      const source = reg?.getSources().find((s) => s.name === request.appContext?.serverName);
-      if (source) {
-        try {
-          const sourceTools = await source.tools();
-          const skillResource = await this.getAppSkillResource(request.appContext.serverName);
-          const referenceUri = `skill://${request.appContext.serverName}/reference`;
-          const hasReference = skillResource
-            ? source instanceof McpSource && (await this.hasResource(source, referenceUri))
-            : false;
-          const bundleInstance = this.lifecycle?.getInstance(
-            request.appContext.serverName,
-            appWsId,
-          );
-          focusedApp = {
-            name: request.appContext.appName,
-            tools: sourceTools.map((t) => ({
-              name: t.name,
-              description: t.description,
-            })),
-            ...(skillResource ? { skillResource } : {}),
-            ...(hasReference ? { referenceResourceUri: referenceUri } : {}),
-            trustScore: bundleInstance?.trustScore ?? 100,
-          };
-          focusedAppWsId = appWsId;
-        } catch {
-          // Source stopped or crashed — no app briefing this turn.
-        }
-      }
-    }
-
-    // Build appState for prompt injection (Synapse Feature 2 — LLM-aware UI state).
     let appState: AppStateInfo | undefined;
-    if (request.appContext?.appState && focusedApp && focusedAppWsId) {
-      const bundleRef = this.lifecycle?.getInstance(request.appContext.serverName, focusedAppWsId);
-      appState = {
-        state: request.appContext.appState.state,
-        summary: request.appContext.appState.summary,
-        updatedAt: request.appContext.appState.updatedAt,
-        trustScore: bundleRef?.trustScore ?? 100,
-      };
+    let focusedNamespaced: string | undefined;
+    if (request.appContext) {
+      ({ focusedApp, appState, focusedNamespaced } = await this.resolveFocusedApp(
+        request.appContext,
+        convWsId,
+      ));
     }
 
     // Tool surfacing. A session reaches exactly ONE workspace: the conversation's
@@ -1388,28 +1251,17 @@ export class Runtime {
           ...(t.annotations !== undefined ? { annotations: t.annotations } : {}),
         })),
     ];
-    // Post-aggregator the focused-app match key is the WORKSPACE-PREFIXED
-    // source name: tools land in the active list as
-    // `ws_<id>-<source>__<tool>`, and `surfaceTools.focusedServerName`
-    // matches with `t.name.startsWith(prefix + "__")`. Build via the
-    // namespace primitive (single legal construction site for
-    // `ws_<id>-<...>` per `check:tool-namespace`).
-    const focusedNamespaced =
-      request.appContext && focusedAppWsId
-        ? namespacedToolName(focusedAppWsId, request.appContext.serverName)
-        : undefined;
-    const { direct: tools, proxied } = surfaceTools(allTools, skill, {
-      ...(focusedNamespaced ? { focusedServerName: focusedNamespaced } : {}),
-      ...(request.allowedTools ? { requestAllowedTools: request.allowedTools } : {}),
-    });
+    // `focusedNamespaced` (the WORKSPACE-PREFIXED source name that
+    // `surfaceTools.focusedServerName` matches) is computed in `resolveFocusedApp`.
+    const { direct: tools, proxied } = surfaceTools(
+      allTools,
+      skill,
+      buildSurfaceOptions(focusedNamespaced, request.allowedTools),
+    );
 
     // Per-user preferences from the authenticated identity. We already
     // hard-error if no identity above, so reads here are unconditional.
-    const prefs = {
-      displayName: requestIdentity.displayName ?? "",
-      timezone: requestIdentity.preferences?.timezone ?? "",
-      locale: requestIdentity.preferences?.locale ?? "en-US",
-    };
+    const prefs = buildPromptPrefs(requestIdentity);
 
     // The prompt narrates the conversation's own workspace — the same one whose
     // apps + house rules the briefing above describes — so the prose, the app
@@ -1417,22 +1269,12 @@ export class Runtime {
     // workspace, so this always loads a real, named workspace.
     const activeWorkspace = narratedWsId ? await this._workspaceStore.get(narratedWsId) : undefined;
     // Personal/session workspace → undefined → compose omits the "## Workspace" block.
-    const workspaceContext = narratedWsId
-      ? activeWorkspace
-        ? { id: activeWorkspace.id, name: activeWorkspace.name }
-        : { id: narratedWsId }
-      : undefined;
+    const workspaceContext = buildWorkspaceContext(narratedWsId, activeWorkspace);
 
-    // Workspace identity/persona override — follows the conversation's workspace too.
-    const identityOverride = activeWorkspace?.identity
-      ? makeIdentitySkill(activeWorkspace.identity)
-      : null;
     // Always-on context channel: the `type: context` skills across every tier
-    // (core/builtin/org + workspace + user), not just the boot-time set.
-    const contextBase = poolContext;
-    const requestContextSkills = identityOverride
-      ? [...contextBase, identityOverride]
-      : contextBase;
+    // (core/builtin/org + workspace + user), plus the workspace identity/persona
+    // override when the conversation's workspace sets one.
+    const requestContextSkills = withIdentityOverride(poolContext, activeWorkspace?.identity);
 
     // Layer 3 selection — pick `always` and `dynamic` (tool-affinity) skills
     // based on the active tool set. The merged pool
@@ -1563,31 +1405,26 @@ export class Runtime {
       history,
       messageBudget.budget,
     );
-    const messages = await rehydrateUserResources(compactedHistory ?? history, fileStore, {
+    // The RAW (un-rehydrated) history the engine reasons about: the compacted
+    // form when compaction fired, else the full history. Rehydration inlines
+    // file bytes exactly once below; connector-injection detection reads this
+    // un-rehydrated form (rehydrate strips the synthetic marker's metadata).
+    const effectiveHistory = compactedHistory ?? history;
+    const messages = await rehydrateUserResources(effectiveHistory, fileStore, {
       model: resolvedModelString,
       maxExtractedTextSize: this.getFilesConfig().maxExtractedTextSize,
     });
 
-    // Per-request hooks: inherit `beforeToolCall` from the runtime-level
-    // hooks; compose `transformContext` here so the windowing budget is
-    // the one we just resolved for THIS call. The order (slice → apply
-    // provider replay policy → window by token budget) is preserved.
-    const maxHistoryMessages = this.config.maxHistoryMessages ?? DEFAULT_MAX_HISTORY_MESSAGES;
-    const replayProvider = getProviderFromModel(resolvedModelString);
+    // Per-request hooks: inherit `beforeToolCall` from the runtime-level hooks;
+    // compose `transformContext` here so the windowing budget is the one we just
+    // resolved for THIS call.
     const perRequestHooks: EngineHooks = {
       ...this.hooks,
-      transformContext: (historyMessages, opts) => {
-        // `overflowAttempt > 0` means the provider rejected the prior
-        // call for exceeding the model's context window. Halve the
-        // composed budget per attempt and re-window. The engine caps
-        // recovery at one attempt today so this scales at most by 1/2.
-        const attempt = opts?.overflowAttempt ?? 0;
-        const budget =
-          attempt > 0 ? Math.floor(messageBudget.budget / (1 << attempt)) : messageBudget.budget;
-        const sliced = sliceHistory(historyMessages, maxHistoryMessages);
-        const replayReady = applyReasoningReplayPolicy(sliced, replayProvider);
-        return windowMessages(replayReady, budget);
-      },
+      transformContext: buildTransformContext(
+        messageBudget.budget,
+        this.config.maxHistoryMessages,
+        getProviderFromModel(resolvedModelString),
+      ),
     };
 
     // Build pre-emit run telemetry tied to the engine's runId. The engine fires
@@ -1610,40 +1447,24 @@ export class Runtime {
     // message to carry it (keeps the content, forgoes the cache win).
     const engineSystem = resolveEngineSystem(messages, stableSystem, volatileHead);
 
-    const engineConfig: EngineConfig = {
+    const engineConfig = this.buildTurnEngineConfig({
       model: resolvedModelString,
-      maxIterations: request.maxIterations ?? this.config.maxIterations ?? DEFAULT_MAX_ITERATIONS,
-      // Surfaced on run.start telemetry. The actual budget enforcement
-      // happens inside `perRequestHooks.transformContext` above; this
-      // value is reported for observability so operators can see what
-      // the call was allotted vs. what it actually used.
+      requestMaxIterations: request.maxIterations,
       maxInputTokens: messageBudget.budget,
       maxOutputTokens: resolvedMaxOutputTokens,
-      ...(resolvedThinking ? { thinking: resolvedThinking } : {}),
-      maxToolResultSize: this.config.maxToolResultSize,
+      thinking: resolvedThinking,
       hooks: perRequestHooks,
-      runMetadata: {
-        skillsLoaded,
-        contextAssembled,
-      },
+      skillsLoaded,
+      contextAssembled,
       // Connector-skill overlays for the conversation's own workspace — surfaced
       // once into history by the engine on a matching connector tool call, never
       // into the system prefix. Same workspace scoping as the layer-3 pool.
       connectorSkillCandidates: this.loadConnectorSkillCandidates(convWsId),
-      // Computed from the UN-rehydrated history — rehydrate strips the synthetic
-      // marker's metadata, so the engine can't recover the already-injected set
-      // from the messages it receives. This is what makes surface-ONCE hold
+      // From the UN-rehydrated history — this is what makes surface-ONCE hold
       // across turns on the real chat path.
-      alreadyInjectedConnectorSkills: this.collectInjectedConnectorSkills(
-        compactedHistory ?? history,
-      ),
-      // Cancellation: thread the caller's signal into the engine. The
-      // engine checks it between iterations and forwards it down to every
-      // tool call. Without this, callers racing the chat against a
-      // deadline (notably the automations executor's `Promise.race`
-      // against `maxRunDurationMs`) silently orphan in-flight work.
-      ...(request.signal ? { signal: request.signal } : {}),
-    };
+      alreadyInjectedConnectorSkills: this.collectInjectedConnectorSkills(effectiveHistory),
+      signal: request.signal,
+    });
 
     // Conversations are workspace-owned: `store` (from `resolveChatStore`) is the
     // per-call workspace event store, and is both the active event sink for this
@@ -1701,12 +1522,10 @@ export class Runtime {
     // instead. T008 (credential rebinding) tightens this further.
     const reqCtx: RequestContext = {
       identity: requestIdentity,
-      scope: {
-        kind: "workspace",
-        workspaceId: sessionWsId,
-        workspaceAgents: sessionWorkspace?.agents ?? null,
-        workspaceModelOverride: sessionWorkspace?.models ?? null,
-      },
+      // The scope workspace is the session (personal) workspace — the same
+      // breadcrumb the conversation metadata records. Per-call scope comes from
+      // the routed namespace, not from `requireWorkspaceId()`.
+      scope: buildWorkspaceScope(sessionWsId, sessionWorkspace),
       conversationId: conversation.id,
       // Files created/read by identity-door `files__*` tools land in the
       // conversation's authoritative workspace — the same partition the
@@ -1715,21 +1534,9 @@ export class Runtime {
     };
     engineConfig.toolPromotion = this.buildToolPromotionFactory();
 
-    // Emit chat.start so the client knows the conversation ID immediately
-    // and conversation list UIs can refresh
-    if (requestSink) {
-      requestSink.emit({
-        type: "chat.start",
-        data: { conversationId: conversation.id },
-      });
-      // Notify conversation browser UIs that a new conversation exists
-      if (!request.conversationId) {
-        requestSink.emit({
-          type: "data.changed",
-          data: { server: "conversations", tool: "list" },
-        });
-      }
-    }
+    // Emit chat.start so the client knows the conversation ID immediately and
+    // conversation list UIs can refresh.
+    this.emitChatStart(requestSink, conversation.id, !request.conversationId);
 
     // Root span for the agent turn — the common chokepoint for both the HTTP
     // and CLI entry points. Opened inside runWithRequestContext so the verified
@@ -1751,75 +1558,11 @@ export class Runtime {
     // assistant turn) via emit() as they streamed, so there is no separate
     // assistant-message append here.
 
-    // Fire-and-forget title generation on first turn (use "fast" slot for cost
-    // savings). Decoupled from the turn lifecycle: when it resolves we persist
-    // the title and broadcast `conversation.title` on the global SSE.
-    //
-    // No `emitConversationsChanged()` here — the conversation-list iframe
-    // listens for `conversation.title` directly (forwarded via postMessage
-    // by the web shell) and patches the matching row in-place. Firing
-    // `data.changed` on title resolve used to trigger a full list refetch,
-    // which was wasteful and caused row flicker. The global channel (not
-    // the turn stream, which the client closes on `done`) means delivery
-    // is reliable after the turn ends and across tabs — routed to the
-    // right conversation by `conversationId`.
-    //
-    // Chaining `store.update(...).then(emit)` from the fulfillment handler
-    // and a single `.catch()` on the outer promise means any rejection (model
-    // timeout, ENOENT when the conversation was deleted between chat() returning
-    // and the title landing) surfaces in the catch instead of as an unhandled
-    // rejection that would fail the whole run.
-    if (conversation.title === null) {
-      const titleSlot = this.getModelSlot("fast");
-      const titleModel = this.resolveModelFn(titleSlot);
-      const titleInput =
-        request.message ||
-        `[Uploaded: ${request.fileRefs?.map((f) => f.filename).join(", ") || "files"}]`;
-      // The title call runs the `fast` slot outside the agentic loop; persist
-      // its usage as an aux.usage event so it isn't invisible to cost accounting.
-      const appendTitleUsage = store.appendEvent?.bind(store);
-      void generateTitle(titleModel, titleInput, result.output, (usage, llmMs) => {
-        recordLlmUsage("title", titleSlot, usage);
-        appendTitleUsage?.(conversation.id, {
-          ts: new Date().toISOString(),
-          type: "aux.usage",
-          source: "title",
-          model: titleSlot,
-          usage,
-          llmMs,
-        });
-      })
-        .then(async (title) => {
-          await store.update(conversation.id, { title });
-          // `wsId: sessionWsId` (the owner's personal workspace) — NOT
-          // `conversation.workspaceId`. The SSE layer (events.ts) scopes
-          // `scope: "workspace"` events to clients whose membership set
-          // contains this wsId. Conversations are owner-scoped, and the owner
-          // is always a member of their own personal workspace, so this
-          // reaches exactly the owner's tabs. Using the conversation's
-          // workspaceId would be WRONG here: when the chat was focused on a
-          // team workspace, that id fans the title out to every member of the
-          // team — none of whom can see this owner-scoped conversation, so it
-          // leaks the title string to their browsers for no benefit.
-          // (The iframe list patch is routed by `conversationId`, not wsId, so
-          // it's unaffected either way.) Stage 4 cross-user sharing must
-          // revisit this — route by the conversation's ACL, not the owner's
-          // personal ws — so an org-admin viewing another user's conversation
-          // receives the live title.
-          this.defaultEvents.emit({
-            type: "conversation.title",
-            data: { conversationId: conversation.id, title, wsId: sessionWsId },
-          });
-        })
-        .catch((err) => {
-          // Title generation is best-effort; a failed write must not crash
-          // the chat. Common causes: model latency timeout (generateTitle),
-          // or ENOENT on the conversation file (deleted concurrently).
-          log.error("[runtime] title generation failed", {
-            error: err instanceof Error ? err.message : String(err),
-          });
-        });
-    }
+    // Fire-and-forget title generation on the first turn (decoupled from the
+    // turn lifecycle; best-effort). Broadcasts `conversation.title` on the global
+    // SSE — routed to the right conversation by `conversationId` — so delivery is
+    // reliable after the turn ends and across tabs.
+    this.maybeGenerateTitle(conversation, request, store, result.output, sessionWsId);
 
     return {
       response: result.output,
@@ -1882,12 +1625,7 @@ export class Runtime {
     // file store, and the workspace-agents / model overrides lookup. Never
     // narrated by the task prompt; the prompt only mentions the focused
     // workspace if one is set.
-    const sessionWsId = personalWorkspaceIdFor(requestIdentity.id);
-    await ensureUserWorkspace(this._workspaceStore, {
-      id: requestIdentity.id,
-      ...(requestIdentity.displayName ? { displayName: requestIdentity.displayName } : {}),
-    });
-    await this.ensureWorkspaceRegistry(sessionWsId);
+    const sessionWsId = await this.prepareSessionWorkspace(requestIdentity);
     // A task is a one-shot run, not a conversation: it produces a deliverable
     // (the caller — the automations bundle — persists the run result), so
     // nothing is written to a conversation store and there is no resume path.
@@ -1901,17 +1639,18 @@ export class Runtime {
     // as chat: gated on `focusedWsId`. When absent the briefing layers are
     // empty and `TASK_IDENTITY` is the dominant framing.
     const focusedWsId = request.workspaceId;
-    const apps = focusedWsId ? await this.buildAppsList(focusedWsId) : [];
-    const liveOverlays = focusedWsId
-      ? await this.readPromptOverlays(focusedWsId)
-      : { org: await this.getInstructionsStore().read({ scope: "org" }), workspace: "" };
+    const { apps, liveOverlays } = await this.buildWorkspaceBriefing(focusedWsId);
+
+    // The task's single working workspace: the focused workspace, or the personal
+    // (session) workspace when unfocused. Tool scope, skill/bundle scope,
+    // connector overlays, and file provenance all key off this one id.
+    const workWsId = focusedWsId ?? sessionWsId;
 
     // Tool surfacing. The task is walled to one workspace: active set = the
     // focused workspace's tools (or the session/personal workspace if no focus)
     // + identity tools. `nb__search`'s corpus is that same workspace — no
     // cross-workspace reach.
-    const toolsWsId = focusedWsId ?? sessionWsId;
-    const toolsRegistry = await this.ensureWorkspaceRegistry(toolsWsId);
+    const toolsRegistry = await this.ensureWorkspaceRegistry(workWsId);
     const [focusedTools, identityTools] = await Promise.all([
       toolsRegistry.availableTools(),
       this.listIdentitySourceTools(),
@@ -1920,7 +1659,7 @@ export class Runtime {
       ...focusedTools
         .filter((t) => isToolVisibleToRole(t.name, requestIdentity.orgRole))
         .map((t) => ({
-          name: namespacedToolName(toolsWsId, t.name),
+          name: namespacedToolName(workWsId, t.name),
           description: t.description,
           inputSchema: t.inputSchema,
           ...(t.annotations !== undefined ? { annotations: t.annotations } : {}),
@@ -1934,30 +1673,20 @@ export class Runtime {
           ...(t.annotations !== undefined ? { annotations: t.annotations } : {}),
         })),
     ];
-    const { direct: tools, proxied } = surfaceTools(allTools, null, {
-      ...(request.allowedTools ? { requestAllowedTools: request.allowedTools } : {}),
-    });
+    const { direct: tools, proxied } = surfaceTools(
+      allTools,
+      null,
+      buildSurfaceOptions(undefined, request.allowedTools),
+    );
 
-    const prefs = {
-      displayName: requestIdentity.displayName ?? "",
-      timezone: requestIdentity.preferences?.timezone ?? "",
-      locale: requestIdentity.preferences?.locale ?? "en-US",
-    };
+    const prefs = buildPromptPrefs(requestIdentity);
 
-    const activeWorkspace = focusedWsId
-      ? focusedWsId === sessionWsId
-        ? sessionWorkspace
-        : await this._workspaceStore.get(focusedWsId)
-      : undefined;
-    const workspaceContext = focusedWsId
-      ? activeWorkspace
-        ? { id: activeWorkspace.id, name: activeWorkspace.name }
-        : { id: focusedWsId }
-      : undefined;
-
-    const identityOverride = activeWorkspace?.identity
-      ? makeIdentitySkill(activeWorkspace.identity)
-      : null;
+    const activeWorkspace = await this.resolveTaskActiveWorkspace(
+      focusedWsId,
+      sessionWsId,
+      sessionWorkspace,
+    );
+    const workspaceContext = buildWorkspaceContext(focusedWsId, activeWorkspace);
 
     // Layer 3 selection — bundle workflow guidance still applies based on
     // the active tool set. No `appContextServerName` (tasks don't have
@@ -1965,23 +1694,21 @@ export class Runtime {
     //
     // Workspace-tier skills follow the FOCUSED workspace, falling back
     // to the session (personal) workspace only when the task has no
-    // focus. This mirrors `_chatInner` (line ~1259, fixed in PR #315);
-    // tasks scheduled against a shared workspace were silently dropping
-    // every `loading_strategy: always` skill in that workspace before
-    // this parity fix.
+    // focus. This mirrors `_chatInner`; tasks scheduled against a shared
+    // workspace were silently dropping every `loading_strategy: always` skill
+    // in that workspace before this parity fix.
     const userId = requestIdentity.id;
     // Partition by role (same as `_chatInner`): context → Layer 0/1; capability
     // → conditional Layer 3. Disjoint by `type`, so no skill injects twice.
-    const conversationPool = this.loadConversationSkills(focusedWsId ?? sessionWsId, userId);
+    const conversationPool = this.loadConversationSkills(workWsId, userId);
     const { context: poolContext, capability: poolCapability } =
       partitionSkillsByRole(conversationPool);
-    const contextBase = poolContext;
-    const requestContextSkills = identityOverride
-      ? [...contextBase, identityOverride]
-      : contextBase;
+    // Always-on context channel plus the workspace identity/persona override when
+    // the focused workspace sets one.
+    const requestContextSkills = withIdentityOverride(poolContext, activeWorkspace?.identity);
     // Bundle skills come from the FOCUSED workspace only (the wall) — never
     // across the owner's other workspaces.
-    const bundleSkills = await this.loadBundleSkills(focusedWsId ?? sessionWsId, {});
+    const bundleSkills = await this.loadBundleSkills(workWsId, {});
     const mergedLayer3Pool: Skill[] = [...poolCapability, ...bundleSkills];
     const activeToolNames = tools.map((t) => t.name);
     const selectedLayer3 = selectLayer3Skills({
@@ -2014,19 +1741,14 @@ export class Runtime {
     const systemPrompt = foldVolatileHead(stableSystem, volatileHead);
 
     // Model resolution — mirrors chat (alias slot + qualification).
-    let resolvedModelString = request.model ?? this.getDefaultModel();
-    const aliasSlot = parseAliasRef(resolvedModelString);
-    if (aliasSlot) {
-      resolvedModelString = this.getModelSlot(aliasSlot);
-    }
-    resolvedModelString = resolveModelString(resolvedModelString);
+    const resolvedModelString = this.resolveRequestModelString(request.model);
 
     // The task's single input message — no conversation, no history, no resume.
     // Rehydration below is a pass-through for shape consistency with the engine's
     // message contract (it only does work if the prompt carries file refs). The
-    // file store is anchored to the run's provenance workspace (the request
-    // workspace, or the owner's personal workspace when unfocused).
-    const fileStore = this.getWorkspaceFileStore(request.workspaceId ?? sessionWsId, ownerId);
+    // file store is anchored to the run's provenance workspace (`workWsId` — the
+    // request workspace, or the owner's personal workspace when unfocused).
+    const fileStore = this.getWorkspaceFileStore(workWsId, ownerId);
     const taskMessages: StoredMessage[] = [
       {
         role: "user",
@@ -2068,18 +1790,13 @@ export class Runtime {
       maxExtractedTextSize: this.getFilesConfig().maxExtractedTextSize,
     });
 
-    const maxHistoryMessages = this.config.maxHistoryMessages ?? DEFAULT_MAX_HISTORY_MESSAGES;
-    const replayProvider = getProviderFromModel(resolvedModelString);
     const perRequestHooks: EngineHooks = {
       ...this.hooks,
-      transformContext: (historyMessages, opts) => {
-        const attempt = opts?.overflowAttempt ?? 0;
-        const budget =
-          attempt > 0 ? Math.floor(messageBudget.budget / (1 << attempt)) : messageBudget.budget;
-        const sliced = sliceHistory(historyMessages, maxHistoryMessages);
-        const replayReady = applyReasoningReplayPolicy(sliced, replayProvider);
-        return windowMessages(replayReady, budget);
-      },
+      transformContext: buildTransformContext(
+        messageBudget.budget,
+        this.config.maxHistoryMessages,
+        getProviderFromModel(resolvedModelString),
+      ),
     };
 
     const skillsLoaded = buildSkillsLoadedPayload(selectedLayer3);
@@ -2098,23 +1815,23 @@ export class Runtime {
     // message to carry it (keeps the content, forgoes the cache win).
     const engineSystem = resolveEngineSystem(messages, stableSystem, volatileHead);
 
-    const engineConfig: EngineConfig = {
+    const engineConfig = this.buildTurnEngineConfig({
       model: resolvedModelString,
-      maxIterations: request.maxIterations ?? this.config.maxIterations ?? DEFAULT_MAX_ITERATIONS,
+      requestMaxIterations: request.maxIterations,
       maxInputTokens: messageBudget.budget,
       maxOutputTokens: resolvedMaxOutputTokens,
-      ...(resolvedThinking ? { thinking: resolvedThinking } : {}),
-      maxToolResultSize: this.config.maxToolResultSize,
+      thinking: resolvedThinking,
       hooks: perRequestHooks,
-      runMetadata: { skillsLoaded, contextAssembled },
+      skillsLoaded,
+      contextAssembled,
       // Connector-skill overlays — same focused-workspace scoping as the
       // layer-3 pool; surfaced once into history, never the system prefix.
-      connectorSkillCandidates: this.loadConnectorSkillCandidates(focusedWsId ?? sessionWsId),
+      connectorSkillCandidates: this.loadConnectorSkillCandidates(workWsId),
       // A fresh task has a single user message and no prior history, so no
       // connector skill has been injected yet — the set is empty.
       alreadyInjectedConnectorSkills: this.collectInjectedConnectorSkills(taskMessages),
-      ...(request.signal ? { signal: request.signal } : {}),
-    };
+      signal: request.signal,
+    });
 
     // No conversation store: a task run isn't persisted as a chat. The sinks are
     // the optional per-request sink, the default telemetry events, and the usage
@@ -2172,26 +1889,23 @@ export class Runtime {
     const engineSink = new MultiEventSink(wrappedSinks);
     const identityToolRouter = this._buildIdentityToolRouter({
       identityId: ownerId,
-      workspaceId: toolsWsId,
+      workspaceId: workWsId,
       perCallWorkspaceMap,
     });
     const engine = new AgentEngine(resolvedModel, identityToolRouter, engineSink);
 
     const reqCtx: RequestContext = {
       identity: requestIdentity,
-      scope: {
-        kind: "workspace",
-        workspaceId: sessionWsId,
-        workspaceAgents: sessionWorkspace?.agents ?? null,
-        workspaceModelOverride: sessionWorkspace?.models ?? null,
-      },
+      // The scope workspace is the session (personal) workspace, carrying its
+      // agents + model overrides.
+      scope: buildWorkspaceScope(sessionWsId, sessionWorkspace),
       // The run's correlation id (no conversation exists) — stamps audit/file
       // records so a file the run creates is traceable back to it.
       conversationId: runId,
       // Files created/read by identity-door `files__*` tools land in the run's
-      // provenance workspace — the same partition the rehydration read uses, not
-      // the personal `sessionWsId` scope.
-      fileWorkspaceId: request.workspaceId ?? sessionWsId,
+      // provenance workspace (`workWsId`) — the same partition the rehydration
+      // read uses, not the personal `sessionWsId` scope.
+      fileWorkspaceId: workWsId,
     };
     engineConfig.toolPromotion = this.buildToolPromotionFactory();
 
@@ -2245,6 +1959,309 @@ export class Runtime {
     };
   }
 
+  // ── chat / task turn helpers (shared setup) ──────────────────────
+
+  /**
+   * Ensure the identity's personal (session) workspace exists and has a
+   * registry, returning its id. Idempotent belt-and-suspenders for embedded /
+   * dev / CLI callers that never went through HTTP auth.
+   */
+  private async prepareSessionWorkspace(identity: UserIdentity): Promise<string> {
+    const sessionWsId = personalWorkspaceIdFor(identity.id);
+    await ensureUserWorkspace(this._workspaceStore, {
+      id: identity.id,
+      ...(identity.displayName ? { displayName: identity.displayName } : {}),
+    });
+    await this.ensureWorkspaceRegistry(sessionWsId);
+    return sessionWsId;
+  }
+
+  /**
+   * Resolve the request model string: apply an `alias:` slot indirection, then
+   * qualify the bare id. Qualification at the request-entry boundary lets the
+   * rest of the pipeline (cost aggregation, capability checks, resolvers, log
+   * lines) read `engineConfig.model` and depend on it being qualified.
+   */
+  private resolveRequestModelString(requestModel: string | undefined): string {
+    let modelString = requestModel ?? this.getDefaultModel();
+    const aliasSlot = parseAliasRef(modelString);
+    if (aliasSlot) {
+      modelString = this.getModelSlot(aliasSlot);
+    }
+    return resolveModelString(modelString);
+  }
+
+  /**
+   * The workspace briefing surfaces (apps + org/workspace overlays) for a turn.
+   * `wsId` is the conversation's own (chat) or focused (task) workspace;
+   * `undefined` (personal/session) yields empty apps and org-only overlays.
+   */
+  private async buildWorkspaceBriefing(wsId: string | undefined): Promise<{
+    apps: PromptAppInfo[];
+    liveOverlays: { org: string; workspace: string };
+  }> {
+    const apps = wsId ? await this.buildAppsList(wsId) : [];
+    // Org overlay always applies (org-level, not workspace-specific); the
+    // workspace overlay only for a real (non-personal) workspace.
+    const liveOverlays = wsId
+      ? await this.readPromptOverlays(wsId)
+      : { org: await this.getInstructionsStore().read({ scope: "org" }), workspace: "" };
+    return { apps, liveOverlays };
+  }
+
+  /**
+   * Resolve (owning) or create the conversation for a chat turn.
+   *
+   * Enforces the ownerId privacy gate and the resume workspace-membership gate
+   * in the same order as the inline path, and preserves request metadata onto a
+   * resumed conversation. The disambiguation between "doesn't exist" (→ create)
+   * and "exists but isn't yours" (→ throw) matters: silently creating a new
+   * conversation for a foreign id would mask a takeover attempt as a normal flow.
+   */
+  private async loadOrCreateConversation(
+    request: ChatRequest,
+    store: EventSourcedConversationStore,
+    createOpts: CreateConversationOptions,
+    ownerId: string,
+    convWsId: string,
+  ): Promise<Conversation> {
+    let conversation: Conversation;
+    if (request.conversationId) {
+      const existing = await store.load(request.conversationId);
+      if (existing && existing.ownerId !== ownerId) {
+        throw new ConversationAccessDeniedError(request.conversationId, ownerId);
+      }
+      // Resume requires CURRENT membership of the conversation's workspace — not
+      // just ownership. Resuming binds tools/skills/apps to `convWsId`, so a
+      // member offboarded from that workspace must not be able to continue acting
+      // in it (reads stay owner-gated). New conversations skip this: `convWsId` is
+      // the focused workspace, already membership-validated at the door.
+      if (existing) {
+        await this.assertOwnerIsWorkspaceMember(request.conversationId, convWsId, ownerId);
+      }
+      conversation = existing ?? (await store.create(createOpts));
+    } else {
+      conversation = await store.create(createOpts);
+    }
+
+    // Preserve metadata on resumed conversations (don't overwrite).
+    if (request.metadata && !conversation.metadata) {
+      conversation.metadata = request.metadata;
+    }
+    return conversation;
+  }
+
+  /**
+   * Resolve the focused-app briefing (§7 app-aware chat) for a request scoped to
+   * a specific app: the app descriptor, its bound workspace, the LLM-aware app
+   * state (Synapse Feature 2), and the workspace-prefixed source name used to
+   * match surfaced tools. Returns empties when the app's source isn't running
+   * (or crashed mid-turn) — the wall applies to the briefing too: it can only
+   * ever describe an app whose tools this session is allowed to call.
+   */
+  private async resolveFocusedApp(
+    appContext: NonNullable<ChatRequest["appContext"]>,
+    convWsId: string,
+  ): Promise<{
+    focusedApp?: FocusedAppInfo;
+    focusedAppWsId?: string;
+    appState?: AppStateInfo;
+    focusedNamespaced?: string;
+  }> {
+    // The app is resolved in the SAME single workspace the session's tools are
+    // bound to (`convWsId`), never a scan across the identity's other workspaces.
+    const appWsId = convWsId;
+    const reg = this._workspaceRegistries.get(appWsId);
+    const source = reg?.getSources().find((s) => s.name === appContext.serverName);
+    if (!source) return {};
+
+    let focusedApp: FocusedAppInfo;
+    try {
+      const sourceTools = await source.tools();
+      const skillResource = await this.getAppSkillResource(appContext.serverName);
+      const referenceUri = `skill://${appContext.serverName}/reference`;
+      const hasReference = skillResource
+        ? source instanceof McpSource && (await this.hasResource(source, referenceUri))
+        : false;
+      const bundleInstance = this.lifecycle?.getInstance(appContext.serverName, appWsId);
+      focusedApp = {
+        name: appContext.appName,
+        tools: sourceTools.map((t) => ({
+          name: t.name,
+          description: t.description,
+        })),
+        ...(skillResource ? { skillResource } : {}),
+        ...(hasReference ? { referenceResourceUri: referenceUri } : {}),
+        trustScore: bundleInstance?.trustScore ?? 100,
+      };
+    } catch {
+      // Source stopped or crashed — no app briefing this turn.
+      return {};
+    }
+
+    // appState (LLM-aware UI state) only when the request carries it; the app
+    // has already resolved past the guards above.
+    const appState: AppStateInfo | undefined = appContext.appState
+      ? {
+          state: appContext.appState.state,
+          summary: appContext.appState.summary,
+          updatedAt: appContext.appState.updatedAt,
+          trustScore:
+            this.lifecycle?.getInstance(appContext.serverName, appWsId)?.trustScore ?? 100,
+        }
+      : undefined;
+
+    // The focused-app match key is the WORKSPACE-PREFIXED source name: tools land
+    // in the active list as `ws_<id>-<source>__<tool>`, and
+    // `surfaceTools.focusedServerName` matches with `t.name.startsWith(prefix + "__")`.
+    // Build via the namespace primitive (single legal construction site for
+    // `ws_<id>-<...>` per `check:tool-namespace`).
+    const focusedNamespaced = namespacedToolName(appWsId, appContext.serverName);
+
+    return { focusedApp, focusedAppWsId: appWsId, appState, focusedNamespaced };
+  }
+
+  /** Append the turn's user message (content + optional userId + file metadata) to the store. */
+  private async appendUserMessage(
+    store: EventSourcedConversationStore,
+    conversation: Conversation,
+    content: Array<UserTextPart | UserResourceLinkPart>,
+    request: ChatRequest,
+  ): Promise<void> {
+    await store.append(conversation, {
+      role: "user",
+      content,
+      timestamp: new Date().toISOString(),
+      ...(request.identity?.id ? { userId: request.identity.id } : {}),
+      ...(request.fileRefs?.length ? { metadata: { files: request.fileRefs } } : {}),
+    });
+  }
+
+  /**
+   * Emit the initial `chat.start` (so the client knows the conversation id
+   * immediately) and, for a new conversation, a conversations-list `data.changed`
+   * — both on the per-request sink only.
+   */
+  private emitChatStart(
+    requestSink: EventSink | undefined,
+    conversationId: string,
+    isNewConversation: boolean,
+  ): void {
+    if (!requestSink) return;
+    requestSink.emit({ type: "chat.start", data: { conversationId } });
+    // Notify conversation browser UIs that a new conversation exists.
+    if (isNewConversation) {
+      requestSink.emit({ type: "data.changed", data: { server: "conversations", tool: "list" } });
+    }
+  }
+
+  /**
+   * Fire-and-forget first-turn title generation (on the `fast` slot). Persists
+   * the title + its aux usage and broadcasts `conversation.title` on the global
+   * SSE. Best-effort — a failure only logs.
+   *
+   * `wsId: sessionWsId` (the owner's personal workspace) — NOT
+   * `conversation.workspaceId`: the SSE layer scopes `scope: "workspace"` events
+   * to clients whose membership set contains this wsId. Conversations are
+   * owner-scoped and the owner is always a member of their own personal
+   * workspace, so this reaches exactly the owner's tabs. (The iframe list patch
+   * routes by `conversationId`, unaffected either way.)
+   */
+  private maybeGenerateTitle(
+    conversation: Conversation,
+    request: ChatRequest,
+    store: EventSourcedConversationStore,
+    output: string,
+    sessionWsId: string,
+  ): void {
+    if (conversation.title !== null) return;
+    const titleSlot = this.getModelSlot("fast");
+    const titleModel = this.resolveModelFn(titleSlot);
+    const titleInput =
+      request.message ||
+      `[Uploaded: ${request.fileRefs?.map((f) => f.filename).join(", ") || "files"}]`;
+    // The title call runs the `fast` slot outside the agentic loop; persist its
+    // usage as an aux.usage event so it isn't invisible to cost accounting.
+    const appendTitleUsage = store.appendEvent?.bind(store);
+    void generateTitle(titleModel, titleInput, output, (usage, llmMs) => {
+      recordLlmUsage("title", titleSlot, usage);
+      appendTitleUsage?.(conversation.id, {
+        ts: new Date().toISOString(),
+        type: "aux.usage",
+        source: "title",
+        model: titleSlot,
+        usage,
+        llmMs,
+      });
+    })
+      .then(async (title) => {
+        await store.update(conversation.id, { title });
+        this.defaultEvents.emit({
+          type: "conversation.title",
+          data: { conversationId: conversation.id, title, wsId: sessionWsId },
+        });
+      })
+      .catch((err) => {
+        // Title generation is best-effort; a failed write must not crash the chat
+        // (model latency timeout, or ENOENT if the conversation was deleted).
+        log.error("[runtime] title generation failed", {
+          error: err instanceof Error ? err.message : String(err),
+        });
+      });
+  }
+
+  /** Assemble the per-turn `EngineConfig` (present-only `thinking` / `signal`; `toolPromotion` is set by the caller). */
+  private buildTurnEngineConfig(opts: {
+    model: string;
+    requestMaxIterations: number | undefined;
+    maxInputTokens: number;
+    maxOutputTokens: number;
+    thinking: EngineConfig["thinking"];
+    hooks: EngineHooks;
+    skillsLoaded: SkillsLoadedPayload;
+    contextAssembled: ContextAssembledPayload;
+    connectorSkillCandidates: EngineConfig["connectorSkillCandidates"];
+    alreadyInjectedConnectorSkills: EngineConfig["alreadyInjectedConnectorSkills"];
+    signal: AbortSignal | undefined;
+  }): EngineConfig {
+    return {
+      model: opts.model,
+      maxIterations:
+        opts.requestMaxIterations ?? this.config.maxIterations ?? DEFAULT_MAX_ITERATIONS,
+      // Surfaced on run.start telemetry; the actual budget enforcement happens
+      // inside `hooks.transformContext`.
+      maxInputTokens: opts.maxInputTokens,
+      maxOutputTokens: opts.maxOutputTokens,
+      ...(opts.thinking ? { thinking: opts.thinking } : {}),
+      maxToolResultSize: this.config.maxToolResultSize,
+      hooks: opts.hooks,
+      runMetadata: {
+        skillsLoaded: opts.skillsLoaded,
+        contextAssembled: opts.contextAssembled,
+      },
+      connectorSkillCandidates: opts.connectorSkillCandidates,
+      alreadyInjectedConnectorSkills: opts.alreadyInjectedConnectorSkills,
+      // Cancellation: thread the caller's signal into the engine, which checks it
+      // between iterations and forwards it down to every tool call.
+      ...(opts.signal ? { signal: opts.signal } : {}),
+    };
+  }
+
+  /**
+   * The focused workspace record for a task run: the already-loaded session
+   * workspace when the task is focused on it, a fresh load for any other focused
+   * workspace, or `null` for an unfocused task.
+   */
+  private async resolveTaskActiveWorkspace(
+    focusedWsId: string | undefined,
+    sessionWsId: string,
+    sessionWorkspace: Workspace | null,
+  ): Promise<Workspace | null> {
+    if (!focusedWsId) return null;
+    if (focusedWsId === sessionWsId) return sessionWorkspace;
+    return this._workspaceStore.get(focusedWsId);
+  }
+
   // ── Stage 2 (T006) — identity-bound chat helpers ─────────────────
 
   /**
@@ -2292,23 +2309,20 @@ export class Runtime {
   ): EventSink {
     return {
       emit: (event) => {
-        if (event.type === "tool.progress" || event.type === "tool.done") {
-          const id = typeof event.data.id === "string" ? event.data.id : undefined;
-          if (id) {
-            const wsId = perCallWorkspaceMap.get(id);
-            if (wsId !== undefined) {
-              const augmented = { ...event.data, workspaceId: wsId };
-              if (event.type === "tool.done") {
-                // Done is terminal — drop the entry now to keep the map
-                // bounded across long-running conversations.
-                perCallWorkspaceMap.delete(id);
-              }
-              inner.emit({ type: event.type, data: augmented });
-              return;
-            }
-          }
+        const id =
+          (event.type === "tool.progress" || event.type === "tool.done") &&
+          typeof event.data.id === "string"
+            ? event.data.id
+            : undefined;
+        const wsId = id ? perCallWorkspaceMap.get(id) : undefined;
+        if (!id || wsId === undefined) {
+          inner.emit(event);
+          return;
         }
-        inner.emit(event);
+        // Done is terminal — drop the entry now to keep the map bounded
+        // across long-running conversations.
+        if (event.type === "tool.done") perCallWorkspaceMap.delete(id);
+        inner.emit({ type: event.type, data: { ...event.data, workspaceId: wsId } });
       },
     };
   }
@@ -2603,71 +2617,89 @@ export class Runtime {
 
     const apps: PromptAppInfo[] = [];
     for (const instance of instances) {
-      const trustScore = instance.trustScore ?? 0;
-      let ui: PromptAppInfo["ui"] = null;
-      if (instance.ui) {
-        ui = { name: instance.ui.name };
-      }
-
-      // Surface the MCP server's `initialize.instructions` (when set) so the
-      // LLM sees per-bundle guidance — typically a pointer to `skill://`
-      // resources that explain correct tool usage. Without this hint the
-      // agent cannot discover that such resources exist.
-      let instructions: string | undefined;
-      let customInstructions: string | undefined;
-      const source = registry?.getSource(instance.serverName);
-      if (source instanceof McpSource) {
-        instructions = source.getInstructions();
-        // Reserved platform convention: `app://instructions`. A bundle that
-        // supports user-set custom instructions publishes its current overlay
-        // body at this URI; the platform reads it on every assembly and
-        // renders it inside `<app-custom-instructions>` containment in
-        // `formatAppsSection`.
-        //
-        // Why `app://` over `<serverName>://instructions`: the serverName is
-        // platform-derived (e.g. `@nimblebraininc/synapse-collateral` →
-        // `synapse-collateral`), not something a bundle author intuitively
-        // knows. A fixed scheme means bundle authors just remember
-        // `app://instructions` and the platform's name-derivation rules are
-        // not part of the contract.
-        //
-        // Resource-not-found returns `null` from `readResource` (the SDK's
-        // normal not-found path); we treat any read error or empty body as
-        // "bundle does not support / has none". Plain MCP servers (no
-        // opt-in) end up here.
-        try {
-          const data = await source.readResource("app://instructions");
-          const body = data?.text;
-          const trimmedLen = typeof body === "string" ? body.trim().length : 0;
-          // Visible under NB_DEBUG=mcp — confirms the platform fetched
-          // app://instructions per active bundle and shows the resulting
-          // body length. "len=0" + "set=false" for bundles that don't
-          // publish; "set=true" + len=N for bundles that do.
-          log.debug(
-            "mcp",
-            `app-instructions source=${instance.serverName} fetched=${data !== null} len=${trimmedLen} set=${trimmedLen > 0}`,
-          );
-          if (typeof body === "string" && body.trim().length > 0) {
-            customInstructions = body;
-          }
-        } catch (err) {
-          log.debug(
-            "mcp",
-            `app-instructions source=${instance.serverName} error=${err instanceof Error ? err.message : String(err)}`,
-          );
-        }
-      }
-
-      apps.push({
-        name: instance.serverName,
-        description: instance.description,
-        instructions,
-        ...(customInstructions !== undefined ? { customInstructions } : {}),
-        trustScore,
-        ui,
-      });
+      apps.push(await this.buildAppInfo(instance, registry));
     }
     return apps;
+  }
+
+  /**
+   * Assemble one app's system-prompt entry: trust score, UI descriptor, the MCP
+   * server's `initialize.instructions`, and the optional `app://instructions`
+   * custom-instructions overlay.
+   */
+  private async buildAppInfo(
+    instance: BundleInstance,
+    registry: ToolRegistry | undefined,
+  ): Promise<PromptAppInfo> {
+    const trustScore = instance.trustScore ?? 0;
+    const ui: PromptAppInfo["ui"] = instance.ui ? { name: instance.ui.name } : null;
+
+    // Surface the MCP server's `initialize.instructions` (when set) so the
+    // LLM sees per-bundle guidance — typically a pointer to `skill://`
+    // resources that explain correct tool usage. Without this hint the
+    // agent cannot discover that such resources exist.
+    let instructions: string | undefined;
+    let customInstructions: string | undefined;
+    const source = registry?.getSource(instance.serverName);
+    if (source instanceof McpSource) {
+      instructions = source.getInstructions();
+      customInstructions = await this.readAppCustomInstructions(source, instance.serverName);
+    }
+
+    return {
+      name: instance.serverName,
+      description: instance.description,
+      instructions,
+      ...(customInstructions !== undefined ? { customInstructions } : {}),
+      trustScore,
+      ui,
+    };
+  }
+
+  /**
+   * Read a bundle's `app://instructions` custom-instructions overlay. Returns
+   * the trimmed non-empty body, or `undefined` when the bundle doesn't publish
+   * the resource (or the read errors) — the normal not-supported case.
+   */
+  private async readAppCustomInstructions(
+    source: McpSource,
+    serverName: string,
+  ): Promise<string | undefined> {
+    // Reserved platform convention: `app://instructions`. A bundle that
+    // supports user-set custom instructions publishes its current overlay
+    // body at this URI; the platform reads it on every assembly and renders
+    // it inside `<app-custom-instructions>` containment in `formatAppsSection`.
+    //
+    // Why `app://` over `<serverName>://instructions`: the serverName is
+    // platform-derived (e.g. `@nimblebraininc/synapse-collateral` →
+    // `synapse-collateral`), not something a bundle author intuitively knows.
+    // A fixed scheme means bundle authors just remember `app://instructions`
+    // and the platform's name-derivation rules are not part of the contract.
+    //
+    // Resource-not-found returns `null` from `readResource` (the SDK's normal
+    // not-found path); we treat any read error or empty body as "bundle does
+    // not support / has none". Plain MCP servers (no opt-in) end up here.
+    try {
+      const data = await source.readResource("app://instructions");
+      const body = data?.text;
+      const trimmedLen = typeof body === "string" ? body.trim().length : 0;
+      // Visible under NB_DEBUG=mcp — confirms the platform fetched
+      // app://instructions per active bundle and shows the resulting body
+      // length. "len=0" + "set=false" for bundles that don't publish;
+      // "set=true" + len=N for bundles that do.
+      log.debug(
+        "mcp",
+        `app-instructions source=${serverName} fetched=${data !== null} len=${trimmedLen} set=${trimmedLen > 0}`,
+      );
+      if (typeof body === "string" && body.trim().length > 0) return body;
+      return undefined;
+    } catch (err) {
+      log.debug(
+        "mcp",
+        `app-instructions source=${serverName} error=${err instanceof Error ? err.message : String(err)}`,
+      );
+      return undefined;
+    }
   }
 
   /** Get the default event sink. */
@@ -3480,9 +3512,7 @@ export class Runtime {
     preferences?: Record<string, string>;
   }) {
     if (patch.models) {
-      if (!this.config.models) {
-        this.config.models = this.getModelSlots(); // init from current
-      }
+      this.config.models ??= this.getModelSlots(); // init from current
       Object.assign(this.config.models, patch.models);
     }
     if (patch.defaultModel !== undefined) {
@@ -3497,19 +3527,14 @@ export class Runtime {
     if (patch.maxOutputTokens !== undefined) this.config.maxOutputTokens = patch.maxOutputTokens;
     if (patch.maxToolResultSize !== undefined)
       this.config.maxToolResultSize = patch.maxToolResultSize;
+    // For `thinking` / `thinkingBudgetTokens`, `null` is the explicit
+    // "clear my override" sentinel — distinct from `undefined` (leave alone).
     if (patch.thinking !== undefined) {
-      if (patch.thinking === null) {
-        this.config.thinking = undefined;
-      } else {
-        this.config.thinking = patch.thinking;
-      }
+      this.config.thinking = patch.thinking === null ? undefined : patch.thinking;
     }
     if (patch.thinkingBudgetTokens !== undefined) {
-      if (patch.thinkingBudgetTokens === null) {
-        this.config.thinkingBudgetTokens = undefined;
-      } else {
-        this.config.thinkingBudgetTokens = patch.thinkingBudgetTokens;
-      }
+      this.config.thinkingBudgetTokens =
+        patch.thinkingBudgetTokens === null ? undefined : patch.thinkingBudgetTokens;
     }
   }
 
@@ -4035,6 +4060,57 @@ function readSourcePlacements(src: ToolSource): PlacementDeclaration[] {
   return Array.isArray(out) ? (out as PlacementDeclaration[]) : [];
 }
 
+/**
+ * Register placements declared by platform sources. The helper isolates the
+ * duck-type — `getPlacements()` is on `McpSource` (carrying the declarations
+ * from `defineInProcessApp`) but isn't on the `ToolSource` interface itself.
+ */
+function registerPlatformPlacements(
+  placementRegistry: PlacementRegistry,
+  platformSources: ToolSource[],
+): void {
+  for (const src of platformSources) {
+    const placements = readSourcePlacements(src);
+    if (placements.length > 0) {
+      placementRegistry.register(src.name, placements);
+    }
+  }
+}
+
+/**
+ * Seed lifecycle instances for boot-started workspace bundles, then re-register
+ * any placements they carry.
+ *
+ * Operators are expected to have run `bun run migrate:user-creds` before
+ * deploying Stage 2 (see the Stage 2 deploy runbook). The runtime no longer
+ * migrates or normalizes legacy `oauthScope: "user"` records at boot; a legacy
+ * ref reaches `seedInstance` only via `buildProcessInventory` and throws
+ * `LegacyOAuthScopeError` there.
+ */
+function seedWorkspaceBundleInstances(
+  lifecycle: BundleLifecycleManager,
+  workspaceRegistries: Map<string, ToolRegistry>,
+  placementRegistry: PlacementRegistry,
+  entries: ProcessInventoryEntry[],
+): void {
+  for (const entry of entries) {
+    const { serverName: sn, bundle: ref, meta, wsId, dataDir } = entry;
+    const label = "name" in ref ? ref.name : "url" in ref ? ref.url : ref.path;
+    const wsRegistry = workspaceRegistries.get(wsId);
+    lifecycle.seedInstance(sn, label, ref, meta ?? undefined, wsId, dataDir, wsRegistry);
+
+    const instance = lifecycle.getInstance(sn, wsId);
+    if (instance?.ui?.placements && instance.ui.placements.length > 0) {
+      // Sanitize at boot too — not just at install. Placements persist RAW on
+      // the BundleRef (`instance.ui` is the unfiltered host meta), so a spoof
+      // that `registerPlacements` dropped at install time would otherwise
+      // re-register verbatim here on every restart. Same fail-closed guard.
+      const safe = sanitizePlacements(instance.ui.placements);
+      if (safe.length > 0) placementRegistry.register(sn, safe, wsId);
+    }
+  }
+}
+
 function resolveModel(config: RuntimeConfig): (modelString: string) => LanguageModelV3 {
   // New multi-provider config takes precedence
   if (config.providers) {
@@ -4214,6 +4290,140 @@ function resolveEngineSystem(
     return foldVolatileHead(stableSystem, volatileHead);
   }
   return stableSystem;
+}
+
+/** A user-message text content block. */
+type UserTextPart = { type: "text"; text: string };
+/** A user-message MCP `resource_link` attachment block. */
+type UserResourceLinkPart = {
+  type: "resource_link";
+  uri: string;
+  mimeType: string;
+  name: string;
+};
+
+/**
+ * Build a user message's content blocks: the text message plus any
+ * `resource_link` attachment parts. Falls back to a synthetic `[Uploaded: …]`
+ * text part when there's no text and no text content parts (a file-only upload)
+ * so the content is never empty.
+ */
+function buildUserMessageContent(request: ChatRequest): Array<UserTextPart | UserResourceLinkPart> {
+  // Bytes for binary attachments live in the workspace FileStore (already
+  // persisted by `ingestFiles`); the conversation log carries only the URI.
+  // The runtime rehydrates image links to AI SDK `file` parts at the
+  // `model.doStream` boundary — see `rehydrateUserResources`.
+  const userContent: Array<UserTextPart | UserResourceLinkPart> = [];
+  if (request.message) {
+    userContent.push({ type: "text", text: request.message });
+  }
+  if (request.contentParts?.length) {
+    for (const part of request.contentParts) {
+      if (part.type === "text") {
+        userContent.push({ type: "text", text: part.text });
+      } else if (part.type === "resource_link") {
+        userContent.push({
+          type: "resource_link",
+          uri: part.uri,
+          mimeType: part.mimeType,
+          name: part.name,
+        });
+      }
+    }
+  }
+  // Ensure content is never empty — file-only uploads may have no text message.
+  if (userContent.length === 0) {
+    const filenames = request.fileRefs?.map((f) => f.filename).join(", ") || "files";
+    userContent.push({ type: "text", text: `[Uploaded: ${filenames}]` });
+  }
+  return userContent;
+}
+
+/** Per-user prompt preferences resolved from the authenticated identity. */
+function buildPromptPrefs(identity: UserIdentity): {
+  displayName: string;
+  timezone: string;
+  locale: string;
+} {
+  return {
+    displayName: identity.displayName ?? "",
+    timezone: identity.preferences?.timezone ?? "",
+    locale: identity.preferences?.locale ?? "en-US",
+  };
+}
+
+/**
+ * The "## Workspace" prompt block descriptor for a turn: `{ id, name }` when the
+ * workspace record loaded, `{ id }` when only the id is known, or `undefined`
+ * for the personal/session workspace (compose omits the block).
+ */
+function buildWorkspaceContext(
+  wsId: string | undefined,
+  workspace: Workspace | null | undefined,
+): { id: string; name: string } | { id: string } | undefined {
+  if (!wsId) return undefined;
+  return workspace ? { id: workspace.id, name: workspace.name } : { id: wsId };
+}
+
+/**
+ * The workspace-scoped RequestContext scope, carrying the session workspace's
+ * agent profiles + model overrides (`null` when the record didn't load).
+ */
+function buildWorkspaceScope(
+  workspaceId: string,
+  workspace: Workspace | null | undefined,
+): RequestScope {
+  return {
+    kind: "workspace",
+    workspaceId,
+    workspaceAgents: workspace?.agents ?? null,
+    workspaceModelOverride: workspace?.models ?? null,
+  };
+}
+
+/** Compose the present-only `surfaceTools` options (focused server + request-allowed tools). */
+function buildSurfaceOptions(
+  focusedServerName: string | undefined,
+  requestAllowedTools: string[] | undefined,
+): { focusedServerName?: string; requestAllowedTools?: string[] } {
+  return {
+    ...(focusedServerName ? { focusedServerName } : {}),
+    ...(requestAllowedTools ? { requestAllowedTools } : {}),
+  };
+}
+
+/** Append the workspace identity/persona override skill to the context channel when the workspace sets one. */
+function withIdentityOverride(
+  contextBase: Skill[],
+  workspaceIdentity: string | undefined,
+): Skill[] {
+  if (!workspaceIdentity) return contextBase;
+  return [...contextBase, makeIdentitySkill(workspaceIdentity)];
+}
+
+/**
+ * Build the per-request `transformContext` hook: slice history → apply the
+ * provider reasoning-replay policy → window by token budget. `overflowAttempt`
+ * halves the budget per retry after a provider context-window rejection.
+ */
+function buildTransformContext(
+  budgetBase: number,
+  maxHistoryMessages: number | undefined,
+  replayProvider: ReturnType<typeof getProviderFromModel>,
+): NonNullable<EngineHooks["transformContext"]> {
+  return (historyMessages, opts) => {
+    // `overflowAttempt > 0` means the provider rejected the prior call for
+    // exceeding the model's context window; halve the composed budget per
+    // attempt and re-window (the engine caps recovery at one attempt today).
+    const attempt = opts?.overflowAttempt ?? 0;
+    const budget = attempt > 0 ? Math.floor(budgetBase / (1 << attempt)) : budgetBase;
+    const sliced = sliceHistory(
+      historyMessages,
+      maxHistoryMessages ?? DEFAULT_MAX_HISTORY_MESSAGES,
+    );
+    const replayReady = applyReasoningReplayPolicy(sliced, replayProvider);
+    return windowMessages(replayReady, budget);
+  };
 }
 
 export function buildContextAssembledPayload(input: {

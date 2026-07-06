@@ -25,20 +25,23 @@ import {
   estimateContentSize,
   extractResourceLinks,
   extractTextForModel,
+  type ResourceLinkInfo,
   textContent,
 } from "./content-helpers.ts";
 import { isContextOverflowError } from "./context-overflow.ts";
 import { withRetry } from "./retry.ts";
-import { createRunSupervisor } from "./supervisor.ts";
+import { createRunSupervisor, type RunSupervisor, type SupervisorVerdict } from "./supervisor.ts";
 import { toolSchemaForLlm } from "./tool-schema-for-llm.ts";
 import {
   CONNECTOR_SKILL_SYNTHETIC,
+  type ConnectorSkillCandidate,
   type EngineConfig,
   type EngineResult,
   type EventSink,
   type FinishReason,
   type ResolvedThinking,
   type StopReason,
+  type ToolCall,
   type ToolCallRecord,
   type ToolResult,
   type ToolRouter,
@@ -64,6 +67,59 @@ function budgetToEffort(budget: number): "low" | "medium" | "high" | "max" {
 }
 
 /**
+ * Build the `providerOptions.anthropic` thinking shape for the resolved config.
+ * Adaptive-only models (e.g. Opus 4.7) reject `thinking.type=enabled` outright,
+ * and drop `budgetTokens` on adaptive; both are translated to
+ * `thinking.type=adaptive` plus a top-level `effort` mapped from the budget so
+ * the operator's intended cap actually constrains thinking.
+ */
+function buildAnthropicThinkingOptions(
+  model: string,
+  thinking: ResolvedThinking,
+): SharedV3ProviderOptions {
+  if (thinking.mode === "off") {
+    return { anthropic: { thinking: { type: "disabled" } } };
+  }
+  const adaptiveOnly = !supportsEnabledThinking(model);
+  if (thinking.mode === "adaptive") {
+    // Adaptive with an explicit budget on adaptive-only models maps to
+    // effort so the operator's intended cap actually constrains thinking
+    // (the SDK drops budgetTokens on adaptive otherwise). For models that
+    // accept enabled, adaptive is left bare — the model decides.
+    if (adaptiveOnly && thinking.budgetTokens != null) {
+      return {
+        anthropic: {
+          thinking: { type: "adaptive" },
+          effort: budgetToEffort(thinking.budgetTokens),
+        },
+      };
+    }
+    return { anthropic: { thinking: { type: "adaptive" } } };
+  }
+  // mode === "enabled"
+  if (adaptiveOnly) {
+    // Anthropic rejects `thinking.type=enabled` for these models with a
+    // specific error pointing at `output_config.effort`. Translate the
+    // platform's enabled+budget into adaptive+effort here so the
+    // resolver stays provider-neutral.
+    return {
+      anthropic: {
+        thinking: { type: "adaptive" },
+        ...(thinking.budgetTokens != null ? { effort: budgetToEffort(thinking.budgetTokens) } : {}),
+      },
+    };
+  }
+  return {
+    anthropic: {
+      thinking: {
+        type: "enabled",
+        ...(thinking.budgetTokens != null ? { budgetTokens: thinking.budgetTokens } : {}),
+      },
+    },
+  };
+}
+
+/**
  * Translate the platform's provider-neutral thinking config into the
  * call's `providerOptions` shape. Each provider has its own option name
  * and discriminated-union shape; we keep them confined to this helper
@@ -72,65 +128,15 @@ function budgetToEffort(budget: number): "low" | "medium" | "high" | "max" {
  * Today: Anthropic only. OpenAI o-series (`reasoningEffort`) and
  * Google Gemini 2.5 (`thinkingConfig`) are TODO and ignored — those
  * providers fall back to their own defaults until wired in.
- *
- * Adaptive-only models (e.g. Opus 4.7) reject `thinking.type=enabled`
- * outright; for those we emit `thinking.type=adaptive` plus a top-level
- * `effort` mapped from the resolved budget. The AI SDK forwards `effort`
- * as `output_config.effort` and adds the `effort-2025-11-24` beta header.
  */
 function buildThinkingProviderOptions(
   model: string,
   thinking: ResolvedThinking | undefined,
 ): SharedV3ProviderOptions {
   if (!thinking) return {};
-
-  const provider = getProviderFromModel(model);
-
-  if (provider === "anthropic") {
-    if (thinking.mode === "off") {
-      return { anthropic: { thinking: { type: "disabled" } } };
-    }
-    const adaptiveOnly = !supportsEnabledThinking(model);
-    if (thinking.mode === "adaptive") {
-      // Adaptive with an explicit budget on adaptive-only models maps to
-      // effort so the operator's intended cap actually constrains thinking
-      // (the SDK drops budgetTokens on adaptive otherwise). For models that
-      // accept enabled, adaptive is left bare — the model decides.
-      if (adaptiveOnly && thinking.budgetTokens != null) {
-        return {
-          anthropic: {
-            thinking: { type: "adaptive" },
-            effort: budgetToEffort(thinking.budgetTokens),
-          },
-        };
-      }
-      return { anthropic: { thinking: { type: "adaptive" } } };
-    }
-    // mode === "enabled"
-    if (adaptiveOnly) {
-      // Anthropic rejects `thinking.type=enabled` for these models with a
-      // specific error pointing at `output_config.effort`. Translate the
-      // platform's enabled+budget into adaptive+effort here so the
-      // resolver stays provider-neutral.
-      return {
-        anthropic: {
-          thinking: { type: "adaptive" },
-          ...(thinking.budgetTokens != null
-            ? { effort: budgetToEffort(thinking.budgetTokens) }
-            : {}),
-        },
-      };
-    }
-    return {
-      anthropic: {
-        thinking: {
-          type: "enabled",
-          ...(thinking.budgetTokens != null ? { budgetTokens: thinking.budgetTokens } : {}),
-        },
-      },
-    };
+  if (getProviderFromModel(model) === "anthropic") {
+    return buildAnthropicThinkingOptions(model, thinking);
   }
-
   // openai / google: not yet wired. The provider falls back to its own
   // default behavior. Tracked for follow-up.
   return {};
@@ -157,6 +163,24 @@ function hasUnsignedReasoning(content: LanguageModelV3Content[]): boolean {
     if (!signed) return true;
   }
   return false;
+}
+
+/**
+ * Whether a no-tool-call turn that hit the output ceiling can be auto-resumed
+ * from its partial text. False once MAX_LENGTH_CONTINUATIONS is reached, or when
+ * the turn's reasoning was cut off unsigned — replaying that as the trailing
+ * assistant message is exactly what Anthropic rejects.
+ */
+function canResumeFromLength(
+  finishReason: FinishReason | undefined,
+  lengthContinuations: number,
+  content: LanguageModelV3Content[],
+): boolean {
+  return (
+    finishReason === "length" &&
+    lengthContinuations < MAX_LENGTH_CONTINUATIONS &&
+    !hasUnsignedReasoning(content)
+  );
 }
 
 /**
@@ -217,6 +241,318 @@ function sanitizeMessages(messages: LanguageModelV3Message[]): LanguageModelV3Me
   });
 }
 
+/**
+ * Seed the connector-skill dedup set from history metadata. Kept as a fallback
+ * for callers that pass metadata-bearing messages directly (the engine+store
+ * integration test): on the real chat path `rehydrateUserResources` strips
+ * message `metadata` (where the synthetic marker lives) before the engine sees
+ * the messages, so this scan can't be the sole source there. No-op when there
+ * are no candidates.
+ */
+function seedInjectedConnectorSkills(
+  history: LanguageModelV3Message[],
+  connectorSkillCandidates: ConnectorSkillCandidate[],
+  injectedConnectorSkills: Set<string>,
+): void {
+  if (connectorSkillCandidates.length === 0) return;
+  for (const m of history) {
+    const meta = (m as { metadata?: { synthetic?: string; skill?: string | null } }).metadata;
+    if (meta?.synthetic === CONNECTOR_SKILL_SYNTHETIC && typeof meta.skill === "string") {
+      injectedConnectorSkills.add(meta.skill);
+    }
+  }
+}
+
+/**
+ * Build the router-wide lookups the run needs. Uses ALL tools from the router
+ * (not just the direct/surfaced subset passed to the LLM) because tiered
+ * surfacing may proxy UI-annotated tools:
+ *   - `toolAnnotations`: tool name → MCP annotations (UI metadata like resourceUri).
+ *   - `allToolSchemaMap`: tool name → schema (used to resolve agent-promoted tools).
+ */
+function buildToolLookups(allRouterTools: ToolSchema[]): {
+  toolAnnotations: Map<string, Record<string, unknown>>;
+  allToolSchemaMap: Map<string, ToolSchema>;
+} {
+  const toolAnnotations = new Map<string, Record<string, unknown>>();
+  for (const t of allRouterTools) {
+    if (t.annotations) toolAnnotations.set(t.name, t.annotations);
+  }
+
+  const allToolSchemaMap = new Map<string, ToolSchema>();
+  for (const t of allRouterTools) {
+    allToolSchemaMap.set(t.name, t);
+  }
+
+  return { toolAnnotations, allToolSchemaMap };
+}
+
+/** Throw the abort reason if the run's signal is already aborted. */
+function throwIfAborted(signal: AbortSignal | undefined): void {
+  if (signal?.aborted) {
+    throw signal.reason instanceof Error
+      ? signal.reason
+      : new DOMException("The operation was aborted.", "AbortError");
+  }
+}
+
+/** Apply the transformPrompt hook when present; otherwise the system prompt verbatim. */
+function resolveCallPrompt(config: EngineConfig, systemPrompt: string): string {
+  return config.hooks?.transformPrompt ? config.hooks.transformPrompt(systemPrompt) : systemPrompt;
+}
+
+/**
+ * On the final allowed iteration, append the wrap-up system-reminder as a TAIL
+ * message, not by appending to the system prompt: mutating the system block
+ * would bust its (1-hour) cache breakpoint — and the whole message prefix after
+ * it — on the final call of every run. As a tail message the reminder rides the
+ * volatile (5-minute) region and leaves the stable prefix byte-identical, so the
+ * final call still reads it from cache. Merge into a trailing user turn when
+ * present to avoid consecutive user messages; otherwise append a fresh one.
+ * No-op on any earlier iteration.
+ */
+function appendFinalStepReminder(
+  callMessages: LanguageModelV3Message[],
+  iteration: number,
+  maxIter: number,
+): LanguageModelV3Message[] {
+  if (iteration !== maxIter - 1) return callMessages;
+  const finalStep =
+    "<system-reminder>This is your final step. Do NOT call any more tools. " +
+    "Summarize what you have accomplished so far and clearly list what remains " +
+    "unfinished so the user can continue in a follow-up message.</system-reminder>";
+  const last = callMessages[callMessages.length - 1];
+  if (last && last.role === "user" && Array.isArray(last.content)) {
+    return [
+      ...callMessages.slice(0, -1),
+      { ...last, content: [...last.content, { type: "text", text: finalStep }] },
+    ];
+  }
+  return [...callMessages, { role: "user", content: [{ type: "text", text: finalStep }] }];
+}
+
+/**
+ * Map the AI SDK V3 usage shape into our canonical TokenUsage, plus the
+ * engine-only 1h/5m cache-write split the base V3 struct doesn't carry.
+ * V3's `inputTokens.total` is the grand total (noCache+cacheRead+cacheWrite);
+ * we preserve that on TokenUsage.inputTokens and surface the cache subsets as
+ * siblings. Cost computation subtracts the subsets from the totals — see
+ * src/usage/cost.ts. Anthropic reports the cache-write TTL split under
+ * `raw.cache_creation` (ephemeral_1h vs ephemeral_5m). We tier TTL by
+ * breakpoint (1h on system+tools, 5m on the rolling history — see
+ * model/cache-policy.ts), so capture the 1-hour portion for accurate costing.
+ * Absent for providers that don't report it.
+ */
+function computeTurnUsage(usage: StreamResult["usage"]): TokenUsage {
+  const rawCreation = (
+    usage.raw as { cache_creation?: { ephemeral_1h_input_tokens?: number } } | undefined
+  )?.cache_creation;
+  const cacheWrite1h = rawCreation?.ephemeral_1h_input_tokens;
+  return {
+    ...tokenUsageFromV3(usage),
+    ...(cacheWrite1h != null ? { cacheWrite1hTokens: cacheWrite1h } : {}),
+  };
+}
+
+/** Parse a tool call's `input` into an object, tolerating the stream's JSON-string form. */
+function parseToolCallInput(input: LanguageModelV3ToolCall["input"]): Record<string, unknown> {
+  return (typeof input === "string" ? JSON.parse(input) : (input ?? {})) as Record<string, unknown>;
+}
+
+/**
+ * Coerce a tool call's input against its declared schema, then validate it.
+ * Coerce first: models occasionally emit nested object/array values as
+ * JSON-encoded strings (`{ manifest: "{...}" }`); the coerce pass uses the
+ * schema as a parsing oracle to recover those one-level misencodings before
+ * validation. Returns the (possibly coerced) input plus an isError result when
+ * validation fails. With no schema the input passes through unchanged.
+ */
+function coerceAndValidateToolInput(
+  input: Record<string, unknown>,
+  toolSchema: ToolSchema | undefined,
+): { input: Record<string, unknown>; errorResult?: ToolResult } {
+  if (!toolSchema?.inputSchema) return { input };
+  const schema = toolSchema.inputSchema as Record<string, unknown>;
+  const coerced = coerceInputForSchema(input, schema);
+  const validation = validateToolInput(coerced, schema);
+  if (!validation.valid) {
+    return {
+      input: coerced,
+      errorResult: {
+        content: textContent(`Invalid tool input: ${validation.error}`),
+        isError: true,
+      },
+    };
+  }
+  return { input: coerced };
+}
+
+/**
+ * Reject an oversized tool result before it propagates through event emission,
+ * hooks, or history accumulation — replacing it with an isError summary.
+ * `maxToolResultSize` of 0 disables the guard; absent defaults to 1M chars.
+ */
+function enforceMaxToolResultSize(
+  result: ToolResult,
+  maxToolResultSize: number | undefined,
+): ToolResult {
+  const maxResultSize = maxToolResultSize ?? 1_000_000;
+  if (maxResultSize <= 0) return result;
+  const resultSize = estimateContentSize(result.content);
+  if (resultSize <= maxResultSize) return result;
+  return {
+    content: textContent(
+      `Tool result too large (${resultSize.toLocaleString()} chars, limit: ${maxResultSize.toLocaleString()}). ` +
+        `Ask the user to constrain the query or use pagination.`,
+    ),
+    isError: true,
+  };
+}
+
+/**
+ * Assemble the `tool.done` event payload. `result` is attached only when there
+ * is an inline-UI resourceUri; `modelOutput` only when bounding actually shrank
+ * the text (so small results don't carry a duplicate field, and replay falls
+ * back to bounding `output` for legacy events without it); the supervisor fields
+ * only when the loop supervisor tripped.
+ */
+function buildToolDoneData(params: {
+  runId: string;
+  name: string;
+  id: string;
+  finalResult: ToolResult;
+  ms: number;
+  resourceUri: string | undefined;
+  outputText: string;
+  bounded: boolean;
+  modelOutput: string;
+  resourceLinks: ResourceLinkInfo[];
+  verdict: SupervisorVerdict;
+}): Record<string, unknown> {
+  const {
+    runId,
+    name,
+    id,
+    finalResult,
+    ms,
+    resourceUri,
+    outputText,
+    bounded,
+    modelOutput,
+    resourceLinks,
+    verdict,
+  } = params;
+  return {
+    runId,
+    name,
+    id,
+    ok: !finalResult.isError,
+    ms,
+    resourceUri,
+    output: outputText,
+    ...(bounded ? { modelOutput } : {}),
+    result: resourceUri ? finalResult : undefined,
+    ...(resourceLinks.length > 0 ? { resourceLinks } : {}),
+    ...(verdict.type === "synth"
+      ? {
+          supervisorTripped: true,
+          trippedTool: verdict.trippedTool,
+          consecutiveRepeats: verdict.consecutiveRepeats,
+        }
+      : {}),
+  };
+}
+
+/**
+ * Turn the iteration's per-tool-call outcomes into the tool-result message parts
+ * fed back to the model plus the ToolCallRecord list for run telemetry.
+ * `modelOutput` is the already-bounded text the model sees (computed once during
+ * execution and persisted on tool.done) — so the live prompt and the replayed
+ * prompt carry the identical bounded result. Early-return paths that skip
+ * execution (e.g. policy-denied) omit it; bound their small result here so the
+ * type stays a string.
+ */
+function buildToolResults(toolResults: ToolExecResult[]): {
+  toolResultParts: LanguageModelV3ToolResultPart[];
+  toolCallRecords: ToolCallRecord[];
+} {
+  const toolResultParts: LanguageModelV3ToolResultPart[] = [];
+  const toolCallRecords: ToolCallRecord[] = [];
+
+  for (const {
+    toolCall,
+    result,
+    ms,
+    resourceUri: uri,
+    resourceLinks: links,
+    modelOutput,
+  } of toolResults) {
+    const llmText =
+      modelOutput ??
+      boundToolResultForModel(extractTextForModel(result.content), { hasUiResource: !!uri });
+    toolCallRecords.push({
+      id: toolCall.toolCallId,
+      name: toolCall.toolName,
+      input: JSON.parse(toolCall.input) as Record<string, unknown>,
+      output: llmText,
+      ok: !result.isError,
+      ms,
+      // Surface the structured failure reason (orchestrator routing
+      // classes, etc.) so consumers can tell an unroutable connector
+      // from a tool that ran and errored. See ToolCallRecord.errorReason.
+      ...(result.isError && typeof result.structuredContent?.reason === "string"
+        ? { errorReason: result.structuredContent.reason }
+        : {}),
+      ...(uri ? { resourceUri: uri } : {}),
+      ...(links && links.length > 0 ? { resourceLinks: links } : {}),
+    });
+
+    toolResultParts.push({
+      type: "tool-result",
+      toolCallId: toolCall.toolCallId,
+      toolName: toolCall.toolName,
+      output: result.isError
+        ? { type: "error-text", value: llmText }
+        : { type: "text", value: llmText },
+    });
+  }
+
+  return { toolResultParts, toolCallRecords };
+}
+
+/** Shape the `run.error` event payload from a thrown value. */
+function buildRunErrorData(runId: string, err: unknown): Record<string, unknown> {
+  return {
+    runId,
+    error: err instanceof Error ? err.message : String(err),
+    type: err instanceof Error ? err.constructor.name : "Error",
+  };
+}
+
+/** Per-tool-call context shared across an iteration's concurrent executions. */
+interface ToolExecContext {
+  config: EngineConfig;
+  runId: string;
+  toolAnnotations: Map<string, Record<string, unknown>>;
+  connectorSkillCandidates: ConnectorSkillCandidate[];
+  injectedConnectorSkills: Set<string>;
+  toolSchemaMap: Map<string, ToolSchema>;
+  promotedLastUsed: Map<string, number>;
+  bumpUseCounter: () => number;
+  supervisor: RunSupervisor;
+}
+
+/** One tool call's outcome, consumed by buildToolResults to shape history + records. */
+interface ToolExecResult {
+  toolCall: LanguageModelV3ToolCall;
+  gatedCall: ToolCall;
+  result: ToolResult;
+  ms: number;
+  resourceUri?: string;
+  resourceLinks?: ResourceLinkInfo[];
+  modelOutput?: string;
+}
+
 export class AgentEngine {
   constructor(
     private model: LanguageModelV3,
@@ -246,14 +582,7 @@ export class AgentEngine {
     // The set also dedups multiple matching calls within this run.
     const connectorSkillCandidates = config.connectorSkillCandidates ?? [];
     const injectedConnectorSkills = new Set<string>(config.alreadyInjectedConnectorSkills ?? []);
-    if (connectorSkillCandidates.length > 0) {
-      for (const m of history) {
-        const meta = (m as { metadata?: { synthetic?: string; skill?: string | null } }).metadata;
-        if (meta?.synthetic === CONNECTOR_SKILL_SYNTHETIC && typeof meta.skill === "string") {
-          injectedConnectorSkills.add(meta.skill);
-        }
-      }
-    }
+    seedInjectedConnectorSkills(history, connectorSkillCandidates, injectedConnectorSkills);
 
     let iteration = 0;
     const cumulativeUsage: TokenUsage = emptyUsage();
@@ -262,19 +591,8 @@ export class AgentEngine {
     const allToolCalls: ToolCallRecord[] = [];
     const runId = crypto.randomUUID();
 
-    // Build tool annotations lookup for UI metadata (resourceUri).
-    // Use ALL tools from the router (not just the direct/surfaced subset passed
-    // to the LLM) because tiered surfacing may proxy UI-annotated tools.
-    const toolAnnotations = new Map<string, Record<string, unknown>>();
     const allRouterTools = await this.tools.availableTools();
-    for (const t of allRouterTools) {
-      if (t.annotations) toolAnnotations.set(t.name, t.annotations);
-    }
-
-    const allToolSchemaMap = new Map<string, ToolSchema>();
-    for (const t of allRouterTools) {
-      allToolSchemaMap.set(t.name, t);
-    }
+    const { toolAnnotations, allToolSchemaMap } = buildToolLookups(allRouterTools);
 
     const directTools = [...tools];
     const directToolNames = new Set(directTools.map((t) => t.name));
@@ -284,6 +602,7 @@ export class AgentEngine {
     // smaller stamp = older, regardless of clock skew or test parallelism.
     const promotedLastUsed = new Map<string, number>();
     let useCounter = 0;
+    const bumpUseCounter = () => ++useCounter;
     const maxActiveTools = config.maxActiveTools ?? DEFAULT_MAX_DIRECT_TOOLS;
     if (directTools.length > maxActiveTools) {
       // Operator-facing: initial tool set already exceeds the per-run cap,
@@ -346,31 +665,14 @@ export class AgentEngine {
 
         // Backstop: cap active tools by evicting LRU agent-promoted entries.
         // Initial tools are exempt because they're not in `promotedLastUsed`.
-        // Defensive guard: if the just-added tool would be its own eviction
-        // victim (only possible when initial tools alone already exceed the
-        // cap, so promotedLastUsed has only this one entry), break out.
-        // Cap is "soft" in that pathological config — the alternative would
-        // be silently undoing the agent's intentional promotion, which is
-        // worse than letting the cap stretch by one.
-        while (directTools.length > maxActiveTools && promotedLastUsed.size > 0) {
-          let oldestName: string | null = null;
-          let oldestStamp = Number.POSITIVE_INFINITY;
-          for (const [name, stamp] of promotedLastUsed) {
-            if (stamp < oldestStamp) {
-              oldestStamp = stamp;
-              oldestName = name;
-            }
-          }
-          if (!oldestName || oldestName === toolName) break;
-          const idx = directTools.findIndex((t) => t.name === oldestName);
-          if (idx >= 0) directTools.splice(idx, 1);
-          directToolNames.delete(oldestName);
-          promotedLastUsed.delete(oldestName);
-          this.events.emit({
-            type: "tool.released",
-            data: { runId, toolName: oldestName, reason: "evicted" },
-          });
-        }
+        this.evictPromotedToolsToCap(
+          runId,
+          directTools,
+          directToolNames,
+          promotedLastUsed,
+          maxActiveTools,
+          toolName,
+        );
         return {
           ok: true,
           toolName,
@@ -431,36 +733,7 @@ export class AgentEngine {
       },
     });
 
-    // Emit run-scope telemetry the runtime pre-computed (Phase 2: skills.loaded
-    // and context.assembled). Tied to the same `runId` as `run.start` so the
-    // conversation log records what the prompt looked like for this turn.
-    if (config.runMetadata?.skillsLoaded) {
-      this.events.emit({
-        type: "skills.loaded",
-        data: {
-          runId,
-          skills: config.runMetadata.skillsLoaded.skills,
-          totalTokens: config.runMetadata.skillsLoaded.totalTokens,
-        },
-      });
-    }
-    if (config.runMetadata?.contextAssembled) {
-      this.events.emit({
-        type: "context.assembled",
-        data: {
-          runId,
-          sources: config.runMetadata.contextAssembled.sources,
-          excluded: config.runMetadata.contextAssembled.excluded,
-          totalTokens: config.runMetadata.contextAssembled.totalTokens,
-          ...(config.runMetadata.contextAssembled.modelMaxContext !== undefined
-            ? { modelMaxContext: config.runMetadata.contextAssembled.modelMaxContext }
-            : {}),
-          ...(config.runMetadata.contextAssembled.headroomTokens !== undefined
-            ? { headroomTokens: config.runMetadata.contextAssembled.headroomTokens }
-            : {}),
-        },
-      });
-    }
+    this.emitRunPromptMetadata(runId, config);
 
     const runStart = performance.now();
 
@@ -509,30 +782,11 @@ export class AgentEngine {
         // stop starting new work. The runtime catch translates the
         // thrown AbortError into the appropriate `run.error` event for
         // SSE consumers.
-        if (config.signal?.aborted) {
-          throw config.signal.reason instanceof Error
-            ? config.signal.reason
-            : new DOMException("The operation was aborted.", "AbortError");
-        }
-        // Filter out any tool the supervisor has tripped this run. Removing
-        // the tool from the model's toolset is more reliable than telling
-        // the model "do not call this tool" via prose — the model literally
-        // can't call a tool that isn't in its list. Other tools remain
-        // available so the run can recover.
-        const trippedSet = new Set(supervisor.snapshot().trippedTools);
-        const usableDirectTools =
-          trippedSet.size === 0 ? directTools : directTools.filter((t) => !trippedSet.has(t.name));
-        const modelTools: LanguageModelV3FunctionTool[] = usableDirectTools.map((t) => ({
-          type: "function" as const,
-          name: t.name,
-          description: t.description,
-          inputSchema: toolSchemaForLlm(t.inputSchema, t.name) as JSONSchema7,
-        }));
+        throwIfAborted(config.signal);
 
-        const toolSchemaMap = new Map<string, ToolSchema>();
-        for (const t of usableDirectTools) {
-          toolSchemaMap.set(t.name, t);
-        }
+        // Drop any tool the supervisor has tripped this run and build the
+        // per-iteration model toolset + schema lookup.
+        const { modelTools, toolSchemaMap } = this.buildIterationTools(directTools, supervisor);
 
         // 1. Apply context/prompt hooks and call LLM. The transformContext
         //    hook is also re-invoked on a context-overflow recovery (see
@@ -545,37 +799,9 @@ export class AgentEngine {
         const windowed = runTransform(0);
         // Sanitize: filter out empty text content blocks that the API rejects
         let callMessages = sanitizeMessages(windowed);
-        const callPrompt = config.hooks?.transformPrompt
-          ? config.hooks.transformPrompt(systemPrompt)
-          : systemPrompt;
+        const callPrompt = resolveCallPrompt(config, systemPrompt);
 
-        // On the final allowed iteration, tell the model to wrap up instead of
-        // starting new tool calls that will never execute. Deliver this as a
-        // TAIL message, not by appending to the system prompt: mutating the
-        // system block would bust its (1-hour) cache breakpoint — and the whole
-        // message prefix after it — on the final call of every run. As a tail
-        // message the reminder rides the volatile (5-minute) region and leaves
-        // the stable prefix byte-identical, so the final call still reads it
-        // from cache. Merge into a trailing user turn when present to avoid
-        // consecutive user messages; otherwise append a fresh one.
-        if (iteration === maxIter - 1) {
-          const finalStep =
-            "<system-reminder>This is your final step. Do NOT call any more tools. " +
-            "Summarize what you have accomplished so far and clearly list what remains " +
-            "unfinished so the user can continue in a follow-up message.</system-reminder>";
-          const last = callMessages[callMessages.length - 1];
-          if (last && last.role === "user" && Array.isArray(last.content)) {
-            callMessages = [
-              ...callMessages.slice(0, -1),
-              { ...last, content: [...last.content, { type: "text", text: finalStep }] },
-            ];
-          } else {
-            callMessages = [
-              ...callMessages,
-              { role: "user", content: [{ type: "text", text: finalStep }] },
-            ];
-          }
-        }
+        callMessages = appendFinalStepReminder(callMessages, iteration, maxIter);
 
         const callProviderOptions = buildThinkingProviderOptions(config.model, config.thinking);
 
@@ -632,113 +858,27 @@ export class AgentEngine {
         };
 
         const llmStart = performance.now();
-        let response: StreamResult;
-        let overflowAttempt = 0;
-        while (true) {
-          try {
-            response = await callOnce(callMessages);
-            break;
-          } catch (err) {
-            // Reactive recovery for provider-reported context-window
-            // overflows. The pre-flight `resolveMessageBudget` should make
-            // this rare; when it fires, we re-window with the hook's
-            // own `overflowAttempt`-driven scaling (typically halves the
-            // budget) and retry once. A second overflow propagates the
-            // original error so the UI can surface a clear "conversation
-            // too long" message rather than silently looping.
-            if (
-              overflowAttempt === 0 &&
-              isContextOverflowError(err) &&
-              config.hooks?.transformContext
-            ) {
-              overflowAttempt = 1;
-              const previousMessageCount = callMessages.length;
-              const errorMessage = err instanceof Error ? err.message : String(err);
-              // Always-on stderr line so a frequency uptick is visible in
-              // operator logs without flipping a debug flag. Recovery
-              // firing means the pre-flight budget composition disagreed
-              // with the provider's tokenizer — actionable signal for
-              // tuning DEFAULT_BUDGET_SAFETY_MARGIN_TOKENS or the
-              // estimator. Per-conversation correlation via runId; the
-              // aggregate is what drives action.
-              log.warn(
-                `[engine] context overflow recovery runId=${runId} attempt=${overflowAttempt} previousMessages=${previousMessageCount} model=${config.model} error="${errorMessage}"`,
-              );
-              this.events.emit({
-                type: "context.overflow_recovery",
-                data: {
-                  runId,
-                  attempt: overflowAttempt,
-                  previousMessageCount,
-                  errorMessage,
-                },
-              });
-              callMessages = sanitizeMessages(runTransform(overflowAttempt));
-              continue;
-            }
-            // Terminal LLM failure: the call threw, in-call retry is exhausted,
-            // and it's neither a recoverable overflow nor a user cancellation.
-            // Emit the observe-only error fact (for the LLM error-rate metric)
-            // before re-throwing — the error still propagates and ends the run.
-            // Aborts are excluded: a cancellation isn't a provider failure and
-            // must not inflate the error rate.
-            if (!config.signal?.aborted) {
-              this.events.emit({
-                type: "llm.error",
-                data: { runId, model: config.model },
-              });
-            }
-            throw err;
-          }
-        }
+        const response = await this.callModelWithOverflowRecovery(
+          callOnce,
+          callMessages,
+          runTransform,
+          config,
+          runId,
+        );
         const llmMs = Math.round(performance.now() - llmStart);
 
         // Accumulate text output (add newline between turns if needed).
         // When this turn is the resumption of a length-truncated one, stitch
         // directly onto the partial with no separator — the model is
         // continuing mid-thought, so a blank line would inject a false break.
-        for (const block of response.content) {
-          if (block.type === "text") {
-            if (
-              !resumingFromLength &&
-              output.length > 0 &&
-              !output.endsWith("\n") &&
-              block.text.length > 0
-            ) {
-              output += "\n\n";
-              this.events.emit({ type: "text.delta", data: { runId, text: "\n\n" } });
-            }
-            output += block.text;
-          }
-        }
+        output = this.accumulateAssistantText(output, response.content, resumingFromLength, runId);
         // Consume the resume flag unconditionally: it must not leak into a
         // later iteration if this resumed turn produced no text block (e.g.
         // tool-call- or reasoning-only), which would wrongly glue a genuinely
         // new turn onto the previous one.
         resumingFromLength = false;
 
-        // Map the AI SDK V3 usage shape into our canonical TokenUsage.
-        // V3's `inputTokens.total` is the grand total (noCache+cacheRead+
-        // cacheWrite); we preserve that semantics on TokenUsage.inputTokens
-        // and surface the cache subsets as siblings. Cost computation
-        // subtracts the subsets from the totals — see src/usage/cost.ts.
-        // Anthropic reports the cache-write TTL split under
-        // `raw.cache_creation` (ephemeral_1h vs ephemeral_5m). We tier TTL by
-        // breakpoint (1h on system+tools, 5m on the rolling history — see
-        // model/cache-policy.ts), so capture the 1-hour portion for accurate
-        // costing. Absent for providers that don't report it.
-        const rawCreation = (
-          response.usage.raw as
-            | { cache_creation?: { ephemeral_1h_input_tokens?: number } }
-            | undefined
-        )?.cache_creation;
-        const cacheWrite1h = rawCreation?.ephemeral_1h_input_tokens;
-        // Canonical mapping + the engine-only 1h/5m cache-write split that the
-        // base V3 usage struct doesn't carry (from provider metadata above).
-        const turnUsage: TokenUsage = {
-          ...tokenUsageFromV3(response.usage),
-          ...(cacheWrite1h != null ? { cacheWrite1hTokens: cacheWrite1h } : {}),
-        };
+        const turnUsage = computeTurnUsage(response.usage);
         addUsage(cumulativeUsage, turnUsage);
         cumulativeLlmMs += llmMs;
 
@@ -786,11 +926,7 @@ export class AgentEngine {
           // message cannot be modified" — src/model/inbound-fit.ts). In that
           // case fall through to `break` and surface stopReason "length"; the
           // user re-prompts and the model starts a fresh, fully-signed turn.
-          if (
-            lastFinishReason === "length" &&
-            lengthContinuations < MAX_LENGTH_CONTINUATIONS &&
-            !hasUnsignedReasoning(response.content)
-          ) {
+          if (canResumeFromLength(lastFinishReason, lengthContinuations, response.content)) {
             lengthContinuations += 1;
             // Seed history with the partial assistant text so the next call
             // continues from where it stopped. `normalizeForReplay` fixes the
@@ -830,277 +966,27 @@ export class AgentEngine {
         history.push({ role: "assistant", content: historyContent });
 
         // 5. Execute tools in PARALLEL (sync + task-augmented concurrently, §13)
+        const toolExecContext: ToolExecContext = {
+          config,
+          runId,
+          toolAnnotations,
+          connectorSkillCandidates,
+          injectedConnectorSkills,
+          toolSchemaMap,
+          promotedLastUsed,
+          bumpUseCounter,
+          supervisor,
+        };
         const toolResults = await Promise.all(
-          toolCalls.map(async (toolCall) => {
-            const parsedInput = (
-              typeof toolCall.input === "string"
-                ? JSON.parse(toolCall.input)
-                : (toolCall.input ?? {})
-            ) as Record<string, unknown>;
-
-            const gatedCall = config.hooks?.beforeToolCall
-              ? await config.hooks.beforeToolCall({
-                  id: toolCall.toolCallId,
-                  name: toolCall.toolName,
-                  input: parsedInput,
-                })
-              : { id: toolCall.toolCallId, name: toolCall.toolName, input: parsedInput };
-
-            if (gatedCall === null) {
-              return {
-                toolCall,
-                gatedCall: {
-                  id: toolCall.toolCallId,
-                  name: toolCall.toolName,
-                  input: parsedInput,
-                },
-                result: {
-                  content: textContent("Tool call was denied by policy."),
-                  isError: true,
-                } as ToolResult,
-                ms: 0,
-              };
-            }
-
-            // Extract UI resourceUri from tool annotations if present
-            const ann = toolAnnotations.get(gatedCall.name);
-            const uiMeta = ann?.ui as Record<string, unknown> | undefined;
-            const resourceUri =
-              typeof uiMeta?.resourceUri === "string" ? uiMeta.resourceUri : undefined;
-
-            // tool.start fires with the *pre-coercion* input on purpose:
-            // audit/telemetry should see the raw model emission so we can
-            // observe when models string-encode nested objects (the very
-            // misbehavior coerceInputForSchema below recovers from). Do
-            // not move this emit after the coerce step.
-            this.events.emit({
-              type: "tool.start",
-              data: {
-                runId,
-                name: gatedCall.name,
-                id: gatedCall.id,
-                resourceUri,
-                input: gatedCall.input,
-              },
-            });
-
-            // Surface-once connector-skill overlays. On the first call to
-            // a tool whose name a candidate's tool-affinity matches, emit
-            // `connector.skill.injected` — the reconstructor turns it into a
-            // synthetic history message that rides the cached history from the
-            // next turn (never the system prefix). Deduped across runs (the set
-            // is seeded from history above) and within this run (the set).
-            // Synchronous between the has-check and the add — no await — so
-            // parallel tool calls in this `Promise.all` mapper can't both pass
-            // the check and double-inject the same overlay.
-            if (connectorSkillCandidates.length > 0) {
-              for (const candidate of connectorSkillCandidates) {
-                if (injectedConnectorSkills.has(candidate.name)) continue;
-                if (!candidate.toolAffinity.some((p) => toolMatches(gatedCall.name, p))) continue;
-                injectedConnectorSkills.add(candidate.name);
-                this.events.emit({
-                  type: "connector.skill.injected",
-                  data: {
-                    runId,
-                    toolName: gatedCall.name,
-                    skillName: candidate.name,
-                    skillBody: candidate.body,
-                    scope: candidate.scope,
-                  },
-                });
-              }
-            }
-
-            const start = performance.now();
-            let result: ToolResult | undefined;
-
-            // Validate tool input against declared schema before execution.
-            // Coerce first: models occasionally emit nested object/array
-            // values as JSON-encoded strings (`{ manifest: "{...}" }`).
-            // The coerce pass uses the schema as a parsing oracle to
-            // recover those one-level misencodings before validation.
-            const toolSchema = toolSchemaMap.get(gatedCall.name);
-            if (toolSchema?.inputSchema) {
-              const schema = toolSchema.inputSchema as Record<string, unknown>;
-              gatedCall.input = coerceInputForSchema(gatedCall.input, schema);
-              const validation = validateToolInput(gatedCall.input, schema);
-              if (!validation.valid) {
-                result = {
-                  content: textContent(`Invalid tool input: ${validation.error}`),
-                  isError: true,
-                };
-              }
-            }
-
-            if (!result) {
-              try {
-                // Forward the run's AbortSignal so task-augmented MCP tools
-                // propagate cancellation via tasks/cancel and inline tools
-                // abort their in-flight RPC. Identity flows through
-                // AsyncLocalStorage (`runWithRequestContext`); no principal
-                // argument threads through the call.
-                result = await this.tools.execute(gatedCall, config.signal);
-              } catch (err) {
-                result = {
-                  content: textContent(err instanceof Error ? err.message : String(err)),
-                  isError: true,
-                };
-              }
-            }
-
-            // LRU refresh: a promoted tool that's actively being called
-            // moves to the back of the eviction queue. Initial tools aren't
-            // in the map and are exempt from eviction either way.
-            if (promotedLastUsed.has(gatedCall.name)) {
-              promotedLastUsed.set(gatedCall.name, ++useCounter);
-            }
-
-            // Guard: reject oversized tool results before event emission or history accumulation
-            const maxResultSize = config.maxToolResultSize ?? 1_000_000;
-            if (maxResultSize > 0) {
-              const resultSize = estimateContentSize(result.content);
-              if (resultSize > maxResultSize) {
-                result = {
-                  content: textContent(
-                    `Tool result too large (${resultSize.toLocaleString()} chars, limit: ${maxResultSize.toLocaleString()}). ` +
-                      `Ask the user to constrain the query or use pagination.`,
-                  ),
-                  isError: true,
-                };
-              }
-            }
-
-            const ms = performance.now() - start;
-
-            const hookedResult = config.hooks?.afterToolCall
-              ? await config.hooks.afterToolCall(gatedCall, result)
-              : result;
-
-            // Supervisor sees the post-hook, post-A.3-normalization result.
-            // On a trip, the replacement directive flows downstream in place
-            // of the original tool result. The tripped tool is filtered out
-            // of `modelTools` on subsequent iterations (see the top of the
-            // run loop), so the model can't call it again regardless of
-            // what the directive says.
-            const verdict = supervisor.observe(gatedCall, hookedResult);
-            const finalResult = verdict.type === "synth" ? verdict.replacement : hookedResult;
-
-            // Extract text output for persistence. The full structured result
-            // is only attached when there's a resourceUri (inline UI), but the
-            // text output is always needed for conversation history reconstruction.
-            const outputText = extractTextForModel(finalResult.content);
-
-            // Bound the text the MODEL sees. `outputText` (full) is persisted
-            // for the UI and the record; `modelOutput` (bounded) is what enters
-            // the prompt — both on this live turn AND on every replay. Computing
-            // it once here and persisting it keeps the live view and the
-            // replayed view byte-identical. See boundToolResultForModel.
-            const modelOutput = boundToolResultForModel(outputText, {
-              hasUiResource: !!resourceUri,
-            });
-            const bounded = modelOutput !== outputText;
-            if (bounded) {
-              this.events.emit({
-                type: "tool.progress",
-                data: {
-                  runId,
-                  id: gatedCall.id,
-                  message: resourceUri
-                    ? `Tool result bounded for model context (${outputText.length.toLocaleString()} chars → pointer). Full result rendered in inline UI.`
-                    : `Tool result bounded for model context (${outputText.length.toLocaleString()} chars → ${modelOutput.length.toLocaleString()}). Full result persisted for the UI.`,
-                },
-              });
-            }
-
-            // Per-call resource_link blocks (MCP 2025-11-25). Distinct from the
-            // static `resourceUri` tool annotation used for inline UI binding —
-            // resource_link points at a file/resource the client should fetch.
-            const resourceLinks = extractResourceLinks(finalResult.content);
-
-            this.events.emit({
-              type: "tool.done",
-              data: {
-                runId,
-                name: gatedCall.name,
-                id: gatedCall.id,
-                ok: !finalResult.isError,
-                ms,
-                resourceUri,
-                output: outputText,
-                // Persisted only when it actually differs from `output`, so
-                // small results don't carry a duplicate field. Replay falls
-                // back to bounding `output` for legacy events without it.
-                ...(bounded ? { modelOutput } : {}),
-                result: resourceUri ? finalResult : undefined,
-                ...(resourceLinks.length > 0 ? { resourceLinks } : {}),
-                ...(verdict.type === "synth"
-                  ? {
-                      supervisorTripped: true,
-                      trippedTool: verdict.trippedTool,
-                      consecutiveRepeats: verdict.consecutiveRepeats,
-                    }
-                  : {}),
-              },
-            });
-
-            return {
-              toolCall,
-              gatedCall,
-              result: finalResult,
-              ms,
-              resourceUri,
-              resourceLinks,
-              modelOutput,
-            };
-          }),
+          toolCalls.map((toolCall) => this.executeToolCall(toolCall, toolExecContext)),
         );
 
         // Build result arrays from parallel results. `modelOutput` is the
-        // already-bounded text the model sees (computed once, above, and
-        // persisted on tool.done) — so the live prompt and the replayed
+        // already-bounded text the model sees (computed once, during execution,
+        // and persisted on tool.done) — so the live prompt and the replayed
         // prompt carry the identical bounded result.
-        const toolResultParts: LanguageModelV3ToolResultPart[] = [];
-
-        for (const {
-          toolCall,
-          result,
-          ms,
-          resourceUri: uri,
-          resourceLinks: links,
-          modelOutput,
-        } of toolResults) {
-          // `modelOutput` is present for every executed tool (bounded once,
-          // above). Early-return paths that skip execution (e.g. policy-denied)
-          // omit it; bound their small result here so the type stays a string.
-          const llmText =
-            modelOutput ??
-            boundToolResultForModel(extractTextForModel(result.content), { hasUiResource: !!uri });
-          allToolCalls.push({
-            id: toolCall.toolCallId,
-            name: toolCall.toolName,
-            input: JSON.parse(toolCall.input) as Record<string, unknown>,
-            output: llmText,
-            ok: !result.isError,
-            ms,
-            // Surface the structured failure reason (orchestrator routing
-            // classes, etc.) so consumers can tell an unroutable connector
-            // from a tool that ran and errored. See ToolCallRecord.errorReason.
-            ...(result.isError && typeof result.structuredContent?.reason === "string"
-              ? { errorReason: result.structuredContent.reason }
-              : {}),
-            ...(uri ? { resourceUri: uri } : {}),
-            ...(links && links.length > 0 ? { resourceLinks: links } : {}),
-          });
-
-          toolResultParts.push({
-            type: "tool-result",
-            toolCallId: toolCall.toolCallId,
-            toolName: toolCall.toolName,
-            output: result.isError
-              ? { type: "error-text", value: llmText }
-              : { type: "text", value: llmText },
-          });
-        }
+        const { toolResultParts, toolCallRecords } = buildToolResults(toolResults);
+        allToolCalls.push(...toolCallRecords);
 
         // 6. Feed results back as tool message
         history.push({ role: "tool", content: toolResultParts });
@@ -1108,40 +994,508 @@ export class AgentEngine {
         iteration++;
       }
     } catch (err) {
-      const errorMessage = err instanceof Error ? err.message : String(err);
-      this.events.emit({
-        type: "run.error",
-        data: {
-          runId,
-          error: errorMessage,
-          type: err instanceof Error ? err.constructor.name : "Error",
-        },
-      });
+      this.events.emit({ type: "run.error", data: buildRunErrorData(runId, err) });
       throw err;
     } finally {
       unregisterToolControls?.();
     }
 
+    const totalMs = Math.round(performance.now() - runStart);
+    return this.finishRun({
+      runId,
+      iteration,
+      maxIter,
+      lastFinishReason,
+      totalMs,
+      output,
+      allToolCalls,
+      cumulativeUsage,
+      cumulativeLlmMs,
+    });
+  }
+
+  /**
+   * Emit `run.done` and assemble the EngineResult: the run-level stop reason
+   * (iteration cap first, then the model-driven exit) and the reported
+   * iteration count (which includes the in-progress iteration when the loop
+   * exited before the cap).
+   */
+  private finishRun(params: {
+    runId: string;
+    iteration: number;
+    maxIter: number;
+    lastFinishReason: FinishReason | undefined;
+    totalMs: number;
+    output: string;
+    allToolCalls: ToolCallRecord[];
+    cumulativeUsage: TokenUsage;
+    cumulativeLlmMs: number;
+  }): EngineResult {
+    const {
+      runId,
+      iteration,
+      maxIter,
+      lastFinishReason,
+      totalMs,
+      output,
+      allToolCalls,
+      cumulativeUsage,
+      cumulativeLlmMs,
+    } = params;
     const stopReason: StopReason =
       iteration >= maxIter ? "max_iterations" : deriveStopReason(lastFinishReason);
+    const reportedIterations = iteration + (iteration < maxIter ? 1 : 0);
     this.events.emit({
       type: "run.done",
       data: {
         runId,
         stopReason,
-        iterations: iteration + (iteration < maxIter ? 1 : 0),
-        totalMs: Math.round(performance.now() - runStart),
+        iterations: reportedIterations,
+        totalMs,
       },
     });
 
     return {
       output,
       toolCalls: allToolCalls,
-      iterations: iteration + (iteration < maxIter ? 1 : 0),
+      iterations: reportedIterations,
       usage: cumulativeUsage,
       llmMs: cumulativeLlmMs,
       stopReason,
       ...(lastFinishReason !== undefined ? { finishReason: lastFinishReason } : {}),
+    };
+  }
+
+  /**
+   * Emit the run-scope telemetry the runtime pre-computed (Phase 2:
+   * skills.loaded and context.assembled). Tied to the same `runId` as
+   * `run.start` so the conversation log records what the prompt looked like for
+   * this turn.
+   */
+  private emitRunPromptMetadata(runId: string, config: EngineConfig): void {
+    if (config.runMetadata?.skillsLoaded) {
+      this.events.emit({
+        type: "skills.loaded",
+        data: {
+          runId,
+          skills: config.runMetadata.skillsLoaded.skills,
+          totalTokens: config.runMetadata.skillsLoaded.totalTokens,
+        },
+      });
+    }
+    if (config.runMetadata?.contextAssembled) {
+      this.events.emit({
+        type: "context.assembled",
+        data: {
+          runId,
+          sources: config.runMetadata.contextAssembled.sources,
+          excluded: config.runMetadata.contextAssembled.excluded,
+          totalTokens: config.runMetadata.contextAssembled.totalTokens,
+          ...(config.runMetadata.contextAssembled.modelMaxContext !== undefined
+            ? { modelMaxContext: config.runMetadata.contextAssembled.modelMaxContext }
+            : {}),
+          ...(config.runMetadata.contextAssembled.headroomTokens !== undefined
+            ? { headroomTokens: config.runMetadata.contextAssembled.headroomTokens }
+            : {}),
+        },
+      });
+    }
+  }
+
+  /**
+   * Build the per-iteration model toolset and name→schema lookup. Filters out
+   * any tool the supervisor has tripped this run: removing the tool from the
+   * model's toolset is more reliable than telling the model "do not call this
+   * tool" via prose — the model literally can't call a tool that isn't in its
+   * list. Other tools remain available so the run can recover.
+   */
+  private buildIterationTools(
+    directTools: ToolSchema[],
+    supervisor: RunSupervisor,
+  ): { modelTools: LanguageModelV3FunctionTool[]; toolSchemaMap: Map<string, ToolSchema> } {
+    const trippedSet = new Set(supervisor.snapshot().trippedTools);
+    const usableDirectTools =
+      trippedSet.size === 0 ? directTools : directTools.filter((t) => !trippedSet.has(t.name));
+    const modelTools: LanguageModelV3FunctionTool[] = usableDirectTools.map((t) => ({
+      type: "function" as const,
+      name: t.name,
+      description: t.description,
+      inputSchema: toolSchemaForLlm(t.inputSchema, t.name) as JSONSchema7,
+    }));
+
+    const toolSchemaMap = new Map<string, ToolSchema>();
+    for (const t of usableDirectTools) {
+      toolSchemaMap.set(t.name, t);
+    }
+
+    return { modelTools, toolSchemaMap };
+  }
+
+  /**
+   * Backstop for the active-tool cap: evict LRU agent-promoted entries until the
+   * set fits `maxActiveTools`. Initial tools are exempt because they're not in
+   * `promotedLastUsed`. Defensive guard: if the just-added tool would be its own
+   * eviction victim (only possible when initial tools alone already exceed the
+   * cap, so promotedLastUsed has only this one entry), break out. Cap is "soft"
+   * in that pathological config — the alternative would be silently undoing the
+   * agent's intentional promotion, which is worse than letting the cap stretch
+   * by one.
+   */
+  private evictPromotedToolsToCap(
+    runId: string,
+    directTools: ToolSchema[],
+    directToolNames: Set<string>,
+    promotedLastUsed: Map<string, number>,
+    maxActiveTools: number,
+    justAddedToolName: string,
+  ): void {
+    while (directTools.length > maxActiveTools && promotedLastUsed.size > 0) {
+      let oldestName: string | null = null;
+      let oldestStamp = Number.POSITIVE_INFINITY;
+      for (const [name, stamp] of promotedLastUsed) {
+        if (stamp < oldestStamp) {
+          oldestStamp = stamp;
+          oldestName = name;
+        }
+      }
+      if (!oldestName || oldestName === justAddedToolName) break;
+      const idx = directTools.findIndex((t) => t.name === oldestName);
+      if (idx >= 0) directTools.splice(idx, 1);
+      directToolNames.delete(oldestName);
+      promotedLastUsed.delete(oldestName);
+      this.events.emit({
+        type: "tool.released",
+        data: { runId, toolName: oldestName, reason: "evicted" },
+      });
+    }
+  }
+
+  /**
+   * Call the model once, recovering from a single provider-reported
+   * context-window overflow. The pre-flight `resolveMessageBudget` should make
+   * this rare; when it fires, we re-window with the hook's own
+   * `overflowAttempt`-driven scaling (typically halves the budget) and retry
+   * once. A second overflow propagates the original error so the UI can surface
+   * a clear "conversation too long" message rather than silently looping.
+   */
+  private async callModelWithOverflowRecovery(
+    callOnce: (msgs: LanguageModelV3Message[]) => Promise<StreamResult>,
+    initialMessages: LanguageModelV3Message[],
+    runTransform: (attempt: number) => LanguageModelV3Message[],
+    config: EngineConfig,
+    runId: string,
+  ): Promise<StreamResult> {
+    let callMessages = initialMessages;
+    let overflowAttempt = 0;
+    while (true) {
+      try {
+        return await callOnce(callMessages);
+      } catch (err) {
+        if (
+          overflowAttempt === 0 &&
+          isContextOverflowError(err) &&
+          config.hooks?.transformContext
+        ) {
+          overflowAttempt = 1;
+          const previousMessageCount = callMessages.length;
+          const errorMessage = err instanceof Error ? err.message : String(err);
+          // Always-on stderr line so a frequency uptick is visible in
+          // operator logs without flipping a debug flag. Recovery
+          // firing means the pre-flight budget composition disagreed
+          // with the provider's tokenizer — actionable signal for
+          // tuning DEFAULT_BUDGET_SAFETY_MARGIN_TOKENS or the
+          // estimator. Per-conversation correlation via runId; the
+          // aggregate is what drives action.
+          log.warn(
+            `[engine] context overflow recovery runId=${runId} attempt=${overflowAttempt} previousMessages=${previousMessageCount} model=${config.model} error="${errorMessage}"`,
+          );
+          this.events.emit({
+            type: "context.overflow_recovery",
+            data: {
+              runId,
+              attempt: overflowAttempt,
+              previousMessageCount,
+              errorMessage,
+            },
+          });
+          callMessages = sanitizeMessages(runTransform(overflowAttempt));
+          continue;
+        }
+        // Terminal LLM failure: the call threw, in-call retry is exhausted,
+        // and it's neither a recoverable overflow nor a user cancellation.
+        // Emit the observe-only error fact (for the LLM error-rate metric)
+        // before re-throwing — the error still propagates and ends the run.
+        // Aborts are excluded: a cancellation isn't a provider failure and
+        // must not inflate the error rate.
+        if (!config.signal?.aborted) {
+          this.events.emit({
+            type: "llm.error",
+            data: { runId, model: config.model },
+          });
+        }
+        throw err;
+      }
+    }
+  }
+
+  /**
+   * Append this turn's assistant text to the running output, emitting the
+   * inter-turn separator (`\n\n`) when needed. When this turn is the resumption
+   * of a length-truncated one (`resumingFromLength`), stitch directly onto the
+   * partial with no separator — the model is continuing mid-thought, so a blank
+   * line would inject a false break. Returns the new output; does not consume
+   * the resume flag.
+   */
+  private accumulateAssistantText(
+    currentOutput: string,
+    content: LanguageModelV3Content[],
+    resumingFromLength: boolean,
+    runId: string,
+  ): string {
+    let output = currentOutput;
+    for (const block of content) {
+      if (block.type === "text") {
+        if (
+          !resumingFromLength &&
+          output.length > 0 &&
+          !output.endsWith("\n") &&
+          block.text.length > 0
+        ) {
+          output += "\n\n";
+          this.events.emit({ type: "text.delta", data: { runId, text: "\n\n" } });
+        }
+        output += block.text;
+      }
+    }
+    return output;
+  }
+
+  /**
+   * Surface-once connector-skill overlays whose tool-affinity matches this call.
+   * On the first call to a matching tool, emit `connector.skill.injected` — the
+   * reconstructor turns it into a synthetic history message that rides the cached
+   * history from the next turn (never the system prefix). Deduped across runs
+   * (`injected` is seeded from history) and within this run. Synchronous between
+   * the has-check and the add — no await — so parallel tool calls in the
+   * iteration's `Promise.all` can't both pass the check and double-inject the
+   * same overlay. Mutates `injected`.
+   */
+  private injectConnectorSkillOverlays(
+    runId: string,
+    toolName: string,
+    candidates: ConnectorSkillCandidate[],
+    injected: Set<string>,
+  ): void {
+    for (const candidate of candidates) {
+      if (injected.has(candidate.name)) continue;
+      if (!candidate.toolAffinity.some((p) => toolMatches(toolName, p))) continue;
+      injected.add(candidate.name);
+      this.events.emit({
+        type: "connector.skill.injected",
+        data: {
+          runId,
+          toolName,
+          skillName: candidate.name,
+          skillBody: candidate.body,
+          scope: candidate.scope,
+        },
+      });
+    }
+  }
+
+  /**
+   * Emit `tool.progress` when a tool result was bounded for model context.
+   * `outputText` (full) is persisted for the UI and the record; `modelOutput`
+   * (bounded) is what enters the prompt. The message differs for inline-UI
+   * results (pointer) vs. persisted results. No-op when the result was not
+   * bounded.
+   */
+  private emitToolResultBoundedProgress(
+    bounded: boolean,
+    runId: string,
+    id: string,
+    resourceUri: string | undefined,
+    outputText: string,
+    modelOutput: string,
+  ): void {
+    if (!bounded) return;
+    this.events.emit({
+      type: "tool.progress",
+      data: {
+        runId,
+        id,
+        message: resourceUri
+          ? `Tool result bounded for model context (${outputText.length.toLocaleString()} chars → pointer). Full result rendered in inline UI.`
+          : `Tool result bounded for model context (${outputText.length.toLocaleString()} chars → ${modelOutput.length.toLocaleString()}). Full result persisted for the UI.`,
+      },
+    });
+  }
+
+  /**
+   * Run one tool call end-to-end: gate (beforeToolCall) → coerce/validate →
+   * execute → bound → afterToolCall → supervisor → emit. Returns the record the
+   * loop needs to build history and telemetry. Called concurrently (one per tool
+   * call) inside the iteration's `Promise.all`.
+   */
+  private async executeToolCall(
+    toolCall: LanguageModelV3ToolCall,
+    ctx: ToolExecContext,
+  ): Promise<ToolExecResult> {
+    const parsedInput = parseToolCallInput(toolCall.input);
+
+    const gatedCall = ctx.config.hooks?.beforeToolCall
+      ? await ctx.config.hooks.beforeToolCall({
+          id: toolCall.toolCallId,
+          name: toolCall.toolName,
+          input: parsedInput,
+        })
+      : { id: toolCall.toolCallId, name: toolCall.toolName, input: parsedInput };
+
+    if (gatedCall === null) {
+      return {
+        toolCall,
+        gatedCall: {
+          id: toolCall.toolCallId,
+          name: toolCall.toolName,
+          input: parsedInput,
+        },
+        result: {
+          content: textContent("Tool call was denied by policy."),
+          isError: true,
+        } as ToolResult,
+        ms: 0,
+      };
+    }
+
+    // Extract UI resourceUri from tool annotations if present
+    const ann = ctx.toolAnnotations.get(gatedCall.name);
+    const uiMeta = ann?.ui as Record<string, unknown> | undefined;
+    const resourceUri = typeof uiMeta?.resourceUri === "string" ? uiMeta.resourceUri : undefined;
+
+    // tool.start fires with the *pre-coercion* input on purpose:
+    // audit/telemetry should see the raw model emission so we can
+    // observe when models string-encode nested objects (the very
+    // misbehavior coerceInputForSchema below recovers from). Do
+    // not move this emit after the coerce step.
+    this.events.emit({
+      type: "tool.start",
+      data: {
+        runId: ctx.runId,
+        name: gatedCall.name,
+        id: gatedCall.id,
+        resourceUri,
+        input: gatedCall.input,
+      },
+    });
+
+    this.injectConnectorSkillOverlays(
+      ctx.runId,
+      gatedCall.name,
+      ctx.connectorSkillCandidates,
+      ctx.injectedConnectorSkills,
+    );
+
+    const start = performance.now();
+
+    // Validate + coerce tool input against the declared schema before execution.
+    const toolSchema = ctx.toolSchemaMap.get(gatedCall.name);
+    const coercion = coerceAndValidateToolInput(gatedCall.input, toolSchema);
+    gatedCall.input = coercion.input;
+    let result: ToolResult | undefined = coercion.errorResult;
+
+    if (!result) {
+      try {
+        // Forward the run's AbortSignal so task-augmented MCP tools
+        // propagate cancellation via tasks/cancel and inline tools
+        // abort their in-flight RPC. Identity flows through
+        // AsyncLocalStorage (`runWithRequestContext`); no principal
+        // argument threads through the call.
+        result = await this.tools.execute(gatedCall, ctx.config.signal);
+      } catch (err) {
+        result = {
+          content: textContent(err instanceof Error ? err.message : String(err)),
+          isError: true,
+        };
+      }
+    }
+
+    // LRU refresh: a promoted tool that's actively being called
+    // moves to the back of the eviction queue. Initial tools aren't
+    // in the map and are exempt from eviction either way.
+    if (ctx.promotedLastUsed.has(gatedCall.name)) {
+      ctx.promotedLastUsed.set(gatedCall.name, ctx.bumpUseCounter());
+    }
+
+    // Guard: reject oversized tool results before event emission or history accumulation
+    result = enforceMaxToolResultSize(result, ctx.config.maxToolResultSize);
+
+    const ms = performance.now() - start;
+
+    const hookedResult = ctx.config.hooks?.afterToolCall
+      ? await ctx.config.hooks.afterToolCall(gatedCall, result)
+      : result;
+
+    // Supervisor sees the post-hook, post-A.3-normalization result.
+    // On a trip, the replacement directive flows downstream in place
+    // of the original tool result. The tripped tool is filtered out
+    // of `modelTools` on subsequent iterations (see buildIterationTools),
+    // so the model can't call it again regardless of what the directive says.
+    const verdict = ctx.supervisor.observe(gatedCall, hookedResult);
+    const finalResult = verdict.type === "synth" ? verdict.replacement : hookedResult;
+
+    // Extract text output for persistence. The full structured result
+    // is only attached when there's a resourceUri (inline UI), but the
+    // text output is always needed for conversation history reconstruction.
+    const outputText = extractTextForModel(finalResult.content);
+
+    // Bound the text the MODEL sees. `outputText` (full) is persisted
+    // for the UI and the record; `modelOutput` (bounded) is what enters
+    // the prompt — both on this live turn AND on every replay. Computing
+    // it once here and persisting it keeps the live view and the
+    // replayed view byte-identical. See boundToolResultForModel.
+    const modelOutput = boundToolResultForModel(outputText, {
+      hasUiResource: !!resourceUri,
+    });
+    const bounded = modelOutput !== outputText;
+    this.emitToolResultBoundedProgress(
+      bounded,
+      ctx.runId,
+      gatedCall.id,
+      resourceUri,
+      outputText,
+      modelOutput,
+    );
+
+    // Per-call resource_link blocks (MCP 2025-11-25). Distinct from the
+    // static `resourceUri` tool annotation used for inline UI binding —
+    // resource_link points at a file/resource the client should fetch.
+    const resourceLinks = extractResourceLinks(finalResult.content);
+
+    this.events.emit({
+      type: "tool.done",
+      data: buildToolDoneData({
+        runId: ctx.runId,
+        name: gatedCall.name,
+        id: gatedCall.id,
+        finalResult,
+        ms,
+        resourceUri,
+        outputText,
+        bounded,
+        modelOutput,
+        resourceLinks,
+        verdict,
+      }),
+    });
+
+    return {
+      toolCall,
+      gatedCall,
+      result: finalResult,
+      ms,
+      resourceUri,
+      resourceLinks,
+      modelOutput,
     };
   }
 }

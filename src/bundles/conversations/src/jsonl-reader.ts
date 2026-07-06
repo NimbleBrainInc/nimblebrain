@@ -302,48 +302,63 @@ interface DerivedMetrics {
   lastEventTs: string | null;
 }
 
+/** Fold one parsed event's usage into the running metrics accumulator. */
+function accumulateEventMetrics(
+  evt: KnownEvent & { ts: string; type: string },
+  acc: DerivedMetrics,
+): void {
+  acc.lastEventTs = evt.ts;
+  if (isLlmResponse(evt)) {
+    acc.totalInputTokens += evt.usage?.inputTokens ?? 0;
+    acc.totalOutputTokens += evt.usage?.outputTokens ?? 0;
+    acc.lastModel = evt.model;
+  } else if (isAuxUsage(evt)) {
+    // Forked fast-slot calls (compaction/title/briefing) emit no
+    // llm.response; count their usage so the bundle's totals match the
+    // runtime aggregator (which counts aux.usage too).
+    acc.totalInputTokens += evt.usage?.inputTokens ?? 0;
+    acc.totalOutputTokens += evt.usage?.outputTokens ?? 0;
+  }
+}
+
+/**
+ * Legacy message-format line: read assistant metadata.usage. Mirrors the
+ * runtime's index-cache so both surfaces report the same totals for a file.
+ */
+function accumulateLegacyMetrics(line: string, acc: DerivedMetrics): void {
+  try {
+    const msg = JSON.parse(line) as {
+      role?: string;
+      metadata?: { usage?: { inputTokens?: number; outputTokens?: number }; model?: string };
+    };
+    if (msg.role === "assistant" && msg.metadata?.usage && msg.metadata.model) {
+      acc.totalInputTokens += msg.metadata.usage.inputTokens ?? 0;
+      acc.totalOutputTokens += msg.metadata.usage.outputTokens ?? 0;
+      acc.lastModel = msg.metadata.model;
+    }
+  } catch {
+    // Skip malformed lines.
+  }
+}
+
 function deriveMetricsFromLines(lines: string[]): DerivedMetrics {
-  let totalInputTokens = 0;
-  let totalOutputTokens = 0;
-  let lastModel: string | null = null;
-  let lastEventTs: string | null = null;
+  const acc: DerivedMetrics = {
+    totalInputTokens: 0,
+    totalOutputTokens: 0,
+    lastModel: null,
+    lastEventTs: null,
+  };
 
   for (const line of lines) {
     const evt = parseEventLine(line);
     if (evt) {
-      lastEventTs = evt.ts;
-      if (isLlmResponse(evt)) {
-        totalInputTokens += evt.usage?.inputTokens ?? 0;
-        totalOutputTokens += evt.usage?.outputTokens ?? 0;
-        lastModel = evt.model;
-      } else if (isAuxUsage(evt)) {
-        // Forked fast-slot calls (compaction/title/briefing) emit no
-        // llm.response; count their usage so the bundle's totals match the
-        // runtime aggregator (which counts aux.usage too).
-        totalInputTokens += evt.usage?.inputTokens ?? 0;
-        totalOutputTokens += evt.usage?.outputTokens ?? 0;
-      }
+      accumulateEventMetrics(evt, acc);
       continue;
     }
-    // Legacy message-format line: read assistant metadata.usage. Mirrors
-    // the runtime's index-cache so both surfaces report the same totals
-    // for the same file.
-    try {
-      const msg = JSON.parse(line) as {
-        role?: string;
-        metadata?: { usage?: { inputTokens?: number; outputTokens?: number }; model?: string };
-      };
-      if (msg.role === "assistant" && msg.metadata?.usage && msg.metadata.model) {
-        totalInputTokens += msg.metadata.usage.inputTokens ?? 0;
-        totalOutputTokens += msg.metadata.usage.outputTokens ?? 0;
-        lastModel = msg.metadata.model;
-      }
-    } catch {
-      // Skip malformed lines.
-    }
+    accumulateLegacyMetrics(line, acc);
   }
 
-  return { totalInputTokens, totalOutputTokens, lastModel, lastEventTs };
+  return acc;
 }
 
 function applyDerivedMetrics(meta: ConversationMeta, metrics: DerivedMetrics): void {
@@ -420,6 +435,19 @@ function extractText(content: ContentPart[] | undefined): string {
 // Event-sourced reducer — produces DisplayMessage[]
 // ---------------------------------------------------------------------------
 
+/** Build the user DisplayMessage for a `user.message` event. */
+function buildUserMessage(evt: UserMessageEvent): DisplayMessage {
+  const text = extractText(evt.content);
+  return {
+    role: "user",
+    content: text,
+    blocks: text ? [{ type: "text", text }] : [],
+    timestamp: evt.ts,
+    ...(evt.userId ? { userId: evt.userId } : {}),
+    ...(evt.files && evt.files.length > 0 ? { files: evt.files } : {}),
+  };
+}
+
 /**
  * Walk events in chronological order and project them into the display shape.
  *
@@ -448,17 +476,9 @@ function reconstructFromEvents(lines: string[]): {
     const evt = events[i]!;
 
     if (isUserMessage(evt)) {
-      const text = extractText(evt.content);
-      const msg: DisplayMessage = {
-        role: "user",
-        content: text,
-        blocks: text ? [{ type: "text", text }] : [],
-        timestamp: evt.ts,
-        ...(evt.userId ? { userId: evt.userId } : {}),
-        ...(evt.files && evt.files.length > 0 ? { files: evt.files } : {}),
-      };
+      const msg = buildUserMessage(evt);
       messages.push(msg);
-      if (!preview) preview = text;
+      if (!preview) preview = msg.content;
       i++;
       continue;
     }
@@ -476,88 +496,161 @@ function reconstructFromEvents(lines: string[]): {
   return { messages, messageCount: messages.length, preview };
 }
 
+/** How a run ended: a clean terminal (run.done/run.error) or a foreign turn. */
+type RunBoundary =
+  | { kind: "terminal"; endTs: string; stopReason: string | undefined }
+  | { kind: "foreign" };
+
+/** Collected events for one run, plus how it ended and where to resume. */
+interface RunScan {
+  toolDones: Map<string, ToolDoneEvent>;
+  toolInputs: Map<string, unknown>;
+  llmResponses: LlmResponseEvent[];
+  endTs: string;
+  stopReason: string | undefined;
+  terminated: boolean;
+  abandoned: boolean;
+  nextIndex: number;
+}
+
 /**
- * Collect events belonging to a single run (from run.start at index `start`
- * through run.done or run.error) and build one assistant DisplayMessage.
- *
- * Returns the built message and the index at which outer iteration resumes.
- * Incomplete runs (no run.done) still produce a best-effort message.
+ * Classify whether `inner` ends the run identified by `runId`. Returns how it
+ * ended, or null for an interior event that belongs to (or is ignorable within)
+ * the run.
  */
-function collectRun(
-  events: KnownEvent[],
-  start: number,
+function classifyRunBoundary(inner: KnownEvent, runId: string): RunBoundary | null {
+  if (isRunDone(inner) && inner.runId === runId) {
+    return { kind: "terminal", endTs: inner.ts, stopReason: inner.stopReason };
+  }
+  if (isRunError(inner) && inner.runId === runId) {
+    return { kind: "terminal", endTs: inner.ts, stopReason: "error" };
+  }
+  // Implicit run end: a foreign user.message or a different run's run.start
+  // means this run never closed cleanly (process death / deploy bounce
+  // mid-turn before a terminal event). Mirrors the sibling LLM-replay
+  // projection's guard in src/conversation/event-reconstructor.ts. Without
+  // this, an orphaned run swallows every subsequent turn and the transcript
+  // appears to lose everything after the bounce (NimbleBrain prod incident: a
+  // deploy-killed turn hid the next hour of an actively-used conversation on
+  // reload). The scan begins at start + 1, so any run.start seen here is by
+  // construction a foreign run.
+  if (isUserMessage(inner) || isRunStart(inner)) {
+    return { kind: "foreign" };
+  }
+  return null;
+}
+
+/** Fold an interior run event (llm.response / tool.start / tool.done) into the scan. */
+function collectRunContentEvent(
+  inner: KnownEvent,
   runId: string,
-): [DisplayMessage | null, number] {
+  into: {
+    llmResponses: LlmResponseEvent[];
+    toolInputs: Map<string, unknown>;
+    toolDones: Map<string, ToolDoneEvent>;
+  },
+): void {
+  if (isLlmResponse(inner) && inner.runId === runId) {
+    into.llmResponses.push(inner);
+  } else if (isToolStart(inner) && inner.runId === runId) {
+    if (inner.input !== undefined) into.toolInputs.set(inner.id, inner.input);
+  } else if (isToolDone(inner) && inner.runId === runId) {
+    into.toolDones.set(inner.id, inner);
+  }
+}
+
+/**
+ * Scan forward from the run.start at `start`, collecting the run's events until
+ * a terminal (run.done/run.error), an implicit end (a foreign turn), or the end
+ * of the array. A run is "terminated" only on its own run.done/run.error; if the
+ * scan runs off the END of the array first the turn was still in flight when the
+ * file was read (caller marks it pending). A run cut short by a LATER turn is
+ * `abandoned`, not pending.
+ */
+function scanRunEvents(events: KnownEvent[], start: number, runId: string): RunScan {
   const toolDones = new Map<string, ToolDoneEvent>();
   const toolInputs = new Map<string, unknown>();
   const llmResponses: LlmResponseEvent[] = [];
 
   let endTs = events[start]?.ts ?? "";
   let stopReason: string | undefined;
-  // A run is "terminated" only when we see its run.done/run.error. If the loop
-  // runs off the END of the array first, the turn was still in flight when the
-  // file was read → mark the message pending. A run cut short by a LATER turn
-  // (foreign user.message / run.start) is `abandoned`, not pending — see below.
   let terminated = false;
   let abandoned = false;
 
   let i = start + 1;
   while (i < events.length) {
     const inner = events[i]!;
-    if (isRunDone(inner) && inner.runId === runId) {
-      endTs = inner.ts;
-      stopReason = inner.stopReason;
-      terminated = true;
-      i++;
+    const boundary = classifyRunBoundary(inner, runId);
+    if (boundary) {
+      if (boundary.kind === "terminal") {
+        endTs = boundary.endTs;
+        stopReason = boundary.stopReason;
+        terminated = true;
+        i++;
+      } else {
+        // Foreign turn: stop WITHOUT consuming the event (`i` stays put) so the
+        // outer loop renders it as its own turn. It is `abandoned`, not pending.
+        abandoned = true;
+        stopReason = "interrupted";
+      }
       break;
     }
-    if (isRunError(inner) && inner.runId === runId) {
-      endTs = inner.ts;
-      stopReason = "error";
-      terminated = true;
-      i++;
-      break;
-    }
-    // Implicit run end: a foreign user.message or a different run's run.start
-    // means this run never closed cleanly (process death / deploy bounce
-    // mid-turn before a terminal event). Stop here WITHOUT consuming the event
-    // (`i` stays put) so the outer loop renders it as its own turn. Mirrors the
-    // sibling LLM-replay projection's guard in src/conversation/
-    // event-reconstructor.ts. Without this, an orphaned run swallows every
-    // subsequent turn and the transcript appears to lose everything after the
-    // bounce (NimbleBrain prod incident: a deploy-killed turn hid the next hour
-    // of an actively-used conversation on reload). The loop begins at start + 1,
-    // so any run.start seen here is by construction a foreign run.
-    if (isUserMessage(inner) || isRunStart(inner)) {
-      abandoned = true;
-      stopReason = "interrupted";
-      break;
-    }
-    if (isLlmResponse(inner) && inner.runId === runId) {
-      llmResponses.push(inner);
-    } else if (isToolStart(inner) && inner.runId === runId) {
-      if (inner.input !== undefined) toolInputs.set(inner.id, inner.input);
-    } else if (isToolDone(inner) && inner.runId === runId) {
-      toolDones.set(inner.id, inner);
-    }
+    collectRunContentEvent(inner, runId, { llmResponses, toolInputs, toolDones });
     i++;
   }
 
-  if (llmResponses.length === 0) return [null, i];
+  return {
+    toolDones,
+    toolInputs,
+    llmResponses,
+    endTs,
+    stopReason,
+    terminated,
+    abandoned,
+    nextIndex: i,
+  };
+}
 
+/**
+ * Reconstruct a single DisplayToolCall from a tool-call content part, joining it
+ * with its tool.start input and tool.done result.
+ */
+function buildToolCall(
+  tc: ContentPart,
+  toolDones: Map<string, ToolDoneEvent>,
+  toolInputs: Map<string, unknown>,
+): DisplayToolCall {
+  const toolCallId = tc.toolCallId ?? "";
+  const done = toolDones.get(toolCallId);
+  const inputFromStart = toolInputs.get(toolCallId);
+  const input = parseToolInput(inputFromStart ?? tc.input);
+  const ok = done?.ok ?? true;
+  const name = tc.toolName ?? "";
+  const appName = extractAppName(name);
+  return {
+    id: toolCallId,
+    name,
+    ...(appName ? { appName } : {}),
+    status: ok ? "done" : "error",
+    ok,
+    ms: done?.ms ?? 0,
+    input,
+    result: wrapOutputAsResult(done?.output ?? "", !ok),
+    ...(done?.resourceUri ? { resourceUri: done.resourceUri } : {}),
+    ...(done?.resourceLinks && done.resourceLinks.length > 0
+      ? { resourceLinks: done.resourceLinks }
+      : {}),
+  };
+}
+
+/** Project a run's llm.responses into ordered display blocks and flattened tool calls. */
+function buildRunBlocks(
+  llmResponses: LlmResponseEvent[],
+  toolDones: Map<string, ToolDoneEvent>,
+  toolInputs: Map<string, unknown>,
+): { blocks: DisplayBlock[]; flatToolCalls: DisplayToolCall[] } {
   const blocks: DisplayBlock[] = [];
   const flatToolCalls: DisplayToolCall[] = [];
-
-  let inputTokens = 0;
-  let outputTokens = 0;
-  let cacheReadTokens = 0;
-  let cacheWriteTokens = 0;
-  let reasoningTokens = 0;
-  let hasCacheReads = false;
-  let hasCacheWrites = false;
-  let hasReasoning = false;
-  let llmMs = 0;
-  let model = "";
 
   for (const llm of llmResponses) {
     // Reasoning content — collapse all reasoning parts in this response
@@ -578,89 +671,128 @@ function collectRun(
     // Tool-call content — one tool block per llm.response that has tool-calls.
     const toolCallParts = llm.content.filter((c) => c.type === "tool-call");
     if (toolCallParts.length > 0) {
-      const tools = toolCallParts.map((tc): DisplayToolCall => {
-        const toolCallId = tc.toolCallId ?? "";
-        const done = toolDones.get(toolCallId);
-        const inputFromStart = toolInputs.get(toolCallId);
-        const input = parseToolInput(inputFromStart ?? tc.input);
-        const ok = done?.ok ?? true;
-        const name = tc.toolName ?? "";
-        return {
-          id: toolCallId,
-          name,
-          ...(extractAppName(name) ? { appName: extractAppName(name)! } : {}),
-          status: ok ? "done" : "error",
-          ok,
-          ms: done?.ms ?? 0,
-          input,
-          result: wrapOutputAsResult(done?.output ?? "", !ok),
-          ...(done?.resourceUri ? { resourceUri: done.resourceUri } : {}),
-          ...(done?.resourceLinks && done.resourceLinks.length > 0
-            ? { resourceLinks: done.resourceLinks }
-            : {}),
-        };
-      });
+      const tools = toolCallParts.map((tc) => buildToolCall(tc, toolDones, toolInputs));
       blocks.push({ type: "tool", toolCalls: tools });
       flatToolCalls.push(...tools);
     }
-
-    // Usage — aggregate across all llm.responses in the run. `usage` is
-    // optional on the wire (absent on pre-unification legacy events); the
-    // run-level total just contributes zero in that case. cacheWrite and
-    // reasoning are carried so fork() can round-trip them; the chat UI
-    // doesn't render them per-message today.
-    inputTokens += llm.usage?.inputTokens ?? 0;
-    outputTokens += llm.usage?.outputTokens ?? 0;
-    const llmCacheRead = llm.usage?.cacheReadTokens ?? 0;
-    if (llmCacheRead > 0) {
-      hasCacheReads = true;
-      cacheReadTokens += llmCacheRead;
-    }
-    const llmCacheWrite = llm.usage?.cacheWriteTokens ?? 0;
-    if (llmCacheWrite > 0) {
-      hasCacheWrites = true;
-      cacheWriteTokens += llmCacheWrite;
-    }
-    const llmReasoning = llm.usage?.reasoningTokens ?? 0;
-    if (llmReasoning > 0) {
-      hasReasoning = true;
-      reasoningTokens += llmReasoning;
-    }
-    llmMs += llm.llmMs;
-    model = llm.model;
   }
+
+  return { blocks, flatToolCalls };
+}
+
+/** Running usage totals across a run's llm.responses. */
+interface UsageAccumulator {
+  inputTokens: number;
+  outputTokens: number;
+  cacheReadTokens: number;
+  cacheWriteTokens: number;
+  reasoningTokens: number;
+  hasCacheReads: boolean;
+  hasCacheWrites: boolean;
+  hasReasoning: boolean;
+  llmMs: number;
+  model: string;
+}
+
+/**
+ * Add one llm.response's usage into the accumulator. `usage` is optional on the
+ * wire (absent on pre-unification legacy events), contributing zero when missing.
+ * cacheWrite and reasoning are carried so fork() can round-trip them; the chat UI
+ * doesn't render them per-message today.
+ */
+function addLlmUsage(acc: UsageAccumulator, llm: LlmResponseEvent): void {
+  acc.inputTokens += llm.usage?.inputTokens ?? 0;
+  acc.outputTokens += llm.usage?.outputTokens ?? 0;
+  const llmCacheRead = llm.usage?.cacheReadTokens ?? 0;
+  if (llmCacheRead > 0) {
+    acc.hasCacheReads = true;
+    acc.cacheReadTokens += llmCacheRead;
+  }
+  const llmCacheWrite = llm.usage?.cacheWriteTokens ?? 0;
+  if (llmCacheWrite > 0) {
+    acc.hasCacheWrites = true;
+    acc.cacheWriteTokens += llmCacheWrite;
+  }
+  const llmReasoning = llm.usage?.reasoningTokens ?? 0;
+  if (llmReasoning > 0) {
+    acc.hasReasoning = true;
+    acc.reasoningTokens += llmReasoning;
+  }
+  acc.llmMs += llm.llmMs;
+  acc.model = llm.model;
+}
+
+/** Sum usage across a run's llm.responses into the aggregate DisplayUsage. */
+function sumRunUsage(llmResponses: LlmResponseEvent[]): DisplayUsage {
+  const acc: UsageAccumulator = {
+    inputTokens: 0,
+    outputTokens: 0,
+    cacheReadTokens: 0,
+    cacheWriteTokens: 0,
+    reasoningTokens: 0,
+    hasCacheReads: false,
+    hasCacheWrites: false,
+    hasReasoning: false,
+    llmMs: 0,
+    model: "",
+  };
+
+  for (const llm of llmResponses) addLlmUsage(acc, llm);
+
+  return {
+    inputTokens: acc.inputTokens,
+    outputTokens: acc.outputTokens,
+    ...(acc.hasCacheReads ? { cacheReadTokens: acc.cacheReadTokens } : {}),
+    ...(acc.hasCacheWrites ? { cacheWriteTokens: acc.cacheWriteTokens } : {}),
+    ...(acc.hasReasoning ? { reasoningTokens: acc.reasoningTokens } : {}),
+    model: acc.model,
+    llmMs: acc.llmMs,
+  };
+}
+
+/**
+ * Collect events belonging to a single run (from run.start at index `start`
+ * through run.done or run.error) and build one assistant DisplayMessage.
+ *
+ * Returns the built message and the index at which outer iteration resumes.
+ * Incomplete runs (no run.done) still produce a best-effort message.
+ */
+function collectRun(
+  events: KnownEvent[],
+  start: number,
+  runId: string,
+): [DisplayMessage | null, number] {
+  const scan = scanRunEvents(events, start, runId);
+  if (scan.llmResponses.length === 0) return [null, scan.nextIndex];
+
+  const { blocks, flatToolCalls } = buildRunBlocks(
+    scan.llmResponses,
+    scan.toolDones,
+    scan.toolInputs,
+  );
+  const usage = sumRunUsage(scan.llmResponses);
 
   const contentText = blocks
     .filter((b): b is { type: "text"; text: string } => b.type === "text")
     .map((b) => b.text)
     .join("");
 
-  const usage: DisplayUsage = {
-    inputTokens,
-    outputTokens,
-    ...(hasCacheReads ? { cacheReadTokens } : {}),
-    ...(hasCacheWrites ? { cacheWriteTokens } : {}),
-    ...(hasReasoning ? { reasoningTokens } : {}),
-    model,
-    llmMs,
-  };
-
   const msg: DisplayMessage = {
     role: "assistant",
     content: contentText,
     blocks,
-    timestamp: endTs,
+    timestamp: scan.endTs,
     ...(flatToolCalls.length > 0 ? { toolCalls: flatToolCalls } : {}),
     usage,
-    ...(stopReason && stopReason !== "complete" ? { stopReason } : {}),
+    ...(scan.stopReason && scan.stopReason !== "complete" ? { stopReason: scan.stopReason } : {}),
     // `pending` only for a TRULY trailing in-flight run (ran off the end of the
     // array). An `abandoned` run has a later turn after it, so it can never be
     // in flight — stamping it pending would show a perpetual "still thinking"
     // spinner on an old turn (and chat-store's trailing-pending trim doesn't
     // apply to an interior turn anyway). It carries stopReason "interrupted".
-    ...(terminated || abandoned ? {} : { pending: true }),
+    ...(scan.terminated || scan.abandoned ? {} : { pending: true }),
   };
-  return [msg, i];
+  return [msg, scan.nextIndex];
 }
 
 /** "server__tool" → "server"; undefined if no "__" separator. */
@@ -727,6 +859,20 @@ function parseLegacyMessages(lines: string[]): {
   return { messages, messageCount: messages.length, preview };
 }
 
+/**
+ * Prefer the message's top-level DisplayMessage blocks; otherwise synthesize
+ * them from `content` plus any hydrated tool calls.
+ */
+function resolveLegacyBlocks(
+  raw: Record<string, unknown>,
+  content: string,
+  hydratedTools: DisplayToolCall[],
+): DisplayBlock[] {
+  const topBlocks = raw.blocks as DisplayBlock[] | undefined;
+  if (topBlocks && topBlocks.length > 0) return topBlocks;
+  return buildLegacyBlocks(content, hydratedTools.length > 0 ? hydratedTools : undefined);
+}
+
 function legacyLineToDisplay(raw: Record<string, unknown>): DisplayMessage | null {
   const role = raw.role;
   if (role !== "user" && role !== "assistant") return null;
@@ -740,11 +886,7 @@ function legacyLineToDisplay(raw: Record<string, unknown>): DisplayMessage | nul
     | undefined;
   const hydratedTools = rawToolCalls?.map(hydrateLegacyToolCall) ?? [];
 
-  const topBlocks = raw.blocks as DisplayBlock[] | undefined;
-  const blocks =
-    topBlocks && topBlocks.length > 0
-      ? topBlocks
-      : buildLegacyBlocks(content, hydratedTools.length > 0 ? hydratedTools : undefined);
+  const blocks = resolveLegacyBlocks(raw, content, hydratedTools);
   const usage = (raw.usage as DisplayUsage | undefined) ?? buildLegacyUsageFromMetadata(metadata);
 
   return {
@@ -908,6 +1050,18 @@ export async function readConversationHeader(
  * workspace's files. Self-contained (no runtime imports) so the bundle stays
  * independently deployable.
  */
+/** Collect `.jsonl` file paths under a workspace's `conversations/<ownerId>/` partitions. */
+function listWorkspaceConversationFiles(convRoot: string): string[] {
+  const out: string[] = [];
+  for (const ownerId of safeReaddir(convRoot)) {
+    const ownerDir = join(convRoot, ownerId);
+    for (const f of safeReaddir(ownerDir)) {
+      if (f.endsWith(".jsonl")) out.push(join(ownerDir, f));
+    }
+  }
+  return out;
+}
+
 export function listConversationFiles(dir: string): string[] {
   const out: string[] = [];
   let top: Dirent[];
@@ -925,12 +1079,7 @@ export function listConversationFiles(dir: string): string[] {
     // Workspace-owned layout: each workspace's conversations subtree.
     // lint-ok:conversation-path
     const convRoot = join(dir, ent.name, "conversations");
-    for (const ownerId of safeReaddir(convRoot)) {
-      const ownerDir = join(convRoot, ownerId);
-      for (const f of safeReaddir(ownerDir)) {
-        if (f.endsWith(".jsonl")) out.push(join(ownerDir, f));
-      }
-    }
+    out.push(...listWorkspaceConversationFiles(convRoot));
   }
   return out;
 }

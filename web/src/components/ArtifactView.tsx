@@ -47,6 +47,34 @@ function defaultFilename(uri: string, name?: string): string {
   return tail && tail.length > 0 ? tail : "artifact";
 }
 
+/** Human-readable message for a resource read failure, from richest source down. */
+function errorMessage(err: unknown): string {
+  if (err instanceof ApiClientError) return err.message;
+  if (err instanceof Error) return err.message;
+  return "Failed to load artifact";
+}
+
+/** Object URL for a resource's binary body (blob), or null for a text body. */
+function objectUrlFor(
+  content: ReadResourceContent,
+  fallbackMime: string | undefined,
+): string | null {
+  if (content.blob === undefined) return null;
+  const bytes = base64ToBytes(content.blob);
+  const blob = new Blob([bytes.buffer as ArrayBuffer], {
+    type: content.mimeType ?? fallbackMime ?? "application/octet-stream",
+  });
+  return URL.createObjectURL(blob);
+}
+
+/** Read the artifact and return its first content part, throwing on an empty result. */
+async function loadArtifactContent(server: string, uri: string): Promise<ReadResourceContent> {
+  const result = await readResource(server, uri);
+  const first = result.contents[0];
+  if (!first) throw new Error("No content returned");
+  return first;
+}
+
 export function ArtifactView({ uri, appName, name, mimeType, description }: ArtifactViewProps) {
   const [content, setContent] = useState<ReadResourceContent | null>(null);
   const [objectUrl, setObjectUrl] = useState<string | null>(null);
@@ -62,38 +90,28 @@ export function ArtifactView({ uri, appName, name, mimeType, description }: Arti
     setContent(null);
     setObjectUrl(null);
 
-    (async () => {
-      try {
-        // `appName` is irrelevant to artifact:// resolution (host-resolved), but
-        // the read endpoint still expects a `server` field; pass a stable
-        // placeholder when none was provided.
-        const result = await readResource(appName ?? "artifact", uri);
+    // `appName` is irrelevant to artifact:// resolution (host-resolved), but the
+    // read endpoint still expects a `server` field; pass a stable placeholder
+    // when none was provided.
+    loadArtifactContent(appName ?? "artifact", uri)
+      .then((first) => {
         if (cancelled) return;
-        const first = result.contents[0];
-        if (!first) throw new Error("No content returned");
         setContent(first);
-        // Build an object URL for binary bodies / the download fallback.
-        if (first.blob !== undefined) {
-          const bytes = base64ToBytes(first.blob);
-          const blob = new Blob([bytes.buffer as ArrayBuffer], {
-            type: first.mimeType ?? mimeType ?? "application/octet-stream",
-          });
-          createdUrl = URL.createObjectURL(blob);
-          setObjectUrl(createdUrl);
+        // A binary body (blob) flows to the download fallback via `objectUrl`;
+        // a text body yields null and renders inline.
+        const url = objectUrlFor(first, mimeType);
+        if (url) {
+          createdUrl = url;
+          setObjectUrl(url);
         }
-      } catch (err) {
+      })
+      .catch((err) => {
         if (cancelled) return;
-        const msg =
-          err instanceof ApiClientError
-            ? err.message
-            : err instanceof Error
-              ? err.message
-              : "Failed to load artifact";
-        setError(msg);
-      } finally {
+        setError(errorMessage(err));
+      })
+      .finally(() => {
         if (!cancelled) setLoading(false);
-      }
-    })();
+      });
 
     return () => {
       cancelled = true;
@@ -128,33 +146,14 @@ export function ArtifactView({ uri, appName, name, mimeType, description }: Arti
   const kind = rendererKindFor(resolvedMime);
   const isRenderable = kind !== "unsupported" && content.text !== undefined;
 
-  const header = (
-    <div className="flex items-center justify-between gap-2 px-3 py-2 border-b border-border bg-muted/20 text-xs">
-      <div className="flex items-center gap-2 min-w-0">
-        <FileText className="w-3.5 h-3.5 shrink-0 text-muted-foreground" />
-        <span className="truncate font-medium">{displayName}</span>
-        {resolvedMime && (
-          <span className="text-muted-foreground tabular-nums shrink-0">
-            {normalizeMime(resolvedMime)}
-          </span>
-        )}
-      </div>
-      {objectUrl && (
-        <a
-          href={objectUrl}
-          download={defaultFilename(uri, name)}
-          className="inline-flex items-center gap-1 text-muted-foreground hover:text-foreground"
-          aria-label={`Download ${displayName}`}
-        >
-          <Download className="w-3.5 h-3.5" />
-        </a>
-      )}
-    </div>
-  );
-
   return (
     <div className="w-full my-2 rounded-sm border border-border bg-card overflow-hidden">
-      {header}
+      <ArtifactHeader
+        displayName={displayName}
+        resolvedMime={resolvedMime}
+        objectUrl={objectUrl}
+        downloadName={defaultFilename(uri, name)}
+      />
       <div className="p-3 max-h-[32rem] overflow-y-auto">
         <ArtifactRenderer
           mimeType={resolvedMime}
@@ -168,6 +167,43 @@ export function ArtifactView({ uri, appName, name, mimeType, description }: Arti
         <div className="px-3 py-2 text-xs text-muted-foreground border-t border-border">
           {description}
         </div>
+      )}
+    </div>
+  );
+}
+
+/** Title bar: file icon, display name, MIME badge, and a download link for binary bodies. */
+function ArtifactHeader({
+  displayName,
+  resolvedMime,
+  objectUrl,
+  downloadName,
+}: {
+  displayName: string;
+  resolvedMime: string | undefined;
+  objectUrl: string | null;
+  downloadName: string;
+}) {
+  return (
+    <div className="flex items-center justify-between gap-2 px-3 py-2 border-b border-border bg-muted/20 text-xs">
+      <div className="flex items-center gap-2 min-w-0">
+        <FileText className="w-3.5 h-3.5 shrink-0 text-muted-foreground" />
+        <span className="truncate font-medium">{displayName}</span>
+        {resolvedMime && (
+          <span className="text-muted-foreground tabular-nums shrink-0">
+            {normalizeMime(resolvedMime)}
+          </span>
+        )}
+      </div>
+      {objectUrl && (
+        <a
+          href={objectUrl}
+          download={downloadName}
+          className="inline-flex items-center gap-1 text-muted-foreground hover:text-foreground"
+          aria-label={`Download ${displayName}`}
+        >
+          <Download className="w-3.5 h-3.5" />
+        </a>
       )}
     </div>
   );

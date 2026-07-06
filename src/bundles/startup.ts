@@ -18,7 +18,6 @@ import { log } from "../observability/log.ts";
 import { FileCredentialStore } from "../tools/credential-store.ts";
 import { type BundleMcpContext, McpSource } from "../tools/mcp-source.ts";
 import type { ToolRegistry } from "../tools/registry.ts";
-import type { ToolSource } from "../tools/types.ts";
 import {
   WorkspaceOAuthProvider,
   type WorkspaceOAuthProviderOptions,
@@ -169,6 +168,612 @@ function resolveWorkspaceContext(
   return undefined;
 }
 
+/** Options accepted by `startBundleSource`. */
+interface StartBundleOpts {
+  allowInsecureRemotes?: boolean;
+  dataDir?: string;
+  /**
+   * Workspace context for credential resolution and on-disk path
+   * derivation. Preferred over the legacy `wsId` + `workDir` pair —
+   * carries both fields plus the credential store and is validated
+   * once at construction. When provided, `wsId` and `workDir` MUST be
+   * omitted or match (the function asserts consistency); the context
+   * wins.
+   */
+  workspaceContext?: WorkspaceContext;
+  /**
+   * Workspace id for credential resolution. Required for named bundles — the
+   * named-bundle path resolves `user_config` via `resolveUserConfig` which is
+   * workspace-scoped by design. Unused for URL and local-path bundles, which
+   * don't go through `prepareServer` for `user_config`.
+   *
+   * @deprecated Pass `workspaceContext` instead. Kept for incremental
+   * migration; see a follow-up migration.
+   */
+  wsId?: string;
+  /**
+   * Work directory for credential resolution. Defaults to `NB_WORK_DIR` or
+   * `~/.nimblebrain` — the same default the named-bundle branch already uses
+   * for `bundleDataDir`.
+   *
+   * @deprecated Pass `workspaceContext` instead.
+   */
+  workDir?: string;
+  /**
+   * Optional callback fired when a URL bundle's OAuth provider determines
+   * the flow requires a real browser. Threaded into
+   * `WorkspaceOAuthProvider`; receivers typically transition the bundle's
+   * Connection to `pending_auth` and emit a `connection.state_changed`
+   * SSE event so the UI banner appears. No-op for non-URL bundles.
+   */
+  onInteractiveAuthRequired?: (authorizationUrl: string) => void;
+  /**
+   * Optional callback fired when an established connection loses its
+   * authorization mid-session — a tool call threw `UnauthorizedError`
+   * because the persisted refresh token was rejected. Threaded into
+   * `WorkspaceOAuthProvider`; receivers transition the Connection to
+   * `reauth_required` (the documented `running → reauth_required` step) so
+   * the UI offers "Reconnect". No-op for non-URL bundles.
+   */
+  onAuthLost?: () => void;
+  /**
+   * Per-workspace host-resources deps. When present, the spawned
+   * McpSource registers inbound handlers for
+   * `ai.nimblebrain/resources/{read,list}` so the bundle can read
+   * workspace files through the platform. Workspace-id-bearing
+   * caller provides the resolver + rate-limit shared across all
+   * bundles in this workspace; the source-name (composed inside
+   * this function) supplies the `bundleId` half of the rate-limit
+   * + audit key.
+   */
+  bundleMcp?: BundleMcpDeps;
+}
+
+/** A resolvable promise handle: calling `resolve()` settles `promise`. Used to
+ *  race an interactive-auth early return against a longer-running `start()`. */
+function createDeferred(): { resolve: () => void; promise: Promise<void> } {
+  let resolve!: () => void;
+  const promise = new Promise<void>((r) => {
+    resolve = r;
+  });
+  return { resolve, promise };
+}
+
+/** Warn when a URL source declares a `transport.auth.type` the runtime doesn't recognize. */
+function warnUnrecognizedUrlAuthType(
+  ref: Extract<BundleRef, { url: string }>,
+  serverName: string,
+): void {
+  // Diagnostic (NOT back-compat): name the cause when a url source declares a
+  // transport.auth.type the runtime doesn't recognize — otherwise it silently
+  // gets no credential and 401s. The likeliest case is a config that predates
+  // the provider-auth migration (e.g. the retired `tenant-key`).
+  const declaredAuthType = ref.transport?.auth?.type;
+  if (declaredAuthType && !["bearer", "header", "none", "provider"].includes(declaredAuthType)) {
+    log.warn(
+      `[bundles] source "${serverName}" declares an unrecognized transport.auth.type="${declaredAuthType}" ` +
+        "(known: bearer, header, none, provider). No credential will be attached and the source will likely 401 — " +
+        "if this config predates the provider-auth migration, re-register the source.",
+    );
+  }
+}
+
+/**
+ * Resolve a URL bundle's pre-registered OAuth client (Track A), dereferencing
+ * the client secret from the workspace credential store when present. Returns
+ * undefined when the bundle has no static client config (DCR path).
+ */
+async function resolveStaticOAuthClient(
+  ref: Extract<BundleRef, { url: string }>,
+  wsId: string,
+  workDir: string,
+): Promise<WorkspaceOAuthProviderOptions["staticClient"] | undefined> {
+  // Track A: resolve pre-registered client config when present. The
+  // oauthClient.clientSecret is a reference into the workspace
+  // credential store; we resolve it to a string here so the provider
+  // can stamp it into clientInformation()'s response. The catalog
+  // boundary already enforced that the secret reference is well-
+  // formed; here we just dereference it. Errors abort the boot of
+  // this bundle (the connection enters dead) — user can fix the
+  // credential and restart.
+  if (!ref.oauthClient) return undefined;
+  let resolvedSecret: string | undefined;
+  if (ref.oauthClient.clientSecret) {
+    const secretStore = new FileCredentialStore(workDir);
+    const wrapped = await secretStore.get(wsId, ref.oauthClient.clientSecret.key);
+    if (!wrapped) {
+      throw new Error(
+        `[bundles] OAuth client_secret not found at credential key "${ref.oauthClient.clientSecret.key}" — ` +
+          `configure it in the workspace's Connections settings (web UI)`,
+      );
+    }
+    resolvedSecret = wrapped.reveal();
+  }
+  return {
+    clientId: ref.oauthClient.clientId,
+    ...(resolvedSecret ? { clientSecret: resolvedSecret } : {}),
+    ...(ref.oauthClient.tokenEndpointAuthMethod
+      ? { tokenEndpointAuthMethod: ref.oauthClient.tokenEndpointAuthMethod }
+      : {}),
+  };
+}
+
+/**
+ * Build the workspace-scoped OAuth provider for a URL bundle, or undefined when
+ * the bundle carries static auth (no OAuth). Tokens and DCR credentials live
+ * under <workDir>/workspaces/<wsId>/credentials/mcp-oauth/<serverName>/.
+ *
+ * `wsId` is REQUIRED here — not defaulted — to match the named-bundle branch's
+ * behavior at the credential boundary. A silent `ws_default` fallback would
+ * cause cross-tenant credential leakage: URL bundles installed from different
+ * workspaces would share OAuth tokens under the same default id. Callers must
+ * thread workspace context through `installRemote` / `startBundleSource`.
+ */
+async function buildUrlOAuthProvider(
+  ref: Extract<BundleRef, { url: string }>,
+  serverName: string,
+  wsContext: WorkspaceContext | undefined,
+  opts: StartBundleOpts | undefined,
+  onInteractiveAuthRequired: (authorizationUrl: string) => void,
+): Promise<WorkspaceOAuthProvider | undefined> {
+  // Attach an OAuthClientProvider only when no static auth is configured.
+  if (bundleHasStaticAuth(ref)) return undefined;
+  if (!wsContext) {
+    throw new Error(
+      `[bundles] URL bundle "${serverName}" without static auth requires opts.workspaceContext ` +
+        "(or the legacy opts.wsId) — OAuth credentials are workspace-scoped and silent defaults " +
+        "would cross tenants. Thread workspaceContext through installRemote() or the caller " +
+        "that invoked startBundleSource().",
+    );
+  }
+  const wsId = wsContext.workspaceId;
+  const workDir = wsContext.workDir;
+  // Resolve the OAuth callback through the single source of truth
+  // (bouncer-aware). Boot-start MUST register the same redirect_uri the
+  // interactive `initiate` flow uses — otherwise the provider's DCR
+  // drift check discards client.json, re-registration mints a new
+  // client_id, and the stored refresh token is orphaned (silent refresh
+  // then fails and the bundle falls into a headless interactive flow
+  // that times out at boot). See src/oauth/mcp-callback-url.ts.
+  const callbackUrl = mcpAuthCallbackUrl();
+  // Startup warning when a URL-ref bundle is being wired with no externally
+  // reachable origin and no bouncer — the callback resolved to localhost.
+  // Only safe for local dev; in prod the authorization server would get a
+  // redirect_uri pointing at the pod's localhost. One log per process.
+  if (callbackUrl.startsWith("http://localhost")) {
+    log.warn(
+      `[bundles] public origin not configured; OAuth callback defaults to ${callbackUrl}. ` +
+        "In production (NB behind a proxy / on a different host from the user's browser), " +
+        "set the custom domain / platform host so publicOrigin() resolves to the externally " +
+        "reachable URL.",
+    );
+  }
+
+  const staticClient = await resolveStaticOAuthClient(ref, wsId, workDir);
+
+  // Boot path is workspace-scope only — user-scope bundles aren't
+  // started at boot (they're loaded into a workspace's registry
+  // on-demand when their user enters the workspace, see lifecycle).
+  // Human-readable workspace name for the vendor consent screen in
+  // place of the opaque wsId; best-effort, falls back to the id.
+  const ownerDisplayName = await resolveWorkspaceDisplayName(workDir, wsId);
+  return new WorkspaceOAuthProvider({
+    owner: { type: "workspace", wsId },
+    ...(ownerDisplayName ? { ownerDisplayName } : {}),
+    serverName,
+    workDir,
+    workspaceContext: wsContext,
+    callbackUrl,
+    allowInsecureRemotes: opts?.allowInsecureRemotes === true,
+    headlessAuthProbe: ref.headlessAuthProbe === true,
+    // Fleet tenant binding. Safe for every server: the provider only
+    // attaches an assertion when the token endpoint's origin matches this
+    // issuer (the fleet authorizer), never to a vendor.
+    ...fleetIssuerOption(),
+    onInteractiveAuthRequired,
+    ...(opts?.onAuthLost ? { onAuthLost: opts.onAuthLost } : {}),
+    ...(staticClient ? { staticClient } : {}),
+    ...(ref.scopes ? { scopes: ref.scopes } : {}),
+    ...(ref.additionalAuthorizationParams
+      ? { additionalAuthorizationParams: ref.additionalAuthorizationParams }
+      : {}),
+  });
+}
+
+/**
+ * Finalize a remote source once `start()` resolves: read its tools, register it
+ * (idempotently), notify lifecycle it's running, and shape the success result.
+ */
+async function finalizeUrlSourceStart(
+  source: McpSource,
+  registry: ToolRegistry,
+  sourceName: string,
+  wsContext: WorkspaceContext | undefined,
+  ref: Extract<BundleRef, { url: string }>,
+): Promise<StartBundleResult> {
+  const tools = await source.tools();
+  if (!registry.hasSource(sourceName)) {
+    registry.addSource(source);
+  }
+  // Notify lifecycle that this Connection finished its OAuth
+  // dance and is now running. For URL bundles that went through
+  // pending_auth → running (background path after the user
+  // completed auth), this transitions the BundleInstance's
+  // Connection out of pending_auth and emits the
+  // `connection.state_changed` SSE event so the UI banner
+  // clears. For headless bundles that succeeded without ever
+  // hitting pending_auth, this is just a confirming update.
+  if (wsContext) {
+    notifyConnectionRunning(wsContext.workspaceId, sourceName);
+  }
+  log.info(`[bundles] ✓ ${sourceName} ready (${tools.length} tools, remote)`);
+  return {
+    meta: {
+      version: `remote (${tools.length} tools)`,
+      ui: ref.ui ?? null,
+      briefing: null,
+      type: "plain" as const,
+    },
+    sourceName,
+    manifest: null,
+  };
+}
+
+/** Start a remote (URL) bundle source: validate, wire OAuth, race `start()`
+ *  against an interactive-auth early return, and register on success or
+ *  pending-auth. Returns the manifest-less remote `StartBundleResult`. */
+async function startUrlBundleSource(
+  ref: Extract<BundleRef, { url: string }>,
+  registry: ToolRegistry,
+  eventSink: EventSink,
+  wsContext: WorkspaceContext | undefined,
+  opts: StartBundleOpts | undefined,
+): Promise<StartBundleResult> {
+  const serverName = ref.serverName ?? deriveServerName(ref.url);
+  validateServerName(serverName);
+  const sourceName = serverName;
+
+  warnUnrecognizedUrlAuthType(ref, serverName);
+
+  // SSRF protection: validate URL before connecting. Provider-auth sources are
+  // the operator-provisioned fleet rail (a `provider` auth config can't be set
+  // from tenant input — it comes from the vetted catalog entry), so they may
+  // reach in-cluster `.svc` services over plain HTTP — see `validateBundleUrl`'s
+  // `fleetInternal` path.
+  validateBundleUrl(new URL(ref.url), {
+    allowInsecure: opts?.allowInsecureRemotes,
+    fleetInternal: ref.transport?.auth?.type === "provider",
+  });
+  log.info(`[bundles] Starting remote bundle ${ref.url} as ${sourceName}...`);
+
+  // Wrap the user's onInteractiveAuthRequired callback to also signal an
+  // early-return path. Without this, `await source.start()` blocks
+  // indefinitely while the user clicks Connect → completes browser auth
+  // (could be minutes or never), which would hang both the install API
+  // call and the workspace-startup loop. With it, the moment the
+  // provider determines interactive auth is needed, the caller's
+  // `onInteractiveAuthRequired` fires (lifecycle transitions Connection
+  // to pending_auth and emits SSE so the banner appears), AND the
+  // function returns early with a placeholder meta. `source.start()`
+  // continues in the background; when it eventually resolves (user
+  // completed auth), the connection state machine transitions via the
+  // existing UnauthorizedError-retry path inside `mcp-source.ts`. The
+  // lifecycle observes the eventual `connection.state_changed` running
+  // event and the bundle becomes fully usable.
+  let pendingAuthDetected = false;
+  const userCallback = opts?.onInteractiveAuthRequired;
+  const earlyReturn = createDeferred();
+  const wrappedCallback = (authorizationUrl: string) => {
+    pendingAuthDetected = true;
+    try {
+      userCallback?.(authorizationUrl);
+    } finally {
+      earlyReturn.resolve();
+    }
+  };
+
+  const authProvider = await buildUrlOAuthProvider(
+    ref,
+    serverName,
+    wsContext,
+    opts,
+    wrappedCallback,
+  );
+
+  const source = new McpSource(
+    sourceName,
+    {
+      type: "remote",
+      url: new URL(ref.url),
+      transportConfig: ref.transport,
+      allowInsecure: opts?.allowInsecureRemotes === true,
+      authProvider,
+    },
+    eventSink,
+    composeBundleMcpContext(opts?.bundleMcp, sourceName),
+  );
+
+  // Kick off start() and finalize on completion. The promise's value
+  // is the full `StartBundleResult` for the success path; on failure it
+  // logs and rethrows so the lifecycle can record the connection as
+  // dead. We register the source with the registry from inside the
+  // success branch; on failure (transport error, auth never completes)
+  // the source is never registered so callers asserting
+  // `registry.hasSource()` after a failed startup see the right shape.
+  //
+  // Pending-auth registration happens later (below): if the early-
+  // return signal fires, we register the source so the registry
+  // reflects the bundle exists. Tool calls against an unstarted source
+  // throw cleanly until start() succeeds.
+  const startPromise: Promise<StartBundleResult> = source
+    .start()
+    .then(() => finalizeUrlSourceStart(source, registry, sourceName, wsContext, ref))
+    .catch((err) => {
+      log.error(`[bundles] ${sourceName} start failed: ${err}`);
+      // Make sure the source isn't left in the registry if start
+      // ultimately failed (background pending-auth path could have
+      // added it). Best-effort — removeSource is idempotent.
+      void registry.removeSource(sourceName).catch(() => {});
+      throw err;
+    });
+
+  // Race start against the early-return signal. If the provider hits
+  // the interactive branch, `wrappedCallback` resolves earlyReturn before
+  // start() rejects/awaits — earlyReturn.promise wins, we return a
+  // placeholder meta, and startPromise continues in the background.
+  // (Attach a no-op .catch so a delayed background failure doesn't
+  // surface as an unhandled rejection.)
+  await Promise.race([
+    startPromise.then(() => undefined).catch(() => undefined),
+    earlyReturn.promise,
+  ]);
+
+  if (pendingAuthDetected) {
+    // Register the source so the registry reflects the bundle exists.
+    // Tool calls against the unstarted source throw cleanly until
+    // start() succeeds (which happens after the user completes auth).
+    if (!registry.hasSource(sourceName)) {
+      registry.addSource(source);
+    }
+    // Don't await startPromise — it'll resolve when the user finishes
+    // auth (could be minutes). Background-protect against unhandled
+    // rejection if start ultimately fails.
+    startPromise.catch(() => {});
+    return {
+      meta: {
+        version: "remote (pending auth)",
+        ui: ref.ui ?? null,
+        briefing: null,
+        type: "plain" as const,
+      },
+      sourceName,
+      manifest: null,
+    };
+  }
+
+  // Headless path or already-completed auth. start() succeeded.
+  return await startPromise;
+}
+
+/** Force a fresh registry pull after a cached manifest failed the host-manifest
+ *  gate; returns the refreshed manifest + meta, or null if the pull failed. */
+async function forceRefreshNamedBundle(
+  mpak: ReturnType<typeof getMpak>,
+  ref: Extract<BundleRef, { name: string }>,
+): Promise<{ manifest: BundleManifest; meta: LocalBundleMeta } | null> {
+  try {
+    await mpak.bundleCache.loadBundle(ref.name, { force: true });
+    const refreshed = mpak.bundleCache.getBundleManifest(ref.name) as BundleManifest | null;
+    if (!refreshed) return null;
+    return {
+      manifest: refreshed,
+      meta: extractBundleMeta(refreshed as unknown as Record<string, unknown>),
+    };
+  } catch (refreshErr) {
+    // Registry unreachable or pull failed: leave the cached copy intact
+    // and fall through. The terminal gate re-throws the original gate
+    // error, surfacing the actionable "Refusing to install" message
+    // rather than a transient network error — so we're never worse off
+    // than skipping the heal entirely.
+    const detail = refreshErr instanceof Error ? refreshErr.message : String(refreshErr);
+    log.warn(`[bundles] force-refresh of ${ref.name} failed (${detail}); keeping cached copy.`);
+    return null;
+  }
+}
+
+/**
+ * Resolve a named bundle's cached manifest + extracted meta, warming the mpak
+ * cache first and self-healing a bad cached version through the host-manifest
+ * gate. Returns `{ manifest: null, meta: null }` on a cache miss.
+ */
+async function resolveNamedBundleManifest(
+  mpak: ReturnType<typeof getMpak>,
+  ref: Extract<BundleRef, { name: string }>,
+): Promise<{ manifest: BundleManifest | null; meta: LocalBundleMeta | null }> {
+  // Warm the mpak cache so the up-front manifest read below is a hit on a
+  // cold/first-ever install. Without this, getBundleManifest() returns null
+  // the first time a bundle is installed on a pod; meta/manifest stay null,
+  // so placement registration AND user_config resolution silently no-op
+  // until a process restart re-reads the now-warm cache (#60 — the bundle
+  // shows under Connectors but never under Apps). Doing it here, at the one
+  // chokepoint every named install/respawn path funnels through (connector
+  // UI, installNamed, boot reload, JIT), fixes the whole class instead of
+  // relying on each caller to pre-warm — a contract callers silently broke.
+  //
+  // Guard on getBundleManifest (the same manifest.json the read below uses),
+  // NOT on loadBundle's own short-circuit: loadBundle keys its no-op on a
+  // separate .mpak-meta.json, so a manifest-only cache (offline-warm starts,
+  // test fixtures) would wrongly trigger a network pull. Skipping when the
+  // manifest is already on disk keeps warm boots and offline starts
+  // network-free, exactly as today; prepareServer re-reads and re-validates.
+  if (!mpak.bundleCache.getBundleManifest(ref.name)) {
+    await mpak.bundleCache.loadBundle(ref.name);
+  }
+
+  // Read cached manifest up-front so we can discover the user_config schema
+  // and resolve credentials BEFORE prepareServer validates them. The warm
+  // step above guarantees the manifest is present here on every path that
+  // can reach the registry; a miss now means a genuinely unexpected state.
+  let cachedManifest = mpak.bundleCache.getBundleManifest(ref.name) as BundleManifest | null;
+  if (!cachedManifest) {
+    // With no manifest in cache we can't read `_meta` capability
+    // declarations, so host_capabilities gets silently skipped at spawn.
+    // Surface it loudly instead of letting operators chase phantom UI bugs.
+    //
+    // The cache-warm step above (#60) closes the common cause of this —
+    // a cold first-install no longer reaches here, since the warm either
+    // populates the manifest or throws on a truly cold + offline cache.
+    // Reaching this branch now means an unexpected state (e.g. the cache
+    // dir was wiped between the warm and this read), not the normal
+    // first-install path. We still fall through rather than fail-closed:
+    // refusing the spawn would break workspaces that were valid before a
+    // restart, and the terminal host-capability gate below re-checks the
+    // manifest once prepareServer has re-populated it.
+    log.warn(
+      `[bundles] manifest cache miss for ${ref.name} — capability declarations ` +
+        "(host_capabilities, etc.) will be skipped at spawn, including " +
+        "the install-time host-resources gate. Reinstall the bundle to repopulate.",
+    );
+    return { manifest: null, meta: null };
+  }
+
+  let meta = extractBundleMeta(cachedManifest as unknown as Record<string, unknown>);
+
+  // Boot / re-spawn self-heal for the name-only mpak cache. The cache dir is
+  // keyed by bundle name with no version, so a pod that cached a bad version
+  // re-spawns it on every boot — and if that manifest fails the host-manifest
+  // gate, the bundle is rejected forever even after a fixed version ships
+  // (the manual workaround was deleting the cache dir on the pod + restart).
+  // Detect the gate failure here, against the cached manifest, and force ONE
+  // re-pull from the registry so a published fix self-heals on restart. This
+  // sits before prepareServer so the fresh artifact is what gets spawned, and
+  // covers every named re-spawn path (boot reload, JIT install, configure-
+  // restart) since they all funnel through here. We do NOT re-assert the gate
+  // after refreshing — the terminal gate below (post-prepareServer) re-runs on
+  // the refreshed manifest and throws for real if the latest published
+  // version is still invalid.
+  try {
+    assertHostCapabilitiesAvailable(cachedManifest, cachedManifest.name);
+  } catch (err) {
+    if (!(err instanceof HostManifestGateError)) throw err;
+    log.warn(
+      `[bundles] ${ref.name} failed the host-manifest gate from cache ` +
+        `(${err.reason}); force-refreshing from the registry and retrying.`,
+    );
+    const refreshed = await forceRefreshNamedBundle(mpak, ref);
+    if (refreshed) {
+      cachedManifest = refreshed.manifest;
+      meta = refreshed.meta;
+    }
+  }
+
+  return { manifest: cachedManifest, meta };
+}
+
+/** Prepare the McpSource + metadata for a named (mpak-registry) bundle. */
+async function prepareNamedBundleSource(
+  ref: Extract<BundleRef, { name: string }>,
+  eventSink: EventSink,
+  wsContext: WorkspaceContext | undefined,
+  opts: StartBundleOpts | undefined,
+): Promise<{ source: McpSource; meta: LocalBundleMeta | null; manifest: BundleManifest | null }> {
+  // Honor the canonical-form serverName persisted on the ref by the
+  // catalog install path (`slugifyServerName(entry.id)`); fall back
+  // to the legacy short slug (`deriveServerName(ref.name)`) for
+  // pre-#195 installs whose ref doesn't carry the field. Mirrors the
+  // URL-branch pattern — without this the registered source
+  // name would diverge from what install persisted, breaking
+  // uninstall for every catalog-installed mpak bundle
+  // whose canonical id and package name produce different slugs
+  // (e.g. `dev.mpak.nimblebraininc/echo` vs `@nimblebraininc/echo`).
+  const serverName = ref.serverName ?? deriveServerName(ref.name);
+  validateServerName(serverName);
+  const sourceName = serverName;
+
+  // Named bundles are workspace-scoped. The caller must supply
+  // `workspaceContext` (or the legacy `wsId`); without it we have no
+  // workspace to resolve credentials against and no way to pick a
+  // consistent data dir. This throw is the end of the named-bundle
+  // path — the platform has a bug if a caller reaches here without a
+  // workspace context.
+  if (!wsContext) {
+    throw new Error(
+      `Cannot start ${ref.name}: a workspace ID is required (platform bug — please report).`,
+    );
+  }
+
+  // Data dir derives from the workspace context. Callers only pass
+  // `opts.dataDir` to override for test fixtures. This is the single
+  // source of truth for the layout — lifecycle.installNamed,
+  // workspace-ops, and workspace-runtime all produce paths matching
+  // this derivation, so there is no drift class between "where a bundle
+  // gets installed" and "where it spawns when restarted."
+  const bundleDataDir =
+    opts?.dataDir ?? wsContext.getDataPath("data", deriveBundleDataDir(ref.name));
+
+  const mpakHome = process.env.MPAK_HOME ?? join(homedir(), ".mpak");
+  const mpak = getMpak(mpakHome);
+
+  const { manifest, meta } = await resolveNamedBundleManifest(mpak, ref);
+
+  // Read host-side credentials from the workspace credential store. The
+  // mpak SDK does the rest of the resolution chain: manifest-declared
+  // mcp_config.env aliases (so a bundle with
+  // `"NEWSAPI_API_KEY": "${user_config.api_key}"` is satisfied by a host
+  // NEWSAPI_API_KEY export) and manifest defaults. Any still-missing
+  // required field surfaces as MpakConfigError, which we translate to an
+  // operator hint pointing at the env var(s) / workspace Connections settings.
+  const userConfig = await wsContext.getCredentialStore().resolveUserConfig({
+    bundleName: ref.name,
+    userConfigSchema: manifest?.user_config,
+  });
+
+  let server: Awaited<ReturnType<typeof mpak.prepareServer>>;
+  try {
+    server = await mpak.prepareServer(
+      { name: ref.name },
+      { workspaceDir: bundleDataDir, userConfig },
+    );
+  } catch (err) {
+    // MpakConfigError (0.5.0+) carries envAliases per missing field,
+    // so friendlyMpakConfigError can name `export ANTHROPIC_API_KEY`
+    // hints without us threading the manifest through.
+    throw friendlyMpakConfigError(err, wsContext.workspaceId);
+  }
+
+  // Subprocess env contract is unchanged: NB_WORKSPACE_ID is the
+  // bundle-visible workspace id. Derived through the context so the
+  // workspace's identity flows through one validated path.
+  const platformEnv = buildPlatformEnv({
+    workspaceId: wsContext.workspaceId,
+    publicOrigin: resolvePublicOrigin(),
+  });
+
+  const source = new McpSource(
+    sourceName,
+    {
+      type: "stdio",
+      spawn: {
+        command: server.command,
+        args: server.args,
+        env: {
+          ...server.env,
+          ...filterEnvForBundle(process.env as Record<string, string>, undefined, ref.allowedEnv),
+          ...(ref.env ?? {}),
+          MPAK_WORKSPACE: bundleDataDir,
+          UPJACK_ROOT: bundleDataDir,
+          ...platformEnv,
+        },
+        cwd: server.cwd,
+      },
+    },
+    eventSink,
+    composeBundleMcpContext(opts?.bundleMcp, sourceName),
+  );
+
+  return { source, meta, manifest };
+}
+
 /** Create and start a McpSource for a BundleRef, then add to registry.
  *  Returns manifest metadata and actual source name for local bundles. */
 export async function startBundleSource(
@@ -182,538 +787,30 @@ export async function startBundleSource(
   // updates across the entire platform.
   eventSink: EventSink,
   configDir?: string,
-  opts?: {
-    allowInsecureRemotes?: boolean;
-    dataDir?: string;
-    /**
-     * Workspace context for credential resolution and on-disk path
-     * derivation. Preferred over the legacy `wsId` + `workDir` pair —
-     * carries both fields plus the credential store and is validated
-     * once at construction. When provided, `wsId` and `workDir` MUST be
-     * omitted or match (the function asserts consistency); the context
-     * wins.
-     */
-    workspaceContext?: WorkspaceContext;
-    /**
-     * Workspace id for credential resolution. Required for named bundles — the
-     * named-bundle path resolves `user_config` via `resolveUserConfig` which is
-     * workspace-scoped by design. Unused for URL and local-path bundles, which
-     * don't go through `prepareServer` for `user_config`.
-     *
-     * @deprecated Pass `workspaceContext` instead. Kept for incremental
-     * migration; see a follow-up migration.
-     */
-    wsId?: string;
-    /**
-     * Work directory for credential resolution. Defaults to `NB_WORK_DIR` or
-     * `~/.nimblebrain` — the same default the named-bundle branch already uses
-     * for `bundleDataDir`.
-     *
-     * @deprecated Pass `workspaceContext` instead.
-     */
-    workDir?: string;
-    /**
-     * Optional callback fired when a URL bundle's OAuth provider determines
-     * the flow requires a real browser. Threaded into
-     * `WorkspaceOAuthProvider`; receivers typically transition the bundle's
-     * Connection to `pending_auth` and emit a `connection.state_changed`
-     * SSE event so the UI banner appears. No-op for non-URL bundles.
-     */
-    onInteractiveAuthRequired?: (authorizationUrl: string) => void;
-    /**
-     * Optional callback fired when an established connection loses its
-     * authorization mid-session — a tool call threw `UnauthorizedError`
-     * because the persisted refresh token was rejected. Threaded into
-     * `WorkspaceOAuthProvider`; receivers transition the Connection to
-     * `reauth_required` (the documented `running → reauth_required` step) so
-     * the UI offers "Reconnect". No-op for non-URL bundles.
-     */
-    onAuthLost?: () => void;
-    /**
-     * Per-workspace host-resources deps. When present, the spawned
-     * McpSource registers inbound handlers for
-     * `ai.nimblebrain/resources/{read,list}` so the bundle can read
-     * workspace files through the platform. Workspace-id-bearing
-     * caller provides the resolver + rate-limit shared across all
-     * bundles in this workspace; the source-name (composed inside
-     * this function) supplies the `bundleId` half of the rate-limit
-     * + audit key.
-     */
-    bundleMcp?: BundleMcpDeps;
-  },
+  opts?: StartBundleOpts,
 ): Promise<StartBundleResult> {
   // Reconcile workspaceContext / wsId / workDir into a single context for
   // the rest of this function. Callers may pass either form; once
   // the follow-up migration lands, everyone passes workspaceContext.
   const wsContext: WorkspaceContext | undefined = resolveWorkspaceContext(opts);
   if ("url" in ref) {
-    const serverName = ref.serverName ?? deriveServerName(ref.url);
-    validateServerName(serverName);
-    const sourceName = serverName;
-    // Diagnostic (NOT back-compat): name the cause when a url source declares a
-    // transport.auth.type the runtime doesn't recognize — otherwise it silently
-    // gets no credential and 401s. The likeliest case is a config that predates
-    // the provider-auth migration (e.g. the retired `tenant-key`).
-    const declaredAuthType = ref.transport?.auth?.type;
-    if (declaredAuthType && !["bearer", "header", "none", "provider"].includes(declaredAuthType)) {
-      log.warn(
-        `[bundles] source "${serverName}" declares an unrecognized transport.auth.type="${declaredAuthType}" ` +
-          "(known: bearer, header, none, provider). No credential will be attached and the source will likely 401 — " +
-          "if this config predates the provider-auth migration, re-register the source.",
-      );
-    }
-    // SSRF protection: validate URL before connecting. Provider-auth sources are
-    // the operator-provisioned fleet rail (a `provider` auth config can't be set
-    // from tenant input — it comes from the vetted catalog entry), so they may
-    // reach in-cluster `.svc` services over plain HTTP — see `validateBundleUrl`'s
-    // `fleetInternal` path.
-    validateBundleUrl(new URL(ref.url), {
-      allowInsecure: opts?.allowInsecureRemotes,
-      fleetInternal: ref.transport?.auth?.type === "provider",
-    });
-    log.info(`[bundles] Starting remote bundle ${ref.url} as ${sourceName}...`);
-
-    // Attach an OAuthClientProvider when no static auth is configured. The
-    // provider is workspace-scoped: tokens and DCR credentials live under
-    // <workDir>/workspaces/<wsId>/credentials/mcp-oauth/<serverName>/.
-    //
-    // `wsId` is REQUIRED here — not defaulted — to match the named-bundle
-    // branch's behavior at the credential boundary. A silent `ws_default`
-    // fallback would cause cross-tenant credential leakage: URL bundles
-    // installed from different workspaces would share OAuth tokens under
-    // the same default id. Callers must thread workspace context through
-    // `installRemote` / `startBundleSource`.
-    // Wrap the user's onInteractiveAuthRequired callback to also signal an
-    // early-return path. Without this, `await source.start()` blocks
-    // indefinitely while the user clicks Connect → completes browser auth
-    // (could be minutes or never), which would hang both the install API
-    // call and the workspace-startup loop. With it, the moment the
-    // provider determines interactive auth is needed, the caller's
-    // `onInteractiveAuthRequired` fires (lifecycle transitions Connection
-    // to pending_auth and emits SSE so the banner appears), AND the
-    // function returns early with a placeholder meta. `source.start()`
-    // continues in the background; when it eventually resolves (user
-    // completed auth), the connection state machine transitions via the
-    // existing UnauthorizedError-retry path inside `mcp-source.ts`. The
-    // lifecycle observes the eventual `connection.state_changed` running
-    // event and the bundle becomes fully usable.
-    let pendingAuthDetected = false;
-    const userCallback = opts?.onInteractiveAuthRequired;
-    const earlyReturn: { resolve: () => void; promise: Promise<void> } = (() => {
-      let resolve!: () => void;
-      const promise = new Promise<void>((r) => {
-        resolve = r;
-      });
-      return { resolve, promise };
-    })();
-    const wrappedCallback = (authorizationUrl: string) => {
-      pendingAuthDetected = true;
-      try {
-        userCallback?.(authorizationUrl);
-      } finally {
-        earlyReturn.resolve();
-      }
-    };
-
-    let authProvider: WorkspaceOAuthProvider | undefined;
-    const hasStaticAuth = bundleHasStaticAuth(ref);
-    if (!hasStaticAuth) {
-      if (!wsContext) {
-        throw new Error(
-          `[bundles] URL bundle "${sourceName}" without static auth requires opts.workspaceContext ` +
-            "(or the legacy opts.wsId) — OAuth credentials are workspace-scoped and silent defaults " +
-            "would cross tenants. Thread workspaceContext through installRemote() or the caller " +
-            "that invoked startBundleSource().",
-        );
-      }
-      const wsId = wsContext.workspaceId;
-      const workDir = wsContext.workDir;
-      // Resolve the OAuth callback through the single source of truth
-      // (bouncer-aware). Boot-start MUST register the same redirect_uri the
-      // interactive `initiate` flow uses — otherwise the provider's DCR
-      // drift check discards client.json, re-registration mints a new
-      // client_id, and the stored refresh token is orphaned (silent refresh
-      // then fails and the bundle falls into a headless interactive flow
-      // that times out at boot). See src/oauth/mcp-callback-url.ts.
-      const callbackUrl = mcpAuthCallbackUrl();
-      // Startup warning when a URL-ref bundle is being wired with no externally
-      // reachable origin and no bouncer — the callback resolved to localhost.
-      // Only safe for local dev; in prod the authorization server would get a
-      // redirect_uri pointing at the pod's localhost. One log per process.
-      if (callbackUrl.startsWith("http://localhost")) {
-        log.warn(
-          `[bundles] public origin not configured; OAuth callback defaults to ${callbackUrl}. ` +
-            "In production (NB behind a proxy / on a different host from the user's browser), " +
-            "set the custom domain / platform host so publicOrigin() resolves to the externally " +
-            "reachable URL.",
-        );
-      }
-
-      // Track A: resolve pre-registered client config when present. The
-      // oauthClient.clientSecret is a reference into the workspace
-      // credential store; we resolve it to a string here so the provider
-      // can stamp it into clientInformation()'s response. The catalog
-      // boundary already enforced that the secret reference is well-
-      // formed; here we just dereference it. Errors abort the boot of
-      // this bundle (the connection enters dead) — user can fix the
-      // credential and restart.
-      let staticClient: WorkspaceOAuthProviderOptions["staticClient"] | undefined;
-      if (ref.oauthClient) {
-        let resolvedSecret: string | undefined;
-        if (ref.oauthClient.clientSecret) {
-          const secretStore = new FileCredentialStore(workDir);
-          const wrapped = await secretStore.get(wsId, ref.oauthClient.clientSecret.key);
-          if (!wrapped) {
-            throw new Error(
-              `[bundles] OAuth client_secret not found at credential key "${ref.oauthClient.clientSecret.key}" — ` +
-                `configure it in the workspace's Connections settings (web UI)`,
-            );
-          }
-          resolvedSecret = wrapped.reveal();
-        }
-        staticClient = {
-          clientId: ref.oauthClient.clientId,
-          ...(resolvedSecret ? { clientSecret: resolvedSecret } : {}),
-          ...(ref.oauthClient.tokenEndpointAuthMethod
-            ? { tokenEndpointAuthMethod: ref.oauthClient.tokenEndpointAuthMethod }
-            : {}),
-        };
-      }
-
-      // Boot path is workspace-scope only — user-scope bundles aren't
-      // started at boot (they're loaded into a workspace's registry
-      // on-demand when their user enters the workspace, see lifecycle).
-      // Human-readable workspace name for the vendor consent screen in
-      // place of the opaque wsId; best-effort, falls back to the id.
-      const ownerDisplayName = await resolveWorkspaceDisplayName(workDir, wsId);
-      authProvider = new WorkspaceOAuthProvider({
-        owner: { type: "workspace", wsId },
-        ...(ownerDisplayName ? { ownerDisplayName } : {}),
-        serverName,
-        workDir,
-        workspaceContext: wsContext,
-        callbackUrl,
-        allowInsecureRemotes: opts?.allowInsecureRemotes === true,
-        headlessAuthProbe: ref.headlessAuthProbe === true,
-        // Fleet tenant binding. Safe for every server: the provider only
-        // attaches an assertion when the token endpoint's origin matches this
-        // issuer (the fleet authorizer), never to a vendor.
-        ...fleetIssuerOption(),
-        onInteractiveAuthRequired: wrappedCallback,
-        ...(opts?.onAuthLost ? { onAuthLost: opts.onAuthLost } : {}),
-        ...(staticClient ? { staticClient } : {}),
-        ...(ref.scopes ? { scopes: ref.scopes } : {}),
-        ...(ref.additionalAuthorizationParams
-          ? { additionalAuthorizationParams: ref.additionalAuthorizationParams }
-          : {}),
-      });
-    }
-
-    const source = new McpSource(
-      sourceName,
-      {
-        type: "remote",
-        url: new URL(ref.url),
-        transportConfig: ref.transport,
-        allowInsecure: opts?.allowInsecureRemotes === true,
-        authProvider,
-      },
-      eventSink,
-      composeBundleMcpContext(opts?.bundleMcp, sourceName),
-    );
-
-    // Kick off start() and finalize on completion. The promise's value
-    // is the full `StartBundleResult` for the success path; on failure it
-    // logs and rethrows so the lifecycle can record the connection as
-    // dead. We register the source with the registry from inside the
-    // success branch; on failure (transport error, auth never completes)
-    // the source is never registered so callers asserting
-    // `registry.hasSource()` after a failed startup see the right shape.
-    //
-    // Pending-auth registration happens later (below): if the early-
-    // return signal fires, we register the source so the registry
-    // reflects the bundle exists. Tool calls against an unstarted source
-    // throw cleanly until start() succeeds.
-    const startPromise: Promise<StartBundleResult> = source
-      .start()
-      .then(async () => {
-        const tools = await source.tools();
-        if (!registry.hasSource(sourceName)) {
-          registry.addSource(source);
-        }
-        // Notify lifecycle that this Connection finished its OAuth
-        // dance and is now running. For URL bundles that went through
-        // pending_auth → running (background path after the user
-        // completed auth), this transitions the BundleInstance's
-        // Connection out of pending_auth and emits the
-        // `connection.state_changed` SSE event so the UI banner
-        // clears. For headless bundles that succeeded without ever
-        // hitting pending_auth, this is just a confirming update.
-        if (wsContext) {
-          notifyConnectionRunning(wsContext.workspaceId, sourceName);
-        }
-        log.info(`[bundles] ✓ ${sourceName} ready (${tools.length} tools, remote)`);
-        return {
-          meta: {
-            version: `remote (${tools.length} tools)`,
-            ui: ref.ui ?? null,
-            briefing: null,
-            type: "plain" as const,
-          },
-          sourceName,
-          manifest: null,
-        };
-      })
-      .catch((err) => {
-        log.error(`[bundles] ${sourceName} start failed: ${err}`);
-        // Make sure the source isn't left in the registry if start
-        // ultimately failed (background pending-auth path could have
-        // added it). Best-effort — removeSource is idempotent.
-        void registry.removeSource(sourceName).catch(() => {});
-        throw err;
-      });
-
-    // Race start against the early-return signal. If the provider hits
-    // the interactive branch, `wrappedCallback` resolves earlyReturn before
-    // start() rejects/awaits — earlyReturn.promise wins, we return a
-    // placeholder meta, and startPromise continues in the background.
-    // (Attach a no-op .catch so a delayed background failure doesn't
-    // surface as an unhandled rejection.)
-    await Promise.race([
-      startPromise.then(() => undefined).catch(() => undefined),
-      earlyReturn.promise,
-    ]);
-
-    if (pendingAuthDetected) {
-      // Register the source so the registry reflects the bundle exists.
-      // Tool calls against the unstarted source throw cleanly until
-      // start() succeeds (which happens after the user completes auth).
-      if (!registry.hasSource(sourceName)) {
-        registry.addSource(source);
-      }
-      // Don't await startPromise — it'll resolve when the user finishes
-      // auth (could be minutes). Background-protect against unhandled
-      // rejection if start ultimately fails.
-      startPromise.catch(() => {});
-      return {
-        meta: {
-          version: "remote (pending auth)",
-          ui: ref.ui ?? null,
-          briefing: null,
-          type: "plain" as const,
-        },
-        sourceName,
-        manifest: null,
-      };
-    }
-
-    // Headless path or already-completed auth. start() succeeded.
-    return await startPromise;
+    return startUrlBundleSource(ref, registry, eventSink, wsContext, opts);
   }
+
   const label = "name" in ref ? ref.name : ref.path;
   log.info(`[bundles] Starting ${label}...`);
 
-  let source: ToolSource;
-  let meta: LocalBundleMeta | null = null;
-  let manifest: BundleManifest | null = null;
-  if ("name" in ref) {
-    // Honor the canonical-form serverName persisted on the ref by the
-    // catalog install path (`slugifyServerName(entry.id)`); fall back
-    // to the legacy short slug (`deriveServerName(ref.name)`) for
-    // pre-#195 installs whose ref doesn't carry the field. Mirrors the
-    // URL-branch pattern below — without this the registered source
-    // name would diverge from what install persisted, breaking
-    // uninstall for every catalog-installed mpak bundle
-    // whose canonical id and package name produce different slugs
-    // (e.g. `dev.mpak.nimblebraininc/echo` vs `@nimblebraininc/echo`).
-    const serverName = ref.serverName ?? deriveServerName(ref.name);
-    validateServerName(serverName);
-    const sourceName = serverName;
-
-    // Named bundles are workspace-scoped. The caller must supply
-    // `workspaceContext` (or the legacy `wsId`); without it we have no
-    // workspace to resolve credentials against and no way to pick a
-    // consistent data dir. This throw is the end of the named-bundle
-    // path — the platform has a bug if a caller reaches here without a
-    // workspace context.
-    if (!wsContext) {
-      throw new Error(
-        `Cannot start ${ref.name}: a workspace ID is required (platform bug — please report).`,
-      );
-    }
-
-    // Data dir derives from the workspace context. Callers only pass
-    // `opts.dataDir` to override for test fixtures. This is the single
-    // source of truth for the layout — lifecycle.installNamed,
-    // workspace-ops, and workspace-runtime all produce paths matching
-    // this derivation, so there is no drift class between "where a bundle
-    // gets installed" and "where it spawns when restarted."
-    const bundleDataDir =
-      opts?.dataDir ?? wsContext.getDataPath("data", deriveBundleDataDir(ref.name));
-
-    const mpakHome = process.env.MPAK_HOME ?? join(homedir(), ".mpak");
-    const mpak = getMpak(mpakHome);
-
-    // Warm the mpak cache so the up-front manifest read below is a hit on a
-    // cold/first-ever install. Without this, getBundleManifest() returns null
-    // the first time a bundle is installed on a pod; meta/manifest stay null,
-    // so placement registration AND user_config resolution silently no-op
-    // until a process restart re-reads the now-warm cache (#60 — the bundle
-    // shows under Connectors but never under Apps). Doing it here, at the one
-    // chokepoint every named install/respawn path funnels through (connector
-    // UI, installNamed, boot reload, JIT), fixes the whole class instead of
-    // relying on each caller to pre-warm — a contract callers silently broke.
-    //
-    // Guard on getBundleManifest (the same manifest.json the read below uses),
-    // NOT on loadBundle's own short-circuit: loadBundle keys its no-op on a
-    // separate .mpak-meta.json, so a manifest-only cache (offline-warm starts,
-    // test fixtures) would wrongly trigger a network pull. Skipping when the
-    // manifest is already on disk keeps warm boots and offline starts
-    // network-free, exactly as today; prepareServer re-reads and re-validates.
-    if (!mpak.bundleCache.getBundleManifest(ref.name)) {
-      await mpak.bundleCache.loadBundle(ref.name);
-    }
-
-    // Read cached manifest up-front so we can discover the user_config schema
-    // and resolve credentials BEFORE prepareServer validates them. The warm
-    // step above guarantees the manifest is present here on every path that
-    // can reach the registry; a miss now means a genuinely unexpected state.
-    let cachedManifest = mpak.bundleCache.getBundleManifest(ref.name) as BundleManifest | null;
-    if (cachedManifest) {
-      meta = extractBundleMeta(cachedManifest as unknown as Record<string, unknown>);
-      manifest = cachedManifest;
-    } else {
-      // With no manifest in cache we can't read `_meta` capability
-      // declarations, so host_capabilities gets silently skipped at spawn.
-      // Surface it loudly instead of letting operators chase phantom UI bugs.
-      //
-      // The cache-warm step above (#60) closes the common cause of this —
-      // a cold first-install no longer reaches here, since the warm either
-      // populates the manifest or throws on a truly cold + offline cache.
-      // Reaching this branch now means an unexpected state (e.g. the cache
-      // dir was wiped between the warm and this read), not the normal
-      // first-install path. We still fall through rather than fail-closed:
-      // refusing the spawn would break workspaces that were valid before a
-      // restart, and the terminal host-capability gate below re-checks the
-      // manifest once prepareServer has re-populated it.
-      log.warn(
-        `[bundles] manifest cache miss for ${ref.name} — capability declarations ` +
-          "(host_capabilities, etc.) will be skipped at spawn, including " +
-          "the install-time host-resources gate. Reinstall the bundle to repopulate.",
-      );
-    }
-
-    // Boot / re-spawn self-heal for the name-only mpak cache. The cache dir is
-    // keyed by bundle name with no version, so a pod that cached a bad version
-    // re-spawns it on every boot — and if that manifest fails the host-manifest
-    // gate, the bundle is rejected forever even after a fixed version ships
-    // (the manual workaround was deleting the cache dir on the pod + restart).
-    // Detect the gate failure here, against the cached manifest, and force ONE
-    // re-pull from the registry so a published fix self-heals on restart. This
-    // sits before prepareServer so the fresh artifact is what gets spawned, and
-    // covers every named re-spawn path (boot reload, JIT install, configure-
-    // restart) since they all funnel through here. We do NOT re-assert the gate
-    // after refreshing — the terminal gate below (post-prepareServer) re-runs on
-    // the refreshed manifest and throws for real if the latest published
-    // version is still invalid.
-    if (cachedManifest) {
-      try {
-        assertHostCapabilitiesAvailable(cachedManifest, cachedManifest.name);
-      } catch (err) {
-        if (!(err instanceof HostManifestGateError)) throw err;
-        log.warn(
-          `[bundles] ${ref.name} failed the host-manifest gate from cache ` +
-            `(${err.reason}); force-refreshing from the registry and retrying.`,
+  const { source, meta, manifest } =
+    "name" in ref
+      ? await prepareNamedBundleSource(ref, eventSink, wsContext, opts)
+      : buildLocalSource(
+          ref,
+          configDir,
+          opts?.dataDir,
+          eventSink,
+          wsContext?.workspaceId,
+          opts?.bundleMcp,
         );
-        try {
-          await mpak.bundleCache.loadBundle(ref.name, { force: true });
-          const refreshed = mpak.bundleCache.getBundleManifest(ref.name) as BundleManifest | null;
-          if (refreshed) {
-            cachedManifest = refreshed;
-            meta = extractBundleMeta(refreshed as unknown as Record<string, unknown>);
-            manifest = refreshed;
-          }
-        } catch (refreshErr) {
-          // Registry unreachable or pull failed: leave the cached copy intact
-          // and fall through. The terminal gate re-throws the original gate
-          // error, surfacing the actionable "Refusing to install" message
-          // rather than a transient network error — so we're never worse off
-          // than skipping the heal entirely.
-          const detail = refreshErr instanceof Error ? refreshErr.message : String(refreshErr);
-          log.warn(
-            `[bundles] force-refresh of ${ref.name} failed (${detail}); keeping cached copy.`,
-          );
-        }
-      }
-    }
-
-    // Read host-side credentials from the workspace credential store. The
-    // mpak SDK does the rest of the resolution chain: manifest-declared
-    // mcp_config.env aliases (so a bundle with
-    // `"NEWSAPI_API_KEY": "${user_config.api_key}"` is satisfied by a host
-    // NEWSAPI_API_KEY export) and manifest defaults. Any still-missing
-    // required field surfaces as MpakConfigError, which we translate to an
-    // operator hint pointing at the env var(s) / workspace Connections settings.
-    const userConfig = await wsContext.getCredentialStore().resolveUserConfig({
-      bundleName: ref.name,
-      userConfigSchema: cachedManifest?.user_config,
-    });
-
-    let server: Awaited<ReturnType<typeof mpak.prepareServer>>;
-    try {
-      server = await mpak.prepareServer(
-        { name: ref.name },
-        { workspaceDir: bundleDataDir, userConfig },
-      );
-    } catch (err) {
-      // MpakConfigError (0.5.0+) carries envAliases per missing field,
-      // so friendlyMpakConfigError can name `export ANTHROPIC_API_KEY`
-      // hints without us threading the manifest through.
-      throw friendlyMpakConfigError(err, wsContext.workspaceId);
-    }
-
-    // Subprocess env contract is unchanged: NB_WORKSPACE_ID is the
-    // bundle-visible workspace id. Derived through the context so the
-    // workspace's identity flows through one validated path.
-    const platformEnv = buildPlatformEnv({
-      workspaceId: wsContext.workspaceId,
-      publicOrigin: resolvePublicOrigin(),
-    });
-
-    source = new McpSource(
-      sourceName,
-      {
-        type: "stdio",
-        spawn: {
-          command: server.command,
-          args: server.args,
-          env: {
-            ...server.env,
-            ...filterEnvForBundle(process.env as Record<string, string>, undefined, ref.allowedEnv),
-            ...(ref.env ?? {}),
-            MPAK_WORKSPACE: bundleDataDir,
-            UPJACK_ROOT: bundleDataDir,
-            ...platformEnv,
-          },
-          cwd: server.cwd,
-        },
-      },
-      eventSink,
-      composeBundleMcpContext(opts?.bundleMcp, sourceName),
-    );
-  } else {
-    const result = buildLocalSource(
-      ref,
-      configDir,
-      opts?.dataDir,
-      eventSink,
-      wsContext?.workspaceId,
-      opts?.bundleMcp,
-    );
-    source = result.source;
-    meta = result.meta;
-    manifest = result.manifest;
-  }
 
   // Refuse to spawn a bundle whose `host_capabilities` declares required
   // capabilities the platform doesn't advertise. Single chokepoint for
@@ -826,20 +923,7 @@ function buildLocalSource(
 
   // Python bundles: resolve "python" -> "python3" if needed, build PYTHONPATH
   if (manifest.server.type === "python") {
-    if (command === "python") {
-      const check = Bun.spawnSync(["which", "python"]);
-      if (check.exitCode !== 0) command = "python3";
-    }
-    const resolvedDir = resolve(bundleDir);
-    const pathParts: string[] = [];
-    const depsDir = join(resolvedDir, "deps");
-    if (existsSync(depsDir)) pathParts.push(depsDir);
-    const srcDir = join(resolvedDir, "src");
-    if (existsSync(srcDir)) pathParts.push(srcDir);
-    if (pathParts.length > 0) {
-      const existing = spawnEnv.PYTHONPATH;
-      spawnEnv.PYTHONPATH = existing ? `${pathParts.join(":")}:${existing}` : pathParts.join(":");
-    }
+    command = applyPythonSpawn(bundleDir, command, spawnEnv);
   }
 
   const sourceName = serverName;
@@ -863,6 +947,62 @@ function buildLocalSource(
     meta: extractBundleMeta(manifest as unknown as Record<string, unknown>),
     manifest,
   };
+}
+
+/**
+ * Resolve the python executable and PYTHONPATH for a python bundle. Returns the
+ * command to spawn (`python` → `python3` when `python` isn't on PATH) and
+ * mutates `spawnEnv.PYTHONPATH` to prepend the bundle's `deps/` and `src/` dirs.
+ */
+function applyPythonSpawn(
+  bundleDir: string,
+  command: string,
+  spawnEnv: Record<string, string>,
+): string {
+  let resolvedCommand = command;
+  if (command === "python") {
+    const check = Bun.spawnSync(["which", "python"]);
+    if (check.exitCode !== 0) resolvedCommand = "python3";
+  }
+  const resolvedDir = resolve(bundleDir);
+  const pathParts: string[] = [];
+  const depsDir = join(resolvedDir, "deps");
+  if (existsSync(depsDir)) pathParts.push(depsDir);
+  const srcDir = join(resolvedDir, "src");
+  if (existsSync(srcDir)) pathParts.push(srcDir);
+  if (pathParts.length > 0) {
+    const existing = spawnEnv.PYTHONPATH;
+    spawnEnv.PYTHONPATH = existing ? `${pathParts.join(":")}:${existing}` : pathParts.join(":");
+  }
+  return resolvedCommand;
+}
+
+/**
+ * Reverse-lookup each declared `user_config` field's value from `processEnv`:
+ * for a field, find the `mcp_config.env` entry whose value references it via
+ * `${user_config.<field>}`, then read that env var. A bundle declaring
+ * `"ANTHROPIC_API_KEY": "${user_config.anthropic_api_key}"` is satisfied by a
+ * host `ANTHROPIC_API_KEY` export. Fields with no host value are omitted (the
+ * caller collapses their placeholders to "").
+ */
+function reverseLookupUserConfigValues(
+  userConfigSchema: Record<string, UserConfigFieldDef>,
+  mcpConfigEnv: Record<string, string>,
+  processEnv: Record<string, string>,
+): Record<string, string> {
+  const values: Record<string, string> = {};
+  for (const fieldKey of Object.keys(userConfigSchema)) {
+    const placeholder = `\${user_config.${fieldKey}}`;
+    for (const [envVarName, envVarValue] of Object.entries(mcpConfigEnv)) {
+      if (!envVarValue.includes(placeholder)) continue;
+      const v = processEnv[envVarName];
+      if (v !== undefined && v !== "") {
+        values[fieldKey] = v;
+        break;
+      }
+    }
+  }
+  return values;
 }
 
 /**
@@ -895,21 +1035,9 @@ function substituteUserConfigFromEnv(
   // below so an undeclared `${user_config.foo}` placeholder gets substituted to ""
   // rather than leaking through as a literal string (the bug class this function
   // exists to prevent).
-  const values: Record<string, string> = {};
-  if (userConfigSchema) {
-    for (const fieldKey of Object.keys(userConfigSchema)) {
-      const placeholder = `\${user_config.${fieldKey}}`;
-      for (const [envVarName, envVarValue] of Object.entries(mcpConfigEnv)) {
-        if (envVarValue.includes(placeholder)) {
-          const v = processEnv[envVarName];
-          if (v !== undefined && v !== "") {
-            values[fieldKey] = v;
-            break;
-          }
-        }
-      }
-    }
-  }
+  const values: Record<string, string> = userConfigSchema
+    ? reverseLookupUserConfigValues(userConfigSchema, mcpConfigEnv, processEnv)
+    : {};
 
   // Regex collapse runs unconditionally so no path produces a literal
   // `${user_config.*}` in the spawn env — undeclared or unresolved fields

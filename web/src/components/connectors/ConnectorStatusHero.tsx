@@ -85,139 +85,85 @@ export function ConnectorStatusHero({
 
   const action = resolveAction(installed, !!directoryEntry);
 
-  // Connector version, two axes: the running serverInfo.version (handshakeVersion —
-  // what's actually connected) takes precedence over the declared catalog/manifest
-  // version (installed.version; "remote" is the placeholder for a remote bundle that
-  // declares none, not a real version). When both exist and differ, the declared one
-  // is surfaced as a small drift note rather than silently hidden.
-  const declaredVersion = installed.version !== "remote" ? installed.version : undefined;
-  const shownVersion = installed.handshakeVersion ?? declaredVersion;
-  const versionDrift =
-    installed.handshakeVersion && declaredVersion && installed.handshakeVersion !== declaredVersion
-      ? declaredVersion
-      : undefined;
+  /** Surface an unknown error's message on the hero. */
+  const reportError = (err: unknown) => setError(err instanceof Error ? err.message : String(err));
+
+  /**
+   * Reset a connector wedged mid-connect. `disconnect` flips the
+   * connection back to `not_authenticated` (no established session to
+   * revoke — the OAuth dance never finished), so `onChanged`'s refetch
+   * re-renders the hero with the normal Connect CTA.
+   */
+  const cancelConnect = async () => {
+    setActing(true);
+    try {
+      await disconnectConnector(installed.serverName, installed.scope);
+      onChanged();
+    } catch (err) {
+      reportError(err);
+    } finally {
+      setActing(false);
+    }
+  };
+
+  /**
+   * Kick off the OAuth redirect. Composio-backed connectors route
+   * through their own initiate endpoint (Composio holds the tokens; we
+   * just persist a connectedAccountId pointer). Native OAuth (dcr +
+   * static) still goes through /v1/mcp-auth/initiate. On failure the
+   * button resets so the user can retry.
+   */
+  const runOAuth = async () => {
+    setActing(true);
+    try {
+      const { authorizationUrl } =
+        cat?.auth === "composio"
+          ? await initiateComposioOAuth(cat.id)
+          : await initiateMcpOAuth(installed.serverName);
+      window.location.assign(authorizationUrl);
+    } catch (err) {
+      reportError(err);
+      setActing(false);
+    }
+  };
 
   const onPrimary = async () => {
     if (!action) return;
     setError(null);
-    if (action.kind === "open-bundle-modal") {
-      setBundleModalOpen(true);
-      return;
-    }
-    if (action.kind === "open-operator-modal") {
-      setOperatorModalOpen(true);
-      return;
-    }
-    if (action.kind === "cancel") {
-      // Reset a connector wedged mid-connect. `disconnect` flips the
-      // connection back to `not_authenticated` (no established session to
-      // revoke — the OAuth dance never finished), so `onChanged`'s refetch
-      // re-renders the hero with the normal Connect CTA.
-      setActing(true);
-      try {
-        await disconnectConnector(installed.serverName, installed.scope);
-        onChanged();
-      } catch (err) {
-        setError(err instanceof Error ? err.message : String(err));
-      } finally {
-        setActing(false);
-      }
-      return;
-    }
-    if (action.kind === "oauth") {
-      // API-key Composio connectors have no redirect — collect the declared
-      // fields in a modal and call connect_api_key (rotation is admin-gated
-      // server-side). Branch before the OAuth dispatch below.
-      if (cat?.auth === "composio" && cat.composio?.authScheme === "API_KEY") {
-        setApiKeyModalOpen(true);
+    switch (action.kind) {
+      case "open-bundle-modal":
+        setBundleModalOpen(true);
         return;
-      }
-      setActing(true);
-      try {
-        // Composio-backed connectors route through their own
-        // initiate endpoint (Composio holds the tokens; we just
-        // persist a connectedAccountId pointer). Native OAuth
-        // (dcr + static) still goes through /v1/mcp-auth/initiate.
-        const { authorizationUrl } =
-          cat?.auth === "composio"
-            ? await initiateComposioOAuth(cat.id)
-            : await initiateMcpOAuth(installed.serverName);
-        window.location.assign(authorizationUrl);
-      } catch (err) {
-        setError(err instanceof Error ? err.message : String(err));
-        setActing(false);
-      }
+      case "open-operator-modal":
+        setOperatorModalOpen(true);
+        return;
+      case "cancel":
+        await cancelConnect();
+        return;
+      case "oauth":
+        // API-key Composio connectors have no redirect — collect the
+        // declared fields in a modal and call connect_api_key (rotation
+        // is admin-gated server-side). Branch before the OAuth dispatch.
+        if (cat?.auth === "composio" && cat.composio?.authScheme === "API_KEY") {
+          setApiKeyModalOpen(true);
+          return;
+        }
+        await runOAuth();
+        return;
     }
   };
 
   return (
     <section className="space-y-5">
-      {/* Identity row — icon + name + description. Always present;
-          the page's title block. The icon falls back to a letter
-          avatar with a deterministic tint when no iconUrl is set
-          (or the URL 404s — Asana's vendor link does without auth),
-          matching the Browse cards' treatment. */}
-      <div className="flex items-start gap-4">
-        <ConnectorIcon
-          name={name}
-          iconUrl={installed.iconUrl}
-          className="h-12 w-12 rounded-sm text-base"
-        />
-        <div className="flex-1 min-w-0">
-          <div className="flex items-center gap-2 flex-wrap">
-            <h1 className="text-xl font-semibold tracking-tight">{name}</h1>
-            {installed.interactive && (
-              <span className="text-3xs px-1.5 py-0.5 rounded bg-accent/50 text-accent-foreground font-medium">
-                Interactive
-              </span>
-            )}
-          </div>
-          {/* Version: running serverInfo.version primary, declared (catalog/manifest)
-              version shown only when it drifts from what's running. Covers remote
-              connectors (fleet, Composio, OAuth) — which report a handshake version
-              but carry no meaningful bundle version — as well as local bundles. */}
-          {shownVersion && (
-            <p className="text-xs text-muted-foreground font-mono mt-0.5">
-              v{shownVersion}
-              {versionDrift && (
-                <span className="ml-2 text-muted-foreground/60">catalog v{versionDrift}</span>
-              )}
-            </p>
-          )}
-          {cat?.description && (
-            <p className="text-sm text-muted-foreground mt-1">{cat.description}</p>
-          )}
-        </div>
-      </div>
+      <IdentityRow installed={installed} name={name} />
 
-      {/* Status block — only when the connector needs attention.
-          When `ready`, the page reads as quiet settings; when any
-          other status applies, this block is the visual anchor. */}
-      {installed.status !== "ready" && (
-        <div className="flex items-start justify-between gap-4 px-4 py-3 border border-border/60 rounded-sm bg-muted/20">
-          <div className="flex items-start gap-3 min-w-0">
-            <StatusDot status={installed.status} />
-            <div className="min-w-0">
-              <div className="text-sm font-medium">{statusLabel(installed.status)}</div>
-              {installed.statusReason && (
-                <div className="text-xs text-muted-foreground mt-0.5">{installed.statusReason}</div>
-              )}
-            </div>
-          </div>
-          {action && canManageAction(action, canManage) && (
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              className="shrink-0"
-              onClick={onPrimary}
-              disabled={acting}
-            >
-              {acting ? "Working…" : action.label}
-            </Button>
-          )}
-        </div>
-      )}
+      <StatusBlock
+        installed={installed}
+        action={action}
+        canManage={canManage}
+        acting={acting}
+        onPrimary={onPrimary}
+      />
 
       {error && <p className="text-xs text-destructive">{error}</p>}
 
@@ -257,6 +203,109 @@ export function ConnectorStatusHero({
         />
       )}
     </section>
+  );
+}
+
+// ── Hero sections ───────────────────────────────────────────────────
+
+/** Identity row — icon + name + interactive badge + version + description.
+ *  Always present; the page's title block. */
+function IdentityRow({ installed, name }: { installed: InstalledConnector; name: string }) {
+  const cat = installed.catalog;
+
+  // Connector version, two axes: the running serverInfo.version (handshakeVersion —
+  // what's actually connected) takes precedence over the declared catalog/manifest
+  // version (installed.version; "remote" is the placeholder for a remote bundle that
+  // declares none, not a real version). When both exist and differ, the declared one
+  // is surfaced as a small drift note rather than silently hidden.
+  const declaredVersion = installed.version !== "remote" ? installed.version : undefined;
+  const shownVersion = installed.handshakeVersion ?? declaredVersion;
+  const versionDrift =
+    installed.handshakeVersion && declaredVersion && installed.handshakeVersion !== declaredVersion
+      ? declaredVersion
+      : undefined;
+
+  return (
+    <div className="flex items-start gap-4">
+      {/* The icon falls back to a letter avatar with a deterministic tint
+          when no iconUrl is set (or the URL 404s — Asana's vendor link does
+          without auth), matching the Browse cards' treatment. */}
+      <ConnectorIcon
+        name={name}
+        iconUrl={installed.iconUrl}
+        className="h-12 w-12 rounded-sm text-base"
+      />
+      <div className="flex-1 min-w-0">
+        <div className="flex items-center gap-2 flex-wrap">
+          <h1 className="text-xl font-semibold tracking-tight">{name}</h1>
+          {installed.interactive && (
+            <span className="text-3xs px-1.5 py-0.5 rounded bg-accent/50 text-accent-foreground font-medium">
+              Interactive
+            </span>
+          )}
+        </div>
+        {/* Version: running serverInfo.version primary, declared (catalog/manifest)
+            version shown only when it drifts from what's running. Covers remote
+            connectors (fleet, Composio, OAuth) — which report a handshake version
+            but carry no meaningful bundle version — as well as local bundles. */}
+        {shownVersion && (
+          <p className="text-xs text-muted-foreground font-mono mt-0.5">
+            v{shownVersion}
+            {versionDrift && (
+              <span className="ml-2 text-muted-foreground/60">catalog v{versionDrift}</span>
+            )}
+          </p>
+        )}
+        {cat?.description && (
+          <p className="text-sm text-muted-foreground mt-1">{cat.description}</p>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/** Status block — the page's actionable anchor when the connector needs
+ *  attention. Renders nothing while `ready` (the page reads as quiet
+ *  settings); any other status makes this the visual anchor with the CTA. */
+function StatusBlock({
+  installed,
+  action,
+  canManage,
+  acting,
+  onPrimary,
+}: {
+  installed: InstalledConnector;
+  action: PrimaryAction | null;
+  canManage: boolean;
+  acting: boolean;
+  onPrimary: () => void;
+}) {
+  if (installed.status === "ready") return null;
+
+  return (
+    <div className="flex items-start justify-between gap-4 px-4 py-3 border border-border/60 rounded-sm bg-muted/20">
+      <div className="flex items-start gap-3 min-w-0">
+        <StatusDot status={installed.status} />
+        <div className="min-w-0">
+          <div className="text-sm font-medium">{statusLabel(installed.status)}</div>
+          {installed.statusReason && (
+            <div className="text-xs text-muted-foreground mt-0.5">{installed.statusReason}</div>
+          )}
+        </div>
+      </div>
+      {action && canManageAction(action, canManage) && (
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          className="shrink-0"
+          onClick={onPrimary}
+          disabled={acting}
+        >
+          {acting ? "Working…" : action.label}
+        </Button>
+      )}
+    </div>
   );
 }
 

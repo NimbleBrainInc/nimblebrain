@@ -18,9 +18,11 @@ import type {
   ConversationEvent,
   HistoryCompactedEvent,
   LlmResponseEvent,
+  RunStartEvent,
   StoredMessage,
   ToolDoneEvent,
   UserContentPart,
+  UserMessageEvent,
 } from "./types.ts";
 
 /**
@@ -171,6 +173,22 @@ export function reconstructMessages(
   return ensureRoleAlternation(messages);
 }
 
+/** One executed tool-call block from an llm.response's content array. */
+type ToolCallPart = LanguageModelV3Content & { type: "tool-call" };
+
+/** The events collected within a single run span (before message shaping). */
+interface RunCollections {
+  llmResponses: LlmResponseEvent[];
+  toolDones: Map<string, ToolDoneEvent>;
+  toolInputs: Map<string, unknown>;
+  connectorSkills: ConnectorSkillInjectedEvent[];
+}
+
+/** A collected run span plus the index of the first event past it. */
+interface CollectedRun extends RunCollections {
+  nextIndex: number;
+}
+
 function buildMessagesFromEvents(events: readonly ConversationEvent[]): StoredMessage[] {
   const messages: StoredMessage[] = [];
 
@@ -182,270 +200,13 @@ function buildMessagesFromEvents(events: readonly ConversationEvent[]): StoredMe
     }
 
     if (event.type === "user.message") {
-      const msg: StoredMessage = {
-        role: "user",
-        content: event.content.flatMap(toUserContentPart),
-        timestamp: event.ts,
-        ...(event.userId ? { userId: event.userId } : {}),
-        ...(event.files ? { metadata: { files: event.files } } : {}),
-      };
-      messages.push(msg);
+      messages.push(buildUserMessage(event));
       i++;
       continue;
     }
 
     if (event.type === "run.start") {
-      const runId = event.runId;
-      i++;
-
-      // Collect events within this run
-      const runLlmResponses: LlmResponseEvent[] = [];
-      const runToolDones: Map<string, ToolDoneEvent> = new Map();
-      const runToolInputs: Map<string, unknown> = new Map();
-      // Connector overlays surfaced during this run. Reconstructed into
-      // synthetic assistant messages appended after the run's real turns, so
-      // the guidance rides the cached, append-only history from here on.
-      const runConnectorSkills: ConnectorSkillInjectedEvent[] = [];
-
-      while (i < events.length) {
-        const inner = events[i];
-        if (!inner) {
-          i++;
-          continue;
-        }
-
-        if (inner.type === "run.done" && inner.runId === runId) {
-          i++;
-          break;
-        }
-
-        if (inner.type === "run.error" && inner.runId === runId) {
-          // Run errored — we still emit messages collected so far
-          i++;
-          break;
-        }
-
-        // Implicit run end: a new user.message or run.start means the
-        // previous run never closed cleanly (process died, abort fired
-        // without emitting a terminal event). Break out — but DO NOT
-        // increment `i`, so the outer loop processes the event itself.
-        // Without this, subsequent user messages get swallowed by the
-        // run loop and the conversation appears to skip turns on reload.
-        if (inner.type === "user.message" || inner.type === "run.start") {
-          break;
-        }
-
-        if (inner.type === "llm.response" && inner.runId === runId) {
-          runLlmResponses.push(inner);
-        } else if (inner.type === "tool.done" && inner.runId === runId) {
-          runToolDones.set(inner.id, inner);
-        } else if (inner.type === "tool.start" && inner.runId === runId) {
-          if (inner.input !== undefined) {
-            runToolInputs.set(inner.id, inner.input);
-          }
-        } else if (inner.type === "connector.skill.injected") {
-          runConnectorSkills.push(inner);
-        }
-        // tool.progress and other events are skipped for reconstruction
-
-        i++;
-      }
-
-      // If we ran out of events without run.done/run.error, still emit what we have
-      // (handles incomplete runs)
-
-      // Now produce messages from llm.response events in order.
-      //
-      // Faithful replay shape: each llm.response becomes ONE assistant
-      // message whose content array preserves the provider's original
-      // block ordering — text, reasoning, and executed tool-calls in the
-      // exact order Anthropic returned them. Unexecuted (orphaned) tool-
-      // calls are filtered out (the API rejects orphans), but no other
-      // reordering happens.
-      //
-      // Why ordering matters: Anthropic validates the LATEST assistant
-      // message byte-for-byte ("thinking blocks in the latest assistant
-      // message cannot be modified"). An older implementation grouped
-      // content by category (reasoning / text / tool-call) and emitted
-      // them as separate messages — convenient for UI rendering but a
-      // 400 on multi-iteration runs with thinking enabled. The chat UI
-      // consumes its own projection from src/bundles/conversations/src/
-      // jsonl-reader.ts; this function is the LLM-replay projection.
-      for (const llmResp of runLlmResponses) {
-        const baseMetadata = () => ({
-          usage: llmResp.usage,
-          model: llmResp.model,
-          llmMs: llmResp.llmMs,
-          iterations: runLlmResponses.length,
-          ...(llmResp.finishReason ? { finishReason: llmResp.finishReason } : {}),
-        });
-
-        const executedToolCalls = llmResp.content.filter(
-          (c): c is LanguageModelV3Content & { type: "tool-call" } =>
-            c.type === "tool-call" && runToolDones.has(c.toolCallId),
-        );
-        const totalToolCalls = llmResp.content.filter((c) => c.type === "tool-call").length;
-        const hasOrphanedToolCalls = totalToolCalls > executedToolCalls.length;
-
-        // Filter out orphaned tool-calls; preserve all other blocks in
-        // their original order. normalizeForReplay then handles the
-        // stream→prompt shape mismatches (reasoning providerMetadata→
-        // providerOptions, tool-call input string→object).
-        const replayContent = normalizeForReplay(
-          llmResp.content.filter((c) => c.type !== "tool-call" || runToolDones.has(c.toolCallId)),
-        );
-
-        // Tool-call metadata for the chat UI (input/output rendering).
-        // Carried on the assistant message; not part of the LLM replay.
-        const toolCallsMeta = executedToolCalls.map((tc) => {
-          const done = runToolDones.get(tc.toolCallId)!;
-          return {
-            id: tc.toolCallId,
-            name: tc.toolName,
-            input: (runToolInputs.get(tc.toolCallId) ?? parseToolInput(tc.input)) as Record<
-              string,
-              unknown
-            >,
-            output: done.output ?? "",
-            ok: done.ok ?? true,
-            ms: done.ms ?? 0,
-          };
-        });
-
-        const hasRealContent =
-          replayContent.some((c) => c.type === "text") || executedToolCalls.length > 0;
-
-        if (hasRealContent) {
-          // Normal path: one assistant message, original block order.
-          // Orphaned tool-calls (if any) were already filtered out of
-          // replayContent — text alongside them survives as the visible
-          // assistant turn, no placeholder needed.
-          const assistantMsg: StoredMessage = {
-            role: "assistant",
-            content: replayContent,
-            timestamp: llmResp.ts,
-            metadata: {
-              ...baseMetadata(),
-              ...(toolCallsMeta.length > 0 ? { toolCalls: toolCallsMeta } : {}),
-            },
-          };
-          messages.push(assistantMsg);
-
-          // Tool-result message per executed tool-call (one per result so
-          // role alternation alternates assistant→tool→tool→… cleanly).
-          for (const tc of executedToolCalls) {
-            const done = runToolDones.get(tc.toolCallId)!;
-            const toolMsg: StoredMessage = {
-              role: "tool",
-              content: [
-                {
-                  type: "tool-result" as const,
-                  toolCallId: tc.toolCallId,
-                  toolName: tc.toolName,
-                  // Replay the BOUNDED model view, not the full output. New
-                  // events carry `modelOutput` (exactly what the model saw
-                  // live); legacy events without it are bounded here at read
-                  // time. This stops large tool results from re-entering the
-                  // prompt at full size on every subsequent run — the primary
-                  // driver of runaway context growth and cache-write churn.
-                  output: {
-                    type: "text",
-                    value: done.modelOutput ?? boundToolResultForModel(done.output ?? ""),
-                  },
-                },
-              ],
-              timestamp: done.ts ?? llmResp.ts,
-            };
-            messages.push(toolMsg);
-          }
-          continue;
-        }
-
-        // Step 4a — replay honesty.
-        // No real content emitted above. Reasons:
-        //   1. The turn produced reasoning only (extended thinking that
-        //      ran out of budget before any visible content).
-        //   2. The turn produced literally nothing AND the model didn't
-        //      end cleanly (length / content_filter / error).
-        //   3. The turn produced tool calls that NEVER executed (process
-        //      death, abort, stalled call). Without a placeholder, the
-        //      next user message lands directly after the prior user
-        //      message and Anthropic rejects the conversation on reload
-        //      with "model does not support assistant message prefill".
-        //
-        // Reasoning content is ONLY usable as the placeholder body when
-        // it carries provider metadata that lets it round-trip (e.g.
-        // Anthropic's signature). Without that, the AI SDK provider
-        // drops the block on the next prompt → content: [] → API 400.
-        // For the orphaned-tool-calls case we always use marker text:
-        // the reasoning may end mid-tool-call-intent, and the marker is
-        // the load-bearing signal to the model on retry.
-        //
-        // Behavior change vs. the pre-block-ordering reconstructor: when
-        // a turn has both signed and unsigned reasoning blocks, only the
-        // signed ones are kept in the placeholder. The old code kept all
-        // reasoning blocks as long as ANY had a signature; the unsigned
-        // blocks would then be silently dropped by the AI SDK provider on
-        // the next prompt with an "unsupported reasoning metadata" warning.
-        // Filtering up-front is more honest — the reconstructed message
-        // accurately reflects what the next call will actually send.
-        const reasoningWithMeta = replayContent.filter(
-          (c): c is LanguageModelV3ReasoningPart =>
-            c.type === "reasoning" && c.providerOptions != null,
-        );
-        const hasAbnormalFinish = llmResp.finishReason != null && llmResp.finishReason !== "stop";
-        const hasAnyReasoning = replayContent.some((c) => c.type === "reasoning");
-        const shouldEmitPlaceholder = hasOrphanedToolCalls || hasAnyReasoning || hasAbnormalFinish;
-
-        if (!shouldEmitPlaceholder) continue;
-
-        const placeholderText = hasOrphanedToolCalls
-          ? ORPHANED_TOOL_CALLS_MARKER
-          : (TRUNCATION_MARKERS[llmResp.finishReason ?? "other"] ?? TRUNCATION_MARKERS.other!);
-        const reasoningRoundTrips = !hasOrphanedToolCalls && reasoningWithMeta.length > 0;
-        // Inferred type: ReasoningPart[] | [{type:"text",text:string}].
-        // Both are assignable to the assistant variant's content union;
-        // an explicit `LanguageModelV3Content[]` annotation here is the
-        // wrong type (stream-side, doesn't include `providerOptions`).
-        const placeholderContent = reasoningRoundTrips
-          ? reasoningWithMeta
-          : [{ type: "text" as const, text: placeholderText }];
-
-        const assistantMsg: StoredMessage = {
-          role: "assistant",
-          content: placeholderContent,
-          timestamp: llmResp.ts,
-          metadata: baseMetadata(),
-        };
-        messages.push(assistantMsg);
-      }
-
-      // Connector overlays surfaced during this run. Append after the
-      // run's real turns as synthetic assistant messages — the Anthropic
-      // provider merges them into the preceding assistant block, and a user
-      // turn always follows on replay, so they never become a trailing
-      // prefill. The `<connector-skill>` containment is the per-prompt
-      // injection defense; `metadata.synthetic`/`skill` let the engine detect
-      // an already-surfaced overlay and never re-inject it.
-      //
-      // Provider note: this produces two consecutive assistant messages (the
-      // run's final assistant text, then this one). Anthropic — the default,
-      // tested provider, and the only one overlays ship enabled-for — merges
-      // consecutive same-role messages, so the pair coalesces cleanly. A
-      // non-Anthropic provider whose SDK conversion does NOT merge could reject
-      // the pair; verify provider-side coalescing before enabling overlays on
-      // a non-Anthropic default.
-      for (const cs of runConnectorSkills) {
-        messages.push({
-          role: "assistant",
-          content: [
-            { type: "text", text: formatConnectorSkillBlock(cs.skillName, cs.scope, cs.skillBody) },
-          ],
-          timestamp: cs.ts,
-          metadata: { synthetic: CONNECTOR_SKILL_SYNTHETIC, skill: cs.skillName },
-        });
-      }
-
+      i = appendRunMessages(events, i, messages);
       continue;
     }
 
@@ -454,6 +215,355 @@ function buildMessagesFromEvents(events: readonly ConversationEvent[]): StoredMe
   }
 
   return messages;
+}
+
+/** Build a user-role StoredMessage from a `user.message` event. */
+function buildUserMessage(event: UserMessageEvent): StoredMessage {
+  return {
+    role: "user",
+    content: event.content.flatMap(toUserContentPart),
+    timestamp: event.ts,
+    ...(event.userId ? { userId: event.userId } : {}),
+    ...(event.files ? { metadata: { files: event.files } } : {}),
+  };
+}
+
+/**
+ * Whether `inner` is an explicit terminator (`run.done`/`run.error`) for this
+ * run. A foreign-run terminal is NOT a terminator — it is skipped like any
+ * unrelated event.
+ */
+function isExplicitRunTerminator(inner: ConversationEvent, runId: string): boolean {
+  return (inner.type === "run.done" || inner.type === "run.error") && inner.runId === runId;
+}
+
+/** Route one non-terminator run event into the run's collections (mutates `acc`). */
+function accumulateRunEvent(inner: ConversationEvent, runId: string, acc: RunCollections): void {
+  if (inner.type === "llm.response" && inner.runId === runId) {
+    acc.llmResponses.push(inner);
+  } else if (inner.type === "tool.done" && inner.runId === runId) {
+    acc.toolDones.set(inner.id, inner);
+  } else if (inner.type === "tool.start" && inner.runId === runId) {
+    if (inner.input !== undefined) {
+      acc.toolInputs.set(inner.id, inner.input);
+    }
+  } else if (inner.type === "connector.skill.injected") {
+    acc.connectorSkills.push(inner);
+  }
+  // tool.progress and other events are skipped for reconstruction
+}
+
+/**
+ * Collect the events of one run span, walking from `startIndex` until a
+ * terminator. `run.done`/`run.error` for this run are consumed (the returned
+ * `nextIndex` steps past them). An implicit terminator (`user.message`/
+ * `run.start`) is left for the outer loop to reprocess — without this,
+ * subsequent user messages get swallowed by the run loop and the conversation
+ * appears to skip turns on reload. Running out of events without a terminator
+ * still returns what was collected (handles incomplete runs).
+ */
+function collectRunEvents(
+  events: readonly ConversationEvent[],
+  startIndex: number,
+  runId: string,
+): CollectedRun {
+  const acc: RunCollections = {
+    llmResponses: [],
+    toolDones: new Map(),
+    toolInputs: new Map(),
+    connectorSkills: [],
+  };
+
+  let i = startIndex;
+  while (i < events.length) {
+    const inner = events[i];
+    if (!inner) {
+      i++;
+      continue;
+    }
+
+    if (isExplicitRunTerminator(inner, runId)) {
+      i++;
+      break;
+    }
+
+    // Implicit run end: a new user.message or run.start means the previous run
+    // never closed cleanly. Break WITHOUT advancing `i` so the outer loop
+    // processes the event itself.
+    if (inner.type === "user.message" || inner.type === "run.start") {
+      break;
+    }
+
+    accumulateRunEvent(inner, runId, acc);
+    i++;
+  }
+
+  return { ...acc, nextIndex: i };
+}
+
+/**
+ * Process a `run.start` span beginning at `runStartIndex`: collect its inner
+ * events, emit the run's assistant/tool/connector messages into `messages`, and
+ * return the index of the first event past the run.
+ */
+function appendRunMessages(
+  events: readonly ConversationEvent[],
+  runStartIndex: number,
+  messages: StoredMessage[],
+): number {
+  const runStart = events[runStartIndex] as RunStartEvent;
+  const run = collectRunEvents(events, runStartIndex + 1, runStart.runId);
+
+  // Faithful replay shape: each llm.response becomes ONE assistant message whose
+  // content array preserves the provider's original block ordering — text,
+  // reasoning, and executed tool-calls in the exact order Anthropic returned
+  // them. Unexecuted (orphaned) tool-calls are filtered out (the API rejects
+  // orphans), but no other reordering happens.
+  //
+  // Why ordering matters: Anthropic validates the LATEST assistant message
+  // byte-for-byte ("thinking blocks in the latest assistant message cannot be
+  // modified"). Grouping content by category (reasoning / text / tool-call) and
+  // emitting them as separate messages is a 400 on multi-iteration runs with
+  // thinking enabled. The chat UI consumes its own projection from
+  // src/bundles/conversations/src/jsonl-reader.ts; this function is the
+  // LLM-replay projection.
+  for (const llmResp of run.llmResponses) {
+    for (const msg of messagesForLlmResponse(
+      llmResp,
+      run.toolDones,
+      run.toolInputs,
+      run.llmResponses.length,
+    )) {
+      messages.push(msg);
+    }
+  }
+
+  // Connector overlays surfaced during this run. Append after the run's real
+  // turns as synthetic assistant messages — the Anthropic provider merges them
+  // into the preceding assistant block, and a user turn always follows on
+  // replay, so they never become a trailing prefill. The `<connector-skill>`
+  // containment is the per-prompt injection defense; `metadata.synthetic`/
+  // `skill` let the engine detect an already-surfaced overlay and never
+  // re-inject it.
+  //
+  // Provider note: this produces two consecutive assistant messages (the run's
+  // final assistant text, then this one). Anthropic — the default, tested
+  // provider, and the only one overlays ship enabled-for — merges consecutive
+  // same-role messages, so the pair coalesces cleanly. A non-Anthropic provider
+  // whose SDK conversion does NOT merge could reject the pair; verify
+  // provider-side coalescing before enabling overlays on a non-Anthropic
+  // default.
+  for (const cs of run.connectorSkills) {
+    messages.push(buildConnectorSkillMessage(cs));
+  }
+
+  return run.nextIndex;
+}
+
+/** Assistant-message metadata shared by every message derived from one llm.response. */
+function baseResponseMetadata(llmResp: LlmResponseEvent, iterations: number) {
+  return {
+    usage: llmResp.usage,
+    model: llmResp.model,
+    llmMs: llmResp.llmMs,
+    iterations,
+    ...(llmResp.finishReason ? { finishReason: llmResp.finishReason } : {}),
+  };
+}
+
+/**
+ * Tool-call metadata for the chat UI (input/output rendering). Carried on the
+ * assistant message; not part of the LLM replay.
+ */
+function buildToolCallMeta(
+  tc: ToolCallPart,
+  toolDones: Map<string, ToolDoneEvent>,
+  toolInputs: Map<string, unknown>,
+) {
+  const done = toolDones.get(tc.toolCallId)!;
+  return {
+    id: tc.toolCallId,
+    name: tc.toolName,
+    input: (toolInputs.get(tc.toolCallId) ?? parseToolInput(tc.input)) as Record<string, unknown>,
+    output: done.output ?? "",
+    ok: done.ok ?? true,
+    ms: done.ms ?? 0,
+  };
+}
+
+/**
+ * Build the tool-result message for one executed tool-call. Replays the BOUNDED
+ * model view, not the full output: new events carry `modelOutput` (exactly what
+ * the model saw live); legacy events without it are bounded here at read time.
+ * This stops large tool results from re-entering the prompt at full size on
+ * every subsequent run — the primary driver of runaway context growth and
+ * cache-write churn.
+ */
+function buildToolResultMessage(
+  tc: ToolCallPart,
+  toolDones: Map<string, ToolDoneEvent>,
+  fallbackTs: string,
+): StoredMessage {
+  const done = toolDones.get(tc.toolCallId)!;
+  return {
+    role: "tool",
+    content: [
+      {
+        type: "tool-result" as const,
+        toolCallId: tc.toolCallId,
+        toolName: tc.toolName,
+        output: {
+          type: "text",
+          value: done.modelOutput ?? boundToolResultForModel(done.output ?? ""),
+        },
+      },
+    ],
+    timestamp: done.ts ?? fallbackTs,
+  };
+}
+
+/**
+ * Step 4a — replay honesty. When an llm.response emitted no real content,
+ * decide whether an honesty placeholder is needed and build it. Reasons a turn
+ * has no real content:
+ *   1. The turn produced reasoning only (extended thinking that ran out of
+ *      budget before any visible content).
+ *   2. The turn produced literally nothing AND the model didn't end cleanly
+ *      (length / content_filter / error).
+ *   3. The turn produced tool calls that NEVER executed (process death, abort,
+ *      stalled call). Without a placeholder, the next user message lands
+ *      directly after the prior user message and Anthropic rejects the
+ *      conversation on reload with "model does not support assistant message
+ *      prefill".
+ *
+ * Reasoning content is ONLY usable as the placeholder body when it carries
+ * provider metadata that lets it round-trip (e.g. Anthropic's signature).
+ * Without that, the AI SDK provider drops the block on the next prompt →
+ * content: [] → API 400. For the orphaned-tool-calls case we always use marker
+ * text: the reasoning may end mid-tool-call-intent, and the marker is the
+ * load-bearing signal to the model on retry.
+ *
+ * When a turn has both signed and unsigned reasoning blocks, only the signed
+ * ones are kept in the placeholder — the reconstructed message accurately
+ * reflects what the next call will actually send (the AI SDK provider drops
+ * unsigned reasoning with an "unsupported reasoning metadata" warning).
+ *
+ * Returns null when no placeholder should be emitted.
+ */
+function buildPlaceholderMessage(
+  llmResp: LlmResponseEvent,
+  replayContent: ReturnType<typeof normalizeForReplay>,
+  hasOrphanedToolCalls: boolean,
+  metadata: ReturnType<typeof baseResponseMetadata>,
+): StoredMessage | null {
+  const reasoningWithMeta = replayContent.filter(
+    (c): c is LanguageModelV3ReasoningPart => c.type === "reasoning" && c.providerOptions != null,
+  );
+  const hasAbnormalFinish = llmResp.finishReason != null && llmResp.finishReason !== "stop";
+  const hasAnyReasoning = replayContent.some((c) => c.type === "reasoning");
+  const shouldEmitPlaceholder = hasOrphanedToolCalls || hasAnyReasoning || hasAbnormalFinish;
+
+  if (!shouldEmitPlaceholder) return null;
+
+  const placeholderText = hasOrphanedToolCalls
+    ? ORPHANED_TOOL_CALLS_MARKER
+    : (TRUNCATION_MARKERS[llmResp.finishReason ?? "other"] ?? TRUNCATION_MARKERS.other!);
+  const reasoningRoundTrips = !hasOrphanedToolCalls && reasoningWithMeta.length > 0;
+  // Inferred type: ReasoningPart[] | [{type:"text",text:string}]. Both are
+  // assignable to the assistant variant's content union; an explicit
+  // `LanguageModelV3Content[]` annotation here is the wrong type (stream-side,
+  // doesn't include `providerOptions`).
+  const placeholderContent = reasoningRoundTrips
+    ? reasoningWithMeta
+    : [{ type: "text" as const, text: placeholderText }];
+
+  return {
+    role: "assistant",
+    content: placeholderContent,
+    timestamp: llmResp.ts,
+    metadata,
+  };
+}
+
+/**
+ * Build the messages for one llm.response: on the normal path, one assistant
+ * message (original block order, orphaned tool-calls filtered out) followed by
+ * one tool-result message per executed tool-call (so role alternation runs
+ * assistant→tool→tool→… cleanly). When the turn produced no real content,
+ * returns a single honesty placeholder (or nothing). See buildPlaceholderMessage.
+ */
+function messagesForLlmResponse(
+  llmResp: LlmResponseEvent,
+  toolDones: Map<string, ToolDoneEvent>,
+  toolInputs: Map<string, unknown>,
+  iterations: number,
+): StoredMessage[] {
+  const executedToolCalls = llmResp.content.filter(
+    (c): c is ToolCallPart => c.type === "tool-call" && toolDones.has(c.toolCallId),
+  );
+  const totalToolCalls = llmResp.content.filter((c) => c.type === "tool-call").length;
+  const hasOrphanedToolCalls = totalToolCalls > executedToolCalls.length;
+
+  // Filter out orphaned tool-calls; preserve all other blocks in their original
+  // order. normalizeForReplay then handles the stream→prompt shape mismatches
+  // (reasoning providerMetadata→providerOptions, tool-call input string→object).
+  const replayContent = normalizeForReplay(
+    llmResp.content.filter((c) => c.type !== "tool-call" || toolDones.has(c.toolCallId)),
+  );
+
+  const metadata = baseResponseMetadata(llmResp, iterations);
+
+  const hasRealContent =
+    replayContent.some((c) => c.type === "text") || executedToolCalls.length > 0;
+
+  if (!hasRealContent) {
+    // Orphaned tool-calls (if any) were already filtered out of replayContent;
+    // text alongside them would count as real content above, so reaching here
+    // means the turn is genuinely empty.
+    const placeholder = buildPlaceholderMessage(
+      llmResp,
+      replayContent,
+      hasOrphanedToolCalls,
+      metadata,
+    );
+    return placeholder ? [placeholder] : [];
+  }
+
+  const toolCallsMeta = executedToolCalls.map((tc) => buildToolCallMeta(tc, toolDones, toolInputs));
+  const messages: StoredMessage[] = [
+    {
+      role: "assistant",
+      content: replayContent,
+      timestamp: llmResp.ts,
+      metadata: {
+        ...metadata,
+        ...(toolCallsMeta.length > 0 ? { toolCalls: toolCallsMeta } : {}),
+      },
+    },
+  ];
+
+  for (const tc of executedToolCalls) {
+    messages.push(buildToolResultMessage(tc, toolDones, llmResp.ts));
+  }
+
+  return messages;
+}
+
+/**
+ * Synthesize the assistant message for a connector-skill overlay: the overlay
+ * body wrapped in `<connector-skill>` containment, tagged with
+ * `metadata.synthetic`/`skill` so the engine detects an already-surfaced
+ * overlay and never re-injects it.
+ */
+function buildConnectorSkillMessage(cs: ConnectorSkillInjectedEvent): StoredMessage {
+  return {
+    role: "assistant",
+    content: [
+      { type: "text", text: formatConnectorSkillBlock(cs.skillName, cs.scope, cs.skillBody) },
+    ],
+    timestamp: cs.ts,
+    metadata: { synthetic: CONNECTOR_SKILL_SYNTHETIC, skill: cs.skillName },
+  };
 }
 
 /**
