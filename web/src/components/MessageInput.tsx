@@ -163,14 +163,17 @@ export function MessageInput({
     <div className="py-3 shrink-0">
       {/* biome-ignore lint/a11y/noStaticElementInteractions: drag-and-drop container for file uploads */}
       <div
-        className={`rounded-lg border transition-all duration-200 bg-card ${
+        // At rest the composer recesses into a borderless muted well — no hard
+        // line above the input. It earns a raised card (border + shadow) only
+        // when engaged: focused, receiving a drop, or breathing during a turn.
+        className={`rounded-lg border transition-all duration-200 ${
           isDragOver
-            ? "border-primary shadow-lg shadow-primary/20"
+            ? "bg-card border-primary shadow-lg shadow-primary/20"
             : isActive && !isFocused
-              ? "input-breathing"
+              ? "bg-card input-breathing"
               : isFocused
-                ? "border-ring shadow-lg shadow-ring/10"
-                : "border-input shadow-lg shadow-border/20"
+                ? "bg-card border-ring shadow-lg shadow-ring/10"
+                : "bg-muted border-transparent"
         } ${disabled ? "opacity-60" : ""}`}
         role="presentation"
         onDragOver={handleDragOver}

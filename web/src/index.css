@@ -286,20 +286,21 @@
   50% { opacity: 1; }
 }
 
-/* Breathing input glow — ambient state cue during thinking/working */
+/* Breathing input glow — ambient state cue during thinking/working. Warm is
+   the brand "look here" accent, so the composer wears it while a turn runs. */
 .input-breathing {
-  border-color: var(--processing) !important;
+  border-color: var(--warm) !important;
   animation: breathing-glow 3s ease-in-out infinite;
 }
 
 @keyframes breathing-glow {
-  0%, 100% { box-shadow: 0 0 0 1px var(--processing), 0 0 8px 0 color-mix(in oklch, var(--processing) 15%, transparent); }
-  50% { box-shadow: 0 0 0 1px var(--processing), 0 0 16px 2px color-mix(in oklch, var(--processing) 8%, transparent); }
+  0%, 100% { box-shadow: 0 0 0 1px var(--warm), 0 0 8px 0 color-mix(in oklch, var(--warm) 15%, transparent); }
+  50% { box-shadow: 0 0 0 1px var(--warm), 0 0 16px 2px color-mix(in oklch, var(--warm) 8%, transparent); }
 }
 
 /* Warm background shift — ambient state on scroll container */
 .chat-ambient-warm {
-  background-color: color-mix(in oklch, var(--background), var(--processing-light) 15%);
+  background-color: color-mix(in oklch, var(--background), var(--warm-light) 15%);
 }
 
 /* ───────────────────────────────────────────────────────────────────────
@@ -386,7 +387,6 @@
 }
 .turn-pill[data-tone="running"] .turn-pill__label,
 .turn-pill[data-expanded="true"] .turn-pill__label { color: var(--foreground); }
-.turn-pill[data-tone="running"] .turn-pill__label { color: var(--processing); }
 
 .turn-pill__count,
 .turn-pill__ms {
@@ -419,7 +419,7 @@
 }
 .turn-pill__icon--error { color: var(--warm); }
 .turn-pill__icon--running {
-  color: var(--processing);
+  color: var(--warm);
   animation: spin 1s linear infinite;
 }
 /* Active/expanded states give the dot a brand color; at rest it's currentColor
@@ -686,12 +686,12 @@
   font-size: var(--font-text-xs-size);
 }
 .live-cursor__spinner {
-  color: var(--processing);
+  color: var(--warm);
   animation: spin 1s linear infinite;
   flex-shrink: 0;
 }
 .live-cursor__label {
-  color: var(--processing);
+  color: var(--muted-foreground);
   font-weight: 500;
 }
 
