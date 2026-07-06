@@ -61,6 +61,12 @@ export interface ConversationStreamConnection {
   close(): void;
 }
 
+/** Per-frame SSE accumulator: the `event:`/`id:` seen so far, awaiting `data:`. */
+interface SseParserState {
+  currentEvent: string;
+  currentSeq: number | null;
+}
+
 const INITIAL_BACKOFF_MS = 1_000;
 const MAX_BACKOFF_MS = 30_000;
 const BACKOFF_MULTIPLIER = 2;
@@ -148,6 +154,102 @@ export function connectConversationStream(
     abortController = null;
   }
 
+  /** Dispatch one complete SSE frame: `subscribed` to onSubscribed, everything
+   *  else to onEvent while advancing the resume point. */
+  function emitFrame(event: string, seq: number | null, data: unknown): void {
+    if (event === "subscribed") {
+      const info = data as { isActive?: boolean; activeSeq?: number };
+      onSubscribed?.({
+        isActive: info.isActive ?? false,
+        activeSeq: info.activeSeq ?? 0,
+      });
+      return;
+    }
+    const s = seq ?? 0;
+    if (s > lastSeq) lastSeq = s;
+    onEvent(event, data, s);
+  }
+
+  /** Feed one SSE line into the accumulator: capture `event:`/`id:`, and on a
+   *  complete `data:` line emit the frame and reset for the next one. */
+  function consumeLine(line: string, state: SseParserState): void {
+    if (line.startsWith("event: ")) {
+      state.currentEvent = line.slice(7).trim();
+      return;
+    }
+    if (line.startsWith("id: ")) {
+      const n = Number.parseInt(line.slice(4).trim(), 10);
+      state.currentSeq = Number.isFinite(n) ? n : null;
+      return;
+    }
+    if (line.startsWith("data: ") && state.currentEvent) {
+      try {
+        emitFrame(state.currentEvent, state.currentSeq, JSON.parse(line.slice(6)));
+      } catch {
+        // Skip malformed frames.
+      }
+      state.currentEvent = "";
+      state.currentSeq = null;
+    }
+  }
+
+  /** Read the SSE body to completion (or teardown), decoding line-by-line and
+   *  dispatching each frame in arrival order. The trailing partial line stays
+   *  buffered across reads. */
+  async function pumpStream(reader: ReadableStreamDefaultReader<Uint8Array>): Promise<void> {
+    const decoder = new TextDecoder();
+    let buffer = "";
+    const state: SseParserState = { currentEvent: "", currentSeq: null };
+
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done || closed) break;
+      markFrame();
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split("\n");
+      buffer = lines.pop() ?? "";
+      for (const line of lines) consumeLine(line, state);
+    }
+  }
+
+  /** Route a non-2xx (or 401) response: refresh + reconnect on 401, teardown on
+   *  403/404, throw the rest to the retry path. Returns true to keep reading. */
+  async function handleResponse(res: Response): Promise<boolean> {
+    if (res.status === 401) {
+      const refreshed = await refreshSession();
+      if (refreshed) {
+        scheduleReconnect();
+        return false;
+      }
+      teardown();
+      onError?.(new Error("Conversation stream auth failed after token refresh"));
+      return false;
+    }
+    if (res.ok) return true;
+    if (res.status === 403 || res.status === 404) {
+      teardown();
+      onError?.(new Error(`Conversation stream access denied: ${res.status}`));
+      return false;
+    }
+    throw new Error(`Conversation stream failed: ${res.status} ${res.statusText}`);
+  }
+
+  /** Post-stream error routing: swallow self-aborts (reconnect immediately, no
+   *  backoff — the stream was stale, not erroring), retry everything else. */
+  function handleConnectError(err: unknown): void {
+    stopWatchdog();
+    if (closed) return;
+    if (err instanceof DOMException && err.name === "AbortError") {
+      // Self-aborted by the watchdog / visibility handler.
+      connect();
+      return;
+    }
+    // A 403/404 is a non-ok RESPONSE, handled (with teardown) on the response
+    // path above — it never throws here, so this catch only sees transport /
+    // 5xx errors, which retry.
+    scheduleReconnect();
+  }
+
   async function connect(): Promise<void> {
     if (closed) return;
     abortController = new AbortController();
@@ -162,21 +264,7 @@ export function connectConversationStream(
         signal: abortController.signal,
       });
 
-      if (res.status === 401) {
-        const refreshed = await refreshSession();
-        if (refreshed) return void scheduleReconnect();
-        teardown();
-        onError?.(new Error("Conversation stream auth failed after token refresh"));
-        return;
-      }
-      if (!res.ok) {
-        if (res.status === 403 || res.status === 404) {
-          teardown();
-          onError?.(new Error(`Conversation stream access denied: ${res.status}`));
-          return;
-        }
-        throw new Error(`Conversation stream failed: ${res.status} ${res.statusText}`);
-      }
+      if (!(await handleResponse(res))) return;
 
       backoff = INITIAL_BACKOFF_MS;
       markFrame();
@@ -184,63 +272,12 @@ export function connectConversationStream(
       const reader = res.body?.getReader();
       if (!reader) throw new Error("No response body");
 
-      const decoder = new TextDecoder();
-      let buffer = "";
-      let currentEvent = "";
-      let currentSeq: number | null = null;
-
-      for (;;) {
-        const { done, value } = await reader.read();
-        if (done || closed) break;
-        markFrame();
-        buffer += decoder.decode(value, { stream: true });
-        const lines = buffer.split("\n");
-        buffer = lines.pop() ?? "";
-
-        for (const line of lines) {
-          if (line.startsWith("event: ")) {
-            currentEvent = line.slice(7).trim();
-          } else if (line.startsWith("id: ")) {
-            const n = Number.parseInt(line.slice(4).trim(), 10);
-            currentSeq = Number.isFinite(n) ? n : null;
-          } else if (line.startsWith("data: ") && currentEvent) {
-            try {
-              const data = JSON.parse(line.slice(6));
-              if (currentEvent === "subscribed") {
-                const info = data as { isActive?: boolean; activeSeq?: number };
-                onSubscribed?.({
-                  isActive: info.isActive ?? false,
-                  activeSeq: info.activeSeq ?? 0,
-                });
-              } else {
-                const seq = currentSeq ?? 0;
-                if (seq > lastSeq) lastSeq = seq;
-                onEvent(currentEvent, data, seq);
-              }
-            } catch {
-              // Skip malformed frames.
-            }
-            currentEvent = "";
-            currentSeq = null;
-          }
-        }
-      }
+      await pumpStream(reader);
 
       stopWatchdog();
       if (!closed) scheduleReconnect();
     } catch (err) {
-      stopWatchdog();
-      if (closed) return;
-      if (err instanceof DOMException && err.name === "AbortError") {
-        // Self-aborted by the watchdog / visibility handler — reconnect
-        // immediately (no backoff; the stream was stale, not erroring).
-        connect();
-        return;
-      }
-      // A 403/404 is a non-ok RESPONSE, handled (with teardown) on the response
-      // path above — it never throws here, so this catch only sees transport /
-      // 5xx errors, which retry.
-      scheduleReconnect();
+      handleConnectError(err);
     }
   }
 

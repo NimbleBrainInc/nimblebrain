@@ -73,6 +73,7 @@ import { resolve } from "node:path";
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js";
 import {
+  type CallToolRequest,
   CallToolRequestSchema,
   type CreateTaskResult,
   ErrorCode,
@@ -81,10 +82,12 @@ import {
   ListToolsRequestSchema,
   McpError,
   ReadResourceRequestSchema,
+  type ReadResourceResult,
   type Resource,
   type ServerCapabilities,
 } from "@modelcontextprotocol/sdk/types.js";
 import { isToolEnabled, isToolVisibleToRole, type ResolvedFeatures } from "../config/features.ts";
+import type { ToolResult } from "../engine/types.ts";
 import type { UserIdentity } from "../identity/provider.ts";
 import { log } from "../observability/log.ts";
 import {
@@ -717,7 +720,6 @@ function createServer(
   server.setRequestHandler(CallToolRequestSchema, async (request) => {
     const { name, arguments: args } = request.params;
     const taskParam = request.params.task; // { ttl?, pollInterval? } | undefined
-    const isTaskRequest = taskParam !== undefined;
 
     if (!runtime || !identityId) {
       throw new McpError(
@@ -747,241 +749,24 @@ function createServer(
         runtime,
       });
     } catch (err) {
-      if (err instanceof UnknownNamespacedToolName) {
-        throw new McpError(ErrorCode.InvalidParams, `Invalid tool name: expected ws_<id>-<tool>`, {
-          reason: "invalid_tool_name",
-          input: err.input,
-          parse: err.reason,
-        });
-      }
-      if (err instanceof WorkspaceAccessDenied) {
-        // No spec-blessed JSON-RPC code for "permission denied", but
-        // `-32603 Internal error` is too broad — the call IS well-formed,
-        // it just isn't allowed for this identity. The MCP draft's tasks
-        // spec sets the precedent of using `-32602` for owner-mismatch
-        // task lookups; we mirror that here so a misrouted call doesn't
-        // get classified as a server bug. The `data.reason` field carries
-        // the precise classification.
-        throw new McpError(ErrorCode.InvalidParams, `Access denied to workspace "${err.wsId}"`, {
-          reason: "workspace_access_denied",
-          wsId: err.wsId,
-        });
-      }
-      if (err instanceof UnknownToolSource) {
-        throw new McpError(
-          ErrorCode.MethodNotFound,
-          `No tool source "${err.sourceName}" in workspace "${err.wsId}"`,
-          {
-            reason: "unknown_tool_source",
-            wsId: err.wsId,
-            sourceName: err.sourceName,
-            toolName: err.toolName,
-          },
-        );
-      }
-      if (err instanceof UnknownIdentitySource) {
-        throw new McpError(
-          ErrorCode.InvalidParams,
-          `No identity source "${err.sourceName}" for "${err.toolName}"`,
-          { reason: "unknown_identity_source", toolName: err.toolName },
-        );
-      }
-      throw err;
+      mapRouteToolError(err);
     }
 
-    // Identity request (bare `<source>__<tool>`): dispatch against the
-    // caller's identity, no workspace. `workspaceId: null` is safe — a
-    // handler that needs a workspace calls `requireWorkspaceId()`, which
-    // hard-fails (never a passive failover). Identity tools (conversations)
-    // aren't task-augmented, so the workspace task-negotiation below is
-    // skipped; entity reads are gated by `canAccess` in the handler.
+    // Identity request (bare `<source>__<tool>`): dispatch against the caller's
+    // identity, no workspace. See `executeIdentityToolCall` for the rationale.
     if (routed.kind === "identity") {
-      const fullName = routed.toolName;
-      if (!isToolEnabled(fullName, features)) {
-        return {
-          content: [{ type: "text" as const, text: `Tool "${name}" is disabled` }],
-          isError: true,
-        };
-      }
-      // Role-gate at DISPATCH, not just surfacing — the workspace branch and
-      // the REST handler both do, and surfacing already hides role-gated
-      // identity tools, so a crafted bare `tools/call` must not slip past.
-      // (No identity tool is role-gated today; this closes the gap before
-      // files/automations land an admin-gated one.)
-      if (!isToolVisibleToRole(fullName, sessionCtx.identity?.orgRole)) {
-        return {
-          content: [{ type: "text" as const, text: `Tool "${name}" is not available` }],
-          isError: true,
-        };
-      }
-      const sep = fullName.indexOf("__");
-      const bare = sep >= 0 ? fullName.slice(sep + 2) : fullName;
-      const identityCtx: RequestContext = {
-        identity: sessionCtx.identity ?? null,
-        scope: { kind: "identity" },
-        // Files are workspace-owned: a `files__*` call resolves in the request's
-        // validated workspace; undefined (no / non-member header) ⇒ the file
-        // tool denies, consistent with the resources wall.
-        fileWorkspaceId: mcpRequestWorkspace.getStore(),
-      };
-      const idResult = await runWithRequestContext(identityCtx, () =>
-        routed.source.execute(bare, (args ?? {}) as Record<string, unknown>),
-      );
-      return {
-        content: idResult.content,
-        ...(idResult.structuredContent !== undefined
-          ? { structuredContent: idResult.structuredContent }
-          : {}),
-        isError: idResult.isError,
-      };
+      return executeIdentityToolCall(routed, name, args, features, sessionCtx);
     }
-
-    const { context: workspaceContext, toolName: innerToolName, source } = routed;
-
-    // Feature gating + role visibility on the BARE tool name (post-parse).
-    if (!isToolEnabled(innerToolName, features)) {
-      return {
-        content: [{ type: "text" as const, text: `Tool "${name}" is disabled` }],
-        isError: true,
-      };
-    }
-    if (!isToolVisibleToRole(innerToolName, sessionCtx.identity?.orgRole)) {
-      return {
-        content: [{ type: "text" as const, text: `Tool "${name}" is not available` }],
-        isError: true,
-      };
-    }
-
-    // ── Tool-level task negotiation (MCP spec 2025-11-25 §tasks) ─────────
-    //
-    // The low-level SDK `Server` validates the *result shape* against the
-    // request (CreateTaskResult vs CallToolResult) but does NOT enforce the
-    // tool-level taskSupport semantics. We do that here:
-    //   - `required` + no task param   → -32601 MethodNotFound
-    //   - `forbidden`/absent + task    → -32601 MethodNotFound
-    //   - `optional`                   → either path is legal
-    //
-    // See `src/tools/types.ts::Tool.execution.taskSupport` for the field.
-    //
-    // The orchestrator's parse already split `innerToolName` into
-    // `<source>__<tool>`; reuse that here.
-    const sepIndex = innerToolName.indexOf("__");
-    const sourceName = sepIndex >= 0 ? innerToolName.slice(0, sepIndex) : null;
-    const localName = sepIndex >= 0 ? innerToolName.slice(sepIndex + 2) : innerToolName;
-    const wsId = workspaceContext.workspaceId;
-
-    // Connector permission gate. Runs BEFORE the task-vs-inline negotiation
-    // below so an operator's `disallow` is honored whether or not the tool is
-    // task-augmented — a disallowed task tool must be denied just like an
-    // inline one. Mirrors the engine door (`IdentityToolRouter`) and the REST
-    // registry gate, so all three doors enforce the same workspace policy.
-    if (sourceName) {
-      const denied = await assertToolAllowed(
-        runtime.getPermissionStore(),
-        wsId,
-        sourceName,
-        localName,
-      );
-      if (denied) {
-        return {
-          content: denied.content,
-          ...(denied.structuredContent !== undefined
-            ? { structuredContent: denied.structuredContent }
-            : {}),
-          isError: denied.isError,
-        };
-      }
-    }
-
-    const wsRegistry = runtime.getRegistryForWorkspace(wsId);
-    const taskAwareSource = sourceName ? wsRegistry.findTaskAwareSource(sourceName) : null;
-    // Inspect the cached tool definition (if the source is MCP-backed) to
-    // read `taskSupport`. Non-MCP sources never support tasks.
-    let taskSupport: "optional" | "required" | "forbidden" | undefined;
-    if (taskAwareSource) {
-      const tools = await taskAwareSource.tools();
-      const tool = tools.find((t) => t.name === innerToolName);
-      taskSupport = tool?.execution?.taskSupport;
-    }
-
-    if (taskSupport === "required" && !isTaskRequest) {
-      throw new McpError(
-        ErrorCode.MethodNotFound,
-        `Tool ${name} requires task augmentation (taskSupport: 'required')`,
-      );
-    }
-    if (isTaskRequest && (!taskSupport || taskSupport === "forbidden")) {
-      throw new McpError(
-        ErrorCode.MethodNotFound,
-        `Tool ${name} does not support task augmentation (taskSupport: ${taskSupport ?? "none"})`,
-      );
-    }
-
-    // Build per-request context for AsyncLocalStorage (concurrency-safe).
-    // Workspace ID is derived from the parsed namespace — NOT from any
-    // session-level state. This is the per-call routing the orchestrator
-    // exists to enforce.
-    const reqCtx: RequestContext = {
-      identity: sessionCtx.identity ?? null,
-      scope: {
-        kind: "workspace",
-        workspaceId: wsId,
-        workspaceAgents: null,
-        workspaceModelOverride: null,
-      },
-    };
-
-    // ── Task-augmented path ─────────────────────────────────────────────
-    //
-    // Return a CreateTaskResult immediately. The McpSource has already
-    // started the stream and is draining it in the background; its
-    // TaskHandle holds the terminal deferred for later `tasks/result` and
-    // its abortController for `tasks/cancel`. We stash the (source, owner)
-    // pair in the session's task store so the SDK-installed task handlers
-    // can find their way back.
-    if (isTaskRequest && taskAwareSource && taskStore) {
-      const ownerContext: OwnerContext = {
-        workspaceId: wsId,
-        ...(sessionCtx.identity?.id ? { identityId: sessionCtx.identity.id } : {}),
-      };
-      const createResult: CreateTaskResult = await runWithRequestContext(reqCtx, () =>
-        taskAwareSource.startToolAsTask(localName, (args ?? {}) as Record<string, unknown>, {
-          ownerContext,
-          ...(taskParam.ttl !== undefined ? { ttlMs: taskParam.ttl } : {}),
-        }),
-      );
-      taskStore.recordTask({
-        source: taskAwareSource as TaskAwareSource,
-        toolFullName: innerToolName,
-        task: createResult.task,
-        ownerContext,
-      });
-      return createResult;
-    }
-
-    // ── Inline path ─────────────────────────────────────────────────────
-    //
-    // Dispatch via the resolved source directly (the orchestrator already
-    // looked it up and returned it). `ToolSource.execute` takes the bare
-    // (post-`__`) tool name, mirroring `ToolRegistry.execute`'s contract.
-    //
-    // Preserve `structuredContent` — dropping it was a long-standing bug
-    // that silently violated `CallToolResult must be returned as-is`.
-    // `_meta` propagation on the
-    // inline path is a no-op today because the engine's ToolResult shape
-    // doesn't carry `_meta`; task-augmented flows carry `_meta` through
-    // naturally because `tasks/result` returns the full CallToolResult
-    // directly from `awaitToolTaskResult` (see mcp-task-store.ts).
-    const result = await runWithRequestContext(reqCtx, () =>
-      source.execute(localName, (args ?? {}) as Record<string, unknown>),
+    return executeWorkspaceToolCall(
+      routed,
+      name,
+      args,
+      taskParam,
+      runtime,
+      features,
+      sessionCtx,
+      taskStore,
     );
-    return {
-      content: result.content,
-      ...(result.structuredContent !== undefined
-        ? { structuredContent: result.structuredContent }
-        : {}),
-      isError: result.isError,
-    };
   });
 
   // ── resources/list ────────────────────────────────────────────────
@@ -1012,18 +797,7 @@ function createServer(
       return { resources };
     }
     for (const src of wsRegistry.getSources()) {
-      if (!(src instanceof McpSource)) continue;
-      const client = src.getClient();
-      if (!client) continue;
-      try {
-        const result = await client.listResources();
-        for (const r of result.resources) {
-          resources.push(r as Resource);
-        }
-      } catch {
-        // Source didn't implement resources/list, or transport hiccup —
-        // swallow so one bad source doesn't kill the listing.
-      }
+      await collectSourceResources(src, resources);
     }
     return { resources };
   });
@@ -1054,23 +828,8 @@ function createServer(
       // validated workspace; undefined ⇒ not found (the resources wall denies).
       fileWorkspaceId: mcpRequestWorkspace.getStore(),
     };
-    for (const sourceName of IDENTITY_SOURCES) {
-      const src = runtime.getIdentitySource(sourceName);
-      if (!(src instanceof McpSource)) continue;
-      const client = src.getClient();
-      if (!client) continue;
-      try {
-        const result = await runWithRequestContext(identityReqCtx, () =>
-          client.readResource({ uri }),
-        );
-        if (result.contents && result.contents.length > 0) {
-          return result;
-        }
-      } catch {
-        // Not this source, or not found here — fall through to the next
-        // identity source and ultimately the workspace sweep.
-      }
-    }
+    const identityResult = await readResourceFromIdentitySources(runtime, uri, identityReqCtx);
+    if (identityResult) return identityResult;
 
     // Walled to the request's workspace (validated `X-Workspace-Id`). With no
     // workspace in scope the read falls through to not-found below — an
@@ -1078,26 +837,8 @@ function createServer(
     // else. NEVER a sweep across every workspace the identity belongs to.
     const wsId = mcpRequestWorkspace.getStore();
     if (wsId) {
-      let wsRegistry: ToolRegistry | undefined;
-      try {
-        wsRegistry = await runtime.ensureWorkspaceRegistry(wsId);
-      } catch {
-        wsRegistry = undefined;
-      }
-      for (const src of wsRegistry?.getSources() ?? []) {
-        if (src instanceof McpSource) {
-          const client = src.getClient();
-          if (!client) continue;
-          try {
-            const result = await client.readResource({ uri });
-            if (result.contents && result.contents.length > 0) {
-              return result;
-            }
-          } catch {
-            // Resource not found on this source; keep trying the next one.
-          }
-        }
-      }
+      const wsResult = await readResourceFromWorkspace(runtime, uri, wsId);
+      if (wsResult) return wsResult;
     }
 
     // The URI resolved in neither the caller's identity sources nor the
@@ -1107,6 +848,392 @@ function createServer(
   });
 
   return server;
+}
+
+// ── /mcp CallTool + resource dispatch helpers ──────────────────────────────
+
+type IdentityRoute = Extract<Awaited<ReturnType<typeof routeToolCall>>, { kind: "identity" }>;
+type WorkspaceRoute = Extract<Awaited<ReturnType<typeof routeToolCall>>, { kind: "workspace" }>;
+type TaskAwareSourceHandle = NonNullable<ReturnType<ToolRegistry["findTaskAwareSource"]>>;
+type CallToolTaskParam = CallToolRequest["params"]["task"];
+
+/** Shape an engine ToolResult into an MCP CallToolResult, preserving optional structuredContent. */
+function toCallToolResult(result: ToolResult) {
+  return {
+    content: result.content,
+    ...(result.structuredContent !== undefined
+      ? { structuredContent: result.structuredContent }
+      : {}),
+    isError: result.isError,
+  };
+}
+
+/**
+ * Map an orchestrator routing error to its MCP JSON-RPC error, re-throwing
+ * anything unrecognized. Each error class maps to a distinct response shape;
+ * `error.data.reason` carries the precise classification. (The wall's two
+ * denials, `CrossWorkspaceReachDenied` and `WorkspaceToolUnavailable`, both
+ * arrive as `WorkspaceAccessDenied` and share the `workspace_access_denied`
+ * reason.)
+ */
+function mapRouteToolError(err: unknown): never {
+  if (err instanceof UnknownNamespacedToolName) {
+    throw new McpError(ErrorCode.InvalidParams, `Invalid tool name: expected ws_<id>-<tool>`, {
+      reason: "invalid_tool_name",
+      input: err.input,
+      parse: err.reason,
+    });
+  }
+  if (err instanceof WorkspaceAccessDenied) {
+    // No spec-blessed JSON-RPC code for "permission denied", but
+    // `-32603 Internal error` is too broad — the call IS well-formed, it just
+    // isn't allowed for this identity. The MCP draft's tasks spec sets the
+    // precedent of using `-32602` for owner-mismatch task lookups; we mirror
+    // that here so a misrouted call doesn't get classified as a server bug.
+    throw new McpError(ErrorCode.InvalidParams, `Access denied to workspace "${err.wsId}"`, {
+      reason: "workspace_access_denied",
+      wsId: err.wsId,
+    });
+  }
+  if (err instanceof UnknownToolSource) {
+    throw new McpError(
+      ErrorCode.MethodNotFound,
+      `No tool source "${err.sourceName}" in workspace "${err.wsId}"`,
+      {
+        reason: "unknown_tool_source",
+        wsId: err.wsId,
+        sourceName: err.sourceName,
+        toolName: err.toolName,
+      },
+    );
+  }
+  if (err instanceof UnknownIdentitySource) {
+    throw new McpError(
+      ErrorCode.InvalidParams,
+      `No identity source "${err.sourceName}" for "${err.toolName}"`,
+      { reason: "unknown_identity_source", toolName: err.toolName },
+    );
+  }
+  throw err;
+}
+
+/**
+ * Dispatch an identity-scoped `/mcp` tools/call (bare `<source>__<tool>`)
+ * against the caller's identity, no workspace. `workspaceId: null` is safe — a
+ * handler that needs a workspace calls `requireWorkspaceId()`, which hard-fails
+ * (never a passive failover). Identity tools (conversations) aren't
+ * task-augmented, so the workspace task-negotiation is skipped; entity reads
+ * are gated by `canAccess` in the handler.
+ */
+async function executeIdentityToolCall(
+  routed: IdentityRoute,
+  name: string,
+  args: Record<string, unknown> | undefined,
+  features: ResolvedFeatures,
+  sessionCtx: McpSessionContext,
+) {
+  const fullName = routed.toolName;
+  if (!isToolEnabled(fullName, features)) {
+    return {
+      content: [{ type: "text" as const, text: `Tool "${name}" is disabled` }],
+      isError: true,
+    };
+  }
+  // Role-gate at DISPATCH, not just surfacing — the workspace branch and the
+  // REST handler both do, and surfacing already hides role-gated identity
+  // tools, so a crafted bare `tools/call` must not slip past. (No identity tool
+  // is role-gated today; this closes the gap before files/automations land an
+  // admin-gated one.)
+  if (!isToolVisibleToRole(fullName, sessionCtx.identity?.orgRole)) {
+    return {
+      content: [{ type: "text" as const, text: `Tool "${name}" is not available` }],
+      isError: true,
+    };
+  }
+  const sep = fullName.indexOf("__");
+  const bare = sep >= 0 ? fullName.slice(sep + 2) : fullName;
+  const identityCtx: RequestContext = {
+    identity: sessionCtx.identity ?? null,
+    scope: { kind: "identity" },
+    // Files are workspace-owned: a `files__*` call resolves in the request's
+    // validated workspace; undefined (no / non-member header) ⇒ the file tool
+    // denies, consistent with the resources wall.
+    fileWorkspaceId: mcpRequestWorkspace.getStore(),
+  };
+  const idResult = await runWithRequestContext(identityCtx, () =>
+    routed.source.execute(bare, (args ?? {}) as Record<string, unknown>),
+  );
+  return toCallToolResult(idResult);
+}
+
+/**
+ * Dispatch a workspace-scoped `/mcp` tools/call (`ws_<id>-<tool>`): feature +
+ * role gating, connector permission gate, tool-level task negotiation, then the
+ * task-augmented or inline execution path. The workspace ID comes from the
+ * parsed namespace (`routed.context`), never from session-level state.
+ */
+async function executeWorkspaceToolCall(
+  routed: WorkspaceRoute,
+  name: string,
+  args: Record<string, unknown> | undefined,
+  taskParam: CallToolTaskParam,
+  runtime: Runtime,
+  features: ResolvedFeatures,
+  sessionCtx: McpSessionContext,
+  taskStore: McpTaskStore | undefined,
+) {
+  const isTaskRequest = taskParam !== undefined;
+  const { context: workspaceContext, toolName: innerToolName, source } = routed;
+
+  // Feature gating + role visibility on the BARE tool name (post-parse).
+  if (!isToolEnabled(innerToolName, features)) {
+    return {
+      content: [{ type: "text" as const, text: `Tool "${name}" is disabled` }],
+      isError: true,
+    };
+  }
+  if (!isToolVisibleToRole(innerToolName, sessionCtx.identity?.orgRole)) {
+    return {
+      content: [{ type: "text" as const, text: `Tool "${name}" is not available` }],
+      isError: true,
+    };
+  }
+
+  // The orchestrator's parse already split `innerToolName` into
+  // `<source>__<tool>`; reuse that split here.
+  const sepIndex = innerToolName.indexOf("__");
+  const sourceName = sepIndex >= 0 ? innerToolName.slice(0, sepIndex) : null;
+  const localName = sepIndex >= 0 ? innerToolName.slice(sepIndex + 2) : innerToolName;
+  const wsId = workspaceContext.workspaceId;
+
+  // Connector permission gate. Runs BEFORE the task-vs-inline negotiation below
+  // so an operator's `disallow` is honored whether or not the tool is
+  // task-augmented — a disallowed task tool must be denied just like an inline
+  // one. Mirrors the engine door (`IdentityToolRouter`) and the REST registry
+  // gate, so all three doors enforce the same workspace policy.
+  if (sourceName) {
+    const denied = await assertToolAllowed(
+      runtime.getPermissionStore(),
+      wsId,
+      sourceName,
+      localName,
+    );
+    if (denied) return toCallToolResult(denied);
+  }
+
+  const wsRegistry = runtime.getRegistryForWorkspace(wsId);
+  const taskAwareSource = sourceName ? wsRegistry.findTaskAwareSource(sourceName) : null;
+  const taskSupport = await resolveTaskSupport(taskAwareSource, innerToolName);
+
+  assertTaskNegotiation(name, taskSupport, isTaskRequest);
+
+  // Build per-request context for AsyncLocalStorage (concurrency-safe). The
+  // workspace ID is derived from the parsed namespace — NOT from any
+  // session-level state. This is the per-call routing the orchestrator exists
+  // to enforce.
+  const reqCtx: RequestContext = {
+    identity: sessionCtx.identity ?? null,
+    scope: {
+      kind: "workspace",
+      workspaceId: wsId,
+      workspaceAgents: null,
+      workspaceModelOverride: null,
+    },
+  };
+
+  if (isTaskRequest && taskAwareSource && taskStore) {
+    return startWorkspaceTask(
+      taskParam,
+      taskAwareSource,
+      taskStore,
+      reqCtx,
+      localName,
+      innerToolName,
+      args,
+      wsId,
+      sessionCtx,
+    );
+  }
+
+  // ── Inline path ────────────────────────────────────────────────────────────
+  //
+  // Dispatch via the resolved source directly (the orchestrator already looked
+  // it up and returned it). `ToolSource.execute` takes the bare (post-`__`)
+  // tool name, mirroring `ToolRegistry.execute`'s contract. Preserve
+  // `structuredContent` — dropping it silently violated `CallToolResult must be
+  // returned as-is`. `_meta` propagation is a no-op today because the engine's
+  // ToolResult shape doesn't carry `_meta`; task-augmented flows carry `_meta`
+  // through naturally because `tasks/result` returns the full CallToolResult
+  // directly from `awaitToolTaskResult` (see mcp-task-store.ts).
+  const result = await runWithRequestContext(reqCtx, () =>
+    source.execute(localName, (args ?? {}) as Record<string, unknown>),
+  );
+  return toCallToolResult(result);
+}
+
+/**
+ * Read a task-aware source's `taskSupport` for one tool. Inspects the cached
+ * tool definition (MCP-backed sources only); returns undefined when the source
+ * is non-task-aware (never supports tasks) or the tool is unknown.
+ */
+async function resolveTaskSupport(
+  taskAwareSource: TaskAwareSourceHandle | null,
+  innerToolName: string,
+): Promise<"optional" | "required" | "forbidden" | undefined> {
+  if (!taskAwareSource) return undefined;
+  const tools = await taskAwareSource.tools();
+  const tool = tools.find((t) => t.name === innerToolName);
+  return tool?.execution?.taskSupport;
+}
+
+/**
+ * Enforce tool-level task negotiation (MCP spec 2025-11-25 §tasks). The
+ * low-level SDK `Server` validates the result shape but NOT the tool-level
+ * taskSupport semantics, so we do it here: `required` without a task param and
+ * a task param against a `forbidden`/absent tool both reject with -32601;
+ * `optional` allows either path.
+ */
+function assertTaskNegotiation(
+  name: string,
+  taskSupport: "optional" | "required" | "forbidden" | undefined,
+  isTaskRequest: boolean,
+): void {
+  if (taskSupport === "required" && !isTaskRequest) {
+    throw new McpError(
+      ErrorCode.MethodNotFound,
+      `Tool ${name} requires task augmentation (taskSupport: 'required')`,
+    );
+  }
+  if (isTaskRequest && (!taskSupport || taskSupport === "forbidden")) {
+    throw new McpError(
+      ErrorCode.MethodNotFound,
+      `Tool ${name} does not support task augmentation (taskSupport: ${taskSupport ?? "none"})`,
+    );
+  }
+}
+
+/**
+ * Task-augmented workspace dispatch (MCP spec 2025-11-25 §tasks). Returns a
+ * CreateTaskResult immediately; the McpSource has already started the stream and
+ * is draining it in the background. Stashes the (source, owner) pair in the
+ * session's task store so the SDK-installed task handlers can find their way
+ * back for later `tasks/result` and `tasks/cancel`.
+ */
+async function startWorkspaceTask(
+  taskParam: NonNullable<CallToolTaskParam>,
+  taskAwareSource: TaskAwareSourceHandle,
+  taskStore: McpTaskStore,
+  reqCtx: RequestContext,
+  localName: string,
+  innerToolName: string,
+  args: Record<string, unknown> | undefined,
+  wsId: string,
+  sessionCtx: McpSessionContext,
+): Promise<CreateTaskResult> {
+  const ownerContext: OwnerContext = {
+    workspaceId: wsId,
+    ...(sessionCtx.identity?.id ? { identityId: sessionCtx.identity.id } : {}),
+  };
+  const createResult: CreateTaskResult = await runWithRequestContext(reqCtx, () =>
+    taskAwareSource.startToolAsTask(localName, (args ?? {}) as Record<string, unknown>, {
+      ownerContext,
+      ...(taskParam.ttl !== undefined ? { ttlMs: taskParam.ttl } : {}),
+    }),
+  );
+  taskStore.recordTask({
+    source: taskAwareSource as TaskAwareSource,
+    toolFullName: innerToolName,
+    task: createResult.task,
+    ownerContext,
+  });
+  return createResult;
+}
+
+/**
+ * Append one MCP source's resources to `out`. Non-MCP and clientless sources are
+ * skipped; per-source errors are swallowed so one bad source doesn't kill the
+ * listing.
+ */
+async function collectSourceResources(src: unknown, out: Resource[]): Promise<void> {
+  if (!(src instanceof McpSource)) return;
+  const client = src.getClient();
+  if (!client) return;
+  try {
+    const result = await client.listResources();
+    for (const r of result.resources) {
+      out.push(r as Resource);
+    }
+  } catch {
+    // Source didn't implement resources/list, or transport hiccup — swallow so
+    // one bad source doesn't kill the listing.
+  }
+}
+
+/**
+ * Read `uri` from one source if it's an MCP source with a live client, running
+ * the read through `run` (identity context for identity sources, pass-through
+ * for workspace sources). Returns the result only when it carries contents;
+ * null otherwise, including on error.
+ */
+async function tryReadResource(
+  src: unknown,
+  uri: string,
+  run: (read: () => Promise<ReadResourceResult>) => Promise<ReadResourceResult>,
+): Promise<ReadResourceResult | null> {
+  if (!(src instanceof McpSource)) return null;
+  const client = src.getClient();
+  if (!client) return null;
+  try {
+    const result = await run(() => client.readResource({ uri }));
+    if (result.contents && result.contents.length > 0) return result;
+  } catch {
+    // Not this source, or not found here — the caller tries the next source and
+    // ultimately the workspace sweep.
+  }
+  return null;
+}
+
+/**
+ * Try the caller's kernel identity sources (files, conversations, automations)
+ * for `uri`, each within the identity request context. Returns the first result
+ * that carries contents, or null.
+ */
+async function readResourceFromIdentitySources(
+  runtime: Runtime,
+  uri: string,
+  identityReqCtx: RequestContext,
+): Promise<ReadResourceResult | null> {
+  for (const sourceName of IDENTITY_SOURCES) {
+    const src = runtime.getIdentitySource(sourceName);
+    const result = await tryReadResource(src, uri, (read) =>
+      runWithRequestContext(identityReqCtx, read),
+    );
+    if (result) return result;
+  }
+  return null;
+}
+
+/**
+ * Sweep the focused workspace's MCP sources for `uri` (the validated
+ * `X-Workspace-Id`) — never a sweep across every workspace the identity belongs
+ * to. Returns the first result that carries contents, or null.
+ */
+async function readResourceFromWorkspace(
+  runtime: Runtime,
+  uri: string,
+  wsId: string,
+): Promise<ReadResourceResult | null> {
+  let wsRegistry: ToolRegistry | undefined;
+  try {
+    wsRegistry = await runtime.ensureWorkspaceRegistry(wsId);
+  } catch {
+    wsRegistry = undefined;
+  }
+  for (const src of wsRegistry?.getSources() ?? []) {
+    const result = await tryReadResource(src, uri, (read) => read());
+    if (result) return result;
+  }
+  return null;
 }
 
 /** JSON-RPC error response with the proper headers. */

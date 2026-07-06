@@ -65,6 +65,87 @@ export interface InstanceConfig {
 
 const VALID_ADAPTERS = new Set(["oidc", "workos"]);
 
+/** Return a defined string, throwing `fieldError` on a non-string; `undefined` passes through unchanged. */
+function optionalString(value: unknown, fieldError: string): string | undefined {
+  if (value === undefined) return undefined;
+  if (typeof value !== "string") throw new Error(fieldError);
+  return value;
+}
+
+/** Validate optional WorkOS admin-role slugs — an array of strings with at least one non-empty slug. */
+function validateAdminRoleSlugs(value: unknown): string[] | undefined {
+  if (value === undefined) return undefined;
+  if (!Array.isArray(value) || value.some((s) => typeof s !== "string"))
+    throw new Error("instance.json: workos auth 'adminRoleSlugs' must be an array of strings");
+  // An explicit list replaces the defaults, so an empty or blank-only list
+  // would mean "no slug grants admin" — almost always a mistake (it locks
+  // out every WorkOS admin). Reject it loudly instead of silently falling
+  // back to the defaults; omit the field to use ["admin", "owner"].
+  if ((value as string[]).every((s) => s.trim() === ""))
+    throw new Error(
+      "instance.json: workos auth 'adminRoleSlugs' must contain at least one " +
+        'non-empty slug (omit the field to use the default ["admin", "owner"])',
+    );
+  return value as string[];
+}
+
+/** Validate and build an OIDC auth config, throwing on any missing or mistyped field. */
+function buildOidcAuth(auth: Record<string, unknown>): OidcAuth {
+  if (typeof auth.issuer !== "string")
+    throw new Error("instance.json: oidc auth requires string 'issuer'");
+  if (typeof auth.clientId !== "string")
+    throw new Error("instance.json: oidc auth requires string 'clientId'");
+  if (!Array.isArray(auth.allowedDomains))
+    throw new Error("instance.json: oidc auth requires array 'allowedDomains'");
+  const oidc: OidcAuth = {
+    adapter: "oidc",
+    issuer: auth.issuer as string,
+    clientId: auth.clientId as string,
+    allowedDomains: auth.allowedDomains as string[],
+  };
+  const jwksUri = optionalString(
+    auth.jwksUri,
+    "instance.json: oidc auth 'jwksUri' must be a string",
+  );
+  if (jwksUri !== undefined) oidc.jwksUri = jwksUri;
+  return oidc;
+}
+
+/** Validate and build a WorkOS auth config, throwing on any missing or mistyped field. */
+function buildWorkosAuth(auth: Record<string, unknown>): WorkosAuth {
+  if (typeof auth.clientId !== "string")
+    throw new Error("instance.json: workos auth requires string 'clientId'");
+  const workos: WorkosAuth = {
+    adapter: "workos",
+    clientId: auth.clientId as string,
+  };
+  // redirectUri is optional — the provider derives it from publicOrigin()
+  // when absent. Validate only if present.
+  const redirectUri = optionalString(
+    auth.redirectUri,
+    "instance.json: workos auth 'redirectUri' must be a string",
+  );
+  if (redirectUri !== undefined) workos.redirectUri = redirectUri;
+  const organizationId = optionalString(
+    auth.organizationId,
+    "instance.json: workos auth 'organizationId' must be a string",
+  );
+  if (organizationId !== undefined) workos.organizationId = organizationId;
+  const apiKey = optionalString(
+    auth.apiKey,
+    "instance.json: workos auth 'apiKey' must be a string",
+  );
+  if (apiKey !== undefined) workos.apiKey = apiKey;
+  const authkitDomain = optionalString(
+    auth.authkitDomain,
+    "instance.json: workos auth 'authkitDomain' must be a string",
+  );
+  if (authkitDomain !== undefined) workos.authkitDomain = authkitDomain;
+  const adminRoleSlugs = validateAdminRoleSlugs(auth.adminRoleSlugs);
+  if (adminRoleSlugs !== undefined) workos.adminRoleSlugs = adminRoleSlugs;
+  return workos;
+}
+
 function validateAuthConfig(raw: unknown): AuthConfig {
   if (raw == null || typeof raw !== "object") {
     throw new Error("instance.json: auth must be an object");
@@ -77,83 +158,9 @@ function validateAuthConfig(raw: unknown): AuthConfig {
     );
   }
 
-  switch (adapter) {
-    case "oidc": {
-      if (typeof auth.issuer !== "string")
-        throw new Error("instance.json: oidc auth requires string 'issuer'");
-      if (typeof auth.clientId !== "string")
-        throw new Error("instance.json: oidc auth requires string 'clientId'");
-      if (!Array.isArray(auth.allowedDomains)) {
-        throw new Error("instance.json: oidc auth requires array 'allowedDomains'");
-      }
-      const oidc: OidcAuth = {
-        adapter: "oidc",
-        issuer: auth.issuer as string,
-        clientId: auth.clientId as string,
-        allowedDomains: auth.allowedDomains as string[],
-      };
-      if (auth.jwksUri !== undefined) {
-        if (typeof auth.jwksUri !== "string")
-          throw new Error("instance.json: oidc auth 'jwksUri' must be a string");
-        oidc.jwksUri = auth.jwksUri as string;
-      }
-      return oidc;
-    }
-
-    case "workos": {
-      if (typeof auth.clientId !== "string")
-        throw new Error("instance.json: workos auth requires string 'clientId'");
-      // redirectUri is optional — the provider derives it from publicOrigin()
-      // when absent. Validate only if present.
-      if (auth.redirectUri !== undefined && typeof auth.redirectUri !== "string")
-        throw new Error("instance.json: workos auth 'redirectUri' must be a string");
-      const workos: WorkosAuth = {
-        adapter: "workos",
-        clientId: auth.clientId as string,
-      };
-      if (auth.redirectUri !== undefined) {
-        workos.redirectUri = auth.redirectUri as string;
-      }
-      if (auth.organizationId !== undefined) {
-        if (typeof auth.organizationId !== "string")
-          throw new Error("instance.json: workos auth 'organizationId' must be a string");
-        workos.organizationId = auth.organizationId as string;
-      }
-      if (auth.apiKey !== undefined) {
-        if (typeof auth.apiKey !== "string")
-          throw new Error("instance.json: workos auth 'apiKey' must be a string");
-        workos.apiKey = auth.apiKey as string;
-      }
-      if (auth.authkitDomain !== undefined) {
-        if (typeof auth.authkitDomain !== "string")
-          throw new Error("instance.json: workos auth 'authkitDomain' must be a string");
-        workos.authkitDomain = auth.authkitDomain as string;
-      }
-      if (auth.adminRoleSlugs !== undefined) {
-        if (
-          !Array.isArray(auth.adminRoleSlugs) ||
-          auth.adminRoleSlugs.some((s) => typeof s !== "string")
-        )
-          throw new Error(
-            "instance.json: workos auth 'adminRoleSlugs' must be an array of strings",
-          );
-        // An explicit list replaces the defaults, so an empty or blank-only list
-        // would mean "no slug grants admin" — almost always a mistake (it locks
-        // out every WorkOS admin). Reject it loudly instead of silently falling
-        // back to the defaults; omit the field to use ["admin", "owner"].
-        if ((auth.adminRoleSlugs as string[]).every((s) => s.trim() === ""))
-          throw new Error(
-            "instance.json: workos auth 'adminRoleSlugs' must contain at least one " +
-              'non-empty slug (omit the field to use the default ["admin", "owner"])',
-          );
-        workos.adminRoleSlugs = auth.adminRoleSlugs as string[];
-      }
-      return workos;
-    }
-
-    default:
-      throw new Error(`instance.json: unknown auth adapter "${adapter}"`);
-  }
+  if (adapter === "oidc") return buildOidcAuth(auth);
+  if (adapter === "workos") return buildWorkosAuth(auth);
+  throw new Error(`instance.json: unknown auth adapter "${adapter}"`);
 }
 
 function validateInstanceConfig(raw: unknown): InstanceConfig {

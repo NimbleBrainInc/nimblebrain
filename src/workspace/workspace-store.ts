@@ -189,6 +189,119 @@ export interface ArchiveMarker {
   archivedReason: "workspace_deleted";
 }
 
+// ── Personal-workspace invariant guards ────────────────────────────
+
+/** Enforce the co-required personal fields at create time: personal ⇔ ownerUserId set. */
+function assertPersonalOwnerCoRequired(isPersonal: boolean, ownerUserId: string | undefined): void {
+  if (isPersonal && !ownerUserId) {
+    throw new Error("[workspace-store] create: isPersonal=true requires ownerUserId");
+  }
+  if (!isPersonal && ownerUserId) {
+    throw new Error("[workspace-store] create: ownerUserId is only valid with isPersonal=true");
+  }
+}
+
+/**
+ * Resolve a new workspace's initial members, enforcing the
+ * personal-workspace sole-owner-admin shape.
+ *
+ * Shared workspaces default to the supplied members (or `[]`). Personal
+ * workspaces are forced to `[{ userId: ownerUserId, role: "admin" }]`; a
+ * caller that supplies any other shape is making a claim the type system
+ * can't catch (member arrays carry no identity binding), so it's surfaced
+ * loudly here — the create-time twin of the mutation-time guards in
+ * `update` / `addMember` / `removeMember` / `updateMemberRole`.
+ */
+function resolveInitialMembers(
+  id: string,
+  isPersonal: boolean,
+  ownerUserId: string | undefined,
+  members: WorkspaceMember[] | undefined,
+): WorkspaceMember[] {
+  if (!isPersonal) return members ?? [];
+  // Unreachable in practice (the co-required check already threw), but
+  // narrows the type for the return below.
+  if (!ownerUserId) {
+    throw new Error("[workspace-store] create: isPersonal=true requires ownerUserId");
+  }
+  if (members !== undefined) {
+    const ok =
+      members.length === 1 && members[0]?.userId === ownerUserId && members[0]?.role === "admin";
+    if (!ok) {
+      throw new PersonalWorkspaceInvariantError(
+        id,
+        "members_mutation",
+        "personal workspace initial members must be exactly [{ userId: ownerUserId, role: 'admin' }]",
+      );
+    }
+  }
+  return [{ userId: ownerUserId, role: "admin" }];
+}
+
+/** Reject a patch that would flip a workspace's frozen `isPersonal` flag (either direction). */
+function assertIsPersonalFrozen(id: string, current: Workspace, patch: Partial<Workspace>): void {
+  if (!("isPersonal" in patch)) return;
+  if (patch.isPersonal !== current.isPersonal) {
+    throw new PersonalWorkspaceInvariantError(
+      id,
+      "is_personal_frozen",
+      `cannot change isPersonal from ${String(current.isPersonal === true)} to ${String(patch.isPersonal === true)}`,
+    );
+  }
+}
+
+/** Reject a patch that would move a personal workspace's owner, or set ownerUserId on a shared one. */
+function assertOwnerUserIdInvariant(
+  id: string,
+  current: Workspace,
+  patch: Partial<Workspace>,
+): void {
+  if (!("ownerUserId" in patch)) return;
+  if (current.isPersonal === true) {
+    if (patch.ownerUserId !== current.ownerUserId) {
+      throw new PersonalWorkspaceInvariantError(
+        id,
+        "owner_user_id_frozen",
+        `cannot change ownerUserId from ${current.ownerUserId ?? "(unset)"} to ${
+          patch.ownerUserId ?? "(unset)"
+        }`,
+      );
+    }
+    return;
+  }
+  // Non-personal workspaces MUST NOT carry an ownerUserId — the two
+  // fields travel together (see `Workspace.ownerUserId`).
+  if (patch.ownerUserId !== undefined) {
+    throw new PersonalWorkspaceInvariantError(
+      id,
+      "owner_user_id_on_non_personal",
+      "ownerUserId can only be set on a workspace where isPersonal === true",
+    );
+  }
+}
+
+/** Reject a members patch on a personal workspace that isn't the sole-owner-admin shape. */
+function assertPersonalMembersLocked(
+  id: string,
+  current: Workspace,
+  patch: Partial<Workspace>,
+): void {
+  if (!("members" in patch) || current.isPersonal !== true) return;
+  // Membership changes go through `addMember` / `removeMember` /
+  // `updateMemberRole`, which carry the same guard.
+  const proposed = patch.members ?? [];
+  const ownerUserId = current.ownerUserId;
+  const ok =
+    proposed.length === 1 && proposed[0]?.userId === ownerUserId && proposed[0]?.role === "admin";
+  if (!ok) {
+    throw new PersonalWorkspaceInvariantError(
+      id,
+      "members_mutation",
+      "personal workspace members are locked to [{ userId: ownerUserId, role: 'admin' }]",
+    );
+  }
+}
+
 // ── WorkspaceStore ─────────────────────────────────────────────────
 
 export class WorkspaceStore {
@@ -261,6 +374,47 @@ export class WorkspaceStore {
     return workspaces;
   }
 
+  /**
+   * Resolve the id for a new workspace. Two paths:
+   *   1. Explicit `slug` supplied → `ws_<slug>`. Deliberate caller intent:
+   *      personal workspaces (`personalWorkspaceSlugFor`, which MUST stay
+   *      deterministic for O(1) lookup) and any operator/test that wants a
+   *      chosen id. Validated against WORKSPACE_ID_RE.
+   *   2. No `slug` → opaque, name-independent id via
+   *      `generateUniqueWorkspaceId`. The name never lands in the id, so a
+   *      later rename leaves the id / dir / URL untouched.
+   */
+  private async resolveNewWorkspaceId(slug: string | undefined): Promise<string> {
+    if (slug !== undefined) {
+      const id = `ws_${slug}`;
+      if (!WORKSPACE_ID_RE.test(id)) {
+        throw new Error(`Invalid workspace ID format: "${id}"`);
+      }
+      return id;
+    }
+    return this.generateUniqueWorkspaceId();
+  }
+
+  /**
+   * Generate an opaque, collision-free workspace id.
+   *
+   * 64 bits of entropy makes a collision astronomically unlikely; the
+   * bounded retry is defense-in-depth so the rare case self-heals instead
+   * of surfacing a confusing conflict to the operator. The generator's
+   * alphabet is guaranteed to satisfy WORKSPACE_ID_RE, so there's no
+   * per-iteration revalidation.
+   */
+  private async generateUniqueWorkspaceId(): Promise<string> {
+    const MAX_ID_ATTEMPTS = 5;
+    for (let attempt = 0; attempt < MAX_ID_ATTEMPTS; attempt++) {
+      const candidate = generateWorkspaceId();
+      if (!(await this.get(candidate))) return candidate;
+    }
+    throw new Error(
+      `[workspace-store] create: could not generate a collision-free workspace id after ${MAX_ID_ATTEMPTS} attempts`,
+    );
+  }
+
   async create(
     name: string,
     slug?: string,
@@ -281,89 +435,21 @@ export class WorkspaceStore {
       members?: WorkspaceMember[];
     },
   ): Promise<Workspace> {
-    // ID derivation. Two paths:
-    //   1. Explicit `slug` supplied → `ws_<slug>`. Deliberate caller
-    //      intent: personal workspaces (`personalWorkspaceSlugFor`, which
-    //      MUST stay deterministic for O(1) lookup) and any operator/test
-    //      that wants a chosen id. Validated against WORKSPACE_ID_RE.
-    //   2. No `slug` → opaque, name-independent id via
-    //      `generateWorkspaceId`. The name never lands in the id, so a
-    //      later rename leaves the id / dir / URL untouched. A collision
-    //      against an existing id is retried (see the loop below).
-    let id: string;
-    if (slug !== undefined) {
-      id = `ws_${slug}`;
-      if (!WORKSPACE_ID_RE.test(id)) {
-        throw new Error(`Invalid workspace ID format: "${id}"`);
-      }
-    } else {
-      // Generate an opaque id and ensure it doesn't collide with an
-      // existing workspace. 64 bits of entropy makes a collision
-      // astronomically unlikely; the bounded retry is defense-in-depth so
-      // the rare case self-heals instead of surfacing a confusing
-      // conflict to the operator. The generator's alphabet is guaranteed
-      // to satisfy WORKSPACE_ID_RE, so no per-iteration revalidation.
-      const MAX_ID_ATTEMPTS = 5;
-      let candidate = "";
-      for (let attempt = 0; attempt < MAX_ID_ATTEMPTS; attempt++) {
-        candidate = generateWorkspaceId();
-        if (!(await this.get(candidate))) break;
-        candidate = "";
-      }
-      if (candidate === "") {
-        throw new Error(
-          `[workspace-store] create: could not generate a collision-free workspace id after ${MAX_ID_ATTEMPTS} attempts`,
-        );
-      }
-      id = candidate;
-    }
+    const id = await this.resolveNewWorkspaceId(slug);
 
     // Co-required invariant. A personal workspace MUST declare its owner;
     // a shared workspace MUST NOT carry an ownerUserId. These two fields
     // travel together — see `Workspace.isPersonal` / `ownerUserId` in types.
     const isPersonal = opts?.isPersonal === true;
-    if (isPersonal && !opts?.ownerUserId) {
-      throw new Error("[workspace-store] create: isPersonal=true requires ownerUserId");
-    }
-    if (!isPersonal && opts?.ownerUserId) {
-      throw new Error("[workspace-store] create: ownerUserId is only valid with isPersonal=true");
-    }
+    assertPersonalOwnerCoRequired(isPersonal, opts?.ownerUserId);
 
-    // Personal-workspace member shape: sole-owner-admin only. This is
-    // the create-time enforcement of the invariant that `update` /
-    // `addMember` / `removeMember` / `updateMemberRole` also defend at
-    // mutation time. A caller that supplies any other shape is making a
-    // claim the type system can't catch (member arrays carry no
-    // identity binding) — surface it loudly here so the next operator
-    // doesn't inherit a multi-admin personal workspace.
-    let members: WorkspaceMember[] = opts?.members ?? [];
-    if (isPersonal) {
-      const ownerUserId = opts?.ownerUserId;
-      // Unreachable in practice (the co-required check above already
-      // threw), but narrows the type for the assignment below.
-      if (!ownerUserId) {
-        throw new Error("[workspace-store] create: isPersonal=true requires ownerUserId");
-      }
-      if (opts?.members !== undefined) {
-        const ok =
-          opts.members.length === 1 &&
-          opts.members[0]?.userId === ownerUserId &&
-          opts.members[0]?.role === "admin";
-        if (!ok) {
-          throw new PersonalWorkspaceInvariantError(
-            id,
-            "members_mutation",
-            "personal workspace initial members must be exactly [{ userId: ownerUserId, role: 'admin' }]",
-          );
-        }
-      }
-      members = [{ userId: ownerUserId, role: "admin" }];
-    }
+    // Personal-workspace member shape: sole-owner-admin only.
+    const members = resolveInitialMembers(id, isPersonal, opts?.ownerUserId, opts?.members);
 
     // Id collision detection. For the explicit-slug path this is the
     // only collision guard (two `create(name, "team_a")` calls conflict).
-    // For the opaque path the loop above already retried past collisions,
-    // so this is a redundant-but-cheap final assertion.
+    // For the opaque path `resolveNewWorkspaceId` already retried past
+    // collisions, so this is a redundant-but-cheap final assertion.
     const existing = await this.get(id);
     if (existing) {
       throw new WorkspaceConflictError(id);
@@ -423,68 +509,15 @@ export class WorkspaceStore {
     // strip is the failure mode that produced multi-admin personal
     // workspaces in production.
     //
-    // Casts here are scoped to read-only inspection of the widened patch
-    // shape. We do NOT widen the spread that builds `updated` — only
-    // fields in the Pick can land on disk.
+    // The casts here are scoped to read-only inspection of the widened
+    // patch shape. We do NOT widen the spread that builds `updated` — only
+    // fields in the Pick can land on disk. The identity-bound fields are
+    // frozen post-create; each guard throws a typed error rather than
+    // silently stripping.
     const widePatch = patch as Partial<Workspace>;
-    const wantsIsPersonal = "isPersonal" in widePatch;
-    const wantsOwnerUserId = "ownerUserId" in widePatch;
-    const wantsMembers = "members" in widePatch;
-
-    if (wantsIsPersonal) {
-      // Frozen post-create in both directions: a workspace's
-      // "personal-ness" is part of its identity.
-      if (widePatch.isPersonal !== ws.isPersonal) {
-        throw new PersonalWorkspaceInvariantError(
-          id,
-          "is_personal_frozen",
-          `cannot change isPersonal from ${String(ws.isPersonal === true)} to ${String(widePatch.isPersonal === true)}`,
-        );
-      }
-    }
-
-    if (wantsOwnerUserId) {
-      if (ws.isPersonal === true) {
-        if (widePatch.ownerUserId !== ws.ownerUserId) {
-          throw new PersonalWorkspaceInvariantError(
-            id,
-            "owner_user_id_frozen",
-            `cannot change ownerUserId from ${ws.ownerUserId ?? "(unset)"} to ${
-              widePatch.ownerUserId ?? "(unset)"
-            }`,
-          );
-        }
-      } else {
-        // Non-personal workspaces MUST NOT carry an ownerUserId — the
-        // two fields travel together (see `Workspace.ownerUserId`).
-        if (widePatch.ownerUserId !== undefined) {
-          throw new PersonalWorkspaceInvariantError(
-            id,
-            "owner_user_id_on_non_personal",
-            "ownerUserId can only be set on a workspace where isPersonal === true",
-          );
-        }
-      }
-    }
-
-    if (wantsMembers && ws.isPersonal === true) {
-      // Personal-workspace members are locked to sole-owner-admin.
-      // Membership changes go through `addMember` / `removeMember` /
-      // `updateMemberRole`, which carry the same guard.
-      const proposed = widePatch.members ?? [];
-      const ownerUserId = ws.ownerUserId;
-      const ok =
-        proposed.length === 1 &&
-        proposed[0]?.userId === ownerUserId &&
-        proposed[0]?.role === "admin";
-      if (!ok) {
-        throw new PersonalWorkspaceInvariantError(
-          id,
-          "members_mutation",
-          "personal workspace members are locked to [{ userId: ownerUserId, role: 'admin' }]",
-        );
-      }
-    }
+    assertIsPersonalFrozen(id, ws, widePatch);
+    assertOwnerUserIdInvariant(id, ws, widePatch);
+    assertPersonalMembersLocked(id, ws, widePatch);
 
     // Build the safe patch from the type-level Pick only. We strip the
     // identity-bound keys (`isPersonal`, `ownerUserId`, `members`) from

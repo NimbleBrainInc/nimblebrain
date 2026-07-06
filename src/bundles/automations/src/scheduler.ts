@@ -199,6 +199,146 @@ function getTimezoneOffsetMs(tz: string, date: Date): number {
   return new Date(utcStr).getTime() - new Date(tzStr).getTime();
 }
 
+/**
+ * How a thrown run maps to a persisted failure record. One guard-clause row per
+ * outcome keeps `status`, the id `suffix`, the `error` text, and the `transient`
+ * flag together so they can't drift apart.
+ */
+function classifyRunFailure(err: unknown): {
+  status: AutomationRun["status"];
+  suffix: string;
+  error: string;
+  transient: boolean;
+} {
+  if (err instanceof DOMException && err.name === "AbortError") {
+    return { status: "cancelled", suffix: "cancel", error: "Cancelled by user", transient: false };
+  }
+  const errorMsg = err instanceof Error ? err.message : String(err);
+  // Owner removed from the automation's provenance workspace: the runtime denied
+  // the run (`executeTask` throws `WorkspaceMembershipRevokedError`). SKIPPED, not a
+  // failure — it must not count toward consecutiveErrors or trip the auto-disable,
+  // so the automation self-heals the moment the owner is re-added. Matched by the
+  // error's stable `code`, which crosses the in-process runtime→bundle boundary.
+  if ((err as { code?: string })?.code === "workspace_membership_revoked") {
+    return { status: "skipped", suffix: "skip", error: errorMsg, transient: false };
+  }
+  if (errorMsg.includes("timed out")) {
+    return {
+      status: "timeout",
+      suffix: "timeout",
+      error: errorMsg,
+      transient: isTransientError(errorMsg),
+    };
+  }
+  return {
+    status: "failure",
+    suffix: "err",
+    error: errorMsg,
+    transient: isTransientError(errorMsg),
+  };
+}
+
+// ---------------------------------------------------------------------------
+// State-update helpers (mutate the passed automation in place)
+// ---------------------------------------------------------------------------
+
+/** Map a run's terminal status onto the persisted lastRunStatus field. */
+function resolveLastRunStatus(
+  status: AutomationRun["status"],
+): NonNullable<Automation["lastRunStatus"]> {
+  if (status === "success") return "success";
+  if (status === "timeout") return "timeout";
+  if (status === "skipped") return "skipped";
+  return "failure";
+}
+
+/**
+ * Update consecutive-error accounting and auto-disable after too many failures.
+ * Skipped and cancelled runs don't affect consecutiveErrors.
+ */
+function applyConsecutiveErrors(auto: Automation, run: AutomationRun, now: number): void {
+  if (run.status === "success") {
+    auto.consecutiveErrors = 0;
+    return;
+  }
+  if (run.status !== "failure" && run.status !== "timeout") return;
+
+  auto.consecutiveErrors = (auto.consecutiveErrors ?? 0) + 1;
+
+  // Auto-disable after too many consecutive failures
+  if (auto.consecutiveErrors >= MAX_CONSECUTIVE_ERRORS) {
+    auto.enabled = false;
+    auto.disabledAt = new Date(now).toISOString();
+    auto.disabledReason = `Auto-disabled after ${auto.consecutiveErrors} consecutive failures. Last error: ${(run.error ?? "unknown").slice(0, 200)}`;
+  }
+}
+
+/** Compute and set nextRunAt, pushing it out by backoff during an error streak. */
+function applyNextRunAt(auto: Automation, now: number, defaultTimezone?: string): void {
+  const nextRun = computeNextRunAt(auto, now, defaultTimezone);
+  if (nextRun === null) return;
+
+  // In backoff, push nextRunAt forward by the backoff delay but never schedule
+  // sooner than the natural interval.
+  if (auto.consecutiveErrors > 0) {
+    const delay = backoffDelay(auto.consecutiveErrors);
+    const naturalDelay = nextRun - now;
+    const effectiveDelay = Math.max(delay, naturalDelay);
+    auto.nextRunAt = new Date(now + effectiveDelay).toISOString();
+  } else {
+    auto.nextRunAt = new Date(nextRun).toISOString();
+  }
+}
+
+/** Roll the budget-reset window: reset counters when the period elapsed, else seed it. */
+function rollBudgetWindow(
+  auto: Automation,
+  run: AutomationRun,
+  now: number,
+  defaultTimezone?: string,
+): void {
+  if (!auto.tokenBudget) return;
+
+  // Reset counters if the budget period has elapsed
+  if (auto.budgetResetAt && new Date(auto.budgetResetAt).getTime() <= now) {
+    auto.cumulativeInputTokens = run.inputTokens;
+    auto.cumulativeOutputTokens = run.outputTokens;
+    auto.budgetResetAt = computeBudgetResetAt(auto.tokenBudget.period, now, defaultTimezone);
+  }
+
+  // Initialize budgetResetAt if not set
+  if (!auto.budgetResetAt && auto.tokenBudget.period) {
+    auto.budgetResetAt = computeBudgetResetAt(auto.tokenBudget.period, now, defaultTimezone);
+  }
+}
+
+/** Enforce the token budget: roll the reset window and disable if a cap is exceeded. */
+function applyTokenBudget(
+  auto: Automation,
+  run: AutomationRun,
+  now: number,
+  defaultTimezone?: string,
+): void {
+  if (!auto.tokenBudget || !auto.enabled) return;
+
+  rollBudgetWindow(auto, run, now, defaultTimezone);
+
+  const inputExceeded =
+    auto.tokenBudget.maxInputTokens != null &&
+    auto.cumulativeInputTokens > auto.tokenBudget.maxInputTokens;
+  const outputExceeded =
+    auto.tokenBudget.maxOutputTokens != null &&
+    auto.cumulativeOutputTokens > auto.tokenBudget.maxOutputTokens;
+  if (!inputExceeded && !outputExceeded) return;
+
+  auto.enabled = false;
+  auto.disabledAt = new Date(now).toISOString();
+  const which = inputExceeded ? "input" : "output";
+  const used = inputExceeded ? auto.cumulativeInputTokens : auto.cumulativeOutputTokens;
+  const limit = inputExceeded ? auto.tokenBudget.maxInputTokens : auto.tokenBudget.maxOutputTokens;
+  auto.disabledReason = `Token budget exceeded: ${used.toLocaleString()} / ${limit!.toLocaleString()} ${which} tokens used`;
+}
+
 // ---------------------------------------------------------------------------
 // Scheduler
 // ---------------------------------------------------------------------------
@@ -484,21 +624,19 @@ export class Scheduler {
       return run;
     } catch (err) {
       this.activeRuns.delete(key);
-      const isAbort = err instanceof DOMException && err.name === "AbortError";
-      const errorMsg = err instanceof Error ? err.message : String(err);
-      const isTimeout = !isAbort && errorMsg.includes("timed out");
+      const { status, suffix, error, transient } = classifyRunFailure(err);
       const failedRun: AutomationRun = {
-        id: `run_${Date.now()}_${isAbort ? "cancel" : isTimeout ? "timeout" : "err"}`,
+        id: `run_${Date.now()}_${suffix}`,
         automationId: auto.id,
         startedAt,
         completedAt: new Date().toISOString(),
-        status: isAbort ? "cancelled" : isTimeout ? "timeout" : "failure",
+        status,
         inputTokens: 0,
         outputTokens: 0,
         toolCalls: 0,
         iterations: 0,
-        error: isAbort ? "Cancelled by user" : errorMsg,
-        transient: isAbort ? false : isTransientError(errorMsg),
+        error,
+        transient,
       };
       this.updateAfterRun(auto, failedRun);
       return failedRun;
@@ -535,92 +673,17 @@ export class Scheduler {
     const now = Date.now();
 
     auto.lastRunAt = run.completedAt ?? run.startedAt;
-    auto.lastRunStatus =
-      run.status === "success"
-        ? "success"
-        : run.status === "timeout"
-          ? "timeout"
-          : run.status === "skipped"
-            ? "skipped"
-            : "failure";
+    auto.lastRunStatus = resolveLastRunStatus(run.status);
     auto.runCount = (auto.runCount ?? 0) + 1;
 
     // Track cumulative tokens
     auto.cumulativeInputTokens = (auto.cumulativeInputTokens ?? 0) + run.inputTokens;
     auto.cumulativeOutputTokens = (auto.cumulativeOutputTokens ?? 0) + run.outputTokens;
 
-    if (run.status === "success") {
-      auto.consecutiveErrors = 0;
-    } else if (run.status === "failure" || run.status === "timeout") {
-      auto.consecutiveErrors = (auto.consecutiveErrors ?? 0) + 1;
-
-      // Auto-disable after too many consecutive failures
-      if (auto.consecutiveErrors >= MAX_CONSECUTIVE_ERRORS) {
-        auto.enabled = false;
-        auto.disabledAt = new Date(now).toISOString();
-        auto.disabledReason = `Auto-disabled after ${auto.consecutiveErrors} consecutive failures. Last error: ${(run.error ?? "unknown").slice(0, 200)}`;
-      }
-    }
-    // skipped and cancelled don't affect consecutiveErrors
-
-    // Compute next run time
-    const nextRun = computeNextRunAt(auto, now, this.config.defaultTimezone);
-    if (nextRun !== null) {
-      // If in backoff, push nextRunAt forward by the backoff delay
-      // but never schedule sooner than the natural interval
-      if (auto.consecutiveErrors > 0) {
-        const delay = backoffDelay(auto.consecutiveErrors);
-        const naturalDelay = nextRun - now;
-        const effectiveDelay = Math.max(delay, naturalDelay);
-        auto.nextRunAt = new Date(now + effectiveDelay).toISOString();
-      } else {
-        auto.nextRunAt = new Date(nextRun).toISOString();
-      }
-    }
-
+    applyConsecutiveErrors(auto, run, now);
+    applyNextRunAt(auto, now, this.config.defaultTimezone);
     auto.updatedAt = new Date(now).toISOString();
-
-    // Check token budget
-    if (auto.tokenBudget && auto.enabled) {
-      // Reset counters if budget period has elapsed
-      if (auto.budgetResetAt && new Date(auto.budgetResetAt).getTime() <= now) {
-        auto.cumulativeInputTokens = run.inputTokens;
-        auto.cumulativeOutputTokens = run.outputTokens;
-        auto.budgetResetAt = computeBudgetResetAt(
-          auto.tokenBudget.period,
-          now,
-          this.config.defaultTimezone,
-        );
-      }
-
-      // Initialize budgetResetAt if not set
-      if (!auto.budgetResetAt && auto.tokenBudget.period) {
-        auto.budgetResetAt = computeBudgetResetAt(
-          auto.tokenBudget.period,
-          now,
-          this.config.defaultTimezone,
-        );
-      }
-
-      // Check limits
-      const inputExceeded =
-        auto.tokenBudget.maxInputTokens != null &&
-        auto.cumulativeInputTokens > auto.tokenBudget.maxInputTokens;
-      const outputExceeded =
-        auto.tokenBudget.maxOutputTokens != null &&
-        auto.cumulativeOutputTokens > auto.tokenBudget.maxOutputTokens;
-
-      if (inputExceeded || outputExceeded) {
-        auto.enabled = false;
-        auto.disabledAt = new Date(now).toISOString();
-        const which = inputExceeded ? "input" : "output";
-        const used = inputExceeded ? auto.cumulativeInputTokens : auto.cumulativeOutputTokens;
-        const limit = inputExceeded
-          ? auto.tokenBudget.maxInputTokens
-          : auto.tokenBudget.maxOutputTokens;
-        auto.disabledReason = `Token budget exceeded: ${used.toLocaleString()} / ${limit!.toLocaleString()} ${which} tokens used`;
-      }
-    }
+    applyTokenBudget(auto, run, now, this.config.defaultTimezone);
 
     // Persist the run summary + the updated definition, then sync the single
     // in-memory entry so the timer sees the new nextRunAt without re-scanning.

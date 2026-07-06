@@ -184,67 +184,8 @@ export class ActivityCollector {
 
       try {
         const content = await readFile(join(conversationsDir, filename), "utf-8");
-        const lines = content.split("\n").filter(Boolean);
-        const firstLine = lines[0];
-        if (!firstLine?.trim()) continue;
-
-        const meta = JSON.parse(firstLine) as Record<string, unknown>;
-        const updatedAt = (meta.updatedAt as string) ?? "";
-        if (updatedAt < since || updatedAt > until) continue;
-
-        let inputTokens = 0;
-        let outputTokens = 0;
-        let messageCount = 0;
-        let preview = "";
-        for (let i = 1; i < lines.length; i++) {
-          try {
-            const entry = JSON.parse(lines[i]!) as {
-              type?: string;
-              role?: string;
-              content?: unknown;
-              usage?: { inputTokens?: number; outputTokens?: number };
-              metadata?: { usage?: { inputTokens?: number; outputTokens?: number } };
-            };
-
-            if (entry.type === "llm.response" && entry.usage) {
-              inputTokens += entry.usage.inputTokens ?? 0;
-              outputTokens += entry.usage.outputTokens ?? 0;
-            } else if (entry.type === "user.message") {
-              messageCount++;
-              if (!preview && Array.isArray(entry.content)) {
-                const firstText = (entry.content as Array<{ type?: string; text?: string }>).find(
-                  (c) => c.type === "text",
-                );
-                preview = firstText?.text ?? "";
-              }
-            } else if (entry.type === "run.done") {
-              messageCount++;
-            } else if (entry.role) {
-              messageCount++;
-              if (!preview && entry.role === "user" && typeof entry.content === "string") {
-                preview = entry.content;
-              }
-              if (entry.role === "assistant" && entry.metadata?.usage) {
-                inputTokens += entry.metadata.usage.inputTokens ?? 0;
-                outputTokens += entry.metadata.usage.outputTokens ?? 0;
-              }
-            }
-          } catch {
-            // Skip malformed conversation lines.
-          }
-        }
-
-        summaries.push({
-          id: (meta.id as string) ?? filename.replace(".jsonl", ""),
-          created_at: (meta.createdAt as string) ?? "",
-          updated_at: updatedAt,
-          message_count: messageCount,
-          tool_call_count: 0,
-          input_tokens: inputTokens,
-          output_tokens: outputTokens,
-          preview,
-          had_errors: false,
-        });
+        const summary = summarizeJsonlConversation(content, filename, since, until);
+        if (summary) summaries.push(summary);
       } catch {
         // Skip unreadable or malformed conversation files.
       }
@@ -279,11 +220,12 @@ export class ActivityCollector {
     since: string,
     until: string,
   ): Promise<AutomationRunSummary | null> {
-    if (!this.automationRunsDir) return null;
+    const dir = this.automationRunsDir;
+    if (!dir) return null;
 
     let filenames: string[];
     try {
-      filenames = await readdir(this.automationRunsDir);
+      filenames = await readdir(dir);
     } catch {
       return null;
     }
@@ -294,58 +236,18 @@ export class ActivityCollector {
     const sinceMs = new Date(since).getTime();
     const untilMs = new Date(until).getTime();
 
-    let total = 0;
-    let succeeded = 0;
-    let failed = 0;
-    const failures: AutomationRunSummary["failures"] = [];
-
+    const totals: AutomationRunTotals = { total: 0, succeeded: 0, failed: 0, failures: [] };
     for (const filename of jsonlFiles) {
-      try {
-        const content = await readFile(join(this.automationRunsDir, filename), "utf-8");
-        for (const line of content.split("\n")) {
-          if (!line.trim()) continue;
-
-          let run: Record<string, unknown>;
-          try {
-            run = JSON.parse(line);
-          } catch {
-            continue;
-          }
-
-          const startedAt = run.startedAt as string | undefined;
-          if (!startedAt) continue;
-
-          const startedMs = new Date(startedAt).getTime();
-          if (startedMs < sinceMs || startedMs > untilMs) continue;
-
-          const status = run.status as string | undefined;
-          if (status !== "success" && status !== "failure" && status !== "timeout") continue;
-
-          total++;
-          if (status === "success") {
-            succeeded++;
-          } else {
-            failed++;
-            const automationName = filename.replace(/\.jsonl$/, "");
-            failures.push({
-              name: automationName,
-              error: (run.error as string) ?? undefined,
-              action: {
-                label: "View failed run",
-                type: "startChat",
-                route: null,
-                prompt: `Show me the failed ${automationName} automation run`,
-              },
-            });
-          }
-        }
-      } catch {
-        // Skip unreadable automation run files.
-      }
+      await accumulateAutomationRunFile(dir, filename, sinceMs, untilMs, totals);
     }
 
-    if (total === 0) return null;
-    return { total, succeeded, failed, failures };
+    if (totals.total === 0) return null;
+    return {
+      total: totals.total,
+      succeeded: totals.succeeded,
+      failed: totals.failed,
+      failures: totals.failures,
+    };
   }
 
   private async collectFromLogs(
@@ -356,7 +258,7 @@ export class ActivityCollector {
   ): Promise<{ toolUsage: ToolUsageSummary[]; errors: ErrorEntry[] }> {
     const lines = await this.readLogLines(since, until);
 
-    const toolAgg = new Map<string, { count: number; errors: number; totalMs: number }>();
+    const toolAgg = new Map<string, ToolAggEntry>();
     const errors: ErrorEntry[] = [];
 
     for (const line of lines) {
@@ -370,70 +272,10 @@ export class ActivityCollector {
       const ts = record.ts as string | undefined;
       if (!ts || ts < since || ts > until) continue;
 
-      const event = record.event as string | undefined;
-
-      if (event === "run.done") {
-        // Aggregate tool stats
-        const toolStats = record.toolStats as
-          | Record<string, { count: number; totalMs: number }>
-          | undefined;
-        if (toolStats) {
-          for (const [name, stats] of Object.entries(toolStats)) {
-            const existing = toolAgg.get(name);
-            if (existing) {
-              existing.count += stats.count;
-              existing.totalMs += stats.totalMs;
-            } else {
-              toolAgg.set(name, {
-                count: stats.count,
-                errors: 0,
-                totalMs: stats.totalMs,
-              });
-            }
-          }
-        }
-
-        // Check for tool errors
-        const toolErrors = record.toolErrors as number | undefined;
-        if (toolErrors && toolErrors > 0) {
-          errors.push({
-            timestamp: ts,
-            source: "tool",
-            message: `${toolErrors} tool error(s) in run`,
-            context: record.sid as string | undefined,
-          });
-        }
-      }
-
-      if (event === "run.error") {
-        errors.push({
-          timestamp: ts,
-          source: "engine",
-          message: (record.error as string) ?? (record.message as string) ?? "Unknown engine error",
-          context: record.sid as string | undefined,
-        });
-      }
-
-      if (event === "http.error") {
-        errors.push({
-          timestamp: ts,
-          source: "http",
-          message: `${record.status} ${record.error}: ${record.message}`,
-          context: `${record.method} ${record.path}`,
-        });
-      }
+      accumulateLogRecord(record, ts, toolAgg, errors);
     }
 
-    const toolUsage: ToolUsageSummary[] = [];
-    for (const [name, stats] of toolAgg) {
-      toolUsage.push({
-        tool: name,
-        server: this.extractServer(name),
-        call_count: stats.count,
-        error_count: stats.errors,
-        avg_latency_ms: stats.count > 0 ? Math.round(stats.totalMs / stats.count) : 0,
-      });
-    }
+    const toolUsage = this.buildToolUsage(toolAgg);
 
     // Sort by call count descending, apply limit
     toolUsage.sort((a, b) => b.call_count - a.call_count);
@@ -444,6 +286,21 @@ export class ActivityCollector {
     if (category === "tools") return { toolUsage, errors: [] };
     if (category === "errors") return { toolUsage: [], errors };
     return { toolUsage, errors };
+  }
+
+  /** Turn aggregated per-tool stats into usage rows (server + average latency), unsorted. */
+  private buildToolUsage(toolAgg: Map<string, ToolAggEntry>): ToolUsageSummary[] {
+    const toolUsage: ToolUsageSummary[] = [];
+    for (const [name, stats] of toolAgg) {
+      toolUsage.push({
+        tool: name,
+        server: this.extractServer(name),
+        call_count: stats.count,
+        error_count: stats.errors,
+        avg_latency_ms: stats.count > 0 ? Math.round(stats.totalMs / stats.count) : 0,
+      });
+    }
+    return toolUsage;
   }
 
   private async readLogLines(since: string, until: string): Promise<string[]> {
@@ -484,5 +341,286 @@ export class ActivityCollector {
   private extractServer(toolName: string): string {
     const idx = toolName.indexOf("__");
     return idx > 0 ? toolName.slice(0, idx) : "system";
+  }
+}
+
+// ---------------------------------------------------------------------------
+// JSONL conversation helpers
+// ---------------------------------------------------------------------------
+
+/** One parsed line from a conversation JSONL log (event- or message-shaped). */
+type JsonlConversationEntry = {
+  type?: string;
+  role?: string;
+  content?: unknown;
+  usage?: { inputTokens?: number; outputTokens?: number };
+  metadata?: { usage?: { inputTokens?: number; outputTokens?: number } };
+};
+
+/** Running totals accumulated while scanning one conversation's JSONL lines. */
+interface JsonlConversationTotals {
+  inputTokens: number;
+  outputTokens: number;
+  messageCount: number;
+  preview: string;
+}
+
+/**
+ * Summarize one conversation JSONL file into an activity row, or null when its
+ * first line is empty/missing or its updatedAt falls outside [since, until].
+ */
+function summarizeJsonlConversation(
+  content: string,
+  filename: string,
+  since: string,
+  until: string,
+): ActivityConversationSummary | null {
+  const lines = content.split("\n").filter(Boolean);
+  const firstLine = lines[0];
+  if (!firstLine?.trim()) return null;
+
+  const meta = JSON.parse(firstLine) as Record<string, unknown>;
+  const updatedAt = (meta.updatedAt as string) ?? "";
+  if (updatedAt < since || updatedAt > until) return null;
+
+  const totals: JsonlConversationTotals = {
+    inputTokens: 0,
+    outputTokens: 0,
+    messageCount: 0,
+    preview: "",
+  };
+  for (let i = 1; i < lines.length; i++) {
+    try {
+      applyJsonlEntry(JSON.parse(lines[i]!) as JsonlConversationEntry, totals);
+    } catch {
+      // Skip malformed conversation lines.
+    }
+  }
+
+  return {
+    id: (meta.id as string) ?? filename.replace(".jsonl", ""),
+    created_at: (meta.createdAt as string) ?? "",
+    updated_at: updatedAt,
+    message_count: totals.messageCount,
+    tool_call_count: 0,
+    input_tokens: totals.inputTokens,
+    output_tokens: totals.outputTokens,
+    preview: totals.preview,
+    had_errors: false,
+  };
+}
+
+/**
+ * Fold one JSONL entry into the totals. Matches, in order, llm.response (with
+ * usage), user.message, run.done, then any remaining role-tagged message.
+ */
+function applyJsonlEntry(entry: JsonlConversationEntry, totals: JsonlConversationTotals): void {
+  if (entry.type === "llm.response" && entry.usage) {
+    totals.inputTokens += entry.usage.inputTokens ?? 0;
+    totals.outputTokens += entry.usage.outputTokens ?? 0;
+    return;
+  }
+  if (entry.type === "user.message") {
+    applyUserMessageEntry(entry, totals);
+    return;
+  }
+  if (entry.type === "run.done") {
+    totals.messageCount++;
+    return;
+  }
+  if (entry.role) {
+    applyRoleTaggedEntry(entry, totals);
+  }
+}
+
+/** Count a user.message and, absent a preview, take its first text block as the preview. */
+function applyUserMessageEntry(
+  entry: JsonlConversationEntry,
+  totals: JsonlConversationTotals,
+): void {
+  totals.messageCount++;
+  if (!totals.preview && Array.isArray(entry.content)) {
+    const firstText = (entry.content as Array<{ type?: string; text?: string }>).find(
+      (c) => c.type === "text",
+    );
+    totals.preview = firstText?.text ?? "";
+  }
+}
+
+/** Count a role-tagged message, taking a user-string preview and summing assistant usage. */
+function applyRoleTaggedEntry(
+  entry: JsonlConversationEntry,
+  totals: JsonlConversationTotals,
+): void {
+  totals.messageCount++;
+  if (!totals.preview && entry.role === "user" && typeof entry.content === "string") {
+    totals.preview = entry.content;
+  }
+  if (entry.role === "assistant" && entry.metadata?.usage) {
+    totals.inputTokens += entry.metadata.usage.inputTokens ?? 0;
+    totals.outputTokens += entry.metadata.usage.outputTokens ?? 0;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Automation-run helpers
+// ---------------------------------------------------------------------------
+
+/** Running tallies accumulated while scanning automation-run JSONL files. */
+interface AutomationRunTotals {
+  total: number;
+  succeeded: number;
+  failed: number;
+  failures: AutomationRunSummary["failures"];
+}
+
+/** Fold every run line of one automation JSONL file into the totals; skip the file if unreadable. */
+async function accumulateAutomationRunFile(
+  dir: string,
+  filename: string,
+  sinceMs: number,
+  untilMs: number,
+  totals: AutomationRunTotals,
+): Promise<void> {
+  try {
+    const content = await readFile(join(dir, filename), "utf-8");
+    for (const line of content.split("\n")) {
+      accumulateAutomationRunLine(line, filename, sinceMs, untilMs, totals);
+    }
+  } catch {
+    // Skip unreadable automation run files.
+  }
+}
+
+/**
+ * Fold one automation-run line into the totals, counting successes and
+ * collecting failures for runs started within [sinceMs, untilMs].
+ */
+function accumulateAutomationRunLine(
+  line: string,
+  filename: string,
+  sinceMs: number,
+  untilMs: number,
+  totals: AutomationRunTotals,
+): void {
+  if (!line.trim()) return;
+
+  let run: Record<string, unknown>;
+  try {
+    run = JSON.parse(line);
+  } catch {
+    return;
+  }
+
+  const startedAt = run.startedAt as string | undefined;
+  if (!startedAt) return;
+
+  const startedMs = new Date(startedAt).getTime();
+  if (startedMs < sinceMs || startedMs > untilMs) return;
+
+  const status = run.status as string | undefined;
+  if (status !== "success" && status !== "failure" && status !== "timeout") return;
+
+  totals.total++;
+  if (status === "success") {
+    totals.succeeded++;
+    return;
+  }
+
+  totals.failed++;
+  const automationName = filename.replace(/\.jsonl$/, "");
+  totals.failures.push({
+    name: automationName,
+    error: (run.error as string) ?? undefined,
+    action: {
+      label: "View failed run",
+      type: "startChat",
+      route: null,
+      prompt: `Show me the failed ${automationName} automation run`,
+    },
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Log-scan helpers
+// ---------------------------------------------------------------------------
+
+/** Running aggregate for one tool across every run in the window. */
+interface ToolAggEntry {
+  count: number;
+  errors: number;
+  totalMs: number;
+}
+
+/** Route one parsed log record into the tool aggregate and/or the error list by event type. */
+function accumulateLogRecord(
+  record: Record<string, unknown>,
+  ts: string,
+  toolAgg: Map<string, ToolAggEntry>,
+  errors: ErrorEntry[],
+): void {
+  const event = record.event as string | undefined;
+
+  if (event === "run.done") {
+    accumulateRunDone(record, ts, toolAgg, errors);
+    return;
+  }
+
+  if (event === "run.error") {
+    errors.push({
+      timestamp: ts,
+      source: "engine",
+      message: (record.error as string) ?? (record.message as string) ?? "Unknown engine error",
+      context: record.sid as string | undefined,
+    });
+    return;
+  }
+
+  if (event === "http.error") {
+    errors.push({
+      timestamp: ts,
+      source: "http",
+      message: `${record.status} ${record.error}: ${record.message}`,
+      context: `${record.method} ${record.path}`,
+    });
+  }
+}
+
+/** Merge a run.done record's per-tool stats into the aggregate and record any tool errors. */
+function accumulateRunDone(
+  record: Record<string, unknown>,
+  ts: string,
+  toolAgg: Map<string, ToolAggEntry>,
+  errors: ErrorEntry[],
+): void {
+  const toolStats = record.toolStats as
+    | Record<string, { count: number; totalMs: number }>
+    | undefined;
+  if (toolStats) mergeToolStats(toolAgg, toolStats);
+
+  const toolErrors = record.toolErrors as number | undefined;
+  if (toolErrors && toolErrors > 0) {
+    errors.push({
+      timestamp: ts,
+      source: "tool",
+      message: `${toolErrors} tool error(s) in run`,
+      context: record.sid as string | undefined,
+    });
+  }
+}
+
+/** Merge per-tool call/latency stats from one run into the running aggregate. */
+function mergeToolStats(
+  toolAgg: Map<string, ToolAggEntry>,
+  toolStats: Record<string, { count: number; totalMs: number }>,
+): void {
+  for (const [name, stats] of Object.entries(toolStats)) {
+    const existing = toolAgg.get(name);
+    if (existing) {
+      existing.count += stats.count;
+      existing.totalMs += stats.totalMs;
+    } else {
+      toolAgg.set(name, { count: stats.count, errors: 0, totalMs: stats.totalMs });
+    }
   }
 }

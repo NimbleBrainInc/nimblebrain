@@ -187,85 +187,7 @@ export function createSkillsSource(runtime: Runtime, eventSink: EventSink): McpS
       inputSchema: SkillsReadInput,
       handler: async (input: Record<string, unknown>): Promise<ToolResult> => {
         try {
-          const id = String(input.id ?? "");
-          // Determine scope for the permission check before any FS work.
-          // skill:// URIs always resolve to the Layer 1 bundle resource;
-          // anything else is path-derived.
-          const isUri = id === AUTHORING_GUIDE_URI || id.startsWith(SKILL_URI_PREFIX);
-          const scope = isUri ? "bundle" : scopeOfPath(runtime, id, authoringGuidePath);
-          if (!scope) {
-            return {
-              content: textContent(unrecognizedIdMessage(id)),
-              isError: true,
-            };
-          }
-          // Existence before permission. A stale `id` (e.g. a path the
-          // agent cached before the skill was moved to a workspace dir)
-          // should report "not found" — telling the caller their file
-          // is gone. Reporting "permission denied" on a missing path
-          // sends the agent down a hallucination loop trying to fix a
-          // role instead of refreshing its path. (skill:// URIs skip
-          // this — existence is checked inside readSkillById.)
-          //
-          // Trade-off: an authenticated tenant member can now distinguish
-          // "file exists but I lack permission" from "file doesn't exist"
-          // for paths in other workspaces — a thin filename-existence
-          // oracle. Severity is low in our threat model: skill filenames
-          // are not secrets, content is still gated by checkPathAccess,
-          // and the caller is already inside the tenant. If a future
-          // deployment needs to close this oracle, gate the existence
-          // check behind the same scope-allowance that `checkPathAccess`
-          // applies (e.g. only run existsSync for paths in the caller's
-          // own workspace / user dir / org).
-          if (!isUri && !existsSync(id)) {
-            return {
-              content: textContent(
-                `Skill not found at "${id}". The file may have been moved or deleted — ` +
-                  `call skills__list to get current paths.`,
-              ),
-              isError: true,
-            };
-          }
-          const permission = await checkPathAccess(runtime, id, scope, "read");
-          if (!permission.allowed) {
-            return permissionDenied(permission.reason ?? "Permission denied", {
-              path: id,
-              scope,
-              role: currentRoleHint(runtime, scope),
-            });
-          }
-          // Symlink-boundary check (skipped for skill:// URIs which
-          // dispatch to the resource handler, not the filesystem path).
-          // Without this, a tenant member could symlink another
-          // workspace's skill into their own dir and read its
-          // contents via parseSkillFile (which follows symlinks).
-          if (!isUri) {
-            try {
-              assertSymlinkBoundaryOrThrow(runtime, id, scope);
-            } catch (err) {
-              return errorResult(err);
-            }
-          }
-          const result = await readSkillById(runtime, authoringGuidePath, id);
-          if (!result) {
-            return {
-              content: textContent(`Skill not found: ${id}`),
-              isError: true,
-            };
-          }
-          // Compile-time drift coverage on the read shape: `out`'s type
-          // pins it to the canonical `SkillsReadOutput`. Wire cast is
-          // the same shim explained in the `list` handler.
-          const out: SkillsReadOutput = result;
-          return {
-            // `content` carries the full body + manifest because the
-            // engine never surfaces `structuredContent` to the model;
-            // `structuredContent` keeps the typed copy for `/mcp` clients
-            // and the UI. See `renderRead`.
-            content: textContent(renderRead(result)),
-            structuredContent: out as unknown as Record<string, unknown>,
-            isError: false,
-          };
+          return await readSkillHandler(runtime, authoringGuidePath, input);
         } catch (err) {
           return errorResult(err);
         }
@@ -504,16 +426,7 @@ async function listSkills(
       ? runtime.loadConversationSkills(wsId, userId)
       : runtime.getContextSkills().concat(runtime.getMatchableSkills());
     for (const skill of skills) {
-      if (skill.sourcePath && layer1SourcePaths.has(resolve(skill.sourcePath))) {
-        continue;
-      }
-      // Connector-skill overlays are surface-once-into-history candidates,
-      // not authored skills — they live in a separate `connector-skills/` store
-      // that `loadConversationSkills` never reads. Filter on the provenance
-      // origin as defense-in-depth so an overlay can never leak into the
-      // authored-skill listing even if a future change merges the pools.
-      if (skill.manifest.provenance?.origin === "connector") continue;
-      out.push(skillToListed(skill));
+      if (isListableLayer3Skill(skill, layer1SourcePaths)) out.push(skillToListed(skill));
     }
   }
 
@@ -523,56 +436,91 @@ async function listSkills(
   // discovered via a runtime resource scan; for Phase 2 the catalog is
   // static and small.
   if (includeLayer1) {
-    if (existsSync(authoringGuidePath)) {
-      const skill = parseSkillFile(authoringGuidePath);
-      if (skill) {
-        const tokens = approxTokens(skill.body);
-        const mechanism = resolveLoadingMechanism(skill.manifest);
-        out.push({
-          id: AUTHORING_GUIDE_URI,
-          name: skill.manifest.name,
-          layer: 1,
-          scope: "bundle",
-          status: skill.manifest.status,
-          tokens,
-          source: { uri: AUTHORING_GUIDE_URI, path: authoringGuidePath, bundle: "nb__skills" },
-          ...(skill.manifest.description ? { description: skill.manifest.description } : {}),
-          modifiedAt: readSkillMtime(authoringGuidePath),
-          loadingStrategy: skill.manifest.loadingStrategy,
-          ...(skill.manifest.toolAffinity && skill.manifest.toolAffinity.length > 0
-            ? { toolAffinity: skill.manifest.toolAffinity }
-            : {}),
-          ...(skill.manifest.triggers && skill.manifest.triggers.length > 0
-            ? { triggers: skill.manifest.triggers }
-            : {}),
-          priority: skill.manifest.priority,
-          loading: { wouldLoad: mechanism !== "none", mechanism },
-        });
-      }
-    }
+    const entry = buildAuthoringGuideEntry(authoringGuidePath);
+    if (entry) out.push(entry);
   }
 
   // Apply scalar filters
-  return out.filter((s) => {
-    if (filter.scope && s.scope !== filter.scope) return false;
-    if (filter.loading_strategy && s.loadingStrategy !== filter.loading_strategy) return false;
-    if (filter.status && s.status !== filter.status) return false;
-    if (filter.modified_since && s.modifiedAt) {
-      if (s.modifiedAt < filter.modified_since) return false;
-    }
-    if (filter.tool_affinity !== undefined) {
-      // Short-circuit empty/whitespace-only target: an empty string would
-      // match `*`-pattern skills via `toolMatches`, but the operator's
-      // intent is clearly "no tool", which should match nothing rather
-      // than every wildcard skill.
-      const target = filter.tool_affinity.trim();
-      if (target.length === 0) return false;
-      const patterns = s.toolAffinity ?? [];
-      if (patterns.length === 0) return false;
-      if (!patterns.some((p) => toolMatches(target, p))) return false;
-    }
-    return true;
-  });
+  return out.filter((s) => matchesListFilters(s, filter));
+}
+
+/**
+ * True when a Layer 3 skill belongs in `skills__list`: not a Layer 1 resource
+ * that would double-list, and not a connector-skill overlay.
+ */
+function isListableLayer3Skill(skill: Skill, layer1SourcePaths: Set<string>): boolean {
+  // Skills surfaced as Layer 1 resources (today: the vendored authoring
+  // guide) are filtered out here so they don't appear twice — once via
+  // their file path through the contextSkills pool and again as a Layer 1
+  // entry.
+  if (skill.sourcePath && layer1SourcePaths.has(resolve(skill.sourcePath))) return false;
+  // Connector-skill overlays are surface-once-into-history candidates,
+  // not authored skills — they live in a separate `connector-skills/` store
+  // that `loadConversationSkills` never reads. Filter on the provenance
+  // origin as defense-in-depth so an overlay can never leak into the
+  // authored-skill listing even if a future change merges the pools.
+  if (skill.manifest.provenance?.origin === "connector") return false;
+  return true;
+}
+
+/**
+ * Build the Layer 1 list entry for the vendored authoring guide, or null when
+ * the guide file is absent or unparseable.
+ */
+function buildAuthoringGuideEntry(authoringGuidePath: string): ListedSkill | null {
+  if (!existsSync(authoringGuidePath)) return null;
+  const skill = parseSkillFile(authoringGuidePath);
+  if (!skill) return null;
+  const tokens = approxTokens(skill.body);
+  const mechanism = resolveLoadingMechanism(skill.manifest);
+  return {
+    id: AUTHORING_GUIDE_URI,
+    name: skill.manifest.name,
+    layer: 1,
+    scope: "bundle",
+    status: skill.manifest.status,
+    tokens,
+    source: { uri: AUTHORING_GUIDE_URI, path: authoringGuidePath, bundle: "nb__skills" },
+    ...(skill.manifest.description ? { description: skill.manifest.description } : {}),
+    modifiedAt: readSkillMtime(authoringGuidePath),
+    loadingStrategy: skill.manifest.loadingStrategy,
+    ...(skill.manifest.toolAffinity && skill.manifest.toolAffinity.length > 0
+      ? { toolAffinity: skill.manifest.toolAffinity }
+      : {}),
+    ...(skill.manifest.triggers && skill.manifest.triggers.length > 0
+      ? { triggers: skill.manifest.triggers }
+      : {}),
+    priority: skill.manifest.priority,
+    loading: { wouldLoad: mechanism !== "none", mechanism },
+  };
+}
+
+/** Scalar + tool-affinity filter for `skills__list`: true when `s` passes every provided filter. */
+function matchesListFilters(s: ListedSkill, filter: ListInput): boolean {
+  if (filter.scope && s.scope !== filter.scope) return false;
+  if (filter.loading_strategy && s.loadingStrategy !== filter.loading_strategy) return false;
+  if (filter.status && s.status !== filter.status) return false;
+  if (filter.modified_since && s.modifiedAt && s.modifiedAt < filter.modified_since) return false;
+  if (filter.tool_affinity !== undefined && !matchesToolAffinityFilter(s, filter.tool_affinity)) {
+    return false;
+  }
+  return true;
+}
+
+/**
+ * Tool-affinity filter: an empty/whitespace target matches nothing; otherwise
+ * the skill must carry a `tool-affinity` pattern that matches the target.
+ */
+function matchesToolAffinityFilter(s: ListedSkill, toolAffinity: string): boolean {
+  // Short-circuit empty/whitespace-only target: an empty string would
+  // match `*`-pattern skills via `toolMatches`, but the operator's
+  // intent is clearly "no tool", which should match nothing rather
+  // than every wildcard skill.
+  const target = toolAffinity.trim();
+  if (target.length === 0) return false;
+  const patterns = s.toolAffinity ?? [];
+  if (patterns.length === 0) return false;
+  return patterns.some((p) => toolMatches(target, p));
 }
 
 /**
@@ -756,6 +704,98 @@ async function readSkillById(
   });
 }
 
+/**
+ * `skills__read` core: resolve one skill by id (a `skill://` URI or a
+ * filesystem path), enforcing scope permission and the symlink boundary
+ * before reading. Throws on unexpected errors; the tool wrapper turns those
+ * into an `isError` result.
+ */
+async function readSkillHandler(
+  runtime: Runtime,
+  authoringGuidePath: string,
+  input: Record<string, unknown>,
+): Promise<ToolResult> {
+  const id = String(input.id ?? "");
+  // Determine scope for the permission check before any FS work.
+  // skill:// URIs always resolve to the Layer 1 bundle resource;
+  // anything else is path-derived.
+  const isUri = id === AUTHORING_GUIDE_URI || id.startsWith(SKILL_URI_PREFIX);
+  const scope = isUri ? "bundle" : scopeOfPath(runtime, id, authoringGuidePath);
+  if (!scope) {
+    return {
+      content: textContent(unrecognizedIdMessage(id)),
+      isError: true,
+    };
+  }
+  // Existence before permission. A stale `id` (e.g. a path the
+  // agent cached before the skill was moved to a workspace dir)
+  // should report "not found" — telling the caller their file
+  // is gone. Reporting "permission denied" on a missing path
+  // sends the agent down a hallucination loop trying to fix a
+  // role instead of refreshing its path. (skill:// URIs skip
+  // this — existence is checked inside readSkillById.)
+  //
+  // Trade-off: an authenticated tenant member can now distinguish
+  // "file exists but I lack permission" from "file doesn't exist"
+  // for paths in other workspaces — a thin filename-existence
+  // oracle. Severity is low in our threat model: skill filenames
+  // are not secrets, content is still gated by checkPathAccess,
+  // and the caller is already inside the tenant. If a future
+  // deployment needs to close this oracle, gate the existence
+  // check behind the same scope-allowance that `checkPathAccess`
+  // applies (e.g. only run existsSync for paths in the caller's
+  // own workspace / user dir / org).
+  if (!isUri && !existsSync(id)) {
+    return {
+      content: textContent(
+        `Skill not found at "${id}". The file may have been moved or deleted — ` +
+          `call skills__list to get current paths.`,
+      ),
+      isError: true,
+    };
+  }
+  const permission = await checkPathAccess(runtime, id, scope, "read");
+  if (!permission.allowed) {
+    return permissionDenied(permission.reason ?? "Permission denied", {
+      path: id,
+      scope,
+      role: currentRoleHint(runtime, scope),
+    });
+  }
+  // Symlink-boundary check (skipped for skill:// URIs which
+  // dispatch to the resource handler, not the filesystem path).
+  // Without this, a tenant member could symlink another
+  // workspace's skill into their own dir and read its
+  // contents via parseSkillFile (which follows symlinks).
+  if (!isUri) {
+    try {
+      assertSymlinkBoundaryOrThrow(runtime, id, scope);
+    } catch (err) {
+      return errorResult(err);
+    }
+  }
+  const result = await readSkillById(runtime, authoringGuidePath, id);
+  if (!result) {
+    return {
+      content: textContent(`Skill not found: ${id}`),
+      isError: true,
+    };
+  }
+  // Compile-time drift coverage on the read shape: `out`'s type
+  // pins it to the canonical `SkillsReadOutput`. Wire cast is
+  // the same shim explained in the `list` handler.
+  const out: SkillsReadOutput = result;
+  return {
+    // `content` carries the full body + manifest because the
+    // engine never surfaces `structuredContent` to the model;
+    // `structuredContent` keeps the typed copy for `/mcp` clients
+    // and the UI. See `renderRead`.
+    content: textContent(renderRead(result)),
+    structuredContent: out as unknown as Record<string, unknown>,
+    isError: false,
+  };
+}
+
 function buildReadResult(
   skill: Skill,
   base: {
@@ -886,17 +926,7 @@ async function loadingLog(
   }
   const access = { userId: identity.id };
 
-  const convIds: string[] = [];
-  if (filter.conversation_id) {
-    // Explicit-id branch: verify ownership before reading events.
-    // `findConversation(id, access)` returns null for both not-found
-    // and foreign-owner, so we treat them the same: no entries.
-    const owned = await runtime.findConversation(filter.conversation_id, access);
-    if (!owned) return [];
-    convIds.push(filter.conversation_id);
-  } else {
-    convIds.push(...(await listOwnedConversationIds(runtime, access)));
-  }
+  const convIds = await resolveLoadingLogConvIds(runtime, filter, access);
 
   const out: LoadingLogEntry[] = [];
   for (const convId of convIds) {
@@ -905,9 +935,7 @@ async function loadingLog(
     for (const ev of events) {
       if (ev.type !== "skills.loaded") continue;
       const sl = ev as SkillsLoadedEvent;
-      if (filter.since && sl.ts < filter.since) continue;
-      if (filter.until && sl.ts > filter.until) continue;
-      if (filter.skill_id && !sl.skills.some((s) => s.id === filter.skill_id)) continue;
+      if (!matchesLoadingLogFilter(sl, filter)) continue;
       out.push({
         ts: sl.ts,
         conv_id: convId,
@@ -920,6 +948,31 @@ async function loadingLog(
   // Sort by timestamp for stable ordering across conversations.
   out.sort((a, b) => a.ts.localeCompare(b.ts));
   return out;
+}
+
+/** Resolve the conversation ids to scan for `skills__loading_log`, scoped to the caller. */
+async function resolveLoadingLogConvIds(
+  runtime: Runtime,
+  filter: LoadingLogInput,
+  access: { userId: string },
+): Promise<string[]> {
+  if (filter.conversation_id) {
+    // Explicit-id branch: verify ownership before reading events.
+    // `findConversation(id, access)` returns null for both not-found
+    // and foreign-owner, so we treat them the same: no entries.
+    const owned = await runtime.findConversation(filter.conversation_id, access);
+    if (!owned) return [];
+    return [filter.conversation_id];
+  }
+  return listOwnedConversationIds(runtime, access);
+}
+
+/** True when a `skills.loaded` event passes the loading-log time/skill filters. */
+function matchesLoadingLogFilter(sl: SkillsLoadedEvent, filter: LoadingLogInput): boolean {
+  if (filter.since && sl.ts < filter.since) return false;
+  if (filter.until && sl.ts > filter.until) return false;
+  if (filter.skill_id && !sl.skills.some((s) => s.id === filter.skill_id)) return false;
+  return true;
 }
 
 /**
@@ -1115,36 +1168,61 @@ async function checkPathAccess(
   const identity = runtime.getCurrentIdentity();
   if (!identity) return { allowed: false, reason: "No authenticated identity" };
 
-  const isOrgAdmin = ORG_ADMIN_ROLES.has(identity.orgRole);
   const workDir = runtime.getWorkDir();
 
-  if (scope === "bundle") {
-    if (mode === "read") return { allowed: true };
-    return { allowed: false, reason: "Bundle (Layer 1) skills are vendored and not mutable" };
-  }
+  if (scope === "bundle") return bundleAccess(mode);
+  if (scope === "org") return orgAccess(mode, ORG_ADMIN_ROLES.has(identity.orgRole));
+  if (scope === "user") return userScopeAccess(path, workDir, identity);
+  return workspaceScopeAccess(runtime, path, workDir, identity, mode);
+}
 
-  if (scope === "org") {
-    if (mode === "read") return { allowed: true };
-    return isOrgAdmin
-      ? { allowed: true }
-      : { allowed: false, reason: "Org-scope writes require org admin or owner" };
-  }
+/** Authenticated caller identity — the non-null shape `checkPathAccess` has already gated on. */
+type SkillIdentity = NonNullable<ReturnType<Runtime["getCurrentIdentity"]>>;
 
-  if (scope === "user") {
-    const pathUserId = extractUserIdFromPath(path, workDir);
-    if (!pathUserId) {
-      return { allowed: false, reason: "Could not derive user id from path" };
-    }
-    if (pathUserId === identity.id) return { allowed: true };
-    // Strict — no org-admin override across users. Operators access
-    // their own user-tier skills only.
-    return {
-      allowed: false,
-      reason: `User-scope skills are scoped to their owning user (${pathUserId})`,
-    };
-  }
+/** Bundle-tier access: Layer 1 vendored skills are world-readable, never mutable. */
+function bundleAccess(mode: AccessMode): PermissionDecision {
+  if (mode === "read") return { allowed: true };
+  return { allowed: false, reason: "Bundle (Layer 1) skills are vendored and not mutable" };
+}
 
-  // workspace
+/** Org-tier access: any tenant member reads; only org admins/owners write. */
+function orgAccess(mode: AccessMode, isOrgAdmin: boolean): PermissionDecision {
+  if (mode === "read") return { allowed: true };
+  return isOrgAdmin
+    ? { allowed: true }
+    : { allowed: false, reason: "Org-scope writes require org admin or owner" };
+}
+
+/** User-tier access: read+write only for the owning user named by the path (no org-admin override). */
+function userScopeAccess(
+  path: string,
+  workDir: string,
+  identity: SkillIdentity,
+): PermissionDecision {
+  const pathUserId = extractUserIdFromPath(path, workDir);
+  if (!pathUserId) {
+    return { allowed: false, reason: "Could not derive user id from path" };
+  }
+  if (pathUserId === identity.id) return { allowed: true };
+  // Strict — no org-admin override across users. Operators access
+  // their own user-tier skills only.
+  return {
+    allowed: false,
+    reason: `User-scope skills are scoped to their owning user (${pathUserId})`,
+  };
+}
+
+/**
+ * Workspace-tier access: read+write require membership in the workspace named
+ * by the path; write additionally requires the shared admin-role gate.
+ */
+async function workspaceScopeAccess(
+  runtime: Runtime,
+  path: string,
+  workDir: string,
+  identity: SkillIdentity,
+  mode: AccessMode,
+): Promise<PermissionDecision> {
   const pathWsId = extractWsIdFromPath(path, workDir);
   if (!pathWsId) {
     return { allowed: false, reason: "Could not derive workspace id from path" };
@@ -1398,6 +1476,40 @@ function unrecognizedIdMessage(id: string): string {
   );
 }
 
+/**
+ * Assemble the on-write manifest for a create from the flat LLM-facing input,
+ * defaulting the optional fields and stamping provenance (never author-supplied).
+ */
+function buildCreateManifest(
+  manifest: SkillsCreateInput["manifest"],
+  ctx: ReturnType<typeof getRequestContext>,
+  createdBy: string | undefined,
+  now: string,
+): SkillManifest {
+  const { name } = manifest;
+  return {
+    name,
+    description: manifest.description,
+    loadingStrategy: manifest.loadingStrategy ?? "dynamic",
+    priority: manifest.priority ?? 50,
+    status: manifest.status ?? "active",
+    ...(manifest.toolAffinity && manifest.toolAffinity.length > 0
+      ? { toolAffinity: manifest.toolAffinity }
+      : {}),
+    ...(manifest.triggers && manifest.triggers.length > 0 ? { triggers: manifest.triggers } : {}),
+    ...(manifest.allowedTools && manifest.allowedTools.length > 0
+      ? { allowedTools: manifest.allowedTools }
+      : {}),
+    provenance: {
+      origin: ctx?.conversationId ? "chat" : "admin",
+      ...(ctx?.conversationId ? { conversationId: ctx.conversationId } : {}),
+      ...(createdBy ? { createdBy } : {}),
+      createdAt: now,
+      updatedAt: now,
+    },
+  };
+}
+
 // Input shape for `skills__create`. Derived from the TypeBox schema in
 // `./schemas/skills.ts`; the validator (validateToolInput) has already
 // rejected anything that doesn't match before this runs, so the handler
@@ -1443,27 +1555,7 @@ async function createSkill(
   const ctx = getRequestContext();
   const createdBy = runtime.getCurrentIdentity()?.id;
   const now = new Date().toISOString();
-  const fullManifest: SkillManifest = {
-    name,
-    description: manifest.description,
-    loadingStrategy: manifest.loadingStrategy ?? "dynamic",
-    priority: manifest.priority ?? 50,
-    status: manifest.status ?? "active",
-    ...(manifest.toolAffinity && manifest.toolAffinity.length > 0
-      ? { toolAffinity: manifest.toolAffinity }
-      : {}),
-    ...(manifest.triggers && manifest.triggers.length > 0 ? { triggers: manifest.triggers } : {}),
-    ...(manifest.allowedTools && manifest.allowedTools.length > 0
-      ? { allowedTools: manifest.allowedTools }
-      : {}),
-    provenance: {
-      origin: ctx?.conversationId ? "chat" : "admin",
-      ...(ctx?.conversationId ? { conversationId: ctx.conversationId } : {}),
-      ...(createdBy ? { createdBy } : {}),
-      createdAt: now,
-      updatedAt: now,
-    },
-  };
+  const fullManifest = buildCreateManifest(manifest, ctx, createdBy, now);
 
   // A `dynamic` skill with neither tool-affinity nor triggers is catalog-only:
   // it won't auto-load until the catalog ships (P3). We honor that rather than
@@ -1504,6 +1596,29 @@ async function createSkill(
       loadingStrategy: fullManifest.loadingStrategy,
     },
     isError: false,
+  };
+}
+
+/**
+ * Build a `Partial<SkillManifest>` from an update patch, keeping only the
+ * fields the caller actually provided. `name` in the patch is ignored since
+ * it's derived from the path (renaming is a separate operation). Metadata
+ * sub-fields (keywords, triggers) are required arrays in the domain type but
+ * optional in the LLM-facing schema, so we default-to-empty when they're
+ * omitted — same boundary normalization as createSkill.
+ */
+function buildUpdatePatch(
+  patch: SkillsUpdateInput["manifest"],
+): Partial<SkillManifest> | undefined {
+  if (!patch) return undefined;
+  return {
+    ...(patch.description !== undefined ? { description: patch.description } : {}),
+    ...(patch.loadingStrategy !== undefined ? { loadingStrategy: patch.loadingStrategy } : {}),
+    ...(patch.priority !== undefined ? { priority: patch.priority } : {}),
+    ...(patch.status !== undefined ? { status: patch.status } : {}),
+    ...(patch.toolAffinity !== undefined ? { toolAffinity: patch.toolAffinity } : {}),
+    ...(patch.triggers !== undefined ? { triggers: patch.triggers } : {}),
+    ...(patch.allowedTools !== undefined ? { allowedTools: patch.allowedTools } : {}),
   };
 }
 
@@ -1567,23 +1682,7 @@ async function updateSkillHandler(
 
   snapshotVersion(id);
 
-  // Build a Partial<SkillManifest> from the patch. `name` in the patch
-  // is ignored since it's derived from the path (renaming is a separate
-  // operation). Metadata sub-fields (keywords, triggers) are required
-  // arrays in the domain type but optional in the LLM-facing schema, so
-  // we default-to-empty when they're omitted — same boundary normalization
-  // as createSkill.
-  const partial: Partial<SkillManifest> | undefined = patch
-    ? {
-        ...(patch.description !== undefined ? { description: patch.description } : {}),
-        ...(patch.loadingStrategy !== undefined ? { loadingStrategy: patch.loadingStrategy } : {}),
-        ...(patch.priority !== undefined ? { priority: patch.priority } : {}),
-        ...(patch.status !== undefined ? { status: patch.status } : {}),
-        ...(patch.toolAffinity !== undefined ? { toolAffinity: patch.toolAffinity } : {}),
-        ...(patch.triggers !== undefined ? { triggers: patch.triggers } : {}),
-        ...(patch.allowedTools !== undefined ? { allowedTools: patch.allowedTools } : {}),
-      }
-    : undefined;
+  const partial = buildUpdatePatch(patch);
   // Merged result is canonically validated by the writer before write; a patch
   // that would make the skill unloadable fails cleanly, leaving the file as-is.
   try {

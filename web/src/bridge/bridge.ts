@@ -42,12 +42,18 @@ import type {
   ExtAppsHostContextChangedNotification,
   ExtAppsInitializeResponse,
   ExtAppsToolInputNotification,
+  ResourcesReadMessage,
+  SynapseRequestFileMessage,
+  UiActionMessage,
+  UiChatContext,
   UiDataChangedMessage,
   UiInitializeMessage,
+  UiMessageMessage,
   UiStateLoadedMessage,
   UiToolResultError,
   UiToolResultMessage,
   UiToolResultResponse,
+  UiUpdateModelContextMessage,
 } from "./types";
 import { validateAppToHostMessage } from "./validate";
 
@@ -185,151 +191,47 @@ export function createBridge(
       return;
     }
 
-    // --- ext-apps protocol: ui/initialize REQUEST (has id + method) ---
-    // JSON-RPC 2.0 (and the ext-apps spec by extension) allows request IDs to
-    // be strings OR numbers. Clients built on `@modelcontextprotocol/ext-apps`
-    // (including `@reboot-dev/reboot-react`) send numeric IDs starting at 0.
-    // An earlier string-only check here silently dropped those handshakes,
-    // leaving the iframe stuck at "Connecting to MCP host...".
-    if (
-      msg.method === "ui/initialize" &&
-      (typeof msg.id === "string" || typeof msg.id === "number")
-    ) {
-      const extMode = getHostThemeMode();
-      // Filter to spec-valid keys only. Strict ext-apps SDK clients (Reboot's
-      // React runtime validates via Zod) reject unknown keys on this field.
-      // NB extensions and out-of-spec tokens still flow through the iframe's
-      // injected `<style>` block — they just don't cross the protocol.
-      const extTokens = getSpecThemeTokens(extMode);
-      // Spec-standardized fields (theme, styles) take precedence over any
-      // same-named keys returned by `getHostExtensions()`, so callers can
-      // safely return arbitrary extension keys without colliding.
-      //
-      // Top-level extension keys (e.g. `workspace`) are spec-allowed: the
-      // ext-apps `McpUiHostContextSchema` is `.passthrough()`, so strict
-      // SDK clients (Reboot/Zod) preserve unknown keys at the hostContext
-      // root. The strict-key concern documented above applies only to
-      // `hostContext.styles.variables`, which is a typed enum of CSS
-      // custom properties — extensions there would tear down the connection.
-      //
-      // Wrapped in try/catch: a throwing callback would otherwise drop the
-      // entire `ui/initialize` response and hang the iframe at "Connecting…".
-      let extensions: Record<string, unknown> = {};
-      try {
-        extensions = callbacks?.getHostExtensions?.() ?? {};
-      } catch (err) {
-        console.error("getHostExtensions threw — proceeding with no extensions:", err);
-      }
-      const hostCapabilities = {
-        openLinks: {},
-        serverTools: {},
-        logging: {},
-        tasks: {
-          cancel: {},
-          requests: { tools: { call: {} } },
-        },
-      };
-      const response: ExtAppsInitializeResponse = {
-        jsonrpc: "2.0",
-        id: msg.id,
-        result: {
-          protocolVersion: "2026-01-26",
-          hostInfo: { name: "nimblebrain", version: "1.0.0" },
-          hostCapabilities,
-          hostContext: {
-            ...extensions,
-            // `origin` is the platform's window.location.origin. SDK helpers
-            // use it as `targetOrigin` on outbound postMessage and to
-            // validate `event.origin` on inbound — closing the gap that
-            // bundles can't otherwise discover the host origin from a
-            // srcdoc iframe (which itself runs in the "null" origin).
-            origin: window.location.origin,
-            theme: extMode,
-            styles: {
-              variables: extTokens,
-            },
-          },
-        },
-      };
-      postToIframe(response);
-
-      // After handshake: send any persisted widget state
-      const savedWidget = widgetStateStore.get(appName);
-      if (savedWidget) {
-        const loadMsg: UiStateLoadedMessage = {
-          jsonrpc: "2.0",
-          method: "synapse/state-loaded",
-          params: { state: savedWidget.state, version: savedWidget.version },
-        };
-        postToIframe(loadMsg);
-      }
-      return;
-    }
-
-    // --- ext-apps protocol: ui/notifications/initialized ---
-    if (msg.method === "ui/notifications/initialized") {
-      callbacks?.onInitialized?.();
-      return;
-    }
-
-    // --- ext-apps protocol: ui/notifications/request-teardown ---
-    if (msg.method === "ui/notifications/request-teardown") return;
-
-    if (!("method" in msg)) return;
-
+    // Dispatch by method. Every spec method, the two ui/notifications/*
+    // lifecycle signals, and the synapse/ extensions are distinct `method`
+    // values, so one switch reproduces the original per-method routing. A
+    // message with no (or an unrecognized) method matches no case and is
+    // dropped — the same default-drop the switch always relied on.
     switch (msg.method) {
+      // -----------------------------------------------------------------
+      // ext-apps protocol: ui/initialize REQUEST (has id + method)
+      // -----------------------------------------------------------------
+      case "ui/initialize":
+        handleInitialize(msg.id, appName, callbacks, postToIframe);
+        break;
+
+      // -----------------------------------------------------------------
+      // ext-apps protocol: ui/notifications/initialized
+      // -----------------------------------------------------------------
+      case "ui/notifications/initialized":
+        callbacks?.onInitialized?.();
+        break;
+
+      // -----------------------------------------------------------------
+      // ext-apps protocol: ui/notifications/request-teardown
+      // -----------------------------------------------------------------
+      case "ui/notifications/request-teardown":
+        break;
+
       // -----------------------------------------------------------------
       // Spec: tools/call — standard MCP proxying
       // Returns CallToolResult: { content, structuredContent?, isError? }
       // -----------------------------------------------------------------
-      case "tools/call": {
-        const { id, params } = msg;
-
-        // Security: tool calls are scoped to appName by default. Internal
-        // bundles (`INTERNAL_APPS`) can specify `params.server` to
-        // cross-call other sources. The `/mcp` endpoint is workspace-
-        // scoped but doesn't know about the "internal app" concept, so
-        // this authz check stays in the bridge.
-        const server = INTERNAL_APPS.has(appName) && params.server ? params.server : appName;
-
-        callToolViaMcp(server, params, id).then(postToIframe, (err: unknown) => {
-          const errorMsg = err instanceof Error ? err.message : "Tool call failed";
-          const errorResponse: UiToolResultError = {
-            jsonrpc: "2.0",
-            id,
-            error: { code: -32000, message: errorMsg },
-          };
-          postToIframe(errorResponse);
-        });
+      case "tools/call":
+        handleToolsCall(msg.params, msg.id, appName, postToIframe);
         break;
-      }
 
       // -----------------------------------------------------------------
       // Spec: resources/read — standard MCP resource reads
       // Returns ReadResourceResult: { contents: [{ uri, mimeType?, text?, blob? }] }
       // -----------------------------------------------------------------
-      case "resources/read": {
-        const { id, params } = msg;
-        // Same trust list as tools/call. The URI itself passes through
-        // verbatim to the server — SSRF safety lives in the bundle, not
-        // the host, because only URIs the bundle advertises via
-        // resources/list will resolve anyway.
-        const server = INTERNAL_APPS.has(appName) && params.server ? params.server : appName;
-
-        readResourceViaMcp(server, params.uri)
-          .then((result) => {
-            postToIframe({ jsonrpc: "2.0", id, result });
-          })
-          .catch((err: unknown) => {
-            const errorMsg = err instanceof Error ? err.message : "Resource read failed";
-            postToIframe({
-              jsonrpc: "2.0",
-              id,
-              error: { code: -32000, message: errorMsg },
-            });
-          });
+      case "resources/read":
+        handleResourcesRead(msg.params, msg.id, appName, postToIframe);
         break;
-      }
 
       // -----------------------------------------------------------------
       // Spec: tasks/get — non-blocking fetch of current task state.
@@ -370,30 +272,9 @@ export function createBridge(
       // -----------------------------------------------------------------
       // Spec: ui/message — { role, content: [{ type, text, _meta? }] }
       // -----------------------------------------------------------------
-      case "ui/message": {
-        const params = msg.params;
-        // Spec format: content is array of content blocks
-        if (Array.isArray(params.content)) {
-          const textBlock = params.content.find((b: Record<string, unknown>) => b.type === "text");
-          if (textBlock?.text) {
-            const context = textBlock._meta?.context;
-            if (callbacks?.onChat) {
-              callbacks.onChat(textBlock.text, context);
-            } else {
-              window.dispatchEvent(
-                new CustomEvent("nb:chat", {
-                  detail: { message: textBlock.text, context },
-                }),
-              );
-            }
-          }
-        }
-        // NimbleBrain extension: prompt suggestion action
-        if (params.action === "prompt" && params.value) {
-          callbacks?.onPromptAction?.(params.value);
-        }
+      case "ui/message":
+        handleUiMessage(msg.params, callbacks);
         break;
-      }
 
       // -----------------------------------------------------------------
       // Spec: ui/open-link
@@ -414,41 +295,16 @@ export function createBridge(
       // -----------------------------------------------------------------
       // Spec: ui/update-model-context
       // -----------------------------------------------------------------
-      case "ui/update-model-context": {
-        const { structuredContent, content } = msg.params;
-        const summary =
-          Array.isArray(content) && content.length > 0 && content[0].type === "text"
-            ? content[0].text
-            : undefined;
-        appStateStore.set(appName, {
-          state: structuredContent ?? {},
-          summary,
-          updatedAt: new Date().toISOString(),
-        });
-        if (msg.id) {
-          postToIframe({ jsonrpc: "2.0", id: msg.id, result: {} });
-        }
+      case "ui/update-model-context":
+        handleUpdateModelContext(msg.params, msg.id, appName, postToIframe);
         break;
-      }
 
       // -----------------------------------------------------------------
       // Extension: synapse/action — semantic host actions
       // -----------------------------------------------------------------
-      case "synapse/action": {
-        const { action, ...actionParams } = msg.params;
-        if (action === "navigate" && actionParams.route && callbacks?.onNavigate) {
-          callbacks.onNavigate(actionParams.route as string);
-          break;
-        }
-        if (callbacks?.onAction) {
-          callbacks.onAction(action, actionParams);
-        } else {
-          window.dispatchEvent(
-            new CustomEvent("nb:action", { detail: { action, ...actionParams } }),
-          );
-        }
+      case "synapse/action":
+        handleSynapseAction(msg.params, callbacks);
         break;
-      }
 
       // -----------------------------------------------------------------
       // Extension: synapse/download-file — trigger browser download
@@ -478,26 +334,9 @@ export function createBridge(
       // -----------------------------------------------------------------
       // Extension: synapse/request-file — native file picker
       // -----------------------------------------------------------------
-      case "synapse/request-file": {
-        const { id, params } = msg;
-        const accept = params?.accept ?? "";
-        const maxSize = params?.maxSize ?? 26_214_400; // 25 MB
-        const multiple = params?.multiple ?? false;
-
-        pickFiles(accept, maxSize, multiple)
-          .then((result) => {
-            postToIframe({ jsonrpc: "2.0", id, result });
-          })
-          .catch((err: unknown) => {
-            const errorMsg = err instanceof Error ? err.message : "File pick failed";
-            postToIframe({
-              jsonrpc: "2.0",
-              id,
-              error: { code: -32602, message: errorMsg },
-            });
-          });
+      case "synapse/request-file":
+        handleRequestFile(msg.params, msg.id, postToIframe);
         break;
-      }
 
       // -----------------------------------------------------------------
       // Extension: synapse/keydown — keyboard shortcut forwarding
@@ -637,6 +476,264 @@ export function createBridge(
       }
     },
   };
+}
+
+// ---------------------------------------------------------------------------
+// Per-message handlers — one per app→host method the bridge routes. Each
+// takes only the context it needs (`postToIframe` is a no-op after teardown),
+// so `handleMessage` stays a thin, low-complexity dispatcher.
+// ---------------------------------------------------------------------------
+
+/** Delivers a host→iframe message; a no-op once the bridge is destroyed. */
+type PostToIframe = (data: unknown) => void;
+
+/**
+ * Answer an ext-apps `ui/initialize` request: post the handshake response,
+ * then replay any persisted widget state.
+ *
+ * JSON-RPC 2.0 (and the ext-apps spec by extension) allows request IDs to be
+ * strings OR numbers. Clients built on `@modelcontextprotocol/ext-apps`
+ * (including `@reboot-dev/reboot-react`) send numeric IDs starting at 0; an id
+ * that is neither is dropped — a string-only check once left those iframes
+ * stuck at "Connecting to MCP host...".
+ */
+function handleInitialize(
+  id: unknown,
+  appName: string,
+  callbacks: BridgeCallbacks | undefined,
+  postToIframe: PostToIframe,
+): void {
+  if (typeof id !== "string" && typeof id !== "number") return;
+
+  const extMode = getHostThemeMode();
+  // Filter to spec-valid keys only. Strict ext-apps SDK clients (Reboot's
+  // React runtime validates via Zod) reject unknown keys on this field.
+  // NB extensions and out-of-spec tokens still flow through the iframe's
+  // injected `<style>` block — they just don't cross the protocol.
+  const extTokens = getSpecThemeTokens(extMode);
+  // Spec-standardized fields (theme, styles) take precedence over any
+  // same-named keys returned by `getHostExtensions()`, so callers can
+  // safely return arbitrary extension keys without colliding.
+  //
+  // Top-level extension keys (e.g. `workspace`) are spec-allowed: the
+  // ext-apps `McpUiHostContextSchema` is `.passthrough()`, so strict
+  // SDK clients (Reboot/Zod) preserve unknown keys at the hostContext
+  // root. The strict-key concern documented above applies only to
+  // `hostContext.styles.variables`, which is a typed enum of CSS
+  // custom properties — extensions there would tear down the connection.
+  //
+  // Wrapped in try/catch: a throwing callback would otherwise drop the
+  // entire `ui/initialize` response and hang the iframe at "Connecting…".
+  let extensions: Record<string, unknown> = {};
+  try {
+    extensions = callbacks?.getHostExtensions?.() ?? {};
+  } catch (err) {
+    console.error("getHostExtensions threw — proceeding with no extensions:", err);
+  }
+  const hostCapabilities = {
+    openLinks: {},
+    serverTools: {},
+    logging: {},
+    tasks: {
+      cancel: {},
+      requests: { tools: { call: {} } },
+    },
+  };
+  const response: ExtAppsInitializeResponse = {
+    jsonrpc: "2.0",
+    id,
+    result: {
+      protocolVersion: "2026-01-26",
+      hostInfo: { name: "nimblebrain", version: "1.0.0" },
+      hostCapabilities,
+      hostContext: {
+        ...extensions,
+        // `origin` is the platform's window.location.origin. SDK helpers
+        // use it as `targetOrigin` on outbound postMessage and to
+        // validate `event.origin` on inbound — closing the gap that
+        // bundles can't otherwise discover the host origin from a
+        // srcdoc iframe (which itself runs in the "null" origin).
+        origin: window.location.origin,
+        theme: extMode,
+        styles: {
+          variables: extTokens,
+        },
+      },
+    },
+  };
+  postToIframe(response);
+
+  // After handshake: send any persisted widget state
+  const savedWidget = widgetStateStore.get(appName);
+  if (savedWidget) {
+    const loadMsg: UiStateLoadedMessage = {
+      jsonrpc: "2.0",
+      method: "synapse/state-loaded",
+      params: { state: savedWidget.state, version: savedWidget.version },
+    };
+    postToIframe(loadMsg);
+  }
+}
+
+/**
+ * Proxy a spec `tools/call` to the MCP bridge — scoping the target server per
+ * the INTERNAL_APPS trust list — and forward the result (or a JSON-RPC error)
+ * to the iframe.
+ */
+function handleToolsCall(
+  params: ToolsCallParams,
+  id: string,
+  appName: string,
+  postToIframe: PostToIframe,
+): void {
+  // Security: tool calls are scoped to appName by default. Internal
+  // bundles (`INTERNAL_APPS`) can specify `params.server` to
+  // cross-call other sources. The `/mcp` endpoint is workspace-
+  // scoped but doesn't know about the "internal app" concept, so
+  // this authz check stays in the bridge.
+  const server = INTERNAL_APPS.has(appName) && params.server ? params.server : appName;
+
+  callToolViaMcp(server, params, id).then(postToIframe, (err: unknown) => {
+    const errorMsg = err instanceof Error ? err.message : "Tool call failed";
+    const errorResponse: UiToolResultError = {
+      jsonrpc: "2.0",
+      id,
+      error: { code: -32000, message: errorMsg },
+    };
+    postToIframe(errorResponse);
+  });
+}
+
+/**
+ * Proxy a spec `resources/read` to the MCP bridge (same INTERNAL_APPS scoping
+ * as tools/call) and forward the result or a JSON-RPC error to the iframe.
+ */
+function handleResourcesRead(
+  params: ResourcesReadMessage["params"],
+  id: string,
+  appName: string,
+  postToIframe: PostToIframe,
+): void {
+  // Same trust list as tools/call. The URI itself passes through
+  // verbatim to the server — SSRF safety lives in the bundle, not
+  // the host, because only URIs the bundle advertises via
+  // resources/list will resolve anyway.
+  const server = INTERNAL_APPS.has(appName) && params.server ? params.server : appName;
+
+  readResourceViaMcp(server, params.uri)
+    .then((result) => {
+      postToIframe({ jsonrpc: "2.0", id, result });
+    })
+    .catch((err: unknown) => {
+      const errorMsg = err instanceof Error ? err.message : "Resource read failed";
+      postToIframe({
+        jsonrpc: "2.0",
+        id,
+        error: { code: -32000, message: errorMsg },
+      });
+    });
+}
+
+/**
+ * Handle a spec `ui/message`: forward chat text (via onChat or an `nb:chat`
+ * event) and any `prompt` suggestion action to the host.
+ */
+function handleUiMessage(
+  params: UiMessageMessage["params"],
+  callbacks: BridgeCallbacks | undefined,
+): void {
+  // Spec format: content is array of content blocks
+  if (Array.isArray(params.content)) {
+    const textBlock = params.content.find((b: Record<string, unknown>) => b.type === "text");
+    if (textBlock?.text) {
+      const context = textBlock._meta?.context as UiChatContext | undefined;
+      if (callbacks?.onChat) {
+        callbacks.onChat(textBlock.text, context);
+      } else {
+        window.dispatchEvent(
+          new CustomEvent("nb:chat", {
+            detail: { message: textBlock.text, context },
+          }),
+        );
+      }
+    }
+  }
+  // NimbleBrain extension: prompt suggestion action
+  if (params.action === "prompt" && params.value) {
+    callbacks?.onPromptAction?.(params.value);
+  }
+}
+
+/**
+ * Handle a spec `ui/update-model-context`: store the app's latest visible
+ * state (with a text summary when present) and ack when the message had an id.
+ */
+function handleUpdateModelContext(
+  params: UiUpdateModelContextMessage["params"],
+  id: string | number | undefined,
+  appName: string,
+  postToIframe: PostToIframe,
+): void {
+  const { structuredContent, content } = params;
+  const summary =
+    Array.isArray(content) && content.length > 0 && content[0].type === "text"
+      ? content[0].text
+      : undefined;
+  appStateStore.set(appName, {
+    state: structuredContent ?? {},
+    summary,
+    updatedAt: new Date().toISOString(),
+  });
+  if (id) {
+    postToIframe({ jsonrpc: "2.0", id, result: {} });
+  }
+}
+
+/**
+ * Handle a synapse/action: route `navigate` to onNavigate, otherwise invoke
+ * onAction (or dispatch an `nb:action` event when no callback is wired).
+ */
+function handleSynapseAction(
+  params: UiActionMessage["params"],
+  callbacks: BridgeCallbacks | undefined,
+): void {
+  const { action, ...actionParams } = params;
+  if (action === "navigate" && actionParams.route && callbacks?.onNavigate) {
+    callbacks.onNavigate(actionParams.route as string);
+    return;
+  }
+  if (callbacks?.onAction) {
+    callbacks.onAction(action, actionParams);
+  } else {
+    window.dispatchEvent(new CustomEvent("nb:action", { detail: { action, ...actionParams } }));
+  }
+}
+
+/**
+ * Handle a synapse/request-file: open the native file picker and forward the
+ * uploaded entries — or a JSON-RPC `-32602` error — back to the iframe.
+ */
+function handleRequestFile(
+  params: SynapseRequestFileMessage["params"] | undefined,
+  id: string,
+  postToIframe: PostToIframe,
+): void {
+  const accept = params?.accept ?? "";
+  const maxSize = params?.maxSize ?? 26_214_400; // 25 MB
+  const multiple = params?.multiple ?? false;
+
+  pickFiles(accept, maxSize, multiple)
+    .then((result) => {
+      postToIframe({ jsonrpc: "2.0", id, result });
+    })
+    .catch((err: unknown) => {
+      const errorMsg = err instanceof Error ? err.message : "File pick failed";
+      postToIframe({
+        jsonrpc: "2.0",
+        id,
+        error: { code: -32602, message: errorMsg },
+      });
+    });
 }
 
 // ---------------------------------------------------------------------------
@@ -935,37 +1032,39 @@ async function pickFiles(accept: string, maxSize: number, multiple: boolean): Pr
     // Fallback: if user cancels, focus returns to window
     window.addEventListener("focus", () => setTimeout(cleanup, 300), { once: true });
 
-    input.addEventListener("change", async () => {
+    input.addEventListener("change", () => {
       resolved = true;
       document.body.removeChild(input);
-
-      const files = input.files;
-      if (!files || files.length === 0) {
-        resolve(multiple ? [] : null);
-        return;
-      }
-
-      try {
-        const selected = Array.from(files);
-        for (const file of selected) {
-          if (file.size > maxSize) {
-            reject(
-              new Error(
-                `File "${file.name}" exceeds maximum size of ${Math.round(maxSize / 1_048_576)} MB`,
-              ),
-            );
-            return;
-          }
-        }
-        const result = await uploadResource(selected);
-        resolve(multiple ? result.files : (result.files[0] ?? null));
-      } catch (err) {
-        reject(err);
-      }
+      // Validate + upload off-thread; settle the picker Promise with the
+      // result (or the size/upload error) exactly as the change fires.
+      processPickedFiles(input.files, maxSize, multiple).then(resolve, reject);
     });
 
     input.click();
   });
+}
+
+/**
+ * Validate picked files against `maxSize`, upload them via `POST /v1/resources`,
+ * and resolve to the persisted entries — or `[]`/`null` when nothing was chosen.
+ * Throws on the first oversize file or an upload failure.
+ */
+async function processPickedFiles(
+  files: FileList | null,
+  maxSize: number,
+  multiple: boolean,
+): Promise<unknown> {
+  if (!files || files.length === 0) return multiple ? [] : null;
+  const selected = Array.from(files);
+  for (const file of selected) {
+    if (file.size > maxSize) {
+      throw new Error(
+        `File "${file.name}" exceeds maximum size of ${Math.round(maxSize / 1_048_576)} MB`,
+      );
+    }
+  }
+  const result = await uploadResource(selected);
+  return multiple ? result.files : (result.files[0] ?? null);
 }
 
 /**

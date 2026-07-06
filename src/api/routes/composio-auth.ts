@@ -1,5 +1,5 @@
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
-import { Hono } from "hono";
+import { type Context, Hono } from "hono";
 import {
   type ComposioConnection,
   saveComposioConnection,
@@ -15,6 +15,7 @@ import {
   validateComposioConfig,
 } from "../../composio/sdk.ts";
 import { log } from "../../observability/log.ts";
+import type { ConnectorCatalogEntry } from "../../registries/projection.ts";
 import { requireAuth } from "../middleware/auth.ts";
 import { requireWorkspace } from "../middleware/workspace.ts";
 import { type AppContext, type AppEnv, apiError } from "../types.ts";
@@ -110,194 +111,39 @@ export function composioAuthRoutes(ctx: AppContext) {
     requireAuth(ctx.authOptions),
     requireWorkspace(ctx.workspaceStore),
     async (c) => {
-      let body: { connectorId?: unknown };
-      try {
-        body = await c.req.json();
-      } catch {
-        return apiError(400, "bad_request", "Body must be JSON.");
-      }
-      const connectorId = typeof body.connectorId === "string" ? body.connectorId : "";
-      if (!connectorId || !isValidConnectorId(connectorId)) {
-        return apiError(400, "bad_request", "connectorId is required and must be a catalog id.");
-      }
-
+      const parsed = await parseInitiateRequest(c);
+      if (parsed instanceof Response) return parsed;
+      const { connectorId } = parsed;
       const wsId = c.var.workspaceId;
-      const directory = ctx.runtime.getConnectorDirectory();
-      const entry = await directory.catalogById(connectorId);
-      if (!entry) {
-        return apiError(404, "connector_not_found", `Connector "${connectorId}" not in catalog.`);
-      }
-      if (entry.auth !== "composio" || !entry.composio) {
-        return apiError(
-          400,
-          "wrong_auth_kind",
-          `Connector "${connectorId}" is not Composio-backed (auth=${entry.auth}).`,
-        );
-      }
 
-      // Platform-wide Composio API key. Single source for the whole
-      // deployment; per-workspace isolation lives in `user_id`. A
-      // missing key is operator config error — surface generic 500
-      // and log specifics rather than telling the API caller which
-      // env var to set (the API isn't operator-facing).
-      const apiKey = process.env.COMPOSIO_API_KEY?.trim();
-      if (!apiKey) {
-        log.warn(
-          "[composio-auth] COMPOSIO_API_KEY not set; cannot initiate connection " +
-            `for ${connectorId} in ${wsId}`,
-        );
-        return apiError(500, "composio_unconfigured", "Composio integration not configured.");
-      }
+      const entry = await loadInitiateCatalogEntry(ctx, connectorId);
+      if (entry instanceof Response) return entry;
 
-      // Per-connector Composio `auth_config_id`. Lives in the catalog
-      // entry's `_meta.composio.authConfigEnv` as the name of the env
-      // var holding the value; the actual id (e.g. `ac_xxx`) is
-      // operator-supplied via 1Password → ExternalSecret → pod env.
-      // The indirection keeps the catalog file free of deployment-
-      // specific identifiers.
-      const authConfigEnvName = entry.composio.authConfigEnv;
-      const authConfigId = process.env[authConfigEnvName]?.trim();
-      if (!authConfigId) {
-        log.warn(
-          `[composio-auth] ${authConfigEnvName} not set; cannot initiate ${connectorId} in ${wsId}`,
-        );
-        return apiError(
-          500,
-          "composio_unconfigured",
-          `Composio auth config for "${connectorId}" not configured.`,
-        );
-      }
+      const creds = resolveComposioCredentials(entry, connectorId, wsId);
+      if (creds instanceof Response) return creds;
+      const { apiKey, authConfigId } = creds;
 
       const userId = composioUserId(wsId);
 
       // Short-circuit: if Composio already has an ACTIVE connected
-      // account for this (userId, authConfigId), reuse it. The
-      // chat-side `manageConnections` flow and an earlier explicit
-      // click both create connected accounts here; without this
-      // dedup we'd hit Composio's "Multiple connected accounts
-      // found … use allowMultiple" error or pile up duplicates.
-      // We adopt the existing account by writing our own
-      // connection.json against its id, transitioning the bundle
-      // state to `running`, and telling the SPA to navigate to the
-      // success page — no second OAuth round-trip.
-      try {
-        const existing = await findActiveComposioConnection({
-          apiKey,
-          userId,
-          authConfigId,
-        });
-        if (existing) {
-          // Ordering matters: bring the source online BEFORE writing
-          // connection.json. `disconnect()` calls
-          // `teardownConnectionSource` which removes the source from
-          // the workspace registry — a reconnect must restart it.
-          // Install-path eager-start works for first connect because
-          // the source has never been torn down; this path handles
-          // every subsequent connect.
-          //
-          // The reordering matters when ensureSourceRegistered fails.
-          // Writing connection.json eagerly would leave the user with
-          // a "connected" state on disk (state derivation reads
-          // connection.json on next boot) while the source isn't
-          // running, plus a success page that contradicts the
-          // connector's actual state. By starting the source first,
-          // a failure leaves a clean slate: connection.json is absent,
-          // the user sees an honest error here, and a retry runs the
-          // same adopt-existing path with no half-written state to
-          // reconcile.
-          const serverName = slugifyServerName(connectorId);
-          const lifecycle = ctx.runtime.getLifecycle();
-          try {
-            await lifecycle.ensureSourceRegistered(serverName, wsId, ctx.runtime.getWorkDir());
-          } catch (err) {
-            const msg = err instanceof Error ? err.message : String(err);
-            log.warn(
-              `[composio-auth] adopt: source registration failed for ${connectorId} in ${wsId}: ${msg}`,
-            );
-            return apiError(
-              502,
-              "composio_adopt_source_start_failed",
-              "Reconnect failed: the existing Composio account was found but the MCP source could not start. Try Disconnect, then Connect again.",
-            );
-          }
-          const connection: ComposioConnection = {
-            connectedAccountId: existing.id,
-            toolkit: entry.composio.toolkit,
-            userId,
-            connectedAt: new Date().toISOString(),
-            status: existing.status,
-          };
-          await saveComposioConnection(ctx.runtime.getWorkDir(), wsId, connectorId, connection);
-          lifecycle.recordConnectionStateChange(
-            serverName,
-            wsId,
-            WORKSPACE_PRINCIPAL_ID,
-            "running",
-          );
-          return c.json({
-            authorizationUrl: workspaceConnectorsUrl(wsId),
-            alreadyConnected: true,
-          });
-        }
-      } catch (err) {
-        // Lookup failures shouldn't block a fresh OAuth attempt —
-        // fall through to initiate. Log so the operator can investigate.
-        log.warn(
-          `[composio-auth] connected-account lookup failed for ${connectorId} in ${wsId}: ${
-            err instanceof Error ? err.message : String(err)
-          }`,
-        );
-      }
+      // account for this (userId, authConfigId), reuse it rather than
+      // running a second OAuth round-trip.
+      const adopted = await adoptExistingComposioConnection(ctx, c, {
+        entry,
+        connectorId,
+        wsId,
+        userId,
+        apiKey,
+        authConfigId,
+      });
+      if (adopted) return adopted;
 
-      const nonce = randomBytes(32).toString("hex");
-
-      // Encode the binding parameters in the callback URL so the
-      // callback handler (which has no workspace middleware — the
-      // user comes back from Composio without our headers) can
-      // reconstruct the (connectorId, wsId) tuple. The cookie hash
-      // commits to all three values; tampering with any of them in
-      // the URL fails the constant-time compare on return.
-      const callbackBase = composioCallbackUrl();
-      const callbackUrl = new URL(callbackBase);
-      callbackUrl.searchParams.set("cid", connectorId);
-      callbackUrl.searchParams.set("ws", wsId);
-      callbackUrl.searchParams.set("n", nonce);
-
-      let initiateResponse: { redirectUrl: string; connectedAccountId: string };
-      try {
-        initiateResponse = await initiateComposioConnection({
-          apiKey,
-          userId,
-          authConfigId,
-          callbackUrl: callbackUrl.toString(),
-        });
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err);
-        log.warn(`[composio-auth] initiate failed for ${connectorId} in ${wsId}: ${msg}`);
-        return apiError(
-          502,
-          "composio_initiate_failed",
-          "Composio rejected the connection initiate.",
-        );
-      }
-
-      // Cookie binds (nonce, connectorId, wsId) to this browser
-      // session. Scoped to /v1/composio-auth/callback so it's only
-      // sent back on the return leg — never leaked to /initiate
-      // calls on adjacent paths or to the SPA.
-      const stateHash = sha256Hex(`${nonce}.${connectorId}.${wsId}`);
-      const cookieParts = [
-        `nb_composio_state=${stateHash}`,
-        "HttpOnly",
-        "SameSite=Lax",
-        "Path=/v1/composio-auth/callback",
-        "Max-Age=900",
-      ];
-      if (ctx.secureCookies) cookieParts.push("Secure");
-      c.header("Set-Cookie", cookieParts.join("; "));
-
-      return c.json({
-        authorizationUrl: initiateResponse.redirectUrl,
+      return initiateFreshComposioConnection(ctx, c, {
+        connectorId,
+        wsId,
+        userId,
+        apiKey,
+        authConfigId,
       });
     },
   );
@@ -307,47 +153,12 @@ export function composioAuthRoutes(ctx: AppContext) {
     c.header("Cache-Control", "no-store");
     c.header("Pragma", "no-cache");
 
-    const connectedAccountId =
-      c.req.query("connectedAccountId") ?? c.req.query("connected_account_id");
-    const status = c.req.query("status") ?? "ACTIVE";
-    const error = c.req.query("error");
-    const cid = c.req.query("cid");
-    const wsId = c.req.query("ws");
-    const nonce = c.req.query("n");
+    const validated = await validateCallbackParams(c);
+    if (validated instanceof Response) return validated;
+    const { connectedAccountId, status, cid, wsId } = validated;
 
-    if (error) {
-      c.header("Content-Security-Policy", ERROR_PAGE_CSP);
-      return c.html(
-        `<html><body><h3>Connection failed</h3><pre>${escapeHtml(error)}</pre></body></html>`,
-        400,
-      );
-    }
-    if (!cid || !wsId || !nonce) {
-      return c.text("missing cid, ws, or nonce", 400);
-    }
-    if (!isValidConnectorId(cid)) {
-      return c.text("invalid cid", 400);
-    }
-    if (!connectedAccountId) {
-      return c.text("missing connectedAccountId", 400);
-    }
-
-    const expected = sha256Hex(`${nonce}.${cid}.${wsId}`);
-    const cookieValue = readCookie(c.req.header("cookie"), "nb_composio_state");
-    if (!cookieValue || !timingSafeEqualHex(cookieValue, expected)) {
-      c.header("Content-Security-Policy", ERROR_PAGE_CSP);
-      return c.html(
-        "<html><body><h3>Authorization session mismatch.</h3>" +
-          "<p>Re-initiate the connection from NimbleBrain.</p></body></html>",
-        400,
-      );
-    }
-
-    const directory = ctx.runtime.getConnectorDirectory();
-    const entry = await directory.catalogById(cid);
-    if (!entry || entry.auth !== "composio" || !entry.composio) {
-      return c.text(`connector "${cid}" is not Composio-backed`, 400);
-    }
+    const entry = await loadCallbackCatalogEntry(ctx, c, cid);
+    if (entry instanceof Response) return entry;
 
     const userId = composioUserId(wsId);
     const connection: ComposioConnection = {
@@ -361,48 +172,17 @@ export function composioAuthRoutes(ctx: AppContext) {
     try {
       await saveComposioConnection(ctx.runtime.getWorkDir(), wsId, cid, connection);
     } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      log.error(`[composio-auth] failed to persist connection for ${cid} in ${wsId}: ${msg}`);
+      log.error(
+        `[composio-auth] failed to persist connection for ${cid} in ${wsId}: ${errMessage(err)}`,
+      );
       return c.text("internal_error", 500);
     }
 
-    // Transition the lifecycle state from `not_authenticated` (set
-    // at boot when connection.json was absent) to `running`. Without
-    // this the UI would keep showing "Sign-in required" until the
-    // next platform restart, even though tools were already callable.
-    //
-    // After a Disconnect → Connect cycle, `teardownConnectionSource`
-    // has already removed the source from the workspace registry —
-    // pure state mutation isn't enough to recover. `ensureSourceRegistered`
-    // brings the source back up from the persisted BundleRef if it's
-    // missing, no-ops if it's already there (first-connect path,
-    // where the install-eager-start already registered).
-    const serverName = slugifyServerName(cid);
-    try {
-      const lifecycle = ctx.runtime.getLifecycle();
-      await lifecycle.ensureSourceRegistered(serverName, wsId, ctx.runtime.getWorkDir());
-      lifecycle.recordConnectionStateChange(serverName, wsId, WORKSPACE_PRINCIPAL_ID, "running");
-    } catch (err) {
-      // Non-fatal — the next boot will derive `running` from
-      // connection.json and start the source from the persisted ref.
-      // Log and continue to the success page.
-      const msg = err instanceof Error ? err.message : String(err);
-      log.warn(
-        `[composio-auth] source recovery / state transition failed for ${cid} in ${wsId} (will recover on restart): ${msg}`,
-      );
-    }
+    await recoverCallbackSource(ctx, cid, wsId);
 
     // One-shot cookie — clear on success so a refresh of this page
     // can't be used as a replay vector.
-    const expireParts = [
-      "nb_composio_state=",
-      "HttpOnly",
-      "SameSite=Lax",
-      "Path=/v1/composio-auth/callback",
-      "Max-Age=0",
-    ];
-    if (ctx.secureCookies) expireParts.push("Secure");
-    c.header("Set-Cookie", expireParts.join("; "));
+    c.header("Set-Cookie", buildComposioStateCookie("", 0, ctx.secureCookies));
 
     const returnUrl = workspaceConnectorsUrl(wsId);
     const safeReturnUrl = escapeHtml(returnUrl);
@@ -443,6 +223,340 @@ export function composioAuthRoutes(ctx: AppContext) {
   });
 
   return app;
+}
+
+// ── /initiate + /callback concern helpers ─────────────────────────
+//
+// Each returns either its success value or a ready-to-send `Response`;
+// the handler forwards the `Response` (`instanceof Response`) and
+// otherwise proceeds. The validation order and every status code /
+// error string are the same as an inline implementation — these only
+// move code, not behavior.
+
+/** A catalog entry confirmed to be Composio-backed (`composio` config present). */
+type ComposioCatalogEntry = ConnectorCatalogEntry & {
+  composio: NonNullable<ConnectorCatalogEntry["composio"]>;
+};
+
+/** Message text for an unknown thrown value — `.message` for Errors, else stringified. */
+function errMessage(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
+}
+
+/** Parse the initiate body and validate `connectorId` is a catalog id, else an error Response. */
+async function parseInitiateRequest(
+  c: Context<AppEnv>,
+): Promise<{ connectorId: string } | Response> {
+  let body: { connectorId?: unknown };
+  try {
+    body = await c.req.json();
+  } catch {
+    return apiError(400, "bad_request", "Body must be JSON.");
+  }
+  const connectorId = typeof body.connectorId === "string" ? body.connectorId : "";
+  if (!connectorId || !isValidConnectorId(connectorId)) {
+    return apiError(400, "bad_request", "connectorId is required and must be a catalog id.");
+  }
+  return { connectorId };
+}
+
+/** Load `connectorId` from the catalog and confirm it is Composio-backed, else an error Response. */
+async function loadInitiateCatalogEntry(
+  ctx: AppContext,
+  connectorId: string,
+): Promise<ComposioCatalogEntry | Response> {
+  const directory = ctx.runtime.getConnectorDirectory();
+  const entry = await directory.catalogById(connectorId);
+  if (!entry) {
+    return apiError(404, "connector_not_found", `Connector "${connectorId}" not in catalog.`);
+  }
+  if (entry.auth !== "composio" || !entry.composio) {
+    return apiError(
+      400,
+      "wrong_auth_kind",
+      `Connector "${connectorId}" is not Composio-backed (auth=${entry.auth}).`,
+    );
+  }
+  return entry as ComposioCatalogEntry;
+}
+
+/** Resolve the platform Composio API key and the connector's auth-config id from env, else an error Response. */
+function resolveComposioCredentials(
+  entry: ComposioCatalogEntry,
+  connectorId: string,
+  wsId: string,
+): { apiKey: string; authConfigId: string } | Response {
+  // Platform-wide Composio API key. Single source for the whole
+  // deployment; per-workspace isolation lives in `user_id`. A
+  // missing key is operator config error — surface generic 500
+  // and log specifics rather than telling the API caller which
+  // env var to set (the API isn't operator-facing).
+  const apiKey = process.env.COMPOSIO_API_KEY?.trim();
+  if (!apiKey) {
+    log.warn(
+      "[composio-auth] COMPOSIO_API_KEY not set; cannot initiate connection " +
+        `for ${connectorId} in ${wsId}`,
+    );
+    return apiError(500, "composio_unconfigured", "Composio integration not configured.");
+  }
+
+  // Per-connector Composio `auth_config_id`. Lives in the catalog
+  // entry's `_meta.composio.authConfigEnv` as the name of the env
+  // var holding the value; the actual id (e.g. `ac_xxx`) is
+  // operator-supplied via 1Password → ExternalSecret → pod env.
+  // The indirection keeps the catalog file free of deployment-
+  // specific identifiers.
+  const authConfigEnvName = entry.composio.authConfigEnv;
+  const authConfigId = process.env[authConfigEnvName]?.trim();
+  if (!authConfigId) {
+    log.warn(
+      `[composio-auth] ${authConfigEnvName} not set; cannot initiate ${connectorId} in ${wsId}`,
+    );
+    return apiError(
+      500,
+      "composio_unconfigured",
+      `Composio auth config for "${connectorId}" not configured.`,
+    );
+  }
+
+  return { apiKey, authConfigId };
+}
+
+/** Reuse an already-ACTIVE Composio account for this workspace (adopting it), or null to run a fresh OAuth initiate. */
+async function adoptExistingComposioConnection(
+  ctx: AppContext,
+  c: Context<AppEnv>,
+  args: {
+    entry: ComposioCatalogEntry;
+    connectorId: string;
+    wsId: string;
+    userId: string;
+    apiKey: string;
+    authConfigId: string;
+  },
+): Promise<Response | null> {
+  const { entry, connectorId, wsId, userId, apiKey, authConfigId } = args;
+  // The chat-side `manageConnections` flow and an earlier explicit
+  // click both create connected accounts here; without this dedup
+  // we'd hit Composio's "Multiple connected accounts found … use
+  // allowMultiple" error or pile up duplicates. We adopt the existing
+  // account by writing our own connection.json against its id,
+  // transitioning the bundle state to `running`, and telling the SPA
+  // to navigate to the success page — no second OAuth round-trip.
+  try {
+    const existing = await findActiveComposioConnection({
+      apiKey,
+      userId,
+      authConfigId,
+    });
+    if (existing) {
+      // Ordering matters: bring the source online BEFORE writing
+      // connection.json. `disconnect()` calls
+      // `teardownConnectionSource` which removes the source from
+      // the workspace registry — a reconnect must restart it.
+      // Install-path eager-start works for first connect because
+      // the source has never been torn down; this path handles
+      // every subsequent connect.
+      //
+      // The reordering matters when ensureSourceRegistered fails.
+      // Writing connection.json eagerly would leave the user with
+      // a "connected" state on disk (state derivation reads
+      // connection.json on next boot) while the source isn't
+      // running, plus a success page that contradicts the
+      // connector's actual state. By starting the source first,
+      // a failure leaves a clean slate: connection.json is absent,
+      // the user sees an honest error here, and a retry runs the
+      // same adopt-existing path with no half-written state to
+      // reconcile.
+      const serverName = slugifyServerName(connectorId);
+      const lifecycle = ctx.runtime.getLifecycle();
+      try {
+        await lifecycle.ensureSourceRegistered(serverName, wsId, ctx.runtime.getWorkDir());
+      } catch (err) {
+        log.warn(
+          `[composio-auth] adopt: source registration failed for ${connectorId} in ${wsId}: ${errMessage(err)}`,
+        );
+        return apiError(
+          502,
+          "composio_adopt_source_start_failed",
+          "Reconnect failed: the existing Composio account was found but the MCP source could not start. Try Disconnect, then Connect again.",
+        );
+      }
+      const connection: ComposioConnection = {
+        connectedAccountId: existing.id,
+        toolkit: entry.composio.toolkit,
+        userId,
+        connectedAt: new Date().toISOString(),
+        status: existing.status,
+      };
+      await saveComposioConnection(ctx.runtime.getWorkDir(), wsId, connectorId, connection);
+      lifecycle.recordConnectionStateChange(serverName, wsId, WORKSPACE_PRINCIPAL_ID, "running");
+      return c.json({
+        authorizationUrl: workspaceConnectorsUrl(wsId),
+        alreadyConnected: true,
+      });
+    }
+  } catch (err) {
+    // Lookup failures shouldn't block a fresh OAuth attempt —
+    // fall through to initiate. Log so the operator can investigate.
+    log.warn(
+      `[composio-auth] connected-account lookup failed for ${connectorId} in ${wsId}: ${errMessage(err)}`,
+    );
+  }
+  return null;
+}
+
+/** Begin a fresh Composio OAuth connection: bind the state cookie and return the vendor authorization URL. */
+async function initiateFreshComposioConnection(
+  ctx: AppContext,
+  c: Context<AppEnv>,
+  args: {
+    connectorId: string;
+    wsId: string;
+    userId: string;
+    apiKey: string;
+    authConfigId: string;
+  },
+): Promise<Response> {
+  const { connectorId, wsId, userId, apiKey, authConfigId } = args;
+  const nonce = randomBytes(32).toString("hex");
+
+  // Encode the binding parameters in the callback URL so the
+  // callback handler (which has no workspace middleware — the
+  // user comes back from Composio without our headers) can
+  // reconstruct the (connectorId, wsId) tuple. The cookie hash
+  // commits to all three values; tampering with any of them in
+  // the URL fails the constant-time compare on return.
+  const callbackBase = composioCallbackUrl();
+  const callbackUrl = new URL(callbackBase);
+  callbackUrl.searchParams.set("cid", connectorId);
+  callbackUrl.searchParams.set("ws", wsId);
+  callbackUrl.searchParams.set("n", nonce);
+
+  let initiateResponse: { redirectUrl: string; connectedAccountId: string };
+  try {
+    initiateResponse = await initiateComposioConnection({
+      apiKey,
+      userId,
+      authConfigId,
+      callbackUrl: callbackUrl.toString(),
+    });
+  } catch (err) {
+    log.warn(`[composio-auth] initiate failed for ${connectorId} in ${wsId}: ${errMessage(err)}`);
+    return apiError(502, "composio_initiate_failed", "Composio rejected the connection initiate.");
+  }
+
+  // Cookie binds (nonce, connectorId, wsId) to this browser
+  // session. Scoped to /v1/composio-auth/callback so it's only
+  // sent back on the return leg — never leaked to /initiate
+  // calls on adjacent paths or to the SPA.
+  const stateHash = sha256Hex(`${nonce}.${connectorId}.${wsId}`);
+  c.header("Set-Cookie", buildComposioStateCookie(stateHash, 900, ctx.secureCookies));
+
+  return c.json({
+    authorizationUrl: initiateResponse.redirectUrl,
+  });
+}
+
+/** Validate the callback query params and the session-binding cookie, returning the verified tuple or an error Response. */
+async function validateCallbackParams(
+  c: Context<AppEnv>,
+): Promise<
+  | { connectedAccountId: string; status: string; cid: string; wsId: string; nonce: string }
+  | Response
+> {
+  const connectedAccountId =
+    c.req.query("connectedAccountId") ?? c.req.query("connected_account_id");
+  const status = c.req.query("status") ?? "ACTIVE";
+  const error = c.req.query("error");
+  const cid = c.req.query("cid");
+  const wsId = c.req.query("ws");
+  const nonce = c.req.query("n");
+
+  if (error) {
+    c.header("Content-Security-Policy", ERROR_PAGE_CSP);
+    return c.html(
+      `<html><body><h3>Connection failed</h3><pre>${escapeHtml(error)}</pre></body></html>`,
+      400,
+    );
+  }
+  if (!cid || !wsId || !nonce) {
+    return c.text("missing cid, ws, or nonce", 400);
+  }
+  if (!isValidConnectorId(cid)) {
+    return c.text("invalid cid", 400);
+  }
+  if (!connectedAccountId) {
+    return c.text("missing connectedAccountId", 400);
+  }
+
+  const expected = sha256Hex(`${nonce}.${cid}.${wsId}`);
+  const cookieValue = readCookie(c.req.header("cookie"), "nb_composio_state");
+  if (!cookieValue || !timingSafeEqualHex(cookieValue, expected)) {
+    c.header("Content-Security-Policy", ERROR_PAGE_CSP);
+    return c.html(
+      "<html><body><h3>Authorization session mismatch.</h3>" +
+        "<p>Re-initiate the connection from NimbleBrain.</p></body></html>",
+      400,
+    );
+  }
+
+  return { connectedAccountId, status, cid, wsId, nonce };
+}
+
+/** Load a callback `cid` from the catalog and confirm it is Composio-backed, else an error Response. */
+async function loadCallbackCatalogEntry(
+  ctx: AppContext,
+  c: Context<AppEnv>,
+  cid: string,
+): Promise<ComposioCatalogEntry | Response> {
+  const directory = ctx.runtime.getConnectorDirectory();
+  const entry = await directory.catalogById(cid);
+  if (!entry || entry.auth !== "composio" || !entry.composio) {
+    return c.text(`connector "${cid}" is not Composio-backed`, 400);
+  }
+  return entry as ComposioCatalogEntry;
+}
+
+/** Bring the connector's MCP source online and record the `running` transition after a callback (non-fatal). */
+async function recoverCallbackSource(ctx: AppContext, cid: string, wsId: string): Promise<void> {
+  // Transition the lifecycle state from `not_authenticated` (set
+  // at boot when connection.json was absent) to `running`. Without
+  // this the UI would keep showing "Sign-in required" until the
+  // next platform restart, even though tools were already callable.
+  //
+  // After a Disconnect → Connect cycle, `teardownConnectionSource`
+  // has already removed the source from the workspace registry —
+  // pure state mutation isn't enough to recover. `ensureSourceRegistered`
+  // brings the source back up from the persisted BundleRef if it's
+  // missing, no-ops if it's already there (first-connect path,
+  // where the install-eager-start already registered).
+  const serverName = slugifyServerName(cid);
+  try {
+    const lifecycle = ctx.runtime.getLifecycle();
+    await lifecycle.ensureSourceRegistered(serverName, wsId, ctx.runtime.getWorkDir());
+    lifecycle.recordConnectionStateChange(serverName, wsId, WORKSPACE_PRINCIPAL_ID, "running");
+  } catch (err) {
+    // Non-fatal — the next boot will derive `running` from
+    // connection.json and start the source from the persisted ref.
+    // Log and continue to the success page.
+    log.warn(
+      `[composio-auth] source recovery / state transition failed for ${cid} in ${wsId} (will recover on restart): ${errMessage(err)}`,
+    );
+  }
+}
+
+/** Build the `nb_composio_state` Set-Cookie value scoped to the callback path. */
+function buildComposioStateCookie(value: string, maxAgeSeconds: number, secure: boolean): string {
+  const parts = [
+    `nb_composio_state=${value}`,
+    "HttpOnly",
+    "SameSite=Lax",
+    "Path=/v1/composio-auth/callback",
+    `Max-Age=${maxAgeSeconds}`,
+  ];
+  if (secure) parts.push("Secure");
+  return parts.join("; ");
 }
 
 // ── Helpers shared with mcp-auth.ts in shape (kept inline to avoid
