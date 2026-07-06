@@ -237,6 +237,30 @@ function deferred<T>(): Deferred<T> {
 }
 
 /**
+ * Terminal-shape + policy inputs for `recover`. The connection-failure
+ * classification is op-independent and shared; the op-specific terminal
+ * representations (a `ToolResult` for `execute`, a `ResourceData | null` for
+ * `readResource`) come from `surface` / `reauth` / `miss`.
+ */
+interface RecoveryShape<T> {
+  idempotent: boolean;
+  /** How to treat an `unknown` (unclassifiable) throw. Tool calls set this so
+   *  an unrecognized transport error still recovers (old "restart on any
+   *  throw" robustness); reads leave it false so a malformed result / 429 /
+   *  server code surfaces instead of restart-storming the whole source. */
+  recoverUnknown: boolean;
+  /** Per-call-site backoff schedule. Tool calls pass a single immediate
+   *  attempt (`TOOL_CALL_RECOVERY_DELAYS`) to preserve the historical
+   *  one-retry budget — a non-idempotent mutating call must NOT be replayed
+   *  several times. Reads pass the wider roll-window schedule. The test seam
+   *  `recoveryDelaysMs` overrides both. */
+  delays: readonly number[];
+  surface: (err: unknown) => T;
+  reauth: (err: unknown) => T;
+  miss?: (err: unknown) => T;
+}
+
+/**
  * Sanitize an untrusted `serverInfo.version` before we store or surface it. The
  * string comes from the MCP server — a Composio gateway or a third-party OAuth
  * server controls it — so drop C0/C1 control characters and cap the length.
@@ -397,6 +421,111 @@ export class McpSource implements ToolSource {
     this.stopping = false;
     this.stopped = false;
 
+    await this.initTransport();
+
+    // Advertise client-side tasks capability per MCP spec draft 2025-11-25:
+    // servers with `execution.taskSupport` on any tool see that this client
+    // honors task-augmented `tools/call` and will attach `params.task: {ttl}`
+    // when calling those tools. The engine then polls via tasks/get and
+    // retrieves via tasks/result instead of blocking the request.
+    //
+    // The `extensions` block carries NimbleBrain-namespaced vendor
+    // capabilities (e.g. `ai.nimblebrain/host-resources`) per the MCP
+    // extensions spec — https://modelcontextprotocol.io/extensions/overview.
+    // Bundles read these from their ClientCapabilities to opt into
+    // bundle→host resource reads. Phase 1 advertises the capability;
+    // handlers land in Phase 2.
+    this.client = new Client(
+      { name: "nimblebrain", version: "0.1.0" },
+      {
+        capabilities: {
+          tasks: {
+            requests: { tools: { call: {} } },
+            cancel: {},
+            list: {},
+          },
+          extensions: hostExtensions(),
+        },
+      },
+    );
+    // Inbound host-resources handlers registered before connect so they're
+    // ready the moment the bundle issues its first request. No-op for
+    // in-process sources that don't pass a bundleContext.
+    this.registerBundleHandlers(this.client);
+    // Native `tools/list_changed` subscription — must be on the client before
+    // connect so a notification arriving immediately after `initialize` isn't
+    // dropped.
+    this.registerToolsChangedHandler(this.client);
+
+    // Timeout MCP handshake — remote gets shorter timeout (15s vs 30s)
+    const CONNECT_TIMEOUT = this.mode.type === "remote" ? 15_000 : 30_000;
+
+    try {
+      await this.connectWithTimeout(CONNECT_TIMEOUT);
+    } catch (err) {
+      // One-shot OAuth retry: if we have an authProvider and the SDK threw
+      // UnauthorizedError, drive the provider's pending flow, finish auth on the
+      // existing transport, then rebuild the transport+client and retry connect
+      // exactly once. `retryConnectWithOAuth` throws on failure.
+      if (this.canRetryWithOAuth(err)) {
+        await this.retryConnectWithOAuth(CONNECT_TIMEOUT);
+        return;
+      }
+
+      await this.cleanupOnStartFailure();
+      throw err;
+    }
+
+    this.dead = false;
+    this.startedAt = Date.now();
+
+    // Now that start has succeeded, wire transport close-detection.
+    // Closes from this point on indicate a real mid-session disconnect
+    // (server crashed, network drop, idle timeout) and should mark the
+    // source dead so HealthMonitor can take over.
+    if (this.transport && this.mode.type === "remote") {
+      this.transport.onclose = () => this.emitSourceCrashed("Remote transport closed");
+    }
+
+    // Capture the server's initialize `instructions` field (may be undefined).
+    // The MCP SDK stores it internally; we expose it via getInstructions() so
+    // the system prompt composer can render it in the apps list.
+    const instructions = this.client.getInstructions();
+    this._instructions = typeof instructions === "string" ? instructions : undefined;
+
+    // Capture the server's reported version (serverInfo.version, from the same
+    // initialize response). The server is untrusted — a Composio gateway or a
+    // third-party OAuth server controls this string — so strip control chars and
+    // cap length before storing. Display-only; never a security signal. A server
+    // that sets no version reports its framework's instead; that's still what it
+    // claims, so we keep it and let the UI decide (running version primary,
+    // catalog version shown only on drift).
+    const reportedVersion = this.client.getServerVersion()?.version;
+    this._serverVersion =
+      typeof reportedVersion === "string" ? sanitizeReportedVersion(reportedVersion) : undefined;
+
+    this.startTaskSweeper();
+
+    // Connect succeeded — this source's tools are now enumerable where a
+    // moment ago `tools()` would have thrown "not started". This is the
+    // signal the cross-workspace tool-list aggregator needs: a union memoized
+    // while we were unreachable (slow cold-start, crash + HealthMonitor
+    // restart, deferred/pending-auth start) is now stale and must be dropped.
+    // This is the PRIMARY success seam (initial start + `tryRestart`); the
+    // OAuth-retry early-return above is the secondary seam and emits there too.
+    // Cheap and idempotent downstream: invalidation is a no-op when nothing is
+    // cached yet (e.g. during boot, before any request has populated the union).
+    this.emitToolsChanged();
+  }
+
+  /**
+   * Construct `this.transport` (and, for in-process, `this.inProcessServer`)
+   * for the current `mode`. Wires the crash-detection `onclose` handler for
+   * stdio and in-process immediately; remote's is wired in `start()` AFTER a
+   * successful connect (see the remote branch note) so a close during the
+   * handshake isn't misclassified as a mid-session crash.
+   */
+  private async initTransport(): Promise<void> {
     if (this.mode.type === "stdio") {
       const stdioTransport = new StdioClientTransport({
         command: this.mode.spawn.command,
@@ -457,166 +586,92 @@ export class McpSource implements ToolSource {
 
       this.transport.onclose = () => this.emitSourceCrashed("In-process transport closed");
     }
+  }
 
-    // Advertise client-side tasks capability per MCP spec draft 2025-11-25:
-    // servers with `execution.taskSupport` on any tool see that this client
-    // honors task-augmented `tools/call` and will attach `params.task: {ttl}`
-    // when calling those tools. The engine then polls via tasks/get and
-    // retrieves via tasks/result instead of blocking the request.
-    //
-    // The `extensions` block carries NimbleBrain-namespaced vendor
-    // capabilities (e.g. `ai.nimblebrain/host-resources`) per the MCP
-    // extensions spec — https://modelcontextprotocol.io/extensions/overview.
-    // Bundles read these from their ClientCapabilities to opt into
-    // bundle→host resource reads. Phase 1 advertises the capability;
-    // handlers land in Phase 2.
-    this.client = new Client(
-      { name: "nimblebrain", version: "0.1.0" },
-      {
-        capabilities: {
-          tasks: {
-            requests: { tools: { call: {} } },
-            cancel: {},
-            list: {},
-          },
-          extensions: hostExtensions(),
-        },
-      },
+  /**
+   * Whether a failed connect can be retried through the headless OAuth flow:
+   * a remote source with an attached provider and a live transport that threw
+   * `UnauthorizedError`.
+   */
+  private canRetryWithOAuth(err: unknown): boolean {
+    return (
+      err instanceof UnauthorizedError &&
+      this.mode.type === "remote" &&
+      this.mode.authProvider != null &&
+      this.transport != null
     );
-    // Inbound host-resources handlers registered before connect so they're
-    // ready the moment the bundle issues its first request. No-op for
-    // in-process sources that don't pass a bundleContext.
-    this.registerBundleHandlers(this.client);
-    // Native `tools/list_changed` subscription — must be on the client before
-    // connect so a notification arriving immediately after `initialize` isn't
-    // dropped.
-    this.registerToolsChangedHandler(this.client);
+  }
 
-    // Timeout MCP handshake — remote gets shorter timeout (15s vs 30s)
-    const CONNECT_TIMEOUT = this.mode.type === "remote" ? 15_000 : 30_000;
-
+  /**
+   * One-shot OAuth retry after a `UnauthorizedError` on connect. The provider's
+   * pending flow was either resolved in-process (headless, e.g. Reboot
+   * Anonymous) or rejected with a clear error (interactive, unsupported). Await
+   * the flow, finish auth on the EXISTING transport (so tokens land via
+   * `authProvider.saveTokens`), then tear down and rebuild the transport+client
+   * for the retry — `StreamableHTTPClientTransport` rejects a second `start()`
+   * on the same instance (matching the SDK's `simpleOAuthClient` example pattern
+   * of new-transport-per-attempt). Resolves on success; rejects on failure after
+   * cleaning up. Preconditions are `canRetryWithOAuth`.
+   */
+  private async retryConnectWithOAuth(timeoutMs: number): Promise<void> {
+    if (this.mode.type !== "remote" || !this.mode.authProvider || !this.transport) {
+      throw new Error("[mcp-source] retryConnectWithOAuth called without OAuth preconditions");
+    }
+    const authProvider = this.mode.authProvider;
+    const transport = this.transport;
     try {
-      await this.connectWithTimeout(CONNECT_TIMEOUT);
-    } catch (err) {
-      // One-shot OAuth retry: if we have an authProvider and the SDK threw
-      // UnauthorizedError, the provider's pending flow was either resolved
-      // in-process (headless, e.g. Reboot Anonymous) or rejected with a
-      // clear error (interactive, which we don't support yet). Await the
-      // flow, finish auth on the EXISTING transport (so tokens land via
-      // authProvider.saveTokens), then tear down the transport+client and
-      // rebuild for the retry — `StreamableHTTPClientTransport` rejects a
-      // second `start()` on the same instance (matching the SDK's own
-      // `simpleOAuthClient` example pattern of new-transport-per-attempt).
-      if (
-        err instanceof UnauthorizedError &&
-        this.mode.type === "remote" &&
-        this.mode.authProvider &&
-        this.transport
-      ) {
-        try {
-          const code = await this.mode.authProvider.awaitPendingFlow();
-          const authable = this.transport as AuthFinishableTransport;
-          if (typeof authable.finishAuth !== "function") {
-            throw new Error(
-              `[mcp-source] transport does not support finishAuth (got ${this.transport.constructor.name})`,
-            );
-          }
-          await authable.finishAuth(code);
-          log.debug("mcp", `[oauth] ${this.name}: finishAuth ok, recreating transport for retry`);
-
-          // Drop the first-attempt transport+client. Both are single-use
-          // after a failed start; the SDK tracks internal state
-          // (AbortController on the transport, handshake promise on the
-          // client) that a second connect would trip over.
-          //
-          // Clear the onclose handler before close — the existing handler
-          // marks the source dead and emits source.crashed, which would
-          // race with the retry path: the upcoming HealthMonitor sweep
-          // would see `dead === true` and try to restart, fighting our
-          // own retry. Re-attached on the new transport in
-          // `rebuildRemoteTransport`.
-          if (this.transport) this.transport.onclose = undefined;
-          await this.cleanupOnStartFailure();
-          this.rebuildRemoteTransport();
-          this.client = this.buildClient();
-          // Re-register inbound host-resources handlers on the rebuilt
-          // Client — handler tables don't carry over from the prior
-          // instance.
-          this.registerBundleHandlers(this.client);
-          this.registerToolsChangedHandler(this.client);
-          // Re-arm crash detection for the retry: cleanupOnStartFailure
-          // set `stopping = true` to suppress its own teardown noise; we
-          // need it false again before the new transport's onclose can
-          // fire usefully. If this retry connect also fails, the catch
-          // below calls cleanupOnStartFailure again and re-suppresses.
-          this.stopping = false;
-
-          await this.connectWithTimeout(CONNECT_TIMEOUT);
-          this.startedAt = Date.now();
-          // This early-return is a SECOND success seam (the headless OAuth
-          // auto-resolve retry). The source is now enumerable, so it must emit
-          // the same tools-changed signal as the bottom seam — otherwise a
-          // union memoized while a remote OAuth source was unreachable (e.g.
-          // `tryRestart` re-auth, or a union cached between addSource and
-          // connect-completion on a post-boot startAuth) stays stale: the exact
-          // bug this signal exists to kill, on the one branch that skipped it.
-          // FOLLOW-UP: this branch also skips `dead = false`, the onclose
-          // rewiring, instructions capture, and `startTaskSweeper()` from the
-          // bottom seam — a pre-existing asymmetry (tracked separately). The
-          // right long-term shape is to converge this path onto the bottom seam
-          // instead of early-returning.
-          this.emitToolsChanged();
-          return;
-        } catch (retryErr) {
-          await this.cleanupOnStartFailure();
-          throw retryErr;
-        }
+      const code = await authProvider.awaitPendingFlow();
+      const authable = transport as AuthFinishableTransport;
+      if (typeof authable.finishAuth !== "function") {
+        throw new Error(
+          `[mcp-source] transport does not support finishAuth (got ${transport.constructor.name})`,
+        );
       }
+      await authable.finishAuth(code);
+      log.debug("mcp", `[oauth] ${this.name}: finishAuth ok, recreating transport for retry`);
 
+      // Drop the first-attempt transport+client. Both are single-use after a
+      // failed start; the SDK tracks internal state (AbortController on the
+      // transport, handshake promise on the client) that a second connect would
+      // trip over.
+      //
+      // Clear the onclose handler before close — the existing handler marks the
+      // source dead and emits source.crashed, which would race with the retry
+      // path: the upcoming HealthMonitor sweep would see `dead === true` and try
+      // to restart, fighting our own retry. Re-attached on the new transport in
+      // `rebuildRemoteTransport`.
+      transport.onclose = undefined;
       await this.cleanupOnStartFailure();
-      throw err;
+      this.rebuildRemoteTransport();
+      this.client = this.buildClient();
+      // Re-register inbound host-resources handlers on the rebuilt Client —
+      // handler tables don't carry over from the prior instance.
+      this.registerBundleHandlers(this.client);
+      this.registerToolsChangedHandler(this.client);
+      // Re-arm crash detection for the retry: cleanupOnStartFailure set
+      // `stopping = true` to suppress its own teardown noise; we need it false
+      // again before the new transport's onclose can fire usefully. If this
+      // retry connect also fails, the catch below re-suppresses.
+      this.stopping = false;
+
+      await this.connectWithTimeout(timeoutMs);
+      this.startedAt = Date.now();
+      // This is a SECOND success seam (the headless OAuth auto-resolve retry).
+      // The source is now enumerable, so it must emit the same tools-changed
+      // signal as the bottom seam — otherwise a union memoized while a remote
+      // OAuth source was unreachable (e.g. `tryRestart` re-auth, or a union
+      // cached between addSource and connect-completion on a post-boot
+      // startAuth) stays stale: the exact bug this signal exists to kill, on
+      // the one branch that skipped it. FOLLOW-UP: this branch also skips
+      // `dead = false`, the onclose rewiring, instructions capture, and
+      // `startTaskSweeper()` from the bottom seam — a pre-existing asymmetry
+      // (tracked separately). The right long-term shape is to converge this
+      // path onto the bottom seam instead of early-returning.
+      this.emitToolsChanged();
+    } catch (retryErr) {
+      await this.cleanupOnStartFailure();
+      throw retryErr;
     }
-
-    this.dead = false;
-    this.startedAt = Date.now();
-
-    // Now that start has succeeded, wire transport close-detection.
-    // Closes from this point on indicate a real mid-session disconnect
-    // (server crashed, network drop, idle timeout) and should mark the
-    // source dead so HealthMonitor can take over.
-    if (this.transport && this.mode.type === "remote") {
-      this.transport.onclose = () => this.emitSourceCrashed("Remote transport closed");
-    }
-
-    // Capture the server's initialize `instructions` field (may be undefined).
-    // The MCP SDK stores it internally; we expose it via getInstructions() so
-    // the system prompt composer can render it in the apps list.
-    const instructions = this.client.getInstructions();
-    this._instructions = typeof instructions === "string" ? instructions : undefined;
-
-    // Capture the server's reported version (serverInfo.version, from the same
-    // initialize response). The server is untrusted — a Composio gateway or a
-    // third-party OAuth server controls this string — so strip control chars and
-    // cap length before storing. Display-only; never a security signal. A server
-    // that sets no version reports its framework's instead; that's still what it
-    // claims, so we keep it and let the UI decide (running version primary,
-    // catalog version shown only on drift).
-    const reportedVersion = this.client.getServerVersion()?.version;
-    this._serverVersion =
-      typeof reportedVersion === "string" ? sanitizeReportedVersion(reportedVersion) : undefined;
-
-    this.startTaskSweeper();
-
-    // Connect succeeded — this source's tools are now enumerable where a
-    // moment ago `tools()` would have thrown "not started". This is the
-    // signal the cross-workspace tool-list aggregator needs: a union memoized
-    // while we were unreachable (slow cold-start, crash + HealthMonitor
-    // restart, deferred/pending-auth start) is now stale and must be dropped.
-    // This is the PRIMARY success seam (initial start + `tryRestart`); the
-    // OAuth-retry early-return above is the secondary seam and emits there too.
-    // Cheap and idempotent downstream: invalidation is a no-op when nothing is
-    // cached yet (e.g. during boot, before any request has populated the union).
-    this.emitToolsChanged();
   }
 
   private async connectWithTimeout(timeoutMs: number): Promise<void> {
@@ -1107,6 +1162,56 @@ export class McpSource implements ToolSource {
     return this.cachedTools?.find((t) => t.name === fullName);
   }
 
+  /**
+   * Recover string-encoded structured args against THIS server's own advertised
+   * schema, then strip no-op optional values — both keyed off `tool.inputSchema`,
+   * the schema this source advertised at `tools/list`.
+   *
+   * Coerce first: models routinely emit object/array parameters as JSON-encoded
+   * strings (`to_recipients: "[\"a@b.com\"]"` instead of the array). The engine
+   * runs the same coercion against the schema it built for the LLM, but that view
+   * can diverge from this source's live schema (search-promoted tools,
+   * cross-workspace dispatch) — and any divergence means a stringified array
+   * reaches the wire and the upstream validator rejects it ("Input should be a
+   * valid list on parameter to_recipients"). Re-coercing here, at the dispatch
+   * boundary, against the source's own schema closes that gap for every call
+   * routed through `execute` — the agent loop's inline and task-augmented paths
+   * both flow through here. `coerceInputForSchema` is pure and idempotent: an
+   * already-correct array survives unchanged, so the redundant engine-side pass
+   * is harmless.
+   *
+   * Scope: this covers the `execute` path only. The external `/mcp` task surface
+   * dispatches via `startToolAsTask` directly (see mcp-server.ts), bypassing
+   * this; that path is folded into the separate `/mcp` overhaul (#423).
+   * Limitation: coercion is a no-op when the array/object param is expressed via
+   * `$ref`/`allOf` (see `coerce-input.ts`) — Composio's flat `type: "array"`
+   * schemas are covered; richer shapes are tracked in #424.
+   *
+   * Order matters: coerce before scrub so a stringified empty array (`"[]"`)
+   * becomes `[]` and is then eligible for no-op stripping.
+   */
+  private prepareDispatchArgs(
+    tool: Tool | undefined,
+    input: Record<string, unknown>,
+    toolName: string,
+  ): Record<string, unknown> {
+    const coerced = tool?.inputSchema ? coerceInputForSchema(input, tool.inputSchema) : input;
+    // Strip no-op values models routinely emit for optional fields (empty
+    // strings, nil UUIDs, empty arrays). Some upstream APIs treat these as real
+    // values and reject with HTTP 400. Equivalent to the model having omitted the
+    // field. Required fields pass through unchanged.
+    const scrubbed = tool?.inputSchema
+      ? scrubArgsForDispatch(coerced, tool.inputSchema)
+      : { args: coerced, stripped: [] };
+    if (scrubbed.stripped.length > 0) {
+      log.debug(
+        "mcp",
+        `scrub source=${this.name} tool=${toolName} stripped=${scrubbed.stripped.join(",")}`,
+      );
+    }
+    return scrubbed.args;
+  }
+
   async execute(
     toolName: string,
     input: Record<string, unknown>,
@@ -1126,57 +1231,17 @@ export class McpSource implements ToolSource {
     const taskSupport = tool?.execution?.taskSupport;
     const isTaskAugmented = taskSupport === "optional" || taskSupport === "required";
 
-    // Recover string-encoded structured args against THIS server's own
-    // advertised schema, then strip no-op optional values — both keyed off
-    // `tool.inputSchema`, the schema this source advertised at `tools/list`.
-    //
-    // Coerce first: models routinely emit object/array parameters as
-    // JSON-encoded strings (`to_recipients: "[\"a@b.com\"]"` instead of the
-    // array). The engine runs the same coercion against the schema it built
-    // for the LLM, but that view can diverge from this source's live schema
-    // (search-promoted tools, cross-workspace dispatch) — and any divergence
-    // means a stringified array reaches the wire and the upstream validator
-    // rejects it ("Input should be a valid list on parameter to_recipients").
-    // Re-coercing here, at the dispatch boundary, against the source's own
-    // schema closes that gap for every call routed through `execute` — the
-    // agent loop's inline and task-augmented paths both flow through here.
-    // `coerceInputForSchema` is pure and idempotent: an already-correct array
-    // survives unchanged, so the redundant engine-side pass is harmless.
-    //
-    // Scope: this covers the `execute` path only. The external `/mcp` task
-    // surface dispatches via `startToolAsTask` directly (see mcp-server.ts),
-    // bypassing this; that path is folded into the separate `/mcp` overhaul (#423).
-    // Limitation: coercion is a no-op when the array/object param is expressed
-    // via `$ref`/`allOf` (see `coerce-input.ts`) — Composio's flat `type:
-    // "array"` schemas are covered; richer shapes are tracked in #424.
-    //
-    // Order matters: coerce before scrub so a stringified empty array
-    // (`"[]"`) becomes `[]` and is then eligible for no-op stripping.
-    const coerced = tool?.inputSchema ? coerceInputForSchema(input, tool.inputSchema) : input;
-
-    // Strip no-op values models routinely emit for optional fields (empty
-    // strings, nil UUIDs, empty arrays). Some upstream APIs treat these as
-    // real values and reject with HTTP 400. Equivalent to the model having
-    // omitted the field. Required fields pass through unchanged.
-    const scrubbed = tool?.inputSchema
-      ? scrubArgsForDispatch(coerced, tool.inputSchema)
-      : { args: coerced, stripped: [] };
-    if (scrubbed.stripped.length > 0) {
-      log.debug(
-        "mcp",
-        `scrub source=${this.name} tool=${toolName} stripped=${scrubbed.stripped.join(",")}`,
-      );
-    }
-    const dispatchArgs = scrubbed.args;
+    const dispatchArgs = this.prepareDispatchArgs(tool, input, toolName);
 
     // Answers: "why is this tool call going inline vs task-augmented?" and
     // "is the tool cache populated?". Covers the whole dispatch decision in
     // one line. (eventSink is required at construction, so always present.)
+    const path = isTaskAugmented ? "task-augmented" : "inline";
     log.debug(
       "mcp",
       `execute source=${this.name} tool=${toolName}` +
         ` taskSupport=${taskSupport ?? "undefined"}` +
-        ` path=${isTaskAugmented ? "task-augmented" : "inline"}` +
+        ` path=${path}` +
         ` cachedTools=${this.cachedTools ? this.cachedTools.length : "null"}`,
     );
 
@@ -1186,7 +1251,7 @@ export class McpSource implements ToolSource {
         {
           "tool.name": toolName,
           "tool.source": this.name,
-          "tool.path": isTaskAugmented ? "task-augmented" : "inline",
+          "tool.path": path,
           ...requestIdentityAttrs(),
         },
         () =>
@@ -1197,76 +1262,88 @@ export class McpSource implements ToolSource {
         { isExpectedError: () => signal?.aborted === true },
       );
     } catch (err) {
-      // Cancellation isn't a crash — the source is healthy, the client just
-      // asked to stop. Emit a terminal tool.progress for task-augmented
-      // calls so UIs watching the progress stream transition out of
-      // "working", then surface the error to the agent without marking
-      // the source dead or triggering restart.
-      const wasAborted = signal?.aborted === true;
-      if (wasAborted) {
-        if (isTaskAugmented) {
-          this.eventSink.emit({
-            type: "tool.progress",
-            data: {
-              source: this.name,
-              tool: toolName,
-              status: "cancelled",
-              message: "Cancelled by client",
-            },
-          });
-        }
-        return {
-          content: textContent("Task cancelled"),
-          isError: true,
-        };
-      }
-
-      // One recovery path for every outbound op. `recover` classifies the throw,
-      // consults `policyFor`, and effects the action (surface / reauth / restart
-      // + retry with bounded backoff). Two op-specific facts come from here:
-      //
-      //  - `idempotent: !isTaskAugmented` — a task-augmented call has spawned
-      //    server-side state (the task, an entity, side effects); retrying would
-      //    duplicate it. So `policyFor` surfaces every failure for tasks rather
-      //    than retrying. Inline calls are re-issued with the SCRUBBED args
-      //    (`dispatchArgs`), same as the direct call — the original `input` may
-      //    carry no-op sentinels an upstream API rejects.
-      //  - `reauth` — a remote with an OAuth provider flips to `reauth_required`
-      //    and shows a structured "Reconnect"; a static-auth remote (no provider)
-      //    has nothing to re-run, so `policyFor` surfaces it as a normal error.
-      const failMsg = (e: unknown) => (e instanceof Error ? e.message : String(e));
-      return this.recover<ToolResult>(
-        err,
-        () => this.callToolInline(toolName, dispatchArgs, signal),
-        {
-          idempotent: !isTaskAugmented,
-          // A throw on a tools/call is almost always the transport; recover even
-          // unrecognized shapes (old robustness), but only ONCE — see
-          // TOOL_CALL_RECOVERY_DELAYS — so a mutating call isn't replayed N times.
-          recoverUnknown: true,
-          delays: TOOL_CALL_RECOVERY_DELAYS,
-          surface: (e) => ({
-            content: textContent(
-              isTaskAugmented
-                ? `Task failed and cannot be auto-retried: ${failMsg(e)}`
-                : `${this.name} call failed: ${failMsg(e)}`,
-            ),
-            isError: true,
-          }),
-          reauth: () => ({
-            content: textContent(
-              `${this.name} needs to be reconnected — its authorization has expired. Open the connector and click Reconnect.`,
-            ),
-            isError: true,
-            structuredContent: {
-              error: "auth_required",
-              reason: "reauth_required",
-              source: this.name,
-            },
-          }),
-        },
-      );
+      return this.handleExecuteError(err, toolName, dispatchArgs, signal, isTaskAugmented);
     }
+  }
+
+  /**
+   * Map a thrown dispatch error to a terminal `ToolResult`. A client abort
+   * emits a terminal `cancelled` progress event (task-augmented calls only) and
+   * returns "Task cancelled" — the source is healthy, so no restart. Any other
+   * throw routes through the shared `recover` (classify → surface / reauth /
+   * restart + retry with bounded backoff).
+   *
+   *  - `idempotent: !isTaskAugmented` — a task-augmented call has spawned
+   *    server-side state (the task, an entity, side effects); retrying would
+   *    duplicate it. So `policyFor` surfaces every failure for tasks rather than
+   *    retrying. Inline calls are re-issued with the SCRUBBED args
+   *    (`dispatchArgs`), same as the direct call — the original `input` may carry
+   *    no-op sentinels an upstream API rejects.
+   *  - `reauth` — a remote with an OAuth provider flips to `reauth_required` and
+   *    shows a structured "Reconnect"; a static-auth remote (no provider) has
+   *    nothing to re-run, so `policyFor` surfaces it as a normal error.
+   */
+  private handleExecuteError(
+    err: unknown,
+    toolName: string,
+    dispatchArgs: Record<string, unknown>,
+    signal: AbortSignal | undefined,
+    isTaskAugmented: boolean,
+  ): ToolResult | Promise<ToolResult> {
+    // Cancellation isn't a crash — the source is healthy, the client just asked
+    // to stop. Emit a terminal tool.progress for task-augmented calls so UIs
+    // watching the progress stream transition out of "working", then surface the
+    // error to the agent without marking the source dead or triggering restart.
+    const wasAborted = signal?.aborted === true;
+    if (wasAborted) {
+      if (isTaskAugmented) {
+        this.eventSink.emit({
+          type: "tool.progress",
+          data: {
+            source: this.name,
+            tool: toolName,
+            status: "cancelled",
+            message: "Cancelled by client",
+          },
+        });
+      }
+      return {
+        content: textContent("Task cancelled"),
+        isError: true,
+      };
+    }
+
+    return this.recover<ToolResult>(
+      err,
+      () => this.callToolInline(toolName, dispatchArgs, signal),
+      {
+        idempotent: !isTaskAugmented,
+        // A throw on a tools/call is almost always the transport; recover even
+        // unrecognized shapes (old robustness), but only ONCE — see
+        // TOOL_CALL_RECOVERY_DELAYS — so a mutating call isn't replayed N times.
+        recoverUnknown: true,
+        delays: TOOL_CALL_RECOVERY_DELAYS,
+        surface: (e) => ({
+          content: textContent(
+            isTaskAugmented
+              ? `Task failed and cannot be auto-retried: ${errMessage(e)}`
+              : `${this.name} call failed: ${errMessage(e)}`,
+          ),
+          isError: true,
+        }),
+        reauth: () => ({
+          content: textContent(
+            `${this.name} needs to be reconnected — its authorization has expired. Open the connector and click Reconnect.`,
+          ),
+          isError: true,
+          structuredContent: {
+            error: "auth_required",
+            reason: "reauth_required",
+            source: this.name,
+          },
+        }),
+      },
+    );
   }
 
   /**
@@ -1290,60 +1367,17 @@ export class McpSource implements ToolSource {
   private async recover<T>(
     firstErr: unknown,
     op: () => Promise<T>,
-    shape: {
-      idempotent: boolean;
-      /** How to treat an `unknown` (unclassifiable) throw. Tool calls set this so
-       *  an unrecognized transport error still recovers (old "restart on any
-       *  throw" robustness); reads leave it false so a malformed result / 429 /
-       *  server code surfaces instead of restart-storming the whole source. */
-      recoverUnknown: boolean;
-      /** Per-call-site backoff schedule. Tool calls pass a single immediate
-       *  attempt (`TOOL_CALL_RECOVERY_DELAYS`) to preserve the historical
-       *  one-retry budget — a non-idempotent mutating call must NOT be replayed
-       *  several times. Reads pass the wider roll-window schedule. The test seam
-       *  `recoveryDelaysMs` overrides both. */
-      delays: readonly number[];
-      surface: (err: unknown) => T;
-      reauth: (err: unknown) => T;
-      miss?: (err: unknown) => T;
-    },
+    shape: RecoveryShape<T>,
   ): Promise<T> {
     const hasReauthableProvider = this.mode.type === "remote" && this.mode.authProvider != null;
     const delays = this.recoveryDelaysMs ?? shape.delays;
     let err = firstErr;
 
     for (let attempt = 0; attempt <= delays.length; attempt++) {
-      // The server answered "not here" — an application outcome, not a connection
-      // failure. Checked each iteration (only reads pass `miss`): a genuine miss
-      // discovered AFTER a successful re-establish stays a silent null, matching
-      // the pre-unification behavior, instead of logging a spurious read failure.
-      if (shape.miss && isMcpResourceMiss(err)) return shape.miss(err);
-      const classified = classifyConnectionFailure(err);
-      // An `unknown` throw is recoverable only where the caller opts in (tool path);
-      // elsewhere it's surfaced like a protocol error.
-      const kind =
-        classified === "unknown" ? (shape.recoverUnknown ? "transport-dead" : "none") : classified;
-      if (kind === "none") return shape.surface(err); // app/protocol/unknown — don't restart
-      const action = policyFor(kind, { idempotent: shape.idempotent, hasReauthableProvider });
-      if (action === "reauth") {
-        if (this.mode.type === "remote" && this.mode.authProvider) {
-          this.mode.authProvider.notifyAuthLost();
-        }
-        return shape.reauth(err);
-      }
-      if (action === "surface") {
-        // Mark the source crashed ONLY for a genuine connection-down class we
-        // won't retry (e.g. a task-augmented call whose transport broke), so
-        // HealthMonitor heals it for later calls. A `timeout` (the tool is slow,
-        // transport is fine) and `auth-lost` (a credential problem) are NOT the
-        // transport crashing — restarting the source for them would tear it down
-        // for its other tools (the #581 cascade), so they surface without it.
-        if (kind === "session-lost" || kind === "transient" || kind === "transport-dead") {
-          this.emitSourceCrashed(String(err));
-        }
-        return shape.surface(err);
-      }
-      // action === "recover": re-establish + retry, riding the roll window.
+      const outcome = this.recoveryOutcome<T>(err, shape, hasReauthableProvider);
+      if (outcome) return outcome.value;
+      // No terminal outcome → action was "recover": re-establish + retry,
+      // riding the roll window.
       if (attempt === delays.length) break; // out of attempts
       const delayMs = delays[attempt] ?? 0;
       if (delayMs > 0) await sleep(delayMs);
@@ -1358,10 +1392,58 @@ export class McpSource implements ToolSource {
     // Recovery exhausted. A stale session never closed the transport, so the
     // source still reports `isAlive()` — mark it crashed so HealthMonitor's
     // longer exponential backoff sweeps it (it only acts on a not-alive source).
-    this.emitSourceCrashed(
-      `recovery exhausted: ${firstErr instanceof Error ? firstErr.message : String(firstErr)}`,
-    );
+    this.emitSourceCrashed(`recovery exhausted: ${errMessage(firstErr)}`);
     return shape.surface(err);
+  }
+
+  /**
+   * Classify one recovery iteration for `err` and, where terminal, perform its
+   * side-effect and return the caller's terminal representation wrapped in
+   * `{ value }`. Returns null only for the `recover` action (re-establish +
+   * retry), which the loop drives.
+   *
+   *  - **miss** (reads only) — the server answered "not here", an application
+   *    outcome, not a connection failure. Checked first each iteration so a
+   *    genuine miss discovered AFTER a successful re-establish stays a silent
+   *    null instead of logging a spurious read failure.
+   *  - **none** (`kind === "none"`) — app/protocol/unknown; a restart won't help.
+   *  - **reauth** — flip the connection to `reauth_required` and surface Reconnect.
+   *  - **surface** — give up. Mark the source crashed ONLY for a genuine
+   *    connection-down class we won't retry (session-lost / transient /
+   *    transport-dead), so HealthMonitor heals it for later calls. A `timeout`
+   *    (slow tool, healthy transport) and `auth-lost` (a credential problem) are
+   *    NOT the transport crashing — restarting for them would tear the source
+   *    down for its other tools (the #581 cascade), so they surface without it.
+   */
+  private recoveryOutcome<T>(
+    err: unknown,
+    shape: RecoveryShape<T>,
+    hasReauthableProvider: boolean,
+  ): { value: T } | null {
+    if (shape.miss && isMcpResourceMiss(err)) return { value: shape.miss(err) };
+    const classified = classifyConnectionFailure(err);
+    // An `unknown` throw is recoverable only where the caller opts in (tool
+    // path); elsewhere it's surfaced like a protocol error.
+    const kind =
+      classified === "unknown" ? (shape.recoverUnknown ? "transport-dead" : "none") : classified;
+    if (kind === "none") return { value: shape.surface(err) };
+    const action = policyFor(kind, { idempotent: shape.idempotent, hasReauthableProvider });
+    if (action === "reauth") {
+      this.flagAuthLost();
+      return { value: shape.reauth(err) };
+    }
+    if (action === "surface") {
+      if (isConnectionDownClass(kind)) this.emitSourceCrashed(String(err));
+      return { value: shape.surface(err) };
+    }
+    return null; // action === "recover"
+  }
+
+  /** If this is a remote source with a reauthable provider, flag its auth lost. */
+  private flagAuthLost(): void {
+    if (this.mode.type === "remote" && this.mode.authProvider) {
+      this.mode.authProvider.notifyAuthLost();
+    }
   }
 
   /**
@@ -1818,154 +1900,187 @@ export class McpSource implements ToolSource {
           error?: { message?: string };
         };
         switch (message.type) {
-          case "taskStatus": {
-            if (!message.task) break;
-            handle.latestTask = message.task;
-            handle.expiresAt = computeExpiry(message.task);
-            this.eventSink.emit({
-              type: "tool.progress",
-              data: {
-                source: this.name,
-                tool: toolName,
-                taskId: handle.taskId,
-                status: message.task.status,
-                message: message.task.statusMessage,
-              },
-            });
+          case "taskStatus":
+            this.applyTaskStatus(handle, message.task, toolName);
             break;
-          }
           case "taskCreated":
             // `startToolAsTask` already consumed the first taskCreated.
             // A second one would be a protocol oddity; ignore gracefully.
             break;
-          case "result": {
-            if (!message.result) break;
-            handle.terminal = { result: message.result };
-            handle.latestTask = {
-              ...handle.latestTask,
-              status: "completed",
-              lastUpdatedAt: new Date().toISOString(),
-            };
-            handle.expiresAt = Date.now() + TASK_HANDLE_GRACE_MS;
-            handle.terminalDeferred.resolve(message.result);
+          case "result":
+            if (this.settleTaskResult(handle, message.result)) return;
+            break;
+          case "error":
+            await this.settleTaskError(handle, message.error);
             return;
-          }
-          case "error": {
-            // Two sub-cases here:
-            //   1. A caller invoked `cancelTask(...)` → per task 001
-            //      acceptance criteria, in-flight `awaitToolTaskResult`
-            //      callers must be rejected with a descriptive error.
-            //   2. Clean stream-level `error` from the server (task failed
-            //      without cancellation) → resolve with `isError: true` so
-            //      the agent-loop wrapper preserves its historical return
-            //      shape. Rejection is reserved for transport crashes /
-            //      protocol violations so `execute()`'s catch branch makes
-            //      the right restart decision.
-            const errMessage = message.error?.message ?? `Task ${handle.taskId} failed`;
-            if (handle.cancelRequested) {
-              const err = new Error(`Task ${handle.taskId} cancelled: ${errMessage}`);
-              handle.terminal = { error: err };
-              handle.latestTask = {
-                ...handle.latestTask,
-                status: "cancelled",
-                statusMessage: errMessage,
-                lastUpdatedAt: new Date().toISOString(),
-              };
-              handle.expiresAt = Date.now() + TASK_HANDLE_GRACE_MS;
-              handle.terminalDeferred.reject(err);
-              return;
-            }
-            const isAborted = handle.abortController.signal.aborted;
-
-            // Defense in depth: the upstream MCP SDK's task stream emits
-            // `type: 'error'` with an `McpError(InternalError, "Task <id>
-            // failed")` whenever the server-side task status is `failed`,
-            // AND discards the server's `tasks/result` payload along the
-            // way. A bundle that misclassified its own terminal status —
-            // e.g., a post-result exception flipping COMPLETED→FAILED
-            // while a usable payload already existed in the store — would
-            // surface to the agent as a useless string with the real
-            // output gone. Try one extra fetch before settling for the
-            // generic error.
-            //
-            // Discriminator: `endsWith` on the known `handle.taskId`,
-            // NOT a regex on the bare message. McpError's constructor
-            // wraps the message as `"MCP error <code>: <message>"` (see
-            // node_modules/@modelcontextprotocol/sdk/.../types.js), so
-            // the production `error.message` is "MCP error -32603:
-            // Task <id> failed" — anchored regexes against the bare
-            // form silently fail to match and the recovery is a no-op.
-            // Using the taskId as the discriminator also tightens
-            // specificity: we won't accidentally recover on a bundle-
-            // authored error that happens to mention a different task.
-            let recoveredResult: CallToolResult | null = null;
-            const isGenericTaskFailed = errMessage.endsWith(`Task ${handle.taskId} failed`);
-            if (!isAborted && this.client && isGenericTaskFailed) {
-              try {
-                recoveredResult = await this.client.experimental.tasks.getTaskResult(
-                  handle.taskId,
-                  CallToolResultSchema,
-                );
-                log.debug(
-                  "mcp",
-                  `recovered tasks/result for failed task ${handle.taskId} on ${this.name}`,
-                );
-              } catch {
-                // No result genuinely available — fall through to the
-                // generic-error path below.
-              }
-            }
-
-            const callToolResult: CallToolResult = recoveredResult ?? {
-              content: [{ type: "text", text: errMessage }],
-              isError: true,
-            };
-            handle.terminal = { result: callToolResult };
-            // Contract: even when we recover a payload, `latestTask.status`
-            // reflects what the SERVER reported (`failed`/`cancelled`).
-            // The recovery only salvages the agent-visible content; we
-            // don't rewrite the server's terminal verdict. Status
-            // consumers (UI progress, postmortem inspection) see the
-            // honest server state; the agent sees the actual output.
-            handle.latestTask = {
-              ...handle.latestTask,
-              status: isAborted ? "cancelled" : "failed",
-              statusMessage: errMessage,
-              lastUpdatedAt: new Date().toISOString(),
-            };
-            handle.expiresAt = Date.now() + TASK_HANDLE_GRACE_MS;
-            handle.terminalDeferred.resolve(callToolResult);
-            return;
-          }
         }
       }
-      // Stream ended without a terminal message — protocol violation.
-      const err = new Error(`Task ${handle.taskId} stream ended without a terminal message`);
+      this.settleStreamEndedWithoutTerminal(handle);
+    } catch (err) {
+      this.settleDrainerThrow(handle, err);
+    }
+  }
+
+  /**
+   * `taskStatus`: refresh `handle.latestTask` + expiry and emit a live
+   * `tool.progress`. No-op when the message carried no task.
+   */
+  private applyTaskStatus(handle: TaskHandle, task: Task | undefined, toolName: string): void {
+    if (!task) return;
+    handle.latestTask = task;
+    handle.expiresAt = computeExpiry(task);
+    this.eventSink.emit({
+      type: "tool.progress",
+      data: {
+        source: this.name,
+        tool: toolName,
+        taskId: handle.taskId,
+        status: task.status,
+        message: task.statusMessage,
+      },
+    });
+  }
+
+  /**
+   * `result`: mark the handle terminal-completed and resolve. Returns true when
+   * settled; false (keep draining) when the message carried no result.
+   */
+  private settleTaskResult(handle: TaskHandle, result: CallToolResult | undefined): boolean {
+    if (!result) return false;
+    handle.terminal = { result };
+    handle.latestTask = {
+      ...handle.latestTask,
+      status: "completed",
+      lastUpdatedAt: new Date().toISOString(),
+    };
+    handle.expiresAt = Date.now() + TASK_HANDLE_GRACE_MS;
+    handle.terminalDeferred.resolve(result);
+    return true;
+  }
+
+  /**
+   * `error` (always terminal). Two sub-cases:
+   *   1. A caller invoked `cancelTask(...)` → per task 001 acceptance criteria,
+   *      in-flight `awaitToolTaskResult` callers must be rejected with a
+   *      descriptive error.
+   *   2. Clean stream-level `error` from the server (task failed without
+   *      cancellation) → resolve with `isError: true` so the agent-loop wrapper
+   *      preserves its historical return shape. Rejection is reserved for
+   *      transport crashes / protocol violations so `execute()`'s catch branch
+   *      makes the right restart decision.
+   *
+   * Contract: even when `recoverFailedTaskResult` salvages a payload,
+   * `latestTask.status` reflects what the SERVER reported (`failed`/`cancelled`)
+   * — the recovery only salvages the agent-visible content, not the terminal
+   * verdict. Status consumers see the honest server state; the agent sees the
+   * actual output.
+   */
+  private async settleTaskError(
+    handle: TaskHandle,
+    error: { message?: string } | undefined,
+  ): Promise<void> {
+    const message = error?.message ?? `Task ${handle.taskId} failed`;
+    if (handle.cancelRequested) {
+      const err = new Error(`Task ${handle.taskId} cancelled: ${message}`);
       handle.terminal = { error: err };
       handle.latestTask = {
         ...handle.latestTask,
-        status: "failed",
-        statusMessage: err.message,
+        status: "cancelled",
+        statusMessage: message,
         lastUpdatedAt: new Date().toISOString(),
       };
       handle.expiresAt = Date.now() + TASK_HANDLE_GRACE_MS;
       handle.terminalDeferred.reject(err);
-    } catch (err) {
-      // Transport crash or abort. The outer `execute()` catch handles
-      // surfacing this to the agent loop; here we just make sure the
-      // handle is in a defensible state for post-mortem inspection.
-      const wasAborted = handle.abortController.signal.aborted;
-      const finalStatus = wasAborted ? "cancelled" : "failed";
-      handle.terminal = { error: err instanceof Error ? err : new Error(String(err)) };
-      handle.latestTask = {
-        ...handle.latestTask,
-        status: finalStatus,
-        statusMessage: err instanceof Error ? err.message : String(err),
-        lastUpdatedAt: new Date().toISOString(),
-      };
-      handle.expiresAt = Date.now() + TASK_HANDLE_GRACE_MS;
-      handle.terminalDeferred.reject(err instanceof Error ? err : new Error(String(err)));
+      return;
     }
+    const isAborted = handle.abortController.signal.aborted;
+    const recoveredResult = await this.recoverFailedTaskResult(handle, message, isAborted);
+    const callToolResult: CallToolResult = recoveredResult ?? {
+      content: [{ type: "text", text: message }],
+      isError: true,
+    };
+    handle.terminal = { result: callToolResult };
+    handle.latestTask = {
+      ...handle.latestTask,
+      status: isAborted ? "cancelled" : "failed",
+      statusMessage: message,
+      lastUpdatedAt: new Date().toISOString(),
+    };
+    handle.expiresAt = Date.now() + TASK_HANDLE_GRACE_MS;
+    handle.terminalDeferred.resolve(callToolResult);
+  }
+
+  /**
+   * Defense in depth: the upstream MCP SDK's task stream emits `type: 'error'`
+   * with an `McpError(InternalError, "Task <id> failed")` whenever the
+   * server-side status is `failed`, AND discards the server's `tasks/result`
+   * payload along the way. A bundle that misclassified its own terminal status —
+   * e.g. a post-result exception flipping COMPLETED→FAILED while a usable payload
+   * already existed in the store — would surface to the agent as a useless string
+   * with the real output gone. Try one extra `tasks/result` fetch before settling
+   * for the generic error. Returns null when no result is genuinely available.
+   *
+   * Discriminator: `endsWith` on the known `handle.taskId`, NOT a regex on the
+   * bare message. McpError's constructor wraps the message as
+   * `"MCP error <code>: <message>"` (see
+   * node_modules/@modelcontextprotocol/sdk/.../types.js), so the production
+   * `error.message` is "MCP error -32603: Task <id> failed" — anchored regexes
+   * against the bare form silently fail to match and the recovery is a no-op.
+   * Using the taskId as the discriminator also tightens specificity: we won't
+   * accidentally recover on a bundle-authored error that mentions a different
+   * task.
+   */
+  private async recoverFailedTaskResult(
+    handle: TaskHandle,
+    message: string,
+    isAborted: boolean,
+  ): Promise<CallToolResult | null> {
+    const isGenericTaskFailed = message.endsWith(`Task ${handle.taskId} failed`);
+    if (isAborted || !this.client || !isGenericTaskFailed) return null;
+    try {
+      const recovered = await this.client.experimental.tasks.getTaskResult(
+        handle.taskId,
+        CallToolResultSchema,
+      );
+      log.debug("mcp", `recovered tasks/result for failed task ${handle.taskId} on ${this.name}`);
+      return recovered;
+    } catch {
+      // No result genuinely available — caller falls through to the generic error.
+      return null;
+    }
+  }
+
+  /** Stream ended without a terminal message — protocol violation; reject. */
+  private settleStreamEndedWithoutTerminal(handle: TaskHandle): void {
+    const err = new Error(`Task ${handle.taskId} stream ended without a terminal message`);
+    handle.terminal = { error: err };
+    handle.latestTask = {
+      ...handle.latestTask,
+      status: "failed",
+      statusMessage: err.message,
+      lastUpdatedAt: new Date().toISOString(),
+    };
+    handle.expiresAt = Date.now() + TASK_HANDLE_GRACE_MS;
+    handle.terminalDeferred.reject(err);
+  }
+
+  /**
+   * Transport crash or abort thrown out of the drain loop. The outer
+   * `execute()` catch surfaces this to the agent loop; here we just leave the
+   * handle in a defensible state for post-mortem inspection and reject.
+   */
+  private settleDrainerThrow(handle: TaskHandle, thrown: unknown): void {
+    const err = toError(thrown);
+    const wasAborted = handle.abortController.signal.aborted;
+    handle.terminal = { error: err };
+    handle.latestTask = {
+      ...handle.latestTask,
+      status: wasAborted ? "cancelled" : "failed",
+      statusMessage: err.message,
+      lastUpdatedAt: new Date().toISOString(),
+    };
+    handle.expiresAt = Date.now() + TASK_HANDLE_GRACE_MS;
+    handle.terminalDeferred.reject(err);
   }
 
   private startTaskSweeper(): void {
@@ -2260,6 +2375,16 @@ export function classifyConnectionFailure(err: unknown): ConnectionFailure {
 }
 
 /**
+ * The connection-down classes `recover` marks crashed before surfacing (so
+ * HealthMonitor heals the source for later calls). `timeout` (slow tool, healthy
+ * transport) and `auth-lost` (a credential problem) are excluded — restarting
+ * for them would tear the source down for its other tools (the #581 cascade).
+ */
+function isConnectionDownClass(kind: ConnectionFailure): boolean {
+  return kind === "session-lost" || kind === "transient" || kind === "transport-dead";
+}
+
+/**
  * What `McpSource.recover` does with a connection failure. A deliberately small
  * vocabulary — only what the recovery effector actually distinguishes:
  *
@@ -2317,6 +2442,16 @@ const TOOL_CALL_RECOVERY_DELAYS = [0] as const;
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/** Extract a human-readable message from an unknown throw. */
+function errMessage(value: unknown): string {
+  return value instanceof Error ? value.message : String(value);
+}
+
+/** Normalize an unknown throw into an Error (wrapping non-Errors verbatim). */
+function toError(value: unknown): Error {
+  return value instanceof Error ? value : new Error(String(value));
 }
 
 /** Type guard: does this unknown value match Tool.execution's shape? */
