@@ -298,11 +298,6 @@
   50% { box-shadow: 0 0 0 1px var(--warm), 0 0 16px 2px color-mix(in oklch, var(--warm) 8%, transparent); }
 }
 
-/* Warm background shift — ambient state on scroll container */
-.chat-ambient-warm {
-  background-color: color-mix(in oklch, var(--background), var(--warm-light) 15%);
-}
-
 /* ───────────────────────────────────────────────────────────────────────
  * Turn activity pill — single status + tool surface for an assistant turn
  *

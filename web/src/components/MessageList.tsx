@@ -266,12 +266,7 @@ export function MessageList({
 
   return (
     <div className="relative flex-1 min-h-0">
-      <div
-        ref={scrollRef}
-        className={`h-full overflow-y-auto transition-colors duration-[2000ms] ${
-          isStreaming ? "chat-ambient-warm" : ""
-        }`}
-      >
+      <div ref={scrollRef} className="h-full overflow-y-auto">
         <div className={`py-6 flex flex-col gap-10 ${compact ? "px-4" : "px-8 max-w-4xl mx-auto"}`}>
           {messages.map((msg, idx) => {
             const contextMatch = msg.role === "user" ? msg.content.match(APP_CONTEXT_RE) : null;
