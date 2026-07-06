@@ -60,16 +60,11 @@ function tokensForText(text: string | undefined | null): number {
   return tokensForChars(text.length);
 }
 
-/**
- * PNG / JPEG / GIF / WebP dimension decode from the in-memory bytes. Returns
- * null on any short read or unrecognized header — the caller falls back to
- * the flat per-image estimate. Pure-byte parsing rather than a dep so the
- * estimator stays self-contained.
- *
- * Only the four formats Anthropic vision accepts are supported.
- */
-function decodeImageDimensions(data: Uint8Array): { width: number; height: number } | null {
-  if (data.length < 12) return null;
+/** Decoded pixel dimensions for a raster image. */
+type ImageDimensions = { width: number; height: number };
+
+/** PNG dimensions from the IHDR chunk (big-endian uint32s at offsets 16 and 20), or null if not a PNG. */
+function decodePngDimensions(data: Uint8Array): ImageDimensions | null {
   // PNG: 8-byte signature + IHDR chunk; width/height live at offsets 16..23
   // as big-endian uint32s.
   if (
@@ -86,11 +81,21 @@ function decodeImageDimensions(data: Uint8Array): { width: number; height: numbe
     const view = new DataView(data.buffer, data.byteOffset, data.byteLength);
     return { width: view.getUint32(16, false), height: view.getUint32(20, false) };
   }
+  return null;
+}
+
+/** GIF87a/GIF89a dimensions (little-endian uint16s at offsets 6 and 8), or null if not a GIF. */
+function decodeGifDimensions(data: Uint8Array): ImageDimensions | null {
   // GIF87a / GIF89a: signature + LE width/height at offsets 6..9.
   if (data[0] === 0x47 && data[1] === 0x49 && data[2] === 0x46 && data.length >= 10) {
     const view = new DataView(data.buffer, data.byteOffset, data.byteLength);
     return { width: view.getUint16(6, true), height: view.getUint16(8, true) };
   }
+  return null;
+}
+
+/** WebP dimensions across VP8/VP8L/VP8X chunk shapes, or null if not a WebP or an unknown chunk. */
+function decodeWebpDimensions(data: Uint8Array): ImageDimensions | null {
   // WebP (RIFF....WEBP): VP8/VP8L/VP8X dimensions vary by chunk type.
   if (
     data[0] === 0x52 &&
@@ -128,31 +133,52 @@ function decodeImageDimensions(data: Uint8Array): { width: number; height: numbe
       return { width, height };
     }
   }
+  return null;
+}
+
+/** True for JPEG SOF markers (0xC0..0xCF) that carry dimensions, excluding DHT/JPG/DAC (C4/C8/CC). */
+function isSofMarker(marker: number): boolean {
+  return marker >= 0xc0 && marker <= 0xcf && marker !== 0xc4 && marker !== 0xc8 && marker !== 0xcc;
+}
+
+/** JPEG dimensions from the first SOF marker found while scanning segments, or null if none. */
+function decodeJpegDimensions(data: Uint8Array): ImageDimensions | null {
   // JPEG: scan SOF0..SOF3 markers for height/width. Cheap enough at this size.
-  if (data[0] === 0xff && data[1] === 0xd8) {
-    let offset = 2;
-    while (offset < data.length - 9) {
-      if (data[offset] !== 0xff) break;
-      const marker = data[offset + 1]!;
-      // SOF0..SOF15 except DHT/JPG/DAC (C4/C8/CC) carry image dimensions.
-      if (
-        marker >= 0xc0 &&
-        marker <= 0xcf &&
-        marker !== 0xc4 &&
-        marker !== 0xc8 &&
-        marker !== 0xcc
-      ) {
-        if (offset + 9 >= data.length) return null;
-        const view = new DataView(data.buffer, data.byteOffset, data.byteLength);
-        const height = view.getUint16(offset + 5, false);
-        const width = view.getUint16(offset + 7, false);
-        return { width, height };
-      }
-      const segLen = (data[offset + 2]! << 8) | data[offset + 3]!;
-      offset += 2 + segLen;
+  if (data[0] !== 0xff || data[1] !== 0xd8) return null;
+  let offset = 2;
+  while (offset < data.length - 9) {
+    if (data[offset] !== 0xff) break;
+    const marker = data[offset + 1]!;
+    if (isSofMarker(marker)) {
+      if (offset + 9 >= data.length) return null;
+      const view = new DataView(data.buffer, data.byteOffset, data.byteLength);
+      const height = view.getUint16(offset + 5, false);
+      const width = view.getUint16(offset + 7, false);
+      return { width, height };
     }
+    const segLen = (data[offset + 2]! << 8) | data[offset + 3]!;
+    offset += 2 + segLen;
   }
   return null;
+}
+
+/**
+ * PNG / JPEG / GIF / WebP dimension decode from the in-memory bytes. Returns
+ * null on any short read or unrecognized header — the caller falls back to
+ * the flat per-image estimate. Pure-byte parsing rather than a dep so the
+ * estimator stays self-contained.
+ *
+ * Only the four formats Anthropic vision accepts are supported. The `< 12`
+ * guard gates every format (including GIF's 10-byte minimum) before dispatch.
+ */
+function decodeImageDimensions(data: Uint8Array): ImageDimensions | null {
+  if (data.length < 12) return null;
+  return (
+    decodePngDimensions(data) ??
+    decodeGifDimensions(data) ??
+    decodeWebpDimensions(data) ??
+    decodeJpegDimensions(data)
+  );
 }
 
 /**
@@ -201,6 +227,52 @@ function tokensForToolCallPart(part: LanguageModelV3ToolCallPart): number {
   return tokensForChars(inputJson.length + nameLen) + TOOL_CALL_OVERHEAD_TOKENS;
 }
 
+/** Elements of a tool-result `content` output's `value` array. */
+type ToolResultContentValue = Extract<
+  LanguageModelV3ToolResultPart["output"],
+  { type: "content" }
+>["value"];
+type ToolResultContentItem = ToolResultContentValue[number];
+
+/** Tokens for one tool-result content item, walking file/image shapes without `JSON.stringify`-ing bytes. */
+function tokensForToolResultContentItem(item: ToolResultContentItem): number {
+  switch (item.type) {
+    case "text":
+      return tokensForText(item.text);
+    case "file-data":
+      // Base64-encoded image: same flat fallback as the file-part path (we
+      // don't decode dimensions from the b64 wire shape) so over/underestimate
+      // is bounded. Non-image: tokenize only the relayed metadata.
+      return item.mediaType.startsWith("image/")
+        ? IMAGE_TOKEN_FALLBACK
+        : tokensForChars(item.mediaType.length + (item.filename?.length ?? 0)) +
+            FILE_METADATA_OVERHEAD_TOKENS;
+    case "file-url":
+    case "file-id": {
+      // Reference-only; tokenize the small pointer. Neither shape carries
+      // `mediaType` in the V3 union, so cost is dominated by the overhead.
+      const ref = "url" in item ? item.url : JSON.stringify(item.fileId);
+      return tokensForChars(ref.length) + FILE_METADATA_OVERHEAD_TOKENS;
+    }
+    case "image-data":
+      return IMAGE_TOKEN_FALLBACK;
+    default:
+      return 0;
+  }
+}
+
+/** Sum of per-item estimates across a tool-result `content` array, accumulated in array order. */
+function tokensForToolResultContent(items: ToolResultContentValue): number {
+  // The result's nested content array is itself a sequence of parts that can
+  // contain inline `file-data` (base64) blocks; walk them so we never
+  // `JSON.stringify` raw bytes.
+  let sum = 0;
+  for (const item of items) {
+    sum += tokensForToolResultContentItem(item);
+  }
+  return sum;
+}
+
 function tokensForToolResultPart(part: LanguageModelV3ToolResultPart): number {
   const output = part.output;
   switch (output.type) {
@@ -212,37 +284,8 @@ function tokensForToolResultPart(part: LanguageModelV3ToolResultPart): number {
       return tokensForChars(JSON.stringify(output.value).length);
     case "execution-denied":
       return tokensForText(output.reason) + 5;
-    case "content": {
-      // The result's nested content array is itself a sequence of parts that
-      // can contain inline `file-data` (base64) blocks. Walk recursively so
-      // we never `JSON.stringify` raw bytes.
-      let sum = 0;
-      for (const item of output.value) {
-        if (item.type === "text") {
-          sum += tokensForText(item.text);
-        } else if (item.type === "file-data") {
-          if (item.mediaType.startsWith("image/")) {
-            // Base64-encoded image; we don't decode dimensions from b64 here
-            // (the base64 string is the wire shape). Use the same flat
-            // fallback as the file-part path so over/underestimate is bounded.
-            sum += IMAGE_TOKEN_FALLBACK;
-          } else {
-            sum +=
-              tokensForChars(item.mediaType.length + (item.filename?.length ?? 0)) +
-              FILE_METADATA_OVERHEAD_TOKENS;
-          }
-        } else if (item.type === "file-url" || item.type === "file-id") {
-          // Reference-only; tokenize the small pointer. Neither shape
-          // carries `mediaType` in the V3 union, so cost is dominated by
-          // the metadata overhead.
-          const ref = "url" in item ? item.url : JSON.stringify(item.fileId);
-          sum += tokensForChars(ref.length) + FILE_METADATA_OVERHEAD_TOKENS;
-        } else if (item.type === "image-data") {
-          sum += IMAGE_TOKEN_FALLBACK;
-        }
-      }
-      return sum;
-    }
+    case "content":
+      return tokensForToolResultContent(output.value);
     default:
       return 0;
   }
