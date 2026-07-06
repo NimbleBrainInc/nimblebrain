@@ -15,6 +15,9 @@ import { OperatorSetupModal } from "../../components/connectors/OperatorSetupMod
 import { Button } from "../../components/ui/button";
 import { roleAtLeast, useScopedRole } from "../../hooks/useScopedRole";
 
+/** The remote-OAuth variant of a directory entry's install descriptor. */
+type RemoteOAuthInstall = Extract<DirectoryEntry["install"], { kind: "remote-oauth" }>;
+
 /**
  * Connector directory — what's available to install. The Browse page
  * is intentionally focused on *discovery*: already-installed
@@ -122,6 +125,41 @@ export function ConnectorBrowsePage() {
     );
   }, [entries, query, isInstalled]);
 
+  // Route a completed remote-OAuth install per its auth scheme: provider-auth to
+  // Configure, API-key Composio to the key modal, and everything else into the
+  // vendor's OAuth redirect.
+  const routeRemoteOAuthInstall = async (
+    entry: DirectoryEntry,
+    install: RemoteOAuthInstall,
+    serverName: string,
+  ) => {
+    // A provider-auth (platform) source has no user/operator OAuth — its
+    // credential is minted server-side and it eager-starts `running` at install.
+    // So there's no auth flow to launch: route to Configure, which renders it
+    // `ready`. Launching initiateMcpOAuth here would spin a bogus OAuth flow
+    // against a server that has none.
+    if (install.auth === "provider") {
+      navigate(`${configureBasePath}/${serverName}`);
+      return;
+    }
+    // API-key Composio connectors have no OAuth redirect — collect the declared
+    // fields in a modal and call connect_api_key. The install already created the
+    // bundle ref the connect step needs.
+    if (install.auth === "composio" && install.composio?.authScheme === "API_KEY") {
+      setApiKeyModal({ entry, serverName });
+      setBusyId(null);
+      return;
+    }
+    // Composio-backed connectors route through their own initiate endpoint (keyed
+    // on catalog id, not server name). Everything else (dcr + static) stays on
+    // /v1/mcp-auth.
+    const { authorizationUrl } =
+      install.auth === "composio"
+        ? await initiateComposioOAuth(entry.id)
+        : await initiateMcpOAuth(serverName);
+    window.location.assign(authorizationUrl);
+  };
+
   // Install into the workspace the user is already in. The page is
   // mounted under `/w/<slug>/...`, so the route names an unambiguous
   // workspace; `installConnector` sends no explicit target and the server
@@ -136,42 +174,17 @@ export function ConnectorBrowsePage() {
     setBusyId(`${entry.registryId}::${entry.id}`);
     try {
       const result = await installConnector(entry);
-      // Remote OAuth: kick the user into the vendor's auth flow.
-      // Stdio (mpak-bundle): install completes in-process; route to
-      // Configure so the user can fill in any user_config fields.
+      // Remote OAuth: kick the user into the vendor's auth flow. Stdio
+      // (mpak-bundle): install completes in-process; route to Configure so the
+      // user can fill in any user_config fields. direct-url not yet supported.
       if (entry.install.kind === "remote-oauth") {
-        // A provider-auth (platform) source has no user/operator OAuth — its
-        // credential is minted server-side and it eager-starts `running` at
-        // install. So there's no auth flow to launch: route to Configure, which
-        // renders it `ready`. Launching initiateMcpOAuth here would spin a bogus
-        // OAuth flow against a server that has none.
-        if (entry.install.auth === "provider") {
-          navigate(`${configureBasePath}/${result.serverName}`);
-          return;
-        }
-        // API-key Composio connectors have no OAuth redirect — collect the
-        // declared fields in a modal and call connect_api_key. The install
-        // above already created the bundle ref the connect step needs.
-        if (entry.install.auth === "composio" && entry.install.composio?.authScheme === "API_KEY") {
-          setApiKeyModal({ entry, serverName: result.serverName });
-          setBusyId(null);
-          return;
-        }
-        // Composio-backed connectors route through their own initiate
-        // endpoint (keyed on catalog id, not server name). Everything
-        // else (dcr + static) stays on /v1/mcp-auth.
-        const { authorizationUrl } =
-          entry.install.auth === "composio"
-            ? await initiateComposioOAuth(entry.id)
-            : await initiateMcpOAuth(result.serverName);
-        window.location.assign(authorizationUrl);
+        await routeRemoteOAuthInstall(entry, entry.install, result.serverName);
         return;
       }
       if (entry.install.kind === "mpak-bundle") {
         navigate(`${configureBasePath}/${result.serverName}`);
         return;
       }
-      // direct-url not yet supported.
     } catch (err) {
       setLoadError(err instanceof Error ? err.message : String(err));
       setBusyId(null);
