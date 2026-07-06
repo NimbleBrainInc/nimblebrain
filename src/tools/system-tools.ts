@@ -813,7 +813,7 @@ async function searchTools(
       isError: false,
       _meta: { [NON_ADVANCING_META_KEY]: true },
     };
-  const shown = matches.slice(0, 25);
+  const shown = matches.slice(0, 10);
   // Return matches as DATA only — search never mutates the active tool
   // set. Tool definitions are wire position 0 (before system and
   // history), so adding one rewrites the whole cached prefix on the next
@@ -825,8 +825,20 @@ async function searchTools(
   // cache-safe channel.
   const suffix = matches.length > shown.length ? ` (showing top ${shown.length})` : "";
   const lines = [`Found ${matches.length} tool(s) for "${query}"${suffix}:\n`];
-  for (const t of shown) lines.push(`- **${t.name}**: ${t.description}`);
-  lines.push("\nTo call one, activate it with nb__manage_tools first.");
+  // One terse line per match — first line of the description, capped. The full
+  // schema is surfaced only when the model activates a tool via
+  // nb__manage_tools, so carrying full descriptions for every match here just
+  // bloats each subsequent turn's context for tools the model won't call.
+  for (const t of shown) {
+    // First non-empty line, so a description that opens with a blank line
+    // still renders text (not just the tool name). `find` can return
+    // undefined, so the fallback is load-bearing.
+    const desc = ((t.description ?? "").split("\n").find((l) => l.trim()) ?? "").trim();
+    lines.push(`- **${t.name}**: ${desc.length > 100 ? `${desc.slice(0, 100)}…` : desc}`);
+  }
+  lines.push(
+    "\nTo call one, activate it with nb__manage_tools first (that surfaces its full schema).",
+  );
   return {
     content: textContent(lines.join("\n")),
     structuredContent: { tools: shown.map((t) => ({ name: t.name })) },
