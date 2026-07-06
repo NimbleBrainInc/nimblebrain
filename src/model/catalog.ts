@@ -213,7 +213,11 @@ export function getProviderFromModel(modelString: string): string {
  * (not synced from models.dev — that source doesn't track this
  * distinction). Add new IDs here when Anthropic ships them.
  */
-const ADAPTIVE_ONLY_THINKING_MODELS: ReadonlySet<string> = new Set(["claude-opus-4-7"]);
+const ADAPTIVE_ONLY_THINKING_MODELS: ReadonlySet<string> = new Set([
+  "claude-opus-4-7",
+  "claude-opus-4-8",
+  "claude-sonnet-5",
+]);
 
 /**
  * Whether the model accepts Anthropic's `thinking.type=enabled` shape.

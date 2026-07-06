@@ -15,6 +15,14 @@ const API_URL = "https://models.dev/api.json";
 const SUPPORTED_PROVIDERS = ["anthropic", "openai", "google"];
 const OUTPUT_PATH = join(dirname(new URL(import.meta.url).pathname), "catalog-data.json");
 
+// Models present upstream that the platform deliberately does not surface —
+// excluded from the catalog entirely, so they can't be selected in the picker
+// or pointed at by a tenant model slot. Format: "<provider>:<modelId>".
+const MANUAL_EXCLUSIONS = new Set<string>([
+  // Anthropic's premium research tier ($10/$50 per 1M) — not offered on the platform.
+  "anthropic:claude-fable-5",
+]);
+
 // Models the upstream API hasn't flagged yet but we know are scheduled for shutdown.
 // Format: "<provider>:<modelId>". Remove an entry once models.dev catches up.
 const MANUAL_DEPRECATIONS = new Set<string>([
@@ -156,6 +164,8 @@ function buildProviderModels(
   for (const [modelId, raw] of entries) {
     // Skip models with no cost data (embeddings, etc. without pricing)
     if (!raw.cost?.input && !raw.cost?.output) continue;
+    // Skip models the platform deliberately does not surface.
+    if (MANUAL_EXCLUSIONS.has(`${providerId}:${modelId}`)) continue;
     models[modelId] = toCatalogModel(providerId, modelId, raw);
   }
 

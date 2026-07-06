@@ -8,6 +8,7 @@ import {
 	isModelAllowed,
 	listModels,
 	listProviders,
+	supportsEnabledThinking,
 } from "../../src/model/catalog.ts";
 import { estimateCost } from "../../src/usage/cost.ts";
 
@@ -162,6 +163,42 @@ describe("getAvailableModels", () => {
 		expect(result.google.some((m) => m.id === "gemini-3-pro-preview")).toBe(false);
 		// The live successor is still offered.
 		expect(result.google.some((m) => m.id === "gemini-3.1-pro-preview")).toBe(true);
+	});
+});
+
+describe("supportsEnabledThinking", () => {
+	it("returns false for adaptive-only Anthropic models", () => {
+		// These reject thinking.type=enabled with a 400; the engine must
+		// translate to thinking.type=adaptive + output_config.effort.
+		expect(supportsEnabledThinking("claude-opus-4-7")).toBe(false);
+		expect(supportsEnabledThinking("claude-opus-4-8")).toBe(false);
+		expect(supportsEnabledThinking("claude-sonnet-5")).toBe(false);
+		expect(supportsEnabledThinking("anthropic:claude-opus-4-8")).toBe(false);
+	});
+
+	it("returns true for Anthropic models that accept the enabled shape", () => {
+		expect(supportsEnabledThinking("claude-sonnet-4-6")).toBe(true);
+		expect(supportsEnabledThinking("claude-haiku-4-5-20251001")).toBe(true);
+	});
+
+	it("returns true for non-Anthropic providers", () => {
+		expect(supportsEnabledThinking("openai:gpt-4o")).toBe(true);
+		expect(supportsEnabledThinking("google:gemini-2.5-pro")).toBe(true);
+	});
+});
+
+describe("Fable 5 exclusion", () => {
+	it("is not in the catalog under any string form", () => {
+		// Premium research tier — excluded at sync time so it can't be
+		// selected in the picker or pointed at by a tenant slot.
+		expect(getModelByString("claude-fable-5")).toBeUndefined();
+		expect(getModelByString("anthropic:claude-fable-5")).toBeUndefined();
+		expect(getModel("anthropic", "claude-fable-5")).toBeUndefined();
+	});
+
+	it("is not offered in the picker", () => {
+		const result = getAvailableModels({ anthropic: {} });
+		expect(result.anthropic.some((m) => m.id === "claude-fable-5")).toBe(false);
 	});
 });
 
