@@ -942,7 +942,11 @@ export function createChatStore(): ChatStore {
   function applyStreamEvent(slice: ConversationSlice, type: string, data: unknown): void {
     // Own-key guard so an inherited name (constructor/toString/__proto__) can't
     // resolve to an Object.prototype member; unknown types no-op as the switch did.
-    if (Object.hasOwn(STREAM_EVENT_HANDLERS, type)) STREAM_EVENT_HANDLERS[type]?.(slice, data);
+    // (`Object.prototype.hasOwnProperty.call` rather than `Object.hasOwn` — the web
+    // tsconfig lib target predates ES2022.)
+    if (Object.prototype.hasOwnProperty.call(STREAM_EVENT_HANDLERS, type)) {
+      STREAM_EVENT_HANDLERS[type]?.(slice, data);
+    }
   }
 
   // -- send (start a server turn, then watch it) --
