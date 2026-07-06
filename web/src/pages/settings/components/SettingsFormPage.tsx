@@ -84,44 +84,49 @@ export function SettingsFormPage({
       ) : (
         <>
           <div className="space-y-6">{children}</div>
-
-          {feedback ? (
-            <p
-              className={cn(
-                "text-sm",
-                feedback.type === "success"
-                  ? "text-success dark:text-green-400"
-                  : "text-destructive",
-              )}
-              role={feedback.type === "error" ? "alert" : "status"}
-            >
-              {feedback.message}
-            </p>
-          ) : null}
-
-          {save ? (
-            <div className="flex gap-2 pt-2">
-              <Button
-                variant={save.variant ?? "default"}
-                onClick={() => void save.onSave()}
-                disabled={save.disabled ?? (save.saving || save.dirty === false)}
-                aria-busy={save.saving}
-              >
-                {save.saving ? "Saving..." : (save.label ?? "Save")}
-              </Button>
-              {save.onReset ? (
-                <Button
-                  variant="outline"
-                  onClick={save.onReset}
-                  disabled={save.saving || save.dirty === false}
-                >
-                  Reset
-                </Button>
-              ) : null}
-            </div>
-          ) : null}
+          {feedback ? <FeedbackMessage feedback={feedback} /> : null}
+          {save ? <SaveBar save={save} /> : null}
         </>
       )}
+    </div>
+  );
+}
+
+/** Inline success/error status rendered between the form body and the save bar. */
+function FeedbackMessage({
+  feedback,
+}: {
+  feedback: NonNullable<SettingsFormPageProps["feedback"]>;
+}) {
+  const isSuccess = feedback.type === "success";
+  return (
+    <p
+      className={cn("text-sm", isSuccess ? "text-success dark:text-green-400" : "text-destructive")}
+      role={isSuccess ? "status" : "alert"}
+    >
+      {feedback.message}
+    </p>
+  );
+}
+
+/** Save bar: Save button plus an optional Reset, with gating derived from `save`. */
+function SaveBar({ save }: { save: NonNullable<SettingsFormPageProps["save"]> }) {
+  const cleanOrSaving = save.saving || save.dirty === false;
+  return (
+    <div className="flex gap-2 pt-2">
+      <Button
+        variant={save.variant ?? "default"}
+        onClick={() => void save.onSave()}
+        disabled={save.disabled ?? cleanOrSaving}
+        aria-busy={save.saving}
+      >
+        {save.saving ? "Saving..." : (save.label ?? "Save")}
+      </Button>
+      {save.onReset ? (
+        <Button variant="outline" onClick={save.onReset} disabled={cleanOrSaving}>
+          Reset
+        </Button>
+      ) : null}
     </div>
   );
 }
