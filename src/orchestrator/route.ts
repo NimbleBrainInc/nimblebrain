@@ -281,18 +281,7 @@ export async function routeToolCall(opts: {
   // the kernel identity sources; the handler gates entity reads by
   // `canAccess` (owner ∪ shares). See ACCESS_MODEL.
   if (scope.kind === "identity") {
-    const sep = toolName.indexOf("__");
-    const sourceName = sep > 0 ? toolName.slice(0, sep) : toolName;
-    const source = runtime.getIdentitySource(sourceName);
-    if (!source) {
-      throw new UnknownIdentitySource(toolName, sourceName);
-    }
-    return {
-      kind: "identity",
-      context: runtime.getIdentityContext(identityId),
-      toolName,
-      source,
-    };
+    return routeIdentityCall(identityId, toolName, runtime);
   }
   const wsId = scope.wsId;
 
@@ -317,10 +306,43 @@ export async function routeToolCall(opts: {
   // future regression that aliases them).
   const context = runtime.getWorkspaceContext(wsId);
 
-  // Step 5 — source lookup. The inner toolName carries the
-  // `<source>__<tool>` form the existing registry routes on (see
-  // `ToolRegistry.execute` in `src/tools/registry.ts`). We split on
-  // the FIRST `__` to mirror that convention.
+  // Step 5 — resolve the inner tool's `<source>__` prefix to a dispatch
+  // handle in the bound workspace's registry (self-healing a transiently
+  // absent source once before failing).
+  const source = await resolveWorkspaceSource(wsId, toolName, runtime);
+
+  return { kind: "workspace", context, toolName, source };
+}
+
+/** Route a bare `<source>__<tool>` against the caller's identity context — no workspace. */
+function routeIdentityCall(
+  identityId: string,
+  toolName: string,
+  runtime: OrchestratorRuntime,
+): RoutedToolCall {
+  const sep = toolName.indexOf("__");
+  const sourceName = sep > 0 ? toolName.slice(0, sep) : toolName;
+  const source = runtime.getIdentitySource(sourceName);
+  if (!source) {
+    throw new UnknownIdentitySource(toolName, sourceName);
+  }
+  return {
+    kind: "identity",
+    context: runtime.getIdentityContext(identityId),
+    toolName,
+    source,
+  };
+}
+
+/** Resolve a workspace tool name's `<source>__` prefix to its registered `ToolSource`, self-healing a transiently absent source once. */
+async function resolveWorkspaceSource(
+  wsId: string,
+  toolName: string,
+  runtime: OrchestratorRuntime,
+): Promise<ToolSource> {
+  // The inner toolName carries the `<source>__<tool>` form the existing
+  // registry routes on (see `ToolRegistry.execute` in `src/tools/registry.ts`).
+  // We split on the FIRST `__` to mirror that convention.
   const sepIndex = toolName.indexOf("__");
   if (sepIndex < 0) {
     throw new UnknownToolSource(wsId, toolName, toolName);
@@ -331,31 +353,39 @@ export async function routeToolCall(opts: {
   }
   const registry = runtime.getRegistryForWorkspace(wsId);
   let source = registry.getSource(sourceName);
-  if (!source && runtime.recoverWorkspaceSource) {
-    // Self-heal. An installed bundle's source can be transiently absent
-    // from the registry: a failed credential respawn or a remote-OAuth
-    // teardown removes it WITHOUT re-adding, and nothing on the chat /
-    // automation hot path re-registers it — so the workspace stays
-    // toolless until a platform restart (the failure that bricked a
-    // workspace's Dropbox tools mid-run for both chat and its scheduled
-    // automations). Give the runtime ONE best-effort, cooldown-guarded
-    // chance to re-spawn the source from its persisted ref, then
-    // re-resolve against the same registry. A still-missing source falls
-    // through to the same `UnknownToolSource` as before — recovery only
-    // repairs a recoverable absence, it never hides a genuine failure.
-    let recovered = false;
-    try {
-      recovered = await runtime.recoverWorkspaceSource(wsId, sourceName);
-    } catch {
-      // Recovery is strictly best-effort; a throw here is no worse than
-      // no recovery at all. Fall through to UnknownToolSource.
-      recovered = false;
-    }
-    if (recovered) source = registry.getSource(sourceName);
+  // Self-heal. An installed bundle's source can be transiently absent from the
+  // registry: a failed credential respawn or a remote-OAuth teardown removes it
+  // WITHOUT re-adding, and nothing on the chat / automation hot path
+  // re-registers it — so the workspace stays toolless until a platform restart
+  // (the failure that bricked a workspace's Dropbox tools mid-run for both chat
+  // and its scheduled automations). Give the runtime ONE best-effort,
+  // cooldown-guarded chance to re-spawn the source from its persisted ref, then
+  // re-resolve against the same registry. A still-missing source falls through
+  // to the same `UnknownToolSource` — recovery only repairs a recoverable
+  // absence, it never hides a genuine failure.
+  if (!source && (await attemptSourceRecovery(wsId, sourceName, runtime))) {
+    source = registry.getSource(sourceName);
   }
   if (!source) {
     throw new UnknownToolSource(wsId, toolName, sourceName);
   }
+  return source;
+}
 
-  return { kind: "workspace", context, toolName, source };
+/** Never-throwing wrapper over the runtime's optional source-recovery hook; false when absent or on error. */
+async function attemptSourceRecovery(
+  wsId: string,
+  sourceName: string,
+  runtime: OrchestratorRuntime,
+): Promise<boolean> {
+  if (!runtime.recoverWorkspaceSource) {
+    return false;
+  }
+  try {
+    return await runtime.recoverWorkspaceSource(wsId, sourceName);
+  } catch {
+    // Recovery is strictly best-effort; a throw here is no worse than
+    // no recovery at all. Fall through to UnknownToolSource.
+    return false;
+  }
 }
