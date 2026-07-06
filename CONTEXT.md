@@ -62,7 +62,11 @@ A tool name's shape is its scope (ADR-0005). **Workspace tools** are
 ### Primitive (conversation / file / automation)
 Workspace-owned, stored at `workspaces/<wsId>/<primitive>/<ownerId>/`
 (ADR-0003). The path is authoritative; `workspaceId`/`ownerId` on the record are
-denormalised. Private to the owner by default (ADR-0004).
+denormalised. Private to the owner by default (ADR-0004). **Active use**
+(resuming a conversation, running an automation, reaching the workspace's tools)
+requires **current membership** of the primitive's workspace — checked at session
+establishment, so offboarding revokes reach; **reading** your own authored
+primitive stays owner-gated (ADR-0007).
 
 ### File
 A workspace-owned primitive with a globally-unique id (`fl_<24 hex>`). Addressed
