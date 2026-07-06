@@ -41,6 +41,135 @@ function formatDate(iso?: string): string {
   }
 }
 
+/** Row action: restores a deactivated user, otherwise deactivates an active one. */
+function UserRowAction({
+  user,
+  isSelf,
+  isBusy,
+  isDeactivated,
+  onDelete,
+  onRestore,
+}: {
+  user: User;
+  isSelf: boolean;
+  isBusy: boolean;
+  isDeactivated: boolean;
+  onDelete: (userId: string, displayName: string) => void;
+  onRestore: (userId: string) => void;
+}) {
+  if (isDeactivated) {
+    return (
+      <Button
+        size="sm"
+        variant="ghost"
+        disabled={isBusy}
+        title={`Restore ${user.displayName}`}
+        onClick={() => onRestore(user.id)}
+        className="h-8 w-8 p-0 text-muted-foreground hover:text-foreground"
+      >
+        <RotateCcw className="h-4 w-4" />
+      </Button>
+    );
+  }
+  return (
+    <Button
+      size="sm"
+      variant="ghost"
+      disabled={isSelf || isBusy}
+      title={isSelf ? "Cannot deactivate yourself" : `Deactivate ${user.displayName}`}
+      onClick={() => onDelete(user.id, user.displayName)}
+      className="h-8 w-8 p-0 text-muted-foreground hover:text-destructive"
+    >
+      <Trash2 className="h-4 w-4" />
+    </Button>
+  );
+}
+
+/** One users-table row: identity columns plus the deactivate/restore action. */
+function UserRow({
+  user,
+  isSelf,
+  isBusy,
+  onDelete,
+  onRestore,
+}: {
+  user: User;
+  isSelf: boolean;
+  isBusy: boolean;
+  onDelete: (userId: string, displayName: string) => void;
+  onRestore: (userId: string) => void;
+}) {
+  const isDeactivated = Boolean(user.deletedAt);
+  return (
+    <TableRow className={isDeactivated ? "opacity-60" : undefined}>
+      <TableCell className="font-medium">
+        {user.displayName}
+        {isDeactivated ? (
+          <span className="ml-2 rounded bg-muted px-1.5 py-0.5 text-xs font-normal text-muted-foreground">
+            Deactivated
+          </span>
+        ) : null}
+      </TableCell>
+      <TableCell>{user.email}</TableCell>
+      <TableCell>
+        <RoleBadge role={user.orgRole} />
+      </TableCell>
+      <TableCell className="text-muted-foreground">{formatDate(user.createdAt)}</TableCell>
+      <TableCell>
+        <UserRowAction
+          user={user}
+          isSelf={isSelf}
+          isBusy={isBusy}
+          isDeactivated={isDeactivated}
+          onDelete={onDelete}
+          onRestore={onRestore}
+        />
+      </TableCell>
+    </TableRow>
+  );
+}
+
+/** The users table: a column header plus one {@link UserRow} per user. */
+function UsersTable({
+  users,
+  currentUserId,
+  busyId,
+  onDelete,
+  onRestore,
+}: {
+  users: User[];
+  currentUserId?: string;
+  busyId: string | null;
+  onDelete: (userId: string, displayName: string) => void;
+  onRestore: (userId: string) => void;
+}) {
+  return (
+    <Table>
+      <TableHeader>
+        <TableRow>
+          <TableHead>Display Name</TableHead>
+          <TableHead>Email</TableHead>
+          <TableHead>Role</TableHead>
+          <TableHead>Created</TableHead>
+          <TableHead className="w-[60px]" />
+        </TableRow>
+      </TableHeader>
+      <TableBody>
+        {users.map((u) => (
+          <UserRow
+            key={u.id}
+            user={u}
+            isSelf={u.id === currentUserId}
+            isBusy={busyId === u.id}
+            onDelete={onDelete}
+            onRestore={onRestore}
+          />
+        ))}
+      </TableBody>
+    </Table>
+  );
+}
+
 export function UsersTab() {
   const session = useSession();
   const currentUserId = session?.user?.id;
@@ -228,68 +357,13 @@ export function UsersTab() {
           </Button>
         </div>
       ) : (
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead>Display Name</TableHead>
-              <TableHead>Email</TableHead>
-              <TableHead>Role</TableHead>
-              <TableHead>Created</TableHead>
-              <TableHead className="w-[60px]" />
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {users.map((u) => {
-              const isSelf = u.id === currentUserId;
-              const isBusy = busyId === u.id;
-              const isDeactivated = Boolean(u.deletedAt);
-              return (
-                <TableRow key={u.id} className={isDeactivated ? "opacity-60" : undefined}>
-                  <TableCell className="font-medium">
-                    {u.displayName}
-                    {isDeactivated ? (
-                      <span className="ml-2 rounded bg-muted px-1.5 py-0.5 text-xs font-normal text-muted-foreground">
-                        Deactivated
-                      </span>
-                    ) : null}
-                  </TableCell>
-                  <TableCell>{u.email}</TableCell>
-                  <TableCell>
-                    <RoleBadge role={u.orgRole} />
-                  </TableCell>
-                  <TableCell className="text-muted-foreground">{formatDate(u.createdAt)}</TableCell>
-                  <TableCell>
-                    {isDeactivated ? (
-                      <Button
-                        size="sm"
-                        variant="ghost"
-                        disabled={isBusy}
-                        title={`Restore ${u.displayName}`}
-                        onClick={() => handleRestore(u.id)}
-                        className="h-8 w-8 p-0 text-muted-foreground hover:text-foreground"
-                      >
-                        <RotateCcw className="h-4 w-4" />
-                      </Button>
-                    ) : (
-                      <Button
-                        size="sm"
-                        variant="ghost"
-                        disabled={isSelf || isBusy}
-                        title={
-                          isSelf ? "Cannot deactivate yourself" : `Deactivate ${u.displayName}`
-                        }
-                        onClick={() => handleDelete(u.id, u.displayName)}
-                        className="h-8 w-8 p-0 text-muted-foreground hover:text-destructive"
-                      >
-                        <Trash2 className="h-4 w-4" />
-                      </Button>
-                    )}
-                  </TableCell>
-                </TableRow>
-              );
-            })}
-          </TableBody>
-        </Table>
+        <UsersTable
+          users={users}
+          currentUserId={currentUserId}
+          busyId={busyId}
+          onDelete={handleDelete}
+          onRestore={handleRestore}
+        />
       )}
     </SettingsListPage>
   );
