@@ -220,6 +220,242 @@ function useSmartScroll(messages: ChatMessage[]) {
   return { scrollRef, bottomRef, isAtBottom, scrollToBottom };
 }
 
+/** Horizontal row of file-attachment chips. */
+function FileAttachments({
+  files,
+  className,
+}: {
+  files: NonNullable<ChatMessage["files"]>;
+  className: string;
+}) {
+  return (
+    <div className={className}>
+      {files.map((file) => (
+        <FileAttachment key={file.id} file={file} />
+      ))}
+    </div>
+  );
+}
+
+/** Collapsed "App Context" prefix shown above a user message. */
+function AppContextDetails({ prefix }: { prefix: string }) {
+  return (
+    <details className="mb-1">
+      <summary className="text-3xs opacity-60 cursor-pointer select-none">App Context</summary>
+      <span className="block text-3xs opacity-60 mt-0.5">{prefix}</span>
+    </details>
+  );
+}
+
+/** User turn: left-ruled bubble with optional app-context prefix and file chips. */
+function UserMessage({
+  contextPrefix,
+  files,
+  displayContent,
+}: {
+  contextPrefix: string | null;
+  files?: ChatMessage["files"];
+  displayContent: string;
+}) {
+  return (
+    <div className="pl-4 border-l-2 border-border break-words whitespace-pre-wrap">
+      {contextPrefix && <AppContextDetails prefix={contextPrefix} />}
+      {files && files.length > 0 && (
+        <FileAttachments files={files} className="flex flex-wrap gap-2 mb-2" />
+      )}
+      <span className="presence-user-message italic">{displayContent}</span>
+    </div>
+  );
+}
+
+/** Run-level stop-reason notice appended below an assistant turn. */
+function StopReasonNotice({ stopReason }: { stopReason: string }) {
+  return (
+    <div className="flex items-start gap-2 px-3 py-2 rounded-sm bg-muted/50 border border-border text-sm text-muted-foreground">
+      <AlertCircle className="w-4 h-4 mt-0.5 shrink-0" />
+      <span>{stopReasonMessage(stopReason)}</span>
+    </div>
+  );
+}
+
+/** Inline error notice with a retry affordance and collapsible raw detail. */
+function ErrorNotice({ error, onRetry }: { error: string; onRetry?: () => void }) {
+  return (
+    <div className="px-3 py-2.5 rounded-sm bg-destructive/10 border border-destructive/20 text-sm">
+      <div className="flex items-center gap-2">
+        <AlertCircle className="w-4 h-4 shrink-0 text-destructive" />
+        <span className="flex-1 text-foreground">
+          Something went wrong. You can try again or continue the conversation.
+        </span>
+        {onRetry && (
+          <button
+            type="button"
+            onClick={onRetry}
+            className="inline-flex items-center gap-1.5 px-2.5 py-1 text-xs font-medium rounded-sm border border-border bg-card hover:bg-muted text-foreground transition-colors shrink-0"
+          >
+            <RotateCcw className="w-3 h-3" />
+            Try again
+          </button>
+        )}
+      </div>
+      <details className="mt-1.5 ml-6">
+        <summary className="text-xs text-muted-foreground cursor-pointer select-none hover:text-foreground transition-colors">
+          Details
+        </summary>
+        <p className="text-xs text-muted-foreground mt-1 font-mono break-all">{error}</p>
+      </details>
+    </div>
+  );
+}
+
+/** Assistant turn: block timeline (or legacy Streamdown), file chips, and notices. */
+function AssistantMessage({
+  msg,
+  displayContent,
+  isLast,
+  isStreaming,
+  streamingState,
+  preparingTool,
+  displayDetail,
+  onRetry,
+}: {
+  msg: ChatMessage;
+  displayContent: string;
+  isLast: boolean;
+  isStreaming: boolean;
+  streamingState: StreamingState;
+  preparingTool?: PreparingTool | null;
+  displayDetail: DisplayDetail;
+  onRetry?: () => void;
+}) {
+  const isCurrent = isStreaming && isLast;
+  return (
+    <div className="w-full break-words min-w-0 overflow-hidden flex flex-col gap-3">
+      {msg.blocks ? (
+        <BlockTimeline
+          blocks={msg.blocks}
+          isCurrentMessage={isCurrent}
+          streamingState={streamingState}
+          preparingTool={preparingTool ?? null}
+          displayDetail={displayDetail}
+        />
+      ) : (
+        // Legacy / pre-block-model conversations: render the serialized message
+        // content as one Streamdown block. The block model has been the engine's
+        // emission shape for some time, so this branch is essentially
+        // history-only; kept for archived JSONLs that don't have `blocks`
+        // populated.
+        <div className="min-h-[1em]">
+          <Streamdown
+            className="streamdown-container presence-assistant-message"
+            isAnimating={isCurrent}
+          >
+            {displayContent}
+          </Streamdown>
+        </div>
+      )}
+      {msg.files && msg.files.length > 0 && (
+        <FileAttachments files={msg.files} className="flex flex-wrap gap-2" />
+      )}
+      {msg.stopReason && <StopReasonNotice stopReason={msg.stopReason} />}
+      {msg.error && <ErrorNotice error={msg.error} onRetry={onRetry} />}
+      {/* Inline app views are rendered within their tool block above */}
+    </div>
+  );
+}
+
+/** Hover-revealed metadata row: copy button, relative timestamp, and usage chip. */
+function MessageHoverChrome({
+  role,
+  displayContent,
+  displayDetail,
+  timestamp,
+  usage,
+}: {
+  role: ChatMessage["role"];
+  displayContent: string;
+  displayDetail: DisplayDetail;
+  timestamp?: string;
+  usage?: ChatMessage["usage"];
+}) {
+  const showTimestamp = displayDetail === "verbose" || (displayDetail === "balanced" && timestamp);
+  return (
+    // Absolutely positioned so it overlays into the existing gap between messages
+    // instead of reserving dead vertical space, aligned to the message's edge.
+    // `whitespace-nowrap` keeps the row single-line however narrow the parent
+    // bubble gets (the absolute child inherits its shrink-to-fit width).
+    <div
+      className={`absolute top-full ${role === "user" ? "right-0" : "left-0"} mt-1 flex items-center gap-2 whitespace-nowrap opacity-0 group-hover:opacity-100 metadata-hover transition-opacity duration-200`}
+    >
+      <CopyButton content={displayContent} />
+      {showTimestamp && timestamp && (
+        <span className="text-3xs text-muted-foreground">{formatRelativeTime(timestamp)}</span>
+      )}
+      {usage && <UsageChip usage={usage} />}
+    </div>
+  );
+}
+
+/** One message row: the user or assistant body plus its hover metadata chrome. */
+function MessageItem({
+  msg,
+  isNew,
+  isLast,
+  isStreaming,
+  streamingState,
+  preparingTool,
+  displayDetail,
+  onRetry,
+}: {
+  msg: ChatMessage;
+  /** Rendered after the initial load, so it gets the entrance animation. */
+  isNew: boolean;
+  isLast: boolean;
+  isStreaming: boolean;
+  streamingState: StreamingState;
+  preparingTool?: PreparingTool | null;
+  displayDetail: DisplayDetail;
+  onRetry?: () => void;
+}) {
+  const contextMatch = msg.role === "user" ? msg.content.match(APP_CONTEXT_RE) : null;
+  const contextPrefix = contextMatch ? contextMatch[0].trim() : null;
+  const displayContent = contextMatch ? msg.content.slice(contextMatch[0].length) : msg.content;
+
+  return (
+    <div
+      className={`group relative flex flex-col scroll-mt-6 ${isNew ? "presence-message-enter" : ""} ${
+        msg.role === "user" ? "max-w-[80%] self-end items-end" : "w-full self-start items-start"
+      }`}
+    >
+      {msg.role === "user" ? (
+        <UserMessage
+          contextPrefix={contextPrefix}
+          files={msg.files}
+          displayContent={displayContent}
+        />
+      ) : (
+        <AssistantMessage
+          msg={msg}
+          displayContent={displayContent}
+          isLast={isLast}
+          isStreaming={isStreaming}
+          streamingState={streamingState}
+          preparingTool={preparingTool}
+          displayDetail={displayDetail}
+          onRetry={onRetry}
+        />
+      )}
+      <MessageHoverChrome
+        role={msg.role}
+        displayContent={displayContent}
+        displayDetail={displayDetail}
+        timestamp={msg.timestamp}
+        usage={msg.usage}
+      />
+    </div>
+  );
+}
+
 export function MessageList({
   messages,
   isStreaming,
@@ -272,140 +508,20 @@ export function MessageList({
         }`}
       >
         <div className={`py-6 flex flex-col gap-10 ${compact ? "px-4" : "px-8 max-w-4xl mx-auto"}`}>
-          {messages.map((msg, idx) => {
-            const contextMatch = msg.role === "user" ? msg.content.match(APP_CONTEXT_RE) : null;
-            const contextPrefix = contextMatch ? contextMatch[0].trim() : null;
-            const displayContent = contextMatch
-              ? msg.content.slice(contextMatch[0].length)
-              : msg.content;
-
-            const showTimestamp =
-              displayDetail === "verbose" || (displayDetail === "balanced" && msg.timestamp);
-
-            return (
-              <div
-                // biome-ignore lint/suspicious/noArrayIndexKey: messages lack stable IDs and don't reorder
-                key={idx}
-                className={`group relative flex flex-col scroll-mt-6 ${idx >= initialCountRef.current ? "presence-message-enter" : ""} ${
-                  msg.role === "user"
-                    ? "max-w-[80%] self-end items-end"
-                    : "w-full self-start items-start"
-                }`}
-              >
-                {msg.role === "user" ? (
-                  <div className="pl-4 border-l-2 border-border break-words whitespace-pre-wrap">
-                    {contextPrefix && (
-                      <details className="mb-1">
-                        <summary className="text-3xs opacity-60 cursor-pointer select-none">
-                          App Context
-                        </summary>
-                        <span className="block text-3xs opacity-60 mt-0.5">{contextPrefix}</span>
-                      </details>
-                    )}
-                    {msg.files && msg.files.length > 0 && (
-                      <div className="flex flex-wrap gap-2 mb-2">
-                        {msg.files.map((file) => (
-                          <FileAttachment key={file.id} file={file} />
-                        ))}
-                      </div>
-                    )}
-                    <span className="presence-user-message italic">{displayContent}</span>
-                  </div>
-                ) : (
-                  <div className="w-full break-words min-w-0 overflow-hidden flex flex-col gap-3">
-                    {msg.blocks ? (
-                      <BlockTimeline
-                        blocks={msg.blocks}
-                        isCurrentMessage={isStreaming && idx === messages.length - 1}
-                        streamingState={streamingState}
-                        preparingTool={preparingTool ?? null}
-                        displayDetail={displayDetail}
-                      />
-                    ) : (
-                      // Legacy / pre-block-model conversations: render the
-                      // serialized message content as one Streamdown block.
-                      // The block model has been the engine's emission shape
-                      // for some time, so this branch is essentially
-                      // history-only; kept for archived JSONLs that don't
-                      // have `blocks` populated.
-                      <div className="min-h-[1em]">
-                        <Streamdown
-                          className="streamdown-container presence-assistant-message"
-                          isAnimating={isStreaming && idx === messages.length - 1}
-                        >
-                          {displayContent}
-                        </Streamdown>
-                      </div>
-                    )}
-                    {/* File attachments */}
-                    {msg.files && msg.files.length > 0 && (
-                      <div className="flex flex-wrap gap-2">
-                        {msg.files.map((file) => (
-                          <FileAttachment key={file.id} file={file} />
-                        ))}
-                      </div>
-                    )}
-                    {/* Stop reason notice */}
-                    {msg.stopReason && (
-                      <div className="flex items-start gap-2 px-3 py-2 rounded-sm bg-muted/50 border border-border text-sm text-muted-foreground">
-                        <AlertCircle className="w-4 h-4 mt-0.5 shrink-0" />
-                        <span>{stopReasonMessage(msg.stopReason)}</span>
-                      </div>
-                    )}
-                    {/* Inline error notice */}
-                    {msg.error && (
-                      <div className="px-3 py-2.5 rounded-sm bg-destructive/10 border border-destructive/20 text-sm">
-                        <div className="flex items-center gap-2">
-                          <AlertCircle className="w-4 h-4 shrink-0 text-destructive" />
-                          <span className="flex-1 text-foreground">
-                            Something went wrong. You can try again or continue the conversation.
-                          </span>
-                          {onRetry && (
-                            <button
-                              type="button"
-                              onClick={onRetry}
-                              className="inline-flex items-center gap-1.5 px-2.5 py-1 text-xs font-medium rounded-sm border border-border bg-card hover:bg-muted text-foreground transition-colors shrink-0"
-                            >
-                              <RotateCcw className="w-3 h-3" />
-                              Try again
-                            </button>
-                          )}
-                        </div>
-                        <details className="mt-1.5 ml-6">
-                          <summary className="text-xs text-muted-foreground cursor-pointer select-none hover:text-foreground transition-colors">
-                            Details
-                          </summary>
-                          <p className="text-xs text-muted-foreground mt-1 font-mono break-all">
-                            {msg.error}
-                          </p>
-                        </details>
-                      </div>
-                    )}
-                    {/* Inline app views are rendered within their tool block above */}
-                  </div>
-                )}
-                {/* Hover chrome — copy button + timestamp + token count.
-                    Absolutely positioned so it overlays into the existing
-                    gap between messages instead of reserving dead vertical
-                    space. Aligned to the same edge as the message bubble.
-                    `whitespace-nowrap` keeps the row single-line regardless
-                    of how narrow the parent bubble gets (short messages
-                    otherwise force text to wrap since the absolute child
-                    inherits the parent's shrink-to-fit width). */}
-                <div
-                  className={`absolute top-full ${msg.role === "user" ? "right-0" : "left-0"} mt-1 flex items-center gap-2 whitespace-nowrap opacity-0 group-hover:opacity-100 metadata-hover transition-opacity duration-200`}
-                >
-                  <CopyButton content={displayContent} />
-                  {showTimestamp && msg.timestamp && (
-                    <span className="text-3xs text-muted-foreground">
-                      {formatRelativeTime(msg.timestamp)}
-                    </span>
-                  )}
-                  {msg.usage && <UsageChip usage={msg.usage} />}
-                </div>
-              </div>
-            );
-          })}
+          {messages.map((msg, idx) => (
+            <MessageItem
+              // biome-ignore lint/suspicious/noArrayIndexKey: messages lack stable IDs and don't reorder
+              key={idx}
+              msg={msg}
+              isNew={idx >= initialCountRef.current}
+              isLast={idx === messages.length - 1}
+              isStreaming={isStreaming}
+              streamingState={streamingState}
+              preparingTool={preparingTool}
+              displayDetail={displayDetail}
+              onRetry={onRetry}
+            />
+          ))}
           {/* Spacer: ensures any message can scroll to the top of the viewport */}
           <div className="min-h-[60vh] shrink-0" />
           <div ref={bottomRef} />
