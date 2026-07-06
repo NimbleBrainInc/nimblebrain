@@ -213,7 +213,7 @@ function useSmartScroll(messages: ChatMessage[]) {
     if (conversationKey !== prevKey && messages.length > 1) {
       // Use double-rAF to ensure the DOM has rendered the messages. Scroll the
       // last real message to the viewport bottom (not the trailing 60vh
-      // spacer / bottomRef, which would leave the last turn off-screen).
+      // spacer, which would leave the last turn off-screen).
       requestAnimationFrame(() => {
         requestAnimationFrame(() => {
           const container = scrollRef.current;

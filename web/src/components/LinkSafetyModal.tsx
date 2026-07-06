@@ -25,7 +25,7 @@ interface ParsedUrl {
   initial: string;
 }
 
-function parseUrl(raw: string): ParsedUrl {
+export function parseUrl(raw: string): ParsedUrl {
   try {
     const u = new URL(raw);
     const domain = u.hostname.replace(/^www\./, "");

@@ -27,7 +27,7 @@ interface RecentListResult {
 
 const RECENT_LIMIT = 10;
 
-function relativeTime(iso: string): string {
+export function relativeTime(iso: string): string {
   const then = new Date(iso).getTime();
   if (Number.isNaN(then)) return "";
   const diff = Date.now() - then;
