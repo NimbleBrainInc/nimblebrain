@@ -6,7 +6,12 @@
  */
 
 import type { AccessContext, ConversationIndex } from "../index-cache.ts";
-import { readConversation } from "../jsonl-reader.ts";
+import {
+  type ConversationFile,
+  type DisplayMessage,
+  type DisplayToolCall,
+  readConversation,
+} from "../jsonl-reader.ts";
 
 export interface StatsInput {
   period?: "day" | "week" | "month" | "all";
@@ -49,6 +54,67 @@ function periodToSince(period: "day" | "week" | "month" | "all", now: Date): Dat
   }
 }
 
+/** Mutable running totals a single stats pass folds each conversation into. */
+interface StatsAccumulator {
+  totalInputTokens: number;
+  totalOutputTokens: number;
+  byModel: Record<string, ModelStats>;
+  toolCounts: Record<string, number>;
+}
+
+/** Get or create the per-model stats bucket for a model. */
+function ensureModelStats(byModel: Record<string, ModelStats>, model: string): ModelStats {
+  const existing = byModel[model];
+  if (existing) return existing;
+  const created: ModelStats = { inputTokens: 0, outputTokens: 0, conversations: 0 };
+  byModel[model] = created;
+  return created;
+}
+
+/** Increment call counts for each tool call in an assistant turn. */
+function recordToolCalls(toolCounts: Record<string, number>, toolCalls: DisplayToolCall[]): void {
+  for (const tc of toolCalls) {
+    toolCounts[tc.name] = (toolCounts[tc.name] ?? 0) + 1;
+  }
+}
+
+/** Fold one assistant message's usage and tool calls into the accumulator, tracking its model. */
+function accumulateAssistantMessage(
+  msg: DisplayMessage,
+  acc: StatsAccumulator,
+  modelsInConv: Set<string>,
+): void {
+  const usage = msg.usage;
+  if (usage?.model) {
+    modelsInConv.add(usage.model);
+    const stats = ensureModelStats(acc.byModel, usage.model);
+    stats.inputTokens += usage.inputTokens;
+    stats.outputTokens += usage.outputTokens;
+  }
+  if (msg.toolCalls) {
+    recordToolCalls(acc.toolCounts, msg.toolCalls);
+  }
+}
+
+/** Fold one conversation's tokens, per-model usage, and tool calls into the accumulator. */
+function accumulateConversation(conv: ConversationFile, acc: StatsAccumulator): void {
+  // Sum tokens from metadata header
+  acc.totalInputTokens += conv.meta.totalInputTokens;
+  acc.totalOutputTokens += conv.meta.totalOutputTokens;
+
+  // Track which models appeared in this conversation; each bumps its
+  // conversation count once, after all messages are folded in.
+  const modelsInConv = new Set<string>();
+  for (const msg of conv.messages) {
+    if (msg.role !== "assistant") continue;
+    accumulateAssistantMessage(msg, acc, modelsInConv);
+  }
+
+  for (const model of modelsInConv) {
+    acc.byModel[model]!.conversations += 1;
+  }
+}
+
 export async function handleStats(
   input: StatsInput,
   index: ConversationIndex,
@@ -74,61 +140,30 @@ export async function handleStats(
     access,
   );
 
-  let totalInputTokens = 0;
-  let totalOutputTokens = 0;
-  const byModel: Record<string, ModelStats> = {};
-  const toolCounts: Record<string, number> = {};
+  const acc: StatsAccumulator = {
+    totalInputTokens: 0,
+    totalOutputTokens: 0,
+    byModel: {},
+    toolCounts: {},
+  };
 
   for (const entry of listResult.conversations) {
     const conv = await readConversation(entry.filePath);
     if (!conv) continue;
-
-    // Sum tokens from metadata header
-    totalInputTokens += conv.meta.totalInputTokens;
-    totalOutputTokens += conv.meta.totalOutputTokens;
-
-    // Track which models appeared in this conversation
-    const modelsInConv = new Set<string>();
-
-    for (const msg of conv.messages) {
-      if (msg.role !== "assistant") continue;
-
-      // Model breakdown (from aggregated turn-level usage)
-      if (msg.usage?.model) {
-        const model = msg.usage.model;
-        modelsInConv.add(model);
-        if (!byModel[model]) {
-          byModel[model] = { inputTokens: 0, outputTokens: 0, conversations: 0 };
-        }
-        byModel[model]!.inputTokens += msg.usage.inputTokens;
-        byModel[model]!.outputTokens += msg.usage.outputTokens;
-      }
-
-      // Tool usage (turn-level flat list)
-      if (msg.toolCalls) {
-        for (const tc of msg.toolCalls) {
-          toolCounts[tc.name] = (toolCounts[tc.name] ?? 0) + 1;
-        }
-      }
-    }
-
-    // Increment conversation counts per model (once per conversation)
-    for (const model of modelsInConv) {
-      byModel[model]!.conversations += 1;
-    }
+    accumulateConversation(conv, acc);
   }
 
   // Sort tools by callCount descending
-  const topTools: ToolEntry[] = Object.entries(toolCounts)
+  const topTools: ToolEntry[] = Object.entries(acc.toolCounts)
     .map(([name, callCount]) => ({ name, callCount }))
     .sort((a, b) => b.callCount - a.callCount);
 
   return {
     period: { since: sinceIso, until: untilIso },
     totalConversations: listResult.conversations.length,
-    totalInputTokens,
-    totalOutputTokens,
-    byModel,
+    totalInputTokens: acc.totalInputTokens,
+    totalOutputTokens: acc.totalOutputTokens,
+    byModel: acc.byModel,
     topTools,
   };
 }
