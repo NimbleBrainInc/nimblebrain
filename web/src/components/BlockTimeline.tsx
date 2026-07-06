@@ -98,35 +98,45 @@ function foldBlocks(blocks: ReadonlyArray<ContentBlock>): TimelineItem[] {
   for (const block of blocks) {
     if (block.type === "text") {
       flush();
-      if (block.text.length > 0) items.push({ kind: "text", text: block.text });
+      pushText(items, block.text);
       continue;
     }
     if (block.type === "reasoning") {
-      if (block.text.length === 0) continue;
-      rows.push({ kind: "reasoning", text: block.text });
+      pushReasoning(rows, block.text);
       continue;
     }
     // tool block
-    if (block.toolCalls.length === 0) continue;
-    const sharedName = sameNameAcross(block.toolCalls);
-    const prev = rows[rows.length - 1];
-    if (
-      sharedName !== null &&
-      prev?.kind === "tool" &&
-      prev.name === sharedName &&
-      prev.name !== ""
-    ) {
-      prev.calls.push(...block.toolCalls);
-    } else {
-      rows.push({
-        kind: "tool",
-        name: sharedName ?? "",
-        calls: [...block.toolCalls],
-      });
-    }
+    if (block.toolCalls.length > 0) appendToolCalls(rows, block.toolCalls);
   }
   flush();
   return items;
+}
+
+/** Emit a text item for non-empty prose; an empty text block renders nothing. */
+function pushText(items: TimelineItem[], text: string): void {
+  if (text.length > 0) items.push({ kind: "text", text });
+}
+
+/** Append a reasoning row for non-empty thought; an empty block renders nothing. */
+function pushReasoning(rows: ActivityRow[], text: string): void {
+  if (text.length > 0) rows.push({ kind: "reasoning", text });
+}
+
+/** Fold a tool block into the trailing tool row when they share a non-empty
+ *  tool name, otherwise start a new tool row. */
+function appendToolCalls(rows: ActivityRow[], toolCalls: ReadonlyArray<ToolCallDisplay>): void {
+  const sharedName = sameNameAcross(toolCalls);
+  const prev = rows[rows.length - 1];
+  if (
+    sharedName !== null &&
+    prev?.kind === "tool" &&
+    prev.name === sharedName &&
+    prev.name !== ""
+  ) {
+    prev.calls.push(...toolCalls);
+    return;
+  }
+  rows.push({ kind: "tool", name: sharedName ?? "", calls: [...toolCalls] });
 }
 
 function sameNameAcross(calls: ReadonlyArray<ToolCallDisplay>): string | null {
