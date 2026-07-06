@@ -41,6 +41,57 @@ function hasTerm(tokens: Set<string>, term: string): boolean {
   return false;
 }
 
+/** Per-term token signal: +20 for a name-token hit, +10 for a description-token hit, plus coverage. */
+function scoreQueryTerms(
+  nameTokens: Set<string>,
+  descriptionTokens: Set<string>,
+  queryTerms: string[],
+): { score: number; matchedTerms: number } {
+  let score = 0;
+  let matchedTerms = 0;
+  for (const term of queryTerms) {
+    const nameMatch = hasTerm(nameTokens, term);
+    const descriptionMatch = hasTerm(descriptionTokens, term);
+    if (!nameMatch && !descriptionMatch) continue;
+
+    matchedTerms++;
+    score += nameMatch ? 20 : 0;
+    score += descriptionMatch ? 10 : 0;
+  }
+  return { score, matchedTerms };
+}
+
+/** Score one tool against the query; null when neither a substring nor a term matches. */
+function scoreTool<T extends ToolSearchResult>(
+  tool: T,
+  normalizedQuery: string,
+  queryTerms: string[],
+): ScoredTool<T> | null {
+  const nameSubstringMatch = tool.name.toLowerCase().includes(normalizedQuery);
+  const descriptionSubstringMatch = tool.description.toLowerCase().includes(normalizedQuery);
+  const termSignal = scoreQueryTerms(tokenSet(tool.name), tokenSet(tool.description), queryTerms);
+
+  if (termSignal.matchedTerms === 0 && !nameSubstringMatch && !descriptionSubstringMatch) {
+    return null;
+  }
+
+  // `score` carries only the substring + per-term signal. Query-term *coverage*
+  // (`matchedTerms`) is the comparator's primary sort key, so it is deliberately
+  // not folded into `score` too — within any matchedTerms tie-group the coverage
+  // contribution is constant and cancels, so encoding it here would never change
+  // ordering.
+  const score =
+    (nameSubstringMatch ? 200 : 0) + (descriptionSubstringMatch ? 100 : 0) + termSignal.score;
+  return { tool, score, matchedTerms: termSignal.matchedTerms };
+}
+
+/** Rank order: term coverage first, then accumulated score, then tie-broken by name. */
+function compareScored<T extends ToolSearchResult>(a: ScoredTool<T>, b: ScoredTool<T>): number {
+  if (b.matchedTerms !== a.matchedTerms) return b.matchedTerms - a.matchedTerms;
+  if (b.score !== a.score) return b.score - a.score;
+  return a.tool.name.localeCompare(b.tool.name);
+}
+
 /**
  * Rank installed tools for natural-language discovery queries.
  *
@@ -55,43 +106,10 @@ export function rankToolSearchResults<T extends ToolSearchResult>(tools: T[], qu
 
   const scored: ScoredTool<T>[] = [];
   for (const tool of tools) {
-    const name = tool.name.toLowerCase();
-    const description = tool.description.toLowerCase();
-    const nameSubstringMatch = name.includes(normalizedQuery);
-    const descriptionSubstringMatch = description.includes(normalizedQuery);
-    const nameTokens = tokenSet(tool.name);
-    const descriptionTokens = tokenSet(tool.description);
-
-    let score = 0;
-    if (nameSubstringMatch) score += 200;
-    if (descriptionSubstringMatch) score += 100;
-
-    let matchedTerms = 0;
-    for (const term of queryTerms) {
-      const nameMatch = hasTerm(nameTokens, term);
-      const descriptionMatch = hasTerm(descriptionTokens, term);
-      if (!nameMatch && !descriptionMatch) continue;
-
-      matchedTerms++;
-      score += nameMatch ? 20 : 0;
-      score += descriptionMatch ? 10 : 0;
-    }
-
-    if (matchedTerms === 0 && !nameSubstringMatch && !descriptionSubstringMatch) continue;
-
-    // `score` carries only the substring + per-term signal. Query-term
-    // *coverage* is the comparator's primary sort key (below), so it is
-    // deliberately not folded into `score` too — within any matchedTerms
-    // tie-group the coverage contribution is constant and cancels, so
-    // encoding it here would never change ordering.
-    scored.push({ tool, score, matchedTerms });
+    const result = scoreTool(tool, normalizedQuery, queryTerms);
+    if (result) scored.push(result);
   }
 
-  scored.sort((a, b) => {
-    if (b.matchedTerms !== a.matchedTerms) return b.matchedTerms - a.matchedTerms;
-    if (b.score !== a.score) return b.score - a.score;
-    return a.tool.name.localeCompare(b.tool.name);
-  });
-
+  scored.sort(compareScored);
   return scored.map((s) => s.tool);
 }
