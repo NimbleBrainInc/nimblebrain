@@ -940,7 +940,9 @@ export function createChatStore(): ChatStore {
   };
 
   function applyStreamEvent(slice: ConversationSlice, type: string, data: unknown): void {
-    STREAM_EVENT_HANDLERS[type]?.(slice, data);
+    // Own-key guard so an inherited name (constructor/toString/__proto__) can't
+    // resolve to an Object.prototype member; unknown types no-op as the switch did.
+    if (Object.hasOwn(STREAM_EVENT_HANDLERS, type)) STREAM_EVENT_HANDLERS[type]?.(slice, data);
   }
 
   // -- send (start a server turn, then watch it) --

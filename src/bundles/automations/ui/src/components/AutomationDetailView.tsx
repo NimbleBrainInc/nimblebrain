@@ -120,7 +120,7 @@ export function AutomationDetailView({
 
   return (
     <div className="app">
-      <DetailHeader d={d} />
+      <DetailHeader d={d} onBack={onBack} />
 
       <div className="content">
         {error && <div className="error-banner">{error}</div>}
@@ -242,11 +242,14 @@ function DetailLoadingState({
   return null;
 }
 
-/** Detail header: status dot, name, paused/auto-disabled tag, description, and any disabled reason. */
-function DetailHeader({ d }: { d: AutomationDetail }) {
+/** Detail header: back button, status dot, name, paused/auto-disabled tag, description, and any disabled reason. */
+function DetailHeader({ d, onBack }: { d: AutomationDetail; onBack: () => void }) {
   return (
     <div className="header">
       <div className="detail-header">
+        <button type="button" className="back-btn" onClick={onBack}>
+          <BackArrowIcon />
+        </button>
         <div className="detail-name">
           <span
             className={`dot ${statusDotClass(d.lastRunStatus, d.enabled, d.consecutiveErrors)}`}

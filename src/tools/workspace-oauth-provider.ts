@@ -1745,10 +1745,12 @@ export class WorkspaceOAuthProvider implements OAuthClientProvider {
         bundleOrigin,
         this.allowInsecureRemotes,
       );
-      // Try each AS in order. First one that advertises a revocation_endpoint wins.
+      // Try each AS in order. First one that advertises a string revocation_endpoint
+      // wins — including an empty string (a downstream `if (endpoint)` guard then
+      // skips the actual revoke), matching the original first-string-wins semantics.
       for (const asOrigin of asOrigins) {
         const endpoint = await this.fetchRevocationEndpoint(fetcher, asOrigin);
-        if (endpoint) return endpoint;
+        if (endpoint !== undefined) return endpoint;
       }
     } catch (err) {
       log.debug(
