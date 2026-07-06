@@ -212,6 +212,11 @@ export function getProviderFromModel(modelString: string): string {
  * `thinking.type=adaptive` plus `output_config.effort` instead. Hardcoded
  * (not synced from models.dev — that source doesn't track this
  * distinction). Add new IDs here when Anthropic ships them.
+ *
+ * Matched by exact id. The catalog carries no dated variants for these
+ * models, so exact match suffices; a dated id (e.g. `claude-opus-4-8-20260101`)
+ * would fall through to the `enabled` shape and 400 — add it here if
+ * models.dev ever emits one.
  */
 const ADAPTIVE_ONLY_THINKING_MODELS: ReadonlySet<string> = new Set([
   "claude-opus-4-7",
