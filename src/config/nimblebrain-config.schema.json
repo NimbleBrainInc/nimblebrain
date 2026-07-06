@@ -177,11 +177,6 @@
       "type": "integer",
       "minimum": 1
     },
-    "maxHistoryMessages": {
-      "description": "Max conversation messages to include in context. Keeps the first message (initial user request) plus the most recent N messages. Tool call/result pairs count as one unit. Default: 40.",
-      "type": "integer",
-      "minimum": 2
-    },
     "maxOutputTokens": {
       "description": "Max output tokens per LLM call. Default: 16384.",
       "type": "integer",

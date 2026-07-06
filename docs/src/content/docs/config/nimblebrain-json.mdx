@@ -52,7 +52,6 @@ A sibling `nimblebrain.overrides.json` next to the resolved config file is **dee
   "maxIterations":      25,
   "maxInputTokens":     500000,
   "maxOutputTokens":    16384,
-  "maxHistoryMessages": 40,
   "maxToolResultSize":  1000000,
 
   "logging": { "dir": "~/.nimblebrain/logs", "disabled": false, "level": "normal", "retentionDays": 30 },
@@ -96,7 +95,6 @@ A sibling `nimblebrain.overrides.json` next to the resolved config file is **dee
 | `maxIterations` | `integer` | `25` | Max agentic iterations per request. Range: 1--50. |
 | `maxInputTokens` | `integer` | `500000` | Max input tokens per request. Engine stops when this budget is exceeded. |
 | `maxOutputTokens` | `integer` | `16384` | Max output tokens per LLM call. |
-| `maxHistoryMessages` | `integer` | `40` | Max conversation message groups in context. Tool call/result pairs count as one group. |
 | `maxToolResultSize` | `integer` | `1000000` | Max characters for a single tool result. `0` disables the cap. |
 | `thinking` | `"off" \| "adaptive" \| "enabled"` | — | Extended-thinking mode for reasoning-capable models. `off`: never reason. `adaptive`: model decides per call. `enabled`: always reason (cap with `thinkingBudgetTokens`). Typically set via the admin `set_model_config` tool, which writes it to `nimblebrain.overrides.json`. |
 | `thinkingBudgetTokens` | `integer` | — | Token budget when `thinking: "enabled"`. Counts toward `maxOutputTokens`. Anthropic requires a minimum of 1,024. |

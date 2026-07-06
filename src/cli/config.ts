@@ -200,7 +200,6 @@ export function loadConfig(flags: CliFlags = {}): RuntimeConfig {
     maxIterations: fileConfig.maxIterations,
     maxInputTokens: fileConfig.maxInputTokens,
     maxOutputTokens: fileConfig.maxOutputTokens,
-    maxHistoryMessages: fileConfig.maxHistoryMessages,
     maxToolResultSize: fileConfig.maxToolResultSize,
     thinking: fileConfig.thinking as RuntimeConfig["thinking"],
     thinkingBudgetTokens: fileConfig.thinkingBudgetTokens as RuntimeConfig["thinkingBudgetTokens"],

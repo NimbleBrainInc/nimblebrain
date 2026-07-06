@@ -34,11 +34,7 @@ import type {
   ListOptions,
   StoredMessage,
 } from "../conversation/types.ts";
-import {
-  applyReasoningReplayPolicy,
-  sliceHistory,
-  windowMessages,
-} from "../conversation/window.ts";
+import { applyReasoningReplayPolicy, windowMessages } from "../conversation/window.ts";
 import { AgentEngine } from "../engine/engine.ts";
 import { estimateMessageTokens, estimateToolDescriptionTokens } from "../engine/token-estimate.ts";
 import type {
@@ -165,8 +161,6 @@ import { resolveMaxOutputTokens } from "./resolve-max-output-tokens.ts";
 import { resolveMessageBudget } from "./resolve-message-budget.ts";
 import { resolveThinking } from "./resolve-thinking.ts";
 import { isToolEligibleForPromotion } from "./tool-eligibility.ts";
-
-const DEFAULT_MAX_HISTORY_MESSAGES = 40;
 
 /** Known model slot names. */
 const MODEL_SLOTS = ["default", "fast", "reasoning"] as const;
@@ -512,9 +506,9 @@ export class Runtime {
 
     const gate = config.confirmationGate ?? new NoopConfirmationGate();
 
-    // Neither `maxInputTokens` nor `maxHistoryMessages` are composed at
-    // runtime startup anymore — they're read per-call from `this.config`
-    // in `chat()`. The per-call message budget comes from the resolved
+    // `maxInputTokens` is not composed at runtime startup — it's read
+    // per-call from `this.config` in `chat()`. The per-call message budget
+    // comes from the resolved
     // model's context window minus the static per-call overhead (system
     // prompt + tools + reserved output + safety margin), capped by the
     // operator's `config.maxInputTokens`. See `resolve-message-budget.ts`.
@@ -1429,7 +1423,6 @@ export class Runtime {
       ...this.hooks,
       transformContext: buildTransformContext(
         messageBudget.budget,
-        this.config.maxHistoryMessages,
         getProviderFromModel(resolvedModelString),
       ),
     };
@@ -1807,7 +1800,6 @@ export class Runtime {
       ...this.hooks,
       transformContext: buildTransformContext(
         messageBudget.budget,
-        this.config.maxHistoryMessages,
         getProviderFromModel(resolvedModelString),
       ),
     };
@@ -4491,9 +4483,8 @@ function withIdentityOverride(
  * provider reasoning-replay policy → window by token budget. `overflowAttempt`
  * halves the budget per retry after a provider context-window rejection.
  */
-function buildTransformContext(
+export function buildTransformContext(
   budgetBase: number,
-  maxHistoryMessages: number | undefined,
   replayProvider: ReturnType<typeof getProviderFromModel>,
 ): NonNullable<EngineHooks["transformContext"]> {
   return (historyMessages, opts) => {
@@ -4502,11 +4493,12 @@ function buildTransformContext(
     // attempt and re-window (the engine caps recovery at one attempt today).
     const attempt = opts?.overflowAttempt ?? 0;
     const budget = attempt > 0 ? Math.floor(budgetBase / (1 << attempt)) : budgetBase;
-    const sliced = sliceHistory(
-      historyMessages,
-      maxHistoryMessages ?? DEFAULT_MAX_HISTORY_MESSAGES,
-    );
-    const replayReady = applyReasoningReplayPolicy(sliced, replayProvider);
+    // History is append-only within a turn — windowMessages (the token budget)
+    // is the sole bound. A per-call group-count slice is deliberately NOT
+    // applied here: it would drop the oldest group each iteration, shifting the
+    // cached prefix and busting the prompt cache mid-turn. Keeping the prefix
+    // stable lets the growing history read back from cache instead of re-writing.
+    const replayReady = applyReasoningReplayPolicy(historyMessages, replayProvider);
     return windowMessages(replayReady, budget);
   };
 }

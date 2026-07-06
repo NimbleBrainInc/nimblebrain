@@ -2,7 +2,6 @@ import { describe, expect, it } from "bun:test";
 import type { LanguageModelV3Message } from "@ai-sdk/provider";
 import {
 	applyReasoningReplayPolicy,
-	sliceHistory,
 	windowMessages,
 } from "../../src/conversation/window.ts";
 
@@ -211,30 +210,6 @@ describe("windowMessages", () => {
 		assertNoOrphanedToolResults(result);
 	});
 
-	it("sliceHistory keeps parallel tool call groups intact", () => {
-		const msgs: LanguageModelV3Message[] = [
-			textMsg("user", "Start"),
-			// Parallel batch 1
-			toolCallMsg("a1", "a2", "a3"),
-			toolResultMsg("a1"),
-			toolResultMsg("a2"),
-			toolResultMsg("a3"),
-			// Parallel batch 2
-			toolCallMsg("b1", "b2"),
-			toolResultMsg("b1"),
-			toolResultMsg("b2"),
-			textMsg("assistant", "Done"),
-			textMsg("user", "Next"),
-		];
-
-		// Keep only 2 groups — should keep batch 2 + "Done" + "Next"
-		// but NOT split batch 1 leaving orphaned results
-		const result = sliceHistory(msgs, 3);
-
-		expect(result[0]).toEqual(msgs[0]);
-		assertNoOrphanedToolResults(result);
-	});
-
 	it("handles structured content token estimation correctly", () => {
 		const structuredMsg: LanguageModelV3Message = {
 			role: "tool",
@@ -287,65 +262,6 @@ describe("windowMessages", () => {
 		];
 		// Budget way too small, but <= 2 messages returns as-is
 		const result = windowMessages(msgs, 1);
-		expect(result).toEqual(msgs);
-	});
-});
-
-describe("sliceHistory", () => {
-	it("returns all messages when under the limit", () => {
-		const msgs: LanguageModelV3Message[] = [
-			textMsg("user", "Hello"),
-			textMsg("assistant", "Hi"),
-			textMsg("user", "How are you?"),
-		];
-		const result = sliceHistory(msgs, 10);
-		expect(result).toEqual(msgs);
-	});
-
-	it("keeps first message plus last N groups", () => {
-		const msgs: LanguageModelV3Message[] = [
-			textMsg("user", "First"),       // always kept
-			textMsg("assistant", "A1"),      // group 1
-			textMsg("user", "Q2"),           // group 2
-			textMsg("assistant", "A2"),      // group 3
-			textMsg("user", "Q3"),           // group 4
-			textMsg("assistant", "A3"),      // group 5
-		];
-		const result = sliceHistory(msgs, 2);
-		// First message + last 2 groups
-		expect(result[0]).toEqual(msgs[0]);
-		expect(result.length).toBe(3); // first + 2 groups
-		expect(result[result.length - 1]).toEqual(msgs[msgs.length - 1]);
-	});
-
-	it("drops old messages and keeps recent ones", () => {
-		const msgs: LanguageModelV3Message[] = [
-			textMsg("user", "Start"),           // always kept
-			textMsg("assistant", "Old A1"),      // group 1 - dropped
-			textMsg("user", "Old Q2"),           // group 2 - dropped
-			textMsg("assistant", "Old A2"),      // group 3 - dropped
-			textMsg("user", "Recent Q"),         // group 4 - kept
-			textMsg("assistant", "Recent A"),    // group 5 - kept
-			textMsg("user", "Latest Q"),         // group 6 - kept
-		];
-		const result = sliceHistory(msgs, 3);
-		// First message + last 3 groups
-		expect(result[0]).toEqual(msgs[0]);
-		expect(result).toContainEqual(msgs[4]);
-		expect(result).toContainEqual(msgs[5]);
-		expect(result).toContainEqual(msgs[6]);
-		// Old messages dropped
-		expect(result).not.toContainEqual(msgs[1]);
-		expect(result).not.toContainEqual(msgs[2]);
-		expect(result).not.toContainEqual(msgs[3]);
-	});
-
-	it("returns messages unchanged when 2 or fewer", () => {
-		const msgs: LanguageModelV3Message[] = [
-			textMsg("user", "Hello"),
-			textMsg("assistant", "Hi"),
-		];
-		const result = sliceHistory(msgs, 1);
 		expect(result).toEqual(msgs);
 	});
 });

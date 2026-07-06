@@ -88,9 +88,6 @@ export interface RuntimeConfig {
    */
   thinkingBudgetTokens?: number;
 
-  /** Max conversation history messages to keep. Default: 40. */
-  maxHistoryMessages?: number;
-
   /** Max chars for a single tool result. 0 disables. Default: 1_000_000. */
   maxToolResultSize?: number;
 
