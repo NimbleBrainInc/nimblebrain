@@ -875,46 +875,8 @@ export class WorkspaceOAuthProvider implements OAuthClientProvider {
       this.cachedClientInfo ??
       (await this.readJson<OAuthClientInformationFull>(this.dataDir, "client.json"));
     if (data) {
-      if (!this.hasUsableRedirectUris(data)) {
-        // Structurally corrupt (missing / empty / non-array redirect_uris):
-        // unusable at /authorize. Drop it so the SDK re-registers.
-        log.warn(
-          `[oauth] ${this.serverName} stored client has no usable redirect_uris — discarding so the next flow re-registers`,
-        );
-        this.cachedClientInfo = null;
-        await this.unlinkIfExists(this.dataDir, "client.json");
-      } else if (this.redirectUriMatchesCurrent(data) || !this.interactiveAuthAllowed) {
-        // The registration matches the current host, OR this is a background /
-        // silent context (refresh, boot, liveness reconnect). Honor the stored
-        // registration — it's immutable identity, and refresh reuses the
-        // `client_id` without a redirect_uri, so a host that has since drifted
-        // is irrelevant to keeping the connection alive.
-        if (!this.redirectUriMatchesCurrent(data)) {
-          log.debug(
-            "mcp",
-            `[oauth] ${this.serverName} honoring registered redirect_uri ${
-              data.redirect_uris?.[0]
-            } (current callback ${this.callbackUrl}) — registration is immutable; refresh reuses client_id`,
-          );
-        }
-        this.cachedClientInfo = data;
-        return data;
-      } else {
-        // Drift on a USER-INITIATED interactive flow: a human is reconnecting
-        // and the canonical host changed since this client was registered.
-        // Re-register against the current host so the next /authorize's
-        // redirect_uri matches the NEW registration AND the session cookie (set
-        // on the current host) travels back on the callback leg. The deliberate,
-        // consented re-registration the architecture calls for — not the silent
-        // discard-on-every-read that caused the crash loop.
-        log.warn(
-          `[oauth] ${this.serverName} redirect_uri drift on user-initiated reauth (registered=${
-            data.redirect_uris?.[0] ?? "<none>"
-          }, current=${this.callbackUrl}) — re-registering for the current host`,
-        );
-        this.cachedClientInfo = null;
-        await this.unlinkIfExists(this.dataDir, "client.json");
-      }
+      const resolved = await this.resolveStoredClient(data);
+      if (resolved) return resolved;
     }
     // No usable client info on disk → SDK will DCR. Coalesce concurrent
     // callers so only ONE DCR happens; second caller awaits the first's
@@ -961,6 +923,58 @@ export class WorkspaceOAuthProvider implements OAuthClientProvider {
     // surface as an unhandled rejection. Cleared on first save.
     d.promise.catch(() => {});
     return undefined;
+  }
+
+  /**
+   * Decide the fate of a stored DCR `client.json`: return it to honor the
+   * registration, or `null` to discard it so the SDK re-registers (DCR).
+   * Performs the discard side effects (cache clear + unlink) inline.
+   */
+  private async resolveStoredClient(
+    data: OAuthClientInformationFull,
+  ): Promise<OAuthClientInformationFull | null> {
+    if (!this.hasUsableRedirectUris(data)) {
+      // Structurally corrupt (missing / empty / non-array redirect_uris):
+      // unusable at /authorize. Drop it so the SDK re-registers.
+      log.warn(
+        `[oauth] ${this.serverName} stored client has no usable redirect_uris — discarding so the next flow re-registers`,
+      );
+      this.cachedClientInfo = null;
+      await this.unlinkIfExists(this.dataDir, "client.json");
+      return null;
+    }
+    if (this.redirectUriMatchesCurrent(data) || !this.interactiveAuthAllowed) {
+      // The registration matches the current host, OR this is a background /
+      // silent context (refresh, boot, liveness reconnect). Honor the stored
+      // registration — it's immutable identity, and refresh reuses the
+      // `client_id` without a redirect_uri, so a host that has since drifted
+      // is irrelevant to keeping the connection alive.
+      if (!this.redirectUriMatchesCurrent(data)) {
+        log.debug(
+          "mcp",
+          `[oauth] ${this.serverName} honoring registered redirect_uri ${
+            data.redirect_uris?.[0]
+          } (current callback ${this.callbackUrl}) — registration is immutable; refresh reuses client_id`,
+        );
+      }
+      this.cachedClientInfo = data;
+      return data;
+    }
+    // Drift on a USER-INITIATED interactive flow: a human is reconnecting
+    // and the canonical host changed since this client was registered.
+    // Re-register against the current host so the next /authorize's
+    // redirect_uri matches the NEW registration AND the session cookie (set
+    // on the current host) travels back on the callback leg. The deliberate,
+    // consented re-registration the architecture calls for — not the silent
+    // discard-on-every-read that caused the crash loop.
+    log.warn(
+      `[oauth] ${this.serverName} redirect_uri drift on user-initiated reauth (registered=${
+        data.redirect_uris?.[0] ?? "<none>"
+      }, current=${this.callbackUrl}) — re-registering for the current host`,
+    );
+    this.cachedClientInfo = null;
+    await this.unlinkIfExists(this.dataDir, "client.json");
+    return null;
   }
 
   /**
@@ -1259,41 +1273,9 @@ export class WorkspaceOAuthProvider implements OAuthClientProvider {
         `Interactive OAuth already in progress for ${this.serverName} (concurrent auth() call coalesced).`,
       );
     }
-    // **PKCE coupling check.** `saveCodeVerifier` and `redirectToAuthorization`
-    // are decoupled in time — different concurrent auth() chains can win each
-    // race independently. If chain A's verifier is on disk but chain B's URL
-    // captures (different `code_challenge`), the user opens URL_B → vendor
-    // binds the code to challenge_B → exchange POSTs verifier_A → vendor
-    // rejects. To preserve PKCE correctness we let ONLY the chain whose
-    // verifier matches this URL's challenge proceed to capture. Other
-    // chains throw and let the matching chain win. The matching chain is
-    // uniquely identified: the saveCodeVerifier winner stored its verifier
-    // in `pendingFlow.verifier`, and only that chain's startAuthorization
-    // output (URL + verifier from one closure) has the matching
-    // SHA256(verifier) == code_challenge relation.
-    if (this.pendingFlow.verifier) {
-      // Gate on S256 — the SHA256 derivation only applies to
-      // `code_challenge_method=S256`. For `plain` (rare in modern OAuth,
-      // not used by the MCP SDK today) the challenge equals the verifier
-      // and the SHA256 comparison would falsely reject every chain.
-      // Defensive against a future SDK / vendor that ever surfaces a
-      // non-S256 flow through this provider.
-      const method = url.searchParams.get("code_challenge_method");
-      if (method === "S256") {
-        const expectedChallenge = createHash("sha256")
-          .update(this.pendingFlow.verifier)
-          .digest("base64url");
-        const urlChallenge = url.searchParams.get("code_challenge");
-        if (urlChallenge && urlChallenge !== expectedChallenge) {
-          // This auth() chain's URL is built from a DIFFERENT verifier than
-          // the one we kept on disk. Throw without capturing — wait for the
-          // matching chain's redirectToAuthorization to win the capture.
-          throw new UnauthorizedError(
-            `Interactive OAuth: this chain's PKCE doesn't match the claimed verifier — deferring to matching chain.`,
-          );
-        }
-      }
-    }
+    // PKCE coupling: only the auth() chain whose captured URL matches the
+    // claimed verifier may proceed (see assertUrlPkceMatchesVerifier).
+    this.assertUrlPkceMatchesVerifier(url);
     // Track A: append operator-supplied additional authorize params
     // (e.g. Google's access_type=offline + prompt=consent for refresh-
     // token issuance). Reserved keys are blocked at construction so we
@@ -1313,98 +1295,12 @@ export class WorkspaceOAuthProvider implements OAuthClientProvider {
     // registry's promise instead.
     const d = this.pendingFlow.deferred;
 
-    // Follow the authorize redirect chain hop-by-hop. Headless providers
-    // (Reboot `Anonymous`, client_credentials-style flows) eventually 302 to
-    // our own callback with the authorization code already in the URL, at
-    // which point we can extract it directly. Reboot specifically does two
-    // hops: /__/oauth/authorize → /__/oauth/callback → our callback.
-    //
-    // We use manual redirect handling (not fetch's default follow) so we
-    // can inspect every Location, stop as soon as one targets our callback,
-    // and avoid actually dispatching a request to our own server (which
-    // would tangle our own HTTP event loop into the probe).
-    //
-    // Real interactive providers (Granola, Claude.ai hosted) redirect to a
-    // login page on a different origin — the loop never lands on our
-    // callback and we fall through to the interactive branch.
-    // Headless-only (see `headlessAuthProbe`). A standard interactive
-    // provider must NOT be probed server-side: fetching `/authorize`
-    // ourselves spins up a vendor authorization session bound to our PKCE
-    // challenge before the user acts, which makes the vendor reject the
-    // user's real code at exchange (`invalid_code`) or strand the flow.
-    // Default-off; only Reboot-style headless bundles opt in.
-    if (this.headlessAuthProbe) {
-      const MAX_HOPS = 10;
-      let current = url;
-      try {
-        for (let hop = 0; hop < MAX_HOPS; hop++) {
-          // SSRF defense: validate EVERY hop (including the initial URL the
-          // server handed us), not just the configured bundle URL. The
-          // authorize URL and every Location header are attacker-controlled —
-          // a compromised remote MCP server could otherwise use our fetch()
-          // as an internal-network probe tool (AWS IMDS, RFC1918 admin
-          // panels, loopback services). Wrap with our marker prefix so the
-          // outer catch rethrows instead of silently falling through to the
-          // interactive branch.
-          try {
-            validateBundleUrl(current, { allowInsecure: this.allowInsecureRemotes });
-          } catch (err) {
-            throw new Error(
-              `[workspace-oauth-provider] SSRF block on ${current.toString()}: ${
-                err instanceof Error ? err.message : String(err)
-              }`,
-            );
-          }
-
-          // Honor lifecycle's timeout: when the controller aborts, the
-          // in-flight TCP read terminates with an AbortError instead of
-          // running its full network timeout in the background.
-          const res = await fetch(current.toString(), {
-            redirect: "manual",
-            ...(this.abortSignal ? { signal: this.abortSignal } : {}),
-          });
-          if (res.status < 300 || res.status >= 400) {
-            // Non-redirect response — provider sent us a login page (200) or
-            // an error (4xx/5xx). Not headless.
-            break;
-          }
-          const location = res.headers.get("location");
-          if (!location) break;
-          const next = new URL(location, current);
-          if (canonicalEndpoint(next) === this.canonicalCallback) {
-            const code = next.searchParams.get("code");
-            const errParam = next.searchParams.get("error");
-            if (code) {
-              log.debug(
-                "mcp",
-                `[oauth] headless flow: ${this.serverName} got code=${code.slice(0, 8)}… after ${hop + 1} hop(s)`,
-              );
-              d?.resolve(code);
-              return;
-            }
-            if (errParam) {
-              const err = new Error(
-                `[workspace-oauth-provider] authorization server returned error: ${errParam}`,
-              );
-              d?.reject(err);
-              throw err;
-            }
-            break;
-          }
-          current = next;
-        }
-      } catch (probeErr) {
-        // Rethrow our own explicit errors (authz server error, SSRF block)
-        // so callers see the real cause instead of the generic
-        // interactive-branch surface. Swallow network failures and fall
-        // through to the interactive branch below.
-        if (probeErr instanceof Error && probeErr.message.includes("[workspace-oauth-provider]")) {
-          d?.reject(probeErr);
-          throw probeErr;
-        }
-        log.debug("mcp", `[oauth] ${this.serverName} redirect probe failed: ${String(probeErr)}`);
-      }
-    }
+    // Headless probe: follow the authorize redirect chain server-side and, if
+    // it lands on our own callback with a code, resolve the flow in-process (no
+    // browser). Returns true only for that headless-resolved case. Real
+    // interactive providers never land on our callback, so this returns false
+    // and we fall through to the interactive branch. See probeHeadlessRedirect.
+    if (await this.probeHeadlessRedirect(url, d)) return;
 
     // Background/liveness gate. If this start attempt is NOT user-initiated
     // (boot auto-start or a HealthMonitor liveness reconnect), there is no user
@@ -1473,20 +1369,11 @@ export class WorkspaceOAuthProvider implements OAuthClientProvider {
     this.pendingFlow.promise = registryPromise;
     this.pendingFlow.deferred = undefined;
 
-    // Notify the lifecycle / UI so the bundle transitions to pending_auth
-    // and the banner appears. Errors from the callback must not break the
-    // OAuth dance — log and continue. The registry registration above is
-    // already in place, so the callback handler can resolve the flow even
-    // if the lifecycle notification path is broken.
-    if (this.onInteractiveAuthRequired) {
-      try {
-        this.onInteractiveAuthRequired(url.toString());
-      } catch (cbErr) {
-        log.warn(
-          `[oauth] onInteractiveAuthRequired callback threw: ${cbErr instanceof Error ? cbErr.message : String(cbErr)}`,
-        );
-      }
-    }
+    // Notify the lifecycle / UI so the bundle transitions to pending_auth and
+    // the banner appears (best-effort — see notifyInteractiveAuthRequired). The
+    // registry registration above already lets the callback handler resolve the
+    // flow even if the lifecycle notification path is broken.
+    this.notifyInteractiveAuthRequired(url);
 
     // Throw the SDK's own UnauthorizedError so `Client.connect()` aborts
     // cleanly — `McpSource.start()` catches this and awaits
@@ -1494,6 +1381,187 @@ export class WorkspaceOAuthProvider implements OAuthClientProvider {
     throw new UnauthorizedError(
       `Interactive OAuth required for ${this.serverName} — pending user authorization at ${url.origin}.`,
     );
+  }
+
+  /**
+   * PKCE coupling guard. `saveCodeVerifier` and `redirectToAuthorization` are
+   * decoupled in time — different concurrent auth() chains can win each race
+   * independently. If chain A's verifier is on disk but chain B's URL captures
+   * (different `code_challenge`), the user opens URL_B → vendor binds the code
+   * to challenge_B → exchange POSTs verifier_A → vendor rejects. To preserve
+   * PKCE correctness we let ONLY the chain whose verifier matches this URL's
+   * challenge proceed to capture; other chains throw and let the matching chain
+   * win. The matching chain is uniquely identified: the saveCodeVerifier winner
+   * stored its verifier in `pendingFlow.verifier`, and only that chain's
+   * startAuthorization output (URL + verifier from one closure) has the matching
+   * SHA256(verifier) == code_challenge relation.
+   */
+  private assertUrlPkceMatchesVerifier(url: URL): void {
+    const verifier = this.pendingFlow?.verifier;
+    if (!verifier) return;
+    // Gate on S256 — the SHA256 derivation only applies to
+    // `code_challenge_method=S256`. For `plain` (rare in modern OAuth, not used
+    // by the MCP SDK today) the challenge equals the verifier and the SHA256
+    // comparison would falsely reject every chain. Defensive against a future
+    // SDK / vendor that ever surfaces a non-S256 flow through this provider.
+    if (url.searchParams.get("code_challenge_method") !== "S256") return;
+    const expectedChallenge = createHash("sha256").update(verifier).digest("base64url");
+    const urlChallenge = url.searchParams.get("code_challenge");
+    if (urlChallenge && urlChallenge !== expectedChallenge) {
+      // This auth() chain's URL is built from a DIFFERENT verifier than the one
+      // we kept on disk. Throw without capturing — wait for the matching chain's
+      // redirectToAuthorization to win the capture.
+      throw new UnauthorizedError(
+        `Interactive OAuth: this chain's PKCE doesn't match the claimed verifier — deferring to matching chain.`,
+      );
+    }
+  }
+
+  /**
+   * Follow the authorize redirect chain hop-by-hop for a HEADLESS provider.
+   * Headless providers (Reboot `Anonymous`, client_credentials-style flows)
+   * eventually 302 to our own callback with the authorization code already in
+   * the URL, at which point we resolve the flow's deferred and return `true`.
+   * Reboot specifically does two hops: /__/oauth/authorize → /__/oauth/callback
+   * → our callback.
+   *
+   * We use manual redirect handling (not fetch's default follow) so we can
+   * inspect every Location, stop as soon as one targets our callback, and avoid
+   * actually dispatching a request to our own server (which would tangle our own
+   * HTTP event loop into the probe).
+   *
+   * Headless-only (see `headlessAuthProbe`): a no-op returning `false` unless
+   * that flag is set. A standard interactive provider must NOT be probed
+   * server-side — fetching `/authorize` ourselves spins up a vendor
+   * authorization session bound to our PKCE challenge before the user acts,
+   * which makes the vendor reject the user's real code at exchange
+   * (`invalid_code`) or strand the flow. Real interactive providers (Granola,
+   * Claude.ai hosted) also redirect to a login page on a different origin — the
+   * loop never lands on our callback — so we return `false` and the caller falls
+   * through to the interactive branch. Throws (rejecting `d`) for authz-server
+   * errors and SSRF blocks; swallows network failures and returns `false`.
+   */
+  private async probeHeadlessRedirect(url: URL, d: Deferred<string> | undefined): Promise<boolean> {
+    if (!this.headlessAuthProbe) return false;
+    const MAX_HOPS = 10;
+    let current = url;
+    try {
+      for (let hop = 0; hop < MAX_HOPS; hop++) {
+        const outcome = await this.followHeadlessHop(current, d, hop);
+        if (outcome.resolved) return true;
+        if (!outcome.next) break;
+        current = outcome.next;
+      }
+    } catch (probeErr) {
+      // Rethrow our own explicit errors (authz server error, SSRF block) so
+      // callers see the real cause instead of the generic interactive-branch
+      // surface. Swallow network failures and fall through to the interactive
+      // branch.
+      if (probeErr instanceof Error && probeErr.message.includes("[workspace-oauth-provider]")) {
+        d?.reject(probeErr);
+        throw probeErr;
+      }
+      log.debug("mcp", `[oauth] ${this.serverName} redirect probe failed: ${String(probeErr)}`);
+    }
+    return false;
+  }
+
+  /**
+   * Follow one hop of the headless authorize-redirect chain. Returns
+   * `{ resolved: true }` when it landed on our callback with a code (flow's `d`
+   * already resolved), `{ next }` to keep probing that Location, or `{}` to stop
+   * probing (non-redirect response, no Location, or our callback without a
+   * code). Throws (with our marker prefix) on SSRF block or authz-server error.
+   */
+  private async followHeadlessHop(
+    current: URL,
+    d: Deferred<string> | undefined,
+    hop: number,
+  ): Promise<{ resolved?: boolean; next?: URL }> {
+    this.validateProbeHop(current);
+    // Honor lifecycle's timeout: when the controller aborts, the in-flight TCP
+    // read terminates with an AbortError instead of running its full network
+    // timeout in the background.
+    const res = await fetch(current.toString(), {
+      redirect: "manual",
+      ...(this.abortSignal ? { signal: this.abortSignal } : {}),
+    });
+    // Non-redirect response — provider sent us a login page (200) or an error
+    // (4xx/5xx). Not headless.
+    if (res.status < 300 || res.status >= 400) return {};
+    const location = res.headers.get("location");
+    if (!location) return {};
+    const next = new URL(location, current);
+    if (canonicalEndpoint(next) !== this.canonicalCallback) return { next };
+    return this.consumeHeadlessCallback(next, d, hop) ? { resolved: true } : {};
+  }
+
+  /**
+   * SSRF-validate one authorize-chain hop. Validates EVERY hop (including the
+   * initial URL the server handed us), not just the configured bundle URL: the
+   * authorize URL and every Location header are attacker-controlled — a
+   * compromised remote MCP server could otherwise use our fetch() as an
+   * internal-network probe tool (AWS IMDS, RFC1918 admin panels, loopback
+   * services). Rethrows with our marker prefix so the probe's outer catch
+   * rethrows instead of silently falling through to the interactive branch.
+   */
+  private validateProbeHop(current: URL): void {
+    try {
+      validateBundleUrl(current, { allowInsecure: this.allowInsecureRemotes });
+    } catch (err) {
+      throw new Error(
+        `[workspace-oauth-provider] SSRF block on ${current.toString()}: ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      );
+    }
+  }
+
+  /**
+   * Handle a redirect hop that landed on our own callback URL. Resolves the
+   * flow's deferred and returns `true` when a `code` is present; throws
+   * (rejecting `d`) on an `error` param; returns `false` when neither is present
+   * (caller stops probing).
+   */
+  private consumeHeadlessCallback(
+    next: URL,
+    d: Deferred<string> | undefined,
+    hop: number,
+  ): boolean {
+    const code = next.searchParams.get("code");
+    const errParam = next.searchParams.get("error");
+    if (code) {
+      log.debug(
+        "mcp",
+        `[oauth] headless flow: ${this.serverName} got code=${code.slice(0, 8)}… after ${hop + 1} hop(s)`,
+      );
+      d?.resolve(code);
+      return true;
+    }
+    if (errParam) {
+      const err = new Error(
+        `[workspace-oauth-provider] authorization server returned error: ${errParam}`,
+      );
+      d?.reject(err);
+      throw err;
+    }
+    return false;
+  }
+
+  /**
+   * Fire the `onInteractiveAuthRequired` callback so the lifecycle / UI can
+   * transition the bundle to pending_auth. Best-effort: a throwing receiver must
+   * not break the OAuth dance, so errors are logged and swallowed.
+   */
+  private notifyInteractiveAuthRequired(url: URL): void {
+    if (!this.onInteractiveAuthRequired) return;
+    try {
+      this.onInteractiveAuthRequired(url.toString());
+    } catch (cbErr) {
+      log.warn(
+        `[oauth] onInteractiveAuthRequired callback threw: ${cbErr instanceof Error ? cbErr.message : String(cbErr)}`,
+      );
+    }
   }
 
   async invalidateCredentials(
@@ -1610,60 +1678,9 @@ export class WorkspaceOAuthProvider implements OAuthClientProvider {
       return result;
     }
 
-    // Discover the revocation endpoint. Best-effort — skip revocation
-    // entirely if discovery fails (server may not advertise a
-    // revocation_endpoint, in which case there's nothing to call).
-    //
-    // Discovery order:
-    //   1. RFC 9728 Protected Resource Metadata at
-    //      `<bundleOrigin>/.well-known/oauth-protected-resource`. This
-    //      lists `authorization_servers[]` whose origins host the AS
-    //      metadata. Required for vendors where the AS lives at a
-    //      different origin than the resource (Google: AS at
-    //      `oauth2.googleapis.com`, bundle at `gmailmcp.googleapis.com`;
-    //      Microsoft: AS at `login.microsoftonline.com`).
-    //   2. RFC 8414 fallback at
-    //      `<bundleOrigin>/.well-known/oauth-authorization-server` for
-    //      vendors that co-locate the AS with the resource (Granola,
-    //      Notion, HubSpot).
-    let revocationEndpoint: string | undefined;
-    try {
-      const bundleOrigin = new URL(opts.bundleUrl).origin;
-      const asOrigins = await discoverAuthorizationServerOrigins(
-        fetcher,
-        bundleOrigin,
-        this.allowInsecureRemotes,
-      );
-      // Try each AS in order. First one that advertises a
-      // revocation_endpoint wins.
-      for (const asOrigin of asOrigins) {
-        const metadataUrl = `${asOrigin}/.well-known/oauth-authorization-server`;
-        try {
-          validateBundleUrl(new URL(metadataUrl), {
-            allowInsecure: this.allowInsecureRemotes,
-          });
-          const res = await fetcher(metadataUrl);
-          if (!res.ok) continue;
-          const meta = (await res.json()) as { revocation_endpoint?: unknown };
-          if (typeof meta.revocation_endpoint === "string") {
-            revocationEndpoint = meta.revocation_endpoint;
-            break;
-          }
-        } catch (innerErr) {
-          log.debug(
-            "mcp",
-            `[oauth] ${this.serverName} AS metadata fetch failed at ${metadataUrl}: ${
-              innerErr instanceof Error ? innerErr.message : String(innerErr)
-            }`,
-          );
-        }
-      }
-    } catch (err) {
-      log.debug(
-        "mcp",
-        `[oauth] ${this.serverName} revocation discovery failed: ${err instanceof Error ? err.message : String(err)}`,
-      );
-    }
+    // Discover the revocation endpoint (best-effort — undefined when the server
+    // advertises none, in which case there's nothing to revoke upstream).
+    const revocationEndpoint = await this.discoverRevocationEndpoint(fetcher, opts.bundleUrl);
 
     if (!clientInfo) {
       // `clientInformation()` returned undefined despite tokens being
@@ -1680,38 +1697,7 @@ export class WorkspaceOAuthProvider implements OAuthClientProvider {
     }
 
     if (revocationEndpoint && clientInfo) {
-      try {
-        // Revoke both tokens in sequence. RFC 7009 doesn't define an
-        // order; we revoke the refresh token first because it's the
-        // longer-lived credential — even if access-token revocation
-        // races a separate caller's request, the AS won't issue a fresh
-        // one once the RT is gone.
-        if (tokens.refresh_token) {
-          result.revoked.refresh = await postRevoke(
-            fetcher,
-            revocationEndpoint,
-            tokens.refresh_token,
-            "refresh_token",
-            clientInfo,
-          );
-        }
-        if (tokens.access_token) {
-          result.revoked.access = await postRevoke(
-            fetcher,
-            revocationEndpoint,
-            tokens.access_token,
-            "access_token",
-            clientInfo,
-          );
-        }
-      } catch (err) {
-        // Don't fail disconnect on revocation errors — log + continue
-        // to local cleanup.
-        result.error = err instanceof Error ? err.message : String(err);
-        log.warn(
-          `[oauth] ${this.serverName} revocation failed: ${result.error} (continuing with local cleanup)`,
-        );
-      }
+      await this.revokeTokenPair(fetcher, revocationEndpoint, tokens, clientInfo, result);
     }
 
     // Always clear local state regardless of upstream revocation result.
@@ -1731,6 +1717,116 @@ export class WorkspaceOAuthProvider implements OAuthClientProvider {
     await this.invalidateCredentials("all");
     result.deletedLocal = true;
     return result;
+  }
+
+  /**
+   * Discover the AS `revocation_endpoint` for a bundle. Best-effort — returns
+   * undefined when the server advertises none or on any network error.
+   *
+   * Discovery order:
+   *   1. RFC 9728 Protected Resource Metadata at
+   *      `<bundleOrigin>/.well-known/oauth-protected-resource`. This lists
+   *      `authorization_servers[]` whose origins host the AS metadata. Required
+   *      for vendors where the AS lives at a different origin than the resource
+   *      (Google: AS at `oauth2.googleapis.com`, bundle at
+   *      `gmailmcp.googleapis.com`; Microsoft: AS at `login.microsoftonline.com`).
+   *   2. RFC 8414 fallback at
+   *      `<bundleOrigin>/.well-known/oauth-authorization-server` for vendors
+   *      that co-locate the AS with the resource (Granola, Notion, HubSpot).
+   */
+  private async discoverRevocationEndpoint(
+    fetcher: typeof fetch,
+    bundleUrl: string,
+  ): Promise<string | undefined> {
+    try {
+      const bundleOrigin = new URL(bundleUrl).origin;
+      const asOrigins = await discoverAuthorizationServerOrigins(
+        fetcher,
+        bundleOrigin,
+        this.allowInsecureRemotes,
+      );
+      // Try each AS in order. First one that advertises a revocation_endpoint wins.
+      for (const asOrigin of asOrigins) {
+        const endpoint = await this.fetchRevocationEndpoint(fetcher, asOrigin);
+        if (endpoint) return endpoint;
+      }
+    } catch (err) {
+      log.debug(
+        "mcp",
+        `[oauth] ${this.serverName} revocation discovery failed: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
+    return undefined;
+  }
+
+  /**
+   * Fetch one AS's RFC 8414 metadata and return its `revocation_endpoint`, or
+   * undefined (SSRF-blocked, unreachable, non-2xx, or not advertised).
+   */
+  private async fetchRevocationEndpoint(
+    fetcher: typeof fetch,
+    asOrigin: string,
+  ): Promise<string | undefined> {
+    const metadataUrl = `${asOrigin}/.well-known/oauth-authorization-server`;
+    try {
+      validateBundleUrl(new URL(metadataUrl), {
+        allowInsecure: this.allowInsecureRemotes,
+      });
+      const res = await fetcher(metadataUrl);
+      if (!res.ok) return undefined;
+      const meta = (await res.json()) as { revocation_endpoint?: unknown };
+      if (typeof meta.revocation_endpoint === "string") return meta.revocation_endpoint;
+    } catch (innerErr) {
+      log.debug(
+        "mcp",
+        `[oauth] ${this.serverName} AS metadata fetch failed at ${metadataUrl}: ${
+          innerErr instanceof Error ? innerErr.message : String(innerErr)
+        }`,
+      );
+    }
+    return undefined;
+  }
+
+  /**
+   * Revoke the refresh + access tokens at the endpoint (RFC 7009), recording
+   * per-token outcomes onto `result`. Revokes the refresh token first because
+   * it's the longer-lived credential — even if access-token revocation races a
+   * separate caller's request, the AS won't issue a fresh one once the RT is
+   * gone. Never throws: a revocation error is logged and stashed on
+   * `result.error` so disconnect continues to local cleanup.
+   */
+  private async revokeTokenPair(
+    fetcher: typeof fetch,
+    endpoint: string,
+    tokens: OAuthTokens,
+    clientInfo: OAuthClientInformationMixed,
+    result: { revoked: { access?: boolean; refresh?: boolean }; error?: string },
+  ): Promise<void> {
+    try {
+      if (tokens.refresh_token) {
+        result.revoked.refresh = await postRevoke(
+          fetcher,
+          endpoint,
+          tokens.refresh_token,
+          "refresh_token",
+          clientInfo,
+        );
+      }
+      if (tokens.access_token) {
+        result.revoked.access = await postRevoke(
+          fetcher,
+          endpoint,
+          tokens.access_token,
+          "access_token",
+          clientInfo,
+        );
+      }
+    } catch (err) {
+      result.error = err instanceof Error ? err.message : String(err);
+      log.warn(
+        `[oauth] ${this.serverName} revocation failed: ${result.error} (continuing with local cleanup)`,
+      );
+    }
   }
 
   // ── File I/O helpers ──────────────────────────────────────────────
