@@ -182,3 +182,32 @@ describe("withRetry", () => {
     expect(calls).toBe(1);
   });
 });
+
+describe("isRetryable — retryable marker", () => {
+  it("returns true for an error flagged retryable === true", () => {
+    expect(isRetryable({ retryable: true })).toBe(true);
+    expect(isRetryable(Object.assign(new Error("stalled"), { retryable: true }))).toBe(true);
+  });
+
+  it("returns false for retryable:false or a non-true marker", () => {
+    expect(isRetryable({ retryable: false })).toBe(false);
+    expect(isRetryable({ retryable: "yes" })).toBe(false);
+  });
+});
+
+describe("withRetry — retryable marker", () => {
+  it("retries an error flagged retryable and then succeeds", async () => {
+    let calls = 0;
+    const result = await withRetry(
+      async () => {
+        calls++;
+        if (calls < 2) throw Object.assign(new Error("stalled"), { retryable: true });
+        return "recovered";
+      },
+      3,
+      0,
+    );
+    expect(result).toBe("recovered");
+    expect(calls).toBe(2);
+  });
+});

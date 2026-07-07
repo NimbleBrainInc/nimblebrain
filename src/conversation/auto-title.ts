@@ -2,6 +2,11 @@ import type { LanguageModelV3 } from "@ai-sdk/provider";
 import { type TokenUsage, tokenUsageFromV3 } from "../usage/types.ts";
 import { escapeClosingTags } from "./escape-closing-tags.ts";
 
+/** Bound the (non-streaming) title call so a stalled provider can't leak a
+ *  dangling request. A timeout throws, and the catch below falls back to a
+ *  heuristic title. */
+const TITLE_TIMEOUT_MS = 45_000;
+
 /**
  * Generate a short conversation title using the provided model.
  * Non-blocking — call fire-and-forget after first turn.
@@ -38,6 +43,7 @@ export async function generateTitle(
         },
       ],
       maxOutputTokens: 30,
+      abortSignal: AbortSignal.timeout(TITLE_TIMEOUT_MS),
     });
     onUsage?.(tokenUsageFromV3(result.usage), Date.now() - startedAt);
     const textBlock = result.content.find((b) => b.type === "text");

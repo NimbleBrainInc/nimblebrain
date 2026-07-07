@@ -3602,16 +3602,22 @@ describe("malformed tool call input", () => {
       expect(modelCalls).toBe(0);
     });
 
-    it("forwards config.signal as abortSignal into model.doStream", async () => {
-      // Regression for the in-flight LLM stream cancellation gap: a
-      // signal threaded through `config.signal` must reach the model
-      // call as `options.abortSignal`, or AI SDK providers can't
-      // abort the underlying fetch and a long completion blocks the
-      // engine until the model finishes.
+    it("threads run cancellation into model.doStream via a linked signal", async () => {
+      // Regression for the in-flight LLM stream cancellation gap: the run
+      // signal must reach the model call so AI SDK providers can abort the
+      // underlying fetch. The engine now passes a COMPOSED signal (run signal
+      // ∨ per-call idle watchdog, see model/stream.ts), so it is no longer
+      // identical to `config.signal` — but aborting the run must still abort
+      // the signal the model received.
       const controller = new AbortController();
       let receivedSignal: AbortSignal | undefined;
+      let linkedToRunSignal = false;
       const model = createMockModel((options) => {
         receivedSignal = options.abortSignal;
+        // The engine's link is live during the call: aborting the run signal
+        // flips the composed signal the model received, synchronously.
+        controller.abort();
+        linkedToRunSignal = receivedSignal?.aborted === true;
         return {
           content: [{ type: "text", text: "ok" }],
           inputTokens: 5,
@@ -3620,21 +3626,29 @@ describe("malformed tool call input", () => {
       });
       const engine = makeEngine(model);
 
-      await engine.run(
-        { ...defaultConfig, signal: controller.signal },
-        "",
-        [{ role: "user", content: [{ type: "text", text: "go" }] }],
-        [],
-      );
+      await engine
+        .run(
+          { ...defaultConfig, signal: controller.signal },
+          "",
+          [{ role: "user", content: [{ type: "text", text: "go" }] }],
+          [],
+        )
+        .catch(() => {
+          // A mid-call abort may surface as an AbortError depending on where
+          // the loop observes it; irrelevant here — we assert the linkage
+          // captured inside the model call above.
+        });
 
-      expect(receivedSignal).toBe(controller.signal);
+      expect(receivedSignal).toBeInstanceOf(AbortSignal);
+      expect(receivedSignal).not.toBe(controller.signal);
+      expect(linkedToRunSignal).toBe(true);
     });
 
-    it("omits abortSignal from doStream options when config.signal is undefined", async () => {
-      // Symmetric check: don't synthesize an empty signal when the
-      // caller didn't pass one. Providers behave differently on
-      // `abortSignal: undefined` vs the field being absent; keep
-      // the shape clean.
+    it("always supplies a valid abortSignal to doStream, even with no run signal", async () => {
+      // The per-call idle watchdog owns the signal handed to `doStream`, so a
+      // call always receives a real, non-aborted AbortSignal — there is no
+      // "absent signal" shape anymore. (The watchdog needs a signal to abort a
+      // stalled stream regardless of whether the caller threaded a run signal.)
       let optionsSeen: { abortSignal?: AbortSignal } | undefined;
       const model = createMockModel((options) => {
         optionsSeen = options;
@@ -3653,8 +3667,8 @@ describe("malformed tool call input", () => {
         [],
       );
 
-      expect(optionsSeen).toBeDefined();
-      expect("abortSignal" in (optionsSeen ?? {})).toBe(false);
+      expect(optionsSeen?.abortSignal).toBeInstanceOf(AbortSignal);
+      expect(optionsSeen?.abortSignal?.aborted).toBe(false);
     });
 
     it("propagates a custom abort reason as the thrown error", async () => {

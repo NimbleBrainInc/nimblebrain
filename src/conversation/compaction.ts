@@ -233,6 +233,12 @@ const SUMMARIZER_CTX_FALLBACK_TOKENS = 32_000;
 // reserved against the summarizer's context below so `input + output ≤ context`.
 const SUMMARY_MAX_OUTPUT_TOKENS = 8_192;
 const SUMMARIZER_SYSTEM_RESERVE_TOKENS = 512;
+
+/** Bound the (non-streaming) summarizer call so a stalled provider can't hang a
+ *  chat turn: compaction is awaited in the run, on a path with no wall clock.
+ *  A timeout throws, which the best-effort caller treats as "skip compaction,
+ *  keep the full history". */
+const SUMMARY_TIMEOUT_MS = 45_000;
 const SUMMARIZER_SAFETY_MARGIN_TOKENS = 8_192;
 const SUMMARIZER_ESTIMATE_DEFLATE = 0.6;
 const TRANSCRIPT_ELISION_MARKER = "[…older history elided to fit the summarizer's context…]";
@@ -354,6 +360,7 @@ export async function summarizeMessages(
       { role: "user", content: [{ type: "text", text: transcript }] },
     ],
     maxOutputTokens: opts.maxOutputTokens ?? SUMMARY_MAX_OUTPUT_TOKENS,
+    abortSignal: AbortSignal.timeout(SUMMARY_TIMEOUT_MS),
   });
   // Report usage before the empty-summary guard — the call was billed
   // regardless of whether its output is usable.

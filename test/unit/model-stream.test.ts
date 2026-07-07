@@ -1,6 +1,11 @@
 import { describe, expect, it } from "bun:test";
-import type { LanguageModelV3CallOptions } from "@ai-sdk/provider";
-import { callModel } from "../../src/model/stream.ts";
+import type {
+  LanguageModelV3,
+  LanguageModelV3CallOptions,
+  LanguageModelV3StreamPart,
+} from "@ai-sdk/provider";
+import { withRetry } from "../../src/engine/retry.ts";
+import { callModel, ModelStreamStallError } from "../../src/model/stream.ts";
 import { createEchoModel } from "../helpers/echo-model.ts";
 
 function userPrompt(text: string): LanguageModelV3CallOptions {
@@ -146,5 +151,239 @@ describe("callModel", () => {
     expect("cacheRead" in result.usage.inputTokens).toBe(true);
     expect("text" in result.usage.outputTokens).toBe(true);
     expect("reasoning" in result.usage.outputTokens).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Stream idle watchdog
+// ---------------------------------------------------------------------------
+
+const USAGE = {
+  inputTokens: { total: 1, noCache: 1, cacheRead: undefined, cacheWrite: undefined },
+  outputTokens: { total: 1, text: 1, reasoning: undefined },
+};
+
+/**
+ * Minimal LanguageModelV3 whose per-call stream is scripted by the caller.
+ * Each function produces the stream for one `doStream` invocation (the last
+ * entry repeats) and receives the abortSignal so it can mirror a provider
+ * aborting the underlying fetch.
+ */
+function scriptedModel(
+  scripts: Array<(signal: AbortSignal | undefined) => ReadableStream<LanguageModelV3StreamPart>>,
+): LanguageModelV3 {
+  let call = 0;
+  return {
+    specificationVersion: "v3",
+    provider: "test",
+    modelId: "test-1",
+    supportedUrls: {},
+    async doGenerate() {
+      throw new Error("doGenerate not used in these tests");
+    },
+    async doStream(options) {
+      const script = scripts[Math.min(call, scripts.length - 1)];
+      call += 1;
+      return { stream: script(options.abortSignal) };
+    },
+  };
+}
+
+/** Opens then never progresses; errors when its signal aborts (mirrors the
+ *  AI SDK aborting the fetch on `abortSignal`). */
+function stallingStream(
+  signal: AbortSignal | undefined,
+): ReadableStream<LanguageModelV3StreamPart> {
+  return new ReadableStream({
+    start(controller) {
+      controller.enqueue({ type: "stream-start", warnings: [] });
+      const fail = () =>
+        controller.error(signal?.reason ?? new DOMException("aborted", "AbortError"));
+      if (signal?.aborted) fail();
+      else signal?.addEventListener("abort", fail, { once: true });
+    },
+  });
+}
+
+/** A complete, healthy single-shot text stream. */
+function textStream(text: string): ReadableStream<LanguageModelV3StreamPart> {
+  return new ReadableStream({
+    start(controller) {
+      controller.enqueue({ type: "stream-start", warnings: [] });
+      controller.enqueue({ type: "text-start", id: "t0" });
+      controller.enqueue({ type: "text-delta", id: "t0", delta: text });
+      controller.enqueue({ type: "text-end", id: "t0" });
+      controller.enqueue({ type: "finish", usage: USAGE, finishReason: { unified: "stop", raw: undefined } });
+      controller.close();
+    },
+  });
+}
+
+/** Text stream paced so each inter-part gap is `gapMs`. Total duration exceeds
+ *  the idle window, but no single gap does — exercises the idle reset. */
+function pacedStream(deltas: number, gapMs: number): ReadableStream<LanguageModelV3StreamPart> {
+  return new ReadableStream({
+    start(controller) {
+      controller.enqueue({ type: "stream-start", warnings: [] });
+      controller.enqueue({ type: "text-start", id: "t0" });
+      let i = 0;
+      const tick = () => {
+        if (i < deltas) {
+          controller.enqueue({ type: "text-delta", id: "t0", delta: "x" });
+          i += 1;
+          setTimeout(tick, gapMs);
+        } else {
+          controller.enqueue({ type: "text-end", id: "t0" });
+          controller.enqueue({ type: "finish", usage: USAGE, finishReason: { unified: "stop", raw: undefined } });
+          controller.close();
+        }
+      };
+      setTimeout(tick, gapMs);
+    },
+  });
+}
+
+/** Emits stream-start + one text-delta, then hangs — a stall AFTER output has
+ *  begun. Errors when its signal aborts. */
+function partialThenStallStream(
+  signal: AbortSignal | undefined,
+): ReadableStream<LanguageModelV3StreamPart> {
+  return new ReadableStream({
+    start(controller) {
+      controller.enqueue({ type: "stream-start", warnings: [] });
+      controller.enqueue({ type: "text-start", id: "t0" });
+      controller.enqueue({ type: "text-delta", id: "t0", delta: "partial" });
+      const fail = () =>
+        controller.error(signal?.reason ?? new DOMException("aborted", "AbortError"));
+      if (signal?.aborted) fail();
+      else signal?.addEventListener("abort", fail, { once: true });
+    },
+  });
+}
+
+/** Model whose `doStream()` never resolves until the call is aborted — mirrors
+ *  a connect / first-chunk hang (providers like Anthropic don't resolve
+ *  doStream until the first SSE event arrives). */
+function hangingDoStreamModel(): LanguageModelV3 {
+  return {
+    specificationVersion: "v3",
+    provider: "test",
+    modelId: "test-1",
+    supportedUrls: {},
+    async doGenerate() {
+      throw new Error("doGenerate not used in these tests");
+    },
+    async doStream(options) {
+      const signal = options.abortSignal;
+      await new Promise<never>((_, reject) => {
+        const fail = () =>
+          reject(signal?.reason ?? new DOMException("aborted", "AbortError"));
+        if (signal?.aborted) fail();
+        else signal?.addEventListener("abort", fail, { once: true });
+      });
+      throw new Error("unreachable");
+    },
+  };
+}
+
+describe("callModel — stream idle watchdog", () => {
+  it("throws a RETRYABLE stall when the stream never produces output", async () => {
+    const model = scriptedModel([stallingStream]);
+    const started = Date.now();
+    const err = await callModel(
+      model,
+      userPrompt("x"),
+      () => {},
+      undefined,
+      undefined,
+      undefined,
+      { firstContentMs: 50 },
+    ).catch((e) => e);
+    expect(err).toBeInstanceOf(ModelStreamStallError);
+    expect((err as ModelStreamStallError).retryable).toBe(true);
+    // Fired on the first-content deadline, not the (absent) run wall clock.
+    expect(Date.now() - started).toBeLessThan(1000);
+  });
+
+  it("bounds a doStream() connect/first-chunk hang (armed before doStream)", async () => {
+    // The provider's doStream doesn't resolve until the first SSE event; a hang
+    // there must still be caught by the first-content deadline, retryable.
+    const err = await callModel(
+      hangingDoStreamModel(),
+      userPrompt("x"),
+      () => {},
+      undefined,
+      undefined,
+      undefined,
+      { firstContentMs: 50 },
+    ).catch((e) => e);
+    expect(err).toBeInstanceOf(ModelStreamStallError);
+    expect((err as ModelStreamStallError).retryable).toBe(true);
+  });
+
+  it("throws a NON-retryable stall when output already began (no delta re-stream)", async () => {
+    // A stall after the first token is not retried: deltas are already on the
+    // wire, and re-issuing would double-render them on the client.
+    const deltas: string[] = [];
+    const err = await callModel(
+      scriptedModel([partialThenStallStream]),
+      userPrompt("x"),
+      (t) => deltas.push(t),
+      undefined,
+      undefined,
+      undefined,
+      { firstContentMs: 10_000, idleMs: 50 }, // idle governs once output starts
+    ).catch((e) => e);
+    expect(err).toBeInstanceOf(ModelStreamStallError);
+    expect((err as ModelStreamStallError).retryable).toBe(false);
+    expect(deltas).toEqual(["partial"]); // the partial delta did stream
+  });
+
+  it("does NOT trip on a healthy but slow stream (idle resets per part)", async () => {
+    // 5 deltas 30ms apart (~150ms total) against a 100ms idle window: total
+    // duration exceeds idle, but every gap is under it. A total-call timeout
+    // would wrongly kill this; the per-part idle must not.
+    const model = scriptedModel([() => pacedStream(5, 30)]);
+    const result = await callModel(
+      model,
+      userPrompt("x"),
+      () => {},
+      undefined,
+      undefined,
+      undefined,
+      { firstContentMs: 10_000, idleMs: 100 },
+    );
+    expect(result.finishReason.unified).toBe("stop");
+    expect(result.content).toEqual([{ type: "text", text: "xxxxx" }]);
+  });
+
+  it("propagates a run-level abort as-is, not as a stall", async () => {
+    const model = scriptedModel([stallingStream]);
+    const controller = new AbortController();
+    setTimeout(() => controller.abort(), 20);
+    const err = await callModel(
+      model,
+      { ...userPrompt("x"), abortSignal: controller.signal },
+      () => {},
+      undefined,
+      undefined,
+      undefined,
+      { firstContentMs: 10_000 }, // deadline far beyond the abort, so it can't win the race
+    ).catch((e) => e);
+    expect(err).not.toBeInstanceOf(ModelStreamStallError);
+    expect(controller.signal.aborted).toBe(true);
+  });
+
+  it("recovers via withRetry: pre-output stall on the first call, succeed on the retry", async () => {
+    const model = scriptedModel([stallingStream, () => textStream("recovered")]);
+    const result = await withRetry(
+      () =>
+        callModel(model, userPrompt("x"), () => {}, undefined, undefined, undefined, {
+          firstContentMs: 50,
+        }),
+      3,
+      0,
+    );
+    expect(result.content).toEqual([{ type: "text", text: "recovered" }]);
   });
 });
