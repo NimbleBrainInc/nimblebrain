@@ -99,7 +99,7 @@ describe("nb__delegate", () => {
 		expect(extractText(result.content)).toBe("Summarize the data");
 	});
 
-	it("returns error for unknown agent profile", async () => {
+	it("falls back to the default sub-agent (with a warning) for an unknown profile", async () => {
 		const ctx = makeDelegateCtx({
 			agents: {
 				researcher: {
@@ -116,12 +116,15 @@ describe("nb__delegate", () => {
 			agent: "nonexistent",
 		});
 
-		expect(result.isError).toBe(true);
-		expect(extractText(result.content)).toContain('Unknown agent profile "nonexistent"');
-		expect(extractText(result.content)).toContain("researcher");
+		// Unknown profile is non-fatal: the delegation still runs, with a note.
+		expect(result.isError).toBe(false);
+		const text = extractText(result.content);
+		expect(text).toContain('Agent profile "nonexistent" not found');
+		expect(text).toContain("researcher"); // lists the available profiles
+		expect(text).toContain("Do something"); // the sub-agent actually ran
 	});
 
-	it("returns error listing 'none' when no agents configured and profile requested", async () => {
+	it("falls back listing 'none' when no profiles are configured and one is requested", async () => {
 		const ctx = makeDelegateCtx({ agents: undefined });
 
 		const tool = createDelegateTool(ctx);
@@ -130,8 +133,22 @@ describe("nb__delegate", () => {
 			agent: "nonexistent",
 		});
 
-		expect(result.isError).toBe(true);
-		expect(extractText(result.content)).toContain("none");
+		expect(result.isError).toBe(false);
+		const text = extractText(result.content);
+		expect(text).toContain("available: none");
+		expect(text).toContain("Do something"); // ran with the default sub-agent
+	});
+
+	it("advertises the `agent` param only when profiles are configured", () => {
+		const props = (agents: Record<string, AgentProfile> | undefined) =>
+			(createDelegateTool(makeDelegateCtx({ agents })).inputSchema as {
+				properties: Record<string, unknown>;
+			}).properties;
+
+		expect(
+			props({ writer: { description: "", systemPrompt: "", tools: [] } }),
+		).toHaveProperty("agent");
+		expect(props(undefined)).not.toHaveProperty("agent");
 	});
 
 	it("caps child maxIterations at parent remaining - 1", async () => {

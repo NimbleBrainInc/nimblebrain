@@ -519,7 +519,7 @@ When total tools ≤30, all are surfaced directly. Above 30 with no skill matche
 
 ### Multi-Agent Delegation
 
-`nb__delegate` (`src/tools/delegate.ts`) spawns child `AgentEngine.run()` with scoped prompt and filtered tools. Named agent profiles configured in `nimblebrain.json` under `agents`. Child iteration budget capped at `min(child.max, parent.remaining - 1)`. Multiple delegations in the same turn run concurrently via `Promise.all()`.
+`nb__delegate` (`src/tools/delegate.ts`) spawns child `AgentEngine.run()` with a fixed safety preamble (or a named profile's system prompt) and filtered tools. Named agent profiles configured in `nimblebrain.json` under `agents`; an unknown profile name falls back to the default sub-agent rather than failing, and the `agent` parameter is advertised only when profiles are configured. Child iteration budget capped at `min(child.max, parent.remaining - 1)`. Multiple delegations in the same turn run concurrently via `Promise.all()`.
 
 ### MCP Tasks Client
 
