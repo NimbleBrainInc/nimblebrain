@@ -31,8 +31,10 @@ import { WORKSPACE_ID_RE } from "../workspace/workspace-store.ts";
  * ever lives in a *user*-scope record (a grant is the granting user's, and
  * revoking it is theirs). Absence of a grant means "not granted" — the
  * dispatch-time check fails closed. A connector used inside the user's own
- * personal workspace needs no grant (home is free); that semantic is owned
- * by the dispatch layer, so this store never records a self-grant.
+ * personal workspace needs no grant (home is free) — the dispatch layer
+ * owns that semantic and never asks the store to record a self-grant. The
+ * store itself is a dumb ledger with no knowledge of a user's personal
+ * workspace id, so it faithfully records whatever grant it is handed.
  *
  * Future expansion (see WORKSPACE_SECRETS_BROKER_SPEC): "needs_approval"
  * as a third state once the agent-pause-and-confirm flow lands.
@@ -151,12 +153,6 @@ export class PermissionStore {
     return record?.grants?.[serverName] ?? [];
   }
 
-  /** Every personal-connector grant for a user: serverName → granted workspace ids. */
-  async listConnectorGrants(userId: string): Promise<ConnectorGrants> {
-    const record = await this.load({ scope: "user", userId });
-    return record?.grants ?? {};
-  }
-
   /**
    * Grant a personal connector for use inside a shared workspace.
    * Idempotent — re-granting an existing (connector, workspace) is a no-op.
@@ -181,6 +177,9 @@ export class PermissionStore {
    * and the `grants` block when it empties, so the file stays small.
    */
   async revokeConnector(userId: string, serverName: string, wsId: string): Promise<void> {
+    // No ID_RE / WORKSPACE_ID_RE guard here (unlike grantConnector): a
+    // malformed key can never be in a strictly-written ledger, so revoking
+    // one is a safe no-op — the includes() check below simply misses.
     const owner: PermissionOwner = { scope: "user", userId };
     const record = await this.load(owner);
     const existing = record?.grants?.[serverName];

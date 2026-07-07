@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { PermissionStore } from "../../src/permissions/permission-store.ts";
@@ -201,16 +201,21 @@ describe("PermissionStore — personal-connector grants", () => {
   });
 
   test("revokeConnector removes one workspace and prunes empty keys", async () => {
-    const { store, cleanup } = freshStore();
+    const { store, dir, cleanup } = freshStore();
     try {
       await store.grantConnector("u1", "granola", WS);
       await store.grantConnector("u1", "granola", WS2);
       await store.revokeConnector("u1", "granola", WS);
       expect(await store.getConnectorGrants("u1", "granola")).toEqual([WS2]);
-      // Last grant removed → connector key pruned, listing is empty.
+      // Removing the last grant prunes the connector key AND the whole
+      // `grants` block, so the file stays small. Read the file directly to
+      // pin that on-disk shape (not just the behavioural empty).
       await store.revokeConnector("u1", "granola", WS2);
       expect(await store.getConnectorGrants("u1", "granola")).toEqual([]);
-      expect(await store.listConnectorGrants("u1")).toEqual({});
+      const onDisk = JSON.parse(
+        readFileSync(join(dir, "users", "u1", "permissions.json"), "utf-8"),
+      );
+      expect(onDisk.grants).toBeUndefined();
     } finally {
       cleanup();
     }
@@ -220,7 +225,7 @@ describe("PermissionStore — personal-connector grants", () => {
     const { store, cleanup } = freshStore();
     try {
       await store.revokeConnector("u1", "granola", WS); // never granted
-      expect(await store.listConnectorGrants("u1")).toEqual({});
+      expect(await store.getConnectorGrants("u1", "granola")).toEqual([]);
     } finally {
       cleanup();
     }
@@ -275,6 +280,24 @@ describe("PermissionStore — personal-connector grants", () => {
     try {
       await store.grantConnector("u1", "granola", WS);
       expect(await store.isConnectorGranted("u1", "granola", "not-a-ws")).toBe(false);
+    } finally {
+      cleanup();
+    }
+  });
+
+  test("load preserves grants when the connectors block is malformed", async () => {
+    const { store, dir, cleanup } = freshStore();
+    try {
+      // A file whose `connectors` is garbage must still yield its grants —
+      // normalization resets connectors without discarding the grant ledger.
+      const userDir = join(dir, "users", "u1");
+      mkdirSync(userDir, { recursive: true });
+      writeFileSync(
+        join(userDir, "permissions.json"),
+        JSON.stringify({ connectors: "garbage", grants: { granola: [WS] } }),
+      );
+      expect(await store.isConnectorGranted("u1", "granola", WS)).toBe(true);
+      expect(await store.getConnectorGrants("u1", "granola")).toEqual([WS]);
     } finally {
       cleanup();
     }
