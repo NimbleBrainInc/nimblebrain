@@ -21,6 +21,7 @@ import { join } from "node:path";
 import { NoopEventSink } from "../../src/adapters/noop-events.ts";
 import { textContent } from "../../src/engine/content-helpers.ts";
 import { DEV_IDENTITY } from "../../src/identity/providers/dev.ts";
+import { IdentityToolRouter } from "../../src/runtime/identity-tool-router.ts";
 import { Runtime } from "../../src/runtime/runtime.ts";
 import { defineInProcessApp } from "../../src/tools/in-process-app.ts";
 import { ensureUserWorkspace } from "../../src/workspace/provisioning.ts";
@@ -128,5 +129,20 @@ describe("personal-connector surfacing", () => {
     // NOT also surfaced as bare identity-door tools (would be a duplicate).
     expect(names).not.toContain("granola__read_notes");
     expect(names).not.toContain("notion__read");
+  });
+
+  // Locks the door wiring: the engine's own tool surface (IdentityToolRouter,
+  // the primary consumer) forwards its captured identityId, so surfacing fires
+  // end-to-end and not just when listToolsForWorkspace is called directly. The
+  // /mcp and nb__search doors forward identity the same way.
+  it("surfaces through IdentityToolRouter.availableTools (the engine door)", async () => {
+    const router = new IdentityToolRouter({
+      identityId: DEV_IDENTITY.id,
+      workspaceId: SHARED_WS,
+      runtime,
+    });
+    const names = (await router.availableTools()).map((t) => t.name);
+    expect(names).toContain("granola__read_notes"); // granted
+    expect(names).not.toContain("notion__read"); // ungranted
   });
 });
