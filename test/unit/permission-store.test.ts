@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { PermissionStore } from "../../src/permissions/permission-store.ts";
@@ -156,6 +156,148 @@ describe("PermissionStore", () => {
       await expect(
         store.setConnector(bad, "gmail", { send_email: "disallow" }),
       ).rejects.toThrow();
+    } finally {
+      cleanup();
+    }
+  });
+});
+
+describe("PermissionStore — personal-connector grants", () => {
+  const WS = "ws_helix";
+  const WS2 = "ws_acme";
+
+  test("isConnectorGranted is false (deny) with no grant recorded", async () => {
+    const { store, cleanup } = freshStore();
+    try {
+      expect(await store.isConnectorGranted("u1", "granola", WS)).toBe(false);
+      expect(await store.getConnectorGrants("u1", "granola")).toEqual([]);
+    } finally {
+      cleanup();
+    }
+  });
+
+  test("grant + isConnectorGranted round-trips, scoped to the granted workspace", async () => {
+    const { store, cleanup } = freshStore();
+    try {
+      await store.grantConnector("u1", "granola", WS);
+      expect(await store.isConnectorGranted("u1", "granola", WS)).toBe(true);
+      // Not granted to a different workspace.
+      expect(await store.isConnectorGranted("u1", "granola", WS2)).toBe(false);
+      expect(await store.getConnectorGrants("u1", "granola")).toEqual([WS]);
+    } finally {
+      cleanup();
+    }
+  });
+
+  test("grantConnector is idempotent — no duplicate workspace ids", async () => {
+    const { store, cleanup } = freshStore();
+    try {
+      await store.grantConnector("u1", "granola", WS);
+      await store.grantConnector("u1", "granola", WS);
+      expect(await store.getConnectorGrants("u1", "granola")).toEqual([WS]);
+    } finally {
+      cleanup();
+    }
+  });
+
+  test("revokeConnector removes one workspace and prunes empty keys", async () => {
+    const { store, dir, cleanup } = freshStore();
+    try {
+      await store.grantConnector("u1", "granola", WS);
+      await store.grantConnector("u1", "granola", WS2);
+      await store.revokeConnector("u1", "granola", WS);
+      expect(await store.getConnectorGrants("u1", "granola")).toEqual([WS2]);
+      // Removing the last grant prunes the connector key AND the whole
+      // `grants` block, so the file stays small. Read the file directly to
+      // pin that on-disk shape (not just the behavioural empty).
+      await store.revokeConnector("u1", "granola", WS2);
+      expect(await store.getConnectorGrants("u1", "granola")).toEqual([]);
+      const onDisk = JSON.parse(
+        readFileSync(join(dir, "users", "u1", "permissions.json"), "utf-8"),
+      );
+      expect(onDisk.grants).toBeUndefined();
+    } finally {
+      cleanup();
+    }
+  });
+
+  test("revokeConnector on a non-existent grant is a no-op", async () => {
+    const { store, cleanup } = freshStore();
+    try {
+      await store.revokeConnector("u1", "granola", WS); // never granted
+      expect(await store.getConnectorGrants("u1", "granola")).toEqual([]);
+    } finally {
+      cleanup();
+    }
+  });
+
+  test("grants are isolated per user", async () => {
+    const { store, cleanup } = freshStore();
+    try {
+      await store.grantConnector("u1", "granola", WS);
+      expect(await store.isConnectorGranted("u2", "granola", WS)).toBe(false);
+    } finally {
+      cleanup();
+    }
+  });
+
+  test("grants and tool policies coexist in the same record", async () => {
+    const { store, cleanup } = freshStore();
+    try {
+      await store.setConnector({ scope: "user", userId: "u1" }, "granola", {
+        delete_note: "disallow",
+      });
+      await store.grantConnector("u1", "granola", WS);
+      // Both survive round-trips through the shared file.
+      expect(
+        await store.get({ scope: "user", userId: "u1" }, "granola", "delete_note"),
+      ).toBe("disallow");
+      expect(await store.isConnectorGranted("u1", "granola", WS)).toBe(true);
+      // And a tool-policy edit doesn't clobber the grant.
+      await store.setConnector({ scope: "user", userId: "u1" }, "granola", {
+        delete_note: "allow",
+      });
+      expect(await store.isConnectorGranted("u1", "granola", WS)).toBe(true);
+    } finally {
+      cleanup();
+    }
+  });
+
+  test("write is strict — malformed connector name or workspace id throws", async () => {
+    const { store, cleanup } = freshStore();
+    try {
+      await expect(store.grantConnector("u1", "bad name!", WS)).rejects.toThrow();
+      await expect(
+        store.grantConnector("u1", "granola", "../../etc"),
+      ).rejects.toThrow();
+    } finally {
+      cleanup();
+    }
+  });
+
+  test("read fails closed — malformed workspace id is not granted", async () => {
+    const { store, cleanup } = freshStore();
+    try {
+      await store.grantConnector("u1", "granola", WS);
+      expect(await store.isConnectorGranted("u1", "granola", "not-a-ws")).toBe(false);
+    } finally {
+      cleanup();
+    }
+  });
+
+  test("load preserves grants when the connectors block is malformed", async () => {
+    const { store, dir, cleanup } = freshStore();
+    try {
+      // A file whose `connectors` is garbage must still yield its grants —
+      // normalization resets connectors without discarding the grant ledger.
+      const userDir = join(dir, "users", "u1");
+      mkdirSync(userDir, { recursive: true });
+      writeFileSync(
+        join(userDir, "permissions.json"),
+        JSON.stringify({ connectors: "garbage", grants: { granola: [WS] } }),
+      );
+      expect(await store.isConnectorGranted("u1", "granola", WS)).toBe(true);
+      expect(await store.getConnectorGrants("u1", "granola")).toEqual([WS]);
     } finally {
       cleanup();
     }

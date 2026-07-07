@@ -13,7 +13,10 @@ import { WORKSPACE_ID_RE } from "../workspace/workspace-store.ts";
  *   workspace scope: <workDir>/workspaces/<wsId>/permissions.json
  *
  * Schema:
- *   { connectors: { <serverName>: { tools: { <toolName>: "allow" | "disallow" } } } }
+ *   {
+ *     connectors: { <serverName>: { tools: { <toolName>: "allow" | "disallow" } } },
+ *     grants:     { <serverName>: [ <wsId>, ... ] }
+ *   }
  *
  * Default policy: tools not present in the store are treated as "allow".
  * This is the "trust by default, tighten as needed" model — friction
@@ -21,6 +24,17 @@ import { WORKSPACE_ID_RE } from "../workspace/workspace-store.ts";
  * primary security boundary. Per-tool deny is for niche cases (operator
  * wants to forbid a specific destructive tool while keeping the rest of
  * the connector functional).
+ *
+ * The `grants` block is the opposite posture — deny-by-default. It records
+ * personal-connector grants: which shared workspaces a user has explicitly
+ * allowed one of their own personal connectors to be used inside. It only
+ * ever lives in a *user*-scope record (a grant is the granting user's, and
+ * revoking it is theirs). Absence of a grant means "not granted" — the
+ * dispatch-time check fails closed. A connector used inside the user's own
+ * personal workspace needs no grant (home is free) — the dispatch layer
+ * owns that semantic and never asks the store to record a self-grant. The
+ * store itself is a dumb ledger with no knowledge of a user's personal
+ * workspace id, so it faithfully records whatever grant it is handed.
  *
  * Future expansion (see WORKSPACE_SECRETS_BROKER_SPEC): "needs_approval"
  * as a third state once the agent-pause-and-confirm flow lands.
@@ -32,8 +46,12 @@ export interface ConnectorPermissions {
   tools?: Record<string, ToolPolicy>;
 }
 
+/** Personal-connector grants: connector serverName → the shared-workspace ids it may be used in. */
+export type ConnectorGrants = Record<string, string[]>;
+
 export interface PermissionsRecord {
   connectors: Record<string, ConnectorPermissions>;
+  grants?: ConnectorGrants;
 }
 
 const ID_RE = /^[a-z0-9_-]{1,128}$/i;
@@ -107,6 +125,78 @@ export class PermissionStore {
     await this.save(owner, record);
   }
 
+  // ── personal-connector grants ─────────────────────────────────
+  //
+  // A grant is always the granting user's, so these methods take a bare
+  // `userId` and address the user-scope record directly — there is no
+  // workspace-scope grant. Reads fail closed (deny / empty) on any
+  // malformed input; writes are strict (throw) so a bad serverName or
+  // target wsId never lands a junk record in the ledger.
+
+  /**
+   * Is `serverName` (a personal connector) granted for use inside the
+   * shared workspace `wsId`? The dispatch-time check — returns false
+   * (deny) when no grant is recorded or any input is malformed.
+   */
+  async isConnectorGranted(userId: string, serverName: string, wsId: string): Promise<boolean> {
+    if (!ID_RE.test(serverName) || !WORKSPACE_ID_RE.test(wsId)) return false;
+    const grants = await this.getConnectorGrants(userId, serverName);
+    return grants.includes(wsId);
+  }
+
+  /**
+   * The shared-workspace ids a user has granted a personal connector to.
+   * Empty when none — never null.
+   */
+  async getConnectorGrants(userId: string, serverName: string): Promise<string[]> {
+    const record = await this.load({ scope: "user", userId });
+    return record?.grants?.[serverName] ?? [];
+  }
+
+  /**
+   * Grant a personal connector for use inside a shared workspace.
+   * Idempotent — re-granting an existing (connector, workspace) is a no-op.
+   * Throws on a malformed serverName or target wsId (strict write).
+   */
+  async grantConnector(userId: string, serverName: string, wsId: string): Promise<void> {
+    if (!ID_RE.test(serverName)) throw new Error(`Invalid connector name: ${serverName}`);
+    if (!WORKSPACE_ID_RE.test(wsId)) throw new Error(`Invalid workspace id: ${wsId}`);
+    const owner: PermissionOwner = { scope: "user", userId };
+    const record = (await this.load(owner)) ?? { connectors: {} };
+    const grants = record.grants ?? {};
+    const existing = grants[serverName] ?? [];
+    if (existing.includes(wsId)) return;
+    grants[serverName] = [...existing, wsId];
+    record.grants = grants;
+    await this.save(owner, record);
+  }
+
+  /**
+   * Revoke a personal connector's grant for a shared workspace.
+   * Idempotent. Prunes the connector key when its last grant is removed
+   * and the `grants` block when it empties, so the file stays small.
+   */
+  async revokeConnector(userId: string, serverName: string, wsId: string): Promise<void> {
+    // No ID_RE / WORKSPACE_ID_RE guard here (unlike grantConnector): a
+    // malformed key can never be in a strictly-written ledger, so revoking
+    // one is a safe no-op — the includes() check below simply misses.
+    const owner: PermissionOwner = { scope: "user", userId };
+    const record = await this.load(owner);
+    const existing = record?.grants?.[serverName];
+    if (!record?.grants || !existing?.includes(wsId)) return;
+    const grants = record.grants;
+    const remaining = existing.filter((id) => id !== wsId);
+    if (remaining.length === 0) {
+      delete grants[serverName];
+    } else {
+      grants[serverName] = remaining;
+    }
+    if (Object.keys(grants).length === 0) {
+      record.grants = undefined;
+    }
+    await this.save(owner, record);
+  }
+
   // ── internals ─────────────────────────────────────────────────
 
   private async load(owner: PermissionOwner): Promise<PermissionsRecord | null> {
@@ -116,7 +206,9 @@ export class PermissionStore {
       const content = await readFile(path, "utf-8");
       const parsed = JSON.parse(content) as PermissionsRecord;
       if (!parsed.connectors || typeof parsed.connectors !== "object") {
-        return { connectors: {} };
+        // Normalize a malformed/absent `connectors` without discarding a
+        // valid `grants` block that shares the same file.
+        return parsed.grants ? { connectors: {}, grants: parsed.grants } : { connectors: {} };
       }
       return parsed;
     } catch (err: unknown) {
