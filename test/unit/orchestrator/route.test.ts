@@ -22,6 +22,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import type { ToolResult } from "../../../src/engine/types.ts";
 import { IdentityContext } from "../../../src/identity/context.ts";
 import {
+  ConnectorGrantDenied,
   CrossWorkspaceReachDenied,
   type OrchestratorRuntime,
   routeToolCall,
@@ -30,6 +31,7 @@ import {
   WorkspaceAccessDenied,
   WorkspaceToolUnavailable,
 } from "../../../src/orchestrator/index.ts";
+import { PermissionStore } from "../../../src/permissions/permission-store.ts";
 import type { Tool, ToolSource } from "../../../src/tools/types.ts";
 import { WorkspaceContext } from "../../../src/workspace/context.ts";
 import { personalWorkspaceIdFor } from "../../../src/workspace/workspace-store.ts";
@@ -61,6 +63,8 @@ interface StubRuntimeOpts {
   identitySources?: Map<string, ToolSource>;
   /** Optional self-heal hook exposed as `recoverWorkspaceSource`. */
   recoverWorkspaceSource?: (wsId: string, sourceName: string) => boolean | Promise<boolean>;
+  /** Optional grant store exposed as `getPermissionStore` (the personal-connector gate reads it). */
+  permissionStore?: PermissionStore;
 }
 
 interface StubRuntime extends OrchestratorRuntime {
@@ -101,6 +105,9 @@ function makeStubRuntime(opts: StubRuntimeOpts): StubRuntime {
     getIdentitySource(name: string): ToolSource | undefined {
       return opts.identitySources?.get(name);
     },
+    ...(opts.permissionStore
+      ? { getPermissionStore: (): PermissionStore => opts.permissionStore! }
+      : {}),
     getIdentityContext(identityId: string): IdentityContext {
       return new IdentityContext({ userId: identityId, workDir: opts.workDir });
     },
@@ -442,5 +449,166 @@ describe("routeToolCall — self-heal on a recoverable source miss", () => {
 
     expect(routed.source.name).toBe("crm");
     expect(runtime.recoverCallCount()).toBe(0);
+  });
+});
+
+describe("routeToolCall — personal connectors (identity-door grant gate)", () => {
+  // A personal connector is an MCP bundle installed in the caller's OWN personal
+  // workspace, reached as a BARE identity tool. It is free inside that personal
+  // workspace and grant-gated inside any shared room. The workspace wall
+  // (`ws_<id>-` calls) is never involved — a personal connector is never a
+  // namespaced workspace tool, so a grant can never widen the wall.
+
+  function runtimeWithPersonalConnector(store?: PermissionStore): StubRuntime {
+    return makeStubRuntime({
+      registries: new Map([
+        [SHARED_WS, [makeStubSource("crm")]],
+        // "granola" is the caller's personal connector, in their ws_user_ registry.
+        [PERSONAL_WS, [makeStubSource("granola")]],
+      ]),
+      workDir,
+      ...(store ? { permissionStore: store } : {}),
+    });
+  }
+
+  test("free inside the caller's own personal workspace — no grant needed", async () => {
+    const routed = await routeToolCall({
+      identityId: USER_ID,
+      namespacedName: "granola__read_notes", // bare identity tool
+      workspaceId: PERSONAL_WS, // the caller's own home
+      runtime: runtimeWithPersonalConnector(),
+    });
+
+    expect(routed.kind).toBe("identity");
+    expect(routed.toolName).toBe("granola__read_notes");
+    expect(routed.source.name).toBe("granola");
+    if (routed.kind === "identity") {
+      expect(routed.context).toBeInstanceOf(IdentityContext);
+    }
+  });
+
+  test("shared room + no grant → ConnectorGrantDenied (fail closed)", async () => {
+    const store = new PermissionStore(workDir); // empty — nothing granted
+    let thrown: unknown = null;
+    try {
+      await routeToolCall({
+        identityId: USER_ID,
+        namespacedName: "granola__read_notes",
+        workspaceId: SHARED_WS, // a shared room, not the caller's home
+        runtime: runtimeWithPersonalConnector(store),
+      });
+    } catch (err) {
+      thrown = err;
+    }
+    expect(thrown).toBeInstanceOf(ConnectorGrantDenied);
+    expect((thrown as ConnectorGrantDenied).connector).toBe("granola");
+    expect((thrown as ConnectorGrantDenied).workspaceId).toBe(SHARED_WS);
+  });
+
+  test("shared room + active grant → allowed, dispatched as identity", async () => {
+    const store = new PermissionStore(workDir);
+    await store.grantConnector(USER_ID, "granola", SHARED_WS);
+
+    const routed = await routeToolCall({
+      identityId: USER_ID,
+      namespacedName: "granola__read_notes",
+      workspaceId: SHARED_WS,
+      runtime: runtimeWithPersonalConnector(store),
+    });
+
+    expect(routed.kind).toBe("identity");
+    expect(routed.source.name).toBe("granola");
+    // The session's workspace never enters the routed result — no crossing.
+    expect(routed.toolName).toBe("granola__read_notes");
+  });
+
+  test("a grant NEVER widens the wall — a ws_<other>- call is still denied", async () => {
+    const store = new PermissionStore(workDir);
+    await store.grantConnector(USER_ID, "granola", SHARED_WS);
+    const runtime = makeStubRuntime({
+      registries: new Map([
+        [SHARED_WS, [makeStubSource("crm")]],
+        [PERSONAL_WS, [makeStubSource("granola")]],
+        [OTHER_WS, [makeStubSource("crm")]],
+      ]),
+      workDir,
+      permissionStore: store,
+    });
+
+    let thrown: unknown = null;
+    try {
+      // A namespaced workspace call to ANOTHER workspace — the grant is irrelevant.
+      await routeToolCall({
+        identityId: USER_ID,
+        namespacedName: `${OTHER_WS}-crm__search`,
+        workspaceId: SHARED_WS,
+        runtime,
+      });
+    } catch (err) {
+      thrown = err;
+    }
+    expect(thrown).toBeInstanceOf(CrossWorkspaceReachDenied);
+  });
+
+  test("identity-only session (no workspace) + personal connector → denied", async () => {
+    // No room to grant to, so it can never be the caller's own home → fail closed.
+    const store = new PermissionStore(workDir);
+    let thrown: unknown = null;
+    try {
+      await routeToolCall({
+        identityId: USER_ID,
+        namespacedName: "granola__read_notes",
+        // No workspaceId.
+        runtime: runtimeWithPersonalConnector(store),
+      });
+    } catch (err) {
+      thrown = err;
+    }
+    expect(thrown).toBeInstanceOf(ConnectorGrantDenied);
+    expect((thrown as ConnectorGrantDenied).workspaceId).toBeUndefined();
+  });
+
+  test("not a kernel source and not a personal connector → UnknownIdentitySource", async () => {
+    // No "granola" anywhere (empty personal registry).
+    const runtime = makeStubRuntime({
+      registries: new Map([
+        [SHARED_WS, [makeStubSource("crm")]],
+        [PERSONAL_WS, []],
+      ]),
+      workDir,
+    });
+
+    let thrown: unknown = null;
+    try {
+      await routeToolCall({
+        identityId: USER_ID,
+        namespacedName: "granola__read_notes",
+        workspaceId: SHARED_WS,
+        runtime,
+      });
+    } catch (err) {
+      thrown = err;
+    }
+    expect(thrown).toBeInstanceOf(UnknownIdentitySource);
+  });
+
+  test("a kernel identity source wins over a personal connector of the same name", async () => {
+    // Shadowing guard: the kernel source (conversations/files/automations) is
+    // resolved first, so a personal connector can never shadow it.
+    const kernel = makeStubSource("files");
+    const runtime = makeStubRuntime({
+      registries: new Map([[PERSONAL_WS, [makeStubSource("files")]]]),
+      workDir,
+      identitySources: new Map([["files", kernel]]),
+    });
+
+    const routed = await routeToolCall({
+      identityId: USER_ID,
+      namespacedName: "files__list",
+      workspaceId: SHARED_WS,
+      runtime,
+    });
+
+    expect(routed.source).toBe(kernel); // the kernel source, not the personal bundle
   });
 });

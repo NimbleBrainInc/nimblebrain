@@ -11,6 +11,7 @@ import { describe, expect, test } from "bun:test";
 
 import { mapOrchestratorErrorToToolResult } from "../../../src/orchestrator/error-mapping.ts";
 import {
+  ConnectorGrantDenied,
   UnknownIdentitySource,
   UnknownToolSource,
   WorkspaceAccessDenied,
@@ -61,6 +62,20 @@ describe("mapOrchestratorErrorToToolResult", () => {
       reason: "unknown_identity_source",
       toolName: "crm__search",
     });
+  });
+
+  test("ConnectorGrantDenied → reason: connector_grant_denied + connector + wsId", () => {
+    const err = new ConnectorGrantDenied("u1", "granola", "ws_helix");
+    const result = mapOrchestratorErrorToToolResult(err, "granola__read_notes");
+    expect(result.isError).toBe(true);
+    expect(result.structuredContent).toMatchObject({
+      reason: "connector_grant_denied",
+      connector: "granola",
+      wsId: "ws_helix",
+    });
+    // Actionable message the agent can relay to the user.
+    expect(result.content[0]).toMatchObject({ type: "text" });
+    expect((result.content[0] as { text: string }).text).toContain("Settings");
   });
 
   // Pins: unknown error classes RE-THROW. A naive `?? "unknown"` default

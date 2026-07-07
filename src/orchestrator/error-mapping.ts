@@ -15,6 +15,7 @@
  *     (the live base of `CrossWorkspaceReachDenied` / `WorkspaceToolUnavailable`)
  *   - `UnknownToolSource`         → `unknown_tool_source`      + `{ wsId, sourceName, toolName }`
  *   - `UnknownIdentitySource`     → `unknown_identity_source`  + `{ toolName }`
+ *   - `ConnectorGrantDenied`      → `connector_grant_denied`   + `{ connector, wsId }`
  *
  * Non-orchestrator errors re-throw — those are real engine failures and
  * should hit the engine's `run.error` path. We deliberately do NOT
@@ -24,6 +25,7 @@
 
 import type { ToolResult } from "../engine/types.ts";
 import {
+  ConnectorGrantDenied,
   UnknownIdentitySource,
   UnknownNamespacedToolName,
   UnknownToolSource,
@@ -96,6 +98,23 @@ export function mapOrchestratorErrorToToolResult(err: unknown, namespacedName: s
         error: "orchestrator_error",
         reason: "unknown_identity_source",
         toolName: err.toolName,
+      },
+    };
+  }
+  if (err instanceof ConnectorGrantDenied) {
+    return {
+      content: [
+        {
+          type: "text",
+          text: `[orchestrator] "${err.connector}" is your personal connector and isn't granted to this workspace. Grant it in Settings → Connectors, then retry.`,
+        },
+      ],
+      isError: true,
+      structuredContent: {
+        error: "orchestrator_error",
+        reason: "connector_grant_denied",
+        connector: err.connector,
+        wsId: err.workspaceId,
       },
     };
   }
