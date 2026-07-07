@@ -161,7 +161,7 @@ export class IdentityToolRouter implements ToolRouter {
    * the engine's reachable universe — a session reaches exactly one workspace.
    */
   async availableTools(): Promise<ToolSchema[]> {
-    return this.runtime.listToolsForWorkspace(this.workspaceId);
+    return this.runtime.listToolsForWorkspace(this.workspaceId, this.identityId);
   }
 
   /**

@@ -697,7 +697,7 @@ function createServer(
     // (`WorkspaceToolUnavailable`).
     const wsId = mcpRequestWorkspace.getStore();
     const all = wsId
-      ? await runtime.listToolsForWorkspace(wsId)
+      ? await runtime.listToolsForWorkspace(wsId, identityId)
       : await runtime.listIdentitySourceTools();
     const orgRole = sessionCtx.identity?.orgRole;
     return {

@@ -285,6 +285,32 @@ describe("PermissionStore — personal-connector grants", () => {
     }
   });
 
+  test("connectorsGrantedTo returns the connectors granted to one workspace", async () => {
+    const { store, cleanup } = freshStore();
+    try {
+      await store.grantConnector("u1", "granola", WS);
+      await store.grantConnector("u1", "gmail", WS);
+      await store.grantConnector("u1", "notion", WS2); // a different room
+      const granted = (await store.connectorsGrantedTo("u1", WS)).sort();
+      expect(granted).toEqual(["gmail", "granola"]);
+      // Scoped to the workspace — notion (granted to WS2) is absent.
+      expect(granted).not.toContain("notion");
+    } finally {
+      cleanup();
+    }
+  });
+
+  test("connectorsGrantedTo is empty with no grants and fails closed on a bad wsId", async () => {
+    const { store, cleanup } = freshStore();
+    try {
+      expect(await store.connectorsGrantedTo("u1", WS)).toEqual([]);
+      await store.grantConnector("u1", "granola", WS);
+      expect(await store.connectorsGrantedTo("u1", "not-a-ws")).toEqual([]);
+    } finally {
+      cleanup();
+    }
+  });
+
   test("load preserves grants when the connectors block is malformed", async () => {
     const { store, dir, cleanup } = freshStore();
     try {

@@ -154,6 +154,21 @@ export class PermissionStore {
   }
 
   /**
+   * The connector names a user has granted to a specific shared workspace — the
+   * surfacing read (one file load; "which of my personal connectors may this room
+   * see"). Empty when none; fails closed (empty) on a malformed `wsId`.
+   */
+  async connectorsGrantedTo(userId: string, wsId: string): Promise<string[]> {
+    if (!WORKSPACE_ID_RE.test(wsId)) return [];
+    const record = await this.load({ scope: "user", userId });
+    const grants = record?.grants;
+    if (!grants) return [];
+    return Object.entries(grants)
+      .filter(([, wsIds]) => wsIds.includes(wsId))
+      .map(([connector]) => connector);
+  }
+
+  /**
    * Grant a personal connector for use inside a shared workspace.
    * Idempotent — re-granting an existing (connector, workspace) is a no-op.
    * Throws on a malformed serverName or target wsId (strict write).
