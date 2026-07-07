@@ -232,10 +232,11 @@ export interface OrchestratorRuntime {
   /**
    * The walled tool surface for a session bounded to `wsId`: that workspace's
    * tools (namespaced `ws_<id>-<tool>`) plus the caller's identity tools
-   * (bare). The engine's reachable universe — there is no cross-workspace
-   * union.
+   * (bare), plus — when `identityId` is given and `wsId` is a shared room — the
+   * caller's personal connectors granted into it (bare). The engine's reachable
+   * universe — there is no cross-workspace union.
    */
-  listToolsForWorkspace(wsId: string): Promise<ToolSchema[]>;
+  listToolsForWorkspace(wsId: string, identityId?: string): Promise<ToolSchema[]>;
 }
 
 // ── Routing ───────────────────────────────────────────────────────

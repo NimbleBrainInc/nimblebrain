@@ -2942,21 +2942,26 @@ export class Runtime {
     if (!wsId) {
       return this.getRegistryForCurrentWorkspace().availableTools();
     }
-    return this.listToolsForWorkspace(wsId);
+    return this.listToolsForWorkspace(wsId, ctx?.identity?.id);
   }
 
   /**
    * The walled tool surface for a session bounded to `wsId`: that workspace's
-   * tools (namespaced `ws_<id>-<tool>`) plus the caller's identity tools
-   * (bare). The engine's reachable universe (`IdentityToolRouter.availableTools`)
-   * and the `nb__search` corpus (`listDiscoverableTools`) both read this — a
-   * session reaches exactly one workspace plus identity tools.
+   * tools (namespaced `ws_<id>-<tool>`) plus the caller's identity tools (bare),
+   * plus — when `identityId` is given and `wsId` is a *shared* room — the
+   * caller's personal connectors granted into that room (bare, §
+   * `_listGrantedPersonalConnectorTools`). The engine's reachable universe
+   * (`IdentityToolRouter.availableTools`), the `nb__search` corpus
+   * (`listDiscoverableTools`), and `/mcp` `tools/list` all read this — a session
+   * reaches exactly one workspace, its own identity tools, and its granted
+   * personal connectors.
    */
-  async listToolsForWorkspace(wsId: string): Promise<ToolSchema[]> {
+  async listToolsForWorkspace(wsId: string, identityId?: string): Promise<ToolSchema[]> {
     const registry = await this.ensureWorkspaceRegistry(wsId);
-    const [wsTools, identityTools] = await Promise.all([
+    const [wsTools, identityTools, personalTools] = await Promise.all([
       registry.availableTools(),
       this.listIdentitySourceTools(),
+      identityId ? this._listGrantedPersonalConnectorTools(identityId, wsId) : Promise.resolve([]),
     ]);
     return [
       ...wsTools.map((t) => ({
@@ -2971,7 +2976,65 @@ export class Runtime {
         inputSchema: t.inputSchema,
         ...(t.annotations !== undefined ? { annotations: t.annotations } : {}),
       })),
+      ...personalTools,
     ];
+  }
+
+  /**
+   * The caller's personal connectors granted into the shared room `sessionWsId`,
+   * as bare `<connector>__<tool>` tool schemas — the identity-door form
+   * `routeIdentityCall` dispatches (never namespaced, so they never hit the
+   * workspace wall). Returns `[]` unless the call is in a *shared* room with an
+   * active grant:
+   *
+   *   - In the caller's OWN personal workspace, personal connectors are already
+   *     surfaced namespaced via `wsTools` (that workspace's registry), so we add
+   *     nothing here — no duplicate.
+   *   - In a shared room, only connectors the owner granted to THIS room surface
+   *     (deny by default). The grant is read once (`connectorsGrantedTo`); the
+   *     common no-grant case short-circuits before touching the personal registry.
+   *
+   * The connector's source + credentials live in the owner's `ws_user_` registry
+   * (bound at source construction); we only enumerate its tool schemas here — the
+   * session's workspace never changes. Fail-safe: any error surfaces no personal
+   * connectors rather than breaking the whole tool list (mirrors the per-source
+   * containment in `ToolRegistry.availableTools`).
+   */
+  private async _listGrantedPersonalConnectorTools(
+    identityId: string,
+    sessionWsId: string,
+  ): Promise<ToolSchema[]> {
+    const personalWsId = personalWorkspaceIdFor(identityId);
+    // Own home: already surfaced namespaced via wsTools — adding bare would duplicate.
+    if (sessionWsId === personalWsId) return [];
+    try {
+      const granted = await this.getPermissionStore().connectorsGrantedTo(identityId, sessionWsId);
+      if (granted.length === 0) return [];
+      const grantedSet = new Set(granted);
+      const registry = await this.ensureWorkspaceRegistry(personalWsId);
+      const tools = await registry.availableTools();
+      return tools
+        .filter((t) => {
+          const sep = t.name.indexOf("__");
+          const source = sep > 0 ? t.name.slice(0, sep) : t.name;
+          // Granted, and never a name that shadows a kernel identity source.
+          return grantedSet.has(source) && !isIdentitySource(source);
+        })
+        .map((t) => ({
+          name: t.name,
+          description: t.description,
+          inputSchema: t.inputSchema,
+          ...(t.annotations !== undefined ? { annotations: t.annotations } : {}),
+        }));
+    } catch (err) {
+      log.debug(
+        "mcp",
+        `[runtime] personal-connector surfacing: skipping for "${identityId}" in "${sessionWsId}" — ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      );
+      return [];
+    }
   }
 
   /** Get the per-workspace registries map. */
