@@ -13,8 +13,8 @@ When the agent calls `nb__delegate`, NimbleBrain:
 
 <Steps>
 
-1. Resolves the named agent profile (if specified)
-2. Determines the system prompt — from the profile or the task description
+1. Resolves the named agent profile (if specified) — an unknown name falls back to the default sub-agent rather than failing
+2. Determines the system prompt — from the profile, or a fixed safety preamble when no profile is used (never the task text itself)
 3. Selects the model — from the profile or the workspace default
 4. Calculates the iteration budget — capped by the parent's remaining iterations
 5. Filters tools based on the profile's tool globs or the explicit `tools` parameter
@@ -36,7 +36,7 @@ The agent calls `nb__delegate` with these parameters:
 | `maxIterations` | integer | No | Max iterations for the sub-agent. Default: 5, max: 10. |
 
 <Aside type="note">
-  The `task` parameter is always required. If no `agent` profile is specified, the task description itself is used as the system prompt.
+  The `task` parameter is always required. When no `agent` profile is used, the sub-agent runs with a fixed safety preamble as its system prompt — the task text is passed as the user message, never as the system prompt. Naming a profile that doesn't exist is not an error: the delegation runs with that default sub-agent and the result notes the fallback. The `agent` parameter is only offered when the workspace has profiles configured.
 </Aside>
 
 ## Agent profiles
@@ -74,7 +74,7 @@ Define named agent profiles in [`workspace.json`](/config/workspace-json) under 
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
-| `description` | string | Yes | What this agent does (shown when agent requests unknown profile) |
+| `description` | string | Yes | What this agent does |
 | `systemPrompt` | string | Yes | System prompt injected when this agent runs |
 | `tools` | string[] | Yes | Tool name globs the agent can access |
 | `maxIterations` | integer | No | Max iterations. Falls through to the `nb__delegate` call's default (5) when omitted. Also capped at the child-iteration ceiling of 10. |
@@ -111,7 +111,7 @@ You can also delegate without named profiles:
 
 > "Delegate to a sub-agent: search my Granola meetings for any mention of budget discussions this quarter"
 
-The agent will call `nb__delegate` with just a `task` parameter, using the task itself as the system prompt.
+The agent will call `nb__delegate` with just a `task` parameter; the sub-agent runs with the default safety preamble as its system prompt and the task as its user message.
 
 ## When to use delegation
 

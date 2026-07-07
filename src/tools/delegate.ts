@@ -153,16 +153,25 @@ function parseDelegateInput(input: Record<string, unknown>): {
   };
 }
 
-/** Look up a named agent profile; returns an error message when the name is unknown. */
+/**
+ * Look up a named agent profile. An unknown name is non-fatal: the delegation
+ * runs with the default sub-agent (fixed preamble + default model/tools) and a
+ * `warning` the caller can surface. Hard-failing here stranded skill protocols
+ * that name a profile the tenant never configured — the model would guess a
+ * name, get an instant error, and the delegation never ran.
+ */
 function resolveAgentProfile(
   agents: Record<string, AgentProfile> | undefined,
   agentName: string | undefined,
-): { profile?: AgentProfile; error?: string } {
+): { profile?: AgentProfile; warning?: string } {
   if (!agentName) return {};
   const profile = agents?.[agentName];
   if (!profile) {
-    const available = agents ? Object.keys(agents).join(", ") : "none";
-    return { error: `Unknown agent profile "${agentName}". Available profiles: ${available}` };
+    const names = agents ? Object.keys(agents) : [];
+    const available = names.length > 0 ? names.join(", ") : "none";
+    return {
+      warning: `Agent profile "${agentName}" not found (available: ${available}); ran with the default sub-agent.`,
+    };
   }
   return { profile };
 }
@@ -266,44 +275,56 @@ function buildChildConfig(
  * Spawns a child AgentEngine.run() with scoped config when called.
  */
 export function createDelegateTool(ctx: DelegateContext): InProcessTool {
+  const profileNames = ctx.agents ? Object.keys(ctx.agents) : [];
+  const hasProfiles = profileNames.length > 0;
+
+  // Only advertise the `agent` selector when the tenant actually has profiles.
+  // With none configured, the model otherwise guesses a profile name and the
+  // delegation fails before running — so don't dangle an unsatisfiable option.
+  const properties: Record<string, unknown> = {
+    task: {
+      type: "string",
+      description: "Clear description of what the sub-agent should accomplish",
+    },
+    ...(hasProfiles
+      ? {
+          agent: {
+            type: "string",
+            description: `Named agent profile to use (defines system prompt and tool access). Available profiles: ${profileNames.join(", ")}.`,
+          },
+        }
+      : {}),
+    tools: {
+      type: "array",
+      items: { type: "string" },
+      description: hasProfiles
+        ? "Tool name globs the sub-agent can access (e.g., 'rfpsearch__*'). Defaults to the agent profile's tool list."
+        : "Tool name globs the sub-agent can access (e.g., 'rfpsearch__*'). Defaults to the current workspace's tools.",
+    },
+    maxIterations: {
+      type: "integer",
+      description: "Max iterations for the sub-agent (default: 5, max: 10)",
+      default: DEFAULT_CHILD_ITERATIONS,
+      maximum: MAX_CHILD_ITERATIONS,
+    },
+  };
+
   return {
     name: "delegate",
     description:
       "Delegate a task to a specialized sub-agent. The sub-agent runs independently with its own system prompt and tool access, then returns its output.",
     inputSchema: {
       type: "object",
-      properties: {
-        task: {
-          type: "string",
-          description: "Clear description of what the sub-agent should accomplish",
-        },
-        agent: {
-          type: "string",
-          description:
-            "Named agent profile to use (defines system prompt and tool access). Available profiles are listed in the workspace config.",
-        },
-        tools: {
-          type: "array",
-          items: { type: "string" },
-          description:
-            "Tool name globs the sub-agent can access (e.g., 'rfpsearch__*'). Defaults to agent profile's tool list.",
-        },
-        maxIterations: {
-          type: "integer",
-          description: "Max iterations for the sub-agent (default: 5, max: 10)",
-          default: DEFAULT_CHILD_ITERATIONS,
-          maximum: MAX_CHILD_ITERATIONS,
-        },
-      },
+      properties,
       required: ["task"],
     },
     handler: async (input): Promise<ToolResult> => {
       const { task, agentName, toolGlobs, requestedIterations } = parseDelegateInput(input);
 
       try {
-        // Resolve agent profile if specified
-        const { profile, error } = resolveAgentProfile(ctx.agents, agentName);
-        if (error) return { content: textContent(error), isError: true };
+        // Resolve agent profile if specified. An unknown name is non-fatal —
+        // fall through with the default sub-agent (below) and surface a note.
+        const { profile, warning } = resolveAgentProfile(ctx.agents, agentName);
 
         // Determine system prompt — use profile's prompt if available,
         // otherwise use a fixed preamble (never the raw task, which could
@@ -349,8 +370,9 @@ export function createDelegateTool(ctx: DelegateContext): InProcessTool {
           childTools,
         );
 
+        const output = result.output || "(sub-agent produced no output)";
         return {
-          content: textContent(result.output || "(sub-agent produced no output)"),
+          content: textContent(warning ? `${warning}\n\n${output}` : output),
           isError: false,
         };
       } catch (err) {
