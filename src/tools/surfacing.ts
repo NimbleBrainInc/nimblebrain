@@ -1,6 +1,7 @@
 import type { ToolSchema } from "../engine/types.ts";
 import { DEFAULT_MAX_DIRECT_TOOLS } from "../limits.ts";
 import type { Skill } from "../skills/types.ts";
+import { isIdentitySource } from "./identity-sources.ts";
 import { bareToolName } from "./namespace.ts";
 
 const SYSTEM_TOOL_PREFIX = "nb__";
@@ -13,6 +14,27 @@ const SYSTEM_TOOL_PREFIX = "nb__";
  */
 function isSystemTool(t: ToolSchema): boolean {
   return bareToolName(t.name).startsWith(SYSTEM_TOOL_PREFIX);
+}
+
+/** The source segment of a tool's bare name (`files__read` → `files`). */
+function toolSource(t: ToolSchema): string {
+  const bare = bareToolName(t.name);
+  const sep = bare.indexOf("__");
+  return sep === -1 ? bare : bare.slice(0, sep);
+}
+
+/**
+ * A tool is a KERNEL tool if it's the `nb__` system core OR belongs to a kernel
+ * identity source (`files`/`conversations`/`automations`, per
+ * {@link isIdentitySource}). Kernel tools are always surfaced DIRECT: they are
+ * the substrate the model reaches for unprompted, so they belong in the stable,
+ * cached tool prefix rather than being proxied and promoted on demand.
+ * Promotion mutates the tools block — which precedes the messages in the
+ * request — so proxying a hot kernel tool busts the conversation's cached
+ * prefix on every promote. Keeping kernel tools direct keeps that prefix stable.
+ */
+function isKernelTool(t: ToolSchema): boolean {
+  return isSystemTool(t) || isIdentitySource(toolSource(t));
 }
 
 /**
@@ -28,11 +50,17 @@ export function filterTools(tools: ToolSchema[], patterns: string[]): ToolSchema
  * Tiered tool surfacing strategy (§7.2).
  *
  * - Tier 1 (≤maxDirectTools total): all tools direct, nothing proxied.
- * - Tier 2 (>maxDirectTools, no skill or skill has no allowedTools): only nb__* system tools direct, rest proxied.
- * - Tier 3 (skill matched with allowedTools): tools matching skill globs + system tools direct, rest proxied.
+ * - Tier 2 (>maxDirectTools, no skill or skill has no allowedTools): only KERNEL tools
+ *   direct (nb__* system core + identity sources — files/conversations/automations), rest proxied.
+ * - Tier 3 (skill matched with allowedTools): tools matching skill globs + kernel tools direct, rest proxied.
  *
- * When `requestAllowedTools` is provided, it acts as a pre-filter: only tools matching
- * those patterns (plus nb__* read-only tools) survive before tiered surfacing runs.
+ * Kernel tools stay direct because they're the substrate the model reaches for unprompted;
+ * proxying them would force a promote (nb__manage_tools) on first use, and each promote mutates
+ * the tools block ahead of the messages — busting the conversation's cached prefix.
+ *
+ * When `requestAllowedTools` is provided, it acts as a pre-filter: only tools matching those
+ * patterns (plus nb__* system tools) survive before tiered surfacing runs. Identity tools are
+ * NOT force-kept by that pre-filter — an explicit request-level allow-list can still exclude them.
  */
 export function surfaceTools(
   allTools: ToolSchema[],
@@ -55,7 +83,7 @@ export function surfaceTools(
   }
 
   const maxDirect = config.maxDirectTools ?? DEFAULT_MAX_DIRECT_TOOLS;
-  const systemTools = visibleTools.filter(isSystemTool);
+  const kernelTools = visibleTools.filter(isKernelTool);
   const allowedTools = matchedSkill?.manifest.allowedTools;
 
   let result: { direct: ToolSchema[]; proxied: ToolSchema[] };
@@ -63,9 +91,9 @@ export function surfaceTools(
   // Tier 3: skill matched with allowedTools globs
   if (allowedTools && allowedTools.length > 0) {
     const matched = visibleTools.filter(
-      (t) => !isSystemTool(t) && allowedTools.some((glob) => matchToolPattern(t.name, glob)),
+      (t) => !isKernelTool(t) && allowedTools.some((glob) => matchToolPattern(t.name, glob)),
     );
-    const directSet = new Set([...systemTools, ...matched]);
+    const directSet = new Set([...kernelTools, ...matched]);
     result = {
       direct: [...directSet],
       proxied: visibleTools.filter((t) => !directSet.has(t)),
@@ -74,11 +102,11 @@ export function surfaceTools(
     // Tier 1: total tools within budget — all direct
     result = { direct: visibleTools, proxied: [] };
   } else {
-    // Tier 2: too many tools, no skill filter — only system tools direct
-    const systemSet = new Set(systemTools);
+    // Tier 2: too many tools, no skill filter — only kernel tools direct
+    const kernelSet = new Set(kernelTools);
     result = {
-      direct: systemTools,
-      proxied: visibleTools.filter((t) => !systemSet.has(t)),
+      direct: kernelTools,
+      proxied: visibleTools.filter((t) => !kernelSet.has(t)),
     };
   }
 

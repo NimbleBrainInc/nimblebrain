@@ -417,6 +417,77 @@ describe("surfaceTools — namespaced (cross-workspace) names", () => {
 	});
 });
 
+// --- Kernel identity sources are always-direct (§4.2) ---
+//
+// The always-direct set is KERNEL tools = nb__ system core ∪ identity sources
+// (files / conversations / automations). Identity tools are hot substrate the
+// model reaches for unprompted; proxying them forces a promote on first use,
+// and every promote mutates the tools block ahead of the messages — busting
+// the conversation's cached prefix. Keeping them direct keeps the prefix stable.
+
+describe("surfaceTools — kernel identity tools always direct", () => {
+	it("Tier 2: identity-source tools surface direct alongside nb__, bundle tools proxy", () => {
+		const system = makeSystemTools(4); // nb__*
+		const identity = [
+			makeTool("files__read"),
+			makeTool("files__search"),
+			makeTool("conversations__search"),
+			makeTool("automations__create"),
+		];
+		const app = makeAppTools("tasks", 40); // non-kernel bundle tools
+		const all = [...system, ...identity, ...app];
+
+		const result = surfaceTools(all, null);
+
+		const directNames = new Set(result.direct.map((t) => t.name));
+		expect(result.direct).toHaveLength(system.length + identity.length);
+		for (const t of [...system, ...identity]) {
+			expect(directNames.has(t.name)).toBe(true);
+		}
+		for (const t of app) {
+			expect(directNames.has(t.name)).toBe(false);
+		}
+	});
+
+	it("Tier 2: a source that only resembles an identity source is still proxied", () => {
+		// Guards the exact-source match: `filesystem__*` / `fileshare__*` are NOT
+		// the `files` identity source — a prefix check would wrongly promote them.
+		const system = makeSystemTools(4);
+		const lookalikes = [makeTool("filesystem__list"), makeTool("fileshare__get")];
+		const app = makeAppTools("tasks", 40);
+		const all = [...system, ...lookalikes, ...app];
+
+		const result = surfaceTools(all, null);
+
+		const directNames = new Set(result.direct.map((t) => t.name));
+		for (const t of lookalikes) {
+			expect(directNames.has(t.name)).toBe(false);
+		}
+		expect(result.direct).toHaveLength(4); // only nb__*
+	});
+
+	it("Tier 3: identity tools stay direct even when a skill glob doesn't name them", () => {
+		const system = makeSystemTools(4);
+		const identity = [makeTool("files__read"), makeTool("conversations__search")];
+		const tasks = makeAppTools("tasks", 10);
+		const weather = makeAppTools("weather", 10);
+		const all = [...system, ...identity, ...tasks, ...weather];
+		const skill = makeSkill({ allowedTools: ["tasks__*"] });
+
+		const result = surfaceTools(all, skill);
+
+		const directNames = new Set(result.direct.map((t) => t.name));
+		// 4 nb__ + 2 identity + 10 tasks = 16 direct; 10 weather proxied.
+		expect(result.direct).toHaveLength(16);
+		for (const t of identity) {
+			expect(directNames.has(t.name)).toBe(true);
+		}
+		for (const t of weather) {
+			expect(directNames.has(t.name)).toBe(false);
+		}
+	});
+});
+
 describe("surfaceTools — internal annotation filtering", () => {
 	it("excludes tools with ai.nimblebrain/internal annotation from direct tools", () => {
 		const internalTool: ToolSchema = {
