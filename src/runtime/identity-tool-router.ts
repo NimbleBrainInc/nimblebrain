@@ -220,28 +220,29 @@ export class IdentityToolRouter implements ToolRouter {
   }
 
   /**
-   * Connector permission gate for workspace-routed calls — returns the denial
-   * result when an operator set the tool's policy to `disallow`, else `null`.
+   * Per-tool `disallow` gate, returning the denial result when the tool's policy
+   * is `disallow`, else `null`. Runs after routing, before `source.execute`.
    *
-   * The engine door must honor an operator's per-tool `disallow` just like the
-   * REST registry gate does — otherwise a tool an admin disabled stays callable
-   * by the agent loop. Only workspace-routed calls carry a connector permission;
-   * identity-door tools (conversations / files / automations) have none — those
-   * pass through (`null`).
+   * The policy workspace comes from routing, never re-inferred here:
+   *   - **Workspace tool** — the focused workspace (`routed.context.workspaceId`),
+   *     just like the REST registry and `/mcp` doors.
+   *   - **Personal connector** — the owner's `ws_user_`, stamped on the identity
+   *     route as `policyWorkspaceId` (the SAME policy the workspace door consults
+   *     when the connector runs at home), so a granted connector is never MORE
+   *     capable in a shared room than at home.
+   *
+   * Kernel identity sources have no `policyWorkspaceId` and pass through (`null`).
    */
   private async connectorPermissionDenial(
     routed: RoutedToolCall,
     sourcePrefix: string,
     bareToolName: string,
   ): Promise<ToolResult | null> {
-    if (routed.kind !== "workspace") return null;
     const permissionStore = this.runtime.getPermissionStore?.();
     if (!permissionStore) return null;
-    return assertToolAllowed(
-      permissionStore,
-      routed.context.workspaceId,
-      sourcePrefix,
-      bareToolName,
-    );
+    const policyWsId =
+      routed.kind === "workspace" ? routed.context.workspaceId : routed.policyWorkspaceId;
+    if (!policyWsId) return null;
+    return assertToolAllowed(permissionStore, policyWsId, sourcePrefix, bareToolName);
   }
 }

@@ -267,6 +267,16 @@ export type RoutedToolCall =
       toolName: string;
       /** The source the inner tool dispatches to: a kernel identity source, or a grant-gated personal connector resolved from the caller's `ws_user_` registry. */
       source: ToolSource;
+      /**
+       * For a **personal connector**: the workspace whose per-tool `disallow`
+       * policy governs it — the owner's `ws_user_`. Dispatch doors read this to
+       * apply the owner's policy (the same policy the workspace door consults at
+       * home), so a granted connector is never more capable in a shared room than
+       * at home. **Undefined for kernel identity sources** (they have no per-tool
+       * policy). Stamped here at routing so the doors never re-infer "is this a
+       * personal connector."
+       */
+      policyWorkspaceId?: string;
     };
 
 /**
@@ -384,13 +394,8 @@ async function routeIdentityCall(
   const personalWsId = personalWorkspaceIdFor(identityId);
   const connector = getPersonalConnectorSource(runtime, personalWsId, sourceName);
   if (connector) {
-    // The grant is the coarse gate for this crossing. The owner's per-tool
-    // `disallow` policy (honored on the workspace door via the registry gate) is
-    // NOT consulted here — a personal connector reached via the identity door is
-    // more permissive in a shared room than in its own home. Deciding whether
-    // owner-side per-tool policy should travel with the grant is deferred to the
-    // surfacing work (it must resolve before personal connectors are visible).
-    // Free inside the caller's own personal workspace; a shared room needs a grant.
+    // The grant is the reachability gate for this crossing. Free inside the
+    // caller's own personal workspace; a shared room needs an active grant.
     if (workspaceId !== personalWsId) {
       const granted =
         workspaceId !== undefined &&
@@ -406,6 +411,9 @@ async function routeIdentityCall(
       context: runtime.getIdentityContext(identityId),
       toolName,
       source: connector,
+      // The dispatch doors apply the owner's per-tool `disallow` from here — the
+      // connector's home workspace, the same policy the workspace door consults.
+      policyWorkspaceId: personalWsId,
     };
   }
 
