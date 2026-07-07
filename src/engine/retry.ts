@@ -12,8 +12,20 @@ function getStatus(err: unknown): number | undefined {
   return undefined;
 }
 
-/** Returns true if the error has a retryable HTTP status (429 or 529). */
+/**
+ * Returns true if the error is retryable: a retryable HTTP status (429 / 529),
+ * or an error that flags itself with `retryable === true`. The marker keeps
+ * this generic — callers (e.g. the model-stream stall watchdog) opt in by
+ * throwing a `retryable` error, without this module depending on their types.
+ */
 export function isRetryable(err: unknown): boolean {
+  if (
+    err !== null &&
+    typeof err === "object" &&
+    (err as { retryable?: unknown }).retryable === true
+  ) {
+    return true;
+  }
   const status = getStatus(err);
   return status !== undefined && RETRYABLE_STATUSES.has(status);
 }
@@ -50,7 +62,8 @@ function abortableSleep(ms: number, signal?: AbortSignal): Promise<void> {
 /**
  * Retry wrapper with exponential backoff and jitter.
  *
- * - Retries on 429 (rate limit) and 529 (overload).
+ * - Retries on 429 (rate limit), 529 (overload), and errors flagged
+ *   `retryable` (e.g. a stalled model stream).
  * - Fails immediately on 401 (auth) with a clear message.
  * - Fails immediately on all other errors.
  * - Backoff: baseDelay * 2^attempt + random(0, 500ms).
