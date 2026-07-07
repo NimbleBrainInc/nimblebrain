@@ -264,7 +264,7 @@ export type RoutedToolCall =
       context: IdentityContext;
       /** The bare `<source>__<tool>` the source executes. */
       toolName: string;
-      /** The kernel identity source the inner tool dispatches to. */
+      /** The source the inner tool dispatches to: a kernel identity source, or a grant-gated personal connector resolved from the caller's `ws_user_` registry. */
       source: ToolSource;
     };
 
@@ -383,6 +383,12 @@ async function routeIdentityCall(
   const personalWsId = personalWorkspaceIdFor(identityId);
   const connector = getPersonalConnectorSource(runtime, personalWsId, sourceName);
   if (connector) {
+    // The grant is the coarse gate for this crossing. The owner's per-tool
+    // `disallow` policy (honored on the workspace door via the registry gate) is
+    // NOT consulted here — a personal connector reached via the identity door is
+    // more permissive in a shared room than in its own home. Deciding whether
+    // owner-side per-tool policy should travel with the grant is deferred to the
+    // surfacing work (it must resolve before personal connectors are visible).
     // Free inside the caller's own personal workspace; a shared room needs a grant.
     if (workspaceId !== personalWsId) {
       const granted =
