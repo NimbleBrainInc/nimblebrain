@@ -756,6 +756,16 @@ export class WorkspaceOAuthProvider implements OAuthClientProvider {
       assertSafeOwnerId(opts.owner.wsId);
       this.dataDir = opts.workspaceContext.getDataPath("credentials", "mcp-oauth", opts.serverName);
     } else {
+      // The single audited constructor for both credential planes. For a
+      // workspace owner: `workspaces/<wsId>/credentials/mcp-oauth/...`. For a
+      // user owner: `users/<userId>/credentials/mcp-oauth/...` — the sanctioned
+      // identity-owned personal-connector path (a user's own remote MCP
+      // connection, outside any workspace; see AGENTS.md "Credentials live with
+      // their owner"). Because `ownerSegment` is a variable, `check:credential-
+      // paths` cannot flag the `users` case here without false-positiving the
+      // `workspaces` case, so this one site is intentionally invisible to that
+      // lint — which the lint header documents. The lint's `mcp-oauth` carve-out
+      // covers any literal reconstruction elsewhere.
       const ownerSegment = opts.owner.type === "workspace" ? "workspaces" : "users";
       const ownerId = opts.owner.type === "workspace" ? opts.owner.wsId : opts.owner.userId;
       assertSafeOwnerId(ownerId);

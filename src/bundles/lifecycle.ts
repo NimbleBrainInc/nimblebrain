@@ -4,6 +4,7 @@ import { dirname, join } from "node:path";
 import { cleanupComposioBundle } from "../composio/sdk.ts";
 import { resolveConnectorSkillsConfig } from "../config/connector-skills.ts";
 import type { EventSink } from "../engine/types.ts";
+import { IdentityConnectorStore } from "../identity/connector-store.ts";
 import { fleetIssuerOption } from "../oauth/fleet-assertion.ts";
 import { mcpAuthCallbackUrl } from "../oauth/mcp-callback-url.ts";
 import { log } from "../observability/log.ts";
@@ -16,7 +17,8 @@ import {
 } from "../skills/connector-skill-store.ts";
 import { FileCredentialStore } from "../tools/credential-store.ts";
 import { McpSource } from "../tools/mcp-source.ts";
-import type { ToolRegistry } from "../tools/registry.ts";
+import { ToolRegistry } from "../tools/registry.ts";
+import type { ToolSource } from "../tools/types.ts";
 import { WorkspaceOAuthProvider } from "../tools/workspace-oauth-provider.ts";
 import { validateAdditionalAuthorizationParams } from "../util/oauth-params.ts";
 import { WorkspaceContext } from "../workspace/context.ts";
@@ -1725,6 +1727,29 @@ export class BundleLifecycleManager {
   private readonly registriesByWs = new Map<string, ToolRegistry>();
 
   /**
+   * Map of `userId` → `ToolRegistry` holding that user's started personal
+   * connectors — the owner-keyed sibling of `registriesByWs`. Reuses the same
+   * `ToolRegistry` type and `startBundleSource` path; only the owner (identity)
+   * and credential root (`users/<userId>/...`) differ. Created lazily on first
+   * `getIdentityConnectorSource` for a user, per-pod in-memory (same clustering
+   * posture as `registriesByWs`).
+   */
+  private readonly registriesByUser = new Map<string, ToolRegistry>();
+
+  /**
+   * In-flight `getIdentityConnectorSource` starts, keyed `${userId}|${serverName}`.
+   * Lazy-start is check-then-act (`hasSource` miss → read record → start), so two
+   * concurrent first-calls for the same connector would both miss and both spawn a
+   * transport — the loser's `addSource` throws (or its transport leaks). This map
+   * collapses concurrent first-calls onto one start promise (the sibling of
+   * `authFlowsInFlight`); the JS single-thread guarantees the check + set run with
+   * no intervening await, so a second caller always observes the entry. Distinct
+   * from a spawn-storm cooldown, which is a negative cache for *failed* starts and
+   * does NOT dedup concurrent *first* calls.
+   */
+  private readonly identityConnectorStarts = new Map<string, Promise<ToolSource | undefined>>();
+
+  /**
    * Per-`${serverName}|${wsId}` timestamp (epoch ms) of the last
    * best-effort recovery attempt (`tryRecoverSource`). Negative cache: a
    * failed re-spawn stamps the key so the orchestrator hot path doesn't
@@ -1962,6 +1987,79 @@ export class BundleLifecycleManager {
       // composio-auth callback path goes through here.
       bundleMcp: this.resolveBundleMcpDeps(wsId),
     });
+  }
+
+  /**
+   * Resolve a user's personal connector to a started `ToolSource`, lazy-starting
+   * it on first use. The identity-plane analog of the workspace self-heal:
+   *
+   *   1. Look in the user's registry — already running ⇒ return it (idempotent).
+   *   2. Otherwise read the persisted install record (`connectors.json`) via
+   *      `IdentityConnectorStore`. No URL record ⇒ `undefined` (not installed).
+   *   3. Start it through the shared `startBundleSource` path, bound to the
+   *      `{type:"user"}` owner so OAuth credentials resolve under
+   *      `users/<userId>/credentials/mcp-oauth/`, and return it.
+   *
+   * Per-pod and reactive, like the workspace self-heal — a fresh pod starts the
+   * source on its own first call, idempotently (`hasSource` short-circuit).
+   * Concurrent first-calls are de-duplicated onto one start (see
+   * `identityConnectorStarts`) so a double-dispatch can't double-spawn. No
+   * spawn-storm *cooldown* yet — that negative cache for repeatedly-failing
+   * starts is separate, and lands with the hot dispatch consumer that wires this
+   * in.
+   *
+   * `startBundleSource` can throw on transport / handshake failure; callers
+   * decide whether to swallow or surface.
+   */
+  async getIdentityConnectorSource(
+    userId: string,
+    serverName: string,
+    workDir: string,
+  ): Promise<ToolSource | undefined> {
+    const registry = this.userRegistry(userId);
+    if (registry.hasSource(serverName)) return registry.getSource(serverName);
+
+    // Collapse concurrent first-calls onto one start (check + set run with no
+    // intervening await, so a second caller always observes the entry).
+    const key = `${userId}|${serverName}`;
+    const inFlight = this.identityConnectorStarts.get(key);
+    if (inFlight) return inFlight;
+
+    const start = this.startIdentityConnector(userId, serverName, workDir, registry);
+    this.identityConnectorStarts.set(key, start);
+    try {
+      return await start;
+    } finally {
+      this.identityConnectorStarts.delete(key);
+    }
+  }
+
+  /** Read the persisted record and start the connector into the user's registry. */
+  private async startIdentityConnector(
+    userId: string,
+    serverName: string,
+    workDir: string,
+    registry: ToolRegistry,
+  ): Promise<ToolSource | undefined> {
+    const ref = await new IdentityConnectorStore({ workDir }).get(userId, serverName);
+    if (!ref || !("url" in ref)) return undefined;
+
+    await startBundleSource(ref, registry, this.eventSink, undefined, {
+      allowInsecureRemotes: this.allowInsecureRemotes,
+      workDir,
+      identityOwner: { userId },
+    });
+    return registry.getSource(serverName);
+  }
+
+  /** The user's personal-connector registry, created on first access. */
+  private userRegistry(userId: string): ToolRegistry {
+    let registry = this.registriesByUser.get(userId);
+    if (!registry) {
+      registry = new ToolRegistry();
+      this.registriesByUser.set(userId, registry);
+    }
+    return registry;
   }
 
   /**

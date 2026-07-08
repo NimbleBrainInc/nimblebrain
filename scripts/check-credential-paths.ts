@@ -1,36 +1,38 @@
 #!/usr/bin/env bun
 /**
- * Lint: credentials live in the workspace, not the user.
+ * Lint: credentials live with their owner — the workspace for shared
+ * connectors, the identity for personal ones.
  *
- * Stage 2 of the cross-workspace refactor moved user-scoped credentials
- * from `{workDir}/users/<userId>/credentials/...` onto the user's
- * personal workspace at `{workDir}/workspaces/ws_user_<userId>/credentials/...`.
- * Every credential read/write in `src/` now resolves through
- * `WorkspaceContext` (which routes through `WORKSPACE_ID_RE`) or its
- * primitive consumers in `src/config/workspace-credentials.ts`. Any new
- * occurrence of `join(..., "users", X, "credentials", ...)` is a
- * regression — credentials would end up off the workspace and out of
- * reach of the personal-workspace migration.
+ * Stage 2 moved workspace-shared credentials onto the workspace at
+ * `{workDir}/workspaces/<wsId>/credentials/...`, reached only through
+ * `WorkspaceContext` or the primitives in `src/config/workspace-credentials.ts`.
+ * A hand-built `join(..., "users", X, "credentials", ...)` is a regression: a
+ * shared-connector credential would land off the workspace.
  *
- * What this script flags:
- *   - `join(...)` calls whose argument list contains the adjacency
- *     `"users", <userId>, "credentials"`.
- *   - Template literals whose assembled text contains
- *     `users/<...>/credentials/`.
- *   - String literals containing the substring `users/<...>/credentials/`.
+ * The ONE exception is the identity plane. A **personal connector** (a user's
+ * own remote MCP connection, reachable across their workspaces) owns its OAuth
+ * tokens at `users/<userId>/credentials/mcp-oauth/<serverName>/` — the
+ * `{type:"user"}` WorkspaceOAuthProvider arm, outside any workspace so leaving
+ * one never orphans them. This exact `mcp-oauth` shape is allowed; every other
+ * `users/<id>/credentials/...` stays banned.
+ *
+ * What this script flags (all EXCEPT the `mcp-oauth` carve-out):
+ *   - `join(...)` with the adjacency `"users", <id>, "credentials"`.
+ *   - Template / string literals containing `users/<...>/credentials/`.
  *
  * What it allows:
- *   - `scripts/migrate-user-creds-to-personal-workspace.ts` — the
- *     migration script that reads the legacy layout to move credentials
- *     to the workspace layout. Allowlisted in `ALLOWED_SCRIPTS`, but
- *     `src/`-only scope already excludes it.
- *   - A `// lint-ok:credential-path` marker on the line immediately
- *     above the construction, for the rare future case where the typed
- *     helper genuinely doesn't apply.
+ *   - `users/<id>/credentials/mcp-oauth/...` — the identity-connector path.
+ *   - A `// lint-ok:credential-path` marker on the line immediately above the
+ *     construction, for the rare case the typed helper genuinely doesn't apply.
  *
- * Scope: `src/**\/*.ts`. Scripts are explicitly out of scope (the
- * migration script is the only legitimate consumer). Tests are also out
- * of scope (legacy migration tests construct the old shape deliberately).
+ * Blind spot, by design: `WorkspaceOAuthProvider` builds BOTH owners' paths
+ * through one `join(workDir, ownerSegment, ownerId, "credentials", ...)` where
+ * `ownerSegment` is a *variable* (`"workspaces"` | `"users"`). The AST matchers
+ * can't flag the "users" case there without false-positiving the workspace
+ * case, so that single audited constructor is intentionally invisible to this
+ * lint; the lint guards against NEW literal reintroductions elsewhere.
+ *
+ * Scope: `src/**\/*.ts`. Scripts and tests are out of scope.
  */
 
 import { readFileSync } from "node:fs";
@@ -41,6 +43,16 @@ import * as ts from "typescript";
 const ROOT = join(import.meta.dirname ?? __dirname, "..");
 const SRC_ROOT = join(ROOT, "src");
 const ALLOW_MARKER = "lint-ok:credential-path";
+
+/**
+ * Matches a banned `users/<id>/credentials/…` path, EXCEPT the sanctioned
+ * identity-connector home `users/<id>/credentials/mcp-oauth/…` — the
+ * `{type:"user"}` WorkspaceOAuthProvider arm, where a personal connector's
+ * OAuth tokens live (owned by the user, outside any workspace). The negative
+ * lookahead is the whole carve-out: a bare `credentials` dir or any non-
+ * `mcp-oauth` child is still a regression.
+ */
+const USER_CREDENTIAL_PATH_RE = /users\/[^/]+\/credentials(?:$|\/(?!mcp-oauth(?:\/|$)))/;
 
 // Files within `src/` that legitimately reference the legacy
 // `users/<userId>/credentials/...` shape. Stage-2 deletion of
@@ -73,6 +85,15 @@ interface Violation {
  *
  * Exported for the self-test under `test/unit/scripts/`.
  */
+/** A `join` arg that is the string (or no-substitution template) literal `text`. */
+function isLiteralSegment(node: ts.Node | undefined, text: string): boolean {
+  return (
+    node !== undefined &&
+    (ts.isStringLiteral(node) || ts.isNoSubstitutionTemplateLiteral(node)) &&
+    node.text === text
+  );
+}
+
 export function isUserCredentialJoin(node: ts.CallExpression): boolean {
   const callee = node.expression;
   const calleeName = ts.isIdentifier(callee)
@@ -83,17 +104,17 @@ export function isUserCredentialJoin(node: ts.CallExpression): boolean {
   if (calleeName !== "join") return false;
 
   const args = node.arguments;
-  // Need three adjacent positions: "users", <userId>, "credentials".
+  // Need the adjacency `"users", <userId>, "credentials"`.
   for (let i = 0; i < args.length - 2; i++) {
-    const a = args[i];
-    const b = args[i + 1];
-    const c = args[i + 2];
-    if (!a || !b || !c) continue;
-    const aIsUsers =
-      (ts.isStringLiteral(a) || ts.isNoSubstitutionTemplateLiteral(a)) && a.text === "users";
-    const cIsCredentials =
-      (ts.isStringLiteral(c) || ts.isNoSubstitutionTemplateLiteral(c)) && c.text === "credentials";
-    if (aIsUsers && cIsCredentials) return true;
+    if (!isLiteralSegment(args[i], "users") || !isLiteralSegment(args[i + 2], "credentials")) {
+      continue;
+    }
+    // Carve-out: `users/<id>/credentials/mcp-oauth/...` is the sanctioned
+    // identity-owned personal-connector OAuth path (the `{type:"user"}`
+    // WorkspaceOAuthProvider arm). Everything else under
+    // `users/<id>/credentials/` stays banned.
+    if (isLiteralSegment(args[i + 3], "mcp-oauth")) continue;
+    return true;
   }
   return false;
 }
@@ -113,7 +134,7 @@ export function isUserCredentialTemplate(node: ts.TemplateExpression): boolean {
     assembled += "<expr>";
     assembled += span.literal.text;
   }
-  return /users\/[^/]+\/credentials(\/|$)/.test(assembled);
+  return USER_CREDENTIAL_PATH_RE.test(assembled);
 }
 
 /**
@@ -121,7 +142,7 @@ export function isUserCredentialTemplate(node: ts.TemplateExpression): boolean {
  * `users/<...>/credentials/`. Catches hard-coded path fragments.
  */
 export function isUserCredentialStringLiteral(node: ts.StringLiteral): boolean {
-  return /users\/[^/]+\/credentials(\/|$)/.test(node.text);
+  return USER_CREDENTIAL_PATH_RE.test(node.text);
 }
 
 // ── Walker scaffolding (same shape as check-conversation-paths.ts) ──
@@ -205,18 +226,14 @@ async function main(): Promise<void> {
       console.error(`    ${v.snippet}\n`);
     }
     console.error(
-      "Stage 2: credentials live in the workspace at `workspaces/<wsId>/credentials/...` —",
+      "Workspace-shared credentials live at `workspaces/<wsId>/credentials/...` — route",
     );
-    console.error("not on the user. Route through `WorkspaceContext` (constructed via");
+    console.error("through `WorkspaceContext` (`runtime.getWorkspaceContext(wsId)`) or the");
+    console.error("primitives in `src/config/workspace-credentials.ts`.");
+    console.error("The ONLY user-scoped exception is a personal connector's OAuth tokens at");
+    console.error('`users/<userId>/credentials/mcp-oauth/<serverName>/` (the {type:"user"} arm).');
     console.error(
-      "`runtime.getWorkspaceContext(wsId)`) or the primitives in `src/config/workspace-credentials.ts`.",
-    );
-    console.error(
-      "Personal-workspace credentials live at `workspaces/ws_user_<userId>/credentials/...`,",
-    );
-    console.error("constructed via `personalWorkspaceIdFor(userId)`.");
-    console.error(
-      `Legitimate exceptions (rare) require a // ${ALLOW_MARKER} comment on the line above the construction.`,
+      `Other legitimate exceptions (rare) require a // ${ALLOW_MARKER} comment on the line above.`,
     );
     process.exit(1);
   }
