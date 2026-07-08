@@ -962,14 +962,14 @@ async function executeIdentityToolCall(
   const { sourcePrefix, bareToolName: bare } = splitInnerToolName(fullName);
 
   // Per-tool `disallow` gate for a personal connector reached via the identity
-  // door — honor the OWNER'S policy from its home workspace (`policyWorkspaceId`,
-  // stamped at routing), the same policy the workspace door consults at home, so
-  // a shared room is never more capable than home. Kernel identity sources have
-  // no `policyWorkspaceId` and are skipped.
-  if (routed.policyWorkspaceId) {
+  // door — honor the OWNER'S policy (`policyOwner`, stamped at routing), the same
+  // policy the workspace door consults at home, so a shared room is never more
+  // capable than home. Kernel identity sources have no `policyOwner` and are
+  // skipped.
+  if (routed.policyOwner) {
     const denied = await assertToolAllowed(
       runtime.getPermissionStore(),
-      routed.policyWorkspaceId,
+      routed.policyOwner,
       sourcePrefix,
       bare,
     );
@@ -1038,7 +1038,7 @@ async function executeWorkspaceToolCall(
   if (sourceName) {
     const denied = await assertToolAllowed(
       runtime.getPermissionStore(),
-      wsId,
+      { scope: "workspace", wsId },
       sourceName,
       localName,
     );

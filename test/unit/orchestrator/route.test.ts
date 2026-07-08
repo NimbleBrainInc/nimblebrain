@@ -61,6 +61,8 @@ interface StubRuntimeOpts {
   workDir: string;
   /** Kernel identity sources by name (conversations, …). The identity door. */
   identitySources?: Map<string, ToolSource>;
+  /** Personal connectors by name — the DYNAMIC identity door (`getIdentityConnectorSource`). */
+  identityConnectors?: Map<string, ToolSource>;
   /** Optional self-heal hook exposed as `recoverWorkspaceSource`. */
   recoverWorkspaceSource?: (wsId: string, sourceName: string) => boolean | Promise<boolean>;
   /** Optional grant store exposed as `getPermissionStore` (the personal-connector gate reads it). */
@@ -104,6 +106,9 @@ function makeStubRuntime(opts: StubRuntimeOpts): StubRuntime {
     },
     getIdentitySource(name: string): ToolSource | undefined {
       return opts.identitySources?.get(name);
+    },
+    getIdentityConnectorSource(_userId: string, name: string): Promise<ToolSource | undefined> {
+      return Promise.resolve(opts.identityConnectors?.get(name));
     },
     ...(opts.permissionStore
       ? { getPermissionStore: (): PermissionStore => opts.permissionStore! }
@@ -453,34 +458,51 @@ describe("routeToolCall — self-heal on a recoverable source miss", () => {
 });
 
 describe("routeToolCall — personal connectors (identity-door grant gate)", () => {
-  // A personal connector is an MCP bundle installed in the caller's OWN personal
-  // workspace, reached as a BARE identity tool. It is free inside that personal
-  // workspace and grant-gated inside any shared room. The workspace wall
-  // (`ws_<id>-` calls) is never involved — a personal connector is never a
+  // A personal connector is an IDENTITY-owned source, reached as a BARE identity
+  // tool and resolved by userId (never through a workspace registry). It is
+  // grant-gated in EVERY workspace — including the caller's own personal one, a
+  // personal workspace being just a workspace (no free-at-home). The workspace
+  // wall (`ws_<id>-` calls) is never involved — a personal connector is never a
   // namespaced workspace tool, so a grant can never widen the wall.
 
   function runtimeWithPersonalConnector(store?: PermissionStore): StubRuntime {
     return makeStubRuntime({
-      registries: new Map([
-        [SHARED_WS, [makeStubSource("crm")]],
-        // "granola" is the caller's personal connector, in their ws_user_ registry.
-        [PERSONAL_WS, [makeStubSource("granola")]],
-      ]),
+      registries: new Map([[SHARED_WS, [makeStubSource("crm")]]]),
+      // "granola" is the caller's identity-owned personal connector.
+      identityConnectors: new Map([["granola", makeStubSource("granola")]]),
       workDir,
       ...(store ? { permissionStore: store } : {}),
     });
   }
 
-  test("free inside the caller's own personal workspace — no grant needed", async () => {
+  test("the caller's own personal workspace is grant-gated too — no grant → denied (no free-at-home)", async () => {
+    // A personal workspace is just a workspace; it gets no special treatment.
+    const store = new PermissionStore(workDir); // nothing granted, not even to the personal ws
+    let thrown: unknown = null;
+    try {
+      await routeToolCall({
+        identityId: USER_ID,
+        namespacedName: "granola__read_notes",
+        workspaceId: PERSONAL_WS, // the caller's own personal workspace
+        runtime: runtimeWithPersonalConnector(store),
+      });
+    } catch (err) {
+      thrown = err;
+    }
+    expect(thrown).toBeInstanceOf(ConnectorGrantDenied);
+    expect((thrown as ConnectorGrantDenied).workspaceId).toBe(PERSONAL_WS);
+  });
+
+  test("granted to the personal workspace → reachable there, dispatched as identity", async () => {
+    const store = new PermissionStore(workDir);
+    await store.grantConnector(USER_ID, "granola", PERSONAL_WS);
     const routed = await routeToolCall({
       identityId: USER_ID,
-      namespacedName: "granola__read_notes", // bare identity tool
-      workspaceId: PERSONAL_WS, // the caller's own home
-      runtime: runtimeWithPersonalConnector(),
+      namespacedName: "granola__read_notes",
+      workspaceId: PERSONAL_WS,
+      runtime: runtimeWithPersonalConnector(store),
     });
-
     expect(routed.kind).toBe("identity");
-    expect(routed.toolName).toBe("granola__read_notes");
     expect(routed.source.name).toBe("granola");
     if (routed.kind === "identity") {
       expect(routed.context).toBeInstanceOf(IdentityContext);
