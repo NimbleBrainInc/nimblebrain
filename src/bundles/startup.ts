@@ -178,6 +178,12 @@ interface StartBundleOpts {
    * outside any workspace. Mutually exclusive with `workspaceContext` / `wsId`
    * — a personal connector belongs to no workspace — so it relies on
    * `workDir` (defaulted) rather than a workspace context for the path root.
+   *
+   * Honored ONLY on the URL-bundle path (a personal connector is a remote MCP
+   * connection). A named/local ref ignores it and falls through to the
+   * workspace path — the caller (`getIdentityConnectorSource`) already gates on
+   * `"url" in ref`, so this is a documentation guard against a future caller,
+   * not a live case.
    */
   identityOwner?: { userId: string };
   dataDir?: string;

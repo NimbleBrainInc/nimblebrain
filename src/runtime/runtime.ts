@@ -2851,18 +2851,6 @@ export class Runtime {
   }
 
   /**
-   * Resolve a user's personal connector to a started `ToolSource`, lazy-starting
-   * it on first use (see `BundleLifecycleManager.getIdentityConnectorSource`).
-   * The DYNAMIC, per-identity connector door — deliberately separate from the
-   * static kernel `getIdentitySource(name)` above: it is keyed by `(userId,
-   * name)` and resolves an MCP-backed personal connector, not a kernel source.
-   * Returns `undefined` when the user has no such connector installed.
-   */
-  async getIdentityConnectorSource(userId: string, name: string): Promise<ToolSource | undefined> {
-    return this.lifecycle.getIdentityConnectorSource(userId, name, this.getWorkDir());
-  }
-
-  /**
    * List the kernel identity sources' tools (conversations, …), source-
    * qualified (`conversations__list`). These are emitted BARE — owned by the
    * user, not any workspace — and prepended to the session's one workspace
