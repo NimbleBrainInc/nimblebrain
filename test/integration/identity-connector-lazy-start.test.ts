@@ -120,6 +120,19 @@ describe("getIdentityConnectorSource — lazy-start", () => {
     expect(second).toBe(first);
   });
 
+  it("de-dups concurrent first-calls — no double-spawn, both get the same source", async () => {
+    await install("usr_alice", "granola");
+    // Two simultaneous first-calls: without the in-flight guard this would
+    // double-spawn a transport and the losing addSource would throw / leak.
+    const [a, b] = await Promise.all([
+      lifecycle.getIdentityConnectorSource("usr_alice", "granola", workDir),
+      lifecycle.getIdentityConnectorSource("usr_alice", "granola", workDir),
+    ]);
+    if (a) started.push(a);
+    expect(a).toBeDefined();
+    expect(b).toBe(a);
+  });
+
   it("returns undefined for a connector the user hasn't installed", async () => {
     await install("usr_alice", "granola");
     expect(await resolve("usr_alice", "notion")).toBeUndefined();

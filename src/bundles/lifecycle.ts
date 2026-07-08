@@ -1737,6 +1737,19 @@ export class BundleLifecycleManager {
   private readonly registriesByUser = new Map<string, ToolRegistry>();
 
   /**
+   * In-flight `getIdentityConnectorSource` starts, keyed `${userId}|${serverName}`.
+   * Lazy-start is check-then-act (`hasSource` miss → read record → start), so two
+   * concurrent first-calls for the same connector would both miss and both spawn a
+   * transport — the loser's `addSource` throws (or its transport leaks). This map
+   * collapses concurrent first-calls onto one start promise (the sibling of
+   * `authFlowsInFlight`); the JS single-thread guarantees the check + set run with
+   * no intervening await, so a second caller always observes the entry. Distinct
+   * from a spawn-storm cooldown, which is a negative cache for *failed* starts and
+   * does NOT dedup concurrent *first* calls.
+   */
+  private readonly identityConnectorStarts = new Map<string, Promise<ToolSource | undefined>>();
+
+  /**
    * Per-`${serverName}|${wsId}` timestamp (epoch ms) of the last
    * best-effort recovery attempt (`tryRecoverSource`). Negative cache: a
    * failed re-spawn stamps the key so the orchestrator hot path doesn't
@@ -1988,9 +2001,12 @@ export class BundleLifecycleManager {
    *      `users/<userId>/credentials/mcp-oauth/`, and return it.
    *
    * Per-pod and reactive, like the workspace self-heal — a fresh pod starts the
-   * source on its own first call. No spawn-storm cooldown yet: this isn't on a
-   * hot dispatch path until the identity-door switch wires it in, where the
-   * negative-cache guard lands with that consumer.
+   * source on its own first call, idempotently (`hasSource` short-circuit).
+   * Concurrent first-calls are de-duplicated onto one start (see
+   * `identityConnectorStarts`) so a double-dispatch can't double-spawn. No
+   * spawn-storm *cooldown* yet — that negative cache for repeatedly-failing
+   * starts is separate, and lands with the hot dispatch consumer that wires this
+   * in.
    *
    * `startBundleSource` can throw on transport / handshake failure; callers
    * decide whether to swallow or surface.
@@ -2003,6 +2019,28 @@ export class BundleLifecycleManager {
     const registry = this.userRegistry(userId);
     if (registry.hasSource(serverName)) return registry.getSource(serverName);
 
+    // Collapse concurrent first-calls onto one start (check + set run with no
+    // intervening await, so a second caller always observes the entry).
+    const key = `${userId}|${serverName}`;
+    const inFlight = this.identityConnectorStarts.get(key);
+    if (inFlight) return inFlight;
+
+    const start = this.startIdentityConnector(userId, serverName, workDir, registry);
+    this.identityConnectorStarts.set(key, start);
+    try {
+      return await start;
+    } finally {
+      this.identityConnectorStarts.delete(key);
+    }
+  }
+
+  /** Read the persisted record and start the connector into the user's registry. */
+  private async startIdentityConnector(
+    userId: string,
+    serverName: string,
+    workDir: string,
+    registry: ToolRegistry,
+  ): Promise<ToolSource | undefined> {
     const ref = await new IdentityConnectorStore({ workDir }).get(userId, serverName);
     if (!ref || !("url" in ref)) return undefined;
 
