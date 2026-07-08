@@ -2972,8 +2972,8 @@ export class Runtime {
   /**
    * The walled tool surface for a session bounded to `wsId`: that workspace's
    * tools (namespaced `ws_<id>-<tool>`) plus the caller's identity tools (bare),
-   * plus — when `identityId` is given and `wsId` is a *shared* room — the
-   * caller's personal connectors granted into that room (bare, §
+   * plus — when `identityId` is given — the caller's personal connectors granted
+   * to `wsId` (bare; any workspace, including the caller's own personal one, §
    * `_listGrantedPersonalConnectorTools`). The engine's reachable universe
    * (`IdentityToolRouter.availableTools`), the `nb__search` corpus
    * (`listDiscoverableTools`), and `/mcp` `tools/list` all read this — a session
