@@ -213,8 +213,68 @@ function checkContainmentTagOpens(): CheckResult {
   return { rule, violations };
 }
 
+/**
+ * Rule: No raw control bytes.
+ *
+ * A raw C0 control byte in source (e.g. a NUL used as a string-join delimiter)
+ * passes tsc, biome, AND the test suite, but silently breaks tooling: ripgrep /
+ * git grep classify the whole file as *binary* and skip it, and git's diff
+ * renders it as text only by luck (its binary heuristic scans just the first
+ * ~8 KB), so the diff misrepresents what actually ships. Write the source escape
+ * (`\u0000`, `\t`, …) — the runtime string is byte-identical and the file stays
+ * greppable text.
+ *
+ * Detection: read each source file as UTF-8 and flag any byte in 0x00-0x08,
+ * 0x0B, 0x0C, 0x0E-0x1F, or 0x7F. Tab (0x09), newline (0x0A), and carriage
+ * return (0x0D) are allowed. The C0/DEL range never appears as part of a
+ * multibyte UTF-8 sequence, so decoding-then-scanning never false-positives on
+ * legitimate Unicode.
+ */
+/** Tab (0x09), newline (0x0A), and carriage return (0x0D) are the allowed controls. */
+function isDisallowedControlByte(code: number): boolean {
+  if (code === 0x09 || code === 0x0a || code === 0x0d) return false;
+  return code <= 0x1f || code === 0x7f;
+}
+
+/** Append one formatted `rel:line:col  U+XXXX` finding per disallowed byte in `text`. */
+function scanForControlBytes(rel: string, text: string, violations: string[]): void {
+  let line = 1;
+  let col = 0;
+  for (let i = 0; i < text.length; i++) {
+    const code = text.charCodeAt(i);
+    if (code === 0x0a) {
+      line++;
+      col = 0;
+      continue;
+    }
+    col++;
+    if (isDisallowedControlByte(code)) {
+      const hex = code.toString(16).padStart(4, "0").toUpperCase();
+      violations.push(`  ${rel}:${line}:${col}  U+${hex}`);
+    }
+  }
+}
+
+function checkNoControlBytes(): CheckResult {
+  const violations: string[] = [];
+  const glob = new Glob("**/*.{ts,tsx}");
+
+  for (const file of glob.scanSync({ cwd: SRC_ROOT, absolute: true })) {
+    const rel = relative(ROOT, file);
+    // Skip vendored deps and bundle subtrees, matching the other passes.
+    if (rel.includes("/node_modules/") || rel.startsWith("src/bundles/")) continue;
+    scanForControlBytes(rel, readFileSync(file, "utf-8"), violations);
+  }
+
+  return { rule: "no-control-bytes", violations };
+}
+
 function main(): void {
-  const checks: CheckResult[] = [checkNoInlineTypeImports(), checkContainmentTagOpens()];
+  const checks: CheckResult[] = [
+    checkNoInlineTypeImports(),
+    checkContainmentTagOpens(),
+    checkNoControlBytes(),
+  ];
 
   let totalViolations = 0;
   for (const { rule, violations } of checks) {

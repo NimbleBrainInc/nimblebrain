@@ -80,7 +80,7 @@ the first ~8 KB). So the artifact ships a byte the diff never showed the
 reviewer, and code search over a core file goes dark. The escape yields the
 identical runtime string with none of that.
 
-**Detection.** `bun run check:no-control-bytes` (wired into `verify:static`) —
+**Detection.** `bun run check:code-style` (wired into `verify:static`) —
 flags any byte in 0x00-0x08, 0x0B, 0x0C, 0x0E-0x1F, or 0x7F under `src/`.
 
 **Override.** None.
