@@ -14,7 +14,11 @@ import type { PersonalConnector } from "../api/client";
 (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
 let nextConnectors: PersonalConnector[] = [];
-const listPersonalConnectors = mock(async () => ({ connectors: nextConnectors }));
+let nextError: Error | null = null;
+const listPersonalConnectors = mock(async () => {
+  if (nextError) throw nextError;
+  return { connectors: nextConnectors };
+});
 
 mock.module("../api/client", () => ({
   ...realClient,
@@ -58,6 +62,7 @@ beforeEach(() => {
   mounted = null;
   listPersonalConnectors.mockClear();
   nextConnectors = [];
+  nextError = null;
 });
 
 describe("ProfileConnectorsTab", () => {
@@ -94,5 +99,27 @@ describe("ProfileConnectorsTab", () => {
     expect(text).toContain("Gmail");
     expect(text).toContain("Not granted");
     expect(text).toContain("not_authenticated"); // non-running state shown verbatim
+  });
+
+  test("pluralizes the grant count for 2+ workspaces", async () => {
+    nextConnectors = [
+      {
+        serverName: "granola",
+        displayName: "Granola",
+        description: null,
+        state: "running",
+        grantedWorkspaces: ["ws_helix", "ws_acme"],
+      },
+    ];
+    mounted = await mount();
+    expect(mounted.container.textContent ?? "").toContain("Granted to 2 workspaces");
+  });
+
+  test("shows an error state when the list load fails", async () => {
+    nextError = new Error("boom");
+    mounted = await mount();
+    const text = mounted.container.textContent ?? "";
+    expect(text).toContain("Unable to load connectors");
+    expect(text).toContain("boom");
   });
 });
