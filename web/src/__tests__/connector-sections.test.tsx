@@ -467,6 +467,21 @@ describe("ConnectorStatusHero", () => {
     expect(mounted.container.textContent).not.toContain("catalog v");
   });
 
+  // Edge-channel fleet connectors report the build SHA as their version; a SHA is
+  // not semver, so show it as-is (no bogus "v" prefix) and no catalog note.
+  test("version: build-SHA handshake + 'remote' declared → SHA as-is, no 'v', no catalog note", async () => {
+    mounted = await mount(
+      <ConnectorStatusHero
+        installed={dcrConnector({ handshakeVersion: "cd0ab7f", version: "remote" })}
+        canManage={true}
+        onChanged={() => {}}
+      />,
+    );
+    expect(mounted.container.textContent).toContain("cd0ab7f");
+    expect(mounted.container.textContent).not.toContain("vcd0ab7f");
+    expect(mounted.container.textContent).not.toContain("catalog v");
+  });
+
   test("version: local bundle semver renders one 'v'", async () => {
     mounted = await mount(
       <ConnectorStatusHero

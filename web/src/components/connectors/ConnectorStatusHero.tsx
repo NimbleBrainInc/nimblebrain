@@ -221,9 +221,14 @@ function IdentityRow({ installed, name }: { installed: InstalledConnector; name:
   // surfaced as a small drift note rather than silently hidden.
   const asVersion = (v: string | undefined) =>
     v && v !== "remote" && v !== "unknown" ? v : undefined;
-  // Display form: exactly one leading "v". Image tags carry it (v0.1.0), catalog
-  // manifests may not (0.1.0); normalize so the label never doubles the prefix.
-  const vlabel = (v: string) => `v${v.replace(/^v/, "")}`;
+  // Display form: exactly one leading "v", but only for a version NUMBER. Image tags
+  // carry it (v0.1.0) and catalog manifests may not (0.1.0), so normalize both to a
+  // single "v". A build SHA (edge channel, e.g. cd0ab7f) or other non-semver
+  // identifier is shown as-is; the "v" convention is semver's, not a commit's.
+  const vlabel = (v: string) => {
+    const bare = v.replace(/^v/, "");
+    return /^\d+\.\d+/.test(bare) ? `v${bare}` : bare;
+  };
 
   const declaredVersion = asVersion(installed.version);
   const runningVersion = asVersion(installed.handshakeVersion);
