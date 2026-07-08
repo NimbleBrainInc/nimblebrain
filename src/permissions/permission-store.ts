@@ -164,6 +164,16 @@ export class PermissionStore {
   }
 
   /**
+   * All of a user's personal-connector grants — `serverName → granted workspace
+   * ids` — in one file load. The by-user read for "list my connectors and where
+   * each is granted" (avoids an N+1 of `getConnectorGrants` per connector).
+   */
+  async listConnectorGrants(userId: string): Promise<ConnectorGrants> {
+    const record = await this.load({ scope: "user", userId });
+    return record?.grants ?? {};
+  }
+
+  /**
    * The connector names a user has granted to a specific shared workspace — the
    * surfacing read (one file load; "which of my personal connectors may this room
    * see"). Empty when none; fails closed (empty) on a malformed `wsId`.
