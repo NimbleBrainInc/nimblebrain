@@ -4,6 +4,7 @@ import { dirname, join } from "node:path";
 import { cleanupComposioBundle } from "../composio/sdk.ts";
 import { resolveConnectorSkillsConfig } from "../config/connector-skills.ts";
 import type { EventSink } from "../engine/types.ts";
+import { IdentityConnectorStore } from "../identity/connector-store.ts";
 import { fleetIssuerOption } from "../oauth/fleet-assertion.ts";
 import { mcpAuthCallbackUrl } from "../oauth/mcp-callback-url.ts";
 import { log } from "../observability/log.ts";
@@ -14,7 +15,6 @@ import {
   materializeConnectorSkill,
   removeConnectorSkillsForServer,
 } from "../skills/connector-skill-store.ts";
-import { IdentityConnectorStore } from "../identity/connector-store.ts";
 import { FileCredentialStore } from "../tools/credential-store.ts";
 import { McpSource } from "../tools/mcp-source.ts";
 import { ToolRegistry } from "../tools/registry.ts";
