@@ -41,6 +41,7 @@ import { personalWorkspaceIdFor } from "../workspace/workspace-store.ts";
 import { FileCredentialStore } from "./credential-store.ts";
 import type { InProcessTool } from "./in-process-app.ts";
 import { McpSource } from "./mcp-source.ts";
+import type { Tool, ToolSource } from "./types.ts";
 
 /**
  * `manage_connectors` tool — single surface for the Connectors UI
@@ -674,6 +675,33 @@ function resolveInstanceCatalog(
 }
 
 /**
+ * How long a remote connector's memoized `tools/list` is trusted before the
+ * connector read surfaces (Configure page, installed list) force a re-fetch.
+ * A remote server redeployed at the same URL changes its advertised tools with
+ * no lifecycle signal to an already-connected source — no `stop`, no restart,
+ * no native `tools/list_changed` — so without this the surface the UI shows
+ * (and the agent's callable set) stays pinned to the first-connect snapshot.
+ * Short enough that a redeploy surfaces within a page reload or two; long
+ * enough that a burst of reads coalesces onto one round-trip.
+ */
+const REMOTE_TOOL_LIST_MAX_AGE_MS = 30_000;
+
+/**
+ * Tools for a connector's read surface, kept fresh for remote sources. Local /
+ * stdio sources change their tool set only via respawn (which already drops
+ * the memo), so they read the memo directly; only remote sources need the
+ * age-gated re-fetch. A refresh that finds a changed surface fans out through
+ * the source's `toolsChanged` seam, so the agent's tool union and the LLM tool
+ * list converge with what the UI now shows (never one without the other).
+ */
+async function readConnectorTools(source: ToolSource): Promise<Tool[]> {
+  if (source instanceof McpSource && source.isRemote()) {
+    return source.toolsWithMaxAge(REMOTE_TOOL_LIST_MAX_AGE_MS);
+  }
+  return source.tools();
+}
+
+/**
  * Tool count + reported version from the live source — best-effort (a stopped
  * source returns [] and has no version). `getReportedVersion` is McpSource-
  * specific (not on the ToolSource interface), reached by the same `instanceof`
@@ -688,7 +716,7 @@ async function probeToolCountAndVersion(
   try {
     const src = registry.getSource(serverName);
     if (src) {
-      toolCount = (await src.tools()).length;
+      toolCount = (await readConnectorTools(src)).length;
       if (src instanceof McpSource) handshakeVersion = src.getReportedVersion();
     }
   } catch {
@@ -2317,7 +2345,7 @@ async function handleListTools(
   }
 
   try {
-    const tools = await source.tools();
+    const tools = await readConnectorTools(source);
     // Strip the connector prefix from tool names. McpSource adds it
     // (`<serverName>__<bareName>`) for the registry's dispatch surface,
     // but the Configure page only handles tools within one connector
@@ -2391,7 +2419,7 @@ async function handleListToolsWithPermissions(
     // other and the permission store hits disk while tools/list may
     // round-trip to the bundle subprocess.
     const [tools, permissions] = await Promise.all([
-      source.tools(),
+      readConnectorTools(source),
       ctx.runtime.getPermissionStore().getConnector(owner, serverName),
     ]);
     const prefix = `${serverName}__`;

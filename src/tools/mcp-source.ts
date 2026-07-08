@@ -282,6 +282,24 @@ export function sanitizeReportedVersion(raw: string): string | undefined {
 }
 
 /**
+ * Whether two mapped tool lists differ in a way the LLM or UI would observe —
+ * the set of tool names, or any tool's description / input schema / execution
+ * metadata. Order-independent (`tools/list` ordering isn't guaranteed stable
+ * across server restarts). Used to gate the `toolsChanged` fan-out so a
+ * refresh that returns the identical surface doesn't needlessly invalidate
+ * memoized tool unions downstream.
+ */
+export function toolListChanged(a: readonly Tool[], b: readonly Tool[]): boolean {
+  if (a.length !== b.length) return true;
+  const signature = (tools: readonly Tool[]) =>
+    tools
+      .map((t) => JSON.stringify([t.name, t.description, t.inputSchema, t.execution ?? null]))
+      .sort()
+      .join(" ");
+  return signature(a) !== signature(b);
+}
+
+/**
  * ToolSource wrapping a single MCP server (stdio subprocess or remote HTTP/SSE).
  * Lazy tool loading: first tools() call triggers listTools(), then caches.
  * Crash recovery: on execute failure, attempts one restart + retry.
@@ -290,6 +308,26 @@ export class McpSource implements ToolSource {
   private client: Client | null = null;
   private transport: Transport | null = null;
   private cachedTools: Tool[] | null = null;
+  /**
+   * When `cachedTools` was last populated from a live `tools/list`. Null
+   * whenever the memo is empty (never fetched, or dropped by stop/restart/
+   * native list_changed). Read by {@link toolsWithMaxAge} to decide whether a
+   * remote source's memo is stale enough to re-fetch — a remote server
+   * redeployed at the same URL changes its tool surface with no lifecycle
+   * signal to this client, so the memo would otherwise stay pinned to
+   * first-connect forever.
+   */
+  private toolsFetchedAt: number | null = null;
+  /**
+   * A `tools/list` round-trip in progress, shared so concurrent readers reuse
+   * one request instead of each firing its own. A remote roll can land several
+   * connector-page reads here at once (the read path is not serialized the way
+   * tool dispatch is); without this each would issue a duplicate `tools/list`.
+   */
+  private toolsFetchInFlight: Promise<Tool[]> | null = null;
+  /** A {@link refreshTools} in progress, shared so concurrent refreshes reuse
+   *  one round-trip AND emit the change signal at most once. */
+  private refreshInFlight: Promise<Tool[]> | null = null;
   private dead = false;
   /** A restart in progress, shared so concurrent recoveries reuse one
    *  stop()/start() cycle instead of stacking. Resource reads are NOT serialized
@@ -946,6 +984,7 @@ export class McpSource implements ToolSource {
   private registerToolsChangedHandler(client: Client): void {
     client.setNotificationHandler(ToolListChangedNotificationSchema, () => {
       this.cachedTools = null;
+      this.toolsFetchedAt = null;
       this.emitToolsChanged();
     });
   }
@@ -1049,6 +1088,9 @@ export class McpSource implements ToolSource {
     this.transport = null;
     this.inProcessServer = null;
     this.cachedTools = null;
+    this.toolsFetchedAt = null;
+    this.toolsFetchInFlight = null;
+    this.refreshInFlight = null;
     this._instructions = undefined;
     this._serverVersion = undefined;
   }
@@ -1129,24 +1171,112 @@ export class McpSource implements ToolSource {
     return [];
   }
 
+  /**
+   * Issue a `tools/list` and map the response into the registry's `Tool`
+   * shape. Does NOT read or write `cachedTools` — callers decide whether the
+   * result seeds the memo ({@link tools}) or replaces it ({@link refreshTools}).
+   * Concurrent callers share one round-trip via `toolsFetchInFlight`.
+   */
+  private fetchToolList(): Promise<Tool[]> {
+    if (this.toolsFetchInFlight) return this.toolsFetchInFlight;
+    if (!this.client) throw new Error(`McpSource "${this.name}" not started`);
+    const client = this.client;
+    const p = (async () => {
+      const response = await client.listTools();
+      return response.tools.map((t) => {
+        const rawExec = (t as { execution?: unknown }).execution;
+        const execution = isExecutionMeta(rawExec)
+          ? { taskSupport: rawExec.taskSupport }
+          : undefined;
+        return {
+          name: `${this.name}__${t.name}`,
+          description: t.description ?? "",
+          inputSchema: (t.inputSchema ?? {}) as Record<string, unknown>,
+          source: `mcpb:${this.name}`,
+          annotations: t._meta as Record<string, unknown> | undefined,
+          execution,
+        };
+      });
+    })();
+    this.toolsFetchInFlight = p;
+    return p.finally(() => {
+      if (this.toolsFetchInFlight === p) this.toolsFetchInFlight = null;
+    });
+  }
+
   async tools(): Promise<Tool[]> {
     if (this.cachedTools) return this.cachedTools;
-    if (!this.client) throw new Error(`McpSource "${this.name}" not started`);
-
-    const response = await this.client.listTools();
-    this.cachedTools = response.tools.map((t) => {
-      const rawExec = (t as { execution?: unknown }).execution;
-      const execution = isExecutionMeta(rawExec) ? { taskSupport: rawExec.taskSupport } : undefined;
-      return {
-        name: `${this.name}__${t.name}`,
-        description: t.description ?? "",
-        inputSchema: (t.inputSchema ?? {}) as Record<string, unknown>,
-        source: `mcpb:${this.name}`,
-        annotations: t._meta as Record<string, unknown> | undefined,
-        execution,
-      };
-    });
+    const fetched = await this.fetchToolList();
+    this.cachedTools = fetched;
+    this.toolsFetchedAt = Date.now();
     return this.cachedTools;
+  }
+
+  /**
+   * Force a fresh `tools/list`, replacing the memo in place and re-stamping
+   * `toolsFetchedAt`. Unlike {@link tools} this bypasses the memo, so it is the
+   * seam for picking up a remote server whose tool surface changed WITHOUT a
+   * lifecycle event (redeployed at the same URL, no reconnect, no native
+   * `tools/list_changed`). When the resulting surface actually differs from
+   * what was cached, fans out via `emitToolsChanged()` so the workspace tool
+   * union and the engine's LLM tool list converge in lockstep with the UI; a
+   * no-op refresh stays silent to avoid needless union invalidation.
+   *
+   * Note: does NOT refresh the reported handshake version
+   * ({@link getReportedVersion}) — that comes from the `initialize` response,
+   * not `tools/list`, so only a reconnect (`restart()`) updates it.
+   *
+   * The dispatch path ({@link execute} via {@link findTool}) is deliberately
+   * NOT routed through here: it stays on the memo so a tool call never pays a
+   * `tools/list` round-trip.
+   */
+  async refreshTools(): Promise<Tool[]> {
+    if (this.refreshInFlight) return this.refreshInFlight;
+    const previous = this.cachedTools;
+    const p = (async () => {
+      const fetched = await this.fetchToolList();
+      this.cachedTools = fetched;
+      this.toolsFetchedAt = Date.now();
+      // previous === null means the memo was empty; the connect seam already
+      // emits on first population, so only a real surface change re-fans-out.
+      if (previous !== null && toolListChanged(previous, fetched)) {
+        this.emitToolsChanged();
+      }
+      return fetched;
+    })();
+    this.refreshInFlight = p;
+    return p.finally(() => {
+      if (this.refreshInFlight === p) this.refreshInFlight = null;
+    });
+  }
+
+  /**
+   * Tools, re-fetching when the memo is older than `maxAgeMs`. For the
+   * connector read surfaces (Configure / installed-list), which must reflect a
+   * redeployed remote server's current tools rather than the first-connect
+   * snapshot. A refresh failure falls back to the last good memo (a transient
+   * blip shouldn't blank the tool list); only a cold miss with no memo throws.
+   */
+  async toolsWithMaxAge(maxAgeMs: number): Promise<Tool[]> {
+    const fresh =
+      this.cachedTools !== null &&
+      this.toolsFetchedAt !== null &&
+      Date.now() - this.toolsFetchedAt <= maxAgeMs;
+    if (fresh && this.cachedTools) return this.cachedTools;
+    try {
+      return await this.refreshTools();
+    } catch (err) {
+      if (this.cachedTools) {
+        log.debug(
+          "mcp",
+          `[${this.name}] tool-list refresh failed, serving cached — ${
+            err instanceof Error ? err.message : String(err)
+          }`,
+        );
+        return this.cachedTools;
+      }
+      throw err;
+    }
   }
 
   /**
@@ -2250,6 +2380,7 @@ export class McpSource implements ToolSource {
       await this.stop();
       await this.start();
       this.cachedTools = null;
+      this.toolsFetchedAt = null;
       this.dead = false;
       this.eventSink.emit({
         type: "run.error",
