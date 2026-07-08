@@ -57,6 +57,36 @@ hasn't seen it before. The readability tax isn't worth the shortcut.
 
 ---
 
+## Source text
+
+### No raw control bytes
+
+Never embed a raw C0 control byte in source. Write the escape.
+
+```ts
+// BAD — a raw NUL byte sits between the quotes (drawn here as the visible
+// symbol ␀, since it's invisible in a real editor). tsc, biome, and the tests
+// all pass, so nothing catches it.
+.join("␀")
+
+// GOOD — an escape. Byte-identical runtime string; the file stays text.
+.join("\u0000")
+```
+
+**Rationale.** A raw control byte passes `tsc`, biome, and the test suite, but
+`rg` / `git grep` classify the whole file as *binary* and silently skip it, and
+git's own diff renders it as text only by luck (its binary heuristic scans just
+the first ~8 KB). So the artifact ships a byte the diff never showed the
+reviewer, and code search over a core file goes dark. The escape yields the
+identical runtime string with none of that.
+
+**Detection.** `bun run check:no-control-bytes` (wired into `verify:static`) —
+flags any byte in 0x00-0x08, 0x0B, 0x0C, 0x0E-0x1F, or 0x7F under `src/`.
+
+**Override.** None.
+
+---
+
 ## Adding a new rule
 
 1. **Pick the smallest possible rule.** One pattern, one example, one
