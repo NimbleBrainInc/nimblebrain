@@ -14,9 +14,11 @@ import {
   materializeConnectorSkill,
   removeConnectorSkillsForServer,
 } from "../skills/connector-skill-store.ts";
+import { IdentityConnectorStore } from "../identity/connector-store.ts";
 import { FileCredentialStore } from "../tools/credential-store.ts";
 import { McpSource } from "../tools/mcp-source.ts";
-import type { ToolRegistry } from "../tools/registry.ts";
+import { ToolRegistry } from "../tools/registry.ts";
+import type { ToolSource } from "../tools/types.ts";
 import { WorkspaceOAuthProvider } from "../tools/workspace-oauth-provider.ts";
 import { validateAdditionalAuthorizationParams } from "../util/oauth-params.ts";
 import { WorkspaceContext } from "../workspace/context.ts";
@@ -1725,6 +1727,16 @@ export class BundleLifecycleManager {
   private readonly registriesByWs = new Map<string, ToolRegistry>();
 
   /**
+   * Map of `userId` → `ToolRegistry` holding that user's started personal
+   * connectors — the owner-keyed sibling of `registriesByWs`. Reuses the same
+   * `ToolRegistry` type and `startBundleSource` path; only the owner (identity)
+   * and credential root (`users/<userId>/...`) differ. Created lazily on first
+   * `getIdentityConnectorSource` for a user, per-pod in-memory (same clustering
+   * posture as `registriesByWs`).
+   */
+  private readonly registriesByUser = new Map<string, ToolRegistry>();
+
+  /**
    * Per-`${serverName}|${wsId}` timestamp (epoch ms) of the last
    * best-effort recovery attempt (`tryRecoverSource`). Negative cache: a
    * failed re-spawn stamps the key so the orchestrator hot path doesn't
@@ -1962,6 +1974,54 @@ export class BundleLifecycleManager {
       // composio-auth callback path goes through here.
       bundleMcp: this.resolveBundleMcpDeps(wsId),
     });
+  }
+
+  /**
+   * Resolve a user's personal connector to a started `ToolSource`, lazy-starting
+   * it on first use. The identity-plane analog of the workspace self-heal:
+   *
+   *   1. Look in the user's registry — already running ⇒ return it (idempotent).
+   *   2. Otherwise read the persisted install record (`connectors.json`) via
+   *      `IdentityConnectorStore`. No URL record ⇒ `undefined` (not installed).
+   *   3. Start it through the shared `startBundleSource` path, bound to the
+   *      `{type:"user"}` owner so OAuth credentials resolve under
+   *      `users/<userId>/credentials/mcp-oauth/`, and return it.
+   *
+   * Per-pod and reactive, like the workspace self-heal — a fresh pod starts the
+   * source on its own first call. No spawn-storm cooldown yet: this isn't on a
+   * hot dispatch path until the identity-door switch wires it in, where the
+   * negative-cache guard lands with that consumer.
+   *
+   * `startBundleSource` can throw on transport / handshake failure; callers
+   * decide whether to swallow or surface.
+   */
+  async getIdentityConnectorSource(
+    userId: string,
+    serverName: string,
+    workDir: string,
+  ): Promise<ToolSource | undefined> {
+    const registry = this.userRegistry(userId);
+    if (registry.hasSource(serverName)) return registry.getSource(serverName);
+
+    const ref = await new IdentityConnectorStore({ workDir }).get(userId, serverName);
+    if (!ref || !("url" in ref)) return undefined;
+
+    await startBundleSource(ref, registry, this.eventSink, undefined, {
+      allowInsecureRemotes: this.allowInsecureRemotes,
+      workDir,
+      identityOwner: { userId },
+    });
+    return registry.getSource(serverName);
+  }
+
+  /** The user's personal-connector registry, created on first access. */
+  private userRegistry(userId: string): ToolRegistry {
+    let registry = this.registriesByUser.get(userId);
+    if (!registry) {
+      registry = new ToolRegistry();
+      this.registriesByUser.set(userId, registry);
+    }
+    return registry;
   }
 
   /**

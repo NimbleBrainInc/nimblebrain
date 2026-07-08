@@ -171,6 +171,15 @@ function resolveWorkspaceContext(
 /** Options accepted by `startBundleSource`. */
 interface StartBundleOpts {
   allowInsecureRemotes?: boolean;
+  /**
+   * Identity owner for a personal connector. When set, the URL bundle's OAuth
+   * credentials bind to the user (the `WorkspaceOAuthProvider` `{type:"user"}`
+   * arm) and live at `users/<userId>/credentials/mcp-oauth/<serverName>/`,
+   * outside any workspace. Mutually exclusive with `workspaceContext` / `wsId`
+   * — a personal connector belongs to no workspace — so it relies on
+   * `workDir` (defaulted) rather than a workspace context for the path root.
+   */
+  identityOwner?: { userId: string };
   dataDir?: string;
   /**
    * Workspace context for credential resolution and on-disk path
@@ -309,7 +318,39 @@ async function resolveStaticOAuthClient(
  * workspaces would share OAuth tokens under the same default id. Callers must
  * thread workspace context through `installRemote` / `startBundleSource`.
  */
-async function buildUrlOAuthProvider(
+/**
+ * The `{type:"user"}` arm of {@link buildUrlOAuthProvider} — a personal
+ * connector's OAuth provider. Credentials live at
+ * `users/<userId>/credentials/mcp-oauth/<serverName>/`, derived from `workDir`
+ * with no `workspaceContext`. Static-client (non-DCR) resolution is
+ * workspace-scoped and not wired for personal connectors here; the DCR /
+ * provider auth paths apply.
+ */
+function buildUserOAuthProvider(
+  ref: Extract<BundleRef, { url: string }>,
+  serverName: string,
+  identityOwner: { userId: string },
+  opts: StartBundleOpts | undefined,
+  onInteractiveAuthRequired: (authorizationUrl: string) => void,
+): WorkspaceOAuthProvider {
+  return new WorkspaceOAuthProvider({
+    owner: { type: "user", userId: identityOwner.userId },
+    serverName,
+    workDir: opts?.workDir ?? defaultWorkDir(),
+    callbackUrl: mcpAuthCallbackUrl(),
+    allowInsecureRemotes: opts?.allowInsecureRemotes === true,
+    headlessAuthProbe: ref.headlessAuthProbe === true,
+    ...fleetIssuerOption(),
+    onInteractiveAuthRequired,
+    ...(opts?.onAuthLost ? { onAuthLost: opts.onAuthLost } : {}),
+    ...(ref.scopes ? { scopes: ref.scopes } : {}),
+    ...(ref.additionalAuthorizationParams
+      ? { additionalAuthorizationParams: ref.additionalAuthorizationParams }
+      : {}),
+  });
+}
+
+export async function buildUrlOAuthProvider(
   ref: Extract<BundleRef, { url: string }>,
   serverName: string,
   wsContext: WorkspaceContext | undefined,
@@ -318,6 +359,20 @@ async function buildUrlOAuthProvider(
 ): Promise<WorkspaceOAuthProvider | undefined> {
   // Attach an OAuthClientProvider only when no static auth is configured.
   if (bundleHasStaticAuth(ref)) return undefined;
+
+  // Personal connector (identity owner): OAuth credentials bind to the user, at
+  // users/<userId>/credentials/mcp-oauth/<serverName>/ — the {type:"user"} arm,
+  // outside any workspace. Mutually exclusive with the workspace branch below.
+  if (opts?.identityOwner) {
+    return buildUserOAuthProvider(
+      ref,
+      serverName,
+      opts.identityOwner,
+      opts,
+      onInteractiveAuthRequired,
+    );
+  }
+
   if (!wsContext) {
     throw new Error(
       `[bundles] URL bundle "${serverName}" without static auth requires opts.workspaceContext ` +
