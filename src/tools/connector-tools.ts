@@ -37,6 +37,7 @@ import { validateAdditionalAuthorizationParams } from "../util/oauth-params.ts";
 import { isHttpUrl } from "../util/url.ts";
 import { canWriteWorkspaceScoped } from "../workspace/authz.ts";
 import type { Workspace } from "../workspace/types.ts";
+import { personalWorkspaceIdFor } from "../workspace/workspace-store.ts";
 import { FileCredentialStore } from "./credential-store.ts";
 import type { InProcessTool } from "./in-process-app.ts";
 import { McpSource } from "./mcp-source.ts";
@@ -234,6 +235,9 @@ export function createManageConnectorsTool(ctx: ManageConnectorsContext): InProc
             "clear_user_config",
             "get_redirect_uri",
             "list_bound_skills",
+            "list_personal_connectors",
+            "grant_connector",
+            "revoke_connector",
           ],
           description: "Action to perform.",
         },
@@ -250,7 +254,7 @@ export function createManageConnectorsTool(ctx: ManageConnectorsContext): InProc
         wsId: {
           type: "string",
           description:
-            "Target workspace for `install`. Optional: defaults to the request's workspace (X-Workspace-Id), so the web shell installs into the workspace it's viewing without passing this. Supply it only to install into a different workspace. There is no default-to-personal fallback — if neither the header nor this arg names a workspace, install hard-errors.",
+            "Target workspace. For `install`: defaults to the request's workspace (X-Workspace-Id), so the web shell installs into the workspace it's viewing without passing this; supply it only to install elsewhere. For `grant_connector` / `revoke_connector`: the shared workspace to grant/revoke the caller's personal connector to — REQUIRED and explicit (no header fallback). There is no default-to-personal fallback.",
         },
         clientId: {
           type: "string",
@@ -263,7 +267,7 @@ export function createManageConnectorsTool(ctx: ManageConnectorsContext): InProc
         serverName: {
           type: "string",
           description:
-            "Bundle server name (required for disconnect, list_tools, get_permissions, set_permissions).",
+            "Bundle server name (required for disconnect, list_tools, get_permissions, set_permissions, grant_connector, revoke_connector).",
         },
         scope: {
           type: "string",
@@ -345,6 +349,12 @@ export function createManageConnectorsTool(ctx: ManageConnectorsContext): InProc
           return handleGetRedirectUri(args.identity);
         case "list_bound_skills":
           return handleListBoundSkills(ctx, args.wsId);
+        case "list_personal_connectors":
+          return handleListPersonalConnectors(ctx, args.callerId);
+        case "grant_connector":
+          return handleGrantConnector(ctx, args.callerId, args.serverName, args.grantTargetWsId);
+        case "revoke_connector":
+          return handleRevokeConnector(ctx, args.callerId, args.serverName, args.grantTargetWsId);
         default:
           return errResult(`Unknown action "${args.action}".`);
       }
@@ -376,6 +386,8 @@ interface DispatchArgs {
   tools: Record<string, unknown>;
   entry: unknown;
   installWsId: string | undefined;
+  /** Explicit grant/revoke target workspace (input `wsId`, no header fallback). */
+  grantTargetWsId: string | null;
 }
 
 /** Coerce the raw tool input + request context into typed dispatch args. */
@@ -408,6 +420,10 @@ function resolveDispatchArgs(
     // closes the "Bundle not installed" scope mismatch (an install seeded under
     // one workspace, then read under another).
     installWsId: input.wsId === undefined ? (wsId ?? undefined) : String(input.wsId),
+    // Grant/revoke target is explicit only — never the ambient X-Workspace-Id
+    // (the profile page has no workspace focus, and a stale header must not
+    // silently become the grant target).
+    grantTargetWsId: input.wsId !== undefined ? String(input.wsId) : null,
   };
 }
 
@@ -2447,6 +2463,110 @@ async function handleSetPermissions(
   return {
     content: textContent(`Updated ${Object.keys(tools).length} tool policies.`),
     structuredContent: { ok: true, scope: owner.scope, serverName },
+    isError: false,
+  };
+}
+
+// ── personal-connector grants ─────────────────────────────────────
+//
+// A personal connector lives in the caller's own personal workspace
+// (`ws_user_<callerId>`). A grant lets the caller USE it inside a shared
+// workspace they belong to — the one sanctioned crossing (fail closed at
+// dispatch). The grant is the caller's own (`grantedBy = callerId`) and is
+// per-granter: it only widens the granter's OWN reach, never another member's,
+// so no admin gate is needed — any member may grant their own connector.
+
+/**
+ * `list_personal_connectors` — the caller's personal connectors and, for each,
+ * the shared workspaces it's granted to. The read behind the Profile → Connectors
+ * page.
+ */
+async function handleListPersonalConnectors(
+  ctx: ManageConnectorsContext,
+  callerId: string | null,
+): Promise<ToolResult> {
+  if (!callerId) return errResult("Authentication required.");
+  const personalWsId = personalWorkspaceIdFor(callerId);
+  const store = ctx.runtime.getPermissionStore();
+  const lifecycle = ctx.runtime.getLifecycle();
+
+  const connectors = [];
+  for (const instance of lifecycle.getInstances()) {
+    if (instance.wsId !== personalWsId) continue;
+    connectors.push({
+      serverName: instance.serverName,
+      displayName: instance.bundleName,
+      description: instance.description ?? null,
+      state: instance.state,
+      grantedWorkspaces: await store.getConnectorGrants(callerId, instance.serverName),
+    });
+  }
+  return {
+    content: textContent(`${connectors.length} personal connector(s).`),
+    structuredContent: { connectors },
+    isError: false,
+  };
+}
+
+/**
+ * `grant_connector` — grant the caller's personal connector `serverName` for use
+ * inside the shared workspace `targetWsId`. Validates the connector is one the
+ * caller actually installed personally, and the target is a shared workspace the
+ * caller belongs to (never their own home — home is free).
+ */
+async function handleGrantConnector(
+  ctx: ManageConnectorsContext,
+  callerId: string | null,
+  serverName: string,
+  targetWsId: string | null,
+): Promise<ToolResult> {
+  if (!callerId) return errResult("Authentication required.");
+  if (!serverName) return errResult("serverName is required.");
+  if (!targetWsId) return errResult("wsId (the workspace to grant access to) is required.");
+
+  const personalWsId = personalWorkspaceIdFor(callerId);
+  if (targetWsId === personalWsId) {
+    return errResult(
+      "A personal connector is always available in your own personal workspace — no grant needed.",
+    );
+  }
+  if (!ctx.runtime.getLifecycle().getInstance(serverName, personalWsId)) {
+    return errResult(
+      `"${serverName}" is not one of your personal connectors — connect it in your profile first.`,
+    );
+  }
+  const memberships = await ctx.runtime.getWorkspaceStore().getWorkspacesForUser(callerId);
+  const target = memberships.find((w) => w.id === targetWsId);
+  if (!target) {
+    return errResult(`You are not a member of workspace "${targetWsId}".`);
+  }
+
+  await ctx.runtime.getPermissionStore().grantConnector(callerId, serverName, targetWsId);
+  return {
+    content: textContent(`Granted "${serverName}" to ${target.name}.`),
+    structuredContent: { ok: true, serverName, wsId: targetWsId },
+    isError: false,
+  };
+}
+
+/**
+ * `revoke_connector` — revoke the caller's grant of `serverName` to `targetWsId`.
+ * Idempotent and lenient: revoking a grant that doesn't exist is a safe no-op.
+ */
+async function handleRevokeConnector(
+  ctx: ManageConnectorsContext,
+  callerId: string | null,
+  serverName: string,
+  targetWsId: string | null,
+): Promise<ToolResult> {
+  if (!callerId) return errResult("Authentication required.");
+  if (!serverName) return errResult("serverName is required.");
+  if (!targetWsId) return errResult("wsId (the workspace to revoke access from) is required.");
+
+  await ctx.runtime.getPermissionStore().revokeConnector(callerId, serverName, targetWsId);
+  return {
+    content: textContent(`Revoked "${serverName}" from workspace.`),
+    structuredContent: { ok: true, serverName, wsId: targetWsId },
     isError: false,
   };
 }
