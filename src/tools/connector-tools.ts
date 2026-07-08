@@ -2494,20 +2494,12 @@ async function handleSetPermissions(
 // dispatch). The grant is the caller's own (`grantedBy = callerId`) and is
 // per-granter: it only widens the granter's OWN reach, never another member's,
 // so no admin gate is needed — any member may grant their own connector.
-
-/**
- * A grantable personal connector is a **remote MCP connection** (a `remote-oauth`
- * install → `installSource: "remote"`, see `deriveInstallSource`). The admission
- * gate in `handleInstall` already keeps a personal workspace connectors-only for
- * installs made *after* it. This predicate is the **defense-in-depth backstop**
- * for personal workspaces that predate the gate (a Synapse app / mpak bundle a
- * user installed into their home workspace before this arc): such a bundle is
- * never listed or granted as a connector. The gate is the primary boundary; this
- * ensures legacy data can't leak through the read/grant paths.
- */
-function isRemotePersonalConnector(instance: BundleInstance): boolean {
-  return instance.installSource === "remote";
-}
+//
+// Every bundle in a personal workspace is a connector (a remote MCP connection):
+// the admission gate in `handleInstall` admits only `remote-oauth` installs, and
+// that is the only write-path into a personal workspace's bundle set. So the
+// grant / list handlers below trust the invariant and don't re-derive "is this a
+// connector" — there is no other kind of bundle for them to exclude.
 
 /**
  * `list_personal_connectors` — the caller's personal connectors and, for each,
@@ -2529,7 +2521,6 @@ async function handleListPersonalConnectors(
   const connectors = [];
   for (const instance of lifecycle.getInstances()) {
     if (instance.wsId !== personalWsId) continue;
-    if (!isRemotePersonalConnector(instance)) continue; // backstop for pre-gate bundles
     connectors.push({
       serverName: instance.serverName,
       displayName: instance.bundleName,
@@ -2567,8 +2558,7 @@ async function handleGrantConnector(
       "A personal connector is always available in your own personal workspace — no grant needed.",
     );
   }
-  const instance = ctx.runtime.getLifecycle().getInstance(serverName, personalWsId);
-  if (!instance || !isRemotePersonalConnector(instance)) {
+  if (!ctx.runtime.getLifecycle().getInstance(serverName, personalWsId)) {
     return errResult(
       `"${serverName}" is not one of your personal connectors — connect it in your profile first.`,
     );

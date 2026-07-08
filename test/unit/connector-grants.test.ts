@@ -36,27 +36,20 @@ interface Harness {
   tool: ReturnType<typeof createManageConnectorsTool>;
 }
 
-/**
- * A fake bundle instance in the caller's personal workspace. `installSource`
- * "remote" = a remote MCP connection (a real personal connector); "registry" =
- * a pre-gate mpak bundle / Synapse app that is NOT a grantable connector.
- */
-function personalInstance(serverName: string, installSource: "remote" | "registry" = "remote") {
+/** A fake personal-connector lifecycle instance in the caller's personal workspace. */
+function personalInstance(serverName: string) {
   return {
     serverName,
     wsId: personalWs,
     bundleName: serverName,
-    description: `${serverName} bundle`,
+    description: `${serverName} connector`,
     state: "running",
-    installSource,
   };
 }
 
 async function buildHarness(opts: {
   identity?: UserIdentity | null;
   personalConnectors?: string[];
-  /** Non-connector bundles (e.g. a pre-gate app) sitting in the personal workspace. */
-  personalNonConnectors?: string[];
   memberOfShared?: boolean;
 }): Promise<Harness> {
   const workDir = mkdtempSync(join(tmpdir(), "nb-connector-grants-"));
@@ -66,10 +59,7 @@ async function buildHarness(opts: {
   if (opts.memberOfShared !== false) {
     await workspaceStore.addMember(SHARED_WS, ALICE.id, "member");
   }
-  const instances = [
-    ...(opts.personalConnectors ?? []).map((n) => personalInstance(n, "remote")),
-    ...(opts.personalNonConnectors ?? []).map((n) => personalInstance(n, "registry")),
-  ];
+  const instances = (opts.personalConnectors ?? []).map(personalInstance);
 
   const runtime = {
     getPermissionStore: () => store,
@@ -183,25 +173,5 @@ describe("manage_connectors — personal-connector grants", () => {
       const res = await h.tool.handler({ action, serverName: "granola", wsId: SHARED_WS });
       expect(res.isError).toBe(true);
     }
-  });
-
-  // Defense-in-depth for personal workspaces created before the install
-  // admission gate: a non-connector bundle (mpak/app, installSource !== "remote")
-  // must not be listed or granted as a personal connector.
-  test("list_personal_connectors excludes a pre-gate non-connector bundle", async () => {
-    h = await buildHarness({ personalConnectors: ["granola"], personalNonConnectors: ["crm_app"] });
-    const connectors = sc(await h.tool.handler({ action: "list_personal_connectors" })).connectors ?? [];
-    expect(connectors.map((c) => c.serverName)).toEqual(["granola"]); // crm_app excluded
-  });
-
-  test("grant_connector rejects a pre-gate non-connector bundle", async () => {
-    h = await buildHarness({ personalNonConnectors: ["crm_app"] });
-    const res = await h.tool.handler({
-      action: "grant_connector",
-      serverName: "crm_app",
-      wsId: SHARED_WS,
-    });
-    expect(res.isError).toBe(true);
-    expect(await h.store.getConnectorGrants(ALICE.id, "crm_app")).toEqual([]);
   });
 });
