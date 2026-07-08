@@ -214,7 +214,12 @@ export class ToolRegistry implements ToolRouter {
     // connector-permission check — the same one the chat engine and /mcp
     // doors run, so a `disallow` is denied identically on every door.
     if (this.permissionStore && this.wsId) {
-      const denied = await assertToolAllowed(this.permissionStore, this.wsId, prefix, localName);
+      const denied = await assertToolAllowed(
+        this.permissionStore,
+        { scope: "workspace", wsId: this.wsId },
+        prefix,
+        localName,
+      );
       if (denied) return denied;
     }
 

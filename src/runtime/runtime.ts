@@ -72,7 +72,11 @@ import { buildModelResolver, resolveModelString } from "../model/registry.ts";
 import { registerBuiltinCredentialProviders } from "../oauth/minted-credential-provider.ts";
 import { requestIdentityAttrs, withSpan } from "../observability/index.ts";
 import { log } from "../observability/log.ts";
-import { isDisallowed, PermissionStore } from "../permissions/permission-store.ts";
+import {
+  isDisallowed,
+  type PermissionOwner,
+  PermissionStore,
+} from "../permissions/permission-store.ts";
 import type {
   AppStateInfo,
   FocusedAppInfo,
@@ -2851,6 +2855,18 @@ export class Runtime {
   }
 
   /**
+   * Resolve a user's personal connector to a started `ToolSource`, lazy-starting
+   * it on first use (see `BundleLifecycleManager.getIdentityConnectorSource`).
+   * The DYNAMIC, per-identity connector door — deliberately separate from the
+   * static kernel `getIdentitySource(name)` above: keyed by `(userId, name)`, it
+   * resolves an MCP-backed personal connector, not a kernel source. Returns
+   * `undefined` when the user has no such connector installed.
+   */
+  async getIdentityConnectorSource(userId: string, name: string): Promise<ToolSource | undefined> {
+    return this.lifecycle.getIdentityConnectorSource(userId, name, this.getWorkDir());
+  }
+
+  /**
    * List the kernel identity sources' tools (conversations, …), source-
    * qualified (`conversations__list`). These are emitted BARE — owned by the
    * user, not any workspace — and prepended to the session's one workspace
@@ -2956,8 +2972,8 @@ export class Runtime {
   /**
    * The walled tool surface for a session bounded to `wsId`: that workspace's
    * tools (namespaced `ws_<id>-<tool>`) plus the caller's identity tools (bare),
-   * plus — when `identityId` is given and `wsId` is a *shared* room — the
-   * caller's personal connectors granted into that room (bare, §
+   * plus — when `identityId` is given — the caller's personal connectors granted
+   * to `wsId` (bare; any workspace, including the caller's own personal one, §
    * `_listGrantedPersonalConnectorTools`). The engine's reachable universe
    * (`IdentityToolRouter.availableTools`), the `nb__search` corpus
    * (`listDiscoverableTools`), and `/mcp` `tools/list` all read this — a session
@@ -2989,38 +3005,42 @@ export class Runtime {
   }
 
   /**
-   * The caller's personal connectors granted into the shared room `sessionWsId`,
-   * as bare `<connector>__<tool>` tool schemas — the identity-door form
+   * The caller's personal connectors granted into the session's workspace
+   * `sessionWsId`, as bare `<connector>__<tool>` schemas — the identity-door form
    * `routeIdentityCall` dispatches (never namespaced, so they never hit the
-   * workspace wall). Returns `[]` unless the call is in a *shared* room with an
-   * active grant:
+   * workspace wall). Uniform across every workspace (a personal workspace is just
+   * a workspace, with no special "own home" surfacing): only connectors the owner
+   * granted to THIS workspace surface (deny by default), and only their
+   * non-`disallow`ed tools.
    *
-   *   - In the caller's OWN personal workspace, personal connectors are already
-   *     surfaced namespaced via `wsTools` (that workspace's registry), so we add
-   *     nothing here — no duplicate.
-   *   - In a shared room, only connectors the owner granted to THIS room surface
-   *     (deny by default). The grant is read once (`connectorsGrantedTo`); the
-   *     common no-grant case short-circuits before touching the personal registry.
-   *
-   * The connector's source + credentials live in the owner's `ws_user_` registry
-   * (bound at source construction); we only enumerate its tool schemas here — the
-   * session's workspace never changes. Fail-safe: any error surfaces no personal
-   * connectors rather than breaking the whole tool list (mirrors the per-source
-   * containment in `ToolRegistry.availableTools`).
+   * Each granted connector is resolved from the identity holder
+   * (`getIdentityConnectorSource`, lazy-starting on first use); its tools are
+   * enumerated here. Fail-safe: a connector that can't start surfaces nothing
+   * rather than breaking the whole tool list (mirrors the per-source containment
+   * in `ToolRegistry.availableTools`).
    */
   private async _listGrantedPersonalConnectorTools(
     identityId: string,
     sessionWsId: string,
   ): Promise<ToolSchema[]> {
-    const personalWsId = personalWorkspaceIdFor(identityId);
-    // Own home: already surfaced namespaced via wsTools — adding bare would duplicate.
-    if (sessionWsId === personalWsId) return [];
     try {
       const granted = await this.getPermissionStore().connectorsGrantedTo(identityId, sessionWsId);
       if (granted.length === 0) return [];
-      const registry = await this.ensureWorkspaceRegistry(personalWsId);
-      const tools = await registry.availableTools();
-      return await this._filterSurfacedConnectorTools(tools, new Set(granted), personalWsId);
+      const tools: ToolSchema[] = [];
+      for (const serverName of granted) {
+        try {
+          const source = await this.getIdentityConnectorSource(identityId, serverName);
+          if (source) tools.push(...(await source.tools()));
+        } catch (err) {
+          log.debug(
+            "mcp",
+            `[runtime] personal-connector surfacing: skipping "${serverName}" for "${identityId}" — ${
+              err instanceof Error ? err.message : String(err)
+            }`,
+          );
+        }
+      }
+      return await this._filterSurfacedConnectorTools(tools, identityId);
     } catch (err) {
       log.debug(
         "mcp",
@@ -3033,27 +3053,28 @@ export class Runtime {
   }
 
   /**
-   * Keep the personal-connector tools that are granted AND not `disallow`ed by
-   * the owner. **Surface = dispatchable:** the disallow read is the SAME
-   * `{scope:"workspace", ws_user_}` policy the identity-door gate enforces
-   * (per-connector, read once), so we never advertise a tool that would then be
-   * denied. Kernel-source names are excluded (they can't be shadowed).
+   * Keep the personal-connector tools that are NOT `disallow`ed by the owner.
+   * **Surface = dispatchable:** the disallow read is the SAME `{scope:"user"}`
+   * policy the identity-door gate enforces (per-connector, read once), so we
+   * never advertise a tool that would then be denied. Kernel-source names are
+   * excluded (they can't be shadowed). Input `tools` are already limited to
+   * granted connectors by the caller.
    */
   private async _filterSurfacedConnectorTools(
     tools: readonly ToolSchema[],
-    grantedSet: ReadonlySet<string>,
-    policyWsId: string,
+    identityId: string,
   ): Promise<ToolSchema[]> {
     const store = this.getPermissionStore();
+    const owner: PermissionOwner = { scope: "user", userId: identityId };
     const policyByConnector = new Map<string, Record<string, "allow" | "disallow">>();
     const out: ToolSchema[] = [];
     for (const t of tools) {
       const sep = t.name.indexOf("__");
       const source = sep > 0 ? t.name.slice(0, sep) : t.name;
-      if (!grantedSet.has(source) || isIdentitySource(source)) continue;
+      if (isIdentitySource(source)) continue;
       let policies = policyByConnector.get(source);
       if (!policies) {
-        policies = await store.getConnector({ scope: "workspace", wsId: policyWsId }, source);
+        policies = await store.getConnector(owner, source);
         policyByConnector.set(source, policies);
       }
       const bare = sep > 0 ? t.name.slice(sep + 2) : t.name;

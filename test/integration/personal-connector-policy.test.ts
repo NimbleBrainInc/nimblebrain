@@ -1,35 +1,32 @@
-/**
- * Integration tests: personal-connector per-tool policy + door parity.
- *
- * When a personal connector is used in a shared room via the identity door, the
- * OWNER'S per-tool `disallow` policy must be honored — read from the connector's
- * home workspace (`{scope:"workspace", ws_user_<owner>}`), the SAME policy the
- * workspace door consults at home. So a granted connector is never MORE capable
- * in a shared room than in its own home. This is enforced on every door that can
- * reach a personal connector (the chat engine and `/mcp`) and mirrored in
- * surfacing (a disallowed tool is not advertised).
- *
- * Setup: one dev-mode Runtime; a shared workspace (Helix, dev is a member); the
- * dev's personal workspace with `granola` (read_notes + delete_notes; granted to
- * Helix; delete_notes disallowed) and `notion` (read; NOT granted).
- */
-
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { existsSync, mkdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
-import { NoopEventSink } from "../../src/adapters/noop-events.ts";
-import { textContent } from "../../src/engine/content-helpers.ts";
 import { DEV_IDENTITY } from "../../src/identity/providers/dev.ts";
+import { IdentityConnectorStore } from "../../src/identity/connector-store.ts";
 import { type ServerHandle, startServer } from "../../src/api/server.ts";
 import { IdentityToolRouter } from "../../src/runtime/identity-tool-router.ts";
 import { Runtime } from "../../src/runtime/runtime.ts";
-import { defineInProcessApp } from "../../src/tools/in-process-app.ts";
 import { ensureUserWorkspace } from "../../src/workspace/provisioning.ts";
 import { personalWorkspaceIdFor } from "../../src/workspace/workspace-store.ts";
 import { createEchoModel } from "../helpers/echo-model.ts";
+import { type FakeConnectorServer, startFakeConnectorServer } from "../helpers/fake-connector-server.ts";
+
+/**
+ * Integration: a personal connector is an IDENTITY-owned source, resolved by
+ * userId on the identity door and lazy-started from the caller's
+ * `connectors.json`. Reachability in a workspace is governed uniformly by the
+ * grant — including the user's OWN personal workspace, which is just a
+ * workspace (no "free at home"). The owner's `{scope:"user"}` per-tool
+ * `disallow` policy travels with the connector, so a granted connector is never
+ * more capable than the owner permits.
+ *
+ * Setup: dev user; a shared workspace (Helix, dev is a member); `granola`
+ * (read_notes + delete_notes; granted to Helix; delete_notes disallowed) and
+ * `notion` (read; installed but NOT granted) — both installed on the identity.
+ */
 
 const testDir = join(tmpdir(), `nb-pc-policy-${Date.now()}`);
 const SHARED_WS = "ws_helix";
@@ -38,27 +35,16 @@ let runtime: Runtime;
 let personalWs: string;
 let handle: ServerHandle;
 let baseUrl: string;
+const servers: FakeConnectorServer[] = [];
 
-function buildSource(name: string, tools: string[]) {
-  return defineInProcessApp(
-    {
-      name,
-      version: "1.0.0",
-      tools: tools.map((t) => ({
-        name: t,
-        description: `${name} ${t}`,
-        inputSchema: { type: "object", properties: {} },
-        handler: async () => ({ content: textContent("ok"), isError: false }),
-      })),
-    },
-    new NoopEventSink(),
-  );
-}
-
-async function register(wsId: string, name: string, tools: string[]): Promise<void> {
-  const source = buildSource(name, tools);
-  await source.start();
-  (await runtime.ensureWorkspaceRegistry(wsId)).addSource(source);
+async function installConnector(serverName: string, toolNames: string[]): Promise<void> {
+  const server = startFakeConnectorServer(toolNames);
+  servers.push(server);
+  await new IdentityConnectorStore({ workDir: testDir }).add(DEV_IDENTITY.id, {
+    url: server.url,
+    serverName,
+    ui: null,
+  });
 }
 
 async function mcpClient(workspace: string): Promise<Client> {
@@ -77,6 +63,8 @@ beforeAll(async () => {
     noDefaultBundles: true,
     logging: { disabled: true },
     workDir: testDir,
+    // The fake connector servers bind on localhost.
+    allowInsecureRemotes: true,
   });
 
   const wsStore = runtime.getWorkspaceStore();
@@ -88,13 +76,13 @@ beforeAll(async () => {
   });
   personalWs = personalWorkspaceIdFor(DEV_IDENTITY.id);
 
-  await register(personalWs, "granola", ["read_notes", "delete_notes"]);
-  await register(personalWs, "notion", ["read"]); // installed but NOT granted
+  await installConnector("granola", ["read_notes", "delete_notes"]);
+  await installConnector("notion", ["read"]); // installed but NOT granted
 
   const store = runtime.getPermissionStore();
   await store.grantConnector(DEV_IDENTITY.id, "granola", SHARED_WS);
-  // The owner disallowed delete_notes on their own connector — its home policy.
-  await store.setConnector({ scope: "workspace", wsId: personalWs }, "granola", {
+  // The owner disallowed delete_notes on their own connector — identity-scoped.
+  await store.setConnector({ scope: "user", userId: DEV_IDENTITY.id }, "granola", {
     delete_notes: "disallow",
   });
 
@@ -105,6 +93,7 @@ beforeAll(async () => {
 afterAll(async () => {
   handle.stop(true);
   await runtime.shutdown();
+  for (const s of servers) s.close();
   if (existsSync(testDir)) rmSync(testDir, { recursive: true });
 });
 
@@ -133,32 +122,47 @@ describe("personal-connector per-tool policy — engine door", () => {
       tool: "delete_notes",
     });
   });
+});
 
-  it("home and shared room are symmetric — the same disallow holds in the owner's own workspace", async () => {
-    // At home the connector is reached via the WORKSPACE door (namespaced); the
-    // same {scope:"workspace", ws_user_} policy denies it there too.
+describe("personal-connector reachability — a personal workspace is just a workspace", () => {
+  it("an ungranted connector is denied in the owner's OWN personal workspace (no free-at-home)", async () => {
+    // granola is NOT granted to the personal workspace — only to Helix. The
+    // personal workspace gets no special treatment, so it's grant-gated too.
     const homeRouter = new IdentityToolRouter({
       identityId: DEV_IDENTITY.id,
       workspaceId: personalWs,
       runtime,
     });
-    const result = await homeRouter.execute({
-      id: "h1",
-      name: `${personalWs}-granola__delete_notes`,
-      input: {},
-    });
+    const result = await homeRouter.execute({ id: "h1", name: "granola__read_notes", input: {} });
     expect(result.isError).toBe(true);
-    expect(result.structuredContent).toMatchObject({ error: "tool_permission_denied" });
+    expect(result.structuredContent).toMatchObject({ reason: "connector_grant_denied" });
+  });
+
+  it("granting to the personal workspace makes it reachable there — same as any workspace", async () => {
+    const store = runtime.getPermissionStore();
+    await store.grantConnector(DEV_IDENTITY.id, "notion", personalWs);
+    try {
+      const homeRouter = new IdentityToolRouter({
+        identityId: DEV_IDENTITY.id,
+        workspaceId: personalWs,
+        runtime,
+      });
+      const result = await homeRouter.execute({ id: "h2", name: "notion__read", input: {} });
+      expect(result.isError).toBeFalsy();
+    } finally {
+      await store.revokeConnector(DEV_IDENTITY.id, "notion", personalWs);
+    }
   });
 });
 
 describe("personal-connector per-tool policy — surfacing (surface = dispatchable)", () => {
-  it("does not advertise a disallowed tool", async () => {
+  it("advertises granted allowed tools but not the disallowed one", async () => {
     const names = (await runtime.listToolsForWorkspace(SHARED_WS, DEV_IDENTITY.id)).map(
       (t) => t.name,
     );
     expect(names).toContain("granola__read_notes"); // granted + allowed
     expect(names).not.toContain("granola__delete_notes"); // granted but disallowed
+    expect(names).not.toContain("notion__read"); // not granted to Helix
   });
 });
 

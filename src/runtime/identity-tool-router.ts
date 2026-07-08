@@ -38,6 +38,7 @@ import {
   routeToolCall,
 } from "../orchestrator/index.ts";
 import { assertToolAllowed } from "../permissions/assert-tool-allowed.ts";
+import type { PermissionOwner } from "../permissions/permission-store.ts";
 import {
   getRequestContext,
   type RequestContext,
@@ -226,15 +227,15 @@ export class IdentityToolRouter implements ToolRouter {
    * Per-tool `disallow` gate, returning the denial result when the tool's policy
    * is `disallow`, else `null`. Runs after routing, before `source.execute`.
    *
-   * The policy workspace comes from routing, never re-inferred here:
+   * The policy owner comes from routing, never re-inferred here:
    *   - **Workspace tool** — the focused workspace (`routed.context.workspaceId`),
    *     just like the REST registry and `/mcp` doors.
-   *   - **Personal connector** — the owner's `ws_user_`, stamped on the identity
-   *     route as `policyWorkspaceId` (the SAME policy the workspace door consults
-   *     when the connector runs at home), so a granted connector is never MORE
-   *     capable in a shared room than at home.
+   *   - **Personal connector** — the owner, stamped on the identity route as
+   *     `policyOwner` (the SAME policy the workspace door consults when the
+   *     connector runs at home), so a granted connector is never MORE capable in
+   *     a shared room than at home.
    *
-   * Kernel identity sources have no `policyWorkspaceId` and pass through (`null`).
+   * Kernel identity sources have no `policyOwner` and pass through (`null`).
    */
   private async connectorPermissionDenial(
     routed: RoutedToolCall,
@@ -243,9 +244,11 @@ export class IdentityToolRouter implements ToolRouter {
   ): Promise<ToolResult | null> {
     const permissionStore = this.runtime.getPermissionStore?.();
     if (!permissionStore) return null;
-    const policyWsId =
-      routed.kind === "workspace" ? routed.context.workspaceId : routed.policyWorkspaceId;
-    if (!policyWsId) return null;
-    return assertToolAllowed(permissionStore, policyWsId, sourcePrefix, bareToolName);
+    const owner: PermissionOwner | undefined =
+      routed.kind === "workspace"
+        ? { scope: "workspace", wsId: routed.context.workspaceId }
+        : routed.policyOwner;
+    if (!owner) return null;
+    return assertToolAllowed(permissionStore, owner, sourcePrefix, bareToolName);
   }
 }

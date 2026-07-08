@@ -32,11 +32,10 @@
 
 import type { ToolSchema } from "../engine/types.ts";
 import type { IdentityContext } from "../identity/context.ts";
-import type { PermissionStore } from "../permissions/permission-store.ts";
+import type { PermissionOwner, PermissionStore } from "../permissions/permission-store.ts";
 import { parseNamespacedToolName, UnknownNamespacedToolName } from "../tools/namespace.ts";
 import type { ToolSource } from "../tools/types.ts";
 import type { WorkspaceContext } from "../workspace/context.ts";
-import { personalWorkspaceIdFor } from "../workspace/workspace-store.ts";
 
 // ── Errors ─────────────────────────────────────────────────────────
 
@@ -136,11 +135,11 @@ export class UnknownIdentitySource extends Error {
 }
 
 /**
- * Thrown when a personal connector (an identity-owned MCP bundle, resolved from
- * the caller's personal workspace) is reached from a *shared* workspace session
- * with no active grant for it. The one sanctioned identity→shared crossing is
- * consent-gated: a personal connector runs inside a shared room only if the
- * owner granted it there (fail closed). Distinct from `UnknownIdentitySource`
+ * Thrown when a personal connector (an identity-owned MCP connection, resolved
+ * by `userId`) is reached from a workspace session with no active grant for it in
+ * that workspace. A personal connector runs inside a workspace only if the owner
+ * granted it there (fail closed) — uniformly, in every workspace including the
+ * caller's own personal one. Distinct from `UnknownIdentitySource`
  * (the connector exists, it's just not granted here) so the caller can surface
  * an actionable "grant it in settings" message rather than "no such tool".
  */
@@ -216,6 +215,16 @@ export interface OrchestratorRuntime {
    */
   getIdentitySource(name: string): ToolSource | undefined;
 
+  /**
+   * Resolve a user's personal connector to a started `ToolSource`, lazy-starting
+   * it on first use from the caller's identity-plane install record. Returns
+   * `undefined` when the user has no such connector installed. The DYNAMIC,
+   * per-identity connector door — keyed by `(userId, name)`, distinct from the
+   * static kernel `getIdentitySource(name)`. Optional: test stubs may omit it,
+   * in which case a connector name resolves to `UnknownIdentitySource`.
+   */
+  getIdentityConnectorSource?(userId: string, name: string): Promise<ToolSource | undefined>;
+
   /** Fresh `IdentityContext` for the authenticated identity. No workspace. */
   getIdentityContext(identityId: string): IdentityContext;
 
@@ -232,9 +241,9 @@ export interface OrchestratorRuntime {
   /**
    * The walled tool surface for a session bounded to `wsId`: that workspace's
    * tools (namespaced `ws_<id>-<tool>`) plus the caller's identity tools
-   * (bare), plus — when `identityId` is given and `wsId` is a shared room — the
-   * caller's personal connectors granted into it (bare). The engine's reachable
-   * universe — there is no cross-workspace union.
+   * (bare), plus — when `identityId` is given — the caller's personal connectors
+   * granted to `wsId` (bare; any workspace, including the caller's own personal
+   * one). The engine's reachable universe — there is no cross-workspace union.
    */
   listToolsForWorkspace(wsId: string, identityId?: string): Promise<ToolSchema[]>;
 }
@@ -265,18 +274,17 @@ export type RoutedToolCall =
       context: IdentityContext;
       /** The bare `<source>__<tool>` the source executes. */
       toolName: string;
-      /** The source the inner tool dispatches to: a kernel identity source, or a grant-gated personal connector resolved from the caller's `ws_user_` registry. */
+      /** The source the inner tool dispatches to: a kernel identity source, or a grant-gated personal connector resolved from the caller's identity. */
       source: ToolSource;
       /**
-       * For a **personal connector**: the workspace whose per-tool `disallow`
-       * policy governs it — the owner's `ws_user_`. Dispatch doors read this to
-       * apply the owner's policy (the same policy the workspace door consults at
-       * home), so a granted connector is never more capable in a shared room than
-       * at home. **Undefined for kernel identity sources** (they have no per-tool
-       * policy). Stamped here at routing so the doors never re-infer "is this a
-       * personal connector."
+       * For a **personal connector**: the owner (`{scope:"user"}`) whose per-tool
+       * `disallow` policy governs it. Dispatch doors read this to apply the
+       * owner's policy, so a granted connector is never more capable than the
+       * owner permits. **Undefined for kernel identity sources** (they have no
+       * per-tool policy). Stamped here at routing so the doors never re-infer "is
+       * this a personal connector."
        */
-      policyWorkspaceId?: string;
+      policyOwner?: PermissionOwner;
     };
 
 /**
@@ -359,18 +367,19 @@ export async function routeToolCall(opts: {
  *   1. A **kernel identity source** (`conversations` / `files` / `automations`)
  *      — the caller's own data, always reachable, gated per-entity by
  *      `canAccess`.
- *   2. A **personal connector** — an MCP bundle the caller installed in their
- *      own personal workspace (`ws_user_<identityId>`), reached here as a bare
- *      identity tool. Free inside the caller's OWN personal workspace; inside
- *      any *shared* workspace it requires an active `PersonalConnectorGrant`
- *      (fail closed → `ConnectorGrantDenied`). The connector runs as the caller
- *      with its own `ws_user_`-bound credentials (bound at source construction),
- *      so the session's workspace never enters the dispatch — `ws_user_` is only
- *      the resolution substrate, NOT a second workspace in scope (no crossing).
+ *   2. A **personal connector** — an MCP connection the caller installed on their
+ *      own identity, reached here as a bare identity tool and resolved by
+ *      `userId` (never through a workspace registry). Reaching it inside a
+ *      workspace requires an active `PersonalConnectorGrant` to THAT workspace
+ *      (fail closed → `ConnectorGrantDenied`) — uniformly, with no special case
+ *      for the caller's own personal workspace (a personal workspace is just a
+ *      workspace). The connector runs as the caller with its own identity-scoped
+ *      credentials (`users/<id>/…`), so the session's workspace never enters the
+ *      dispatch — no crossing.
  *
  * `workspaceId` is the session's one workspace (the room the call runs in), used
- * ONLY to decide "own home (free)" vs "shared room (needs a grant)"; it is never
- * the connector's credential source.
+ * ONLY to decide WHICH workspace's grant the connector requires — never
+ * free-vs-gated, and never the connector's credential source.
  */
 async function routeIdentityCall(
   identityId: string,
@@ -391,20 +400,23 @@ async function routeIdentityCall(
     };
   }
 
-  const personalWsId = personalWorkspaceIdFor(identityId);
-  const connector = getPersonalConnectorSource(runtime, personalWsId, sourceName);
+  // A personal connector is an identity-owned source, resolved by userId on the
+  // identity door (lazy-started on first use) — never through a workspace
+  // registry.
+  const connector = await runtime.getIdentityConnectorSource?.(identityId, sourceName);
   if (connector) {
-    // The grant is the reachability gate for this crossing. Free inside the
-    // caller's own personal workspace; a shared room needs an active grant.
-    if (workspaceId !== personalWsId) {
-      const granted =
-        workspaceId !== undefined &&
-        (await runtime
-          .getPermissionStore?.()
-          ?.isConnectorGranted(identityId, sourceName, workspaceId)) === true;
-      if (!granted) {
-        throw new ConnectorGrantDenied(identityId, sourceName, workspaceId);
-      }
+    // A personal connector is the user's own; reaching it inside a workspace
+    // requires an active grant to THAT workspace — uniformly, with no special
+    // case for the user's personal workspace (a personal workspace is just a
+    // workspace and gets no "free at home" treatment). Fail closed. The
+    // connector runs as the caller with its own identity-scoped credentials.
+    const granted =
+      workspaceId !== undefined &&
+      (await runtime
+        .getPermissionStore?.()
+        ?.isConnectorGranted(identityId, sourceName, workspaceId)) === true;
+    if (!granted) {
+      throw new ConnectorGrantDenied(identityId, sourceName, workspaceId);
     }
     return {
       kind: "identity",
@@ -412,30 +424,12 @@ async function routeIdentityCall(
       toolName,
       source: connector,
       // The dispatch doors apply the owner's per-tool `disallow` from here — the
-      // connector's home workspace, the same policy the workspace door consults.
-      policyWorkspaceId: personalWsId,
+      // owner's identity-scoped `{scope:"user"}` policy.
+      policyOwner: { scope: "user", userId: identityId },
     };
   }
 
   throw new UnknownIdentitySource(toolName, sourceName);
-}
-
-/**
- * Non-throwing lookup of a personal connector in the caller's personal-workspace
- * registry. `getRegistryForWorkspace` throws when the workspace has no
- * provisioned registry; that is not an error here — it just means "no such
- * personal connector," so we fall through to `UnknownIdentitySource`.
- */
-function getPersonalConnectorSource(
-  runtime: OrchestratorRuntime,
-  personalWsId: string,
-  sourceName: string,
-): ToolSource | undefined {
-  try {
-    return runtime.getRegistryForWorkspace(personalWsId).getSource(sourceName);
-  } catch {
-    return undefined;
-  }
 }
 
 /** Resolve a workspace tool name's `<source>__` prefix to its registered `ToolSource`, self-healing a transiently absent source once. */
