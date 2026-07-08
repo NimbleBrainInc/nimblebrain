@@ -276,7 +276,7 @@ export function createManageConnectorsTool(ctx: ManageConnectorsContext): InProc
           type: "string",
           enum: ["workspace"],
           description:
-            "Stage 2: only `workspace` is accepted (legacy `user` scope was removed). Reserved for forward compatibility; defaults to `workspace`.",
+            "Workspace-vs-user scope hint for `list_installed` / `list_tools` / `uninstall` / `disconnect`. The permission actions (`get_permissions` / `set_permissions` / `list_tools_with_permissions`) IGNORE this and auto-resolve scope from where the connector is installed — a personal connector (on the caller's identity) is user-scoped, anything else is workspace-scoped — so passing `scope` cannot pin their target.",
         },
         tools: {
           type: "object",
