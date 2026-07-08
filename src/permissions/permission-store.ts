@@ -42,6 +42,16 @@ import { WORKSPACE_ID_RE } from "../workspace/workspace-store.ts";
 
 export type ToolPolicy = "allow" | "disallow";
 
+/**
+ * The single "is this tool blocked?" predicate. An absent policy is the default
+ * (`allow`). Centralizing it keeps the dispatch gate (`assertToolAllowed`) and
+ * the surfacing filter agreeing by construction — and means a future
+ * `needs_approval` third state (see above) is classified in one place, not two.
+ */
+export function isDisallowed(policy: ToolPolicy | undefined): boolean {
+  return policy === "disallow";
+}
+
 export interface ConnectorPermissions {
   tools?: Record<string, ToolPolicy>;
 }

@@ -85,22 +85,6 @@ export interface IdentityToolRouterOptions {
   onWorkspaceDispatch?: WorkspaceDispatchHook;
 }
 
-/**
- * Split a routed inner tool name (`<source>__<tool>`) into its source prefix and
- * bare tool name (split on the FIRST `__`; no separator ⇒ both are the whole name).
- */
-function splitInnerToolName(innerName: string): {
-  sourcePrefix: string;
-  bareToolName: string;
-} {
-  const sepIndex = innerName.indexOf("__");
-  if (sepIndex < 0) return { sourcePrefix: innerName, bareToolName: innerName };
-  return {
-    sourcePrefix: innerName.slice(0, sepIndex),
-    bareToolName: innerName.slice(sepIndex + 2),
-  };
-}
-
 /** Build the routed request scope, carrying workspace agent/model overrides from the ambient scope onto a workspace route. */
 function buildPerCallScope(
   routed: RoutedToolCall,
@@ -132,6 +116,25 @@ function buildPerCallContext(
     // tools with no workspace in scope even when the chat set one.
     ...(outer?.fileWorkspaceId !== undefined ? { fileWorkspaceId: outer.fileWorkspaceId } : {}),
     ...(outer?.toolPromotion !== undefined ? { toolPromotion: outer.toolPromotion } : {}),
+  };
+}
+
+/**
+ * Split `<source>__<tool>` into its source prefix and bare tool name, on the
+ * FIRST `__`. A local mirror of `tools/namespace.ts::splitInnerToolName`
+ * (byte-identical logic) — a `src/runtime/` module may not import `src/tools/`
+ * (the `check:cycles` layering rule), so the canonical helper can't be shared
+ * here. Keep the two in sync.
+ */
+function splitInnerToolName(innerName: string): {
+  sourcePrefix: string;
+  bareToolName: string;
+} {
+  const sepIndex = innerName.indexOf("__");
+  if (sepIndex < 0) return { sourcePrefix: innerName, bareToolName: innerName };
+  return {
+    sourcePrefix: innerName.slice(0, sepIndex),
+    bareToolName: innerName.slice(sepIndex + 2),
   };
 }
 

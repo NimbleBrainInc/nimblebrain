@@ -1,6 +1,6 @@
 import { textContent } from "../engine/content-helpers.ts";
 import type { ToolResult } from "../engine/types.ts";
-import type { PermissionStore } from "./permission-store.ts";
+import { isDisallowed, type PermissionStore } from "./permission-store.ts";
 
 /**
  * The single workspace connector-permission check. Returns the denied
@@ -22,7 +22,7 @@ export async function assertToolAllowed(
 ): Promise<ToolResult | null> {
   const owner = { scope: "workspace" as const, wsId };
   const policy = await permissionStore.get(owner, serverName, toolName);
-  if (policy !== "disallow") return null;
+  if (!isDisallowed(policy)) return null;
   return {
     content: textContent(
       `Tool "${serverName}__${toolName}" is disabled by policy. Adjust in Settings → Connectors → ${serverName} → Configure.`,

@@ -72,7 +72,7 @@ import { buildModelResolver, resolveModelString } from "../model/registry.ts";
 import { registerBuiltinCredentialProviders } from "../oauth/minted-credential-provider.ts";
 import { requestIdentityAttrs, withSpan } from "../observability/index.ts";
 import { log } from "../observability/log.ts";
-import { PermissionStore } from "../permissions/permission-store.ts";
+import { isDisallowed, PermissionStore } from "../permissions/permission-store.ts";
 import type {
   AppStateInfo,
   FocusedAppInfo,
@@ -3057,7 +3057,7 @@ export class Runtime {
         policyByConnector.set(source, policies);
       }
       const bare = sep > 0 ? t.name.slice(sep + 2) : t.name;
-      if (policies[bare] === "disallow") continue;
+      if (isDisallowed(policies[bare])) continue;
       out.push({
         name: t.name,
         description: t.description,

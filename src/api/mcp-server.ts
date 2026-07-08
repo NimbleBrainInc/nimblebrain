@@ -103,7 +103,7 @@ import { type RequestContext, runWithRequestContext } from "../runtime/request-c
 import type { Runtime } from "../runtime/runtime.ts";
 import { IDENTITY_SOURCES } from "../tools/identity-sources.ts";
 import { McpSource } from "../tools/mcp-source.ts";
-import { bareToolName } from "../tools/namespace.ts";
+import { bareToolName, splitInnerToolName } from "../tools/namespace.ts";
 import type { ToolRegistry } from "../tools/registry.ts";
 import {
   createMcpTaskStore,
@@ -959,20 +959,18 @@ async function executeIdentityToolCall(
       isError: true,
     };
   }
-  const sep = fullName.indexOf("__");
-  const bare = sep >= 0 ? fullName.slice(sep + 2) : fullName;
+  const { sourcePrefix, bareToolName: bare } = splitInnerToolName(fullName);
 
   // Per-tool `disallow` gate for a personal connector reached via the identity
   // door — honor the OWNER'S policy from its home workspace (`policyWorkspaceId`,
   // stamped at routing), the same policy the workspace door consults at home, so
   // a shared room is never more capable than home. Kernel identity sources have
   // no `policyWorkspaceId` and are skipped.
-  const sourceName = sep >= 0 ? fullName.slice(0, sep) : null;
-  if (sourceName && routed.policyWorkspaceId) {
+  if (routed.policyWorkspaceId) {
     const denied = await assertToolAllowed(
       runtime.getPermissionStore(),
       routed.policyWorkspaceId,
-      sourceName,
+      sourcePrefix,
       bare,
     );
     if (denied) return toCallToolResult(denied);

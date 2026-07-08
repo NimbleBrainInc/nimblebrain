@@ -254,6 +254,25 @@ export function bareToolName(s: string): string {
 }
 
 /**
+ * Split an inner tool name (`<source>__<tool>`, i.e. a name already stripped of
+ * any `ws_<id>-` prefix) into its source prefix and bare tool name, on the FIRST
+ * `__`. No separator ⇒ both are the whole name. The canonical decomposition every
+ * dispatch door uses so `<source>` (the registry key) and `<tool>` (what the
+ * source executes) are derived one way, not re-hand-rolled per door.
+ */
+export function splitInnerToolName(innerName: string): {
+  sourcePrefix: string;
+  bareToolName: string;
+} {
+  const sepIndex = innerName.indexOf("__");
+  if (sepIndex < 0) return { sourcePrefix: innerName, bareToolName: innerName };
+  return {
+    sourcePrefix: innerName.slice(0, sepIndex),
+    bareToolName: innerName.slice(sepIndex + 2),
+  };
+}
+
+/**
  * Parse a workspace-qualified **source** (server) name.
  *
  * A source name has the same `ws_<id>-<rest>` shape as a tool name, but its
