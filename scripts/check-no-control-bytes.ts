@@ -13,7 +13,7 @@
  * Flags any byte in 0x00-0x08, 0x0B, 0x0C, 0x0E-0x1F, or 0x7F. Tab (0x09),
  * newline (0x0A), and carriage return (0x0D) are allowed.
  *
- * Scope: `src/` *.ts. (web/ has its own toolchain; scripts/ and tests are out of scope.)
+ * Scope: `src/` *.ts and *.tsx. (web/ has its own toolchain; scripts/ and tests are out of scope.)
  */
 
 import { readFileSync } from "node:fs";
@@ -56,7 +56,7 @@ function scanFile(absPath: string, violations: Violation[]): void {
 
 async function main(): Promise<void> {
   const violations: Violation[] = [];
-  const glob = new Glob("**/*.ts");
+  const glob = new Glob("**/*.{ts,tsx}");
   let scanned = 0;
 
   for await (const rel of glob.scan({ cwd: SRC_ROOT })) {
