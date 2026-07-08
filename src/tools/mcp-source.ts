@@ -295,7 +295,7 @@ export function toolListChanged(a: readonly Tool[], b: readonly Tool[]): boolean
     tools
       .map((t) => JSON.stringify([t.name, t.description, t.inputSchema, t.execution ?? null]))
       .sort()
-      .join(" ");
+      .join("\u0000");
   return signature(a) !== signature(b);
 }
 
