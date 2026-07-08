@@ -255,7 +255,7 @@ export function createManageConnectorsTool(ctx: ManageConnectorsContext): InProc
         wsId: {
           type: "string",
           description:
-            "Target workspace. For `install`: defaults to the request's workspace (X-Workspace-Id), so the web shell installs into the workspace it's viewing without passing this; supply it only to install elsewhere. For `grant_connector` / `revoke_connector`: the shared workspace to grant/revoke the caller's personal connector to — REQUIRED and explicit (no header fallback). There is no default-to-personal fallback.",
+            "Target workspace. For `install`: defaults to the request's workspace (X-Workspace-Id), so the web shell installs into the workspace it's viewing without passing this; supply it only to install elsewhere. For `grant_connector` / `revoke_connector`: the workspace to grant/revoke the caller's personal connector to (any workspace the caller belongs to, including their own personal one) — REQUIRED and explicit (no header fallback).",
         },
         clientId: {
           type: "string",
@@ -2489,23 +2489,22 @@ async function handleSetPermissions(
 
 // ── personal-connector grants ─────────────────────────────────────
 //
-// A personal connector lives in the caller's own personal workspace
-// (`ws_user_<callerId>`). A grant lets the caller USE it inside a shared
-// workspace they belong to — the one sanctioned crossing (fail closed at
-// dispatch). The grant is the caller's own (`grantedBy = callerId`) and is
-// per-granter: it only widens the granter's OWN reach, never another member's,
-// so no admin gate is needed — any member may grant their own connector.
+// A personal connector is installed on the caller's identity (their
+// `connectors.json`). A grant lets the caller USE it inside a workspace they
+// belong to — any workspace, including their own personal one (a personal
+// workspace is just a workspace); reaching it there fails closed at dispatch
+// without an active grant. The grant is the caller's own (`grantedBy =
+// callerId`) and is per-granter: it only widens the granter's OWN reach, never
+// another member's, so no admin gate is needed — any member may grant their own
+// connector.
 //
-// Every bundle in a personal workspace is a connector (a remote MCP connection):
-// the admission gate in `handleInstall` admits only `remote-oauth` installs, and
-// that is the only write-path into a personal workspace's bundle set. So the
-// grant / list handlers below trust the invariant and don't re-derive "is this a
-// connector" — there is no other kind of bundle for them to exclude.
+// A caller's personal connectors are all remote MCP connections (install admits
+// only `remote-oauth`), so the grant / list handlers trust that every entry is a
+// connector and don't re-derive "is this a connector."
 
 /**
  * `list_personal_connectors` — the caller's personal connectors and, for each,
- * the shared workspaces it's granted to. The read behind the Profile → Connectors
- * page.
+ * the workspaces it's granted to. The read behind the Profile → Connectors page.
  */
 async function handleListPersonalConnectors(
   ctx: ManageConnectorsContext,

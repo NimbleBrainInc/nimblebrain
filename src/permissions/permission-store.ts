@@ -26,15 +26,15 @@ import { WORKSPACE_ID_RE } from "../workspace/workspace-store.ts";
  * the connector functional).
  *
  * The `grants` block is the opposite posture — deny-by-default. It records
- * personal-connector grants: which shared workspaces a user has explicitly
+ * personal-connector grants: which workspaces a user has explicitly
  * allowed one of their own personal connectors to be used inside. It only
  * ever lives in a *user*-scope record (a grant is the granting user's, and
  * revoking it is theirs). Absence of a grant means "not granted" — the
- * dispatch-time check fails closed. A connector used inside the user's own
- * personal workspace needs no grant (home is free) — the dispatch layer
- * owns that semantic and never asks the store to record a self-grant. The
- * store itself is a dumb ledger with no knowledge of a user's personal
- * workspace id, so it faithfully records whatever grant it is handed.
+ * dispatch-time check fails closed uniformly, in every workspace including the
+ * user's own personal one (a personal workspace is just a workspace — no
+ * free-at-home). The store is a dumb ledger with no knowledge of
+ * personal-workspace ids; it faithfully records whatever grant it is handed,
+ * self-grants to the caller's own personal workspace included.
  *
  * Future expansion (see WORKSPACE_SECRETS_BROKER_SPEC): "needs_approval"
  * as a third state once the agent-pause-and-confirm flow lands.
@@ -56,7 +56,7 @@ export interface ConnectorPermissions {
   tools?: Record<string, ToolPolicy>;
 }
 
-/** Personal-connector grants: connector serverName → the shared-workspace ids it may be used in. */
+/** Personal-connector grants: connector serverName → the workspace ids it may be used in. */
 export type ConnectorGrants = Record<string, string[]>;
 
 export interface PermissionsRecord {
@@ -145,7 +145,7 @@ export class PermissionStore {
 
   /**
    * Is `serverName` (a personal connector) granted for use inside the
-   * shared workspace `wsId`? The dispatch-time check — returns false
+   * workspace `wsId`? The dispatch-time check — returns false
    * (deny) when no grant is recorded or any input is malformed.
    */
   async isConnectorGranted(userId: string, serverName: string, wsId: string): Promise<boolean> {
@@ -155,7 +155,7 @@ export class PermissionStore {
   }
 
   /**
-   * The shared-workspace ids a user has granted a personal connector to.
+   * The workspace ids a user has granted a personal connector to.
    * Empty when none — never null.
    */
   async getConnectorGrants(userId: string, serverName: string): Promise<string[]> {
@@ -174,8 +174,8 @@ export class PermissionStore {
   }
 
   /**
-   * The connector names a user has granted to a specific shared workspace — the
-   * surfacing read (one file load; "which of my personal connectors may this room
+   * The connector names a user has granted to a specific workspace — the
+   * surfacing read (one file load; "which of my personal connectors may this workspace
    * see"). Empty when none; fails closed (empty) on a malformed `wsId`.
    */
   async connectorsGrantedTo(userId: string, wsId: string): Promise<string[]> {
@@ -189,7 +189,8 @@ export class PermissionStore {
   }
 
   /**
-   * Grant a personal connector for use inside a shared workspace.
+   * Grant a personal connector for use inside a workspace (any workspace,
+   * including the user's own personal one).
    * Idempotent — re-granting an existing (connector, workspace) is a no-op.
    * Throws on a malformed serverName or target wsId (strict write).
    */
@@ -207,7 +208,7 @@ export class PermissionStore {
   }
 
   /**
-   * Revoke a personal connector's grant for a shared workspace.
+   * Revoke a personal connector's grant for a workspace.
    * Idempotent. Prunes the connector key when its last grant is removed
    * and the `grants` block when it empties, so the file stays small.
    */
