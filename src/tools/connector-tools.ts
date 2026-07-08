@@ -1078,6 +1078,21 @@ async function handleInstall(
     }
   }
 
+  // A personal workspace is a CONNECTOR space: it holds the user's own remote
+  // MCP connections (Gmail/Granola/Composio/…), which they can grant into shared
+  // rooms. Only `remote-oauth` (a remote MCP connection) is admitted; `mpak-bundle`
+  // / local installs belong in a shared workspace. This keeps "a bundle in your
+  // personal workspace" == "a grantable personal connector" TRUE BY CONSTRUCTION,
+  // so grant / surfacing / dispatch need no per-bundle connector check — and it
+  // avoids the legacy `upjack` app/connector flag entirely (the discriminator is
+  // the install kind, i.e. whether it's a remote MCP connection).
+  if (ws.isPersonal === true && entry.install.kind !== "remote-oauth") {
+    return errResult(
+      `Your personal workspace is for connectors — remote MCP connections. ` +
+        `"${entry.id}" installs as a "${entry.install.kind}" bundle; install it into a shared workspace instead.`,
+    );
+  }
+
   switch (entry.install.kind) {
     case "remote-oauth":
       return handleInstallRemoteOAuth(ctx, wsId, ws, entry);
@@ -2490,6 +2505,9 @@ async function handleListPersonalConnectors(
   const store = ctx.runtime.getPermissionStore();
   const lifecycle = ctx.runtime.getLifecycle();
 
+  // The caller's whole grant map, read once (not per connector).
+  const grantsByConnector = await store.listConnectorGrants(callerId);
+
   const connectors = [];
   for (const instance of lifecycle.getInstances()) {
     if (instance.wsId !== personalWsId) continue;
@@ -2498,7 +2516,7 @@ async function handleListPersonalConnectors(
       displayName: instance.bundleName,
       description: instance.description ?? null,
       state: instance.state,
-      grantedWorkspaces: await store.getConnectorGrants(callerId, instance.serverName),
+      grantedWorkspaces: grantsByConnector[instance.serverName] ?? [],
     });
   }
   return {

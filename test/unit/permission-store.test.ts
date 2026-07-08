@@ -300,6 +300,22 @@ describe("PermissionStore — personal-connector grants", () => {
     }
   });
 
+  test("listConnectorGrants returns the whole grant map in one read", async () => {
+    const { store, cleanup } = freshStore();
+    try {
+      expect(await store.listConnectorGrants("u1")).toEqual({});
+      await store.grantConnector("u1", "granola", WS);
+      await store.grantConnector("u1", "granola", WS2);
+      await store.grantConnector("u1", "gmail", WS);
+      expect(await store.listConnectorGrants("u1")).toEqual({
+        granola: [WS, WS2],
+        gmail: [WS],
+      });
+    } finally {
+      cleanup();
+    }
+  });
+
   test("connectorsGrantedTo is empty with no grants and fails closed on a bad wsId", async () => {
     const { store, cleanup } = freshStore();
     try {

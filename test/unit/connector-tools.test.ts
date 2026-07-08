@@ -20,6 +20,7 @@ import {
 } from "../../src/tools/connector-tools.ts";
 import { ToolRegistry } from "../../src/tools/registry.ts";
 import { WorkspaceContext } from "../../src/workspace/context.ts";
+import { ensureUserWorkspace } from "../../src/workspace/provisioning.ts";
 import { personalWorkspaceIdFor, WorkspaceStore } from "../../src/workspace/workspace-store.ts";
 
 /**
@@ -1558,5 +1559,58 @@ describe("deriveConnectorStatus", () => {
       missingOperatorSetup: true,
     });
     expect(result.status).toBe("needs_setup");
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────
+// install — personal workspace admits only connectors (remote MCP)
+// ─────────────────────────────────────────────────────────────────────
+
+describe("manage_connectors.install — personal workspace is connectors-only", () => {
+  let h: Harness;
+
+  beforeEach(async () => {
+    h = buildHarness();
+    await provisionWorkspace(h); // shared ws_acme, ADMIN_USER is admin
+    await ensureUserWorkspace(h.workspaceStore, {
+      id: ADMIN_USER.id,
+      displayName: ADMIN_USER.displayName,
+    });
+  });
+
+  afterEach(() => {
+    rmSync(h.workDir, { recursive: true, force: true });
+  });
+
+  const PERSONAL_MSG = /personal workspace is for connectors/i;
+
+  test("rejects a non-remote-oauth (mpak-bundle) install into the personal workspace", async () => {
+    const personalWs = personalWorkspaceIdFor(ADMIN_USER.id);
+    const tool = buildTool(h, ADMIN_USER, personalWs);
+    const result = await tool.handler({ action: "install", entry: mpakEntry() });
+    expect(result.isError).toBe(true);
+    expect(structured(result).error).not.toBe("permission_denied"); // owner IS admin of their personal ws
+    const text = (result.content?.[0] as { text?: string })?.text ?? "";
+    expect(text).toMatch(PERSONAL_MSG);
+  });
+
+  test("admits a remote-oauth connector into the personal workspace (gate passes)", async () => {
+    const personalWs = personalWorkspaceIdFor(ADMIN_USER.id);
+    const tool = buildTool(h, ADMIN_USER, personalWs);
+    const result = await tool.handler({ action: "install", entry: dropboxEntry() });
+    // remote-oauth is a connector — the gate must NOT block it. (It may still
+    // fail later for an unrelated reason, e.g. missing operator setup — that's
+    // not the personal-workspace gate.)
+    const text = (result.content?.[0] as { text?: string })?.text ?? "";
+    expect(text).not.toMatch(PERSONAL_MSG);
+  });
+
+  test("does not apply the connectors-only gate to a shared workspace", async () => {
+    const tool = buildTool(h, ADMIN_USER, h.wsId); // shared ws_acme
+    const result = await tool.handler({ action: "install", entry: mpakEntry() });
+    // An mpak-bundle install is fine in a shared workspace — whatever the outcome,
+    // it is never the personal-workspace rejection.
+    const text = (result.content?.[0] as { text?: string })?.text ?? "";
+    expect(text).not.toMatch(PERSONAL_MSG);
   });
 });
