@@ -85,22 +85,6 @@ export interface IdentityToolRouterOptions {
   onWorkspaceDispatch?: WorkspaceDispatchHook;
 }
 
-/**
- * Split a routed inner tool name (`<source>__<tool>`) into its source prefix and
- * bare tool name (split on the FIRST `__`; no separator ⇒ both are the whole name).
- */
-function splitInnerToolName(innerName: string): {
-  sourcePrefix: string;
-  bareToolName: string;
-} {
-  const sepIndex = innerName.indexOf("__");
-  if (sepIndex < 0) return { sourcePrefix: innerName, bareToolName: innerName };
-  return {
-    sourcePrefix: innerName.slice(0, sepIndex),
-    bareToolName: innerName.slice(sepIndex + 2),
-  };
-}
-
 /** Build the routed request scope, carrying workspace agent/model overrides from the ambient scope onto a workspace route. */
 function buildPerCallScope(
   routed: RoutedToolCall,
@@ -132,6 +116,25 @@ function buildPerCallContext(
     // tools with no workspace in scope even when the chat set one.
     ...(outer?.fileWorkspaceId !== undefined ? { fileWorkspaceId: outer.fileWorkspaceId } : {}),
     ...(outer?.toolPromotion !== undefined ? { toolPromotion: outer.toolPromotion } : {}),
+  };
+}
+
+/**
+ * Split `<source>__<tool>` into its source prefix and bare tool name, on the
+ * FIRST `__`. A local mirror of `tools/namespace.ts::splitInnerToolName`
+ * (byte-identical logic) — a `src/runtime/` module may not import `src/tools/`
+ * (the `check:cycles` layering rule), so the canonical helper can't be shared
+ * here. Keep the two in sync.
+ */
+function splitInnerToolName(innerName: string): {
+  sourcePrefix: string;
+  bareToolName: string;
+} {
+  const sepIndex = innerName.indexOf("__");
+  if (sepIndex < 0) return { sourcePrefix: innerName, bareToolName: innerName };
+  return {
+    sourcePrefix: innerName.slice(0, sepIndex),
+    bareToolName: innerName.slice(sepIndex + 2),
   };
 }
 
@@ -220,28 +223,29 @@ export class IdentityToolRouter implements ToolRouter {
   }
 
   /**
-   * Connector permission gate for workspace-routed calls — returns the denial
-   * result when an operator set the tool's policy to `disallow`, else `null`.
+   * Per-tool `disallow` gate, returning the denial result when the tool's policy
+   * is `disallow`, else `null`. Runs after routing, before `source.execute`.
    *
-   * The engine door must honor an operator's per-tool `disallow` just like the
-   * REST registry gate does — otherwise a tool an admin disabled stays callable
-   * by the agent loop. Only workspace-routed calls carry a connector permission;
-   * identity-door tools (conversations / files / automations) have none — those
-   * pass through (`null`).
+   * The policy workspace comes from routing, never re-inferred here:
+   *   - **Workspace tool** — the focused workspace (`routed.context.workspaceId`),
+   *     just like the REST registry and `/mcp` doors.
+   *   - **Personal connector** — the owner's `ws_user_`, stamped on the identity
+   *     route as `policyWorkspaceId` (the SAME policy the workspace door consults
+   *     when the connector runs at home), so a granted connector is never MORE
+   *     capable in a shared room than at home.
+   *
+   * Kernel identity sources have no `policyWorkspaceId` and pass through (`null`).
    */
   private async connectorPermissionDenial(
     routed: RoutedToolCall,
     sourcePrefix: string,
     bareToolName: string,
   ): Promise<ToolResult | null> {
-    if (routed.kind !== "workspace") return null;
     const permissionStore = this.runtime.getPermissionStore?.();
     if (!permissionStore) return null;
-    return assertToolAllowed(
-      permissionStore,
-      routed.context.workspaceId,
-      sourcePrefix,
-      bareToolName,
-    );
+    const policyWsId =
+      routed.kind === "workspace" ? routed.context.workspaceId : routed.policyWorkspaceId;
+    if (!policyWsId) return null;
+    return assertToolAllowed(permissionStore, policyWsId, sourcePrefix, bareToolName);
   }
 }

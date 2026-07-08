@@ -72,7 +72,7 @@ import { buildModelResolver, resolveModelString } from "../model/registry.ts";
 import { registerBuiltinCredentialProviders } from "../oauth/minted-credential-provider.ts";
 import { requestIdentityAttrs, withSpan } from "../observability/index.ts";
 import { log } from "../observability/log.ts";
-import { PermissionStore } from "../permissions/permission-store.ts";
+import { isDisallowed, PermissionStore } from "../permissions/permission-store.ts";
 import type {
   AppStateInfo,
   FocusedAppInfo,
@@ -574,6 +574,14 @@ export class Runtime {
       // Bare-name globs in `tools: [...]` match against THIS set; namespaced
       // globs match the bound workspace's reachable set — see
       // `DelegateContext.tools`.
+      //
+      // Deliberately EXCLUDES personal connectors (which `availableTools` does
+      // surface). A delegated child runs as the parent's exact identity, so a
+      // granted personal connector IS in the child's reachable set — but it is
+      // not in the child's *default* active set: a sub-agent gets one only when
+      // the parent explicitly opts it in via a `granola__*` glob. That is
+      // least-privilege for delegation, and it is a decision, not an accident —
+      // do not add personal connectors here to "make the sets consistent."
       defaultActiveTools: async (): Promise<ToolSchema[]> => {
         if (!rtHolder.rt) throw new Error("Runtime not initialized");
         const rt = rtHolder.rt;
@@ -3010,22 +3018,9 @@ export class Runtime {
     try {
       const granted = await this.getPermissionStore().connectorsGrantedTo(identityId, sessionWsId);
       if (granted.length === 0) return [];
-      const grantedSet = new Set(granted);
       const registry = await this.ensureWorkspaceRegistry(personalWsId);
       const tools = await registry.availableTools();
-      return tools
-        .filter((t) => {
-          const sep = t.name.indexOf("__");
-          const source = sep > 0 ? t.name.slice(0, sep) : t.name;
-          // Granted, and never a name that shadows a kernel identity source.
-          return grantedSet.has(source) && !isIdentitySource(source);
-        })
-        .map((t) => ({
-          name: t.name,
-          description: t.description,
-          inputSchema: t.inputSchema,
-          ...(t.annotations !== undefined ? { annotations: t.annotations } : {}),
-        }));
+      return await this._filterSurfacedConnectorTools(tools, new Set(granted), personalWsId);
     } catch (err) {
       log.debug(
         "mcp",
@@ -3035,6 +3030,42 @@ export class Runtime {
       );
       return [];
     }
+  }
+
+  /**
+   * Keep the personal-connector tools that are granted AND not `disallow`ed by
+   * the owner. **Surface = dispatchable:** the disallow read is the SAME
+   * `{scope:"workspace", ws_user_}` policy the identity-door gate enforces
+   * (per-connector, read once), so we never advertise a tool that would then be
+   * denied. Kernel-source names are excluded (they can't be shadowed).
+   */
+  private async _filterSurfacedConnectorTools(
+    tools: readonly ToolSchema[],
+    grantedSet: ReadonlySet<string>,
+    policyWsId: string,
+  ): Promise<ToolSchema[]> {
+    const store = this.getPermissionStore();
+    const policyByConnector = new Map<string, Record<string, "allow" | "disallow">>();
+    const out: ToolSchema[] = [];
+    for (const t of tools) {
+      const sep = t.name.indexOf("__");
+      const source = sep > 0 ? t.name.slice(0, sep) : t.name;
+      if (!grantedSet.has(source) || isIdentitySource(source)) continue;
+      let policies = policyByConnector.get(source);
+      if (!policies) {
+        policies = await store.getConnector({ scope: "workspace", wsId: policyWsId }, source);
+        policyByConnector.set(source, policies);
+      }
+      const bare = sep > 0 ? t.name.slice(sep + 2) : t.name;
+      if (isDisallowed(policies[bare])) continue;
+      out.push({
+        name: t.name,
+        description: t.description,
+        inputSchema: t.inputSchema,
+        ...(t.annotations !== undefined ? { annotations: t.annotations } : {}),
+      });
+    }
+    return out;
   }
 
   /** Get the per-workspace registries map. */

@@ -91,6 +91,7 @@ import type { ToolResult } from "../engine/types.ts";
 import type { UserIdentity } from "../identity/provider.ts";
 import { log } from "../observability/log.ts";
 import {
+  ConnectorGrantDenied,
   routeToolCall,
   UnknownIdentitySource,
   UnknownNamespacedToolName,
@@ -102,7 +103,7 @@ import { type RequestContext, runWithRequestContext } from "../runtime/request-c
 import type { Runtime } from "../runtime/runtime.ts";
 import { IDENTITY_SOURCES } from "../tools/identity-sources.ts";
 import { McpSource } from "../tools/mcp-source.ts";
-import { bareToolName } from "../tools/namespace.ts";
+import { bareToolName, splitInnerToolName } from "../tools/namespace.ts";
 import type { ToolRegistry } from "../tools/registry.ts";
 import {
   createMcpTaskStore,
@@ -755,7 +756,7 @@ function createServer(
     // Identity request (bare `<source>__<tool>`): dispatch against the caller's
     // identity, no workspace. See `executeIdentityToolCall` for the rationale.
     if (routed.kind === "identity") {
-      return executeIdentityToolCall(routed, name, args, features, sessionCtx);
+      return executeIdentityToolCall(routed, name, args, features, sessionCtx, runtime);
     }
     return executeWorkspaceToolCall(
       routed,
@@ -914,6 +915,13 @@ function mapRouteToolError(err: unknown): never {
       { reason: "unknown_identity_source", toolName: err.toolName },
     );
   }
+  if (err instanceof ConnectorGrantDenied) {
+    throw new McpError(
+      ErrorCode.InvalidParams,
+      `Personal connector "${err.connector}" is not granted to this workspace`,
+      { reason: "connector_grant_denied", connector: err.connector, wsId: err.workspaceId },
+    );
+  }
   throw err;
 }
 
@@ -931,6 +939,7 @@ async function executeIdentityToolCall(
   args: Record<string, unknown> | undefined,
   features: ResolvedFeatures,
   sessionCtx: McpSessionContext,
+  runtime: Runtime,
 ) {
   const fullName = routed.toolName;
   if (!isToolEnabled(fullName, features)) {
@@ -950,8 +959,23 @@ async function executeIdentityToolCall(
       isError: true,
     };
   }
-  const sep = fullName.indexOf("__");
-  const bare = sep >= 0 ? fullName.slice(sep + 2) : fullName;
+  const { sourcePrefix, bareToolName: bare } = splitInnerToolName(fullName);
+
+  // Per-tool `disallow` gate for a personal connector reached via the identity
+  // door — honor the OWNER'S policy from its home workspace (`policyWorkspaceId`,
+  // stamped at routing), the same policy the workspace door consults at home, so
+  // a shared room is never more capable than home. Kernel identity sources have
+  // no `policyWorkspaceId` and are skipped.
+  if (routed.policyWorkspaceId) {
+    const denied = await assertToolAllowed(
+      runtime.getPermissionStore(),
+      routed.policyWorkspaceId,
+      sourcePrefix,
+      bare,
+    );
+    if (denied) return toCallToolResult(denied);
+  }
+
   const identityCtx: RequestContext = {
     identity: sessionCtx.identity ?? null,
     scope: { kind: "identity" },
