@@ -28,6 +28,7 @@ import type { UserConfigFieldDef } from "../config/workspace-credentials.ts";
 import { connectorSkillIdentityFrom } from "../connectors/server-detail.ts";
 import { textContent } from "../engine/content-helpers.ts";
 import type { ToolResult } from "../engine/types.ts";
+import { IdentityConnectorStore } from "../identity/connector-store.ts";
 import type { UserIdentity } from "../identity/provider.ts";
 import { log } from "../observability/log.ts";
 import type { ConnectorCatalogEntry } from "../registries/projection.ts";
@@ -2538,9 +2539,10 @@ async function handleListPersonalConnectors(
 
 /**
  * `grant_connector` — grant the caller's personal connector `serverName` for use
- * inside the shared workspace `targetWsId`. Validates the connector is one the
- * caller actually installed personally, and the target is a shared workspace the
- * caller belongs to (never their own home — home is free).
+ * inside the workspace `targetWsId`. Validates the connector is one the caller
+ * installed on their identity, and the target is a workspace the caller belongs
+ * to. The grant is required in EVERY workspace, including the caller's own
+ * personal one (a personal workspace is just a workspace — no free-at-home).
  */
 async function handleGrantConnector(
   ctx: ManageConnectorsContext,
@@ -2552,13 +2554,12 @@ async function handleGrantConnector(
   if (!serverName) return errResult("serverName is required.");
   if (!targetWsId) return errResult("wsId (the workspace to grant access to) is required.");
 
-  const personalWsId = personalWorkspaceIdFor(callerId);
-  if (targetWsId === personalWsId) {
-    return errResult(
-      "A personal connector is always available in your own personal workspace — no grant needed.",
-    );
-  }
-  if (!ctx.runtime.getLifecycle().getInstance(serverName, personalWsId)) {
+  // The connector must be one the caller installed on their identity.
+  const installed = await new IdentityConnectorStore({ workDir: ctx.runtime.getWorkDir() }).get(
+    callerId,
+    serverName,
+  );
+  if (!installed) {
     return errResult(
       `"${serverName}" is not one of your personal connectors — connect it in your profile first.`,
     );

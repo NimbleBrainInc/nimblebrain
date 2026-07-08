@@ -2,9 +2,10 @@
  * Unit tests for the personal-connector grant actions on `manage_connectors`:
  * `grant_connector`, `revoke_connector`, `list_personal_connectors`.
  *
- * A grant lets the caller use one of THEIR OWN personal connectors (installed in
- * `ws_user_<callerId>`) inside a shared workspace they belong to. It is written
- * to the caller's own grant ledger and is per-granter — no admin gate.
+ * A grant lets the caller use one of THEIR OWN personal connectors (installed on
+ * their identity) inside a workspace they belong to — any workspace, including
+ * their own personal one (a personal workspace is just a workspace). It is
+ * written to the caller's own grant ledger and is per-granter — no admin gate.
  */
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
@@ -12,6 +13,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
+import { IdentityConnectorStore } from "../../src/identity/connector-store.ts";
 import type { UserIdentity } from "../../src/identity/provider.ts";
 import { PermissionStore } from "../../src/permissions/permission-store.ts";
 import {
@@ -19,6 +21,7 @@ import {
   type ManageConnectorsContext,
 } from "../../src/tools/connector-tools.ts";
 import type { Runtime } from "../../src/runtime/runtime.ts";
+import { ensureUserWorkspace } from "../../src/workspace/provisioning.ts";
 import { personalWorkspaceIdFor, WorkspaceStore } from "../../src/workspace/workspace-store.ts";
 
 const ALICE: UserIdentity = {
@@ -59,9 +62,24 @@ async function buildHarness(opts: {
   if (opts.memberOfShared !== false) {
     await workspaceStore.addMember(SHARED_WS, ALICE.id, "member");
   }
+  // The caller's personal workspace — just a workspace they belong to.
+  await ensureUserWorkspace(workspaceStore, { id: ALICE.id, displayName: ALICE.displayName });
+
+  // Personal connectors live on the identity (grant reads the store); the
+  // lifecycle instances mock still backs list_personal_connectors, which reads
+  // the ws_user_ registry until its own re-key lands.
+  const connectorStore = new IdentityConnectorStore({ workDir });
+  for (const serverName of opts.personalConnectors ?? []) {
+    await connectorStore.add(ALICE.id, {
+      url: `https://mcp.example.com/${serverName}`,
+      serverName,
+      ui: null,
+    });
+  }
   const instances = (opts.personalConnectors ?? []).map(personalInstance);
 
   const runtime = {
+    getWorkDir: () => workDir,
     getPermissionStore: () => store,
     getWorkspaceStore: () => workspaceStore,
     getLifecycle: () => ({
@@ -104,15 +122,16 @@ describe("manage_connectors — personal-connector grants", () => {
     expect(await h.store.getConnectorGrants(ALICE.id, "granola")).toEqual([SHARED_WS]);
   });
 
-  test("grant_connector rejects a self-grant to the caller's own personal workspace", async () => {
+  test("grant_connector grants to the caller's own personal workspace — just a workspace", async () => {
+    // A personal workspace is grant-gated like any other (no free-at-home).
     h = await buildHarness({ personalConnectors: ["granola"] });
     const res = await h.tool.handler({
       action: "grant_connector",
       serverName: "granola",
       wsId: personalWs,
     });
-    expect(res.isError).toBe(true);
-    expect(await h.store.getConnectorGrants(ALICE.id, "granola")).toEqual([]);
+    expect(res.isError).toBeFalsy();
+    expect(await h.store.getConnectorGrants(ALICE.id, "granola")).toEqual([personalWs]);
   });
 
   test("grant_connector rejects a connector the caller has not installed personally", async () => {
