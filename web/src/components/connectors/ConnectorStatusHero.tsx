@@ -215,13 +215,21 @@ function IdentityRow({ installed, name }: { installed: InstalledConnector; name:
 
   // Connector version, two axes: the running serverInfo.version (handshakeVersion —
   // what's actually connected) takes precedence over the declared catalog/manifest
-  // version (installed.version; "remote" is the placeholder for a remote bundle that
-  // declares none, not a real version). When both exist and differ, the declared one
-  // is surfaced as a small drift note rather than silently hidden.
-  const declaredVersion = installed.version !== "remote" ? installed.version : undefined;
-  const shownVersion = installed.handshakeVersion ?? declaredVersion;
+  // version (installed.version). Either can arrive as a placeholder sentinel — "remote"
+  // for a remote bundle that declares none, "unknown" when it isn't known — which are
+  // not versions and never render. When both are real and differ, the declared one is
+  // surfaced as a small drift note rather than silently hidden.
+  const asVersion = (v: string | undefined) =>
+    v && v !== "remote" && v !== "unknown" ? v : undefined;
+  // Display form: exactly one leading "v". Image tags carry it (v0.1.0), catalog
+  // manifests may not (0.1.0); normalize so the label never doubles the prefix.
+  const vlabel = (v: string) => `v${v.replace(/^v/, "")}`;
+
+  const declaredVersion = asVersion(installed.version);
+  const runningVersion = asVersion(installed.handshakeVersion);
+  const shownVersion = runningVersion ?? declaredVersion;
   const versionDrift =
-    installed.handshakeVersion && declaredVersion && installed.handshakeVersion !== declaredVersion
+    runningVersion && declaredVersion && vlabel(runningVersion) !== vlabel(declaredVersion)
       ? declaredVersion
       : undefined;
 
@@ -250,9 +258,9 @@ function IdentityRow({ installed, name }: { installed: InstalledConnector; name:
             but carry no meaningful bundle version — as well as local bundles. */}
         {shownVersion && (
           <p className="text-xs text-muted-foreground font-mono mt-0.5">
-            v{shownVersion}
+            {vlabel(shownVersion)}
             {versionDrift && (
-              <span className="ml-2 text-muted-foreground/60">catalog v{versionDrift}</span>
+              <span className="ml-2 text-muted-foreground/60">catalog {vlabel(versionDrift)}</span>
             )}
           </p>
         )}

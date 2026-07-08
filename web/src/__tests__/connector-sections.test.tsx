@@ -449,6 +449,62 @@ describe("ConnectorStatusHero", () => {
     expect(findButton(mounted.container, "Reconnect")).toBeNull();
   });
 
+  // ── version line (identity row) ──────────────────────────────────
+  // A fleet connector reports a v-prefixed handshake version (image tags carry the
+  // "v") and declares no catalog version ("unknown"): render exactly one "v" and no
+  // bogus drift note.
+  test("version: v-prefixed handshake + declared 'unknown' → single 'v', no catalog note", async () => {
+    mounted = await mount(
+      <ConnectorStatusHero
+        installed={dcrConnector({ handshakeVersion: "v0.1.0", version: "unknown" })}
+        canManage={true}
+        onChanged={() => {}}
+      />,
+    );
+    expect(mounted.container.textContent).toContain("v0.1.0");
+    expect(mounted.container.textContent).not.toContain("vv0.1.0");
+    expect(mounted.container.textContent).not.toContain("vunknown");
+    expect(mounted.container.textContent).not.toContain("catalog v");
+  });
+
+  test("version: local bundle semver renders one 'v'", async () => {
+    mounted = await mount(
+      <ConnectorStatusHero
+        installed={stdioBundle({ version: "1.0.0" })}
+        canManage={true}
+        onChanged={() => {}}
+      />,
+    );
+    expect(mounted.container.textContent).toContain("v1.0.0");
+    expect(mounted.container.textContent).not.toContain("vv1.0.0");
+    expect(mounted.container.textContent).not.toContain("catalog v");
+  });
+
+  test("version: real drift (running != declared) shows a catalog note, each one 'v'", async () => {
+    mounted = await mount(
+      <ConnectorStatusHero
+        installed={stdioBundle({ handshakeVersion: "v0.2.0", version: "0.1.0" })}
+        canManage={true}
+        onChanged={() => {}}
+      />,
+    );
+    expect(mounted.container.textContent).toContain("v0.2.0");
+    expect(mounted.container.textContent).toContain("catalog v0.1.0");
+    expect(mounted.container.textContent).not.toContain("vv");
+  });
+
+  test("version: no false drift when running and declared differ only by the 'v' prefix", async () => {
+    mounted = await mount(
+      <ConnectorStatusHero
+        installed={stdioBundle({ handshakeVersion: "v0.1.0", version: "0.1.0" })}
+        canManage={true}
+        onChanged={() => {}}
+      />,
+    );
+    expect(mounted.container.textContent).toContain("v0.1.0");
+    expect(mounted.container.textContent).not.toContain("catalog v");
+  });
+
   test("status=needs_auth + state=reauth_required → 'Reconnect'", async () => {
     mounted = await mount(
       <ConnectorStatusHero
