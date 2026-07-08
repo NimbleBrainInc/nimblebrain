@@ -20,10 +20,11 @@ import { IdentityContext } from "./context.ts";
  * `workspaces/<wsId>/credentials/mcp-oauth/`).
  *
  * Ownership is **structural**: a ref stored here is user-owned by virtue of
- * its location. Refs carry NO `oauthScope` (the `"user"` value was cut in
- * Stage 2 and is rejected on load); the identity source holder that reads
- * this record knows to construct a `{ type: "user" }` OAuth provider because
- * the ref came from `connectors.json`, not from any workspace.
+ * its location, not a field on the ref. Refs carry no `oauthScope` — the
+ * `"user"` scope value was removed from the `BundleRef` union in Stage 2, and
+ * a `"workspace"` scope would be meaningless off any workspace. The source
+ * holder that reads this record constructs a `{ type: "user" }` OAuth provider
+ * because the ref came from `connectors.json`, not from any workspace.
  *
  * Storage discipline mirrors `WorkspaceStore`: read-modify-write with an
  * atomic (`rename(2)`) commit via `writeJsonAtomic`. No file lock — like
