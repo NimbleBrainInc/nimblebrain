@@ -53,6 +53,7 @@ import { OrgRegistriesTab } from "./pages/settings/OrgRegistriesTab";
 import { OrgSettingsPage } from "./pages/settings/OrgSettingsPage";
 import { OrgSkillsTab } from "./pages/settings/OrgSkillsTab";
 import { OrgUsageTab } from "./pages/settings/OrgUsageTab";
+import { ProfileConnectorsTab } from "./pages/settings/ProfileConnectorsTab";
 import { ProfileSkillsTab } from "./pages/settings/ProfileSkillsTab";
 import { ProfileTab } from "./pages/settings/ProfileTab";
 import { SettingsAppPanel } from "./pages/settings/SettingsAppPanel";
@@ -437,6 +438,7 @@ function AuthenticatedAppContent({
             <Route path="/profile" element={<ProfilePage />}>
               <Route index element={<Navigate to="/profile/general" replace />} />
               <Route path="general" element={<ProfileTab />} />
+              <Route path="connectors" element={<ProfileConnectorsTab />} />
               <Route path="skills" element={<ProfileSkillsTab />} />
             </Route>
 

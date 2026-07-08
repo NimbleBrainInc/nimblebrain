@@ -782,6 +782,28 @@ export async function getInstalledConnector(
   return unwrapStructured(result, "get_installed");
 }
 
+/** A personal connector (a remote MCP connection in the caller's personal workspace) + where it's granted. */
+export interface PersonalConnector {
+  serverName: string;
+  displayName: string;
+  description: string | null;
+  state: string;
+  grantedWorkspaces: string[];
+}
+
+/**
+ * The caller's personal connectors and, for each, the shared workspaces it's
+ * granted to. The server derives the personal workspace from the caller's
+ * identity, so this is workspace-independent — safe to call from `/profile`,
+ * which has no active workspace (unlike the ambient-`X-Workspace-Id` helpers).
+ */
+export async function listPersonalConnectors(): Promise<{ connectors: PersonalConnector[] }> {
+  const result = await callTool("nb", "manage_connectors", {
+    action: "list_personal_connectors",
+  });
+  return unwrapStructured(result, "list_personal_connectors");
+}
+
 export async function disconnectConnector(
   serverName: string,
   scope?: "workspace",
