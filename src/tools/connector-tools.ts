@@ -31,6 +31,7 @@ import type { ToolResult } from "../engine/types.ts";
 import { IdentityConnectorStore } from "../identity/connector-store.ts";
 import type { UserIdentity } from "../identity/provider.ts";
 import { log } from "../observability/log.ts";
+import type { PermissionOwner } from "../permissions/permission-store.ts";
 import type { ConnectorCatalogEntry } from "../registries/projection.ts";
 import type { DirectoryEntry, RemoteOAuthInstall } from "../registries/types.ts";
 import type { Runtime } from "../runtime/runtime.ts";
@@ -306,13 +307,7 @@ export function createManageConnectorsTool(ctx: ManageConnectorsContext): InProc
         case "list_tools":
           return handleListTools(ctx, args.wsId, args.callerId, args.serverName, args.scope);
         case "list_tools_with_permissions":
-          return handleListToolsWithPermissions(
-            ctx,
-            args.wsId,
-            args.callerId,
-            args.serverName,
-            args.scope,
-          );
+          return handleListToolsWithPermissions(ctx, args.wsId, args.callerId, args.serverName);
         case "install":
           return handleInstall(ctx, args.identity, args.entry, args.installWsId);
         case "connect_api_key":
@@ -322,16 +317,9 @@ export function createManageConnectorsTool(ctx: ManageConnectorsContext): InProc
         case "uninstall":
           return handleUninstall(ctx, args.wsId, args.identity, args.serverName, args.scope);
         case "get_permissions":
-          return handleGetPermissions(ctx, args.wsId, args.callerId, args.serverName, args.scope);
+          return handleGetPermissions(ctx, args.wsId, args.callerId, args.serverName);
         case "set_permissions":
-          return handleSetPermissions(
-            ctx,
-            args.wsId,
-            args.callerId,
-            args.serverName,
-            args.scope,
-            args.tools,
-          );
+          return handleSetPermissions(ctx, args.wsId, args.callerId, args.serverName, args.tools);
         case "setup_operator":
           return handleSetupOperator(
             ctx,
@@ -2385,10 +2373,8 @@ async function handleListToolsWithPermissions(
   wsId: string | null,
   callerId: string | null,
   serverName: string,
-  scopeHint: string | undefined,
 ): Promise<ToolResult> {
   if (!serverName) return errResult("serverName is required.");
-  void scopeHint; // Stage 2: scopeHint is workspace-only and informational
 
   const lifecycle = ctx.runtime.getLifecycle();
   if (!wsId) return errResult("Workspace context required.");
@@ -2396,7 +2382,7 @@ async function handleListToolsWithPermissions(
     return errResult(`Bundle "${serverName}" not installed in workspace.`);
   }
 
-  const owner = resolvePermissionOwner(wsId, callerId, undefined);
+  const owner = await resolvePermissionOwner(ctx, wsId, callerId, serverName);
   if (!owner) return errResult("Could not resolve permission owner — sign in or pick a workspace.");
 
   const registry = ctx.runtime.getRegistryForWorkspace(wsId);
@@ -2444,17 +2430,26 @@ async function handleListToolsWithPermissions(
 }
 
 /**
- * Resolve a workspace owner pair for permission read/write. Stage 2:
- * permissions are workspace-scoped only (the legacy user-scope path is
- * gone). Returns null when no workspace context is available.
+ * Resolve the policy owner for a connector's permission read/write. A
+ * **personal connector** (installed on the caller's identity — in their
+ * `connectors.json`) owns its per-tool policy under `{scope:"user"}`, the same
+ * record the identity-door dispatch gate reads. Any other connector is
+ * workspace-scoped (`{scope:"workspace", wsId}`). Returns null when neither a
+ * personal connector nor a workspace is available.
  */
-function resolvePermissionOwner(
+async function resolvePermissionOwner(
+  ctx: ManageConnectorsContext,
   wsId: string | null,
   callerId: string | null,
-  scopeHint: string | undefined,
-): { scope: "workspace"; wsId: string } | null {
-  void scopeHint; // Stage 2: only workspace scope is legal
-  void callerId; // unused post-Stage-2
+  serverName: string,
+): Promise<PermissionOwner | null> {
+  if (callerId && serverName) {
+    const personal = await new IdentityConnectorStore({ workDir: ctx.runtime.getWorkDir() }).get(
+      callerId,
+      serverName,
+    );
+    if (personal) return { scope: "user", userId: callerId };
+  }
   return wsId ? { scope: "workspace", wsId } : null;
 }
 
@@ -2463,10 +2458,9 @@ async function handleGetPermissions(
   wsId: string | null,
   callerId: string | null,
   serverName: string,
-  scopeHint: string | undefined,
 ): Promise<ToolResult> {
   if (!serverName) return errResult("serverName is required.");
-  const owner = resolvePermissionOwner(wsId, callerId, scopeHint);
+  const owner = await resolvePermissionOwner(ctx, wsId, callerId, serverName);
   if (!owner) return errResult("Could not resolve permission owner — sign in or pick a workspace.");
 
   const tools = await ctx.runtime.getPermissionStore().getConnector(owner, serverName);
@@ -2482,21 +2476,21 @@ async function handleSetPermissions(
   wsId: string | null,
   callerId: string | null,
   serverName: string,
-  scopeHint: string | undefined,
   toolsInput: Record<string, unknown>,
 ): Promise<ToolResult> {
   if (!serverName) return errResult("serverName is required.");
-  const owner = resolvePermissionOwner(wsId, callerId, scopeHint);
+  const owner = await resolvePermissionOwner(ctx, wsId, callerId, serverName);
   if (!owner) return errResult("Could not resolve permission owner — sign in or pick a workspace.");
 
-  // Reject unknown serverName up front. Permission entries for a
-  // non-existent connector would sit unused (the runtime gate keys on
-  // installed-source dispatch); failing fast here surfaces typos at
-  // write time instead of letting them rot in the store.
-  const lifecycle = ctx.runtime.getLifecycle();
-  const installedHere = lifecycle.getInstance(serverName, owner.wsId) != null;
-  if (!installedHere) {
-    return errResult(`Connector "${serverName}" is not installed in workspace "${owner.wsId}".`);
+  // Reject unknown serverName up front. Permission entries for a non-existent
+  // connector would sit unused (the runtime gate keys on installed-source
+  // dispatch); failing fast surfaces typos at write time. A personal connector's
+  // existence is already confirmed by `resolvePermissionOwner` (it's in the
+  // caller's identity store); a workspace connector needs the workspace check.
+  if (owner.scope === "workspace") {
+    if (ctx.runtime.getLifecycle().getInstance(serverName, owner.wsId) == null) {
+      return errResult(`Connector "${serverName}" is not installed in workspace "${owner.wsId}".`);
+    }
   }
 
   const tools: Record<string, "allow" | "disallow"> = {};

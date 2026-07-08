@@ -194,3 +194,37 @@ describe("manage_connectors — personal-connector grants", () => {
     }
   });
 });
+
+describe("manage_connectors — personal-connector permissions (identity scope)", () => {
+  let h: Harness;
+  afterEach(() => {
+    if (h) rmSync(h.workDir, { recursive: true, force: true });
+  });
+
+  test("set_permissions on a personal connector writes {scope:'user'} — the record dispatch reads", async () => {
+    h = await buildHarness({ personalConnectors: ["granola"] });
+    const res = await h.tool.handler({
+      action: "set_permissions",
+      serverName: "granola",
+      tools: { delete_notes: "disallow" },
+    });
+    expect(res.isError).toBeFalsy();
+    // Written under the caller's identity, not any workspace — the same record
+    // the identity-door dispatch gate reads.
+    expect(await h.store.getConnector({ scope: "user", userId: ALICE.id }, "granola")).toEqual({
+      delete_notes: "disallow",
+    });
+  });
+
+  test("get_permissions on a personal connector reads {scope:'user'}", async () => {
+    h = await buildHarness({ personalConnectors: ["granola"] });
+    await h.store.setConnector({ scope: "user", userId: ALICE.id }, "granola", {
+      delete_notes: "disallow",
+    });
+    const res = await h.tool.handler({ action: "get_permissions", serverName: "granola" });
+    expect((res.structuredContent as { scope?: string })?.scope).toBe("user");
+    expect((res.structuredContent as { tools?: Record<string, string> })?.tools).toEqual({
+      delete_notes: "disallow",
+    });
+  });
+});
