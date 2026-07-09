@@ -19,7 +19,7 @@ import { buildTenantAssertion } from "../oauth/fleet-assertion.ts";
 import { log } from "../observability/log.ts";
 import { validateAdditionalAuthorizationParams } from "../util/oauth-params.ts";
 import type { WorkspaceContext } from "../workspace/context.ts";
-import { register as registerInteractiveFlow } from "./oauth-flow-registry.ts";
+import { type FlowOwner, register as registerInteractiveFlow } from "./oauth-flow-registry.ts";
 
 /**
  * Sentinel kept for callers that import the symbol. The original
@@ -1360,14 +1360,13 @@ export class WorkspaceOAuthProvider implements OAuthClientProvider {
       `[oauth] interactive flow: ${this.serverName} registering state=${stateParam.slice(0, 8)}… url=${url.origin}…`,
     );
 
-    // Flow registry just needs an opaque owner key for diagnostics; either
-    // wsId or userId is fine (and they live in different keyspaces — no
-    // collision risk). Workspace owner uses the wsId; user owner uses
-    // a `user:` prefix so an operator reading registry state can tell
-    // them apart at a glance.
-    const ownerKey =
-      this.owner.type === "workspace" ? this.owner.wsId : `user:${this.owner.userId}`;
-    const registryPromise = registerInteractiveFlow(stateParam, ownerKey, this.serverName);
+    // The flow carries its owner so the callback lands the user back on the
+    // right page — a workspace connector's settings page vs the user's profile.
+    const flowOwner: FlowOwner =
+      this.owner.type === "workspace"
+        ? { kind: "workspace", wsId: this.owner.wsId }
+        : { kind: "user", userId: this.owner.userId };
+    const registryPromise = registerInteractiveFlow(stateParam, flowOwner, this.serverName);
     // Swap the promise to the registry's (which resolves on HTTP callback
     // delivering the code) and drop the headless-branch deferred (no longer
     // applicable on the interactive path). MUTATE rather than replace the

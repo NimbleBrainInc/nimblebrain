@@ -38,7 +38,12 @@ import { getMpak } from "./mpak.ts";
 import { hasPersistedWorkspaceOAuthTokens } from "./oauth-tokens.ts";
 import { defaultWorkDir, deriveServerName, resolveBundleDataDirForRef } from "./paths.ts";
 import { consumePendingAuth } from "./pending-auth-buffer.ts";
-import { type BundleMcpDeps, composeBundleMcpContext, startBundleSource } from "./startup.ts";
+import {
+  type BundleMcpDeps,
+  buildUrlOAuthProvider,
+  composeBundleMcpContext,
+  startBundleSource,
+} from "./startup.ts";
 import type {
   BriefingBlock,
   BundleInstance,
@@ -1750,6 +1755,21 @@ export class BundleLifecycleManager {
   private readonly identityConnectorStarts = new Map<string, Promise<ToolSource | undefined>>();
 
   /**
+   * In-flight INTERACTIVE identity-auth flows, keyed `${serverName}|user:${userId}`.
+   * Held from the "Connect" click until the background start settles (the OAuth
+   * window), so a second click during the window coalesces onto the same flow
+   * rather than starting a fresh one that would clobber the provider's
+   * `verifier.json` (→ `invalid_code`). The identity analog of `authFlowsInFlight`;
+   * cleared by the background start's terminal handler (identity connectors have
+   * no connection-state machine to clear it — the minimal-now design), or here on
+   * a synchronous pre-start failure.
+   */
+  private readonly identityAuthFlowsInFlight = new Map<
+    string,
+    Promise<{ authorizationUrl: string }>
+  >();
+
+  /**
    * Per-`${serverName}|${wsId}` timestamp (epoch ms) of the last
    * best-effort recovery attempt (`tryRecoverSource`). Negative cache: a
    * failed re-spawn stamps the key so the orchestrator hot path doesn't
@@ -2060,6 +2080,152 @@ export class BundleLifecycleManager {
       this.registriesByUser.set(userId, registry);
     }
     return registry;
+  }
+
+  /**
+   * Begin an INTERACTIVE OAuth flow to connect a personal connector on the
+   * caller's identity — the "Connect" click from the profile. Mirrors the
+   * workspace `startAuth`, bound to the `{type:"user"}` owner and the
+   * `IdentityConnectorStore`. Returns the authorization URL the caller's browser
+   * should be sent to. Coalesces concurrent calls per `(serverName, userId)`.
+   *
+   * Minimal connection state by design: the returned URL drives the browser and
+   * the source runs once the user returns; the rich per-user connection-state
+   * model + reauth surfacing are deferred.
+   */
+  async startIdentityAuth(
+    serverName: string,
+    userId: string,
+    opts: { workDir: string; allowInsecureRemotes?: boolean },
+  ): Promise<{ authorizationUrl: string }> {
+    const key = `${serverName}|user:${userId}`;
+    const existing = this.identityAuthFlowsInFlight.get(key);
+    if (existing) return existing;
+    const flow = this.startIdentityAuthInner(serverName, userId, opts, key);
+    this.identityAuthFlowsInFlight.set(key, flow);
+    return flow;
+  }
+
+  private async startIdentityAuthInner(
+    serverName: string,
+    userId: string,
+    opts: { workDir: string; allowInsecureRemotes?: boolean },
+    flowKey: string,
+  ): Promise<{ authorizationUrl: string }> {
+    const clearSlot = (): void => {
+      this.identityAuthFlowsInFlight.delete(flowKey);
+    };
+
+    let backgroundStarted = false;
+    try {
+      const ref = await new IdentityConnectorStore({ workDir: opts.workDir }).get(
+        userId,
+        serverName,
+      );
+      if (!ref || !("url" in ref)) {
+        throw new Error(`[lifecycle] "${serverName}" is not a personal connector for ${userId}`);
+      }
+
+      let capturedAuthUrl: string | undefined;
+      let resolveAuthUrl!: (url: string) => void;
+      let rejectAuthUrl!: (err: Error) => void;
+      const authUrlPromise = new Promise<string>((res, rej) => {
+        resolveAuthUrl = res;
+        rejectAuthUrl = rej;
+      });
+      authUrlPromise.catch(() => {});
+
+      const provider = await buildUrlOAuthProvider(
+        ref,
+        serverName,
+        undefined, // no workspace context — identity-owned
+        {
+          identityOwner: { userId },
+          workDir: opts.workDir,
+          allowInsecureRemotes: opts.allowInsecureRemotes === true,
+        },
+        (url) => {
+          capturedAuthUrl = url;
+          resolveAuthUrl(url);
+        },
+      );
+      if (!provider) {
+        throw new Error(`[lifecycle] "${serverName}" uses static auth — no interactive OAuth flow`);
+      }
+
+      const registry = this.userRegistry(userId);
+      const source = new McpSource(
+        serverName,
+        {
+          type: "remote",
+          url: new URL(ref.url),
+          transportConfig: ref.transport,
+          allowInsecure: opts.allowInsecureRemotes === true,
+          authProvider: provider,
+        },
+        this.eventSink,
+        composeBundleMcpContext(undefined, serverName),
+      );
+      // Wire into the user's registry before start so a concurrent dispatch finds
+      // this same source (the `hasSource` short-circuit in
+      // `getIdentityConnectorSource`) rather than spawning a second one.
+      if (!registry.hasSource(serverName)) {
+        registry.addSource(source);
+      }
+
+      // Arm interactive OAuth for THIS user-initiated start only.
+      provider.setInteractiveAuthAllowed(true);
+
+      // Background start: the provider's callback resolves `authUrlPromise` when
+      // interactive auth is required; the token exchange + reconnect complete
+      // when the user returns from the authorization server. The in-flight slot
+      // is cleared when this settles — the end of the OAuth window (bounded by
+      // the flow registry's 15-min TTL if the user never returns) — NOT when the
+      // race below returns, so a second Connect during the window coalesces.
+      backgroundStarted = true;
+      void source
+        .start()
+        .then(() => {
+          if (!capturedAuthUrl) {
+            rejectAuthUrl(
+              new Error(
+                `[lifecycle] ${serverName} connected without interactive auth — already authenticated`,
+              ),
+            );
+          }
+        })
+        .catch((err: unknown) => {
+          const msg = err instanceof Error ? err.message || err.name : String(err);
+          log.warn(
+            `[lifecycle] startIdentityAuth: ${serverName} start failed for ${userId}: ${msg}`,
+          );
+          void registry.removeSource(serverName).catch(() => {});
+          rejectAuthUrl(err instanceof Error ? err : new Error(msg));
+        })
+        .finally(clearSlot);
+
+      // Race the auth URL signal against a hard timeout (mirrors `startAuth`).
+      const TIMEOUT_MS = 15_000;
+      let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
+      const timeout = new Promise<never>((_, rej) => {
+        timeoutHandle = setTimeout(
+          () => rej(new Error(`[lifecycle] startIdentityAuth timed out after ${TIMEOUT_MS}ms`)),
+          TIMEOUT_MS,
+        );
+      });
+      try {
+        return { authorizationUrl: await Promise.race([authUrlPromise, timeout]) };
+      } finally {
+        if (timeoutHandle !== undefined) clearTimeout(timeoutHandle);
+      }
+    } catch (err) {
+      // A synchronous pre-start failure (no record, static auth) never reached
+      // `source.start()`, so no background handler will clear the slot — clear it
+      // here. A post-start failure (timeout) leaves the slot for the background's
+      // `finally` while the OAuth window may still be live.
+      if (!backgroundStarted) clearSlot();
+      throw err;
+    }
   }
 
   /**

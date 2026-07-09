@@ -18,6 +18,7 @@ import { _clearAll, register as registerFlow } from "../../../src/tools/oauth-fl
  */
 
 const WS_ID = "ws_test";
+const WS_OWNER = { kind: "workspace", wsId: WS_ID } as const;
 
 function sha256Hex(input: string): string {
   return createHash("sha256").update(input).digest("hex");
@@ -201,7 +202,7 @@ describe("GET /v1/mcp-auth/callback", () => {
 
   test("matching cookie + valid state resolves the flow and clears the cookie", async () => {
     const state = "valid-state-xyz";
-    const flowPromise = registerFlow(state, WS_ID, "granola");
+    const flowPromise = registerFlow(state, WS_OWNER, "granola");
     // Attach a no-op catch so a test failure doesn't leak an unhandled
     // rejection if the assertion path bails before consuming flowPromise.
     flowPromise.catch(() => {});
@@ -259,7 +260,7 @@ describe("GET /v1/mcp-auth/callback", () => {
     wrapped.route("/", mcpAuthRoutes(ctx));
 
     const state = "csp-state";
-    const flowPromise = registerFlow(state, WS_ID, "granola");
+    const flowPromise = registerFlow(state, WS_OWNER, "granola");
     flowPromise.catch(() => {});
     const cookie = `nb_oauth_state=${sha256Hex(state)}`;
     const res = await wrapped.request(
@@ -289,7 +290,7 @@ describe("GET /v1/mcp-auth/callback", () => {
 
   test("missing cookie → 400 session mismatch, flow NOT resolved", async () => {
     const state = "no-cookie-state";
-    const flowPromise = registerFlow(state, WS_ID, "granola");
+    const flowPromise = registerFlow(state, WS_OWNER, "granola");
     flowPromise.catch(() => {});
 
     const res = await app.request(
@@ -311,7 +312,7 @@ describe("GET /v1/mcp-auth/callback", () => {
 
   test("mismatched cookie hash → 400 session mismatch, flow NOT resolved", async () => {
     const state = "mismatched-state";
-    const flowPromise = registerFlow(state, WS_ID, "granola");
+    const flowPromise = registerFlow(state, WS_OWNER, "granola");
     flowPromise.catch(() => {});
 
     // Cookie is sha256(some-other-state), not sha256(state) — the timing-safe
@@ -460,7 +461,7 @@ describe("bouncer mode: state envelope wrap on initiate / unwrap on callback", (
       tenantKey: Buffer.from(TENANT_KEY_B64, "base64"),
     });
 
-    const flowPromise = registerFlow(innerState, WS_ID, "granola");
+    const flowPromise = registerFlow(innerState, WS_OWNER, "granola");
     flowPromise.catch(() => {});
 
     const cookie = `nb_oauth_state=${sha256Hex(innerState)}`;
