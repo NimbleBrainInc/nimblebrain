@@ -1,6 +1,7 @@
 import { createHash, timingSafeEqual } from "node:crypto";
 import { type Context, Hono } from "hono";
 import { WORKSPACE_PRINCIPAL_ID } from "../../bundles/connection.ts";
+import { ConnectorBusyError } from "../../bundles/lifecycle.ts";
 import { IdentityConnectorStore } from "../../identity/connector-store.ts";
 import { getBouncerMode } from "../../oauth/bouncer-config.ts";
 import {
@@ -297,6 +298,19 @@ async function startIdentityAuthorization(
     });
     return result.authorizationUrl;
   } catch (err) {
+    // A concurrent Connect / dispatch already holds the start gate for this
+    // connector. Retriable and not a server fault — return a 409 with a
+    // Retry-After so the client backs off, rather than a 500 that tells the
+    // user to read logs.
+    if (err instanceof ConnectorBusyError) {
+      return apiError(
+        409,
+        "connector_busy",
+        "A connection for this connector is already in progress. Retry shortly.",
+        undefined,
+        { "Retry-After": "2" },
+      );
+    }
     // Don't leak SDK / DNS / TLS details in the response body (same posture as
     // startAuthorization above). Log raw server-side; return a generic shape.
     const msg = err instanceof Error ? err.message : String(err);

@@ -2,7 +2,7 @@ import { existsSync, mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
-import { BundleLifecycleManager } from "../../src/bundles/lifecycle.ts";
+import { BundleLifecycleManager, ConnectorBusyError } from "../../src/bundles/lifecycle.ts";
 import { IdentityConnectorStore } from "../../src/identity/connector-store.ts";
 import type { EngineEvent, EventSink } from "../../src/engine/types.ts";
 import { _clearAll, peekFlowOwner } from "../../src/tools/oauth-flow-registry.ts";
@@ -99,6 +99,39 @@ class CapturingSink implements EventSink {
 const USER_ID = "usr_alice";
 const SERVER = "granola";
 
+/** Path to the DCR client under the caller's identity credential root. */
+function clientJsonPath(workDir: string): string {
+  return join(workDir, "users", USER_ID, "credentials", "mcp-oauth", SERVER, "client.json");
+}
+
+/**
+ * Retry `startIdentityAuth` until it proceeds past the busy gate (or a bounded
+ * deadline). Under the old poison-slot bug this never escaped — every retry got
+ * the cached rejection; under the single-gate design it recovers once the prior
+ * start settles and frees the gate.
+ */
+async function retryConnect(
+  lifecycle: BundleLifecycleManager,
+  workDir: string,
+  timeoutMs = 10_000,
+): Promise<{ authorizationUrl: string }> {
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    try {
+      return await lifecycle.startIdentityAuth(SERVER, USER_ID, {
+        workDir,
+        allowInsecureRemotes: true,
+      });
+    } catch (err) {
+      if (!(err instanceof ConnectorBusyError)) throw err;
+      if (Date.now() > deadline) {
+        throw new Error("Connect never recovered from busy — the gate appears poisoned");
+      }
+      await new Promise((r) => setTimeout(r, 20));
+    }
+  }
+}
+
 describe("lifecycle.startIdentityAuth — interactive OAuth for a personal connector", () => {
   let workDir: string;
   let mock: MockAS;
@@ -157,26 +190,44 @@ describe("lifecycle.startIdentityAuth — interactive OAuth for a personal conne
     ).rejects.toThrow(/not a personal connector/);
   });
 
-  it("coalesces a second concurrent Connect onto the same flow — one auth chain, one DCR client", async () => {
-    // Two simultaneous Connects: the second must return the SAME flow, not spawn
-    // a second auth() chain that would clobber client.json / verifier.json.
-    const [a, b] = await Promise.all([
+  it("rejects a second concurrent Connect as busy — one auth chain, no DCR clobber", async () => {
+    // Two simultaneous Connects: one claims the shared start gate; the other
+    // finds it held and is rejected `ConnectorBusyError`. The loser must NOT
+    // spawn a rival auth() chain that would clobber client.json / verifier.json.
+    const a = lifecycle.startIdentityAuth(SERVER, USER_ID, { workDir, allowInsecureRemotes: true });
+    const b = lifecycle.startIdentityAuth(SERVER, USER_ID, { workDir, allowInsecureRemotes: true });
+    const settled = await Promise.allSettled([a, b]);
+
+    const fulfilled = settled.filter((s) => s.status === "fulfilled");
+    const rejected = settled.filter((s) => s.status === "rejected");
+    expect(fulfilled).toHaveLength(1);
+    expect(rejected).toHaveLength(1);
+    expect((rejected[0] as PromiseRejectedResult).reason).toBeInstanceOf(ConnectorBusyError);
+    expect(
+      (fulfilled[0] as PromiseFulfilledResult<{ authorizationUrl: string }>).value.authorizationUrl,
+    ).toContain("/authorize");
+
+    // Exactly one DCR client under the identity root (one auth chain, no clobber).
+    expect(existsSync(clientJsonPath(workDir))).toBe(true);
+  }, 20_000);
+
+  it("a busy rejection does not poison the gate — a later Connect recovers", async () => {
+    // Regression for the poison-slot brick: a concurrent busy rejection must not
+    // wedge the shared gate. Race two Connects — one wins, one is rejected busy.
+    const settled = await Promise.allSettled([
       lifecycle.startIdentityAuth(SERVER, USER_ID, { workDir, allowInsecureRemotes: true }),
       lifecycle.startIdentityAuth(SERVER, USER_ID, { workDir, allowInsecureRemotes: true }),
     ]);
-    expect(a).toBe(b); // coalesced onto one in-flight flow
-    expect(a.authorizationUrl).toContain("/authorize");
-    // Exactly one DCR client under the identity root (one auth chain, no clobber).
-    const clientJson = join(
-      workDir,
-      "users",
-      USER_ID,
-      "credentials",
-      "mcp-oauth",
-      SERVER,
-      "client.json",
-    );
-    expect(existsSync(clientJson)).toBe(true);
+    expect(settled.filter((s) => s.status === "rejected")).toHaveLength(1);
+
+    // Abandon the winner's still-pending interactive flow (as if the user never
+    // returned / the flow TTL expired) so its background start settles and frees
+    // the gate. Under the old two-map design the busy reject had already wedged a
+    // separate coalesce slot with a permanently-cached rejection — no gate-
+    // freeing ever recovered. Under the single gate, a fresh Connect proceeds.
+    _clearAll();
+    const later = await retryConnect(lifecycle, workDir);
+    expect(later.authorizationUrl).toContain("/authorize");
   }, 20_000);
 
   it("a concurrent dispatch lazy-start joins the interactive flow — no parallel source", async () => {

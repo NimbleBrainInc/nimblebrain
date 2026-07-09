@@ -7,6 +7,7 @@ import { Hono } from "hono";
 import { securityHeaders } from "../../../src/api/middleware/security-headers.ts";
 import { mcpAuthRoutes } from "../../../src/api/routes/mcp-auth.ts";
 import type { AppContext, AppEnv } from "../../../src/api/types.ts";
+import { ConnectorBusyError } from "../../../src/bundles/lifecycle.ts";
 import { IdentityConnectorStore } from "../../../src/identity/connector-store.ts";
 import { _clearAll, register as registerFlow } from "../../../src/tools/oauth-flow-registry.ts";
 
@@ -588,6 +589,31 @@ describe("POST /v1/mcp-auth/initiate-identity", () => {
     expect(setCookie).not.toBeNull();
     expect(setCookie!).toContain(`nb_oauth_state=${sha256Hex(state)}`);
     expect(setCookie!).toContain("Path=/v1/mcp-auth/callback");
+  });
+
+  test("a connect already in progress → 409 connector_busy (retriable), not 500", async () => {
+    await new IdentityConnectorStore({ workDir }).add(USER_ID, {
+      url: "https://granola.test/mcp",
+      serverName: "granola",
+      ui: null,
+    });
+    // The lifecycle rejects `ConnectorBusyError` when a start is already in
+    // flight for this (user, connector) — a retriable conflict, not a fault.
+    lifecycle.startIdentityAuth = async () => {
+      throw new ConnectorBusyError("granola", USER_ID);
+    };
+
+    const res = await app.request("http://localhost/v1/mcp-auth/initiate-identity", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ serverName: "granola" }),
+    });
+
+    expect(res.status).toBe(409);
+    expect((await res.json()).error).toBe("connector_busy");
+    expect(res.headers.get("Retry-After")).not.toBeNull();
+    // Busy is not a flow start — no state cookie set.
+    expect(res.headers.get("Set-Cookie")).toBeNull();
   });
 
   test("not one of the caller's personal connectors → 404 connector_not_found (not 500)", async () => {

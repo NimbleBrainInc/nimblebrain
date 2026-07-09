@@ -175,7 +175,8 @@ interface StartBundleOpts {
    * AbortSignal threaded into the OAuth provider's outbound fetches (the
    * redirect-probe / discovery / DCR chain). A give-up path — a `startAuth`
    * timeout — aborts it so the background start fails fast instead of lingering
-   * for the network deadline. Honored on the URL-bundle path (both owner arms).
+   * for the network deadline. Threaded on the identity (`{type:"user"}`) arm of
+   * the URL-bundle path; boot-start (the workspace arm) never sets it.
    */
   abortSignal?: AbortSignal;
   /**

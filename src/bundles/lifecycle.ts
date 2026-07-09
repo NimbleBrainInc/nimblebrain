@@ -110,6 +110,26 @@ export class LegacyOAuthScopeError extends Error {
 }
 
 /**
+ * A user-initiated interactive connect (`startIdentityAuth`) can't start a clean
+ * OAuth flow because a start for the same `(userId, serverName)` is already in
+ * flight, or the source is already connected. Retriable and NOT a server fault —
+ * the caller should back off and retry, not read logs. Surfaced as a `409` at
+ * the route layer.
+ */
+export class ConnectorBusyError extends Error {
+  readonly serverName: string;
+  readonly userId: string;
+  constructor(serverName: string, userId: string) {
+    super(
+      `[lifecycle] "${serverName}" is already connecting or connected for ${userId} — retry shortly`,
+    );
+    this.name = "ConnectorBusyError";
+    this.serverName = serverName;
+    this.userId = userId;
+  }
+}
+
+/**
  * Assert a `BundleRef` read from disk conforms to the post-Stage-2 schema.
  * Throws `LegacyOAuthScopeError` on encounter — does not translate. The
  * deploy runbook is the operator contract; the runtime stays strict.
@@ -1742,7 +1762,11 @@ export class BundleLifecycleManager {
   private readonly registriesByUser = new Map<string, ToolRegistry>();
 
   /**
-   * In-flight `getIdentityConnectorSource` starts, keyed `${userId}|${serverName}`.
+   * In-flight identity-connector starts, keyed `${userId}|${serverName}` — the
+   * single coordination gate for BOTH the dispatch lazy-start
+   * (`getIdentityConnectorSource`) and the interactive Connect
+   * (`startIdentityAuth`).
+   *
    * Lazy-start is check-then-act (`hasSource` miss → read record → start), so two
    * concurrent first-calls for the same connector would both miss and both spawn a
    * transport — the loser's `addSource` throws (or its transport leaks). This map
@@ -1751,31 +1775,15 @@ export class BundleLifecycleManager {
    * no intervening await, so a second caller always observes the entry. Distinct
    * from a spawn-storm cooldown, which is a negative cache for *failed* starts and
    * does NOT dedup concurrent *first* calls.
+   *
+   * The interactive Connect claims this SAME gate — synchronously, before any
+   * await — so a concurrent dispatch JOINS the interactive source instead of
+   * building a parallel one over the same credential root (which would clobber
+   * `client.json` / `verifier.json` → `invalid_code`), and a concurrent second
+   * Connect finds the gate held and fails with `ConnectorBusyError` (a retriable
+   * 409 at the route) rather than racing a rival `auth()` chain.
    */
   private readonly identityConnectorStarts = new Map<string, Promise<ToolSource | undefined>>();
-
-  /**
-   * In-flight INTERACTIVE identity-auth flows, keyed `${serverName}|user:${userId}`.
-   * Held from the "Connect" click until the background start settles (the OAuth
-   * window), so a second click during the window coalesces onto the same flow
-   * rather than starting a fresh one that would clobber the provider's
-   * `verifier.json` (→ `invalid_code`). The identity analog of `authFlowsInFlight`;
-   * cleared by the background start's terminal handler (identity connectors have
-   * no connection-state machine to clear it — the minimal-now design), or here on
-   * a synchronous pre-start failure.
-   *
-   * Distinct from `identityConnectorStarts` (the dispatch lazy-start map), which
-   * the interactive flow ALSO claims — synchronously, before any await — so a
-   * concurrent `getIdentityConnectorSource` joins the interactive source instead
-   * of building a parallel one over the same credential root (which would clobber
-   * `client.json` / `verifier.json` → `invalid_code`). This map exists only to
-   * coalesce a second *Connect*; the cross-path clobber is prevented by the
-   * shared `identityConnectorStarts` claim in `startIdentityAuthInner`.
-   */
-  private readonly identityAuthFlowsInFlight = new Map<
-    string,
-    Promise<{ authorizationUrl: string }>
-  >();
 
   /**
    * Per-`${serverName}|${wsId}` timestamp (epoch ms) of the last
@@ -2095,7 +2103,17 @@ export class BundleLifecycleManager {
    * caller's identity — the "Connect" click from the profile. Mirrors the
    * workspace `startAuth`, bound to the `{type:"user"}` owner and the
    * `IdentityConnectorStore`. Returns the authorization URL the caller's browser
-   * should be sent to. Coalesces concurrent calls per `(serverName, userId)`.
+   * should be sent to.
+   *
+   * Single-gate concurrency: the interactive start and the dispatch lazy-start
+   * (`getIdentityConnectorSource`) coordinate on ONE synchronously-claimed
+   * `identityConnectorStarts` gate per `${userId}|${serverName}`, so neither
+   * builds a second `{type:"user"}` provider over the same credential root — two
+   * concurrent `source.start()`s would each run the SDK's DCR + verifier writes,
+   * clobbering `client.json` / `verifier.json` → `invalid_code`. A concurrent
+   * dispatch JOINS this source (coalescing onto `sourceReady`); a concurrent
+   * second Connect finds the gate held and throws `ConnectorBusyError` (a
+   * retriable 409 at the route) rather than racing a rival `auth()` chain.
    *
    * Minimal connection state by design: the returned URL drives the browser and
    * the source runs once the user returns; the rich per-user connection-state
@@ -2106,45 +2124,23 @@ export class BundleLifecycleManager {
     userId: string,
     opts: { workDir: string; allowInsecureRemotes?: boolean },
   ): Promise<{ authorizationUrl: string }> {
-    const key = `${serverName}|user:${userId}`;
-    const existing = this.identityAuthFlowsInFlight.get(key);
-    if (existing) return existing;
-    const flow = this.startIdentityAuthInner(serverName, userId, opts, key);
-    this.identityAuthFlowsInFlight.set(key, flow);
-    return flow;
-  }
-
-  private async startIdentityAuthInner(
-    serverName: string,
-    userId: string,
-    opts: { workDir: string; allowInsecureRemotes?: boolean },
-    flowKey: string,
-  ): Promise<{ authorizationUrl: string }> {
     const registry = this.userRegistry(userId);
     const connectorKey = `${userId}|${serverName}`;
-    const clearAuthSlot = (): void => {
-      this.identityAuthFlowsInFlight.delete(flowKey);
-    };
 
-    // Coordinate with the dispatch lazy-start (`getIdentityConnectorSource`):
-    // both build a `{type:"user"}` provider over the SAME credential root, and
-    // two concurrent `source.start()`s would each run the SDK's DCR + verifier
-    // writes, clobbering `client.json` / `verifier.json` across the two provider
-    // instances → the interactive flow returns `invalid_code`. A synchronous
-    // check-and-claim (no await between the two lines below) is the gate: if the
-    // source already exists, or a start is already in flight either way, we
-    // can't run a clean interactive flow, so surface a retriable busy error
-    // rather than racing a second `auth()` chain.
+    // Synchronous check-and-claim of the shared start gate: the check below and
+    // the `set` a few lines down run with no intervening await, so a concurrent
+    // dispatch or Connect can't interleave between them. If the source already
+    // exists, or a start is already in flight either way, we can't run a clean
+    // interactive flow — surface a retriable busy error instead of racing a
+    // second `auth()` chain that would clobber the shared credential root.
     if (registry.hasSource(serverName) || this.identityConnectorStarts.has(connectorKey)) {
-      clearAuthSlot();
-      throw new Error(
-        `[lifecycle] "${serverName}" is already connecting or connected for ${userId} — retry shortly`,
-      );
+      throw new ConnectorBusyError(serverName, userId);
     }
-    // Claim the shared start gate so a concurrent dispatch JOINS this source
-    // (coalescing onto `sourceReady`) instead of starting a parallel one.
-    // Resolved with the source the instant it's registered — before the OAuth
-    // round-trip — or `undefined` on a pre-registration failure.
+
+    // Claim the gate so a concurrent dispatch JOINS this source (coalescing onto
+    // `sourceReady`) instead of starting a parallel one. Resolved with the
+    // source the instant it's registered — before the OAuth round-trip — or
+    // `undefined` on a pre-registration failure.
     let settleSource!: (s: ToolSource | undefined) => void;
     const sourceReady = new Promise<ToolSource | undefined>((res) => {
       settleSource = res;
@@ -2178,7 +2174,7 @@ export class BundleLifecycleManager {
       // Cancel the provider's outbound fetches when we give up (timeout) so an
       // unresponsive auth server's redirect-probe / discovery TCP read doesn't
       // linger for its full network deadline — and so the background start fails
-      // fast, freeing the slots. Mirrors `startAuthInner`'s abort.
+      // fast, freeing the gate. Mirrors `startAuthInner`'s abort.
       const providerAbort = new AbortController();
 
       const provider = await buildUrlOAuthProvider(
@@ -2222,10 +2218,10 @@ export class BundleLifecycleManager {
 
       // Background start: the provider's callback resolves `authUrlPromise` when
       // interactive auth is required; the token exchange + reconnect complete
-      // when the user returns from the authorization server. Both slots are
-      // cleared when this settles — the end of the OAuth window (bounded by the
-      // flow registry's 15-min TTL if the user never returns) — NOT when the race
-      // below returns, so a second Connect during the window coalesces.
+      // when the user returns from the authorization server. The gate is freed
+      // when this settles — the end of the OAuth window (bounded by the flow
+      // registry's 15-min TTL if the user never returns) — NOT when the race
+      // below returns.
       backgroundStarted = true;
       void source
         .start()
@@ -2247,7 +2243,6 @@ export class BundleLifecycleManager {
           rejectAuthUrl(err instanceof Error ? err : new Error(msg));
         })
         .finally(() => {
-          clearAuthSlot();
           clearConnectorGate();
         });
 
@@ -2264,7 +2259,7 @@ export class BundleLifecycleManager {
         return { authorizationUrl: await Promise.race([authUrlPromise, timeout]) };
       } catch (raceErr) {
         // Give up (timeout): abort the provider's in-flight fetches so the
-        // background `source.start()` fails fast — which frees both slots via its
+        // background `source.start()` fails fast — which frees the gate via its
         // `.finally` and unblocks a retry — instead of lingering for the network
         // deadline / flow TTL. Mirrors `startAuthInner`.
         providerAbort.abort();
@@ -2274,14 +2269,13 @@ export class BundleLifecycleManager {
       }
     } catch (err) {
       // A pre-start failure (no record, static auth) never reached
-      // `source.start()`, so no background handler will clear the slots — clear
-      // them here and unblock any coalescing dispatch with `undefined`. A
-      // post-start failure (timeout) aborts above → the background's `.finally`
-      // frees both slots, so we don't double-clear here.
+      // `source.start()`, so no background handler will free the gate — free it
+      // here and unblock any coalescing dispatch with `undefined`. A post-start
+      // failure (timeout) aborts above → the background's `.finally` frees the
+      // gate, so we don't double-clear here.
       if (!backgroundStarted) {
         settleSource(undefined);
         clearConnectorGate();
-        clearAuthSlot();
       }
       throw err;
     }
