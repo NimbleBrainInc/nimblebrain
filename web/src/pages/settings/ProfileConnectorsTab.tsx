@@ -40,20 +40,23 @@ export function ProfileConnectorsTab() {
   const refresh = useCallback(async () => {
     setLoading(true);
     setLoadError(null);
-    try {
-      // Workspace-independent: the server resolves the caller's identity, so no
-      // active-workspace header is needed on `/profile`.
-      const [installed, catalog] = await Promise.all([
-        listPersonalConnectors(),
-        listPersonalCatalog(),
-      ]);
-      setConnectors(installed.connectors);
-      setAvailable(catalog.catalog);
-    } catch (err) {
+    // Workspace-independent: the server resolves the caller's identity, so no
+    // active-workspace header is needed on `/profile`. The installed list is the
+    // page's primary content; the curated picker is secondary — decouple them so
+    // a `list_personal_catalog` failure hides "Add a connector" but doesn't block
+    // the installed list behind a load error.
+    const [installed, catalog] = await Promise.allSettled([
+      listPersonalConnectors(),
+      listPersonalCatalog(),
+    ]);
+    if (installed.status === "fulfilled") {
+      setConnectors(installed.value.connectors);
+    } else {
+      const err = installed.reason;
       setLoadError(err instanceof Error ? err.message : String(err));
-    } finally {
-      setLoading(false);
     }
+    setAvailable(catalog.status === "fulfilled" ? catalog.value.catalog : []);
+    setLoading(false);
   }, []);
 
   useEffect(() => {
@@ -78,9 +81,13 @@ export function ProfileConnectorsTab() {
       } catch (err) {
         setActionError(err instanceof Error ? err.message : String(err));
         setBusyKey(null);
+        // The install may have persisted before the connect leg failed; re-sync
+        // so the connector moves from "Add a connector" to "Your connectors"
+        // (with a Connect action) rather than lingering as available.
+        void refresh();
       }
     },
-    [redirectToConnect],
+    [redirectToConnect, refresh],
   );
 
   // Installed but not authenticated (e.g. a cancelled or expired flow): connect
@@ -105,13 +112,13 @@ export function ProfileConnectorsTab() {
         title="Connectors"
         description="Your personal connections — remote MCP services like Granola. Grant one to a workspace to let your agent use it there."
       />
+      {actionError ? <InlineError message={actionError} /> : null}
       {loading ? (
         <div className="text-sm text-muted-foreground">Loading…</div>
       ) : loadError ? (
         <InlineError message={`Unable to load connectors: ${loadError}. Reload to retry.`} />
       ) : (
         <>
-          {actionError ? <InlineError message={actionError} /> : null}
           <Section title="Your connectors" flush>
             {connectors.length === 0 ? (
               <EmptyState message="You haven't connected any connectors yet." />

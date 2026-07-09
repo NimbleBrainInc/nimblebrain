@@ -17,11 +17,15 @@ import type { DirectoryEntry, PersonalConnector } from "../api/client";
 let nextConnectors: PersonalConnector[] = [];
 let nextCatalog: DirectoryEntry[] = [];
 let nextError: Error | null = null;
+let nextCatalogError: Error | null = null;
 const listPersonalConnectors = mock(async () => {
   if (nextError) throw nextError;
   return { connectors: nextConnectors };
 });
-const listPersonalCatalog = mock(async () => ({ catalog: nextCatalog }));
+const listPersonalCatalog = mock(async () => {
+  if (nextCatalogError) throw nextCatalogError;
+  return { catalog: nextCatalog };
+});
 const installPersonalConnector = mock(async () => ({
   ok: true,
   serverName: "granola",
@@ -97,6 +101,7 @@ beforeEach(() => {
   nextConnectors = [];
   nextCatalog = [];
   nextError = null;
+  nextCatalogError = null;
 });
 
 describe("ProfileConnectorsTab", () => {
@@ -159,6 +164,27 @@ describe("ProfileConnectorsTab", () => {
     expect(text).toContain("Add a connector");
     expect(text).toContain("Granola");
     expect(text).toContain("Connect");
+  });
+
+  test("renders the installed list even if the curated catalog read fails", async () => {
+    nextConnectors = [
+      {
+        serverName: "granola",
+        displayName: "Granola",
+        description: null,
+        state: "running",
+        grantedWorkspaces: [],
+      },
+    ];
+    nextCatalogError = new Error("catalog boom");
+    mounted = await mount();
+    const text = mounted.container.textContent ?? "";
+    // Installed list (primary content) still renders — not blocked behind a
+    // load error — and the secondary picker is simply hidden.
+    expect(text).toContain("Granola");
+    expect(text).toContain("Connected");
+    expect(text).not.toContain("Unable to load connectors");
+    expect(text).not.toContain("Add a connector");
   });
 
   test("shows an error state when the list load fails", async () => {
