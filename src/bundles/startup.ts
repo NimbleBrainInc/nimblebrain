@@ -172,6 +172,14 @@ function resolveWorkspaceContext(
 interface StartBundleOpts {
   allowInsecureRemotes?: boolean;
   /**
+   * AbortSignal threaded into the OAuth provider's outbound fetches (the
+   * redirect-probe / discovery / DCR chain). A give-up path — a `startAuth`
+   * timeout — aborts it so the background start fails fast instead of lingering
+   * for the network deadline. Threaded on the identity (`{type:"user"}`) arm of
+   * the URL-bundle path; boot-start (the workspace arm) never sets it.
+   */
+  abortSignal?: AbortSignal;
+  /**
    * Identity owner for a personal connector. When set, the URL bundle's OAuth
    * credentials bind to the user (the `WorkspaceOAuthProvider` `{type:"user"}`
    * arm) and live at `users/<userId>/credentials/mcp-oauth/<serverName>/`,
@@ -314,17 +322,6 @@ async function resolveStaticOAuthClient(
 }
 
 /**
- * Build the workspace-scoped OAuth provider for a URL bundle, or undefined when
- * the bundle carries static auth (no OAuth). Tokens and DCR credentials live
- * under <workDir>/workspaces/<wsId>/credentials/mcp-oauth/<serverName>/.
- *
- * `wsId` is REQUIRED here — not defaulted — to match the named-bundle branch's
- * behavior at the credential boundary. A silent `ws_default` fallback would
- * cause cross-tenant credential leakage: URL bundles installed from different
- * workspaces would share OAuth tokens under the same default id. Callers must
- * thread workspace context through `installRemote` / `startBundleSource`.
- */
-/**
  * The `{type:"user"}` arm of {@link buildUrlOAuthProvider} — a personal
  * connector's OAuth provider. Credentials live at
  * `users/<userId>/credentials/mcp-oauth/<serverName>/`, derived from `workDir`
@@ -349,6 +346,7 @@ function buildUserOAuthProvider(
     ...fleetIssuerOption(),
     onInteractiveAuthRequired,
     ...(opts?.onAuthLost ? { onAuthLost: opts.onAuthLost } : {}),
+    ...(opts?.abortSignal ? { abortSignal: opts.abortSignal } : {}),
     ...(ref.scopes ? { scopes: ref.scopes } : {}),
     ...(ref.additionalAuthorizationParams
       ? { additionalAuthorizationParams: ref.additionalAuthorizationParams }
@@ -356,6 +354,16 @@ function buildUserOAuthProvider(
   });
 }
 
+/**
+ * Build the OAuth provider for a URL bundle, or `undefined` when it carries
+ * static auth (no OAuth). Owner-generic: an `opts.identityOwner` yields the
+ * `{type:"user"}` arm (credentials under `users/<userId>/…`, see
+ * {@link buildUserOAuthProvider}); otherwise a `wsContext` is REQUIRED and yields
+ * the workspace-scoped provider (tokens under
+ * `workspaces/<wsId>/credentials/mcp-oauth/<serverName>/`). The workspace id is
+ * never defaulted — a silent `ws_default` fallback would pool OAuth tokens across
+ * tenants.
+ */
 export async function buildUrlOAuthProvider(
   ref: Extract<BundleRef, { url: string }>,
   serverName: string,

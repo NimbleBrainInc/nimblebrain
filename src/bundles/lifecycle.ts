@@ -38,7 +38,12 @@ import { getMpak } from "./mpak.ts";
 import { hasPersistedWorkspaceOAuthTokens } from "./oauth-tokens.ts";
 import { defaultWorkDir, deriveServerName, resolveBundleDataDirForRef } from "./paths.ts";
 import { consumePendingAuth } from "./pending-auth-buffer.ts";
-import { type BundleMcpDeps, composeBundleMcpContext, startBundleSource } from "./startup.ts";
+import {
+  type BundleMcpDeps,
+  buildUrlOAuthProvider,
+  composeBundleMcpContext,
+  startBundleSource,
+} from "./startup.ts";
 import type {
   BriefingBlock,
   BundleInstance,
@@ -101,6 +106,26 @@ export class LegacyOAuthScopeError extends Error {
     this.name = "LegacyOAuthScopeError";
     this.serverName = serverName;
     this.url = url;
+  }
+}
+
+/**
+ * A user-initiated interactive connect (`startIdentityAuth`) can't start a clean
+ * OAuth flow because a start for the same `(userId, serverName)` is already in
+ * flight, or the source is already connected. Retriable and NOT a server fault —
+ * the caller should back off and retry, not read logs. Surfaced as a `409` at
+ * the route layer.
+ */
+export class ConnectorBusyError extends Error {
+  readonly serverName: string;
+  readonly userId: string;
+  constructor(serverName: string, userId: string) {
+    super(
+      `[lifecycle] "${serverName}" is already connecting or connected for ${userId} — retry shortly`,
+    );
+    this.name = "ConnectorBusyError";
+    this.serverName = serverName;
+    this.userId = userId;
   }
 }
 
@@ -1737,7 +1762,11 @@ export class BundleLifecycleManager {
   private readonly registriesByUser = new Map<string, ToolRegistry>();
 
   /**
-   * In-flight `getIdentityConnectorSource` starts, keyed `${userId}|${serverName}`.
+   * In-flight identity-connector starts, keyed `${userId}|${serverName}` — the
+   * single coordination gate for BOTH the dispatch lazy-start
+   * (`getIdentityConnectorSource`) and the interactive Connect
+   * (`startIdentityAuth`).
+   *
    * Lazy-start is check-then-act (`hasSource` miss → read record → start), so two
    * concurrent first-calls for the same connector would both miss and both spawn a
    * transport — the loser's `addSource` throws (or its transport leaks). This map
@@ -1746,6 +1775,13 @@ export class BundleLifecycleManager {
    * no intervening await, so a second caller always observes the entry. Distinct
    * from a spawn-storm cooldown, which is a negative cache for *failed* starts and
    * does NOT dedup concurrent *first* calls.
+   *
+   * The interactive Connect claims this SAME gate — synchronously, before any
+   * await — so a concurrent dispatch JOINS the interactive source instead of
+   * building a parallel one over the same credential root (which would clobber
+   * `client.json` / `verifier.json` → `invalid_code`), and a concurrent second
+   * Connect finds the gate held and fails with `ConnectorBusyError` (a retriable
+   * 409 at the route) rather than racing a rival `auth()` chain.
    */
   private readonly identityConnectorStarts = new Map<string, Promise<ToolSource | undefined>>();
 
@@ -2060,6 +2096,189 @@ export class BundleLifecycleManager {
       this.registriesByUser.set(userId, registry);
     }
     return registry;
+  }
+
+  /**
+   * Begin an INTERACTIVE OAuth flow to connect a personal connector on the
+   * caller's identity — the "Connect" click from the profile. Mirrors the
+   * workspace `startAuth`, bound to the `{type:"user"}` owner and the
+   * `IdentityConnectorStore`. Returns the authorization URL the caller's browser
+   * should be sent to.
+   *
+   * Single-gate concurrency: the interactive start and the dispatch lazy-start
+   * (`getIdentityConnectorSource`) coordinate on ONE synchronously-claimed
+   * `identityConnectorStarts` gate per `${userId}|${serverName}`, so neither
+   * builds a second `{type:"user"}` provider over the same credential root — two
+   * concurrent `source.start()`s would each run the SDK's DCR + verifier writes,
+   * clobbering `client.json` / `verifier.json` → `invalid_code`. A concurrent
+   * dispatch JOINS this source (coalescing onto `sourceReady`); a concurrent
+   * second Connect finds the gate held and throws `ConnectorBusyError` (a
+   * retriable 409 at the route) rather than racing a rival `auth()` chain.
+   *
+   * Minimal connection state by design: the returned URL drives the browser and
+   * the source runs once the user returns; the rich per-user connection-state
+   * model + reauth surfacing are deferred.
+   */
+  async startIdentityAuth(
+    serverName: string,
+    userId: string,
+    opts: { workDir: string; allowInsecureRemotes?: boolean },
+  ): Promise<{ authorizationUrl: string }> {
+    const registry = this.userRegistry(userId);
+    const connectorKey = `${userId}|${serverName}`;
+
+    // Synchronous check-and-claim of the shared start gate: the check below and
+    // the `set` a few lines down run with no intervening await, so a concurrent
+    // dispatch or Connect can't interleave between them. If the source already
+    // exists, or a start is already in flight either way, we can't run a clean
+    // interactive flow — surface a retriable busy error instead of racing a
+    // second `auth()` chain that would clobber the shared credential root.
+    if (registry.hasSource(serverName) || this.identityConnectorStarts.has(connectorKey)) {
+      throw new ConnectorBusyError(serverName, userId);
+    }
+
+    // Claim the gate so a concurrent dispatch JOINS this source (coalescing onto
+    // `sourceReady`) instead of starting a parallel one. Resolved with the
+    // source the instant it's registered — before the OAuth round-trip — or
+    // `undefined` on a pre-registration failure.
+    let settleSource!: (s: ToolSource | undefined) => void;
+    const sourceReady = new Promise<ToolSource | undefined>((res) => {
+      settleSource = res;
+    });
+    this.identityConnectorStarts.set(connectorKey, sourceReady);
+    const clearConnectorGate = (): void => {
+      if (this.identityConnectorStarts.get(connectorKey) === sourceReady) {
+        this.identityConnectorStarts.delete(connectorKey);
+      }
+    };
+
+    let backgroundStarted = false;
+    try {
+      const ref = await new IdentityConnectorStore({ workDir: opts.workDir }).get(
+        userId,
+        serverName,
+      );
+      if (!ref || !("url" in ref)) {
+        throw new Error(`[lifecycle] "${serverName}" is not a personal connector for ${userId}`);
+      }
+
+      let capturedAuthUrl: string | undefined;
+      let resolveAuthUrl!: (url: string) => void;
+      let rejectAuthUrl!: (err: Error) => void;
+      const authUrlPromise = new Promise<string>((res, rej) => {
+        resolveAuthUrl = res;
+        rejectAuthUrl = rej;
+      });
+      authUrlPromise.catch(() => {});
+
+      // Cancel the provider's outbound fetches when we give up (timeout) so an
+      // unresponsive auth server's redirect-probe / discovery TCP read doesn't
+      // linger for its full network deadline — and so the background start fails
+      // fast, freeing the gate. Mirrors `startAuthInner`'s abort.
+      const providerAbort = new AbortController();
+
+      const provider = await buildUrlOAuthProvider(
+        ref,
+        serverName,
+        undefined, // no workspace context — identity-owned
+        {
+          identityOwner: { userId },
+          workDir: opts.workDir,
+          allowInsecureRemotes: opts.allowInsecureRemotes === true,
+          abortSignal: providerAbort.signal,
+        },
+        (url) => {
+          capturedAuthUrl = url;
+          resolveAuthUrl(url);
+        },
+      );
+      if (!provider) {
+        throw new Error(`[lifecycle] "${serverName}" uses static auth — no interactive OAuth flow`);
+      }
+
+      const source = new McpSource(
+        serverName,
+        {
+          type: "remote",
+          url: new URL(ref.url),
+          transportConfig: ref.transport,
+          allowInsecure: opts.allowInsecureRemotes === true,
+          authProvider: provider,
+        },
+        this.eventSink,
+        composeBundleMcpContext(undefined, serverName),
+      );
+      // We hold the start gate and `hasSource` was false at claim time, so this
+      // source is OURS to own — add it, start it, and tear it down on failure.
+      registry.addSource(source);
+      settleSource(source); // a coalescing dispatch now joins THIS (pending) source
+
+      // Arm interactive OAuth for THIS user-initiated start only.
+      provider.setInteractiveAuthAllowed(true);
+
+      // Background start: the provider's callback resolves `authUrlPromise` when
+      // interactive auth is required; the token exchange + reconnect complete
+      // when the user returns from the authorization server. The gate is freed
+      // when this settles — the end of the OAuth window (bounded by the flow
+      // registry's 15-min TTL if the user never returns) — NOT when the race
+      // below returns.
+      backgroundStarted = true;
+      void source
+        .start()
+        .then(() => {
+          if (!capturedAuthUrl) {
+            rejectAuthUrl(
+              new Error(
+                `[lifecycle] ${serverName} connected without interactive auth — already authenticated`,
+              ),
+            );
+          }
+        })
+        .catch((err: unknown) => {
+          const msg = err instanceof Error ? err.message || err.name : String(err);
+          log.warn(
+            `[lifecycle] startIdentityAuth: ${serverName} start failed for ${userId}: ${msg}`,
+          );
+          void registry.removeSource(serverName).catch(() => {}); // ours to remove
+          rejectAuthUrl(err instanceof Error ? err : new Error(msg));
+        })
+        .finally(() => {
+          clearConnectorGate();
+        });
+
+      // Race the auth URL signal against a hard timeout (mirrors `startAuth`).
+      const TIMEOUT_MS = 15_000;
+      let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
+      const timeout = new Promise<never>((_, rej) => {
+        timeoutHandle = setTimeout(
+          () => rej(new Error(`[lifecycle] startIdentityAuth timed out after ${TIMEOUT_MS}ms`)),
+          TIMEOUT_MS,
+        );
+      });
+      try {
+        return { authorizationUrl: await Promise.race([authUrlPromise, timeout]) };
+      } catch (raceErr) {
+        // Give up (timeout): abort the provider's in-flight fetches so the
+        // background `source.start()` fails fast — which frees the gate via its
+        // `.finally` and unblocks a retry — instead of lingering for the network
+        // deadline / flow TTL. Mirrors `startAuthInner`.
+        providerAbort.abort();
+        throw raceErr;
+      } finally {
+        if (timeoutHandle !== undefined) clearTimeout(timeoutHandle);
+      }
+    } catch (err) {
+      // A pre-start failure (no record, static auth) never reached
+      // `source.start()`, so no background handler will free the gate — free it
+      // here and unblock any coalescing dispatch with `undefined`. A post-start
+      // failure (timeout) aborts above → the background's `.finally` frees the
+      // gate, so we don't double-clear here.
+      if (!backgroundStarted) {
+        settleSource(undefined);
+        clearConnectorGate();
+      }
+      throw err;
+    }
   }
 
   /**

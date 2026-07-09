@@ -20,10 +20,17 @@
  * enough that a stuck flow is reclaimed before it piles up.
  */
 
+/**
+ * Who a pending OAuth flow belongs to — a workspace connector or a user's
+ * personal (identity-owned) connector. The callback uses this to land the user
+ * back on the right page (`/w/<slug>/settings/connectors` vs `/profile/connectors`).
+ */
+export type FlowOwner = { kind: "workspace"; wsId: string } | { kind: "user"; userId: string };
+
 interface PendingFlow {
   resolve: (code: string) => void;
   reject: (err: Error) => void;
-  wsId: string;
+  owner: FlowOwner;
   serverName: string;
   timeout: ReturnType<typeof setTimeout>;
 }
@@ -38,7 +45,7 @@ export const DEFAULT_FLOW_TTL_MS = 15 * 60 * 1000;
 
 export function register(
   state: string,
-  wsId: string,
+  owner: FlowOwner,
   serverName: string,
   ttlMs: number = DEFAULT_FLOW_TTL_MS,
 ): Promise<string> {
@@ -59,7 +66,7 @@ export function register(
     // in short-lived CLI invocations. In the HTTP server process this is
     // a no-op — the server keeps the loop alive independently.
     timeout.unref?.();
-    flows.set(state, { resolve, reject, wsId, serverName, timeout });
+    flows.set(state, { resolve, reject, owner, serverName, timeout });
   });
   // Defensive no-op rejection handler. A caller that awaits / .catches
   // their own handle still observes rejections normally — multiple Promise
@@ -73,15 +80,15 @@ export function register(
 }
 
 /**
- * Read the workspace id a pending flow was registered under, without
- * resolving or removing it. The `/v1/mcp-auth/callback` route peeks this to
- * build the workspace-scoped return URL (`/w/<slug>/settings/connectors`)
- * before calling `resolveWithCode` (which deletes the flow). Single-process
- * and synchronous, so peek-then-resolve has no TOCTOU. Returns null when no
- * flow is registered for `state`.
+ * Read the owner a pending flow was registered under, without resolving or
+ * removing it. The `/v1/mcp-auth/callback` route peeks this to build the right
+ * return URL (workspace connectors page vs `/profile/connectors`) before calling
+ * `resolveWithCode` (which deletes the flow). Single-process and synchronous, so
+ * peek-then-resolve has no TOCTOU. Returns null when no flow is registered for
+ * `state`.
  */
-export function peekWorkspaceId(state: string): string | null {
-  return flows.get(state)?.wsId ?? null;
+export function peekFlowOwner(state: string): FlowOwner | null {
+  return flows.get(state)?.owner ?? null;
 }
 
 /** Resolve a pending flow by state. Returns true if found. */

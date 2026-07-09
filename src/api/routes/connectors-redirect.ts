@@ -23,3 +23,12 @@ export function workspaceConnectorsUrl(wsId: string): string {
   const slug = wsId.replace(/^ws_/, "");
   return `${webOrigin()}/w/${slug}/settings/connectors`;
 }
+
+/**
+ * Post-OAuth return URL for a **personal (identity-owned) connector**. It lives
+ * on the user's profile, outside any workspace — `/profile/connectors` — so an
+ * identity OAuth callback lands the user back there, not on a workspace page.
+ */
+export function profileConnectorsUrl(): string {
+  return `${webOrigin()}/profile/connectors`;
+}

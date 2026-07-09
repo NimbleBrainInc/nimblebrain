@@ -1,9 +1,14 @@
 import { createHash, randomBytes } from "node:crypto";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { Hono } from "hono";
 import { securityHeaders } from "../../../src/api/middleware/security-headers.ts";
 import { mcpAuthRoutes } from "../../../src/api/routes/mcp-auth.ts";
 import type { AppContext, AppEnv } from "../../../src/api/types.ts";
+import { ConnectorBusyError } from "../../../src/bundles/lifecycle.ts";
+import { IdentityConnectorStore } from "../../../src/identity/connector-store.ts";
 import { _clearAll, register as registerFlow } from "../../../src/tools/oauth-flow-registry.ts";
 
 /**
@@ -18,6 +23,8 @@ import { _clearAll, register as registerFlow } from "../../../src/tools/oauth-fl
  */
 
 const WS_ID = "ws_test";
+const WS_OWNER = { kind: "workspace", wsId: WS_ID } as const;
+const USER_ID = "usr_test";
 
 function sha256Hex(input: string): string {
   return createHash("sha256").update(input).digest("hex");
@@ -27,6 +34,8 @@ interface StubLifecycle {
   /** Pre-canned URL the stub `startAuth` returns. Undefined ⇒ throws. */
   authUrls: Map<string, string>; // key: "serverName|wsId|principalId"
   instances: Map<string, { oauthScope?: "workspace" | "user" }>; // key: "serverName|wsId"
+  /** Pre-canned URL the stub `startIdentityAuth` returns. Key: "serverName|userId". */
+  identityAuthUrls: Map<string, string>;
   getInstance(serverName: string, wsId: string): { oauthScope?: "workspace" | "user" } | null;
   startAuth(
     serverName: string,
@@ -34,13 +43,20 @@ interface StubLifecycle {
     principalId: string,
     opts: { workDir: string; callbackUrl: string; allowInsecureRemotes?: boolean },
   ): Promise<{ authorizationUrl: string }>;
+  startIdentityAuth(
+    serverName: string,
+    userId: string,
+    opts: { workDir: string; allowInsecureRemotes?: boolean },
+  ): Promise<{ authorizationUrl: string }>;
 }
 
 function makeStubLifecycle(): StubLifecycle {
   const authUrls = new Map<string, string>();
+  const identityAuthUrls = new Map<string, string>();
   const instances = new Map<string, { oauthScope?: "workspace" | "user" }>();
   return {
     authUrls,
+    identityAuthUrls,
     instances,
     getInstance(serverName, wsId) {
       return instances.get(`${serverName}|${wsId}`) ?? null;
@@ -50,15 +66,26 @@ function makeStubLifecycle(): StubLifecycle {
       if (!url) throw new Error(`stub: no canned URL for ${serverName}|${wsId}|${principalId}`);
       return { authorizationUrl: url };
     },
+    async startIdentityAuth(serverName, userId) {
+      const url = identityAuthUrls.get(`${serverName}|${userId}`);
+      if (!url) throw new Error(`stub: no canned identity URL for ${serverName}|${userId}`);
+      return { authorizationUrl: url };
+    },
   };
 }
 
-function makeApp(lifecycle: StubLifecycle, secureCookies = false): Hono<AppEnv> {
+function makeApp(
+  lifecycle: StubLifecycle,
+  secureCookies = false,
+  workDir = "/tmp/nb-test",
+): Hono<AppEnv> {
   const ctx = {
     runtime: {
       getLifecycle: () => lifecycle,
-      getWorkDir: () => "/tmp/nb-test",
+      getWorkDir: () => workDir,
       getAllowInsecureRemotes: () => false,
+      // Dev-mode: no real identity → the fixed test user.
+      resolveRequestUserId: () => USER_ID,
     },
     // Dev-mode auth so requireAuth() passes through without an identity. No
     // identity → requireWorkspace() also passes through without setting
@@ -201,7 +228,7 @@ describe("GET /v1/mcp-auth/callback", () => {
 
   test("matching cookie + valid state resolves the flow and clears the cookie", async () => {
     const state = "valid-state-xyz";
-    const flowPromise = registerFlow(state, WS_ID, "granola");
+    const flowPromise = registerFlow(state, WS_OWNER, "granola");
     // Attach a no-op catch so a test failure doesn't leak an unhandled
     // rejection if the assertion path bails before consuming flowPromise.
     flowPromise.catch(() => {});
@@ -259,7 +286,7 @@ describe("GET /v1/mcp-auth/callback", () => {
     wrapped.route("/", mcpAuthRoutes(ctx));
 
     const state = "csp-state";
-    const flowPromise = registerFlow(state, WS_ID, "granola");
+    const flowPromise = registerFlow(state, WS_OWNER, "granola");
     flowPromise.catch(() => {});
     const cookie = `nb_oauth_state=${sha256Hex(state)}`;
     const res = await wrapped.request(
@@ -289,7 +316,7 @@ describe("GET /v1/mcp-auth/callback", () => {
 
   test("missing cookie → 400 session mismatch, flow NOT resolved", async () => {
     const state = "no-cookie-state";
-    const flowPromise = registerFlow(state, WS_ID, "granola");
+    const flowPromise = registerFlow(state, WS_OWNER, "granola");
     flowPromise.catch(() => {});
 
     const res = await app.request(
@@ -311,7 +338,7 @@ describe("GET /v1/mcp-auth/callback", () => {
 
   test("mismatched cookie hash → 400 session mismatch, flow NOT resolved", async () => {
     const state = "mismatched-state";
-    const flowPromise = registerFlow(state, WS_ID, "granola");
+    const flowPromise = registerFlow(state, WS_OWNER, "granola");
     flowPromise.catch(() => {});
 
     // Cookie is sha256(some-other-state), not sha256(state) — the timing-safe
@@ -460,7 +487,7 @@ describe("bouncer mode: state envelope wrap on initiate / unwrap on callback", (
       tenantKey: Buffer.from(TENANT_KEY_B64, "base64"),
     });
 
-    const flowPromise = registerFlow(innerState, WS_ID, "granola");
+    const flowPromise = registerFlow(innerState, WS_OWNER, "granola");
     flowPromise.catch(() => {});
 
     const cookie = `nb_oauth_state=${sha256Hex(innerState)}`;
@@ -519,5 +546,114 @@ describe("bouncer mode: state envelope wrap on initiate / unwrap on callback", (
   test("mcpAuthCallbackUrl returns the bouncer URL when bouncer mode is enabled", async () => {
     const { mcpAuthCallbackUrl } = await import("../../../src/api/routes/mcp-auth.ts");
     expect(mcpAuthCallbackUrl()).toBe(BOUNCER_CALLBACK);
+  });
+});
+
+describe("POST /v1/mcp-auth/initiate-identity", () => {
+  let workDir: string;
+  let app: Hono<AppEnv>;
+  let lifecycle: StubLifecycle;
+
+  beforeEach(() => {
+    workDir = mkdtempSync(join(tmpdir(), "nb-mcp-auth-identity-"));
+    lifecycle = makeStubLifecycle();
+    app = makeApp(lifecycle, false, workDir);
+  });
+
+  afterEach(() => {
+    _clearAll();
+    rmSync(workDir, { recursive: true, force: true });
+  });
+
+  test("installed connector → sets session-bound cookie and returns the auth URL", async () => {
+    await new IdentityConnectorStore({ workDir }).add(USER_ID, {
+      url: "https://granola.test/mcp",
+      serverName: "granola",
+      ui: null,
+    });
+    const state = "identity-state-abc";
+    lifecycle.identityAuthUrls.set(
+      `granola|${USER_ID}`,
+      `https://granola.test/authorize?state=${state}&client_id=cid`,
+    );
+
+    const res = await app.request("http://localhost/v1/mcp-auth/initiate-identity", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ serverName: "granola" }),
+    });
+
+    expect(res.status).toBe(200);
+    expect((await res.json()).authorizationUrl).toContain("/authorize");
+    const setCookie = res.headers.get("Set-Cookie");
+    expect(setCookie).not.toBeNull();
+    expect(setCookie!).toContain(`nb_oauth_state=${sha256Hex(state)}`);
+    expect(setCookie!).toContain("Path=/v1/mcp-auth/callback");
+  });
+
+  test("a connect already in progress → 409 connector_busy (retriable), not 500", async () => {
+    await new IdentityConnectorStore({ workDir }).add(USER_ID, {
+      url: "https://granola.test/mcp",
+      serverName: "granola",
+      ui: null,
+    });
+    // The lifecycle rejects `ConnectorBusyError` when a start is already in
+    // flight for this (user, connector) — a retriable conflict, not a fault.
+    lifecycle.startIdentityAuth = async () => {
+      throw new ConnectorBusyError("granola", USER_ID);
+    };
+
+    const res = await app.request("http://localhost/v1/mcp-auth/initiate-identity", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ serverName: "granola" }),
+    });
+
+    expect(res.status).toBe(409);
+    expect((await res.json()).error).toBe("connector_busy");
+    expect(res.headers.get("Retry-After")).not.toBeNull();
+    // Busy is not a flow start — no state cookie set.
+    expect(res.headers.get("Set-Cookie")).toBeNull();
+  });
+
+  test("not one of the caller's personal connectors → 404 connector_not_found (not 500)", async () => {
+    const res = await app.request("http://localhost/v1/mcp-auth/initiate-identity", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ serverName: "not-installed" }),
+    });
+    expect(res.status).toBe(404);
+    expect((await res.json()).error).toBe("connector_not_found");
+    // No flow started, no cookie set.
+    expect(res.headers.get("Set-Cookie")).toBeNull();
+  });
+});
+
+describe("GET /v1/mcp-auth/callback — owner-aware redirect", () => {
+  let app: Hono<AppEnv>;
+
+  beforeEach(() => {
+    app = makeApp(makeStubLifecycle());
+  });
+  afterEach(() => {
+    _clearAll();
+  });
+
+  test("a user-owned flow lands the user on /profile/connectors (not a workspace page)", async () => {
+    const state = "user-owned-state";
+    const flowPromise = registerFlow(state, { kind: "user", userId: USER_ID }, "granola");
+    flowPromise.catch(() => {});
+
+    const res = await app.request(
+      `http://localhost/v1/mcp-auth/callback?code=code-1&state=${state}`,
+      { headers: { cookie: `nb_oauth_state=${sha256Hex(state)}` } },
+    );
+
+    expect(res.status).toBe(200);
+    const html = await res.text();
+    expect(html).toContain("/profile/connectors");
+    // Never a workspace-scoped page for a personal connector.
+    expect(html).not.toContain("/w/");
+    await expect(flowPromise).resolves.toBe("code-1");
   });
 });

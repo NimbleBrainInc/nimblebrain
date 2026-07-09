@@ -1,11 +1,13 @@
 import { beforeEach, describe, expect, it } from "bun:test";
 import {
   _clearAll,
-  peekWorkspaceId,
+  peekFlowOwner,
   register,
   rejectFlow,
   resolveWithCode,
 } from "../../src/tools/oauth-flow-registry.ts";
+
+const WS = { kind: "workspace", wsId: "ws_test" } as const;
 
 describe("oauth-flow-registry", () => {
   beforeEach(() => {
@@ -13,7 +15,7 @@ describe("oauth-flow-registry", () => {
   });
 
   it("resolves a registered flow with the provided code", async () => {
-    const p = register("state-abc", "ws_test", "srv");
+    const p = register("state-abc", WS, "srv");
     expect(resolveWithCode("state-abc", "the-code")).toBe(true);
     await expect(p).resolves.toBe("the-code");
   });
@@ -22,32 +24,39 @@ describe("oauth-flow-registry", () => {
     expect(resolveWithCode("unknown-state", "code")).toBe(false);
   });
 
-  it("peekWorkspaceId reads the flow's wsId without resolving it", async () => {
-    // The callback peeks the workspace to build the `/w/<slug>` return URL
-    // before it resolves (which deletes the flow). Peek must be read-only:
-    // the subsequent resolve still finds the flow.
-    const p = register("state-peek", "ws_acme", "srv");
-    expect(peekWorkspaceId("state-peek")).toBe("ws_acme");
+  it("peekFlowOwner reads a workspace flow's owner without resolving it", async () => {
+    // The callback peeks the owner to build the return URL before it resolves
+    // (which deletes the flow). Peek must be read-only: the subsequent resolve
+    // still finds the flow.
+    const p = register("state-peek", { kind: "workspace", wsId: "ws_acme" }, "srv");
+    expect(peekFlowOwner("state-peek")).toEqual({ kind: "workspace", wsId: "ws_acme" });
     // Still resolvable — peek didn't consume the flow.
     expect(resolveWithCode("state-peek", "code")).toBe(true);
     await expect(p).resolves.toBe("code");
     // Gone after resolve.
-    expect(peekWorkspaceId("state-peek")).toBeNull();
+    expect(peekFlowOwner("state-peek")).toBeNull();
   });
 
-  it("peekWorkspaceId returns null for an unknown state", () => {
-    expect(peekWorkspaceId("never-registered")).toBeNull();
+  it("peekFlowOwner reads a user (identity-owned) flow's owner", async () => {
+    const p = register("state-user", { kind: "user", userId: "usr_alice" }, "granola");
+    expect(peekFlowOwner("state-user")).toEqual({ kind: "user", userId: "usr_alice" });
+    expect(resolveWithCode("state-user", "code")).toBe(true);
+    await expect(p).resolves.toBe("code");
+  });
+
+  it("peekFlowOwner returns null for an unknown state", () => {
+    expect(peekFlowOwner("never-registered")).toBeNull();
   });
 
   it("rejects a registered flow with the provided error", async () => {
-    const p = register("state-xyz", "ws_test", "srv");
+    const p = register("state-xyz", WS, "srv");
     const rejected = rejectFlow("state-xyz", new Error("boom"));
     expect(rejected).toBe(true);
     await expect(p).rejects.toThrow("boom");
   });
 
   it("removes the flow after resolve (second resolve is a no-op)", () => {
-    register("state-1", "ws_test", "srv");
+    register("state-1", WS, "srv");
     expect(resolveWithCode("state-1", "a")).toBe(true);
     expect(resolveWithCode("state-1", "b")).toBe(false);
   });
@@ -56,7 +65,7 @@ describe("oauth-flow-registry", () => {
     // Intra-process leaks are the concern: an orphaned pending flow (tab
     // closed, network failure) would keep a promise alive forever without
     // a TTL. Use a tiny TTL to exercise the timer path quickly.
-    const p = register("state-ttl", "ws_test", "srv", 20);
+    const p = register("state-ttl", WS, "srv", 20);
     await expect(p).rejects.toThrow(/timed out/i);
   });
 
@@ -64,7 +73,7 @@ describe("oauth-flow-registry", () => {
     // Resolve first, then wait past the TTL boundary. The timer must be
     // cleared on resolve or we'd get an unhandled rejection from a late
     // fire on an already-settled flow.
-    const p = register("state-resolved", "ws_test", "srv", 30);
+    const p = register("state-resolved", WS, "srv", 30);
     resolveWithCode("state-resolved", "ok");
     await expect(p).resolves.toBe("ok");
     await new Promise((r) => setTimeout(r, 60));

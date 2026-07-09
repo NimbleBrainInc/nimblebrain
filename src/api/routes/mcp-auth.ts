@@ -1,6 +1,8 @@
 import { createHash, timingSafeEqual } from "node:crypto";
 import { type Context, Hono } from "hono";
 import { WORKSPACE_PRINCIPAL_ID } from "../../bundles/connection.ts";
+import { ConnectorBusyError } from "../../bundles/lifecycle.ts";
+import { IdentityConnectorStore } from "../../identity/connector-store.ts";
 import { getBouncerMode } from "../../oauth/bouncer-config.ts";
 import {
   ENVELOPE_VERSION,
@@ -10,11 +12,11 @@ import {
 } from "../../oauth/envelope.ts";
 import { mcpAuthCallbackUrl } from "../../oauth/mcp-callback-url.ts";
 import { log } from "../../observability/log.ts";
-import { peekWorkspaceId, resolveWithCode } from "../../tools/oauth-flow-registry.ts";
+import { type FlowOwner, peekFlowOwner, resolveWithCode } from "../../tools/oauth-flow-registry.ts";
 import { requireAuth } from "../middleware/auth.ts";
 import { requireWorkspace } from "../middleware/workspace.ts";
 import { type AppContext, type AppEnv, apiError } from "../types.ts";
-import { workspaceConnectorsUrl } from "./connectors-redirect.ts";
+import { profileConnectorsUrl, workspaceConnectorsUrl } from "./connectors-redirect.ts";
 
 /**
  * Inline CSS for the OAuth success page. Held in a module constant so the
@@ -149,6 +151,44 @@ export function mcpAuthRoutes(ctx: AppContext) {
     },
   );
 
+  // ── POST /v1/mcp-auth/initiate-identity ───────────────────────────
+  // The identity-plane sibling of `/initiate`: connect a PERSONAL connector on
+  // the caller's own identity (the "Connect" click from the profile). No
+  // workspace — the connector is resolved from the caller's `connectors.json`
+  // and its OAuth binds `{type:"user"}`. Same cookie-bound state + callback as
+  // the workspace flow; the callback lands the user on `/profile/connectors`
+  // (the flow's owner is `{kind:"user"}`).
+  app.post("/v1/mcp-auth/initiate-identity", requireAuth(ctx.authOptions), async (c) => {
+    const serverName = await parseServerName(c);
+    if (serverName instanceof Response) return serverName;
+
+    const userId = ctx.runtime.resolveRequestUserId(c.var.identity);
+
+    // Not-installed is a client error (404), not a server failure — mirror the
+    // workspace `/initiate`'s `getInstance`→404. `startIdentityAuthorization`
+    // reserves the generic 500 for genuine SDK / DNS / TLS failures.
+    const installed = await new IdentityConnectorStore({
+      workDir: ctx.runtime.getWorkDir(),
+    }).get(userId, serverName);
+    if (!installed) {
+      return apiError(
+        404,
+        "connector_not_found",
+        `"${serverName}" is not one of your personal connectors.`,
+      );
+    }
+
+    const started = await startIdentityAuthorization(ctx, serverName, userId);
+    if (started instanceof Response) return started;
+
+    const prepared = prepareAuthorization(started, serverName, `user:${userId}`);
+    if (prepared instanceof Response) return prepared;
+    const { authorizationUrl, state } = prepared;
+
+    c.header("Set-Cookie", buildOAuthStateCookie(sha256Hex(state), 900, ctx.secureCookies));
+    return c.json({ authorizationUrl });
+  });
+
   // ── GET /v1/mcp-auth/callback ─────────────────────────────────────
   //
   // Unauthenticated. Verifies the cookie matches before resolving the
@@ -173,11 +213,11 @@ export function mcpAuthRoutes(ctx: AppContext) {
     const mismatch = verifyStateCookie(c, state);
     if (mismatch) return mismatch;
 
-    // Recover the workspace the flow was initiated in *before* resolving
-    // (which deletes the registry entry), so we can land the user back on
-    // the right `/w/<slug>/settings/connectors` page. Synchronous + single-
-    // process, so the peek can't race the resolve below.
-    const flowWsId = peekWorkspaceId(state);
+    // Recover the flow's owner *before* resolving (which deletes the registry
+    // entry), so we can land the user back on the right page — a workspace
+    // connector's settings page vs the user's profile. Synchronous +
+    // single-process, so the peek can't race the resolve below.
+    const flowOwner = peekFlowOwner(state);
     if (!resolveWithCode(state, code)) {
       return c.html(
         "<html><body><h3>Unknown or expired OAuth flow.</h3>" +
@@ -186,10 +226,7 @@ export function mcpAuthRoutes(ctx: AppContext) {
       );
     }
 
-    // Every connector lands on the workspace Connectors page. Stage 2
-    // collapsed user-scope into the owner's personal workspace; per-
-    // workspace dispatch needs no additional branching here.
-    return renderSuccessPage(c, flowWsId, ctx.secureCookies);
+    return renderSuccessPage(c, flowOwner, ctx.secureCookies);
   });
 
   return app;
@@ -248,11 +285,49 @@ async function startAuthorization(
   }
 }
 
+/** Begin an interactive identity-plane OAuth flow, returning the authorization URL or an error Response. */
+async function startIdentityAuthorization(
+  ctx: AppContext,
+  serverName: string,
+  userId: string,
+): Promise<string | Response> {
+  try {
+    const result = await ctx.runtime.getLifecycle().startIdentityAuth(serverName, userId, {
+      workDir: ctx.runtime.getWorkDir(),
+      allowInsecureRemotes: ctx.runtime.getAllowInsecureRemotes(),
+    });
+    return result.authorizationUrl;
+  } catch (err) {
+    // A concurrent Connect / dispatch already holds the start gate for this
+    // connector. Retriable and not a server fault — return a 409 with a
+    // Retry-After so the client backs off, rather than a 500 that tells the
+    // user to read logs.
+    if (err instanceof ConnectorBusyError) {
+      return apiError(
+        409,
+        "connector_busy",
+        "A connection for this connector is already in progress. Retry shortly.",
+        undefined,
+        { "Retry-After": "2" },
+      );
+    }
+    // Don't leak SDK / DNS / TLS details in the response body (same posture as
+    // startAuthorization above). Log raw server-side; return a generic shape.
+    const msg = err instanceof Error ? err.message : String(err);
+    log.warn(`[mcp-auth] startIdentityAuth failed for ${serverName} (user ${userId}): ${msg}`);
+    return apiError(
+      500,
+      "auth_start_failed",
+      "Failed to start OAuth flow. Check server logs for details.",
+    );
+  }
+}
+
 /** Parse the SDK authorization URL, extract its `state`, and (in bouncer mode) wrap that state in a signed envelope — returning the final URL and inner state, or an error Response. */
 function prepareAuthorization(
   authorizationUrl: string,
   serverName: string,
-  wsId: string,
+  flowContext: string,
 ): { authorizationUrl: string; state: string } | Response {
   let urlObj: URL;
   try {
@@ -294,7 +369,7 @@ function prepareAuthorization(
     // Match the error posture of the startAuth catch above:
     // log the cause, surface a generic 500.
     const msg = err instanceof Error ? err.message : String(err);
-    log.warn(`[mcp-auth] envelope wrap failed for ${serverName} in ${wsId}: ${msg}`);
+    log.warn(`[mcp-auth] envelope wrap failed for ${serverName} (${flowContext}): ${msg}`);
     return apiError(500, "internal_error", "Failed to wrap OAuth state.");
   }
 }
@@ -394,21 +469,24 @@ function verifyStateCookie(c: Context<AppEnv>, state: string): Response | null {
 /** Clear the one-shot state cookie, set the success-page CSP, and return the redirect-home confirmation HTML. */
 function renderSuccessPage(
   c: Context<AppEnv>,
-  flowWsId: string | null,
+  flowOwner: FlowOwner | null,
   secureCookies: boolean,
 ): Response {
   // Clear the one-shot state cookie so a refresh of this page can't
   // be used as a replay vector.
   c.header("Set-Cookie", buildOAuthStateCookie("", 0, secureCookies));
 
-  // Auto-redirect back to the workspace Connectors page. The user came
-  // from NimbleBrain and was navigated away to the OAuth provider in
-  // their existing tab — telling them to "close this tab" is wrong
-  // because they'd lose NimbleBrain entirely. We bring them home, to the
-  // same `/w/<slug>` workspace the flow was initiated in. `flowWsId` is
-  // non-null here (resolveWithCode succeeded just above ⟹ the flow
-  // existed when we peeked it).
-  const returnUrl = workspaceConnectorsUrl(flowWsId ?? "");
+  // Auto-redirect back into NimbleBrain. The user came from here and was
+  // navigated away to the OAuth provider in their existing tab — telling them
+  // to "close this tab" is wrong because they'd lose NimbleBrain entirely. We
+  // bring them home: a workspace connector lands on that workspace's Connectors
+  // page; a personal (identity-owned) connector lands on the profile page.
+  // `flowOwner` is non-null here (resolveWithCode succeeded just above ⟹ the
+  // flow existed when we peeked it); the `?? workspace` fallback is defensive.
+  const returnUrl =
+    flowOwner?.kind === "user"
+      ? profileConnectorsUrl()
+      : workspaceConnectorsUrl(flowOwner?.wsId ?? "");
   const safeReturnUrl = escapeHtml(returnUrl);
   // Override the platform-default CSP (`default-src 'none'`) for this
   // response only. Without this the inline <style> below is blocked and
