@@ -190,6 +190,19 @@ describe("lifecycle.startIdentityAuth — interactive OAuth for a personal conne
     ).rejects.toThrow(/not a personal connector/);
   });
 
+  it("a pre-start failure frees the gate — a retry is not wedged", async () => {
+    // The busy check passes and the gate is claimed BEFORE the record lookup, so
+    // a pre-start failure (here: no record) must free the gate in the catch. If
+    // it leaked, the second call would throw `ConnectorBusyError` from the stale
+    // claim instead of reaching the same not-installed error.
+    await expect(
+      lifecycle.startIdentityAuth("ghost", USER_ID, { workDir, allowInsecureRemotes: true }),
+    ).rejects.toThrow(/not a personal connector/);
+    await expect(
+      lifecycle.startIdentityAuth("ghost", USER_ID, { workDir, allowInsecureRemotes: true }),
+    ).rejects.toThrow(/not a personal connector/);
+  });
+
   it("rejects a second concurrent Connect as busy — one auth chain, no DCR clobber", async () => {
     // Two simultaneous Connects: one claims the shared start gate; the other
     // finds it held and is rejected `ConnectorBusyError`. The loser must NOT
