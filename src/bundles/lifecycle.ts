@@ -2047,6 +2047,20 @@ export class BundleLifecycleManager {
    * `startBundleSource` can throw on transport / handshake failure; callers
    * decide whether to swallow or surface.
    */
+  /**
+   * Whether a personal connector's source is currently registered (running) in
+   * this pod's user registry. A NON-starting probe — it never calls
+   * `getIdentityConnectorSource` (which would lazy-start the source), only reads
+   * the existing registry. Per-pod truth: a source is warm only after a Connect /
+   * dispatch on this pod, so a `false` means "not warm here," not "never
+   * authenticated" (cross-pod / persisted connection state is the deferred reauth
+   * slice). Used by `list_personal_connectors` so a just-connected connector
+   * reflects "running" instead of the resting state.
+   */
+  isIdentityConnectorRunning(userId: string, serverName: string): boolean {
+    return this.registriesByUser.get(userId)?.hasSource(serverName) ?? false;
+  }
+
   async getIdentityConnectorSource(
     userId: string,
     serverName: string,

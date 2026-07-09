@@ -266,4 +266,19 @@ describe("lifecycle.startIdentityAuth — interactive OAuth for a personal conne
     );
     expect(existsSync(clientJson)).toBe(true);
   }, 20_000);
+
+  it("isIdentityConnectorRunning reflects the user registry (same-pod state probe)", async () => {
+    // False before any Connect — nothing warm in this pod's user registry.
+    expect(lifecycle.isIdentityConnectorRunning(USER_ID, SERVER)).toBe(false);
+
+    // startIdentityAuth registers the source into the user registry before the
+    // OAuth window resolves, so the non-starting probe now sees it — the truth
+    // `list_personal_connectors` surfaces as "running" instead of the resting
+    // "not_authenticated".
+    await lifecycle.startIdentityAuth(SERVER, USER_ID, { workDir, allowInsecureRemotes: true });
+    expect(lifecycle.isIdentityConnectorRunning(USER_ID, SERVER)).toBe(true);
+
+    // A different connector the user never installed stays false.
+    expect(lifecycle.isIdentityConnectorRunning(USER_ID, "never-installed")).toBe(false);
+  }, 20_000);
 });

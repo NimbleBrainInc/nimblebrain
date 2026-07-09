@@ -560,6 +560,22 @@ export async function initiateMcpOAuth(
 }
 
 /**
+ * Begin the interactive OAuth flow to connect a PERSONAL connector on the
+ * caller's identity. Returns the authorization URL to send the browser to; the
+ * callback lands back on `/profile/connectors`. The identity-plane sibling of
+ * `initiateMcpOAuth` (no workspace / principal).
+ */
+export async function initiateIdentityConnect(
+  serverName: string,
+): Promise<{ authorizationUrl: string }> {
+  return request<{ authorizationUrl: string }>("/v1/mcp-auth/initiate-identity", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ serverName }),
+  });
+}
+
+/**
  * Begin an OAuth flow for a Composio-backed connector. Parallel to
  * {@link initiateMcpOAuth} but keyed on the catalog connector id
  * (e.g. `com.google/gmail`) rather than the slugified server name,
@@ -804,6 +820,44 @@ export async function listPersonalConnectors(): Promise<{ connectors: PersonalCo
   return unwrapStructured(result, "list_personal_connectors");
 }
 
+/**
+ * The curated set of connectors offered for personal (identity-plane) connection
+ * — the profile "Add a connector" picker. Workspace-independent (safe from
+ * `/profile`, which has no active workspace); the server filters to DCR
+ * connectors the caller hasn't already installed on their identity.
+ */
+export async function listPersonalCatalog(): Promise<{ catalog: DirectoryEntry[] }> {
+  const result = await callTool("nb", "manage_connectors", {
+    action: "list_personal_catalog",
+  });
+  return unwrapStructured(result, "list_personal_catalog");
+}
+
+/**
+ * Grant the caller's personal connector `serverName` for use inside `wsId`. A
+ * personal connector is identity-bound and must be granted into EVERY workspace
+ * it's used in — the personal workspace included (no free-at-home). Its tools
+ * then surface to the agent in that workspace.
+ */
+export async function grantConnector(serverName: string, wsId: string): Promise<void> {
+  const result = await callTool("nb", "manage_connectors", {
+    action: "grant_connector",
+    serverName,
+    wsId,
+  });
+  unwrapStructured(result, "grant_connector");
+}
+
+/** Revoke the caller's grant of `serverName` from `wsId`. */
+export async function revokeConnector(serverName: string, wsId: string): Promise<void> {
+  const result = await callTool("nb", "manage_connectors", {
+    action: "revoke_connector",
+    serverName,
+    wsId,
+  });
+  unwrapStructured(result, "revoke_connector");
+}
+
 export async function disconnectConnector(
   serverName: string,
   scope?: "workspace",
@@ -921,6 +975,23 @@ export async function installConnector(
   return unwrapStructured(result, "install");
 }
 
+/**
+ * Install a connector on the caller's OWN identity (a personal connector), not
+ * into a workspace — `scope: "identity"`. DCR-only; the server rejects other
+ * auth types on the identity plane. Does NOT start OAuth — follow up with
+ * `initiateIdentityConnect(serverName)`.
+ */
+export async function installPersonalConnector(
+  entry: DirectoryEntry,
+): Promise<{ ok: boolean; serverName: string; scope: "identity" }> {
+  const result = await callTool("nb", "manage_connectors", {
+    action: "install",
+    scope: "identity",
+    entry,
+  });
+  return unwrapStructured(result, "install");
+}
+
 export interface ConnectorTool {
   name: string;
   description: string;
@@ -940,6 +1011,8 @@ export interface DirectoryEntry {
   description: string;
   iconUrl?: string;
   tags?: string[];
+  /** Offered for personal (identity-plane) connection — the profile Connectors set. */
+  personal?: boolean;
   /**
    * Static-auth entries: true when the workspace has both clientId and
    * client_secret configured. Undefined for entries where operator

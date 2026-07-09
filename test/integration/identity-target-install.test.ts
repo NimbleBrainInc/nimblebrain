@@ -247,3 +247,41 @@ describe("manage_connectors.install scope:identity — DCR personal-connector in
     });
   });
 });
+
+describe("manage_connectors.list_personal_catalog — the curated personal-connect set", () => {
+  let h: Harness;
+  beforeEach(async () => {
+    h = await buildHarness();
+  });
+  afterEach(() => {
+    rmSync(h.workDir, { recursive: true, force: true });
+  });
+
+  test("offers personal DCR connectors; excludes non-personal and non-DCR", async () => {
+    const result = await h.tool.handler({ action: "list_personal_catalog" });
+    expect(result.isError).toBe(false);
+    const sc = result.structuredContent as {
+      catalog: Array<{ id: string; personal?: boolean; install: { auth?: string } }>;
+    };
+    const ids = sc.catalog.map((e) => e.id);
+    // Granola: dcr + personal → offered.
+    expect(ids).toContain("ai.granola/mcp");
+    // Notion: dcr but NOT flagged personal → excluded.
+    expect(ids).not.toContain("com.notion/mcp");
+    // Dropbox: flagged personal but static (non-DCR) → excluded; DCR is the hard gate.
+    expect(ids).not.toContain("com.dropbox/mcp");
+    // Everything offered is a DCR remote MCP connection.
+    for (const e of sc.catalog) expect(e.install.auth).toBe("dcr");
+  });
+
+  test("drops connectors already installed on the caller's identity", async () => {
+    await h.tool.handler({ action: "install", entry: dcrEntry(), scope: "identity" });
+    const result = await h.tool.handler({ action: "list_personal_catalog" });
+    const ids = (result.structuredContent as { catalog: Array<{ id: string }> }).catalog.map(
+      (e) => e.id,
+    );
+    // `dcrEntry()` slugs to the same serverName as the fixture's Granola, so the
+    // now-installed connector is no longer offered.
+    expect(ids).not.toContain("ai.granola/mcp");
+  });
+});

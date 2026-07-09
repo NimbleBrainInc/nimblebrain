@@ -39,3 +39,23 @@ servers:
           hint: Create a Scoped Access app, add the redirect URI, paste App key + secret
           clientSecretKey: dropbox.client_secret
         tags: [storage, files]
+        # `personal` flag set on a NON-dcr entry: exercises that the personal
+        # catalog's hard gate is still DCR auth (this stays excluded).
+        personal: true
+
+  - name: ai.granola/mcp
+    title: Granola
+    description: Meeting notes and transcripts
+    version: "1.0.0"
+    icons:
+      - src: https://static.nimblebrain.ai/icons/granola.png
+        sizes: ["any"]
+    remotes:
+      - type: streamable-http
+        url: https://mcp.granola.ai/mcp
+    _meta:
+      ai.nimblebrain/connector:
+        auth: dcr
+        tags: [meetings, notes]
+        # Offered for personal (identity-plane) connection.
+        personal: true

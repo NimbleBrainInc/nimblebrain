@@ -2,7 +2,11 @@ import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { UserConflictError, UserStore } from "../../../src/identity/user.ts";
+import {
+  resolveUserDisplayName,
+  UserConflictError,
+  UserStore,
+} from "../../../src/identity/user.ts";
 import type { User } from "../../../src/identity/user.ts";
 
 let workDir: string;
@@ -252,5 +256,16 @@ describe("UserStore", () => {
     test("returns null for a non-existent user", async () => {
       expect(await store.restore("usr_doesnotexist0000")).toBeNull();
     });
+  });
+});
+
+describe("resolveUserDisplayName", () => {
+  test("returns the user's display name for the OAuth consent screen", async () => {
+    const user = await store.create({ email: "alice@example.com", displayName: "Alice Doe" });
+    expect(await resolveUserDisplayName(workDir, user.id)).toBe("Alice Doe");
+  });
+
+  test("returns undefined for an unknown user (caller falls back to the raw id)", async () => {
+    expect(await resolveUserDisplayName(workDir, "usr_nonexistent0000")).toBeUndefined();
   });
 });

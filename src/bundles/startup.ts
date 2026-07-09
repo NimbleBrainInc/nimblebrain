@@ -12,6 +12,7 @@ import {
   type HostResourcesRateLimit,
   type HostResourcesResolver,
 } from "../host-resources/index.ts";
+import { resolveUserDisplayName } from "../identity/user.ts";
 import { fleetIssuerOption } from "../oauth/fleet-assertion.ts";
 import { mcpAuthCallbackUrl } from "../oauth/mcp-callback-url.ts";
 import { log } from "../observability/log.ts";
@@ -329,17 +330,23 @@ async function resolveStaticOAuthClient(
  * workspace-scoped and not wired for personal connectors here; the DCR /
  * provider auth paths apply.
  */
-function buildUserOAuthProvider(
+async function buildUserOAuthProvider(
   ref: Extract<BundleRef, { url: string }>,
   serverName: string,
   identityOwner: { userId: string },
   opts: StartBundleOpts | undefined,
   onInteractiveAuthRequired: (authorizationUrl: string) => void,
-): WorkspaceOAuthProvider {
+): Promise<WorkspaceOAuthProvider> {
+  const workDir = opts?.workDir ?? defaultWorkDir();
+  // Human-readable owner for the vendor consent screen ("NimbleBrain (<name>)")
+  // in place of the opaque `user:<id>`; mirrors the workspace arm's
+  // `resolveWorkspaceDisplayName`. Best-effort — falls back to the id.
+  const ownerDisplayName = await resolveUserDisplayName(workDir, identityOwner.userId);
   return new WorkspaceOAuthProvider({
     owner: { type: "user", userId: identityOwner.userId },
+    ...(ownerDisplayName ? { ownerDisplayName } : {}),
     serverName,
-    workDir: opts?.workDir ?? defaultWorkDir(),
+    workDir,
     callbackUrl: mcpAuthCallbackUrl(),
     allowInsecureRemotes: opts?.allowInsecureRemotes === true,
     headlessAuthProbe: ref.headlessAuthProbe === true,

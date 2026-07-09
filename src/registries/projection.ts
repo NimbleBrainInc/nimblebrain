@@ -107,6 +107,7 @@ export function projectServerDetailToDirectoryEntry(
     description: s.description,
     ...(iconUrl ? { iconUrl } : {}),
     ...(meta?.tags && meta.tags.length > 0 ? { tags: meta.tags } : {}),
+    ...(meta?.personal === true ? { personal: true } : {}),
     install,
   };
 }
@@ -176,6 +177,8 @@ export interface ConnectorCatalogEntry {
   tags?: string[];
   interactive?: boolean;
   docsUrl?: string;
+  /** Offered for personal (identity-plane) connection — see `NimbleBrainConnectorMeta.personal`. */
+  personal?: boolean;
   /**
    * Host UI integration (sidebar placement, etc.) declared by the server in
    * `ServerDetail._meta["ai.nimblebrain/host"]`. Server-authored, carried here
@@ -217,6 +220,7 @@ export function serverDetailToCatalogEntry(s: ServerDetail): ConnectorCatalogEnt
     ...(meta?.tags ? { tags: meta.tags } : {}),
     ...(interactive ? { interactive: true } : {}),
     ...(meta?.docsUrl ? { docsUrl: meta.docsUrl } : {}),
+    ...(meta?.personal === true ? { personal: true } : {}),
     ...(ui ? { ui } : {}),
   };
 }

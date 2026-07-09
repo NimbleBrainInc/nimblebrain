@@ -43,6 +43,8 @@ async function buildHarness(opts: {
   identity?: UserIdentity | null;
   personalConnectors?: string[];
   memberOfShared?: boolean;
+  /** Same-pod probe result — `true` makes every listed connector read `running`. */
+  connectorRunning?: boolean;
 }): Promise<Harness> {
   const workDir = mkdtempSync(join(tmpdir(), "nb-connector-grants-"));
   const store = new PermissionStore(workDir);
@@ -72,6 +74,9 @@ async function buildHarness(opts: {
     // list_personal_connectors enriches display metadata from the catalog; an
     // empty catalog is fine here (the assertions key on serverName + grants).
     getConnectorDirectory: () => ({ catalogEntries: async () => [] }),
+    // Same-pod connection-state probe — nothing warm in this unit context, so
+    // every connector reports the resting state.
+    getLifecycle: () => ({ isIdentityConnectorRunning: () => opts.connectorRunning === true }),
   } as unknown as Runtime;
 
   const ctx: ManageConnectorsContext = {
@@ -85,7 +90,7 @@ async function buildHarness(opts: {
 function sc(result: { structuredContent?: unknown }): {
   ok?: boolean;
   error?: string;
-  connectors?: Array<{ serverName: string; grantedWorkspaces: string[] }>;
+  connectors?: Array<{ serverName: string; grantedWorkspaces: string[]; state?: string }>;
 } {
   return (result.structuredContent ?? {}) as never;
 }
@@ -169,6 +174,15 @@ describe("manage_connectors — personal-connector grants", () => {
     const notion = connectors.find((c) => c.serverName === "notion");
     expect(granola?.grantedWorkspaces).toEqual([SHARED_WS]);
     expect(notion?.grantedWorkspaces).toEqual([]); // installed, ungranted
+    // Probe defaults false in this harness → resting state.
+    expect(granola?.state).toBe("not_authenticated");
+  });
+
+  test("list_personal_connectors reports 'running' when the source is registered", async () => {
+    h = await buildHarness({ personalConnectors: ["granola"], connectorRunning: true });
+    const res = await h.tool.handler({ action: "list_personal_connectors" });
+    const granola = (sc(res).connectors ?? []).find((c) => c.serverName === "granola");
+    expect(granola?.state).toBe("running");
   });
 
   test("all grant actions require authentication", async () => {

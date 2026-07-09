@@ -2,33 +2,57 @@
 // ProfileConnectorsTab — render contract.
 //
 // The Profile → Connectors tab lists the caller's personal connectors (a
-// workspace-independent read via `listPersonalConnectors`) and, per connector,
-// its running state + how many workspaces it's granted into. Same plumbing as
-// connector-sections.test.tsx: bun:test + react-dom/client + happy-dom.
+// workspace-independent read via `listPersonalConnectors`) with their state +
+// grant count, and offers the curated set of personal-connectable connectors
+// (`listPersonalCatalog`) each with a Connect action. bun:test +
+// react-dom/client + happy-dom.
 // ---------------------------------------------------------------------------
 
 import { beforeEach, describe, expect, mock, test } from "bun:test";
 import { realClient } from "../../test/setup";
-import type { PersonalConnector } from "../api/client";
+import type { DirectoryEntry, PersonalConnector } from "../api/client";
+import type { WorkspaceInfo } from "../context/WorkspaceContext";
 
 (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
 let nextConnectors: PersonalConnector[] = [];
+let nextCatalog: DirectoryEntry[] = [];
 let nextError: Error | null = null;
+let nextCatalogError: Error | null = null;
 const listPersonalConnectors = mock(async () => {
   if (nextError) throw nextError;
   return { connectors: nextConnectors };
 });
+const listPersonalCatalog = mock(async () => {
+  if (nextCatalogError) throw nextCatalogError;
+  return { catalog: nextCatalog };
+});
+const installPersonalConnector = mock(async () => ({
+  ok: true,
+  serverName: "granola",
+  scope: "identity" as const,
+}));
+const initiateIdentityConnect = mock(async () => ({
+  authorizationUrl: "https://vendor.test/auth",
+}));
+const grantConnector = mock(async () => {});
+const revokeConnector = mock(async () => {});
 
 mock.module("../api/client", () => ({
   ...realClient,
   listPersonalConnectors,
+  listPersonalCatalog,
+  installPersonalConnector,
+  initiateIdentityConnect,
+  grantConnector,
+  revokeConnector,
 }));
 
 const React = await import("react");
 const ReactDOMClient = await import("react-dom/client");
 const { act } = await import("react");
 const { ProfileConnectorsTab } = await import("../pages/settings/ProfileConnectorsTab");
+const { WorkspaceProvider } = await import("../context/WorkspaceContext");
 
 interface Mounted {
   container: HTMLDivElement;
@@ -57,12 +81,70 @@ async function mount(): Promise<Mounted> {
   };
 }
 
+// Mount inside a real `WorkspaceProvider` so `useWorkspaceContext().workspaces`
+// resolves — needed for the grant/revoke panel.
+async function mountWithWorkspaces(workspaces: WorkspaceInfo[]): Promise<Mounted> {
+  const container = document.createElement("div");
+  document.body.appendChild(container);
+  const root = ReactDOMClient.createRoot(container);
+  await act(async () => {
+    root.render(
+      React.createElement(
+        WorkspaceProvider,
+        { initialWorkspaces: workspaces },
+        React.createElement(ProfileConnectorsTab),
+      ),
+    );
+  });
+  await act(async () => {
+    await Promise.resolve();
+    await Promise.resolve();
+  });
+  return {
+    container,
+    unmount() {
+      root.unmount();
+      container.remove();
+    },
+  };
+}
+
+function click(el: Element | null | undefined): Promise<void> {
+  return act(async () => {
+    el?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    await Promise.resolve();
+  });
+}
+
+function catalogEntry(overrides: Partial<DirectoryEntry> = {}): DirectoryEntry {
+  return {
+    id: "ai.granola/mcp",
+    registryId: "curated",
+    registryType: "static",
+    name: "Granola",
+    description: "Meeting notes and transcripts",
+    personal: true,
+    install: {
+      kind: "remote-oauth",
+      url: "https://mcp.granola.ai/mcp",
+      transportType: "streamable-http",
+      auth: "dcr",
+    },
+    ...overrides,
+  };
+}
+
 beforeEach(() => {
   mounted?.unmount();
   mounted = null;
   listPersonalConnectors.mockClear();
+  listPersonalCatalog.mockClear();
+  grantConnector.mockClear();
+  revokeConnector.mockClear();
   nextConnectors = [];
+  nextCatalog = [];
   nextError = null;
+  nextCatalogError = null;
 });
 
 describe("ProfileConnectorsTab", () => {
@@ -93,12 +175,14 @@ describe("ProfileConnectorsTab", () => {
     const text = mounted.container.textContent ?? "";
 
     expect(text).toContain("Granola");
-    expect(text).toContain("Ready"); // running → "Ready"
+    expect(text).toContain("Connected"); // running → "Connected"
     expect(text).toContain("Granted to 1 workspace");
 
     expect(text).toContain("Gmail");
     expect(text).toContain("Not granted");
-    expect(text).toContain("not_authenticated"); // non-running state shown verbatim
+    // A not-yet-authenticated connector offers a Connect action, not a raw state.
+    expect(text).toContain("Connect");
+    expect(text).not.toContain("not_authenticated");
   });
 
   test("pluralizes the grant count for 2+ workspaces", async () => {
@@ -113,6 +197,69 @@ describe("ProfileConnectorsTab", () => {
     ];
     mounted = await mount();
     expect(mounted.container.textContent ?? "").toContain("Granted to 2 workspaces");
+  });
+
+  test("offers the curated personal catalog with a Connect action", async () => {
+    nextConnectors = [];
+    nextCatalog = [catalogEntry()];
+    mounted = await mount();
+    const text = mounted.container.textContent ?? "";
+    expect(text).toContain("Add a connector");
+    expect(text).toContain("Granola");
+    expect(text).toContain("Connect");
+  });
+
+  test("renders the installed list even if the curated catalog read fails", async () => {
+    nextConnectors = [
+      {
+        serverName: "granola",
+        displayName: "Granola",
+        description: null,
+        state: "running",
+        grantedWorkspaces: [],
+      },
+    ];
+    nextCatalogError = new Error("catalog boom");
+    mounted = await mount();
+    const text = mounted.container.textContent ?? "";
+    // Installed list (primary content) still renders — not blocked behind a
+    // load error — and the secondary picker is simply hidden.
+    expect(text).toContain("Granola");
+    expect(text).toContain("Connected");
+    expect(text).not.toContain("Unable to load connectors");
+    expect(text).not.toContain("Add a connector");
+  });
+
+  test("grant panel: lists the caller's workspaces and grants into one", async () => {
+    nextConnectors = [
+      {
+        serverName: "granola",
+        displayName: "Granola",
+        description: null,
+        state: "running",
+        grantedWorkspaces: ["ws_helix"],
+      },
+    ];
+    mounted = await mountWithWorkspaces([
+      { id: "ws_helix", name: "Helix", memberCount: 1, bundles: [] },
+      { id: "ws_user_x", name: "Home Space", memberCount: 1, bundles: [], isPersonal: true },
+    ]);
+    const container = mounted.container;
+    const buttons = () => [...container.getElementsByTagName("button")];
+
+    // Expand the manage panel via the grant-count toggle.
+    await click(buttons().find((b) => b.textContent?.includes("Granted to 1 workspace")));
+
+    const text = container.textContent ?? "";
+    expect(text).toContain("Helix");
+    expect(text).toContain("Home Space");
+    // The personal workspace is listed like any other (marked, not special-cased).
+    expect(text).toContain("personal");
+    // Already-granted workspace → Revoke; ungranted → Grant.
+    expect(buttons().some((b) => b.textContent === "Revoke")).toBe(true);
+
+    await click(buttons().find((b) => b.textContent === "Grant"));
+    expect(grantConnector).toHaveBeenCalledWith("granola", "ws_user_x");
   });
 
   test("shows an error state when the list load fails", async () => {

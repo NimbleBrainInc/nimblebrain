@@ -91,6 +91,13 @@ export interface DirectoryEntry {
   description: string;
   iconUrl?: string;
   tags?: string[];
+  /**
+   * Offered for personal (identity-plane) connection — the curated set the
+   * profile's Connectors page presents. Set from the connector's
+   * `_meta.ai.nimblebrain/connector.personal`; the hard gate is still DCR auth
+   * (`list_personal_catalog` filters `install.auth === "dcr"`).
+   */
+  personal?: boolean;
   install: InstallAction;
   /**
    * For static-auth entries: whether the workspace has operator OAuth
