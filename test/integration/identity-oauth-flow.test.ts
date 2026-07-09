@@ -156,4 +156,50 @@ describe("lifecycle.startIdentityAuth — interactive OAuth for a personal conne
       lifecycle.startIdentityAuth("not-installed", USER_ID, { workDir, allowInsecureRemotes: true }),
     ).rejects.toThrow(/not a personal connector/);
   });
+
+  it("coalesces a second concurrent Connect onto the same flow — one auth chain, one DCR client", async () => {
+    // Two simultaneous Connects: the second must return the SAME flow, not spawn
+    // a second auth() chain that would clobber client.json / verifier.json.
+    const [a, b] = await Promise.all([
+      lifecycle.startIdentityAuth(SERVER, USER_ID, { workDir, allowInsecureRemotes: true }),
+      lifecycle.startIdentityAuth(SERVER, USER_ID, { workDir, allowInsecureRemotes: true }),
+    ]);
+    expect(a).toBe(b); // coalesced onto one in-flight flow
+    expect(a.authorizationUrl).toContain("/authorize");
+    // Exactly one DCR client under the identity root (one auth chain, no clobber).
+    const clientJson = join(
+      workDir,
+      "users",
+      USER_ID,
+      "credentials",
+      "mcp-oauth",
+      SERVER,
+      "client.json",
+    );
+    expect(existsSync(clientJson)).toBe(true);
+  }, 20_000);
+
+  it("a concurrent dispatch lazy-start joins the interactive flow — no parallel source", async () => {
+    // Connect claims the shared start gate synchronously (before its awaits), so
+    // a dispatch racing it JOINS the interactive source instead of building a
+    // second one over the same credential root (which would clobber DCR state).
+    const [authResult, dispatchSource] = await Promise.all([
+      lifecycle.startIdentityAuth(SERVER, USER_ID, { workDir, allowInsecureRemotes: true }),
+      lifecycle.getIdentityConnectorSource(USER_ID, SERVER, workDir),
+    ]);
+    expect(authResult.authorizationUrl).toContain("/authorize");
+    // The dispatch joined the interactive (pending) source rather than getting
+    // nothing or a rival source.
+    expect(dispatchSource?.name).toBe(SERVER);
+    const clientJson = join(
+      workDir,
+      "users",
+      USER_ID,
+      "credentials",
+      "mcp-oauth",
+      SERVER,
+      "client.json",
+    );
+    expect(existsSync(clientJson)).toBe(true);
+  }, 20_000);
 });

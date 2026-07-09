@@ -321,17 +321,6 @@ async function resolveStaticOAuthClient(
 }
 
 /**
- * Build the workspace-scoped OAuth provider for a URL bundle, or undefined when
- * the bundle carries static auth (no OAuth). Tokens and DCR credentials live
- * under <workDir>/workspaces/<wsId>/credentials/mcp-oauth/<serverName>/.
- *
- * `wsId` is REQUIRED here — not defaulted — to match the named-bundle branch's
- * behavior at the credential boundary. A silent `ws_default` fallback would
- * cause cross-tenant credential leakage: URL bundles installed from different
- * workspaces would share OAuth tokens under the same default id. Callers must
- * thread workspace context through `installRemote` / `startBundleSource`.
- */
-/**
  * The `{type:"user"}` arm of {@link buildUrlOAuthProvider} — a personal
  * connector's OAuth provider. Credentials live at
  * `users/<userId>/credentials/mcp-oauth/<serverName>/`, derived from `workDir`
@@ -364,6 +353,16 @@ function buildUserOAuthProvider(
   });
 }
 
+/**
+ * Build the OAuth provider for a URL bundle, or `undefined` when it carries
+ * static auth (no OAuth). Owner-generic: an `opts.identityOwner` yields the
+ * `{type:"user"}` arm (credentials under `users/<userId>/…`, see
+ * {@link buildUserOAuthProvider}); otherwise a `wsContext` is REQUIRED and yields
+ * the workspace-scoped provider (tokens under
+ * `workspaces/<wsId>/credentials/mcp-oauth/<serverName>/`). The workspace id is
+ * never defaulted — a silent `ws_default` fallback would pool OAuth tokens across
+ * tenants.
+ */
 export async function buildUrlOAuthProvider(
   ref: Extract<BundleRef, { url: string }>,
   serverName: string,

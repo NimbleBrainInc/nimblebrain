@@ -1764,11 +1764,13 @@ export class BundleLifecycleManager {
    * no connection-state machine to clear it — the minimal-now design), or here on
    * a synchronous pre-start failure.
    *
-   * Coordinates with `identityConnectorStarts` (the dispatch lazy-start map) only
-   * via `registry.hasSource`: a Connect racing a first-time tool-dispatch of the
-   * same unconnected connector can't clobber `verifier.json`, because the
-   * dispatch lazy-start is non-interactive (`interactiveAuthAllowed` unset) and
-   * fails fast without ever registering a flow.
+   * Distinct from `identityConnectorStarts` (the dispatch lazy-start map), which
+   * the interactive flow ALSO claims — synchronously, before any await — so a
+   * concurrent `getIdentityConnectorSource` joins the interactive source instead
+   * of building a parallel one over the same credential root (which would clobber
+   * `client.json` / `verifier.json` → `invalid_code`). This map exists only to
+   * coalesce a second *Connect*; the cross-path clobber is prevented by the
+   * shared `identityConnectorStarts` claim in `startIdentityAuthInner`.
    */
   private readonly identityAuthFlowsInFlight = new Map<
     string,
@@ -2118,8 +2120,40 @@ export class BundleLifecycleManager {
     opts: { workDir: string; allowInsecureRemotes?: boolean },
     flowKey: string,
   ): Promise<{ authorizationUrl: string }> {
-    const clearSlot = (): void => {
+    const registry = this.userRegistry(userId);
+    const connectorKey = `${userId}|${serverName}`;
+    const clearAuthSlot = (): void => {
       this.identityAuthFlowsInFlight.delete(flowKey);
+    };
+
+    // Coordinate with the dispatch lazy-start (`getIdentityConnectorSource`):
+    // both build a `{type:"user"}` provider over the SAME credential root, and
+    // two concurrent `source.start()`s would each run the SDK's DCR + verifier
+    // writes, clobbering `client.json` / `verifier.json` across the two provider
+    // instances → the interactive flow returns `invalid_code`. A synchronous
+    // check-and-claim (no await between the two lines below) is the gate: if the
+    // source already exists, or a start is already in flight either way, we
+    // can't run a clean interactive flow, so surface a retriable busy error
+    // rather than racing a second `auth()` chain.
+    if (registry.hasSource(serverName) || this.identityConnectorStarts.has(connectorKey)) {
+      clearAuthSlot();
+      throw new Error(
+        `[lifecycle] "${serverName}" is already connecting or connected for ${userId} — retry shortly`,
+      );
+    }
+    // Claim the shared start gate so a concurrent dispatch JOINS this source
+    // (coalescing onto `sourceReady`) instead of starting a parallel one.
+    // Resolved with the source the instant it's registered — before the OAuth
+    // round-trip — or `undefined` on a pre-registration failure.
+    let settleSource!: (s: ToolSource | undefined) => void;
+    const sourceReady = new Promise<ToolSource | undefined>((res) => {
+      settleSource = res;
+    });
+    this.identityConnectorStarts.set(connectorKey, sourceReady);
+    const clearConnectorGate = (): void => {
+      if (this.identityConnectorStarts.get(connectorKey) === sourceReady) {
+        this.identityConnectorStarts.delete(connectorKey);
+      }
     };
 
     let backgroundStarted = false;
@@ -2144,7 +2178,7 @@ export class BundleLifecycleManager {
       // Cancel the provider's outbound fetches when we give up (timeout) so an
       // unresponsive auth server's redirect-probe / discovery TCP read doesn't
       // linger for its full network deadline — and so the background start fails
-      // fast, freeing the in-flight slot. Mirrors `startAuthInner`'s abort.
+      // fast, freeing the slots. Mirrors `startAuthInner`'s abort.
       const providerAbort = new AbortController();
 
       const provider = await buildUrlOAuthProvider(
@@ -2166,7 +2200,6 @@ export class BundleLifecycleManager {
         throw new Error(`[lifecycle] "${serverName}" uses static auth — no interactive OAuth flow`);
       }
 
-      const registry = this.userRegistry(userId);
       const source = new McpSource(
         serverName,
         {
@@ -2179,22 +2212,20 @@ export class BundleLifecycleManager {
         this.eventSink,
         composeBundleMcpContext(undefined, serverName),
       );
-      // Wire into the user's registry before start so a concurrent dispatch finds
-      // this same source (the `hasSource` short-circuit in
-      // `getIdentityConnectorSource`) rather than spawning a second one.
-      if (!registry.hasSource(serverName)) {
-        registry.addSource(source);
-      }
+      // We hold the start gate and `hasSource` was false at claim time, so this
+      // source is OURS to own — add it, start it, and tear it down on failure.
+      registry.addSource(source);
+      settleSource(source); // a coalescing dispatch now joins THIS (pending) source
 
       // Arm interactive OAuth for THIS user-initiated start only.
       provider.setInteractiveAuthAllowed(true);
 
       // Background start: the provider's callback resolves `authUrlPromise` when
       // interactive auth is required; the token exchange + reconnect complete
-      // when the user returns from the authorization server. The in-flight slot
-      // is cleared when this settles — the end of the OAuth window (bounded by
-      // the flow registry's 15-min TTL if the user never returns) — NOT when the
-      // race below returns, so a second Connect during the window coalesces.
+      // when the user returns from the authorization server. Both slots are
+      // cleared when this settles — the end of the OAuth window (bounded by the
+      // flow registry's 15-min TTL if the user never returns) — NOT when the race
+      // below returns, so a second Connect during the window coalesces.
       backgroundStarted = true;
       void source
         .start()
@@ -2212,10 +2243,13 @@ export class BundleLifecycleManager {
           log.warn(
             `[lifecycle] startIdentityAuth: ${serverName} start failed for ${userId}: ${msg}`,
           );
-          void registry.removeSource(serverName).catch(() => {});
+          void registry.removeSource(serverName).catch(() => {}); // ours to remove
           rejectAuthUrl(err instanceof Error ? err : new Error(msg));
         })
-        .finally(clearSlot);
+        .finally(() => {
+          clearAuthSlot();
+          clearConnectorGate();
+        });
 
       // Race the auth URL signal against a hard timeout (mirrors `startAuth`).
       const TIMEOUT_MS = 15_000;
@@ -2230,21 +2264,25 @@ export class BundleLifecycleManager {
         return { authorizationUrl: await Promise.race([authUrlPromise, timeout]) };
       } catch (raceErr) {
         // Give up (timeout): abort the provider's in-flight fetches so the
-        // background `source.start()` fails fast — which frees the in-flight slot
-        // via its `.finally` and unblocks a retry — instead of lingering for the
-        // network deadline / flow TTL. Mirrors `startAuthInner`.
+        // background `source.start()` fails fast — which frees both slots via its
+        // `.finally` and unblocks a retry — instead of lingering for the network
+        // deadline / flow TTL. Mirrors `startAuthInner`.
         providerAbort.abort();
         throw raceErr;
       } finally {
         if (timeoutHandle !== undefined) clearTimeout(timeoutHandle);
       }
     } catch (err) {
-      // A synchronous pre-start failure (no record, static auth) never reached
-      // `source.start()`, so no background handler will clear the slot — clear it
-      // here. A post-start failure (timeout) aborts above → the background fails
-      // fast → its `.finally` frees the slot; we don't clear it here (the OAuth
-      // window may still be settling).
-      if (!backgroundStarted) clearSlot();
+      // A pre-start failure (no record, static auth) never reached
+      // `source.start()`, so no background handler will clear the slots — clear
+      // them here and unblock any coalescing dispatch with `undefined`. A
+      // post-start failure (timeout) aborts above → the background's `.finally`
+      // frees both slots, so we don't double-clear here.
+      if (!backgroundStarted) {
+        settleSource(undefined);
+        clearConnectorGate();
+        clearAuthSlot();
+      }
       throw err;
     }
   }
