@@ -1,6 +1,7 @@
 import { createHash, timingSafeEqual } from "node:crypto";
 import { type Context, Hono } from "hono";
 import { WORKSPACE_PRINCIPAL_ID } from "../../bundles/connection.ts";
+import { IdentityConnectorStore } from "../../identity/connector-store.ts";
 import { getBouncerMode } from "../../oauth/bouncer-config.ts";
 import {
   ENVELOPE_VERSION,
@@ -161,6 +162,21 @@ export function mcpAuthRoutes(ctx: AppContext) {
     if (serverName instanceof Response) return serverName;
 
     const userId = ctx.runtime.resolveRequestUserId(c.var.identity);
+
+    // Not-installed is a client error (404), not a server failure — mirror the
+    // workspace `/initiate`'s `getInstance`→404. `startIdentityAuthorization`
+    // reserves the generic 500 for genuine SDK / DNS / TLS failures.
+    const installed = await new IdentityConnectorStore({
+      workDir: ctx.runtime.getWorkDir(),
+    }).get(userId, serverName);
+    if (!installed) {
+      return apiError(
+        404,
+        "connector_not_found",
+        `"${serverName}" is not one of your personal connectors.`,
+      );
+    }
+
     const started = await startIdentityAuthorization(ctx, serverName, userId);
     if (started instanceof Response) return started;
 

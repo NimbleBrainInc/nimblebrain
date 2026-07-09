@@ -1763,6 +1763,12 @@ export class BundleLifecycleManager {
    * cleared by the background start's terminal handler (identity connectors have
    * no connection-state machine to clear it — the minimal-now design), or here on
    * a synchronous pre-start failure.
+   *
+   * Coordinates with `identityConnectorStarts` (the dispatch lazy-start map) only
+   * via `registry.hasSource`: a Connect racing a first-time tool-dispatch of the
+   * same unconnected connector can't clobber `verifier.json`, because the
+   * dispatch lazy-start is non-interactive (`interactiveAuthAllowed` unset) and
+   * fails fast without ever registering a flow.
    */
   private readonly identityAuthFlowsInFlight = new Map<
     string,
@@ -2135,6 +2141,12 @@ export class BundleLifecycleManager {
       });
       authUrlPromise.catch(() => {});
 
+      // Cancel the provider's outbound fetches when we give up (timeout) so an
+      // unresponsive auth server's redirect-probe / discovery TCP read doesn't
+      // linger for its full network deadline — and so the background start fails
+      // fast, freeing the in-flight slot. Mirrors `startAuthInner`'s abort.
+      const providerAbort = new AbortController();
+
       const provider = await buildUrlOAuthProvider(
         ref,
         serverName,
@@ -2143,6 +2155,7 @@ export class BundleLifecycleManager {
           identityOwner: { userId },
           workDir: opts.workDir,
           allowInsecureRemotes: opts.allowInsecureRemotes === true,
+          abortSignal: providerAbort.signal,
         },
         (url) => {
           capturedAuthUrl = url;
@@ -2215,14 +2228,22 @@ export class BundleLifecycleManager {
       });
       try {
         return { authorizationUrl: await Promise.race([authUrlPromise, timeout]) };
+      } catch (raceErr) {
+        // Give up (timeout): abort the provider's in-flight fetches so the
+        // background `source.start()` fails fast — which frees the in-flight slot
+        // via its `.finally` and unblocks a retry — instead of lingering for the
+        // network deadline / flow TTL. Mirrors `startAuthInner`.
+        providerAbort.abort();
+        throw raceErr;
       } finally {
         if (timeoutHandle !== undefined) clearTimeout(timeoutHandle);
       }
     } catch (err) {
       // A synchronous pre-start failure (no record, static auth) never reached
       // `source.start()`, so no background handler will clear the slot — clear it
-      // here. A post-start failure (timeout) leaves the slot for the background's
-      // `finally` while the OAuth window may still be live.
+      // here. A post-start failure (timeout) aborts above → the background fails
+      // fast → its `.finally` frees the slot; we don't clear it here (the OAuth
+      // window may still be settling).
       if (!backgroundStarted) clearSlot();
       throw err;
     }
