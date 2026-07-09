@@ -39,17 +39,6 @@ interface Harness {
   tool: ReturnType<typeof createManageConnectorsTool>;
 }
 
-/** A fake personal-connector lifecycle instance in the caller's personal workspace. */
-function personalInstance(serverName: string) {
-  return {
-    serverName,
-    wsId: personalWs,
-    bundleName: serverName,
-    description: `${serverName} connector`,
-    state: "running",
-  };
-}
-
 async function buildHarness(opts: {
   identity?: UserIdentity | null;
   personalConnectors?: string[];
@@ -65,9 +54,8 @@ async function buildHarness(opts: {
   // The caller's personal workspace — just a workspace they belong to.
   await ensureUserWorkspace(workspaceStore, { id: ALICE.id, displayName: ALICE.displayName });
 
-  // Personal connectors live on the identity (grant reads the store); the
-  // lifecycle instances mock still backs list_personal_connectors, which reads
-  // the ws_user_ registry until its own re-key lands.
+  // Personal connectors live on the identity plane — both grant and
+  // list_personal_connectors read the IdentityConnectorStore.
   const connectorStore = new IdentityConnectorStore({ workDir });
   for (const serverName of opts.personalConnectors ?? []) {
     await connectorStore.add(ALICE.id, {
@@ -76,17 +64,14 @@ async function buildHarness(opts: {
       ui: null,
     });
   }
-  const instances = (opts.personalConnectors ?? []).map(personalInstance);
 
   const runtime = {
     getWorkDir: () => workDir,
     getPermissionStore: () => store,
     getWorkspaceStore: () => workspaceStore,
-    getLifecycle: () => ({
-      getInstances: () => instances,
-      getInstance: (s: string, w: string) =>
-        instances.find((i) => i.serverName === s && i.wsId === w),
-    }),
+    // list_personal_connectors enriches display metadata from the catalog; an
+    // empty catalog is fine here (the assertions key on serverName + grants).
+    getConnectorDirectory: () => ({ catalogEntries: async () => [] }),
   } as unknown as Runtime;
 
   const ctx: ManageConnectorsContext = {
