@@ -2,27 +2,41 @@
 // ProfileConnectorsTab — render contract.
 //
 // The Profile → Connectors tab lists the caller's personal connectors (a
-// workspace-independent read via `listPersonalConnectors`) and, per connector,
-// its running state + how many workspaces it's granted into. Same plumbing as
-// connector-sections.test.tsx: bun:test + react-dom/client + happy-dom.
+// workspace-independent read via `listPersonalConnectors`) with their state +
+// grant count, and offers the curated set of personal-connectable connectors
+// (`listPersonalCatalog`) each with a Connect action. bun:test +
+// react-dom/client + happy-dom.
 // ---------------------------------------------------------------------------
 
 import { beforeEach, describe, expect, mock, test } from "bun:test";
 import { realClient } from "../../test/setup";
-import type { PersonalConnector } from "../api/client";
+import type { DirectoryEntry, PersonalConnector } from "../api/client";
 
 (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
 let nextConnectors: PersonalConnector[] = [];
+let nextCatalog: DirectoryEntry[] = [];
 let nextError: Error | null = null;
 const listPersonalConnectors = mock(async () => {
   if (nextError) throw nextError;
   return { connectors: nextConnectors };
 });
+const listPersonalCatalog = mock(async () => ({ catalog: nextCatalog }));
+const installPersonalConnector = mock(async () => ({
+  ok: true,
+  serverName: "granola",
+  scope: "identity" as const,
+}));
+const initiateIdentityConnect = mock(async () => ({
+  authorizationUrl: "https://vendor.test/auth",
+}));
 
 mock.module("../api/client", () => ({
   ...realClient,
   listPersonalConnectors,
+  listPersonalCatalog,
+  installPersonalConnector,
+  initiateIdentityConnect,
 }));
 
 const React = await import("react");
@@ -57,11 +71,31 @@ async function mount(): Promise<Mounted> {
   };
 }
 
+function catalogEntry(overrides: Partial<DirectoryEntry> = {}): DirectoryEntry {
+  return {
+    id: "ai.granola/mcp",
+    registryId: "curated",
+    registryType: "static",
+    name: "Granola",
+    description: "Meeting notes and transcripts",
+    personal: true,
+    install: {
+      kind: "remote-oauth",
+      url: "https://mcp.granola.ai/mcp",
+      transportType: "streamable-http",
+      auth: "dcr",
+    },
+    ...overrides,
+  };
+}
+
 beforeEach(() => {
   mounted?.unmount();
   mounted = null;
   listPersonalConnectors.mockClear();
+  listPersonalCatalog.mockClear();
   nextConnectors = [];
+  nextCatalog = [];
   nextError = null;
 });
 
@@ -93,12 +127,14 @@ describe("ProfileConnectorsTab", () => {
     const text = mounted.container.textContent ?? "";
 
     expect(text).toContain("Granola");
-    expect(text).toContain("Ready"); // running → "Ready"
+    expect(text).toContain("Connected"); // running → "Connected"
     expect(text).toContain("Granted to 1 workspace");
 
     expect(text).toContain("Gmail");
     expect(text).toContain("Not granted");
-    expect(text).toContain("not_authenticated"); // non-running state shown verbatim
+    // A not-yet-authenticated connector offers a Connect action, not a raw state.
+    expect(text).toContain("Connect");
+    expect(text).not.toContain("not_authenticated");
   });
 
   test("pluralizes the grant count for 2+ workspaces", async () => {
@@ -113,6 +149,16 @@ describe("ProfileConnectorsTab", () => {
     ];
     mounted = await mount();
     expect(mounted.container.textContent ?? "").toContain("Granted to 2 workspaces");
+  });
+
+  test("offers the curated personal catalog with a Connect action", async () => {
+    nextConnectors = [];
+    nextCatalog = [catalogEntry()];
+    mounted = await mount();
+    const text = mounted.container.textContent ?? "";
+    expect(text).toContain("Add a connector");
+    expect(text).toContain("Granola");
+    expect(text).toContain("Connect");
   });
 
   test("shows an error state when the list load fails", async () => {

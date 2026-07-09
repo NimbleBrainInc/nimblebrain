@@ -238,6 +238,7 @@ export function createManageConnectorsTool(ctx: ManageConnectorsContext): InProc
             "get_redirect_uri",
             "list_bound_skills",
             "list_personal_connectors",
+            "list_personal_catalog",
             "grant_connector",
             "revoke_connector",
           ],
@@ -340,6 +341,8 @@ export function createManageConnectorsTool(ctx: ManageConnectorsContext): InProc
           return handleListBoundSkills(ctx, args.wsId);
         case "list_personal_connectors":
           return handleListPersonalConnectors(ctx, args.callerId);
+        case "list_personal_catalog":
+          return handleListPersonalCatalog(ctx, args.callerId);
         case "grant_connector":
           return handleGrantConnector(ctx, args.callerId, args.serverName, args.grantTargetWsId);
         case "revoke_connector":
@@ -2688,6 +2691,50 @@ async function handleSetPermissions(
 // connector and don't re-derive "is this a connector."
 
 /**
+ * `list_personal_catalog` — the curated set of connectors offered for PERSONAL
+ * (identity-plane) connection: operator-flagged `personal` connectors, narrowed
+ * to what `handleInstallIdentity` will actually accept (DCR remote-oauth), minus
+ * the ones the caller already installed on their identity. The read behind the
+ * profile "Add a connector" picker.
+ *
+ * The DCR predicate MUST stay in lockstep with `handleInstallIdentity`'s gate
+ * (composio/static/provider are workspace/platform-bound and rejected there), so
+ * the offered set is a subset of the acceptable set — the picker can never
+ * present a connector the install then refuses.
+ */
+async function handleListPersonalCatalog(
+  ctx: ManageConnectorsContext,
+  callerId: string | null,
+): Promise<ToolResult> {
+  if (!callerId) return errResult("Authentication required.");
+
+  // Personal connectors are identity-owned and workspace-independent: read the
+  // whole directory (no wsId → no workspace allow-list) and filter.
+  const { entries } = await ctx.runtime.getConnectorDirectory().list({});
+
+  // Drop connectors the caller already installed on their identity.
+  const installed = await new IdentityConnectorStore({ workDir: ctx.runtime.getWorkDir() }).list(
+    callerId,
+  );
+  const installedServerNames = new Set(installed.map((ref) => serverNameFromRef(ref)));
+
+  const catalog = entries.filter(
+    (e) =>
+      e.personal === true &&
+      e.install.kind === "remote-oauth" &&
+      // Lockstep with handleInstallIdentity's DCR gate — offered ⊆ acceptable.
+      e.install.auth === "dcr" &&
+      !installedServerNames.has(slugifyServerName(e.id)),
+  );
+
+  return {
+    content: textContent(`${catalog.length} connector(s) available for personal connection.`),
+    structuredContent: { catalog },
+    isError: false,
+  };
+}
+
+/**
  * `list_personal_connectors` — the caller's personal connectors and, for each,
  * the workspaces it's granted to. The read behind the Profile → Connectors page.
  */
@@ -2713,6 +2760,7 @@ async function handleListPersonalConnectors(
   const catalog = await ctx.runtime.getConnectorDirectory().catalogEntries();
   const byServerName = new Map(catalog.map((e) => [slugifyServerName(e.id), e]));
 
+  const lifecycle = ctx.runtime.getLifecycle();
   const connectors = refs.map((ref) => {
     const serverName = serverNameFromRef(ref);
     const cat = byServerName.get(serverName);
@@ -2720,11 +2768,13 @@ async function handleListPersonalConnectors(
       serverName,
       displayName: cat?.name ?? serverName,
       description: cat?.description ?? null,
-      // Identity-plane connection state is per-pod and ephemeral (a source is
-      // warm only after a Connect on this pod), so the list reports the resting
-      // `not_authenticated` state — installed, click Connect. Live / cross-pod
+      // Same-pod truth: `running` once the source is warm in this pod's user
+      // registry (after a Connect / dispatch), else the resting
+      // `not_authenticated` — installed, click Connect. Cross-pod / persisted
       // connection state lands with the deferred reauth slice.
-      state: "not_authenticated" as const,
+      state: lifecycle.isIdentityConnectorRunning(callerId, serverName)
+        ? ("running" as const)
+        : ("not_authenticated" as const),
       grantedWorkspaces: grantsByConnector[serverName] ?? [],
     };
   });

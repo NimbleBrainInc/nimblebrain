@@ -209,6 +209,14 @@ export interface NimbleBrainConnectorMeta {
   interactive?: boolean;
   /** Optional connector-specific docs URL surfaced on the Configure page. */
   docsUrl?: string;
+  /**
+   * Offer this connector for PERSONAL (identity-plane) connection — the curated
+   * set surfaced on the profile's Connectors page. Only DCR connectors are
+   * actually installable on the identity plane today, so a non-DCR entry flagged
+   * `personal` is still filtered out server-side (`list_personal_catalog`); the
+   * flag is the operator's opt-in, the auth check is the hard gate.
+   */
+  personal?: boolean;
 }
 
 /** The canonical wire format. Upstream `ServerDetail`. */

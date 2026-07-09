@@ -72,6 +72,9 @@ async function buildHarness(opts: {
     // list_personal_connectors enriches display metadata from the catalog; an
     // empty catalog is fine here (the assertions key on serverName + grants).
     getConnectorDirectory: () => ({ catalogEntries: async () => [] }),
+    // Same-pod connection-state probe — nothing warm in this unit context, so
+    // every connector reports the resting state.
+    getLifecycle: () => ({ isIdentityConnectorRunning: () => false }),
   } as unknown as Runtime;
 
   const ctx: ManageConnectorsContext = {
