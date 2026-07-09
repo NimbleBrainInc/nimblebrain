@@ -1214,9 +1214,11 @@ async function handleInstallIdentity(
     );
   }
 
-  const validated = await validateRemoteOAuthInstall(ctx, entry, entry.install);
-  if ("error" in validated) return errResult(validated.error);
-  const action = validated.action;
+  // No `validateRemoteOAuthInstall` here: the DCR gate above already narrowed the
+  // auth type, and that validator only checks composio / static / provider — it's
+  // a pass-through for `dcr`. The action shape is validated upstream by
+  // `parseDirectoryEntry`.
+  const action = entry.install;
 
   const serverName = slugifyServerName(entry.id);
 
