@@ -232,3 +232,22 @@ export class UserStore {
     await rename(tmpPath, filePath);
   }
 }
+
+/**
+ * A user's human-readable label for a vendor's OAuth consent screen — their
+ * `displayName`, else `email`, else `undefined`. The identity-plane analog of
+ * `resolveWorkspaceDisplayName`: a personal connector's OAuth client registers
+ * as `NimbleBrain (<this>)`, and a missing/unreadable profile falls back to the
+ * raw `user:<id>` rather than failing. Best-effort — never throws.
+ */
+export async function resolveUserDisplayName(
+  workDir: string,
+  userId: string,
+): Promise<string | undefined> {
+  try {
+    const user = await new UserStore(workDir).get(userId);
+    return user?.displayName || user?.email || undefined;
+  } catch {
+    return undefined;
+  }
+}
