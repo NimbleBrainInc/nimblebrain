@@ -833,6 +833,31 @@ export async function listPersonalCatalog(): Promise<{ catalog: DirectoryEntry[]
   return unwrapStructured(result, "list_personal_catalog");
 }
 
+/**
+ * Grant the caller's personal connector `serverName` for use inside `wsId`. A
+ * personal connector is identity-bound and must be granted into EVERY workspace
+ * it's used in — the personal workspace included (no free-at-home). Its tools
+ * then surface to the agent in that workspace.
+ */
+export async function grantConnector(serverName: string, wsId: string): Promise<void> {
+  const result = await callTool("nb", "manage_connectors", {
+    action: "grant_connector",
+    serverName,
+    wsId,
+  });
+  unwrapStructured(result, "grant_connector");
+}
+
+/** Revoke the caller's grant of `serverName` from `wsId`. */
+export async function revokeConnector(serverName: string, wsId: string): Promise<void> {
+  const result = await callTool("nb", "manage_connectors", {
+    action: "revoke_connector",
+    serverName,
+    wsId,
+  });
+  unwrapStructured(result, "revoke_connector");
+}
+
 export async function disconnectConnector(
   serverName: string,
   scope?: "workspace",

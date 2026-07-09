@@ -11,6 +11,7 @@
 import { beforeEach, describe, expect, mock, test } from "bun:test";
 import { realClient } from "../../test/setup";
 import type { DirectoryEntry, PersonalConnector } from "../api/client";
+import type { WorkspaceInfo } from "../context/WorkspaceContext";
 
 (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -34,6 +35,8 @@ const installPersonalConnector = mock(async () => ({
 const initiateIdentityConnect = mock(async () => ({
   authorizationUrl: "https://vendor.test/auth",
 }));
+const grantConnector = mock(async () => {});
+const revokeConnector = mock(async () => {});
 
 mock.module("../api/client", () => ({
   ...realClient,
@@ -41,12 +44,15 @@ mock.module("../api/client", () => ({
   listPersonalCatalog,
   installPersonalConnector,
   initiateIdentityConnect,
+  grantConnector,
+  revokeConnector,
 }));
 
 const React = await import("react");
 const ReactDOMClient = await import("react-dom/client");
 const { act } = await import("react");
 const { ProfileConnectorsTab } = await import("../pages/settings/ProfileConnectorsTab");
+const { WorkspaceProvider } = await import("../context/WorkspaceContext");
 
 interface Mounted {
   container: HTMLDivElement;
@@ -75,6 +81,41 @@ async function mount(): Promise<Mounted> {
   };
 }
 
+// Mount inside a real `WorkspaceProvider` so `useWorkspaceContext().workspaces`
+// resolves — needed for the grant/revoke panel.
+async function mountWithWorkspaces(workspaces: WorkspaceInfo[]): Promise<Mounted> {
+  const container = document.createElement("div");
+  document.body.appendChild(container);
+  const root = ReactDOMClient.createRoot(container);
+  await act(async () => {
+    root.render(
+      React.createElement(
+        WorkspaceProvider,
+        { initialWorkspaces: workspaces },
+        React.createElement(ProfileConnectorsTab),
+      ),
+    );
+  });
+  await act(async () => {
+    await Promise.resolve();
+    await Promise.resolve();
+  });
+  return {
+    container,
+    unmount() {
+      root.unmount();
+      container.remove();
+    },
+  };
+}
+
+function click(el: Element | null | undefined): Promise<void> {
+  return act(async () => {
+    el?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    await Promise.resolve();
+  });
+}
+
 function catalogEntry(overrides: Partial<DirectoryEntry> = {}): DirectoryEntry {
   return {
     id: "ai.granola/mcp",
@@ -98,6 +139,8 @@ beforeEach(() => {
   mounted = null;
   listPersonalConnectors.mockClear();
   listPersonalCatalog.mockClear();
+  grantConnector.mockClear();
+  revokeConnector.mockClear();
   nextConnectors = [];
   nextCatalog = [];
   nextError = null;
@@ -185,6 +228,38 @@ describe("ProfileConnectorsTab", () => {
     expect(text).toContain("Connected");
     expect(text).not.toContain("Unable to load connectors");
     expect(text).not.toContain("Add a connector");
+  });
+
+  test("grant panel: lists the caller's workspaces and grants into one", async () => {
+    nextConnectors = [
+      {
+        serverName: "granola",
+        displayName: "Granola",
+        description: null,
+        state: "running",
+        grantedWorkspaces: ["ws_helix"],
+      },
+    ];
+    mounted = await mountWithWorkspaces([
+      { id: "ws_helix", name: "Helix", memberCount: 1, bundles: [] },
+      { id: "ws_user_x", name: "Home Space", memberCount: 1, bundles: [], isPersonal: true },
+    ]);
+    const container = mounted.container;
+    const buttons = () => [...container.getElementsByTagName("button")];
+
+    // Expand the manage panel via the grant-count toggle.
+    await click(buttons().find((b) => b.textContent?.includes("Granted to 1 workspace")));
+
+    const text = container.textContent ?? "";
+    expect(text).toContain("Helix");
+    expect(text).toContain("Home Space");
+    // The personal workspace is listed like any other (marked, not special-cased).
+    expect(text).toContain("personal");
+    // Already-granted workspace → Revoke; ungranted → Grant.
+    expect(buttons().some((b) => b.textContent === "Revoke")).toBe(true);
+
+    await click(buttons().find((b) => b.textContent === "Grant"));
+    expect(grantConnector).toHaveBeenCalledWith("granola", "ws_user_x");
   });
 
   test("shows an error state when the list load fails", async () => {
