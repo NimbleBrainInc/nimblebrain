@@ -733,4 +733,26 @@ describe("manage_connectors.install scope:identity (composio personal connector)
     expect(await new IdentityConnectorStore({ workDir: h.workDir }).list(ADMIN.id)).toHaveLength(0);
     expect(existsSync(composioDir)).toBe(false);
   });
+
+  test("(n) list_personal_connectors reports `running` from a persisted composio connection (cold source)", async () => {
+    process.env.COMPOSIO_API_KEY = "k_test";
+    process.env.COMPOSIO_GMAIL_AUTH_CONFIG_ID = "ac_gmail";
+
+    const tool = buildTool(h);
+    await tool.handler({ action: "install", entry: gmailEntry(), scope: "identity" });
+
+    // Persisted connection on disk (a completed Connect) but no warm source in
+    // this process — the state must still read `running`, not `not_authenticated`.
+    await saveComposioConnection(h.workDir, { type: "user", userId: ADMIN.id }, GMAIL_ID, {
+      connectedAccountId: "ca_x",
+      toolkit: "gmail",
+      userId: ADMIN.id,
+      connectedAt: "2026-07-10T00:00:00.000Z",
+      status: "ACTIVE",
+    });
+
+    const result = await tool.handler({ action: "list_personal_connectors" });
+    const sc = result.structuredContent as { connectors: Array<{ state: string }> };
+    expect(sc.connectors[0].state).toBe("running");
+  });
 });
