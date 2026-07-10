@@ -1,6 +1,6 @@
 import { ChevronLeft, ChevronRight } from "lucide-react";
-import { memo } from "react";
-import { NavLink } from "react-router-dom";
+import { memo, useEffect } from "react";
+import { NavLink, useLocation } from "react-router-dom";
 import { useChatPanelContext } from "../context/ChatPanelContext";
 import { useSidebar } from "../context/SidebarContext";
 import { useWorkspaceContext } from "../context/WorkspaceContext";
@@ -68,9 +68,27 @@ export const ShellLayout = memo(function ShellLayout({
   // overview, global home, settings, etc. all coordinate identically).
   const chatPanel = useChatPanelContext();
   const isMobile = useIsMobile();
+  // Chat lives ONLY inside a workspace: the panel and its layout push-over
+  // render only on `/w/:slug` routes. The identity/home surfaces (`/`,
+  // `/profile/*`) are management-only — no chat. `ChatProvider` /
+  // `ChatPanelProvider` stay mounted app-wide (cheap, and `/w/:slug` needs
+  // them); only the rendering is gated.
+  const isWorkspaceRoute = useLocation().pathname.startsWith("/w/");
   const chatIsSidebar = chatPanel.panelState === "sidebar";
   const mainMarginRight =
-    chatIsSidebar && !isMobile ? chatPanel.panelWidth + CHAT_RESIZE_HANDLE_WIDTH : 0;
+    isWorkspaceRoute && chatIsSidebar && !isMobile
+      ? chatPanel.panelWidth + CHAT_RESIZE_HANDLE_WIDTH
+      : 0;
+
+  // Reset the chat panel when leaving a workspace so its state doesn't carry
+  // into (or silently reopen on return from) the home / profile surfaces.
+  // Lives here — ShellLayout is always mounted, whereas `ChatChrome` unmounts
+  // on the transition off `/w/` and so can't reliably fire this itself. Panel
+  // state persists across workspace→workspace navigation (both are `/w/`).
+  const closeChat = chatPanel.closePanel;
+  useEffect(() => {
+    if (!isWorkspaceRoute) closeChat();
+  }, [isWorkspaceRoute, closeChat]);
 
   // Sidebar bottom items: pinned to bottom, excluding settings (now in workspace dropdown)
   const sidebarBottom = forSlot("sidebar.bottom").filter((p) => p.route !== "settings");
@@ -139,12 +157,12 @@ export const ShellLayout = memo(function ShellLayout({
         <div className="flex-1 min-h-0 overflow-hidden">{children}</div>
       </main>
 
-      {/* Chat chrome (toggle + sliding panel + resize handle) — the
-          single, global mount point, so chat is one click away from any
-          route. The push-over that makes room for the panel is the
-          `marginRight` on <main> above; the panel and handle live inside
-          ChatChrome itself. */}
-      <ChatChrome />
+      {/* Chat chrome (toggle + sliding panel + resize handle) — the single,
+          global mount point, gated to workspace routes: chat exists only
+          inside a workspace, so home / profile render no panel. The push-over
+          that makes room for the panel is the `marginRight` on <main> above;
+          the panel and handle live inside ChatChrome itself. */}
+      {isWorkspaceRoute && <ChatChrome />}
 
       {/* Artifact document panel — the single, global mount point (sibling
           of ChatChrome), so an artifact chip in any conversation opens its

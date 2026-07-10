@@ -19,7 +19,7 @@
 import { Search } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { useNavigate } from "react-router-dom";
+import { useLocation, useNavigate } from "react-router-dom";
 import { useChatPanelContext } from "../../context/ChatPanelContext";
 import { usePalette } from "../../context/PaletteContext";
 import { useSession } from "../../context/SessionContext";
@@ -48,6 +48,7 @@ export function CommandPalette({ onLogout }: { onLogout: () => void }) {
   const { iconFor } = useWorkspaceAppIcons();
   const session = useSession();
   const navigate = useNavigate();
+  const isWorkspaceRoute = useLocation().pathname.startsWith("/w/");
   const chatPanel = useChatPanelContext();
   const sidebar = useSidebar();
   const theme = useTheme();
@@ -73,8 +74,9 @@ export function CommandPalette({ onLogout }: { onLogout: () => void }) {
       apps,
       iconForApp: iconFor,
       orgRole: session?.user?.orgRole,
+      isWorkspaceRoute,
     };
-  }, [wsCtx.workspaces, wsCtx.activeWorkspace, shell, iconFor, session]);
+  }, [wsCtx.workspaces, wsCtx.activeWorkspace, shell, iconFor, session, isWorkspaceRoute]);
 
   // Imperative handles, assembled once. setShowShortcuts is stable, so this is
   // memoized cheaply.

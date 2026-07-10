@@ -1136,11 +1136,14 @@ export class Runtime {
       requestWsId,
       ownerId,
     );
-    // Narrate the workspace only when it's a REAL (non-personal) workspace; the
-    // personal/session workspace stays the silent session bridge, never named in
-    // the prompt. Replaces the old "is there a focus?" gate — a sealed
-    // conversation narrates its OWN workspace from wherever it is viewed.
-    const narratedWsId = convWsId !== sessionWsId ? convWsId : undefined;
+    // Narrate the conversation's OWN workspace — personal or shared alike. A
+    // personal workspace is just a workspace (JIT-provisioned at login), so it's
+    // named in the prompt like any other when the conversation lives there. A
+    // sealed conversation narrates its own workspace from wherever it's viewed.
+    // `formatNoWorkspaceContext()` (compose.ts) is reserved for genuinely
+    // workspace-less contexts — an external `/mcp` call with no `X-Workspace-Id`;
+    // the chat door requires a workspace, so it never reaches that branch.
+    const narratedWsId = convWsId;
 
     // Load the personal workspace config for agents / models override.
     // Pre-Stage-2 this looked up the request's `workspaceId`; that field
@@ -1207,11 +1210,8 @@ export class Runtime {
 
     // The workspace BRIEFING (apps + workspace overlay + "## Workspace" block
     // + workspace persona) reflects the conversation's own workspace
-    // (`narratedWsId`). When the conversation lives in the personal/session
-    // workspace there is nothing to narrate — the briefing is empty (ORG-level
-    // house rules + identity tools only), and the personal workspace stays the
-    // SILENT session bridge, never named. Deterministic + workspace-scoped
-    // (same for every member of that workspace).
+    // (`narratedWsId` = `convWsId`) — personal or shared alike. Deterministic +
+    // workspace-scoped (same for every member of that workspace).
     const { apps, liveOverlays } = await this.buildWorkspaceBriefing(narratedWsId);
 
     // Build focusedApp/appState/focusedNamespaced when the request is scoped to a
@@ -1278,10 +1278,10 @@ export class Runtime {
 
     // The prompt narrates the conversation's own workspace — the same one whose
     // apps + house rules the briefing above describes — so the prose, the app
-    // list, and the persona all agree. `narratedWsId` is never the personal
-    // workspace, so this always loads a real, named workspace.
-    const activeWorkspace = narratedWsId ? await this._workspaceStore.get(narratedWsId) : undefined;
-    // Personal/session workspace → undefined → compose omits the "## Workspace" block.
+    // list, and the persona all agree. `narratedWsId` is always the
+    // conversation's workspace (personal or shared), so this loads a real, named
+    // workspace and compose always renders the "## Workspace" block.
+    const activeWorkspace = await this._workspaceStore.get(narratedWsId);
     const workspaceContext = buildWorkspaceContext(narratedWsId, activeWorkspace);
 
     // Always-on context channel: the `type: context` skills across every tier
