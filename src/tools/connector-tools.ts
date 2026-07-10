@@ -9,7 +9,12 @@ import {
 import { WORKSPACE_PRINCIPAL_ID } from "../bundles/connection.ts";
 import { sanitizePlacements } from "../bundles/defaults.ts";
 import { getMpak } from "../bundles/mpak.ts";
-import { deriveServerName, serverNameFromRef, slugifyServerName } from "../bundles/paths.ts";
+import {
+  deriveServerName,
+  isReservedServerName,
+  serverNameFromRef,
+  slugifyServerName,
+} from "../bundles/paths.ts";
 import { startBundleSource } from "../bundles/startup.ts";
 import type {
   BundleInstance,
@@ -1228,6 +1233,22 @@ async function handleInstallIdentity(
   const action = entry.install;
 
   const serverName = slugifyServerName(entry.id);
+
+  // Reserved-name guard: a connector whose slug collides with a system-tool
+  // prefix (e.g. `nb`) would surface its tools as `nb__…` in the trusted system
+  // band. Workspace registries can't hit this — the real `nb` system source
+  // already occupies that slot, so a colliding interactive connect is skipped
+  // (`startAuthInner`'s `!hasSource`), and eager-started workspace sources also
+  // pass `startBundleSource`'s `validateServerName`. The identity registry
+  // carries no system source, so neither applies; reject at the install boundary
+  // (and again in `startIdentityAuth`) to keep a reserved-name record out of
+  // connectors.json.
+  if (isReservedServerName(serverName)) {
+    return errResult(
+      `"${entry.id}" resolves to "${serverName}", a name reserved for NimbleBrain system ` +
+        `tools. Pick a connector with a different id.`,
+    );
+  }
 
   // Idempotency (identity side): if this connector is already installed on the
   // caller's identity, short-circuit BEFORE any wiring — a re-install must not

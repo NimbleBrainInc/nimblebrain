@@ -25,9 +25,20 @@ export function defaultWorkDir(): string {
 /** Prefixes reserved for system tools — bundles must not use these as source names. */
 const RESERVED_TOOL_PREFIXES = new Set(["nb"]);
 
+/**
+ * True if `serverName` collides with a reserved system-tool prefix. A source
+ * named `nb` emits its tools as `nb__…`, which the surfacing layer classifies
+ * as first-party system/kernel tools — so the name is refused. Exposed as a
+ * predicate for callers that reject gracefully (returning a tool result);
+ * `validateServerName` is the throwing form over the same set.
+ */
+export function isReservedServerName(serverName: string): boolean {
+  return RESERVED_TOOL_PREFIXES.has(serverName);
+}
+
 /** Throw if a server name would shadow system tool prefixes. */
 export function validateServerName(serverName: string): void {
-  if (RESERVED_TOOL_PREFIXES.has(serverName)) {
+  if (isReservedServerName(serverName)) {
     throw new Error(`Source name '${serverName}' is reserved for system tools`);
   }
 }

@@ -221,6 +221,29 @@ describe("manage_connectors.install scope:identity — DCR personal-connector in
     expect(await new IdentityConnectorStore({ workDir: h.workDir }).list(USER.id)).toHaveLength(0);
   });
 
+  test("rejects a connector whose slug is a reserved system name (nb) — nothing persisted", async () => {
+    // A DCR entry whose id slugifies to `nb` would surface its tools as `nb__…`
+    // in the trusted system band. Install refuses it at the boundary, so no
+    // reserved-name record ever reaches connectors.json.
+    const reserved: DirectoryEntry = {
+      id: "nb",
+      registryId: "bundled-static",
+      registryType: "static",
+      name: "Reserved",
+      description: "collides with the system-tool prefix",
+      install: {
+        kind: "remote-oauth",
+        url: "https://reserved.test/mcp",
+        transportType: "streamable-http",
+        auth: "dcr",
+      },
+    };
+    const result = await h.tool.handler({ action: "install", entry: reserved, scope: "identity" });
+    expect(result.isError).toBe(true);
+    expect(resultText(result).toLowerCase()).toContain("reserved");
+    expect(await new IdentityConnectorStore({ workDir: h.workDir }).list(USER.id)).toHaveLength(0);
+  });
+
   test("admits a composio entry at the gate — fails on the missing prerequisite, not the auth type", async () => {
     // Deterministically drive the no-key path: composio passes the gate, then
     // `validateComposioInstall` rejects because COMPOSIO_API_KEY is unset. (The
@@ -341,5 +364,24 @@ describe("manage_connectors.list_personal_catalog — the curated personal-conne
     // `dcrEntry()` slugs to the same serverName as the fixture's Granola, so the
     // now-installed connector is no longer offered.
     expect(ids).not.toContain("ai.granola/mcp");
+  });
+});
+
+describe("startIdentityAuth reserved-name guard", () => {
+  test("rejects a reserved serverName (nb) before any wiring", async () => {
+    // Defense-in-depth mirroring `startBundleSource`: the interactive Connect
+    // path builds its source directly (outside startBundleSource), so it
+    // enforces the reserved-name invariant itself. Install already blocks such a
+    // record, so reaching here means a hand-edited connectors.json — it must
+    // still fail closed before constructing a source named `nb`.
+    const workDir = mkdtempSync(join(tmpdir(), "nb-startauth-reserved-"));
+    try {
+      const lifecycle = new BundleLifecycleManager(new NoopEventSink(), undefined);
+      await expect(lifecycle.startIdentityAuth("nb", USER.id, { workDir })).rejects.toThrow(
+        /reserved/i,
+      );
+    } finally {
+      rmSync(workDir, { recursive: true, force: true });
+    }
   });
 });
