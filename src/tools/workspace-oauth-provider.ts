@@ -506,6 +506,21 @@ function assertSafeOwnerId(ownerId: string): void {
   }
 }
 
+/**
+ * The identity-owned OAuth credential dir for a personal connector:
+ * `users/<userId>/credentials/mcp-oauth/<serverName>/`. The same shape the
+ * constructor's user-owner arm builds — extracted so teardown (disconnect) can
+ * remove exactly what connect wrote, without a second reconstruction of the path
+ * drifting. `assertSafeOwnerId` on both components (path-security in depth). The
+ * lint's `mcp-oauth` carve-out covers this literal `users/…/credentials/mcp-oauth`
+ * reconstruction (see the lint header + the constructor comment).
+ */
+export function identityMcpOAuthDir(workDir: string, userId: string, serverName: string): string {
+  assertSafeOwnerId(userId);
+  assertSafeOwnerId(serverName);
+  return join(workDir, "users", userId, "credentials", "mcp-oauth", serverName);
+}
+
 interface Deferred<T> {
   promise: Promise<T>;
   resolve: (value: T) => void;

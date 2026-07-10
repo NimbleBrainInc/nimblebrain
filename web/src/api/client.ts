@@ -823,6 +823,8 @@ export interface PersonalConnector {
   serverName: string;
   displayName: string;
   description: string | null;
+  /** Brand icon from the catalog; absent when the connector ships none. */
+  iconUrl?: string;
   state: string;
   /**
    * Auth type — drives which Connect route the profile uses: `dcr` keys on
@@ -886,6 +888,24 @@ export async function revokeConnector(serverName: string, wsId: string): Promise
     wsId,
   });
   unwrapStructured(result, "revoke_connector");
+}
+
+/**
+ * Fully remove a PERSONAL connector from the caller's identity: revokes every
+ * workspace grant, deletes the identity credentials, and drops the install
+ * record. The inverse of {@link installPersonalConnector} + Connect + grant; the
+ * connector returns to the "Add a connector" picker. `revokedWorkspaces` is how
+ * many grants were cleared.
+ */
+export async function disconnectPersonalConnector(
+  serverName: string,
+): Promise<{ ok: boolean; scope: "identity"; serverName: string; revokedWorkspaces: number }> {
+  const result = await callTool("nb", "manage_connectors", {
+    action: "disconnect",
+    scope: "identity",
+    serverName,
+  });
+  return unwrapStructured(result, "disconnect");
 }
 
 export async function disconnectConnector(

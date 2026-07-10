@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import {
   type DirectoryEntry,
+  disconnectPersonalConnector,
   grantConnector,
   initiateComposioIdentityConnect,
   initiateIdentityConnect,
@@ -154,6 +155,32 @@ export function ProfileConnectorsTab() {
     [fetchLists],
   );
 
+  // Fully remove a personal connector — de-auth + delete credentials + revoke all
+  // grants + drop the install. Destructive, so confirm first (naming the grant
+  // count). On success it leaves "Your connectors" and returns to the picker.
+  const onDisconnect = useCallback(
+    async (connector: PersonalConnector) => {
+      const grants = connector.grantedWorkspaces.length;
+      const name = connector.displayName || connector.serverName;
+      const confirmMsg =
+        grants > 0
+          ? `Disconnect "${name}"? This removes it from your identity and revokes access in ${grants} workspace${grants === 1 ? "" : "s"}.`
+          : `Disconnect "${name}"? This removes it from your identity.`;
+      if (!window.confirm(confirmMsg)) return;
+      setActionError(null);
+      setBusyKey(`disconnect:${connector.serverName}`);
+      try {
+        await disconnectPersonalConnector(connector.serverName);
+        await fetchLists();
+      } catch (err) {
+        setActionError(err instanceof Error ? err.message : String(err));
+      } finally {
+        setBusyKey(null);
+      }
+    },
+    [fetchLists],
+  );
+
   return (
     <div className="max-w-5xl mx-auto space-y-6">
       <SettingsPageHeader
@@ -179,6 +206,7 @@ export function ProfileConnectorsTab() {
                     workspaces={workspaces}
                     busyKey={busyKey}
                     onConnect={() => onConnectExisting(c)}
+                    onDisconnect={() => onDisconnect(c)}
                     onSetGrant={onSetGrant}
                   />
                 ))}
@@ -214,12 +242,14 @@ function PersonalConnectorRow({
   workspaces,
   busyKey,
   onConnect,
+  onDisconnect,
   onSetGrant,
 }: {
   connector: PersonalConnector;
   workspaces: WorkspaceInfo[];
   busyKey: string | null;
   onConnect: () => void;
+  onDisconnect: () => void;
   onSetGrant: (serverName: string, wsId: string, granted: boolean) => void;
 }) {
   const [managing, setManaging] = useState(false);
@@ -228,17 +258,23 @@ function PersonalConnectorRow({
     grants === 0 ? "Not granted" : `Granted to ${grants} workspace${grants === 1 ? "" : "s"}`;
   const connected = connector.state === "running";
   const connectBusy = busyKey === connector.serverName;
+  const disconnectBusy = busyKey === `disconnect:${connector.serverName}`;
 
   return (
     <div className="border-b border-border py-3">
       <div className="flex items-center justify-between gap-3">
-        <div className="min-w-0">
-          <div className="truncate text-sm font-medium">
-            {connector.displayName || connector.serverName}
-          </div>
-          {connector.description ? (
-            <div className="truncate text-xs text-muted-foreground">{connector.description}</div>
+        <div className="flex min-w-0 items-center gap-3">
+          {connector.iconUrl ? (
+            <img src={connector.iconUrl} alt="" className="h-6 w-6 shrink-0 rounded" />
           ) : null}
+          <div className="min-w-0">
+            <div className="truncate text-sm font-medium">
+              {connector.displayName || connector.serverName}
+            </div>
+            {connector.description ? (
+              <div className="truncate text-xs text-muted-foreground">{connector.description}</div>
+            ) : null}
+          </div>
         </div>
         <div className="flex shrink-0 items-center gap-3">
           <button
@@ -265,6 +301,14 @@ function PersonalConnectorRow({
               {connectBusy ? "Connecting…" : "Connect"}
             </Button>
           )}
+          <button
+            type="button"
+            onClick={onDisconnect}
+            disabled={disconnectBusy}
+            className="text-xs text-muted-foreground underline-offset-4 hover:text-red-600 hover:underline disabled:opacity-50"
+          >
+            {disconnectBusy ? "Disconnecting…" : "Disconnect"}
+          </button>
         </div>
       </div>
 

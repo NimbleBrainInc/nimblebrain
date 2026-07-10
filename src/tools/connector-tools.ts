@@ -319,8 +319,15 @@ export function createManageConnectorsTool(ctx: ManageConnectorsContext): InProc
         case "connect_api_key":
           return handleConnectApiKey(ctx, args.wsId, args.identity, args.catalogId, args.fields);
         case "disconnect":
+          // A personal connector's only teardown is full removal (there's no
+          // "de-auth but keep installed" half-state on the identity plane), so
+          // both disconnect and uninstall with scope:identity route here.
+          if (args.scope === "identity")
+            return handleDisconnectIdentity(ctx, args.identity, args.serverName);
           return handleDisconnect(ctx, args.wsId, args.identity, args.serverName, args.scope);
         case "uninstall":
+          if (args.scope === "identity")
+            return handleDisconnectIdentity(ctx, args.identity, args.serverName);
           return handleUninstall(ctx, args.wsId, args.identity, args.serverName, args.scope);
         case "get_permissions":
           return handleGetPermissions(ctx, args.wsId, args.callerId, args.serverName);
@@ -2851,6 +2858,9 @@ async function handleListPersonalConnectors(
       serverName,
       displayName: cat?.name ?? serverName,
       description: cat?.description ?? null,
+      // Brand icon from the operator-trusted catalog (same source the "Add a
+      // connector" picker renders), so an installed connector shows its icon too.
+      ...(cat?.iconUrl ? { iconUrl: cat.iconUrl } : {}),
       // The Connect route differs by auth: DCR keys on serverName
       // (`/v1/mcp-auth/initiate-identity`); composio keys on the connectorId
       // (`/v1/composio-auth/initiate-identity`). The profile UI branches on this.
@@ -2932,6 +2942,61 @@ async function handleRevokeConnector(
   return {
     content: textContent(`Revoked "${serverName}" from workspace.`),
     structuredContent: { ok: true, serverName, wsId: targetWsId },
+    isError: false,
+  };
+}
+
+/**
+ * `disconnect` / `uninstall` with `scope: "identity"` — fully remove a PERSONAL
+ * connector from the caller's identity. Revokes every workspace grant first (no
+ * grant should outlive the connector), then tears down the source, deletes the
+ * identity credentials, and drops the install record
+ * (`lifecycle.uninstallIdentityConnector`). The inverse of install + Connect +
+ * grant; the connector leaves "Your connectors" and is offered again under "Add a
+ * connector". Not-installed is an error (nothing to remove).
+ */
+async function handleDisconnectIdentity(
+  ctx: ManageConnectorsContext,
+  identity: UserIdentity | null,
+  serverName: string,
+): Promise<ToolResult> {
+  if (!identity) return errResult("Authentication required.");
+  if (!serverName) return errResult("serverName is required.");
+  const callerId = identity.id;
+
+  const store = new IdentityConnectorStore({ workDir: ctx.runtime.getWorkDir() });
+  if (!(await store.get(callerId, serverName))) {
+    return errResult(`"${serverName}" is not one of your personal connectors.`);
+  }
+
+  // Revoke every workspace grant FIRST — fail-closed, so a dangling grant never
+  // references a removed connector. Read the connector's grants and revoke each
+  // (idempotent).
+  const grantedWorkspaces = await ctx.runtime
+    .getPermissionStore()
+    .getConnectorGrants(callerId, serverName);
+  for (const wsId of grantedWorkspaces) {
+    await ctx.runtime.getPermissionStore().revokeConnector(callerId, serverName, wsId);
+  }
+
+  // Full teardown: stop + drop the source, delete identity credentials, remove the
+  // install record.
+  await ctx.runtime
+    .getLifecycle()
+    .uninstallIdentityConnector(callerId, serverName, { workDir: ctx.runtime.getWorkDir() });
+
+  return {
+    content: textContent(
+      grantedWorkspaces.length > 0
+        ? `Disconnected "${serverName}" and revoked access in ${grantedWorkspaces.length} workspace(s).`
+        : `Disconnected "${serverName}".`,
+    ),
+    structuredContent: {
+      ok: true,
+      scope: "identity",
+      serverName,
+      revokedWorkspaces: grantedWorkspaces.length,
+    },
     isError: false,
   };
 }

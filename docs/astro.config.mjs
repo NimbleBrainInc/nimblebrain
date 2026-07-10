@@ -108,6 +108,7 @@ export default defineConfig({
                   { label: 'Installing Apps', slug: 'using/installing-apps' },
                   { label: 'Managing Apps', slug: 'using/managing-apps' },
                   { label: 'Connectors', slug: 'using/connectors' },
+                  { label: 'Personal connectors', slug: 'using/personal-connectors' },
                 ],
               },
               {
