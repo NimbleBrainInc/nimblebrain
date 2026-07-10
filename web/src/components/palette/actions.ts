@@ -44,6 +44,8 @@ export const ACTIONS: ActionDef[] = [
     title: "Open / close chat",
     keywords: ["chat", "assistant", "panel"],
     icon: "MessageSquare",
+    // Chat only exists inside a workspace — hide the action on home / profile.
+    available: (ctx) => ctx.isWorkspaceRoute === true,
     run: (run) => {
       run.toggleChat();
       run.closePalette();

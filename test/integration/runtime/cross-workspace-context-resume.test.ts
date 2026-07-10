@@ -40,6 +40,7 @@ const WORKSPACE_B = "ws_workspace_b";
 const WORKSPACE_B_NAME = "Bravo Workspace";
 const OWNER = DEV_IDENTITY.id;
 const PERSONAL = personalWorkspaceIdFor(OWNER);
+const PERSONAL_NAME = "Home Workspace";
 
 const RESUME_MSG = "which workspace am I in";
 
@@ -204,6 +205,39 @@ describe("cross-workspace resume scopes the session's workspace to the conversat
     expect(wsTools.length).toBeGreaterThan(0);
     expect(wsTools.some((t) => t.startsWith(`${WORKSPACE_A}-`))).toBe(true);
     expect(wsTools.some((t) => t.startsWith(`${WORKSPACE_B}-`))).toBe(false);
+
+    await runtime.shutdown();
+  });
+
+  it("a conversation IN the personal workspace narrates it as a workspace, not 'home'", async () => {
+    // A personal workspace is just a workspace (JIT-provisioned at login). A chat
+    // born there narrates the personal workspace like any other — it is no longer
+    // the silent, unnamed "identity-level home" bridge.
+    const workDir = join(testDir, "personal-narrated");
+    mkdirSync(workDir, { recursive: true });
+    const captured: Captured[] = [];
+
+    const runtime = await Runtime.start({
+      model: { provider: "custom", adapter: createCapturingModel(captured) },
+      noDefaultBundles: true,
+      logging: { disabled: true },
+      workDir,
+    });
+    await provisionTestWorkspace(runtime, PERSONAL, PERSONAL_NAME);
+
+    // Born focused on the personal workspace → convWsId === PERSONAL. The
+    // capturing model only records the RESUME_MSG turn (see createCapturingModel).
+    await runtime.chat({ message: RESUME_MSG, workspaceId: PERSONAL });
+
+    expect(captured.length).toBeGreaterThan(0);
+    const prompt = captured.at(-1)?.prompt ?? "";
+
+    // Narrated as its own "## Workspace" block (id + name), NOT the old
+    // identity-level "home / not in any single workspace" block.
+    expect(prompt).toContain("## Workspace");
+    expect(prompt).toContain(PERSONAL);
+    expect(prompt).toContain(PERSONAL_NAME);
+    expect(prompt).not.toContain("not in any single workspace");
 
     await runtime.shutdown();
   });

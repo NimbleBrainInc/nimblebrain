@@ -86,6 +86,13 @@ export interface CommandSourceContext {
   iconForApp: (serverName: string) => string | undefined;
   /** Signed-in user's org role, for gating org-admin-only actions. */
   orgRole?: string;
+  /**
+   * True when the current route is a workspace route (`/w/:slug`). Chat lives
+   * only inside a workspace, so the chat action gates on this — NOT on
+   * `activeWorkspaceSlug`, which is set (to the personal workspace) even on the
+   * home / profile surfaces.
+   */
+  isWorkspaceRoute?: boolean;
 }
 
 export interface CommandSource {
