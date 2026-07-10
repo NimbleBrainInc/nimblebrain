@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { NoopEventSink } from "../../src/adapters/noop-events.ts";
@@ -89,6 +89,8 @@ function mpakEntry(): DirectoryEntry {
 interface Harness {
   workDir: string;
   sharedWsId: string;
+  grants: Record<string, string[]>;
+  toolPolicies: Record<string, unknown>;
   tool: ReturnType<typeof createManageConnectorsTool>;
 }
 
@@ -129,6 +131,9 @@ async function buildHarness(): Promise<Harness> {
   });
 
   const grants: Record<string, string[]> = {};
+  // Per-tool allow/deny policies, keyed serverName — the user-scope
+  // `connectors[serverName]` block a disconnect must also clear.
+  const toolPolicies: Record<string, unknown> = {};
   const runtime = {
     getWorkDir: () => workDir,
     getWorkspaceStore: () => workspaceStore,
@@ -138,8 +143,19 @@ async function buildHarness(): Promise<Harness> {
     getLifecycle: () => lifecycle,
     getRegistryForWorkspace: (_id: string) => workspaceRegistry,
     getPermissionStore: () => ({
-      deleteConnector: async () => {},
+      deleteConnector: async (owner: { scope: string }, serverName: string) => {
+        if (owner.scope === "user") delete toolPolicies[serverName];
+      },
       listConnectorGrants: async (_userId: string) => grants,
+      getConnectorGrants: async (_userId: string, serverName: string) => grants[serverName] ?? [],
+      grantConnector: async (_userId: string, serverName: string, wsId: string) => {
+        grants[serverName] = [...(grants[serverName] ?? []), wsId];
+      },
+      revokeConnector: async (_userId: string, serverName: string, wsId: string) => {
+        const remaining = (grants[serverName] ?? []).filter((id) => id !== wsId);
+        if (remaining.length === 0) delete grants[serverName];
+        else grants[serverName] = remaining;
+      },
     }),
     getAllowInsecureRemotes: () => false,
   } as unknown as Runtime;
@@ -149,7 +165,7 @@ async function buildHarness(): Promise<Harness> {
     getIdentity: () => USER,
     getWorkspaceId: () => sharedWsId,
   };
-  return { workDir, sharedWsId, tool: createManageConnectorsTool(ctx) };
+  return { workDir, sharedWsId, grants, toolPolicies, tool: createManageConnectorsTool(ctx) };
 }
 
 function resultText(result: { content?: unknown }): string {
@@ -383,5 +399,81 @@ describe("startIdentityAuth reserved-name guard", () => {
     } finally {
       rmSync(workDir, { recursive: true, force: true });
     }
+  });
+});
+
+describe("manage_connectors.disconnect scope:identity — full remove", () => {
+  let h: Harness;
+  beforeEach(async () => {
+    h = await buildHarness();
+  });
+  afterEach(() => {
+    rmSync(h.workDir, { recursive: true, force: true });
+  });
+
+  const SERVER = "ai-granola-mcp"; // slugifyServerName("ai.granola/mcp")
+
+  test("removes the install record, revokes all grants, drops tool policies, and deletes identity credentials", async () => {
+    await h.tool.handler({ action: "install", entry: dcrEntry(), scope: "identity" });
+    await h.tool.handler({ action: "grant_connector", serverName: SERVER, wsId: h.sharedWsId });
+
+    // A per-tool allow policy the user set on this personal connector — it must not
+    // survive the disconnect (else it silently rebinds on a reconnect).
+    h.toolPolicies[SERVER] = { tools: { some_tool: "allow" } };
+
+    // Simulate a completed OAuth: tokens under the identity mcp-oauth root.
+    const oauthDir = join(h.workDir, "users", USER.id, "credentials", "mcp-oauth", SERVER);
+    mkdirSync(oauthDir, { recursive: true });
+    writeFileSync(join(oauthDir, "tokens.json"), JSON.stringify({ access_token: "x" }));
+
+    const store = new IdentityConnectorStore({ workDir: h.workDir });
+    expect(await store.list(USER.id)).toHaveLength(1);
+    expect(h.grants[SERVER]).toEqual([h.sharedWsId]);
+
+    const result = await h.tool.handler({
+      action: "disconnect",
+      serverName: SERVER,
+      scope: "identity",
+    });
+    expect(result.isError).toBe(false);
+    const sc = result.structuredContent as {
+      ok?: boolean;
+      scope?: string;
+      revokedWorkspaces?: number;
+    };
+    expect(sc.ok).toBe(true);
+    expect(sc.scope).toBe("identity");
+    expect(sc.revokedWorkspaces).toBe(1);
+
+    // Install record gone → offered again by the catalog.
+    expect(await store.list(USER.id)).toHaveLength(0);
+    // Every grant revoked.
+    expect(h.grants[SERVER]).toBeUndefined();
+    // Per-tool policies dropped (no silent rebind on reconnect).
+    expect(h.toolPolicies[SERVER]).toBeUndefined();
+    // Identity credentials deleted.
+    expect(existsSync(oauthDir)).toBe(false);
+  });
+
+  test("errors on a connector that isn't installed on the identity", async () => {
+    const result = await h.tool.handler({
+      action: "disconnect",
+      serverName: "not-installed",
+      scope: "identity",
+    });
+    expect(result.isError).toBe(true);
+    expect(resultText(result)).toMatch(/not one of your personal connectors/i);
+  });
+
+  test("disconnect with no grants succeeds (revokedWorkspaces: 0)", async () => {
+    await h.tool.handler({ action: "install", entry: dcrEntry(), scope: "identity" });
+    const result = await h.tool.handler({
+      action: "disconnect",
+      serverName: SERVER,
+      scope: "identity",
+    });
+    expect(result.isError).toBe(false);
+    expect((result.structuredContent as { revokedWorkspaces?: number }).revokedWorkspaces).toBe(0);
+    expect(await new IdentityConnectorStore({ workDir: h.workDir }).list(USER.id)).toHaveLength(0);
   });
 });

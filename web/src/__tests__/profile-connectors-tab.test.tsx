@@ -40,6 +40,12 @@ const initiateComposioIdentityConnect = mock(async () => ({
 }));
 const grantConnector = mock(async () => {});
 const revokeConnector = mock(async () => {});
+const disconnectPersonalConnector = mock(async () => ({
+  ok: true,
+  scope: "identity" as const,
+  serverName: "granola",
+  revokedWorkspaces: 0,
+}));
 
 mock.module("../api/client", () => ({
   ...realClient,
@@ -50,6 +56,7 @@ mock.module("../api/client", () => ({
   initiateComposioIdentityConnect,
   grantConnector,
   revokeConnector,
+  disconnectPersonalConnector,
 }));
 
 // Connecting leaves the SPA via `window.location.assign`. happy-dom doesn't
@@ -60,6 +67,12 @@ Object.defineProperty(window, "location", {
   configurable: true,
   value: { ...window.location, assign: locationAssign },
 });
+
+// Disconnect confirms via window.confirm. Stub it so tests drive the accept /
+// cancel branch deterministically (happy-dom returns false by default).
+let confirmReturn = true;
+const windowConfirm = mock((_msg?: string) => confirmReturn);
+Object.defineProperty(window, "confirm", { configurable: true, value: windowConfirm });
 
 const React = await import("react");
 const ReactDOMClient = await import("react-dom/client");
@@ -158,6 +171,9 @@ beforeEach(() => {
   locationAssign.mockClear();
   grantConnector.mockClear();
   revokeConnector.mockClear();
+  disconnectPersonalConnector.mockClear();
+  windowConfirm.mockClear();
+  confirmReturn = true;
   nextConnectors = [];
   nextCatalog = [];
   nextError = null;
@@ -342,5 +358,71 @@ describe("ProfileConnectorsTab", () => {
     expect(initiateComposioIdentityConnect).toHaveBeenCalledWith("com.google/gmail");
     expect(initiateIdentityConnect).not.toHaveBeenCalled();
     expect(locationAssign).toHaveBeenCalledWith("https://composio.test/connect");
+  });
+
+  test("renders an installed connector's icon from iconUrl", async () => {
+    nextConnectors = [
+      {
+        serverName: "granola",
+        displayName: "Granola",
+        description: "Meeting notes",
+        iconUrl: "https://static.test/granola.png",
+        state: "running",
+        auth: "dcr",
+        grantedWorkspaces: [],
+      },
+    ];
+    mounted = await mount();
+    const imgs = [...mounted.container.getElementsByTagName("img")];
+    expect(imgs.some((i) => i.getAttribute("src") === "https://static.test/granola.png")).toBe(
+      true,
+    );
+  });
+
+  test("Disconnect confirms, calls the API, and refreshes", async () => {
+    nextConnectors = [
+      {
+        serverName: "granola",
+        displayName: "Granola",
+        description: null,
+        state: "running",
+        auth: "dcr",
+        grantedWorkspaces: ["ws_helix"],
+      },
+    ];
+    mounted = await mount();
+    const disconnect = [...mounted.container.getElementsByTagName("button")].find(
+      (b) => b.textContent === "Disconnect",
+    );
+    // Emptied on the post-disconnect refresh so the row goes away.
+    nextConnectors = [];
+    await click(disconnect);
+    await flush();
+    expect(windowConfirm).toHaveBeenCalled();
+    expect(disconnectPersonalConnector).toHaveBeenCalledWith("granola");
+    // Re-fetched after the disconnect.
+    expect(listPersonalConnectors.mock.calls.length).toBeGreaterThan(1);
+  });
+
+  test("cancelling the Disconnect confirm is a no-op", async () => {
+    confirmReturn = false;
+    nextConnectors = [
+      {
+        serverName: "granola",
+        displayName: "Granola",
+        description: null,
+        state: "running",
+        auth: "dcr",
+        grantedWorkspaces: [],
+      },
+    ];
+    mounted = await mount();
+    const disconnect = [...mounted.container.getElementsByTagName("button")].find(
+      (b) => b.textContent === "Disconnect",
+    );
+    await click(disconnect);
+    await flush();
+    expect(windowConfirm).toHaveBeenCalled();
+    expect(disconnectPersonalConnector).not.toHaveBeenCalled();
   });
 });

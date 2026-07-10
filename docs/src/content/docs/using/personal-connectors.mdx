@@ -1,0 +1,88 @@
+---
+title: Personal connectors
+description: Connect a remote service to your own identity once, then grant it into any workspace so your agent can use it there.
+---
+
+import { Steps, Aside } from '@astrojs/starlight/components';
+
+A **personal connector** is a remote MCP service — Granola, Gmail, Outlook, and more — that you connect to **your own identity**, not to a single workspace. You authenticate once, and the connection follows you across every workspace you belong to. It is owned by you, not shared with a workspace's other members.
+
+This is the counterpart to a workspace [Connector](/using/connectors), which is shared by everyone in a workspace and owned by that workspace. Same catalog of services; different owner.
+
+## Where personal connectors live
+
+Open **Profile → Connectors**. The page has two lists:
+
+- **Your connectors** — what you've already connected, each with its connection state and the number of workspaces it's granted into.
+- **Add a connector** — the curated set of services offered for a personal connection you haven't added yet.
+
+Which services appear under **Add a connector** is set by the platform operator (a connector is flagged as personal in the catalog). Personal connectors authenticate by standard OAuth (**dcr**) or through **Composio**.
+
+## Connecting a service
+
+<Steps>
+1. Under **Add a connector**, find the service and click **Connect**.
+2. You're redirected to the vendor's sign-in page (for a Composio connector, through Composio's hosted flow).
+3. Sign in and approve access. You're returned to **Profile → Connectors**, and the service moves into **Your connectors** as **Connected**.
+</Steps>
+
+Connecting installs the connector on your identity and runs the sign-in in one step. Nothing runs on the platform host except the connection itself; your tokens are stored against your identity, outside any workspace.
+
+<Aside type="caution" title="Connecting is not the same as usable">
+A freshly connected personal connector is **not yet available to your agent anywhere** — not even in your personal workspace. You have to **grant** it into a workspace first. See below.
+</Aside>
+
+## Grants — the key idea
+
+A personal connector is yours, so **you** decide which of your workspaces may use it. Until you grant it into a workspace, the agent in that workspace has none of its tools. This is deliberate: a grant is explicit, audited, and revocable, so a connection you hold personally never leaks into a shared workspace's agent without your say-so.
+
+The rule has **no exception for your personal workspace** — a personal workspace is just a workspace, so you grant the connector there too before your agent can use it in your own chat. There is no "free at home".
+
+<Steps>
+1. In **Your connectors**, click a connector's **"Granted to N workspaces"** label to open its access panel.
+2. Toggle **Grant** on each workspace where you want your agent to use it. Toggle **Revoke** to take access away again.
+</Steps>
+
+Granting into a workspace makes that connector's tools appear to the agent there on its next turn. Revoking removes them just as immediately. Grants are per-workspace and independent — granting into one never affects another.
+
+You can also grant from **chat**: ask the agent to "grant Granola to this workspace," and it will (a grant only ever widens *your own* reach, so any member may grant their own connector — no admin role needed).
+
+## Using it in a workspace
+
+Once a personal connector is **granted into the workspace you're chatting in**, its tools are available to the agent there, namespaced to that workspace. Ask the agent to use the service ("summarize my last three Granola meetings") and it will call the connector's tools. In a workspace where you haven't granted it, those tools simply aren't present.
+
+## Disconnecting
+
+**Disconnect** on a connector's row fully removes it from your identity in one step:
+
+- revokes **every** workspace grant,
+- deletes the connection's stored credentials,
+- stops and removes the running connection, and
+- drops the install record.
+
+The connector leaves **Your connectors** and returns to **Add a connector**. There is no "de-authenticate but keep it" half-state — disconnect is a clean removal. To use the service again later, connect it again and re-grant it where you want it. Disconnecting asks you to confirm first, and tells you how many workspaces will lose access.
+
+<Aside type="note" title="The vendor-side grant">
+Disconnect removes NimbleBrain's copy of your credentials. It does **not yet revoke the grant at the vendor** — the service may still list NimbleBrain among its authorized apps until the token expires. To remove that too, revoke access in the vendor's own account settings.
+</Aside>
+
+## Where your credentials live
+
+A personal connector's credentials are **identity-owned**: they live at `users/<userId>/credentials/` on the platform, outside any workspace, so leaving or being removed from a workspace never orphans them. They are never echoed back to the UI. For a Composio connector, the platform-wide Composio API key stays in the platform environment and only an opaque account pointer is stored against your identity — never the vendor key. See [Credentials](/config/credentials/) for the full model.
+
+## Personal vs. workspace connectors
+
+| | Personal connector | Workspace [connector](/using/connectors) |
+|---|---|---|
+| **Owned by** | You (your identity) | The workspace |
+| **Managed under** | Profile → Connectors | Settings → Connectors (per workspace) |
+| **Who can use it** | Only you, and only in workspaces you grant it into | Every member of that workspace |
+| **Credentials** | `users/<userId>/credentials/` | `workspaces/<wsId>/credentials/` |
+| **To use in a workspace** | Grant it in | Already shared with all members |
+
+## What's next
+
+- [Connectors](/using/connectors) — workspace-shared connectors and the four auth modes
+- [Workspaces](/using/workspaces) — how membership and per-workspace scoping work
+- [Chat](/using/chat) — talking to the agent
+- [Credentials](/config/credentials/) — how secrets are stored

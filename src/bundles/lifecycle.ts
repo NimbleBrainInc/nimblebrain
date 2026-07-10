@@ -19,14 +19,18 @@ import { FileCredentialStore } from "../tools/credential-store.ts";
 import { McpSource } from "../tools/mcp-source.ts";
 import { ToolRegistry } from "../tools/registry.ts";
 import type { ToolSource } from "../tools/types.ts";
-import { WorkspaceOAuthProvider } from "../tools/workspace-oauth-provider.ts";
+import { mcpOAuthDir, WorkspaceOAuthProvider } from "../tools/workspace-oauth-provider.ts";
 import { validateAdditionalAuthorizationParams } from "../util/oauth-params.ts";
 import { WorkspaceContext } from "../workspace/context.ts";
 import { resolveWorkspaceDisplayName } from "../workspace/workspace-store.ts";
 import type { AutomationDomainContext } from "./automations/src/domain.ts";
 import { createAutomation, deleteAutomation } from "./automations/src/domain.ts";
 import { bundleHasStaticAuth } from "./bundle-auth.ts";
-import { connectorSlug, hasPersistedComposioConnection } from "./composio-connection.ts";
+import {
+  composioConnectorDir,
+  connectorSlug,
+  hasPersistedComposioConnection,
+} from "./composio-connection.ts";
 import {
   type Connection,
   type ConnectionState,
@@ -2105,6 +2109,88 @@ export class BundleLifecycleManager {
       identityOwner: { userId },
     });
     return registry.getSource(serverName);
+  }
+
+  /**
+   * Full teardown of a personal (identity-plane) connector — the identity sibling
+   * of `uninstall` (workspace). Stops + drops the source from the user's registry,
+   * deletes the identity credentials (mcp-oauth always; the composio connection
+   * dir too when it's a composio connector), and removes the install record from
+   * `IdentityConnectorStore`. Grant revocation is the caller's job (permission
+   * store), exactly as `handleUninstall` drops tool permissions after
+   * `lifecycle.uninstall`. Each teardown step is best-effort so a partial failure
+   * still reaches the install-record removal — the user-visible "it's gone".
+   *
+   * Upstream token revocation is NOT performed here — for a DCR connector the
+   * vendor's OAuth grant (RFC 7009) and for a composio connector the connected
+   * account both stay live at the vendor until they expire; we only delete the
+   * LOCAL credentials, so the platform forgets them. The workspace `uninstall`
+   * DOES revoke upstream (`revokeUrlBundleTokens` for DCR, `cleanupComposioBundle`
+   * for composio), but both are workspace-keyed; owner-aware upstream revocation
+   * for both auth types rolls into the connection-state / reauth slice. This is a
+   * known asymmetry with `uninstall`. A user who wants the vendor-side grant gone
+   * meanwhile can revoke it in the vendor's own authorized-apps list.
+   */
+  async uninstallIdentityConnector(
+    userId: string,
+    serverName: string,
+    opts: { workDir: string },
+  ): Promise<void> {
+    const { workDir } = opts;
+    const store = new IdentityConnectorStore({ workDir });
+    // Read the ref BEFORE removing it — its composio marker decides whether to
+    // also clear the composio connection dir.
+    const ref = await store.get(userId, serverName);
+
+    // 1. Stop + drop the running source from the user's registry (if warm).
+    const registry = this.registriesByUser.get(userId);
+    if (registry?.hasSource(serverName)) {
+      try {
+        await registry.getSource(serverName)?.stop();
+      } catch (err) {
+        log.warn(
+          `[lifecycle] identity source.stop() failed for ${userId}|${serverName}: ${
+            err instanceof Error ? err.message : String(err)
+          }`,
+        );
+      }
+      await registry.removeSource(serverName);
+    }
+
+    // 2. Delete identity credentials. mcp-oauth for every personal connector; the
+    //    composio connection dir additionally when the ref carries a composio
+    //    marker. Best-effort (force: a never-connected connector has no dir).
+    try {
+      rmSync(mcpOAuthDir(workDir, { type: "user", userId }, serverName), {
+        recursive: true,
+        force: true,
+      });
+    } catch (err) {
+      log.warn(
+        `[lifecycle] failed to clear identity mcp-oauth for ${userId}|${serverName}: ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      );
+    }
+    const connectorId = (ref as { composio?: { connectorId: string } } | null)?.composio
+      ?.connectorId;
+    if (connectorId) {
+      try {
+        rmSync(composioConnectorDir(workDir, { type: "user", userId }, connectorId), {
+          recursive: true,
+          force: true,
+        });
+      } catch (err) {
+        log.warn(
+          `[lifecycle] failed to clear identity composio dir for ${userId}|${serverName}: ${
+            err instanceof Error ? err.message : String(err)
+          }`,
+        );
+      }
+    }
+
+    // 3. Remove the install record — the user-visible "disconnected" state.
+    await store.remove(userId, serverName);
   }
 
   /** The user's personal-connector registry, created on first access. */

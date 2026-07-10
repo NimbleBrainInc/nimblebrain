@@ -19,7 +19,7 @@
  */
 
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -90,6 +90,7 @@ import { ToolRegistry } from "../../src/tools/registry.ts";
 import { personalWorkspaceIdFor, WorkspaceStore } from "../../src/workspace/workspace-store.ts";
 import { _resetComposioConfigForTest } from "../../src/composio/sdk.ts";
 import {
+  composioConnectorDir,
   hasPersistedComposioConnection,
   saveComposioConnection,
 } from "../../src/bundles/composio-connection.ts";
@@ -178,6 +179,8 @@ function buildHarness(): Harness {
     getPermissionStore: () => ({
       deleteConnector: async () => {},
       listConnectorGrants: async () => ({}),
+      getConnectorGrants: async () => [],
+      revokeConnector: async () => {},
     }),
     getUserStore: () => ({ get: async () => null }),
     getBundleInstancesForWorkspace: () => lifecycle.getInstances(),
@@ -698,5 +701,36 @@ describe("manage_connectors.install scope:identity (composio personal connector)
 
     // Still exactly one ref on the identity plane.
     expect(await new IdentityConnectorStore({ workDir: h.workDir }).list(ADMIN.id)).toHaveLength(1);
+  });
+
+  test("(m) disconnect scope:identity removes the composio connection dir + the install record", async () => {
+    process.env.COMPOSIO_API_KEY = "k_test";
+    process.env.COMPOSIO_GMAIL_AUTH_CONFIG_ID = "ac_gmail";
+
+    const tool = buildTool(h);
+    await tool.handler({ action: "install", entry: gmailEntry(), scope: "identity" });
+
+    // Simulate a completed composio Connect: a connection.json under the identity
+    // composio credential root (the dir the disconnect teardown must clear).
+    const composioDir = composioConnectorDir(h.workDir, { type: "user", userId: ADMIN.id }, GMAIL_ID);
+    mkdirSync(composioDir, { recursive: true });
+    writeFileSync(
+      join(composioDir, "connection.json"),
+      JSON.stringify({ connectedAccountId: "ca_x" }),
+    );
+
+    expect(await new IdentityConnectorStore({ workDir: h.workDir }).list(ADMIN.id)).toHaveLength(1);
+
+    const result = await tool.handler({
+      action: "disconnect",
+      serverName: "com-google-gmail",
+      scope: "identity",
+    });
+    expect(result.isError).toBe(false);
+    expect((result.structuredContent as { scope?: string }).scope).toBe("identity");
+
+    // Install record gone AND the composio connection dir deleted.
+    expect(await new IdentityConnectorStore({ workDir: h.workDir }).list(ADMIN.id)).toHaveLength(0);
+    expect(existsSync(composioDir)).toBe(false);
   });
 });
