@@ -177,11 +177,12 @@ export class HealthMonitor {
     // the exponential backoff must start fresh for the next independent crash
     // episode. Without this, a remote connector that periodically drops and
     // cleanly reconnects (e.g. a server that idle-closes long-lived streams)
-    // accrues restarts across its whole life and is wrongly killed after
-    // `MAX_RESTARTS` total drops despite every reconnect succeeding. The reset
-    // is gated on SUSTAINED uptime, not a single successful reconnect, on
-    // purpose: a source that recovers then immediately re-drops never earns the
-    // reset, so it still escalates to `dead` instead of looping forever.
+    // accrues restarts across its whole life and is wrongly forced into the
+    // slow-re-probe cooldown after `MAX_RESTARTS` total drops despite every
+    // reconnect succeeding. The reset is gated on SUSTAINED uptime, not a single
+    // successful reconnect, on purpose: a source that recovers then immediately
+    // re-drops never earns the reset, so it still escalates to `cooldown`
+    // instead of bursting forever at the base delay.
     if (record.restartCount === 0) return;
     const uptime = record.source.uptime();
     if (uptime !== null && uptime >= this.checkIntervalMs) {

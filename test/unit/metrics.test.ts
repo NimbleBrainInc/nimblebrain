@@ -260,16 +260,18 @@ describe("bundle unhealthy gauge", () => {
     expect(await readGauge("synapse-crm")).toBeUndefined();
   });
 
-  it("test_bundle_unhealthy_gauge_excludes_restarting_source", async () => {
-    // `restarting` is a transient burst (≤ MAX_RESTARTS attempts) — it should
-    // not assert the down signal; only the settled down states do.
+  it("test_bundle_unhealthy_gauge_reports_1_for_restarting_source", async () => {
+    // `restarting` (an active backoff burst) is one of the two involuntary-down
+    // states — it must assert so the series stays continuous across the
+    // burst→cooldown→burst cycle (the `for: 10m` alert needs that continuity; a
+    // genuine transient blip is de-flapped by `for:`, not by excluding this).
     registerBundleHealthGauge(() => status({ name: "ai-granola-mcp", state: "restarting" }));
-    expect(await readGauge("ai-granola-mcp")).toBeUndefined();
+    expect(await readGauge("ai-granola-mcp")).toBe(1);
   });
 
   it("test_bundle_unhealthy_gauge_reports_1_for_cooldown_source", async () => {
     // `cooldown` (crashed, spent its quick-retry budget, now on slow re-probe)
-    // can stay down indefinitely, so it must keep the alert lit like `dead`.
+    // can stay down indefinitely — the other involuntary-down state.
     registerBundleHealthGauge(() => status({ name: "com-example-enrich-mcp", state: "cooldown" }));
     expect(await readGauge("com-example-enrich-mcp")).toBe(1);
   });
