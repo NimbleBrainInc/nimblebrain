@@ -180,6 +180,24 @@ describe("manage_connectors.install scope:identity — DCR personal-connector in
     expect(ref.url).toBe("https://api.granola.test/mcp");
     // Identity refs are user-owned structurally and carry NO oauthScope literal.
     expect(ref.oauthScope).toBeUndefined();
+    // Fresh install reports alreadyInstalled:false (symmetric with the dup path).
+    expect((result.structuredContent as { alreadyInstalled?: boolean }).alreadyInstalled).toBe(
+      false,
+    );
+  });
+
+  test("re-installing an already-installed connector is idempotent (alreadyInstalled:true, one ref)", async () => {
+    const first = await h.tool.handler({ action: "install", entry: dcrEntry(), scope: "identity" });
+    expect(first.isError).toBe(false);
+
+    const second = await h.tool.handler({ action: "install", entry: dcrEntry(), scope: "identity" });
+    expect(second.isError).toBe(false);
+    const sc = second.structuredContent as { ok?: boolean; alreadyInstalled?: boolean };
+    expect(sc.ok).toBe(true);
+    expect(sc.alreadyInstalled).toBe(true);
+
+    // Upsert-idempotent: still exactly one ref (no duplicate row).
+    expect(await new IdentityConnectorStore({ workDir: h.workDir }).list(USER.id)).toHaveLength(1);
   });
 
   test("list_personal_connectors reads the identity plane after an identity install", async () => {

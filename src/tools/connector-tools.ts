@@ -1229,10 +1229,28 @@ async function handleInstallIdentity(
 
   const serverName = slugifyServerName(entry.id);
 
+  // Idempotency (identity side): if this connector is already installed on the
+  // caller's identity, short-circuit BEFORE any wiring — a re-install must not
+  // mint a fresh Composio session and orphan the prior one. The workspace path
+  // guards the same way (`handleDuplicateInstall`, before `resolveInstallWiring`).
+  // `add` upserts, so the record survives either way; this just defers the
+  // session-create and keeps the contract idempotent (composio and DCR alike).
+  const existing = await new IdentityConnectorStore({
+    workDir: ctx.runtime.getWorkDir(),
+  }).get(callerId, serverName);
+  if (existing) {
+    return {
+      content: textContent(
+        `"${entry.name}" is already a personal connector. Connect it to authenticate.`,
+      ),
+      structuredContent: { ok: true, alreadyInstalled: true, serverName, scope: "identity" },
+      isError: false,
+    };
+  }
+
   // Forbid the collision (identity side): reject if this serverName already
-  // exists as a shared-workspace install in any workspace the caller belongs to.
-  // Runs before any composio wiring so a colliding re-install can't burn a
-  // Composio session.
+  // exists as a shared-workspace install in any workspace the caller belongs to
+  // (a connector can't be both a personal connector and a workspace install).
   const collidingWsId = await findSharedWorkspaceInstall(ctx, callerId, serverName);
   if (collidingWsId) {
     return errResult(
@@ -1296,7 +1314,7 @@ async function handleInstallIdentity(
     content: textContent(
       `Installed "${entry.name}" as a personal connector. Connect it to authenticate.`,
     ),
-    structuredContent: { ok: true, serverName, scope: "identity" },
+    structuredContent: { ok: true, alreadyInstalled: false, serverName, scope: "identity" },
     isError: false,
   };
 }

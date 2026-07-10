@@ -1007,13 +1007,15 @@ export async function installConnector(
 
 /**
  * Install a connector on the caller's OWN identity (a personal connector), not
- * into a workspace — `scope: "identity"`. DCR-only; the server rejects other
- * auth types on the identity plane. Does NOT start OAuth — follow up with
- * `initiateIdentityConnect(serverName)`.
+ * into a workspace — `scope: "identity"`. DCR and composio install here; the
+ * server rejects static/provider on the identity plane. Idempotent: re-installing
+ * an already-installed connector returns `alreadyInstalled: true` without minting
+ * a new session. Does NOT start the Connect flow — follow up with the auth-typed
+ * initiate (`initiateIdentityConnect` / `initiateComposioIdentityConnect`).
  */
 export async function installPersonalConnector(
   entry: DirectoryEntry,
-): Promise<{ ok: boolean; serverName: string; scope: "identity" }> {
+): Promise<{ ok: boolean; alreadyInstalled?: boolean; serverName: string; scope: "identity" }> {
   const result = await callTool("nb", "manage_connectors", {
     action: "install",
     scope: "identity",

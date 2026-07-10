@@ -660,4 +660,43 @@ describe("manage_connectors.install scope:identity (composio personal connector)
     // Prerequisite failure (before any session create) persists nothing.
     expect(await new IdentityConnectorStore({ workDir: h.workDir }).list(ADMIN.id)).toHaveLength(0);
   });
+
+  test("(l) second identity install of the same composio connector is idempotent — no second session, alreadyInstalled:true", async () => {
+    process.env.COMPOSIO_API_KEY = "k_test";
+    process.env.COMPOSIO_GMAIL_AUTH_CONFIG_ID = "ac_gmail";
+
+    // Count upstream session creates — a re-install must NOT mint a second and
+    // orphan the first (the asymmetry the workspace path guards via dedup).
+    let createCalls = 0;
+    composioCalls.createImpl = async () => {
+      createCalls += 1;
+      return {
+        sessionId: "session_test",
+        mcp: { type: "http", url: "https://composio.test/mcp/session_test", headers: {} },
+      };
+    };
+
+    const tool = buildTool(h);
+    const first = await tool.handler({ action: "install", entry: gmailEntry(), scope: "identity" });
+    expect(first.isError).toBe(false);
+    expect((first.structuredContent as { alreadyInstalled?: boolean }).alreadyInstalled).toBe(false);
+
+    const second = await tool.handler({ action: "install", entry: gmailEntry(), scope: "identity" });
+    expect(second.isError).toBe(false);
+    const sc = second.structuredContent as {
+      ok?: boolean;
+      alreadyInstalled?: boolean;
+      scope?: string;
+    };
+    expect(sc.ok).toBe(true);
+    expect(sc.alreadyInstalled).toBe(true);
+    expect(sc.scope).toBe("identity");
+
+    // The dedup short-circuits BEFORE buildComposioWiring — exactly one upstream
+    // session was ever created, so none is orphaned.
+    expect(createCalls).toBe(1);
+
+    // Still exactly one ref on the identity plane.
+    expect(await new IdentityConnectorStore({ workDir: h.workDir }).list(ADMIN.id)).toHaveLength(1);
+  });
 });
