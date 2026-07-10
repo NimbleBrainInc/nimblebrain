@@ -23,58 +23,41 @@ const MAX_HEIGHT = 600;
 // causes the iframe to report the full viewport height instead of content height.
 const INLINE_SIZING_CSS = `<style>html,body{height:auto!important;min-height:0!important;overflow:hidden!important;margin:0!important}</style>`;
 
-/** Inject inline auto-sizing CSS into app HTML so full-page templates size to content, not the viewport. */
+// Report content height to the host from INSIDE the iframe. The app frame is
+// sandboxed without `allow-same-origin` (opaque origin), so the host cannot
+// read `iframe.contentDocument` to measure it — the content must report its own
+// size. A ResizeObserver posts `ui/notifications/size-changed` (the ext-apps
+// resize protocol the bridge already routes to `onResize`) on every content
+// change plus once on start; the host caps the value at MAX_HEIGHT. This is
+// host-injected wrapper markup, not app code; CSP `script-src 'unsafe-inline'`
+// permits it, and `injectCSP` replaces any app-declared CSP so it always runs.
+const INLINE_RESIZE_REPORTER = `<script>(function(){function r(){try{parent.postMessage({jsonrpc:"2.0",method:"ui/notifications/size-changed",params:{height:document.documentElement.scrollHeight}},"*");}catch(e){}}function s(){try{new ResizeObserver(r).observe(document.body||document.documentElement);}catch(e){}r();}if(document.readyState==="loading"){document.addEventListener("DOMContentLoaded",s);}else{s();}})();</script>`;
+
+/** Inject inline auto-sizing CSS + a content-height reporter into app HTML so full-page templates size to content, not the viewport. */
 function buildSizedHtml(html: string): string {
+  const inject = `${INLINE_SIZING_CSS}\n${INLINE_RESIZE_REPORTER}`;
   const headPattern = /<head([^>]*)>/i;
   return headPattern.test(html)
-    ? html.replace(headPattern, (m) => `${m}\n${INLINE_SIZING_CSS}`)
-    : `${INLINE_SIZING_CSS}\n${html}`;
+    ? html.replace(headPattern, (m) => `${m}\n${inject}`)
+    : `${inject}\n${html}`;
 }
 
-/** Keep the iframe height synced to its rendered body content (capped at MAX_HEIGHT) via a ResizeObserver. */
-function observeContentHeight(
-  iframe: HTMLIFrameElement,
-  isCancelled: () => boolean,
-  setHeight: (h: number) => void,
-  roRef: { current: ResizeObserver | null },
-): void {
-  const body = iframe.contentDocument?.body;
-  if (!body) return;
-
-  const syncHeight = () => {
-    if (isCancelled()) return;
-    const h = Math.min(body.scrollHeight, MAX_HEIGHT);
-    if (h > 0) {
-      setHeight(h);
-      iframe.style.height = `${h}px`;
-    }
-  };
-
-  syncHeight();
-
-  const ro = new ResizeObserver(syncHeight);
-  ro.observe(body);
-  roRef.current = ro;
-}
-
-/** On iframe load, clear the loading state and begin auto-sizing to content on the next frame. */
-function attachAutoSizeOnLoad(
+/**
+ * On iframe load, clear the loading overlay. Content sizing is driven by the
+ * in-iframe reporter (INLINE_RESIZE_REPORTER) via the bridge's `onResize`, not
+ * by reading `iframe.contentDocument` — the opaque-origin frame is not readable
+ * from the host.
+ */
+function attachLoadHandler(
   iframe: HTMLIFrameElement,
   isCancelled: () => boolean,
   setLoading: (v: boolean) => void,
-  setHeight: (h: number) => void,
-  roRef: { current: ResizeObserver | null },
 ): void {
   iframe.addEventListener(
     "load",
     () => {
       if (isCancelled()) return;
       setLoading(false);
-
-      requestAnimationFrame(() => {
-        if (isCancelled()) return;
-        observeContentHeight(iframe, isCancelled, setHeight, roRef);
-      });
     },
     { once: true },
   );
@@ -85,7 +68,6 @@ export function InlineAppView({ appName, resourceUri, toolResult }: InlineAppVie
   const iframeContainerRef = useRef<HTMLDivElement>(null);
   const bridgeRef = useRef<BridgeHandle | null>(null);
   const iframeRef = useRef<HTMLIFrameElement | null>(null);
-  const roRef = useRef<ResizeObserver | null>(null);
   // Capture toolResult in a ref so the effect doesn't re-fire when the parent
   // re-renders with a new object reference (e.g., during streaming text deltas).
   const toolResultRef = useRef(toolResult);
@@ -156,11 +138,11 @@ export function InlineAppView({ appName, resourceUri, toolResult }: InlineAppVie
         });
         bridgeRef.current = bridge;
 
-        // After the iframe loads: auto-size based on actual rendered content.
-        // ResizeObserver on the body fires whenever content height changes,
-        // so async data loads and dynamic content are handled automatically.
+        // Auto-sizing is driven by the in-iframe reporter → onResize (above);
+        // this just clears the loading overlay on load. Async data loads and
+        // dynamic content resize automatically via the reporter's ResizeObserver.
         // Tool result is sent separately when the widget confirms handshake via onInitialized.
-        attachAutoSizeOnLoad(iframe, () => cancelled, setLoading, setHeight, roRef);
+        attachLoadHandler(iframe, () => cancelled, setLoading);
       } catch (err) {
         if (cancelled) return;
         const msg = err instanceof Error ? err.message : "Failed to load inline view";
@@ -173,8 +155,6 @@ export function InlineAppView({ appName, resourceUri, toolResult }: InlineAppVie
 
     return () => {
       cancelled = true;
-      roRef.current?.disconnect();
-      roRef.current = null;
       bridgeRef.current?.destroy();
       bridgeRef.current = null;
       iframeRef.current = null;
