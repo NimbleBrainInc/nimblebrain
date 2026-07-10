@@ -81,15 +81,30 @@ interface StubLifecycleCalls {
     } | null;
     callCount: number;
   };
+  // Identity-plane analog: the user-owner callback / adopt paths bring the
+  // personal connector's source online via `getIdentityConnectorSource`
+  // (there is no per-principal connection-state machine, so they do NOT call
+  // `recordConnectionStateChange`). Captured so the identity tests can assert
+  // the source-recovery call fires and the workspace-only state transition
+  // does not.
+  getIdentityConnectorSource: {
+    lastCall: { userId: string; serverName: string } | null;
+    callCount: number;
+  };
 }
 
 function stubCtx(
   workDir: string,
   catalogEntry: ReturnType<typeof composioEntry> | null,
-  options: { ensureSourceRegisteredError?: Error } = {},
+  options: {
+    ensureSourceRegisteredError?: Error;
+    getIdentityConnectorSourceError?: Error;
+    userId?: string;
+  } = {},
 ): AppContext & { __lifecycleCalls: StubLifecycleCalls } {
   const calls: StubLifecycleCalls = {
     recordConnectionStateChange: { lastCall: null, callCount: 0 },
+    getIdentityConnectorSource: { lastCall: null, callCount: 0 },
   };
   const lifecycle = {
     recordConnectionStateChange(
@@ -112,6 +127,17 @@ function stubCtx(
         throw options.ensureSourceRegisteredError;
       }
     },
+    // Identity-plane source holder: starts + registers a personal connector
+    // into the user's registry from its persisted record. The real method
+    // returns a source; the route only awaits it (ignores the return), so the
+    // stub captures the call and resolves.
+    async getIdentityConnectorSource(userId: string, serverName: string): Promise<void> {
+      calls.getIdentityConnectorSource.lastCall = { userId, serverName };
+      calls.getIdentityConnectorSource.callCount++;
+      if (options.getIdentityConnectorSourceError) {
+        throw options.getIdentityConnectorSourceError;
+      }
+    },
   };
   const runtime = {
     getConnectorDirectory() {
@@ -125,6 +151,13 @@ function stubCtx(
     },
     getLifecycle() {
       return lifecycle;
+    },
+    // The identity initiate route resolves the caller's user id from the
+    // verified request identity. In dev-mode tests the identity is canned;
+    // the stub returns a fixed id (overridable per test) so assertions can
+    // pin the credential path / cookie-committed owner.
+    resolveRequestUserId() {
+      return options.userId ?? "usr_test";
     },
   } as unknown as AppContext["runtime"];
 
@@ -783,5 +816,254 @@ describe("POST /v1/composio-auth/initiate", () => {
     expect(res.status).toBe(400);
     const body = (await res.json()) as { error: string };
     expect(body.error).toBe("bad_request");
+  });
+});
+
+// ── POST /v1/composio-auth/initiate-identity ─────────────────────────
+//
+// The identity-plane sibling of /initiate: connect a PERSONAL Composio
+// connector on the caller's own identity, with NO workspace in context.
+// Same dev-mode-auth pattern as the /initiate describe, minus the
+// workspace-injection middleware — the route has `requireAuth` but not
+// `requireWorkspace`, so it resolves its owner from the verified identity,
+// never from a focused workspace. These tests are the identity analog of
+// the /initiate happy-path + adopt-existing cases; the workspace path
+// above is left byte-identical (the shared `connectComposio` helper only
+// varies on `owner`).
+describe("POST /v1/composio-auth/initiate-identity", () => {
+  const USER_ID = "usr_test";
+  const savedEnv: Record<string, string | undefined> = {};
+  const TRACKED = [
+    "COMPOSIO_API_KEY",
+    "COMPOSIO_API_BASE_URL",
+    "COMPOSIO_GMAIL_AUTH_CONFIG_ID",
+    "NB_TENANT_ID",
+    "NB_API_URL",
+    "NB_WEB_URL",
+  ];
+
+  beforeEach(() => {
+    for (const k of TRACKED) savedEnv[k] = process.env[k];
+    for (const k of TRACKED) delete process.env[k];
+    _resetComposioConfigForTest();
+    sdkCalls.listImpl = async () => ({ items: [] });
+    sdkCalls.initiateImpl = async () => ({
+      redirectUrl: "https://connect.composio.dev/link/lk_identity",
+      id: "ca_identity",
+    });
+  });
+
+  afterEach(() => {
+    for (const k of TRACKED) {
+      if (savedEnv[k] === undefined) delete process.env[k];
+      else process.env[k] = savedEnv[k];
+    }
+    _resetComposioConfigForTest();
+  });
+
+  function makeIdentityApp(
+    catalogEntry: ReturnType<typeof composioEntry> | null,
+    dir = "/tmp/nb-initiate-identity-test",
+  ): { app: Hono<AppEnv>; ctx: ReturnType<typeof stubCtx> } {
+    const ctx = stubCtx(dir, catalogEntry, { userId: USER_ID });
+    (ctx as unknown as { authOptions: unknown }).authOptions = {
+      mode: { type: "dev" },
+      eventSink: { emit: () => {} },
+    };
+    const app = new Hono<AppEnv>();
+    // No workspace-injection middleware — proves the route needs no workspace.
+    app.route("/", composioAuthRoutes(ctx));
+    return { app, ctx };
+  }
+
+  test("(a) fresh flow: drives Composio with the user identity, commits the user owner in the cookie", async () => {
+    process.env.COMPOSIO_API_KEY = "k_test";
+    process.env.COMPOSIO_GMAIL_AUTH_CONFIG_ID = "ac_gmail_test";
+    sdkCalls.listImpl = async () => ({ items: [] }); // no existing connection
+    let initiateArgs: unknown[] = [];
+    sdkCalls.initiateImpl = async (...args: unknown[]) => {
+      initiateArgs = args;
+      return { redirectUrl: "https://connect.composio.dev/link/lk_identity", id: "ca_identity" };
+    };
+
+    const { app } = makeIdentityApp(composioEntry("com.google/gmail"));
+    const res = await app.request("http://nb.test/v1/composio-auth/initiate-identity", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ connectorId: "com.google/gmail" }),
+    });
+
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { authorizationUrl: string; alreadyConnected?: boolean };
+    expect(body.authorizationUrl).toBe("https://connect.composio.dev/link/lk_identity");
+    expect(body.alreadyConnected).toBeUndefined();
+
+    // Composio-side identity is the USER namespace (`user:<id>`), never a
+    // workspace — single-tenant here (NB_TENANT_ID unset), so no tenant prefix.
+    expect(initiateArgs[0]).toBe("user:usr_test");
+    expect(initiateArgs[0]).toBe(composioUserId({ type: "user", userId: USER_ID }));
+
+    // The callback URL commits the user owner: `usr=<id>`, never `ws=`.
+    const cbUrl = new URL((initiateArgs[2] as { callbackUrl: string }).callbackUrl);
+    expect(cbUrl.searchParams.get("usr")).toBe(USER_ID);
+    expect(cbUrl.searchParams.get("ws")).toBeNull();
+    expect(cbUrl.searchParams.get("cid")).toBe("com.google/gmail");
+    const nonce = cbUrl.searchParams.get("n") ?? "";
+    expect(nonce.length).toBeGreaterThan(0);
+
+    // Cookie shape + owner commitment: the state hash binds
+    // (nonce, cid, usr:<id>). A workspace callback (`ws=`) can never satisfy
+    // it — the constant-time compare on the return leg would fail.
+    const setCookie = res.headers.get("set-cookie") ?? "";
+    expect(setCookie.includes("HttpOnly")).toBe(true);
+    expect(setCookie.includes("SameSite=Lax")).toBe(true);
+    expect(setCookie.includes("Path=/v1/composio-auth/callback")).toBe(true);
+    const cookieHash = /nb_composio_state=([0-9a-f]{64})/.exec(setCookie)?.[1];
+    expect(cookieHash).toBe(sha256Hex(`${nonce}.com.google/gmail.usr:${USER_ID}`));
+  });
+
+  test("(b) adopt-existing: writes connection.json under the user root, no workspace state transition", async () => {
+    process.env.COMPOSIO_API_KEY = "k_test";
+    process.env.COMPOSIO_GMAIL_AUTH_CONFIG_ID = "ac_gmail_test";
+    sdkCalls.listImpl = async () => ({ items: [{ id: "ca_user_active", status: "ACTIVE" }] });
+    sdkCalls.initiateImpl = async () => {
+      throw new Error("adopt-existing path should not call connectedAccounts.initiate");
+    };
+
+    const dir = mkdtempSync(join(tmpdir(), "nb-adopt-identity-"));
+    try {
+      const { app, ctx } = makeIdentityApp(composioEntry("com.google/gmail"), dir);
+      const res = await app.request("http://nb.test/v1/composio-auth/initiate-identity", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ connectorId: "com.google/gmail" }),
+      });
+
+      expect(res.status).toBe(200);
+      const body = (await res.json()) as { authorizationUrl: string; alreadyConnected?: boolean };
+      expect(body.alreadyConnected).toBe(true);
+      // Navigates back to the identity connectors surface, not a workspace one.
+      expect(body.authorizationUrl).toContain("/profile/connectors");
+
+      // connection.json landed under the USER credential root.
+      const owner = { type: "user", userId: USER_ID } as const;
+      const stored = await readComposioConnection(dir, owner, "com.google/gmail");
+      expect(stored?.connectedAccountId).toBe("ca_user_active");
+      expect(stored?.toolkit).toBe("gmail");
+      const path = composioConnectionPath(dir, owner, "com.google/gmail");
+      expect(path.includes(join("users", USER_ID, "credentials", "composio"))).toBe(true);
+
+      // Identity source brought online; NO workspace-only state transition
+      // (there is no per-principal connection-state machine on the identity plane).
+      expect(ctx.__lifecycleCalls.getIdentityConnectorSource.callCount).toBe(1);
+      expect(ctx.__lifecycleCalls.getIdentityConnectorSource.lastCall).toEqual({
+        userId: USER_ID,
+        serverName: "com-google-gmail",
+      });
+      expect(ctx.__lifecycleCalls.recordConnectionStateChange.callCount).toBe(0);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("GET /v1/composio-auth/callback — identity (user) owner", () => {
+  test("persists under the user root, recovers the identity source, returns to /profile/connectors", async () => {
+    const { dir, cleanup } = freshDir();
+    try {
+      const entry = composioEntry("com.google/gmail");
+      const ctx = stubCtx(dir, entry);
+      const app = composioAuthRoutes(ctx);
+      const nonce = "deadbeefdeadbeefdeadbeefdeadbeef";
+      const userId = "usr_test";
+      const cid = "com.google/gmail";
+      // Owner committed as `usr:<id>` (connectorOwnerKey), not a bare id —
+      // this is the identity-side counterpart of the workspace `wsId` hash.
+      const cookieHash = sha256Hex(`${nonce}.${cid}.usr:${userId}`);
+
+      const url =
+        `http://nb.test/v1/composio-auth/callback?cid=${encodeURIComponent(cid)}` +
+        `&usr=${userId}&n=${nonce}&connected_account_id=ca_user&status=ACTIVE`;
+      const res = await app.request(url, {
+        headers: { cookie: `nb_composio_state=${cookieHash}` },
+      });
+
+      expect(res.status).toBe(200);
+      const html = await res.text();
+      expect(html).toContain("/profile/connectors");
+      // Never a workspace connectors URL for an identity connection.
+      expect(html).not.toContain("/settings/connectors");
+
+      const owner = { type: "user", userId } as const;
+      const stored = await readComposioConnection(dir, owner, cid);
+      expect(stored?.connectedAccountId).toBe("ca_user");
+      expect(stored?.toolkit).toBe("gmail");
+      expect(stored?.status).toBe("ACTIVE");
+      const path = composioConnectionPath(dir, owner, cid);
+      expect(path.includes(join("users", userId, "credentials", "composio"))).toBe(true);
+
+      // Identity source recovered; NO per-principal workspace state transition.
+      expect(ctx.__lifecycleCalls.getIdentityConnectorSource.callCount).toBe(1);
+      expect(ctx.__lifecycleCalls.getIdentityConnectorSource.lastCall).toEqual({
+        userId,
+        serverName: "com-google-gmail",
+      });
+      expect(ctx.__lifecycleCalls.recordConnectionStateChange.callCount).toBe(0);
+
+      // One-shot cookie cleared on success.
+      const setCookie = res.headers.get("set-cookie") ?? "";
+      expect(setCookie.includes("Max-Age=0")).toBe(true);
+    } finally {
+      cleanup();
+    }
+  });
+
+  test("rejects when the cookie commits a different user (owner tamper)", async () => {
+    const { dir, cleanup } = freshDir();
+    try {
+      const entry = composioEntry("com.google/gmail");
+      const app = composioAuthRoutes(stubCtx(dir, entry));
+      // Cookie was bound to usr_real, but the callback URL claims usr_attacker.
+      const goodHash = sha256Hex("n.com.google/gmail.usr:usr_real");
+      const url =
+        "http://nb.test/v1/composio-auth/callback?cid=com.google/gmail&usr=usr_attacker" +
+        "&n=n&connected_account_id=ca_xyz&status=ACTIVE";
+      const res = await app.request(url, {
+        headers: { cookie: `nb_composio_state=${goodHash}` },
+      });
+      expect(res.status).toBe(400);
+      // Nothing persisted for the claimed attacker user.
+      const attackerPath = composioConnectionPath(
+        dir,
+        { type: "user", userId: "usr_attacker" },
+        "com.google/gmail",
+      );
+      const { existsSync } = await import("node:fs");
+      expect(existsSync(attackerPath)).toBe(false);
+    } finally {
+      cleanup();
+    }
+  });
+
+  test("rejects an ambiguous owner naming both ws and usr", async () => {
+    const { dir, cleanup } = freshDir();
+    try {
+      const app = composioAuthRoutes(stubCtx(dir, composioEntry("com.google/gmail")));
+      const nonce = "n";
+      const cid = "com.google/gmail";
+      // Even with a valid-looking cookie, an owner that names BOTH ws and usr
+      // is rejected before the cookie check (ownerFromCallbackQuery → null).
+      const anyHash = sha256Hex(`${nonce}.${cid}.usr:usr_test`);
+      const url =
+        `http://nb.test/v1/composio-auth/callback?cid=${encodeURIComponent(cid)}` +
+        `&ws=ws_test&usr=usr_test&n=${nonce}&connected_account_id=ca_xyz&status=ACTIVE`;
+      const res = await app.request(url, {
+        headers: { cookie: `nb_composio_state=${anyHash}` },
+      });
+      expect(res.status).toBe(400);
+      expect(await res.text()).toContain("missing cid, owner");
+    } finally {
+      cleanup();
+    }
   });
 });
