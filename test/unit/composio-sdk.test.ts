@@ -164,17 +164,27 @@ describe("validateComposioConfig", () => {
 
 describe("composioUserId", () => {
   test("returns wsId alone when NB_TENANT_ID unset", () => {
-    expect(composioUserId("ws_01abc")).toBe("ws_01abc");
+    expect(composioUserId({ type: "workspace", wsId: "ws_01abc" })).toBe("ws_01abc");
   });
 
   test("prefixes tenant id when NB_TENANT_ID set", () => {
     process.env.NB_TENANT_ID = "hq";
-    expect(composioUserId("ws_01abc")).toBe("hq:ws_01abc");
+    expect(composioUserId({ type: "workspace", wsId: "ws_01abc" })).toBe("hq:ws_01abc");
   });
 
   test("trims whitespace on NB_TENANT_ID", () => {
     process.env.NB_TENANT_ID = "  hq  ";
-    expect(composioUserId("ws_01abc")).toBe("hq:ws_01abc");
+    expect(composioUserId({ type: "workspace", wsId: "ws_01abc" })).toBe("hq:ws_01abc");
+  });
+
+  test("namespaces a user owner with a `user:` segment (no tenant)", () => {
+    process.env.NB_TENANT_ID = undefined;
+    expect(composioUserId({ type: "user", userId: "usr_alice" })).toBe("user:usr_alice");
+  });
+
+  test("prefixes the tenant id for a user owner too", () => {
+    process.env.NB_TENANT_ID = "hq";
+    expect(composioUserId({ type: "user", userId: "usr_alice" })).toBe("hq:user:usr_alice");
   });
 });
 
@@ -503,14 +513,14 @@ describe("cleanupComposioBundle", () => {
     };
 
     // Seed a connection.json on disk.
-    await saveComposioConnection(workDir, "ws_test", "com.google/gmail", {
+    await saveComposioConnection(workDir, { type: "workspace", wsId: "ws_test" }, "com.google/gmail", {
       connectedAccountId: "ca_to_revoke",
       toolkit: "gmail",
       userId: "ws_test",
       connectedAt: "2026-05-13T00:00:00.000Z",
       status: "ACTIVE",
     });
-    expect(hasPersistedComposioConnection(workDir, "ws_test", "com.google/gmail")).toBe(true);
+    expect(hasPersistedComposioConnection(workDir, { type: "workspace", wsId: "ws_test" }, "com.google/gmail")).toBe(true);
 
     const result = await cleanupComposioBundle({
       workDir,
@@ -521,7 +531,7 @@ describe("cleanupComposioBundle", () => {
     expect(result.upstreamDeleted).toBe(true);
     expect(result.localDeleted).toBe(true);
     expect(deletedAccountId).toBe("ca_to_revoke");
-    expect(hasPersistedComposioConnection(workDir, "ws_test", "com.google/gmail")).toBe(false);
+    expect(hasPersistedComposioConnection(workDir, { type: "workspace", wsId: "ws_test" }, "com.google/gmail")).toBe(false);
   });
 
   test("local cleanup still runs when upstream Composio call fails (idempotent)", async () => {
@@ -530,7 +540,7 @@ describe("cleanupComposioBundle", () => {
       throw new Error("composio down");
     };
 
-    await saveComposioConnection(workDir, "ws_test", "com.google/gmail", {
+    await saveComposioConnection(workDir, { type: "workspace", wsId: "ws_test" }, "com.google/gmail", {
       connectedAccountId: "ca_x",
       toolkit: "gmail",
       userId: "ws_test",
@@ -547,7 +557,7 @@ describe("cleanupComposioBundle", () => {
     // SDK call failed → upstreamDeleted: false. Local cleanup still ran.
     expect(result.upstreamDeleted).toBe(false);
     expect(result.localDeleted).toBe(true);
-    expect(hasPersistedComposioConnection(workDir, "ws_test", "com.google/gmail")).toBe(false);
+    expect(hasPersistedComposioConnection(workDir, { type: "workspace", wsId: "ws_test" }, "com.google/gmail")).toBe(false);
   });
 
   test("skips upstream call when COMPOSIO_API_KEY is unset (still cleans local file)", async () => {
@@ -558,7 +568,7 @@ describe("cleanupComposioBundle", () => {
       sdkCalled = true;
     };
 
-    await saveComposioConnection(workDir, "ws_test", "com.google/gmail", {
+    await saveComposioConnection(workDir, { type: "workspace", wsId: "ws_test" }, "com.google/gmail", {
       connectedAccountId: "ca_x",
       toolkit: "gmail",
       userId: "ws_test",
@@ -606,7 +616,7 @@ describe("cleanupComposioBundle", () => {
       throw new Error("composio down");
     };
 
-    await saveComposioConnection(workDir, "ws_test", "com.google/gmail", {
+    await saveComposioConnection(workDir, { type: "workspace", wsId: "ws_test" }, "com.google/gmail", {
       connectedAccountId: "ca_x",
       toolkit: "gmail",
       userId: "ws_test",

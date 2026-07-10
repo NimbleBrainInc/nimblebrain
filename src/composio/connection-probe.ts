@@ -60,7 +60,7 @@ export class ComposioConnectionProbe implements ConnectionHealthProbe {
     }
     if (!authConfigId) return "indeterminate";
 
-    const userId = composioUserId(target.wsId);
+    const userId = composioUserId({ type: "workspace", wsId: target.wsId });
     try {
       // `findActiveComposioConnection` lists statuses:["ACTIVE"] and is bounded
       // by an internal 10s `withTimeout`. A non-null result = at least one

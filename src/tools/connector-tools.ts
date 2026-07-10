@@ -28,6 +28,7 @@ import type { UserConfigFieldDef } from "../config/workspace-credentials.ts";
 import { connectorSkillIdentityFrom } from "../connectors/server-detail.ts";
 import { textContent } from "../engine/content-helpers.ts";
 import type { ToolResult } from "../engine/types.ts";
+import type { ConnectorOwner } from "../identity/connector-owner.ts";
 import { IdentityConnectorStore } from "../identity/connector-store.ts";
 import type { UserIdentity } from "../identity/provider.ts";
 import { log } from "../observability/log.ts";
@@ -1340,7 +1341,8 @@ async function handleConnectApiKey(
   const { apiKey, authConfigId } = env;
 
   const serverName = slugifyServerName(catalogId);
-  const userId = composioUserId(wsId);
+  const owner: ConnectorOwner = { type: "workspace", wsId };
+  const userId = composioUserId(owner);
   const lifecycle = ctx.runtime.getLifecycle();
   const workDir = ctx.runtime.getWorkDir();
 
@@ -1348,7 +1350,7 @@ async function handleConnectApiKey(
   // case below and is the id we revoke after a successful replace. We can't
   // adopt-existing like the OAuth path — an API-key re-submit may carry a
   // rotated key, so the old account is REPLACED, not reused.
-  const prior = await readComposioConnection(workDir, wsId, catalogId);
+  const prior = await readComposioConnection(workDir, owner, catalogId);
 
   // Authz: a FIRST connect (no prior) is member-level, matching the OAuth
   // connect route. But a RE-CONNECT/rotation replaces and revokes the shared
@@ -1381,7 +1383,7 @@ async function handleConnectApiKey(
     connectedAt: new Date().toISOString(),
     status: connected.status,
   };
-  await saveComposioConnection(workDir, wsId, catalogId, connection);
+  await saveComposioConnection(workDir, owner, catalogId, connection);
   lifecycle.recordConnectionStateChange(serverName, wsId, WORKSPACE_PRINCIPAL_ID, "running");
 
   await revokeReplacedComposioAccount(apiKey, prior, connected.connectedAccountId, catalogId, wsId);
@@ -1875,7 +1877,7 @@ function scrubComposioHeaders(
  */
 async function buildComposioWiring(
   action: RemoteOAuthInstall,
-  wsId: string,
+  owner: ConnectorOwner,
   entryName: string,
 ): Promise<{ url: string; transport: RemoteTransportConfig } | { __err: string }> {
   if (action.auth !== "composio" || !action.composio) {
@@ -1883,7 +1885,7 @@ async function buildComposioWiring(
     // narrowing convenience.
     return { __err: "composio wiring requested for non-composio install" };
   }
-  const userId = composioUserId(wsId);
+  const userId = composioUserId(owner);
   let sessionMcp: { type: "http" | "sse"; url: string; headers?: Record<string, string> };
   try {
     sessionMcp = await createComposioSession({
@@ -2095,7 +2097,11 @@ async function resolveInstallWiring(
   | { error: string }
 > {
   if (action.auth === "composio") {
-    const composioWiring = await buildComposioWiring(action, wsId, entry.name);
+    const composioWiring = await buildComposioWiring(
+      action,
+      { type: "workspace", wsId },
+      entry.name,
+    );
     if ("__err" in composioWiring) return { error: composioWiring.__err };
     return { composioWiring };
   }

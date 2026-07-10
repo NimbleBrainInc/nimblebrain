@@ -9,19 +9,25 @@
  * A hand-built `join(..., "users", X, "credentials", ...)` is a regression: a
  * shared-connector credential would land off the workspace.
  *
- * The ONE exception is the identity plane. A **personal connector** (a user's
- * own remote MCP connection, reachable across their workspaces) owns its OAuth
- * tokens at `users/<userId>/credentials/mcp-oauth/<serverName>/` — the
- * `{type:"user"}` WorkspaceOAuthProvider arm, outside any workspace so leaving
- * one never orphans them. This exact `mcp-oauth` shape is allowed; every other
- * `users/<id>/credentials/...` stays banned.
+ * The exceptions are the identity plane's personal-connector credential homes. A
+ * **personal connector** (a user's own remote MCP connection, reachable across
+ * their workspaces) owns its credentials outside any workspace, so leaving one
+ * never orphans them:
+ *   - `users/<userId>/credentials/mcp-oauth/<serverName>/` — the `{type:"user"}`
+ *     WorkspaceOAuthProvider arm (OAuth tokens for a DCR/static connector).
+ *   - `users/<userId>/credentials/composio/<connector>/` — the personal Composio
+ *     connection home (opaque `connectedAccountId`; the `{type:"user"}` arm of
+ *     `composioConnectorDir`).
+ * Those exact shapes are allowed; every other `users/<id>/credentials/...` stays
+ * banned.
  *
- * What this script flags (all EXCEPT the `mcp-oauth` carve-out):
+ * What this script flags (all EXCEPT the carve-outs above):
  *   - `join(...)` with the adjacency `"users", <id>, "credentials"`.
  *   - Template / string literals containing `users/<...>/credentials/`.
  *
  * What it allows:
- *   - `users/<id>/credentials/mcp-oauth/...` — the identity-connector path.
+ *   - `users/<id>/credentials/{mcp-oauth,composio}/...` — the identity-connector
+ *     credential homes.
  *   - A `// lint-ok:credential-path` marker on the line immediately above the
  *     construction, for the rare case the typed helper genuinely doesn't apply.
  *
@@ -46,13 +52,18 @@ const ALLOW_MARKER = "lint-ok:credential-path";
 
 /**
  * Matches a banned `users/<id>/credentials/…` path, EXCEPT the sanctioned
- * identity-connector home `users/<id>/credentials/mcp-oauth/…` — the
- * `{type:"user"}` WorkspaceOAuthProvider arm, where a personal connector's
- * OAuth tokens live (owned by the user, outside any workspace). The negative
- * lookahead is the whole carve-out: a bare `credentials` dir or any non-
- * `mcp-oauth` child is still a regression.
+ * identity-connector homes, where a personal connector's credentials live
+ * (owned by the user, outside any workspace):
+ *   - `users/<id>/credentials/mcp-oauth/…` — the `{type:"user"}`
+ *     WorkspaceOAuthProvider arm (OAuth tokens for a DCR/static connector).
+ *   - `users/<id>/credentials/composio/…` — the personal Composio connection
+ *     home (the opaque `connectedAccountId`; the `{type:"user"}` owner arm of
+ *     `composioConnectorDir`).
+ * The negative lookahead is the whole carve-out: a bare `credentials` dir or any
+ * child outside that set is still a regression.
  */
-const USER_CREDENTIAL_PATH_RE = /users\/[^/]+\/credentials(?:$|\/(?!mcp-oauth(?:\/|$)))/;
+const USER_CREDENTIAL_PATH_RE =
+  /users\/[^/]+\/credentials(?:$|\/(?!(?:mcp-oauth|composio)(?:\/|$)))/;
 
 // Files within `src/` that legitimately reference the legacy
 // `users/<userId>/credentials/...` shape. Stage-2 deletion of
@@ -109,11 +120,14 @@ export function isUserCredentialJoin(node: ts.CallExpression): boolean {
     if (!isLiteralSegment(args[i], "users") || !isLiteralSegment(args[i + 2], "credentials")) {
       continue;
     }
-    // Carve-out: `users/<id>/credentials/mcp-oauth/...` is the sanctioned
-    // identity-owned personal-connector OAuth path (the `{type:"user"}`
-    // WorkspaceOAuthProvider arm). Everything else under
-    // `users/<id>/credentials/` stays banned.
-    if (isLiteralSegment(args[i + 3], "mcp-oauth")) continue;
+    // Carve-out: the sanctioned identity-owned personal-connector credential
+    // homes — `mcp-oauth` (OAuth tokens, the `{type:"user"}`
+    // WorkspaceOAuthProvider arm) and `composio` (the opaque
+    // `connectedAccountId`). Everything else under `users/<id>/credentials/`
+    // stays banned. Keep this set in sync with `USER_CREDENTIAL_PATH_RE`.
+    if (isLiteralSegment(args[i + 3], "mcp-oauth") || isLiteralSegment(args[i + 3], "composio")) {
+      continue;
+    }
     return true;
   }
   return false;

@@ -139,7 +139,11 @@ function urlBundleHasBootAuth(
   workDir: string,
 ): boolean {
   if (bundle.composio) {
-    return hasPersistedComposioConnection(workDir, wsId, bundle.composio.connectorId);
+    return hasPersistedComposioConnection(
+      workDir,
+      { type: "workspace", wsId },
+      bundle.composio.connectorId,
+    );
   }
   return bundleHasStaticAuth(bundle) || hasPersistedWorkspaceOAuthTokens(workDir, wsId, serverName);
 }

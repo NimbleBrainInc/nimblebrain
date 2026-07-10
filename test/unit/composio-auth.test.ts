@@ -166,17 +166,17 @@ describe("composioUserId", () => {
 
   test("returns wsId alone when NB_TENANT_ID is unset (single-tenant)", () => {
     delete process.env.NB_TENANT_ID;
-    expect(composioUserId("ws_01abc")).toBe("ws_01abc");
+    expect(composioUserId({ type: "workspace", wsId: "ws_01abc" })).toBe("ws_01abc");
   });
 
   test("prefixes tenant id when NB_TENANT_ID is set", () => {
     process.env.NB_TENANT_ID = "tenant-a";
-    expect(composioUserId("ws_01abc")).toBe("tenant-a:ws_01abc");
+    expect(composioUserId({ type: "workspace", wsId: "ws_01abc" })).toBe("tenant-a:ws_01abc");
   });
 
   test("trims whitespace on NB_TENANT_ID", () => {
     process.env.NB_TENANT_ID = "  tenant-b  ";
-    expect(composioUserId("ws_01abc")).toBe("tenant-b:ws_01abc");
+    expect(composioUserId({ type: "workspace", wsId: "ws_01abc" })).toBe("tenant-b:ws_01abc");
   });
 });
 
@@ -309,7 +309,7 @@ describe("GET /v1/composio-auth/callback", () => {
       expect(html).toContain("/w/test/settings/connectors");
       expect(html).not.toContain("/settings/workspace/connectors");
 
-      const stored = await readComposioConnection(dir, wsId, cid);
+      const stored = await readComposioConnection(dir, { type: "workspace", wsId }, cid);
       expect(stored).not.toBeNull();
       expect(stored?.connectedAccountId).toBe("ca_xyz");
       expect(stored?.toolkit).toBe("gmail");
@@ -348,7 +348,7 @@ describe("GET /v1/composio-auth/callback", () => {
       const res = await app.request(url);
       expect(res.status).toBe(400);
       // No connection.json written.
-      const path = composioConnectionPath(dir, "ws_test", "com.google/gmail");
+      const path = composioConnectionPath(dir, { type: "workspace", wsId: "ws_test" }, "com.google/gmail");
       const { existsSync } = await import("node:fs");
       expect(existsSync(path)).toBe(false);
     } finally {
@@ -606,7 +606,7 @@ describe("POST /v1/composio-auth/initiate", () => {
       expect(body.alreadyConnected).toBe(true);
 
       // connection.json landed on disk under the existing account id.
-      const stored = await readComposioConnection(dir, WS_ID, "com.google/gmail");
+      const stored = await readComposioConnection(dir, { type: "workspace", wsId: WS_ID }, "com.google/gmail");
       expect(stored?.connectedAccountId).toBe("ca_already_active");
       expect(stored?.toolkit).toBe("gmail");
 
@@ -665,7 +665,7 @@ describe("POST /v1/composio-auth/initiate", () => {
       // connection.json must NOT be on disk — that's the whole point
       // of the reorder. A "connected" state marker without a running
       // source is exactly the lie the previous code was telling.
-      const stored = await readComposioConnection(dir, WS_ID, "com.google/gmail");
+      const stored = await readComposioConnection(dir, { type: "workspace", wsId: WS_ID }, "com.google/gmail");
       expect(stored).toBeNull();
 
       // recordConnectionStateChange must NOT have been called either

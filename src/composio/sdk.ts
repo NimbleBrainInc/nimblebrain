@@ -35,6 +35,7 @@
  */
 
 import { AuthScheme, Composio } from "@composio/core";
+import type { ConnectorOwner } from "../identity/connector-owner.ts";
 import { getBouncerMode } from "../oauth/bouncer-config.ts";
 import { publicOrigin } from "../oauth/public-origin.ts";
 import { log } from "../observability/log.ts";
@@ -173,9 +174,13 @@ export function _resetComposioConfigForTest(): void {
  * caller — that's why this lives in the SDK adapter, not the route
  * file.
  */
-export function composioUserId(wsId: string): string {
+export function composioUserId(owner: ConnectorOwner): string {
   const tid = process.env.NB_TENANT_ID?.trim();
-  return tid ? `${tid}:${wsId}` : wsId;
+  // A personal (identity) connector namespaces its Composio-side identity with a
+  // `user:` segment so it can never collide with a workspace's (`ws_...` vs
+  // `user:usr_...`). A workspace owner is byte-identical to the prior `wsId` form.
+  const key = owner.type === "workspace" ? owner.wsId : `user:${owner.userId}`;
+  return tid ? `${tid}:${key}` : key;
 }
 
 // ── URL helpers ─────────────────────────────────────────────────────
@@ -478,7 +483,11 @@ export async function cleanupComposioBundle(opts: {
 
   let connectedAccountId: string | undefined;
   try {
-    const connection = await readComposioConnection(opts.workDir, opts.wsId, opts.connectorId);
+    const connection = await readComposioConnection(
+      opts.workDir,
+      { type: "workspace", wsId: opts.wsId },
+      opts.connectorId,
+    );
     connectedAccountId = connection?.connectedAccountId;
   } catch (err) {
     lastError = err instanceof Error ? err.message : String(err);
@@ -492,7 +501,11 @@ export async function cleanupComposioBundle(opts: {
   }
 
   try {
-    localDeleted = await deleteComposioConnection(opts.workDir, opts.wsId, opts.connectorId);
+    localDeleted = await deleteComposioConnection(
+      opts.workDir,
+      { type: "workspace", wsId: opts.wsId },
+      opts.connectorId,
+    );
   } catch (err) {
     lastError = err instanceof Error ? err.message : String(err);
   }

@@ -498,7 +498,7 @@ describe("manage_connectors.connect_api_key — lifecycle tail", () => {
     expect((r.structuredContent as { connected?: boolean })?.connected).toBe(true);
 
     // connection.json persisted with the verified account + toolkit + status.
-    const conn = await readComposioConnection(workDir, WS, POSTHOG_ID);
+    const conn = await readComposioConnection(workDir, { type: "workspace", wsId: WS }, POSTHOG_ID);
     expect(conn?.connectedAccountId).toBe("ca_ph");
     expect(conn?.toolkit).toBe("posthog");
     expect(conn?.status).toBe("ACTIVE");
@@ -538,7 +538,7 @@ describe("manage_connectors.connect_api_key — lifecycle tail", () => {
     // ensureSourceRegistered runs before the Composio connect, so nothing was
     // created and nothing persisted.
     expect(apiKeyCalls.initiateArgs.length).toBe(0);
-    expect(await readComposioConnection(workDir, WS, POSTHOG_ID)).toBeFalsy();
+    expect(await readComposioConnection(workDir, { type: "workspace", wsId: WS }, POSTHOG_ID)).toBeFalsy();
     expect(ctx.__calls.recordConnectionStateChange.callCount).toBe(0);
   });
 
@@ -604,7 +604,7 @@ describe("manage_connectors.connect_api_key — lifecycle tail", () => {
 
     expect(r.isError).toBe(true);
     expect(JSON.stringify(r)).toContain("Could not connect");
-    expect(await readComposioConnection(workDir, WS, POSTHOG_ID)).toBeFalsy();
+    expect(await readComposioConnection(workDir, { type: "workspace", wsId: WS }, POSTHOG_ID)).toBeFalsy();
     expect(ctx.__calls.recordConnectionStateChange.callCount).toBe(0);
     // The SDK helper cleaned up the dangling connected account.
     expect(apiKeyCalls.deletedIds).toContain("ca_bad");
@@ -616,7 +616,7 @@ describe("manage_connectors.connect_api_key — lifecycle tail", () => {
     _resetComposioConfigForTest();
 
     // Pre-seed a prior, already-connected account.
-    await saveComposioConnection(workDir, WS, POSTHOG_ID, {
+    await saveComposioConnection(workDir, { type: "workspace", wsId: WS }, POSTHOG_ID, {
       connectedAccountId: "ca_old",
       toolkit: "posthog",
       userId: "u",
@@ -639,7 +639,7 @@ describe("manage_connectors.connect_api_key — lifecycle tail", () => {
 
     expect(r.isError).toBe(false);
     // connection.json now points at the new account...
-    const conn = await readComposioConnection(workDir, WS, POSTHOG_ID);
+    const conn = await readComposioConnection(workDir, { type: "workspace", wsId: WS }, POSTHOG_ID);
     expect(conn?.connectedAccountId).toBe("ca_new");
     // ...and the replaced account was revoked at Composio (no orphan, old key
     // de-authorized). The new account is NOT deleted.
@@ -653,7 +653,7 @@ describe("manage_connectors.connect_api_key — lifecycle tail", () => {
     _resetComposioConfigForTest();
 
     // A connector is already connected...
-    await saveComposioConnection(workDir, WS, POSTHOG_ID, {
+    await saveComposioConnection(workDir, { type: "workspace", wsId: WS }, POSTHOG_ID, {
       connectedAccountId: "ca_old",
       toolkit: "posthog",
       userId: "u",
@@ -674,7 +674,7 @@ describe("manage_connectors.connect_api_key — lifecycle tail", () => {
     // Nothing happened: no new connect, the old account survives, state unchanged.
     expect(apiKeyCalls.initiateArgs.length).toBe(0);
     expect(apiKeyCalls.deletedIds).not.toContain("ca_old");
-    const conn = await readComposioConnection(workDir, WS, POSTHOG_ID);
+    const conn = await readComposioConnection(workDir, { type: "workspace", wsId: WS }, POSTHOG_ID);
     expect(conn?.connectedAccountId).toBe("ca_old");
     expect(ctx.__calls.recordConnectionStateChange.callCount).toBe(0);
   });

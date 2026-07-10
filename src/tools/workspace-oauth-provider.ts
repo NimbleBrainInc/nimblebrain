@@ -15,6 +15,7 @@ import type {
   OAuthTokens,
 } from "@modelcontextprotocol/sdk/shared/auth.js";
 import { validateBundleUrl } from "../bundles/url-validator.ts";
+import type { ConnectorOwner } from "../identity/connector-owner.ts";
 import { buildTenantAssertion } from "../oauth/fleet-assertion.ts";
 import { log } from "../observability/log.ts";
 import { validateAdditionalAuthorizationParams } from "../util/oauth-params.ts";
@@ -86,9 +87,7 @@ export class BackgroundReauthRequiredError extends Error {
  * `client.json` (DCR client info), `tokens.json` (access + refresh),
  * `verifier.json` (PKCE), `identity.json` (OIDC claims when issued).
  */
-export type OAuthOwnerContext =
-  | { readonly type: "workspace"; readonly wsId: string }
-  | { readonly type: "user"; readonly userId: string };
+export type OAuthOwnerContext = ConnectorOwner;
 
 export interface WorkspaceOAuthProviderOptions {
   /**
