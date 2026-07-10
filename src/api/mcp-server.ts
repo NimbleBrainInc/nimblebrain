@@ -391,6 +391,20 @@ export class McpServerHost {
 
       const local = this.transports.get(sessionId);
       if (local) {
+        // A `/mcp` session is bound to the identity that initialized it
+        // (Stage 2). `requireMcpAuth` proves the caller holds *some* valid
+        // identity, not that they own this session id — so reject reuse by
+        // any other identity. Without this check, a leaked `Mcp-Session-Id`
+        // lets a same-tenant user drive the owner's identity-scoped tools
+        // (conversations/files/automations) as the owner. Respond exactly
+        // like an unknown session id (`not_found`) so a non-owner can't even
+        // tell the session exists (`unavailable` would confirm it's live).
+        if (!this.ownsTransport(local, sessionCtx)) {
+          log.warn(
+            `[mcp] session identity mismatch ${fmtSessionContext(request, sessionId, sessionCtx)}`,
+          );
+          return this.sessionNotFoundResponse();
+        }
         // Fast path: we own this transport. Touch + re-insert moves the
         // entry to the MRU end of the Map so LRU eviction picks the oldest
         // first. Best-effort registry touch keeps the cluster-shared TTL
@@ -452,6 +466,16 @@ export class McpServerHost {
       this.bestEffortDelete(sessionId);
       return new Response("Session not found", { status: 404 });
     }
+    // Only the owning identity may tear down its session (same binding as the
+    // POST fast path). A non-owner gets an unmodified 404 — no teardown, no
+    // registry delete, no existence signal — so a leaked session id can't be
+    // used to evict another user's live session.
+    if (!this.ownsTransport(local, sessionCtx)) {
+      log.info(
+        `[mcp] delete identity mismatch ${fmtSessionContext(request, sessionId, sessionCtx)}`,
+      );
+      return new Response("Session not found", { status: 404 });
+    }
     return local.transport.handleRequest(request);
   }
 
@@ -502,6 +526,11 @@ export class McpServerHost {
     const reason: "not_found" | "unavailable" = meta ? "unavailable" : "not_found";
     log.warn(`[mcp] session miss reason=${reason} ${ctx}`);
 
+    return this.sessionMissResponse(reason);
+  }
+
+  /** Build the JSON-RPC 404 body shared by every `/mcp` session-miss path. */
+  private sessionMissResponse(reason: "not_found" | "unavailable"): Response {
     return new Response(
       JSON.stringify({
         jsonrpc: "2.0",
@@ -510,6 +539,33 @@ export class McpServerHost {
       }),
       { status: 404, headers: { "Content-Type": "application/json" } },
     );
+  }
+
+  /**
+   * Opaque 404 for a caller who presents a session id they don't own. Always
+   * `not_found` (never `unavailable`), so a non-owner can't use the reason to
+   * confirm that someone else's session is live on this process.
+   */
+  private sessionNotFoundResponse(): Response {
+    return this.sessionMissResponse("not_found");
+  }
+
+  /**
+   * Whether `entry` is owned by the identity making this request. A `/mcp`
+   * session is bound to the identity that initialized it (`identityId`,
+   * normalized to `null` for the dev/no-auth case, matching how it's stored).
+   *
+   * INVARIANT for any path that reaches a live transport: gate on this before
+   * dispatch, and turn a non-owner away WITHOUT letting them distinguish "not
+   * yours" from "no such session". The two branches must stay distinct — POST
+   * returns an opaque `not_found` (never `unavailable`, which would confirm the
+   * session is live) and DELETE returns 404 without `bestEffortDelete` (a
+   * non-owner must not evict the owner's registry entry). Today only
+   * `handlePost` (fast path) and `handleDelete` reach a transport; a future
+   * GET/SSE handler (see the class header) must add the same gate.
+   */
+  private ownsTransport(entry: TransportEntry, sessionCtx: McpSessionContext): boolean {
+    return entry.identityId === (sessionCtx.identity?.id ?? null);
   }
 
   /**
