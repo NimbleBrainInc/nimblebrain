@@ -15,6 +15,7 @@ import {
   validateComposioConfig,
 } from "../../composio/sdk.ts";
 import { type ConnectorOwner, connectorOwnerKey } from "../../identity/connector-owner.ts";
+import { IdentityConnectorStore } from "../../identity/connector-store.ts";
 import { log } from "../../observability/log.ts";
 import type { ConnectorCatalogEntry } from "../../registries/projection.ts";
 import { requireAuth } from "../middleware/auth.ts";
@@ -168,6 +169,20 @@ export function composioAuthRoutes(ctx: AppContext) {
     const { connectorId } = parsed;
 
     const userId = ctx.runtime.resolveRequestUserId(c.var.identity);
+
+    // A personal connector must be installed on the caller's identity before it
+    // can be connected — mirrors the OAuth identity initiate
+    // (`/v1/mcp-auth/initiate-identity`). Without this the callback would persist
+    // a `connection.json` under the user root with no install record to read it —
+    // a dangling (own-credential-only) state. Not-installed is a 404 client error.
+    const serverName = slugifyServerName(connectorId);
+    const installed = await new IdentityConnectorStore({ workDir: ctx.runtime.getWorkDir() }).get(
+      userId,
+      serverName,
+    );
+    if (!installed) {
+      return apiError(404, "connector_not_found", `"${serverName}" is not one of your connectors.`);
+    }
 
     const entry = await loadInitiateCatalogEntry(ctx, connectorId);
     if (entry instanceof Response) return entry;

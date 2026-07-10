@@ -43,6 +43,8 @@ import {
   composioConnectionPath,
   readComposioConnection,
 } from "../../src/bundles/composio-connection.ts";
+import { slugifyServerName } from "../../src/bundles/paths.ts";
+import { IdentityConnectorStore } from "../../src/identity/connector-store.ts";
 import {
   _resetComposioConfigForTest,
   composioCallbackUrl,
@@ -861,15 +863,26 @@ describe("POST /v1/composio-auth/initiate-identity", () => {
     _resetComposioConfigForTest();
   });
 
-  function makeIdentityApp(
+  async function makeIdentityApp(
     catalogEntry: ReturnType<typeof composioEntry> | null,
     dir = "/tmp/nb-initiate-identity-test",
-  ): { app: Hono<AppEnv>; ctx: ReturnType<typeof stubCtx> } {
+    opts: { seedInstall?: boolean } = {},
+  ): Promise<{ app: Hono<AppEnv>; ctx: ReturnType<typeof stubCtx> }> {
     const ctx = stubCtx(dir, catalogEntry, { userId: USER_ID });
     (ctx as unknown as { authOptions: unknown }).authOptions = {
       mode: { type: "dev" },
       eventSink: { emit: () => {} },
     };
+    // A personal connector must be installed on the identity before it can be
+    // connected; seed the install ref so the route's precheck passes (skip it to
+    // exercise the not-installed path).
+    if (opts.seedInstall !== false && catalogEntry) {
+      await new IdentityConnectorStore({ workDir: dir }).add(USER_ID, {
+        url: `https://mcp.example.com/${slugifyServerName(catalogEntry.id)}`,
+        serverName: slugifyServerName(catalogEntry.id),
+        ui: null,
+      });
+    }
     const app = new Hono<AppEnv>();
     // No workspace-injection middleware — proves the route needs no workspace.
     app.route("/", composioAuthRoutes(ctx));
@@ -886,7 +899,7 @@ describe("POST /v1/composio-auth/initiate-identity", () => {
       return { redirectUrl: "https://connect.composio.dev/link/lk_identity", id: "ca_identity" };
     };
 
-    const { app } = makeIdentityApp(composioEntry("com.google/gmail"));
+    const { app } = await makeIdentityApp(composioEntry("com.google/gmail"));
     const res = await app.request("http://nb.test/v1/composio-auth/initiate-identity", {
       method: "POST",
       headers: { "content-type": "application/json" },
@@ -932,7 +945,7 @@ describe("POST /v1/composio-auth/initiate-identity", () => {
 
     const dir = mkdtempSync(join(tmpdir(), "nb-adopt-identity-"));
     try {
-      const { app, ctx } = makeIdentityApp(composioEntry("com.google/gmail"), dir);
+      const { app, ctx } = await makeIdentityApp(composioEntry("com.google/gmail"), dir);
       const res = await app.request("http://nb.test/v1/composio-auth/initiate-identity", {
         method: "POST",
         headers: { "content-type": "application/json" },
@@ -961,6 +974,29 @@ describe("POST /v1/composio-auth/initiate-identity", () => {
         serverName: "com-google-gmail",
       });
       expect(ctx.__lifecycleCalls.recordConnectionStateChange.callCount).toBe(0);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("(c) 404 connector_not_found when the connector isn't installed on the identity", async () => {
+    process.env.COMPOSIO_API_KEY = "k_test";
+    process.env.COMPOSIO_GMAIL_AUTH_CONFIG_ID = "ac_gmail_test";
+    const dir = mkdtempSync(join(tmpdir(), "nb-identity-not-installed-"));
+    try {
+      // Valid catalog entry, but NO install ref seeded → the precheck rejects,
+      // mirroring the OAuth identity initiate. Prevents a connect-before-install
+      // dangling connection.json.
+      const { app } = await makeIdentityApp(composioEntry("com.google/gmail"), dir, {
+        seedInstall: false,
+      });
+      const res = await app.request("http://nb.test/v1/composio-auth/initiate-identity", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ connectorId: "com.google/gmail" }),
+      });
+      expect(res.status).toBe(404);
+      expect(((await res.json()) as { error: string }).error).toBe("connector_not_found");
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
