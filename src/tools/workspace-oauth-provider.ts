@@ -526,6 +526,22 @@ export function mcpOAuthDir(workDir: string, owner: OAuthOwnerContext, serverNam
   return join(workDir, ownerSegment, ownerId, "credentials", "mcp-oauth", serverName);
 }
 
+/**
+ * Whether an (owner, serverName) has persisted OAuth tokens on disk — i.e. the
+ * connector completed its Connect flow at least once. Presence only (survives a
+ * pod restart), NOT validity: token expiry / revocation detection is the reauth
+ * slice's job. The DCR sibling of `hasPersistedComposioConnection` — used to
+ * render "connected" for an authed connector whose source isn't warm in the
+ * current pod, so the profile doesn't offer a spurious re-Connect.
+ */
+export function hasMcpOAuthTokens(
+  workDir: string,
+  owner: OAuthOwnerContext,
+  serverName: string,
+): boolean {
+  return existsSync(join(mcpOAuthDir(workDir, owner, serverName), "tokens.json"));
+}
+
 interface Deferred<T> {
   promise: Promise<T>;
   resolve: (value: T) => void;

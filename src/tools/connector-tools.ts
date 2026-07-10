@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { mcpAuthCallbackUrl } from "../api/routes/mcp-auth.ts";
 import {
   type ComposioConnection,
+  hasPersistedComposioConnection,
   readComposioConnection,
   saveComposioConnection,
 } from "../bundles/composio-connection.ts";
@@ -49,6 +50,7 @@ import { FileCredentialStore } from "./credential-store.ts";
 import type { InProcessTool } from "./in-process-app.ts";
 import { McpSource } from "./mcp-source.ts";
 import type { Tool, ToolSource } from "./types.ts";
+import { hasMcpOAuthTokens } from "./workspace-oauth-provider.ts";
 
 /**
  * `manage_connectors` tool — single surface for the Connectors UI
@@ -2845,6 +2847,8 @@ async function handleListPersonalConnectors(
   const catalog = await ctx.runtime.getConnectorDirectory().catalogEntries();
   const byServerName = new Map(catalog.map((e) => [slugifyServerName(e.id), e]));
 
+  const workDir = ctx.runtime.getWorkDir();
+  const owner = { type: "user", userId: callerId } as const;
   const lifecycle = ctx.runtime.getLifecycle();
   const connectors = refs.map((ref) => {
     const serverName = serverNameFromRef(ref);
@@ -2855,6 +2859,18 @@ async function handleListPersonalConnectors(
     // (`{composio:{connectorId}}`) is stamped at install by `buildRemoteBundleRef`;
     // its absence means DCR.
     const composioMarker = (ref as { composio?: { connectorId: string } }).composio;
+    // Connected = authenticated, derived from PERSISTED credentials (tokens.json
+    // for DCR, connection.json for composio) — which survive a pod restart — OR
+    // the source already warm in this pod. Presence, NOT validity: token
+    // expiry/revocation detection is the deferred reauth slice. Persistence
+    // matters because `isIdentityConnectorRunning` is same-pod-only: on a fresh
+    // pod an authed connector would otherwise report `not_authenticated` and offer
+    // a Connect that then fails (it's already authed). The agent lazy-starts the
+    // source from these same credentials, so an authed-but-cold connector is
+    // genuinely usable.
+    const authed = composioMarker
+      ? hasPersistedComposioConnection(workDir, owner, composioMarker.connectorId)
+      : hasMcpOAuthTokens(workDir, owner, serverName);
     return {
       serverName,
       displayName: cat?.name ?? serverName,
@@ -2867,13 +2883,15 @@ async function handleListPersonalConnectors(
       // (`/v1/composio-auth/initiate-identity`). The profile UI branches on this.
       auth: composioMarker ? ("composio" as const) : ("dcr" as const),
       ...(composioMarker ? { connectorId: composioMarker.connectorId } : {}),
-      // Same-pod truth: `running` once the source is warm in this pod's user
-      // registry (after a Connect / dispatch), else the resting
-      // `not_authenticated` — installed, click Connect. Cross-pod / persisted
-      // connection state lands with the deferred reauth slice.
-      state: lifecycle.isIdentityConnectorRunning(callerId, serverName)
-        ? ("running" as const)
-        : ("not_authenticated" as const),
+      // `authed` carries the common case; the warmth check is a deliberate
+      // backstop, not redundancy — `warm` doesn't strictly imply `authed` (creds
+      // can be deleted after the source warms), and it also catches a future
+      // personal-connector auth type whose creds this `authed` derivation doesn't
+      // yet know to look for. A live source is genuinely serving ⇒ `running`.
+      state:
+        authed || lifecycle.isIdentityConnectorRunning(callerId, serverName)
+          ? ("running" as const)
+          : ("not_authenticated" as const),
       grantedWorkspaces: grantsByConnector[serverName] ?? [],
     };
   });
