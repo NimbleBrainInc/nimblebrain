@@ -125,6 +125,31 @@ export const llmRequestDurationSeconds = new Histogram({
 });
 
 /**
+ * LLM time-to-first-token in seconds — from stream start (pre-`doStream`) to the
+ * first output part. Isolates the connect + provider-queue + prefill slice that
+ * `nb_llm_request_duration_seconds` buries under decode: a long reasoning answer
+ * makes the round-trip histogram fire even when prefill is a fast cache hit, so
+ * TTFT is the discriminator between the actionable pathology (a large context
+ * re-prefilled cold — prefix cache thrash) and expected decode (nothing to fix).
+ *
+ * Buckets top out at 60s: a TTFT past that is already pathological — the whole
+ * point is that healthy prefill, even on a very large cached context, is single-
+ * digit seconds. Same completed-calls SLI as the round-trip histogram (only
+ * `llm.done` is sampled; terminal failures bump `nb_llm_errors_total`).
+ *
+ * A call that emits no output part (empty completion, or a provider that streams
+ * a tool-call with no preceding `tool-input-start`) records no sample — TTFT is
+ * undefined there rather than a misleading 0 or full-duration reading.
+ */
+export const llmTtftSeconds = new Histogram({
+  name: "nb_llm_ttft_seconds",
+  help: "LLM time-to-first-token in seconds (connect + prefill), by call source and model.",
+  labelNames: ["source", "model"] as const,
+  buckets: [0.25, 0.5, 1, 2, 5, 10, 20, 30, 45, 60],
+  registers: [metricsRegistry],
+});
+
+/**
  * LLM calls that failed terminally — the provider call threw and the engine's
  * in-call retry (3 attempts with backoff) was exhausted, or a context overflow
  * could not be recovered. User-initiated cancellations (abort signal) are NOT

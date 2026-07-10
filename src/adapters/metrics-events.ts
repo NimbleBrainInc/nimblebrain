@@ -1,6 +1,7 @@
 import {
   llmErrorsTotal,
   llmRequestDurationSeconds,
+  llmTtftSeconds,
   recordBundleCrash,
   recordLlmUsage,
   toolCallsTotal,
@@ -64,6 +65,13 @@ export class MetricsEventSink implements EventSink {
     const llmMs = data.llmMs;
     if (typeof llmMs === "number") {
       llmRequestDurationSeconds.observe({ source: "main", model }, llmMs / 1000);
+    }
+    // Time-to-first-token (connect + prefill), the prefill-vs-decode
+    // discriminator. Absent when the call emitted no output part — skip rather
+    // than record a misleading 0.
+    const ttftMs = data.ttftMs;
+    if (typeof ttftMs === "number") {
+      llmTtftSeconds.observe({ source: "main", model }, ttftMs / 1000);
     }
   }
 

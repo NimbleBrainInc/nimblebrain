@@ -9,6 +9,7 @@ import {
   llmErrorsTotal,
   llmRequestDurationSeconds,
   llmTokensTotal,
+  llmTtftSeconds,
   recordBundleCrash,
   recordLlmUsage,
   registerBundleHealthGauge,
@@ -330,6 +331,47 @@ describe("LLM latency + error metrics", () => {
     // A malformed llm.done missing llmMs must not record a 0s (or NaN) sample.
     sink.emit({ type: "llm.done", data: { runId: "r1", model: "tm-no-ms" } });
     expect((await readHistogram("count", labels)) - before).toBe(0);
+  });
+
+  // Same shape as readHistogram, against the TTFT histogram.
+  async function readTtft(
+    suffix: "sum" | "count",
+    labels: Record<string, string>,
+  ): Promise<number> {
+    const metric = await llmTtftSeconds.get();
+    const want = `nb_llm_ttft_seconds_${suffix}`;
+    for (const s of metric.values) {
+      if (
+        // biome-ignore lint/suspicious/noExplicitAny: prom-client value shape.
+        (s as any).metricName === want &&
+        Object.entries(labels).every(([k, v]) => s.labels[k] === v)
+      ) {
+        return s.value;
+      }
+    }
+    return 0;
+  }
+
+  it("test_llm_done_observes_ttft_histogram_seconds", async () => {
+    const sink = new MetricsEventSink();
+    const labels = { source: "main", model: "tm-ttft" };
+    const beforeCount = await readTtft("count", labels);
+    const beforeSum = await readTtft("sum", labels);
+    // 1800ms to first token → 1.8s observed; the long round-trip (60s) is the
+    // decode this metric deliberately looks past.
+    sink.emit({ type: "llm.done", data: { runId: "r1", model: "tm-ttft", llmMs: 60000, ttftMs: 1800 } });
+    expect((await readTtft("count", labels)) - beforeCount).toBe(1);
+    expect((await readTtft("sum", labels)) - beforeSum).toBeCloseTo(1.8, 5);
+  });
+
+  it("test_llm_done_without_ttftMs_does_not_observe_ttft", async () => {
+    const sink = new MetricsEventSink();
+    const labels = { source: "main", model: "tm-no-ttft" };
+    const before = await readTtft("count", labels);
+    // An empty completion (no output part) carries no ttftMs; it must not record
+    // a 0s (or NaN) TTFT sample. The round-trip latency still observes.
+    sink.emit({ type: "llm.done", data: { runId: "r1", model: "tm-no-ttft", llmMs: 5000 } });
+    expect((await readTtft("count", labels)) - before).toBe(0);
   });
 
   it("test_llm_error_increments_errors_counter_with_model", async () => {

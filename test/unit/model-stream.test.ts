@@ -387,3 +387,97 @@ describe("callModel — stream idle watchdog", () => {
     expect(result.content).toEqual([{ type: "text", text: "recovered" }]);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Time-to-first-token (TTFT)
+// ---------------------------------------------------------------------------
+
+/** stream-start then finish, with NO output part — an empty completion. */
+function noOutputStream(): ReadableStream<LanguageModelV3StreamPart> {
+  return new ReadableStream({
+    start(controller) {
+      controller.enqueue({ type: "stream-start", warnings: [] });
+      controller.enqueue({ type: "finish", usage: USAGE, finishReason: { unified: "stop", raw: undefined } });
+      controller.close();
+    },
+  });
+}
+
+/** First text-delta immediately, then a `gapMs` pause before the rest finishes.
+ *  TTFT (first output) is near-zero; the LAST output part lands ~gapMs later — so
+ *  a large ttft would prove the metric captured the wrong (last) part. */
+function fastFirstThenGapStream(gapMs: number): ReadableStream<LanguageModelV3StreamPart> {
+  return new ReadableStream({
+    start(controller) {
+      controller.enqueue({ type: "stream-start", warnings: [] });
+      controller.enqueue({ type: "text-start", id: "t0" });
+      controller.enqueue({ type: "text-delta", id: "t0", delta: "a" });
+      setTimeout(() => {
+        controller.enqueue({ type: "text-delta", id: "t0", delta: "b" });
+        controller.enqueue({ type: "text-end", id: "t0" });
+        controller.enqueue({ type: "finish", usage: USAGE, finishReason: { unified: "stop", raw: undefined } });
+        controller.close();
+      }, gapMs);
+    },
+  });
+}
+
+/** Reasoning (thinking) tokens precede any text — the reasoning-heavy shape whose
+ *  long decode is exactly what TTFT must see past. */
+function reasoningFirstStream(): ReadableStream<LanguageModelV3StreamPart> {
+  return new ReadableStream({
+    start(controller) {
+      controller.enqueue({ type: "stream-start", warnings: [] });
+      controller.enqueue({ type: "reasoning-start", id: "r0" });
+      controller.enqueue({ type: "reasoning-delta", id: "r0", delta: "thinking" });
+      controller.enqueue({ type: "reasoning-end", id: "r0" });
+      controller.enqueue({ type: "text-start", id: "t0" });
+      controller.enqueue({ type: "text-delta", id: "t0", delta: "answer" });
+      controller.enqueue({ type: "text-end", id: "t0" });
+      controller.enqueue({ type: "finish", usage: USAGE, finishReason: { unified: "stop", raw: undefined } });
+      controller.close();
+    },
+  });
+}
+
+describe("callModel — time-to-first-token", () => {
+  it("sets ttftMs on a text response", async () => {
+    const result = await callModel(scriptedModel([() => textStream("hi")]), userPrompt("x"), () => {});
+    expect(typeof result.ttftMs).toBe("number");
+    expect(result.ttftMs as number).toBeGreaterThanOrEqual(0);
+  });
+
+  it("measures the FIRST output part, not the last (regression: no inversion)", async () => {
+    const gapMs = 200;
+    const started = Date.now();
+    const result = await callModel(
+      scriptedModel([() => fastFirstThenGapStream(gapMs)]),
+      userPrompt("x"),
+      () => {},
+    );
+    const total = Date.now() - started;
+    // The stream genuinely spanned the gap (so the next assertion is meaningful)...
+    expect(total).toBeGreaterThanOrEqual(gapMs * 0.7);
+    // ...yet TTFT is the FIRST token, well before the last output part at ~gapMs.
+    // If it captured the last part, ttft would be ≈gapMs.
+    expect(result.ttftMs).toBeDefined();
+    expect(result.ttftMs as number).toBeLessThan(gapMs * 0.5);
+  });
+
+  it("leaves ttftMs undefined when the stream emits no output part", async () => {
+    const result = await callModel(scriptedModel([noOutputStream]), userPrompt("x"), () => {});
+    expect(result.content).toHaveLength(0);
+    expect(result.ttftMs).toBeUndefined();
+  });
+
+  it("sets ttftMs on a reasoning-first response (first output is a reasoning delta)", async () => {
+    const result = await callModel(scriptedModel([reasoningFirstStream]), userPrompt("x"), () => {});
+    expect(typeof result.ttftMs).toBe("number");
+  });
+
+  it("sets ttftMs for a tool-only response (first output is tool-input-start)", async () => {
+    const model = createEchoModel({ responses: [{ toolCalls: [sampleToolCall] }] });
+    const result = await callModel(model, userPrompt("call tool"), () => {});
+    expect(typeof result.ttftMs).toBe("number");
+  });
+});

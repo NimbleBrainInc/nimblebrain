@@ -64,6 +64,13 @@ export interface StreamResult {
   content: LanguageModelV3Content[];
   usage: LanguageModelV3Usage;
   finishReason: LanguageModelV3FinishReason;
+  /**
+   * Time-to-first-token in milliseconds: from stream start (pre-`doStream`) to
+   * the first output part (text / reasoning / tool-input). Approximates connect
+   * + provider queue + prefill — the slice of round-trip latency a long decode
+   * hides. `undefined` when the call produced no output part (empty completion).
+   */
+  ttftMs?: number;
 }
 
 /** Sink callbacks invoked as deltas stream, before the final StreamResult is assembled. */
@@ -122,6 +129,7 @@ export async function callModel(
         "llm.tokens.input": result.usage.inputTokens.total ?? 0,
         "llm.tokens.output": result.usage.outputTokens.total ?? 0,
         "llm.finish_reason": result.finishReason.unified,
+        ...(result.ttftMs !== undefined ? { "llm.ttft_ms": result.ttftMs } : {}),
       });
       return result;
     },
@@ -200,7 +208,16 @@ async function callModelInner(
   flushText(state);
   flushReasoning(state);
 
-  return { content: state.content, usage: state.usage, finishReason: state.finishReason };
+  return {
+    content: state.content,
+    usage: state.usage,
+    finishReason: state.finishReason,
+    // Reads the watchdog's first-output timestamp (undefined if no output part
+    // arrived). Measured on THIS attempt's stream, so on a retry it reflects the
+    // successful call — distinct from the engine's `llmMs`, which wraps the whole
+    // recovery (failed attempts + backoff).
+    ttftMs: watchdog.ttftMs,
+  };
 }
 
 /**
@@ -242,6 +259,13 @@ interface StreamWatchdog {
   readonly signal: AbortSignal;
   /** True once the model has emitted its first output part. */
   readonly sawOutput: boolean;
+  /**
+   * Time-to-first-token in ms: watchdog creation (≈ stream start, pre-`doStream`)
+   * to the first output part. `undefined` until the first output part arrives —
+   * and stays `undefined` for a completion that emits no output part (empty
+   * result, or a provider that streams a tool-call with no `tool-input-start`).
+   */
+  readonly ttftMs: number | undefined;
   /** True if THIS watchdog's deadline fired (vs the run-level signal). */
   readonly stalled: boolean;
   /** (Re)arm the deadline for the next part — first-content or idle by phase. */
@@ -256,6 +280,10 @@ function createStreamWatchdog(
   externalSignal: AbortSignal | undefined,
   deadlines: { firstContentMs: number; idleMs: number },
 ): StreamWatchdog {
+  // Captured at creation (≈ the pre-`doStream` moment; the arm() and doStream
+  // calls that follow are synchronous set-up) so the watchdog can report
+  // time-to-first-token as `firstOutputAt - createdAt`.
+  const createdAt = performance.now();
   const controller = new AbortController();
   const onExternalAbort = () => controller.abort(externalSignal?.reason);
   if (externalSignal) {
@@ -264,6 +292,7 @@ function createStreamWatchdog(
   }
 
   let sawOutput = false;
+  let firstOutputAt: number | undefined;
   let stalled = false;
   let timer: ReturnType<typeof setTimeout> | undefined;
 
@@ -271,6 +300,9 @@ function createStreamWatchdog(
     signal: controller.signal,
     get sawOutput() {
       return sawOutput;
+    },
+    get ttftMs() {
+      return firstOutputAt === undefined ? undefined : Math.round(firstOutputAt - createdAt);
     },
     get stalled() {
       return stalled;
@@ -286,6 +318,10 @@ function createStreamWatchdog(
       );
     },
     noteOutput(): void {
+      // First output part only — this timestamp is the TTFT endpoint. `arm()`
+      // re-runs every part, but this must not: recording the LAST output part
+      // would measure end-of-decode, inverting the metric.
+      if (firstOutputAt === undefined) firstOutputAt = performance.now();
       sawOutput = true;
     },
     dispose(): void {

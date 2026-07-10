@@ -910,6 +910,10 @@ export class AgentEngine {
             content: response.content,
             usage: turnUsage,
             llmMs,
+            // Time-to-first-token of the successful provider call (connect +
+            // prefill), distinct from `llmMs` (whole round-trip incl. decode).
+            // Absent when the call emitted no output part.
+            ttftMs: response.ttftMs,
             finishReason: lastFinishReason,
           },
         });
