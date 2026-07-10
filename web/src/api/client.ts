@@ -576,6 +576,26 @@ export async function initiateIdentityConnect(
 }
 
 /**
+ * Begin the Composio Connect flow for a PERSONAL connector on the caller's
+ * identity. The composio sibling of {@link initiateIdentityConnect}: keyed on the
+ * catalog connector id (Composio auth is per-toolkit), no workspace. The callback
+ * lands back on `/profile/connectors`. `alreadyConnected` is returned when an
+ * existing active Composio account was adopted without a second OAuth round-trip.
+ */
+export async function initiateComposioIdentityConnect(
+  connectorId: string,
+): Promise<{ authorizationUrl: string; alreadyConnected?: boolean }> {
+  return request<{ authorizationUrl: string; alreadyConnected?: boolean }>(
+    "/v1/composio-auth/initiate-identity",
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ connectorId }),
+    },
+  );
+}
+
+/**
  * Begin an OAuth flow for a Composio-backed connector. Parallel to
  * {@link initiateMcpOAuth} but keyed on the catalog connector id
  * (e.g. `com.google/gmail`) rather than the slugified server name,
@@ -798,12 +818,22 @@ export async function getInstalledConnector(
   return unwrapStructured(result, "get_installed");
 }
 
-/** A personal connector (a remote MCP connection in the caller's personal workspace) + where it's granted. */
+/** A personal connector (a remote MCP connection owned by the caller's identity) + where it's granted. */
 export interface PersonalConnector {
   serverName: string;
   displayName: string;
   description: string | null;
   state: string;
+  /**
+   * Auth type — drives which Connect route the profile uses: `dcr` keys on
+   * `serverName`, `composio` on `connectorId`.
+   */
+  auth: "dcr" | "composio";
+  /**
+   * Composio connectors: the catalog connector id (e.g. `com.google/gmail`) the
+   * composio Connect route keys on. Absent for DCR connectors.
+   */
+  connectorId?: string;
   grantedWorkspaces: string[];
 }
 
@@ -977,13 +1007,15 @@ export async function installConnector(
 
 /**
  * Install a connector on the caller's OWN identity (a personal connector), not
- * into a workspace — `scope: "identity"`. DCR-only; the server rejects other
- * auth types on the identity plane. Does NOT start OAuth — follow up with
- * `initiateIdentityConnect(serverName)`.
+ * into a workspace — `scope: "identity"`. DCR and composio install here; the
+ * server rejects static/provider on the identity plane. Idempotent: re-installing
+ * an already-installed connector returns `alreadyInstalled: true` without minting
+ * a new session. Does NOT start the Connect flow — follow up with the auth-typed
+ * initiate (`initiateIdentityConnect` / `initiateComposioIdentityConnect`).
  */
 export async function installPersonalConnector(
   entry: DirectoryEntry,
-): Promise<{ ok: boolean; serverName: string; scope: "identity" }> {
+): Promise<{ ok: boolean; alreadyInstalled?: boolean; serverName: string; scope: "identity" }> {
   const result = await callTool("nb", "manage_connectors", {
     action: "install",
     scope: "identity",

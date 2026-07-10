@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import {
   type DirectoryEntry,
   grantConnector,
+  initiateComposioIdentityConnect,
   initiateIdentityConnect,
   installPersonalConnector,
   listPersonalCatalog,
@@ -25,9 +26,11 @@ import { EmptyState, InlineError, Section, SettingsPageHeader } from "./componen
  * A personal connector is identity-bound and must be granted into EVERY
  * workspace it's used in (the personal workspace included — no free-at-home);
  * only then do its tools surface to the agent there. Connecting redirects the
- * browser through the connector's OAuth flow (`installPersonalConnector` →
- * `initiateIdentityConnect` → the vendor's authorization URL); the callback
- * lands back here.
+ * browser through the connector's OAuth flow (`installPersonalConnector` → a
+ * Connect initiate → the vendor's authorization URL); the callback lands back
+ * here. The Connect route depends on the connector's auth: DCR goes through
+ * `initiateIdentityConnect` (keyed on the serverName), composio through
+ * `initiateComposioIdentityConnect` (keyed on the catalog connector id).
  */
 export function ProfileConnectorsTab() {
   const { workspaces } = useWorkspaceContext();
@@ -75,21 +78,35 @@ export function ProfileConnectorsTab() {
     void refresh();
   }, [refresh]);
 
-  // Redirect into the connector's OAuth flow. `window.location.assign` leaves
-  // the SPA, so `busyKey` only needs resetting when the flow fails to start.
-  const redirectToConnect = useCallback(async (serverName: string) => {
-    const { authorizationUrl } = await initiateIdentityConnect(serverName);
-    window.location.assign(authorizationUrl);
-  }, []);
+  // Redirect into the connector's Connect flow. The route depends on the auth
+  // type: composio keys on the catalog connector id, DCR on the serverName.
+  // `window.location.assign` leaves the SPA, so `busyKey` only needs resetting
+  // when the flow fails to start.
+  const redirectToConnect = useCallback(
+    async (target: { auth: "dcr" | "composio"; serverName: string; connectorId?: string }) => {
+      const { authorizationUrl } =
+        target.auth === "composio" && target.connectorId
+          ? await initiateComposioIdentityConnect(target.connectorId)
+          : await initiateIdentityConnect(target.serverName);
+      window.location.assign(authorizationUrl);
+    },
+    [],
+  );
 
-  // Available (not yet installed): install on the identity, then connect.
+  // Available (not yet installed): install on the identity, then connect. The
+  // catalog only offers DCR + composio, so map the entry's auth to the Connect
+  // route (`entry.id` is the composio connector id).
   const onConnectNew = useCallback(
     async (entry: DirectoryEntry) => {
       setActionError(null);
       setBusyKey(entry.id);
       try {
         const { serverName } = await installPersonalConnector(entry);
-        await redirectToConnect(serverName);
+        const auth =
+          entry.install.kind === "remote-oauth" && entry.install.auth === "composio"
+            ? "composio"
+            : "dcr";
+        await redirectToConnect({ auth, serverName, connectorId: entry.id });
       } catch (err) {
         setActionError(err instanceof Error ? err.message : String(err));
         setBusyKey(null);
@@ -102,13 +119,17 @@ export function ProfileConnectorsTab() {
   );
 
   // Installed but not authenticated (e.g. a cancelled or expired flow): connect
-  // the existing record — no re-install.
+  // the existing record — no re-install. Route by the connector's stored auth.
   const onConnectExisting = useCallback(
-    async (serverName: string) => {
+    async (connector: PersonalConnector) => {
       setActionError(null);
-      setBusyKey(serverName);
+      setBusyKey(connector.serverName);
       try {
-        await redirectToConnect(serverName);
+        await redirectToConnect({
+          auth: connector.auth,
+          serverName: connector.serverName,
+          connectorId: connector.connectorId,
+        });
       } catch (err) {
         setActionError(err instanceof Error ? err.message : String(err));
         setBusyKey(null);
@@ -157,7 +178,7 @@ export function ProfileConnectorsTab() {
                     connector={c}
                     workspaces={workspaces}
                     busyKey={busyKey}
-                    onConnect={() => onConnectExisting(c.serverName)}
+                    onConnect={() => onConnectExisting(c)}
                     onSetGrant={onSetGrant}
                   />
                 ))}

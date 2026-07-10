@@ -24,3 +24,7 @@ servers:
             - ASANA_CREATE_A_TASK
             - ASANA_GET_A_TASK
         tags: [tasks, projects, composio]
+        # Offered for personal (identity-plane) connection — exercises that the
+        # personal catalog now admits composio (not DCR-only). Composio's `auth`
+        # is unchanged, so the DCR rot-detector still skips this entry.
+        personal: true

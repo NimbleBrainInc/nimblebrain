@@ -35,6 +35,9 @@ const installPersonalConnector = mock(async () => ({
 const initiateIdentityConnect = mock(async () => ({
   authorizationUrl: "https://vendor.test/auth",
 }));
+const initiateComposioIdentityConnect = mock(async () => ({
+  authorizationUrl: "https://composio.test/connect",
+}));
 const grantConnector = mock(async () => {});
 const revokeConnector = mock(async () => {});
 
@@ -44,9 +47,19 @@ mock.module("../api/client", () => ({
   listPersonalCatalog,
   installPersonalConnector,
   initiateIdentityConnect,
+  initiateComposioIdentityConnect,
   grantConnector,
   revokeConnector,
 }));
+
+// Connecting leaves the SPA via `window.location.assign`. happy-dom doesn't
+// implement navigation, so stub it — the routing tests only care which initiate
+// helper ran before the redirect.
+const locationAssign = mock((_url: string) => {});
+Object.defineProperty(window, "location", {
+  configurable: true,
+  value: { ...window.location, assign: locationAssign },
+});
 
 const React = await import("react");
 const ReactDOMClient = await import("react-dom/client");
@@ -139,6 +152,10 @@ beforeEach(() => {
   mounted = null;
   listPersonalConnectors.mockClear();
   listPersonalCatalog.mockClear();
+  initiateIdentityConnect.mockClear();
+  initiateComposioIdentityConnect.mockClear();
+  installPersonalConnector.mockClear();
+  locationAssign.mockClear();
   grantConnector.mockClear();
   revokeConnector.mockClear();
   nextConnectors = [];
@@ -161,6 +178,7 @@ describe("ProfileConnectorsTab", () => {
         displayName: "Granola",
         description: "Meeting notes",
         state: "running",
+        auth: "dcr",
         grantedWorkspaces: ["ws_helix"],
       },
       {
@@ -168,6 +186,7 @@ describe("ProfileConnectorsTab", () => {
         displayName: "Gmail",
         description: null,
         state: "not_authenticated",
+        auth: "dcr",
         grantedWorkspaces: [],
       },
     ];
@@ -192,6 +211,7 @@ describe("ProfileConnectorsTab", () => {
         displayName: "Granola",
         description: null,
         state: "running",
+        auth: "dcr",
         grantedWorkspaces: ["ws_helix", "ws_acme"],
       },
     ];
@@ -216,6 +236,7 @@ describe("ProfileConnectorsTab", () => {
         displayName: "Granola",
         description: null,
         state: "running",
+        auth: "dcr",
         grantedWorkspaces: [],
       },
     ];
@@ -237,6 +258,7 @@ describe("ProfileConnectorsTab", () => {
         displayName: "Granola",
         description: null,
         state: "running",
+        auth: "dcr",
         grantedWorkspaces: ["ws_helix"],
       },
     ];
@@ -268,5 +290,57 @@ describe("ProfileConnectorsTab", () => {
     const text = mounted.container.textContent ?? "";
     expect(text).toContain("Unable to load connectors");
     expect(text).toContain("boom");
+  });
+
+  // A flush deep enough for the two-await Connect chain (initiate → assign).
+  const flush = () =>
+    act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+  test("routes a DCR connector's Connect to the OAuth identity initiate (keyed on serverName)", async () => {
+    nextConnectors = [
+      {
+        serverName: "granola",
+        displayName: "Granola",
+        description: null,
+        state: "not_authenticated",
+        auth: "dcr",
+        grantedWorkspaces: [],
+      },
+    ];
+    mounted = await mount();
+    const connect = [...mounted.container.getElementsByTagName("button")].find(
+      (b) => b.textContent === "Connect",
+    );
+    await click(connect);
+    await flush();
+    expect(initiateIdentityConnect).toHaveBeenCalledWith("granola");
+    expect(initiateComposioIdentityConnect).not.toHaveBeenCalled();
+    expect(locationAssign).toHaveBeenCalledWith("https://vendor.test/auth");
+  });
+
+  test("routes a composio connector's Connect to the composio identity initiate (keyed on the connectorId)", async () => {
+    nextConnectors = [
+      {
+        serverName: "gmail",
+        displayName: "Gmail",
+        description: null,
+        state: "not_authenticated",
+        auth: "composio",
+        connectorId: "com.google/gmail",
+        grantedWorkspaces: [],
+      },
+    ];
+    mounted = await mount();
+    const connect = [...mounted.container.getElementsByTagName("button")].find(
+      (b) => b.textContent === "Connect",
+    );
+    await click(connect);
+    await flush();
+    expect(initiateComposioIdentityConnect).toHaveBeenCalledWith("com.google/gmail");
+    expect(initiateIdentityConnect).not.toHaveBeenCalled();
+    expect(locationAssign).toHaveBeenCalledWith("https://composio.test/connect");
   });
 });

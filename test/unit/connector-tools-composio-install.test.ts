@@ -78,6 +78,7 @@ import { RegistryStore } from "../../src/registries/registry-store.ts";
 import { BundleLifecycleManager } from "../../src/bundles/lifecycle.ts";
 import type { BundleRef } from "../../src/bundles/types.ts";
 import { NoopEventSink } from "../../src/adapters/noop-events.ts";
+import { IdentityConnectorStore } from "../../src/identity/connector-store.ts";
 import type { UserIdentity } from "../../src/identity/provider.ts";
 import type { Runtime } from "../../src/runtime/runtime.ts";
 import { FileCredentialStore } from "../../src/tools/credential-store.ts";
@@ -174,7 +175,10 @@ function buildHarness(): Harness {
     getRegistryForWorkspace: () => workspaceRegistry,
     getAllowInsecureRemotes: () => false,
     getEventSink: () => new NoopEventSink(),
-    getPermissionStore: () => ({ deleteConnector: async () => {} }),
+    getPermissionStore: () => ({
+      deleteConnector: async () => {},
+      listConnectorGrants: async () => ({}),
+    }),
     getUserStore: () => ({ get: async () => null }),
     getBundleInstancesForWorkspace: () => lifecycle.getInstances(),
   } as unknown as Runtime;
@@ -574,5 +578,125 @@ describe("manage_connectors.install (composio-auth)", () => {
       .disconnect("com-google-gmail", personalWsId, "_workspace", { workDir: h.workDir });
 
     expect(hasPersistedComposioConnection(h.workDir, { type: "workspace", wsId: personalWsId }, GMAIL_ID)).toBe(false);
+  });
+});
+
+// ── scope: "identity" — personal Composio connector ──────────────────
+//
+// The identity-plane sibling of the workspace install above. Same wiring
+// (`buildComposioWiring` bound to `{type:"user"}`), but the ref lands in
+// `users/<id>/connectors.json` — not any workspace — and carries NO oauthScope
+// (identity refs are user-owned structurally). Unlike the workspace path, the
+// identity install does NOT eager-start, so the fake session URL is never dialed
+// and the happy path returns success outright (the Connect callback starts the
+// source later, via `getIdentityConnectorSource`).
+describe("manage_connectors.install scope:identity (composio personal connector)", () => {
+  test("(i) persists the composio ref on the identity plane — no oauthScope, no workspace write, no eager-start", async () => {
+    process.env.COMPOSIO_API_KEY = "k_test";
+    process.env.COMPOSIO_GMAIL_AUTH_CONFIG_ID = "ac_gmail";
+
+    const tool = buildTool(h);
+    const result = await tool.handler({ action: "install", entry: gmailEntry(), scope: "identity" });
+
+    // No eager-start on the identity path → the fake session URL is never dialed,
+    // so this succeeds outright (the workspace path fails at eager-start).
+    expect(result.isError).toBe(false);
+    const sc = result.structuredContent as { ok?: boolean; scope?: string; serverName?: string };
+    expect(sc.ok).toBe(true);
+    expect(sc.scope).toBe("identity");
+
+    // Persisted on the identity plane with the composio marker + the per-install
+    // session URL from the mocked session.
+    const refs = await new IdentityConnectorStore({ workDir: h.workDir }).list(ADMIN.id);
+    expect(refs).toHaveLength(1);
+    const ref = refs[0] as Extract<BundleRef, { url: string }>;
+    expect(ref.url).toBe("https://composio.test/mcp/session_test");
+    expect(ref.composio?.connectorId).toBe(GMAIL_ID);
+    // Identity refs are user-owned structurally — no oauthScope literal.
+    expect((ref as { oauthScope?: unknown }).oauthScope).toBeUndefined();
+
+    // Nothing written into any workspace.
+    const ws = await h.workspaceStore.get(h.wsId);
+    expect(ws?.bundles ?? []).toHaveLength(0);
+
+    // The literal API key never lands on disk — transport carries the template.
+    expect(JSON.stringify(ref).includes("k_test")).toBe(false);
+    expect((ref.transport?.auth as { value?: string } | undefined)?.value).toBe(
+      "${COMPOSIO_API_KEY}",
+    );
+  });
+
+  test("(j) list_personal_connectors exposes auth:composio + the connectorId (cid) — the Connect route's key", async () => {
+    process.env.COMPOSIO_API_KEY = "k_test";
+    process.env.COMPOSIO_GMAIL_AUTH_CONFIG_ID = "ac_gmail";
+
+    const tool = buildTool(h);
+    await tool.handler({ action: "install", entry: gmailEntry(), scope: "identity" });
+
+    const result = await tool.handler({ action: "list_personal_connectors" });
+    expect(result.isError).toBe(false);
+    const sc = result.structuredContent as {
+      connectors: Array<{ serverName: string; auth: string; connectorId?: string }>;
+    };
+    expect(sc.connectors).toHaveLength(1);
+    // The UI branches Connect on `auth`; composio keys on the catalog cid.
+    expect(sc.connectors[0].auth).toBe("composio");
+    expect(sc.connectors[0].connectorId).toBe(GMAIL_ID);
+  });
+
+  test("(k) errResult when COMPOSIO_API_KEY is unset — the gate admits composio, the prerequisite rejects it, nothing persisted", async () => {
+    // Per-toolkit env set so the failure is provably API-key-specific.
+    process.env.COMPOSIO_GMAIL_AUTH_CONFIG_ID = "ac_gmail";
+
+    const tool = buildTool(h);
+    const result = await tool.handler({ action: "install", entry: gmailEntry(), scope: "identity" });
+
+    expect(result.isError).toBe(true);
+    const text = (result.content?.[0] as { text?: string } | undefined)?.text ?? "";
+    expect(text).toContain("COMPOSIO_API_KEY");
+    // Not the auth-type gate rejection — composio passed the gate.
+    expect(text).not.toMatch(/isn't supported for personal connectors yet/i);
+
+    // Prerequisite failure (before any session create) persists nothing.
+    expect(await new IdentityConnectorStore({ workDir: h.workDir }).list(ADMIN.id)).toHaveLength(0);
+  });
+
+  test("(l) second identity install of the same composio connector is idempotent — no second session, alreadyInstalled:true", async () => {
+    process.env.COMPOSIO_API_KEY = "k_test";
+    process.env.COMPOSIO_GMAIL_AUTH_CONFIG_ID = "ac_gmail";
+
+    // Count upstream session creates — a re-install must NOT mint a second and
+    // orphan the first (the asymmetry the workspace path guards via dedup).
+    let createCalls = 0;
+    composioCalls.createImpl = async () => {
+      createCalls += 1;
+      return {
+        sessionId: "session_test",
+        mcp: { type: "http", url: "https://composio.test/mcp/session_test", headers: {} },
+      };
+    };
+
+    const tool = buildTool(h);
+    const first = await tool.handler({ action: "install", entry: gmailEntry(), scope: "identity" });
+    expect(first.isError).toBe(false);
+    expect((first.structuredContent as { alreadyInstalled?: boolean }).alreadyInstalled).toBe(false);
+
+    const second = await tool.handler({ action: "install", entry: gmailEntry(), scope: "identity" });
+    expect(second.isError).toBe(false);
+    const sc = second.structuredContent as {
+      ok?: boolean;
+      alreadyInstalled?: boolean;
+      scope?: string;
+    };
+    expect(sc.ok).toBe(true);
+    expect(sc.alreadyInstalled).toBe(true);
+    expect(sc.scope).toBe("identity");
+
+    // The dedup short-circuits BEFORE buildComposioWiring — exactly one upstream
+    // session was ever created, so none is orphaned.
+    expect(createCalls).toBe(1);
+
+    // Still exactly one ref on the identity plane.
+    expect(await new IdentityConnectorStore({ workDir: h.workDir }).list(ADMIN.id)).toHaveLength(1);
   });
 });
