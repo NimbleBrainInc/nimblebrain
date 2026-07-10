@@ -248,9 +248,11 @@ describe("bundle unhealthy gauge", () => {
   // collect with a stale provider).
   afterAll(() => registerBundleHealthGauge(() => []));
 
-  it("test_bundle_unhealthy_gauge_reports_1_for_dead_source", async () => {
+  it("test_bundle_unhealthy_gauge_excludes_deliberately_stopped_dead_source", async () => {
+    // `dead` is now reachable only via deliberate teardown (disconnect /
+    // uninstall) — not an involuntary outage, so it must NOT page.
     registerBundleHealthGauge(() => status({ name: "com-dropbox-mcp", state: "dead" }));
-    expect(await readGauge("com-dropbox-mcp")).toBe(1);
+    expect(await readGauge("com-dropbox-mcp")).toBeUndefined();
   });
 
   it("test_bundle_unhealthy_gauge_absent_for_healthy_source", async () => {
@@ -259,14 +261,21 @@ describe("bundle unhealthy gauge", () => {
   });
 
   it("test_bundle_unhealthy_gauge_excludes_restarting_source", async () => {
-    // `restarting` is transient (≤ MAX_RESTARTS attempts) — only terminal `dead`
-    // should assert the down signal.
+    // `restarting` is a transient burst (≤ MAX_RESTARTS attempts) — it should
+    // not assert the down signal; only the settled down states do.
     registerBundleHealthGauge(() => status({ name: "ai-granola-mcp", state: "restarting" }));
     expect(await readGauge("ai-granola-mcp")).toBeUndefined();
   });
 
+  it("test_bundle_unhealthy_gauge_reports_1_for_cooldown_source", async () => {
+    // `cooldown` (crashed, spent its quick-retry budget, now on slow re-probe)
+    // can stay down indefinitely, so it must keep the alert lit like `dead`.
+    registerBundleHealthGauge(() => status({ name: "com-example-enrich-mcp", state: "cooldown" }));
+    expect(await readGauge("com-example-enrich-mcp")).toBe(1);
+  });
+
   it("test_bundle_unhealthy_gauge_resolves_when_source_recovers", async () => {
-    registerBundleHealthGauge(() => status({ name: "com-dropbox-mcp", state: "dead" }));
+    registerBundleHealthGauge(() => status({ name: "com-dropbox-mcp", state: "cooldown" }));
     expect(await readGauge("com-dropbox-mcp")).toBe(1);
     // Source recovers → collect resets → series disappears → alert can resolve.
     registerBundleHealthGauge(() => status({ name: "com-dropbox-mcp", state: "healthy" }));
@@ -276,8 +285,8 @@ describe("bundle unhealthy gauge", () => {
   it("test_bundle_unhealthy_gauge_separate_series_per_source", async () => {
     registerBundleHealthGauge(() =>
       status(
-        { name: "com-dropbox-mcp", state: "dead" },
-        { name: "ai-granola-mcp", state: "dead" },
+        { name: "com-dropbox-mcp", state: "cooldown" },
+        { name: "ai-granola-mcp", state: "cooldown" },
         { name: "synapse-crm", state: "healthy" },
       ),
     );
@@ -287,7 +296,7 @@ describe("bundle unhealthy gauge", () => {
   });
 
   it("test_bundle_unhealthy_gauge_unsafe_source_buckets_to_other", async () => {
-    registerBundleHealthGauge(() => status({ name: "Weird Name!! /etc", state: "dead" }));
+    registerBundleHealthGauge(() => status({ name: "Weird Name!! /etc", state: "cooldown" }));
     expect(await readGauge("other")).toBe(1);
   });
 });

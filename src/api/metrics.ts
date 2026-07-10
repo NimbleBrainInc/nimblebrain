@@ -227,9 +227,10 @@ export const artifactResolutionsTotal = new Counter({
  *
  * This is a crash-RATE signal (good for dashboards / spotting active
  * crash-looping). It is NOT the right primitive for "is this connector down
- * right now": the HealthMonitor stops emitting once a source exhausts its
- * restarts and is marked dead-terminal, so the counter goes flat while the
- * connector stays down. Use `nb_bundle_unhealthy` (below) for down-alerting.
+ * right now": a crashed source retries in a quick burst and then re-probes on a
+ * slow cooldown, so the counter carries a low floor (one burst per cooldown)
+ * rather than a steady level while the connector stays down. Use
+ * `nb_bundle_unhealthy` (below) for down-alerting.
  */
 export const bundleCrashedTotal = new Counter({
   name: "nb_bundle_crashed_total",
@@ -258,28 +259,32 @@ export function recordBundleCrash(source: string | undefined, remote: boolean): 
 }
 
 /**
- * Gauge: which MCP bundles/connectors are currently DOWN — HealthMonitor state
- * `dead` — by source. `1` = down.
+ * Gauge: which MCP connectors are currently DOWN involuntarily — HealthMonitor
+ * state `cooldown` — by source. `1` = down.
  *
- * Why a gauge, not the `nb_bundle_crashed_total` counter: a down source emits a
- * crash event each ~30s HealthMonitor sweep only until it exhausts its restarts
- * (`MAX_RESTARTS`), at which point it's marked `dead` and the monitor stops
- * touching it ("dead is terminal"). So the counter records a short burst then
- * goes flat — an `increase()`-based alert would auto-resolve minutes into a
- * multi-day outage. This gauge instead stays asserted for the entire outage and
- * clears only when the source recovers, so `== 1 for: Nm` is a correct
- * "connector has been down for N minutes" signal.
+ * `cooldown` is the settled "crashed and not recovering on its own" state: a
+ * source that spent its quick-retry budget (`MAX_RESTARTS`) and is now on slow
+ * re-probe, which can persist indefinitely. That is exactly the involuntary
+ * outage to page on.
  *
- * Excludes `restarting` (transient: at most `MAX_RESTARTS` attempts over a few
- * minutes before the source is either healthy again or `dead`). Driven at
- * scrape time from the live HealthMonitor via {@link registerBundleHealthGauge};
- * the collect callback resets first, so a recovered source's series disappears.
+ * Why a gauge, not the `nb_bundle_crashed_total` counter: the counter is a
+ * crash RATE (a burst while looping, then a low floor while re-probing), so an
+ * `increase()`-based alert would mis-track a steady outage. This gauge stays
+ * asserted for the whole outage and clears only when the source recovers, so
+ * `== 1 for: Nm` is a correct "connector down for N minutes" signal.
+ *
+ * Excludes `restarting` (a transient burst of at most `MAX_RESTARTS` attempts
+ * before the source is healthy again or enters `cooldown`) and `dead` (a
+ * DELIBERATE teardown — disconnect / uninstall — not an outage to page on).
+ * Driven at scrape time from the live HealthMonitor via
+ * {@link registerBundleHealthGauge}; the collect callback resets first, so a
+ * recovered source's series disappears.
  *
  * No tenant/workspace label — one pod per tenant, scrape namespace attributes it.
  */
 export const bundleUnhealthy = new Gauge({
   name: "nb_bundle_unhealthy",
-  help: 'MCP bundles currently down (HealthMonitor state "dead"), by source. 1 = down.',
+  help: 'MCP connectors currently down involuntarily (HealthMonitor state "cooldown"), by source. 1 = down.',
   labelNames: ["source"] as const,
   registers: [metricsRegistry],
   collect() {
@@ -289,7 +294,11 @@ export const bundleUnhealthy = new Gauge({
     this.reset();
     const status = healthStatusProvider?.() ?? [];
     for (const b of status) {
-      if (b.state !== "dead") continue;
+      // `cooldown` (crashed, quick-retry budget spent, now on slow re-probe) is
+      // the settled involuntary-down state and can persist indefinitely, so it
+      // keeps the alert lit. `restarting` is a transient burst (excluded); `dead`
+      // is a DELIBERATE teardown, not an outage (excluded).
+      if (b.state !== "cooldown") continue;
       const safe = b.name && SAFE_SOURCE.test(b.name) ? b.name : "other";
       this.set({ source: safe }, 1);
     }

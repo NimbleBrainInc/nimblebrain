@@ -91,34 +91,144 @@ describe("HealthMonitor", () => {
     monitor.stop();
   });
 
-  it("gives up after 5 restart attempts and reports dead", async () => {
+  it("backs off to cooldown after the quick-retry budget — not terminal — and stops hammering", async () => {
     const source = makeMockSource("flaky-bundle");
     const sink = makeEventCollector();
-    const monitor = new HealthMonitor([source], sink, { checkIntervalMs: 60_000, baseDelayMs: 1 });
+    // Large cooldown so the source stays in the cooling window across the checks
+    // below; the self-heal-after-cooldown case is covered by its own test.
+    const monitor = new HealthMonitor([source], sink, {
+      checkIntervalMs: 60_000,
+      baseDelayMs: 1,
+      cooldownMs: 60_000,
+    });
 
-    // Each restart "succeeds" but subprocess immediately dies again
+    // Each restart "succeeds" but the subprocess immediately dies again — a
+    // crash loop that spends the whole quick-retry budget.
     for (let i = 0; i < 5; i++) {
       source.alive = false;
       await monitor.check();
-      // After restart, mark as dead again for next cycle
       source.alive = false;
     }
 
-    // 6th crash — should hit the limit
+    // 6th crash exhausts the budget → cooldown, NOT terminal dead.
     source.alive = false;
     await monitor.check();
 
     const status = monitor.getStatus();
-    expect(status[0]!.state).toBe("dead");
+    expect(status[0]!.state).toBe("cooldown");
 
-    // Should have emitted bundle.dead
     const events = eventNames(sink);
-    expect(events).toContain("bundle.dead");
+    expect(events).toContain("bundle.cooldown");
+    // `bundle.dead` is retired for the crash path — a crash never ends terminal.
+    expect(events).not.toContain("bundle.dead");
 
-    // No further restarts should happen
+    // While cooling, further checks neither restart nor re-emit `bundle.crashed`
+    // — a throttling upstream is not hammered, and the crash-rate metric (which
+    // counts `bundle.crashed`) is not inflated during the quiet window.
+    const restartsBefore = source.restartCalls;
+    const crashedBefore = eventNames(sink).filter((e) => e === "bundle.crashed").length;
+    await monitor.check();
+    await monitor.check();
+    expect(source.restartCalls).toBe(restartsBefore);
+    expect(eventNames(sink).filter((e) => e === "bundle.crashed").length).toBe(crashedBefore);
+
+    monitor.stop();
+  });
+
+  it("self-heals: after the cooldown window elapses it retries and recovers", async () => {
+    const source = makeMockSource("recoverable-bundle");
+    const sink = makeEventCollector();
+    // Tiny cooldown so the window elapses within the test.
+    const monitor = new HealthMonitor([source], sink, {
+      checkIntervalMs: 60_000,
+      baseDelayMs: 1,
+      cooldownMs: 5,
+    });
+
+    // Spend the budget → enter cooldown.
+    for (let i = 0; i < 5; i++) {
+      source.alive = false;
+      await monitor.check();
+      source.alive = false;
+    }
+    source.alive = false;
+    await monitor.check();
+    expect(monitor.getStatus()[0]!.state).toBe("cooldown");
+    const restartsAtCooldown = source.restartCalls;
+
+    // Upstream recovers: let the next restart stick (mock.restart sets alive).
+    // Wait well past the 5ms cooldown window (generous margin so a jittery CI
+    // clock can't race it), then a check resumes the burst and recovers.
+    await new Promise((r) => setTimeout(r, 50));
+    await monitor.check();
+
+    const status = monitor.getStatus();
+    expect(status[0]!.state).toBe("healthy");
+    expect(source.restartCalls).toBeGreaterThan(restartsAtCooldown);
+    // A recovery event fires once the source comes back — no operator action.
+    expect(eventNames(sink)).toContain("bundle.recovered");
+
+    monitor.stop();
+  });
+
+  it("a deliberate stop while cooling goes terminal dead (not re-probed)", async () => {
+    const source = makeMockSource("cooling-then-stopped");
+    const sink = makeEventCollector();
+    const monitor = new HealthMonitor([source], sink, {
+      checkIntervalMs: 60_000,
+      baseDelayMs: 1,
+      cooldownMs: 60_000,
+    });
+
+    // Spend the budget → cooldown.
+    for (let i = 0; i < 5; i++) {
+      source.alive = false;
+      await monitor.check();
+      source.alive = false;
+    }
+    source.alive = false;
+    await monitor.check();
+    expect(monitor.getStatus()[0]!.state).toBe("cooldown");
+
+    // Operator disconnects it mid-cooldown → deliberate teardown is terminal.
+    source.stopped = true;
+    await monitor.check();
+    expect(monitor.getStatus()[0]!.state).toBe("dead");
+
+    // Terminal: no further re-probe.
     const restartsBefore = source.restartCalls;
     await monitor.check();
     expect(source.restartCalls).toBe(restartsBefore);
+
+    monitor.stop();
+  });
+
+  it("a cooling source that comes back out of band goes healthy within one tick", async () => {
+    const source = makeMockSource("cooling-then-alive");
+    const sink = makeEventCollector();
+    // Long cooldown: if the isAlive check didn't precede the cooldown gate, the
+    // source would stay reported as `cooldown` for the whole window despite
+    // being alive — a gauge false-positive. This asserts it recovers on the very
+    // next tick.
+    const monitor = new HealthMonitor([source], sink, {
+      checkIntervalMs: 60_000,
+      baseDelayMs: 1,
+      cooldownMs: 60_000,
+    });
+
+    for (let i = 0; i < 5; i++) {
+      source.alive = false;
+      await monitor.check();
+      source.alive = false;
+    }
+    source.alive = false;
+    await monitor.check();
+    expect(monitor.getStatus()[0]!.state).toBe("cooldown");
+
+    // Inline recovery (readResource/callTool self-heal) brought it back.
+    source.alive = true;
+    await monitor.check();
+    expect(monitor.getStatus()[0]!.state).toBe("healthy");
 
     monitor.stop();
   });
@@ -163,16 +273,20 @@ describe("HealthMonitor", () => {
     monitor.stop();
   });
 
-  it("does not reset restartCount when recovery is not sustained — still escalates to dead", async () => {
+  it("does not reset restartCount when recovery is not sustained — still escalates to cooldown", async () => {
     const source = makeMockSource("brief-flapper");
     const sink = makeEventCollector();
     const checkIntervalMs = 1000;
-    const monitor = new HealthMonitor([source], sink, { checkIntervalMs, baseDelayMs: 1 });
+    const monitor = new HealthMonitor([source], sink, {
+      checkIntervalMs,
+      baseDelayMs: 1,
+      cooldownMs: 60_000,
+    });
 
     // Recovery is real but never sustained: the source is briefly alive with
     // sub-interval uptime, so it must NOT earn the reset. This guards against
-    // an unconditional reset that would let a fast-flapping source loop
-    // forever instead of escalating to dead.
+    // an unconditional reset that would let a fast-flapping source burst
+    // forever instead of escalating to the slow-re-probe cooldown.
     for (let i = 0; i < 5; i++) {
       source.alive = false;
       await monitor.check(); // recovers, counter climbs
@@ -181,11 +295,12 @@ describe("HealthMonitor", () => {
       expect(monitor.getStatus()[0]!.restartCount).toBe(i + 1);
     }
 
-    // 6th drop hits the limit.
+    // 6th drop spends the budget → cooldown (not terminal).
     source.alive = false;
     await monitor.check();
-    expect(monitor.getStatus()[0]!.state).toBe("dead");
-    expect(eventNames(sink)).toContain("bundle.dead");
+    expect(monitor.getStatus()[0]!.state).toBe("cooldown");
+    expect(eventNames(sink)).toContain("bundle.cooldown");
+    expect(eventNames(sink)).not.toContain("bundle.dead");
 
     monitor.stop();
   });
