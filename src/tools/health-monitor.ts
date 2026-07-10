@@ -1,7 +1,7 @@
 import type { EventSink } from "../engine/types.ts";
 import type { McpSource } from "./mcp-source.ts";
 
-export type ProcessLiveness = "healthy" | "restarting" | "dead";
+export type ProcessLiveness = "healthy" | "restarting" | "cooldown" | "dead";
 
 export interface BundleHealth {
   name: string;
@@ -14,26 +14,51 @@ interface BundleRecord {
   source: McpSource;
   state: ProcessLiveness;
   restartCount: number;
+  /**
+   * Epoch ms until which a crashed source is in slow-re-probe cooldown (its
+   * quick-retry budget spent). Null when not cooling. A check skips a cooling
+   * source until the window elapses, then resumes the restart burst.
+   */
+  cooldownUntil: number | null;
 }
 
+/**
+ * Quick-retry budget for a crashed source. After this many CONSECUTIVE fast
+ * restart attempts fail, the source backs off to a slow re-probe
+ * (`DEFAULT_COOLDOWN_MS`) — it is NOT abandoned. A transient upstream outage
+ * (rate-limit, brief 5xx window) can outlast the burst and still recover, so
+ * exhausting the budget is never terminal. The only terminal state is a
+ * deliberate teardown (`isStopped()`).
+ */
 const MAX_RESTARTS = 5;
 const DEFAULT_BASE_DELAY_MS = 1000;
 const DEFAULT_CHECK_INTERVAL_MS = 30_000;
+/**
+ * How long a crashed source waits, after spending its quick-retry budget,
+ * before the next burst of restart attempts. Bounds the re-probe rate against a
+ * persistently-down upstream while still self-healing within one cooldown of
+ * the upstream recovering.
+ */
+const DEFAULT_COOLDOWN_MS = 300_000;
 
 export interface HealthMonitorOptions {
   checkIntervalMs?: number;
   baseDelayMs?: number;
+  cooldownMs?: number;
 }
 
 /**
- * Monitors MCP subprocess health and auto-restarts dead bundles
- * with exponential backoff.
+ * Monitors MCP subprocess/transport health and keeps down sources alive:
+ * exponential-backoff restart bursts, then a slow re-probe cooldown so a
+ * transient upstream outage self-heals instead of bricking the connector. Only
+ * a deliberate teardown (`isStopped()`) is terminal.
  */
 export class HealthMonitor {
   private records: BundleRecord[];
   private timer: ReturnType<typeof setInterval> | null = null;
   private checkIntervalMs: number;
   private baseDelayMs: number;
+  private cooldownMs: number;
 
   constructor(
     sources: McpSource[],
@@ -42,10 +67,12 @@ export class HealthMonitor {
   ) {
     this.checkIntervalMs = opts.checkIntervalMs ?? DEFAULT_CHECK_INTERVAL_MS;
     this.baseDelayMs = opts.baseDelayMs ?? DEFAULT_BASE_DELAY_MS;
+    this.cooldownMs = opts.cooldownMs ?? DEFAULT_COOLDOWN_MS;
     this.records = sources.map((source) => ({
       source,
       state: "healthy" as ProcessLiveness,
       restartCount: 0,
+      cooldownUntil: null,
     }));
   }
 
@@ -80,11 +107,19 @@ export class HealthMonitor {
   }
 
   private async checkOne(record: BundleRecord): Promise<void> {
-    // Dead is terminal — no more restart attempts
+    // `dead` is terminal and reachable ONLY via deliberate teardown
+    // (`isStopped()` below). A crashed source is never left here — it backs off
+    // to the `cooldown` slow re-probe — so this early-out never strands a
+    // recoverable source.
     if (record.state === "dead") return;
 
-    // Alive sources need no restart; a sustained-uptime source resets backoff.
+    // Alive sources need no restart. Clear any cooldown, mark healthy, and (after
+    // sustained uptime) reset the backoff counter for the next crash episode —
+    // covers a source that self-healed out of band (inline recovery) as well as
+    // one the monitor just restarted.
     if (record.source.isAlive()) {
+      record.state = "healthy";
+      record.cooldownUntil = null;
       this.resetBackoffIfRecovered(record);
       return;
     }
@@ -105,15 +140,28 @@ export class HealthMonitor {
       return;
     }
 
+    // Slow-re-probe cooldown: the quick-retry budget was spent on an earlier
+    // sweep and the window hasn't elapsed — skip so a persistently-throttling
+    // upstream isn't hammered. Once it passes, fall through and resume the burst.
+    if (record.cooldownUntil !== null && Date.now() < record.cooldownUntil) return;
+    record.cooldownUntil = null;
+
     const remote = isRemoteSource(record.source);
 
     // Source is down — emit crashed event
     this.emitBundleEvent(record, "bundle.crashed", remote);
 
-    // Check if we've exhausted restart attempts
+    // Quick-retry budget spent. NOT terminal: a transient upstream outage
+    // (rate-limit, brief 5xx window) can outlast the burst and still recover.
+    // Back off to a slow re-probe — reset the counter and gate the next burst
+    // behind the cooldown window — so we keep trying at a bounded rate until the
+    // source recovers or is deliberately stopped. (`bundle.dead` is retired: a
+    // crash never ends here, and deliberate teardown is handled above.)
     if (record.restartCount >= MAX_RESTARTS) {
-      record.state = "dead";
-      this.emitBundleEvent(record, "bundle.dead", remote);
+      record.state = "cooldown";
+      record.cooldownUntil = Date.now() + this.cooldownMs;
+      record.restartCount = 0;
+      this.emitBundleEvent(record, "bundle.cooldown", remote, { retryInMs: this.cooldownMs });
       return;
     }
 
@@ -129,11 +177,12 @@ export class HealthMonitor {
     // the exponential backoff must start fresh for the next independent crash
     // episode. Without this, a remote connector that periodically drops and
     // cleanly reconnects (e.g. a server that idle-closes long-lived streams)
-    // accrues restarts across its whole life and is wrongly killed after
-    // `MAX_RESTARTS` total drops despite every reconnect succeeding. The reset
-    // is gated on SUSTAINED uptime, not a single successful reconnect, on
-    // purpose: a source that recovers then immediately re-drops never earns the
-    // reset, so it still escalates to `dead` instead of looping forever.
+    // accrues restarts across its whole life and is wrongly forced into the
+    // slow-re-probe cooldown after `MAX_RESTARTS` total drops despite every
+    // reconnect succeeding. The reset is gated on SUSTAINED uptime, not a single
+    // successful reconnect, on purpose: a source that recovers then immediately
+    // re-drops never earns the reset, so it still escalates to `cooldown`
+    // instead of bursting forever at the base delay.
     if (record.restartCount === 0) return;
     const uptime = record.source.uptime();
     if (uptime !== null && uptime >= this.checkIntervalMs) {

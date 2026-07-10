@@ -106,7 +106,7 @@ export class MetricsEventSink implements EventSink {
   private onRunError(data: EventData): void {
     // The HealthMonitor reports bundle/connector liveness via `run.error`
     // with a nested `event` discriminator (bundle.crashed / restarting /
-    // dead / recovered) and no runId. `bundle.crashed` is the canonical
+    // cooldown / recovered) and no runId. `bundle.crashed` is the canonical
     // crash signal and counting here is 1:1 with a real detection — counts
     // once per HealthMonitor sweep a source is found down, the per-sweep
     // cadence the alert thresholds on.

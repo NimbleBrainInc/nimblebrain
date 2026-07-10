@@ -12,23 +12,23 @@ Once a bundle is installed, NimbleBrain tracks its lifecycle from startup throug
 Every installed bundle is in one of five states:
 
 ```
-starting ──→ running ──→ crashed ──→ dead
-                │                     │
-                └──→ stopped ←────────┘
-                        │
-                        └──→ starting (explicit restart)
+starting ──→ running ⇄ crashed     (health monitor auto-restarts a crash until it recovers)
+   │            │
+   │            └──→ stopped ──→ starting  (explicit restart)
+   │
+   └──→ dead   (couldn't start, or was torn down)
 ```
 
 | State | Meaning |
 |-------|---------|
 | `starting` | MCP server process is being spawned |
 | `running` | Process is alive and responding to tool calls |
-| `crashed` | Process exited unexpectedly. The health monitor will attempt automatic restart. |
-| `dead` | Restart attempts exhausted. Must be explicitly restarted. |
+| `crashed` | Process exited unexpectedly. The health monitor restarts it automatically and keeps re-probing until it recovers. |
+| `dead` | No live process and not being auto-retried — it couldn't start (or authenticate) or was torn down. Restart or reconnect it explicitly. |
 | `stopped` | Manually stopped by you. Will not auto-restart. |
 
 <Aside type="note">
-  A `crashed` bundle transitions to `dead` after the health monitor exhausts its restart attempts. A `dead` bundle must be explicitly restarted — it will not recover on its own.
+  A `crashed` connector recovers on its own. The health monitor retries it automatically — a quick burst first, then a slower re-probe — and it comes back once the underlying problem clears (for example, a rate-limited or briefly-unavailable upstream returning). You don't need to restart it manually. A bundle only reaches `dead` if it can't start at all or was explicitly torn down.
 </Aside>
 
 ## Listing bundles and checking health

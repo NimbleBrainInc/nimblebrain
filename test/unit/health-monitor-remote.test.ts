@@ -157,10 +157,14 @@ describe("HealthMonitor — remote sources", () => {
     monitor.stop();
   });
 
-  it("remote source transitions to dead after MAX_RESTARTS failures", async () => {
+  it("remote source backs off to cooldown after MAX_RESTARTS failures", async () => {
     const source = makeMockRemoteSource("flaky-remote");
     const sink = makeEventCollector();
-    const monitor = new HealthMonitor([source], sink, { checkIntervalMs: 60_000, baseDelayMs: 1 });
+    const monitor = new HealthMonitor([source], sink, {
+      checkIntervalMs: 60_000,
+      baseDelayMs: 1,
+      cooldownMs: 60_000,
+    });
 
     // Each reconnect succeeds but remote immediately dies again
     for (let i = 0; i < 5; i++) {
@@ -169,23 +173,22 @@ describe("HealthMonitor — remote sources", () => {
       source.alive = false;
     }
 
-    // 6th crash — should hit the limit
+    // 6th crash spends the budget → cooldown (not terminal).
     source.alive = false;
     await monitor.check();
 
     const status = monitor.getStatus();
-    expect(status[0]!.state).toBe("dead");
+    expect(status[0]!.state).toBe("cooldown");
 
     const events = eventNames(sink);
-    expect(events).toContain("bundle.dead");
+    expect(events).toContain("bundle.cooldown");
+    expect(events).not.toContain("bundle.dead");
 
-    // dead event should have remote: true
-    const deadEvent = eventData(sink).find(
-      (d) => d.event === "bundle.dead",
-    );
-    expect(deadEvent?.remote).toBe(true);
+    // cooldown event should have remote: true
+    const cooldownEvent = eventData(sink).find((d) => d.event === "bundle.cooldown");
+    expect(cooldownEvent?.remote).toBe(true);
 
-    // No further reconnect attempts
+    // No reconnect attempts while cooling — a throttling remote isn't hammered.
     const stopsBefore = source.stopCalls;
     const startsBefore = source.startCalls;
     await monitor.check();

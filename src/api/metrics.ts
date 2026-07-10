@@ -227,9 +227,10 @@ export const artifactResolutionsTotal = new Counter({
  *
  * This is a crash-RATE signal (good for dashboards / spotting active
  * crash-looping). It is NOT the right primitive for "is this connector down
- * right now": the HealthMonitor stops emitting once a source exhausts its
- * restarts and is marked dead-terminal, so the counter goes flat while the
- * connector stays down. Use `nb_bundle_unhealthy` (below) for down-alerting.
+ * right now": a crashed source retries in a quick burst and then re-probes on a
+ * slow cooldown, so the counter carries a low floor (one burst per cooldown)
+ * rather than a steady level while the connector stays down. Use
+ * `nb_bundle_unhealthy` (below) for down-alerting.
  */
 export const bundleCrashedTotal = new Counter({
   name: "nb_bundle_crashed_total",
@@ -258,28 +259,35 @@ export function recordBundleCrash(source: string | undefined, remote: boolean): 
 }
 
 /**
- * Gauge: which MCP bundles/connectors are currently DOWN — HealthMonitor state
- * `dead` — by source. `1` = down.
+ * Gauge: which MCP connectors are currently DOWN involuntarily, by source.
+ * `1` = down. Asserts on the two involuntary-down states a crashed source
+ * cycles through — `restarting` (an active backoff burst) and `cooldown` (the
+ * slow re-probe between bursts) — so the series stays CONTINUOUSLY `1` for the
+ * whole outage.
  *
- * Why a gauge, not the `nb_bundle_crashed_total` counter: a down source emits a
- * crash event each ~30s HealthMonitor sweep only until it exhausts its restarts
- * (`MAX_RESTARTS`), at which point it's marked `dead` and the monitor stops
- * touching it ("dead is terminal"). So the counter records a short burst then
- * goes flat — an `increase()`-based alert would auto-resolve minutes into a
- * multi-day outage. This gauge instead stays asserted for the entire outage and
- * clears only when the source recovers, so `== 1 for: Nm` is a correct
- * "connector has been down for N minutes" signal.
+ * That continuity is load-bearing. The `TenantConnectorDown` alert is
+ * `== 1 for: 10m`; if the gauge de-asserted during each re-burst (the
+ * source oscillates cooldown → restarting → cooldown for a sustained outage),
+ * the `for:` timer would reset every cycle and a genuine multi-day outage would
+ * never page — the exact incident the alert exists to catch.
  *
- * Excludes `restarting` (transient: at most `MAX_RESTARTS` attempts over a few
- * minutes before the source is either healthy again or `dead`). Driven at
- * scrape time from the live HealthMonitor via {@link registerBundleHealthGauge};
- * the collect callback resets first, so a recovered source's series disappears.
+ * Excludes `healthy` (up) and `dead` (a DELIBERATE teardown — disconnect /
+ * uninstall — not an outage to page on). A genuine transient blip that recovers
+ * within the first burst asserts for only ~1-2 min and is de-flapped by the
+ * alert's `for: 10m` — no false page.
+ *
+ * Why a gauge, not the `nb_bundle_crashed_total` counter: the counter is a
+ * crash RATE (a burst per cooldown), so an `increase()`-based alert would
+ * mis-track a steady outage. This gauge is the correct down-detector; it clears
+ * only when the source recovers (or is deliberately stopped). Driven at scrape
+ * time from the live HealthMonitor via {@link registerBundleHealthGauge}; the
+ * collect callback resets first, so a recovered source's series disappears.
  *
  * No tenant/workspace label — one pod per tenant, scrape namespace attributes it.
  */
 export const bundleUnhealthy = new Gauge({
   name: "nb_bundle_unhealthy",
-  help: 'MCP bundles currently down (HealthMonitor state "dead"), by source. 1 = down.',
+  help: 'MCP connectors currently down involuntarily (HealthMonitor state "restarting" or "cooldown"), by source. 1 = down.',
   labelNames: ["source"] as const,
   registers: [metricsRegistry],
   collect() {
@@ -289,7 +297,12 @@ export const bundleUnhealthy = new Gauge({
     this.reset();
     const status = healthStatusProvider?.() ?? [];
     for (const b of status) {
-      if (b.state !== "dead") continue;
+      // Both involuntary-down states assert, so the series stays continuously 1
+      // across the whole burst→cooldown→burst cycle (the `for: 10m` alert needs
+      // that continuity): `restarting` (active backoff burst) and `cooldown`
+      // (slow re-probe between bursts). `healthy` is up; `dead` is a DELIBERATE
+      // teardown, not an outage.
+      if (b.state !== "restarting" && b.state !== "cooldown") continue;
       const safe = b.name && SAFE_SOURCE.test(b.name) ? b.name : "other";
       this.set({ source: safe }, 1);
     }
