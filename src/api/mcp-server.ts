@@ -399,7 +399,7 @@ export class McpServerHost {
         // (conversations/files/automations) as the owner. Respond exactly
         // like an unknown session id (`not_found`) so a non-owner can't even
         // tell the session exists (`unavailable` would confirm it's live).
-        if (local.identityId !== (sessionCtx.identity?.id ?? null)) {
+        if (!this.ownsTransport(local, sessionCtx)) {
           log.warn(
             `[mcp] session identity mismatch ${fmtSessionContext(request, sessionId, sessionCtx)}`,
           );
@@ -470,7 +470,7 @@ export class McpServerHost {
     // POST fast path). A non-owner gets an unmodified 404 — no teardown, no
     // registry delete, no existence signal — so a leaked session id can't be
     // used to evict another user's live session.
-    if (local.identityId !== (sessionCtx.identity?.id ?? null)) {
+    if (!this.ownsTransport(local, sessionCtx)) {
       log.info(
         `[mcp] delete identity mismatch ${fmtSessionContext(request, sessionId, sessionCtx)}`,
       );
@@ -548,6 +548,24 @@ export class McpServerHost {
    */
   private sessionNotFoundResponse(): Response {
     return this.sessionMissResponse("not_found");
+  }
+
+  /**
+   * Whether `entry` is owned by the identity making this request. A `/mcp`
+   * session is bound to the identity that initialized it (`identityId`,
+   * normalized to `null` for the dev/no-auth case, matching how it's stored).
+   *
+   * INVARIANT for any path that reaches a live transport: gate on this before
+   * dispatch, and turn a non-owner away WITHOUT letting them distinguish "not
+   * yours" from "no such session". The two branches must stay distinct — POST
+   * returns an opaque `not_found` (never `unavailable`, which would confirm the
+   * session is live) and DELETE returns 404 without `bestEffortDelete` (a
+   * non-owner must not evict the owner's registry entry). Today only
+   * `handlePost` (fast path) and `handleDelete` reach a transport; a future
+   * GET/SSE handler (see the class header) must add the same gate.
+   */
+  private ownsTransport(entry: TransportEntry, sessionCtx: McpSessionContext): boolean {
+    return entry.identityId === (sessionCtx.identity?.id ?? null);
   }
 
   /**
