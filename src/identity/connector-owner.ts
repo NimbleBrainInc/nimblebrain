@@ -8,14 +8,8 @@
  * root (`workspaces/<wsId>/credentials/...` vs `users/<userId>/credentials/...`)
  * and the principal id a provider keys on.
  *
- * Pure type + a diagnostic accessor; imports nothing, so any layer can depend
- * on it without a cycle.
+ * Pure type; imports nothing, so any layer can depend on it without a cycle.
  */
 export type ConnectorOwner =
   | { readonly type: "workspace"; readonly wsId: string }
   | { readonly type: "user"; readonly userId: string };
-
-/** The owner's id, regardless of variant — for logging / diagnostics only. */
-export function connectorOwnerId(owner: ConnectorOwner): string {
-  return owner.type === "workspace" ? owner.wsId : owner.userId;
-}
