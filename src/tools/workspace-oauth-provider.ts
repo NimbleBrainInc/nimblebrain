@@ -507,18 +507,23 @@ function assertSafeOwnerId(ownerId: string): void {
 }
 
 /**
- * The identity-owned OAuth credential dir for a personal connector:
- * `users/<userId>/credentials/mcp-oauth/<serverName>/`. The same shape the
- * constructor's user-owner arm builds — extracted so teardown (disconnect) can
- * remove exactly what connect wrote, without a second reconstruction of the path
- * drifting. `assertSafeOwnerId` on both components (path-security in depth). The
- * lint's `mcp-oauth` carve-out covers this literal `users/…/credentials/mcp-oauth`
- * reconstruction (see the lint header + the constructor comment).
+ * The OAuth credential dir for a connector: `<owner-root>/credentials/mcp-oauth/
+ * <serverName>/` — `workspaces/<wsId>/…` for a workspace owner, `users/<userId>/…`
+ * for a user (the identity-owned personal-connector home, outside any workspace;
+ * see AGENTS.md "Credentials live with their owner"). THE single construction of
+ * this path: the provider constructor writes here and the disconnect teardown
+ * removes here, both through this helper — so connect and teardown can't drift.
+ * `assertSafeOwnerId` on the owner id + server name (path-security in depth).
+ * Because `ownerSegment` is a variable, `check:credential-paths` /
+ * `check:workspace-paths` can't flag either literal without false-positiving the
+ * other — this is the one audited site both lint headers document.
  */
-export function identityMcpOAuthDir(workDir: string, userId: string, serverName: string): string {
-  assertSafeOwnerId(userId);
+export function mcpOAuthDir(workDir: string, owner: OAuthOwnerContext, serverName: string): string {
+  const ownerSegment = owner.type === "workspace" ? "workspaces" : "users";
+  const ownerId = owner.type === "workspace" ? owner.wsId : owner.userId;
+  assertSafeOwnerId(ownerId);
   assertSafeOwnerId(serverName);
-  return join(workDir, "users", userId, "credentials", "mcp-oauth", serverName);
+  return join(workDir, ownerSegment, ownerId, "credentials", "mcp-oauth", serverName);
 }
 
 interface Deferred<T> {
@@ -770,27 +775,11 @@ export class WorkspaceOAuthProvider implements OAuthClientProvider {
       assertSafeOwnerId(opts.owner.wsId);
       this.dataDir = opts.workspaceContext.getDataPath("credentials", "mcp-oauth", opts.serverName);
     } else {
-      // The single audited constructor for both credential planes. For a
-      // workspace owner: `workspaces/<wsId>/credentials/mcp-oauth/...`. For a
-      // user owner: `users/<userId>/credentials/mcp-oauth/...` — the sanctioned
-      // identity-owned personal-connector path (a user's own remote MCP
-      // connection, outside any workspace; see AGENTS.md "Credentials live with
-      // their owner"). Because `ownerSegment` is a variable, `check:credential-
-      // paths` cannot flag the `users` case here without false-positiving the
-      // `workspaces` case, so this one site is intentionally invisible to that
-      // lint — which the lint header documents. The lint's `mcp-oauth` carve-out
-      // covers any literal reconstruction elsewhere.
-      const ownerSegment = opts.owner.type === "workspace" ? "workspaces" : "users";
-      const ownerId = opts.owner.type === "workspace" ? opts.owner.wsId : opts.owner.userId;
-      assertSafeOwnerId(ownerId);
-      this.dataDir = join(
-        opts.workDir,
-        ownerSegment,
-        ownerId,
-        "credentials",
-        "mcp-oauth",
-        opts.serverName,
-      );
+      // No `WorkspaceContext` handle — build the owner's mcp-oauth dir through the
+      // shared `mcpOAuthDir` helper (workspace-no-context or user owner). Same
+      // construction the disconnect teardown uses, so connect and teardown can't
+      // drift; the helper carries the `assertSafeOwnerId` checks + the lint story.
+      this.dataDir = mcpOAuthDir(opts.workDir, opts.owner, opts.serverName);
     }
   }
 

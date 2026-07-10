@@ -2368,12 +2368,13 @@ async function handleDisconnect(
   scopeHint: string | undefined,
 ): Promise<ToolResult> {
   if (!serverName) return errResult("serverName is required.");
-  void scopeHint; // Stage 2: scopeHint is workspace-only and informational
+  void scopeHint; // workspace-only path; `scope:"identity"` is routed upstream
   const lifecycle = ctx.runtime.getLifecycle();
 
-  // Stage 2: every connector is workspace-scoped. Personal connectors
-  // live in the caller's personal workspace; the caller is expected to
-  // disconnect them from that workspace context (the UI selects it).
+  // Workspace connectors only. A personal (identity-owned) connector is
+  // disconnected via `handleDisconnectIdentity`, which the dispatcher routes to
+  // for `scope:"identity"` before reaching here — so this path always has a
+  // workspace.
   if (!wsId) return errResult("Workspace context required.");
   if (!identity) return errResult("Authentication required.");
   if (!lifecycle.getInstance(serverName, wsId)) {
@@ -2416,8 +2417,8 @@ async function handleDisconnect(
  * unregisters placements. For local bundles (stdio / non-OAuth URL),
  * just `lifecycle.uninstall`.
  *
- * Stage 2: workspace-scope only. Personal connectors live in the user's
- * personal workspace; uninstall from that workspace context.
+ * Workspace connectors only — a personal (identity-owned) connector is removed
+ * via `handleDisconnectIdentity` (the dispatcher routes `scope:"identity"` there).
  */
 async function handleUninstall(
   ctx: ManageConnectorsContext,
@@ -2427,12 +2428,12 @@ async function handleUninstall(
   scopeHint: string | undefined,
 ): Promise<ToolResult> {
   if (!serverName) return errResult("serverName is required.");
-  void scopeHint; // Stage 2: scopeHint is workspace-only and informational
+  void scopeHint; // workspace-only path; `scope:"identity"` is routed upstream
   const lifecycle = ctx.runtime.getLifecycle();
 
-  // Stage 2: every connector is workspace-scoped. Personal connectors
-  // live in the caller's personal workspace; uninstall from that
-  // workspace context (the UI selects it).
+  // Workspace connectors only. A personal (identity-owned) connector is removed
+  // via `handleDisconnectIdentity` (dispatcher routes `scope:"identity"` there
+  // before reaching here) — so this path always has a workspace.
   if (!wsId) return errResult("Workspace context required.");
   if (!identity) return errResult("Authentication required.");
   if (!lifecycle.getInstance(serverName, wsId)) {

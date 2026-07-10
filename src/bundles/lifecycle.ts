@@ -19,7 +19,7 @@ import { FileCredentialStore } from "../tools/credential-store.ts";
 import { McpSource } from "../tools/mcp-source.ts";
 import { ToolRegistry } from "../tools/registry.ts";
 import type { ToolSource } from "../tools/types.ts";
-import { identityMcpOAuthDir, WorkspaceOAuthProvider } from "../tools/workspace-oauth-provider.ts";
+import { mcpOAuthDir, WorkspaceOAuthProvider } from "../tools/workspace-oauth-provider.ts";
 import { validateAdditionalAuthorizationParams } from "../util/oauth-params.ts";
 import { WorkspaceContext } from "../workspace/context.ts";
 import { resolveWorkspaceDisplayName } from "../workspace/workspace-store.ts";
@@ -2161,7 +2161,10 @@ export class BundleLifecycleManager {
     //    composio connection dir additionally when the ref carries a composio
     //    marker. Best-effort (force: a never-connected connector has no dir).
     try {
-      rmSync(identityMcpOAuthDir(workDir, userId, serverName), { recursive: true, force: true });
+      rmSync(mcpOAuthDir(workDir, { type: "user", userId }, serverName), {
+        recursive: true,
+        force: true,
+      });
     } catch (err) {
       log.warn(
         `[lifecycle] failed to clear identity mcp-oauth for ${userId}|${serverName}: ${
