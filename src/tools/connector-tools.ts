@@ -1236,10 +1236,13 @@ async function handleInstallIdentity(
 
   // Reserved-name guard: a connector whose slug collides with a system-tool
   // prefix (e.g. `nb`) would surface its tools as `nb__…` in the trusted system
-  // band. The workspace install path enforces this inside `startBundleSource`;
-  // the identity plane builds its source outside that path, so reject at the
-  // install boundary (and again in `startIdentityAuth`). Rejecting here keeps a
-  // reserved-name record from ever reaching `connectors.json`.
+  // band. Workspace registries can't hit this — the real `nb` system source
+  // already occupies that slot, so a colliding interactive connect is skipped
+  // (`startAuthInner`'s `!hasSource`), and eager-started workspace sources also
+  // pass `startBundleSource`'s `validateServerName`. The identity registry
+  // carries no system source, so neither applies; reject at the install boundary
+  // (and again in `startIdentityAuth`) to keep a reserved-name record out of
+  // connectors.json.
   if (isReservedServerName(serverName)) {
     return errResult(
       `"${entry.id}" resolves to "${serverName}", a name reserved for NimbleBrain system ` +
