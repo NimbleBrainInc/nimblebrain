@@ -7,6 +7,7 @@ import type { ServerDetail } from "../connectors/server-detail.ts";
 import { textContent } from "../engine/content-helpers.ts";
 import type { EventSink, ToolPromotionControls, ToolResult, ToolSchema } from "../engine/types.ts";
 import { NON_ADVANCING_META_KEY } from "../engine/types.ts";
+import { log } from "../observability/log.ts";
 import type { Runtime } from "../runtime/runtime.ts";
 import type { SelectedSkill } from "../skills/select.ts";
 import type { Skill } from "../skills/types.ts";
@@ -395,6 +396,32 @@ async function handleBundleStatus(
   return { content: textContent(entries.join("\n\n")), isError: false };
 }
 
+/**
+ * Best-effort tool count for a status entry. Per-source error containment —
+ * the same guard `registry.availableTools` applies. A source in `starting` /
+ * `pending_auth` / `dead` state has `client === null` and throws
+ * `"<name>" not started` from `tools()`. A status call is exactly where a down
+ * connector must be REPORTED, not where it aborts the whole report: without
+ * this guard one dead source's throw rejects `nb__status(scope="bundles")` for
+ * every connector (the tool's top-level catch then replaces the entire report
+ * with that one error). Returns null when the count is unknowable so the caller
+ * omits the Tools line rather than fabricating `Tools: 0` for a live-but-down
+ * connector; the `Status: down` line (via `isAlive()`) carries the real signal.
+ */
+async function safeToolCount(
+  source: ReturnType<ToolRegistry["getSources"]>[number],
+): Promise<number | null> {
+  try {
+    return (await source.tools()).length;
+  } catch (err) {
+    log.warn(
+      `[status] could not enumerate tools for "${source.name}" — ` +
+        `${err instanceof Error ? err.message : String(err)}. Reporting it as down.`,
+    );
+    return null;
+  }
+}
+
 /** Format one bundle's status block, or null when the source is filtered out. */
 async function buildBundleStatusEntry(
   source: ReturnType<ToolRegistry["getSources"]>[number],
@@ -404,7 +431,7 @@ async function buildBundleStatusEntry(
   if (!query && !(source instanceof McpSource)) return null;
   if (query && !serverName.toLowerCase().includes(query)) return null;
 
-  const tools = await source.tools();
+  const toolCount = await safeToolCount(source);
   const manifest = await readManifestForSource(serverName);
 
   const lines: string[] = [];
@@ -412,7 +439,10 @@ async function buildBundleStatusEntry(
   if (manifest?.version) lines.push(`  Version: ${manifest.version}`);
   if (manifest?.description) lines.push(`  Description: ${manifest.description}`);
   if (manifest?.author?.name) lines.push(`  Author: ${manifest.author.name}`);
-  lines.push(`  Tools: ${tools.length}`);
+  // Omit the Tools line when enumeration failed — a dead source's true tool
+  // count is unknowable here (the memo is cleared on teardown), and rendering
+  // `Tools: 0` would read as "empty connector" rather than "down".
+  if (toolCount !== null) lines.push(`  Tools: ${toolCount}`);
 
   if (source instanceof McpSource) {
     const alive = source.isAlive();
