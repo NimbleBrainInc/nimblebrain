@@ -25,8 +25,12 @@ function logLlmDone(event: EngineEvent): void {
     inputTokens?: number;
     outputTokens?: number;
   };
+  // Append TTFT only when present — an empty completion has no first-output
+  // timestamp, and `Math.round(undefined)` would print `NaNms ttft`.
+  const ttftMs = event.data.ttftMs;
+  const ttft = typeof ttftMs === "number" ? `, ${Math.round(ttftMs)}ms ttft` : "";
   console.error(
-    `[engine] llm.done: ${event.data.model} (${usage.inputTokens ?? 0} in, ${usage.outputTokens ?? 0} out, ${Math.round(event.data.llmMs as number)}ms)`,
+    `[engine] llm.done: ${event.data.model} (${usage.inputTokens ?? 0} in, ${usage.outputTokens ?? 0} out, ${Math.round(event.data.llmMs as number)}ms${ttft})`,
   );
 }
 
