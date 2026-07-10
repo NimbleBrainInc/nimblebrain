@@ -536,12 +536,14 @@ async function initiateFreshComposioConnection(
   // callback's anti-forgery gate.
   registerConnectFlow(nonce, owner, connectorId);
 
-  // Cookie binds the nonce to this browser session. Scoped to
-  // /v1/composio-auth/callback so it's only sent back on the return leg — never
-  // leaked to /initiate calls on adjacent paths or to the SPA. The server-side
-  // flow record is the anti-forgery gate; this cookie adds session binding on
-  // top, so a nonce leaked from the URL (referrer, history) can't be completed
-  // from a different browser.
+  // Cookie scoped to /v1/composio-auth/callback so it's only sent on the return
+  // leg — never leaked to /initiate calls on adjacent paths or to the SPA. The
+  // server-side flow record is the anti-forgery gate; the cookie only adds
+  // browser-context binding — a third-party web origin can't set this same-origin
+  // HttpOnly cookie in the victim's browser. It is NOT tamper resistance: the
+  // value is sha256(nonce) and the nonce rides in the callback URL, so any client
+  // that already holds the nonce recomputes it. Kept for parity with
+  // /v1/mcp-auth/callback as cheap defense-in-depth.
   const stateHash = sha256Hex(nonce);
   c.header("Set-Cookie", buildComposioStateCookie(stateHash, 900, ctx.secureCookies));
 
@@ -550,7 +552,7 @@ async function initiateFreshComposioConnection(
   });
 }
 
-/** Validate the callback query params and the session-binding cookie, returning the verified tuple or an error Response. */
+/** Validate the callback (nonce, browser-binding cookie, server-side flow record) and return the trusted (owner, connectorId) plus the vendor fields, or an error Response. */
 async function validateCallbackParams(c: Context<AppEnv>): Promise<
   | {
       connectedAccountId: string;
@@ -580,8 +582,10 @@ async function validateCallbackParams(c: Context<AppEnv>): Promise<
     return c.text("missing connectedAccountId", 400);
   }
 
-  // Session binding: the cookie set by /initiate must hash to the nonce, so a
-  // nonce leaked from the URL can't be completed from a different browser.
+  // Browser-context binding (defense-in-depth): the cookie set by /initiate must
+  // hash to the nonce. This only stops a third-party web origin from driving the
+  // callback in the victim's browser — a client that holds the nonce recomputes
+  // sha256(nonce) itself. The server-side record consumed below is the real gate.
   const cookieValue = readCookie(c.req.header("cookie"), "nb_composio_state");
   if (!cookieValue || !timingSafeEqualHex(cookieValue, sha256Hex(nonce))) {
     c.header("Content-Security-Policy", ERROR_PAGE_CSP);
