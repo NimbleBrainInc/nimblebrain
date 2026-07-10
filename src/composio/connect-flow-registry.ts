@@ -16,11 +16,19 @@
  * only the browser that ran an authenticated initiate holds a usable one.
  *
  * State is not persisted, for the same reasons as `oauth-flow-registry`:
- * connect flows complete in seconds, NimbleBrain runs single-process, and a
- * process restart mid-flow is correctly handled by re-initiating. The only
- * intra-process concern is a leak — an orphaned record (user closed the tab,
- * network failure, never hit the callback) — so every record carries a TTL and
- * is reclaimed when it fires.
+ * connect flows complete in seconds and a process restart mid-flow is correctly
+ * handled by re-initiating. The only intra-process concern is a leak — an
+ * orphaned record (user closed the tab, network failure, never hit the callback)
+ * — so every record carries a TTL and is reclaimed when it fires.
+ *
+ * Multi-replica: this map is per-pod, exactly like `oauth-flow-registry` and
+ * `run-bus`. Today every tenant runs `platform.replicas: 1` (one pod per tenant,
+ * the only supported topology), so the browser's return leg can't reach a
+ * non-initiating pod. Under `replicas > 1` the tenant ingress's `lb_cookie`
+ * session affinity (already configured, a no-op at one replica) pins a browser
+ * to the pod that served `/initiate`, so the callback still resolves here;
+ * moving to a shared (Redis) store to also survive a mid-flow pod restart is
+ * deferred with the other `replicas > 1` prerequisites.
  */
 
 import type { ConnectorOwner } from "../identity/connector-owner.ts";
