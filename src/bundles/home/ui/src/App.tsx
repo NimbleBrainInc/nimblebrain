@@ -67,8 +67,23 @@ function dotColor(sentiment: string): string {
   return "var(--nb-color-warning, #f59e0b)";
 }
 
+function escapeHtml(s: string): string {
+  return s
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
+// `text` is LLM-generated briefing copy — untrusted. Escape HTML first so only
+// the bold/code markup this function adds can produce tags; without it, an
+// `<img src=x onerror=…>` in the model output would execute as XSS in the app
+// iframe. Escaping runs before the regexes so `**…**` / `` `…` `` still work
+// (the markers aren't HTML metacharacters) and any tags in the captured text
+// stay inert.
 function renderMd(text: string): string {
-  return text
+  return escapeHtml(text)
     .replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>")
     .replace(/`([^`]+)`/g, "<code>$1</code>");
 }
@@ -167,7 +182,7 @@ function SectionGroup({
       {items.map((item) => (
         <div key={item.id} className="section-item">
           <span className="dot" style={{ background: dotColor(item.type) }} />
-          {/* biome-ignore lint/security/noDangerouslySetInnerHtml: markdown rendered from trusted briefing data */}
+          {/* biome-ignore lint/security/noDangerouslySetInnerHtml: renderMd HTML-escapes the untrusted LLM text before adding bold/code markup */}
           <span className="item-text" dangerouslySetInnerHTML={{ __html: renderMd(item.text) }} />
           {item.action && (
             <button
