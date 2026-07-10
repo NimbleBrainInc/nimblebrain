@@ -2883,6 +2883,11 @@ async function handleListPersonalConnectors(
       // (`/v1/composio-auth/initiate-identity`). The profile UI branches on this.
       auth: composioMarker ? ("composio" as const) : ("dcr" as const),
       ...(composioMarker ? { connectorId: composioMarker.connectorId } : {}),
+      // `authed` carries the common case; the warmth check is a deliberate
+      // backstop, not redundancy — `warm` doesn't strictly imply `authed` (creds
+      // can be deleted after the source warms), and it also catches a future
+      // personal-connector auth type whose creds this `authed` derivation doesn't
+      // yet know to look for. A live source is genuinely serving ⇒ `running`.
       state:
         authed || lifecycle.isIdentityConnectorRunning(callerId, serverName)
           ? ("running" as const)
