@@ -19,3 +19,15 @@ export type ConnectorOwner =
 export function connectorOwnerId(owner: ConnectorOwner): string {
   return owner.type === "workspace" ? owner.wsId : owner.userId;
 }
+
+/**
+ * A canonical key for an owner, for committing an owner to a signed/hashed value
+ * (e.g. the composio-auth CSRF state). A workspace keeps its bare id — a `ws_…`
+ * id is already namespaced, so an existing workspace binding stays byte-identical
+ * — while a user gets an explicit `usr:` prefix. A workspace id and a user id can
+ * therefore never hash to the same key (their forms don't overlap AND the user
+ * is prefixed), so a callback can't be replayed against the wrong owner root.
+ */
+export function connectorOwnerKey(owner: ConnectorOwner): string {
+  return owner.type === "workspace" ? owner.wsId : `usr:${owner.userId}`;
+}

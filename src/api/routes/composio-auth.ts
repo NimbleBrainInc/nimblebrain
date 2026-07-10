@@ -14,12 +14,14 @@ import {
   initiateComposioConnection,
   validateComposioConfig,
 } from "../../composio/sdk.ts";
+import { type ConnectorOwner, connectorOwnerKey } from "../../identity/connector-owner.ts";
+import { IdentityConnectorStore } from "../../identity/connector-store.ts";
 import { log } from "../../observability/log.ts";
 import type { ConnectorCatalogEntry } from "../../registries/projection.ts";
 import { requireAuth } from "../middleware/auth.ts";
 import { requireWorkspace } from "../middleware/workspace.ts";
 import { type AppContext, type AppEnv, apiError } from "../types.ts";
-import { workspaceConnectorsUrl } from "./connectors-redirect.ts";
+import { profileConnectorsUrl, workspaceConnectorsUrl } from "./connectors-redirect.ts";
 
 /**
  * OAuth integration routes for connectors backed by Composio as a
@@ -96,6 +98,28 @@ function isValidConnectorId(cid: string): boolean {
   return CID_RE.test(cid) && !cid.includes("..") && !cid.includes("//");
 }
 
+/** Where the browser returns after a successful connect — the owner's connectors surface. */
+function connectorsReturnUrl(owner: ConnectorOwner): string {
+  return owner.type === "workspace" ? workspaceConnectorsUrl(owner.wsId) : profileConnectorsUrl();
+}
+
+/**
+ * Recover a `ConnectorOwner` from the callback query — exactly one of `ws`
+ * (workspace) or `usr` (user). The id must be a safe single path segment (the
+ * cookie hash is the real tamper guard; this is a defense-in-depth boundary
+ * check before the id reaches a credential path). Returns null when the owner
+ * is ambiguous, missing, or unsafe.
+ */
+function ownerFromCallbackQuery(
+  ws: string | undefined,
+  usr: string | undefined,
+): ConnectorOwner | null {
+  const safe = (id: string): boolean => id.length > 0 && !id.includes("/") && !id.includes("..");
+  if (ws && !usr && safe(ws)) return { type: "workspace", wsId: ws };
+  if (usr && !ws && safe(usr)) return { type: "user", userId: usr };
+  return null;
+}
+
 export function composioAuthRoutes(ctx: AppContext) {
   // Eager startup validation — same pattern as `getBouncerMode()` in
   // `mcpAuthRoutes`. Misconfigured `COMPOSIO_API_BASE_URL` or missing
@@ -123,30 +147,60 @@ export function composioAuthRoutes(ctx: AppContext) {
       if (creds instanceof Response) return creds;
       const { apiKey, authConfigId } = creds;
 
-      const userId = composioUserId({ type: "workspace", wsId });
-
-      // Short-circuit: if Composio already has an ACTIVE connected
-      // account for this (userId, authConfigId), reuse it rather than
-      // running a second OAuth round-trip.
-      const adopted = await adoptExistingComposioConnection(ctx, c, {
+      return connectComposio(ctx, c, {
         entry,
         connectorId,
-        wsId,
-        userId,
-        apiKey,
-        authConfigId,
-      });
-      if (adopted) return adopted;
-
-      return initiateFreshComposioConnection(ctx, c, {
-        connectorId,
-        wsId,
-        userId,
+        owner: { type: "workspace", wsId },
         apiKey,
         authConfigId,
       });
     },
   );
+
+  // ── POST /v1/composio-auth/initiate-identity ──────────────────────
+  // The identity-plane sibling of `/initiate`: connect a PERSONAL Composio
+  // connector on the caller's own identity (the "Connect" click from the
+  // profile). No workspace — the connection binds `{type:"user"}`, its
+  // `connection.json` lives under the user's credential root, and the callback
+  // lands the user on `/profile/connectors`.
+  app.post("/v1/composio-auth/initiate-identity", requireAuth(ctx.authOptions), async (c) => {
+    const parsed = await parseInitiateRequest(c);
+    if (parsed instanceof Response) return parsed;
+    const { connectorId } = parsed;
+
+    const userId = ctx.runtime.resolveRequestUserId(c.var.identity);
+
+    // A personal connector must be installed on the caller's identity before it
+    // can be connected — mirrors the OAuth identity initiate
+    // (`/v1/mcp-auth/initiate-identity`). Without this the callback would persist
+    // a `connection.json` under the user root with no install record to read it —
+    // a dangling (own-credential-only) state. Not-installed is a 404 client error.
+    const serverName = slugifyServerName(connectorId);
+    const installed = await new IdentityConnectorStore({ workDir: ctx.runtime.getWorkDir() }).get(
+      userId,
+      serverName,
+    );
+    if (!installed) {
+      return apiError(404, "connector_not_found", `"${serverName}" is not one of your connectors.`);
+    }
+
+    const entry = await loadInitiateCatalogEntry(ctx, connectorId);
+    if (entry instanceof Response) return entry;
+
+    // `resolveComposioCredentials` uses its second arg only for log context —
+    // there is no workspace here; pass the user id.
+    const creds = resolveComposioCredentials(entry, connectorId, userId);
+    if (creds instanceof Response) return creds;
+    const { apiKey, authConfigId } = creds;
+
+    return connectComposio(ctx, c, {
+      entry,
+      connectorId,
+      owner: { type: "user", userId },
+      apiKey,
+      authConfigId,
+    });
+  });
 
   // ── GET /v1/composio-auth/callback ────────────────────────────────
   app.get("/v1/composio-auth/callback", async (c) => {
@@ -155,41 +209,36 @@ export function composioAuthRoutes(ctx: AppContext) {
 
     const validated = await validateCallbackParams(c);
     if (validated instanceof Response) return validated;
-    const { connectedAccountId, status, cid, wsId } = validated;
+    const { connectedAccountId, status, cid, owner } = validated;
 
     const entry = await loadCallbackCatalogEntry(ctx, c, cid);
     if (entry instanceof Response) return entry;
 
-    const userId = composioUserId({ type: "workspace", wsId });
+    const composioUser = composioUserId(owner);
     const connection: ComposioConnection = {
       connectedAccountId,
       toolkit: entry.composio.toolkit,
-      userId,
+      userId: composioUser,
       connectedAt: new Date().toISOString(),
       status,
     };
 
     try {
-      await saveComposioConnection(
-        ctx.runtime.getWorkDir(),
-        { type: "workspace", wsId },
-        cid,
-        connection,
-      );
+      await saveComposioConnection(ctx.runtime.getWorkDir(), owner, cid, connection);
     } catch (err) {
       log.error(
-        `[composio-auth] failed to persist connection for ${cid} in ${wsId}: ${errMessage(err)}`,
+        `[composio-auth] failed to persist connection for ${cid} (${connectorOwnerKey(owner)}): ${errMessage(err)}`,
       );
       return c.text("internal_error", 500);
     }
 
-    await recoverCallbackSource(ctx, cid, wsId);
+    await recoverCallbackSource(ctx, cid, owner);
 
     // One-shot cookie — clear on success so a refresh of this page
     // can't be used as a replay vector.
     c.header("Set-Cookie", buildComposioStateCookie("", 0, ctx.secureCookies));
 
-    const returnUrl = workspaceConnectorsUrl(wsId);
+    const returnUrl = connectorsReturnUrl(owner);
     const safeReturnUrl = escapeHtml(returnUrl);
     c.header("Content-Security-Policy", SUCCESS_PAGE_CSP);
     return c.html(
@@ -289,18 +338,19 @@ async function loadInitiateCatalogEntry(
 function resolveComposioCredentials(
   entry: ComposioCatalogEntry,
   connectorId: string,
-  wsId: string,
+  logCtx: string,
 ): { apiKey: string; authConfigId: string } | Response {
   // Platform-wide Composio API key. Single source for the whole
-  // deployment; per-workspace isolation lives in `user_id`. A
-  // missing key is operator config error — surface generic 500
-  // and log specifics rather than telling the API caller which
-  // env var to set (the API isn't operator-facing).
+  // deployment; per-owner isolation lives in `user_id` (the Composio-side
+  // identity, derived from the workspace or the user). A missing key is an
+  // operator config error — surface a generic 500 and log specifics rather
+  // than telling the API caller which env var to set (the API isn't
+  // operator-facing). `logCtx` is the owner label, for log context only.
   const apiKey = process.env.COMPOSIO_API_KEY?.trim();
   if (!apiKey) {
     log.warn(
       "[composio-auth] COMPOSIO_API_KEY not set; cannot initiate connection " +
-        `for ${connectorId} in ${wsId}`,
+        `for ${connectorId} (${logCtx})`,
     );
     return apiError(500, "composio_unconfigured", "Composio integration not configured.");
   }
@@ -315,7 +365,7 @@ function resolveComposioCredentials(
   const authConfigId = process.env[authConfigEnvName]?.trim();
   if (!authConfigId) {
     log.warn(
-      `[composio-auth] ${authConfigEnvName} not set; cannot initiate ${connectorId} in ${wsId}`,
+      `[composio-auth] ${authConfigEnvName} not set; cannot initiate ${connectorId} (${logCtx})`,
     );
     return apiError(
       500,
@@ -327,20 +377,21 @@ function resolveComposioCredentials(
   return { apiKey, authConfigId };
 }
 
-/** Reuse an already-ACTIVE Composio account for this workspace (adopting it), or null to run a fresh OAuth initiate. */
+/** Reuse an already-ACTIVE Composio account for this owner (adopting it), or null to run a fresh OAuth initiate. */
 async function adoptExistingComposioConnection(
   ctx: AppContext,
   c: Context<AppEnv>,
   args: {
     entry: ComposioCatalogEntry;
     connectorId: string;
-    wsId: string;
-    userId: string;
+    owner: ConnectorOwner;
     apiKey: string;
     authConfigId: string;
   },
 ): Promise<Response | null> {
-  const { entry, connectorId, wsId, userId, apiKey, authConfigId } = args;
+  const { entry, connectorId, owner, apiKey, authConfigId } = args;
+  const composioUser = composioUserId(owner);
+  const ownerLabel = connectorOwnerKey(owner);
   // The chat-side `manageConnections` flow and an earlier explicit
   // click both create connected accounts here; without this dedup
   // we'd hit Composio's "Multiple connected accounts found … use
@@ -351,7 +402,7 @@ async function adoptExistingComposioConnection(
   try {
     const existing = await findActiveComposioConnection({
       apiKey,
-      userId,
+      userId: composioUser,
       authConfigId,
     });
     if (existing) {
@@ -376,10 +427,20 @@ async function adoptExistingComposioConnection(
       const serverName = slugifyServerName(connectorId);
       const lifecycle = ctx.runtime.getLifecycle();
       try {
-        await lifecycle.ensureSourceRegistered(serverName, wsId, ctx.runtime.getWorkDir());
+        if (owner.type === "workspace") {
+          await lifecycle.ensureSourceRegistered(serverName, owner.wsId, ctx.runtime.getWorkDir());
+        } else {
+          // Identity plane: the source holder starts + registers the personal
+          // connector into the user's registry from its persisted record.
+          await lifecycle.getIdentityConnectorSource(
+            owner.userId,
+            serverName,
+            ctx.runtime.getWorkDir(),
+          );
+        }
       } catch (err) {
         log.warn(
-          `[composio-auth] adopt: source registration failed for ${connectorId} in ${wsId}: ${errMessage(err)}`,
+          `[composio-auth] adopt: source registration failed for ${connectorId} (${ownerLabel}): ${errMessage(err)}`,
         );
         return apiError(
           502,
@@ -390,19 +451,21 @@ async function adoptExistingComposioConnection(
       const connection: ComposioConnection = {
         connectedAccountId: existing.id,
         toolkit: entry.composio.toolkit,
-        userId,
+        userId: composioUser,
         connectedAt: new Date().toISOString(),
         status: existing.status,
       };
-      await saveComposioConnection(
-        ctx.runtime.getWorkDir(),
-        { type: "workspace", wsId },
-        connectorId,
-        connection,
-      );
-      lifecycle.recordConnectionStateChange(serverName, wsId, WORKSPACE_PRINCIPAL_ID, "running");
+      await saveComposioConnection(ctx.runtime.getWorkDir(), owner, connectorId, connection);
+      if (owner.type === "workspace") {
+        lifecycle.recordConnectionStateChange(
+          serverName,
+          owner.wsId,
+          WORKSPACE_PRINCIPAL_ID,
+          "running",
+        );
+      }
       return c.json({
-        authorizationUrl: workspaceConnectorsUrl(wsId),
+        authorizationUrl: connectorsReturnUrl(owner),
         alreadyConnected: true,
       });
     }
@@ -410,10 +473,36 @@ async function adoptExistingComposioConnection(
     // Lookup failures shouldn't block a fresh OAuth attempt —
     // fall through to initiate. Log so the operator can investigate.
     log.warn(
-      `[composio-auth] connected-account lookup failed for ${connectorId} in ${wsId}: ${errMessage(err)}`,
+      `[composio-auth] connected-account lookup failed for ${connectorId} (${ownerLabel}): ${errMessage(err)}`,
     );
   }
   return null;
+}
+
+/**
+ * Connect a Composio-backed connector for `owner`: adopt an existing ACTIVE
+ * connected account if one exists (no second OAuth round-trip), else begin a
+ * fresh connection. Shared by the workspace and identity initiate routes.
+ */
+async function connectComposio(
+  ctx: AppContext,
+  c: Context<AppEnv>,
+  args: {
+    entry: ComposioCatalogEntry;
+    connectorId: string;
+    owner: ConnectorOwner;
+    apiKey: string;
+    authConfigId: string;
+  },
+): Promise<Response> {
+  const adopted = await adoptExistingComposioConnection(ctx, c, args);
+  if (adopted) return adopted;
+  return initiateFreshComposioConnection(ctx, c, {
+    connectorId: args.connectorId,
+    owner: args.owner,
+    apiKey: args.apiKey,
+    authConfigId: args.authConfigId,
+  });
 }
 
 /** Begin a fresh Composio OAuth connection: bind the state cookie and return the vendor authorization URL. */
@@ -422,45 +511,50 @@ async function initiateFreshComposioConnection(
   c: Context<AppEnv>,
   args: {
     connectorId: string;
-    wsId: string;
-    userId: string;
+    owner: ConnectorOwner;
     apiKey: string;
     authConfigId: string;
   },
 ): Promise<Response> {
-  const { connectorId, wsId, userId, apiKey, authConfigId } = args;
+  const { connectorId, owner, apiKey, authConfigId } = args;
+  const composioUser = composioUserId(owner);
+  const ownerLabel = connectorOwnerKey(owner);
   const nonce = randomBytes(32).toString("hex");
 
   // Encode the binding parameters in the callback URL so the
-  // callback handler (which has no workspace middleware — the
-  // user comes back from Composio without our headers) can
-  // reconstruct the (connectorId, wsId) tuple. The cookie hash
-  // commits to all three values; tampering with any of them in
-  // the URL fails the constant-time compare on return.
+  // callback handler (which has no auth middleware — the user comes
+  // back from Composio without our headers) can reconstruct the
+  // (connectorId, owner) tuple. Exactly one of `ws` / `usr` names the
+  // owner. The cookie hash commits to all of them; tampering with any
+  // in the URL fails the constant-time compare on return.
   const callbackBase = composioCallbackUrl();
   const callbackUrl = new URL(callbackBase);
   callbackUrl.searchParams.set("cid", connectorId);
-  callbackUrl.searchParams.set("ws", wsId);
+  if (owner.type === "workspace") callbackUrl.searchParams.set("ws", owner.wsId);
+  else callbackUrl.searchParams.set("usr", owner.userId);
   callbackUrl.searchParams.set("n", nonce);
 
   let initiateResponse: { redirectUrl: string; connectedAccountId: string };
   try {
     initiateResponse = await initiateComposioConnection({
       apiKey,
-      userId,
+      userId: composioUser,
       authConfigId,
       callbackUrl: callbackUrl.toString(),
     });
   } catch (err) {
-    log.warn(`[composio-auth] initiate failed for ${connectorId} in ${wsId}: ${errMessage(err)}`);
+    log.warn(
+      `[composio-auth] initiate failed for ${connectorId} (${ownerLabel}): ${errMessage(err)}`,
+    );
     return apiError(502, "composio_initiate_failed", "Composio rejected the connection initiate.");
   }
 
-  // Cookie binds (nonce, connectorId, wsId) to this browser
-  // session. Scoped to /v1/composio-auth/callback so it's only
-  // sent back on the return leg — never leaked to /initiate
-  // calls on adjacent paths or to the SPA.
-  const stateHash = sha256Hex(`${nonce}.${connectorId}.${wsId}`);
+  // Cookie binds (nonce, connectorId, owner) to this browser session.
+  // Scoped to /v1/composio-auth/callback so it's only sent back on the
+  // return leg — never leaked to /initiate calls on adjacent paths or
+  // to the SPA. The owner is committed as `connectorOwnerKey` so a
+  // workspace id and a user id can never hash to the same value.
+  const stateHash = sha256Hex(`${nonce}.${connectorId}.${ownerLabel}`);
   c.header("Set-Cookie", buildComposioStateCookie(stateHash, 900, ctx.secureCookies));
 
   return c.json({
@@ -469,10 +563,14 @@ async function initiateFreshComposioConnection(
 }
 
 /** Validate the callback query params and the session-binding cookie, returning the verified tuple or an error Response. */
-async function validateCallbackParams(
-  c: Context<AppEnv>,
-): Promise<
-  | { connectedAccountId: string; status: string; cid: string; wsId: string; nonce: string }
+async function validateCallbackParams(c: Context<AppEnv>): Promise<
+  | {
+      connectedAccountId: string;
+      status: string;
+      cid: string;
+      owner: ConnectorOwner;
+      nonce: string;
+    }
   | Response
 > {
   const connectedAccountId =
@@ -480,7 +578,7 @@ async function validateCallbackParams(
   const status = c.req.query("status") ?? "ACTIVE";
   const error = c.req.query("error");
   const cid = c.req.query("cid");
-  const wsId = c.req.query("ws");
+  const owner = ownerFromCallbackQuery(c.req.query("ws"), c.req.query("usr"));
   const nonce = c.req.query("n");
 
   if (error) {
@@ -490,8 +588,8 @@ async function validateCallbackParams(
       400,
     );
   }
-  if (!cid || !wsId || !nonce) {
-    return c.text("missing cid, ws, or nonce", 400);
+  if (!cid || !owner || !nonce) {
+    return c.text("missing cid, owner (ws|usr), or nonce", 400);
   }
   if (!isValidConnectorId(cid)) {
     return c.text("invalid cid", 400);
@@ -500,7 +598,7 @@ async function validateCallbackParams(
     return c.text("missing connectedAccountId", 400);
   }
 
-  const expected = sha256Hex(`${nonce}.${cid}.${wsId}`);
+  const expected = sha256Hex(`${nonce}.${cid}.${connectorOwnerKey(owner)}`);
   const cookieValue = readCookie(c.req.header("cookie"), "nb_composio_state");
   if (!cookieValue || !timingSafeEqualHex(cookieValue, expected)) {
     c.header("Content-Security-Policy", ERROR_PAGE_CSP);
@@ -511,7 +609,7 @@ async function validateCallbackParams(
     );
   }
 
-  return { connectedAccountId, status, cid, wsId, nonce };
+  return { connectedAccountId, status, cid, owner, nonce };
 }
 
 /** Load a callback `cid` from the catalog and confirm it is Composio-backed, else an error Response. */
@@ -528,30 +626,51 @@ async function loadCallbackCatalogEntry(
   return entry as ComposioCatalogEntry;
 }
 
-/** Bring the connector's MCP source online and record the `running` transition after a callback (non-fatal). */
-async function recoverCallbackSource(ctx: AppContext, cid: string, wsId: string): Promise<void> {
+/** Bring the connector's MCP source online after a callback (non-fatal), for either owner. */
+async function recoverCallbackSource(
+  ctx: AppContext,
+  cid: string,
+  owner: ConnectorOwner,
+): Promise<void> {
   // Transition the lifecycle state from `not_authenticated` (set
   // at boot when connection.json was absent) to `running`. Without
   // this the UI would keep showing "Sign-in required" until the
   // next platform restart, even though tools were already callable.
   //
   // After a Disconnect → Connect cycle, `teardownConnectionSource`
-  // has already removed the source from the workspace registry —
-  // pure state mutation isn't enough to recover. `ensureSourceRegistered`
-  // brings the source back up from the persisted BundleRef if it's
-  // missing, no-ops if it's already there (first-connect path,
-  // where the install-eager-start already registered).
+  // has already removed the source from the registry — pure state
+  // mutation isn't enough to recover. `ensureSourceRegistered` brings
+  // the source back up from the persisted BundleRef if it's missing,
+  // no-ops if it's already there (first-connect path, where the
+  // install-eager-start already registered).
   const serverName = slugifyServerName(cid);
   try {
     const lifecycle = ctx.runtime.getLifecycle();
-    await lifecycle.ensureSourceRegistered(serverName, wsId, ctx.runtime.getWorkDir());
-    lifecycle.recordConnectionStateChange(serverName, wsId, WORKSPACE_PRINCIPAL_ID, "running");
+    if (owner.type === "workspace") {
+      await lifecycle.ensureSourceRegistered(serverName, owner.wsId, ctx.runtime.getWorkDir());
+      lifecycle.recordConnectionStateChange(
+        serverName,
+        owner.wsId,
+        WORKSPACE_PRINCIPAL_ID,
+        "running",
+      );
+    } else {
+      // Identity plane: the source holder starts + registers into the user's
+      // registry (the same lazy-start dispatch uses). There is no per-principal
+      // connection-state machine here — running-ness is derived from whether
+      // the source is registered.
+      await lifecycle.getIdentityConnectorSource(
+        owner.userId,
+        serverName,
+        ctx.runtime.getWorkDir(),
+      );
+    }
   } catch (err) {
     // Non-fatal — the next boot will derive `running` from
     // connection.json and start the source from the persisted ref.
     // Log and continue to the success page.
     log.warn(
-      `[composio-auth] source recovery / state transition failed for ${cid} in ${wsId} (will recover on restart): ${errMessage(err)}`,
+      `[composio-auth] source recovery failed for ${cid} (${connectorOwnerKey(owner)}) (will recover on restart): ${errMessage(err)}`,
     );
   }
 }
