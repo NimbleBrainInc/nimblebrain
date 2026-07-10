@@ -36,7 +36,12 @@ import {
 import { hostMetaToUiMeta, sanitizePlacements } from "./defaults.ts";
 import { getMpak } from "./mpak.ts";
 import { hasPersistedWorkspaceOAuthTokens } from "./oauth-tokens.ts";
-import { defaultWorkDir, deriveServerName, resolveBundleDataDirForRef } from "./paths.ts";
+import {
+  defaultWorkDir,
+  deriveServerName,
+  resolveBundleDataDirForRef,
+  validateServerName,
+} from "./paths.ts";
 import { consumePendingAuth } from "./pending-auth-buffer.ts";
 import {
   type BundleMcpDeps,
@@ -2138,6 +2143,13 @@ export class BundleLifecycleManager {
     userId: string,
     opts: { workDir: string; allowInsecureRemotes?: boolean },
   ): Promise<{ authorizationUrl: string }> {
+    // Reserved-name guard, matching `startBundleSource` (which the lazy-start
+    // path routes through). This interactive path builds the source directly,
+    // so it enforces the same invariant: a source named `nb` would shadow the
+    // system-tool namespace. Install already rejects such names, so reaching
+    // here means a hand-edited record — fail closed before any wiring.
+    validateServerName(serverName);
+
     const registry = this.userRegistry(userId);
     const connectorKey = `${userId}|${serverName}`;
 

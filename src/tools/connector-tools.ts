@@ -9,7 +9,12 @@ import {
 import { WORKSPACE_PRINCIPAL_ID } from "../bundles/connection.ts";
 import { sanitizePlacements } from "../bundles/defaults.ts";
 import { getMpak } from "../bundles/mpak.ts";
-import { deriveServerName, serverNameFromRef, slugifyServerName } from "../bundles/paths.ts";
+import {
+  deriveServerName,
+  isReservedServerName,
+  serverNameFromRef,
+  slugifyServerName,
+} from "../bundles/paths.ts";
 import { startBundleSource } from "../bundles/startup.ts";
 import type {
   BundleInstance,
@@ -1228,6 +1233,19 @@ async function handleInstallIdentity(
   const action = entry.install;
 
   const serverName = slugifyServerName(entry.id);
+
+  // Reserved-name guard: a connector whose slug collides with a system-tool
+  // prefix (e.g. `nb`) would surface its tools as `nb__…` in the trusted system
+  // band. The workspace install path enforces this inside `startBundleSource`;
+  // the identity plane builds its source outside that path, so reject at the
+  // install boundary (and again in `startIdentityAuth`). Rejecting here keeps a
+  // reserved-name record from ever reaching `connectors.json`.
+  if (isReservedServerName(serverName)) {
+    return errResult(
+      `"${entry.id}" resolves to "${serverName}", a name reserved for NimbleBrain system ` +
+        `tools. Pick a connector with a different id.`,
+    );
+  }
 
   // Idempotency (identity side): if this connector is already installed on the
   // caller's identity, short-circuit BEFORE any wiring — a re-install must not
