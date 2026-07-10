@@ -24,10 +24,14 @@ import { CONNECTOR_FIXTURE_DIR } from "../helpers/connector-fixtures.ts";
  * — installing a personal connector on the caller's own identity plane
  * (`users/<id>/connectors.json`) instead of into a workspace.
  *
- * Scope of the slice under test: DCR (standard OAuth) connectors only. Composio
- * / static / provider auth are workspace/platform-bound and rejected here — a
- * separate slice. The collision rule ("a serverName can't be both a personal
- * connector and a shared-workspace install") is enforced at both install points.
+ * Scope of the slice under test: DCR (standard OAuth) and composio connectors.
+ * static / provider auth are workspace/platform-bound and rejected here — a
+ * separate slice. The composio session-creation path needs a module-level SDK
+ * mock, so its happy path lives in the unit suite
+ * (`connector-tools-composio-install.test.ts`); here we pin the gate (composio is
+ * admitted, and fails on the missing platform prerequisite, not the auth type).
+ * The collision rule ("a serverName can't be both a personal connector and a
+ * shared-workspace install") is enforced at both install points.
  */
 
 const USER: UserIdentity = {
@@ -199,10 +203,43 @@ describe("manage_connectors.install scope:identity — DCR personal-connector in
     expect(await new IdentityConnectorStore({ workDir: h.workDir }).list(USER.id)).toHaveLength(0);
   });
 
-  test("rejects a composio remote-oauth entry — DCR-only on the identity plane for now", async () => {
+  test("admits a composio entry at the gate — fails on the missing prerequisite, not the auth type", async () => {
+    // Deterministically drive the no-key path: composio passes the gate, then
+    // `validateComposioInstall` rejects because COMPOSIO_API_KEY is unset. (The
+    // happy path — a real session + persisted ref — lives in the unit suite,
+    // which mocks the Composio SDK.)
+    const savedKey = process.env.COMPOSIO_API_KEY;
+    delete process.env.COMPOSIO_API_KEY;
+    try {
+      const result = await h.tool.handler({
+        action: "install",
+        entry: composioEntry(),
+        scope: "identity",
+      });
+      expect(result.isError).toBe(true);
+      // NOT the old gate rejection — composio is no longer refused by auth type.
+      expect(resultText(result)).not.toMatch(/isn't supported for personal connectors yet/i);
+      // It got past the gate and hit the platform prerequisite check.
+      expect(resultText(result)).toMatch(/COMPOSIO_API_KEY/);
+      // A prerequisite failure persists nothing to the identity plane.
+      expect(await new IdentityConnectorStore({ workDir: h.workDir }).list(USER.id)).toHaveLength(0);
+    } finally {
+      if (savedKey === undefined) delete process.env.COMPOSIO_API_KEY;
+      else process.env.COMPOSIO_API_KEY = savedKey;
+    }
+  });
+
+  test("rejects a static remote-oauth entry — static is workspace-bound", async () => {
+    const staticEntry = composioEntry();
+    staticEntry.id = "com.dropbox/mcp";
+    staticEntry.name = "Dropbox";
+    if (staticEntry.install.kind === "remote-oauth") {
+      staticEntry.install.auth = "static";
+      delete (staticEntry.install as { composio?: unknown }).composio;
+    }
     const result = await h.tool.handler({
       action: "install",
-      entry: composioEntry(),
+      entry: staticEntry,
       scope: "identity",
     });
     expect(result.isError).toBe(true);
@@ -257,7 +294,7 @@ describe("manage_connectors.list_personal_catalog — the curated personal-conne
     rmSync(h.workDir, { recursive: true, force: true });
   });
 
-  test("offers personal DCR connectors; excludes non-personal and non-DCR", async () => {
+  test("offers personal DCR + composio connectors; excludes non-personal and static", async () => {
     const result = await h.tool.handler({ action: "list_personal_catalog" });
     expect(result.isError).toBe(false);
     const sc = result.structuredContent as {
@@ -266,12 +303,15 @@ describe("manage_connectors.list_personal_catalog — the curated personal-conne
     const ids = sc.catalog.map((e) => e.id);
     // Granola: dcr + personal → offered.
     expect(ids).toContain("ai.granola/mcp");
+    // Asana: composio + personal → offered (the widened gate).
+    expect(ids).toContain("io.asana/mcp");
     // Notion: dcr but NOT flagged personal → excluded.
     expect(ids).not.toContain("com.notion/mcp");
-    // Dropbox: flagged personal but static (non-DCR) → excluded; DCR is the hard gate.
+    // Dropbox: flagged personal but static → excluded; static stays workspace-bound.
     expect(ids).not.toContain("com.dropbox/mcp");
-    // Everything offered is a DCR remote MCP connection.
-    for (const e of sc.catalog) expect(e.install.auth).toBe("dcr");
+    // Everything offered is a DCR or composio remote MCP connection — lockstep
+    // with the install gate.
+    for (const e of sc.catalog) expect(["dcr", "composio"]).toContain(e.install.auth);
   });
 
   test("drops connectors already installed on the caller's identity", async () => {

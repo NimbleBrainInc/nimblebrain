@@ -1182,14 +1182,16 @@ async function personalConnectorCollisionGuard(
  * PERSONAL connector on the caller's own identity (`users/<id>/connectors.json`),
  * not into any workspace. The identity-plane sibling of `handleInstallRemoteOAuth`.
  *
- * DCR-only for now: `composio` binds the Composio-side identity to a workspace
- * (`composioUserId(wsId)`), `static` reads an operator client secret from the
- * workspace credential store, and `provider` carries a platform/fleet auth class
- * eager-started outside the interactive Connect flow — all workspace/platform-
- * bound. Only `dcr` (standard dynamic-client-registration OAuth) authenticates
- * cleanly on the identity plane, via the interactive Connect flow
- * (`POST /v1/mcp-auth/initiate-identity` → `startIdentityAuth`). The identity
- * variants of composio / static / provider are a separate slice.
+ * DCR and composio install here. `dcr` (standard dynamic-client-registration
+ * OAuth) authenticates via the interactive Connect flow
+ * (`POST /v1/mcp-auth/initiate-identity` → `startIdentityAuth`). `composio` binds
+ * the Composio-side identity to the caller (`{type:"user"}`, not a workspace) and
+ * connects via `POST /v1/composio-auth/initiate-identity`; its only owner-scoped
+ * state is the `composioUserId` + an opaque `connectedAccountId` (the API key is
+ * platform-global). `static` reads an operator client secret from the workspace
+ * credential store and `provider` carries a platform/fleet auth class — both
+ * workspace/platform-bound and rejected here (their identity variants are a
+ * separate slice).
  */
 async function handleInstallIdentity(
   ctx: ManageConnectorsContext,
@@ -1207,27 +1209,30 @@ async function handleInstallIdentity(
     );
   }
 
-  // DCR-only gate — fail fast before any composio/provider validation (which
-  // would create a Composio session or re-resolve from the catalog for an auth
-  // type we reject on the identity plane anyway).
-  if (entry.install.auth !== "dcr") {
+  // Gate: only DCR + composio install on the identity plane today. Fail fast
+  // before any wiring (a composio session, a static credential read, a provider
+  // re-resolve) for an auth type we reject here anyway. static/provider are
+  // workspace/platform-bound.
+  if (entry.install.auth !== "dcr" && entry.install.auth !== "composio") {
     return errResult(
       `"${entry.name}" uses "${entry.install.auth}" auth, which isn't supported for personal ` +
-        `connectors yet — only standard OAuth (DCR) connectors can install on your identity ` +
-        `today. Install it into a shared workspace instead.`,
+        `connectors yet — only standard OAuth (DCR) and Composio connectors can install on your ` +
+        `identity today. Install it into a shared workspace instead.`,
     );
   }
 
-  // No `validateRemoteOAuthInstall` here: the DCR gate above already narrowed the
-  // auth type, and that validator only checks composio / static / provider — it's
-  // a pass-through for `dcr`. The action shape is validated upstream by
-  // `parseDirectoryEntry`.
+  // The gate above narrowed to dcr|composio. `validateComposioInstall` (below)
+  // covers the composio prerequisites; static/provider — the only other things
+  // `validateRemoteOAuthInstall` checks — are already rejected. The action shape
+  // is validated upstream by `parseDirectoryEntry`.
   const action = entry.install;
 
   const serverName = slugifyServerName(entry.id);
 
   // Forbid the collision (identity side): reject if this serverName already
   // exists as a shared-workspace install in any workspace the caller belongs to.
+  // Runs before any composio wiring so a colliding re-install can't burn a
+  // Composio session.
   const collidingWsId = await findSharedWorkspaceInstall(ctx, callerId, serverName);
   if (collidingWsId) {
     return errResult(
@@ -1241,12 +1246,37 @@ async function handleInstallIdentity(
   // catalog by id, never the caller's entry (a forged entry can't inject chrome).
   const trustedUi = (await ctx.runtime.getConnectorDirectory().catalogById(entry.id))?.ui;
 
-  // DCR carries no install wiring (no composio session, no static client secret).
+  // Resolve install wiring, owner-generic. DCR carries none (no session, no client
+  // secret). Composio creates the upstream session bound to the caller's identity
+  // (`{type:"user"}`, not a workspace) and returns the per-install session URL +
+  // `${COMPOSIO_API_KEY}` transport template — the same wiring the workspace path
+  // builds via `resolveInstallWiring`, owner-swapped.
+  let composioWiring: { url: string; transport: RemoteTransportConfig } | undefined;
+  if (action.auth === "composio") {
+    const composioErr = validateComposioInstall(action, entry.name);
+    if (composioErr) return errResult(composioErr);
+    const wiring = await buildComposioWiring(
+      action,
+      { type: "user", userId: callerId },
+      entry.name,
+    );
+    if ("__err" in wiring) return errResult(wiring.__err);
+    composioWiring = wiring;
+  }
+
   // Strip the `oauthScope: "workspace"` literal `buildRemoteBundleRef` stamps for
   // the workspace path — an identity ref is user-owned structurally, by its
   // location in `connectors.json`, and carries no scope field (see
-  // `IdentityConnectorStore`).
-  const ref = buildRemoteBundleRef(action, serverName, entry.id, trustedUi, undefined, undefined);
+  // `IdentityConnectorStore`). The composio marker (`{composio:{connectorId}}`),
+  // when present, rides the ref so the Connect route and list handler key on it.
+  const ref = buildRemoteBundleRef(
+    action,
+    serverName,
+    entry.id,
+    trustedUi,
+    composioWiring,
+    undefined,
+  );
   delete (ref as { oauthScope?: "workspace" }).oauthScope;
 
   // The connector-skill overlay (`syncBoundSkills`) is workspace-keyed; the
@@ -1256,10 +1286,12 @@ async function handleInstallIdentity(
 
   await new IdentityConnectorStore({ workDir: ctx.runtime.getWorkDir() }).add(callerId, ref);
 
-  // No eager-start: a DCR connector has no credentials until the user completes
-  // the interactive Connect flow (`POST /v1/mcp-auth/initiate-identity` →
-  // `startIdentityAuth`), which starts the source into the user registry when the
-  // browser returns. Install only persists the record.
+  // No eager-start: a connector has no live credentials until the user completes
+  // the interactive Connect flow — DCR via `POST /v1/mcp-auth/initiate-identity`
+  // (`startIdentityAuth`), composio via `POST /v1/composio-auth/initiate-identity`.
+  // Both callbacks start the source into the user registry
+  // (`getIdentityConnectorSource`) when the browser returns. Install only persists
+  // the record.
   return {
     content: textContent(
       `Installed "${entry.name}" as a personal connector. Connect it to authenticate.`,
@@ -2699,14 +2731,14 @@ async function handleSetPermissions(
 /**
  * `list_personal_catalog` — the curated set of connectors offered for PERSONAL
  * (identity-plane) connection: operator-flagged `personal` connectors, narrowed
- * to what `handleInstallIdentity` will actually accept (DCR remote-oauth), minus
- * the ones the caller already installed on their identity. The read behind the
- * profile "Add a connector" picker.
+ * to what `handleInstallIdentity` will actually accept (DCR + composio
+ * remote-oauth), minus the ones the caller already installed on their identity.
+ * The read behind the profile "Add a connector" picker.
  *
- * The DCR predicate MUST stay in lockstep with `handleInstallIdentity`'s gate
- * (composio/static/provider are workspace/platform-bound and rejected there), so
- * the offered set is a subset of the acceptable set — the picker can never
- * present a connector the install then refuses.
+ * The auth predicate MUST stay in lockstep with `handleInstallIdentity`'s gate
+ * (static/provider are workspace/platform-bound and rejected there), so the
+ * offered set is a subset of the acceptable set — the picker can never present a
+ * connector the install then refuses.
  */
 async function handleListPersonalCatalog(
   ctx: ManageConnectorsContext,
@@ -2728,8 +2760,8 @@ async function handleListPersonalCatalog(
     (e) =>
       e.personal === true &&
       e.install.kind === "remote-oauth" &&
-      // Lockstep with handleInstallIdentity's DCR gate — offered ⊆ acceptable.
-      e.install.auth === "dcr" &&
+      // Lockstep with handleInstallIdentity's gate — offered ⊆ acceptable.
+      (e.install.auth === "dcr" || e.install.auth === "composio") &&
       !installedServerNames.has(slugifyServerName(e.id)),
   );
 
@@ -2770,10 +2802,21 @@ async function handleListPersonalConnectors(
   const connectors = refs.map((ref) => {
     const serverName = serverNameFromRef(ref);
     const cat = byServerName.get(serverName);
+    // Auth type + (for composio) the catalog connector id are read from the
+    // stored ref, not the catalog — they're what the Connect route keys on and
+    // must survive a catalog entry being renamed or removed. The composio marker
+    // (`{composio:{connectorId}}`) is stamped at install by `buildRemoteBundleRef`;
+    // its absence means DCR.
+    const composioMarker = (ref as { composio?: { connectorId: string } }).composio;
     return {
       serverName,
       displayName: cat?.name ?? serverName,
       description: cat?.description ?? null,
+      // The Connect route differs by auth: DCR keys on serverName
+      // (`/v1/mcp-auth/initiate-identity`); composio keys on the connectorId
+      // (`/v1/composio-auth/initiate-identity`). The profile UI branches on this.
+      auth: composioMarker ? ("composio" as const) : ("dcr" as const),
+      ...(composioMarker ? { connectorId: composioMarker.connectorId } : {}),
       // Same-pod truth: `running` once the source is warm in this pod's user
       // registry (after a Connect / dispatch), else the resting
       // `not_authenticated` — installed, click Connect. Cross-pod / persisted
