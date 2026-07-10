@@ -202,9 +202,8 @@ export function injectCSP(html: string, policy: string): string {
 /**
  * Create a sandboxed iframe for an MCP App.
  *
- * Sandbox attributes per SS10.3:
- * - allow-scripts: JavaScript execution
- * - allow-same-origin: Needed for postMessage origin checks
+ * Sandbox attributes:
+ * - allow-scripts: JavaScript execution (the app is an interactive UI)
  * - allow-popups: External link opening
  * - allow-popups-to-escape-sandbox: Opened popups are not sandboxed
  * - allow-downloads: Lets an app save bytes it already holds (e.g. the
@@ -212,7 +211,17 @@ export function injectCSP(html: string, policy: string): string {
  *   from a blob: URL). Gesture-gated by the browser; without it Chromium
  *   silently blocks the download.
  *
- * Explicitly NOT allowed: allow-forms, allow-top-navigation, allow-modals.
+ * Deliberately NOT granted:
+ * - allow-same-origin: App HTML is third-party (bundle / remote-MCP-server
+ *   authored). With `srcdoc`, granting this makes the frame SAME-ORIGIN with
+ *   the host — the app could then read `window.parent` (DOM, globals), ride
+ *   the host session cookie on same-origin `/v1` + `/mcp` fetches, and remove
+ *   its own sandbox: a full sandbox escape. Withheld, the app runs in an
+ *   opaque origin. The bridge keys trust on `event.source ===
+ *   iframe.contentWindow` (not origin), so postMessage still works; a real
+ *   per-app origin, if ever needed, comes from the sandbox-proxy pattern in
+ *   the TODO below — never from same-origin.
+ * - allow-forms, allow-top-navigation, allow-modals.
  */
 export function createAppIframe(
   html: string,
@@ -221,10 +230,8 @@ export function createAppIframe(
 ): HTMLIFrameElement {
   const iframe = document.createElement("iframe");
 
-  // Sandbox attributes per SS10.3
   iframe.sandbox.add(
     "allow-scripts",
-    "allow-same-origin",
     "allow-popups",
     "allow-popups-to-escape-sandbox",
     "allow-downloads",
