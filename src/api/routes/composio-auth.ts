@@ -6,6 +6,7 @@ import {
 } from "../../bundles/composio-connection.ts";
 import { WORKSPACE_PRINCIPAL_ID } from "../../bundles/connection.ts";
 import { slugifyServerName } from "../../bundles/paths.ts";
+import { consumeConnectFlow, registerConnectFlow } from "../../composio/connect-flow-registry.ts";
 import {
   COMPOSIO_CALLBACK_PATH,
   composioCallbackUrl,
@@ -40,10 +41,12 @@ import { profileConnectorsUrl, workspaceConnectorsUrl } from "./connectors-redir
  *   as `/v1/mcp-auth/initiate`.
  *
  * - `GET /v1/composio-auth/callback` (unauthenticated): the return
- *   leg from Composio after the user consents at the vendor.
- *   Verifies the cookie nonce binds the calling browser session to
- *   (connectorId, workspaceId) so a leaked URL alone can't land
- *   tokens in someone else's workspace, then writes `connection.json`.
+ *   leg from Composio after the user consents at the vendor. Recovers
+ *   the (owner, connectorId) from the server-side flow record that an
+ *   authenticated `/initiate` created under the URL nonce — never from
+ *   the query — so an unauthenticated caller can't land a connection
+ *   under another owner. A session cookie binds the nonce to the
+ *   calling browser on top. Then writes `connection.json`.
  *
  * - `GET /v1/composio-auth/proxy` (unauthenticated): white-label
  *   forwarder. Registered with the vendor as our OAuth client's
@@ -101,23 +104,6 @@ function isValidConnectorId(cid: string): boolean {
 /** Where the browser returns after a successful connect — the owner's connectors surface. */
 function connectorsReturnUrl(owner: ConnectorOwner): string {
   return owner.type === "workspace" ? workspaceConnectorsUrl(owner.wsId) : profileConnectorsUrl();
-}
-
-/**
- * Recover a `ConnectorOwner` from the callback query — exactly one of `ws`
- * (workspace) or `usr` (user). The id must be a safe single path segment (the
- * cookie hash is the real tamper guard; this is a defense-in-depth boundary
- * check before the id reaches a credential path). Returns null when the owner
- * is ambiguous, missing, or unsafe.
- */
-function ownerFromCallbackQuery(
-  ws: string | undefined,
-  usr: string | undefined,
-): ConnectorOwner | null {
-  const safe = (id: string): boolean => id.length > 0 && !id.includes("/") && !id.includes("..");
-  if (ws && !usr && safe(ws)) return { type: "workspace", wsId: ws };
-  if (usr && !ws && safe(usr)) return { type: "user", userId: usr };
-  return null;
 }
 
 export function composioAuthRoutes(ctx: AppContext) {
@@ -521,17 +507,12 @@ async function initiateFreshComposioConnection(
   const ownerLabel = connectorOwnerKey(owner);
   const nonce = randomBytes(32).toString("hex");
 
-  // Encode the binding parameters in the callback URL so the
-  // callback handler (which has no auth middleware — the user comes
-  // back from Composio without our headers) can reconstruct the
-  // (connectorId, owner) tuple. Exactly one of `ws` / `usr` names the
-  // owner. The cookie hash commits to all of them; tampering with any
-  // in the URL fails the constant-time compare on return.
-  const callbackBase = composioCallbackUrl();
-  const callbackUrl = new URL(callbackBase);
-  callbackUrl.searchParams.set("cid", connectorId);
-  if (owner.type === "workspace") callbackUrl.searchParams.set("ws", owner.wsId);
-  else callbackUrl.searchParams.set("usr", owner.userId);
+  // The callback (which has no auth middleware — the user returns from Composio
+  // without our headers) recovers the owner and connector from the server-side
+  // flow record keyed by this nonce, never from the query string, so the return
+  // leg can't be steered to a different owner. The callback URL therefore
+  // carries only the nonce; Composio appends `connected_account_id`/`status`.
+  const callbackUrl = new URL(composioCallbackUrl());
   callbackUrl.searchParams.set("n", nonce);
 
   let initiateResponse: { redirectUrl: string; connectedAccountId: string };
@@ -549,12 +530,19 @@ async function initiateFreshComposioConnection(
     return apiError(502, "composio_initiate_failed", "Composio rejected the connection initiate.");
   }
 
-  // Cookie binds (nonce, connectorId, owner) to this browser session.
-  // Scoped to /v1/composio-auth/callback so it's only sent back on the
-  // return leg — never leaked to /initiate calls on adjacent paths or
-  // to the SPA. The owner is committed as `connectorOwnerKey` so a
-  // workspace id and a user id can never hash to the same value.
-  const stateHash = sha256Hex(`${nonce}.${connectorId}.${ownerLabel}`);
+  // Register the flow only once Composio has accepted the initiate, so a failed
+  // initiate leaves no orphan record. The nonce is a value only this
+  // authenticated initiate could mint — that's what makes the record the
+  // callback's anti-forgery gate.
+  registerConnectFlow(nonce, owner, connectorId);
+
+  // Cookie binds the nonce to this browser session. Scoped to
+  // /v1/composio-auth/callback so it's only sent back on the return leg — never
+  // leaked to /initiate calls on adjacent paths or to the SPA. The server-side
+  // flow record is the anti-forgery gate; this cookie adds session binding on
+  // top, so a nonce leaked from the URL (referrer, history) can't be completed
+  // from a different browser.
+  const stateHash = sha256Hex(nonce);
   c.header("Set-Cookie", buildComposioStateCookie(stateHash, 900, ctx.secureCookies));
 
   return c.json({
@@ -569,7 +557,6 @@ async function validateCallbackParams(c: Context<AppEnv>): Promise<
       status: string;
       cid: string;
       owner: ConnectorOwner;
-      nonce: string;
     }
   | Response
 > {
@@ -577,8 +564,6 @@ async function validateCallbackParams(c: Context<AppEnv>): Promise<
     c.req.query("connectedAccountId") ?? c.req.query("connected_account_id");
   const status = c.req.query("status") ?? "ACTIVE";
   const error = c.req.query("error");
-  const cid = c.req.query("cid");
-  const owner = ownerFromCallbackQuery(c.req.query("ws"), c.req.query("usr"));
   const nonce = c.req.query("n");
 
   if (error) {
@@ -588,19 +573,17 @@ async function validateCallbackParams(c: Context<AppEnv>): Promise<
       400,
     );
   }
-  if (!cid || !owner || !nonce) {
-    return c.text("missing cid, owner (ws|usr), or nonce", 400);
-  }
-  if (!isValidConnectorId(cid)) {
-    return c.text("invalid cid", 400);
+  if (!nonce) {
+    return c.text("missing nonce", 400);
   }
   if (!connectedAccountId) {
     return c.text("missing connectedAccountId", 400);
   }
 
-  const expected = sha256Hex(`${nonce}.${cid}.${connectorOwnerKey(owner)}`);
+  // Session binding: the cookie set by /initiate must hash to the nonce, so a
+  // nonce leaked from the URL can't be completed from a different browser.
   const cookieValue = readCookie(c.req.header("cookie"), "nb_composio_state");
-  if (!cookieValue || !timingSafeEqualHex(cookieValue, expected)) {
+  if (!cookieValue || !timingSafeEqualHex(cookieValue, sha256Hex(nonce))) {
     c.header("Content-Security-Policy", ERROR_PAGE_CSP);
     return c.html(
       "<html><body><h3>Authorization session mismatch.</h3>" +
@@ -609,7 +592,22 @@ async function validateCallbackParams(c: Context<AppEnv>): Promise<
     );
   }
 
-  return { connectedAccountId, status, cid, owner, nonce };
+  // Anti-forgery gate: recover (owner, connectorId) from the server-side record
+  // an authenticated /initiate created under this nonce. No record ⟹ the nonce
+  // was never issued (or is already used / expired) — reject rather than trust
+  // the query. This is what stops an unauthenticated caller from landing a
+  // connection under another owner. One-shot: `consume` removes the record.
+  const flow = consumeConnectFlow(nonce);
+  if (!flow) {
+    c.header("Content-Security-Policy", ERROR_PAGE_CSP);
+    return c.html(
+      "<html><body><h3>Unknown or expired authorization flow.</h3>" +
+        "<p>Re-initiate the connection from NimbleBrain.</p></body></html>",
+      400,
+    );
+  }
+
+  return { connectedAccountId, status, cid: flow.connectorId, owner: flow.owner };
 }
 
 /** Load a callback `cid` from the catalog and confirm it is Composio-backed, else an error Response. */
