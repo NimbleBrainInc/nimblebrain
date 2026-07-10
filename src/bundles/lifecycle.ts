@@ -2468,7 +2468,11 @@ export class BundleLifecycleManager {
     // runs), so `running` is accurate.
     const hasAuth =
       "composio" in ref && ref.composio
-        ? hasPersistedComposioConnection(workDir, wsId, ref.composio.connectorId)
+        ? hasPersistedComposioConnection(
+            workDir,
+            { type: "workspace", wsId },
+            ref.composio.connectorId,
+          )
         : bundleHasStaticAuth(ref) || hasPersistedWorkspaceOAuthTokens(workDir, wsId, serverName);
     if (!hasAuth) {
       this.recordConnectionStateChange(serverName, wsId, "_workspace", "not_authenticated");

@@ -551,14 +551,14 @@ describe("manage_connectors.install (composio-auth)", () => {
     // Simulate a completed Composio OAuth: a connection.json under the
     // personal workspace's credential path. Cleanup must find and remove
     // THIS file — proving it resolves by wsId, personal included.
-    await saveComposioConnection(h.workDir, personalWsId, GMAIL_ID, {
+    await saveComposioConnection(h.workDir, { type: "workspace", wsId: personalWsId }, GMAIL_ID, {
       connectedAccountId: "ca_personal",
       toolkit: "gmail",
       userId: ADMIN.id,
       connectedAt: "2026-06-02T00:00:00.000Z",
       status: "ACTIVE",
     });
-    expect(hasPersistedComposioConnection(h.workDir, personalWsId, GMAIL_ID)).toBe(true);
+    expect(hasPersistedComposioConnection(h.workDir, { type: "workspace", wsId: personalWsId }, GMAIL_ID)).toBe(true);
 
     // Drop the API key so cleanup skips the upstream revoke (offline);
     // the local-delete branch is the part that pins the wsId routing.
@@ -573,6 +573,6 @@ describe("manage_connectors.install (composio-auth)", () => {
       .getLifecycle()
       .disconnect("com-google-gmail", personalWsId, "_workspace", { workDir: h.workDir });
 
-    expect(hasPersistedComposioConnection(h.workDir, personalWsId, GMAIL_ID)).toBe(false);
+    expect(hasPersistedComposioConnection(h.workDir, { type: "workspace", wsId: personalWsId }, GMAIL_ID)).toBe(false);
   });
 });

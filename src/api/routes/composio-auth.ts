@@ -123,7 +123,7 @@ export function composioAuthRoutes(ctx: AppContext) {
       if (creds instanceof Response) return creds;
       const { apiKey, authConfigId } = creds;
 
-      const userId = composioUserId(wsId);
+      const userId = composioUserId({ type: "workspace", wsId });
 
       // Short-circuit: if Composio already has an ACTIVE connected
       // account for this (userId, authConfigId), reuse it rather than
@@ -160,7 +160,7 @@ export function composioAuthRoutes(ctx: AppContext) {
     const entry = await loadCallbackCatalogEntry(ctx, c, cid);
     if (entry instanceof Response) return entry;
 
-    const userId = composioUserId(wsId);
+    const userId = composioUserId({ type: "workspace", wsId });
     const connection: ComposioConnection = {
       connectedAccountId,
       toolkit: entry.composio.toolkit,
@@ -170,7 +170,12 @@ export function composioAuthRoutes(ctx: AppContext) {
     };
 
     try {
-      await saveComposioConnection(ctx.runtime.getWorkDir(), wsId, cid, connection);
+      await saveComposioConnection(
+        ctx.runtime.getWorkDir(),
+        { type: "workspace", wsId },
+        cid,
+        connection,
+      );
     } catch (err) {
       log.error(
         `[composio-auth] failed to persist connection for ${cid} in ${wsId}: ${errMessage(err)}`,
@@ -389,7 +394,12 @@ async function adoptExistingComposioConnection(
         connectedAt: new Date().toISOString(),
         status: existing.status,
       };
-      await saveComposioConnection(ctx.runtime.getWorkDir(), wsId, connectorId, connection);
+      await saveComposioConnection(
+        ctx.runtime.getWorkDir(),
+        { type: "workspace", wsId },
+        connectorId,
+        connection,
+      );
       lifecycle.recordConnectionStateChange(serverName, wsId, WORKSPACE_PRINCIPAL_ID, "running");
       return c.json({
         authorizationUrl: workspaceConnectorsUrl(wsId),

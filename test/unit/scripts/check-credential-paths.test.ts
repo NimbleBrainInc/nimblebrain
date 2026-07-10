@@ -87,7 +87,15 @@ describe("check-credential-paths — isUserCredentialJoin", () => {
     expect(isUserCredentialJoin(call!)).toBe(false);
   });
 
-  test("still matches a non-mcp-oauth child of `users/<id>/credentials/`", () => {
+  test("does NOT match the sanctioned `users/<id>/credentials/composio/...` carve-out", () => {
+    const src = parse(
+      `const p = join(workDir, "users", userId, "credentials", "composio", connectorId);`,
+    );
+    const call = findFirst(src, ts.isCallExpression);
+    expect(isUserCredentialJoin(call!)).toBe(false);
+  });
+
+  test("still matches a non-carve-out child of `users/<id>/credentials/`", () => {
     const src = parse(
       `const p = join(workDir, "users", userId, "credentials", "secrets", "x");`,
     );
@@ -139,6 +147,14 @@ describe("check-credential-paths — isUserCredentialStringLiteral", () => {
   test("does NOT match the sanctioned `users/<id>/credentials/mcp-oauth/...` carve-out", () => {
     const src = parse(
       `const p = "/work/users/user_abc/credentials/mcp-oauth/notion/tokens.json";`,
+    );
+    const node = findFirst(src, ts.isStringLiteral);
+    expect(isUserCredentialStringLiteral(node!)).toBe(false);
+  });
+
+  test("does NOT match the sanctioned `users/<id>/credentials/composio/...` carve-out", () => {
+    const src = parse(
+      `const p = "/work/users/user_abc/credentials/composio/com.slack-slack/connection.json";`,
     );
     const node = findFirst(src, ts.isStringLiteral);
     expect(isUserCredentialStringLiteral(node!)).toBe(false);

@@ -24,6 +24,8 @@
 import { existsSync } from "node:fs";
 import { chmod, mkdir, readFile, rename, unlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import type { ConnectorOwner } from "../identity/connector-owner.ts";
+import { IdentityContext } from "../identity/context.ts";
 import { WorkspaceContext } from "../workspace/context.ts";
 
 /**
@@ -80,36 +82,58 @@ export function connectorSlug(connectorId: string): string {
   return slug;
 }
 
-/** Absolute path to the per-connector composio credentials directory. */
-export function composioConnectorDir(workDir: string, wsId: string, connectorId: string): string {
-  // Routed through WorkspaceContext so the `workspaces/{wsId}/credentials/`
-  // layout has exactly one definition site (see src/workspace/context.ts).
-  // The context constructor validates `wsId` against `WORKSPACE_ID_RE`,
-  // so no local `assertValidWsId` is needed.
-  return new WorkspaceContext({ wsId, workDir }).getDataPath(
-    "credentials",
-    "composio",
-    connectorSlug(connectorId),
-  );
+/**
+ * Absolute path to the per-connector composio credentials directory, under the
+ * owner's credential root:
+ *   - workspace: `workspaces/<wsId>/credentials/composio/<connector>/`
+ *   - user:      `users/<userId>/credentials/composio/<connector>/`
+ *
+ * The workspace path routes through `WorkspaceContext` (its single definition
+ * site, validates `wsId`). The user path is the identity-owned personal-
+ * connector credential home, outside any workspace (mirrors the mcp-oauth
+ * `{type:"user"}` arm): the `IdentityContext` constructor validates the userId,
+ * and the `credentials/composio` subpath is joined onto that validated root — a
+ * variable root, so `check:credential-paths` sees no literal `users/…/
+ * credentials` to flag (the `composio` carve-out covers literal reconstruction).
+ */
+export function composioConnectorDir(
+  workDir: string,
+  owner: ConnectorOwner,
+  connectorId: string,
+): string {
+  const slug = connectorSlug(connectorId);
+  if (owner.type === "workspace") {
+    return new WorkspaceContext({ wsId: owner.wsId, workDir }).getDataPath(
+      "credentials",
+      "composio",
+      slug,
+    );
+  }
+  const userRoot = new IdentityContext({ userId: owner.userId, workDir }).getDataPath("root");
+  return join(userRoot, "credentials", "composio", slug);
 }
 
-/** Absolute path to `connection.json` for a (workspace, connector). */
-export function composioConnectionPath(workDir: string, wsId: string, connectorId: string): string {
-  return join(composioConnectorDir(workDir, wsId, connectorId), "connection.json");
+/** Absolute path to `connection.json` for an (owner, connector). */
+export function composioConnectionPath(
+  workDir: string,
+  owner: ConnectorOwner,
+  connectorId: string,
+): string {
+  return join(composioConnectorDir(workDir, owner, connectorId), "connection.json");
 }
 
 /**
  * True iff a `connection.json` exists at the expected path for this
- * (workspace, connector). Existence-only — does not parse or validate.
+ * (owner, connector). Existence-only — does not parse or validate.
  * Used at platform boot to pick the right initial state for a Composio-
  * backed connector (`not_authenticated` vs ready-to-start).
  */
 export function hasPersistedComposioConnection(
   workDir: string,
-  wsId: string,
+  owner: ConnectorOwner,
   connectorId: string,
 ): boolean {
-  return existsSync(composioConnectionPath(workDir, wsId, connectorId));
+  return existsSync(composioConnectionPath(workDir, owner, connectorId));
 }
 
 let tmpCounter = 0;
@@ -133,11 +157,11 @@ async function atomicWriteFile(path: string, content: string, mode: number): Pro
  */
 export async function saveComposioConnection(
   workDir: string,
-  wsId: string,
+  owner: ConnectorOwner,
   connectorId: string,
   connection: ComposioConnection,
 ): Promise<void> {
-  const dir = composioConnectorDir(workDir, wsId, connectorId);
+  const dir = composioConnectorDir(workDir, owner, connectorId);
   await mkdir(dir, { recursive: true, mode: 0o700 });
   try {
     await chmod(dir, 0o700);
@@ -145,7 +169,7 @@ export async function saveComposioConnection(
     // Best-effort directory hardening — the file is 0o600 explicitly.
     // Mirror workspace-credentials.ts's policy of not aborting here.
   }
-  const filePath = composioConnectionPath(workDir, wsId, connectorId);
+  const filePath = composioConnectionPath(workDir, owner, connectorId);
   await atomicWriteFile(filePath, `${JSON.stringify(connection, null, 2)}\n`, 0o600);
 }
 
@@ -158,10 +182,10 @@ export async function saveComposioConnection(
  */
 export async function readComposioConnection(
   workDir: string,
-  wsId: string,
+  owner: ConnectorOwner,
   connectorId: string,
 ): Promise<ComposioConnection | null> {
-  const filePath = composioConnectionPath(workDir, wsId, connectorId);
+  const filePath = composioConnectionPath(workDir, owner, connectorId);
   let raw: string;
   try {
     raw = await readFile(filePath, "utf-8");
@@ -209,10 +233,10 @@ export async function readComposioConnection(
  */
 export async function deleteComposioConnection(
   workDir: string,
-  wsId: string,
+  owner: ConnectorOwner,
   connectorId: string,
 ): Promise<boolean> {
-  const filePath = composioConnectionPath(workDir, wsId, connectorId);
+  const filePath = composioConnectionPath(workDir, owner, connectorId);
   try {
     await unlink(filePath);
     return true;
