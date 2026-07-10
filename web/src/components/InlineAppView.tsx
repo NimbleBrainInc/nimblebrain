@@ -28,10 +28,14 @@ const INLINE_SIZING_CSS = `<style>html,body{height:auto!important;min-height:0!i
 // read `iframe.contentDocument` to measure it — the content must report its own
 // size. A ResizeObserver posts `ui/notifications/size-changed` (the ext-apps
 // resize protocol the bridge already routes to `onResize`) on every content
-// change plus once on start; the host caps the value at MAX_HEIGHT. This is
-// host-injected wrapper markup, not app code; CSP `script-src 'unsafe-inline'`
+// change plus once on start; the host caps at MAX_HEIGHT and floors at >0.
+// Reports `body.scrollHeight` (true content height, so the widget shrinks as
+// well as grows) — NOT `documentElement.scrollHeight`, whose viewport floor
+// ratchets the height and never lets it shrink. An empty root (async app,
+// pre-mount) reports ~0, which the host's `onResize` lower bound ignores. This
+// is host-injected wrapper markup, not app code; CSP `script-src 'unsafe-inline'`
 // permits it, and `injectCSP` replaces any app-declared CSP so it always runs.
-const INLINE_RESIZE_REPORTER = `<script>(function(){function r(){try{parent.postMessage({jsonrpc:"2.0",method:"ui/notifications/size-changed",params:{height:document.documentElement.scrollHeight}},"*");}catch(e){}}function s(){try{new ResizeObserver(r).observe(document.body||document.documentElement);}catch(e){}r();}if(document.readyState==="loading"){document.addEventListener("DOMContentLoaded",s);}else{s();}})();</script>`;
+const INLINE_RESIZE_REPORTER = `<script>(function(){function r(){try{var b=document.body;parent.postMessage({jsonrpc:"2.0",method:"ui/notifications/size-changed",params:{height:b?b.scrollHeight:document.documentElement.scrollHeight}},"*");}catch(e){}}function s(){try{new ResizeObserver(r).observe(document.body||document.documentElement);}catch(e){}r();}if(document.readyState==="loading"){document.addEventListener("DOMContentLoaded",s);}else{s();}})();</script>`;
 
 /** Inject inline auto-sizing CSS + a content-height reporter into app HTML so full-page templates size to content, not the viewport. */
 function buildSizedHtml(html: string): string {
@@ -123,10 +127,17 @@ export function InlineAppView({ appName, resourceUri, toolResult }: InlineAppVie
 
         const bridge = createBridge(iframe, appName, {
           onResize: (newHeight) => {
-            // App's explicit resize hint — still respect it but cap it
+            // Cap at MAX_HEIGHT and ignore non-positive heights. The in-iframe
+            // reporter fires once on DOMContentLoaded — when an async-rendering
+            // app's root is still empty, scrollHeight ≈ 0 — so without this
+            // lower bound the widget would collapse to ~0px until content mounts
+            // and the ResizeObserver reports again. Restores the guard the old
+            // contentDocument observer had.
             const h = Math.min(newHeight, MAX_HEIGHT);
-            setHeight(h);
-            iframe.style.height = `${h}px`;
+            if (h > 0) {
+              setHeight(h);
+              iframe.style.height = `${h}px`;
+            }
           },
           onInitialized: () => {
             const tr = toolResultRef.current;
