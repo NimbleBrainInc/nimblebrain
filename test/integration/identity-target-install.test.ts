@@ -90,6 +90,7 @@ interface Harness {
   workDir: string;
   sharedWsId: string;
   grants: Record<string, string[]>;
+  toolPolicies: Record<string, unknown>;
   tool: ReturnType<typeof createManageConnectorsTool>;
 }
 
@@ -130,6 +131,9 @@ async function buildHarness(): Promise<Harness> {
   });
 
   const grants: Record<string, string[]> = {};
+  // Per-tool allow/deny policies, keyed serverName — the user-scope
+  // `connectors[serverName]` block a disconnect must also clear.
+  const toolPolicies: Record<string, unknown> = {};
   const runtime = {
     getWorkDir: () => workDir,
     getWorkspaceStore: () => workspaceStore,
@@ -139,7 +143,9 @@ async function buildHarness(): Promise<Harness> {
     getLifecycle: () => lifecycle,
     getRegistryForWorkspace: (_id: string) => workspaceRegistry,
     getPermissionStore: () => ({
-      deleteConnector: async () => {},
+      deleteConnector: async (owner: { scope: string }, serverName: string) => {
+        if (owner.scope === "user") delete toolPolicies[serverName];
+      },
       listConnectorGrants: async (_userId: string) => grants,
       getConnectorGrants: async (_userId: string, serverName: string) => grants[serverName] ?? [],
       grantConnector: async (_userId: string, serverName: string, wsId: string) => {
@@ -159,7 +165,7 @@ async function buildHarness(): Promise<Harness> {
     getIdentity: () => USER,
     getWorkspaceId: () => sharedWsId,
   };
-  return { workDir, sharedWsId, grants, tool: createManageConnectorsTool(ctx) };
+  return { workDir, sharedWsId, grants, toolPolicies, tool: createManageConnectorsTool(ctx) };
 }
 
 function resultText(result: { content?: unknown }): string {
@@ -407,9 +413,13 @@ describe("manage_connectors.disconnect scope:identity — full remove", () => {
 
   const SERVER = "ai-granola-mcp"; // slugifyServerName("ai.granola/mcp")
 
-  test("removes the install record, revokes all grants, and deletes identity credentials", async () => {
+  test("removes the install record, revokes all grants, drops tool policies, and deletes identity credentials", async () => {
     await h.tool.handler({ action: "install", entry: dcrEntry(), scope: "identity" });
     await h.tool.handler({ action: "grant_connector", serverName: SERVER, wsId: h.sharedWsId });
+
+    // A per-tool allow policy the user set on this personal connector — it must not
+    // survive the disconnect (else it silently rebinds on a reconnect).
+    h.toolPolicies[SERVER] = { tools: { some_tool: "allow" } };
 
     // Simulate a completed OAuth: tokens under the identity mcp-oauth root.
     const oauthDir = join(h.workDir, "users", USER.id, "credentials", "mcp-oauth", SERVER);
@@ -439,6 +449,8 @@ describe("manage_connectors.disconnect scope:identity — full remove", () => {
     expect(await store.list(USER.id)).toHaveLength(0);
     // Every grant revoked.
     expect(h.grants[SERVER]).toBeUndefined();
+    // Per-tool policies dropped (no silent rebind on reconnect).
+    expect(h.toolPolicies[SERVER]).toBeUndefined();
     // Identity credentials deleted.
     expect(existsSync(oauthDir)).toBe(false);
   });

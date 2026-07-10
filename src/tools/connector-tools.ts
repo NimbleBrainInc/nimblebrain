@@ -2979,6 +2979,15 @@ async function handleDisconnectIdentity(
     await ctx.runtime.getPermissionStore().revokeConnector(callerId, serverName, wsId);
   }
 
+  // Drop the connector's per-tool allow/deny policies too — personal-connector
+  // policies live under the user-scope record (`resolvePermissionOwner` →
+  // `{scope:"user"}`). They have no meaning once the connector is gone, and
+  // leaving them lets a stale "always allow" silently rebind on a reconnect (same
+  // deterministic serverName). Mirrors the workspace uninstall's `deleteConnector`.
+  await ctx.runtime
+    .getPermissionStore()
+    .deleteConnector({ scope: "user", userId: callerId }, serverName);
+
   // Full teardown: stop + drop the source, delete identity credentials, remove the
   // install record.
   await ctx.runtime

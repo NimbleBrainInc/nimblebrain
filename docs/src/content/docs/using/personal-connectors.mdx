@@ -62,6 +62,10 @@ Once a personal connector is **granted into the workspace you're chatting in**, 
 
 The connector leaves **Your connectors** and returns to **Add a connector**. There is no "de-authenticate but keep it" half-state — disconnect is a clean removal. To use the service again later, connect it again and re-grant it where you want it. Disconnecting asks you to confirm first, and tells you how many workspaces will lose access.
 
+<Aside type="note" title="The vendor-side grant">
+Disconnect removes NimbleBrain's copy of your credentials. It does **not yet revoke the grant at the vendor** — the service may still list NimbleBrain among its authorized apps until the token expires. To remove that too, revoke access in the vendor's own account settings.
+</Aside>
+
 ## Where your credentials live
 
 A personal connector's credentials are **identity-owned**: they live at `users/<userId>/credentials/` on the platform, outside any workspace, so leaving or being removed from a workspace never orphans them. They are never echoed back to the UI. For a Composio connector, the platform-wide Composio API key stays in the platform environment and only an opaque account pointer is stored against your identity — never the vendor key. See [Credentials](/config/credentials/) for the full model.

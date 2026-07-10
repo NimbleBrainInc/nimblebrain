@@ -2121,10 +2121,15 @@ export class BundleLifecycleManager {
    * `lifecycle.uninstall`. Each teardown step is best-effort so a partial failure
    * still reaches the install-record removal — the user-visible "it's gone".
    *
-   * Upstream Composio account revocation is NOT done here (`cleanupComposioBundle`
-   * is workspace-keyed); an owner-aware revoke rolls into the connection-state
-   * slice. Deleting the local `connection.json` still makes the platform forget
-   * the account.
+   * Upstream token revocation is NOT performed here — for a DCR connector the
+   * vendor's OAuth grant (RFC 7009) and for a composio connector the connected
+   * account both stay live at the vendor until they expire; we only delete the
+   * LOCAL credentials, so the platform forgets them. The workspace `uninstall`
+   * DOES revoke upstream (`revokeUrlBundleTokens` for DCR, `cleanupComposioBundle`
+   * for composio), but both are workspace-keyed; owner-aware upstream revocation
+   * for both auth types rolls into the connection-state / reauth slice. This is a
+   * known asymmetry with `uninstall`. A user who wants the vendor-side grant gone
+   * meanwhile can revoke it in the vendor's own authorized-apps list.
    */
   async uninstallIdentityConnector(
     userId: string,
