@@ -40,6 +40,10 @@ mock.module("@composio/core", () => ({
 import type { AppContext, AppEnv } from "../../src/api/types.ts";
 import { composioAuthRoutes } from "../../src/api/routes/composio-auth.ts";
 import {
+  _clearAllConnectFlows,
+  registerConnectFlow,
+} from "../../src/composio/connect-flow-registry.ts";
+import {
   composioConnectionPath,
   readComposioConnection,
 } from "../../src/bundles/composio-connection.ts";
@@ -316,7 +320,11 @@ describe("GET /v1/composio-auth/proxy", () => {
 });
 
 describe("GET /v1/composio-auth/callback", () => {
-  test("writes connection.json AND transitions lifecycle state when cookie matches", async () => {
+  // The registry is module-level state shared across the process; clear it so
+  // one test's pending flow can't leak into the next.
+  beforeEach(_clearAllConnectFlows);
+
+  test("writes connection.json AND transitions lifecycle state when the flow + cookie match", async () => {
     const { dir, cleanup } = freshDir();
     try {
       const entry = composioEntry("com.google/gmail");
@@ -325,11 +333,13 @@ describe("GET /v1/composio-auth/callback", () => {
       const nonce = "deadbeefdeadbeefdeadbeefdeadbeef";
       const wsId = "ws_test";
       const cid = "com.google/gmail";
-      const cookieHash = sha256Hex(`${nonce}.${cid}.${wsId}`);
+      // An authenticated /initiate registered this flow; the cookie is sha256(nonce).
+      registerConnectFlow(nonce, { type: "workspace", wsId }, cid);
+      const cookieHash = sha256Hex(nonce);
 
       const url =
-        `http://nb.test/v1/composio-auth/callback?cid=${encodeURIComponent(cid)}` +
-        `&ws=${wsId}&n=${nonce}&connected_account_id=ca_xyz&status=ACTIVE`;
+        `http://nb.test/v1/composio-auth/callback?n=${nonce}` +
+        "&connected_account_id=ca_xyz&status=ACTIVE";
       const res = await app.request(url, {
         headers: { cookie: `nb_composio_state=${cookieHash}` },
       });
@@ -372,18 +382,58 @@ describe("GET /v1/composio-auth/callback", () => {
     }
   });
 
-  test("rejects when nonce cookie missing", async () => {
+  test("forged cookie without a server-side flow is rejected — no cross-owner write", async () => {
+    // The reported vulnerability: the callback is unauthenticated and the
+    // `nb_composio_state` cookie was a bare sha256 of values the caller already
+    // knows, so anyone could author it and drop a connection.json under a
+    // victim's credential root. The server-side flow record — creatable only by
+    // an authenticated /initiate — is the real gate. Here NO flow is registered;
+    // a self-authored cookie must not land a connection.
     const { dir, cleanup } = freshDir();
     try {
-      const entry = composioEntry("com.google/gmail");
-      const app = composioAuthRoutes(stubCtx(dir, entry));
+      const app = composioAuthRoutes(stubCtx(dir, composioEntry("com.google/gmail")));
+      const nonce = "0123456789abcdef0123456789abcdef";
+      const victim = "usr_victim";
+      // Attacker computes the cookie themselves — it commits to nothing secret.
+      const forgedCookie = sha256Hex(nonce);
       const url =
-        "http://nb.test/v1/composio-auth/callback?cid=com.google/gmail&ws=ws_test" +
-        "&n=abc123&connected_account_id=ca_xyz&status=ACTIVE";
-      const res = await app.request(url);
+        `http://nb.test/v1/composio-auth/callback?n=${nonce}&usr=${victim}` +
+        "&connected_account_id=ca_attacker&status=ACTIVE";
+      const res = await app.request(url, {
+        headers: { cookie: `nb_composio_state=${forgedCookie}` },
+      });
+
       expect(res.status).toBe(400);
-      // No connection.json written.
-      const path = composioConnectionPath(dir, { type: "workspace", wsId: "ws_test" }, "com.google/gmail");
+      expect(await res.text()).toContain("Unknown or expired");
+      // Nothing written for the victim — the owner comes from the absent record,
+      // and the legacy `usr=` query param is ignored entirely.
+      const { existsSync } = await import("node:fs");
+      expect(
+        existsSync(
+          composioConnectionPath(dir, { type: "user", userId: victim }, "com.google/gmail"),
+        ),
+      ).toBe(false);
+    } finally {
+      cleanup();
+    }
+  });
+
+  test("rejects when nonce cookie missing, even with a registered flow", async () => {
+    const { dir, cleanup } = freshDir();
+    try {
+      const app = composioAuthRoutes(stubCtx(dir, composioEntry("com.google/gmail")));
+      const nonce = "abc123abc123abc123abc123abc123ab";
+      registerConnectFlow(nonce, { type: "workspace", wsId: "ws_test" }, "com.google/gmail");
+      const url =
+        `http://nb.test/v1/composio-auth/callback?n=${nonce}` +
+        "&connected_account_id=ca_xyz&status=ACTIVE";
+      const res = await app.request(url); // no cookie
+      expect(res.status).toBe(400);
+      const path = composioConnectionPath(
+        dir,
+        { type: "workspace", wsId: "ws_test" },
+        "com.google/gmail",
+      );
       const { existsSync } = await import("node:fs");
       expect(existsSync(path)).toBe(false);
     } finally {
@@ -391,18 +441,18 @@ describe("GET /v1/composio-auth/callback", () => {
     }
   });
 
-  test("rejects when nonce cookie does not match (wrong wsId)", async () => {
+  test("rejects when the cookie does not hash to the nonce", async () => {
     const { dir, cleanup } = freshDir();
     try {
-      const entry = composioEntry("com.google/gmail");
-      const app = composioAuthRoutes(stubCtx(dir, entry));
-      // Cookie was bound to ws_real, but callback URL claims ws_attacker.
-      const goodHash = sha256Hex("n.com.google/gmail.ws_real");
+      const app = composioAuthRoutes(stubCtx(dir, composioEntry("com.google/gmail")));
+      const nonce = "feedfacefeedfacefeedfacefeedface";
+      registerConnectFlow(nonce, { type: "workspace", wsId: "ws_test" }, "com.google/gmail");
+      const wrongCookie = sha256Hex("some-other-nonce");
       const url =
-        "http://nb.test/v1/composio-auth/callback?cid=com.google/gmail&ws=ws_attacker" +
-        "&n=n&connected_account_id=ca_xyz&status=ACTIVE";
+        `http://nb.test/v1/composio-auth/callback?n=${nonce}` +
+        "&connected_account_id=ca_xyz&status=ACTIVE";
       const res = await app.request(url, {
-        headers: { cookie: `nb_composio_state=${goodHash}` },
+        headers: { cookie: `nb_composio_state=${wrongCookie}` },
       });
       expect(res.status).toBe(400);
     } finally {
@@ -410,14 +460,15 @@ describe("GET /v1/composio-auth/callback", () => {
     }
   });
 
-  test("400s on missing required params", async () => {
+  test("400s on missing required params (no connectedAccountId)", async () => {
     const { dir, cleanup } = freshDir();
     try {
       const app = composioAuthRoutes(stubCtx(dir, composioEntry("com.google/gmail")));
-      // Missing connectedAccountId.
-      const res = await app.request(
-        "http://nb.test/v1/composio-auth/callback?cid=com.google/gmail&ws=ws_test&n=abc",
-      );
+      const nonce = "abcabcabcabcabcabcabcabcabcabcab";
+      registerConnectFlow(nonce, { type: "workspace", wsId: "ws_test" }, "com.google/gmail");
+      const res = await app.request(`http://nb.test/v1/composio-auth/callback?n=${nonce}`, {
+        headers: { cookie: `nb_composio_state=${sha256Hex(nonce)}` },
+      });
       expect(res.status).toBe(400);
     } finally {
       cleanup();
@@ -427,67 +478,17 @@ describe("GET /v1/composio-auth/callback", () => {
   test("400s when the catalog entry is not composio-backed", async () => {
     const { dir, cleanup } = freshDir();
     try {
-      // No matching catalog entry returned by stub.
+      // Stub returns no catalog entry.
       const app = composioAuthRoutes(stubCtx(dir, null));
-      const nonce = "x";
-      const wsId = "ws_test";
-      const cid = "com.google/gmail";
-      const cookieHash = sha256Hex(`${nonce}.${cid}.${wsId}`);
+      const nonce = "1111111111111111111111111111111a";
+      registerConnectFlow(nonce, { type: "workspace", wsId: "ws_test" }, "com.google/gmail");
       const url =
-        "http://nb.test/v1/composio-auth/callback?cid=com.google/gmail&ws=ws_test&n=x" +
+        `http://nb.test/v1/composio-auth/callback?n=${nonce}` +
         "&connected_account_id=ca_xyz&status=ACTIVE";
       const res = await app.request(url, {
-        headers: { cookie: `nb_composio_state=${cookieHash}` },
+        headers: { cookie: `nb_composio_state=${sha256Hex(nonce)}` },
       });
       expect(res.status).toBe(400);
-    } finally {
-      cleanup();
-    }
-  });
-
-  test("rejects malformed cid (path-traversal substring) before reading cookie", async () => {
-    // Bind a valid cookie hash for the malformed cid so the test fails
-    // at the cid validation step rather than the session-mismatch step.
-    // Without the cookie binding, this test would pass for the wrong
-    // reason — verifying nothing about cid validation specifically.
-    const { dir, cleanup } = freshDir();
-    try {
-      const app = composioAuthRoutes(stubCtx(dir, composioEntry("com.google/gmail")));
-      const cid = "../escape";
-      const nonce = "n";
-      const wsId = "ws_test";
-      const cookieHash = sha256Hex(`${nonce}.${cid}.${wsId}`);
-      const url =
-        "http://nb.test/v1/composio-auth/callback?cid=" +
-        encodeURIComponent(cid) +
-        `&ws=${wsId}&n=${nonce}&connected_account_id=ca_xyz`;
-      const res = await app.request(url, {
-        headers: { cookie: `nb_composio_state=${cookieHash}` },
-      });
-      expect(res.status).toBe(400);
-      expect(await res.text()).toBe("invalid cid");
-    } finally {
-      cleanup();
-    }
-  });
-
-  test("rejects cid containing `//` substring", async () => {
-    const { dir, cleanup } = freshDir();
-    try {
-      const app = composioAuthRoutes(stubCtx(dir, composioEntry("com.google/gmail")));
-      const cid = "com//google/gmail";
-      const nonce = "n";
-      const wsId = "ws_test";
-      const cookieHash = sha256Hex(`${nonce}.${cid}.${wsId}`);
-      const url =
-        "http://nb.test/v1/composio-auth/callback?cid=" +
-        encodeURIComponent(cid) +
-        `&ws=${wsId}&n=${nonce}&connected_account_id=ca_xyz`;
-      const res = await app.request(url, {
-        headers: { cookie: `nb_composio_state=${cookieHash}` },
-      });
-      expect(res.status).toBe(400);
-      expect(await res.text()).toBe("invalid cid");
     } finally {
       cleanup();
     }
@@ -589,8 +590,8 @@ describe("POST /v1/composio-auth/initiate", () => {
     expect(body.alreadyConnected).toBeUndefined();
 
     // Cookie shape: HttpOnly + SameSite=Lax + path-scoped to the
-    // callback. The actual hash value is sha256(nonce.cid.ws); we
-    // can't predict the nonce, so assert structural properties only.
+    // callback. The actual hash value is sha256(nonce); we can't
+    // predict the nonce, so assert structural properties only.
     const setCookie = res.headers.get("set-cookie") ?? "";
     expect(setCookie.includes("nb_composio_state=")).toBe(true);
     expect(setCookie.includes("HttpOnly")).toBe(true);
@@ -889,7 +890,7 @@ describe("POST /v1/composio-auth/initiate-identity", () => {
     return { app, ctx };
   }
 
-  test("(a) fresh flow: drives Composio with the user identity, commits the user owner in the cookie", async () => {
+  test("(a) fresh flow: drives Composio with the user identity, carries only the nonce, binds the cookie", async () => {
     process.env.COMPOSIO_API_KEY = "k_test";
     process.env.COMPOSIO_GMAIL_AUTH_CONFIG_ID = "ac_gmail_test";
     sdkCalls.listImpl = async () => ({ items: [] }); // no existing connection
@@ -916,23 +917,23 @@ describe("POST /v1/composio-auth/initiate-identity", () => {
     expect(initiateArgs[0]).toBe("user:usr_test");
     expect(initiateArgs[0]).toBe(composioUserId({ type: "user", userId: USER_ID }));
 
-    // The callback URL commits the user owner: `usr=<id>`, never `ws=`.
+    // The callback URL carries only the nonce — the owner (user vs workspace)
+    // and connector live in the server-side flow record, not the query, so the
+    // vendor return leg can't be steered to a different owner.
     const cbUrl = new URL((initiateArgs[2] as { callbackUrl: string }).callbackUrl);
-    expect(cbUrl.searchParams.get("usr")).toBe(USER_ID);
-    expect(cbUrl.searchParams.get("ws")).toBeNull();
-    expect(cbUrl.searchParams.get("cid")).toBe("com.google/gmail");
     const nonce = cbUrl.searchParams.get("n") ?? "";
     expect(nonce.length).toBeGreaterThan(0);
+    expect(cbUrl.searchParams.get("usr")).toBeNull();
+    expect(cbUrl.searchParams.get("ws")).toBeNull();
+    expect(cbUrl.searchParams.get("cid")).toBeNull();
 
-    // Cookie shape + owner commitment: the state hash binds
-    // (nonce, cid, usr:<id>). A workspace callback (`ws=`) can never satisfy
-    // it — the constant-time compare on the return leg would fail.
+    // Cookie binds the nonce to this browser session (sha256(nonce)).
     const setCookie = res.headers.get("set-cookie") ?? "";
     expect(setCookie.includes("HttpOnly")).toBe(true);
     expect(setCookie.includes("SameSite=Lax")).toBe(true);
     expect(setCookie.includes("Path=/v1/composio-auth/callback")).toBe(true);
     const cookieHash = /nb_composio_state=([0-9a-f]{64})/.exec(setCookie)?.[1];
-    expect(cookieHash).toBe(sha256Hex(`${nonce}.com.google/gmail.usr:${USER_ID}`));
+    expect(cookieHash).toBe(sha256Hex(nonce));
   });
 
   test("(b) adopt-existing: writes connection.json under the user root, no workspace state transition", async () => {
@@ -1004,6 +1005,8 @@ describe("POST /v1/composio-auth/initiate-identity", () => {
 });
 
 describe("GET /v1/composio-auth/callback — identity (user) owner", () => {
+  beforeEach(_clearAllConnectFlows);
+
   test("persists under the user root, recovers the identity source, returns to /profile/connectors", async () => {
     const { dir, cleanup } = freshDir();
     try {
@@ -1013,13 +1016,13 @@ describe("GET /v1/composio-auth/callback — identity (user) owner", () => {
       const nonce = "deadbeefdeadbeefdeadbeefdeadbeef";
       const userId = "usr_test";
       const cid = "com.google/gmail";
-      // Owner committed as `usr:<id>` (connectorOwnerKey), not a bare id —
-      // this is the identity-side counterpart of the workspace `wsId` hash.
-      const cookieHash = sha256Hex(`${nonce}.${cid}.usr:${userId}`);
+      // An authenticated /initiate-identity registered this user-owned flow.
+      registerConnectFlow(nonce, { type: "user", userId }, cid);
+      const cookieHash = sha256Hex(nonce);
 
       const url =
-        `http://nb.test/v1/composio-auth/callback?cid=${encodeURIComponent(cid)}` +
-        `&usr=${userId}&n=${nonce}&connected_account_id=ca_user&status=ACTIVE`;
+        `http://nb.test/v1/composio-auth/callback?n=${nonce}` +
+        "&connected_account_id=ca_user&status=ACTIVE";
       const res = await app.request(url, {
         headers: { cookie: `nb_composio_state=${cookieHash}` },
       });
@@ -1054,50 +1057,38 @@ describe("GET /v1/composio-auth/callback — identity (user) owner", () => {
     }
   });
 
-  test("rejects when the cookie commits a different user (owner tamper)", async () => {
+  test("owner comes from the record, not the query — a spoofed usr= param is ignored", async () => {
+    // The owner is whatever the authenticated /initiate registered, not what the
+    // vendor return carries. Here a workspace flow is registered; a
+    // `usr=usr_attacker` query param must not divert the write to a user root.
     const { dir, cleanup } = freshDir();
     try {
-      const entry = composioEntry("com.google/gmail");
-      const app = composioAuthRoutes(stubCtx(dir, entry));
-      // Cookie was bound to usr_real, but the callback URL claims usr_attacker.
-      const goodHash = sha256Hex("n.com.google/gmail.usr:usr_real");
+      const ctx = stubCtx(dir, composioEntry("com.google/gmail"));
+      const app = composioAuthRoutes(ctx);
+      const nonce = "cafecafecafecafecafecafecafecafe";
+      registerConnectFlow(nonce, { type: "workspace", wsId: "ws_real" }, "com.google/gmail");
       const url =
-        "http://nb.test/v1/composio-auth/callback?cid=com.google/gmail&usr=usr_attacker" +
-        "&n=n&connected_account_id=ca_xyz&status=ACTIVE";
+        `http://nb.test/v1/composio-auth/callback?n=${nonce}&usr=usr_attacker` +
+        "&connected_account_id=ca_xyz&status=ACTIVE";
       const res = await app.request(url, {
-        headers: { cookie: `nb_composio_state=${goodHash}` },
+        headers: { cookie: `nb_composio_state=${sha256Hex(nonce)}` },
       });
-      expect(res.status).toBe(400);
-      // Nothing persisted for the claimed attacker user.
-      const attackerPath = composioConnectionPath(
+
+      expect(res.status).toBe(200);
+      const { existsSync } = await import("node:fs");
+      // Nothing under the spoofed attacker user.
+      expect(
+        existsSync(
+          composioConnectionPath(dir, { type: "user", userId: "usr_attacker" }, "com.google/gmail"),
+        ),
+      ).toBe(false);
+      // The connection landed under the registered workspace owner.
+      const stored = await readComposioConnection(
         dir,
-        { type: "user", userId: "usr_attacker" },
+        { type: "workspace", wsId: "ws_real" },
         "com.google/gmail",
       );
-      const { existsSync } = await import("node:fs");
-      expect(existsSync(attackerPath)).toBe(false);
-    } finally {
-      cleanup();
-    }
-  });
-
-  test("rejects an ambiguous owner naming both ws and usr", async () => {
-    const { dir, cleanup } = freshDir();
-    try {
-      const app = composioAuthRoutes(stubCtx(dir, composioEntry("com.google/gmail")));
-      const nonce = "n";
-      const cid = "com.google/gmail";
-      // Even with a valid-looking cookie, an owner that names BOTH ws and usr
-      // is rejected before the cookie check (ownerFromCallbackQuery → null).
-      const anyHash = sha256Hex(`${nonce}.${cid}.usr:usr_test`);
-      const url =
-        `http://nb.test/v1/composio-auth/callback?cid=${encodeURIComponent(cid)}` +
-        `&ws=ws_test&usr=usr_test&n=${nonce}&connected_account_id=ca_xyz&status=ACTIVE`;
-      const res = await app.request(url, {
-        headers: { cookie: `nb_composio_state=${anyHash}` },
-      });
-      expect(res.status).toBe(400);
-      expect(await res.text()).toContain("missing cid, owner");
+      expect(stored?.connectedAccountId).toBe("ca_xyz");
     } finally {
       cleanup();
     }
