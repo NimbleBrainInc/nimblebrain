@@ -75,6 +75,77 @@ jobs:
       - name: Integration tests
         run: bun run test:integration
 
+  # Does this push change anything that ships in an image? Gates only the edge
+  # bump (roll-staging-edge) — NOT build-and-push, which still publishes a
+  # SHA-tagged image for every main commit. A merge touching only paths that
+  # .dockerignore already drops from both images (docs/, test/, .github/,
+  # root-level *.md) produces a byte-identical runtime, so rolling the staging
+  # edge channel onto it is pure churn. The skip-set mirrors a subset of
+  # .dockerignore — keep the two in sync (a back-pointer comment lives there).
+  #
+  # Two deliberate scope notes:
+  #   - The skip-set is NOT `**/*.md`: some markdown under src/ (e.g.
+  #     src/skills/core/soul.md) is shipped prompt content, so `[^/]+\.md$`
+  #     matches root-level *.md only and nested markdown still bumps.
+  #   - A build-pipeline change under .github/ (the build-push-image action,
+  #     ci.yml build-args) can alter the image yet classifies as skip. The image
+  #     is still built (build-and-push is ungated); only the edge roll waits for
+  #     the next shipping merge. Force it now via the bump-edge-image
+  #     workflow_dispatch in the deploy repo if a build change must hit staging.
+  #
+  # Fails safe: a first push / force-reset (no prior SHA), a compare-API error,
+  # or a result at the API's 300-file cap all count as image-relevant — the only
+  # failure mode is an unnecessary bump, never a skipped one.
+  changes:
+    name: Detect image-affecting changes
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    permissions:
+      contents: read
+    outputs:
+      image_relevant: ${{ steps.detect.outputs.image_relevant }}
+    steps:
+      - name: Compare changed paths
+        id: detect
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          BEFORE: ${{ github.event.before }}
+          AFTER: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          bump() { echo "image_relevant=true" >> "$GITHUB_OUTPUT"; exit 0; }
+          zero="0000000000000000000000000000000000000000"
+          if [ -z "$BEFORE" ] || [ "$BEFORE" = "$zero" ]; then
+            echo "no prior SHA (new branch / force-reset) — treating as image-relevant"
+            bump
+          fi
+          if ! payload="$(gh api "repos/$REPO/compare/$BEFORE...$AFTER" 2>/dev/null)"; then
+            echo "compare API failed — treating as image-relevant"
+            bump
+          fi
+          # The compare API caps .files at 300; a truncated list could hide a
+          # shipping file behind 300 non-shipping ones, so treat an unreadable
+          # or at-cap result as image-relevant.
+          count="$(printf '%s' "$payload" | jq '.files | length' 2>/dev/null)" || count=""
+          if [ -z "$count" ] || [ "$count" -ge 300 ]; then
+            echo "compare returned ${count:-unreadable} files (>= 300-file cap) — treating as image-relevant"
+            bump
+          fi
+          files="$(printf '%s' "$payload" | jq -r '.files // [] | .[].filename')"
+          # Keep only files OUTSIDE the .dockerignore-excluded set. `[^/]+\.md$`
+          # is root-level *.md only, so nested shipped markdown (src/skills/**)
+          # is retained and still counts as image-relevant.
+          shipping="$(printf '%s\n' "$files" | grep -Ev '^(docs/|test/|\.github/|[^/]+\.md$)' || true)"
+          if [ -n "$shipping" ]; then
+            echo "image-affecting paths changed:"
+            printf '%s\n' "$shipping"
+            echo "image_relevant=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "only non-shipping paths changed — skipping edge bump"
+            echo "image_relevant=false" >> "$GITHUB_OUTPUT"
+          fi
+
   # Build + push a SHA-tagged image for every commit that lands on main, so
   # `make deploy` can roll out any main commit without a manual local push.
   # This is the everyday counterpart to release.yml (which builds on `v*`
@@ -141,8 +212,11 @@ jobs:
   #   secrets.EDGE_BUMP_APP_KEY      — that App's private key
   roll-staging-edge:
     name: Roll staging edge channel
-    needs: build-and-push
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: [build-and-push, changes]
+    if: >-
+      github.event_name == 'push' &&
+      github.ref == 'refs/heads/main' &&
+      needs.changes.outputs.image_relevant == 'true'
     runs-on: ubuntu-latest
     # Authenticates with a minted App token, never GITHUB_TOKEN — needs no grants.
     permissions: {}
