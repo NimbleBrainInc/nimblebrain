@@ -75,6 +75,60 @@ jobs:
       - name: Integration tests
         run: bun run test:integration
 
+  # Does this push change anything that ships in an image? Gates only the edge
+  # bump (roll-staging-edge) — NOT build-and-push, which still publishes a
+  # SHA-tagged image for every main commit. A merge touching only paths that
+  # .dockerignore already drops from both images (docs/, test/, .github/,
+  # root-level *.md) produces a byte-identical runtime, so rolling the staging
+  # edge channel onto it is pure churn. Note the ignore set is NOT `**/*.md`:
+  # some markdown under src/ (e.g. src/skills/core/soul.md) is shipped prompt
+  # content and must still trigger a bump.
+  #
+  # Fails safe: a first push / force-reset (no prior SHA) or a compare-API error
+  # counts as image-relevant, so the only failure mode is an unnecessary bump,
+  # never a skipped one.
+  changes:
+    name: Detect image-affecting changes
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    permissions:
+      contents: read
+    outputs:
+      image_relevant: ${{ steps.detect.outputs.image_relevant }}
+    steps:
+      - name: Compare changed paths
+        id: detect
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          BEFORE: ${{ github.event.before }}
+          AFTER: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          zero="0000000000000000000000000000000000000000"
+          if [ -z "$BEFORE" ] || [ "$BEFORE" = "$zero" ]; then
+            echo "no prior SHA (new branch / force-reset) — treating as image-relevant"
+            echo "image_relevant=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if ! files="$(gh api "repos/$REPO/compare/$BEFORE...$AFTER" --jq '.files[].filename' 2>/dev/null)"; then
+            echo "compare API failed — treating as image-relevant"
+            echo "image_relevant=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          # Keep only files OUTSIDE the .dockerignore-excluded set. `[^/]+\.md$`
+          # is root-level *.md only, so nested shipped markdown (src/skills/**)
+          # is retained and still counts as image-relevant.
+          shipping="$(printf '%s\n' "$files" | grep -Ev '^(docs/|test/|\.github/|[^/]+\.md$)' || true)"
+          if [ -n "$shipping" ]; then
+            echo "image-affecting paths changed:"
+            printf '%s\n' "$shipping"
+            echo "image_relevant=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "only non-shipping paths changed — skipping edge bump"
+            echo "image_relevant=false" >> "$GITHUB_OUTPUT"
+          fi
+
   # Build + push a SHA-tagged image for every commit that lands on main, so
   # `make deploy` can roll out any main commit without a manual local push.
   # This is the everyday counterpart to release.yml (which builds on `v*`
@@ -141,8 +195,11 @@ jobs:
   #   secrets.EDGE_BUMP_APP_KEY      — that App's private key
   roll-staging-edge:
     name: Roll staging edge channel
-    needs: build-and-push
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: [build-and-push, changes]
+    if: >-
+      github.event_name == 'push' &&
+      github.ref == 'refs/heads/main' &&
+      needs.changes.outputs.image_relevant == 'true'
     runs-on: ubuntu-latest
     # Authenticates with a minted App token, never GITHUB_TOKEN — needs no grants.
     permissions: {}
