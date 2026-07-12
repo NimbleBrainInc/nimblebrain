@@ -1,3 +1,7 @@
+# The CI edge-bump classifier (.github/workflows/ci.yml, job "changes") treats a
+# subset of these excludes — docs/, test/, .github/, root-level *.md — as "does
+# not ship". If you change what's excluded from the image here, update that
+# classifier too, or a merge that now ships could skip its staging edge roll.
 .git
 .gitignore
 .github

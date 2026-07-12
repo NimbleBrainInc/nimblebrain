@@ -80,13 +80,22 @@ jobs:
   # SHA-tagged image for every main commit. A merge touching only paths that
   # .dockerignore already drops from both images (docs/, test/, .github/,
   # root-level *.md) produces a byte-identical runtime, so rolling the staging
-  # edge channel onto it is pure churn. Note the ignore set is NOT `**/*.md`:
-  # some markdown under src/ (e.g. src/skills/core/soul.md) is shipped prompt
-  # content and must still trigger a bump.
+  # edge channel onto it is pure churn. The skip-set mirrors a subset of
+  # .dockerignore — keep the two in sync (a back-pointer comment lives there).
   #
-  # Fails safe: a first push / force-reset (no prior SHA) or a compare-API error
-  # counts as image-relevant, so the only failure mode is an unnecessary bump,
-  # never a skipped one.
+  # Two deliberate scope notes:
+  #   - The skip-set is NOT `**/*.md`: some markdown under src/ (e.g.
+  #     src/skills/core/soul.md) is shipped prompt content, so `[^/]+\.md$`
+  #     matches root-level *.md only and nested markdown still bumps.
+  #   - A build-pipeline change under .github/ (the build-push-image action,
+  #     ci.yml build-args) can alter the image yet classifies as skip. The image
+  #     is still built (build-and-push is ungated); only the edge roll waits for
+  #     the next shipping merge. Force it now via the bump-edge-image
+  #     workflow_dispatch in the deploy repo if a build change must hit staging.
+  #
+  # Fails safe: a first push / force-reset (no prior SHA), a compare-API error,
+  # or a result at the API's 300-file cap all count as image-relevant — the only
+  # failure mode is an unnecessary bump, never a skipped one.
   changes:
     name: Detect image-affecting changes
     runs-on: ubuntu-latest
@@ -105,17 +114,25 @@ jobs:
           AFTER: ${{ github.sha }}
         run: |
           set -euo pipefail
+          bump() { echo "image_relevant=true" >> "$GITHUB_OUTPUT"; exit 0; }
           zero="0000000000000000000000000000000000000000"
           if [ -z "$BEFORE" ] || [ "$BEFORE" = "$zero" ]; then
             echo "no prior SHA (new branch / force-reset) — treating as image-relevant"
-            echo "image_relevant=true" >> "$GITHUB_OUTPUT"
-            exit 0
+            bump
           fi
-          if ! files="$(gh api "repos/$REPO/compare/$BEFORE...$AFTER" --jq '.files[].filename' 2>/dev/null)"; then
+          if ! payload="$(gh api "repos/$REPO/compare/$BEFORE...$AFTER" 2>/dev/null)"; then
             echo "compare API failed — treating as image-relevant"
-            echo "image_relevant=true" >> "$GITHUB_OUTPUT"
-            exit 0
+            bump
           fi
+          # The compare API caps .files at 300; a truncated list could hide a
+          # shipping file behind 300 non-shipping ones, so treat an unreadable
+          # or at-cap result as image-relevant.
+          count="$(printf '%s' "$payload" | jq '.files | length' 2>/dev/null)" || count=""
+          if [ -z "$count" ] || [ "$count" -ge 300 ]; then
+            echo "compare returned ${count:-unreadable} files (>= 300-file cap) — treating as image-relevant"
+            bump
+          fi
+          files="$(printf '%s' "$payload" | jq -r '.files // [] | .[].filename')"
           # Keep only files OUTSIDE the .dockerignore-excluded set. `[^/]+\.md$`
           # is root-level *.md only, so nested shipped markdown (src/skills/**)
           # is retained and still counts as image-relevant.
