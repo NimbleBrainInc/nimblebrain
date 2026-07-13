@@ -8,6 +8,7 @@ import type {
   SharedV3ProviderMetadata,
 } from "@ai-sdk/provider";
 import { withSpan } from "../observability/index.ts";
+import { registerLiveness, unregisterLiveness } from "./fetch-liveness.ts";
 
 /**
  * The watchdog bounds a single model stream in two regimes, because time-to-
@@ -15,21 +16,29 @@ import { withSpan } from "../observability/index.ts";
  *
  * - **First content** — connect + prefill + first token. Prefill time scales
  *   with input size (a large cold-cache prompt can take many seconds to first
- *   token, and Anthropic's keep-alive `ping`s are swallowed by the provider,
- *   so a healthy prefill looks silent to us). This deadline must be generous
- *   enough not to trip a live-but-slow start, yet still bound a connect/first-
- *   chunk hang — which on the chat path has no run wall clock behind it.
- * - **Idle (inter-part)** — once tokens are flowing, a gap this long is a
- *   genuine stall (healthy inter-token gaps are sub-second). Reset on every
- *   part, so a healthy long generation (extended thinking, large output) never
- *   trips it.
+ *   token). This deadline must be generous enough not to trip a live-but-slow
+ *   start, yet still bound a connect/first-chunk hang — which on the chat path
+ *   has no run wall clock behind it.
+ * - **Idle (inter-part)** — once output is flowing, a gap this long with no
+ *   activity is a genuine stall. Reset on every part, so a healthy long
+ *   generation (extended thinking, large output) never trips it.
+ *
+ * Crucially, the deadline is re-armed on *transport liveness*, not just decoded
+ * parts: the fetch tap in `fetch-liveness.ts` pokes the watchdog on every byte
+ * the provider sends, including the keep-alive `ping` frames the AI SDK swallows
+ * before they become parts. So the idle deadline bounds true socket silence
+ * (nothing at all coming back), not merely the gap between decoded tokens — a
+ * healthy-but-slow large-context stream keeps the socket warm with pings and
+ * never trips, while a dead connection still does. That decoupling is why the
+ * idle deadline can stay comfortably above the observed inter-token gap: it is
+ * now a "the server has gone quiet on the wire" threshold.
  *
  * Both sit below a typical run budget so a stall is caught (and the pre-content
  * case retried) with room to spare, instead of the whole run blocking on one
  * hung call until `maxRunDurationMs`.
  */
 export const MODEL_STREAM_FIRST_CONTENT_TIMEOUT_MS = 90_000;
-export const MODEL_STREAM_IDLE_TIMEOUT_MS = 45_000;
+export const MODEL_STREAM_IDLE_TIMEOUT_MS = 75_000;
 
 /** Per-call watchdog overrides (defaults are the two constants above). */
 export interface StreamWatchdogConfig {
@@ -181,6 +190,11 @@ async function callModelInner(
   };
 
   const watchdog = createStreamWatchdog(options.abortSignal, { firstContentMs, idleMs });
+  // The fetch tap (fetch-liveness.ts) pokes this on every provider byte, keyed
+  // on the same signal we hand doStream — so swallowed `ping` keep-alives re-arm
+  // the deadline in the current regime. `arm()` only; a keep-alive must not flip
+  // `sawOutput` (that would corrupt TTFT and a later stall's retryability).
+  registerLiveness(watchdog.signal, () => watchdog.arm());
   try {
     // Arm BEFORE doStream: for some providers (e.g. Anthropic) `doStream` does
     // not resolve until the first stream event arrives, so a connect / first-
@@ -201,6 +215,7 @@ async function callModelInner(
     }
     throw err;
   } finally {
+    unregisterLiveness(watchdog.signal);
     watchdog.dispose();
   }
 
@@ -294,6 +309,7 @@ function createStreamWatchdog(
   let sawOutput = false;
   let firstOutputAt: number | undefined;
   let stalled = false;
+  let disposed = false;
   let timer: ReturnType<typeof setTimeout> | undefined;
 
   return {
@@ -308,6 +324,9 @@ function createStreamWatchdog(
       return stalled;
     },
     arm(): void {
+      // A transport-liveness poke can land after the stream is consumed and the
+      // watchdog disposed; ignore it so no zombie timer is armed post-dispose.
+      if (disposed) return;
       if (timer !== undefined) clearTimeout(timer);
       timer = setTimeout(
         () => {
@@ -325,6 +344,7 @@ function createStreamWatchdog(
       sawOutput = true;
     },
     dispose(): void {
+      disposed = true;
       if (timer !== undefined) clearTimeout(timer);
       externalSignal?.removeEventListener("abort", onExternalAbort);
     },
