@@ -1835,7 +1835,11 @@ async function handleInstallRemoteOAuth(
   const skillsLock = await lifecycle.syncBoundSkills(
     connectorSkillIdentityFrom(
       action.auth === "composio" ? action.composio?.toolkit : undefined,
-      serverName,
+      // Derive the overlay identity from the canonical reverse-DNS name
+      // (`com.dropbox/mcp` → `dropbox`), NOT the slugified serverName
+      // (`com-dropbox-mcp`) — the slug has no dotted structure to split on, so
+      // it derives the whole slug and 404s the overlay for every DCR connector.
+      entry.id,
     ),
     serverName,
     wsId,
