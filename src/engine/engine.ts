@@ -607,16 +607,15 @@ export class AgentEngine {
     let useCounter = 0;
     const bumpUseCounter = () => ++useCounter;
     const maxActiveTools = config.maxActiveTools ?? DEFAULT_MAX_DIRECT_TOOLS;
-    if (directTools.length > maxActiveTools) {
-      // Operator-facing: initial tool set already exceeds the per-run cap,
-      // so the cap can't be enforced strictly for agent-driven additions.
-      // Surface the misconfiguration once at run start; behavior degrades
-      // to "cap is soft, agent additions stick on top." See addTool below.
-      log.warn(
-        `[engine] initial tools (${directTools.length}) exceed maxActiveTools (${maxActiveTools}); ` +
-          `cap will be soft for this run. Reduce the initial tool set or raise maxActiveTools.`,
-      );
-    }
+    // No warning when the initial set exceeds the cap. The always-direct kernel
+    // tool set (nb__* + the identity sources) alone is larger than the default
+    // cap, so the initial set routinely is too — that's the expected steady
+    // state, not a misconfiguration. The cap only governs eviction of
+    // AGENT-PROMOTED tools (initial tools are exempt — see
+    // evictPromotedToolsToCap); an over-cap initial set just makes that eviction
+    // soft, with agent additions sticking on top. The warn that used to fire
+    // here ran on every request and named an unactionable fix ("reduce the
+    // initial tool set" — you can't drop the kernel tools).
 
     const toolControls = {
       addTool: (toolName: string) => {
