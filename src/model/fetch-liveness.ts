@@ -42,7 +42,14 @@ export function registerLiveness(signal: AbortSignal, poke: LivenessPoke): void 
   pokesBySignal.set(signal, poke);
 }
 
-/** Drop a call's liveness poke once its stream is fully consumed or aborted. */
+/**
+ * Remove a call's WeakMap entry once its stream is fully consumed or aborted.
+ * This is entry cleanup, not an in-flight stop: the fetch wrapper captures the
+ * poke at fetch-resolution time, so unregistering mid-stream does not halt an
+ * already-tapped body. Late pokes are neutralized by the watchdog's `dispose()`
+ * + `disposed` guard, not by this. Calling it is also optional — the entry is
+ * collected with its signal — but doing so eagerly keeps the map small.
+ */
 export function unregisterLiveness(signal: AbortSignal): void {
   pokesBySignal.delete(signal);
 }
