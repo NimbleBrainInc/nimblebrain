@@ -25,10 +25,11 @@ import { bareToolName } from "./namespace.ts";
  *   3. INTERNAL — the agent NEVER legitimately calls it; it's a UI-driven
  *      affordance the web shell invokes by name over REST (settings/admin ops:
  *      `manage_*`, `set_model_config`, `briefing`). Annotate
- *      `ai.nimblebrain/internal` — stripped from every LLM tool list (chat AND
- *      external `/mcp`) by the `visibleTools` filter at the top of
- *      `surfaceTools` below, still callable by name; promotion is refused in
- *      the engine.
+ *      `ai.nimblebrain/internal` — stripped from the chat tool list by the
+ *      `visibleTools` filter at the top of `surfaceTools` below, and refused
+ *      for promotion in the engine; still callable by name. NOTE: this flag
+ *      governs the chat/runtime surface only — the `/mcp` `tools/list` is
+ *      gated by feature/role (`isToolVisibleToRole`), not by this annotation.
  *
  * Two rules keep this honest:
  *   - A new `nb__*`/identity tool DEFAULTS to kernel-direct (it's a kernel tool
