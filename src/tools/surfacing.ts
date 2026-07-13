@@ -4,6 +4,41 @@ import type { Skill } from "../skills/types.ts";
 import { isIdentitySource } from "./identity-sources.ts";
 import { bareToolName } from "./namespace.ts";
 
+/**
+ * Choosing a tool's surface — the three resting places.
+ *
+ * Two orthogonal axes govern any tool:
+ *   - AUTHORITY — who may invoke it (member/admin/owner). Enforced in the
+ *     handler and by role visibility; NOT this file's concern.
+ *   - DRIVER — what surface decides to call it: the agent *reasoning* about a
+ *     capability, or a deterministic *UI affordance* a human clicks. This is
+ *     the axis that decides where a tool lands below.
+ *
+ * By how the agent relates to a tool, it belongs in exactly one of:
+ *   1. KERNEL-DIRECT — hot; the agent reaches for it unprompted (`nb__search`,
+ *      `nb__manage_tools`, `nb__status`, `nb__delegate`, the files/conversations
+ *      basics). Full schema in the always-cached prefix. `isKernelTool` below.
+ *   2. PROXIED — the agent needs it only occasionally. Discovered via
+ *      `nb__search` and promoted on demand, so it stays OUT of the default
+ *      prefix (Tier 2/3 here). Costs one prefix-bust per promote — worth it for
+ *      cold tools, not for hot ones.
+ *   3. INTERNAL — the agent NEVER legitimately calls it; it's a UI-driven
+ *      affordance the web shell invokes by name over REST (settings/admin ops:
+ *      `manage_*`, `set_model_config`, `briefing`). Annotate
+ *      `ai.nimblebrain/internal` — stripped from the chat tool list by the
+ *      `visibleTools` filter at the top of `surfaceTools` below, and refused
+ *      for promotion in the engine; still callable by name. NOTE: this flag
+ *      governs the chat/runtime surface only — the `/mcp` `tools/list` is
+ *      gated by feature/role (`isToolVisibleToRole`), not by this annotation.
+ *
+ * Two rules keep this honest:
+ *   - A new `nb__*`/identity tool DEFAULTS to kernel-direct (it's a kernel tool
+ *     by construction). Pick its slot deliberately — that default is how a
+ *     surface accretes cost.
+ *   - ONE TOOL, ONE AUDIENCE. `internal` is honest only when the WHOLE tool is
+ *     UI-driven. A tool that straddles agent + UI use is mis-sized: split it,
+ *     don't flag the aggregate.
+ */
 const SYSTEM_TOOL_PREFIX = "nb__";
 
 /**
