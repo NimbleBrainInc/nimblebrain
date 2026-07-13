@@ -648,6 +648,7 @@ export function createCoreToolDefs(runtime: Runtime): InProcessTool[] {
       name: "set_model_config",
       description:
         "Update model selection and runtime limits. Writes atomically to nimblebrain.overrides.json (preserved across deploys). Does not allow changing API keys or secrets.",
+      annotations: { "ai.nimblebrain/internal": true },
       inputSchema: {
         type: "object",
         properties: {
@@ -1031,6 +1032,7 @@ export function createCoreToolDefs(runtime: Runtime): InProcessTool[] {
       name: "briefing",
       description:
         "Generate a personalized activity briefing for the workspace using the fast model slot. Returns a summary of recent activity, upcoming items, and anything needing attention. May take a few seconds.",
+      annotations: { "ai.nimblebrain/internal": true },
       inputSchema: {
         type: "object",
         properties: {

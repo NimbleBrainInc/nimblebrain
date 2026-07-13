@@ -42,6 +42,7 @@ export function createManageWorkspacesTool(ctx: ManageWorkspacesContext): InProc
     name: "manage_workspaces",
     description:
       "Manage workspaces and their members. Workspace CRUD and claim_admin require org admin. Member management requires workspace admin membership. claim_admin lets an org admin seat themselves as admin of a shared workspace that has no admin member, to recover one that would otherwise be unmanageable. Conversation sharing was removed in Stage 1 of the cross-workspace refactor and returns in Stage 4 with policy-gated primitives.",
+    annotations: { "ai.nimblebrain/internal": true },
     inputSchema: {
       type: "object",
       properties: {
