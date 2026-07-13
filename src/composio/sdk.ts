@@ -233,7 +233,19 @@ function composioClient(apiKey: string): Composio {
   // re-validating. The "validate" in the name reflects the
   // first-call semantics; here it's a fast cache hit.
   const cfg = validateComposioConfig();
-  return new Composio({ apiKey, baseURL: cfg.baseUrl });
+  // Opt out of the SDK's two per-request "phone home" behaviors. This client
+  // is constructed per request (see above), so both fire on every call:
+  //   - disableVersionCheck: the npm version check fetches `registry.npmjs.org`
+  //     and logs an "upgrade available" line each time. The version is pinned in
+  //     package.json, so the nag has no signal — just log noise and wasted egress.
+  //   - allowTracking: anonymous usage telemetry to `telemetry.composio.dev`.
+  //     Tenant runtimes should not emit per-request analytics.
+  return new Composio({
+    apiKey,
+    baseURL: cfg.baseUrl,
+    disableVersionCheck: true,
+    allowTracking: false,
+  });
 }
 
 /**
