@@ -32,6 +32,7 @@ export function createManageRegistriesTool(ctx: ManageRegistriesContext): InProc
     name: "manage_registries",
     description:
       "List and configure connector registries (curated, mpak, future). Org admin gated for writes.",
+    annotations: { "ai.nimblebrain/internal": true },
     inputSchema: {
       type: "object",
       properties: {

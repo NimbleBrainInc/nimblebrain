@@ -88,6 +88,7 @@ export function createManageUsersTool(ctx: ManageUsersContext): InProcessTool {
     name: "manage_users",
     description:
       "Create, update, delete, or list workspace users. Only org admins and owners can use this tool.",
+    annotations: { "ai.nimblebrain/internal": true },
     inputSchema: {
       type: "object",
       properties: {

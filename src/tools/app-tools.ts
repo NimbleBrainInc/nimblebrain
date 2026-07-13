@@ -51,6 +51,7 @@ export function createManageAppsTool(ctx: ManageAppsContext): InProcessTool {
     name: "manage_apps",
     description:
       "Org-admin management of installed registry apps (mpak bundles): list them across the org, check for updates, and upgrade an app to the latest version everywhere it's installed. App version is org-global (shared cache); per-workspace install/connect lives in manage_connectors.",
+    annotations: { "ai.nimblebrain/internal": true },
     inputSchema: {
       type: "object",
       properties: {
