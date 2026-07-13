@@ -1,5 +1,6 @@
 import { describe, expect, it } from "bun:test";
 import {
+  bootReconcileConnectorSkills,
   type ConnectorSkillReconcileDeps,
   reconcileConnectorSkills,
 } from "../../../src/bundles/connector-skill-reconcile.ts";
@@ -144,5 +145,21 @@ describe("reconcileConnectorSkills", () => {
     expect(cap.syncCalls).toHaveLength(1); // attempted
     expect(result.connectorsRefreshed).toBe(0);
     expect(cap.persisted).toHaveLength(0); // never cleared, never persisted
+  });
+
+  it("bootReconcileConnectorSkills swallows a failure — never breaks boot", async () => {
+    // The boot wrapper's whole job is to be non-fatal: if the reconcile throws
+    // (here, the workspace store is down), boot must still proceed.
+    const boom: Omit<ConnectorSkillReconcileDeps, "pinnedVersion"> = {
+      workDir: "/wd",
+      listWorkspaces: async () => {
+        throw new Error("workspace store down");
+      },
+      updateWorkspaceBundles: async () => {},
+      syncBoundSkills: async () => [],
+      catalogByIdMap: async () => new Map(),
+      catalogByUrl: async () => new Map(),
+    };
+    expect(await bootReconcileConnectorSkills(boom)).toBeUndefined();
   });
 });

@@ -19,9 +19,18 @@
  * - Additive only: a fetch that returns nothing (no curated overlay, or a
  *   transient failure — `syncBoundSkills` is best-effort and can't distinguish
  *   them) leaves the connector *exactly as-is* and is retried next boot. The
- *   reconcile never clears a working overlay.
+ *   reconcile never clears a working overlay. Consequence: an overlay *removed*
+ *   from the repo at the new pin does NOT propagate (its 404 is indistinguishable
+ *   from a blip), so the connector keeps its stale overlay. Deprecating guidance
+ *   means serving an empty/tombstone overlay at the new tag, not deleting the file.
  * - Non-fatal: every connector and every workspace is guarded; a failure is
  *   logged and skipped, never propagated to boot.
+ *
+ * Cost note: a connector with no curated overlay has no lock, so it never matches
+ * the version gate and is re-checked every boot. That's a disk read, not a network
+ * call — `resolveOverlay` writes a `{ miss: true }` sentinel to its PVC-backed
+ * cache (keyed by identity@repo@version) on the first 404, so subsequent boots
+ * short-circuit there. Network is hit once per (identity, version), ever.
  */
 
 import { resolveConnectorSkillsConfig } from "../config/connector-skills.ts";
