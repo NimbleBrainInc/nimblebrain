@@ -134,14 +134,9 @@ All system tools are prefixed with `nb__` (the `nb` source name + `__` separator
 | `nb__status` | Platform status: overview, bundles, skills, or config (scope param) |
 | `nb__search` | Unified search: installed tools or mpak registry (scope param) |
 | `nb__read_resource` | Read a `skill://` / `ui://` resource from an installed app's MCP server |
-| `nb__set_model_config` | Update model provider and limits (admin only) |
 | `nb__set_preferences` | Set user preferences (name, timezone, theme) |
-| `nb__manage_app` | Install, uninstall, or configure an app |
-| `nb__manage_skill` | Create, edit, delete user skills |
+| `nb__manage_tools` | Promote/release tools in the active set |
 | `nb__delegate` | Spawn child agent for sub-tasks (multi-agent) |
-| `nb__briefing` | Generate personalized activity briefing |
-| `nb__manage_users` | Create or delete users (admin only) |
-| `nb__manage_workspaces` | Workspace CRUD + member management + conversation sharing (admin only) |
 
 Additional internal tools (UI-only, hidden from LLM) are listed in [Architecture Reference](#internal-system-tools-ui-only-hidden-from-llm).
 
@@ -504,9 +499,16 @@ When total tools ≤30, all are surfaced directly. Above 30 with no skill matche
 |------|-------------|
 | `nb__list_apps` | List installed apps with status, tools, trust scores |
 | `nb__get_config` | Get runtime configuration (providers, model, limits) |
+| `nb__set_model_config` | Update model selection and runtime limits (admin only) |
 | `nb__manage_identity` | Write or reset workspace agent identity override (admin only) |
 | `nb__version` | Platform version info |
 | `nb__workspace_info` | Workspace metadata, telemetry status |
+| `nb__briefing` | Generate personalized activity briefing (home dashboard) |
+| `nb__manage_users` | Create, update, delete, or list users (admin only) |
+| `nb__manage_workspaces` | Workspace CRUD + member management (admin only) |
+| `nb__manage_registries` | List and configure connector registries (admin only) |
+| `nb__manage_apps` | Org-global app-version management: list, check, upgrade (admin only) |
+| `nb__manage_connectors` | Browse, install, configure, and disconnect connectors |
 
 ### Bundle Lifecycle
 
