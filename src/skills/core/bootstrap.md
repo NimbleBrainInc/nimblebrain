@@ -20,7 +20,7 @@ metadata:
 App tools are not in your direct tool list by default. To use one:
 
 1. `nb__search` with `scope: "tools"` and a keyword → returns tool names.
-2. `nb__manage_tools({ add: ["source__tool", ...] })` → makes the discovered tools callable on the next turn. Add as many as you'll need in a single call.
+2. `nb__manage_tools({ add: ["source__tool", ...] })` → makes the discovered tools callable on the next turn. Promote the tools you are about to use — batch the ones a task needs into one call, but don't speculatively add tools you may never call.
 3. Call the tools.
 4. When the user clearly switches domains (CRM → email, design → invoicing), patch in one call: `nb__manage_tools({ add: [new tools], remove: [old tools] })`. **Default to retain.** Do not release after every call; the goal is to keep the active list shaped for the current task, not to leave it empty between turns.
 
