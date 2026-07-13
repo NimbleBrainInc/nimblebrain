@@ -50,7 +50,7 @@ function manager(routes: Record<string, { status: number; body?: string }>): Bun
   return m;
 }
 
-const gmailUrl = "https://raw.githubusercontent.com/NimbleBrainInc/connector-skills/v0.2.0/gmail/SKILL.md";
+const gmailUrl = "https://raw.githubusercontent.com/NimbleBrainInc/connector-skills/v0.3.0/gmail/SKILL.md";
 
 function connectorSkillsDir(wd: string): string {
   return new WorkspaceContext({ wsId: WS_ID, workDir: wd }).getDataPath(CONNECTOR_SKILLS_SUBDIR);
@@ -64,7 +64,7 @@ describe("BundleLifecycleManager.syncBoundSkills (P4)", () => {
     const lock = await m.syncBoundSkills("gmail", "gmail", WS_ID, wd);
     expect(lock).toHaveLength(1);
     expect(lock[0]!.identity).toBe("gmail");
-    expect(lock[0]!.version).toBe("v0.2.0");
+    expect(lock[0]!.version).toBe("v0.3.0");
     expect(lock[0]!.sha).toMatch(/^[0-9a-f]{64}$/);
     expect(existsSync(lock[0]!.path)).toBe(true);
   });

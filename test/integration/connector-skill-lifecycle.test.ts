@@ -112,7 +112,7 @@ describe("connector-skill binding lifecycle (runtime wiring)", () => {
     const overlays = runtime.listConnectorOverlays(TEST_WORKSPACE_ID);
     expect(overlays).toHaveLength(1);
     expect(overlays[0]!.server).toBe("gmail");
-    expect(overlays[0]!.source).toBe("connector:gmail@v0.2.0");
+    expect(overlays[0]!.source).toBe("connector:gmail@v0.3.0");
 
     // Absent from the authored-skill listing — a separate store, filtered out.
     const list = await callTool(runtime, "skills__list", {});
