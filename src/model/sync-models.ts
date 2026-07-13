@@ -26,7 +26,7 @@ const MANUAL_EXCLUSIONS = new Set<string>([
 // Upstream reports each model's maximum limits, but some maxima are only
 // reachable with a capability the platform doesn't enable. Sonnet 4.5's 1M
 // context requires the `context-1m-2025-08-07` beta header, which the runtime
-// never sends (the provider is built with a bare `createAnthropic({ apiKey })`).
+// never sends (the provider is built without that beta header).
 // Pin such models to the limit the platform can actually use so the message
 // budget resolver doesn't over-pack and trip a provider 400. Sonnet 4.6+ ship
 // 1M as GA (headerless) and are left untouched. Format: "<provider>:<modelId>".

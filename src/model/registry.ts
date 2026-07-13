@@ -4,6 +4,7 @@ import { createOpenAI } from "@ai-sdk/openai";
 import type { LanguageModelV3, ProviderV3 } from "@ai-sdk/provider";
 import { createProviderRegistry, type Provider } from "ai";
 import { findProviderForModelId } from "./catalog.ts";
+import { wrapFetchWithLiveness } from "./fetch-liveness.ts";
 
 export interface ProvidersConfig {
   providers?: {
@@ -24,7 +25,16 @@ export function buildRegistry(config: ProvidersConfig): Provider {
 
   if (providersCfg.anthropic) {
     const { apiKey } = providersCfg.anthropic;
-    providers.anthropic = createAnthropic({ apiKey });
+    // Wrap fetch with the transport-liveness tap so the stream watchdog re-arms
+    // on Anthropic's swallowed `ping` keep-alives — otherwise a healthy-but-slow
+    // stream at large context trips the idle deadline. See fetch-liveness.ts.
+    // The cast bridges an unused member: the SDK types `fetch` as the full
+    // `typeof fetch` (incl. Bun's static `preconnect`) but only ever invokes the
+    // call signature, which the wrapper implements.
+    providers.anthropic = createAnthropic({
+      apiKey,
+      fetch: wrapFetchWithLiveness(globalThis.fetch) as typeof fetch,
+    });
   }
 
   if (providersCfg.openai) {
