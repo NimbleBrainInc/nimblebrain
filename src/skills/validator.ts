@@ -6,7 +6,7 @@ export interface ValidationResult {
   warnings: string[];
 }
 
-const RESERVED_NAMES = ["soul", "bootstrap", "capabilities", "skill-authoring"];
+const RESERVED_NAMES = ["soul", "bootstrap", "capabilities"];
 
 const OVERRIDE_PATTERNS = [
   "ignore previous instructions",

@@ -322,7 +322,7 @@ describe("loadCoreSkills", () => {
       const skills = loadCoreSkills();
       const names = skills.map((s) => s.manifest.name).sort();
 
-      expect(names).toEqual(["automation-authoring", "capabilities", "skill-authoring", "soul"]);
+      expect(names).toEqual(["automation-authoring", "capabilities", "soul"]);
     } finally {
       spy.mockRestore();
     }
