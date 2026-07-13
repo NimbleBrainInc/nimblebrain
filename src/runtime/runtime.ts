@@ -12,6 +12,7 @@ import { NoopEventSink } from "../adapters/noop-events.ts";
 import { WorkspaceLogSink } from "../adapters/workspace-log-sink.ts";
 import { recordLlmUsage } from "../api/metrics.ts";
 import type { AutomationDomainContext } from "../bundles/automations/src/domain.ts";
+import { bootReconcileConnectorSkills } from "../bundles/connector-skill-reconcile.ts";
 import { sanitizePlacements } from "../bundles/defaults.ts";
 import { BundleLifecycleManager } from "../bundles/lifecycle.ts";
 import { setConnectionRunningHandler } from "../bundles/pending-auth-buffer.ts";
@@ -848,6 +849,21 @@ export class Runtime {
       placementRegistry,
       workspaceBundleEntries,
     );
+
+    // Reconcile connector-skill overlays to the pinned version. Overlays bind
+    // only at connector install, and the pin is deploy-time config — so boot
+    // (a restart) is exactly when a pin bump must reach connectors that are
+    // already installed. Best-effort + version-gated: a no-op when nothing is
+    // stale, so steady-state boots pay only a per-connector version comparison.
+    await bootReconcileConnectorSkills({
+      workDir: rt.getWorkDir(),
+      listWorkspaces: () => workspaceStore.list(),
+      updateWorkspaceBundles: (wsId, bundles) => workspaceStore.update(wsId, { bundles }),
+      syncBoundSkills: (identity, serverName, wsId, wd) =>
+        lifecycle.syncBoundSkills(identity, serverName, wsId, wd),
+      catalogByIdMap: () => rt.getConnectorDirectory().catalogByIdMap(),
+      catalogByUrl: () => rt.getConnectorDirectory().catalogByUrl(),
+    });
 
     // Boot-time visibility: the locked curated registry is the platform's
     // non-empty-Browse guarantee. Warn loudly if its resolved catalog
