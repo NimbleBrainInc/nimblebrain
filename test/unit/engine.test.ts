@@ -3007,7 +3007,8 @@ describe("cache breakpoint edge cases", () => {
 // ---------------------------------------------------------------------------
 
 describe("malformed tool call input", () => {
-  it("unparseable JSON tool input propagates as run.error", async () => {
+  it("recovers from unparseable JSON tool input instead of aborting the run", async () => {
+    let handlerCalls = 0;
     let callCount = 0;
     const model = createMockModel(() => {
       callCount++;
@@ -3029,7 +3030,10 @@ describe("malformed tool call input", () => {
 
     const tools = {
       schemas: [{ name: "test__noop", description: "No-op", inputSchema: {} }],
-      handler: (): ToolResult => ({ content: textContent("ok"), isError: false }),
+      handler: (): ToolResult => {
+        handlerCalls++;
+        return { content: textContent("ok"), isError: false };
+      },
     };
 
     const events: EngineEvent[] = [];
@@ -3040,21 +3044,27 @@ describe("malformed tool call input", () => {
       sink,
     );
 
-    // Unparseable tool input causes a JSON.parse error that propagates through
-    // the engine's error handler, emitting run.error and re-throwing.
+    // Unparseable tool input must NOT throw out of the run. The engine feeds an
+    // invalid-input result back (never invoking the handler) so the model can
+    // correct on the next iteration — the run completes normally.
     let thrown: Error | null = null;
+    let result: Awaited<ReturnType<typeof engine.run>> | undefined;
     try {
-      await engine.run(defaultConfig, "", [
+      result = await engine.run(defaultConfig, "", [
         { role: "user", content: [{ type: "text", text: "Go" }] },
       ], tools.schemas);
     } catch (e) {
       thrown = e as Error;
     }
 
-    expect(thrown).not.toBeNull();
-    expect(thrown!.message).toContain("JSON");
-    const errorEvent = events.find((e) => e.type === "run.error");
-    expect(errorEvent).toBeDefined();
+    expect(thrown).toBeNull();
+    expect(events.find((e) => e.type === "run.error")).toBeUndefined();
+    expect(handlerCalls).toBe(0);
+    expect(result!.toolCalls).toHaveLength(1);
+    expect(result!.toolCalls[0]!.ok).toBe(false);
+    expect(result!.toolCalls[0]!.output).toContain("Invalid tool input");
+    expect(result!.output).toBe("Recovered");
+    expect(result!.stopReason).toBe("complete");
   });
 
   it("emits run.error event and re-throws on model failure", async () => {

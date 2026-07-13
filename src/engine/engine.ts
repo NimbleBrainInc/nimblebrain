@@ -481,6 +481,7 @@ function buildToolResults(toolResults: ToolExecResult[]): {
 
   for (const {
     toolCall,
+    gatedCall,
     result,
     ms,
     resourceUri: uri,
@@ -493,7 +494,9 @@ function buildToolResults(toolResults: ToolExecResult[]): {
     toolCallRecords.push({
       id: toolCall.toolCallId,
       name: toolCall.toolName,
-      input: JSON.parse(toolCall.input) as Record<string, unknown>,
+      // Reuse the input parsed once in executeToolCall — never re-parse the raw
+      // stream string (a malformed input would throw here and abort the run).
+      input: gatedCall.input,
       output: llmText,
       ok: !result.isError,
       ms,
@@ -1358,7 +1361,24 @@ export class AgentEngine {
     toolCall: LanguageModelV3ToolCall,
     ctx: ToolExecContext,
   ): Promise<ToolExecResult> {
-    const parsedInput = parseToolCallInput(toolCall.input);
+    let parsedInput: Record<string, unknown>;
+    try {
+      parsedInput = parseToolCallInput(toolCall.input);
+    } catch {
+      // The model streamed a tool-call `input` that isn't valid JSON (e.g. a
+      // stray comma). Surface it as an invalid-input tool result — the same
+      // shape a schema-validation failure produces — so the model can correct
+      // on the next iteration, rather than throwing and aborting the whole run.
+      return {
+        toolCall,
+        gatedCall: { id: toolCall.toolCallId, name: toolCall.toolName, input: {} },
+        result: {
+          content: textContent("Invalid tool input: arguments were not valid JSON."),
+          isError: true,
+        } as ToolResult,
+        ms: 0,
+      };
+    }
 
     const gatedCall = ctx.config.hooks?.beforeToolCall
       ? await ctx.config.hooks.beforeToolCall({
