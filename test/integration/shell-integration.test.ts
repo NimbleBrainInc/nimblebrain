@@ -241,9 +241,14 @@ describe("MCP client e2e with nb tools", () => {
 			expect(coreTools.length).toBeGreaterThanOrEqual(7);
 
 			// A genuinely agent-facing nb__ tool — not an `ai.nimblebrain/internal`
-			// one (e.g. list_apps), which the /mcp listing now strips.
+			// one (e.g. list_apps), which the /mcp listing strips.
 			const names = coreTools.map((t) => t.name).sort();
 			expect(names).toContain(`${NB_PREFIX}search`);
+			// Regression pin: internal tools are absent from the /mcp listing
+			// (list_apps carries ai.nimblebrain/internal). Fails if the filter
+			// in mcp-server.ts tools/list is dropped, even though the tool stays
+			// callable by name (see the callTool tests below).
+			expect(names).not.toContain(`${NB_PREFIX}list_apps`);
 		} finally {
 			await client.close();
 		}
