@@ -26,8 +26,9 @@ import { bareToolName } from "./namespace.ts";
  *      affordance the web shell invokes by name over REST (settings/admin ops:
  *      `manage_*`, `set_model_config`, `briefing`). Annotate
  *      `ai.nimblebrain/internal` — stripped from every LLM tool list (chat AND
- *      external `/mcp`) at line ~75, still callable by name; promotion is
- *      refused in the engine.
+ *      external `/mcp`) by the `visibleTools` filter at the top of
+ *      `surfaceTools` below, still callable by name; promotion is refused in
+ *      the engine.
  *
  * Two rules keep this honest:
  *   - A new `nb__*`/identity tool DEFAULTS to kernel-direct (it's a kernel tool
