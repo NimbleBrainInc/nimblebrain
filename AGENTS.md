@@ -13,7 +13,7 @@ bun run dev:worktree       # Run from any worktree against an isolated workdir o
 bun run dev:api            # API only with auto-restart
 bun run verify             # Full CI parity — runs every subscript below
 bun run verify:static      # format:check + lint + check + check:cycles
-bun run verify:test-unit   # test:unit + test:web
+bun run verify:test-unit   # test:unit + test:web + test:bundles
 
 bun run test               # Unit + integration tests (all)
 bun run test:unit          # Unit tests only (fast, ~10s)
@@ -26,8 +26,11 @@ bun run format             # Biome auto-format (writes)
 cd web && bun install      # Web client dependencies (separate package.json)
 cd web && bun run build    # Web production build → web/dist/
 
+for ui in src/bundles/*/ui; do (cd "$ui" && bun install); done   # Bundle UI deps (each a separate package.json)
 bun run build:bundles      # Rebuild every src/bundles/*/ui (vite single-file)
 ```
+
+**A fresh checkout/worktree must install `web/` AND every `src/bundles/*/ui/` before `bun run verify`.** `verify:test-unit` runs `test:web` + `test:bundles`, which execute those separate packages; root `bun install` doesn't cover them, so verify fails with a missing-module error (e.g. `Cannot find package 'dompurify'`) until they're installed.
 
 **`bun run dev` does NOT rebuild bundles.** The API serves each bundle from its pre-built `src/bundles/<name>/ui/dist/index.html`. After editing any file under `src/bundles/*/ui/src/`, run `bun run build:bundles` and restart the dev server (the API reads dist on iframe mount; it doesn't watch the file). Forgetting this means the iframe loads stale code while your changes look "live" in the source tree — a high-confusion failure mode.
 
