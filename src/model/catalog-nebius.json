@@ -2,38 +2,16 @@
   "nebius": {
     "name": "Nebius Token Factory",
     "models": {
-      "deepseek-ai/DeepSeek-V3-0324": {
-        "id": "deepseek-ai/DeepSeek-V3-0324",
-        "name": "DeepSeek V3 (0324)",
+      "deepseek-ai/DeepSeek-V4-Pro": {
+        "id": "deepseek-ai/DeepSeek-V4-Pro",
+        "name": "DeepSeek V4 Pro",
         "family": "deepseek",
         "cost": {
-          "input": 0.5,
-          "output": 1.5
+          "input": 1.75,
+          "output": 3.5
         },
         "limits": {
-          "context": 128000,
-          "output": 32000
-        },
-        "capabilities": {
-          "toolCall": true,
-          "reasoning": false,
-          "attachment": false
-        },
-        "modalities": {
-          "input": ["text"],
-          "output": ["text"]
-        }
-      },
-      "deepseek-ai/DeepSeek-R1-0528": {
-        "id": "deepseek-ai/DeepSeek-R1-0528",
-        "name": "DeepSeek R1 (0528)",
-        "family": "deepseek",
-        "cost": {
-          "input": 0.8,
-          "output": 2.4
-        },
-        "limits": {
-          "context": 128000,
+          "context": 164000,
           "output": 32000
         },
         "capabilities": {
@@ -99,7 +77,7 @@
           "output": 0.6
         },
         "limits": {
-          "context": 262000,
+          "context": 128000,
           "output": 32000
         },
         "capabilities": {
@@ -112,21 +90,43 @@
           "output": ["text"]
         }
       },
-      "Qwen/Qwen3-Coder-480B-A35B-Instruct": {
-        "id": "Qwen/Qwen3-Coder-480B-A35B-Instruct",
-        "name": "Qwen3 Coder 480B A35B",
+      "Qwen/Qwen3-32B": {
+        "id": "Qwen/Qwen3-32B",
+        "name": "Qwen3 32B",
         "family": "qwen",
         "cost": {
-          "input": 0.4,
-          "output": 1.8
+          "input": 0.1,
+          "output": 0.3
         },
         "limits": {
-          "context": 262000,
+          "context": 128000,
           "output": 32000
         },
         "capabilities": {
           "toolCall": true,
           "reasoning": false,
+          "attachment": false
+        },
+        "modalities": {
+          "input": ["text"],
+          "output": ["text"]
+        }
+      },
+      "Qwen/Qwen3-Next-80B-A3B-Thinking": {
+        "id": "Qwen/Qwen3-Next-80B-A3B-Thinking",
+        "name": "Qwen3 Next 80B A3B Thinking",
+        "family": "qwen",
+        "cost": {
+          "input": 0.15,
+          "output": 1.2
+        },
+        "limits": {
+          "context": 128000,
+          "output": 32000
+        },
+        "capabilities": {
+          "toolCall": true,
+          "reasoning": true,
           "attachment": false
         },
         "modalities": {
