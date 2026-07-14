@@ -33,6 +33,8 @@ bun run build:bundles      # Rebuild every src/bundles/*/ui (vite single-file)
 
 **Before opening a PR, run `bun run verify`.** It is the single command that mirrors CI, enforced by construction: `.github/workflows/ci.yml` invokes only `verify:*` subscripts (plus `test:integration`) — no inline check steps. To add or change a check, edit the matching subscript in `package.json`; CI picks it up automatically. If CI ever catches something `verify` didn't, the fix is to update the subscript, not the checklist. Tool-level parity is the gate; discipline-level rules are not.
 
+**In a fresh worktree, `verify` needs deps in three places, not just root:** `bun install`, then `cd web && bun install`, then a `bun install` in each `src/bundles/*/ui/`. Otherwise `verify` fails partway through — `check`/`check:web` on missing `web/` modules, or `test:bundles` on a missing bundle-UI module — even though `src/` is untouched.
+
 ### Worktree dev
 
 `bun run dev:worktree` runs the platform from any git worktree against a worktree-local workdir, on alt ports, with no auth gate — for QA on a feature branch without disturbing your primary `~/.nimblebrain` dev or another worktree's state.
