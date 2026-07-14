@@ -626,4 +626,23 @@ describe("bundle-skill adapter — honors declared loading-strategy", () => {
     const alwaysEntry = skillsLoaded?.skills.find((s) => s.id === "skill://always-guide/SKILL.md");
     expect(alwaysEntry).toBeUndefined();
   });
+
+  it("composes the `always` skill into an unattended task's context too (parity with chat)", async () => {
+    // `_taskInner` routes bundle skills through the same `selectRequestLayer3` +
+    // `[...poolContext, ...bundleContext]` glue as `_chatInner`, so an `always`
+    // discovered skill must reach a scheduled/unattended run's context even with
+    // no server tools active — the exact case turn-start Layer-3 can't cover.
+    multiPrompt = undefined;
+    const result = await multiRuntime.executeTask({
+      prompt: "run the workflow",
+      workspaceId: TEST_WORKSPACE_ID,
+      allowedTools: [],
+    });
+    expect(result.stopReason).toBe("complete");
+
+    const prompt = multiPromptText();
+    expect(prompt).toContain("ALWAYS_ON_WORKFLOW_MARKER");
+    // The `dynamic` skill stays tool-gated on the task path too.
+    expect(prompt).not.toContain("DYNAMIC_USAGE_MARKER");
+  });
 });
