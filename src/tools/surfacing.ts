@@ -1,4 +1,4 @@
-import type { ToolSchema } from "../engine/types.ts";
+import { isInternalTool, type ToolSchema } from "../engine/types.ts";
 import { DEFAULT_MAX_DIRECT_TOOLS } from "../limits.ts";
 import type { Skill } from "../skills/types.ts";
 import { isIdentitySource } from "./identity-sources.ts";
@@ -72,7 +72,7 @@ export function surfaceTools(
   } = {},
 ): { direct: ToolSchema[]; proxied: ToolSchema[] } {
   // Filter out internal tools — they stay callable via bridge/API but never appear in the LLM's tool list
-  let visibleTools = allTools.filter((t) => !t.annotations?.["ai.nimblebrain/internal"]);
+  let visibleTools = allTools.filter((t) => !isInternalTool(t));
 
   // Pre-filter by request-level allowedTools (if provided)
   if (config.requestAllowedTools) {

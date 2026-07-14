@@ -87,7 +87,7 @@ import {
   type ServerCapabilities,
 } from "@modelcontextprotocol/sdk/types.js";
 import { isToolEnabled, isToolVisibleToRole, type ResolvedFeatures } from "../config/features.ts";
-import type { ToolResult } from "../engine/types.ts";
+import { isInternalTool, type ToolResult } from "../engine/types.ts";
 import type { UserIdentity } from "../identity/provider.ts";
 import { log } from "../observability/log.ts";
 import {
@@ -763,7 +763,7 @@ function createServer(
         // capabilities — hidden from every LLM tool listing, this surface
         // included (mirrors `surfaceTools` on the chat path). Still callable by
         // name via `tools/call`, so the web shell's REST calls are unaffected.
-        .filter((t) => !t.annotations?.["ai.nimblebrain/internal"])
+        .filter((t) => !isInternalTool(t))
         // Feature gating + role visibility apply to the BARE tool name.
         .filter((t) => isToolEnabled(bareToolName(t.name), features))
         .filter((t) => isToolVisibleToRole(bareToolName(t.name), orgRole))

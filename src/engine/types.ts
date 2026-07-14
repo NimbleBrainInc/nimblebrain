@@ -84,6 +84,21 @@ export interface ToolResult {
  */
 export const NON_ADVANCING_META_KEY = "ai.nimblebrain/non-advancing";
 
+/**
+ * Annotation marking a tool as a UI-driven affordance, not an agent capability.
+ * An internal tool is stripped from every LLM tool listing — chat
+ * (`surfaceTools`) and `/mcp` (`tools/list`) alike — and refused for promotion,
+ * yet stays callable by name (so the web shell's REST calls still work). Single
+ * source of the key: use {@link isInternalTool} to read it and this const as the
+ * annotation key to set it, so a rename can never split the read/write sites.
+ */
+export const INTERNAL_TOOL_ANNOTATION = "ai.nimblebrain/internal";
+
+/** True when a tool carries {@link INTERNAL_TOOL_ANNOTATION}. */
+export function isInternalTool(tool: { annotations?: Record<string, unknown> }): boolean {
+  return Boolean(tool.annotations?.[INTERNAL_TOOL_ANNOTATION]);
+}
+
 export interface ToolPromotionResult {
   ok: boolean;
   toolName: string;
