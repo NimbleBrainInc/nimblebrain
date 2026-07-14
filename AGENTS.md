@@ -26,7 +26,7 @@ bun run format             # Biome auto-format (writes)
 cd web && bun install      # Web client dependencies (separate package.json)
 cd web && bun run build    # Web production build → web/dist/
 
-for ui in src/bundles/*/ui; do (cd "$ui" && bun install); done   # Bundle UI deps (each a separate package.json)
+bun run install:bundles    # Bundle UI deps (each a separate package.json) — the exact command CI runs
 bun run build:bundles      # Rebuild every src/bundles/*/ui (vite single-file)
 ```
 
