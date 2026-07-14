@@ -39,6 +39,7 @@ import {
   type EngineResult,
   type EventSink,
   type FinishReason,
+  isInternalTool,
   type ResolvedThinking,
   type StopReason,
   type ToolCall,
@@ -637,7 +638,7 @@ export class AgentEngine {
             message: `${toolName} was not found in the current tool registry.`,
           };
         }
-        if (schema.annotations?.["ai.nimblebrain/internal"]) {
+        if (isInternalTool(schema)) {
           return {
             ok: false,
             toolName,

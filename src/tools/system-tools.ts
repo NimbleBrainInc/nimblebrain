@@ -6,7 +6,7 @@ import type { ConfirmationGate } from "../config/privilege.ts";
 import type { ServerDetail } from "../connectors/server-detail.ts";
 import { textContent } from "../engine/content-helpers.ts";
 import type { EventSink, ToolPromotionControls, ToolResult, ToolSchema } from "../engine/types.ts";
-import { NON_ADVANCING_META_KEY } from "../engine/types.ts";
+import { isInternalTool, NON_ADVANCING_META_KEY } from "../engine/types.ts";
 import { log } from "../observability/log.ts";
 import type { Runtime } from "../runtime/runtime.ts";
 import type { SelectedSkill } from "../skills/select.ts";
@@ -829,7 +829,7 @@ async function searchTools(
     ? await runtime.listDiscoverableTools()
     : await getRegistry().availableTools();
   const all = discoverable.filter(
-    (t) => toolEligibilityCtx?.isToolEligible(t) ?? !t.annotations?.["ai.nimblebrain/internal"],
+    (t) => toolEligibilityCtx?.isToolEligible(t) ?? !isInternalTool(t),
   );
   if (!q) return groupToolsBySource(all);
   const matches = rankToolSearchResults(all, q);

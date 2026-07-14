@@ -1,5 +1,5 @@
 import { textContent } from "../engine/content-helpers.ts";
-import type { ToolResult } from "../engine/types.ts";
+import { INTERNAL_TOOL_ANNOTATION, type ToolResult } from "../engine/types.ts";
 import type { UserIdentity } from "../identity/provider.ts";
 import { ORG_ADMIN_ROLES } from "../identity/types.ts";
 import type { Runtime } from "../runtime/runtime.ts";
@@ -32,7 +32,7 @@ export function createManageRegistriesTool(ctx: ManageRegistriesContext): InProc
     name: "manage_registries",
     description:
       "List and configure connector registries (curated, mpak, future). Org admin gated for writes.",
-    annotations: { "ai.nimblebrain/internal": true },
+    annotations: { [INTERNAL_TOOL_ANNOTATION]: true },
     inputSchema: {
       type: "object",
       properties: {

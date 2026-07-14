@@ -33,7 +33,7 @@ import {
 import type { UserConfigFieldDef } from "../config/workspace-credentials.ts";
 import { connectorSkillIdentityFrom } from "../connectors/server-detail.ts";
 import { textContent } from "../engine/content-helpers.ts";
-import type { ToolResult } from "../engine/types.ts";
+import { INTERNAL_TOOL_ANNOTATION, type ToolResult } from "../engine/types.ts";
 import type { ConnectorOwner } from "../identity/connector-owner.ts";
 import { IdentityConnectorStore } from "../identity/connector-store.ts";
 import type { UserIdentity } from "../identity/provider.ts";
@@ -221,7 +221,7 @@ export function createManageConnectorsTool(ctx: ManageConnectorsContext): InProc
     name: "manage_connectors",
     description:
       "List, install, and disconnect remote MCP connectors. Workspace connectors are shared by all members; user connectors are personal and follow you across workspaces.",
-    annotations: { "ai.nimblebrain/internal": true },
+    annotations: { [INTERNAL_TOOL_ANNOTATION]: true },
     inputSchema: {
       type: "object",
       properties: {
