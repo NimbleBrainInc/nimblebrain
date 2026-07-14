@@ -417,3 +417,213 @@ describe("bundle-skill adapter — mid-turn tool promotion", () => {
     expect(historyText).toContain("<connector-skill");
   });
 });
+
+/**
+ * Declared loading-strategy is honored end-to-end.
+ *
+ * A server exposes TWO skill resources whose only difference is the strategy
+ * they declare in `metadata.nimblebrain.loading-strategy`:
+ *   - `skill://always-guide/SKILL.md` → `always`
+ *   - `skill://dynamic-usage/SKILL.md` → declares nothing (defaults to `dynamic`)
+ *
+ * The `always` skill must compose into context EVERY turn, even when none of the
+ * server's tools are in the active set (the exact case turn-start Layer-3
+ * selection can't cover). The `dynamic` skill must stay tool-gated. Both must be
+ * discovered from the same `resources/list`.
+ */
+const ALWAYS_SKILL_BODY = `---
+name: always-guide
+description: The always-on workflow for the multi server.
+metadata:
+  nimblebrain:
+    loading-strategy: always
+---
+
+# Always-on workflow
+
+ALWAYS_ON_WORKFLOW_MARKER — read this every turn.`;
+
+const DYNAMIC_SKILL_BODY = `---
+name: dynamic-usage
+description: How to call the multi server's tools.
+---
+
+# Tool usage
+
+DYNAMIC_USAGE_MARKER — call multi__doit correctly.`;
+
+function createMultiSkillFixtureBundle(dir: string): string {
+  mkdirSync(dir, { recursive: true });
+  const nodeModulesPath = join(import.meta.dir, "../..", "node_modules");
+  const serverCode = `
+const { Server } = require("${nodeModulesPath}/@modelcontextprotocol/sdk/dist/cjs/server/index.js");
+const { StdioServerTransport } = require("${nodeModulesPath}/@modelcontextprotocol/sdk/dist/cjs/server/stdio.js");
+const {
+  ListToolsRequestSchema,
+  CallToolRequestSchema,
+  ListResourcesRequestSchema,
+  ReadResourceRequestSchema,
+} = require("${nodeModulesPath}/@modelcontextprotocol/sdk/dist/cjs/types.js");
+
+async function main() {
+  const server = new Server(
+    { name: "multi", version: "0.1.0" },
+    { capabilities: { tools: {}, resources: {} } },
+  );
+
+  server.setRequestHandler(ListToolsRequestSchema, async () => ({
+    tools: [
+      { name: "doit", description: "Do the thing", inputSchema: { type: "object", properties: {} } },
+    ],
+  }));
+
+  server.setRequestHandler(CallToolRequestSchema, async () => ({
+    content: [{ type: "text", text: "done" }],
+  }));
+
+  server.setRequestHandler(ListResourcesRequestSchema, async () => ({
+    resources: [
+      { uri: "skill://always-guide/SKILL.md", name: "always-guide", mimeType: "text/markdown" },
+      { uri: "skill://dynamic-usage/SKILL.md", name: "dynamic-usage", mimeType: "text/markdown" },
+    ],
+  }));
+
+  const bodies = {
+    "skill://always-guide/SKILL.md": ${JSON.stringify(ALWAYS_SKILL_BODY)},
+    "skill://dynamic-usage/SKILL.md": ${JSON.stringify(DYNAMIC_SKILL_BODY)},
+  };
+  server.setRequestHandler(ReadResourceRequestSchema, async (request) => {
+    const text = bodies[request.params.uri];
+    if (text === undefined) throw new Error("Resource not found: " + request.params.uri);
+    return { contents: [{ uri: request.params.uri, mimeType: "text/markdown", text }] };
+  });
+
+  const transport = new StdioServerTransport();
+  await server.connect(transport);
+}
+main();
+`;
+  writeFileSync(join(dir, "server.cjs"), serverCode);
+  return dir;
+}
+
+const multiDir = join(tmpdir(), `nimblebrain-bundle-skills-multi-${Date.now()}`);
+let multiRuntime: Runtime;
+let multiSource: McpSource;
+// Captures the composed prompt for the multi-skill runtime.
+let multiPrompt: LanguageModelV3CallOptions["prompt"] | undefined;
+
+function multiPromptText(): string {
+  if (!multiPrompt) return "";
+  return multiPrompt
+    .map((m) =>
+      typeof m.content === "string"
+        ? m.content
+        : m.content.map((p) => ("text" in p ? p.text : "")).join(" "),
+    )
+    .join("\n");
+}
+
+describe("bundle-skill adapter — honors declared loading-strategy", () => {
+  beforeAll(async () => {
+    mkdirSync(multiDir, { recursive: true });
+    const echo = createEchoModel();
+    const capturing: LanguageModelV3 = {
+      ...echo,
+      doStream: (options: LanguageModelV3CallOptions) => {
+        multiPrompt = options.prompt;
+        return echo.doStream(options);
+      },
+    };
+
+    multiRuntime = await Runtime.start({
+      model: { provider: "custom", adapter: capturing },
+      noDefaultBundles: true,
+      logging: { disabled: true },
+      workDir: multiDir,
+      telemetry: { enabled: false },
+    });
+    await provisionTestWorkspace(multiRuntime);
+
+    const bundleDir = createMultiSkillFixtureBundle(join(multiDir, "bundle"));
+    multiSource = new McpSource(
+      "ai-nimblebrain-multi-mcp",
+      {
+        type: "stdio",
+        spawn: {
+          command: "node",
+          args: [join(bundleDir, "server.cjs")],
+          env: process.env as Record<string, string>,
+        },
+      },
+      new NoopEventSink(),
+    );
+    await multiSource.start();
+    multiRuntime.getRegistryForWorkspace(TEST_WORKSPACE_ID).addSource(multiSource);
+  });
+
+  afterAll(async () => {
+    try {
+      await multiSource.stop();
+    } catch {
+      // already stopped
+    }
+    await multiRuntime.shutdown();
+    if (existsSync(multiDir)) rmSync(multiDir, { recursive: true });
+  });
+
+  it("composes the `always` skill into context even when the server's tools are NOT active", async () => {
+    multiPrompt = undefined;
+    // No server tools active — the case turn-start Layer-3 selection can't cover.
+    const chat = await multiRuntime.chat({
+      workspaceId: TEST_WORKSPACE_ID,
+      message: "hello",
+      allowedTools: [],
+    });
+
+    const prompt = multiPromptText();
+    // The `always` skill is unconditionally in context.
+    expect(prompt).toContain("ALWAYS_ON_WORKFLOW_MARKER");
+    // The `dynamic` skill is tool-gated and its tool isn't active — absent.
+    expect(prompt).not.toContain("DYNAMIC_USAGE_MARKER");
+
+    // It rides the always-on context channel, so it is NOT reported as a Layer-3
+    // (tool-affinity) selection in `skills.loaded`.
+    const store = await multiRuntime.resolveConversationStore(chat.conversationId);
+    const events = await store!.readEvents(chat.conversationId);
+    const skillsLoaded = events.find((e) => e.type === "skills.loaded") as unknown as
+      | { skills: Array<{ id: string }> }
+      | undefined;
+    const layer3Always = skillsLoaded?.skills.find((s) => s.id === "skill://always-guide/SKILL.md");
+    expect(layer3Always).toBeUndefined();
+  });
+
+  it("loads the `dynamic` skill via Layer 3 when its tool is active, alongside the always skill in context", async () => {
+    multiPrompt = undefined;
+    const chat = await multiRuntime.chat({
+      workspaceId: TEST_WORKSPACE_ID,
+      message: "do it",
+      allowedTools: ["ai-nimblebrain-multi-mcp__doit"],
+    });
+
+    const prompt = multiPromptText();
+    // Both skills are now discovered and present in the prompt: the always one in
+    // context, the dynamic one via Layer-3 tool-affinity.
+    expect(prompt).toContain("ALWAYS_ON_WORKFLOW_MARKER");
+    expect(prompt).toContain("DYNAMIC_USAGE_MARKER");
+
+    const store = await multiRuntime.resolveConversationStore(chat.conversationId);
+    const events = await store!.readEvents(chat.conversationId);
+    const skillsLoaded = events.find((e) => e.type === "skills.loaded") as unknown as
+      | { skills: Array<{ id: string; scope: string; loadedBy: string }> }
+      | undefined;
+    // The dynamic skill is the Layer-3 selection; the always skill is not.
+    const dynamicEntry = skillsLoaded?.skills.find(
+      (s) => s.id === "skill://dynamic-usage/SKILL.md",
+    );
+    expect(dynamicEntry?.scope).toBe("bundle");
+    expect(dynamicEntry?.loadedBy).toBe("tool_affinity");
+    const alwaysEntry = skillsLoaded?.skills.find((s) => s.id === "skill://always-guide/SKILL.md");
+    expect(alwaysEntry).toBeUndefined();
+  });
+});

@@ -27,14 +27,26 @@
  *
  *   This adapter closes both gaps. At chat-build time, for each MCP source in
  *   the active workspace registry, the runtime discovers its `skill://…/SKILL.md`
- *   resources and wraps each body in a synthetic `Skill` with
- *   `loadingStrategy: "dynamic"` and `toolAffinity: ["<serverName>__*"]`. The
- *   skill then flows through the standard `selectLayer3Skills` path: if any
- *   `<serverName>__*` tool is in the active toolset, the skill loads.
+ *   resources and wraps each body in a synthetic `Skill`. The synthesized skill
+ *   then flows through `partitionSkillsByRole`: a `dynamic` skill routes to the
+ *   `selectLayer3Skills` capability channel with `toolAffinity: ["<serverName>__*"]`
+ *   (loads when the server's tools are in the active toolset); an `always` skill
+ *   routes to the always-on context channel (composed every turn, the same
+ *   reliable path filesystem `always` skills use).
+ *
+ *   Loading strategy is READ from the discovered skill's frontmatter, not
+ *   invented: a server declares `metadata.nimblebrain.loading-strategy` (and an
+ *   optional `priority`) exactly as a filesystem skill does, and the host honors
+ *   it. A skill that declares nothing defaults to `dynamic` — backward-compatible
+ *   with servers that publish tool-affined usage guidance and never opt in. This
+ *   lets a server route an always-present workflow guide to the reliable context
+ *   channel, rather than the capability channel that only selects once at
+ *   turn-start (so a workflow skill could silently never load once its tools were
+ *   promoted after selection).
  *
  *   This is strictly additive. The `appContext`-driven `<app-guide>` injection
  *   remains untouched — it has different semantics (per-app focus, trust-score
- *   gating, reference-resource hint) than Layer 3 selection.
+ *   gating, reference-resource hint) than role-based skill composition.
  *
  * NOTE: the exported names keep the `bundle`/`Bundle` prefix to bound the diff,
  * but a skill is a property of the MCP *server*, independent of the mpak
@@ -43,14 +55,20 @@
 
 import matter from "gray-matter";
 
-import type { Skill, SkillScope } from "./types.ts";
+import type { Skill, SkillLoadingStrategy, SkillScope } from "./types.ts";
 
 /** Scope tag used on synthesized server skills. */
 export const BUNDLE_SKILL_SCOPE: SkillScope = "bundle";
 
-/** Priority for synthesized server skills. Mid-range — below `always` skills
- * that workspace authors set explicitly, above default catch-alls. */
+/**
+ * Default priority for a synthesized server skill that declares none. Mid-range —
+ * below `always` skills that workspace authors set explicitly, above default
+ * catch-alls. A server may override it via `metadata.nimblebrain.priority`.
+ */
 const BUNDLE_SKILL_PRIORITY = 60;
+
+/** Loading strategy a synthesized server skill falls back to when it declares none. */
+const DEFAULT_BUNDLE_LOADING_STRATEGY: SkillLoadingStrategy = "dynamic";
 
 /**
  * SEP-2640 skill entrypoint: `skill://<skill-path>/SKILL.md`. A skill is a
@@ -74,6 +92,43 @@ export interface DiscoveredSkill {
   description: string;
   /** SKILL.md body, frontmatter stripped and truncated to budget. */
   body: string;
+  /**
+   * Declared `metadata.nimblebrain.loading-strategy`, when the server set one.
+   * `undefined` means the skill opted out — synthesis defaults it to `dynamic`.
+   */
+  loadingStrategy?: SkillLoadingStrategy;
+  /** Declared `metadata.nimblebrain.priority`, when the server set one. */
+  priority?: number;
+}
+
+/**
+ * Read the declared loading strategy + priority from a discovered skill's parsed
+ * frontmatter, using the SAME `metadata.nimblebrain.*` fields the filesystem
+ * loader reads (`mapFrontmatterToManifest`) — the strategy is READ, not invented.
+ *
+ * Lenient by design: a discovered skill is authored by an arbitrary MCP server,
+ * so — unlike the strict on-disk loader — a non-conforming or absent block does
+ * not reject the skill; it just leaves the fields `undefined` (synthesis then
+ * applies the defaults). Only recognized values are returned: strategy must be
+ * `always` or `dynamic`; priority must be a number in [0, 100].
+ */
+function readDeclaredLoading(data: Record<string, unknown>): {
+  loadingStrategy?: SkillLoadingStrategy;
+  priority?: number;
+} {
+  const metadata = data.metadata;
+  const nb =
+    metadata && typeof metadata === "object"
+      ? (metadata as Record<string, unknown>).nimblebrain
+      : undefined;
+  if (!nb || typeof nb !== "object") return {};
+  const block = nb as Record<string, unknown>;
+  const strategy = block["loading-strategy"];
+  const priority = block.priority;
+  return {
+    ...(strategy === "always" || strategy === "dynamic" ? { loadingStrategy: strategy } : {}),
+    ...(typeof priority === "number" && priority >= 0 && priority <= 100 ? { priority } : {}),
+  };
 }
 
 /**
@@ -93,22 +148,25 @@ function skillPathSegment(uri: string): string {
 }
 
 /**
- * Parse a `SKILL.md` resource into `{ name, description, body }`. The format is
- * the external Agent-Skills spec: YAML frontmatter (`name`, `description`) + a
- * markdown body. Frontmatter `name` wins; the URI's final skill-path segment is
- * the fallback (SEP-2640 requires them to match, but we don't hard-fail on a
- * server that omits the field). Malformed frontmatter degrades to the raw body.
+ * Parse a `SKILL.md` resource into `{ name, description, body, loadingStrategy?,
+ * priority? }`. The format is the external Agent-Skills spec: YAML frontmatter
+ * (`name`, `description`, and the optional `metadata.nimblebrain` runtime block)
+ * + a markdown body. Frontmatter `name` wins; the URI's final skill-path segment
+ * is the fallback (SEP-2640 requires them to match, but we don't hard-fail on a
+ * server that omits the field). The declared `loading-strategy` / `priority` (if
+ * any) are read from `metadata.nimblebrain.*`. Malformed frontmatter degrades to
+ * the raw body with no declared strategy.
  */
 export function parseSkillMarkdown(
   uri: string,
   raw: string,
-): { name: string; description: string; body: string } {
+): { name: string; description: string; body: string } & ReturnType<typeof readDeclaredLoading> {
   const fallbackName = skillPathSegment(uri);
   try {
     const { data, content } = matter(raw);
     const name = typeof data.name === "string" && data.name ? data.name : fallbackName;
     const description = typeof data.description === "string" ? data.description : "";
-    return { name, description, body: content };
+    return { name, description, body: content, ...readDeclaredLoading(data) };
   } catch {
     // Malformed frontmatter — inject the whole document rather than lose it.
     return { name: fallbackName, description: "", body: raw };
@@ -126,32 +184,45 @@ export interface BundleSkillInput {
   body: string;
   /** The `skill://…/SKILL.md` entrypoint URI the body was read from. */
   uri: string;
+  /**
+   * Declared loading strategy from the skill's frontmatter. Defaults to
+   * `dynamic` when the server declared none (backward-compatible with usage
+   * skills that only ever wanted tool-affined loading).
+   */
+  loadingStrategy?: SkillLoadingStrategy;
+  /** Declared priority from the skill's frontmatter. Defaults to {@link BUNDLE_SKILL_PRIORITY}. */
+  priority?: number;
 }
 
 /**
- * Synthesize a Layer 3 `Skill` from a server-exposed `skill://<name>/SKILL.md`
- * resource. The skill is `dynamic` with tool-affinity `<serverName>__*`, so it
- * loads whenever the server's tools are in the active toolset.
+ * Synthesize a `Skill` from a server-exposed `skill://<name>/SKILL.md` resource,
+ * honoring the strategy the skill DECLARES:
+ *  - `dynamic` (the default when none is declared): tool-affined to
+ *    `<serverName>__*`, so it loads via `selectLayer3Skills` whenever the
+ *    server's tools are in the active toolset.
+ *  - `always`: composed into the always-on context channel every turn (routed
+ *    there by `partitionSkillsByRole`). `toolAffinity` is still stamped but
+ *    unused on this path — the context channel is unconditional.
  *
  * Pure function — no I/O, no caching. The caller (runtime) handles discovery,
  * fetch, parse, and cache. Keeping the synthesis pure means it's trivial to
  * unit-test the manifest shape without spinning up a registry.
  *
- * Observability contract: when this skill is selected by `selectLayer3Skills`,
- * `buildSkillsLoadedPayload` emits it on the `skills.loaded` event with
- * `id = <uri>`, `scope = "bundle"`, `loadedBy = "tool_affinity"` — byte-identical
- * in payload structure to any filesystem-sourced Layer 3 skill with the same
- * scope / strategy.
+ * Observability contract: when a `dynamic` skill is selected by
+ * `selectLayer3Skills`, `buildSkillsLoadedPayload` emits it on the
+ * `skills.loaded` event with `id = <uri>`, `scope = "bundle"`,
+ * `loadedBy = "tool_affinity"` — byte-identical in payload structure to any
+ * filesystem-sourced Layer 3 skill with the same scope / strategy.
  */
 export function synthesizeBundleSkill(input: BundleSkillInput): Skill {
-  const { serverName, skillName, description, body, uri } = input;
+  const { serverName, skillName, description, body, uri, loadingStrategy, priority } = input;
   return {
     manifest: {
       name: `bundle:${serverName}:${skillName}`,
       description: description || `Workflow guidance from the ${serverName} server`,
-      priority: BUNDLE_SKILL_PRIORITY,
+      priority: priority ?? BUNDLE_SKILL_PRIORITY,
       scope: BUNDLE_SKILL_SCOPE,
-      loadingStrategy: "dynamic",
+      loadingStrategy: loadingStrategy ?? DEFAULT_BUNDLE_LOADING_STRATEGY,
       toolAffinity: [`${serverName}__*`],
       status: "active",
     },

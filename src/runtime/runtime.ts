@@ -1300,28 +1300,20 @@ export class Runtime {
     const activeWorkspace = await this._workspaceStore.get(narratedWsId);
     const workspaceContext = buildWorkspaceContext(narratedWsId, activeWorkspace);
 
-    // Always-on context channel: the `type: context` skills across every tier
-    // (core/builtin/org + workspace + user), plus the workspace identity/persona
-    // override when the conversation's workspace sets one.
-    const requestContextSkills = withIdentityOverride(poolContext, activeWorkspace?.identity);
-
-    // Layer 3 selection — pick `always` and `dynamic` (tool-affinity) skills
-    // based on the active tool set. The merged pool
-    // includes platform / workspace / user tier skills (user > workspace >
-    // platform on name collisions). Server-exposed `skill://<name>/SKILL.md`
-    // resources are synthesized into the pool as `dynamic` tool-affinity skills so a
-    // workspace-level chat picks them up whenever the bundle's tools are
-    // surfaced — no `appContext` scoping required (the prior path only fired
-    // under `appContext`, missing cross-app workflows).
+    // Skill selection. Server-exposed `skill://<name>/SKILL.md` resources are
+    // discovered here and routed by the strategy they DECLARE: `dynamic` ones
+    // join tool-affinity Layer 3 (loading when the bundle's tools are surfaced,
+    // no `appContext` scoping required); `always` ones (`bundleContext`) compose
+    // into the always-on context channel below, the same reliable every-turn
+    // path filesystem `always` skills use.
     //
     // Workspace-tier skills follow the conversation's own workspace (`convWsId`),
     // matching the briefing / apps / overlay surfaces. A conversation in the
     // personal workspace reads the identity's personal scope, consistent with
-    // the rest of personal-workspace reads.
-    // Reuse the pool computed for the per-request matcher above — same
-    // `wsId` and `userId` — so the conversation-skill disk read happens once
-    // per turn, not twice.
-    const selectedLayer3 = await this.selectRequestLayer3({
+    // the rest of personal-workspace reads. Reuse the capability pool computed
+    // for the per-request matcher above — same `wsId` and `userId` — so the
+    // conversation-skill disk read happens once per turn, not twice.
+    const { context: bundleContext, layer3: selectedLayer3 } = await this.selectRequestLayer3({
       wsId: convWsId,
       userId,
       activeToolNames: tools.map((t) => t.name),
@@ -1330,6 +1322,15 @@ export class Runtime {
         ? { appContextServerName: request.appContext.serverName }
         : {}),
     });
+
+    // Always-on context channel: the `always` skills across every tier
+    // (core/builtin/org + workspace + user) plus the always-on bundle skills,
+    // then the workspace identity/persona override when the conversation's
+    // workspace sets one.
+    const requestContextSkills = withIdentityOverride(
+      [...poolContext, ...bundleContext],
+      activeWorkspace?.identity,
+    );
     const layer3Entries: Layer3SkillEntry[] = selectedLayer3.map((s) => ({
       name: s.skill.manifest.name,
       body: s.skill.body,
@@ -1737,18 +1738,23 @@ export class Runtime {
     const conversationPool = this.loadConversationSkills(workWsId, userId);
     const { context: poolContext, capability: poolCapability } =
       partitionSkillsByRole(conversationPool);
-    // Always-on context channel plus the workspace identity/persona override when
-    // the focused workspace sets one.
-    const requestContextSkills = withIdentityOverride(poolContext, activeWorkspace?.identity);
-    // Bundle skills come from the FOCUSED workspace only (the wall) — never
-    // across the owner's other workspaces.
-    const bundleSkills = await this.loadBundleSkills(workWsId, {});
-    const mergedLayer3Pool: Skill[] = [...poolCapability, ...bundleSkills];
-    const activeToolNames = tools.map((t) => t.name);
-    const selectedLayer3 = selectLayer3Skills({
-      skills: mergedLayer3Pool,
-      activeTools: activeToolNames,
+    // Discover + route the FOCUSED workspace's bundle skills by declared strategy
+    // (the wall — never across the owner's other workspaces). `always` bundle
+    // skills land in `bundleContext` (context channel every turn); `dynamic` ones
+    // feed tool-affinity Layer 3. Mirrors `_chatInner`.
+    const { context: bundleContext, layer3: selectedLayer3 } = await this.selectRequestLayer3({
+      wsId: workWsId,
+      userId,
+      activeToolNames: tools.map((t) => t.name),
+      capabilityPool: poolCapability,
     });
+    // Always-on context channel (conversation-tier + always-on bundle skills)
+    // plus the workspace identity/persona override when the focused workspace
+    // sets one.
+    const requestContextSkills = withIdentityOverride(
+      [...poolContext, ...bundleContext],
+      activeWorkspace?.identity,
+    );
     const layer3Entries: Layer3SkillEntry[] = selectedLayer3.map((s) => ({
       name: s.skill.manifest.name,
       body: s.skill.body,
@@ -2590,6 +2596,10 @@ export class Runtime {
       name: parsed.name,
       description: parsed.description,
       body: capped.body,
+      // Preserve the strategy the server declared (undefined = opted out;
+      // synthesis defaults it to `dynamic`).
+      ...(parsed.loadingStrategy ? { loadingStrategy: parsed.loadingStrategy } : {}),
+      ...(parsed.priority !== undefined ? { priority: parsed.priority } : {}),
     };
   }
 
@@ -2605,11 +2615,13 @@ export class Runtime {
 
   /**
    * Discover every MCP source in `wsId`'s registry that exposes SEP-2640
-   * `skill://<name>/SKILL.md` resources and synthesize a Layer 3 `Skill` for
-   * each. Each synthesized skill is `dynamic` with tool-affinity
-   * `<serverName>__*`, so it loads via the standard `selectLayer3Skills` path
-   * whenever the server's tools are in the active toolset — no `appContext`
-   * required.
+   * `skill://<name>/SKILL.md` resources and synthesize a `Skill` for each,
+   * honoring the loading strategy the skill declares in its frontmatter. A
+   * `dynamic` skill (the default when none is declared) tool-affines to
+   * `<serverName>__*` and loads via `selectLayer3Skills` whenever the server's
+   * tools are in the active toolset; an `always` skill routes to the context
+   * channel. Callers partition the returned pool by role (see
+   * `selectRequestLayer3`) — no `appContext` required.
    *
    * Use case: a workspace-level chat where the model needs the server's
    * workflow guidance but isn't "entered" into the app. Without this, the
@@ -2671,6 +2683,8 @@ export class Runtime {
               description: s.description,
               body: s.body,
               uri: s.uri,
+              ...(s.loadingStrategy ? { loadingStrategy: s.loadingStrategy } : {}),
+              ...(s.priority !== undefined ? { priority: s.priority } : {}),
             }),
           );
         } catch {
@@ -3838,7 +3852,11 @@ export class Runtime {
   /** SEP-2640 bundle skills as surface-once connector-skill candidates, so a server's
    *  skill can be delivered mid-turn when its tools are progressively disclosed (not only
    *  at turn-start via <layer3-skill>). Mirrors selectRequestLayer3's loadBundleSkills
-   *  exclusion (the entered app's skill rides <app-guide>, not this channel). */
+   *  exclusion (the entered app's skill rides <app-guide>, not this channel).
+   *
+   *  Only `dynamic` (tool-affined) skills ride this channel: an `always` bundle
+   *  skill is already composed into the context channel every turn, so surfacing
+   *  it again on tool promotion would double-inject the same guidance. */
   private async loadBundleSkillCandidates(
     wsId: string,
     appContextServerName?: string,
@@ -3847,7 +3865,8 @@ export class Runtime {
       wsId,
       appContextServerName ? { appContextServerName } : {},
     );
-    return skills.map((s) => ({
+    const { capability } = partitionSkillsByRole(skills);
+    return capability.map((s) => ({
       name: s.manifest.name,
       body: s.body,
       scope: s.manifest.scope ?? BUNDLE_SKILL_SCOPE,
@@ -3908,8 +3927,14 @@ export class Runtime {
    * tools land in the workspace's tool list must also surface its workflow
    * guidance, else the model gets the namespaced tool name with no
    * instructions. A bundle in another workspace never contributes here.
-   * `selectLayer3Skills` then filters to the `dynamic` (tool-affinity)
-   * strategy against `activeToolNames`.
+   *
+   * Discovered bundle skills are routed by the strategy they DECLARE, exactly
+   * like filesystem skills: `partitionSkillsByRole` splits them so a `dynamic`
+   * bundle skill feeds `selectLayer3Skills` (tool-affinity, `layer3`) while an
+   * `always` bundle skill is returned in `context` for the caller to compose
+   * into the always-on channel every turn. Conversation-tier context skills are
+   * NOT returned here — the caller already partitioned those; `context` carries
+   * only the always-on *bundle* skills the caller couldn't see.
    */
   async selectRequestLayer3(params: {
     /**
@@ -3933,7 +3958,7 @@ export class Runtime {
      * NOT in this set — they compose into Layer 0/1 by role, never Layer 3.
      */
     capabilityPool?: Skill[];
-  }): Promise<SelectedSkill[]> {
+  }): Promise<{ context: Skill[]; layer3: SelectedSkill[] }> {
     const capabilityPool =
       params.capabilityPool ??
       partitionSkillsByRole(this.loadConversationSkills(params.wsId, params.userId)).capability;
@@ -3942,10 +3967,16 @@ export class Runtime {
     const bundleSkills = await this.loadBundleSkills(params.wsId, {
       ...(params.appContextServerName ? { appContextServerName: params.appContextServerName } : {}),
     });
-    return selectLayer3Skills({
-      skills: [...capabilityPool, ...bundleSkills],
+    // Route the discovered bundle skills by their DECLARED strategy: `always`
+    // skills go to the context channel (composed every turn), `dynamic` skills
+    // join the tool-affinity capability pool that `selectLayer3Skills` filters.
+    const { context: bundleContext, capability: bundleCapability } =
+      partitionSkillsByRole(bundleSkills);
+    const layer3 = selectLayer3Skills({
+      skills: [...capabilityPool, ...bundleCapability],
       activeTools: params.activeToolNames,
     });
+    return { context: bundleContext, layer3 };
   }
 
   /**
@@ -3978,13 +4009,15 @@ export class Runtime {
     const { context, capability } = partitionSkillsByRole(
       this.loadConversationSkills(wsId, userId),
     );
-    const layer3 = await this.selectRequestLayer3({
+    const { context: bundleContext, layer3 } = await this.selectRequestLayer3({
       wsId,
       userId,
       activeToolNames,
       capabilityPool: capability,
     });
-    return { context, layer3 };
+    // Include always-on bundle skills in the reported context so the status
+    // surface matches what the prompt actually composes.
+    return { context: [...context, ...bundleContext], layer3 };
   }
 
   /** Get the path to the nimblebrain.json config file (Helm-managed seed). */
