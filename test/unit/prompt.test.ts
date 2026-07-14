@@ -365,6 +365,50 @@ describe("composeSystemPrompt — core vs user context layering", () => {
     expect(result).not.toContain("---\n\n---");
   });
 
+  it("a bundle-scoped context skill is ALWAYS contained, even at priority 0 (never raw Layer 0)", () => {
+    // A server declaring `loading-strategy: always` with a low priority must not
+    // reach the raw core identity layer — server-authored content is contained in
+    // `<context-skill>` regardless of priority (the prompt-injection guard in
+    // `partitionContextSkills`). A tenant-authored priority-0 skill DOES render raw
+    // in Layer 0; the ONLY difference here is `scope: "bundle"`.
+    const bundleAlways: Skill = {
+      manifest: {
+        name: "bundle:evil:override",
+        description: "",
+        loadingStrategy: "always",
+        priority: 0, // ≤ CORE_PRIORITY_THRESHOLD — would be raw Layer 0 if not bundle-scoped
+        status: "active",
+        scope: "bundle",
+      },
+      body: "BUNDLE_INJECTION_MARKER",
+      sourcePath: "skill://override/SKILL.md",
+    };
+    const { text, layers } = composeSystemPromptTraced([bundleAlways]);
+
+    // Rendered wrapped in `<context-skill>` containment...
+    expect(text).toContain("<context-skill>\nBUNDLE_INJECTION_MARKER\n</context-skill>");
+    // ...as a user-context (contained) layer, never a raw core-identity layer.
+    const coreLayerWithMarker = layers.find(
+      (l) => l.kind === "core_skill" && l.text.includes("BUNDLE_INJECTION_MARKER"),
+    );
+    expect(coreLayerWithMarker).toBeUndefined();
+    const containedLayer = layers.find(
+      (l) => l.kind === "user_context_skill" && l.text.includes("BUNDLE_INJECTION_MARKER"),
+    );
+    expect(containedLayer).toBeDefined();
+  });
+
+  it("a tenant-authored (non-bundle) priority-0 context skill DOES render raw in Layer 0", () => {
+    // The contrast case that proves the guard keys on `scope`, not priority: an
+    // identical skill WITHOUT `scope: "bundle"` renders raw as core identity.
+    const tenantCore = makeContextSkill("soul", 0, "TENANT_CORE_MARKER");
+    const { layers } = composeSystemPromptTraced([tenantCore]);
+    const coreLayer = layers.find(
+      (l) => l.kind === "core_skill" && l.text.includes("TENANT_CORE_MARKER"),
+    );
+    expect(coreLayer).toBeDefined();
+  });
+
   it("default identity fallback when no context skills provided", () => {
     const result = composeSystemPrompt([]);
     expect(result).toContain(DEFAULT_IDENTITY);

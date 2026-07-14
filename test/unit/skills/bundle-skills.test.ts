@@ -13,7 +13,7 @@ import {
   parseSkillMarkdown,
   synthesizeBundleSkill,
 } from "../../../src/skills/bundle-skills.ts";
-import { selectLayer3Skills } from "../../../src/skills/select.ts";
+import { partitionSkillsByRole, selectLayer3Skills } from "../../../src/skills/select.ts";
 
 describe("isSkillEntrypointUri", () => {
   test("matches skill:// URIs ending in /SKILL.md, flat and nested", () => {
@@ -50,6 +50,31 @@ describe("parseSkillMarkdown", () => {
   test("degrades to the path-segment name on malformed frontmatter", () => {
     const parsed = parseSkillMarkdown("skill://foo/SKILL.md", "---\nname: [unclosed\n---\nbody");
     expect(parsed.name).toBe("foo");
+  });
+
+  test("reads a declared loading-strategy + priority from metadata.nimblebrain", () => {
+    const raw =
+      "---\nname: workflow\ndescription: Always-on workflow guide.\n" +
+      "metadata:\n  nimblebrain:\n    loading-strategy: always\n    priority: 20\n---\n\nBody.";
+    const parsed = parseSkillMarkdown("skill://workflow/SKILL.md", raw);
+    expect(parsed.loadingStrategy).toBe("always");
+    expect(parsed.priority).toBe(20);
+  });
+
+  test("leaves strategy/priority undefined when no nimblebrain block is declared", () => {
+    const raw = "---\nname: usage\ndescription: Tool usage.\n---\n\nBody.";
+    const parsed = parseSkillMarkdown("skill://usage/SKILL.md", raw);
+    expect(parsed.loadingStrategy).toBeUndefined();
+    expect(parsed.priority).toBeUndefined();
+  });
+
+  test("ignores an out-of-range or unrecognized declared value", () => {
+    const raw =
+      "---\nname: bad\ndescription: Bad values.\n" +
+      "metadata:\n  nimblebrain:\n    loading-strategy: sometimes\n    priority: 999\n---\n\nBody.";
+    const parsed = parseSkillMarkdown("skill://bad/SKILL.md", raw);
+    expect(parsed.loadingStrategy).toBeUndefined();
+    expect(parsed.priority).toBeUndefined();
   });
 });
 
@@ -95,6 +120,70 @@ describe("synthesizeBundleSkill", () => {
       uri: "skill://foo/SKILL.md",
     });
     expect(skill.body).toBe(body);
+  });
+
+  test("preserves a declared `always` loading-strategy and priority", () => {
+    const skill = synthesizeBundleSkill({
+      serverName: "foo",
+      skillName: "workflow",
+      description: "Always-on guide.",
+      body: "# Always",
+      uri: "skill://workflow/SKILL.md",
+      loadingStrategy: "always",
+      priority: 20,
+    });
+    expect(skill.manifest.loadingStrategy).toBe("always");
+    expect(skill.manifest.priority).toBe(20);
+  });
+
+  test("defaults to `dynamic` at priority 60 when no strategy is declared", () => {
+    const skill = synthesizeBundleSkill({
+      serverName: "foo",
+      skillName: "foo",
+      description: "",
+      body: "x",
+      uri: "skill://foo/SKILL.md",
+    });
+    expect(skill.manifest.loadingStrategy).toBe("dynamic");
+    expect(skill.manifest.priority).toBe(60);
+  });
+});
+
+describe("partitionSkillsByRole routes synthesized bundle skills by declared strategy", () => {
+  test("an `always` bundle skill lands in context; a `dynamic` one in capability", () => {
+    const always = synthesizeBundleSkill({
+      serverName: "foo",
+      skillName: "workflow",
+      description: "",
+      body: "# always",
+      uri: "skill://workflow/SKILL.md",
+      loadingStrategy: "always",
+    });
+    const dynamic = synthesizeBundleSkill({
+      serverName: "bar",
+      skillName: "usage",
+      description: "",
+      body: "# dynamic",
+      uri: "skill://usage/SKILL.md",
+      // no strategy → defaults to dynamic
+    });
+    const { context, capability } = partitionSkillsByRole([always, dynamic]);
+    expect(context.map((s) => s.manifest.name)).toEqual(["bundle:foo:workflow"]);
+    expect(capability.map((s) => s.manifest.name)).toEqual(["bundle:bar:usage"]);
+  });
+
+  test("an `always` bundle skill is NOT selected by tool-affinity even when its tools are active", () => {
+    const always = synthesizeBundleSkill({
+      serverName: "foo",
+      skillName: "workflow",
+      description: "",
+      body: "# always",
+      uri: "skill://workflow/SKILL.md",
+      loadingStrategy: "always",
+    });
+    // It rides the context channel unconditionally, so Layer 3 must skip it.
+    const result = selectLayer3Skills({ skills: [always], activeTools: ["foo__do_it"] });
+    expect(result).toHaveLength(0);
   });
 });
 

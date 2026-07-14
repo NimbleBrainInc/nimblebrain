@@ -412,12 +412,24 @@ function taskIdentityLayers(mode: ComposeMode): PendingLayer[] {
   ];
 }
 
-/** Split context skills into core (priority ≤ threshold) and user (priority > threshold) buckets. */
+/**
+ * Split context skills into core (priority ≤ threshold, rendered RAW in Layer 0)
+ * and user (priority > threshold, wrapped in `<context-skill>` containment).
+ *
+ * `bundle`-scoped skills are ALWAYS placed in the `user` bucket regardless of
+ * priority: they carry server-authored content, which must never render as raw
+ * trusted identity in Layer 0 (that would be a prompt-injection vector). This is
+ * the same install-time-not-per-prompt trust posture as the other bundle-authored
+ * containment tags (`<app-guide>`, `<app-state>`, `<layer3-skill>`) — the defense
+ * is XML containment, so a server that declares `loading-strategy: always` with a
+ * low priority still gets contained, not promoted into the identity layer.
+ */
 function partitionContextSkills(contextSkills: Skill[]): { core: Skill[]; user: Skill[] } {
   const core: Skill[] = [];
   const user: Skill[] = [];
   for (const ctx of contextSkills) {
-    if (ctx.manifest.priority <= CORE_PRIORITY_THRESHOLD) {
+    const isBundleAuthored = ctx.manifest.scope === "bundle";
+    if (!isBundleAuthored && ctx.manifest.priority <= CORE_PRIORITY_THRESHOLD) {
       core.push(ctx);
     } else {
       user.push(ctx);
