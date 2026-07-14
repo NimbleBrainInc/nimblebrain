@@ -19,6 +19,7 @@ interface WriteOpts {
 	title?: string | null;
 	createdAt?: string;
 	updatedAt?: string;
+	workspaceId?: string;
 	messages?: Array<{
 		role: "user" | "assistant";
 		content: string;
@@ -38,6 +39,7 @@ function writeConversation(dir: string, id: string, opts: WriteOpts = {}): void 
 		updatedAt,
 		title: opts.title ?? null,
 		lastModel: "claude-sonnet-4-5-20250929",
+		...(opts.workspaceId ? { workspaceId: opts.workspaceId } : {}),
 	});
 
 	// Attach usage to the last assistant message (or fall through to the
@@ -116,6 +118,28 @@ describe("conversations__get", () => {
 		expect(result.totalMessages).toBe(5);
 		expect(result.messages[0]!.content).toBe("Message 1");
 		expect(result.messages[4]!.content).toBe("Message 3");
+	});
+
+	it("surfaces the conversation's workspaceId in metadata (drives the panel re-scope)", async () => {
+		writeConversation(dir, "conv-ws", { workspaceId: "ws_alpha" });
+		await index.build(dir);
+
+		const result = (await handleGet({ id: "conv-ws", expand: "metadata" }, index)) as {
+			metadata: Record<string, unknown>;
+		};
+
+		expect(result.metadata.workspaceId).toBe("ws_alpha");
+	});
+
+	it("omits workspaceId for a legacy record that has none (absence ⇒ don't reconcile)", async () => {
+		writeConversation(dir, "conv-legacy"); // no workspaceId written
+		await index.build(dir);
+
+		const result = (await handleGet({ id: "conv-legacy", expand: "metadata" }, index)) as {
+			metadata: Record<string, unknown>;
+		};
+
+		expect("workspaceId" in result.metadata).toBe(false);
 	});
 
 	it("returns only the last N messages when limit is provided", async () => {

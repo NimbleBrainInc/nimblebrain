@@ -122,6 +122,16 @@ export interface ChatMessage {
 /** Conversation-level metadata (Stage 1: single-owner only). */
 export interface LoadedConversationMeta {
   ownerId?: string;
+  /**
+   * The workspace this conversation is sealed to (from the server's
+   * `conversations__get` metadata). The panel uses it to avoid resuming a
+   * conversation that belongs to a workspace other than the one currently
+   * focused — see `ChatProvider`'s re-scope effect and `useChat.sendMessage`.
+   * Absent on legacy records with no stamped workspace (they read as the
+   * owner's personal workspace); absence means "workspace unknown — don't
+   * reconcile", which preserves the open-in-progress race guard.
+   */
+  workspaceId?: string;
 }
 
 // ===========================================================================
@@ -337,7 +347,7 @@ function buildChatRequest(slice: ConversationSlice, params: StartTurnParams): Ch
 
 /** A loaded conversation: server metadata plus its reconstructed messages. */
 interface LoadedConversation {
-  metadata: { id: string; ownerId?: string; title?: string | null };
+  metadata: { id: string; ownerId?: string; workspaceId?: string; title?: string | null };
   messages: ChatMessage[];
 }
 
@@ -1060,7 +1070,10 @@ export function createChatStore(): ChatStore {
       const parsed = parseConversationResult(res);
       current.conversationId = parsed.metadata.id;
       aliasSlice(current, parsed.metadata.id);
-      current.meta = { ownerId: parsed.metadata.ownerId };
+      current.meta = {
+        ownerId: parsed.metadata.ownerId,
+        workspaceId: parsed.metadata.workspaceId,
+      };
       current.title = parsed.metadata.title ?? null;
       current.messages = parsed.messages ?? [];
       current.hydrated = true;

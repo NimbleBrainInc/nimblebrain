@@ -130,6 +130,7 @@ import { personalWorkspaceIdFor, WorkspaceStore } from "../workspace/workspace-s
 import {
   ConversationAccessDeniedError,
   ConversationWorkspaceAccessDeniedError,
+  ConversationWorkspaceMismatchError,
   RunInProgressError,
   WorkspaceMembershipRevokedError,
 } from "./errors.ts";
@@ -990,6 +991,10 @@ export class Runtime {
       // reserves a run. Mirrors the `chat()` path; reads stay owner-gated.
       if (existing) {
         await this.assertOwnerIsWorkspaceMember(request.conversationId, convWsId, ownerId);
+        // Coherence backstop: a resume whose focused workspace (`X-Workspace-Id`)
+        // differs from the conversation's own is a mis-targeting client — reject
+        // rather than silently binding to `convWsId`. Header-absent callers pass.
+        this.assertResumeWorkspaceMatches(request.conversationId, request.workspaceId, convWsId);
       }
       signal = this.runBus.begin(request.conversationId);
       try {
@@ -2082,6 +2087,10 @@ export class Runtime {
       // the focused workspace, already membership-validated at the door.
       if (existing) {
         await this.assertOwnerIsWorkspaceMember(request.conversationId, convWsId, ownerId);
+        // Coherence backstop: reject a resume whose focused workspace
+        // (`X-Workspace-Id`) differs from the conversation's own — a mis-targeting
+        // client. Header-absent (identity-level) callers pass. Mirrors `startTurn`.
+        this.assertResumeWorkspaceMatches(request.conversationId, request.workspaceId, convWsId);
       }
       conversation = existing ?? (await store.create(createOpts));
     } else {
@@ -3297,6 +3306,32 @@ export class Runtime {
   ): Promise<void> {
     if (!(await this.isOwnerWorkspaceMember(convWsId, ownerId))) {
       throw new ConversationWorkspaceAccessDeniedError(conversationId, ownerId, convWsId);
+    }
+  }
+
+  /**
+   * Resume backstop against a client that drifted out of sync — the server-side
+   * twin of the web panel's re-scope. A resume carries the client's FOCUSED
+   * workspace (`requestWorkspaceId`, from `X-Workspace-Id`); the conversation is
+   * sealed to `convWsId`. The runtime always binds the turn to `convWsId`, so
+   * this is not the data-isolation seam — it's a coherence check: if the header
+   * is present and names a DIFFERENT workspace than the conversation's own, the
+   * client is displaying one workspace while about to resume a conversation from
+   * another (a mis-target). Reject so the client starts a fresh draft in the
+   * focused workspace instead of silently landing the message in the other one.
+   *
+   * Guarded on the header being PRESENT: an identity-level resume that sends no
+   * `X-Workspace-Id` (`requestWorkspaceId` undefined — embedded / CLI / home
+   * callers) is left untouched. A match is the overwhelmingly common case (an
+   * in-workspace resume) and short-circuits.
+   */
+  private assertResumeWorkspaceMatches(
+    conversationId: string,
+    requestWorkspaceId: string | undefined,
+    convWsId: string,
+  ): void {
+    if (requestWorkspaceId !== undefined && requestWorkspaceId !== convWsId) {
+      throw new ConversationWorkspaceMismatchError(conversationId, requestWorkspaceId, convWsId);
     }
   }
 

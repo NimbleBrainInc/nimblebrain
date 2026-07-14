@@ -10,11 +10,21 @@
  * workspace am I in?"). All of these resolve `convWsId` (the conversation's
  * authoritative workspace), never `request.workspaceId`.
  *
- * Without the seal a conversation born in workspace A, resumed while focused
- * elsewhere (or unfocused), answers in the OTHER workspace's context — a
- * cross-workspace information leak: the thread shows A's history but the agent's
- * tools, house rules, and self-reported workspace are the focused one's. Each
- * assertion below fails if resolution reverts to `request.workspaceId`.
+ * Without the seal a conversation born in workspace A, resumed while UNFOCUSED,
+ * would answer in the OTHER workspace's context — a cross-workspace information
+ * leak: the thread shows A's history but the agent's tools, house rules, and
+ * self-reported workspace are the personal one's. The unfocused test below fails
+ * if resolution reverts to `request.workspaceId`.
+ *
+ * A resume that is FOCUSED ELSEWHERE (a *present* `X-Workspace-Id` naming a
+ * different workspace than the conversation's own) is a separate case: the
+ * runtime still never binds to the request workspace, but a present mismatched
+ * focus means the client is displaying one workspace while about to resume a
+ * conversation from another (a mis-target). That is now rejected by the resume
+ * backstop (`ConversationWorkspaceMismatchError`) rather than silently sealed —
+ * the second test pins that. So the "answer from elsewhere" seal covers the
+ * header-absent (identity-level) path; the header-present-mismatch path is
+ * refused outright.
  */
 
 import { afterAll, describe, expect, it } from "bun:test";
@@ -23,6 +33,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { LanguageModelV3, LanguageModelV3CallOptions } from "@ai-sdk/provider";
 import { DEV_IDENTITY } from "../../../src/identity/providers/dev.ts";
+import { ConversationWorkspaceMismatchError } from "../../../src/runtime/errors.ts";
 import { Runtime } from "../../../src/runtime/runtime.ts";
 import { personalWorkspaceIdFor } from "../../../src/workspace/workspace-store.ts";
 import { createEchoModel } from "../../helpers/echo-model.ts";
@@ -161,7 +172,7 @@ describe("cross-workspace resume scopes the session's workspace to the conversat
     await runtime.shutdown();
   });
 
-  it("resuming a workspace-A conversation while FOCUSED on workspace B tells the model it is in A, not B", async () => {
+  it("REJECTS resuming a workspace-A conversation while FOCUSED on workspace B (mis-target backstop)", async () => {
     const workDir = join(testDir, "cross-focus");
     mkdirSync(workDir, { recursive: true });
     const captured: Captured[] = [];
@@ -178,33 +189,28 @@ describe("cross-workspace resume scopes the session's workspace to the conversat
     // Born in A.
     const born = await runtime.chat({ message: "hello from A", workspaceId: WORKSPACE_A });
 
-    // The exact reported scenario: switch the focused workspace to B, then keep
-    // talking in the A-conversation. The seal must answer "A", not "B".
-    await runtime.chat({
-      message: RESUME_MSG,
-      conversationId: born.conversationId,
-      workspaceId: WORKSPACE_B,
-    });
-
-    expect(captured.length).toBeGreaterThan(0);
-    const turn = captured.at(-1);
-    const prompt = turn?.prompt ?? "";
-
-    expect(prompt).toContain("## Workspace");
-    expect(prompt).toContain(WORKSPACE_A);
-    expect(prompt).toContain(WORKSPACE_A_NAME);
-    // The focused workspace (B) must NOT leak into the resumed A-conversation.
-    expect(prompt).not.toContain(WORKSPACE_B);
-    expect(prompt).not.toContain(WORKSPACE_B_NAME);
-
-    // Direct tool-surface assertion: the namespaced tools are workspace A's, and
-    // the focused workspace B's tools (`ws_workspace_b-…`) are NOT reachable —
-    // the wall follows the conversation, not the request. Reverting the seal
-    // surfaces `ws_workspace_b-…` here and fails.
-    const wsTools = (turn?.tools ?? []).filter((t) => t.startsWith("ws_"));
-    expect(wsTools.length).toBeGreaterThan(0);
-    expect(wsTools.some((t) => t.startsWith(`${WORKSPACE_A}-`))).toBe(true);
-    expect(wsTools.some((t) => t.startsWith(`${WORKSPACE_B}-`))).toBe(false);
+    // The exact reported scenario: the client is focused on B (present, mismatched
+    // `X-Workspace-Id`) but resumes the A-conversation. The runtime never binds to
+    // the request workspace — so this is not a leak — but a present mismatched
+    // focus means the panel is displaying B while about to resume A. The resume
+    // backstop rejects it rather than silently sealing to A, so a mis-targeted
+    // message can't land in A while the user looks at B; the client re-scopes to a
+    // fresh draft in B instead.
+    let thrown: unknown;
+    try {
+      await runtime.chat({
+        message: RESUME_MSG,
+        conversationId: born.conversationId,
+        workspaceId: WORKSPACE_B,
+      });
+    } catch (e) {
+      thrown = e;
+    }
+    expect(thrown).toBeInstanceOf(ConversationWorkspaceMismatchError);
+    expect((thrown as ConversationWorkspaceMismatchError).conversationWorkspaceId).toBe(WORKSPACE_A);
+    expect((thrown as ConversationWorkspaceMismatchError).requestWorkspaceId).toBe(WORKSPACE_B);
+    // Rejected before the engine ran — the model never saw a turn scoped to B.
+    expect(captured.length).toBe(0);
 
     await runtime.shutdown();
   });

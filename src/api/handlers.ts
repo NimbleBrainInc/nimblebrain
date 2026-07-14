@@ -22,6 +22,7 @@ import { log } from "../observability/log.ts";
 import {
   ConversationAccessDeniedError,
   ConversationCorruptedError,
+  ConversationWorkspaceMismatchError,
   RunInProgressError,
 } from "../runtime/errors.ts";
 import {
@@ -159,6 +160,13 @@ function mapChatTurnError(err: unknown): Response | null {
   if (err instanceof RunInProgressError) {
     return runInProgressResponse(err.conversationId);
   }
+  // Order matters: `ConversationWorkspaceMismatchError` is NOT a subclass of
+  // `ConversationAccessDeniedError` (409 coherence, not 403 authz), so it needs
+  // its own branch — but check it regardless of position since the two are
+  // disjoint types.
+  if (err instanceof ConversationWorkspaceMismatchError) {
+    return conversationWorkspaceMismatchResponse(err);
+  }
   if (err instanceof ConversationAccessDeniedError) {
     return conversationAccessDeniedResponse(err.conversationId);
   }
@@ -166,6 +174,54 @@ function mapChatTurnError(err: unknown): Response | null {
     return conversationCorruptedResponse(err);
   }
   return null;
+}
+
+/**
+ * Map `ConversationWorkspaceMismatchError` to a distinct `409` — a coherent but
+ * mis-targeted request (the focused workspace isn't the conversation's), NOT an
+ * access denial. The `conversation_workspace_mismatch` code lets the client tell
+ * this apart from a `403 conversation_access_denied` and re-scope to a fresh
+ * draft. `409` (over `422`) mirrors `run_in_progress`: the conversation is fine,
+ * it just can't be resumed under the workspace the request claims.
+ */
+function conversationWorkspaceMismatchResponse(err: ConversationWorkspaceMismatchError): Response {
+  return apiError(409, "conversation_workspace_mismatch", err.message, {
+    conversationId: err.conversationId,
+    requestWorkspaceId: err.requestWorkspaceId,
+    conversationWorkspaceId: err.conversationWorkspaceId,
+  });
+}
+
+/**
+ * The SSE `error` event payload for `/v1/chat/stream`, mirroring
+ * `mapChatTurnError`'s `error` codes on the streaming channel (the stream is
+ * already a `200`, so the discriminator rides in the event body). Unknown errors
+ * are logged and passed through `friendlyError`.
+ */
+function chatStreamErrorEvent(err: unknown): { error: string; message: string } {
+  if (err instanceof RunInProgressError) {
+    return {
+      error: "run_in_progress",
+      message: "This conversation already has an active response.",
+    };
+  }
+  if (err instanceof ConversationWorkspaceMismatchError) {
+    return { error: "conversation_workspace_mismatch", message: err.message };
+  }
+  if (err instanceof ConversationAccessDeniedError) {
+    return {
+      error: "conversation_access_denied",
+      message: "You do not have access to this conversation.",
+    };
+  }
+  if (err instanceof ConversationCorruptedError) {
+    return { error: "conversation_corrupted", message: err.message };
+  }
+  log.error("[routes] handleChatStream failed", {
+    error: err instanceof Error ? err.message : String(err),
+  });
+  const friendly = friendlyError(err instanceof Error ? err.message : String(err));
+  return { error: friendly.code, message: friendly.message };
 }
 
 function runInProgressResponse(conversationId: string): Response {
@@ -197,23 +253,12 @@ export async function handleChatStart(
     const { conversationId } = await runtime.startTurn(parsed);
     return Response.json({ conversationId });
   } catch (err) {
-    if (err instanceof RunInProgressError) {
-      return runInProgressResponse(parsed.conversationId ?? "");
-    }
-    if (err instanceof ConversationAccessDeniedError) {
-      return apiError(
-        403,
-        "conversation_access_denied",
-        "You do not have access to this conversation.",
-        { conversationId: parsed.conversationId },
-      );
-    }
-    // startTurn → store.load can throw on a pre-migration (ownerless)
-    // conversation. Map to 422 — parity with handleChat / handleChatCancel —
-    // instead of leaking a raw 500.
-    if (err instanceof ConversationCorruptedError) {
-      return conversationCorruptedResponse(err);
-    }
+    // Shared mapper so `/v1/chat/start` and `/v1/chat` return identical shapes
+    // for the same runtime error (run-in-progress, access-denied, corrupted, and
+    // the workspace-mismatch backstop). `startTurn → store.load` can also throw
+    // on a pre-migration (ownerless) conversation → 422, all handled there.
+    const mapped = mapChatTurnError(err);
+    if (mapped) return mapped;
     throw err;
   }
 }
@@ -511,39 +556,7 @@ export async function handleChatStream(
           endRun();
         })
         .catch((err) => {
-          if (err instanceof RunInProgressError) {
-            send("error", {
-              error: "run_in_progress",
-              message: "This conversation already has an active response.",
-            });
-            endRun();
-            return;
-          }
-          if (err instanceof ConversationAccessDeniedError) {
-            send("error", {
-              error: "conversation_access_denied",
-              message: "You do not have access to this conversation.",
-            });
-            endRun();
-            return;
-          }
-          if (err instanceof ConversationCorruptedError) {
-            send("error", {
-              error: "conversation_corrupted",
-              message: err.message,
-            });
-            endRun();
-            return;
-          }
-          log.error("[routes] handleChatStream failed", {
-            error: err instanceof Error ? err.message : String(err),
-          });
-          const raw = err instanceof Error ? err.message : String(err);
-          const friendly = friendlyError(raw);
-          send("error", {
-            error: friendly.code,
-            message: friendly.message,
-          });
+          send("error", chatStreamErrorEvent(err));
           endRun();
         });
     },

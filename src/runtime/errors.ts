@@ -58,6 +58,41 @@ export class ConversationWorkspaceAccessDeniedError extends ConversationAccessDe
 }
 
 /**
+ * Thrown when a chat RESUME names a focused workspace (`X-Workspace-Id`) that
+ * differs from the workspace the conversation is sealed to. This is NOT an
+ * authorization failure — the owner may well be a member of both — and NOT the
+ * data-isolation seam (the runtime already binds every resumed turn to the
+ * conversation's own workspace, so the message never reaches the focused one).
+ * It is a defense-in-depth signal that the CLIENT is confused: the user is
+ * looking at workspace B while the panel still holds a conversation from
+ * workspace A, so a send would land the user's message in a workspace they
+ * aren't viewing (a mis-target). Rather than silently resume into A, reject so
+ * the client re-scopes to a fresh draft in the focused workspace.
+ *
+ * Only fires when the header is PRESENT and mismatched. An identity-level resume
+ * that sends no `X-Workspace-Id` (focus null — embedded/CLI/home callers) is
+ * left untouched; the conversation still resolves its own workspace. Distinct
+ * `409 conversation_workspace_mismatch` (not the `403 conversation_access_denied`
+ * family) because nothing is denied by access — the request is coherent, just
+ * pointed at the wrong conversation for the workspace it claims.
+ */
+export class ConversationWorkspaceMismatchError extends Error {
+  readonly code = "conversation_workspace_mismatch";
+  constructor(
+    public readonly conversationId: string,
+    public readonly requestWorkspaceId: string,
+    public readonly conversationWorkspaceId: string,
+  ) {
+    super(
+      `Conversation ${conversationId} lives in workspace ${conversationWorkspaceId}, ` +
+        `but the request is focused on workspace ${requestWorkspaceId}. Start a new ` +
+        `conversation in the focused workspace instead of resuming this one.`,
+    );
+    this.name = "ConversationWorkspaceMismatchError";
+  }
+}
+
+/**
  * Thrown by `executeTask` when an automation fires but its owner is no longer a
  * member of the automation's provenance workspace. An automation runs *as its
  * owner*, walled to the workspace it was created in — so a removed owner must

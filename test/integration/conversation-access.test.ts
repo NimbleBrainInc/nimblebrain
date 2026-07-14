@@ -379,3 +379,112 @@ describe("HTTP/SSE — ConversationAccessDeniedError mapping", () => {
     expect(payload.error).toBe("conversation_access_denied");
   });
 });
+
+describe("HTTP — ConversationWorkspaceMismatchError mapping", () => {
+  // The mis-target backstop, mapped identically on /v1/chat and /v1/chat/start:
+  // Alice owns a conversation in workspace A and is a member of workspace B too,
+  // so resuming it with `X-Workspace-Id: B` is not an access failure — it's a
+  // client displaying B while about to resume A. → 409 conversation_workspace_mismatch.
+  const ALICE_TOKEN = "alice-token-1234567890";
+  const WORKSPACE_B = "ws_conv_mismatch_b";
+
+  let runtime: Runtime;
+  let handle: ServerHandle;
+  let baseUrl: string;
+  let workDir: string;
+  let aliceConvId: string;
+
+  beforeAll(async () => {
+    workDir = join(tmpdir(), `nb-conv-ws-mismatch-http-${Date.now()}`);
+    mkdirSync(workDir, { recursive: true });
+    runtime = await Runtime.start({
+      model: { provider: "custom", adapter: createEchoModel() },
+      noDefaultBundles: true,
+      logging: { disabled: true },
+      workDir,
+    });
+    // Alice is a member of BOTH workspaces — the mismatch is not an access denial.
+    await provisionTestWorkspace(runtime, TEST_WORKSPACE_ID);
+    await provisionTestWorkspace(runtime, WORKSPACE_B, "Bravo");
+
+    const wsStore = runtime.getWorkspaceStore();
+    const now = new Date().toISOString();
+    const dir = join(workDir, "users", ALICE.id);
+    mkdirSync(dir, { recursive: true });
+    await Bun.write(
+      join(dir, "profile.json"),
+      `${JSON.stringify({ ...ALICE, preferences: {}, createdAt: now, updatedAt: now }, null, 2)}\n`,
+    );
+    await wsStore.addMember(TEST_WORKSPACE_ID, ALICE.id, "member");
+    await wsStore.addMember(WORKSPACE_B, ALICE.id, "member");
+
+    const seed = await runtime.chat({
+      message: "alice seed in A",
+      workspaceId: TEST_WORKSPACE_ID,
+      identity: ALICE,
+    });
+    aliceConvId = seed.conversationId;
+
+    handle = startServer({
+      runtime,
+      port: 0,
+      provider: new MultiUserAuthAdapter({ [ALICE_TOKEN]: ALICE }),
+    });
+    baseUrl = `http://localhost:${handle.port}`;
+  });
+
+  afterAll(async () => {
+    handle?.stop(true);
+    await runtime?.shutdown();
+    rmSync(workDir, { recursive: true, force: true });
+  });
+
+  test("POST /v1/chat returns 409 conversation_workspace_mismatch when focused on another workspace", async () => {
+    const res = await fetch(`${baseUrl}/v1/chat`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${ALICE_TOKEN}`,
+        "X-Workspace-Id": WORKSPACE_B,
+      },
+      body: JSON.stringify({ message: "resume A while viewing B", conversationId: aliceConvId }),
+    });
+    expect(res.status).toBe(409);
+    expect(res.headers.get("Content-Type")).toMatch(/application\/json/);
+    const body = await res.json();
+    expect(body.error).toBe("conversation_workspace_mismatch");
+    expect(body.details?.conversationId).toBe(aliceConvId);
+    expect(body.details?.conversationWorkspaceId).toBe(TEST_WORKSPACE_ID);
+    expect(body.details?.requestWorkspaceId).toBe(WORKSPACE_B);
+  });
+
+  test("POST /v1/chat/start maps the mismatch identically (409)", async () => {
+    const res = await fetch(`${baseUrl}/v1/chat/start`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${ALICE_TOKEN}`,
+        "X-Workspace-Id": WORKSPACE_B,
+      },
+      body: JSON.stringify({ message: "resume A while viewing B", conversationId: aliceConvId }),
+    });
+    expect(res.status).toBe(409);
+    const body = await res.json();
+    expect(body.error).toBe("conversation_workspace_mismatch");
+  });
+
+  test("resuming with the conversation's OWN workspace still succeeds (200)", async () => {
+    const res = await fetch(`${baseUrl}/v1/chat`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${ALICE_TOKEN}`,
+        "X-Workspace-Id": TEST_WORKSPACE_ID,
+      },
+      body: JSON.stringify({ message: "resume A while viewing A", conversationId: aliceConvId }),
+    });
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.conversationId).toBe(aliceConvId);
+  });
+});

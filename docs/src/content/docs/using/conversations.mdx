@@ -86,6 +86,8 @@ You can link directly to a conversation by sharing its URL. When you open the li
 
 Select a conversation from the sidebar list in the web UI. The full message history loads, and new messages continue the conversation. Through the API, pass `conversationId` in the chat request body to continue an existing conversation.
 
+A conversation always resumes **in its own workspace** — the one it was born in — no matter which workspace you are viewing when you send. That workspace is fixed for the conversation's whole life and decides which tools and context the agent reaches. If you switch to a different workspace, the chat panel starts a fresh conversation in the workspace you are now viewing rather than continuing one from another workspace (the earlier conversation stays saved in its own workspace's list). When resuming through the API, the focused workspace you send (`X-Workspace-Id`) must be the conversation's own; sending a different one is rejected (`409 conversation_workspace_mismatch`) so a message can't land in a workspace you didn't intend.
+
 ## Auto-titling
 
 NimbleBrain generates a conversation title automatically after the first assistant response. The title is stored in the metadata line of the JSONL file and shown in the web UI sidebar and conversation list.
