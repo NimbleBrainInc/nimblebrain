@@ -11,8 +11,12 @@ export interface ProvidersConfig {
     anthropic?: { apiKey?: string; promptCaching?: boolean; models?: string[] };
     openai?: { apiKey?: string; baseURL?: string; organization?: string; models?: string[] };
     google?: { apiKey?: string; models?: string[] };
+    nebius?: { apiKey?: string; baseURL?: string; models?: string[] };
   };
 }
+
+/** Nebius Token Factory's OpenAI-compatible inference endpoint. */
+const NEBIUS_DEFAULT_BASE_URL = "https://api.tokenfactory.nebius.com/v1";
 
 /**
  * Build a provider registry from config. Creates AI SDK provider instances
@@ -45,6 +49,21 @@ export function buildRegistry(config: ProvidersConfig): Provider {
   if (providersCfg.google) {
     const { apiKey } = providersCfg.google;
     providers.google = createGoogleGenerativeAI({ apiKey });
+  }
+
+  if (providersCfg.nebius) {
+    const { apiKey, baseURL } = providersCfg.nebius;
+    // Nebius Token Factory is an OpenAI-compatible gateway for open-weight
+    // models. It serves the Chat Completions API but NOT OpenAI's Responses
+    // API, which createOpenAI's default `.languageModel()` binds — so route
+    // through `.chat()`. The key falls back to NEBIUS_API_KEY (createOpenAI's
+    // own fallback is OPENAI_API_KEY, which would be the wrong provider's key).
+    const nebius = createOpenAI({
+      apiKey: apiKey ?? process.env.NEBIUS_API_KEY,
+      baseURL: baseURL ?? NEBIUS_DEFAULT_BASE_URL,
+      name: "nebius",
+    });
+    providers.nebius = { ...nebius, languageModel: (modelId: string) => nebius.chat(modelId) };
   }
 
   return createProviderRegistry(providers);

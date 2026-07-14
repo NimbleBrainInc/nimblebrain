@@ -75,6 +75,17 @@ describe("buildRegistry", () => {
     const registry = buildRegistry({ providers: { anthropic: {} } });
     expect(() => registry.languageModel("fakeprovider:some-model")).toThrow();
   });
+
+  it("resolves nebius models through the OpenAI-compatible Chat Completions API", () => {
+    const registry = buildRegistry({ providers: { nebius: {} } });
+    const model = registry.languageModel("nebius:deepseek-ai/DeepSeek-V3-0324");
+    expect(model).toBeDefined();
+    expect(model.specificationVersion).toBe("v3");
+    // Must bind `.chat()` (Chat Completions), NOT `.responses()` — Nebius has
+    // no Responses API, which is what the OpenAI provider's default binds.
+    expect(model.provider).toBe("nebius.chat");
+    expect(model.modelId).toBe("deepseek-ai/DeepSeek-V3-0324");
+  });
 });
 
 describe("buildModelResolver", () => {
