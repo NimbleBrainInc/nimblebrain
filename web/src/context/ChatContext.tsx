@@ -106,44 +106,61 @@ export function ChatProvider({
     }
   }, [currentUserId]);
 
-  // Re-scope the panel on a real workspace switch. The chat panel is
-  // workspace-scoped: a conversation lives in exactly one workspace, so when
-  // the focused workspace changes from one workspace to a DIFFERENT one, the
-  // open conversation (which belongs to the workspace you just left) clears and
-  // the panel resets to a fresh, empty draft in the newly-focused workspace.
-  // The panel stays open — the assistant is still there; it just no longer shows
-  // a conversation from the workspace you left.
+  // Re-scope the panel to the focused workspace. The chat panel is
+  // workspace-scoped: a conversation lives in exactly one workspace, so when the
+  // panel holds a conversation from a DIFFERENT workspace than the one focused,
+  // it clears and resets to a fresh, empty draft in the focused workspace. The
+  // panel stays open — the assistant is still there; it just no longer shows a
+  // conversation from a workspace you aren't viewing.
   //
   // Narrow on purpose: this clears only the OPEN conversation
   // (`newConversation()` → a fresh draft slice), unlike the identity reset above
   // which nukes every cached slice. Other workspaces' cached slices stay intact.
   //
-  // Triggers ONLY on a workspace→workspace transition, tracked off the focus
-  // value (not by comparing the open conversation's workspace, which would race
-  // with opening one). `null` focus (home / identity routes) is ignored: we hold
-  // the last real workspace, so A→home→B still re-scopes on arrival at B, while
-  // A→home→A does not. Opening a conversation from within its own workspace
-  // doesn't change the focus, so it never trips this.
+  // Two complementary triggers:
   //
-  // Corollary of triggering off the transition (not the open conversation):
-  // arriving INTO a workspace always yields a fresh draft. If a B-conversation
-  // was opened from a home/identity route (focus null) and the user then
-  // navigates into B, the held focus (A) → B transition re-scopes and clears it.
-  // Acceptable: with the conversation list now workspace-scoped, opening a chat
-  // from outside its workspace is unusual, and a fresh draft on arrival is the
-  // consistent, race-free behavior.
+  //  (1) In-session workspace→workspace TRANSITION, tracked off the focus value.
+  //      The open conversation belongs to the workspace we just left, so clear
+  //      it. This fires even before the conversation's own workspace has loaded
+  //      — the transition itself is the signal. `null` focus (home / identity
+  //      routes, or focus not yet resolved) is held, not tracked: A→home→B still
+  //      re-scopes on arrival at B, while A→home→A does not.
+  //
+  //  (2) Mount / async-focus RECONCILE — the refresh hole. On the first render
+  //      after a reload (and on a `null → workspace` async resolve) there is no
+  //      transition for (1) to observe, so a conversation restored from another
+  //      workspace (e.g. per-tab `getSavedConversationId`) would otherwise stay
+  //      active while the URL shows a different workspace, and a send would
+  //      resume it there (a cross-workspace mis-target). Fall back to comparing
+  //      the conversation's OWN workspace to the focus — but ONLY once that
+  //      workspace is KNOWN (`conversationMeta.workspaceId`, loaded from the
+  //      server). This is the race guard the transition-only version relied on:
+  //      a conversation whose workspace hasn't loaded is left alone, so opening
+  //      one from within its own workspace never briefly self-clears.
   const lastWorkspaceFocusRef = useRef(focusWorkspaceId);
-  const { newConversation } = chat;
+  const { newConversation, conversationId, conversationMeta } = chat;
+  const conversationWorkspaceId = conversationMeta?.workspaceId ?? null;
   useEffect(() => {
-    if (focusWorkspaceId === null) return;
+    if (focusWorkspaceId === null) return; // home / identity, or not-yet-resolved — hold
+    const prevFocus = lastWorkspaceFocusRef.current;
+    lastWorkspaceFocusRef.current = focusWorkspaceId;
+
+    // (1) Transition: the conversation belongs to the workspace we just left.
+    if (prevFocus !== null && prevFocus !== focusWorkspaceId) {
+      newConversation();
+      return;
+    }
+
+    // (2) Reconcile: no transition to catch it (mount / async focus), so compare
+    // the conversation's own workspace — once known — to the focus.
     if (
-      lastWorkspaceFocusRef.current !== null &&
-      lastWorkspaceFocusRef.current !== focusWorkspaceId
+      conversationId !== null &&
+      conversationWorkspaceId !== null &&
+      conversationWorkspaceId !== focusWorkspaceId
     ) {
       newConversation();
     }
-    lastWorkspaceFocusRef.current = focusWorkspaceId;
-  }, [focusWorkspaceId, newConversation]);
+  }, [focusWorkspaceId, conversationId, conversationWorkspaceId, newConversation]);
 
   // Dev helper: window.__nb.simulateError("some error message")
   useEffect(() => {
