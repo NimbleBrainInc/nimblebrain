@@ -60,6 +60,21 @@ function spyRestart(source: McpSource, result: boolean) {
   ).mockResolvedValue(result);
 }
 
+/** A restart that succeeds AND re-establishes the client — models an idle-closed
+ *  source that a stop()/start() reconnect brings back. (`spyRestart(_, true)`
+ *  returns true without wiring a client, which models a start that hasn't yet
+ *  produced one.) */
+function spyRestartEstablishing(source: McpSource, client: unknown) {
+  const internal = source as unknown as { client: unknown };
+  return spyOn(
+    source as unknown as { tryRestart: () => Promise<boolean> },
+    "tryRestart",
+  ).mockImplementation(async () => {
+    internal.client = client;
+    return true;
+  });
+}
+
 describe("policyFor — recovery policy", () => {
   const reauthable = { idempotent: true, hasReauthableProvider: true };
   const idem = { idempotent: true, hasReauthableProvider: false };
@@ -257,5 +272,117 @@ describe("readResource — unified recovery (new behaviors)", () => {
       }
     }
     spy.mockRestore();
+  });
+});
+
+describe("on-demand reconnect of a torn-down (null) client — the fleet-flap fix", () => {
+  it("execute reconnects a null client and dispatches instead of returning 'not started'", async () => {
+    // The acute prod symptom: a foreground app calls a tool in the window between an
+    // idle-close (client torn down) and the next HealthMonitor tick. Before the fix
+    // this returned a raw "not started" in ~2-6ms; now it re-establishes and runs.
+    const source = remoteSource({
+      callTool: () => Promise.resolve({ content: [{ type: "text", text: "ok" }], isError: false }),
+    });
+    const internal = source as unknown as { client: unknown };
+    const liveClient = internal.client; // the fake client remoteSource wired
+    internal.client = null; // simulate the idle-close teardown
+    const restart = spyRestartEstablishing(source, liveClient);
+    try {
+      const result = await source.execute("do_thing", {});
+      expect(result.isError).toBe(false);
+      expect(restart).toHaveBeenCalledTimes(1);
+    } finally {
+      restart.mockRestore();
+    }
+  });
+
+  it("execute dispatches a dead-but-live-client source (drops the || dead short-circuit)", async () => {
+    // A stale `dead` crash flag over a still-live transport must NOT short-circuit —
+    // it dispatches, and any real throw would route through recover() like the client
+    // was never flagged. No restart is needed because the client is present.
+    const source = remoteSource({
+      callTool: () => Promise.resolve({ content: [{ type: "text", text: "ok" }], isError: false }),
+    });
+    (source as unknown as { dead: boolean }).dead = true;
+    const restart = spyRestart(source, true);
+    try {
+      const result = await source.execute("do_thing", {});
+      expect(result.isError).toBe(false);
+      expect(restart).not.toHaveBeenCalled();
+    } finally {
+      restart.mockRestore();
+    }
+  });
+
+  it("execute never revives a deliberately-stopped source", async () => {
+    // isStopped() is terminal (a stale provider would clobber shared credentials a
+    // fresh flow depends on) — HealthMonitor gates on the same predicate.
+    const source = remoteSource({
+      callTool: () => Promise.resolve({ content: [{ type: "text", text: "ok" }], isError: false }),
+    });
+    const internal = source as unknown as { client: unknown; stopped: boolean };
+    internal.client = null;
+    internal.stopped = true;
+    const restart = spyRestart(source, true);
+    try {
+      const result = await source.execute("do_thing", {});
+      expect(result.isError).toBe(true);
+      expect(result.content.map((c) => ("text" in c ? c.text : "")).join("")).toContain("not started");
+      expect(restart).not.toHaveBeenCalled();
+    } finally {
+      restart.mockRestore();
+    }
+  });
+
+  it("execute floors repeated reconnects against a still-down source (no restart-storm)", async () => {
+    // A persistently-unreachable upstream must not be stop()/start()-hammered at the
+    // UI's poll cadence — the second call inside the cooldown window fast-fails
+    // without another restart, leaving HealthMonitor's slower schedule the backstop.
+    const source = remoteSource({
+      callTool: () => Promise.resolve({ content: [{ type: "text", text: "ok" }], isError: false }),
+    });
+    (source as unknown as { client: unknown }).client = null;
+    const restart = spyRestart(source, false); // stays down: never re-establishes a client
+    try {
+      expect((await source.execute("do_thing", {})).isError).toBe(true);
+      expect((await source.execute("do_thing", {})).isError).toBe(true);
+      expect(restart).toHaveBeenCalledTimes(1);
+    } finally {
+      restart.mockRestore();
+    }
+  });
+
+  it("readResource reconnects on the app-surface (reconnect) path and reads", async () => {
+    const source = remoteSource({
+      readResource: () =>
+        Promise.resolve({ contents: [{ uri: "ui://svc/main", text: "<html>ok</html>" }] }),
+    });
+    const internal = source as unknown as { client: unknown };
+    const liveClient = internal.client;
+    internal.client = null;
+    const restart = spyRestartEstablishing(source, liveClient);
+    try {
+      const result = await source.readResource("ui://svc/main", { logFailures: true, reconnect: true });
+      expect(result?.text).toBe("<html>ok</html>");
+      expect(restart).toHaveBeenCalledTimes(1);
+    } finally {
+      restart.mockRestore();
+    }
+  });
+
+  it("readResource does NOT reconnect on the silent probe path (no reconnect opt)", async () => {
+    // Discovery/composition probes legitimately race a not-yet-started client — they
+    // must stay a cheap null, never trigger a stop()/start().
+    const source = remoteSource({
+      readResource: () => Promise.resolve({ contents: [{ uri: "app://instructions", text: "x" }] }),
+    });
+    (source as unknown as { client: unknown }).client = null;
+    const restart = spyRestart(source, true);
+    try {
+      expect(await source.readResource("app://instructions")).toBeNull();
+      expect(restart).not.toHaveBeenCalled();
+    } finally {
+      restart.mockRestore();
+    }
   });
 });
