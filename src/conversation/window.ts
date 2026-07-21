@@ -108,8 +108,9 @@ export function applyReasoningReplayPolicy(
 
 /**
  * Sliding window for conversation messages.
- * Keeps the first message (often system context/initial user message) and
- * the most recent messages that fit within the token budget.
+ * Keeps the first message (often system context/initial user message), the
+ * current turn (the most recent atomic group — always retained), and as many of
+ * the intervening recent messages as fit within the token budget.
  *
  * Tool call/result pairs are kept atomic — an assistant message with tool-call
  * parts is never separated from its corresponding tool message with tool-result parts.
@@ -128,22 +129,34 @@ export function windowMessages(
 
   const first = messages[0]!;
   const firstTokens = estimateTokens(first);
-  let budget = maxTokens - firstTokens;
 
-  if (budget <= 0) return [first];
-
-  // Group remaining messages (index 1+) into atomic units
+  // Group everything after the anchor into atomic tool-call/result units.
   const rest = messages.slice(1);
   const groups = groupMessages(rest);
 
-  // Walk backward from end, accumulating groups that fit
+  // The final group is the CURRENT turn (+ any tool call/result it carries).
+  // The model must always see it — dropping it makes the agent answer a stale
+  // question — so reserve it FIRST and retain it unconditionally, even when the
+  // anchor and tool schemas already exhaust the budget. It's an atomic group, so
+  // this never orphans a tool-result.
+  const lastGroup = groups.length > 0 ? groups[groups.length - 1]! : [];
+  const lastGroupTokens = lastGroup.reduce((sum, m) => sum + estimateTokens(m), 0);
+  let budget = maxTokens - lastGroupTokens;
+
+  // If the anchor no longer fits alongside the current turn, drop the anchor —
+  // a slightly-over-budget current turn (the engine's reactive budget-halving is
+  // the backstop) beats answering the oldest turn alone.
+  if (budget - firstTokens < 0) return lastGroup.length > 0 ? lastGroup : [first];
+  budget -= firstTokens;
+
+  // Walk backward from the second-to-last group, accumulating what still fits.
   const kept: LanguageModelV3Message[][] = [];
-  for (let i = groups.length - 1; i >= 0; i--) {
-    const groupTokens = groups[i]?.reduce((sum, m) => sum + estimateTokens(m), 0) ?? 0;
+  for (let i = groups.length - 2; i >= 0; i--) {
+    const groupTokens = groups[i]!.reduce((sum, m) => sum + estimateTokens(m), 0);
     if (budget - groupTokens < 0) break;
     budget -= groupTokens;
     kept.unshift(groups[i]!);
   }
 
-  return [first, ...kept.flat()];
+  return [first, ...kept.flat(), ...lastGroup];
 }

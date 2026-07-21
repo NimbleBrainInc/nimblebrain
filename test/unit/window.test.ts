@@ -264,6 +264,36 @@ describe("windowMessages", () => {
 		const result = windowMessages(msgs, 1);
 		expect(result).toEqual(msgs);
 	});
+
+	it("keeps the current turn, not just the oldest, when the anchor alone exhausts the budget (#688)", () => {
+		// A huge anchor plus small later turns, with a budget below the anchor's
+		// size. Previously windowMessages returned only the oldest message here,
+		// so the model answered without ever seeing the current question.
+		const msgs: LanguageModelV3Message[] = [
+			textMsg("user", "x".repeat(2000)), // huge anchor
+			textMsg("assistant", "ok"),
+			textMsg("user", "what is my name?"), // the current turn
+		];
+		const result = windowMessages(msgs, 5);
+		// The current turn survives as the tail...
+		expect(result[result.length - 1]).toEqual(msgs[2]!);
+		// ...and the result is not just the stale oldest message.
+		expect(result).not.toEqual([msgs[0]!]);
+	});
+
+	it("keeps the current turn's tool pair atomic at a tiny budget (#688)", () => {
+		const msgs: LanguageModelV3Message[] = [
+			textMsg("user", "x".repeat(1200)), // huge anchor
+			textMsg("user", "kick off work"),
+			toolCallMsg("call_z"), // current turn: tool-call...
+			toolResultMsg("call_z", "the answer"), // ...and its result (atomic)
+		];
+		const result = windowMessages(msgs, 6);
+		// The current turn's tool pair is retained whole — never an orphaned result.
+		assertNoOrphanedToolResults(result);
+		expect(result.some((m) => m === msgs[2])).toBe(true);
+		expect(result.some((m) => m === msgs[3])).toBe(true);
+	});
 });
 
 describe("applyReasoningReplayPolicy", () => {
