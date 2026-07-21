@@ -227,7 +227,7 @@ export class BundleLifecycleManager {
    * principal) where no state transition will ever fire — without it, those
    * paths would lock the slot forever.
    */
-  private authFlowsInFlight = new Map<string, Promise<{ authorizationUrl: string }>>();
+  private authFlowsInFlight = new Map<string, Promise<{ authorizationUrl: string | null }>>();
   /**
    * Getter for a workspace-scoped automations domain context. Set by
    * Runtime after the automations platform source is constructed. Used
@@ -1193,6 +1193,20 @@ export class BundleLifecycleManager {
     newState: ConnectionState,
     opts?: { authorizationUrl?: string; lastError?: string; source?: McpSource | null },
   ): void {
+    // Release the OAuth-flow coalesce slot on any TERMINAL transition — ABOVE the
+    // instance lookup so an instance removed mid-flight (uninstall / re-key) still
+    // frees the slot. A headless success resolves the auth-URL promise without
+    // rejecting, so `startAuth`'s `flow.catch()` CAS never fires — this terminal
+    // transition is the sole slot-release path, so it must run whether or not the
+    // instance is still tracked. Gated below the early return, a disappeared instance
+    // would wedge a permanently-resolved flow in the slot and every later `startAuth`
+    // for this key would short-circuit to it (Reconnect a silent no-op until restart).
+    // `starting` / `pending_auth` are NOT terminal (the coalescing windows);
+    // `Map.delete` is idempotent. See the `authFlowsInFlight` field comment.
+    if (AUTH_FLOW_TERMINAL_STATES.has(newState)) {
+      this.authFlowsInFlight.delete(authFlowKey(serverName, wsId, principalId));
+    }
+
     const instance = this.instances.get(`${serverName}|${wsId}`);
     if (!instance) return;
     if (!instance.connections) instance.connections = new Map<string, Connection>();
@@ -1215,22 +1229,6 @@ export class BundleLifecycleManager {
     // Recompute summary state so legacy consumers (HealthMonitor,
     // briefing-collector, runtime status API) see the right surface.
     instance.state = summarizeConnectionState(instance.connections);
-
-    // Release the OAuth-flow coalesce slot on terminal transitions. The
-    // slot is held from the first `startAuth` call until the connection
-    // definitively resolves, so concurrent inbound `startAuth` calls
-    // coalesce to one flow and never clobber shared on-disk PKCE / DCR
-    // state. `starting` and `pending_auth` are NOT terminal — they are
-    // exactly the windows where coalescing matters. See the
-    // `authFlowsInFlight` field comment for the full rationale.
-    //
-    // `Map.delete` is idempotent and unconditional here is safe: if the
-    // key isn't present (no flow was in-flight) it's a no-op; if the key
-    // is present, the flow has reached a terminal state and is no longer
-    // racing with future calls.
-    if (AUTH_FLOW_TERMINAL_STATES.has(newState)) {
-      this.authFlowsInFlight.delete(authFlowKey(serverName, wsId, principalId));
-    }
 
     this.eventSink.emit({
       type: "connection.state_changed",
@@ -1268,16 +1266,17 @@ export class BundleLifecycleManager {
    *
    * Background lifecycle: kicks off `source.start()`. If the provider
    * fires `onInteractiveAuthRequired`, the URL is captured + the
-   * promise resolves; otherwise (headless / pre-authenticated path)
-   * the source connects, transitions to `running`, and the auth URL
-   * promise rejects (the caller wasn't expecting that path).
+   * promise resolves with it; otherwise (headless / pre-authenticated
+   * path) the source connects, transitions to `running`, and the auth
+   * URL promise resolves with `null` — a success the route surfaces as
+   * "already connected" (#679).
    */
   async startAuth(
     serverName: string,
     wsId: string,
     principalId: string,
     opts: { workDir: string; callbackUrl: string; allowInsecureRemotes?: boolean },
-  ): Promise<{ authorizationUrl: string }> {
+  ): Promise<{ authorizationUrl: string | null }> {
     // In-flight coalesce: if a startAuth for this key is mid-flight, return
     // its promise. See `authFlowsInFlight` field comment for the race this
     // closes (DCR + verifier.json clobber by a second startAuth that slips
@@ -1312,7 +1311,7 @@ export class BundleLifecycleManager {
     wsId: string,
     principalId: string,
     opts: { workDir: string; callbackUrl: string; allowInsecureRemotes?: boolean },
-  ): Promise<{ authorizationUrl: string }> {
+  ): Promise<{ authorizationUrl: string | null }> {
     const instance = this.instances.get(`${serverName}|${wsId}`);
     if (!instance) {
       throw new Error(`[lifecycle] bundle "${serverName}" not installed in workspace ${wsId}`);
@@ -1359,9 +1358,12 @@ export class BundleLifecycleManager {
     // provider throws UnauthorizedError, so it always runs before
     // McpSource.start() returns (or its background promise resolves).
     let capturedAuthUrl: string | undefined;
-    let resolveAuthUrl!: (url: string) => void;
+    // Resolves with the interactive authorization URL, or `null` when the source
+    // connected WITHOUT an interactive flow (a provider-minted / pre-authenticated
+    // source) — a success the route surfaces as "already connected" (#679).
+    let resolveAuthUrl!: (url: string | null) => void;
     let rejectAuthUrl!: (err: Error) => void;
-    const authUrlPromise = new Promise<string>((res, rej) => {
+    const authUrlPromise = new Promise<string | null>((res, rej) => {
       resolveAuthUrl = res;
       rejectAuthUrl = rej;
     });
@@ -1438,9 +1440,8 @@ export class BundleLifecycleManager {
     // Background start. The provider's callback resolves `authUrlPromise`
     // when interactive auth is required. If start() succeeds without ever
     // hitting interactive (headless / pre-authenticated), we transition to
-    // running and reject the auth URL promise (caller wasn't expecting
-    // that path; they should re-list installed connectors to refresh
-    // state).
+    // running and resolve the auth URL promise with `null` — a success the
+    // route reports as "already connected" so the UI refreshes state (#679).
     this.startAuthBackground({
       source,
       provider,
@@ -1448,6 +1449,7 @@ export class BundleLifecycleManager {
       wsId,
       principalId,
       getCapturedAuthUrl: () => capturedAuthUrl,
+      resolveAuthUrl,
       rejectAuthUrl,
     });
 
@@ -1546,10 +1548,11 @@ export class BundleLifecycleManager {
   /**
    * Kick off the fire-and-forget `source.start()` for a `startAuth` flow. On
    * success transitions to `running` (and, for the headless / pre-authenticated
-   * path with no captured URL, rejects the caller's auth-URL promise); on
-   * failure logs, transitions to `dead` with the error, and rejects the promise
-   * on the pre-auth path. Always disarms interactive auth so a later background
-   * reconnect of this long-lived source can't drive a browser flow.
+   * path with no captured URL, resolves the caller's auth-URL promise with `null`
+   * — a success the route reports as "already connected"); on failure logs,
+   * transitions to `dead` with the error, and rejects the promise on the pre-auth
+   * path. Always disarms interactive auth so a later background reconnect of this
+   * long-lived source can't drive a browser flow.
    */
   private startAuthBackground(args: {
     source: McpSource;
@@ -1558,20 +1561,29 @@ export class BundleLifecycleManager {
     wsId: string;
     principalId: string;
     getCapturedAuthUrl: () => string | undefined;
+    resolveAuthUrl: (url: string | null) => void;
     rejectAuthUrl: (err: Error) => void;
   }): void {
-    const { source, provider, serverName, wsId, principalId, getCapturedAuthUrl, rejectAuthUrl } =
-      args;
+    const {
+      source,
+      provider,
+      serverName,
+      wsId,
+      principalId,
+      getCapturedAuthUrl,
+      resolveAuthUrl,
+      rejectAuthUrl,
+    } = args;
     void source
       .start()
       .then(() => {
         this.recordConnectionStateChange(serverName, wsId, principalId, "running");
         if (!getCapturedAuthUrl()) {
-          rejectAuthUrl(
-            new Error(
-              `[lifecycle] ${serverName} for ${principalId} connected without interactive auth — already authenticated`,
-            ),
-          );
+          // Connected without ever hitting interactive auth (provider-minted, or
+          // valid tokens already on hand). That is a SUCCESS — the source is now
+          // `running`. Resolve with no URL so the caller returns "already
+          // connected" (the UI refreshes state) instead of a spurious failure. (#679)
+          resolveAuthUrl(null);
         }
       })
       .catch((err) => {
@@ -2228,7 +2240,7 @@ export class BundleLifecycleManager {
     serverName: string,
     userId: string,
     opts: { workDir: string; allowInsecureRemotes?: boolean },
-  ): Promise<{ authorizationUrl: string }> {
+  ): Promise<{ authorizationUrl: string | null }> {
     // Reserved-name guard, matching `startBundleSource` (which the lazy-start
     // path routes through). This interactive path builds the source directly,
     // so it enforces the same invariant: a source named `nb` would shadow the
@@ -2275,9 +2287,11 @@ export class BundleLifecycleManager {
       }
 
       let capturedAuthUrl: string | undefined;
-      let resolveAuthUrl!: (url: string) => void;
+      // `null` = connected without an interactive flow (already authenticated) —
+      // a success the route surfaces as "already connected" (#679).
+      let resolveAuthUrl!: (url: string | null) => void;
       let rejectAuthUrl!: (err: Error) => void;
-      const authUrlPromise = new Promise<string>((res, rej) => {
+      const authUrlPromise = new Promise<string | null>((res, rej) => {
         resolveAuthUrl = res;
         rejectAuthUrl = rej;
       });
@@ -2339,11 +2353,10 @@ export class BundleLifecycleManager {
         .start()
         .then(() => {
           if (!capturedAuthUrl) {
-            rejectAuthUrl(
-              new Error(
-                `[lifecycle] ${serverName} connected without interactive auth — already authenticated`,
-              ),
-            );
+            // Connected without an interactive flow (already authenticated) — a
+            // success. Resolve with no URL so the route reports "already connected"
+            // instead of a spurious failure (#679).
+            resolveAuthUrl(null);
           }
         })
         .catch((err: unknown) => {

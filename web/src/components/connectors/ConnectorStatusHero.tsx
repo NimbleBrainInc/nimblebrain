@@ -120,6 +120,14 @@ export function ConnectorStatusHero({
         cat?.auth === "composio"
           ? await initiateComposioOAuth(cat.id)
           : await initiateMcpOAuth(installed.serverName);
+      if (!authorizationUrl) {
+        // Provider-minted / already-authenticated: the source reconnected without
+        // an interactive flow — refresh status in place instead of redirecting to a
+        // nonexistent auth page (#679).
+        onChanged();
+        setActing(false);
+        return;
+      }
       window.location.assign(authorizationUrl);
     } catch (err) {
       reportError(err);

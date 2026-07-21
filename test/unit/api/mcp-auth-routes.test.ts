@@ -31,28 +31,31 @@ function sha256Hex(input: string): string {
 }
 
 interface StubLifecycle {
-  /** Pre-canned URL the stub `startAuth` returns. Undefined ⇒ throws. */
-  authUrls: Map<string, string>; // key: "serverName|wsId|principalId"
+  /** Pre-canned URL the stub `startAuth` returns. Unset ⇒ throws; value `null` ⇒
+   *  connected without an interactive flow (already authenticated). */
+  authUrls: Map<string, string | null>; // key: "serverName|wsId|principalId"
   instances: Map<string, { oauthScope?: "workspace" | "user" }>; // key: "serverName|wsId"
-  /** Pre-canned URL the stub `startIdentityAuth` returns. Key: "serverName|userId". */
-  identityAuthUrls: Map<string, string>;
+  /** Pre-canned URL the stub `startIdentityAuth` returns. Unset ⇒ throws; value
+   *  `null` ⇒ connected without an interactive flow (already authenticated).
+   *  Key: "serverName|userId". */
+  identityAuthUrls: Map<string, string | null>;
   getInstance(serverName: string, wsId: string): { oauthScope?: "workspace" | "user" } | null;
   startAuth(
     serverName: string,
     wsId: string,
     principalId: string,
     opts: { workDir: string; callbackUrl: string; allowInsecureRemotes?: boolean },
-  ): Promise<{ authorizationUrl: string }>;
+  ): Promise<{ authorizationUrl: string | null }>;
   startIdentityAuth(
     serverName: string,
     userId: string,
     opts: { workDir: string; allowInsecureRemotes?: boolean },
-  ): Promise<{ authorizationUrl: string }>;
+  ): Promise<{ authorizationUrl: string | null }>;
 }
 
 function makeStubLifecycle(): StubLifecycle {
-  const authUrls = new Map<string, string>();
-  const identityAuthUrls = new Map<string, string>();
+  const authUrls = new Map<string, string | null>();
+  const identityAuthUrls = new Map<string, string | null>();
   const instances = new Map<string, { oauthScope?: "workspace" | "user" }>();
   return {
     authUrls,
@@ -62,14 +65,14 @@ function makeStubLifecycle(): StubLifecycle {
       return instances.get(`${serverName}|${wsId}`) ?? null;
     },
     async startAuth(serverName, wsId, principalId) {
-      const url = authUrls.get(`${serverName}|${wsId}|${principalId}`);
-      if (!url) throw new Error(`stub: no canned URL for ${serverName}|${wsId}|${principalId}`);
-      return { authorizationUrl: url };
+      const key = `${serverName}|${wsId}|${principalId}`;
+      if (!authUrls.has(key)) throw new Error(`stub: no canned URL for ${key}`);
+      return { authorizationUrl: authUrls.get(key) ?? null };
     },
     async startIdentityAuth(serverName, userId) {
-      const url = identityAuthUrls.get(`${serverName}|${userId}`);
-      if (!url) throw new Error(`stub: no canned identity URL for ${serverName}|${userId}`);
-      return { authorizationUrl: url };
+      const key = `${serverName}|${userId}`;
+      if (!identityAuthUrls.has(key)) throw new Error(`stub: no canned identity URL for ${key}`);
+      return { authorizationUrl: identityAuthUrls.get(key) ?? null };
     },
   };
 }
@@ -158,6 +161,25 @@ describe("POST /v1/mcp-auth/initiate", () => {
 
     expect(res.status).toBe(200);
     expect(res.headers.get("Set-Cookie")!).toContain("Secure");
+  });
+
+  test("returns { authorizationUrl: null } and no cookie when connected without interactive auth (#679)", async () => {
+    // A provider-minted / already-authenticated source: startAuth resolves with no
+    // URL (the source is now running). The route must report success — not a 500 —
+    // and set no state cookie (there is no interactive flow to bind).
+    lifecycle.instances.set(`minted|${WS_ID}`, { oauthScope: "workspace" });
+    lifecycle.authUrls.set(`minted|${WS_ID}|_workspace`, null);
+
+    const res = await app.request("http://localhost/v1/mcp-auth/initiate", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ serverName: "minted" }),
+    });
+
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.authorizationUrl).toBeNull();
+    expect(res.headers.get("Set-Cookie")).toBeNull();
   });
 
   test("returns 404 with no cookie when bundle is not installed", async () => {
@@ -589,6 +611,27 @@ describe("POST /v1/mcp-auth/initiate-identity", () => {
     expect(setCookie).not.toBeNull();
     expect(setCookie!).toContain(`nb_oauth_state=${sha256Hex(state)}`);
     expect(setCookie!).toContain("Path=/v1/mcp-auth/callback");
+  });
+
+  test("connected without interactive auth → { authorizationUrl: null } and no cookie (#679)", async () => {
+    await new IdentityConnectorStore({ workDir }).add(USER_ID, {
+      url: "https://minted.test/mcp",
+      serverName: "minted",
+      ui: null,
+    });
+    // startIdentityAuth resolves with no URL — the connector is already authenticated.
+    lifecycle.identityAuthUrls.set(`minted|${USER_ID}`, null);
+
+    const res = await app.request("http://localhost/v1/mcp-auth/initiate-identity", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ serverName: "minted" }),
+    });
+
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.authorizationUrl).toBeNull();
+    expect(res.headers.get("Set-Cookie")).toBeNull();
   });
 
   test("a connect already in progress → 409 connector_busy (retriable), not 500", async () => {

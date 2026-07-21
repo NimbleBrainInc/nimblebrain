@@ -80,18 +80,29 @@ export function ProfileConnectorsTab() {
   }, [refresh]);
 
   // Redirect into the connector's Connect flow. The route depends on the auth
-  // type: composio keys on the catalog connector id, DCR on the serverName.
-  // `window.location.assign` leaves the SPA, so `busyKey` only needs resetting
-  // when the flow fails to start.
+  // type: composio keys on the catalog connector id, DCR on the serverName. The
+  // redirect (`window.location.assign`) leaves the SPA, so the callers keep the row
+  // busy until navigation and reset only on a thrown failure. The headless
+  // "already connected" outcome below returns WITHOUT navigating, so it must clear
+  // the busy state itself.
   const redirectToConnect = useCallback(
     async (target: { auth: "dcr" | "composio"; serverName: string; connectorId?: string }) => {
       const { authorizationUrl } =
         target.auth === "composio" && target.connectorId
           ? await initiateComposioIdentityConnect(target.connectorId)
           : await initiateIdentityConnect(target.serverName);
+      if (!authorizationUrl) {
+        // Already connected (no interactive flow) — refresh state in place rather
+        // than redirecting to a nonexistent auth page. This success path does NOT
+        // leave the SPA, so clear the row's busy state here (the callers reset only
+        // on a thrown failure). (#679)
+        await refresh();
+        setBusyKey(null);
+        return;
+      }
       window.location.assign(authorizationUrl);
     },
-    [],
+    [refresh],
   );
 
   // Available (not yet installed): install on the identity, then connect. The

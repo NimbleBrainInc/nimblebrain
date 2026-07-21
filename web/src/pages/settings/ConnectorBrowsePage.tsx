@@ -157,6 +157,13 @@ export function ConnectorBrowsePage() {
       install.auth === "composio"
         ? await initiateComposioOAuth(entry.id)
         : await initiateMcpOAuth(serverName);
+    if (!authorizationUrl) {
+      // Connected without an interactive flow (already authenticated) — route to
+      // Configure like the provider-auth case rather than redirecting to a
+      // nonexistent auth page (#679).
+      navigate(`${configureBasePath}/${serverName}`);
+      return;
+    }
     window.location.assign(authorizationUrl);
   };
 

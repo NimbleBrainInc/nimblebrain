@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, test } from "bun:test";
+import { beforeEach, describe, expect, mock, test } from "bun:test";
 import { BundleLifecycleManager } from "../../src/bundles/lifecycle.ts";
 import type { BundleInstance, BundleRef } from "../../src/bundles/types.ts";
 import type { EngineEvent, EventSink } from "../../src/engine/types.ts";
@@ -137,6 +137,20 @@ describe("BundleLifecycleManager.startAuth — authFlowsInFlight coalesce", () =
     }
   });
 
+  test("a terminal transition releases the slot even when the instance is gone (mid-flight uninstall / re-key)", () => {
+    // #679 made the headless path RESOLVE (not reject), so the flow.catch() CAS never
+    // fires — the slot release must not depend on the instance still being tracked.
+    // Reconnect X → uninstall X while start() is in flight → reinstall: if the release
+    // sat below the `if (!instance) return`, the slot would hold a permanently-resolved
+    // flow and every later startAuth for this key would short-circuit to it (Reconnect
+    // silently no-ops until restart).
+    const lc = new BundleLifecycleManager(new CapturingSink(), undefined);
+    // NO seedInstance — the instance was removed while the flow was in flight.
+    flowSlot(lc).set("ghost|ws_test|_workspace", Promise.resolve({ authorizationUrl: null }));
+    lc.recordConnectionStateChange("ghost", "ws_test", "_workspace", "running");
+    expect(flowSlot(lc).has("ghost|ws_test|_workspace")).toBe(false);
+  });
+
   test("recordConnectionStateChange does NOT release the slot on starting / pending_auth (the in-flight states the mutex exists to coalesce across)", () => {
     seedInstance(lifecycle, "granola", "ws_test", { url: "https://example.test/mcp" });
     const fake = Promise.resolve({ authorizationUrl: "x" });
@@ -186,5 +200,49 @@ describe("BundleLifecycleManager.startAuth — authFlowsInFlight coalesce", () =
     await Promise.resolve();
 
     expect(slot.get(KEY)).toBe(flow2);
+  });
+
+  test("a headless success releases the slot via the running transition", async () => {
+    // A headless success resolves (does not reject), so the flow.catch() CAS never
+    // fires — the slot's release depends solely on `recordConnectionStateChange(
+    // "running")` in `startAuthBackground`. Drop or skip that call and the slot leaks
+    // permanently (every later startAuth returns the stale resolved promise → Reconnect
+    // a silent no-op). Pin the invariant.
+    const lifecycle = new BundleLifecycleManager(new CapturingSink(), undefined);
+    seedInstance(lifecycle, "minted", "ws_test", { url: "https://example.test/mcp" });
+    flowSlot(lifecycle).set("minted|ws_test|_workspace", Promise.resolve({ authorizationUrl: null }));
+
+    const resolveAuthUrl = mock((_url: string | null) => {});
+    const source = { start: async () => {} };
+    const provider = { setInteractiveAuthAllowed: () => {} };
+
+    (
+      lifecycle as unknown as {
+        startAuthBackground: (a: {
+          source: unknown;
+          provider: unknown;
+          serverName: string;
+          wsId: string;
+          principalId: string;
+          getCapturedAuthUrl: () => string | undefined;
+          resolveAuthUrl: (u: string | null) => void;
+          rejectAuthUrl: (e: Error) => void;
+        }) => void;
+      }
+    ).startAuthBackground({
+      source,
+      provider,
+      serverName: "minted",
+      wsId: "ws_test",
+      principalId: "_workspace",
+      getCapturedAuthUrl: () => undefined, // headless — connected without interactive auth
+      resolveAuthUrl,
+      rejectAuthUrl: mock((_e: Error) => {}),
+    });
+
+    await new Promise((r) => setTimeout(r, 0));
+
+    expect(flowSlot(lifecycle).has("minted|ws_test|_workspace")).toBe(false); // slot released
+    expect(resolveAuthUrl).toHaveBeenCalledWith(null); // public contract: resolve null, not reject
   });
 });
