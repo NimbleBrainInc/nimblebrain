@@ -143,15 +143,17 @@ export function windowMessages(
   // to the last user message would be a further improvement, out of scope here.)
   const lastGroup = groups[groups.length - 1]!;
   const lastGroupTokens = lastGroup.reduce((sum, m) => sum + estimateTokens(m), 0);
-  let budget = maxTokens - lastGroupTokens;
 
-  // Always keep the anchor too: it's the conversation's first message (user
-  // role), which Anthropic requires as the leading message — dropping it can emit
-  // an assistant-first list that the provider 400s. When it no longer fits
-  // alongside the last group, keep both anyway and go over budget (a degenerate
-  // case: the context is smaller than anchor + current turn).
-  if (budget - firstTokens < 0) return [first, ...lastGroup];
-  budget -= firstTokens;
+  // Reserve the anchor (kept unconditionally — the leading message must be the
+  // user turn, which Anthropic requires) plus the last group; the remainder is
+  // for older history. The remainder can go negative — e.g. a single large tool
+  // result exceeds the budget on a small-context model, an ordinary case, not a
+  // rare one — and then the loop breaks on its first iteration and we return
+  // `[first, ...lastGroup]` over budget. That request may be rejected by the
+  // provider, and the overflow retry can't shrink an unconditionally-retained
+  // payload; the fix is a larger context window (or tool-result truncation), not
+  // more windowing.
+  let budget = maxTokens - firstTokens - lastGroupTokens;
 
   // Walk backward from the second-to-last group, accumulating what still fits.
   const kept: LanguageModelV3Message[][] = [];
