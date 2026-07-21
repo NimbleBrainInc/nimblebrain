@@ -4249,8 +4249,10 @@ export class Runtime {
     // This is the app-surface (resource-proxy) read path — its only callers are
     // readAppResource / readIdentityAppResource serving a `ui://` resource for a
     // mounted app. A failure here is anomalous, so opt into logging; discovery
-    // probes that read directly from a source stay silent.
-    const opts = { logFailures: true } as const;
+    // probes that read directly from a source stay silent. `reconnect` lets a
+    // torn-down client re-establish on demand so a foreground app's `ui://` read
+    // heals the dead window instead of returning a persistent null.
+    const opts = { logFailures: true, reconnect: true } as const;
 
     if (resourcePath.includes("://")) {
       return source.readResource(resourcePath, opts);

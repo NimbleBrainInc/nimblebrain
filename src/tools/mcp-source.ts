@@ -339,6 +339,16 @@ export class McpSource implements ToolSource {
    *  `SESSION_RECOVERY_DELAYS_MS`; overridable so tests exercise the policy
    *  branches without real sleeps. */
   private recoveryDelaysMs?: readonly number[];
+  /** Timestamp of the last FAILED on-demand reconnect ({@link reconnectOnDemand}),
+   *  or null when there is no unpaid failure — reset by any successful `start()`
+   *  (so a heal via HealthMonitor / recover() clears it too, not just
+   *  reconnectOnDemand's own retry). Floors how often the app-surface execute/read
+   *  paths stop()/start()-cycle a torn-down source, so a persistently-unreachable
+   *  upstream isn't hammered at the UI's poll cadence and HealthMonitor's slower
+   *  re-probe schedule stays the backstop. The floor gates only CONSECUTIVE failures
+   *  with no successful connect between them; a healthy idle-close heals on the
+   *  first call. */
+  private lastReconnectFailedAt: number | null = null;
   private startedAt: number | null = null;
   /** Optional `instructions` string returned by the MCP server during
    *  `initialize`. Captured after connect so callers (e.g. the system
@@ -515,6 +525,11 @@ export class McpSource implements ToolSource {
     }
 
     this.dead = false;
+    // Any successful (re)connect clears the on-demand reconnect floor — including a
+    // heal via HealthMonitor or recover(), not just reconnectOnDemand's own retry.
+    // So the floor gates only CONSECUTIVE failed reconnects with no connect between,
+    // and a fresh idle-close right after an out-of-band heal is never wrongly gated.
+    this.lastReconnectFailedAt = null;
     this.startedAt = Date.now();
 
     // Now that start has succeeded, wire transport close-detection.
@@ -1044,6 +1059,50 @@ export class McpSource implements ToolSource {
     return this.tryRestart();
   }
 
+  /**
+   * On-demand reconnect for the app-surface paths (`execute`, and the `ui://`
+   * `readResource` proxy) when the client was torn down by an idle-close / crash
+   * and no HealthMonitor tick has re-established it yet. Returns whether a live
+   * client is available afterward.
+   *
+   * Heals the window between a self-dropped transport and the next HealthMonitor
+   * sweep, so a foreground app call self-heals instead of surfacing a raw
+   * "not started". Three guards keep it safe:
+   *   - a deliberately-stopped source ({@link isStopped}) is terminal — never
+   *     revived (its stale provider would clobber the shared on-disk credentials a
+   *     fresh flow depends on; HealthMonitor gates on the same predicate);
+   *   - it rides the shared {@link restartInFlight} cycle via {@link tryRestart},
+   *     so concurrent callers and a HealthMonitor tick coalesce onto one
+   *     stop()/start() instead of storming;
+   *   - repeated FAILED attempts are floored behind `RECONNECT_COOLDOWN_MS` so a
+   *     persistently-down upstream isn't stop()/start()-hammered at the UI poll
+   *     cadence (a healthy idle-close still reconnects on the first call).
+   */
+  private async reconnectOnDemand(): Promise<boolean> {
+    if (this.client) return true;
+    // isStopped() is checked-then-acted-on (the restart drives stop()/start()), so a
+    // deliberate stop() interleaving after this check could be undone by the restart.
+    // The window is tiny and self-correcting (the completed stop leaves the next call
+    // client===null && stopped, which blocks revival), and HealthMonitor's reconnect
+    // path carries the identical check-then-restart shape — so this matches existing
+    // behavior rather than introducing a new race.
+    if (this.isStopped()) return false;
+    const now = Date.now();
+    if (
+      this.lastReconnectFailedAt !== null &&
+      now - this.lastReconnectFailedAt < RECONNECT_COOLDOWN_MS
+    ) {
+      return false;
+    }
+    await this.tryRestart(); // coalesced via restartInFlight; never throws
+    if (this.client) {
+      this.lastReconnectFailedAt = null;
+      return true;
+    }
+    this.lastReconnectFailedAt = now;
+    return false;
+  }
+
   async stop(): Promise<void> {
     // Tell our onclose handlers this is a deliberate teardown — see
     // `stopping` field. Without this, every graceful stop would emit a
@@ -1347,7 +1406,14 @@ export class McpSource implements ToolSource {
     input: Record<string, unknown>,
     signal?: AbortSignal,
   ): Promise<ToolResult> {
-    if (!this.client || this.dead) {
+    // A live client dispatches — even with `dead` set: a stale crash flag over a
+    // working transport, or a torn one, both route their throw through recover()
+    // (classify → restart only on a connection-down class, never a timeout/auth-loss
+    // — the #581 policy), so short-circuiting on `dead` here would deny that
+    // self-heal and surface a spurious "not started". Only a genuinely torn-down
+    // (null) client errors, and only after an on-demand reconnect fails — healing
+    // the window between an idle-close and the next HealthMonitor tick.
+    if (!this.client && !(await this.reconnectOnDemand())) {
       return { content: textContent(`McpSource "${this.name}" not started`), isError: true };
     }
 
@@ -1585,22 +1651,31 @@ export class McpSource implements ToolSource {
    * spec attaches ui metadata at the content level, so that's the load-bearing
    * source for iframe CSP / permissions / layout hints.
    */
-  async readResource(uri: string, opts?: { logFailures?: boolean }): Promise<ResourceData | null> {
+  async readResource(
+    uri: string,
+    opts?: { logFailures?: boolean; reconnect?: boolean },
+  ): Promise<ResourceData | null> {
     if (!this.client) {
-      // A torn-down client (a source degraded/crashed without re-creation)
-      // returns null HERE, before the catch below — the persistent silent-404
-      // shape this change exists to surface, and the most likely cause of a read
-      // that stays broken until a full runtime restart. Log it on the app-surface
-      // path; the probe path stays silent because a not-yet-started or tearing-down
-      // source legitimately has no client during composition.
-      if (opts?.logFailures) {
-        log.warn("[mcp] readResource: source has no active client connection", {
-          uri,
-          source: this.name,
-        });
+      // A torn-down client (a source degraded/crashed without re-creation) is the
+      // persistent silent-404 shape — the most likely cause of a read that stays
+      // broken until a full runtime restart. App-surface reads (the ui:// proxy
+      // passes `reconnect`) attempt an on-demand reconnect first so the dead window
+      // self-heals; discovery/composition probes (no `reconnect`) legitimately race
+      // a not-yet-started/tearing-down client and stay cheap. Only when no client is
+      // available do we log (on the app-surface path) and return the null.
+      if (!(opts?.reconnect && (await this.reconnectOnDemand()))) {
+        if (opts?.logFailures) {
+          log.warn("[mcp] readResource: source has no active client connection", {
+            uri,
+            source: this.name,
+          });
+        }
+        return null;
       }
-      return null;
     }
+    // `reconnectOnDemand()` returns true only with a live client, but narrow for the
+    // compiler (and defend a race that re-nulled it) before the read below.
+    if (!this.client) return null;
     // A real failure (a torn transport, a dropped connection, an exhausted
     // recovery) is NOT a missing resource — log it ONLY on the app-surface path
     // (the resource proxy passes `logFailures`), where a failure is anomalous.
@@ -2607,6 +2682,16 @@ export function policyFor(
  * is the backstop for anything beyond it.
  */
 const SESSION_RECOVERY_DELAYS_MS = [0, 500, 2000] as const;
+
+/**
+ * Cooldown floor (ms) for the app-surface on-demand reconnect
+ * ({@link McpSource.reconnectOnDemand}). Bounds how often a torn-down source is
+ * stop()/start()-cycled from foreground execute/read calls when the upstream is
+ * persistently unreachable, so it never out-paces (and defeats) HealthMonitor's
+ * slower re-probe schedule. Only a FAILED attempt is floored — a healthy
+ * idle-close reconnects on the first call with no delay.
+ */
+const RECONNECT_COOLDOWN_MS = 30_000;
 
 /**
  * Backoff for a tool-call (`execute`) recovery: a SINGLE immediate re-establish +
