@@ -135,6 +135,10 @@ The `models` object declares three role-based slots. Each value is a `provider:m
 
 A workspace can override individual slots via `workspace.json → models`. When a `nb__delegate` call or agent profile specifies a slot name (e.g. `"model": "fast"`), it's resolved against these slots.
 
+<Aside type="caution">
+  Don't put a **small-context** model in the `fast` slot. A `fast` request (via `nb__delegate` or a `"model": "fast"` override) runs the **full tool surface**, and the message budget is `context − systemPrompt − toolSchemas − maxOutputTokens − safetyMargin`. On a connector-heavy workspace, a model with a ~40k window can be left with almost no room for conversation history — and once that budget hits zero, only the latest message is kept. Choose the `fast` model for generous context (≥128k), not just low latency or price.
+</Aside>
+
 ## providers
 
 Per-provider API keys. Takes precedence over the legacy `model` object when both are present.
