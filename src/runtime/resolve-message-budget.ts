@@ -117,8 +117,8 @@ export function resolveMessageBudget(input: ResolveMessageBudgetInput): ResolveM
   if (headroom <= 0) {
     // The static per-call cost already exceeds the context window. The
     // call will almost certainly fail at the provider; returning 0 lets
-    // `windowMessages` keep only the anchor message and surfaces the
-    // condition via the breakdown.
+    // `windowMessages` keep just the anchor plus the last atomic group and
+    // surfaces the condition via the breakdown.
     return { budget: 0, breakdown: { ...baseBreakdown, boundedByModel: true } };
   }
 

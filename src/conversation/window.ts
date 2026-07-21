@@ -108,8 +108,10 @@ export function applyReasoningReplayPolicy(
 
 /**
  * Sliding window for conversation messages.
- * Keeps the first message (often system context/initial user message) and
- * the most recent messages that fit within the token budget.
+ * Always keeps the first message (the anchor — the conversation's leading user
+ * turn) and the last atomic group (the most recent assistant/tool-result unit),
+ * plus as many of the intervening recent messages as fit within the token
+ * budget. An exhausted budget therefore never collapses to just the oldest turn.
  *
  * Tool call/result pairs are kept atomic — an assistant message with tool-call
  * parts is never separated from its corresponding tool message with tool-result parts.
@@ -128,22 +130,39 @@ export function windowMessages(
 
   const first = messages[0]!;
   const firstTokens = estimateTokens(first);
-  let budget = maxTokens - firstTokens;
 
-  if (budget <= 0) return [first];
-
-  // Group remaining messages (index 1+) into atomic units
+  // Group everything after the anchor into atomic tool-call/result units.
+  // messages.length > 2 here, so rest has >= 2 messages and groups is non-empty.
   const rest = messages.slice(1);
   const groups = groupMessages(rest);
 
-  // Walk backward from end, accumulating groups that fit
+  // The last atomic group (the most recent assistant/tool-result unit) is always
+  // retained, so an exhausted budget never collapses to just the oldest anchor.
+  // It's atomic, so a tool-result is never orphaned. (Mid-tool-loop this group
+  // may be a tool-call/result without the originating user turn — retaining back
+  // to the last user message would be a further improvement, out of scope here.)
+  const lastGroup = groups[groups.length - 1]!;
+  const lastGroupTokens = lastGroup.reduce((sum, m) => sum + estimateTokens(m), 0);
+
+  // Reserve the anchor (kept unconditionally — the leading message must be the
+  // user turn, which Anthropic requires) plus the last group; the remainder is
+  // for older history. The remainder can go negative — e.g. a single large tool
+  // result exceeds the budget on a small-context model, an ordinary case, not a
+  // rare one — and then the loop breaks on its first iteration and we return
+  // `[first, ...lastGroup]` over budget. That request may be rejected by the
+  // provider, and the overflow retry can't shrink an unconditionally-retained
+  // payload; the fix is a larger context window (or tool-result truncation), not
+  // more windowing.
+  let budget = maxTokens - firstTokens - lastGroupTokens;
+
+  // Walk backward from the second-to-last group, accumulating what still fits.
   const kept: LanguageModelV3Message[][] = [];
-  for (let i = groups.length - 1; i >= 0; i--) {
-    const groupTokens = groups[i]?.reduce((sum, m) => sum + estimateTokens(m), 0) ?? 0;
+  for (let i = groups.length - 2; i >= 0; i--) {
+    const groupTokens = groups[i]!.reduce((sum, m) => sum + estimateTokens(m), 0);
     if (budget - groupTokens < 0) break;
     budget -= groupTokens;
     kept.unshift(groups[i]!);
   }
 
-  return [first, ...kept.flat()];
+  return [first, ...kept.flat(), ...lastGroup];
 }
