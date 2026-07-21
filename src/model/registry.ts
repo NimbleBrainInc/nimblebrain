@@ -56,10 +56,22 @@ export function buildRegistry(config: ProvidersConfig): Provider {
     // Nebius Token Factory is an OpenAI-compatible gateway for open-weight
     // models. It serves the Chat Completions API but NOT OpenAI's Responses
     // API, which createOpenAI's default `.languageModel()` binds — so route
-    // through `.chat()`. The key falls back to NEBIUS_API_KEY (createOpenAI's
-    // own fallback is OPENAI_API_KEY, which would be the wrong provider's key).
+    // through `.chat()`.
+    //
+    // Resolve the key explicitly and FAIL CLOSED when it's absent. createOpenAI's
+    // built-in key fallback is OPENAI_API_KEY, so passing an undefined key here
+    // would silently send the operator's *OpenAI* credential to Nebius's
+    // endpoint. A configured-but-unauthenticated provider is a misconfiguration
+    // worth surfacing loudly, never a credential leak.
+    const nebiusApiKey = apiKey ?? process.env.NEBIUS_API_KEY;
+    if (!nebiusApiKey) {
+      throw new Error(
+        "Provider 'nebius' is configured but no API key is set. " +
+          "Set providers.nebius.apiKey or the NEBIUS_API_KEY environment variable.",
+      );
+    }
     const nebius = createOpenAI({
-      apiKey: apiKey ?? process.env.NEBIUS_API_KEY,
+      apiKey: nebiusApiKey,
       baseURL: baseURL ?? NEBIUS_DEFAULT_BASE_URL,
       name: "nebius",
     });

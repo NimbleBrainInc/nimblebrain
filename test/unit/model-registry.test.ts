@@ -77,7 +77,7 @@ describe("buildRegistry", () => {
   });
 
   it("resolves nebius models through the OpenAI-compatible Chat Completions API", () => {
-    const registry = buildRegistry({ providers: { nebius: {} } });
+    const registry = buildRegistry({ providers: { nebius: { apiKey: "nb-test-key" } } });
     const model = registry.languageModel("nebius:deepseek-ai/DeepSeek-V4-Pro");
     expect(model).toBeDefined();
     expect(model.specificationVersion).toBe("v3");
@@ -85,6 +85,20 @@ describe("buildRegistry", () => {
     // no Responses API, which is what the OpenAI provider's default binds.
     expect(model.provider).toBe("nebius.chat");
     expect(model.modelId).toBe("deepseek-ai/DeepSeek-V4-Pro");
+  });
+
+  it("fails closed when nebius is configured without a key (never leaks OPENAI_API_KEY)", () => {
+    // createOpenAI's own key fallback is OPENAI_API_KEY, so an absent nebius
+    // key must throw here rather than silently authenticate Nebius requests
+    // with the operator's OpenAI credential.
+    const prev = process.env.NEBIUS_API_KEY;
+    process.env.NEBIUS_API_KEY = "";
+    try {
+      expect(() => buildRegistry({ providers: { nebius: {} } })).toThrow(/nebius.*no API key/i);
+    } finally {
+      if (prev === undefined) delete process.env.NEBIUS_API_KEY;
+      else process.env.NEBIUS_API_KEY = prev;
+    }
   });
 });
 

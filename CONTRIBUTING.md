@@ -22,7 +22,7 @@ cd web && bun install && cd ..
 
 # Copy the environment template and fill in at least one LLM provider key
 cp .env.example .env
-# Edit .env — set ANTHROPIC_API_KEY (or OPENAI_API_KEY / GOOGLE_GENERATIVE_AI_API_KEY)
+# Edit .env — set ANTHROPIC_API_KEY (or OPENAI_API_KEY / GOOGLE_GENERATIVE_AI_API_KEY / NEBIUS_API_KEY)
 ```
 
 ## Running Locally

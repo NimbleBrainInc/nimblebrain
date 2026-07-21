@@ -30,7 +30,7 @@ export function formatNumber(n: number): string {
 }
 
 export function shortModel(m: string): string {
-  return m.replace(/^(anthropic:|openai:|google:)/, "").replace(/-\d{8}$/, "");
+  return m.replace(/^[a-z0-9-]+:/, "").replace(/-\d{8}$/, "");
 }
 
 /** Sum of all four token buckets — honest total including cache writes. */

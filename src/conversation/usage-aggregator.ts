@@ -165,7 +165,7 @@ function addCost(target: CostBreakdown, cost: CostBreakdown): void {
 
 /** Normalize model ID by stripping provider prefix and date suffix for grouping. */
 function normalizeModel(model: string): string {
-  return model.replace(/^(anthropic:|openai:|google:)/, "").replace(/-\d{8}$/, "");
+  return model.replace(/^[a-z0-9-]+:/, "").replace(/-\d{8}$/, "");
 }
 
 function isDateInRange(date: string, range: { from: string; to: string }): boolean {
