@@ -140,6 +140,15 @@ function shortCallProviderOptions(modelString: string | null): SharedV3ProviderO
       return { google: { thinkingConfig: { thinkingBudget: 0 } } };
     case "openai":
       return { openai: { reasoningEffort: "minimal" } };
+    case "nebius":
+      // Deliberately no suppression, and NOT a silent fallthrough. Nebius rejects
+      // `reasoning_effort` (HTTP 400) on its DeepSeek/Qwen/gpt-oss reasoning
+      // models, and there's no shared alternative knob. It isn't needed anyway:
+      // under the briefing's json_schema structured-output path these models
+      // return clean JSON within the 1500-token budget (finish=stop, no reasoning
+      // dump) — verified against a live account. Do not add a `reasoning_effort`
+      // case here; it breaks the briefing rather than fixing it.
+      return {};
     default:
       return {};
   }
