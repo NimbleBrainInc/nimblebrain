@@ -360,6 +360,33 @@ describe("ProfileConnectorsTab", () => {
     expect(locationAssign).toHaveBeenCalledWith("https://composio.test/connect");
   });
 
+  test("Connect on an already-authenticated connector refreshes in place — no navigation, button not stuck busy (#679)", async () => {
+    nextConnectors = [
+      {
+        serverName: "granola",
+        displayName: "Granola",
+        description: null,
+        state: "not_authenticated",
+        auth: "dcr",
+        grantedWorkspaces: [],
+      },
+    ];
+    // startAuth reconnected the connector without an interactive flow — no URL.
+    initiateIdentityConnect.mockResolvedValueOnce({ authorizationUrl: null });
+    mounted = await mount();
+    const connect = [...mounted.container.getElementsByTagName("button")].find(
+      (b) => b.textContent === "Connect",
+    );
+    await click(connect);
+    await flush();
+    expect(initiateIdentityConnect).toHaveBeenCalledWith("granola");
+    // Did NOT redirect to a nonexistent auth page…
+    expect(locationAssign).not.toHaveBeenCalled();
+    // …and the row is NOT stuck "Connecting…" — the busy state was cleared (the
+    // non-navigating success path resets it itself).
+    expect(mounted.container.textContent ?? "").not.toContain("Connecting");
+  });
+
   test("renders an installed connector's icon from iconUrl", async () => {
     nextConnectors = [
       {
