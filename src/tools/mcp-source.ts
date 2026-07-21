@@ -340,11 +340,14 @@ export class McpSource implements ToolSource {
    *  branches without real sleeps. */
   private recoveryDelaysMs?: readonly number[];
   /** Timestamp of the last FAILED on-demand reconnect ({@link reconnectOnDemand}),
-   *  or null if the last attempt succeeded / none has run. Floors how often the
-   *  app-surface execute/read paths stop()/start()-cycle a torn-down source, so a
-   *  persistently-unreachable upstream isn't hammered at the UI's poll cadence and
-   *  HealthMonitor's slower re-probe schedule stays the backstop. A healthy
-   *  idle-close still heals on the first call — the floor only gates a FAILED try. */
+   *  or null when there is no unpaid failure — reset by any successful `start()`
+   *  (so a heal via HealthMonitor / recover() clears it too, not just
+   *  reconnectOnDemand's own retry). Floors how often the app-surface execute/read
+   *  paths stop()/start()-cycle a torn-down source, so a persistently-unreachable
+   *  upstream isn't hammered at the UI's poll cadence and HealthMonitor's slower
+   *  re-probe schedule stays the backstop. The floor gates only CONSECUTIVE failures
+   *  with no successful connect between them; a healthy idle-close heals on the
+   *  first call. */
   private lastReconnectFailedAt: number | null = null;
   private startedAt: number | null = null;
   /** Optional `instructions` string returned by the MCP server during
@@ -522,6 +525,11 @@ export class McpSource implements ToolSource {
     }
 
     this.dead = false;
+    // Any successful (re)connect clears the on-demand reconnect floor — including a
+    // heal via HealthMonitor or recover(), not just reconnectOnDemand's own retry.
+    // So the floor gates only CONSECUTIVE failed reconnects with no connect between,
+    // and a fresh idle-close right after an out-of-band heal is never wrongly gated.
+    this.lastReconnectFailedAt = null;
     this.startedAt = Date.now();
 
     // Now that start has succeeded, wire transport close-detection.
@@ -1072,6 +1080,12 @@ export class McpSource implements ToolSource {
    */
   private async reconnectOnDemand(): Promise<boolean> {
     if (this.client) return true;
+    // isStopped() is checked-then-acted-on (the restart drives stop()/start()), so a
+    // deliberate stop() interleaving after this check could be undone by the restart.
+    // The window is tiny and self-correcting (the completed stop leaves the next call
+    // client===null && stopped, which blocks revival), and HealthMonitor's reconnect
+    // path carries the identical check-then-restart shape — so this matches existing
+    // behavior rather than introducing a new race.
     if (this.isStopped()) return false;
     const now = Date.now();
     if (
