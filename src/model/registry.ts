@@ -43,6 +43,12 @@ export function buildRegistry(config: ProvidersConfig): Provider {
 
   if (providersCfg.openai) {
     const { apiKey, baseURL, organization } = providersCfg.openai;
+    // No fail-closed guard here, unlike nebius below: when `baseURL` overrides
+    // the endpoint it typically points at an OpenAI-compatible proxy
+    // (LiteLLM/Helicone/Azure) that legitimately expects the OpenAI key, so
+    // createOpenAI's OPENAI_API_KEY fallback is the desired behavior. Nebius is
+    // a distinct third-party host that must never receive that key — hence the
+    // asymmetry. Don't "unify" the two branches.
     providers.openai = createOpenAI({ apiKey, baseURL, organization });
   }
 

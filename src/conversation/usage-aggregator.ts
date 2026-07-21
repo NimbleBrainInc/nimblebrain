@@ -163,8 +163,13 @@ function addCost(target: CostBreakdown, cost: CostBreakdown): void {
   target.total += cost.total;
 }
 
-/** Normalize model ID by stripping provider prefix and date suffix for grouping. */
-function normalizeModel(model: string): string {
+/**
+ * Normalize model ID by stripping any `provider:` prefix and date suffix for
+ * grouping/display. The prefix match is generic (`^[a-z0-9-]+:`) so a new
+ * provider like `nebius:` is handled without editing this (and the sibling
+ * copies in the usage UIs). Exported for the drift-pinning test.
+ */
+export function normalizeModel(model: string): string {
   return model.replace(/^[a-z0-9-]+:/, "").replace(/-\d{8}$/, "");
 }
 
