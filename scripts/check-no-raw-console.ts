@@ -36,6 +36,7 @@ const ALLOWED_FILES: ReadonlySet<string> = new Set<string>(
     "adapters/console-events.ts",
     "adapters/debug-events.ts",
     "model/sync-models.ts",
+    "model/sync-nebius.ts",
     "services/briefing-debug.ts",
   ].map((f) => f.split("/").join(sep)),
 );
