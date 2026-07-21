@@ -572,12 +572,17 @@ export async function initiateMcpOAuth(
  */
 export async function initiateIdentityConnect(
   serverName: string,
-): Promise<{ authorizationUrl: string }> {
-  return request<{ authorizationUrl: string }>("/v1/mcp-auth/initiate-identity", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ serverName }),
-  });
+): Promise<{ authorizationUrl: string | null; alreadyConnected?: boolean }> {
+  // `authorizationUrl` is null when the connector connected without an interactive
+  // flow (already authenticated) — caller must not redirect.
+  return request<{ authorizationUrl: string | null; alreadyConnected?: boolean }>(
+    "/v1/mcp-auth/initiate-identity",
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ serverName }),
+    },
+  );
 }
 
 /**

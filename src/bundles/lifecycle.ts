@@ -1268,9 +1268,10 @@ export class BundleLifecycleManager {
    *
    * Background lifecycle: kicks off `source.start()`. If the provider
    * fires `onInteractiveAuthRequired`, the URL is captured + the
-   * promise resolves; otherwise (headless / pre-authenticated path)
-   * the source connects, transitions to `running`, and the auth URL
-   * promise rejects (the caller wasn't expecting that path).
+   * promise resolves with it; otherwise (headless / pre-authenticated
+   * path) the source connects, transitions to `running`, and the auth
+   * URL promise resolves with `null` — a success the route surfaces as
+   * "already connected" (#679).
    */
   async startAuth(
     serverName: string,
@@ -1441,9 +1442,8 @@ export class BundleLifecycleManager {
     // Background start. The provider's callback resolves `authUrlPromise`
     // when interactive auth is required. If start() succeeds without ever
     // hitting interactive (headless / pre-authenticated), we transition to
-    // running and reject the auth URL promise (caller wasn't expecting
-    // that path; they should re-list installed connectors to refresh
-    // state).
+    // running and resolve the auth URL promise with `null` — a success the
+    // route reports as "already connected" so the UI refreshes state (#679).
     this.startAuthBackground({
       source,
       provider,
@@ -1550,10 +1550,11 @@ export class BundleLifecycleManager {
   /**
    * Kick off the fire-and-forget `source.start()` for a `startAuth` flow. On
    * success transitions to `running` (and, for the headless / pre-authenticated
-   * path with no captured URL, rejects the caller's auth-URL promise); on
-   * failure logs, transitions to `dead` with the error, and rejects the promise
-   * on the pre-auth path. Always disarms interactive auth so a later background
-   * reconnect of this long-lived source can't drive a browser flow.
+   * path with no captured URL, resolves the caller's auth-URL promise with `null`
+   * — a success the route reports as "already connected"); on failure logs,
+   * transitions to `dead` with the error, and rejects the promise on the pre-auth
+   * path. Always disarms interactive auth so a later background reconnect of this
+   * long-lived source can't drive a browser flow.
    */
   private startAuthBackground(args: {
     source: McpSource;
@@ -2241,7 +2242,7 @@ export class BundleLifecycleManager {
     serverName: string,
     userId: string,
     opts: { workDir: string; allowInsecureRemotes?: boolean },
-  ): Promise<{ authorizationUrl: string }> {
+  ): Promise<{ authorizationUrl: string | null }> {
     // Reserved-name guard, matching `startBundleSource` (which the lazy-start
     // path routes through). This interactive path builds the source directly,
     // so it enforces the same invariant: a source named `nb` would shadow the
@@ -2288,9 +2289,11 @@ export class BundleLifecycleManager {
       }
 
       let capturedAuthUrl: string | undefined;
-      let resolveAuthUrl!: (url: string) => void;
+      // `null` = connected without an interactive flow (already authenticated) —
+      // a success the route surfaces as "already connected" (#679).
+      let resolveAuthUrl!: (url: string | null) => void;
       let rejectAuthUrl!: (err: Error) => void;
-      const authUrlPromise = new Promise<string>((res, rej) => {
+      const authUrlPromise = new Promise<string | null>((res, rej) => {
         resolveAuthUrl = res;
         rejectAuthUrl = rej;
       });
@@ -2352,11 +2355,10 @@ export class BundleLifecycleManager {
         .start()
         .then(() => {
           if (!capturedAuthUrl) {
-            rejectAuthUrl(
-              new Error(
-                `[lifecycle] ${serverName} connected without interactive auth — already authenticated`,
-              ),
-            );
+            // Connected without an interactive flow (already authenticated) — a
+            // success. Resolve with no URL so the route reports "already connected"
+            // instead of a spurious failure (#679).
+            resolveAuthUrl(null);
           }
         })
         .catch((err: unknown) => {

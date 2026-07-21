@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, test } from "bun:test";
+import { beforeEach, describe, expect, mock, test } from "bun:test";
 import { BundleLifecycleManager } from "../../src/bundles/lifecycle.ts";
 import type { BundleInstance, BundleRef } from "../../src/bundles/types.ts";
 import type { EngineEvent, EventSink } from "../../src/engine/types.ts";
@@ -156,5 +156,58 @@ describe("BundleLifecycleManager.disconnect — symmetric teardown", () => {
     expect(stateEvents.length).toBeGreaterThanOrEqual(1);
     const lastEvent = stateEvents[stateEvents.length - 1]!.data as Record<string, unknown>;
     expect(lastEvent.state).toBe("not_authenticated");
+  });
+});
+
+describe("BundleLifecycleManager.startAuthBackground — headless / already-authenticated connect (#679)", () => {
+  test("resolves the auth-URL promise with null (not reject) and transitions to running", async () => {
+    const sink = new CapturingSink();
+    const lifecycle = new BundleLifecycleManager(sink, undefined);
+    seedInstance(lifecycle, "minted", "ws_test"); // so the running transition can emit
+    const resolveAuthUrl = mock((_url: string | null) => {});
+    const rejectAuthUrl = mock((_err: Error) => {});
+    let disarmed = false;
+    const provider = {
+      setInteractiveAuthAllowed: (v: boolean) => {
+        if (!v) disarmed = true;
+      },
+    };
+    // A source that connects cleanly without ever driving an interactive flow.
+    const source = { start: async () => {} };
+
+    (
+      lifecycle as unknown as {
+        startAuthBackground: (a: {
+          source: unknown;
+          provider: unknown;
+          serverName: string;
+          wsId: string;
+          principalId: string;
+          getCapturedAuthUrl: () => string | undefined;
+          resolveAuthUrl: (u: string | null) => void;
+          rejectAuthUrl: (e: Error) => void;
+        }) => void;
+      }
+    ).startAuthBackground({
+      source,
+      provider,
+      serverName: "minted",
+      wsId: "ws_test",
+      principalId: "_workspace",
+      getCapturedAuthUrl: () => undefined, // headless — no interactive auth URL captured
+      resolveAuthUrl,
+      rejectAuthUrl,
+    });
+
+    // start() is fire-and-forget; let its .then/.finally microtask chain settle.
+    await new Promise((r) => setTimeout(r, 0));
+
+    expect(resolveAuthUrl).toHaveBeenCalledWith(null);
+    expect(rejectAuthUrl).not.toHaveBeenCalled();
+    expect(disarmed).toBe(true); // interactive auth disarmed in .finally
+    const running = sink
+      .byType("connection.state_changed")
+      .filter((e) => (e.data as { state?: string }).state === "running");
+    expect(running.length).toBe(1);
   });
 });

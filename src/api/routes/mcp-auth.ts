@@ -184,6 +184,9 @@ export function mcpAuthRoutes(ctx: AppContext) {
 
     const started = await startIdentityAuthorization(ctx, serverName, userId);
     if (started instanceof Response) return started;
+    // No URL: connected without an interactive flow (already authenticated). Report
+    // success so the UI refreshes state instead of redirecting to nothing (#679).
+    if (started === null) return c.json({ authorizationUrl: null, alreadyConnected: true });
 
     const prepared = prepareAuthorization(started, serverName, `user:${userId}`);
     if (prepared instanceof Response) return prepared;
@@ -294,12 +297,16 @@ async function startAuthorization(
   }
 }
 
-/** Begin an interactive identity-plane OAuth flow, returning the authorization URL or an error Response. */
+/**
+ * Begin an interactive identity-plane OAuth flow, returning the authorization URL,
+ * `null` when the connector connected without an interactive flow (already
+ * authenticated — a success; #679), or an error Response.
+ */
 async function startIdentityAuthorization(
   ctx: AppContext,
   serverName: string,
   userId: string,
-): Promise<string | Response> {
+): Promise<string | null | Response> {
   try {
     const result = await ctx.runtime.getLifecycle().startIdentityAuth(serverName, userId, {
       workDir: ctx.runtime.getWorkDir(),

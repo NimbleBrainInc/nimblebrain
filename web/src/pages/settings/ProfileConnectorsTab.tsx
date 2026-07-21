@@ -89,9 +89,15 @@ export function ProfileConnectorsTab() {
         target.auth === "composio" && target.connectorId
           ? await initiateComposioIdentityConnect(target.connectorId)
           : await initiateIdentityConnect(target.serverName);
+      if (!authorizationUrl) {
+        // Already connected (no interactive flow) — refresh state in place rather
+        // than redirecting to a nonexistent auth page (#679).
+        await refresh();
+        return;
+      }
       window.location.assign(authorizationUrl);
     },
-    [],
+    [refresh],
   );
 
   // Available (not yet installed): install on the identity, then connect. The

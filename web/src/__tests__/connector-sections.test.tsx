@@ -80,6 +80,15 @@ mock.module("../api/client", () => ({
   connectComposioApiKey,
 }));
 
+// runOAuth leaves the SPA via `window.location.assign`. happy-dom doesn't implement
+// navigation, so stub it — lets a test assert that an "already connected" reconnect
+// (null URL) does NOT navigate.
+const locationAssign = mock((_url: string) => {});
+Object.defineProperty(window, "location", {
+  configurable: true,
+  value: { ...window.location, assign: locationAssign },
+});
+
 const React = await import("react");
 const ReactDOMClient = await import("react-dom/client");
 const { act } = await import("react");
@@ -594,6 +603,29 @@ describe("ConnectorStatusHero", () => {
     expect(mounted.container.textContent).toContain("Failed");
     expect(mounted.container.textContent).toContain("token revoked upstream");
     expect(findButton(mounted.container, "Reconnect")).not.toBeNull();
+  });
+
+  test("Reconnect on an already-connected source refreshes in place — no navigation (#679)", async () => {
+    const onChanged = mock(() => {});
+    // The source reconnected without an interactive flow — startAuth returned no URL.
+    initiateMcpOAuth.mockResolvedValueOnce({ authorizationUrl: null });
+    locationAssign.mockClear();
+    mounted = await mount(
+      <ConnectorStatusHero
+        installed={dcrConnector({ status: "failed", state: "crashed" })}
+        canManage={true}
+        onChanged={onChanged}
+      />,
+    );
+    const reconnect = findButton(mounted.container, "Reconnect");
+    expect(reconnect).not.toBeNull();
+    await act(async () => {
+      reconnect?.click();
+      await Promise.resolve();
+    });
+    // Refreshed state in place; did NOT redirect to a nonexistent auth page.
+    expect(onChanged).toHaveBeenCalled();
+    expect(locationAssign).not.toHaveBeenCalled();
   });
 
   test("status=failed on stdio bundle → status visible, no one-click CTA", async () => {
