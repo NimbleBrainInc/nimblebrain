@@ -108,9 +108,10 @@ export function applyReasoningReplayPolicy(
 
 /**
  * Sliding window for conversation messages.
- * Keeps the first message (often system context/initial user message), the
- * current turn (the most recent atomic group — always retained), and as many of
- * the intervening recent messages as fit within the token budget.
+ * Always keeps the first message (the anchor — the conversation's leading user
+ * turn) and the last atomic group (the most recent assistant/tool-result unit),
+ * plus as many of the intervening recent messages as fit within the token
+ * budget. An exhausted budget therefore never collapses to just the oldest turn.
  *
  * Tool call/result pairs are kept atomic — an assistant message with tool-call
  * parts is never separated from its corresponding tool message with tool-result parts.
@@ -131,22 +132,25 @@ export function windowMessages(
   const firstTokens = estimateTokens(first);
 
   // Group everything after the anchor into atomic tool-call/result units.
+  // messages.length > 2 here, so rest has >= 2 messages and groups is non-empty.
   const rest = messages.slice(1);
   const groups = groupMessages(rest);
 
-  // The final group is the CURRENT turn (+ any tool call/result it carries).
-  // The model must always see it — dropping it makes the agent answer a stale
-  // question — so reserve it FIRST and retain it unconditionally, even when the
-  // anchor and tool schemas already exhaust the budget. It's an atomic group, so
-  // this never orphans a tool-result.
-  const lastGroup = groups.length > 0 ? groups[groups.length - 1]! : [];
+  // The last atomic group (the most recent assistant/tool-result unit) is always
+  // retained, so an exhausted budget never collapses to just the oldest anchor.
+  // It's atomic, so a tool-result is never orphaned. (Mid-tool-loop this group
+  // may be a tool-call/result without the originating user turn — retaining back
+  // to the last user message would be a further improvement, out of scope here.)
+  const lastGroup = groups[groups.length - 1]!;
   const lastGroupTokens = lastGroup.reduce((sum, m) => sum + estimateTokens(m), 0);
   let budget = maxTokens - lastGroupTokens;
 
-  // If the anchor no longer fits alongside the current turn, drop the anchor —
-  // a slightly-over-budget current turn (the engine's reactive budget-halving is
-  // the backstop) beats answering the oldest turn alone.
-  if (budget - firstTokens < 0) return lastGroup.length > 0 ? lastGroup : [first];
+  // Always keep the anchor too: it's the conversation's first message (user
+  // role), which Anthropic requires as the leading message — dropping it can emit
+  // an assistant-first list that the provider 400s. When it no longer fits
+  // alongside the last group, keep both anyway and go over budget (a degenerate
+  // case: the context is smaller than anchor + current turn).
+  if (budget - firstTokens < 0) return [first, ...lastGroup];
   budget -= firstTokens;
 
   // Walk backward from the second-to-last group, accumulating what still fits.

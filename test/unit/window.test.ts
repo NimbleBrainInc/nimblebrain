@@ -265,31 +265,37 @@ describe("windowMessages", () => {
 		expect(result).toEqual(msgs);
 	});
 
-	it("keeps the current turn, not just the oldest, when the anchor alone exhausts the budget (#688)", () => {
+	it("keeps the anchor + recent turn, not just the oldest, when the anchor alone exhausts the budget (#688)", () => {
 		// A huge anchor plus small later turns, with a budget below the anchor's
 		// size. Previously windowMessages returned only the oldest message here,
-		// so the model answered without ever seeing the current question.
+		// so the model answered without ever seeing the recent turn.
 		const msgs: LanguageModelV3Message[] = [
 			textMsg("user", "x".repeat(2000)), // huge anchor
 			textMsg("assistant", "ok"),
-			textMsg("user", "what is my name?"), // the current turn
+			textMsg("user", "what is my name?"), // the recent turn
 		];
 		const result = windowMessages(msgs, 5);
-		// The current turn survives as the tail...
+		// The anchor still leads (user role — Anthropic requires it)...
+		expect(result[0]).toEqual(msgs[0]!);
+		// ...and the recent turn survives as the tail (not the stale oldest alone).
 		expect(result[result.length - 1]).toEqual(msgs[2]!);
-		// ...and the result is not just the stale oldest message.
-		expect(result).not.toEqual([msgs[0]!]);
 	});
 
-	it("keeps the current turn's tool pair atomic at a tiny budget (#688)", () => {
+	it("keeps anchor-then-tool-pair (never an assistant-first list) at a tiny budget (#688)", () => {
+		// Mid-tool-loop the last atomic group is [assistant(tool-call), tool].
+		// Dropping the anchor here would emit an assistant-first message list,
+		// which Anthropic 400s on. The anchor must lead.
 		const msgs: LanguageModelV3Message[] = [
 			textMsg("user", "x".repeat(1200)), // huge anchor
 			textMsg("user", "kick off work"),
-			toolCallMsg("call_z"), // current turn: tool-call...
+			toolCallMsg("call_z"), // last group: tool-call...
 			toolResultMsg("call_z", "the answer"), // ...and its result (atomic)
 		];
 		const result = windowMessages(msgs, 6);
-		// The current turn's tool pair is retained whole — never an orphaned result.
+		// First message is the user anchor — not an orphaned assistant tool-call.
+		expect(result[0]!.role).toBe("user");
+		expect(result[0]).toEqual(msgs[0]!);
+		// The last group is retained whole — never an orphaned tool-result.
 		assertNoOrphanedToolResults(result);
 		expect(result.some((m) => m === msgs[2])).toBe(true);
 		expect(result.some((m) => m === msgs[3])).toBe(true);
