@@ -74,7 +74,7 @@ Visible only to organization admins and owners. Hidden from regular members. The
 Choose which AI models the agent uses across **every** workspace:
 
 - **Default model** — primary model for chat.
-- **Fast model** — cheaper, faster model for quick auxiliary tasks.
+- **Fast model** — cheaper, faster model for quick auxiliary tasks. Still give it a large context window, not just low latency/price — a `fast` request carries the same tool surface as a normal one, so a small-context model starves conversation history ([details](/config/nimblebrain-json#models)).
 - **Reasoning model** — most capable model for complex analysis.
 
 Plus runtime limits — **max iterations** and **max input/output tokens** — and the **Extended Thinking** control.

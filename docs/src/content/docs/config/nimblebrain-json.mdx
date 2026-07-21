@@ -130,7 +130,7 @@ The `models` object declares three role-based slots. Each value is a `provider:m
 | Slot | Used for |
 |------|----------|
 | `default` | Chat, general requests, most tool-using turns |
-| `fast` | Title generation, briefing, skill matching — cheap/fast workloads |
+| `fast` | Title generation, briefing, skill matching — cheap/fast workloads (still needs a large context window, see below) |
 | `reasoning` | Complex analysis, planning, long-horizon tasks |
 
 A workspace can override individual slots via `workspace.json → models`. When a `nb__delegate` call or agent profile specifies a slot name (e.g. `"model": "fast"`), it's resolved against these slots.
