@@ -551,12 +551,17 @@ export const refreshSession = refreshInterceptor.tryRefresh;
 export async function initiateMcpOAuth(
   serverName: string,
   principalId?: string,
-): Promise<{ authorizationUrl: string }> {
-  return request<{ authorizationUrl: string }>("/v1/mcp-auth/initiate", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(principalId ? { serverName, principalId } : { serverName }),
-  });
+): Promise<{ authorizationUrl: string | null; alreadyConnected?: boolean }> {
+  // `authorizationUrl` is null when the source connected without an interactive
+  // flow (provider-minted / already-authenticated) — caller must not redirect.
+  return request<{ authorizationUrl: string | null; alreadyConnected?: boolean }>(
+    "/v1/mcp-auth/initiate",
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(principalId ? { serverName, principalId } : { serverName }),
+    },
+  );
 }
 
 /**

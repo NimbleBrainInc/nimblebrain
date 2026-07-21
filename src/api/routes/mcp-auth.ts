@@ -131,6 +131,10 @@ export function mcpAuthRoutes(ctx: AppContext) {
 
       const started = await startAuthorization(ctx, serverName, wsId, principalId);
       if (started instanceof Response) return started;
+      // No URL: the source connected without an interactive flow (provider-minted /
+      // already-authenticated). It's now running — report success so the UI refreshes
+      // its state instead of redirecting to a nonexistent auth page (#679).
+      if (started === null) return c.json({ authorizationUrl: null, alreadyConnected: true });
 
       // Bind the user's browser session to the SDK-built `state` via a
       // hashed cookie so a leaked `state` value alone can't let a
@@ -255,13 +259,18 @@ async function parseServerName(c: Context<AppEnv>): Promise<string | Response> {
   return serverName;
 }
 
-/** Start the outbound OAuth flow via the bundle lifecycle, returning the SDK authorization URL or an error Response. */
+/**
+ * Start the outbound OAuth flow via the bundle lifecycle, returning the SDK
+ * authorization URL, `null` when the source connected without an interactive flow
+ * (provider-minted / already-authenticated — a success, not a failure; #679), or
+ * an error Response.
+ */
 async function startAuthorization(
   ctx: AppContext,
   serverName: string,
   wsId: string,
   principalId: string,
-): Promise<string | Response> {
+): Promise<string | null | Response> {
   try {
     const callbackUrl = mcpAuthCallbackUrl();
     const result = await ctx.runtime.getLifecycle().startAuth(serverName, wsId, principalId, {
