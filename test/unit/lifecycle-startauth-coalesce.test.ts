@@ -137,6 +137,20 @@ describe("BundleLifecycleManager.startAuth — authFlowsInFlight coalesce", () =
     }
   });
 
+  test("a terminal transition releases the slot even when the instance is gone (mid-flight uninstall / re-key)", () => {
+    // #679 made the headless path RESOLVE (not reject), so the flow.catch() CAS never
+    // fires — the slot release must not depend on the instance still being tracked.
+    // Reconnect X → uninstall X while start() is in flight → reinstall: if the release
+    // sat below the `if (!instance) return`, the slot would hold a permanently-resolved
+    // flow and every later startAuth for this key would short-circuit to it (Reconnect
+    // silently no-ops until restart).
+    const lc = new BundleLifecycleManager(new CapturingSink(), undefined);
+    // NO seedInstance — the instance was removed while the flow was in flight.
+    flowSlot(lc).set("ghost|ws_test|_workspace", Promise.resolve({ authorizationUrl: null }));
+    lc.recordConnectionStateChange("ghost", "ws_test", "_workspace", "running");
+    expect(flowSlot(lc).has("ghost|ws_test|_workspace")).toBe(false);
+  });
+
   test("recordConnectionStateChange does NOT release the slot on starting / pending_auth (the in-flight states the mutex exists to coalesce across)", () => {
     seedInstance(lifecycle, "granola", "ws_test", { url: "https://example.test/mcp" });
     const fake = Promise.resolve({ authorizationUrl: "x" });

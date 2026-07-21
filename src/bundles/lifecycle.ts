@@ -1193,6 +1193,19 @@ export class BundleLifecycleManager {
     newState: ConnectionState,
     opts?: { authorizationUrl?: string; lastError?: string; source?: McpSource | null },
   ): void {
+    // Release the OAuth-flow coalesce slot on any TERMINAL transition — hoisted ABOVE
+    // the instance lookup so an instance removed mid-flight (uninstall / re-key) still
+    // frees the slot. A headless success now RESOLVES rather than rejects (#679), so
+    // the `flow.catch()` CAS in `startAuth` no longer fires; this is the sole release
+    // path. Below the early return, a disappeared instance would wedge a permanently-
+    // resolved flow in the slot and every later `startAuth` for this key would
+    // short-circuit to it — Reconnect silently no-ops until restart. `starting` /
+    // `pending_auth` are NOT terminal (the coalescing windows); `Map.delete` is
+    // idempotent. See the `authFlowsInFlight` field comment for the full rationale.
+    if (AUTH_FLOW_TERMINAL_STATES.has(newState)) {
+      this.authFlowsInFlight.delete(authFlowKey(serverName, wsId, principalId));
+    }
+
     const instance = this.instances.get(`${serverName}|${wsId}`);
     if (!instance) return;
     if (!instance.connections) instance.connections = new Map<string, Connection>();
@@ -1215,22 +1228,6 @@ export class BundleLifecycleManager {
     // Recompute summary state so legacy consumers (HealthMonitor,
     // briefing-collector, runtime status API) see the right surface.
     instance.state = summarizeConnectionState(instance.connections);
-
-    // Release the OAuth-flow coalesce slot on terminal transitions. The
-    // slot is held from the first `startAuth` call until the connection
-    // definitively resolves, so concurrent inbound `startAuth` calls
-    // coalesce to one flow and never clobber shared on-disk PKCE / DCR
-    // state. `starting` and `pending_auth` are NOT terminal — they are
-    // exactly the windows where coalescing matters. See the
-    // `authFlowsInFlight` field comment for the full rationale.
-    //
-    // `Map.delete` is idempotent and unconditional here is safe: if the
-    // key isn't present (no flow was in-flight) it's a no-op; if the key
-    // is present, the flow has reached a terminal state and is no longer
-    // racing with future calls.
-    if (AUTH_FLOW_TERMINAL_STATES.has(newState)) {
-      this.authFlowsInFlight.delete(authFlowKey(serverName, wsId, principalId));
-    }
 
     this.eventSink.emit({
       type: "connection.state_changed",
