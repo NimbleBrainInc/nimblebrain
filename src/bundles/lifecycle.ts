@@ -1193,15 +1193,16 @@ export class BundleLifecycleManager {
     newState: ConnectionState,
     opts?: { authorizationUrl?: string; lastError?: string; source?: McpSource | null },
   ): void {
-    // Release the OAuth-flow coalesce slot on any TERMINAL transition — hoisted ABOVE
-    // the instance lookup so an instance removed mid-flight (uninstall / re-key) still
-    // frees the slot. A headless success now RESOLVES rather than rejects (#679), so
-    // the `flow.catch()` CAS in `startAuth` no longer fires; this is the sole release
-    // path. Below the early return, a disappeared instance would wedge a permanently-
-    // resolved flow in the slot and every later `startAuth` for this key would
-    // short-circuit to it — Reconnect silently no-ops until restart. `starting` /
-    // `pending_auth` are NOT terminal (the coalescing windows); `Map.delete` is
-    // idempotent. See the `authFlowsInFlight` field comment for the full rationale.
+    // Release the OAuth-flow coalesce slot on any TERMINAL transition — ABOVE the
+    // instance lookup so an instance removed mid-flight (uninstall / re-key) still
+    // frees the slot. A headless success resolves the auth-URL promise without
+    // rejecting, so `startAuth`'s `flow.catch()` CAS never fires — this terminal
+    // transition is the sole slot-release path, so it must run whether or not the
+    // instance is still tracked. Gated below the early return, a disappeared instance
+    // would wedge a permanently-resolved flow in the slot and every later `startAuth`
+    // for this key would short-circuit to it (Reconnect a silent no-op until restart).
+    // `starting` / `pending_auth` are NOT terminal (the coalescing windows);
+    // `Map.delete` is idempotent. See the `authFlowsInFlight` field comment.
     if (AUTH_FLOW_TERMINAL_STATES.has(newState)) {
       this.authFlowsInFlight.delete(authFlowKey(serverName, wsId, principalId));
     }

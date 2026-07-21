@@ -202,13 +202,12 @@ describe("BundleLifecycleManager.startAuth — authFlowsInFlight coalesce", () =
     expect(slot.get(KEY)).toBe(flow2);
   });
 
-  test("a headless success releases the slot via the running transition (the sole path now that flow.catch never fires)", async () => {
-    // #679 made the headless path RESOLVE instead of reject, so the flow.catch()
-    // CAS release no longer fires — the slot's release now depends solely on
-    // `recordConnectionStateChange("running")` running BEFORE `resolveAuthUrl(null)`
-    // in `startAuthBackground`. Reorder those two and the slot leaks permanently
-    // (every later startAuth returns the stale resolved promise → Reconnect silently
-    // no-ops). Pin the invariant.
+  test("a headless success releases the slot via the running transition", async () => {
+    // A headless success resolves (does not reject), so the flow.catch() CAS never
+    // fires — the slot's release depends solely on `recordConnectionStateChange(
+    // "running")` in `startAuthBackground`. Drop or skip that call and the slot leaks
+    // permanently (every later startAuth returns the stale resolved promise → Reconnect
+    // a silent no-op). Pin the invariant.
     const lifecycle = new BundleLifecycleManager(new CapturingSink(), undefined);
     seedInstance(lifecycle, "minted", "ws_test", { url: "https://example.test/mcp" });
     flowSlot(lifecycle).set("minted|ws_test|_workspace", Promise.resolve({ authorizationUrl: null }));

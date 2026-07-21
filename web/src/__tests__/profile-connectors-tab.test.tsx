@@ -377,14 +377,26 @@ describe("ProfileConnectorsTab", () => {
     const connect = [...mounted.container.getElementsByTagName("button")].find(
       (b) => b.textContent === "Connect",
     );
+    // The reconnect ran server-side; the in-place refresh now sees it running.
+    nextConnectors = [
+      {
+        serverName: "granola",
+        displayName: "Granola",
+        description: null,
+        state: "running",
+        auth: "dcr",
+        grantedWorkspaces: [],
+      },
+    ];
     await click(connect);
     await flush();
     expect(initiateIdentityConnect).toHaveBeenCalledWith("granola");
     // Did NOT redirect to a nonexistent auth page…
     expect(locationAssign).not.toHaveBeenCalled();
-    // …and the row is NOT stuck "Connecting…" — the busy state was cleared (the
-    // non-navigating success path resets it itself).
+    // …the row is NOT stuck "Connecting…" — the busy state was cleared…
     expect(mounted.container.textContent ?? "").not.toContain("Connecting");
+    // …and the in-place refresh flipped the row to Connected (not just un-stuck).
+    expect(mounted.container.textContent ?? "").toContain("Connected");
   });
 
   test("renders an installed connector's icon from iconUrl", async () => {
