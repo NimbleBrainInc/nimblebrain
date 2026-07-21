@@ -30,6 +30,7 @@ services:
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
       - OPENAI_API_KEY=${OPENAI_API_KEY:-}
       - GOOGLE_GENERATIVE_AI_API_KEY=${GOOGLE_GENERATIVE_AI_API_KEY:-}
+      - NEBIUS_API_KEY=${NEBIUS_API_KEY:-}
     networks:
       - internal
 
@@ -79,6 +80,7 @@ The `web` container runs Caddy, which serves the static UI files and reverse-pro
 | `ANTHROPIC_API_KEY` | Yes | Your Anthropic API key for Claude |
 | `OPENAI_API_KEY` | No | OpenAI API key (for OpenAI model provider) |
 | `GOOGLE_GENERATIVE_AI_API_KEY` | No | Google Gemini API key (for Google model provider) |
+| `NEBIUS_API_KEY` | No | Nebius Token Factory API key (for the Nebius model provider) |
 | `ALLOWED_ORIGINS` | Production | Comma-separated list of allowed CORS origins (e.g., `https://nb.example.com`). Required for cross-origin cookie auth |
 | `NB_PUBLIC_ORIGIN` | Production (when using OAuth connectors) | Canonical public origin of the platform (e.g., `https://nb.example.com`). Used to build absolute callback URLs such as the OAuth `redirect_uri` for [connectors](/config/connectors-catalog/). A mismatch with the URL registered in each vendor's OAuth app produces vendor-side `redirect_uri does not match` errors at sign-in time. |
 

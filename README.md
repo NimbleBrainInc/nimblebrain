@@ -301,6 +301,7 @@ The working directory is set via `NB_WORK_DIR` (see Environment Variables).
 | `ANTHROPIC_API_KEY` | Anthropic API key (required unless set via `providers.anthropic.apiKey`) |
 | `OPENAI_API_KEY` | OpenAI API key (when using `openai:*` model slots) |
 | `GOOGLE_GENERATIVE_AI_API_KEY` | Google Gemini API key (when using `google:*` model slots) |
+| `NEBIUS_API_KEY` | Nebius Token Factory API key (when using `nebius:*` model slots) |
 
 **Runtime**
 

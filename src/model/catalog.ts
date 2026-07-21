@@ -7,6 +7,7 @@
 
 import { log } from "../observability/log.ts";
 import catalogData from "./catalog-data.json";
+import nebiusData from "./catalog-nebius.json";
 
 // ============================================================================
 // Types
@@ -61,7 +62,12 @@ type CatalogData = Record<
   { name: string; models: Record<string, Omit<CatalogModel, "provider">> }
 >;
 
-const data = catalogData as CatalogData;
+// models.dev (the `sync-models` source) doesn't list Nebius Token Factory's
+// open-weight models, so their metadata lives in catalog-nebius.json — synced
+// from the account's own `/v1/models` API by `bun run sync-nebius` — and is
+// merged here. Keeping it out of catalog-data.json means `bun run sync-models`
+// (which rewrites only the models.dev-backed providers) can never clobber it.
+const data = { ...catalogData, ...nebiusData } as CatalogData;
 
 /**
  * Reverse lookup: bare model id → owning provider. Built once at module

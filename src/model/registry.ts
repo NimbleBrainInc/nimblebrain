@@ -11,8 +11,12 @@ export interface ProvidersConfig {
     anthropic?: { apiKey?: string; promptCaching?: boolean; models?: string[] };
     openai?: { apiKey?: string; baseURL?: string; organization?: string; models?: string[] };
     google?: { apiKey?: string; models?: string[] };
+    nebius?: { apiKey?: string; baseURL?: string; models?: string[] };
   };
 }
+
+/** Nebius Token Factory's OpenAI-compatible inference endpoint. */
+const NEBIUS_DEFAULT_BASE_URL = "https://api.tokenfactory.nebius.com/v1";
 
 /**
  * Build a provider registry from config. Creates AI SDK provider instances
@@ -39,12 +43,45 @@ export function buildRegistry(config: ProvidersConfig): Provider {
 
   if (providersCfg.openai) {
     const { apiKey, baseURL, organization } = providersCfg.openai;
+    // No fail-closed guard here, unlike nebius below: when `baseURL` overrides
+    // the endpoint it typically points at an OpenAI-compatible proxy
+    // (LiteLLM/Helicone/Azure) that legitimately expects the OpenAI key, so
+    // createOpenAI's OPENAI_API_KEY fallback is the desired behavior. Nebius is
+    // a distinct third-party host that must never receive that key — hence the
+    // asymmetry. Don't "unify" the two branches.
     providers.openai = createOpenAI({ apiKey, baseURL, organization });
   }
 
   if (providersCfg.google) {
     const { apiKey } = providersCfg.google;
     providers.google = createGoogleGenerativeAI({ apiKey });
+  }
+
+  if (providersCfg.nebius) {
+    const { apiKey, baseURL } = providersCfg.nebius;
+    // Nebius Token Factory is an OpenAI-compatible gateway for open-weight
+    // models. It serves the Chat Completions API but NOT OpenAI's Responses
+    // API, which createOpenAI's default `.languageModel()` binds — so route
+    // through `.chat()`.
+    //
+    // Resolve the key explicitly and FAIL CLOSED when it's absent. createOpenAI's
+    // built-in key fallback is OPENAI_API_KEY, so passing an undefined key here
+    // would silently send the operator's *OpenAI* credential to Nebius's
+    // endpoint. A configured-but-unauthenticated provider is a misconfiguration
+    // worth surfacing loudly, never a credential leak.
+    const nebiusApiKey = apiKey ?? process.env.NEBIUS_API_KEY;
+    if (!nebiusApiKey) {
+      throw new Error(
+        "Provider 'nebius' is configured but no API key is set. " +
+          "Set providers.nebius.apiKey or the NEBIUS_API_KEY environment variable.",
+      );
+    }
+    const nebius = createOpenAI({
+      apiKey: nebiusApiKey,
+      baseURL: baseURL ?? NEBIUS_DEFAULT_BASE_URL,
+      name: "nebius",
+    });
+    providers.nebius = { ...nebius, languageModel: (modelId: string) => nebius.chat(modelId) };
   }
 
   return createProviderRegistry(providers);

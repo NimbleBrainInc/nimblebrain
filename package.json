@@ -80,6 +80,7 @@
     "format": "bunx @biomejs/biome format --write src/ web/src/ instrument/ scripts/",
     "format:check": "bunx @biomejs/biome format src/ web/src/ instrument/ scripts/",
     "sync-models": "bun run src/model/sync-models.ts",
+    "sync-nebius": "bun run src/model/sync-nebius.ts",
     "migrate:skill-frontmatter": "bun run scripts/migrate-skill-frontmatter.ts"
   },
   "devDependencies": {

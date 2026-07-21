@@ -1,0 +1,139 @@
+{
+  "nebius": {
+    "name": "Nebius Token Factory",
+    "models": {
+      "deepseek-ai/DeepSeek-V4-Pro": {
+        "id": "deepseek-ai/DeepSeek-V4-Pro",
+        "name": "DeepSeek V4 Pro",
+        "family": "deepseek",
+        "cost": {
+          "input": 1.75,
+          "output": 3.5
+        },
+        "limits": {
+          "context": 1048576,
+          "output": 16384
+        },
+        "capabilities": {
+          "toolCall": true,
+          "reasoning": true,
+          "attachment": false
+        },
+        "modalities": {
+          "input": ["text"],
+          "output": ["text"]
+        }
+      },
+      "meta-llama/Llama-3.3-70B-Instruct": {
+        "id": "meta-llama/Llama-3.3-70B-Instruct",
+        "name": "Llama 3.3 70B Instruct",
+        "family": "llama",
+        "cost": {
+          "input": 0.13,
+          "output": 0.4
+        },
+        "limits": {
+          "context": 131072,
+          "output": 16384
+        },
+        "capabilities": {
+          "toolCall": true,
+          "reasoning": false,
+          "attachment": false
+        },
+        "modalities": {
+          "input": ["text"],
+          "output": ["text"]
+        }
+      },
+      "openai/gpt-oss-120b": {
+        "id": "openai/gpt-oss-120b",
+        "name": "GPT-OSS 120B",
+        "family": "gpt-oss",
+        "cost": {
+          "input": 0.15,
+          "output": 0.6
+        },
+        "limits": {
+          "context": 131072,
+          "output": 16384
+        },
+        "capabilities": {
+          "toolCall": true,
+          "reasoning": true,
+          "attachment": false
+        },
+        "modalities": {
+          "input": ["text"],
+          "output": ["text"]
+        }
+      },
+      "Qwen/Qwen3-235B-A22B-Instruct-2507": {
+        "id": "Qwen/Qwen3-235B-A22B-Instruct-2507",
+        "name": "Qwen3 235B A22B Instruct",
+        "family": "qwen",
+        "cost": {
+          "input": 0.2,
+          "output": 0.6
+        },
+        "limits": {
+          "context": 262144,
+          "output": 16384
+        },
+        "capabilities": {
+          "toolCall": true,
+          "reasoning": false,
+          "attachment": false
+        },
+        "modalities": {
+          "input": ["text"],
+          "output": ["text"]
+        }
+      },
+      "Qwen/Qwen3-32B": {
+        "id": "Qwen/Qwen3-32B",
+        "name": "Qwen3 32B",
+        "family": "qwen",
+        "cost": {
+          "input": 0.1,
+          "output": 0.3
+        },
+        "limits": {
+          "context": 40960,
+          "output": 16384
+        },
+        "capabilities": {
+          "toolCall": true,
+          "reasoning": true,
+          "attachment": false
+        },
+        "modalities": {
+          "input": ["text"],
+          "output": ["text"]
+        }
+      },
+      "Qwen/Qwen3-Next-80B-A3B-Thinking": {
+        "id": "Qwen/Qwen3-Next-80B-A3B-Thinking",
+        "name": "Qwen3 Next 80B A3B Thinking",
+        "family": "qwen",
+        "cost": {
+          "input": 0.15,
+          "output": 1.2
+        },
+        "limits": {
+          "context": 128000,
+          "output": 16384
+        },
+        "capabilities": {
+          "toolCall": true,
+          "reasoning": true,
+          "attachment": false
+        },
+        "modalities": {
+          "input": ["text"],
+          "output": ["text"]
+        }
+      }
+    }
+  }
+}

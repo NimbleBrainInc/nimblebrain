@@ -64,7 +64,7 @@ function fmtTok(n: number): string {
 }
 
 function shortModel(m: string): string {
-  return m.replace(/^(anthropic:|openai:|google:)/, "").replace(/-\d{8}$/, "");
+  return m.replace(/^[a-z0-9-]+:/, "").replace(/-\d{8}$/, "");
 }
 
 /** Sum of input, output, and cache-read tokens (cache writes excluded), tolerant of missing fields. */

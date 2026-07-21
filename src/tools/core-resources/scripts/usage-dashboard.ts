@@ -12,7 +12,7 @@ function fmtTokens(n) {
   return String(n);
 }
 function shortModel(m) {
-  return m.replace(/^(anthropic:|openai:|google:)/, "").replace(/-\\d{8}$/, "");
+  return m.replace(/^[a-z0-9-]+:/, "").replace(/-\\d{8}$/, "");
 }
 
 function render(data) {

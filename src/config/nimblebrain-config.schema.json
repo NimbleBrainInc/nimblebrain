@@ -74,6 +74,26 @@
             }
           },
           "additionalProperties": false
+        },
+        "nebius": {
+          "type": "object",
+          "description": "Nebius Token Factory — OpenAI-compatible gateway for open-weight models. Reference models as nebius:<model-id>.",
+          "properties": {
+            "apiKey": {
+              "type": "string",
+              "description": "Nebius API key. Falls back to NEBIUS_API_KEY env var."
+            },
+            "baseURL": {
+              "type": "string",
+              "description": "Override the inference endpoint. Default: https://api.tokenfactory.nebius.com/v1"
+            },
+            "models": {
+              "type": "array",
+              "items": { "type": "string" },
+              "description": "Allowlist of model IDs. Omit to allow all."
+            }
+          },
+          "additionalProperties": false
         }
       },
       "additionalProperties": false
