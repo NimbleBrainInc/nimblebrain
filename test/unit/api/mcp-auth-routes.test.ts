@@ -163,7 +163,7 @@ describe("POST /v1/mcp-auth/initiate", () => {
     expect(res.headers.get("Set-Cookie")!).toContain("Secure");
   });
 
-  test("returns { authorizationUrl: null, alreadyConnected: true } and no cookie when connected without interactive auth (#679)", async () => {
+  test("returns { authorizationUrl: null } and no cookie when connected without interactive auth (#679)", async () => {
     // A provider-minted / already-authenticated source: startAuth resolves with no
     // URL (the source is now running). The route must report success — not a 500 —
     // and set no state cookie (there is no interactive flow to bind).
@@ -179,7 +179,6 @@ describe("POST /v1/mcp-auth/initiate", () => {
     expect(res.status).toBe(200);
     const body = await res.json();
     expect(body.authorizationUrl).toBeNull();
-    expect(body.alreadyConnected).toBe(true);
     expect(res.headers.get("Set-Cookie")).toBeNull();
   });
 
@@ -614,7 +613,7 @@ describe("POST /v1/mcp-auth/initiate-identity", () => {
     expect(setCookie!).toContain("Path=/v1/mcp-auth/callback");
   });
 
-  test("connected without interactive auth → { authorizationUrl: null, alreadyConnected: true } and no cookie (#679)", async () => {
+  test("connected without interactive auth → { authorizationUrl: null } and no cookie (#679)", async () => {
     await new IdentityConnectorStore({ workDir }).add(USER_ID, {
       url: "https://minted.test/mcp",
       serverName: "minted",
@@ -632,7 +631,6 @@ describe("POST /v1/mcp-auth/initiate-identity", () => {
     expect(res.status).toBe(200);
     const body = await res.json();
     expect(body.authorizationUrl).toBeNull();
-    expect(body.alreadyConnected).toBe(true);
     expect(res.headers.get("Set-Cookie")).toBeNull();
   });
 

@@ -131,10 +131,11 @@ export function mcpAuthRoutes(ctx: AppContext) {
 
       const started = await startAuthorization(ctx, serverName, wsId, principalId);
       if (started instanceof Response) return started;
-      // No URL: the source connected without an interactive flow (provider-minted /
-      // already-authenticated). It's now running — report success so the UI refreshes
-      // its state instead of redirecting to a nonexistent auth page (#679).
-      if (started === null) return c.json({ authorizationUrl: null, alreadyConnected: true });
+      // A null URL is the success signal: the source connected without an interactive
+      // flow (provider-minted / already-authenticated) and is now running. Report it
+      // so the UI refreshes state instead of redirecting to a nonexistent auth page,
+      // rather than the old spurious 500 (#679).
+      if (started === null) return c.json({ authorizationUrl: null });
 
       // Bind the user's browser session to the SDK-built `state` via a
       // hashed cookie so a leaked `state` value alone can't let a
@@ -184,9 +185,10 @@ export function mcpAuthRoutes(ctx: AppContext) {
 
     const started = await startIdentityAuthorization(ctx, serverName, userId);
     if (started instanceof Response) return started;
-    // No URL: connected without an interactive flow (already authenticated). Report
-    // success so the UI refreshes state instead of redirecting to nothing (#679).
-    if (started === null) return c.json({ authorizationUrl: null, alreadyConnected: true });
+    // A null URL is the success signal: connected without an interactive flow
+    // (already authenticated). Report it so the UI refreshes state instead of
+    // redirecting to nothing (#679).
+    if (started === null) return c.json({ authorizationUrl: null });
 
     const prepared = prepareAuthorization(started, serverName, `user:${userId}`);
     if (prepared instanceof Response) return prepared;

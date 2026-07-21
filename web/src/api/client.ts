@@ -551,17 +551,14 @@ export const refreshSession = refreshInterceptor.tryRefresh;
 export async function initiateMcpOAuth(
   serverName: string,
   principalId?: string,
-): Promise<{ authorizationUrl: string | null; alreadyConnected?: boolean }> {
+): Promise<{ authorizationUrl: string | null }> {
   // `authorizationUrl` is null when the source connected without an interactive
   // flow (provider-minted / already-authenticated) — caller must not redirect.
-  return request<{ authorizationUrl: string | null; alreadyConnected?: boolean }>(
-    "/v1/mcp-auth/initiate",
-    {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(principalId ? { serverName, principalId } : { serverName }),
-    },
-  );
+  return request<{ authorizationUrl: string | null }>("/v1/mcp-auth/initiate", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(principalId ? { serverName, principalId } : { serverName }),
+  });
 }
 
 /**
@@ -572,17 +569,14 @@ export async function initiateMcpOAuth(
  */
 export async function initiateIdentityConnect(
   serverName: string,
-): Promise<{ authorizationUrl: string | null; alreadyConnected?: boolean }> {
+): Promise<{ authorizationUrl: string | null }> {
   // `authorizationUrl` is null when the connector connected without an interactive
   // flow (already authenticated) — caller must not redirect.
-  return request<{ authorizationUrl: string | null; alreadyConnected?: boolean }>(
-    "/v1/mcp-auth/initiate-identity",
-    {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ serverName }),
-    },
-  );
+  return request<{ authorizationUrl: string | null }>("/v1/mcp-auth/initiate-identity", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ serverName }),
+  });
 }
 
 /**
