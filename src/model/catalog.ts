@@ -63,10 +63,10 @@ type CatalogData = Record<
 >;
 
 // models.dev (the `sync-models` source) doesn't list Nebius Token Factory's
-// open-weight models, so their metadata is hand-maintained in
-// catalog-nebius.json and merged here. Keeping it out of catalog-data.json
-// means `bun run sync-models` — which rewrites only the models.dev-backed
-// providers — can never clobber it.
+// open-weight models, so their metadata lives in catalog-nebius.json — synced
+// from the account's own `/v1/models` API by `bun run sync-nebius` — and is
+// merged here. Keeping it out of catalog-data.json means `bun run sync-models`
+// (which rewrites only the models.dev-backed providers) can never clobber it.
 const data = { ...catalogData, ...nebiusData } as CatalogData;
 
 /**

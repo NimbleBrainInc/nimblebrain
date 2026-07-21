@@ -104,7 +104,7 @@
         },
         "capabilities": {
           "toolCall": true,
-          "reasoning": false,
+          "reasoning": true,
           "attachment": false
         },
         "modalities": {
