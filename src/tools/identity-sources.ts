@@ -28,3 +28,33 @@ export const IDENTITY_SOURCES: ReadonlySet<string> = new Set([
 export function isIdentitySource(name: string): boolean {
   return IDENTITY_SOURCES.has(name);
 }
+
+/**
+ * Identity tools that an unattended task run (an automation) must NOT be able
+ * to call. An automation fires as its owner with no human present to confirm,
+ * and routinely ingests untrusted content (email, web pages, tickets). Binding
+ * the automation-authoring surface into that run lets an injected instruction
+ * rewrite the automation's own prompt/schedule, spawn new automations, or fire
+ * them — a foothold that outlives the run and is then scheduler-driven. So the
+ * mutating and run-triggering automations tools are subtracted from the identity
+ * tool set before a task run is composed (`Runtime.executeTask`). Interactive
+ * chat keeps them: an operator manages their automations with a human in the
+ * loop.
+ *
+ * Read-only automations tools (`list`, `status`, `runs`, `run_result`) and
+ * `cancel` are intentionally left bound — they surface run health without
+ * persisting a new instruction. `executor.ts::containsRecursiveTool` is a
+ * secondary guard on operator/bundle-authored `allowedTools`; this set is the
+ * primary boundary and does not depend on how the automation was authored.
+ */
+export const TASK_FORBIDDEN_IDENTITY_TOOLS: ReadonlySet<string> = new Set([
+  "automations__create",
+  "automations__update",
+  "automations__delete",
+  "automations__run",
+]);
+
+/** Whether a tool (by bare name) is barred from an unattended task run. */
+export function isTaskForbiddenIdentityTool(name: string): boolean {
+  return TASK_FORBIDDEN_IDENTITY_TOOLS.has(name);
+}

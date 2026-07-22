@@ -116,7 +116,11 @@ import type { Skill } from "../skills/types.ts";
 import { TelemetryManager } from "../telemetry/manager.ts";
 import { PostHogEventSink } from "../telemetry/posthog-sink.ts";
 import type { DelegateContext } from "../tools/delegate.ts";
-import { isIdentitySource } from "../tools/identity-sources.ts";
+import {
+  isIdentitySource,
+  isTaskForbiddenIdentityTool,
+  TASK_FORBIDDEN_IDENTITY_TOOLS,
+} from "../tools/identity-sources.ts";
 import { McpSource } from "../tools/mcp-source.ts";
 import { namespacedToolName } from "../tools/namespace.ts";
 import { SharedSourceRef, type ToolRegistry } from "../tools/registry.ts";
@@ -1685,6 +1689,12 @@ export class Runtime {
     // focused workspace's tools (or the session/personal workspace if no focus)
     // + identity tools. `nb__search`'s corpus is that same workspace — no
     // cross-workspace reach.
+    //
+    // A task run is unattended and can ingest untrusted content, so the
+    // automation-authoring surface is subtracted from its identity tools: it
+    // must not be able to rewrite/spawn/fire automations from inside a run
+    // (`isTaskForbiddenIdentityTool`). Chat keeps those tools — that path has a
+    // human in the loop.
     const toolsRegistry = await this.ensureWorkspaceRegistry(workWsId);
     const [focusedTools, identityTools] = await Promise.all([
       toolsRegistry.availableTools(),
@@ -1700,7 +1710,11 @@ export class Runtime {
           ...(t.annotations !== undefined ? { annotations: t.annotations } : {}),
         })),
       ...identityTools
-        .filter((t) => isToolVisibleToRole(t.name, requestIdentity.orgRole))
+        .filter(
+          (t) =>
+            !isTaskForbiddenIdentityTool(t.name) &&
+            isToolVisibleToRole(t.name, requestIdentity.orgRole),
+        )
         .map((t) => ({
           name: t.name,
           description: t.description,
@@ -1931,10 +1945,14 @@ export class Runtime {
       this._wrapSinkWithWorkspaceAttribution(inner, perCallWorkspaceMap),
     );
     const engineSink = new MultiEventSink(wrappedSinks);
+    // Unattended run: the router hard-denies the automation-authoring surface,
+    // so an injected/hallucinated call to it is refused even though it routes
+    // fine for an interactive chat.
     const identityToolRouter = this._buildIdentityToolRouter({
       identityId: ownerId,
       workspaceId: workWsId,
       perCallWorkspaceMap,
+      deniedTools: TASK_FORBIDDEN_IDENTITY_TOOLS,
     });
     const engine = new AgentEngine(resolvedModel, identityToolRouter, engineSink);
 
@@ -2331,8 +2349,10 @@ export class Runtime {
     identityId: string;
     workspaceId: string;
     perCallWorkspaceMap: Map<string, string>;
+    /** Bare tool names the router refuses to dispatch (unattended task path). */
+    deniedTools?: ReadonlySet<string>;
   }): ToolRouter {
-    const { identityId, workspaceId, perCallWorkspaceMap } = opts;
+    const { identityId, workspaceId, perCallWorkspaceMap, deniedTools } = opts;
     return new IdentityToolRouter({
       identityId,
       workspaceId,
@@ -2340,6 +2360,7 @@ export class Runtime {
       onWorkspaceDispatch: (callId, wsId) => {
         perCallWorkspaceMap.set(callId, wsId);
       },
+      ...(deniedTools ? { deniedTools } : {}),
     });
   }
 

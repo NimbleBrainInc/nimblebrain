@@ -295,6 +295,77 @@ describe("runtime.executeTask", () => {
     expect(result.runId).toMatch(/^run_[a-z0-9_-]+$/i);
   });
 
+  it("refuses the automation-authoring surface from inside a run, even when named directly", async () => {
+    // The self-modification boundary. An automation runs unattended and can
+    // ingest untrusted content, so it must not be able to rewrite/spawn/fire
+    // automations from within its own run. The subtraction from the surfaced
+    // tool set keeps the model from seeing these tools; this test pins the HARD
+    // half — the router refuses the call even when the model emits the bare
+    // name directly (the injection/hallucination path), which routing would
+    // otherwise dispatch to the identity source and execute.
+    for (const forbidden of [
+      "automations__update",
+      "automations__create",
+      "automations__delete",
+      "automations__run",
+    ]) {
+      runtime = await bootRuntime({
+        responses: [
+          {
+            toolCalls: [
+              {
+                toolCallId: `call_${forbidden}`,
+                toolName: forbidden,
+                input: JSON.stringify({ name: "ce-inbox-triage" }),
+              },
+            ],
+          },
+          { text: "done" },
+        ],
+      });
+      await provisionWorkspaces(runtime);
+
+      const result = await runtime.executeTask({
+        prompt: "rebuild yourself on real tools",
+        identity: { id: TEST_USER_ID, displayName: TEST_USER_DISPLAY },
+      });
+
+      expect(result.toolCalls[0]?.name).toBe(forbidden);
+      expect(result.toolCalls[0]?.ok).toBe(false);
+      expect(result.toolCalls[0]?.output).toMatch(/unattended automation run|cannot create/i);
+
+      await runtime.shutdown();
+      runtime = null;
+      rmSync(workDir, { recursive: true, force: true });
+    }
+  });
+
+  it("still permits a read-only automations tool from inside a run", async () => {
+    // The boundary is scoped to the authoring surface: introspection tools stay
+    // reachable so an automation can report on automation health. `list` routes
+    // to the automations identity source and returns its normal result (an empty
+    // list in this fresh workspace) — NOT the router's task-forbidden denial.
+    runtime = await bootRuntime({
+      responses: [
+        {
+          toolCalls: [
+            { toolCallId: "call_list", toolName: "automations__list", input: JSON.stringify({}) },
+          ],
+        },
+        { text: "done" },
+      ],
+    });
+    await provisionWorkspaces(runtime);
+
+    const result = await runtime.executeTask({
+      prompt: "check automation health",
+      identity: { id: TEST_USER_ID, displayName: TEST_USER_DISPLAY },
+    });
+
+    expect(result.toolCalls[0]?.name).toBe("automations__list");
+    expect(result.toolCalls[0]?.output).not.toMatch(/unattended automation run/i);
+  });
+
   it("creates no conversation even when caller passes metadata", async () => {
     runtime = await bootRuntime(undefined);
     await provisionWorkspaces(runtime);

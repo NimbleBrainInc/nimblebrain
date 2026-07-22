@@ -30,6 +30,7 @@
  * identity at execute time — that would defeat the membership gate.
  */
 
+import { textContent } from "../engine/content-helpers.ts";
 import type { ToolCall, ToolResult, ToolRouter, ToolSchema } from "../engine/types.ts";
 import {
   mapOrchestratorErrorToToolResult,
@@ -84,6 +85,17 @@ export interface IdentityToolRouterOptions {
   runtime: OrchestratorRuntime;
   /** Optional audit-attribution hook. See `WorkspaceDispatchHook`. */
   onWorkspaceDispatch?: WorkspaceDispatchHook;
+  /**
+   * Bare tool names this router refuses to dispatch, by exact name. Denied
+   * BEFORE routing, so the refusal does not depend on whether the named tool
+   * was surfaced to the model — an injected or hallucinated call to the name is
+   * refused just the same. Used by the unattended task path to bar the
+   * automation-authoring surface (`TASK_FORBIDDEN_IDENTITY_TOOLS`): a run must
+   * not rewrite, spawn, or fire automations. Interactive chat passes nothing
+   * here (a human is present). Captured at construction alongside the identity —
+   * never read from execute-time input.
+   */
+  deniedTools?: ReadonlySet<string>;
 }
 
 /** Build the routed request scope, carrying workspace agent/model overrides from the ambient scope onto a workspace route. */
@@ -144,6 +156,7 @@ export class IdentityToolRouter implements ToolRouter {
   private readonly workspaceId: string;
   private readonly runtime: OrchestratorRuntime;
   private readonly onWorkspaceDispatch?: WorkspaceDispatchHook;
+  private readonly deniedTools?: ReadonlySet<string>;
 
   constructor(opts: IdentityToolRouterOptions) {
     // The type system already pins the shape; we only need to catch the
@@ -157,6 +170,7 @@ export class IdentityToolRouter implements ToolRouter {
     this.workspaceId = opts.workspaceId;
     this.runtime = opts.runtime;
     if (opts.onWorkspaceDispatch) this.onWorkspaceDispatch = opts.onWorkspaceDispatch;
+    if (opts.deniedTools) this.deniedTools = opts.deniedTools;
   }
 
   /**
@@ -184,6 +198,22 @@ export class IdentityToolRouter implements ToolRouter {
    * errors propagate to the engine's `run.error` path.
    */
   async execute(call: ToolCall, signal?: AbortSignal): Promise<ToolResult> {
+    // Hard boundary, checked before routing so it holds even for a call the
+    // model was never shown (hallucinated, or named by an injected prompt).
+    // The task path bars the automation-authoring surface here; without this,
+    // routing a bare `automations__update` would reach the identity source and
+    // execute, because kernel identity sources have no per-tool policy owner.
+    if (this.deniedTools?.has(call.name)) {
+      return {
+        content: textContent(
+          `Tool "${call.name}" is not available inside an unattended automation run. ` +
+            "An automation cannot create, modify, delete, or trigger automations from " +
+            "within its own run. Manage automations from an interactive session instead.",
+        ),
+        isError: true,
+      };
+    }
+
     let routed: RoutedToolCall;
     try {
       routed = await routeToolCall({
