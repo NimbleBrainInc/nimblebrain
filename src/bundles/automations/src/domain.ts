@@ -27,7 +27,7 @@
  * See `src/tools/platform/CLAUDE.md` § 1.4 for the cross-cutting rule.
  */
 
-import { computeNextRunAt } from "./scheduler.ts";
+import { computeBudgetResetAt, computeNextRunAt } from "./scheduler.ts";
 import type { Automation, AutomationSource, ScheduleSpec, TokenBudget } from "./types.ts";
 
 // ---------------------------------------------------------------------------
@@ -44,6 +44,29 @@ export interface AutomationDomainContext {
   save: (defs: Map<string, Automation>) => void;
   reloadScheduler: () => void;
   defaultTimezone: string;
+}
+
+/**
+ * The forward budget-reset boundary for an automation's current `tokenBudget`,
+ * or `undefined` for a periodless (lifetime) budget. Anchored at write time so
+ * the scheduler's window can roll from the first run rather than being seeded
+ * lazily at end-of-run (which left pre-budget spend counting forever).
+ */
+function budgetResetBoundary(automation: Automation, defaultTimezone?: string): string | undefined {
+  const period = automation.tokenBudget?.period;
+  return period ? computeBudgetResetAt(period, Date.now(), defaultTimezone) : undefined;
+}
+
+/**
+ * Start a fresh budget window: clear the running totals and re-anchor the reset
+ * boundary from the (new) `tokenBudget`. `budgetResetAt` + `cumulative*`
+ * together define one window, so redefining the budget resets both — otherwise
+ * spend from the prior window counts against the new ceiling.
+ */
+function startBudgetWindow(automation: Automation, defaultTimezone?: string): void {
+  automation.cumulativeInputTokens = 0;
+  automation.cumulativeOutputTokens = 0;
+  automation.budgetResetAt = budgetResetBoundary(automation, defaultTimezone);
 }
 
 // ---------------------------------------------------------------------------
@@ -171,6 +194,13 @@ export function createAutomation(
     automation.nextRunAt = new Date(nextRun).toISOString();
   }
 
+  // Anchor the budget window at write time, exactly as nextRunAt is anchored
+  // above. Without this the reset boundary is only ever seeded at the end of a
+  // qualifying run, so tokens spent before that first run accumulate against
+  // the budget forever (the window never rolls). Periodless budgets resolve to
+  // undefined and stay lifetime-cumulative by design.
+  automation.budgetResetAt = budgetResetBoundary(automation, ctx.defaultTimezone);
+
   defs.set(id, automation);
   ctx.save(defs);
   ctx.reloadScheduler();
@@ -242,6 +272,13 @@ export function updateAutomation(
       if (nextRun !== null) {
         automation.nextRunAt = new Date(nextRun).toISOString();
       }
+    }
+
+    // A written budget starts a fresh accounting window (mirrors the nextRunAt
+    // recompute on a schedule change above): spend from the prior budget must
+    // not count against the new ceiling.
+    if (patch.tokenBudget !== undefined) {
+      startBudgetWindow(automation, ctx.defaultTimezone);
     }
 
     defs.set(automation.id, automation);
