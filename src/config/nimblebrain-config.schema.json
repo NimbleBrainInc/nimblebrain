@@ -347,8 +347,8 @@
         },
         "compaction": {
           "type": "boolean",
-          "description": "Enable conversation compaction at run start to bound context growth. Default: false.",
-          "default": false
+          "description": "Enable conversation compaction at run start to bound context growth. Default: true.",
+          "default": true
         }
       },
       "additionalProperties": false

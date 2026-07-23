@@ -5,7 +5,7 @@ description: Enable or disable system capabilities with feature flags.
 
 import { Aside } from '@astrojs/starlight/components';
 
-Feature flags control which system capabilities are available. Eight flags default to `true`; `compaction` is opt-in and defaults to `false`. Setting a `true`-by-default flag to `false` removes the capability entirely — the tool is not registered, not visible to the LLM, and is rejected if a client calls it directly.
+Feature flags control which system capabilities are available. All nine flags default to `true`. Setting a tool-gated flag to `false` removes the capability entirely — the tool is not registered, not visible to the LLM, and is rejected if a client calls it directly. `compaction` gates engine behavior rather than a tool: setting it to `false` disables history compaction.
 
 ## Configuration
 
@@ -22,12 +22,12 @@ Add a `features` object to your `nimblebrain.json`:
     "fileContext": true,
     "userManagement": true,
     "workspaceManagement": true,
-    "compaction": false
+    "compaction": true
   }
 }
 ```
 
-You only need to include flags you want to change. Omitted flags use their defaults — `true` for the first eight, `false` for `compaction`.
+You only need to include flags you want to change. Omitted flags use their default (`true`).
 
 ## Flag reference
 
@@ -41,7 +41,7 @@ You only need to include flags you want to change. Omitted flags use their defau
 | `fileContext` | `true` | File upload and context extraction | File processing pipeline |
 | `userManagement` | `true` | Create, update, and delete users | `nb__manage_users` |
 | `workspaceManagement` | `true` | CRUD workspaces and manage members | `nb__manage_workspaces` |
-| `compaction` | `false` | History compaction — fold the oldest turns of a long conversation into a summary at run start to bound context growth. User-authored messages (instructions, corrections) are retained verbatim across compaction, bounded. Event-sourced stores only. | — (engine behavior, not a tool) |
+| `compaction` | `true` | History compaction — fold the oldest turns of a long conversation into a summary at run start to bound context growth. User-authored messages (instructions, corrections) are retained verbatim across compaction, bounded. Event-sourced stores only. | — (engine behavior, not a tool) |
 
 <Aside type="note">
   `bundleManagement` is **reserved**. Its `nb__manage_app` tool was removed — bundle install and configuration now happen through the connectors catalog (`manage_connectors`) and the CLI; org-wide app version management is `manage_apps`. The flag is kept as a stable config knob for a future bundle-management tool, but toggling it has no effect on the current tool set.

@@ -96,7 +96,7 @@ Click **New conversation** in the chat panel header, or type `/clear` in the inp
 
 ## History compaction
 
-For long-running conversations, NimbleBrain can compact older history to keep the context window manageable. This is **opt-in** and disabled by default. Enable it with the `compaction` feature flag in `nimblebrain.json`:
+For long-running conversations, NimbleBrain compacts older history to keep the context window manageable. It's **on by default**. Turn it off with the `compaction` feature flag in `nimblebrain.json`:
 
 ```json title="nimblebrain.json"
 {
@@ -106,7 +106,7 @@ For long-running conversations, NimbleBrain can compact older history to keep th
 }
 ```
 
-When enabled, the runtime summarizes earlier turns once a conversation grows large, preserving the gist while freeing room for new context. With it off (the default), the full event history is replayed every turn.
+The runtime summarizes earlier turns once a conversation grows large, preserving the gist while freeing room for new context. Set the flag to `false` and the full event history is replayed every turn instead.
 
 Your own messages are kept **verbatim** through compaction, not folded into the summary. Instructions and corrections you give ("use this format, not that one") are the highest-value part of a long conversation, so they survive every compaction — including repeated ones — for the life of the conversation. The summary compacts the assistant and tool activity around them. Retention is bounded, so it never undoes the compaction; on an unusually long steering session the oldest of your messages may be elided (a marker shows when this happens), keeping the most recent guidance intact. The full, un-summarized history is always available in the conversation export and fork.
 

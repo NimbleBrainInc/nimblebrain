@@ -9,6 +9,7 @@ describe("resolveFeatures", () => {
 		expect(features.delegation).toBe(true);
 		expect(features.toolDiscovery).toBe(true);
 		expect(features.bundleDiscovery).toBe(true);
+		expect(features.compaction).toBe(true);
 	});
 
 	it("merges partial config correctly", () => {
