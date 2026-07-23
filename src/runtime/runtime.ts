@@ -116,11 +116,7 @@ import type { Skill } from "../skills/types.ts";
 import { TelemetryManager } from "../telemetry/manager.ts";
 import { PostHogEventSink } from "../telemetry/posthog-sink.ts";
 import type { DelegateContext } from "../tools/delegate.ts";
-import {
-  isIdentitySource,
-  isTaskForbiddenIdentityTool,
-  TASK_FORBIDDEN_IDENTITY_TOOLS,
-} from "../tools/identity-sources.ts";
+import { isIdentitySource, isTaskForbiddenIdentityTool } from "../tools/identity-sources.ts";
 import { McpSource } from "../tools/mcp-source.ts";
 import { namespacedToolName } from "../tools/namespace.ts";
 import { SharedSourceRef, type ToolRegistry } from "../tools/registry.ts";
@@ -596,6 +592,12 @@ export class Runtime {
         const rt = rtHolder.rt;
         const wsId = rt._currentWorkspaceId?.();
         const orgRole = getRequestContext()?.identity?.orgRole;
+        // In an unattended run the automations source denies the authoring
+        // surface at any delegation depth; keep it out of the child's default
+        // active set too, so the sub-agent isn't shown a tool it can't call.
+        const unattended = getRequestContext()?.unattended === true;
+        const identityToolVisible = (name: string): boolean =>
+          isToolVisibleToRole(name, orgRole) && !(unattended && isTaskForbiddenIdentityTool(name));
         if (!wsId) {
           // Dev / CLI path without a workspace in scope — return identity
           // tools only. Hard-failing here would break the existing CLI
@@ -603,7 +605,7 @@ export class Runtime {
           // context. The workspace door simply contributes nothing.
           const identityTools = await rt.listIdentitySourceTools();
           return identityTools
-            .filter((t) => isToolVisibleToRole(t.name, orgRole))
+            .filter((t) => identityToolVisible(t.name))
             .map((t) => ({
               name: t.name,
               description: t.description,
@@ -626,7 +628,7 @@ export class Runtime {
               ...(t.annotations !== undefined ? { annotations: t.annotations } : {}),
             })),
           ...identityTools
-            .filter((t) => isToolVisibleToRole(t.name, orgRole))
+            .filter((t) => identityToolVisible(t.name))
             .map((t) => ({
               name: t.name,
               description: t.description,
@@ -1945,14 +1947,10 @@ export class Runtime {
       this._wrapSinkWithWorkspaceAttribution(inner, perCallWorkspaceMap),
     );
     const engineSink = new MultiEventSink(wrappedSinks);
-    // Unattended run: the router hard-denies the automation-authoring surface,
-    // so an injected/hallucinated call to it is refused even though it routes
-    // fine for an interactive chat.
     const identityToolRouter = this._buildIdentityToolRouter({
       identityId: ownerId,
       workspaceId: workWsId,
       perCallWorkspaceMap,
-      deniedTools: TASK_FORBIDDEN_IDENTITY_TOOLS,
     });
     const engine = new AgentEngine(resolvedModel, identityToolRouter, engineSink);
 
@@ -1968,6 +1966,11 @@ export class Runtime {
       // provenance workspace (`workWsId`) — the same partition the rehydration
       // read uses, not the personal `sessionWsId` scope.
       fileWorkspaceId: workWsId,
+      // Unattended run: bars the automation-authoring surface. Rides the ALS
+      // context (preserved across the per-call restamp), so a delegated sub-agent
+      // inherits it and the wall holds at any depth — enforced at the automations
+      // source, not per-router-construction. See `createAutomationsSource`.
+      unattended: true,
     };
     engineConfig.toolPromotion = this.buildToolPromotionFactory();
 
@@ -2349,10 +2352,8 @@ export class Runtime {
     identityId: string;
     workspaceId: string;
     perCallWorkspaceMap: Map<string, string>;
-    /** Bare tool names the router refuses to dispatch (unattended task path). */
-    deniedTools?: ReadonlySet<string>;
   }): ToolRouter {
-    const { identityId, workspaceId, perCallWorkspaceMap, deniedTools } = opts;
+    const { identityId, workspaceId, perCallWorkspaceMap } = opts;
     return new IdentityToolRouter({
       identityId,
       workspaceId,
@@ -2360,7 +2361,6 @@ export class Runtime {
       onWorkspaceDispatch: (callId, wsId) => {
         perCallWorkspaceMap.set(callId, wsId);
       },
-      ...(deniedTools ? { deniedTools } : {}),
     });
   }
 

@@ -1,9 +1,8 @@
 import { describe, expect, it } from "bun:test";
 import {
-  IDENTITY_SOURCES,
+  AUTOMATIONS_TASK_SAFE_TOOLS,
   isIdentitySource,
   isTaskForbiddenIdentityTool,
-  TASK_FORBIDDEN_IDENTITY_TOOLS,
 } from "../../../src/tools/identity-sources.ts";
 
 describe("identity sources", () => {
@@ -17,9 +16,8 @@ describe("identity sources", () => {
 });
 
 describe("task-forbidden identity tools", () => {
-  // An unattended automation run must not be able to author automations —
-  // that is the persistence vector an injected prompt would exploit. The
-  // mutating + run-triggering tools are barred; read-only introspection is not.
+  // An unattended automation run must not reach the automation-authoring
+  // surface — that is the persistence vector an injected prompt would exploit.
   it("bars every mutating and run-triggering automations tool", () => {
     for (const tool of [
       "automations__create",
@@ -28,7 +26,6 @@ describe("task-forbidden identity tools", () => {
       "automations__run",
     ]) {
       expect(isTaskForbiddenIdentityTool(tool)).toBe(true);
-      expect(TASK_FORBIDDEN_IDENTITY_TOOLS.has(tool)).toBe(true);
     }
   });
 
@@ -46,9 +43,20 @@ describe("task-forbidden identity tools", () => {
     }
   });
 
-  it("bars only automations tools (the authoring surface), nothing broader", () => {
-    for (const tool of TASK_FORBIDDEN_IDENTITY_TOOLS) {
-      expect(tool.startsWith("automations__")).toBe(true);
+  it("fails closed: a new automations tool is barred unless explicitly marked safe (allowlist)", () => {
+    // The defense is an allowlist within the automations namespace, not a
+    // denylist of known-bad names — so a future authoring tool is denied by
+    // default instead of silently reopening the vector.
+    expect(isTaskForbiddenIdentityTool("automations__set_schedule")).toBe(true);
+    expect(isTaskForbiddenIdentityTool("automations__pause")).toBe(true);
+    expect(isTaskForbiddenIdentityTool("automations__anything_new")).toBe(true);
+  });
+
+  it("gates only the automations namespace", () => {
+    expect(isTaskForbiddenIdentityTool("nb__search")).toBe(false);
+    for (const safe of AUTOMATIONS_TASK_SAFE_TOOLS) {
+      expect(safe.startsWith("automations__")).toBe(true);
+      expect(isTaskForbiddenIdentityTool(safe)).toBe(false);
     }
   });
 });

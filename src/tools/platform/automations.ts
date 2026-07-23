@@ -30,6 +30,7 @@ import type { EventSink } from "../../engine/types.ts";
 import { getRequestContext, type RequestContext } from "../../runtime/request-context.ts";
 import type { Runtime } from "../../runtime/runtime.ts";
 import type { TaskRequest } from "../../runtime/types.ts";
+import { isTaskForbiddenIdentityTool } from "../identity-sources.ts";
 import { defineInProcessApp, type InProcessTool } from "../in-process-app.ts";
 import type { McpSource } from "../mcp-source.ts";
 import { AUTOMATIONS_PANEL_HTML } from "../platform-resources/automations/panel.ts";
@@ -219,6 +220,25 @@ export async function createAutomationsSource(
   const tools: InProcessTool[] = TOOL_SCHEMAS.map((schema) => ({
     ...schema,
     handler: withErrorHandling((input) => {
+      // Unattended-run wall. An automation must not reach the
+      // automation-authoring surface (create/update/delete/run, and any authoring
+      // tool added later — the allowlist in `isTaskForbiddenIdentityTool` fails
+      // closed). Enforced HERE, at the source, because it is the single dispatch
+      // point every caller funnels through — the top-level run AND a delegated
+      // sub-agent at any depth. `unattended` rides the ambient request context
+      // (set by `executeTask`, preserved across the per-call restamp), so this
+      // does not depend on which engine or router dispatched the call, or on the
+      // tool having been surfaced to the model.
+      if (
+        getRequestContext()?.unattended &&
+        isTaskForbiddenIdentityTool(`automations__${schema.name}`)
+      ) {
+        throw new Error(
+          `Tool "automations__${schema.name}" is not available inside an unattended ` +
+            "automation run. An automation cannot create, modify, delete, or trigger " +
+            "automations from within its own run. Manage automations from an interactive session.",
+        );
+      }
       const ctx = getToolContext();
       switch (schema.name) {
         case "create":

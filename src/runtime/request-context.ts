@@ -59,6 +59,17 @@ export interface RequestContext {
    */
   fileWorkspaceId?: string;
   toolPromotion?: ToolPromotionControls;
+  /**
+   * True when this context belongs to an unattended run (`executeTask` — an
+   * automation), false/undefined for interactive chat. Set once by the runtime
+   * (never from caller input) and, because it rides the AsyncLocalStorage
+   * context, inherited by every delegated sub-agent at any depth. Consumers use
+   * it to bar the automation-authoring surface from a run that has no human
+   * present to confirm — a restriction, never an escalation, which is why it is
+   * safe for `IdentityToolRouter` to read at execute time even though identity
+   * is not (see that module's trust-boundary note).
+   */
+  unattended?: boolean;
 }
 
 const storage = new AsyncLocalStorage<RequestContext>();
