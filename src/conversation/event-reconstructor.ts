@@ -12,7 +12,11 @@ import { CONNECTOR_SKILL_SYNTHETIC } from "../engine/types.ts";
 import { normalizeForReplay } from "../model/inbound-fit.ts";
 import { formatConnectorSkillBlock } from "../prompt/compose.ts";
 import { estimateCost } from "../usage/cost.ts";
-import { compactionSummaryMessages } from "./compaction.ts";
+import {
+  compactionSummaryMessages,
+  type RetainedOperatorMessage,
+  selectRetainedOperatorMessages,
+} from "./compaction.ts";
 import type {
   ConnectorSkillInjectedEvent,
   ConversationEvent,
@@ -158,8 +162,14 @@ export function reconstructMessages(
       // summary) — a harmless over-keep, never data loss, and absorbed by
       // ensureRoleAlternation below.
       const tail = events.filter((e) => e.type !== "history.compacted" && e.ts >= boundary);
+      // Re-derive the retained operator turns from the immutable event log (NOT
+      // the summary) so corrections survive compaction verbatim, and identically
+      // whether the seed is freshly computed by the runtime or rebuilt here on
+      // load. Older compacted conversations gain this on next load for free — the
+      // user.message events were never deleted, only summarized over.
+      const retained = selectRetainedOperatorMessages(extractOperatorTurns(events), boundary);
       const messages = [
-        ...compactionSummaryMessages(lastCompaction.summary, boundary),
+        ...compactionSummaryMessages(lastCompaction.summary, boundary, retained),
         ...buildMessagesFromEvents(tail),
       ];
       return ensureRoleAlternation(messages);
@@ -215,6 +225,36 @@ function buildMessagesFromEvents(events: readonly ConversationEvent[]): StoredMe
   }
 
   return messages;
+}
+
+/** Verbatim text of a user-message event — its text parts joined; non-text
+ *  parts (file `resource_link`s) contribute nothing. Empty when the turn is
+ *  attachments-only. */
+function userMessageText(event: UserMessageEvent): string {
+  return event.content
+    .filter((c): c is UserContentPart & { type: "text"; text: string } => c.type === "text")
+    .map((c) => c.text)
+    .join("\n")
+    .trim();
+}
+
+/**
+ * The conversation's operator (user-authored) turns, verbatim, in order —
+ * every `user.message` event carrying text. This is the source of truth for
+ * compaction retention (`selectRetainedOperatorMessages`): sourcing it from the
+ * append-only event log, never the compacted projection, is what makes operator
+ * corrections immune to summary-of-summary decay across repeated compaction.
+ */
+export function extractOperatorTurns(
+  events: readonly ConversationEvent[],
+): RetainedOperatorMessage[] {
+  const turns: RetainedOperatorMessage[] = [];
+  for (const e of events) {
+    if (e.type !== "user.message") continue;
+    const text = userMessageText(e);
+    if (text.length > 0) turns.push({ text, ts: e.ts });
+  }
+  return turns;
 }
 
 /** Build a user-role StoredMessage from a `user.message` event. */

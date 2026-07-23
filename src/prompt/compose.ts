@@ -1,5 +1,6 @@
 // `ParticipantInfo` was the participants-section input; gone post Stage 1.
 // Stage 4 reintroduces a participants concept with policy gating.
+import type { LoadedBy } from "../skills/select.ts";
 import { approxTokens } from "../skills/tokens.ts";
 import type { Skill } from "../skills/types.ts";
 
@@ -244,7 +245,8 @@ export interface Layer3SkillEntry {
   body: string;
   scope: "org" | "workspace" | "user" | "bundle";
   sourcePath?: string;
-  loadedBy: "always" | "tool_affinity";
+  /** The loading mechanism, for the provenance annotation (display only). */
+  loadedBy: LoadedBy;
   reason: string;
 }
 

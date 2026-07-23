@@ -167,6 +167,60 @@ describe("readConversation (event format)", () => {
 		};
 	}
 
+	test("attaches skills.loaded telemetry to the run's assistant message (reopen parity)", async () => {
+		const runId = "run_sk";
+		const lines = [
+			JSON.stringify(eventMeta("conv_skills")),
+			JSON.stringify({ ts: "2025-06-01T00:00:00.000Z", type: "user.message", content: [{ type: "text", text: "hi" }] }),
+			JSON.stringify({ ts: "2025-06-01T00:00:01.000Z", type: "run.start", runId }),
+			// Full wire entry — carries layer/version/contentHash the display shape drops.
+			JSON.stringify({
+				ts: "2025-06-01T00:00:01.500Z",
+				type: "skills.loaded",
+				runId,
+				skills: [
+					{ id: "skills/mpak-guide.md", layer: 3, scope: "workspace", version: "v1", tokens: 1200, contentHash: "abc123", loadedBy: "tool_affinity", reason: "tool-affinity matched mpak__*" },
+				],
+				totalTokens: 1200,
+			}),
+			JSON.stringify({ ts: "2025-06-01T00:00:02.000Z", type: "llm.response", runId, model: "m1", content: [{ type: "text", text: "answer" }], usage: { inputTokens: 10, outputTokens: 5 }, llmMs: 100 }),
+			JSON.stringify({ ts: "2025-06-01T00:00:03.000Z", type: "run.done", runId, stopReason: "complete" }),
+		];
+		const path = writeTmpFile("conv_skills.jsonl", lines);
+
+		const result = await readConversation(path);
+		expect(result).not.toBeNull();
+		const assistant = result!.messages[1]!;
+		expect(assistant.role).toBe("assistant");
+		expect(assistant.skillsLoaded).toBeDefined();
+		expect(assistant.skillsLoaded!.skills).toHaveLength(1);
+		// Projected to the display subset — id/scope/tokens/loadedBy/reason only.
+		expect(assistant.skillsLoaded!.skills[0]).toEqual({
+			id: "skills/mpak-guide.md",
+			scope: "workspace",
+			tokens: 1200,
+			loadedBy: "tool_affinity",
+			reason: "tool-affinity matched mpak__*",
+		});
+		expect(assistant.skillsLoaded!.totalTokens).toBe(1200);
+	});
+
+	test("a zero-skill turn yields no ledger metadata (old-shape events still parse)", async () => {
+		const runId = "run_none";
+		const lines = [
+			JSON.stringify(eventMeta("conv_noskills")),
+			JSON.stringify({ ts: "2025-06-01T00:00:00.000Z", type: "user.message", content: [{ type: "text", text: "hi" }] }),
+			JSON.stringify({ ts: "2025-06-01T00:00:01.000Z", type: "run.start", runId }),
+			JSON.stringify({ ts: "2025-06-01T00:00:01.500Z", type: "skills.loaded", runId, skills: [], totalTokens: 0 }),
+			JSON.stringify({ ts: "2025-06-01T00:00:02.000Z", type: "llm.response", runId, model: "m1", content: [{ type: "text", text: "answer" }], usage: { inputTokens: 10, outputTokens: 5 }, llmMs: 100 }),
+			JSON.stringify({ ts: "2025-06-01T00:00:03.000Z", type: "run.done", runId, stopReason: "complete" }),
+		];
+		const path = writeTmpFile("conv_noskills.jsonl", lines);
+
+		const result = await readConversation(path);
+		expect(result!.messages[1]!.skillsLoaded).toBeUndefined();
+	});
+
 	test("emits one assistant DisplayMessage per run — merging iterations", async () => {
 		// A single run with 3 iterations: text → tool-call → final text. The old
 		// per-iteration reducer emitted 3 messages; the display reducer must emit 1.

@@ -15,6 +15,7 @@ import type {
   AppContext,
   ChatRequest,
   ChatResult,
+  LedgerSkill,
   LlmDoneEvent,
   ReasoningDeltaEvent,
   StreamErrorEvent,
@@ -24,6 +25,20 @@ import type {
   ToolPreparingEvent,
   ToolStartEvent,
 } from "../types";
+
+export type { LedgerSkill } from "../types";
+
+/**
+ * A turn's skill-loading telemetry, attached to its assistant message as
+ * turn-level context metadata (NOT a content block — blocks are the LLM's
+ * output; this is what the runtime composed *into* the prompt). Rendered by
+ * the Context Ledger as one quiet line above the turn's activity. Present only
+ * when the turn loaded at least one skill.
+ */
+export interface SkillsLoadedContext {
+  skills: LedgerSkill[];
+  totalTokens: number;
+}
 
 // ===========================================================================
 // Public display types (shared across the chat UI). These live here — not in
@@ -103,6 +118,10 @@ export interface ChatMessage {
   timestamp?: string;
   userId?: string;
   files?: MessageFileAttachment[];
+  /** Skills the runtime composed into this turn's prompt — the Context Ledger
+   *  line. Set from the live `skills.loaded` event and re-derived on reopen from
+   *  the persisted turn. Absent when the turn loaded no skills. */
+  skillsLoaded?: SkillsLoadedContext;
   stopReason?: string;
   /** Loaded-from-disk turn with no terminal event yet (run still in flight when
    *  read). Drives the resume reconcile — a partial snapshot vs a finished turn. */
@@ -176,6 +195,9 @@ interface ConversationSlice {
   blocks: ContentBlock[];
   toolCalls: ToolCallDisplay[];
   iteration?: IterationProgress;
+  /** The current turn's `skills.loaded` telemetry, carried through the
+   *  flush/finalize rebuilds so it survives onto the finished message. */
+  skillsLoaded?: SkillsLoadedContext;
   // live subscription to the server turn stream (null when detached)
   connection: ConversationStreamConnection | null;
   /** The next streamed `user.message` echoes a turn we optimistically added —
@@ -276,6 +298,7 @@ function buildFinalAssistantMessage(
   finalTools: ToolCallDisplay[] | undefined,
   usage: ChatMessage["usage"],
   resultFiles: MessageFileAttachment[] | undefined,
+  skillsLoaded: SkillsLoadedContext | undefined,
 ): ChatMessage {
   return {
     role: "assistant",
@@ -283,6 +306,7 @@ function buildFinalAssistantMessage(
     blocks: finalBlocks,
     toolCalls: finalTools,
     usage,
+    ...(skillsLoaded ? { skillsLoaded } : {}),
     ...(result.stopReason && result.stopReason !== "complete"
       ? { stopReason: result.stopReason }
       : {}),
@@ -564,6 +588,7 @@ export function createChatStore(): ChatStore {
     slice.blocks = [];
     slice.toolCalls = [];
     slice.iteration = undefined;
+    slice.skillsLoaded = undefined;
   }
 
   function assistantFromScratch(slice: ConversationSlice): ChatMessage {
@@ -573,6 +598,7 @@ export function createChatStore(): ChatStore {
       blocks: cloneBlocks(slice.blocks),
       toolCalls: [...slice.toolCalls],
       iteration: slice.iteration ? { ...slice.iteration } : undefined,
+      ...(slice.skillsLoaded ? { skillsLoaded: slice.skillsLoaded } : {}),
     };
   }
 
@@ -791,6 +817,42 @@ export function createChatStore(): ChatStore {
     flush(slice);
   }
 
+  function handleSkillsLoaded(slice: ConversationSlice, data: unknown): void {
+    // The stream frame is untrusted `unknown`; normalize each entry the same way
+    // the reopen path does (`projectSkillsLoaded` in the conversations bundle) so
+    // live and replay produce byte-identical ledger rows and a malformed field
+    // can't render `ledger-scope--undefined`. Zero well-formed entries → leave
+    // `skillsLoaded` unset so the line is suppressed (absence is the signal).
+    const evt = data as { skills?: unknown; totalTokens?: unknown };
+    const rawEntries = Array.isArray(evt.skills) ? (evt.skills as Record<string, unknown>[]) : [];
+    const skills: LedgerSkill[] = rawEntries
+      .filter((s) => !!s && typeof s.id === "string")
+      .map((s) => ({
+        id: s.id as string,
+        scope: (typeof s.scope === "string" ? s.scope : "org") as LedgerSkill["scope"],
+        tokens: typeof s.tokens === "number" ? s.tokens : 0,
+        loadedBy: (typeof s.loadedBy === "string"
+          ? s.loadedBy
+          : "tool_affinity") as LedgerSkill["loadedBy"],
+        reason: typeof s.reason === "string" ? s.reason : "",
+      }));
+    if (skills.length === 0) return;
+    const totalTokens =
+      typeof evt.totalTokens === "number"
+        ? evt.totalTokens
+        : skills.reduce((sum, s) => sum + s.tokens, 0);
+    // One payload per turn; last write wins (a resume replays it, matching live).
+    slice.skillsLoaded = { skills, totalTokens };
+    // Surface it on the in-flight assistant message right away — selection
+    // happens at compose time, before any block streams, so the line should
+    // appear immediately (even on a turn that produces no text). `flush`
+    // rebuilds the trailing assistant message from scratch, which now carries
+    // `skillsLoaded`.
+    const last = slice.messages[slice.messages.length - 1];
+    if (last?.role === "assistant") flush(slice);
+    else commit(slice);
+  }
+
   function handleReasoningDelta(slice: ConversationSlice, data: unknown): void {
     const evt = data as ReasoningDeltaEvent;
     slice.streamingState = "streaming";
@@ -889,6 +951,7 @@ export function createChatStore(): ChatStore {
         finalTools,
         usage,
         resultFiles,
+        slice.skillsLoaded,
       );
       slice.messages = updated;
     }
@@ -927,6 +990,7 @@ export function createChatStore(): ChatStore {
   const STREAM_EVENT_HANDLERS: Record<string, (slice: ConversationSlice, data: unknown) => void> = {
     "user.message": handleUserMessage,
     "chat.start": handleChatStart,
+    "skills.loaded": handleSkillsLoaded,
     "text.delta": handleTextDelta,
     "reasoning.delta": handleReasoningDelta,
     "tool.preparing": handleToolPreparing,

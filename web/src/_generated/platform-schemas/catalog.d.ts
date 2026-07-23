@@ -125,6 +125,12 @@ export declare const PlatformToolCatalog: {
                 bundle: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
             }>;
         };
+        readonly assembled_context: {
+            readonly input: import("@sinclair/typebox").TObject<{
+                conversation_id: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
+                run_id: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
+            }>;
+        };
     };
     readonly automations: {
         readonly create: {
