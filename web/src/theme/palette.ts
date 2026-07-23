@@ -74,6 +74,13 @@ export const colors = {
   "processing-foreground": ["#ffffff", "#0a0a09"],
   "processing-light": ["#f3eeff", "#1a0f2e"],
   "info-light": ["#eef4ff", "#0c1a33"],
+  // Skill-scope tones for the Context Ledger — one hue per tier (org /
+  // workspace / user / bundle). Shell-only (no ext-apps projection); shape and
+  // label carry the distinction too, so color never encodes it alone.
+  "scope-org": ["#2563eb", "#60a5fa"],
+  "scope-workspace": ["#059669", "#34d399"],
+  "scope-user": ["#7c3aed", "#a78bfa"],
+  "scope-bundle": ["#b45309", "#fbbf24"],
   "chart-1": ["#0055FF", "#3b8eff"],
   "chart-2": ["#059669", "#34d399"],
   "chart-3": ["#f59e0b", "#fbbf24"],

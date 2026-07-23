@@ -649,6 +649,188 @@
 }
 
 /* ───────────────────────────────────────────────────────────────────────
+ * Context Ledger line — "what equipped this turn" (LedgerLine.tsx)
+ *
+ * A sibling of the turn-pill and a deliberate borrow of its resting physics:
+ * text-only and muted at rest (fades into the page), boxing up only when the
+ * user expands the "why did this load" drawer. One quiet line per turn, above
+ * the first activity chip. Suppressed entirely on a zero-skill turn.
+ * ─────────────────────────────────────────────────────────────────────── */
+.ledger-line {
+  width: 100%;
+  font-size: var(--font-text-xs-size);
+  color: var(--muted-foreground);
+}
+.ledger-line__head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 2px 0;
+  background: none;
+  border: 0;
+  border-radius: 8px;
+  color: inherit;
+  opacity: 0.7;
+  cursor: pointer;
+  font: inherit;
+  text-align: left;
+  transition:
+    opacity 150ms,
+    border-color 150ms,
+    color 150ms,
+    background-color 150ms,
+    padding 150ms;
+}
+.ledger-line__head:hover {
+  color: var(--foreground);
+  opacity: 1;
+}
+.ledger-line__head:focus-visible {
+  outline: 2px solid var(--warm);
+  outline-offset: 2px;
+}
+.ledger-line[data-expanded="true"] > .ledger-line__head {
+  padding: 6px 12px;
+  background: var(--card);
+  border: 1px solid var(--border);
+  opacity: 1;
+  color: var(--foreground);
+}
+
+/* Glyph: the turn-pill's filled 5px dot — skills are behavior, the same mark
+   as "work". Brand color once expanded, currentColor (muted) at rest. */
+.ledger-line__dot {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: currentColor;
+  opacity: 0.5;
+  flex-shrink: 0;
+}
+.ledger-line[data-expanded="true"] .ledger-line__dot {
+  background: var(--success);
+  opacity: 1;
+}
+
+.ledger-line__verb {
+  font-weight: 500;
+  flex-shrink: 0;
+}
+.ledger-line__meta {
+  opacity: 0.7;
+  font-variant-numeric: tabular-nums;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+.ledger-line__chev {
+  margin-left: auto;
+  flex-shrink: 0;
+  width: 7px;
+  height: 7px;
+  border-right: 1.5px solid currentColor;
+  border-bottom: 1.5px solid currentColor;
+  transform: rotate(-45deg);
+  opacity: 0.6;
+  transition: transform 180ms ease;
+}
+.ledger-line[data-expanded="true"] .ledger-line__chev {
+  transform: rotate(45deg);
+}
+
+/* Drawer — the turn-pill__body grammar. Reveal motion is gated on
+   prefers-reduced-motion below. */
+.ledger-line__body {
+  margin-top: 6px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--card);
+  overflow: hidden;
+}
+.ledger-line__trust {
+  padding: 7px 12px;
+  font-size: var(--font-text-2xs-size);
+  color: var(--muted-foreground);
+  border-bottom: 1px solid var(--border);
+  background: var(--secondary);
+}
+.ledger-line__row {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 7px 12px;
+  font-size: var(--font-text-xs-size);
+  color: var(--muted-foreground);
+}
+.ledger-line__row + .ledger-line__row {
+  border-top: 1px solid var(--border);
+}
+.ledger-line__row-name {
+  color: var(--foreground);
+  font-weight: 500;
+  flex-shrink: 0;
+}
+.ledger-line__row-detail {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  opacity: 0.85;
+  min-width: 0;
+}
+.ledger-line__row-tok {
+  margin-left: auto;
+  flex-shrink: 0;
+  font-size: var(--font-text-2xs-size);
+  opacity: 0.6;
+  font-variant-numeric: tabular-nums;
+}
+.ledger-line__foot {
+  padding: 6px 12px;
+  font-size: var(--font-text-2xs-size);
+  border-top: 1px solid var(--border);
+}
+.ledger-line__foot a {
+  color: var(--muted-foreground);
+  text-decoration: none;
+}
+.ledger-line__foot a:hover {
+  color: var(--foreground);
+  text-decoration: underline;
+}
+.ledger-line__mono {
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: var(--font-text-2xs-size);
+}
+
+/* Scope tones — one hue per skill tier, from the palette scope tokens. Shape
+   (the dot) and the label carry the tier too, so color never encodes alone. */
+.ledger-line__scope {
+  font-size: var(--font-text-2xs-size);
+  font-weight: 500;
+  flex-shrink: 0;
+}
+.ledger-scope--org {
+  color: var(--scope-org);
+}
+.ledger-scope--workspace {
+  color: var(--scope-workspace);
+}
+.ledger-scope--user {
+  color: var(--scope-user);
+}
+.ledger-scope--bundle {
+  color: var(--scope-bundle);
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .ledger-line__body {
+    animation: turn-pill-reveal 180ms ease-out;
+  }
+}
+
+/* ───────────────────────────────────────────────────────────────────────
  * Live cursor — covers the gaps between blocks during a streaming turn
  *
  * Appears at the bottom of an assistant message body only while the engine

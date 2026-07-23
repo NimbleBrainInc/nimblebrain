@@ -3,11 +3,11 @@ import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useSta
 import { useChatContext } from "../context/ChatContext";
 import type { ChatMessage } from "../hooks/useChat";
 import type { DisplayDetail } from "../lib/tool-display";
+import { InContextPopover } from "./InContextPopover";
 import { KeyboardShortcutsModal } from "./KeyboardShortcutsModal";
 import { MessageInput } from "./MessageInput";
 import { MessageList } from "./MessageList";
 import { RecentConversationsPopover } from "./RecentConversationsPopover";
-import { SkillsPopover } from "./SkillsPopover";
 
 export interface ChatPanelProps {
   messages: ChatMessage[];
@@ -138,7 +138,7 @@ function ChatHeader({
             <SquarePen style={{ width: 16, height: 16 }} />
           </button>
         </div>
-        <SkillsPopover conversationId={conversationId} />
+        <InContextPopover conversationId={conversationId} />
         {(onFullscreen || onClose) && (
           <div className="flex items-center gap-0.5">
             {onFullscreen && (

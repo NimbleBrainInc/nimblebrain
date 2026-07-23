@@ -32,6 +32,29 @@ const PENDING_LOADED: ChatMessage[] = [
   { role: "assistant", content: "part", blocks: [{ type: "text", text: "part" }], pending: true },
 ];
 
+// A completed conversation whose assistant turn carries ledger metadata — the
+// reopen path (server jsonl-reader attaches `skillsLoaded` to the turn).
+const LOADED_WITH_SKILLS: ChatMessage[] = [
+  { role: "user", content: "q" },
+  {
+    role: "assistant",
+    content: "a",
+    blocks: [{ type: "text", text: "a" }],
+    skillsLoaded: {
+      skills: [
+        {
+          id: "skills/mpak-guide.md",
+          scope: "workspace",
+          tokens: 1200,
+          loadedBy: "tool_affinity",
+          reason: "tool-affinity matched mpak__*",
+        },
+      ],
+      totalTokens: 1200,
+    },
+  },
+];
+
 mock.module("../src/api/conversation-stream", () => ({
   connectConversationStream: (opts: {
     conversationId: string;
@@ -94,7 +117,12 @@ mock.module("../src/api/client", () => ({
       isError: false,
       structuredContent: {
         metadata: { id: args?.id },
-        messages: args?.id === "conv_pending" ? PENDING_LOADED : LOADED,
+        messages:
+          args?.id === "conv_pending"
+            ? PENDING_LOADED
+            : args?.id === "conv_skills"
+              ? LOADED_WITH_SKILLS
+              : LOADED,
       },
     }),
 }));
@@ -496,6 +524,89 @@ describe("chat-store viewer", () => {
     // otherwise-wedged spinner clears.
     after.onSubscribed?.({ isActive: false, activeSeq: 0 });
     expect(store.getSnapshot("kA").isStreaming).toBe(false);
+  });
+
+  it("attaches skills.loaded to the assistant turn as ledger metadata (live + survives done)", async () => {
+    const store = createChatStore();
+    await store.sendTurn("kA", { text: "go" });
+    const s = latestStream();
+    s.onEvent("user.message", { content: "go" }, 1);
+    // Emitted at compose time, before any block streams.
+    s.onEvent(
+      "skills.loaded",
+      {
+        runId: "r1",
+        skills: [
+          {
+            id: "skills/mpak-guide.md",
+            scope: "workspace",
+            tokens: 1200,
+            loadedBy: "tool_affinity",
+            reason: "tool-affinity matched mpak__*",
+          },
+        ],
+        totalTokens: 1200,
+      },
+      2,
+    );
+    // Surfaces immediately, before any text arrives.
+    expect(lastAssistant(store.getSnapshot("kA").messages)?.skillsLoaded?.skills).toHaveLength(1);
+
+    s.onEvent("text.delta", { text: "answer" }, 3);
+    s.onEvent("done", { conversationId: "conv_1", response: "answer" }, 4);
+
+    const finished = lastAssistant(store.getSnapshot("kA").messages);
+    expect(finished?.content).toBe("answer");
+    // The terminal `done` rebuild preserves the ledger metadata.
+    expect(finished?.skillsLoaded?.skills[0].id).toBe("skills/mpak-guide.md");
+    expect(finished?.skillsLoaded?.totalTokens).toBe(1200);
+  });
+
+  it("attaches no ledger metadata for a zero-skill turn (absence is the signal)", async () => {
+    const store = createChatStore();
+    await store.sendTurn("kA", { text: "go" });
+    const s = latestStream();
+    s.onEvent("user.message", { content: "go" }, 1);
+    s.onEvent("skills.loaded", { runId: "r1", skills: [], totalTokens: 0 }, 2);
+    s.onEvent("done", { conversationId: "conv_1", response: "answer" }, 3);
+    expect(lastAssistant(store.getSnapshot("kA").messages)?.skillsLoaded).toBeUndefined();
+  });
+
+  it("replays skills.loaded on resume — parity with the live path", async () => {
+    const store = createChatStore();
+    await store.loadConversation("conv_pending");
+    const s = latestStream();
+    s.onSubscribed?.({ isActive: true, activeSeq: 2 });
+    s.onEvent("user.message", { content: "loaded-q" }, 1);
+    s.onEvent(
+      "skills.loaded",
+      {
+        runId: "r1",
+        skills: [
+          {
+            id: "skills/a.md",
+            scope: "org",
+            tokens: 300,
+            loadedBy: "tool_affinity",
+            reason: "tool-affinity matched a__*",
+          },
+        ],
+        totalTokens: 300,
+      },
+      2,
+    );
+    s.onEvent("text.delta", { text: "fresh" }, 3);
+    const a = lastAssistant(store.getSnapshot("conv_pending").messages);
+    expect(a?.content).toBe("fresh");
+    expect(a?.skillsLoaded?.skills[0].id).toBe("skills/a.md");
+  });
+
+  it("reopen parity: a completed conversation carries its skills ledger metadata", async () => {
+    const store = createChatStore();
+    await store.loadConversation("conv_skills");
+    const a = lastAssistant(store.getSnapshot("conv_skills").messages);
+    expect(a?.skillsLoaded?.skills[0].id).toBe("skills/mpak-guide.md");
+    expect(a?.skillsLoaded?.totalTokens).toBe(1200);
   });
 
   it("reattachStreaming re-tails a STILL-ACTIVE turn without duplicating the user message", async () => {

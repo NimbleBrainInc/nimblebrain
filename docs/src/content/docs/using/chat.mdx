@@ -72,6 +72,19 @@ When extended thinking is enabled, the agent's reasoning shows up in the chat ti
 
 Extended thinking is controlled by the **Extended Thinking** setting on the organization Model tab — choose Off, Adaptive (the model decides per call), or Enabled (always reason). Reasoning is billed as output tokens. See [Settings](/guide/settings) for where to set it.
 
+## The Context Ledger
+
+Skills are prompt guidance the agent composes into its instructions for a turn (see [Skills](/using/skills)). When a turn loads one or more skills, a quiet line appears at the top of that assistant turn — above its activity — recording what equipped it:
+
+- **Following `<skill>` · matched `<tool>`** when one skill loaded, or
+- **Following N skills · ~N tokens** when several did.
+
+The line is text-only and muted at rest, the same treatment as the activity chips. Click it to expand a drawer that lists each skill with its scope (org, workspace, user, or bundle), why it loaded, and how many tokens it added to the prompt. A turn that loaded no skills shows no line.
+
+For an at-a-glance view of everything equipping the conversation, open the **In context** panel from the chat header. It shows the skills loaded for the latest turn, each with its scope and token cost, and a link to manage your skills.
+
+The ledger reflects what actually loaded, and it persists — reopening a past conversation shows the same lines.
+
 ## The Artifacts panel
 
 When a tool or app returns a document via an `artifact://` resource, the chat renders an **artifact chip**. Click it to open the **Artifacts panel** — a slide-out drawer alongside the conversation that shows the full document with a title header and sticky **Copy** and **Download** actions. Markdown is rendered; plain text and other formats fall back to a readable view. Press **Esc** to close the panel.

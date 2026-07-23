@@ -32,6 +32,10 @@
   --processing-foreground: #ffffff;
   --processing-light: #f3eeff;
   --info-light: #eef4ff;
+  --scope-org: #2563eb;
+  --scope-workspace: #059669;
+  --scope-user: #7c3aed;
+  --scope-bundle: #b45309;
   --chart-1: #0055FF;
   --chart-2: #059669;
   --chart-3: #f59e0b;
@@ -116,6 +120,10 @@
   --processing-foreground: #0a0a09;
   --processing-light: #1a0f2e;
   --info-light: #0c1a33;
+  --scope-org: #60a5fa;
+  --scope-workspace: #34d399;
+  --scope-user: #a78bfa;
+  --scope-bundle: #fbbf24;
   --chart-1: #3b8eff;
   --chart-2: #34d399;
   --chart-3: #fbbf24;

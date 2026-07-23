@@ -62,6 +62,28 @@ export interface DisplayMessage {
    * whether to reconcile against the server's replay.
    */
   pending?: boolean;
+  /**
+   * Skills the runtime composed into this turn's prompt (the `skills.loaded`
+   * event for the run) — the Context Ledger's durable source. The live stream
+   * carries the same payload for an in-flight turn; this is how a reopened
+   * conversation re-derives the ledger line. Absent when the turn loaded none.
+   */
+  skillsLoaded?: DisplaySkillsContext;
+}
+
+/** One skill in a turn's `skills.loaded` telemetry, projected for display. */
+export interface DisplaySkill {
+  id: string;
+  scope: "org" | "workspace" | "user" | "bundle";
+  tokens: number;
+  loadedBy: string;
+  reason: string;
+}
+
+/** A turn's skills-loaded telemetry — the ledger line's data. */
+export interface DisplaySkillsContext {
+  skills: DisplaySkill[];
+  totalTokens: number;
 }
 
 export type DisplayBlock =
@@ -226,6 +248,25 @@ interface ToolDoneEvent {
   resourceLinks?: DisplayResourceLink[];
 }
 
+/**
+ * `skills.loaded` — per-turn skill telemetry emitted after `run.start`. Entry
+ * fields are all optional on the wire so historical events (which may carry a
+ * subset, e.g. an older `loadedBy` vocabulary) parse without loss.
+ */
+interface SkillsLoadedEvent {
+  ts: string;
+  type: "skills.loaded";
+  runId: string;
+  skills?: Array<{
+    id?: string;
+    scope?: "org" | "workspace" | "user" | "bundle";
+    tokens?: number;
+    loadedBy?: string;
+    reason?: string;
+  }>;
+  totalTokens?: number;
+}
+
 interface RunDoneEvent {
   ts: string;
   type: "run.done";
@@ -247,6 +288,7 @@ type KnownEvent =
   | AuxUsageEvent
   | ToolStartEvent
   | ToolDoneEvent
+  | SkillsLoadedEvent
   | RunDoneEvent
   | RunErrorEvent;
 
@@ -267,6 +309,9 @@ function isToolStart(e: { type: string }): e is ToolStartEvent {
 }
 function isToolDone(e: { type: string }): e is ToolDoneEvent {
   return e.type === "tool.done";
+}
+function isSkillsLoaded(e: { type: string }): e is SkillsLoadedEvent {
+  return e.type === "skills.loaded";
 }
 function isRunDone(e: { type: string }): e is RunDoneEvent {
   return e.type === "run.done";
@@ -506,11 +551,35 @@ interface RunScan {
   toolDones: Map<string, ToolDoneEvent>;
   toolInputs: Map<string, unknown>;
   llmResponses: LlmResponseEvent[];
+  /** The run's most recent `skills.loaded`, projected — undefined if none. */
+  skillsLoaded: DisplaySkillsContext | undefined;
   endTs: string;
   stopReason: string | undefined;
   terminated: boolean;
   abandoned: boolean;
   nextIndex: number;
+}
+
+/**
+ * Project a `skills.loaded` event to the display shape. Returns undefined for a
+ * zero-skill turn so the ledger line is suppressed (absence is the signal).
+ */
+function projectSkillsLoaded(evt: SkillsLoadedEvent): DisplaySkillsContext | undefined {
+  const skills: DisplaySkill[] = (evt.skills ?? [])
+    .filter((s): s is { id: string } & typeof s => typeof s?.id === "string")
+    .map((s) => ({
+      id: s.id,
+      scope: s.scope ?? "org",
+      tokens: typeof s.tokens === "number" ? s.tokens : 0,
+      loadedBy: typeof s.loadedBy === "string" ? s.loadedBy : "",
+      reason: typeof s.reason === "string" ? s.reason : "",
+    }));
+  if (skills.length === 0) return undefined;
+  const totalTokens =
+    typeof evt.totalTokens === "number"
+      ? evt.totalTokens
+      : skills.reduce((sum, s) => sum + s.tokens, 0);
+  return { skills, totalTokens };
 }
 
 /**
@@ -571,6 +640,7 @@ function scanRunEvents(events: KnownEvent[], start: number, runId: string): RunS
   const toolDones = new Map<string, ToolDoneEvent>();
   const toolInputs = new Map<string, unknown>();
   const llmResponses: LlmResponseEvent[] = [];
+  let skillsLoaded: DisplaySkillsContext | undefined;
 
   let endTs = events[start]?.ts ?? "";
   let stopReason: string | undefined;
@@ -595,6 +665,11 @@ function scanRunEvents(events: KnownEvent[], start: number, runId: string): RunS
       }
       break;
     }
+    // `skills.loaded` rides inside the run span (emitted after run.start); the
+    // last one for the run wins, matching `active_for`'s newest-event rule.
+    if (isSkillsLoaded(inner) && inner.runId === runId) {
+      skillsLoaded = projectSkillsLoaded(inner);
+    }
     collectRunContentEvent(inner, runId, { llmResponses, toolInputs, toolDones });
     i++;
   }
@@ -603,6 +678,7 @@ function scanRunEvents(events: KnownEvent[], start: number, runId: string): RunS
     toolDones,
     toolInputs,
     llmResponses,
+    skillsLoaded,
     endTs,
     stopReason,
     terminated,
@@ -784,6 +860,7 @@ function collectRun(
     timestamp: scan.endTs,
     ...(flatToolCalls.length > 0 ? { toolCalls: flatToolCalls } : {}),
     usage,
+    ...(scan.skillsLoaded ? { skillsLoaded: scan.skillsLoaded } : {}),
     ...(scan.stopReason && scan.stopReason !== "complete" ? { stopReason: scan.stopReason } : {}),
     // `pending` only for a TRULY trailing in-flight run (ran off the end of the
     // array). An `abandoned` run has a later turn after it, so it can never be
@@ -897,6 +974,9 @@ function legacyLineToDisplay(raw: Record<string, unknown>): DisplayMessage | nul
     ...(typeof raw.userId === "string" ? { userId: raw.userId } : {}),
     ...(hydratedTools.length > 0 ? { toolCalls: hydratedTools } : {}),
     ...(usage ? { usage } : {}),
+    // Fork writes DisplayMessage shape directly; carry the ledger through so a
+    // forked conversation keeps its skills lines.
+    ...(raw.skillsLoaded ? { skillsLoaded: raw.skillsLoaded as DisplaySkillsContext } : {}),
   };
 }
 
