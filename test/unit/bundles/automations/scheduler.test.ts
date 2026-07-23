@@ -1167,8 +1167,11 @@ describe("Scheduler — backoff respects natural interval", () => {
 			const updated = defOf(scheduler, auto.id)!;
 			expect(updated.consecutiveErrors).toBe(1);
 			const nextRunMs = new Date(updated.nextRunAt!).getTime();
-			// Backoff (30s) must NOT win — the natural next cron time (~20h) does.
-			expect(nextRunMs - Date.now()).toBeGreaterThan(60_000);
+			// Backoff (30s) must NOT win — nextRunAt is exactly the natural next
+			// 8am HST (2026-07-16 08:00 HST = 18:00Z). Asserting the exact instant
+			// (now that the clock is pinned) also guards the cron math itself —
+			// timezone + occurrence — not just "the delay is more than 30s".
+			expect(nextRunMs).toBe(Date.parse("2026-07-16T18:00:00.000Z"));
 			scheduler.stop();
 		} finally {
 			nowSpy.mockRestore();
