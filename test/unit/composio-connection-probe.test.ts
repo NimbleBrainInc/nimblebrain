@@ -1,20 +1,28 @@
 import { afterEach, beforeEach, describe, expect, it, mock } from "bun:test";
 import type { ProbeTarget } from "../../src/bundles/connection-probe.ts";
 import type { ConnectorDirectory } from "../../src/registries/directory.ts";
-
-// Mock the SDK seam so the probe's verdict mapping can be tested without the
-// network. Must be registered before the probe module is (dynamically) imported.
+// Drive the probe through the `@composio/core` vendor seam — the same seam the
+// sibling composio suites mock — never the internal `sdk.ts`. `mock.module` is
+// process-global and is never torn down at file boundaries; mocking `sdk.ts`
+// (which nothing else re-registers) bleeds a stale stub into every sibling that
+// imports it. `@composio/core` IS re-registered by those siblings, so a bleed of
+// it self-heals. `findActiveComposioConnection` calls straight into
+// `connectedAccounts.list`, so driving that one list result exercises the probe.
 let activeResult: { id: string; status: string } | null = null;
 let activeThrows = false;
-mock.module("../../src/composio/sdk.ts", () => ({
-  composioUserId: (wsId: string) => `user:${wsId}`,
-  findActiveComposioConnection: async () => {
-    if (activeThrows) throw new Error("composio API down");
-    return activeResult;
+mock.module("@composio/core", () => ({
+  Composio: class {
+    connectedAccounts = {
+      list: async () => {
+        if (activeThrows) throw new Error("composio API down");
+        return { items: activeResult ? [activeResult] : [] };
+      },
+    };
   },
 }));
 
 const { ComposioConnectionProbe } = await import("../../src/composio/connection-probe.ts");
+const { _resetComposioConfigForTest } = await import("../../src/composio/sdk.ts");
 
 function fakeDirectory(authConfigEnv: string | undefined): ConnectorDirectory {
   return {
@@ -39,6 +47,9 @@ beforeEach(() => {
   saved = Object.fromEntries(ENV_KEYS.map((k) => [k, process.env[k]]));
   activeResult = null;
   activeThrows = false;
+  // `findActiveComposioConnection` now runs for real (driven by the mocked
+  // vendor seam), so reset the process-cached config between tests.
+  _resetComposioConfigForTest();
 });
 afterEach(() => {
   for (const k of ENV_KEYS) {
