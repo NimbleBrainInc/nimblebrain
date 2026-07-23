@@ -232,6 +232,32 @@ describe("token budget window anchoring", () => {
     const result = updateAutomation("Keep", { prompt: "watch harder" }, ctx);
     expect(result.automation.cumulativeInputTokens).toBe(120_000);
   });
+
+  test("re-sending an unchanged budget does NOT reset the window (change-gated, not write-gated)", () => {
+    const ctx = makeCtx();
+    const { automation } = createAutomation(
+      {
+        name: "Resend",
+        prompt: "watch",
+        schedule: { type: "cron", expression: "0 12 * * *" },
+        tokenBudget: { maxInputTokens: 300_000, period: "daily" },
+      },
+      ctx,
+    );
+    const defs = ctx.definitions();
+    const auto = defs.get(automation.id)!;
+    auto.cumulativeInputTokens = 200_000;
+    ctx.save(defs);
+
+    // A caller re-sends the identical budget alongside an unrelated edit. The
+    // budget didn't change, so accumulated spend must survive.
+    const result = updateAutomation(
+      "Resend",
+      { prompt: "watch harder", tokenBudget: { maxInputTokens: 300_000, period: "daily" } },
+      ctx,
+    );
+    expect(result.automation.cumulativeInputTokens).toBe(200_000);
+  });
 });
 
 describe("createAutomation / deleteAutomation — bundle lifecycle path", () => {

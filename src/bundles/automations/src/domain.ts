@@ -57,13 +57,35 @@ function budgetResetBoundary(automation: Automation, defaultTimezone?: string): 
   return period ? computeBudgetResetAt(period, Date.now(), defaultTimezone) : undefined;
 }
 
+/** Whether two token budgets are materially the same (all caps + period). */
+function tokenBudgetsEqual(a: TokenBudget | undefined, b: TokenBudget | undefined): boolean {
+  if (a === b) return true;
+  if (!a || !b) return false;
+  return (
+    a.maxInputTokens === b.maxInputTokens &&
+    a.maxOutputTokens === b.maxOutputTokens &&
+    a.period === b.period
+  );
+}
+
 /**
- * Start a fresh budget window: clear the running totals and re-anchor the reset
- * boundary from the (new) `tokenBudget`. `budgetResetAt` + `cumulative*`
- * together define one window, so redefining the budget resets both — otherwise
- * spend from the prior window counts against the new ceiling.
+ * Start a fresh budget window when the budget materially CHANGED: clear the
+ * running totals and re-anchor the reset boundary. `budgetResetAt` +
+ * `cumulative*` together define one window, so a changed budget starts a new
+ * one — otherwise spend from the prior window counts against the new ceiling.
+ *
+ * Change-gated, not write-gated: re-sending an identical budget (e.g. alongside
+ * an unrelated field edit) must not zero accumulated spend. Unlike the
+ * idempotent `nextRunAt` recompute, this reset is destructive, so it fires only
+ * on a real change. A no-op (`next` absent or equal) leaves the window intact.
  */
-function startBudgetWindow(automation: Automation, defaultTimezone?: string): void {
+function resetBudgetWindowIfChanged(
+  automation: Automation,
+  prev: TokenBudget | undefined,
+  next: TokenBudget | undefined,
+  defaultTimezone?: string,
+): void {
+  if (next === undefined || tokenBudgetsEqual(prev, next)) return;
   automation.cumulativeInputTokens = 0;
   automation.cumulativeOutputTokens = 0;
   automation.budgetResetAt = budgetResetBoundary(automation, defaultTimezone);
@@ -248,6 +270,10 @@ export function updateAutomation(
     throw new Error(`Automation not found: "${name}"`);
   }
 
+  // Snapshot before the loop overwrites it — the window reset is gated on a real
+  // budget change, not merely a write (see `tokenBudgetsEqual`).
+  const prevTokenBudget = automation.tokenBudget;
+
   let changed = false;
   for (const field of UPDATABLE_FIELDS) {
     if (field in patch && patch[field] !== undefined) {
@@ -274,12 +300,10 @@ export function updateAutomation(
       }
     }
 
-    // A written budget starts a fresh accounting window (mirrors the nextRunAt
+    // A CHANGED budget starts a fresh accounting window (cf. the nextRunAt
     // recompute on a schedule change above): spend from the prior budget must
     // not count against the new ceiling.
-    if (patch.tokenBudget !== undefined) {
-      startBudgetWindow(automation, ctx.defaultTimezone);
-    }
+    resetBudgetWindowIfChanged(automation, prevTokenBudget, patch.tokenBudget, ctx.defaultTimezone);
 
     defs.set(automation.id, automation);
     ctx.save(defs);
