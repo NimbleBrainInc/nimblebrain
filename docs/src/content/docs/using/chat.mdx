@@ -79,7 +79,15 @@ Skills are prompt guidance the agent composes into its instructions for a turn (
 - **Following `<skill>` · matched `<tool>`** when one skill loaded, or
 - **Following N skills · ~N tokens** when several did.
 
-The line is text-only and muted at rest, the same treatment as the activity chips. Click it to expand a drawer that lists each skill with its scope (org, workspace, user, or bundle), why it loaded, and how many tokens it added to the prompt. A turn that loaded no skills shows no line.
+The line is text-only and muted at rest, the same treatment as the activity chips. Click it to expand a drawer that lists each skill with its scope (org, workspace, user, or bundle), why it loaded, and how many tokens it added to the prompt.
+
+The "why" covers every way a skill loads:
+
+- **matched `<tool>`** — a skill that auto-loads when one of its tools is in play (tool-affinity),
+- **trigger "`<phrase>`"** — a skill activated by a phrase you used, and
+- **always-on** — a skill that loads every turn, such as a workspace persona or house-rules skill.
+
+The platform's own built-in core skills are not listed — only the skills you, your workspace, or your org configured. A turn that loaded none of those shows no line.
 
 For an at-a-glance view of everything equipping the conversation, open the **In context** panel from the chat header. It shows a **budget** for the latest turn — how the context window splits across the system prompt, tool descriptions, skills, and history — followed by the skills loaded, each with its scope and token cost, and a link to manage your skills.
 

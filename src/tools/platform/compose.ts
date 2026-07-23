@@ -557,7 +557,12 @@ function buildLayer3Layer(
     kind: "layer3_skills",
     segment: "stable",
     id: "nb:layer3-skills",
-    source: `layer 3 skills as of run ${runId}`,
+    // Mechanism-agnostic label: a recorded `skills.loaded` event now carries
+    // always-on (layer 0) and trigger (layer 4) entries alongside tool-affinity
+    // (layer 3), so this group is "skills", not specifically Layer 3. Each row's
+    // `loaded:` line still names the actual mechanism. (`kind`/`id` stay as the
+    // stable discriminator the tool and its tests key on.)
+    source: `skills as of run ${runId}`,
     text: bodyRows.join("\n"),
     tokens: skillsLoaded.totalTokens,
     subItems,

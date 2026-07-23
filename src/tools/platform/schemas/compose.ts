@@ -69,7 +69,8 @@ export interface AssembledContextSkill {
   id: string;
   scope: "org" | "workspace" | "user" | "bundle";
   tokens: number;
-  loadedBy: "always" | "tool_affinity";
+  /** The loading mechanism: always-on context, tool-affinity, or trigger match. */
+  loadedBy: "always" | "tool_affinity" | "trigger";
   reason: string;
 }
 

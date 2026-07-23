@@ -225,8 +225,15 @@ describe("SkillMatcher", () => {
     const matcher = new SkillMatcher();
     matcher.load([makeSkill({ name: "lead-finder", triggers: ["find leads", "search prospects"] })]);
 
-    expect(matcher.match("can you find leads for me?")?.manifest.name).toBe("lead-finder");
-    expect(matcher.match("search prospects in the pipeline")?.manifest.name).toBe("lead-finder");
+    expect(matcher.match("can you find leads for me?")?.skill.manifest.name).toBe("lead-finder");
+    expect(matcher.match("search prospects in the pipeline")?.skill.manifest.name).toBe("lead-finder");
+  });
+
+  it("returns the trigger phrase that fired (for load telemetry)", () => {
+    const matcher = new SkillMatcher();
+    matcher.load([makeSkill({ name: "lead-finder", triggers: ["find leads", "search prospects"] })]);
+
+    expect(matcher.match("please search prospects now")?.trigger).toBe("search prospects");
   });
 
   it("trigger match wins immediately (first hit)", () => {
@@ -236,14 +243,14 @@ describe("SkillMatcher", () => {
       makeSkill({ name: "skill-b", triggers: ["other"] }),
     ]);
 
-    expect(matcher.match("please do thing A now")?.manifest.name).toBe("skill-a");
+    expect(matcher.match("please do thing A now")?.skill.manifest.name).toBe("skill-a");
   });
 
   it("is case insensitive for triggers", () => {
     const matcher = new SkillMatcher();
     matcher.load([makeSkill({ name: "test", triggers: ["Find Leads"] })]);
 
-    expect(matcher.match("FIND LEADS please")?.manifest.name).toBe("test");
+    expect(matcher.match("FIND LEADS please")?.skill.manifest.name).toBe("test");
   });
 
   // --- Status filter (toggled Off must not reach the matched-skill channel) ---
@@ -258,7 +265,7 @@ describe("SkillMatcher", () => {
     // A disabled skill matched here would be injected straight into Layer-4,
     // bypassing the Off toggle — its trigger must not match.
     expect(matcher.match("find leads for me")).toBeNull();
-    expect(matcher.match("search prospects now")?.manifest.name).toBe("active-rule");
+    expect(matcher.match("search prospects now")?.skill.manifest.name).toBe("active-rule");
   });
 
   // --- Role filtering (always skills compose into the context channel) ---
@@ -282,8 +289,8 @@ describe("SkillMatcher", () => {
     ]);
 
     // An always skill is never matchable, even with a trigger.
-    expect(matcher.match("tell me about your soul")?.manifest.name).not.toBe("soul");
-    expect(matcher.match("find leads for me")?.manifest.name).toBe("lead-finder");
+    expect(matcher.match("tell me about your soul")?.skill.manifest.name).not.toBe("soul");
+    expect(matcher.match("find leads for me")?.skill.manifest.name).toBe("lead-finder");
   });
 
   // --- Edge cases ---
@@ -312,6 +319,12 @@ describe("loadBuiltinSkills", () => {
     const skills = loadBuiltinSkills();
     const names = skills.map((s) => s.manifest.name).sort();
     expect(names).toContain("authoring-guide");
+  });
+
+  it("stamps provenance.origin = vendored on every builtin skill", () => {
+    for (const s of loadBuiltinSkills()) {
+      expect(s.manifest.provenance?.origin).toBe("vendored");
+    }
   });
 });
 
@@ -343,6 +356,12 @@ describe("loadCoreSkills", () => {
     expect(soul.manifest.loadingStrategy).toBe("always");
     expect(soul.manifest.priority).toBe(0);
     expect(soul.body).toContain("NimbleBrain");
+  });
+
+  it("stamps provenance.origin = vendored on core skills (the ledger excludes them by it)", () => {
+    for (const s of loadCoreSkills()) {
+      expect(s.manifest.provenance?.origin).toBe("vendored");
+    }
   });
 
   it("no filesystem skill (bash is opt-in)", () => {

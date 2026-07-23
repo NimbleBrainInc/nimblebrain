@@ -280,12 +280,15 @@ export type SkillsReadOutput = SkillDetail;
  */
 export interface ActiveSkillEntry {
   id: string;
-  layer: 3;
+  /**
+   * The loading mechanism's layer: `0` = always-on context, `3` = tool-affinity,
+   * `4` = trigger match. Historical events only carried `3`.
+   */
+  layer: 0 | 3 | 4;
   scope: SkillScope;
   tokens: number;
-  // Historical `skills.loaded` events may carry `always` (pre-cutover runs);
-  // new selections only ever emit `tool_affinity`.
-  loadedBy: "always" | "tool_affinity";
+  /** The loading mechanism: always-on context, tool-affinity, or trigger match. */
+  loadedBy: "always" | "tool_affinity" | "trigger";
   reason: string;
 }
 
