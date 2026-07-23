@@ -36,6 +36,12 @@ export function InContextPopover({ conversationId }: { conversationId: string | 
   const { activeWorkspace } = useWorkspaceContext();
   // Skills are workspace-scoped; "Manage" targets the focused workspace.
   const skillsPath = activeWorkspace ? `/w/${toSlug(activeWorkspace.id)}/settings/skills` : "/";
+  // "Open full view" routes into the full-page inspector for this conversation,
+  // in the main content area beside the docked chat.
+  const inspectorPath =
+    activeWorkspace && conversationId
+      ? `/w/${toSlug(activeWorkspace.id)}/context/${conversationId}`
+      : null;
 
   // Memory placeholder — always empty until the seed channel ships. Kept as an
   // array so the section populates data-only when memory wiring lands.
@@ -152,7 +158,18 @@ export function InContextPopover({ conversationId }: { conversationId: string | 
             )}
           </div>
 
-          <div className="px-3.5 py-2 border-t flex items-center justify-end">
+          <div className="px-3.5 py-2 border-t flex items-center justify-between gap-3">
+            {inspectorPath ? (
+              <Link
+                to={inspectorPath}
+                className="text-2xs font-medium text-foreground hover:text-warm"
+                onClick={() => setOpen(false)}
+              >
+                Open full view ↗
+              </Link>
+            ) : (
+              <span />
+            )}
             <Link
               to={skillsPath}
               className="text-2xs text-muted-foreground hover:text-foreground"
