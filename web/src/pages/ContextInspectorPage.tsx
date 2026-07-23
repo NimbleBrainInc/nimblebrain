@@ -152,12 +152,6 @@ const SOURCE_LABEL: Record<string, string> = {
   skills: "Skills",
   history: "History",
 };
-const SOURCE_COLOR: Record<string, string> = {
-  system_prompt: "bg-muted-foreground/50",
-  tool_descriptions: "bg-muted-foreground/20",
-  skills: "bg-warm/60",
-  history: "bg-muted-foreground/20",
-};
 /** Budget buckets that map onto composed layers (the drill is meaningful). */
 const DRILLABLE = new Set(["system_prompt", "skills"]);
 
@@ -184,7 +178,7 @@ function BudgetBar({
   const max = Math.max(totalTokens, 1);
   return (
     <div className="shrink-0 px-6 py-4 border-b border-border" data-testid="context-budget">
-      <div className="flex gap-1 h-11 rounded-md overflow-hidden">
+      <div className="flex gap-1.5 h-12">
         {ordered.map((s) => {
           const selectable = DRILLABLE.has(s.kind);
           const isActive = active === s.kind;
@@ -195,12 +189,11 @@ function BudgetBar({
               disabled={!selectable}
               onClick={() => onSelect(isActive ? null : s.kind)}
               style={{ flex: Math.max(s.tokens, max * 0.06) }}
-              className={`relative min-w-0 px-3 py-1.5 flex flex-col justify-between text-left transition-colors ${
-                selectable ? "cursor-pointer hover:brightness-105" : "cursor-default"
-              } ${isActive ? "bg-warm/10 ring-1 ring-warm ring-inset" : "bg-muted"}`}
+              className={`min-w-0 px-3 py-1.5 flex flex-col justify-between text-left rounded-md border transition-colors ${
+                selectable ? "cursor-pointer hover:bg-muted/80" : "cursor-default"
+              } ${isActive ? "bg-warm/10 border-warm" : "bg-muted border-transparent"}`}
               title={selectable ? "Filter the layers below" : "Not composed into the prompt"}
             >
-              <span className={`absolute left-0 top-0 bottom-0 w-0.5 ${SOURCE_COLOR[s.kind]}`} />
               <span className="text-2xs font-medium truncate text-foreground">
                 {SOURCE_LABEL[s.kind] ?? s.kind}
               </span>
@@ -253,6 +246,29 @@ const LAYER_LABEL: Record<string, string> = {
 
 function layerKey(l: TracedLayerView): string {
   return `${l.kind}:${l.id}`;
+}
+
+/** File-backed layers are specific skills/overlays; `nb:`-prefixed layers are structural. */
+function isNamedFile(l: TracedLayerView): boolean {
+  return l.id.includes("/");
+}
+
+/** A skill/overlay name from its file id — handles `<name>.md` and `<name>/SKILL.md`. */
+function skillName(id: string): string {
+  const parts = id.split("/").filter(Boolean);
+  let name = parts[parts.length - 1] ?? id;
+  if (/^SKILL\.md$/i.test(name) && parts.length >= 2) name = parts[parts.length - 2];
+  return name.replace(/\.md$/i, "");
+}
+
+/** Primary label: a file-backed layer is named by its skill; a structural one by its kind. */
+function layerTitle(l: TracedLayerView): string {
+  return isNamedFile(l) ? skillName(l.id) : (LAYER_LABEL[l.kind] ?? l.kind);
+}
+
+/** Muted descriptor under a named skill (its kind); empty for structural layers. */
+function layerDescriptor(l: TracedLayerView): string {
+  return isNamedFile(l) ? (LAYER_LABEL[l.kind] ?? l.kind) : "";
 }
 
 /** A budget bucket selects the layers composed under it. Tools/history aren't composed. */
@@ -313,7 +329,7 @@ function LayerListPane({
             >
               <div className="flex items-baseline gap-2">
                 <span className="text-sm font-medium flex-1 min-w-0 truncate">
-                  {LAYER_LABEL[l.kind] ?? l.kind}
+                  {layerTitle(l)}
                   {l.segment === "volatile" && (
                     <span className="text-3xs text-muted-foreground/60"> · per-turn</span>
                   )}
@@ -328,12 +344,11 @@ function LayerListPane({
                   style={{ width: `${Math.round((l.tokens / max) * 100)}%` }}
                 />
               </span>
-              <div
-                className="text-3xs text-muted-foreground/80 truncate font-mono"
-                title={l.source}
-              >
-                {l.source}
-              </div>
+              {layerDescriptor(l) && (
+                <div className="text-3xs text-muted-foreground/80 truncate" title={l.source}>
+                  {layerDescriptor(l)}
+                </div>
+              )}
             </button>
           );
         })}
@@ -356,7 +371,7 @@ function ReadingPane({ layer, warnings }: { layer: TracedLayerView | null; warni
     <div className="flex flex-col min-h-0 bg-muted/50" data-testid="context-reading-pane">
       <div className="shrink-0 px-6 pt-4 pb-3 border-b border-border">
         <div className="flex items-baseline gap-2 flex-wrap">
-          <h2 className="text-base font-semibold">{LAYER_LABEL[layer.kind] ?? layer.kind}</h2>
+          <h2 className="text-base font-semibold">{layerTitle(layer)}</h2>
           {layer.segment === "volatile" && (
             <span className="text-3xs rounded-full px-2 py-0.5 bg-muted text-muted-foreground">
               per-turn
@@ -366,18 +381,20 @@ function ReadingPane({ layer, warnings }: { layer: TracedLayerView | null; warni
             {formatTokenCount(layer.tokens)} tok
           </span>
         </div>
-        <div className="mt-1.5 text-2xs text-muted-foreground font-mono break-all">
-          {layer.source}
-        </div>
+        {layerDescriptor(layer) && (
+          <div className="mt-1 text-2xs text-muted-foreground" title={layer.source}>
+            {layerDescriptor(layer)}
+          </div>
+        )}
         {layer.subItems && layer.subItems.length > 0 && (
           <div className="mt-2 flex flex-wrap gap-1.5">
             {layer.subItems.map((sub) => (
               <span
                 key={sub.id}
-                className="text-3xs rounded px-1.5 py-0.5 bg-muted text-muted-foreground font-mono"
+                className="text-3xs rounded px-1.5 py-0.5 bg-muted text-muted-foreground"
                 title={sub.source}
               >
-                {shortId(sub.id)}
+                {skillName(sub.id)}
               </span>
             ))}
           </div>
@@ -399,11 +416,4 @@ function ReadingPane({ layer, warnings }: { layer: TracedLayerView | null; warni
       </div>
     </div>
   );
-}
-
-/** Last path/URI segment of an id (skill file, app name), for compact chips. */
-function shortId(id: string): string {
-  const slash = id.lastIndexOf("/");
-  const tail = slash >= 0 ? id.slice(slash + 1) : id;
-  return tail.replace(/\.md$/, "");
 }

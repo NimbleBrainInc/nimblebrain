@@ -131,9 +131,12 @@ describe("ContextInspectorPage", () => {
     expect(text).toContain("History");
     expect(text).toContain("43.0k"); // formatTokenCount(42960)
 
-    // Composition layers.
+    // Composition layers. File-backed skills are named by their skill (not the
+    // generic kind, and not the raw path), with the kind as a muted descriptor.
     expect(text).toContain("Identity (default)");
-    expect(text).toContain("User context skill");
+    expect(text).toContain("voice-and-tone"); // the skill's name, from its file
+    expect(text).toContain("User context skill"); // the kind, as a descriptor
+    expect(text).not.toContain("/workspaces/tenant-a"); // raw path is never shown
     expect(text).toContain("Layer-3 skills");
     expect(text).toContain("Current date");
     expect(text).toContain("per-turn"); // volatile marker on current_date
