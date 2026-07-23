@@ -138,6 +138,128 @@ describe("updateAutomation — pause/resume regression (CLI path)", () => {
   });
 });
 
+describe("token budget window anchoring", () => {
+  test("create anchors budgetResetAt when the budget has a period", () => {
+    const ctx = makeCtx();
+    const { automation } = createAutomation(
+      {
+        name: "Watcher",
+        prompt: "watch",
+        schedule: { type: "cron", expression: "0 12 * * *" },
+        tokenBudget: { maxInputTokens: 300_000, period: "daily" },
+      },
+      ctx,
+    );
+    // Anchored at write time (mirrors nextRunAt), so the scheduler's window can
+    // roll from the first run instead of never — a future ISO boundary.
+    expect(automation.budgetResetAt).toBeDefined();
+    expect(new Date(automation.budgetResetAt!).getTime()).toBeGreaterThan(Date.now());
+  });
+
+  test("create leaves budgetResetAt unset for a periodless (lifetime) budget", () => {
+    const ctx = makeCtx();
+    const { automation } = createAutomation(
+      {
+        name: "Lifetime",
+        prompt: "watch",
+        schedule: { type: "cron", expression: "0 12 * * *" },
+        tokenBudget: { maxInputTokens: 300_000 },
+      },
+      ctx,
+    );
+    expect(automation.budgetResetAt).toBeUndefined();
+  });
+
+  test("changing the budget via update starts a fresh window: resets counters and re-anchors", () => {
+    // The reported incident: a run from an earlier, unrelated design left a
+    // large cumulative total. Rebuilding the automation via update set a new
+    // budget, but the stale total carried over and, on the next run, summed
+    // past the new ceiling and auto-disabled a freshly rebuilt automation.
+    const ctx = makeCtx();
+    const { automation } = createAutomation(
+      {
+        name: "Rebuilt",
+        prompt: "reply/bounce watcher",
+        schedule: { type: "cron", expression: "0 12,17 * * 1-5" },
+        tokenBudget: { maxInputTokens: 300_000, period: "daily" },
+      },
+      ctx,
+    );
+
+    // Simulate spend accrued under the prior design.
+    const defs = ctx.definitions();
+    const auto = defs.get(automation.id)!;
+    auto.cumulativeInputTokens = 490_000;
+    auto.cumulativeOutputTokens = 12_000;
+    ctx.save(defs);
+
+    // Rebuild: raise the budget via update (the operator's "rebuild on real
+    // tools" edit).
+    const result = updateAutomation(
+      "Rebuilt",
+      { tokenBudget: { maxInputTokens: 500_000, period: "daily" } },
+      ctx,
+    );
+
+    // A written budget is a new window: totals cleared, boundary re-anchored.
+    expect(result.automation.cumulativeInputTokens).toBe(0);
+    expect(result.automation.cumulativeOutputTokens).toBe(0);
+    expect(result.automation.budgetResetAt).toBeDefined();
+    expect(new Date(result.automation.budgetResetAt!).getTime()).toBeGreaterThan(Date.now());
+
+    // Persisted, not just mutated in memory.
+    const fromDisk = ctx.definitions().get(automation.id);
+    expect(fromDisk?.cumulativeInputTokens).toBe(0);
+  });
+
+  test("an update that does NOT touch tokenBudget leaves the running totals intact", () => {
+    const ctx = makeCtx();
+    const { automation } = createAutomation(
+      {
+        name: "Keep",
+        prompt: "watch",
+        schedule: { type: "cron", expression: "0 12 * * *" },
+        tokenBudget: { maxInputTokens: 300_000, period: "daily" },
+      },
+      ctx,
+    );
+    const defs = ctx.definitions();
+    const auto = defs.get(automation.id)!;
+    auto.cumulativeInputTokens = 120_000;
+    ctx.save(defs);
+
+    // Editing the prompt must not reset the window mid-period.
+    const result = updateAutomation("Keep", { prompt: "watch harder" }, ctx);
+    expect(result.automation.cumulativeInputTokens).toBe(120_000);
+  });
+
+  test("re-sending an unchanged budget does NOT reset the window (change-gated, not write-gated)", () => {
+    const ctx = makeCtx();
+    const { automation } = createAutomation(
+      {
+        name: "Resend",
+        prompt: "watch",
+        schedule: { type: "cron", expression: "0 12 * * *" },
+        tokenBudget: { maxInputTokens: 300_000, period: "daily" },
+      },
+      ctx,
+    );
+    const defs = ctx.definitions();
+    const auto = defs.get(automation.id)!;
+    auto.cumulativeInputTokens = 200_000;
+    ctx.save(defs);
+
+    // A caller re-sends the identical budget alongside an unrelated edit. The
+    // budget didn't change, so accumulated spend must survive.
+    const result = updateAutomation(
+      "Resend",
+      { prompt: "watch harder", tokenBudget: { maxInputTokens: 300_000, period: "daily" } },
+      ctx,
+    );
+    expect(result.automation.cumulativeInputTokens).toBe(200_000);
+  });
+});
+
 describe("createAutomation / deleteAutomation — bundle lifecycle path", () => {
   test("create with source=bundle and bundleName preserves identity for cleanup", () => {
     const ctx = makeCtx();

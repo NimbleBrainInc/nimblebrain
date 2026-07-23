@@ -27,7 +27,7 @@
  * See `src/tools/platform/CLAUDE.md` § 1.4 for the cross-cutting rule.
  */
 
-import { computeNextRunAt } from "./scheduler.ts";
+import { computeBudgetResetAt, computeNextRunAt } from "./scheduler.ts";
 import type { Automation, AutomationSource, ScheduleSpec, TokenBudget } from "./types.ts";
 
 // ---------------------------------------------------------------------------
@@ -44,6 +44,51 @@ export interface AutomationDomainContext {
   save: (defs: Map<string, Automation>) => void;
   reloadScheduler: () => void;
   defaultTimezone: string;
+}
+
+/**
+ * The forward budget-reset boundary for an automation's current `tokenBudget`,
+ * or `undefined` for a periodless (lifetime) budget. Anchored at write time so
+ * the scheduler's window can roll from the first run rather than being seeded
+ * lazily at end-of-run (which left pre-budget spend counting forever).
+ */
+function budgetResetBoundary(automation: Automation, defaultTimezone?: string): string | undefined {
+  const period = automation.tokenBudget?.period;
+  return period ? computeBudgetResetAt(period, Date.now(), defaultTimezone) : undefined;
+}
+
+/** Whether two token budgets are materially the same (all caps + period). */
+function tokenBudgetsEqual(a: TokenBudget | undefined, b: TokenBudget | undefined): boolean {
+  if (a === b) return true;
+  if (!a || !b) return false;
+  return (
+    a.maxInputTokens === b.maxInputTokens &&
+    a.maxOutputTokens === b.maxOutputTokens &&
+    a.period === b.period
+  );
+}
+
+/**
+ * Start a fresh budget window when the budget materially CHANGED: clear the
+ * running totals and re-anchor the reset boundary. `budgetResetAt` +
+ * `cumulative*` together define one window, so a changed budget starts a new
+ * one — otherwise spend from the prior window counts against the new ceiling.
+ *
+ * Change-gated, not write-gated: re-sending an identical budget (e.g. alongside
+ * an unrelated field edit) must not zero accumulated spend. Unlike the
+ * idempotent `nextRunAt` recompute, this reset is destructive, so it fires only
+ * on a real change. A no-op (`next` absent or equal) leaves the window intact.
+ */
+function resetBudgetWindowIfChanged(
+  automation: Automation,
+  prev: TokenBudget | undefined,
+  next: TokenBudget | undefined,
+  defaultTimezone?: string,
+): void {
+  if (next === undefined || tokenBudgetsEqual(prev, next)) return;
+  automation.cumulativeInputTokens = 0;
+  automation.cumulativeOutputTokens = 0;
+  automation.budgetResetAt = budgetResetBoundary(automation, defaultTimezone);
 }
 
 // ---------------------------------------------------------------------------
@@ -171,6 +216,13 @@ export function createAutomation(
     automation.nextRunAt = new Date(nextRun).toISOString();
   }
 
+  // Anchor the budget window at write time, exactly as nextRunAt is anchored
+  // above. Without this the reset boundary is only ever seeded at the end of a
+  // qualifying run, so tokens spent before that first run accumulate against
+  // the budget forever (the window never rolls). Periodless budgets resolve to
+  // undefined and stay lifetime-cumulative by design.
+  automation.budgetResetAt = budgetResetBoundary(automation, ctx.defaultTimezone);
+
   defs.set(id, automation);
   ctx.save(defs);
   ctx.reloadScheduler();
@@ -218,6 +270,10 @@ export function updateAutomation(
     throw new Error(`Automation not found: "${name}"`);
   }
 
+  // Snapshot before the loop overwrites it — the window reset is gated on a real
+  // budget change, not merely a write (see `tokenBudgetsEqual`).
+  const prevTokenBudget = automation.tokenBudget;
+
   let changed = false;
   for (const field of UPDATABLE_FIELDS) {
     if (field in patch && patch[field] !== undefined) {
@@ -243,6 +299,11 @@ export function updateAutomation(
         automation.nextRunAt = new Date(nextRun).toISOString();
       }
     }
+
+    // A CHANGED budget starts a fresh accounting window (cf. the nextRunAt
+    // recompute on a schedule change above): spend from the prior budget must
+    // not count against the new ceiling.
+    resetBudgetWindowIfChanged(automation, prevTokenBudget, patch.tokenBudget, ctx.defaultTimezone);
 
     defs.set(automation.id, automation);
     ctx.save(defs);
