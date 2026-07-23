@@ -402,9 +402,20 @@ async function postRevoke(
     method: "POST",
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
     body: params.toString(),
+    // Don't follow redirects on a request that carries the refresh token +
+    // client_secret: `validateBundleUrl` vetted `endpoint`, but a 307/308
+    // would re-POST the credential body to an unvetted `Location` (a
+    // cross-origin/internal target). `manual` keeps the credential on the
+    // validated origin; the opaque 3xx below is reported as a non-success.
+    redirect: "manual",
   });
 
   if (res.ok) return true;
+  // A revocation endpoint that redirects is non-conformant (RFC 7009 servers
+  // respond directly); with `redirect: "manual"` the browser fetch surfaces
+  // it as an opaque response (status 0). Treat as a failed revoke rather than
+  // chase the redirect — the credential was never sent past the vetted origin.
+  if (res.type === "opaqueredirect" || res.status === 0) return false;
   // RFC 7009 § 2.2: "If the server is unable to locate the token using
   // the given hint, it MUST extend its search across all of its supported
   // token types." Some servers respond 400 invalid_token if the token's
@@ -1805,7 +1816,21 @@ export class WorkspaceOAuthProvider implements OAuthClientProvider {
       const res = await fetcher(metadataUrl);
       if (!res.ok) return undefined;
       const meta = (await res.json()) as { revocation_endpoint?: unknown };
-      if (typeof meta.revocation_endpoint === "string") return meta.revocation_endpoint;
+      if (typeof meta.revocation_endpoint === "string") {
+        // The endpoint is a URL lifted from the (attacker-influenceable) AS
+        // metadata *body* — an independent target from the metadata URL
+        // validated above, and one we POST the refresh token + client_secret
+        // to. Re-validate it against the same SSRF/scheme rules so a
+        // malicious server can't point revocation at a private/metadata
+        // address or a non-HTTPS host. A malformed or rejected endpoint
+        // throws into the catch below → treated as "none advertised", which
+        // matches this method's best-effort contract (local cleanup still
+        // runs; upstream tokens lapse at their natural expiry).
+        validateBundleUrl(new URL(meta.revocation_endpoint), {
+          allowInsecure: this.allowInsecureRemotes,
+        });
+        return meta.revocation_endpoint;
+      }
     } catch (innerErr) {
       log.debug(
         "mcp",

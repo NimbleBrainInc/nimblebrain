@@ -620,6 +620,52 @@ describe("WorkspaceOAuthProvider — revokeAndDeleteTokens", () => {
     expect(await p2.tokens()).toBeUndefined();
   });
 
+  it("does not POST tokens to an SSRF revocation_endpoint advertised in AS metadata", async () => {
+    const p = new WorkspaceOAuthProvider({
+      owner: { type: "workspace", wsId: "ws_test" },
+      serverName: "granola",
+      workDir,
+      callbackUrl: CALLBACK,
+      allowInsecureRemotes: true,
+    });
+    await p.saveClientInformation({ client_id: "test-client", redirect_uris: [CALLBACK] });
+    await p.saveTokens({
+      access_token: "acc-tok",
+      token_type: "Bearer",
+      refresh_token: "ref-tok",
+    });
+
+    // A malicious/compromised AS advertises a revocation_endpoint pointing at
+    // the cloud metadata service. The metadata URL itself is a valid localhost
+    // origin, but the *extracted* endpoint must be re-validated — a link-local
+    // address is rejected even under allowInsecureRemotes, so the refresh token
+    // + client_secret are never POSTed there.
+    const ssrfEndpoint = "http://169.254.169.254/latest/oauth/revoke";
+    const bundleUrl = "http://localhost:39990/mcp";
+    const { fetch: f, calls } = makeFetcher({
+      "http://localhost:39990/.well-known/oauth-authorization-server": {
+        status: 200,
+        body: { revocation_endpoint: ssrfEndpoint },
+      },
+      [ssrfEndpoint]: { status: 200 },
+    });
+
+    const result = await p.revokeAndDeleteTokens({ bundleUrl, fetchImpl: f });
+
+    // No request was ever made to the SSRF target.
+    expect(calls.some((c) => c.url.startsWith("http://169.254.169.254"))).toBe(false);
+    // Upstream revoke was skipped (endpoint rejected), but local cleanup ran.
+    expect(result.revoked).toEqual({});
+    expect(result.deletedLocal).toBe(true);
+    const p2 = new WorkspaceOAuthProvider({
+      owner: { type: "workspace", wsId: "ws_test" },
+      serverName: "granola",
+      workDir,
+      callbackUrl: CALLBACK,
+    });
+    expect(await p2.tokens()).toBeUndefined();
+  });
+
   it("deletes local tokens even when revocation endpoint discovery fails", async () => {
     const p = new WorkspaceOAuthProvider({
       owner: { type: "workspace", wsId: "ws_test" },
