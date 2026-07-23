@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Link, useParams } from "react-router-dom";
+import { useNavigate, useParams } from "react-router-dom";
 // Canonical shapes from `src/tools/platform/schemas/compose.ts`; mirrored
 // here via codegen so server + web can't drift.
 import type {
@@ -77,15 +77,25 @@ export function ContextInspectorPage() {
   }, [visibleLayers, selectedLayer]);
 
   const selected = visibleLayers.find((l) => layerKey(l) === selectedLayer) ?? null;
-  const backPath = slug ? `/w/${slug}/` : "/";
+
+  const navigate = useNavigate();
+  // Return to wherever the inspector was opened from (an app, the conversations
+  // list, the overview), not a fixed destination. React Router stamps an
+  // incrementing `idx` on history state; a direct load / refresh / shared link
+  // has idx 0, so fall back to the workspace overview rather than leaving the app.
+  const goBack = useCallback(() => {
+    const idx = (window.history.state as { idx?: number } | null)?.idx ?? 0;
+    if (idx > 0) navigate(-1);
+    else navigate(slug ? `/w/${slug}/` : "/");
+  }, [navigate, slug]);
 
   return (
     <div className="h-full flex flex-col overflow-hidden" data-testid="context-inspector-page">
       <header className="shrink-0 px-6 pt-5 pb-4 border-b border-border">
         <div className="text-2xs text-muted-foreground mb-1.5">
-          <Link to={backPath} className="hover:text-foreground">
-            ← Workspace
-          </Link>
+          <button type="button" onClick={goBack} className="hover:text-foreground">
+            ← Back
+          </button>
           <span className="mx-1.5 text-muted-foreground/60">·</span>
           <span className="font-mono">{convId}</span>
         </div>
