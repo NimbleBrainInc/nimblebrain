@@ -18,7 +18,6 @@ import type {
   LedgerSkill,
   LlmDoneEvent,
   ReasoningDeltaEvent,
-  SkillsLoadedEvent,
   StreamErrorEvent,
   TextDeltaEvent,
   ToolCallResult,
@@ -819,18 +818,29 @@ export function createChatStore(): ChatStore {
   }
 
   function handleSkillsLoaded(slice: ConversationSlice, data: unknown): void {
-    const evt = data as SkillsLoadedEvent;
-    // Guard the payload: keep only well-formed entries. A turn that loaded zero
-    // skills emits nothing renderable — leave `skillsLoaded` unset so the
-    // ledger line is suppressed (absence of the line is the signal).
-    const skills = (evt.skills ?? []).filter(
-      (s): s is LedgerSkill => !!s && typeof s.id === "string",
-    );
+    // The stream frame is untrusted `unknown`; normalize each entry the same way
+    // the reopen path does (`projectSkillsLoaded` in the conversations bundle) so
+    // live and replay produce byte-identical ledger rows and a malformed field
+    // can't render `ledger-scope--undefined`. Zero well-formed entries → leave
+    // `skillsLoaded` unset so the line is suppressed (absence is the signal).
+    const evt = data as { skills?: unknown; totalTokens?: unknown };
+    const rawEntries = Array.isArray(evt.skills) ? (evt.skills as Record<string, unknown>[]) : [];
+    const skills: LedgerSkill[] = rawEntries
+      .filter((s) => !!s && typeof s.id === "string")
+      .map((s) => ({
+        id: s.id as string,
+        scope: (typeof s.scope === "string" ? s.scope : "org") as LedgerSkill["scope"],
+        tokens: typeof s.tokens === "number" ? s.tokens : 0,
+        loadedBy: (typeof s.loadedBy === "string"
+          ? s.loadedBy
+          : "tool_affinity") as LedgerSkill["loadedBy"],
+        reason: typeof s.reason === "string" ? s.reason : "",
+      }));
     if (skills.length === 0) return;
     const totalTokens =
       typeof evt.totalTokens === "number"
         ? evt.totalTokens
-        : skills.reduce((sum, s) => sum + (s.tokens ?? 0), 0);
+        : skills.reduce((sum, s) => sum + s.tokens, 0);
     // One payload per turn; last write wins (a resume replays it, matching live).
     slice.skillsLoaded = { skills, totalTokens };
     // Surface it on the in-flight assistant message right away — selection
