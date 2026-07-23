@@ -1416,7 +1416,7 @@ export class Runtime {
       maxOutputTokens: resolvedMaxOutputTokens,
     });
 
-    // History compaction (opt-in): when the conversation has outgrown its
+    // History compaction: when the conversation has outgrown its
     // budget, fold the oldest turns into a summary so the prefix re-anchors
     // once here instead of windowing — and busting the cache — every turn.
     // No-op unless `features.compaction` is on and the store is event-sourced;
@@ -3557,11 +3557,12 @@ export class Runtime {
   /**
    * Compact a conversation's history at run start when it has outgrown its
    * budget — fold the oldest turns into a summary so the prefix re-anchors once
-   * instead of windowing (and busting the cache) every turn. Opt-in via
-   * `features.compaction`; event-sourced stores only (it persists a
-   * `history.compacted` event). Returns the compacted `StoredMessage[]`, or
-   * `null` when nothing changed (no flag, no `appendEvent`, or below threshold)
-   * so the caller can skip re-rehydrating. Best-effort: the helper swallows
+   * instead of windowing (and busting the cache) every turn. Gated by
+   * `features.compaction` (on by default); event-sourced stores only (it
+   * persists a `history.compacted` event). Returns the compacted
+   * `StoredMessage[]`, or `null` when nothing changed (compaction disabled or
+   * below threshold) so the caller can skip re-rehydrating. Best-effort: the
+   * helper swallows
    * failures and returns the full history, never throwing into the chat path.
    */
   private async maybeCompactHistory(
