@@ -268,6 +268,35 @@ export interface LlmDoneEvent {
   finishReason?: "stop" | "length" | "content-filter" | "tool-calls" | "error" | "other";
 }
 
+/** Which tier a skill lives in — mirrors the server `SkillScope`. */
+export type LedgerSkillScope = "org" | "workspace" | "user" | "bundle";
+
+/**
+ * One skill in a turn's `skills.loaded` telemetry, projected to what the
+ * Context Ledger renders. A structural subset of the wire entry (which also
+ * carries `layer`, `version`, `contentHash`) — the ledger only needs
+ * provenance and cost. `loadedBy` is the loading mechanism; the drawer shows
+ * the verbatim `reason` instead, so extra future mechanisms need no UI change.
+ */
+export interface LedgerSkill {
+  id: string;
+  scope: LedgerSkillScope;
+  tokens: number;
+  loadedBy: "always" | "tool_affinity" | "trigger";
+  reason: string;
+}
+
+/**
+ * `skills.loaded` — emitted once per turn from prompt composition (before any
+ * block streams), forwarded verbatim over the RunBus stream. Drives the
+ * skills ledger line. Absent for a turn that composed no Layer-3 skills.
+ */
+export interface SkillsLoadedEvent {
+  runId: string;
+  skills: LedgerSkill[];
+  totalTokens: number;
+}
+
 /** Chat stream SSE event type to payload mapping. */
 export interface ChatStreamEventMap {
   "chat.start": { conversationId: string };
@@ -278,6 +307,7 @@ export interface ChatStreamEventMap {
   "tool.start": ToolStartEvent;
   "tool.done": ToolDoneEvent;
   "llm.done": LlmDoneEvent;
+  "skills.loaded": SkillsLoadedEvent;
   done: ChatResult;
   error: StreamErrorEvent;
 }

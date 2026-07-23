@@ -192,7 +192,7 @@ export type SkillsDeactivateInput = Static<typeof SkillsDeactivateInput>;
 // server both import from here. Skills is a cleaner case than
 // automations — the read-side shapes lived nowhere canonical before
 // (both server's `tools/platform/skills.ts` AND web's
-// `pages/settings/SkillsTab.tsx` / `components/SkillsPopover.tsx`
+// `pages/settings/SkillsTab.tsx` / `components/InContextPopover.tsx`
 // hand-rolled identical interfaces). This file becomes the source of
 // truth; both sides import it, drift becomes structurally impossible.
 
