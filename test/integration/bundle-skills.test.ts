@@ -587,15 +587,18 @@ describe("bundle-skill adapter — honors declared loading-strategy", () => {
     // The `dynamic` skill is tool-gated and its tool isn't active — absent.
     expect(prompt).not.toContain("DYNAMIC_USAGE_MARKER");
 
-    // It rides the always-on context channel, so it is NOT reported as a Layer-3
-    // (tool-affinity) selection in `skills.loaded`.
+    // It rides the always-on context channel, so it is reported in `skills.loaded`
+    // as an always-on entry (`loadedBy: "always"`, layer 0) — NOT a tool-affinity
+    // (Layer-3) selection. The Context Ledger surfaces it as workspace/bundle
+    // context the user configured.
     const store = await multiRuntime.resolveConversationStore(chat.conversationId);
     const events = await store!.readEvents(chat.conversationId);
     const skillsLoaded = events.find((e) => e.type === "skills.loaded") as unknown as
-      | { skills: Array<{ id: string }> }
+      | { skills: Array<{ id: string; loadedBy: string; layer: number }> }
       | undefined;
-    const layer3Always = skillsLoaded?.skills.find((s) => s.id === "skill://always-guide/SKILL.md");
-    expect(layer3Always).toBeUndefined();
+    const always = skillsLoaded?.skills.find((s) => s.id === "skill://always-guide/SKILL.md");
+    expect(always?.loadedBy).toBe("always");
+    expect(always?.layer).toBe(0);
   });
 
   it("loads the `dynamic` skill via Layer 3 when its tool is active, alongside the always skill in context", async () => {
@@ -617,14 +620,15 @@ describe("bundle-skill adapter — honors declared loading-strategy", () => {
     const skillsLoaded = events.find((e) => e.type === "skills.loaded") as unknown as
       | { skills: Array<{ id: string; scope: string; loadedBy: string }> }
       | undefined;
-    // The dynamic skill is the Layer-3 selection; the always skill is not.
+    // The dynamic skill loads via Layer-3 tool-affinity; the always skill via the
+    // always-on channel — both now reported, distinguished by `loadedBy`.
     const dynamicEntry = skillsLoaded?.skills.find(
       (s) => s.id === "skill://dynamic-usage/SKILL.md",
     );
     expect(dynamicEntry?.scope).toBe("bundle");
     expect(dynamicEntry?.loadedBy).toBe("tool_affinity");
     const alwaysEntry = skillsLoaded?.skills.find((s) => s.id === "skill://always-guide/SKILL.md");
-    expect(alwaysEntry).toBeUndefined();
+    expect(alwaysEntry?.loadedBy).toBe("always");
   });
 
   it("composes the `always` skill into an unattended task's context too (parity with chat)", async () => {

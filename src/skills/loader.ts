@@ -16,12 +16,27 @@ const RESERVED_SUBDIR_PREFIX = "_";
 
 /** Load built-in skills shipped with the package. */
 export function loadBuiltinSkills(): Skill[] {
-  return loadSkillDir(BUILTIN_DIR, "builtin");
+  return loadSkillDir(BUILTIN_DIR, "builtin").map(markVendored);
 }
 
 /** Load core skills that are always injected into the system prompt. */
 export function loadCoreSkills(): Skill[] {
-  return loadSkillDir(CORE_DIR, "core");
+  return loadSkillDir(CORE_DIR, "core").map(markVendored);
+}
+
+/**
+ * Stamp `provenance.origin = "vendored"` on a platform-shipped skill (core /
+ * builtin). This is the one durable marker that these skills are the platform's
+ * own scaffolding, not tenant-authored — surfaces that show user-facing skill
+ * activity (the Context Ledger) exclude them by it, so "Following soul" never
+ * appears every turn. A frontmatter-declared provenance is left untouched.
+ */
+function markVendored(skill: Skill): Skill {
+  if (skill.manifest.provenance) return skill;
+  return {
+    ...skill,
+    manifest: { ...skill.manifest, provenance: { origin: "vendored" } },
+  };
 }
 
 /**
