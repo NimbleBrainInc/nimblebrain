@@ -2,9 +2,8 @@ import { ORG_ADMIN_ROLES, type OrgRole } from "../identity/types.ts";
 
 /**
  * Feature flags for controlling which capabilities are available.
- * Most flags default to true for backward compatibility.
- *
- * Opt-in flags (default false) are documented inline.
+ * All flags default to true; setting one to false removes the capability
+ * (for a tool-gated flag) or disables the behavior (`compaction`).
  */
 export interface FeatureFlags {
   /**
@@ -23,9 +22,10 @@ export interface FeatureFlags {
   userManagement?: boolean;
   workspaceManagement?: boolean;
   /**
-   * Opt-in (default false). When on, long conversations are compacted at run
-   * start — the oldest turns folded into a summary — to bound context growth
-   * without per-turn cache thrash. Event-sourced stores only. See
+   * Default on. Long conversations are compacted at run start — the oldest
+   * turns folded into a summary, operator messages retained verbatim — to
+   * bound context growth without per-turn cache thrash. Event-sourced stores
+   * only; set false to replay the full history every turn. See
    * `conversation/compaction.ts`.
    */
   compaction?: boolean;
@@ -43,7 +43,7 @@ const DEFAULTS: ResolvedFeatures = {
   fileContext: true,
   userManagement: true,
   workspaceManagement: true,
-  compaction: false,
+  compaction: true,
 };
 
 /** Resolve partial feature flags to a complete set. Missing keys default to true. */
@@ -58,7 +58,7 @@ export function resolveFeatures(config?: FeatureFlags): ResolvedFeatures {
     fileContext: config.fileContext ?? true,
     userManagement: config.userManagement ?? true,
     workspaceManagement: config.workspaceManagement ?? true,
-    compaction: config.compaction ?? false,
+    compaction: config.compaction ?? true,
   };
 }
 
