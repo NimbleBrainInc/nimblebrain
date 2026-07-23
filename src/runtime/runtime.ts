@@ -4724,6 +4724,11 @@ export function buildContextAssembledPayload(input: {
   // and the chars/4 heuristic over-counted by ~3 tokens per image byte. Two
   // ~700KB PNGs landed at 2.8M+ phantom tokens for a 51K-token call.
   const historyTokens = input.messages.reduce((sum, m) => sum + estimateMessageTokens(m), 0);
+  // NOTE: `skills` is an ANNOTATION of what the composed skills cost, NOT a
+  // disjoint bucket — those skill bodies are already inside `system_prompt`, so
+  // `totalTokens` intentionally double-counts them (unchanged from Phase 1, now
+  // spanning always-on/trigger too since the payload widened). Don't "fix" the
+  // total by subtracting; the disjoint budget is system_prompt + tools + history.
   const sources: ContextAssembledSource[] = [
     { kind: "system_prompt", tokens: promptTokens },
     { kind: "tool_descriptions", count: input.activeTools.length, tokens: toolDescTokens },
