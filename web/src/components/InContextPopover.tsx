@@ -1,12 +1,12 @@
 import { Layers } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
-// Canonical shapes from `src/tools/platform/schemas/skills.ts`; mirrored
+// Canonical shapes from `src/tools/platform/schemas/compose.ts`; mirrored
 // here via codegen so server + web can't drift.
 import type {
-  ActiveSkillEntry as ActiveSkill,
-  SkillsActiveForOutput,
-} from "../_generated/platform-schemas/skills";
+  AssembledContextSource,
+  ComposeAssembledContextOutput,
+} from "../_generated/platform-schemas/compose";
 import { callTool } from "../api/client";
 import { useWorkspaceContext } from "../context/WorkspaceContext";
 import { formatTokenCount, SCOPE_CLASS, shortSkillName } from "../lib/skill-display";
@@ -15,19 +15,20 @@ import { toSlug } from "../lib/workspace-slug";
 
 /**
  * Header affordance — the aggregated projection of the Context Ledger. Answers
- * "what is equipping this conversation" in one place: the skills loaded for the
- * latest turn, and (once the memory seed channel ships) the records seeded at
- * session start. Two honestly-different categories under one roof, each row in
- * the same grammar as the in-transcript ledger drawer.
+ * "what is equipping this conversation, and where did the tokens go" in one
+ * place: the per-source budget for the latest turn (system prompt, tools,
+ * skills, history), the skills loaded, and (once the memory seed channel ships)
+ * the records seeded at session start.
  *
- * Reads `skills.active_for` on every open (cheap; one tool call against an
- * in-memory log) so the panel reflects the latest turn without subscribing to
- * events. The Memory section is dormant until the memory seed channel ships —
- * rendered from a generic ledger-entry array so wiring it later is data-only.
+ * Reads `compose.assembled_context` on every open (cheap; one tool call against
+ * the recorded run telemetry) so the panel reflects the latest turn without
+ * subscribing to events. One read powers both the budget and the skills
+ * section — same run, one source of truth. The Memory section is dormant until
+ * the memory seed channel ships.
  */
 export function InContextPopover({ conversationId }: { conversationId: string | null }) {
   const [open, setOpen] = useState(false);
-  const [skills, setSkills] = useState<ActiveSkill[] | null>(null);
+  const [digest, setDigest] = useState<ComposeAssembledContextOutput | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -42,19 +43,20 @@ export function InContextPopover({ conversationId }: { conversationId: string | 
 
   const refresh = useCallback(async () => {
     if (!conversationId) {
-      setSkills([]);
+      setDigest(null);
       return;
     }
     setLoading(true);
     setError(null);
     try {
-      const res = await callTool("skills", "active_for", { conversation_id: conversationId });
-      const data = parseToolResponse<SkillsActiveForOutput>(res);
-      setSkills(data.active);
+      const res = await callTool("compose", "assembled_context", {
+        conversation_id: conversationId,
+      });
+      setDigest(parseToolResponse<ComposeAssembledContextOutput>(res));
     } catch (err) {
-      const msg = err instanceof Error ? err.message : "Failed to load active skills.";
+      const msg = err instanceof Error ? err.message : "Failed to load context.";
       setError(msg);
-      setSkills(null);
+      setDigest(null);
     } finally {
       setLoading(false);
     }
@@ -82,6 +84,8 @@ export function InContextPopover({ conversationId }: { conversationId: string | 
     };
   }, [open]);
 
+  const hasRun = digest !== null && digest.runId !== null;
+
   return (
     <div ref={containerRef} className="relative">
       <button
@@ -106,32 +110,46 @@ export function InContextPopover({ conversationId }: { conversationId: string | 
           </div>
 
           <div className="max-h-96 overflow-auto">
-            <SectionHeader title="Skills" note="this turn" />
-            {!conversationId && <Empty>Start a conversation to see which skills load.</Empty>}
+            {!conversationId && <Empty>Start a conversation to see what loads.</Empty>}
             {conversationId && loading && (
               <div className="px-3.5 py-3 text-xs text-muted-foreground">Loading…</div>
             )}
             {conversationId && error && (
               <div className="px-3.5 py-3 text-xs text-destructive">{error}</div>
             )}
-            {conversationId && !loading && !error && skills && skills.length === 0 && (
-              <Empty>No skills loaded yet. Send a message to populate the log.</Empty>
-            )}
-            {conversationId && !loading && !error && skills && skills.length > 0 && (
-              <ul>
-                {skills.map((s) => (
-                  <li key={s.id} className="ledger-line__row">
-                    <span className="ledger-line__dot" aria-hidden />
-                    <span className="ledger-line__row-name">{shortSkillName(s.id)}</span>
-                    <span className={`ledger-line__scope ${SCOPE_CLASS[s.scope]}`}>{s.scope}</span>
-                    <span className="ledger-line__row-tok">{formatTokenCount(s.tokens)} tok</span>
-                  </li>
-                ))}
-              </ul>
+            {conversationId && !loading && !error && digest && !hasRun && (
+              <Empty>No context yet. Send a message to populate this turn.</Empty>
             )}
 
-            <SectionHeader title="Memory" note="since start" />
-            {memory.length === 0 && <Empty>Nothing seeded</Empty>}
+            {conversationId && !loading && !error && hasRun && digest && (
+              <>
+                <SectionHeader title="Budget" note="this turn" />
+                <BudgetSection sources={digest.sources} totalTokens={digest.totalTokens} />
+
+                <SectionHeader title="Skills" note="this turn" />
+                {digest.skills.length === 0 ? (
+                  <Empty>No skills loaded for this turn.</Empty>
+                ) : (
+                  <ul>
+                    {digest.skills.map((s) => (
+                      <li key={s.id} className="ledger-line__row">
+                        <span className="ledger-line__dot" aria-hidden />
+                        <span className="ledger-line__row-name">{shortSkillName(s.id)}</span>
+                        <span className={`ledger-line__scope ${SCOPE_CLASS[s.scope]}`}>
+                          {s.scope}
+                        </span>
+                        <span className="ledger-line__row-tok">
+                          {formatTokenCount(s.tokens)} tok
+                        </span>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+
+                <SectionHeader title="Memory" note="since start" />
+                {memory.length === 0 && <Empty>Nothing seeded</Empty>}
+              </>
+            )}
           </div>
 
           <div className="px-3.5 py-2 border-t flex items-center justify-end">
@@ -145,6 +163,70 @@ export function InContextPopover({ conversationId }: { conversationId: string | 
           </div>
         </div>
       )}
+    </div>
+  );
+}
+
+/** Order + human labels for the recorded context sources. */
+const SOURCE_ORDER = ["system_prompt", "tool_descriptions", "skills", "history"];
+const SOURCE_LABEL: Record<string, string> = {
+  system_prompt: "System prompt",
+  tool_descriptions: "Tools",
+  skills: "Skills",
+  history: "History",
+};
+
+/** Count / turns / compacted detail suffix for a source row. */
+function sourceDetail(s: AssembledContextSource): string {
+  const parts: string[] = [];
+  if (typeof s.count === "number") parts.push(`${s.count}`);
+  if (typeof s.turns === "number") parts.push(`${s.turns} turn${s.turns === 1 ? "" : "s"}`);
+  if (s.compacted) parts.push("compacted");
+  return parts.join(" · ");
+}
+
+/** Per-source token breakdown for the latest turn, with proportional bars. */
+function BudgetSection({
+  sources,
+  totalTokens,
+}: {
+  sources: AssembledContextSource[];
+  totalTokens: number;
+}) {
+  const rank = (kind: string) => {
+    const i = SOURCE_ORDER.indexOf(kind);
+    return i === -1 ? SOURCE_ORDER.length : i;
+  };
+  const ordered = [...sources].sort((a, b) => rank(a.kind) - rank(b.kind));
+  const max = Math.max(totalTokens, 1);
+  return (
+    <div className="px-3.5 py-1.5 space-y-1">
+      {ordered.map((s) => {
+        const detail = sourceDetail(s);
+        return (
+          <div key={s.kind} className="flex items-center gap-2">
+            <span className="text-xs flex-1 min-w-0 truncate">
+              {SOURCE_LABEL[s.kind] ?? s.kind}
+              {detail && <span className="text-3xs text-muted-foreground"> {detail}</span>}
+            </span>
+            <span className="h-1 w-14 rounded-full bg-muted overflow-hidden shrink-0">
+              <span
+                className="block h-full rounded-full bg-muted-foreground/45"
+                style={{ width: `${Math.round((s.tokens / max) * 100)}%` }}
+              />
+            </span>
+            <span className="text-3xs text-muted-foreground tabular-nums w-10 text-right shrink-0">
+              {formatTokenCount(s.tokens)}
+            </span>
+          </div>
+        );
+      })}
+      <div className="flex items-baseline justify-between border-t pt-1 mt-0.5">
+        <span className="text-xs font-medium">Total</span>
+        <span className="text-2xs font-medium tabular-nums">
+          {formatTokenCount(totalTokens)} tok
+        </span>
+      </div>
     </div>
   );
 }

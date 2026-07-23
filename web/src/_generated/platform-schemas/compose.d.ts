@@ -9,3 +9,52 @@ export declare const ComposeEffectiveContextInput: import("@sinclair/typebox").T
     bundle: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
 }>;
 export type ComposeEffectiveContextInput = Static<typeof ComposeEffectiveContextInput>;
+export declare const ComposeAssembledContextInput: import("@sinclair/typebox").TObject<{
+    conversation_id: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
+    run_id: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
+}>;
+export type ComposeAssembledContextInput = Static<typeof ComposeAssembledContextInput>;
+/**
+ * One row of a run's assembled context, as recorded in the
+ * `context.assembled` event. `kind` is a free-form source discriminator
+ * (`system_prompt`, `tool_descriptions`, `skills`, `history`); the other
+ * fields are populated per kind (`count` for tools/skills, `turns` /
+ * `compacted` for history).
+ */
+export interface AssembledContextSource {
+    kind: string;
+    tokens: number;
+    count?: number;
+    turns?: number;
+    compacted?: boolean;
+}
+/**
+ * One layer-3 skill that loaded for the run, projected from the
+ * `skills.loaded` event with provenance for why it loaded.
+ */
+export interface AssembledContextSkill {
+    id: string;
+    scope: "org" | "workspace" | "user" | "bundle";
+    tokens: number;
+    loadedBy: "always" | "tool_affinity";
+    reason: string;
+}
+/**
+ * `compose__assembled_context` response — the recorded context digest for
+ * a conversation's run (the most recent by default). A pure read of the
+ * run's already-emitted `context.assembled` + `skills.loaded` events; no
+ * recomposition. `runId` / `ts` are `null` when the conversation exists but
+ * no run has recorded assembled-context telemetry yet.
+ */
+export interface ComposeAssembledContextOutput {
+    conversationId: string;
+    runId: string | null;
+    ts: string | null;
+    sources: AssembledContextSource[];
+    excluded: AssembledContextSource[];
+    totalTokens: number;
+    skills: AssembledContextSkill[];
+    /** Present only when the run recorded them (not emitted on current runs). */
+    modelMaxContext?: number;
+    headroomTokens?: number;
+}

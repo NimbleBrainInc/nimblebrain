@@ -58,7 +58,13 @@ import type { InProcessTool } from "../in-process-app.ts";
 import { defineInProcessApp } from "../in-process-app.ts";
 import type { McpSource } from "../mcp-source.ts";
 import { surfaceTools } from "../surfacing.ts";
-import { ComposeEffectiveContextInput } from "./schemas/compose.ts";
+import {
+  type AssembledContextSkill,
+  type AssembledContextSource,
+  ComposeAssembledContextInput,
+  type ComposeAssembledContextOutput,
+  ComposeEffectiveContextInput,
+} from "./schemas/compose.ts";
 
 const COMPOSE_SOURCE_NAME = "compose";
 
@@ -75,6 +81,15 @@ const COMPOSE_DESCRIPTION =
   "section + layer-3 skills under the bundle's affined directory). Read-only. " +
   "Use this to answer 'what's in the agent's prompt right now' or 'what was " +
   "in the prompt for run X'.";
+
+const ASSEMBLED_CONTEXT_DESCRIPTION =
+  "Return the recorded context digest for a conversation's run — the per-source " +
+  "token breakdown (system prompt, tool descriptions, layer-3 skills, history) " +
+  "and the layer-3 skills that loaded, with provenance. Defaults to the most " +
+  "recent run; pass `run_id` for a specific one. A pure read of the run's " +
+  "already-emitted `context.assembled` + `skills.loaded` events — no " +
+  "recomposition. Read-only. Use this to answer 'what entered this turn's " +
+  "context, and how big was each part?'";
 
 interface ComposeArgs {
   conversation_id?: string;
@@ -142,6 +157,36 @@ export function createComposeSource(runtime: Runtime, eventSink: EventSink): Mcp
           return {
             content: textContent(formatTextSummary(response)),
             structuredContent: response as unknown as Record<string, unknown>,
+            isError: false,
+          };
+        } catch (err) {
+          return errorResult(errorMessage(err));
+        }
+      },
+    },
+    {
+      name: "assembled_context",
+      description: ASSEMBLED_CONTEXT_DESCRIPTION,
+      inputSchema: ComposeAssembledContextInput,
+      handler: async (input: Record<string, unknown>): Promise<ToolResult> => {
+        const args = input as { conversation_id?: string; run_id?: string };
+        try {
+          const convId = resolveConvId(args);
+          if (!convId) {
+            return errorResult(
+              "conversation_id is required when called outside a chat — no current " +
+                "conversation is in scope. Pass conversation_id explicitly.",
+            );
+          }
+          if (!CONVERSATION_ID_RE.test(convId)) {
+            return errorResult(
+              `conversation_id "${convId}" is not a valid conversation id (expected conv_<16 hex chars>).`,
+            );
+          }
+          const digest = await readAssembledContext(runtime, convId, args.run_id);
+          return {
+            content: textContent(formatAssembledSummary(digest)),
+            structuredContent: digest as unknown as Record<string, unknown>,
             isError: false,
           };
         } catch (err) {
@@ -350,6 +395,119 @@ async function composeHistorical(
     layers,
     warnings,
   };
+}
+
+// ── assembled-context digest ─────────────────────────────────────────────
+
+/**
+ * Read the recorded context digest for a conversation's run: the
+ * `context.assembled` per-source breakdown plus the paired `skills.loaded`
+ * entries. Defaults to the most recent run that recorded a
+ * `context.assembled` event; an explicit `runId` selects that run.
+ *
+ * A pure read of already-emitted events — the same telemetry the engine
+ * records at the start of every turn. Owner-gated via `readConvEvents`.
+ * When the conversation exists but no run has recorded assembled context
+ * yet, returns an empty digest (`runId: null`) rather than throwing —
+ * mirrors `skills__active_for`'s "conversation exists, nothing loaded yet"
+ * shape so the UI shows an empty state, not an error.
+ */
+async function readAssembledContext(
+  runtime: Runtime,
+  convId: string,
+  runId?: string,
+): Promise<ComposeAssembledContextOutput> {
+  const events = await readConvEvents(runtime, convId);
+  if (events === null) {
+    throw new Error(`Conversation not found: ${convId}`);
+  }
+
+  const assembled = runId
+    ? findContextAssembled(events, runId)
+    : findLatestContextAssembled(events);
+
+  const empty: ComposeAssembledContextOutput = {
+    conversationId: convId,
+    runId: null,
+    ts: null,
+    sources: [],
+    excluded: [],
+    totalTokens: 0,
+    skills: [],
+  };
+  if (!assembled) return empty;
+
+  // The paired `skills.loaded` shares the run id (both emitted at run start).
+  const skillsLoaded = findSkillsLoaded(events, assembled.runId);
+
+  return {
+    conversationId: convId,
+    runId: assembled.runId,
+    ts: assembled.ts,
+    sources: assembled.sources.map(toAssembledSource),
+    excluded: assembled.excluded.map(toAssembledSource),
+    totalTokens: assembled.totalTokens,
+    skills: (skillsLoaded?.skills ?? []).map(toAssembledSkill),
+    ...(typeof assembled.modelMaxContext === "number"
+      ? { modelMaxContext: assembled.modelMaxContext }
+      : {}),
+    ...(typeof assembled.headroomTokens === "number"
+      ? { headroomTokens: assembled.headroomTokens }
+      : {}),
+  };
+}
+
+/** Find the most recent recorded `context.assembled` event, or undefined. */
+function findLatestContextAssembled(
+  events: ConversationEvent[],
+): ContextAssembledEvent | undefined {
+  for (let i = events.length - 1; i >= 0; i--) {
+    const e = events[i];
+    if (e?.type === "context.assembled") return e as ContextAssembledEvent;
+  }
+  return undefined;
+}
+
+/** Project a recorded context source onto the wire shape (drops unknown extras). */
+function toAssembledSource(s: ContextAssembledEvent["sources"][number]): AssembledContextSource {
+  return {
+    kind: s.kind,
+    tokens: s.tokens,
+    ...(typeof s.count === "number" ? { count: s.count } : {}),
+    ...(typeof s.turns === "number" ? { turns: s.turns } : {}),
+    ...(typeof s.compacted === "boolean" ? { compacted: s.compacted } : {}),
+  };
+}
+
+/** Project a recorded skill entry onto the wire shape. */
+function toAssembledSkill(s: SkillsLoadedEvent["skills"][number]): AssembledContextSkill {
+  return {
+    id: s.id,
+    scope: s.scope,
+    tokens: s.tokens,
+    loadedBy: s.loadedBy,
+    reason: s.reason,
+  };
+}
+
+/** Human-readable text summary for the tool's `content` block. */
+function formatAssembledSummary(d: ComposeAssembledContextOutput): string {
+  if (d.runId === null) {
+    return `No assembled-context telemetry recorded yet for ${d.conversationId}.`;
+  }
+  const sourceLines = d.sources.map((s) => {
+    const detail: string[] = [];
+    if (typeof s.count === "number") detail.push(`${s.count}`);
+    if (typeof s.turns === "number") detail.push(`${s.turns} turns`);
+    if (s.compacted) detail.push("compacted");
+    const suffix = detail.length > 0 ? ` (${detail.join(", ")})` : "";
+    return `  ${s.kind}: ${s.tokens} tok${suffix}`;
+  });
+  return [
+    `Assembled context for run ${d.runId} (${d.totalTokens} tok total):`,
+    ...sourceLines,
+    `  layer-3 skills loaded: ${d.skills.length}`,
+  ].join("\n");
 }
 
 /** Find the run's recorded `skills.loaded` event, or undefined. */
