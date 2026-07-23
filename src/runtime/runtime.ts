@@ -4757,6 +4757,9 @@ export function makeIdentitySkill(body: string): Skill {
       loadingStrategy: "always",
       priority: 1,
       status: "active",
+      // It's the workspace's identity field, so the ledger labels it
+      // `workspace`, not the `?? "org"` fallback in the payload builder.
+      scope: "workspace",
     },
     body,
     sourcePath: "",

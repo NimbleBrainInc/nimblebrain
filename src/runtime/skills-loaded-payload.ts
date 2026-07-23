@@ -33,9 +33,14 @@ function skillKey(skill: Skill): string {
  *     `trigger matched "<phrase>"`.
  *   - `alwaysOn`     — the always-on context skills composed this turn (persona
  *     override, org/workspace/user + bundle always-on skills) → reason
- *     `always-on`. Platform-vendored core skills (soul, capabilities) are
- *     EXCLUDED — they load every turn in every tenant, so surfacing them would
- *     drown the ambient line and leak internals.
+ *     `always-on`.
+ *
+ * Platform-vendored core/builtin skills are EXCLUDED across ALL three sources —
+ * they ship with the platform in every tenant, so surfacing them would drown
+ * the ambient line and leak internals. The exclusion has to be uniform: some
+ * vendored skills are `dynamic` (e.g. the skill-authoring guide), so they reach
+ * the ledger through tool-affinity or a trigger match, not just the always-on
+ * channel. Enforcing it in the shared `push` covers every path.
  *
  * De-duplicated by skill identity with tool-affinity taking precedence (the
  * established channel), so a `dynamic` skill that both trigger- and
@@ -49,6 +54,7 @@ export function collectLoadedSkills(input: {
   const out: SelectedSkill[] = [];
   const seen = new Set<string>();
   const push = (sel: SelectedSkill): void => {
+    if (sel.skill.manifest.provenance?.origin === "vendored") return;
     const key = skillKey(sel.skill);
     if (seen.has(key)) return;
     seen.add(key);
@@ -64,7 +70,6 @@ export function collectLoadedSkills(input: {
     });
   }
   for (const s of input.alwaysOn) {
-    if (s.manifest.provenance?.origin === "vendored") continue;
     push({ skill: s, loadedBy: "always", reason: "always-on" });
   }
 

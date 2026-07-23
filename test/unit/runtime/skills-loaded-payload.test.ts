@@ -180,6 +180,34 @@ describe("collectLoadedSkills", () => {
     expect(out.map((s) => s.skill.manifest.name)).toEqual(["house-style"]);
   });
 
+  test("excludes vendored skills from EVERY source — tool-affinity and trigger too, not just always-on", () => {
+    // Vendored skills can be `dynamic` (the shipped skill-authoring guide has
+    // both a tool-affinity glob and triggers), so they reach the ledger via
+    // tool-affinity or a trigger match. The exclusion must cover all paths, or
+    // the "core skills aren't listed" contract is false.
+    const out = collectLoadedSkills({
+      toolAffinity: [
+        {
+          skill: makeSkill("automation-authoring", { strategy: "dynamic", vendored: true, sourcePath: "/core/automation-authoring.md" }),
+          loadedBy: "tool_affinity",
+          reason: "tool-affinity matched automations__*",
+        },
+        {
+          skill: makeSkill("mpak-guide", { strategy: "dynamic", sourcePath: "/s/mpak.md" }),
+          loadedBy: "tool_affinity",
+          reason: "tool-affinity matched mpak__*",
+        },
+      ],
+      trigger: {
+        skill: makeSkill("authoring-guide", { strategy: "dynamic", vendored: true, sourcePath: "/builtin/authoring-guide.md" }),
+        trigger: "create a skill",
+      },
+      alwaysOn: [makeSkill("house-style", { sourcePath: "/s/house.md" })],
+    });
+    // Only the tenant-authored skills survive; both vendored skills are dropped.
+    expect(out.map((s) => s.skill.manifest.name)).toEqual(["mpak-guide", "house-style"]);
+  });
+
   test("keeps a non-vendored always-on skill with no sourcePath (workspace persona override)", () => {
     const out = collectLoadedSkills({
       toolAffinity: [],
