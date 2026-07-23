@@ -1,13 +1,21 @@
 import { afterEach, beforeEach, describe, expect, it, mock } from "bun:test";
 import type { ProbeTarget } from "../../src/bundles/connection-probe.ts";
 import type { ConnectorDirectory } from "../../src/registries/directory.ts";
+import * as realSdk from "../../src/composio/sdk.ts";
 
 // Mock the SDK seam so the probe's verdict mapping can be tested without the
 // network. Must be registered before the probe module is (dynamically) imported.
+//
+// `mock.module` is process-global and is not torn down at file boundaries, so
+// this registration bleeds into every other test file that imports `sdk.ts`.
+// Spread the REAL module and override only `findActiveComposioConnection` (the
+// one network call the probe needs to drive) — that way the bleed is inert:
+// sibling composio suites still see the genuine `composioUserId`,
+// `connectComposioApiKey`, etc. instead of an incomplete stub.
 let activeResult: { id: string; status: string } | null = null;
 let activeThrows = false;
 mock.module("../../src/composio/sdk.ts", () => ({
-  composioUserId: (wsId: string) => `user:${wsId}`,
+  ...realSdk,
   findActiveComposioConnection: async () => {
     if (activeThrows) throw new Error("composio API down");
     return activeResult;
