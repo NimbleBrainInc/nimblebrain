@@ -6,6 +6,7 @@ import { linkSafety } from "../lib/streamdown-config";
 import type { DisplayDetail } from "../lib/tool-display";
 import { BlockTimeline } from "./BlockTimeline";
 import { FileAttachment } from "./FileAttachment";
+import { LedgerLine } from "./LedgerLine";
 
 function formatTokens(count: number): string {
   if (count >= 1000) return `${(count / 1000).toFixed(1)}k`;
@@ -345,6 +346,10 @@ function AssistantMessage({
   const isCurrent = isStreaming && isLast;
   return (
     <div className="w-full break-words min-w-0 overflow-hidden flex flex-col gap-3">
+      {/* Context Ledger: which skills equipped this turn. Rendered first —
+          above the first activity chip — because selection happens at
+          compose time, before any block streams. */}
+      <LedgerLine skills={msg.skillsLoaded} />
       {msg.blocks ? (
         <BlockTimeline
           blocks={msg.blocks}

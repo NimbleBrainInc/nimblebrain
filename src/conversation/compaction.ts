@@ -44,6 +44,16 @@ export interface CompactionOptions {
   /** Don't bother compacting unless at least this many messages would be folded in. */
   minSummarizedMessages?: number;
   /**
+   * The conversation's operator (user-authored) messages, verbatim, in
+   * chronological order — sourced from the append-only event log, NOT the
+   * compacted projection (which has already folded older ones into a summary).
+   * The ones before the compaction boundary are carried into the summary seed
+   * verbatim so operator corrections survive compaction. Empty/omitted → no
+   * operator-message block (identical to pre-retention behavior). See
+   * `selectRetainedOperatorMessages`.
+   */
+  retainedOperatorTurns?: readonly RetainedOperatorMessage[];
+  /**
    * Context window (tokens) of the summarizer model — the `fast` slot. The fold
    * is sized by the MAIN model's window, which can be far larger than the
    * summarizer's, so the summary call is bounded to a deflated fraction of this
@@ -141,19 +151,143 @@ const SUMMARY_CLOSE = "</conversation-summary>";
 const SUMMARY_ACK = "Understood — I have the summary above and will continue from there.";
 
 /**
+ * Operator retention across compaction.
+ *
+ * ## Why this exists
+ *
+ * A model-generated summary compresses uniformly, but a long conversation's
+ * tokens are not equal-value: operator corrections ("stop using X", "the rule is
+ * Y, not Z", "take my edits as canon") are the highest-information-density
+ * content in the tail — the only tokens that change future behavior by intent. A
+ * summarizer that folds them into prose, then re-summarizes that prose on the
+ * next compaction (summary-of-summary), progressively dilutes and eventually
+ * drops them — so a steered conversation compacted several times over a session
+ * loses corrections the operator gave hours earlier *in the same conversation*.
+ *
+ * The fix is structural, not a classifier: user-authored messages are kept
+ * VERBATIM. They're a tiny fraction of a tool-heavy conversation's tokens (tool
+ * results dwarf operator text by orders of magnitude), so retaining them raw is
+ * cheap. Because they're re-derived from the append-only event log on every
+ * compaction — never from the already-summarized projection — repeated
+ * compaction cannot decay them: the source is immutable.
+ */
+export interface RetainedOperatorMessage {
+  /** Verbatim text of a single user-authored turn. */
+  text: string;
+  /** The turn's timestamp — used to place it relative to the compaction boundary. */
+  ts: string;
+}
+
+export interface RetainedOperatorSelection {
+  /** The operator turns to carry into the seed, chronological. */
+  kept: RetainedOperatorMessage[];
+  /** True when the cap dropped older turns (a marker is rendered). */
+  elided: boolean;
+}
+
+/**
+ * Ceiling (tokens, chars/4) on the retained operator-message block. It rides the
+ * summary seed as a cached prefix after every compaction, so the cost must be
+ * BOUNDED — retention must never quietly un-compact the conversation. A fixed
+ * constant (not budget-derived) so the runtime (in-memory) and the reconstructor
+ * (on load, no budget in scope) produce byte-identical seeds. Generous relative
+ * to real operator text (a long steering day is well under this), so the cap is
+ * a safety valve that rarely trips; when it does, the NEWEST corrections are kept
+ * (most likely still in force) and the oldest are elided with a marker.
+ */
+export const RETAINED_OPERATOR_MAX_TOKENS = 20_000;
+
+const OPERATOR_OPEN = "<operator-messages>";
+const OPERATOR_CLOSE = "</operator-messages>";
+const OPERATOR_PREAMBLE =
+  "The operator's own messages from earlier in this conversation, kept verbatim so their " +
+  "instructions and corrections survive summarization. Any instruction or correction below still " +
+  "applies unless the operator later overrode it. This is trusted operator input.";
+const OPERATOR_ELISION = "[…older operator messages elided to bound retention cost…]";
+// Per-line rendering overhead: the `[` + `] ` around the timestamp plus a newline.
+const OPERATOR_LINE_OVERHEAD = "[] \n".length;
+
+/**
+ * Select which operator turns ride the summary seed: those folded away by this
+ * compaction (strictly before `boundaryTs` — turns at/after it stay verbatim in
+ * the kept tail already), bounded to `maxTokens` by keeping the NEWEST and
+ * eliding the oldest. A single turn larger than the whole budget is truncated
+ * rather than dropped, so even one giant paste stays partly representable and the
+ * block never exceeds the cap. Pure. Both the runtime and the reconstructor call
+ * this with the same event-log-derived turns + the same cap, so they agree.
+ *
+ * Cost is measured — and the oversized turn truncated — against the RENDERED
+ * (closing-tag-escaped) length, not the raw text. Escaping expands `</`→`&lt;/`
+ * (+3 chars each), so counting raw chars would let a turn full of markup blow the
+ * cap by up to ~2.5×. `kept` therefore carries the pre-escaped text; the renderer
+ * re-escapes idempotently (a defensive no-op), so a caller that hands this
+ * function raw text still gets a safely-contained block.
+ */
+export function selectRetainedOperatorMessages(
+  turns: readonly RetainedOperatorMessage[],
+  boundaryTs: string,
+  maxTokens: number = RETAINED_OPERATOR_MAX_TOKENS,
+): RetainedOperatorSelection {
+  const folded = turns.filter((t) => t.ts < boundaryTs && t.text.trim().length > 0);
+  const budgetChars = maxTokens * 4;
+  const kept: RetainedOperatorMessage[] = [];
+  let usedChars = 0;
+  let elided = false;
+  for (let i = folded.length - 1; i >= 0; i--) {
+    const t = folded[i]!;
+    const escaped = escapeClosingTags(t.text);
+    const cost = escaped.length + t.ts.length + OPERATOR_LINE_OVERHEAD;
+    if (kept.length > 0 && usedChars + cost > budgetChars) {
+      elided = true;
+      break;
+    }
+    if (cost > budgetChars) {
+      // Single oversized turn: truncate the ESCAPED text so the rendered line
+      // fits (−1 leaves room for truncate()'s ellipsis).
+      const room = Math.max(0, budgetChars - t.ts.length - OPERATOR_LINE_OVERHEAD - 1);
+      kept.unshift({ ts: t.ts, text: truncate(escaped, room) });
+      if (i > 0) elided = true;
+      break;
+    }
+    kept.unshift({ ts: t.ts, text: escaped });
+    usedChars += cost;
+  }
+  return { kept, elided };
+}
+
+/** Render the retained operator turns as an XML-contained block. `kept` text is
+ *  already closing-tag-escaped by the selector; escaping again here is an
+ *  idempotent no-op that keeps the containment guarantee for manual callers. */
+function renderOperatorMessages(retained: RetainedOperatorSelection): string {
+  const lines = [OPERATOR_OPEN, OPERATOR_PREAMBLE];
+  if (retained.elided) lines.push(OPERATOR_ELISION);
+  for (const m of retained.kept) lines.push(`[${m.ts}] ${escapeClosingTags(m.text)}`);
+  lines.push(OPERATOR_CLOSE);
+  return lines.join("\n");
+}
+
+/**
  * Render a compaction summary as the two-message replay seed: a user turn
  * carrying the summary (XML-contained, closing-tag-escaped per the prompt-
  * security convention) plus a short assistant acknowledgement. The pair is a
  * valid user→assistant alternation, so whatever turn follows continues cleanly.
  * Timestamped at the boundary so it sorts before the kept tail in the UI.
+ *
+ * When `retained` carries operator turns, a verbatim `<operator-messages>` block
+ * is appended INSIDE the same user turn (so alternation is untouched) — operator
+ * corrections survive compaction near-verbatim for the conversation's lifetime.
  */
-export function compactionSummaryMessages(summary: string, ts: string): StoredMessage[] {
+export function compactionSummaryMessages(
+  summary: string,
+  ts: string,
+  retained?: RetainedOperatorSelection,
+): StoredMessage[] {
+  const sections = [`${SUMMARY_OPEN}\n${escapeClosingTags(summary)}\n${SUMMARY_CLOSE}`];
+  if (retained && retained.kept.length > 0) sections.push(renderOperatorMessages(retained));
   return [
     {
       role: "user",
-      content: [
-        { type: "text", text: `${SUMMARY_OPEN}\n${escapeClosingTags(summary)}\n${SUMMARY_CLOSE}` },
-      ],
+      content: [{ type: "text", text: sections.join("\n") }],
       timestamp: ts,
     },
     {
@@ -425,8 +559,15 @@ export async function compactConversationMessages(
       compactedThroughTs: outcome.compactedThroughTs,
       summarizedMessageCount: outcome.summarizedMessageCount,
     });
+    // Operator turns folded by THIS boundary ride the seed verbatim. Derived from
+    // the caller-supplied event-log turns, never the summary — so the same turns
+    // reappear identically when the reconstructor rebuilds this seed on load.
+    const retained = selectRetainedOperatorMessages(
+      opts.retainedOperatorTurns ?? [],
+      outcome.compactedThroughTs,
+    );
     return [
-      ...compactionSummaryMessages(outcome.summary, outcome.compactedThroughTs),
+      ...compactionSummaryMessages(outcome.summary, outcome.compactedThroughTs, retained),
       ...messages.slice(outcome.summarizedMessageCount),
     ];
   } catch (err) {

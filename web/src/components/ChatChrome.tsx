@@ -280,7 +280,7 @@ export function ChatChrome() {
           z-[9] keeps the handle BELOW the chat panel (z-10). The handle sits
           just outside the panel's left edge (right: panelWidth), so the panel
           never covers it — but in-panel overlays that overflow leftward (e.g.
-          the SkillsPopover, z-50 trapped inside the panel's z-10 stacking
+          the InContextPopover, z-50 trapped inside the panel's z-10 stacking
           context) now render ABOVE the handle instead of having the handle's
           hover/active bar (bg-ring / bg-primary) paint a blue stripe over them.
           The drag overlay (ResizeHandle, z-[60]) is unaffected. */}

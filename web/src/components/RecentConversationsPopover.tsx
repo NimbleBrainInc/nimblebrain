@@ -40,7 +40,7 @@ export function relativeTime(iso: string): string {
 
 /**
  * Header affordance that surfaces the most recent conversations without
- * leaving the chat panel. Mirrors {@link SkillsPopover}: a header icon that
+ * leaving the chat panel. Mirrors {@link InContextPopover}: a header icon that
  * opens a popover backed by a tool call (`conversations__list`). Clicking a
  * row reopens it in the same panel via the parent's `onOpen` (→
  * `loadConversation`). "View all" hands off to the full Conversations app for

@@ -34,7 +34,15 @@
  *     short-circuits when `COMPOSIO_API_KEY` is unset.
  */
 
-import { AuthScheme, Composio } from "@composio/core";
+// Namespace import, not `import { AuthScheme, Composio }`. `@composio/core`
+// ships a single large bundled `index.mjs`; under bun, statically linking its
+// named exports is order-sensitive and intermittently fails with
+// "Export named 'AuthScheme' not found" — the static binding is resolved
+// against the real module before a test's `mock.module("@composio/core")`
+// can apply, so it aborts at import time. Binding the whole namespace and
+// reading `composioCore.AuthScheme` / `.Composio` at the use site sidesteps
+// static named-export linking and stays live against the test mocks.
+import * as composioCore from "@composio/core";
 import type { ConnectorOwner } from "../identity/connector-owner.ts";
 import { getBouncerMode } from "../oauth/bouncer-config.ts";
 import { publicOrigin } from "../oauth/public-origin.ts";
@@ -225,7 +233,7 @@ async function withTimeout<T>(label: string, fn: () => Promise<T>): Promise<T> {
  * long-lived client across requests would couple cancellation /
  * abort semantics to its lifetime, which we don't need.
  */
-function composioClient(apiKey: string): Composio {
+function composioClient(apiKey: string): composioCore.Composio {
   // `validateComposioConfig` runs full validation on its first call
   // (eagerly, at server startup, via `composioAuthRoutes`). Every
   // subsequent call — including this one, on every SDK request —
@@ -240,7 +248,7 @@ function composioClient(apiKey: string): Composio {
   //     package.json, so the nag has no signal — just log noise and wasted egress.
   //   - allowTracking: anonymous usage telemetry to `telemetry.composio.dev`.
   //     Tenant runtimes should not emit per-request analytics.
-  return new Composio({
+  return new composioCore.Composio({
     apiKey,
     baseURL: cfg.baseUrl,
     disableVersionCheck: true,
@@ -324,7 +332,7 @@ export async function connectComposioApiKey(opts: {
   // builds the API_KEY-shaped member ({ authScheme, val: { status, ...fields } }).
   const connRequest = (await withTimeout("connectedAccounts.initiate(apikey)", () =>
     composio.connectedAccounts.initiate(opts.userId, opts.authConfigId, {
-      config: AuthScheme.APIKey(opts.fields),
+      config: composioCore.AuthScheme.APIKey(opts.fields),
       allowMultiple: true,
     }),
   )) as unknown as {

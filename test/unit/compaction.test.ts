@@ -6,7 +6,11 @@ import {
   compactionSummaryMessages,
   estimateMessagesTokens,
   planCompaction,
+  RETAINED_OPERATOR_MAX_TOKENS,
+  type RetainedOperatorMessage,
+  type RetainedOperatorSelection,
   runCompaction,
+  selectRetainedOperatorMessages,
   summarizeMessages,
 } from "../../src/conversation/compaction.ts";
 import type {
@@ -340,11 +344,16 @@ describe("reconstructMessages — history.compacted", () => {
     expect(firstText).toContain("<conversation-summary>");
     expect(firstText).toContain("the user did two old things");
     expect(msgs[1]!.role).toBe("assistant"); // ack
-    // the two pre-boundary turns are gone; the kept turn survives verbatim
-    const allText = JSON.stringify(msgs);
-    expect(allText).not.toContain("old turn 1");
-    expect(allText).not.toContain("old turn 2");
-    expect(allText).toContain("kept turn");
+    // Operator retention: the two pre-boundary USER turns are kept VERBATIM in
+    // the summary seed's <operator-messages> block (not collapsed into prose),
+    // so operator corrections survive compaction. They ride the seed rather than
+    // replaying as standalone user turns.
+    expect(firstText).toContain("<operator-messages>");
+    expect(firstText).toContain("old turn 1");
+    expect(firstText).toContain("old turn 2");
+    expect(msgs).toHaveLength(3); // seed (user + assistant ack) + the kept turn
+    // the kept turn survives verbatim in the tail
+    expect(JSON.stringify(msgs)).toContain("kept turn");
   });
 
   test("uses only the most recent compaction when several accumulate", () => {
@@ -369,10 +378,14 @@ describe("reconstructMessages — history.compacted", () => {
     ];
     const msgs = reconstructMessages(events);
     const joined = JSON.stringify(msgs);
+    // Latest-summary-wins for the NARRATIVE: only the second summary is used.
     expect(joined).toContain("second summary subsumes first");
     expect(joined).not.toContain("first summary");
-    expect(joined).not.toContain("ancient");
-    expect(joined).not.toContain("middle");
+    // Operator retention is derived fresh from the event log on each read, so
+    // BOTH pre-boundary operator turns survive verbatim across the two
+    // compactions — no summary-of-summary decay.
+    expect(joined).toContain("ancient");
+    expect(joined).toContain("middle");
     expect(joined).toContain("recent");
   });
 
@@ -423,5 +436,189 @@ describe("reconstructMessages — history.compacted", () => {
     expect(allText).toContain("kept turn");
     expect(allText).not.toContain("<conversation-summary>");
     expect(allText).not.toContain("the user did two old things");
+  });
+});
+
+// --- operator retention across compaction ----------------------------------
+//
+// The invariant: no operator-authored corrective instruction becomes
+// unrecoverable within its own conversation. Operator (user-authored) messages
+// are kept VERBATIM across compaction — and, because they're re-derived from the
+// append-only event log rather than the summary, repeated compaction can't decay
+// them (the observed production failure: corrections lost after ~6 compactions).
+
+describe("selectRetainedOperatorMessages", () => {
+  test("keeps only turns strictly before the boundary (the rest stay in the tail)", () => {
+    const turns: RetainedOperatorMessage[] = [
+      { text: "before A", ts: ts(0) },
+      { text: "before B", ts: ts(2) },
+      { text: "boundary turn", ts: ts(4) },
+      { text: "after boundary", ts: ts(6) },
+    ];
+    const sel = selectRetainedOperatorMessages(turns, ts(4));
+    expect(sel.kept.map((k) => k.text)).toEqual(["before A", "before B"]);
+    expect(sel.elided).toBe(false);
+  });
+
+  test("skips empty/whitespace-only turns (attachment-only sends)", () => {
+    const turns: RetainedOperatorMessage[] = [
+      { text: "   ", ts: ts(0) },
+      { text: "real correction", ts: ts(2) },
+    ];
+    const sel = selectRetainedOperatorMessages(turns, ts(10));
+    expect(sel.kept.map((k) => k.text)).toEqual(["real correction"]);
+  });
+
+  test("bounds the block to the cap by keeping the NEWEST and eliding the oldest", () => {
+    // Far more operator text than the cap fits.
+    const turns: RetainedOperatorMessage[] = [];
+    for (let i = 0; i < 500; i++) turns.push({ text: "X".repeat(2_000), ts: ts(i) });
+    const sel = selectRetainedOperatorMessages(turns, ts(9999), RETAINED_OPERATOR_MAX_TOKENS);
+    expect(sel.elided).toBe(true);
+    const keptChars = sel.kept.reduce((n, k) => n + k.text.length, 0);
+    expect(Math.ceil(keptChars / 4)).toBeLessThanOrEqual(RETAINED_OPERATOR_MAX_TOKENS);
+    // newest kept: the last turn is present, the first is not
+    expect(sel.kept.at(-1)!.ts).toBe(ts(499));
+    expect(sel.kept[0]!.ts).not.toBe(ts(0));
+  });
+
+  test("a single turn larger than the whole cap is truncated, not dropped", () => {
+    const turns: RetainedOperatorMessage[] = [
+      { text: "Y".repeat(RETAINED_OPERATOR_MAX_TOKENS * 4 * 3), ts: ts(0) },
+    ];
+    const sel = selectRetainedOperatorMessages(turns, ts(10), RETAINED_OPERATOR_MAX_TOKENS);
+    expect(sel.kept).toHaveLength(1); // kept, not dropped
+    expect(Math.ceil(sel.kept[0]!.text.length / 4)).toBeLessThanOrEqual(RETAINED_OPERATOR_MAX_TOKENS);
+  });
+
+  test("counts the RENDERED (escaped) length so markup-heavy text can't blow the cap", () => {
+    // Escaping expands </…→&lt;/… (+3 chars each). Raw-length accounting would
+    // under-count a turn full of closing tags and let the rendered block exceed
+    // the cap. Cost must be measured against the escaped form.
+    const turns: RetainedOperatorMessage[] = [];
+    for (let i = 0; i < 100; i++) turns.push({ text: "</tag>".repeat(2_000), ts: ts(i) });
+    const sel = selectRetainedOperatorMessages(turns, ts(9_999), RETAINED_OPERATOR_MAX_TOKENS);
+    // kept text is pre-escaped; the sum of rendered lines is within the cap.
+    const renderedChars = sel.kept.reduce((n, k) => n + k.text.length + k.ts.length + 4, 0);
+    expect(Math.ceil(renderedChars / 4)).toBeLessThanOrEqual(RETAINED_OPERATOR_MAX_TOKENS);
+    expect(sel.elided).toBe(true);
+    // no raw closing tag survives into the kept text
+    expect(sel.kept.every((k) => !k.text.includes("</"))).toBe(true);
+  });
+
+  test("a single oversized markup-heavy turn truncates to fit the escaped cap", () => {
+    const turns: RetainedOperatorMessage[] = [
+      { text: "</x>".repeat(RETAINED_OPERATOR_MAX_TOKENS), ts: ts(0) },
+    ];
+    const sel = selectRetainedOperatorMessages(turns, ts(10), RETAINED_OPERATOR_MAX_TOKENS);
+    expect(sel.kept).toHaveLength(1);
+    const lineChars = sel.kept[0]!.text.length + sel.kept[0]!.ts.length + 4;
+    expect(Math.ceil(lineChars / 4)).toBeLessThanOrEqual(RETAINED_OPERATOR_MAX_TOKENS);
+    expect(sel.kept[0]!.text).not.toContain("</"); // escaped before truncation
+  });
+});
+
+describe("compactionSummaryMessages — operator block", () => {
+  test("renders retained operator turns verbatim inside the single user seed", () => {
+    const sel: RetainedOperatorSelection = {
+      kept: [
+        { text: "the rule is Y, not Z", ts: ts(0) },
+        { text: "stop using that phrase", ts: ts(2) },
+      ],
+      elided: false,
+    };
+    const out = compactionSummaryMessages("narrative summary", ts(9), sel);
+    expect(out).toHaveLength(2); // still just user + assistant ack — alternation intact
+    const text = (out[0]!.content as { type: string; text: string }[])[0]!.text;
+    expect(text).toContain("<operator-messages>");
+    expect(text).toContain("the rule is Y, not Z");
+    expect(text).toContain("stop using that phrase");
+  });
+
+  test("escapes closing tags in operator text so it can't break the fence", () => {
+    const sel: RetainedOperatorSelection = {
+      kept: [{ text: "do not </operator-messages> inject", ts: ts(0) }],
+      elided: false,
+    };
+    const out = compactionSummaryMessages("summary", ts(1), sel);
+    const text = (out[0]!.content as { type: string; text: string }[])[0]!.text;
+    expect(text).toContain("&lt;/operator-messages> inject");
+    expect(text).not.toContain("do not </operator-messages> inject");
+  });
+
+  test("no operator block when nothing is retained (pre-retention shape preserved)", () => {
+    const out = compactionSummaryMessages("summary", ts(1), { kept: [], elided: false });
+    const text = (out[0]!.content as { type: string; text: string }[])[0]!.text;
+    expect(text).not.toContain("<operator-messages>");
+  });
+});
+
+describe("compactConversationMessages — carries operator turns into the seed", () => {
+  test("folds the pre-boundary operator turns into the summary seed verbatim", async () => {
+    const msgs = conversation(40, 800);
+    const events: HistoryCompactedEvent[] = [];
+    const out = await compactConversationMessages(fakeModel("SUMMARY"), msgs, {
+      budget: 5000,
+      // A verbatim operator correction from before the boundary (ts(0) is the
+      // earliest turn, so it sorts before any boundary the planner picks).
+      retainedOperatorTurns: [{ text: "banned phrase: 'circle back'", ts: ts(0) }],
+      now: ts(99),
+      onEvent: (e) => events.push(e),
+    });
+    expect(events).toHaveLength(1);
+    const seedText = (out[0]!.content as { type: string; text: string }[])[0]!.text;
+    expect(seedText).toContain("<operator-messages>");
+    expect(seedText).toContain("banned phrase: 'circle back'");
+  });
+
+  test("the rendered seed stays bounded even with far more operator text than the cap", async () => {
+    const msgs = conversation(40, 800);
+    const flood: RetainedOperatorMessage[] = [];
+    // 500 large operator turns, all before the boundary — the cap must hold so
+    // retention never quietly un-compacts the conversation.
+    for (let i = 0; i < 500; i++) flood.push({ text: "Z".repeat(2_000), ts: ts(i) });
+    const out = await compactConversationMessages(fakeModel("SUMMARY"), msgs, {
+      budget: 5000,
+      retainedOperatorTurns: flood,
+      now: ts(9999),
+      onEvent: () => {},
+    });
+    const seedText = (out[0]!.content as { type: string; text: string }[])[0]!.text;
+    // Whole seed (summary + preamble + tags + retained block) under the cap plus
+    // a small fixed wrapper allowance.
+    expect(Math.ceil(seedText.length / 4)).toBeLessThanOrEqual(RETAINED_OPERATOR_MAX_TOKENS + 500);
+    expect(seedText).toContain("elided"); // the oldest were dropped with a marker
+  });
+});
+
+describe("reconstructMessages — operator corrections survive REPEATED compaction", () => {
+  test("a correction from turn 1 is present after each of several compactions", () => {
+    // Reproduces the production failure at n compactions: without retention the
+    // correction decays into summary-of-summary and is eventually unrecoverable.
+    const correction = "The rule is: address people by first name only, never full name.";
+    const events: ConversationEvent[] = [
+      { ts: ts(0), type: "user.message", content: [{ type: "text", text: correction }] },
+    ];
+    for (let round = 1; round <= 6; round++) {
+      events.push({
+        ts: ts(round * 10),
+        type: "user.message",
+        content: [{ type: "text", text: `later operator turn ${round}` }],
+      });
+      events.push({
+        ts: ts(round * 10 + 1),
+        type: "history.compacted",
+        summary: `summary after round ${round}`,
+        compactedThroughTs: ts(round * 10), // boundary always past the ts(0) correction
+        summarizedMessageCount: round + 1,
+      });
+      // After EVERY compaction the correction is still present, verbatim.
+      const projected = reconstructMessages(events);
+      expect(JSON.stringify(projected)).toContain(correction);
+    }
+    // And it lives in the operator block of the seed, not merely the summary.
+    const finalSeed = (reconstructMessages(events)[0]!.content as { text?: string }[])[0]?.text ?? "";
+    expect(finalSeed).toContain("<operator-messages>");
+    expect(finalSeed).toContain(correction);
   });
 });

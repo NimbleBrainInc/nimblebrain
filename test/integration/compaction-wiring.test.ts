@@ -117,8 +117,9 @@ describe("history compaction — wired path", () => {
   test(
     "enabling features.compaction drives a chat to compact, persist, and split projections",
     async () => {
-      // Turn 1 carries a unique marker so we can prove it later gets summarized
-      // away from the model view but survives in the verbatim view.
+      // Turn 1 carries a unique marker. It's OPERATOR (user-authored) text, so
+      // after compaction it must survive VERBATIM in the model view (retained in
+      // the summary seed's operator block) — corrections can't be summarized away.
       const convId = await sendTurn(`First question. ${OLDEST_NEEDLE}`);
 
       // Drive turns until compaction fires (it persists a history.compacted
@@ -152,13 +153,19 @@ describe("history compaction — wired path", () => {
       expect(metricsBody).toMatch(/nb_llm_tokens_total\{[^}]*source="compaction"[^}]*\}\s+[1-9]/);
 
       // (b) The model-facing projection is compacted: it carries the summary
-      //     seed and NOT the oldest turn's text.
+      //     seed. And it RETAINS the oldest operator turn verbatim in the
+      //     operator block — proving the end-to-end retention path (readEvents →
+      //     extractOperatorTurns → seed) fires through the real runtime, so an
+      //     operator correction survives compaction rather than decaying into the
+      //     summary.
       const modelView = JSON.stringify(reconstructMessages(events));
       expect(modelView).toContain("<conversation-summary>");
       expect(modelView).toContain(SUMMARY_NEEDLE);
-      expect(modelView).not.toContain(OLDEST_NEEDLE);
+      expect(modelView).toContain("<operator-messages>");
+      expect(modelView).toContain(OLDEST_NEEDLE);
 
-      // (c) The verbatim projection (what fork/UI read) still holds every turn.
+      // (c) The verbatim projection (what fork/UI read) still holds every turn
+      //     and carries no summary seed.
       const verbatimView = JSON.stringify(reconstructMessages(events, { ignoreCompaction: true }));
       expect(verbatimView).toContain(OLDEST_NEEDLE);
       expect(verbatimView).not.toContain("<conversation-summary>");

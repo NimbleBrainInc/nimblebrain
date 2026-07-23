@@ -22,7 +22,8 @@ import { isToolVisibleToRole, type ResolvedFeatures, resolveFeatures } from "../
 import { deriveOverridePath } from "../config/overrides.ts";
 import { createPrivilegeHook, NoopConfirmationGate } from "../config/privilege.ts";
 import { generateTitle } from "../conversation/auto-title.ts";
-import { compactConversationMessages } from "../conversation/compaction.ts";
+import { compactConversationMessages, planCompaction } from "../conversation/compaction.ts";
+import { extractOperatorTurns } from "../conversation/event-reconstructor.ts";
 import { EventSourcedConversationStore } from "../conversation/event-sourced-store.ts";
 import { type ConversationLocation, ConversationLocator } from "../conversation/locator.ts";
 import { workspaceConversationsDir } from "../conversation/paths.ts";
@@ -30,7 +31,6 @@ import type {
   Conversation,
   ConversationAccessContext,
   ConversationListResult,
-  ConversationStore,
   CreateConversationOptions,
   ListOptions,
   StoredMessage,
@@ -142,7 +142,7 @@ import {
   runWithRequestContext,
 } from "./request-context.ts";
 import { type BufferedRunEvent, RunBus } from "./run-bus.ts";
-import { buildSkillsLoadedPayload } from "./skills-loaded-payload.ts";
+import { buildSkillsLoadedPayload, collectLoadedSkills } from "./skills-loaded-payload.ts";
 import type {
   ChatRequest,
   ChatResult,
@@ -1222,7 +1222,10 @@ export class Runtime {
       partitionSkillsByRole(conversationPool);
     const requestMatcher = new SkillMatcher();
     requestMatcher.load(poolCapability);
-    const skill = requestMatcher.match(request.message);
+    // The trigger match drives both prompt composition (`skill`, the matched
+    // Skill) and load telemetry (`skillMatch`, which also carries the phrase).
+    const skillMatch = requestMatcher.match(request.message);
+    const skill = skillMatch?.skill ?? null;
 
     // The workspace BRIEFING (apps + workspace overlay + "## Workspace" block
     // + workspace persona) reflects the conversation's own workspace
@@ -1459,8 +1462,16 @@ export class Runtime {
     // Build pre-emit run telemetry tied to the engine's runId. The engine fires
     // these immediately after `run.start` and before any LLM call so the conv
     // log records what the prompt looked like for this turn — even if the LLM
-    // call fails or the process is killed.
-    const skillsLoaded = buildSkillsLoadedPayload(selectedLayer3);
+    // call fails or the process is killed. Reports every loading mechanism, not
+    // just tool-affinity: the trigger match and the always-on context skills
+    // (persona + org/workspace/user + bundle always-on; vendored core excluded).
+    const skillsLoaded = buildSkillsLoadedPayload(
+      collectLoadedSkills({
+        toolAffinity: selectedLayer3,
+        trigger: skillMatch,
+        alwaysOn: requestContextSkills,
+      }),
+    );
     const contextAssembled = buildContextAssembledPayload({
       systemPrompt,
       activeTools: tools,
@@ -1838,7 +1849,15 @@ export class Runtime {
       ),
     };
 
-    const skillsLoaded = buildSkillsLoadedPayload(selectedLayer3);
+    // Task mode matches no trigger (no prompt-driven match), so telemetry
+    // reports tool-affinity + the always-on context skills (vendored excluded).
+    const skillsLoaded = buildSkillsLoadedPayload(
+      collectLoadedSkills({
+        toolAffinity: selectedLayer3,
+        trigger: null,
+        alwaysOn: requestContextSkills,
+      }),
+    );
     const contextAssembled = buildContextAssembledPayload({
       systemPrompt,
       activeTools: tools,
@@ -3565,17 +3584,29 @@ export class Runtime {
    * failures and returns the full history, never throwing into the chat path.
    */
   private async maybeCompactHistory(
-    store: ConversationStore,
+    store: EventSourcedConversationStore,
     conversationId: string,
     history: StoredMessage[],
     budget: number,
   ): Promise<StoredMessage[] | null> {
-    if (!this.config.features?.compaction || !store.appendEvent) return null;
+    if (!this.config.features?.compaction) return null;
+    // Cheap pure pre-check: skip the extra event read AND the summarizer call on
+    // the common below-threshold turn. `planCompaction` is re-run inside
+    // `compactConversationMessages` with the same inputs, so the decision agrees.
+    if (!planCompaction(history, { budget }).shouldCompact) return null;
     const appendEvent = store.appendEvent.bind(store);
     const fastSlot = this.getModelSlot("fast");
     const model = this.resolveModelFn(fastSlot);
+    // Operator (user-authored) turns, verbatim from the append-only event log —
+    // NOT `history` (the compacted projection, which has already folded older
+    // ones into the summary). Re-deriving from the immutable log on every
+    // compaction is what makes operator corrections immune to summary-of-summary
+    // decay across repeated compaction. Read only on a real compaction (gated
+    // above), so no-op turns pay nothing.
+    const retainedOperatorTurns = extractOperatorTurns(await store.readEvents(conversationId));
     const compacted = await compactConversationMessages(model, history, {
       budget,
+      retainedOperatorTurns,
       // Bound the summary call to the summarizer's own context — the fold is
       // sized by the main model's (larger) window, so without this it overflows
       // a smaller `fast` model and compaction silently no-ops.
@@ -4693,6 +4724,11 @@ export function buildContextAssembledPayload(input: {
   // and the chars/4 heuristic over-counted by ~3 tokens per image byte. Two
   // ~700KB PNGs landed at 2.8M+ phantom tokens for a 51K-token call.
   const historyTokens = input.messages.reduce((sum, m) => sum + estimateMessageTokens(m), 0);
+  // NOTE: `skills` is an ANNOTATION of what the composed skills cost, NOT a
+  // disjoint bucket — those skill bodies are already inside `system_prompt`, so
+  // `totalTokens` intentionally double-counts them (unchanged from Phase 1, now
+  // spanning always-on/trigger too since the payload widened). Don't "fix" the
+  // total by subtracting; the disjoint budget is system_prompt + tools + history.
   const sources: ContextAssembledSource[] = [
     { kind: "system_prompt", tokens: promptTokens },
     { kind: "tool_descriptions", count: input.activeTools.length, tokens: toolDescTokens },
@@ -4726,6 +4762,9 @@ export function makeIdentitySkill(body: string): Skill {
       loadingStrategy: "always",
       priority: 1,
       status: "active",
+      // It's the workspace's identity field, so the ledger labels it
+      // `workspace`, not the `?? "org"` fallback in the payload builder.
+      scope: "workspace",
     },
     body,
     sourcePath: "",
