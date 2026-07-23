@@ -39,6 +39,7 @@ export const PlatformToolCatalog = {
   },
   compose: {
     effective_context: { input: Compose.ComposeEffectiveContextInput },
+    assembled_context: { input: Compose.ComposeAssembledContextInput },
   },
   automations: {
     create: { input: Automations.AutomationsCreateInput },

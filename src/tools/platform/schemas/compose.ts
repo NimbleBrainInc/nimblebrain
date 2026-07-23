@@ -25,3 +25,112 @@ export const ComposeEffectiveContextInput = Type.Object({
   ),
 });
 export type ComposeEffectiveContextInput = Static<typeof ComposeEffectiveContextInput>;
+
+export const ComposeAssembledContextInput = Type.Object({
+  conversation_id: Type.Optional(
+    Type.String({
+      description:
+        "Conversation id whose assembled context is being inspected. " +
+        "Optional inside a chat — defaults to the current conversation.",
+    }),
+  ),
+  run_id: Type.Optional(
+    Type.String({
+      description:
+        "Specific run within the conversation. Default: the most recent run " +
+        "that recorded assembled-context telemetry.",
+    }),
+  ),
+});
+export type ComposeAssembledContextInput = Static<typeof ComposeAssembledContextInput>;
+
+// ── Output shapes (mirrored to web via codegen) ────────────────────────────
+
+/**
+ * One row of a run's assembled context, as recorded in the
+ * `context.assembled` event. `kind` is a free-form source discriminator
+ * (`system_prompt`, `tool_descriptions`, `skills`, `history`); the other
+ * fields are populated per kind (`count` for tools/skills, `turns` /
+ * `compacted` for history).
+ */
+export interface AssembledContextSource {
+  kind: string;
+  tokens: number;
+  count?: number;
+  turns?: number;
+  compacted?: boolean;
+}
+
+/**
+ * One layer-3 skill that loaded for the run, projected from the
+ * `skills.loaded` event with provenance for why it loaded.
+ */
+export interface AssembledContextSkill {
+  id: string;
+  scope: "org" | "workspace" | "user" | "bundle";
+  tokens: number;
+  loadedBy: "always" | "tool_affinity";
+  reason: string;
+}
+
+/**
+ * `compose__assembled_context` response — the recorded context digest for
+ * a conversation's run (the most recent by default). A pure read of the
+ * run's already-emitted `context.assembled` + `skills.loaded` events; no
+ * recomposition. `runId` / `ts` are `null` when the conversation exists but
+ * no run has recorded assembled-context telemetry yet.
+ */
+export interface ComposeAssembledContextOutput {
+  conversationId: string;
+  runId: string | null;
+  ts: string | null;
+  sources: AssembledContextSource[];
+  excluded: AssembledContextSource[];
+  totalTokens: number;
+  skills: AssembledContextSkill[];
+  /** Present only when the run recorded them (not emitted on current runs). */
+  modelMaxContext?: number;
+  headroomTokens?: number;
+}
+
+/**
+ * One entry within a traced layer that aggregates operator-authored items
+ * (apps, layer-3 skills). Mirrors the runtime `TracedSubItem` minus the
+ * free-form `metadata` bag — the web renders id/source/bundle only.
+ */
+export interface TracedSubItemView {
+  kind: "app" | "layer3_skill";
+  id: string;
+  source: string;
+  bundle?: string;
+}
+
+/**
+ * One section of the composed system prompt with provenance — the web-
+ * facing projection of the runtime `TracedLayer`. Deliberately OMITS the
+ * layer `text`: the full prompt is large and the inspector renders the
+ * structural breakdown (kind, origin, tokens), not the prompt body.
+ */
+export interface TracedLayerView {
+  kind: string;
+  segment: "stable" | "volatile";
+  id: string;
+  source: string;
+  tokens: number;
+  bundle?: string;
+  subItems?: TracedSubItemView[];
+}
+
+/**
+ * `compose__effective_context` response as consumed by the web inspector.
+ * The runtime tool also returns the full composed `text`; that field is
+ * intentionally absent from this wire-facing type so the client renders
+ * only the per-layer provenance.
+ */
+export interface ComposeEffectiveContextOutput {
+  mode: "live" | "historical";
+  conversationId: string;
+  totalTokens: number;
+  layers: TracedLayerView[];
+  warnings: string[];
+}
