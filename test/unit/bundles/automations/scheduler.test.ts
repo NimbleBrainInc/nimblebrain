@@ -1,4 +1,4 @@
-import { describe, expect, it, beforeEach, afterEach, mock } from "bun:test";
+import { describe, expect, it, beforeEach, afterEach, mock, spyOn } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
@@ -1142,28 +1142,37 @@ describe("Scheduler — backoff respects natural interval", () => {
 	});
 
 	it("cron automation with 1 error delays to next cron occurrence, not 30s", async () => {
-		// Daily at 8am HST — next occurrence is hours away, far longer than 30s backoff
-		const auto = makeAutomation({
-			schedule: { type: "cron", expression: "0 8 * * *", timezone: "Pacific/Honolulu" },
-			nextRunAt: new Date(Date.now() - 1000).toISOString(),
-		});
-		const defs = new Map<string, Automation>();
-		defs.set(auto.id, auto);
-		seedDefs(tmpDir, defs);
+		// Pin the clock to noon HST so the next 8am (daily) is ~20h out —
+		// deterministically far beyond the 30s backoff. With the real clock this
+		// test flaked whenever CI ran in the 07:59 HST minute: there the natural
+		// next 8am is <60s away, so `max(backoff, natural)` is <60s and the
+		// fixed-threshold assertion below fails even though backoff didn't win.
+		const FIXED_NOW = Date.parse("2026-07-15T22:00:00.000Z"); // 12:00 Pacific/Honolulu
+		const nowSpy = spyOn(Date, "now").mockReturnValue(FIXED_NOW);
+		try {
+			const auto = makeAutomation({
+				schedule: { type: "cron", expression: "0 8 * * *", timezone: "Pacific/Honolulu" },
+				nextRunAt: new Date(Date.now() - 1000).toISOString(),
+			});
+			const defs = new Map<string, Automation>();
+			defs.set(auto.id, auto);
+			seedDefs(tmpDir, defs);
 
-		const failRun = makeFailureRun(auto.id);
-		const executor = createMockExecutor(failRun);
-		const scheduler = new Scheduler(executor, { workDir: tmpDir, defaultTimezone: "Pacific/Honolulu" });
-		scheduler.start();
-		await scheduler.onTimer();
+			const failRun = makeFailureRun(auto.id);
+			const executor = createMockExecutor(failRun);
+			const scheduler = new Scheduler(executor, { workDir: tmpDir, defaultTimezone: "Pacific/Honolulu" });
+			scheduler.start();
+			await scheduler.onTimer();
 
-		const updated = defOf(scheduler, auto.id)!;
-		expect(updated.consecutiveErrors).toBe(1);
-		const nextRunMs = new Date(updated.nextRunAt!).getTime();
-		// Next 8am is at least 1 hour away (unless test runs exactly at 7:59am HST)
-		// Backoff of 30s should NOT win — natural cron time should
-		expect(nextRunMs - Date.now()).toBeGreaterThan(60_000); // at least 1 min, proving backoff didn't win
-		scheduler.stop();
+			const updated = defOf(scheduler, auto.id)!;
+			expect(updated.consecutiveErrors).toBe(1);
+			const nextRunMs = new Date(updated.nextRunAt!).getTime();
+			// Backoff (30s) must NOT win — the natural next cron time (~20h) does.
+			expect(nextRunMs - Date.now()).toBeGreaterThan(60_000);
+			scheduler.stop();
+		} finally {
+			nowSpy.mockRestore();
+		}
 	});
 });
 
