@@ -142,7 +142,7 @@ import {
   runWithRequestContext,
 } from "./request-context.ts";
 import { type BufferedRunEvent, RunBus } from "./run-bus.ts";
-import { buildSkillsLoadedPayload } from "./skills-loaded-payload.ts";
+import { buildSkillsLoadedPayload, collectLoadedSkills } from "./skills-loaded-payload.ts";
 import type {
   ChatRequest,
   ChatResult,
@@ -1222,7 +1222,10 @@ export class Runtime {
       partitionSkillsByRole(conversationPool);
     const requestMatcher = new SkillMatcher();
     requestMatcher.load(poolCapability);
-    const skill = requestMatcher.match(request.message);
+    // The trigger match drives both prompt composition (`skill`, the matched
+    // Skill) and load telemetry (`skillMatch`, which also carries the phrase).
+    const skillMatch = requestMatcher.match(request.message);
+    const skill = skillMatch?.skill ?? null;
 
     // The workspace BRIEFING (apps + workspace overlay + "## Workspace" block
     // + workspace persona) reflects the conversation's own workspace
@@ -1459,8 +1462,16 @@ export class Runtime {
     // Build pre-emit run telemetry tied to the engine's runId. The engine fires
     // these immediately after `run.start` and before any LLM call so the conv
     // log records what the prompt looked like for this turn — even if the LLM
-    // call fails or the process is killed.
-    const skillsLoaded = buildSkillsLoadedPayload(selectedLayer3);
+    // call fails or the process is killed. Reports every loading mechanism, not
+    // just tool-affinity: the trigger match and the always-on context skills
+    // (persona + org/workspace/user + bundle always-on; vendored core excluded).
+    const skillsLoaded = buildSkillsLoadedPayload(
+      collectLoadedSkills({
+        toolAffinity: selectedLayer3,
+        trigger: skillMatch,
+        alwaysOn: requestContextSkills,
+      }),
+    );
     const contextAssembled = buildContextAssembledPayload({
       systemPrompt,
       activeTools: tools,
@@ -1838,7 +1849,15 @@ export class Runtime {
       ),
     };
 
-    const skillsLoaded = buildSkillsLoadedPayload(selectedLayer3);
+    // Task mode matches no trigger (no prompt-driven match), so telemetry
+    // reports tool-affinity + the always-on context skills (vendored excluded).
+    const skillsLoaded = buildSkillsLoadedPayload(
+      collectLoadedSkills({
+        toolAffinity: selectedLayer3,
+        trigger: null,
+        alwaysOn: requestContextSkills,
+      }),
+    );
     const contextAssembled = buildContextAssembledPayload({
       systemPrompt,
       activeTools: tools,

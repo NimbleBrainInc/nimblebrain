@@ -385,13 +385,18 @@ export interface ContextAssembledPayload {
  */
 export interface SkillsLoadedEntry {
   id: string;
-  layer: 3;
+  /**
+   * The loading mechanism's layer: `0` = always-on context, `3` = tool-affinity
+   * (the conditional channel), `4` = trigger match. Historical events only ever
+   * carried `3`; the read path treats this additively so they still parse.
+   */
+  layer: 0 | 3 | 4;
   scope: "org" | "workspace" | "user" | "bundle";
   version: string;
   tokens: number;
   /** SHA-256 hex of the skill body composed into the prompt. */
   contentHash: string;
-  loadedBy: "always" | "tool_affinity";
+  loadedBy: "always" | "tool_affinity" | "trigger";
   reason: string;
 }
 

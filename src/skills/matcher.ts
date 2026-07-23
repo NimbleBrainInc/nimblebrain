@@ -15,6 +15,13 @@ import type { Skill } from "./types.ts";
  * is injected into Layer 4 (`<skill-instructions>`) without a further status
  * check, so this is the only place the matched-skill channel honors the toggle.
  */
+/** A trigger hit: the matched skill plus the trigger phrase that fired it. */
+export interface SkillMatch {
+  skill: Skill;
+  /** The trigger phrase (as authored) that matched — used in load telemetry. */
+  trigger: string;
+}
+
 export class SkillMatcher {
   private skills: Skill[] = [];
 
@@ -29,7 +36,7 @@ export class SkillMatcher {
     return [...this.skills];
   }
 
-  match(message: string): Skill | null {
+  match(message: string): SkillMatch | null {
     if (this.skills.length === 0) return null;
 
     const messageLower = message.toLowerCase();
@@ -39,7 +46,7 @@ export class SkillMatcher {
       const triggers = skill.manifest.triggers ?? [];
       for (const trigger of triggers) {
         if (messageLower.includes(trigger.toLowerCase())) {
-          return skill;
+          return { skill, trigger };
         }
       }
     }

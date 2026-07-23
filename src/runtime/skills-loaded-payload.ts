@@ -1,8 +1,75 @@
 import { createHash } from "node:crypto";
 import type { SkillsLoadedPayload } from "../engine/types.ts";
 import { readSkillMtime } from "../skills/loader.ts";
-import type { SelectedSkill } from "../skills/select.ts";
+import type { SkillMatch } from "../skills/matcher.ts";
+import type { LoadedBy, SelectedSkill } from "../skills/select.ts";
 import { approxTokens } from "../skills/tokens.ts";
+import type { Skill } from "../skills/types.ts";
+
+/** The mechanism's layer: 0 = always-on context, 3 = tool-affinity, 4 = trigger. */
+function layerForMechanism(loadedBy: LoadedBy): 0 | 3 | 4 {
+  switch (loadedBy) {
+    case "always":
+      return 0;
+    case "trigger":
+      return 4;
+    default:
+      return 3;
+  }
+}
+
+/** Stable identity for de-duplicating a skill across loading mechanisms. */
+function skillKey(skill: Skill): string {
+  return skill.sourcePath || `name:${skill.manifest.name}`;
+}
+
+/**
+ * Unify every loading mechanism for a turn into one selected set for
+ * `skills.loaded` telemetry, so the Context Ledger reports the full picture,
+ * not just tool-affinity:
+ *
+ *   - `toolAffinity` — the Layer-3 selection (`selectLayer3Skills`), verbatim.
+ *   - `trigger`      — the `SkillMatcher` hit, if any → reason
+ *     `trigger matched "<phrase>"`.
+ *   - `alwaysOn`     — the always-on context skills composed this turn (persona
+ *     override, org/workspace/user + bundle always-on skills) → reason
+ *     `always-on`. Platform-vendored core skills (soul, capabilities) are
+ *     EXCLUDED — they load every turn in every tenant, so surfacing them would
+ *     drown the ambient line and leak internals.
+ *
+ * De-duplicated by skill identity with tool-affinity taking precedence (the
+ * established channel), so a `dynamic` skill that both trigger- and
+ * affinity-matches is reported once. Pure — no FS access, no emission.
+ */
+export function collectLoadedSkills(input: {
+  toolAffinity: SelectedSkill[];
+  trigger?: SkillMatch | null;
+  alwaysOn: Skill[];
+}): SelectedSkill[] {
+  const out: SelectedSkill[] = [];
+  const seen = new Set<string>();
+  const push = (sel: SelectedSkill): void => {
+    const key = skillKey(sel.skill);
+    if (seen.has(key)) return;
+    seen.add(key);
+    out.push(sel);
+  };
+
+  for (const s of input.toolAffinity) push(s);
+  if (input.trigger) {
+    push({
+      skill: input.trigger.skill,
+      loadedBy: "trigger",
+      reason: `trigger matched "${input.trigger.trigger}"`,
+    });
+  }
+  for (const s of input.alwaysOn) {
+    if (s.manifest.provenance?.origin === "vendored") continue;
+    push({ skill: s, loadedBy: "always", reason: "always-on" });
+  }
+
+  return out;
+}
 
 /**
  * Build the `skills.loaded` payload from the Layer 3 selection result.
@@ -28,7 +95,7 @@ export function buildSkillsLoadedPayload(selected: SelectedSkill[]): SkillsLoade
     const sourcePath = s.skill.sourcePath || "";
     return {
       id: sourcePath || `skill-in-memory:${s.skill.manifest.name}`,
-      layer: 3 as const,
+      layer: layerForMechanism(s.loadedBy),
       scope: (s.skill.manifest.scope ?? "org") as "org" | "workspace" | "user" | "bundle",
       version: sourcePath ? readSkillMtime(sourcePath) : "",
       tokens,

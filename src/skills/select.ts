@@ -13,11 +13,18 @@ import { bareToolName } from "../tools/namespace.ts";
 import type { Skill } from "./types.ts";
 
 /**
- * How a skill ended up in the Layer-3 selected set. Layer 3 is the conditional
- * channel for `dynamic` skills; today the only mechanism is tool-affinity.
- * (`always` skills compose into the context channel, not here.)
+ * How a skill ended up composed into a turn's prompt — the loading mechanism,
+ * for `skills.loaded` telemetry:
+ *   - `always`        — always-on context skill (composes every turn by role)
+ *   - `tool_affinity` — `dynamic` skill whose tool-affinity glob matched an
+ *     active tool (Layer 3, the conditional channel this module selects)
+ *   - `trigger`       — `dynamic` skill whose trigger phrase matched the message
+ *     (Layer 4, the `SkillMatcher`)
+ *
+ * `selectLayer3Skills` only ever produces `tool_affinity`; the other two are
+ * stamped at the telemetry-collection site (`collectLoadedSkills`).
  */
-export type LoadedBy = "tool_affinity";
+export type LoadedBy = "always" | "tool_affinity" | "trigger";
 
 export interface SelectedSkill {
   skill: Skill;

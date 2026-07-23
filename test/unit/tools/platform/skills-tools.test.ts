@@ -767,6 +767,93 @@ describe("skills__active_for", () => {
     expect(active[0]!.reason).toContain("applies_to_tools matched");
   });
 
+  test("projects the new mechanism arms — always (layer 0) and trigger (layer 4)", async () => {
+    const conv = await runtime.store().create({ ownerId: "user_test" });
+    runtime.store().setActiveConversation(conv.id);
+    runtime.store().emit({
+      type: "skills.loaded",
+      data: {
+        runId: "run_mech",
+        skills: [
+          {
+            id: "/skills/persona.md",
+            layer: 0,
+            scope: "workspace",
+            version: "",
+            tokens: 40,
+            contentHash: TEST_HASH,
+            loadedBy: "always",
+            reason: "always-on",
+          },
+          {
+            id: "/skills/deploy.md",
+            layer: 4,
+            scope: "user",
+            version: "",
+            tokens: 60,
+            contentHash: TEST_HASH,
+            loadedBy: "trigger",
+            reason: 'trigger matched "deploy"',
+          },
+        ],
+        totalTokens: 100,
+      },
+    });
+    const src = await buildSource();
+    const client = src.getClient()!;
+    const result = await client.callTool({
+      name: "active_for",
+      arguments: { conversation_id: conv.id },
+    });
+    expect(result.isError).toBeFalsy();
+    const active = (result as { structuredContent?: { active?: unknown[] } }).structuredContent
+      ?.active as Array<{ layer: number; loadedBy: string; reason: string }>;
+    expect(active.map((a) => [a.loadedBy, a.layer])).toEqual([
+      ["always", 0],
+      ["trigger", 4],
+    ]);
+    expect(active[1]!.reason).toBe('trigger matched "deploy"');
+  });
+
+  test("an old-shape skills.loaded event (no layer field) still projects — defaults layer 3", async () => {
+    const conv = await runtime.store().create({ ownerId: "user_test" });
+    runtime.store().setActiveConversation(conv.id);
+    // Historical event persisted before the mechanism-layer widening: a
+    // tool-affinity entry with NO `layer` field at all. The read path must
+    // tolerate it (default to 3), not drop or error the projection.
+    runtime.store().emit({
+      type: "skills.loaded",
+      data: {
+        runId: "run_legacy",
+        skills: [
+          {
+            id: "/skills/legacy.md",
+            scope: "org",
+            version: "",
+            tokens: 70,
+            contentHash: TEST_HASH,
+            loadedBy: "tool_affinity",
+            reason: "tool-affinity matched foo__*",
+          },
+        ],
+        totalTokens: 70,
+      },
+    });
+    const src = await buildSource();
+    const client = src.getClient()!;
+    const result = await client.callTool({
+      name: "active_for",
+      arguments: { conversation_id: conv.id },
+    });
+    expect(result.isError).toBeFalsy();
+    const active = (result as { structuredContent?: { active?: unknown[] } }).structuredContent
+      ?.active as Array<{ id: string; layer: number; loadedBy: string }>;
+    expect(active).toHaveLength(1);
+    expect(active[0]!.id).toBe("/skills/legacy.md");
+    expect(active[0]!.layer).toBe(3);
+    expect(active[0]!.loadedBy).toBe("tool_affinity");
+  });
+
   test("returns empty array (not error) when no skills.loaded fired yet", async () => {
     const conv = await runtime.store().create({ ownerId: "user_test" });
     const src = await buildSource();

@@ -2,11 +2,38 @@ import { describe, expect, test } from "bun:test";
 import { createHash } from "node:crypto";
 import {
   buildSkillsLoadedPayload,
+  collectLoadedSkills,
   hashSkillBody,
 } from "../../../src/runtime/skills-loaded-payload.ts";
-import type { SelectedSkill } from "../../../src/skills/select.ts";
+import type { Skill } from "../../../src/skills/types.ts";
+import type { LoadedBy, SelectedSkill } from "../../../src/skills/select.ts";
 
-function selected(overrides: Partial<SelectedSkill["skill"]>, loadedBy: "always" | "tool_affinity" = "always"): SelectedSkill {
+function makeSkill(
+  name: string,
+  opts: {
+    strategy?: "always" | "dynamic";
+    scope?: "org" | "workspace" | "user" | "bundle";
+    sourcePath?: string;
+    body?: string;
+    vendored?: boolean;
+  } = {},
+): Skill {
+  return {
+    manifest: {
+      name,
+      description: `${name} desc`,
+      loadingStrategy: opts.strategy ?? "always",
+      priority: 50,
+      status: "active",
+      ...(opts.scope ? { scope: opts.scope } : {}),
+      ...(opts.vendored ? { provenance: { origin: "vendored" } } : {}),
+    },
+    body: opts.body ?? `body of ${name}`,
+    sourcePath: opts.sourcePath ?? "",
+  };
+}
+
+function selected(overrides: Partial<SelectedSkill["skill"]>, loadedBy: LoadedBy = "always"): SelectedSkill {
   return {
     skill: {
       manifest: {
@@ -108,5 +135,79 @@ describe("buildSkillsLoadedPayload", () => {
     expect(payload.skills[0]!.reason).toContain("loading_strategy");
     expect(payload.skills[1]!.loadedBy).toBe("tool_affinity");
     expect(payload.skills[1]!.reason).toContain("applies_to_tools");
+  });
+
+  test("derives the mechanism layer from loadedBy (always=0, tool_affinity=3, trigger=4)", () => {
+    const payload = buildSkillsLoadedPayload([
+      selected({ body: "a" }, "always"),
+      selected({ body: "b" }, "tool_affinity"),
+      { skill: makeSkill("t", { strategy: "dynamic" }), loadedBy: "trigger", reason: 'trigger matched "x"' },
+    ]);
+    expect(payload.skills.map((s) => s.layer)).toEqual([0, 3, 4]);
+  });
+});
+
+describe("collectLoadedSkills", () => {
+  test("reports tool-affinity, trigger, and always-on with the right loadedBy + reason", () => {
+    const out = collectLoadedSkills({
+      toolAffinity: [
+        {
+          skill: makeSkill("mpak-guide", { strategy: "dynamic", sourcePath: "/s/mpak.md" }),
+          loadedBy: "tool_affinity",
+          reason: "tool-affinity matched mpak__*",
+        },
+      ],
+      trigger: { skill: makeSkill("deploy-guide", { strategy: "dynamic", sourcePath: "/s/deploy.md" }), trigger: "deploy" },
+      alwaysOn: [makeSkill("house-style", { sourcePath: "/s/house.md" })],
+    });
+    expect(out.map((s) => [s.skill.manifest.name, s.loadedBy])).toEqual([
+      ["mpak-guide", "tool_affinity"],
+      ["deploy-guide", "trigger"],
+      ["house-style", "always"],
+    ]);
+    expect(out[1]!.reason).toBe('trigger matched "deploy"');
+    expect(out[2]!.reason).toBe("always-on");
+  });
+
+  test("excludes vendored platform-core always-on skills (soul/capabilities)", () => {
+    const out = collectLoadedSkills({
+      toolAffinity: [],
+      alwaysOn: [
+        makeSkill("soul", { vendored: true, sourcePath: "/core/soul.md" }),
+        makeSkill("house-style", { sourcePath: "/s/house.md" }),
+      ],
+    });
+    expect(out.map((s) => s.skill.manifest.name)).toEqual(["house-style"]);
+  });
+
+  test("keeps a non-vendored always-on skill with no sourcePath (workspace persona override)", () => {
+    const out = collectLoadedSkills({
+      toolAffinity: [],
+      alwaysOn: [makeSkill("identity-override", { sourcePath: "" })],
+    });
+    expect(out).toHaveLength(1);
+    expect(out[0]!.loadedBy).toBe("always");
+  });
+
+  test("dedupes a skill matched by both tool-affinity and trigger — tool-affinity wins", () => {
+    const dual = makeSkill("dual", { strategy: "dynamic", sourcePath: "/s/dual.md" });
+    const out = collectLoadedSkills({
+      toolAffinity: [{ skill: dual, loadedBy: "tool_affinity", reason: "tool-affinity matched x__*" }],
+      trigger: { skill: dual, trigger: "x" },
+      alwaysOn: [],
+    });
+    expect(out).toHaveLength(1);
+    expect(out[0]!.loadedBy).toBe("tool_affinity");
+  });
+
+  test("no trigger and no always-on collapses to just tool-affinity", () => {
+    const out = collectLoadedSkills({
+      toolAffinity: [
+        { skill: makeSkill("only", { strategy: "dynamic" }), loadedBy: "tool_affinity", reason: "r" },
+      ],
+      alwaysOn: [],
+    });
+    expect(out).toHaveLength(1);
+    expect(out[0]!.loadedBy).toBe("tool_affinity");
   });
 });

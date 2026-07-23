@@ -878,7 +878,9 @@ async function activeForConversation(
     if (ev?.type === "skills.loaded") {
       return (ev as SkillsLoadedEvent).skills.map((s) => ({
         id: s.id,
-        layer: 3 as const,
+        // Pass the recorded mechanism layer through (0/3/4). Historical events
+        // only ever carried 3; default to it so old logs still project.
+        layer: s.layer ?? (3 as const),
         scope: (s.scope ?? "org") as ActiveForEntry["scope"],
         tokens: s.tokens,
         loadedBy: s.loadedBy,
