@@ -108,6 +108,8 @@ For long-running conversations, NimbleBrain can compact older history to keep th
 
 When enabled, the runtime summarizes earlier turns once a conversation grows large, preserving the gist while freeing room for new context. With it off (the default), the full event history is replayed every turn.
 
+Your own messages are kept **verbatim** through compaction, not folded into the summary. Instructions and corrections you give ("use this format, not that one") are the highest-value part of a long conversation, so they survive every compaction — including repeated ones — for the life of the conversation. The summary compacts the assistant and tool activity around them. Retention is bounded, so it never undoes the compaction; on an unusually long steering session the oldest of your messages may be elided (a marker shows when this happens), keeping the most recent guidance intact. The full, un-summarized history is always available in the conversation export and fork.
+
 ## Storage configuration
 
 By default the CLI uses event-sourced JSONL storage under the work directory. You can point storage elsewhere in `nimblebrain.json`:

@@ -22,7 +22,8 @@ import { isToolVisibleToRole, type ResolvedFeatures, resolveFeatures } from "../
 import { deriveOverridePath } from "../config/overrides.ts";
 import { createPrivilegeHook, NoopConfirmationGate } from "../config/privilege.ts";
 import { generateTitle } from "../conversation/auto-title.ts";
-import { compactConversationMessages } from "../conversation/compaction.ts";
+import { compactConversationMessages, planCompaction } from "../conversation/compaction.ts";
+import { extractOperatorTurns } from "../conversation/event-reconstructor.ts";
 import { EventSourcedConversationStore } from "../conversation/event-sourced-store.ts";
 import { type ConversationLocation, ConversationLocator } from "../conversation/locator.ts";
 import { workspaceConversationsDir } from "../conversation/paths.ts";
@@ -30,7 +31,6 @@ import type {
   Conversation,
   ConversationAccessContext,
   ConversationListResult,
-  ConversationStore,
   CreateConversationOptions,
   ListOptions,
   StoredMessage,
@@ -3565,17 +3565,29 @@ export class Runtime {
    * failures and returns the full history, never throwing into the chat path.
    */
   private async maybeCompactHistory(
-    store: ConversationStore,
+    store: EventSourcedConversationStore,
     conversationId: string,
     history: StoredMessage[],
     budget: number,
   ): Promise<StoredMessage[] | null> {
-    if (!this.config.features?.compaction || !store.appendEvent) return null;
+    if (!this.config.features?.compaction) return null;
+    // Cheap pure pre-check: skip the extra event read AND the summarizer call on
+    // the common below-threshold turn. `planCompaction` is re-run inside
+    // `compactConversationMessages` with the same inputs, so the decision agrees.
+    if (!planCompaction(history, { budget }).shouldCompact) return null;
     const appendEvent = store.appendEvent.bind(store);
     const fastSlot = this.getModelSlot("fast");
     const model = this.resolveModelFn(fastSlot);
+    // Operator (user-authored) turns, verbatim from the append-only event log —
+    // NOT `history` (the compacted projection, which has already folded older
+    // ones into the summary). Re-deriving from the immutable log on every
+    // compaction is what makes operator corrections immune to summary-of-summary
+    // decay across repeated compaction. Read only on a real compaction (gated
+    // above), so no-op turns pay nothing.
+    const retainedOperatorTurns = extractOperatorTurns(await store.readEvents(conversationId));
     const compacted = await compactConversationMessages(model, history, {
       budget,
+      retainedOperatorTurns,
       // Bound the summary call to the summarizer's own context — the fold is
       // sized by the main model's (larger) window, so without this it overflows
       // a smaller `fast` model and compaction silently no-ops.
