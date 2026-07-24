@@ -406,16 +406,13 @@ async function postRevoke(
     // client_secret: `validateBundleUrl` vetted `endpoint`, but a 307/308
     // would re-POST the credential body to an unvetted `Location` (a
     // cross-origin/internal target). `manual` keeps the credential on the
-    // validated origin; the opaque 3xx below is reported as a non-success.
+    // validated origin — the redirect is surfaced as a non-2xx (RFC 7009
+    // servers respond directly, so a 3xx is non-conformant) and falls through
+    // to the failed-revoke return below, never chased.
     redirect: "manual",
   });
 
   if (res.ok) return true;
-  // A revocation endpoint that redirects is non-conformant (RFC 7009 servers
-  // respond directly); with `redirect: "manual"` the browser fetch surfaces
-  // it as an opaque response (status 0). Treat as a failed revoke rather than
-  // chase the redirect — the credential was never sent past the vetted origin.
-  if (res.type === "opaqueredirect" || res.status === 0) return false;
   // RFC 7009 § 2.2: "If the server is unable to locate the token using
   // the given hint, it MUST extend its search across all of its supported
   // token types." Some servers respond 400 invalid_token if the token's
@@ -1784,9 +1781,10 @@ export class WorkspaceOAuthProvider implements OAuthClientProvider {
         bundleOrigin,
         this.allowInsecureRemotes,
       );
-      // Try each AS in order. First one that advertises a string revocation_endpoint
-      // wins — including an empty string (a downstream `if (endpoint)` guard then
-      // skips the actual revoke), matching the original first-string-wins semantics.
+      // Try each AS in order. First one that advertises a usable
+      // revocation_endpoint (a well-formed URL that passes SSRF/scheme
+      // validation) wins. An AS whose endpoint is malformed, relative, or
+      // rejected yields undefined and we fall through to the next origin.
       for (const asOrigin of asOrigins) {
         const endpoint = await this.fetchRevocationEndpoint(fetcher, asOrigin);
         if (endpoint !== undefined) return endpoint;
