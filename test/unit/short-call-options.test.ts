@@ -4,18 +4,26 @@ import { listModels } from "../../src/model/catalog.ts";
 import { shortCallProviderOptions } from "../../src/model/short-call-options.ts";
 
 /**
- * Anthropic reasoning models that reject `output_config.effort` (Haiku 4.5 and
- * Sonnet 4.5 error on it; Opus 4.1 predates it). The mirror of `ACCEPTS_EFFORT`
- * in the source — between them every Anthropic reasoning model in the catalog
- * must be accounted for.
+ * Anthropic reasoning models that get no options — they run no thinking unless
+ * asked, so there is no budget-starvation failure to prevent, and sending
+ * `effort` would change the request without buying anything (Haiku 4.5 and
+ * Sonnet 4.5 would reject it outright; Opus 4.1 predates it). The mirror of
+ * `THINKS_BY_DEFAULT` in the source — between them every Anthropic reasoning
+ * model in the catalog must be accounted for.
  */
-const REJECTS_EFFORT: ReadonlySet<string> = new Set([
+const NO_OPTIONS: ReadonlySet<string> = new Set([
   "claude-haiku-4-5",
   "claude-haiku-4-5-20251001",
   "claude-opus-4-1",
   "claude-opus-4-1-20250805",
+  "claude-opus-4-5",
+  "claude-opus-4-5-20251101",
+  "claude-opus-4-6",
+  "claude-opus-4-7",
+  "claude-opus-4-8",
   "claude-sonnet-4-5",
   "claude-sonnet-4-5-20250929",
+  "claude-sonnet-4-6",
 ]);
 
 /**
@@ -159,6 +167,9 @@ describe("shortCallProviderOptions shape", () => {
     expect(shortCallProviderOptions("anthropic:claude-opus-5")).toEqual({
       anthropic: { effort: "low" },
     });
+    expect(shortCallProviderOptions("anthropic:claude-sonnet-5")).toEqual({
+      anthropic: { effort: "low" },
+    });
     expect(shortCallProviderOptions("google:gemini-2.5-pro")).toEqual({
       google: { thinkingConfig: { thinkingBudget: 0 } },
     });
@@ -167,14 +178,14 @@ describe("shortCallProviderOptions shape", () => {
     });
   });
 
-  it("returns empty for a null slot or a model outside the catalog", () => {
-    expect(shortCallProviderOptions(null)).toEqual({});
-    expect(shortCallProviderOptions("anthropic:not-a-real-model")).toEqual({});
+  it("returns nothing for a null slot or a model outside the catalog", () => {
+    expect(shortCallProviderOptions(null)).toBeUndefined();
+    expect(shortCallProviderOptions("anthropic:not-a-real-model")).toBeUndefined();
   });
 
-  it("returns empty for Anthropic reasoning models that reject effort", () => {
-    for (const id of REJECTS_EFFORT) {
-      expect(shortCallProviderOptions(`anthropic:${id}`)).toEqual({});
+  it("returns nothing for Anthropic reasoning models that don't think uninvited", () => {
+    for (const id of NO_OPTIONS) {
+      expect(shortCallProviderOptions(`anthropic:${id}`)).toBeUndefined();
     }
   });
 
@@ -186,14 +197,14 @@ describe("shortCallProviderOptions shape", () => {
     // safe, but it means an operator pointing `fast` at it loses the
     // protection without any signal.
     //
-    // To fix a failure: decide whether the model accepts `output_config.effort`,
-    // then add it to ACCEPTS_EFFORT in src/model/short-call-options.ts or to
-    // REJECTS_EFFORT below.
+    // To fix a failure: decide whether the model thinks when `thinking` is
+    // omitted, then add it to THINKS_BY_DEFAULT in
+    // src/model/short-call-options.ts or to NO_OPTIONS above.
     const unclassified = listModels("anthropic")
       .filter((m) => m.capabilities.reasoning)
-      .filter((m) => Object.keys(shortCallProviderOptions(`anthropic:${m.id}`)).length === 0)
+      .filter((m) => shortCallProviderOptions(`anthropic:${m.id}`) === undefined)
       .map((m) => m.id)
-      .filter((id) => !REJECTS_EFFORT.has(id));
+      .filter((id) => !NO_OPTIONS.has(id));
 
     expect(unclassified).toEqual([]);
   });

@@ -389,16 +389,27 @@ describe("briefing-generator", () => {
 			expect(seen?.outputTokens).toBe(50);
 		});
 
-		it("requests the shallowest thinking for reasoning-capable Claude models", async () => {
+		it("requests the shallowest thinking on Claude models that think uninvited", async () => {
 			// Not `thinking: {type: "disabled"}` — the provider drops that before
 			// serialization, so it never reached Anthropic. `output_config.effort`
 			// does; see short-call-options.test.ts, which pins both facts.
 			const llmResponse = JSON.stringify({ lede: "Ok.", sections: [] });
 			const { model, calls } = createTrackingModelV3(llmResponse);
-			const gen = makeGen(model, "anthropic:claude-sonnet-4-6");
+			const gen = makeGen(model, "anthropic:claude-opus-5");
 			await gen.generate(activeActivity());
 
 			expect(calls[0].providerOptions).toEqual({ anthropic: { effort: "low" } });
+		});
+
+		it("sends nothing on Claude models that only think when asked", async () => {
+			// Sonnet 4.6 runs no thinking unless told to, so there is no budget
+			// starvation to prevent and no reason to alter the request.
+			const llmResponse = JSON.stringify({ lede: "Ok.", sections: [] });
+			const { model, calls } = createTrackingModelV3(llmResponse);
+			const gen = makeGen(model, "anthropic:claude-sonnet-4-6");
+			await gen.generate(activeActivity());
+
+			expect(calls[0].providerOptions).toBeUndefined();
 		});
 
 		it("omits Anthropic thinking option for non-reasoning Claude models", async () => {

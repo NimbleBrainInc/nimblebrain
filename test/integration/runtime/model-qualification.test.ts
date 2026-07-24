@@ -118,4 +118,51 @@ describe("model qualification at runtime boundary", () => {
       await runtime.shutdown();
     }
   });
+
+  it("an unconfigured install keeps the fast slot off the default model", async () => {
+    // The `fast` slot backs short auxiliary calls (titling, compaction, the
+    // briefing) on budgets sized to their answer, so it does NOT inherit
+    // DEFAULT_MODEL the way the other slots do. Exercises the real resolver:
+    // the mirror in test/unit/runtime/chat-workspace-config.test.ts takes
+    // `defaultModel` as a required argument and so cannot reach this branch.
+    const workDir = join(testDir, "unconfigured-slots");
+    mkdirSync(workDir, { recursive: true });
+
+    const runtime = await Runtime.start({
+      model: { provider: "custom", adapter: createEchoModel() },
+      noDefaultBundles: true,
+      workDir,
+      // No `models` block and no `defaultModel` — a minimal install.
+    });
+    try {
+      const slots = runtime.getModelSlots();
+      expect(slots.default).toBe("anthropic:claude-opus-5");
+      expect(slots.reasoning).toBe("anthropic:claude-opus-5");
+      expect(slots.fast).toBe("anthropic:claude-haiku-4-5-20251001");
+    } finally {
+      await runtime.shutdown();
+    }
+  });
+
+  it("an explicit defaultModel still governs every unset slot", async () => {
+    // The scope limit on the change above: operators who set only
+    // `defaultModel` see no behavior change, `fast` included.
+    const workDir = join(testDir, "default-model-only");
+    mkdirSync(workDir, { recursive: true });
+
+    const runtime = await Runtime.start({
+      model: { provider: "custom", adapter: createEchoModel() },
+      noDefaultBundles: true,
+      workDir,
+      defaultModel: "claude-sonnet-4-6",
+    });
+    try {
+      const slots = runtime.getModelSlots();
+      expect(slots.default).toBe("anthropic:claude-sonnet-4-6");
+      expect(slots.fast).toBe("anthropic:claude-sonnet-4-6");
+      expect(slots.reasoning).toBe("anthropic:claude-sonnet-4-6");
+    } finally {
+      await runtime.shutdown();
+    }
+  });
 });

@@ -62,7 +62,7 @@ export async function generateTitle(
         },
       ],
       maxOutputTokens: TITLE_MAX_OUTPUT_TOKENS,
-      ...(Object.keys(providerOptions).length > 0 ? { providerOptions } : {}),
+      providerOptions,
       abortSignal: AbortSignal.timeout(TITLE_TIMEOUT_MS),
     });
     onUsage?.(tokenUsageFromV3(result.usage), Date.now() - startedAt);

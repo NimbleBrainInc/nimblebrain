@@ -266,7 +266,7 @@ export class BriefingGenerator {
       },
       maxOutputTokens: BRIEFING_MAX_OUTPUT_TOKENS,
       abortSignal: abort,
-      ...(Object.keys(providerOptions).length > 0 ? { providerOptions } : {}),
+      providerOptions,
     });
 
     this.onUsage?.(tokenUsageFromV3(response.usage), Date.now() - startedAt);

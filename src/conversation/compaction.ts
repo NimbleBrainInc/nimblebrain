@@ -505,7 +505,7 @@ export async function summarizeMessages(
       { role: "user", content: [{ type: "text", text: transcript }] },
     ],
     maxOutputTokens: opts.maxOutputTokens ?? SUMMARY_MAX_OUTPUT_TOKENS,
-    ...(Object.keys(providerOptions).length > 0 ? { providerOptions } : {}),
+    providerOptions,
     abortSignal: AbortSignal.timeout(SUMMARY_TIMEOUT_MS),
   });
   // Report usage before the empty-summary guard — the call was billed
