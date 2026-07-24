@@ -195,29 +195,60 @@ function BudgetBar({
   const max = Math.max(totalTokens, 1);
   return (
     <div className="shrink-0 px-6 py-4 border-b border-border" data-testid="context-budget">
-      <div className="flex gap-1.5 h-12">
+      {/* Equal-width cards: the token size drives the inner bar, never the card
+          width, so a small bucket (history) stays readable next to a large one
+          (tools) at any container width. */}
+      <div className="grid grid-cols-4 gap-2">
         {ordered.map((s) => {
           const selectable = DRILLABLE.has(s.kind);
           const isActive = active === s.kind;
+          const pct = Math.round((s.tokens / max) * 100);
+          const content = (
+            <>
+              <div className="flex items-baseline justify-between gap-1.5">
+                <span className="text-2xs font-medium text-foreground truncate">
+                  {SOURCE_LABEL[s.kind] ?? s.kind}
+                </span>
+                {sourceDetail(s) && (
+                  <span className="text-3xs text-muted-foreground tabular-nums shrink-0">
+                    {sourceDetail(s)}
+                  </span>
+                )}
+              </div>
+              <div className="mt-1 text-sm font-semibold text-foreground tabular-nums">
+                {formatTokenCount(s.tokens)}
+              </div>
+              <div className="mt-2 h-1.5 rounded-full bg-muted overflow-hidden">
+                <div
+                  className={`h-full rounded-full ${isActive ? "bg-warm" : "bg-muted-foreground/80"}`}
+                  style={{ width: `${pct}%` }}
+                />
+              </div>
+            </>
+          );
+          const base = "block rounded-md border px-3 py-2.5 text-left min-w-0";
+          if (!selectable) {
+            return (
+              <div
+                key={s.kind}
+                className={`${base} border-border bg-card`}
+                title="Not composed into the prompt — token cost only"
+              >
+                {content}
+              </div>
+            );
+          }
           return (
             <button
               key={s.kind}
               type="button"
-              disabled={!selectable}
               onClick={() => onSelect(isActive ? null : s.kind)}
-              style={{ flex: Math.max(s.tokens, max * 0.06) }}
-              className={`min-w-0 px-3 py-1.5 flex flex-col justify-between text-left rounded-md border transition-colors ${
-                selectable ? "cursor-pointer hover:bg-muted/80" : "cursor-default"
-              } ${isActive ? "bg-warm/10 border-warm" : "bg-muted border-transparent"}`}
-              title={selectable ? "Filter the layers below" : "Not composed into the prompt"}
+              title="Filter the layers below"
+              className={`${base} cursor-pointer transition-colors ${
+                isActive ? "border-warm bg-warm/10" : "border-border bg-card hover:bg-muted/60"
+              }`}
             >
-              <span className="text-2xs font-medium truncate text-foreground">
-                {SOURCE_LABEL[s.kind] ?? s.kind}
-              </span>
-              <span className="text-3xs text-muted-foreground tabular-nums truncate">
-                {formatTokenCount(s.tokens)}
-                {sourceDetail(s) && ` · ${sourceDetail(s)}`}
-              </span>
+              {content}
             </button>
           );
         })}
@@ -358,7 +389,7 @@ function LayerListPane({
               </div>
               <span className="block h-1 rounded-full bg-muted overflow-hidden">
                 <span
-                  className="block h-full rounded-full bg-muted-foreground/50"
+                  className="block h-full rounded-full bg-muted-foreground/80"
                   style={{ width: `${Math.round((l.tokens / max) * 100)}%` }}
                 />
               </span>
