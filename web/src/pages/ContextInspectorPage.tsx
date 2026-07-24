@@ -436,38 +436,11 @@ function AccordionRow({
   );
 }
 
-/** The composed body of a layer. When the layer aggregates several skills, list
- *  each one with its own body rather than a single combined wall. */
+/** The layer's composed body, verbatim — the exact text that entered the window
+ *  (section header, each skill's provenance line, the containment wrapper, and
+ *  the bodies), so the inspector shows the truth the runtime composed rather than
+ *  a re-derived copy of it. */
 function LayerBody({ layer }: { layer: TracedLayerView }) {
-  const itemized = (layer.subItems ?? []).filter(
-    (s): s is typeof s & { text: string } => typeof s.text === "string" && s.text.length > 0,
-  );
-  if (itemized.length > 0) {
-    return (
-      <div className="space-y-4">
-        <div className="text-2xs text-muted-foreground">
-          {itemized.length} skill{itemized.length === 1 ? "" : "s"}, each shown with its own body
-        </div>
-        {itemized.map((sub) => (
-          <div key={sub.id}>
-            <div className="flex items-baseline gap-2 mb-1.5">
-              <span className="text-sm font-medium truncate" title={sub.source}>
-                {skillName(sub.id)}
-              </span>
-              {typeof sub.tokens === "number" && (
-                <span className="text-3xs text-muted-foreground tabular-nums ml-auto shrink-0">
-                  {formatTokenCount(sub.tokens)} tok
-                </span>
-              )}
-            </div>
-            <pre className="text-xs leading-relaxed whitespace-pre-wrap font-mono text-foreground bg-muted/40 border border-border rounded-lg p-4 m-0">
-              {sub.text}
-            </pre>
-          </div>
-        ))}
-      </div>
-    );
-  }
   return (
     <pre className="text-xs leading-relaxed whitespace-pre-wrap font-mono text-foreground bg-muted/40 border border-border rounded-lg p-4 m-0">
       {layer.text}
