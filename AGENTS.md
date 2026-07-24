@@ -48,6 +48,18 @@ bun run build:bundles      # Rebuild every src/bundles/*/ui (vite single-file)
 | Auth | none (dev mode — no `instance.json`) |
 | LLM keys | `ANTHROPIC_API_KEY` (and friends) read from your shell environment |
 
+**A fresh worktree prepares itself on first run.** `node_modules` and `dist/` are both
+gitignored, so a new worktree has neither: `dev:worktree` installs `web/` dependencies and
+builds any bundle UI missing its `dist/index.html` before starting. It only does what is
+absent — after *editing* bundle source you still run `bun run build:bundles` yourself,
+because `dev` deliberately does not rebuild bundles on every start.
+
+**`bun run seed:dev`** fills the worktree workdir with conversations and skills across all
+three scope tiers, so the shell renders with content instead of empty states. Everything it
+writes is namespaced (`conv_seed_*`, `seed-*`) and it writes only when the target is absent
+or already identical, so a re-run never replaces a real skill or a thread you have chatted
+in. It targets the worktree workdir; `--force` is required for anything else.
+
 Each worktree gets its own isolated state, so two worktrees can run side-by-side without colliding. Reset with `rm -rf .nimblebrain-worktree && bun run dev:worktree`. Share state across worktrees with `NB_WORK_DIR=/abs/path bun run dev:worktree`. Suitable for Chrome DevTools-driven E2E tests against `/v1/*` (no login dance).
 
 ## Conventions
