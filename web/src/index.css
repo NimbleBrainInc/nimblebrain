@@ -16,6 +16,7 @@
        into :root as --nb-font-* by gen:theme. One source, same value. */
     --font-sans: var(--nb-font-sans);
     --font-heading: var(--nb-font-heading);
+    --font-reading: var(--nb-font-reading);
     --font-mono: var(--nb-font-mono);
 
     /* Type scale — single-sourced from src/theme/palette.ts (typeScale),
@@ -73,10 +74,7 @@
     --color-success-foreground: var(--success-foreground);
     --color-warning: var(--warning);
     --color-warning-foreground: var(--warning-foreground);
-    --color-warm: var(--warm);
-    --color-warm-hover: var(--warm-hover);
-    --color-warm-foreground: var(--warm-foreground);
-    --color-warm-light: var(--warm-light);
+    --color-primary-light: var(--primary-light);
     --color-processing: var(--processing);
     --color-processing-foreground: var(--processing-foreground);
     --color-processing-light: var(--processing-light);
@@ -166,28 +164,40 @@
 }
 
 /* ============================================
-   CHAT PRESENCE — Editorial conversation style
-   User: italic sans-serif with left border
-   Assistant: serif (Erode) typography
+   CHAT PRESENCE
+   User: neutral-fill bubble, UI face
+   Assistant: unbounded prose, reading face
    ============================================ */
 
-/* User messages: italic sans-serif */
+/* User messages.
+   A bubble on the SHORT side of an asymmetric conversation. User turns are
+   brief, so a container is cheap and makes the turn boundary unmissable; the
+   assistant turn stays unbounded below, because a container around four
+   paragraphs adds a level and buys nothing.
+   The fill is NEUTRAL, not blue: blue means action everywhere else in the
+   product, and your own message is not an action. */
 .presence-user-message {
+  display: inline-block;
   font-family: var(--font-sans);
-  /* Deliberate editorial size — sits between the type scale's sm (14px) and
-     base (16px) with no exact step; kept bespoke so the most-visible text in
-     the app isn't snapped for the sake of the rule. Assistant body below is
-     18px = the scale's lg, so it's tokenized. */
-  font-size: 15px;
-  font-weight: 500;
-  line-height: 1.5;
+  font-size: var(--font-text-base-size);
+  line-height: var(--font-text-base-line-height);
+  font-weight: var(--font-weight-normal);
   color: var(--foreground);
-  opacity: 0.8;
+  background: var(--muted);
+  padding: 0.5rem 0.8125rem;
+  border-radius: var(--border-radius-md);
+  /* Radius decreases toward the speaker's edge — the corner nearest the
+     sender is tightened so the bubble points at its origin. */
+  border-bottom-right-radius: var(--border-radius-xs);
 }
 
-/* Assistant messages: serif typography base, Streamdown handles markdown rendering */
+/* Assistant messages. Chat is the one surface in the product where READING
+   beats scanning, so agent prose gets a dedicated screen-text serif rather than
+   the UI face. This deliberately does NOT reuse --font-heading: display and UI
+   are one family now, and borrowing the heading face only produced a serif back
+   when that face happened to be one. Streamdown handles markdown rendering. */
 .presence-assistant-message {
-  font-family: var(--font-heading);
+  font-family: var(--font-reading);
   font-size: var(--font-text-lg-size);
   font-weight: 400;
   line-height: 1.5;
@@ -400,9 +410,9 @@
   opacity: 0.5;
   display: inline-block;
 }
-.turn-pill__icon--error { color: var(--warm); }
+.turn-pill__icon--error { color: var(--primary); }
 .turn-pill__icon--running {
-  color: var(--warm);
+  color: var(--primary);
   animation: spin 1s linear infinite;
 }
 /* Active/expanded states give the dot a brand color; at rest it's currentColor
@@ -643,9 +653,9 @@
   word-break: break-word;
 }
 .turn-pill__pre--error {
-  background: var(--warm-light);
-  border-color: var(--warm);
-  color: var(--warm-hover);
+  background: var(--primary-light);
+  border-color: var(--primary);
+  color: var(--primary);
 }
 
 /* ───────────────────────────────────────────────────────────────────────
@@ -687,7 +697,7 @@
   opacity: 1;
 }
 .ledger-line__head:focus-visible {
-  outline: 2px solid var(--warm);
+  outline: 2px solid var(--primary);
   outline-offset: 2px;
 }
 .ledger-line[data-expanded="true"] > .ledger-line__head {
@@ -851,12 +861,12 @@
   font-size: var(--font-text-xs-size);
 }
 .live-cursor__spinner {
-  color: var(--warm);
+  color: var(--primary);
   animation: spin 1s linear infinite;
   flex-shrink: 0;
 }
 .live-cursor__label {
-  color: var(--warm);
+  color: var(--primary);
   font-weight: 500;
 }
 

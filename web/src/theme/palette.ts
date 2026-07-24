@@ -22,10 +22,17 @@ export function pick(pair: Pair, mode: Mode): string {
   return mode === "dark" ? pair[1] : pair[0];
 }
 
-/** Font stacks. `sans` and `heading` are served via Fontshare, `mono` via Fontsource. */
+/**
+ * Font stacks. `sans` and `heading` are one family — hierarchy comes from
+ * weight and size, not from a display/text style split. `reading` is the
+ * exception and is scoped to agent prose in chat, the only surface where
+ * reading beats scanning; it is a screen-text serif, never a display serif.
+ * `sans`/`heading`/`reading` are served via Google Fonts, `mono` via Fontsource.
+ */
 export const fonts = {
-  sans: "'Satoshi', system-ui, sans-serif",
-  heading: "'Erode', Georgia, serif",
+  sans: "'Hanken Grotesk', system-ui, sans-serif",
+  heading: "'Hanken Grotesk', system-ui, sans-serif",
+  reading: "'Newsreader', Georgia, serif",
   mono: "'JetBrains Mono Variable', ui-monospace, SFMono-Regular, monospace",
 } as const;
 
@@ -40,64 +47,58 @@ export const layout = {
  * values the Tailwind `@theme inline` block aliases as `--color-*`.
  */
 export const colors = {
-  background: ["#faf9f7", "#0a0a09"],
-  foreground: ["#171717", "#e5e5e5"],
-  card: ["#ffffff", "#141413"],
-  "card-foreground": ["#171717", "#e5e5e5"],
-  popover: ["#ffffff", "#141413"],
-  "popover-foreground": ["#171717", "#e5e5e5"],
-  primary: ["#0055FF", "#3b8eff"],
-  "primary-foreground": ["#ffffff", "#0a0a09"],
-  secondary: ["#f8f7f5", "#1c1c1b"],
-  "secondary-foreground": ["#171717", "#e5e5e5"],
-  muted: ["#f8f7f5", "#1c1c1b"],
-  "muted-foreground": ["#737373", "#a3a3a3"],
-  accent: ["#f8f7f5", "#1c1c1b"],
-  "accent-foreground": ["#171717", "#e5e5e5"],
-  destructive: ["#dc2626", "#f87171"],
-  border: ["#e5e5e5", "#262626"],
-  input: ["#e5e5e5", "#262626"],
-  ring: ["#0055FF", "#3b8eff"],
-  success: ["#059669", "#34d399"],
-  "success-foreground": ["#ffffff", "#0a0a09"],
-  warning: ["#f59e0b", "#fbbf24"],
-  "warning-foreground": ["#ffffff", "#0a0a09"],
-  // Brand attention accent — the app's "look here" color: the chat FAB, selected
-  // states (e.g. ProfileTab), and ambient notices (e.g. the update prompt).
-  // Prefer this over `primary` (blue) for attention in the warm theme. Soft
-  // surfaces: `warm-light`, or the badge pattern `bg-warm/10 text-warm`.
-  warm: ["#d4620a", "#f59542"],
-  "warm-hover": ["#b8540a", "#fb923c"],
-  "warm-foreground": ["#ffffff", "#0a0a09"],
-  "warm-light": ["#fef5ee", "#2a1a08"],
-  processing: ["#7c3aed", "#a78bfa"],
-  "processing-foreground": ["#ffffff", "#0a0a09"],
-  "processing-light": ["#f3eeff", "#1a0f2e"],
-  "info-light": ["#eef4ff", "#0c1a33"],
+  background: ["#ffffff", "#000000"],
+  foreground: ["#09090b", "#fafafa"],
+  card: ["#ffffff", "#0e0e10"],
+  "card-foreground": ["#09090b", "#fafafa"],
+  popover: ["#ffffff", "#0e0e10"],
+  "popover-foreground": ["#09090b", "#fafafa"],
+  // NimbleBrain Blue. The single accent: every primary action, focus ring, and
+  // live state. There is no second accent hue — see the file header.
+  primary: ["#0055FF", "#4d90ff"],
+  "primary-foreground": ["#ffffff", "#000000"],
+  secondary: ["#f4f4f5", "#161618"],
+  "secondary-foreground": ["#09090b", "#fafafa"],
+  muted: ["#f4f4f5", "#161618"],
+  "muted-foreground": ["#5c5c66", "#9b9ba4"],
+  accent: ["#f4f4f5", "#161618"],
+  "accent-foreground": ["#09090b", "#fafafa"],
+  destructive: ["#c02a24", "#f0736a"],
+  border: ["#e4e4e7", "#232326"],
+  input: ["#e4e4e7", "#232326"],
+  ring: ["#0055FF", "#4d90ff"],
+  success: ["#0f7a4f", "#3fbf85"],
+  "success-foreground": ["#ffffff", "#000000"],
+  warning: ["#8a5f0a", "#e0aa3c"],
+  "warning-foreground": ["#ffffff", "#000000"],
+  "primary-light": ["#eaf0ff", "#0b1a33"],
+  processing: ["#6d3ecf", "#a68bfa"],
+  "processing-foreground": ["#ffffff", "#000000"],
+  "processing-light": ["#f0ecfd", "#161234"],
+  "info-light": ["#eaf0ff", "#0b1a33"],
   // Skill-scope tones for the Context Ledger — one hue per tier (org /
   // workspace / user / bundle). Shell-only (no ext-apps projection); shape and
-  // label carry the distinction too, so color never encodes it alone.
-  "scope-org": ["#2563eb", "#60a5fa"],
-  "scope-workspace": ["#059669", "#34d399"],
-  "scope-user": ["#7c3aed", "#a78bfa"],
-  "scope-bundle": ["#b45309", "#fbbf24"],
-  "chart-1": ["#0055FF", "#3b8eff"],
-  "chart-2": ["#059669", "#34d399"],
-  "chart-3": ["#f59e0b", "#fbbf24"],
-  "chart-4": ["#737373", "#a3a3a3"],
-  "chart-5": ["#a3a3a3", "#525252"],
-  sidebar: ["#f8f7f5", "#0f0f0e"],
-  "sidebar-foreground": ["#737373", "#a3a3a3"],
-  "sidebar-primary": ["#0055FF", "#3b8eff"],
-  "sidebar-primary-foreground": ["#ffffff", "#ffffff"],
-  // NOTE: shadcn-default BLUE (#eff6ff) — NOT the warm sidebar's accent; the name
-  // misleads. Don't use it for sidebar surfaces in the warm theme. Neutral fills:
-  // `sidebar-foreground/5`–`/10` (see NavItem); accented ones: `warm` (above).
-  "sidebar-accent": ["#eff6ff", "#172554"],
-  "sidebar-accent-foreground": ["#0055FF", "#3b8eff"],
-  "sidebar-border": ["#e5e5e5", "#262626"],
-  "sidebar-ring": ["#0055FF", "#3b8eff"],
-  "sidebar-hover": ["#faf9f7", "#141413"],
+  // label carry the distinction too, so color never encodes it alone. Every
+  // one of these clears 3:1 against `card` in both modes (WCAG 1.4.11) —
+  // they carry information, so they are not decorative.
+  "scope-org": ["#0055FF", "#4d90ff"],
+  "scope-workspace": ["#0f7a4f", "#3fbf85"],
+  "scope-user": ["#6d3ecf", "#a68bfa"],
+  "scope-bundle": ["#8a5f0a", "#e0aa3c"],
+  "chart-1": ["#0055FF", "#4d90ff"],
+  "chart-2": ["#0f7a4f", "#3fbf85"],
+  "chart-3": ["#8a5f0a", "#e0aa3c"],
+  "chart-4": ["#5c5c66", "#9b9ba4"],
+  "chart-5": ["#9797a0", "#5c5c66"],
+  sidebar: ["#fafafa", "#08080a"],
+  "sidebar-foreground": ["#5c5c66", "#9b9ba4"],
+  "sidebar-primary": ["#0055FF", "#4d90ff"],
+  "sidebar-primary-foreground": ["#ffffff", "#000000"],
+  "sidebar-accent": ["#eaf0ff", "#0b1a33"],
+  "sidebar-accent-foreground": ["#0055FF", "#4d90ff"],
+  "sidebar-border": ["#e4e4e7", "#232326"],
+  "sidebar-ring": ["#0055FF", "#4d90ff"],
+  "sidebar-hover": ["#f4f4f5", "#0e0e10"],
 } as const satisfies Record<string, Pair>;
 
 /**
@@ -106,8 +107,11 @@ export const colors = {
  * the ext-apps projection never hardcodes a value.
  */
 export const extOnlyColors = {
-  "background-tertiary": ["#f3f2ef", "#1c1c1b"],
-  "text-tertiary": ["#a3a3a3", "#737373"],
+  "background-tertiary": ["#f4f4f5", "#161618"],
+  // Audited: 4.5:1 against every surface it renders on, in both modes. It
+  // carries tallies, kbd hints, section labels, and row metadata — the densest
+  // text in the product — so it is not a decorative grey.
+  "text-tertiary": ["#71717a", "#82828c"],
 } as const satisfies Record<string, Pair>;
 
 /**

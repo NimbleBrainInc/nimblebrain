@@ -91,7 +91,7 @@ export function ProfileTab() {
         // Profile doesn't track dirty: a user reading their own settings
         // expects Save to be available without first re-typing a value.
         disabled: saving,
-        variant: "warm",
+        variant: "primary",
       }}
     >
       <Section flush>
@@ -138,11 +138,13 @@ export function ProfileTab() {
                 className={cn(
                   "flex flex-col items-center gap-2 rounded-sm border-2 p-4 text-center transition-all",
                   selected
-                    ? "border-warm bg-warm/5 text-foreground"
+                    ? "border-primary bg-primary/5 text-foreground"
                     : "border-border bg-card text-muted-foreground hover:border-muted-foreground/20 hover:bg-muted/50",
                 )}
               >
-                <Icon className={cn("w-5 h-5", selected ? "text-warm" : "text-muted-foreground")} />
+                <Icon
+                  className={cn("w-5 h-5", selected ? "text-primary" : "text-muted-foreground")}
+                />
                 <div>
                   <div className="text-sm font-medium">{opt.label}</div>
                   <div className="text-2xs leading-tight text-muted-foreground mt-0.5">

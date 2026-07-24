@@ -48,8 +48,8 @@ export interface SettingsFormPageProps extends Omit<SettingsPageHeaderProps, "ac
     label?: string;
     /** When provided, shows a Reset button next to Save that calls this. */
     onReset?: () => void;
-    /** Visual variant: "warm" for human-initiated, default otherwise. */
-    variant?: "default" | "warm";
+    /** Visual variant: "primary" for human-initiated, default otherwise. */
+    variant?: "default" | "primary";
   };
   /** Persistent banner above the body (e.g. "Loading failed, retry?"). */
   loadError?: string | null;

@@ -71,7 +71,7 @@ function ChatToggleButton({
     <button
       type="button"
       onClick={onOpen}
-      className="fixed bottom-6 right-6 z-40 flex items-center justify-center w-12 h-12 rounded-full bg-warm text-warm-foreground shadow-lg hover:bg-warm-hover transition-all duration-200"
+      className="fixed bottom-6 right-6 z-40 flex items-center justify-center w-12 h-12 rounded-full bg-primary text-primary-foreground shadow-lg hover:bg-primary transition-all duration-200"
       style={{
         opacity: visible ? 1 : 0,
         transition: "opacity 200ms ease-in, background-color 200ms",

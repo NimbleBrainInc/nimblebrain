@@ -126,7 +126,7 @@ export function RecentConversationsPopover({
         title="Recent conversations"
         className={`p-1.5 rounded-sm transition-all ${
           open
-            ? "bg-warm/10 text-warm"
+            ? "bg-primary/10 text-primary"
             : "hover:bg-muted text-muted-foreground hover:text-foreground"
         }`}
       >
@@ -172,7 +172,7 @@ export function RecentConversationsPopover({
                           <span className="text-xs font-medium truncate flex items-center gap-1.5">
                             {isActive && (
                               <span
-                                className="shrink-0 w-1.5 h-1.5 rounded-full bg-warm"
+                                className="shrink-0 w-1.5 h-1.5 rounded-full bg-primary"
                                 aria-hidden
                               />
                             )}

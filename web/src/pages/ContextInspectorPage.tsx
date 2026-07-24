@@ -255,7 +255,7 @@ function BudgetBar({
               </div>
               <div className="mt-2 h-1.5 rounded-full bg-muted overflow-hidden">
                 <div
-                  className={`h-full rounded-full ${isActive ? "bg-warm" : "bg-muted-foreground/80"}`}
+                  className={`h-full rounded-full ${isActive ? "bg-primary" : "bg-muted-foreground/80"}`}
                   style={{ width: `${pct}%` }}
                 />
               </div>
@@ -280,7 +280,9 @@ function BudgetBar({
               onClick={() => onSelect(isActive ? null : s.kind)}
               title="Filter the layers below"
               className={`${base} cursor-pointer transition-colors ${
-                isActive ? "border-warm bg-warm/10" : "border-border bg-card hover:bg-muted/60"
+                isActive
+                  ? "border-primary bg-primary/10"
+                  : "border-border bg-card hover:bg-muted/60"
               }`}
             >
               {content}
@@ -438,7 +440,7 @@ function AccordionRow({
         aria-expanded={open}
         aria-controls={bodyId}
         className={`w-full text-left px-6 py-3 space-y-1.5 transition-colors ${
-          open ? "bg-warm/5" : "hover:bg-muted/60"
+          open ? "bg-primary/5" : "hover:bg-muted/60"
         }`}
       >
         <div className="flex items-center gap-2">

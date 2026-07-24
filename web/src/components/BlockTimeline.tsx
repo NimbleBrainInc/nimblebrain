@@ -17,7 +17,7 @@
  *      no separate turn-level status surface.
  *
  *   4. **One live cursor for the gaps.** When the engine is mid-flight but
- *      no block is currently absorbing the state (initial warm-up,
+ *      no block is currently absorbing the state (initial primary-up,
  *      preparing the next tool, post-tool analyzing), a small `<LiveCursor>`
  *      at the bottom of the message body covers the transition. The
  *      moment the next block starts streaming, the block's own active
@@ -229,7 +229,7 @@ function collectToolCalls(rows: ReadonlyArray<ActivityRow>): ToolCallDisplay[] {
  *     active state covers it → cursor hides.
  *   - `working`   → a tool call has status="running"; the chip spins →
  *     cursor hides.
- *   - `thinking`  → pre-first-block warm-up; cursor shows "Thinking…".
+ *   - `thinking`  → pre-first-block primary-up; cursor shows "Thinking…".
  *   - `preparing` → tool being built server-side, no tool block pushed yet;
  *     cursor shows "Calling X…".
  *   - `analyzing` → post-tool-result digest before next reasoning/text;

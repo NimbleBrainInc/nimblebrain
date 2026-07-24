@@ -60,8 +60,7 @@ const EXPECTED_KEYS = [
   "--nb-color-danger",
   "--nb-color-success",
   "--nb-color-warning",
-  "--nb-color-warm",
-  "--nb-color-warm-light",
+  "--nb-color-primary-light",
   "--nb-color-processing",
   "--nb-color-processing-light",
   "--nb-color-info-light",
@@ -100,27 +99,27 @@ describe("theme token map", () => {
 
   test("light token values match index.css exactly", () => {
     const tokens = getThemeTokens("light");
-    expect(tokens["--color-background-primary"]).toBe("#faf9f7");
-    expect(tokens["--color-text-primary"]).toBe("#171717");
+    expect(tokens["--color-background-primary"]).toBe("#ffffff");
+    expect(tokens["--color-text-primary"]).toBe("#09090b");
     expect(tokens["--color-text-accent"]).toBe("#0055FF");
-    expect(tokens["--color-border-primary"]).toBe("#e5e5e5");
+    expect(tokens["--color-border-primary"]).toBe("#e4e4e7");
     expect(tokens["--color-background-secondary"]).toBe("#ffffff");
-    expect(tokens["--nb-color-danger"]).toBe("#dc2626");
-    expect(tokens["--nb-color-success"]).toBe("#059669");
-    expect(tokens["--nb-color-warning"]).toBe("#f59e0b");
+    expect(tokens["--nb-color-danger"]).toBe("#c02a24");
+    expect(tokens["--nb-color-success"]).toBe("#0f7a4f");
+    expect(tokens["--nb-color-warning"]).toBe("#8a5f0a");
     expect(tokens["--border-radius-sm"]).toBe("0.5rem");
   });
 
   test("dark token values match index.css exactly", () => {
     const tokens = getThemeTokens("dark");
-    expect(tokens["--color-background-primary"]).toBe("#0a0a09");
-    expect(tokens["--color-text-primary"]).toBe("#e5e5e5");
-    expect(tokens["--color-text-accent"]).toBe("#3b8eff");
-    expect(tokens["--color-border-primary"]).toBe("#262626");
-    expect(tokens["--color-background-secondary"]).toBe("#141413");
-    expect(tokens["--nb-color-danger"]).toBe("#f87171");
-    expect(tokens["--nb-color-success"]).toBe("#34d399");
-    expect(tokens["--nb-color-warning"]).toBe("#fbbf24");
+    expect(tokens["--color-background-primary"]).toBe("#000000");
+    expect(tokens["--color-text-primary"]).toBe("#fafafa");
+    expect(tokens["--color-text-accent"]).toBe("#4d90ff");
+    expect(tokens["--color-border-primary"]).toBe("#232326");
+    expect(tokens["--color-background-secondary"]).toBe("#0e0e10");
+    expect(tokens["--nb-color-danger"]).toBe("#f0736a");
+    expect(tokens["--nb-color-success"]).toBe("#3fbf85");
+    expect(tokens["--nb-color-warning"]).toBe("#e0aa3c");
   });
 
   test("all token keys use valid prefixes", () => {
@@ -151,16 +150,16 @@ describe("buildThemeStyleBlock", () => {
 
   test("light output contains correct token values", () => {
     const block = buildThemeStyleBlock("light");
-    expect(block).toContain("--color-background-primary: #faf9f7;");
-    expect(block).toContain("--color-text-primary: #171717;");
+    expect(block).toContain("--color-background-primary: #ffffff;");
+    expect(block).toContain("--color-text-primary: #09090b;");
     expect(block).toContain("--color-text-accent: #0055FF;");
   });
 
   test("dark output contains dark mode values", () => {
     const block = buildThemeStyleBlock("dark");
-    expect(block).toContain("--color-background-primary: #0a0a09;");
-    expect(block).toContain("--color-text-primary: #e5e5e5;");
-    expect(block).toContain("--color-text-accent: #3b8eff;");
+    expect(block).toContain("--color-background-primary: #000000;");
+    expect(block).toContain("--color-text-primary: #fafafa;");
+    expect(block).toContain("--color-text-accent: #4d90ff;");
   });
 
   test("body reset uses var() references, not hardcoded values", () => {
@@ -175,8 +174,8 @@ describe("buildThemeStyleBlock", () => {
     expect(block).toContain("box-sizing: border-box;");
   });
 
-  test("font token uses the Satoshi system fallback", () => {
+  test("font token uses the Hanken Grotesk system fallback", () => {
     const tokens = getThemeTokens("light");
-    expect(tokens["--font-sans"]).toBe("'Satoshi', system-ui, sans-serif");
+    expect(tokens["--font-sans"]).toBe("'Hanken Grotesk', system-ui, sans-serif");
   });
 });

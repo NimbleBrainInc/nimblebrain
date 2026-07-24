@@ -27,7 +27,7 @@ import {
  * `LIGHT_TOKENS`/`DARK_TOKENS` exactly, with two intentional deltas vs. the
  * pre-dedup `theme.ts`:
  *   1. `--font-sans` is Satoshi (was the stale `Inter`).
- *   2. brand-semantic `--nb-color-warm{,-light}` / `--nb-color-processing{,-light}`
+ *   2. brand-semantic `--nb-color-primary-light` / `--nb-color-processing{,-light}`
  *      / `--nb-color-info-light` are added (no ext-apps spec key exists, so they
  *      ride as `--nb-*` extensions — injected into the iframe, filtered from the
  *      protocol boundary by `getSpecThemeTokens`).
@@ -65,8 +65,7 @@ export function paletteToExtAppsTokens(mode: Mode): Record<string, string> {
     "--nb-color-danger": c("destructive"),
     "--nb-color-success": c("success"),
     "--nb-color-warning": c("warning"),
-    "--nb-color-warm": c("warm"),
-    "--nb-color-warm-light": c("warm-light"),
+    "--nb-color-primary-light": c("primary-light"),
     "--nb-color-processing": c("processing"),
     "--nb-color-processing-light": c("processing-light"),
     "--nb-color-info-light": c("info-light"),

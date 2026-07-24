@@ -37,10 +37,10 @@ export function ReleaseUpdateBanner({ collapsed = false }: { collapsed?: boolean
           title="A new version is available — reload"
           aria-label="A new version is available — reload"
           onClick={() => window.location.reload()}
-          className="relative text-warm hover:text-warm"
+          className="relative text-primary hover:text-primary"
         >
           <RefreshCw />
-          <span className="absolute top-1 right-1 size-1.5 rounded-full bg-warm" />
+          <span className="absolute top-1 right-1 size-1.5 rounded-full bg-primary" />
         </Button>
       </div>
     );
@@ -49,7 +49,7 @@ export function ReleaseUpdateBanner({ collapsed = false }: { collapsed?: boolean
   return (
     <div
       role="status"
-      className="mx-2 mb-2 shrink-0 rounded-sm border border-warm/20 bg-warm/5 px-2.5 py-2 text-xs text-foreground"
+      className="mx-2 mb-2 shrink-0 rounded-sm border border-primary/20 bg-primary/5 px-2.5 py-2 text-xs text-foreground"
     >
       <div className="flex items-center justify-between gap-1">
         <span className="font-medium">New version available</span>
@@ -64,7 +64,7 @@ export function ReleaseUpdateBanner({ collapsed = false }: { collapsed?: boolean
       </div>
       <Button
         size="sm"
-        variant="warm"
+        variant="primary"
         className="mt-1.5 w-full"
         onClick={() => window.location.reload()}
       >

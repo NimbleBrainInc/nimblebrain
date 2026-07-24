@@ -113,7 +113,7 @@ export function LinkSafetyModal({ isOpen, onClose, onConfirm, url }: LinkSafetyM
         className="relative w-full max-w-sm rounded-2xl border border-border bg-card text-foreground shadow-2xl overflow-hidden"
       >
         <div className="flex items-start gap-3 p-4">
-          <div className="shrink-0 grid place-items-center w-10 h-10 rounded-xl border border-warm/20 bg-warm/10 text-warm text-base font-semibold">
+          <div className="shrink-0 grid place-items-center w-10 h-10 rounded-xl border border-primary/20 bg-primary/10 text-primary text-base font-semibold">
             {initial}
           </div>
           <div className="min-w-0 flex flex-col gap-0.5">
@@ -160,7 +160,7 @@ export function LinkSafetyModal({ isOpen, onClose, onConfirm, url }: LinkSafetyM
           <button
             type="button"
             onClick={handleVisit}
-            className="ml-auto inline-flex items-center gap-1.5 rounded-lg bg-warm px-4 py-2 text-sm font-semibold text-warm-foreground hover:bg-warm-hover transition-all"
+            className="ml-auto inline-flex items-center gap-1.5 rounded-lg bg-primary px-4 py-2 text-sm font-semibold text-primary-foreground hover:bg-primary transition-all"
           >
             Visit site
             <ArrowUpRight style={{ width: 15, height: 15 }} />
