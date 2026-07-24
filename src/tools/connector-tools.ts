@@ -25,7 +25,7 @@ import type {
 } from "../bundles/types.ts";
 import { installBundleInWorkspace } from "../bundles/workspace-ops.ts";
 import type { UserConfigFieldDef } from "../config/workspace-credentials.ts";
-import type { ManagedConnectorProvider } from "../connectors/managed-provider.ts";
+import type { ManagedConnectorProvider } from "../connectors/providers/managed-provider.ts";
 import { connectorSkillIdentityFrom } from "../connectors/server-detail.ts";
 import { textContent } from "../engine/content-helpers.ts";
 import { INTERNAL_TOOL_ANNOTATION, type ToolResult } from "../engine/types.ts";

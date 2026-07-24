@@ -31,7 +31,7 @@
  * deferred with the other `replicas > 1` prerequisites.
  */
 
-import type { ConnectorOwner } from "../identity/connector-owner.ts";
+import type { ConnectorOwner } from "../../../identity/connector-owner.ts";
 
 interface PendingConnectFlow {
   owner: ConnectorOwner;
