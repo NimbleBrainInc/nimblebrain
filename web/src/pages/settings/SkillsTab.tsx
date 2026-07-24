@@ -661,55 +661,63 @@ function SkillRow({
 
   return (
     <div>
-      <button
-        type="button"
-        onClick={onSelect}
-        aria-expanded={expanded}
-        aria-controls={bodyId}
-        className={cn(
-          "flex w-full items-center gap-3 px-3.5 py-3 text-left transition-colors hover:bg-secondary",
-          // The focus ring is drawn *inside* the row (negative offset): the
-          // card clips overflow, so an outset ring would be cut off on the
-          // first and last row. The tint alone is ~1.05:1 against the card —
-          // nowhere near the 3:1 a focus indicator owes a keyboard user.
-          "focus-visible:bg-secondary focus-visible:outline-2 focus-visible:outline-ring focus-visible:-outline-offset-2",
-        )}
-      >
-        {/* Scope tick — a quiet color column so a tier reads at a glance when
-         * the list is filtered to "All". Decorative: the tier divider names the
-         * scope in words, so the color never carries meaning alone. */}
-        <span
-          aria-hidden
-          className="h-8 w-0.5 shrink-0 rounded-full"
-          style={{ background: `var(--scope-${skill.scope})` }}
-        />
-        <span className="min-w-0 flex-1">
-          <span
-            className={cn(
-              "block truncate text-sm leading-snug text-foreground",
-              labelIsName && "font-mono",
-            )}
-          >
-            {label}
-          </span>
-          {mechanism && (
-            <span
-              // The line truncates to keep rows one height; a long trigger
-              // list would otherwise clip with nowhere else to read it (the
-              // expanded body carries priority and name, not the mechanism).
-              title={mechanism.mono ? `${mechanism.text} ${mechanism.mono}` : mechanism.text}
-              className="mt-0.5 block truncate text-xs text-muted-foreground"
-            >
-              {mechanism.text}
-              {mechanism.mono && (
-                <>
-                  {" "}
-                  <span className="font-mono">{mechanism.mono}</span>
-                </>
-              )}
-            </span>
+      {/* The row is a plain container holding two *sibling* controls — the
+       * expander and the toggle. A `button` may not contain interactive
+       * descendants, so nesting the toggle inside the expander left its
+       * exposure to assistive tech undefined and made "toggling must not
+       * expand the row" rest on `stopPropagation`. As siblings, that
+       * separation is structural and needs no event plumbing. */}
+      <div className="flex items-center gap-3 px-3.5 transition-colors hover:bg-secondary">
+        <button
+          type="button"
+          onClick={onSelect}
+          aria-expanded={expanded}
+          aria-controls={bodyId}
+          className={cn(
+            "flex min-w-0 flex-1 items-center gap-3 py-3 text-left",
+            // The focus ring is drawn *inside* the row (negative offset): the
+            // card clips overflow, so an outset ring would be cut off on the
+            // first and last row. The tint alone is ~1.05:1 against the card —
+            // nowhere near the 3:1 a focus indicator owes a keyboard user.
+            "focus-visible:bg-secondary focus-visible:outline-2 focus-visible:outline-ring focus-visible:-outline-offset-2",
           )}
-        </span>
+        >
+          {/* Scope tick — a quiet color column so a tier reads at a glance when
+           * the list is filtered to "All". Decorative: the tier divider names the
+           * scope in words, so the color never carries meaning alone. */}
+          <span
+            aria-hidden
+            className="h-8 w-0.5 shrink-0 rounded-full"
+            style={{ background: `var(--scope-${skill.scope})` }}
+          />
+          <span className="min-w-0 flex-1">
+            <span
+              className={cn(
+                "block truncate text-sm leading-snug text-foreground",
+                labelIsName && "font-mono",
+              )}
+            >
+              {label}
+            </span>
+            {mechanism && (
+              <span
+                // The line truncates to keep rows one height; a long trigger
+                // list would otherwise clip with nowhere else to read it (the
+                // expanded body carries priority and name, not the mechanism).
+                title={mechanism.mono ? `${mechanism.text} ${mechanism.mono}` : mechanism.text}
+                className="mt-0.5 block truncate text-xs text-muted-foreground"
+              >
+                {mechanism.text}
+                {mechanism.mono && (
+                  <>
+                    {" "}
+                    <span className="font-mono">{mechanism.mono}</span>
+                  </>
+                )}
+              </span>
+            )}
+          </span>
+        </button>
         {/* The tier divider names the scope in words, so the row carries only
          * the tick and the toggle — no redundant per-row scope label. */}
         <Toggle
@@ -718,7 +726,7 @@ function SkillRow({
           disabled={!editable}
           label={skill.name}
         />
-      </button>
+      </div>
 
       <div
         id={bodyId}
@@ -797,10 +805,10 @@ function Toggle({
   return (
     <button
       type="button"
-      onClick={(e) => {
-        e.stopPropagation();
-        if (!disabled) onChange();
-      }}
+      // A sibling of the row's expander, not a descendant — a click here
+      // reaches no other control, so it needs no `stopPropagation`. The
+      // `disabled` attribute is what suppresses the locked-tier click.
+      onClick={onChange}
       disabled={disabled}
       aria-label={
         disabled
