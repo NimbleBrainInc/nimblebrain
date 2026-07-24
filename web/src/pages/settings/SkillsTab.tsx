@@ -1,14 +1,5 @@
-import { Lightbulb, Trash2, User } from "lucide-react";
-import {
-  type ReactNode,
-  type RefObject,
-  useCallback,
-  useEffect,
-  useId,
-  useMemo,
-  useRef,
-  useState,
-} from "react";
+import { Lightbulb, Lock, Trash2 } from "lucide-react";
+import { type RefObject, useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { Streamdown } from "streamdown";
 import type { ToolInput } from "../../_generated/platform-schemas/catalog";
@@ -41,15 +32,15 @@ export function SkillsTab() {
 }
 
 /**
- * Shared skills browser. Each surface picks exactly one prop:
+ * Shared skills browser. Every surface is one *vantage* into the same skill
+ * stack: the scope it can edit, plus the read-only tiers shown around it for
+ * context. One list, one row grammar; the tiers present and the segment filter
+ * derive from the data, so a single-scope surface simply shows no filter.
  *
- *   - `surface="workspace"` — grouped sections (workspace editable +
- *     inherited org disabled + inherited bundles disabled) + personal
- *     footer + create locked to workspace.
- *   - `lockedScope="org"` — single-scope org-tier view + create locked
- *     to org. (OrgSkillsTab.)
- *   - `lockedScope="user"` — single-scope user-tier view + create locked
- *     to user. (ProfileSkillsTab.)
+ *   - `surface="workspace"` — edits workspace; shows the full stack (your
+ *     personal skills, org policy, the system foundation) as read-only tiers.
+ *   - `lockedScope="org"` — edits org. (OrgSkillsTab.)
+ *   - `lockedScope="user"` — edits personal. (ProfileSkillsTab.)
  *
  * The discriminated union prevents a caller from passing neither — the
  * "show every scope" fallback isn't reachable from any route.
@@ -89,8 +80,62 @@ function resolveScopeConfig(props: SkillsBrowserProps): ScopeConfig {
 function headerDescription(lockedScope: "org" | "user" | undefined, isWorkspaceSurface: boolean) {
   if (lockedScope === "org") return "Organization-wide skills. These apply to every workspace.";
   if (isWorkspaceSurface)
-    return "Skills that shape what your agent says and how it works in this workspace.";
-  return "Skills that shape your agent's behavior.";
+    return "Everything shaping your agent in this workspace, and where it comes from.";
+  return "Your personal skills — they follow you into every workspace.";
+}
+
+// ── Vantage: which scope a surface edits, and the tiers it renders ──────────
+//
+// Ordered agency-first: what you control, then what rides along with you, then
+// what's set for you. A surface renders only the tiers actually present in its
+// data, so org/profile (single-scope fetches) collapse to one tier and drop the
+// filter, while the workspace fetch (unscoped) shows the full stack.
+const TIER_ORDER: Record<WritableScope, Scope[]> = {
+  workspace: ["workspace", "user", "org", "bundle"],
+  org: ["org", "bundle"],
+  user: ["user"],
+};
+
+/** The segment-filter chip label for a scope. */
+const SEGMENT_LABEL: Record<Scope, string> = {
+  workspace: "Yours",
+  user: "You",
+  org: "Org",
+  bundle: "System",
+};
+
+/**
+ * A tier's divider label and, when it's read-only on this surface, the deep
+ * link to where it *is* edited. The editable tier names itself plainly; a
+ * context tier names its provenance and points home.
+ */
+function tierChrome(
+  scope: Scope,
+  editable: WritableScope,
+): { label: string; manageTo?: string; manageLabel?: string } {
+  if (scope === editable) {
+    if (scope === "org") return { label: "Organization" };
+    if (scope === "user") return { label: "Your skills" };
+    return { label: "Yours" };
+  }
+  switch (scope) {
+    case "user":
+      return {
+        label: "You · follows you everywhere",
+        manageTo: "/profile/skills",
+        manageLabel: "Edit in your profile",
+      };
+    case "org":
+      return {
+        label: "Organization · managed in org settings",
+        manageTo: "/org/skills",
+        manageLabel: "Manage in org settings",
+      };
+    case "bundle":
+      return { label: "System · built in" };
+    default:
+      return { label: scope };
+  }
 }
 
 /** The loaded detail matching `editingId`, or null while it's absent/stale. */
@@ -116,6 +161,9 @@ export function SkillsBrowser(props: SkillsBrowserProps) {
   const [actionPending, setActionPending] = useState(false);
   const [view, setView] = useState<"list" | "edit">("list");
   const [editingId, setEditingId] = useState<string | null>(null);
+  // Composition-list filter: "all" or a single scope. Only surfaced when the
+  // vantage has more than one tier.
+  const [segment, setSegment] = useState<Scope | "all">("all");
 
   const fetchSkills = useCallback(async () => {
     setLoading(true);
@@ -291,14 +339,34 @@ export function SkillsBrowser(props: SkillsBrowserProps) {
     setError(null);
   }, []);
 
-  const grouped = useMemo(
-    () => groupByScope(skills, { excludeUser: isWorkspaceSurface }),
-    [skills, isWorkspaceSurface],
-  );
-  const personalCount = useMemo(
-    () => (isWorkspaceSurface ? skills.filter((s) => s.scope === "user").length : 0),
-    [skills, isWorkspaceSurface],
-  );
+  // The vantage's tiers, agency-first, keeping only scopes the fetch returned.
+  const tiers = useMemo<Tier[]>(() => {
+    const byScope = new Map<Scope, ListedSkill[]>();
+    for (const s of skills) {
+      const list = byScope.get(s.scope) ?? [];
+      list.push(s);
+      byScope.set(s.scope, list);
+    }
+    for (const list of byScope.values()) list.sort((a, b) => a.name.localeCompare(b.name));
+    return TIER_ORDER[createLockedScope]
+      .filter((scope) => byScope.has(scope))
+      .map((scope) => ({
+        scope,
+        skills: byScope.get(scope)!,
+        editable: scope === createLockedScope,
+      }));
+  }, [skills, createLockedScope]);
+
+  const multiTier = tiers.length > 1;
+  const visibleTiers = segment === "all" ? tiers : tiers.filter((t) => t.scope === segment);
+  const visibleSkills = visibleTiers.flatMap((t) => t.skills);
+  const onCount = visibleSkills.filter((s) => s.status === "active").length;
+
+  // A refetch can drop the tier a filter points at (last skill deleted); fall
+  // back to "All" so the list never renders empty behind a stale segment.
+  useEffect(() => {
+    if (segment !== "all" && !tiers.some((t) => t.scope === segment)) setSegment("all");
+  }, [tiers, segment]);
 
   if (view === "edit") {
     return (
@@ -346,35 +414,36 @@ export function SkillsBrowser(props: SkillsBrowserProps) {
         </Card>
       )}
 
-      {skills.length > 0 &&
-        grouped.map((group, idx) => {
-          const inherited = isWorkspaceSurface && group.scope !== "workspace";
-          return inherited ? (
-            <InheritedSkillGroup
-              key={group.scope}
-              group={group}
-              flush={idx === 0}
-              expandedId={selectedId}
-              onSelect={handleSelect}
-              detail={detail}
-              detailLoading={detailLoading}
-            />
-          ) : (
-            <OwnSkillGroup
-              key={group.scope}
-              group={group}
-              isWorkspaceSurface={isWorkspaceSurface}
-              selectedId={selectedId}
-              detail={detail}
-              detailLoading={detailLoading}
-              actionPending={actionPending}
-              onSelect={handleSelect}
-              onToggle={handleToggle}
-              onEdit={startEdit}
-              onDelete={handleDelete}
-            />
-          );
-        })}
+      {skills.length > 0 && (
+        <div className="space-y-3">
+          {multiTier && (
+            <div className="flex items-center gap-3">
+              <SegmentBar tiers={tiers} value={segment} onChange={setSegment} />
+              <span className="ml-auto text-xs text-muted-foreground tabular-nums">
+                {visibleSkills.length} skill{visibleSkills.length === 1 ? "" : "s"} · {onCount} on
+              </span>
+            </div>
+          )}
+          <div className="overflow-hidden rounded-lg border border-border bg-card divide-y divide-border">
+            {visibleTiers.map((tier) => (
+              <TierGroup
+                key={tier.scope}
+                tier={tier}
+                editableScope={createLockedScope}
+                showLabel={multiTier}
+                selectedId={selectedId}
+                detail={detail}
+                detailLoading={detailLoading}
+                actionPending={actionPending}
+                onSelect={handleSelect}
+                onToggle={handleToggle}
+                onEdit={startEdit}
+                onDelete={handleDelete}
+              />
+            ))}
+          </div>
+        </div>
+      )}
 
       {!loading && (
         <Button
@@ -387,122 +456,67 @@ export function SkillsBrowser(props: SkillsBrowserProps) {
           + Add a skill
         </Button>
       )}
-
-      {isWorkspaceSurface && <PersonalFooter count={personalCount} />}
     </div>
   );
 }
 
-// ── Group / partition ────────────────────────────────────────────────────
+// ── Tiers / composition list ───────────────────────────────────────────────
 
-interface GroupedSkills {
+interface Tier {
   scope: Scope;
   skills: ListedSkill[];
+  /** Whether this surface can edit this tier, or only read it for context. */
+  editable: boolean;
 }
 
-function groupByScope(skills: ListedSkill[], opts?: { excludeUser?: boolean }): GroupedSkills[] {
-  const order: Scope[] = opts?.excludeUser
-    ? ["workspace", "org", "bundle"]
-    : ["user", "workspace", "org", "bundle"];
-  const map = new Map<Scope, ListedSkill[]>();
-  for (const s of skills) {
-    if (opts?.excludeUser && s.scope === "user") continue;
-    const list = map.get(s.scope) ?? [];
-    list.push(s);
-    map.set(s.scope, list);
-  }
-  for (const list of map.values()) list.sort((a, b) => a.name.localeCompare(b.name));
-  return order.filter((s) => map.has(s)).map((scope) => ({ scope, skills: map.get(scope)! }));
-}
-
-const INHERITED_TITLES: Partial<Record<Scope, string>> = {
-  org: "From your organization",
-  bundle: "From the system",
-};
-
-/** Section heading for an inherited (read-only) group. */
-function inheritedTitle(scope: Scope): string {
-  return INHERITED_TITLES[scope] ?? `From ${scope}`;
-}
-
-/**
- * Section heading for the operator's own (editable) group. `scope` always
- * matches one of these because the list fetch is pre-scoped.
- */
-function ownTitle(scope: Scope, isWorkspaceSurface: boolean): string {
-  if (isWorkspaceSurface) return "From your workspace";
-  return scope === "org" ? "Organization skills" : "Your skills";
-}
-
-/** Read-only inherited group (org / system) — derives heading and deep link from scope. */
-function InheritedSkillGroup({
-  group,
-  flush,
-  expandedId,
-  onSelect,
-  detail,
-  detailLoading,
+/** Segmented filter over the composition list — "All" plus one chip per tier. */
+function SegmentBar({
+  tiers,
+  value,
+  onChange,
 }: {
-  group: GroupedSkills;
-  flush: boolean;
-  expandedId: string | null;
-  onSelect: (id: string) => void;
-  detail: ReadSkill | null;
-  detailLoading: boolean;
+  tiers: Tier[];
+  value: Scope | "all";
+  onChange: (value: Scope | "all") => void;
 }) {
-  const isOrg = group.scope === "org";
+  const options: Array<Scope | "all"> = ["all", ...tiers.map((t) => t.scope)];
   return (
-    <InheritedSection
-      flush={flush}
-      title={inheritedTitle(group.scope)}
-      rules={group.skills}
-      deepLinkLabel={isOrg ? "Edit in org settings" : undefined}
-      deepLinkTo={isOrg ? "/org/skills" : undefined}
-      ambient={group.scope === "bundle"}
-      expandedId={expandedId}
-      onSelect={onSelect}
-      detail={detail}
-      detailLoading={detailLoading}
-    />
+    <div className="inline-flex gap-0.5 rounded-md border border-border bg-secondary p-0.5">
+      {options.map((opt) => {
+        const active = value === opt;
+        return (
+          <button
+            key={opt}
+            type="button"
+            onClick={() => onChange(opt)}
+            aria-pressed={active}
+            className={cn(
+              "rounded px-2.5 py-1 text-xs font-medium transition-colors",
+              "focus-visible:outline-2 focus-visible:outline-ring focus-visible:outline-offset-1",
+              active
+                ? "bg-card text-foreground shadow-sm"
+                : "text-muted-foreground hover:text-foreground",
+            )}
+          >
+            {opt === "all" ? "All" : SEGMENT_LABEL[opt]}
+          </button>
+        );
+      })}
+    </div>
   );
 }
 
 /**
- * Card surface for an operable skill group — the turn-pill's expanded
- * treatment (`--card` on `--border`, rounded, hairline-divided rows). Scoped
- * to this catalog on purpose: `Section` stays card-less because that reads
- * right for form pages, but a catalog's rows and their states *are* the
- * content, so they need a figure to sit on. Header carries the group title and
- * the active count; rows divide inside.
+ * One tier inside the composition card: an optional divider label (shown only
+ * when the list holds more than one tier), its rows, and — when the tier is
+ * read-only here — a deep link to where it's edited. Returns a fragment so its
+ * children sit directly under the card's `divide-y`, hairlining every row and
+ * band uniformly.
  */
-function CatalogCard({
-  title,
-  activeCount,
-  children,
-}: {
-  title: string;
-  activeCount: number;
-  children: ReactNode;
-}) {
-  return (
-    <section className="overflow-hidden rounded-lg border border-border bg-card">
-      <header className="flex items-baseline justify-between gap-4 border-b border-border px-3.5 py-2.5">
-        {/* `text-sm font-semibold` is the settings heading vocabulary (see
-         * `Section`), so the owned card reads at the same rank as the
-         * inherited headings below it — surface, color, and size all point
-         * the same way instead of size arguing with the other two. */}
-        <h3 className="text-sm font-semibold text-foreground">{title}</h3>
-        <span className="shrink-0 text-xs text-muted-foreground">{activeCount} active</span>
-      </header>
-      <div className="divide-y divide-border">{children}</div>
-    </section>
-  );
-}
-
-/** Editable own group (workspace / org / user) — renders a Rule per skill. */
-function OwnSkillGroup({
-  group,
-  isWorkspaceSurface,
+function TierGroup({
+  tier,
+  editableScope,
+  showLabel,
   selectedId,
   detail,
   detailLoading,
@@ -512,8 +526,9 @@ function OwnSkillGroup({
   onEdit,
   onDelete,
 }: {
-  group: GroupedSkills;
-  isWorkspaceSurface: boolean;
+  tier: Tier;
+  editableScope: WritableScope;
+  showLabel: boolean;
   selectedId: string | null;
   detail: ReadSkill | null;
   detailLoading: boolean;
@@ -523,13 +538,19 @@ function OwnSkillGroup({
   onEdit: (id: string) => void;
   onDelete: (id: string) => void;
 }) {
-  const activeCount = group.skills.filter((s) => s.status === "active").length;
+  const { label, manageTo, manageLabel } = tierChrome(tier.scope, editableScope);
   return (
-    <CatalogCard title={ownTitle(group.scope, isWorkspaceSurface)} activeCount={activeCount}>
-      {group.skills.map((s) => (
-        <Rule
+    <>
+      {showLabel && (
+        <div className="bg-secondary/40 px-3.5 py-2 text-2xs font-semibold uppercase tracking-wide text-muted-foreground">
+          {label}
+        </div>
+      )}
+      {tier.skills.map((s) => (
+        <SkillRow
           key={s.id}
           skill={s}
+          editable={tier.editable}
           expanded={selectedId === s.id}
           detail={selectedId === s.id ? detail : null}
           detailLoading={selectedId === s.id && detailLoading}
@@ -540,11 +561,21 @@ function OwnSkillGroup({
           pending={actionPending}
         />
       ))}
-    </CatalogCard>
+      {manageTo && manageLabel && (
+        <div className="px-3.5 py-2.5">
+          <Link
+            to={manageTo}
+            className="text-xs text-muted-foreground underline-offset-4 hover:text-foreground hover:underline"
+          >
+            {manageLabel} ↗
+          </Link>
+        </div>
+      )}
+    </>
   );
 }
 
-// ── Rule row ─────────────────────────────────────────────────────────────
+// ── Skill row ────────────────────────────────────────────────────────────
 
 /**
  * Resting-state label for a row.
@@ -562,12 +593,12 @@ function rowLabel(skill: ListedSkill): string {
   return skill.name;
 }
 
-function Rule({
+function SkillRow({
   skill,
+  editable,
   expanded,
   detail,
   detailLoading,
-  inherited,
   onSelect,
   onToggle,
   onEdit,
@@ -575,10 +606,11 @@ function Rule({
   pending,
 }: {
   skill: ListedSkill;
+  /** Editable on this surface (live toggle + edit/delete), or read-only context. */
+  editable: boolean;
   expanded: boolean;
   detail: ReadSkill | null;
   detailLoading: boolean;
-  inherited?: boolean;
   onSelect: () => void;
   onToggle: () => void;
   onEdit?: () => void;
@@ -613,22 +645,29 @@ function Rule({
   const hasExpandedMeta = skill.priority != null || !labelIsName;
 
   return (
-    <div className={cn(inherited && "opacity-80")}>
+    <div>
       <button
         type="button"
         onClick={onSelect}
         aria-expanded={expanded}
         aria-controls={bodyId}
         className={cn(
-          "flex w-full items-center gap-3 text-left transition-colors",
+          "flex w-full items-center gap-3 px-3.5 py-3 text-left transition-colors hover:bg-secondary",
           // The focus ring is drawn *inside* the row (negative offset): the
           // card clips overflow, so an outset ring would be cut off on the
           // first and last row. The tint alone is ~1.05:1 against the card —
           // nowhere near the 3:1 a focus indicator owes a keyboard user.
           "focus-visible:bg-secondary focus-visible:outline-2 focus-visible:outline-ring focus-visible:-outline-offset-2",
-          inherited ? "px-0.5 py-2.5" : "px-3.5 py-3 hover:bg-secondary",
         )}
       >
+        {/* Scope tick — a quiet color column so a tier reads at a glance when
+         * the list is filtered to "All". Decorative: the tier divider names the
+         * scope in words, so the color never carries meaning alone. */}
+        <span
+          aria-hidden
+          className="h-8 w-0.5 shrink-0 rounded-full"
+          style={{ background: `var(--scope-${skill.scope})` }}
+        />
         <span className="min-w-0 flex-1">
           <span
             className={cn(
@@ -656,14 +695,12 @@ function Rule({
             </span>
           )}
         </span>
-        {/* No per-row scope label: `groupByScope` emits one group per scope,
-         * so it would be the same word on every row of a group whose heading
-         * already names the provenance. The in-chat ledger shows scope because
-         * its list genuinely mixes tiers; this catalog never does. */}
+        {/* The tier divider names the scope in words, so the row carries only
+         * the tick and the toggle — no redundant per-row scope label. */}
         <Toggle
           on={skill.status === "active"}
           onChange={onToggle}
-          disabled={inherited}
+          disabled={!editable}
           label={skill.name}
         />
       </button>
@@ -674,7 +711,7 @@ function Rule({
         className="overflow-hidden transition-[max-height,opacity] duration-300 ease-out"
         aria-hidden={!expanded}
       >
-        <div ref={bodyRef} className={cn("pt-1 pb-3", inherited ? "px-0.5" : "px-3.5")}>
+        <div ref={bodyRef} className="px-3.5 pt-1 pb-3 pl-6">
           {detailLoading && <p className="text-xs text-muted-foreground">Loading…</p>}
           {!detailLoading && detail && detail.id === skill.id && (
             <>
@@ -692,7 +729,7 @@ function Rule({
                   {!labelIsName && <span className="font-mono">{skill.name}</span>}
                 </div>
               )}
-              {!inherited && (
+              {editable && (
                 <div className="mt-3 flex gap-4">
                   <Button
                     type="button"
@@ -750,135 +787,20 @@ function Toggle({
         if (!disabled) onChange();
       }}
       disabled={disabled}
-      aria-label={`${on ? "Turn off" : "Turn on"} ${label}`}
+      aria-label={
+        disabled
+          ? `${label} — ${on ? "on" : "off"}, managed elsewhere`
+          : `${on ? "Turn off" : "Turn on"} ${label}`
+      }
       className={cn(
-        "inline-flex shrink-0 items-center gap-2 px-2 py-1 rounded-sm text-xs font-medium select-none",
-        disabled ? "text-muted-foreground/60 cursor-not-allowed" : "text-foreground hover:bg-muted",
+        "inline-flex shrink-0 items-center gap-1.5 px-2 py-1 rounded-sm text-xs font-medium select-none",
+        disabled ? "text-muted-foreground/70 cursor-default" : "text-foreground hover:bg-muted",
       )}
     >
+      {disabled && <Lock className="h-3 w-3" aria-hidden />}
       <span className={cn("w-2 h-2 rounded-full", on ? "bg-success" : "bg-muted-foreground/60")} />
       {on ? "On" : "Off"}
     </button>
-  );
-}
-
-// ── Inherited section ────────────────────────────────────────────────────
-
-/**
- * Inherited (read-only) section — a quiet sibling of `Section` that
- * collapses by default. Uses Section's chrome for consistency: same
- * top-border separator, same `text-sm font-semibold` title vocabulary.
- * The header acts as a button (click toggles open/closed); a chevron
- * sits left of the title to telegraph "this expands".
- *
- * `ambient` shrinks the visual weight further (muted title, slightly
- * dimmed rows) for sections the operator has zero editorial agency
- * over (bundle / system).
- */
-function InheritedSection({
-  flush,
-  title,
-  rules,
-  deepLinkLabel,
-  deepLinkTo,
-  ambient,
-  expandedId,
-  onSelect,
-  detail,
-  detailLoading,
-}: {
-  flush?: boolean;
-  title: string;
-  rules: ListedSkill[];
-  deepLinkLabel?: string;
-  deepLinkTo?: string;
-  ambient?: boolean;
-  expandedId: string | null;
-  onSelect: (id: string) => void;
-  detail: ReadSkill | null;
-  detailLoading: boolean;
-}) {
-  const [open, setOpen] = useState(false);
-  const activeCount = rules.filter((r) => r.status === "active").length;
-  return (
-    <section className={cn("space-y-3", !flush && "pt-6 border-t border-border/60")}>
-      <button
-        type="button"
-        onClick={() => setOpen((v) => !v)}
-        className="w-full flex items-start justify-between gap-4 group"
-      >
-        {/* Inherited groups are ground, not figure: lighter weight and muted
-         * color so the owned cards above read unmistakably as the operable
-         * surface. Ambient (system/bundle) is quieter still. */}
-        <h3
-          className={cn(
-            "flex items-center gap-2 text-sm font-medium transition-colors",
-            ambient
-              ? "text-muted-foreground/70 group-hover:text-foreground"
-              : "text-muted-foreground group-hover:text-foreground",
-          )}
-        >
-          <span
-            className={cn(
-              "text-xs text-muted-foreground transition-transform",
-              open && "rotate-90",
-            )}
-          >
-            ▸
-          </span>
-          {title}
-        </h3>
-        <span className="text-xs text-muted-foreground shrink-0">{activeCount} active</span>
-      </button>
-      {open && (
-        <div className={cn("divide-y divide-border", ambient && "opacity-90")}>
-          {rules.map((r) => (
-            <Rule
-              key={r.id}
-              skill={r}
-              expanded={expandedId === r.id}
-              detail={expandedId === r.id ? detail : null}
-              detailLoading={expandedId === r.id && detailLoading}
-              onSelect={() => onSelect(r.id)}
-              onToggle={() => {}}
-              inherited
-              pending={false}
-            />
-          ))}
-          {deepLinkLabel && deepLinkTo && (
-            <div className="py-3">
-              <Link
-                to={deepLinkTo}
-                className="text-sm text-foreground hover:opacity-70 underline-offset-4 hover:underline"
-              >
-                {deepLinkLabel} →
-              </Link>
-            </div>
-          )}
-        </div>
-      )}
-    </section>
-  );
-}
-
-// ── Personal footer ──────────────────────────────────────────────────────
-
-function PersonalFooter({ count }: { count: number }) {
-  return (
-    <div className="pt-6 border-t border-border/60 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
-      <div className="text-xs text-muted-foreground flex items-center gap-2">
-        <User className="h-3.5 w-3.5" />
-        {count === 0
-          ? "No personal skills active here."
-          : `${count} personal skill${count === 1 ? "" : "s"} active here · follow you across every workspace.`}
-      </div>
-      <Link
-        to="/profile/skills"
-        className="text-sm text-foreground hover:opacity-70 underline-offset-4 hover:underline self-start sm:self-auto"
-      >
-        Edit in your profile →
-      </Link>
-    </div>
   );
 }
 
