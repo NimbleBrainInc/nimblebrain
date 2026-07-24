@@ -2,12 +2,7 @@ type BunServer = ReturnType<typeof Bun.serve>;
 
 import type { ConnectionHealthProbe } from "../bundles/connection-probe.ts";
 import { ConnectionRevalidator } from "../bundles/connection-revalidator.ts";
-import { ComposioConnectionProbe } from "../composio/connection-probe.ts";
-import {
-  composioMonitorEnabled,
-  revalidatorIntervalMsFromEnv,
-} from "../composio/monitor-config.ts";
-import { validateComposioConfig } from "../composio/sdk.ts";
+import { revalidatorIntervalMsFromEnv } from "../composio/monitor-config.ts";
 import type { IdentityProvider } from "../identity/provider.ts";
 import { DevIdentityProvider } from "../identity/providers/dev.ts";
 import { canonicalOrigins, webOrigin } from "../oauth/public-origin.ts";
@@ -97,16 +92,14 @@ export function startServer(options: ServerOptions): ServerHandle {
   // Connection credential re-validation (a disjoint concern from HealthMonitor's
   // transport liveness): poll providers whose upstream account can lapse without
   // a transport 401 (Composio) and flip stale connections to reauth_required.
-  // Dormant unless a probe is registered (Composio configured) and not killed by
-  // the operator switch. Env knobs (read once at startup, restart to change):
-  //   COMPOSIO_MONITOR_ENABLED         — incident kill switch (default on)
-  //   COMPOSIO_MONITOR_INTERVAL_SECONDS — sweep cadence (default 300)
-  const composioConfigured = validateComposioConfig().configured;
+  // Each registered managed-connector provider contributes its own probe (or
+  // none) — a provider-less deploy wires nothing, and a provider that suppresses
+  // its probe (e.g. Composio's COMPOSIO_MONITOR_ENABLED kill switch) simply
+  // omits it. Sweep cadence: COMPOSIO_MONITOR_INTERVAL_SECONDS (default 300).
   const revalidatorProbes: ConnectionHealthProbe[] = [];
-  if (composioMonitorEnabled(composioConfigured)) {
-    revalidatorProbes.push(new ComposioConnectionProbe(runtime.getConnectorDirectory()));
-  } else if (composioConfigured) {
-    log.info("[connection-revalidator] disabled via COMPOSIO_MONITOR_ENABLED=false");
+  for (const provider of runtime.getManagedConnectorRegistry().list()) {
+    const probe = provider.probe?.(runtime.getConnectorDirectory());
+    if (probe) revalidatorProbes.push(probe);
   }
   const intervalMs = revalidatorIntervalMsFromEnv();
   const connectionRevalidator = new ConnectionRevalidator(

@@ -34,15 +34,6 @@
  *     short-circuits when `COMPOSIO_API_KEY` is unset.
  */
 
-// Namespace import, not `import { AuthScheme, Composio }`. `@composio/core`
-// ships a single large bundled `index.mjs`; under bun, statically linking its
-// named exports is order-sensitive and intermittently fails with
-// "Export named 'AuthScheme' not found" — the static binding is resolved
-// against the real module before a test's `mock.module("@composio/core")`
-// can apply, so it aborts at import time. Binding the whole namespace and
-// reading `composioCore.AuthScheme` / `.Composio` at the use site sidesteps
-// static named-export linking and stays live against the test mocks.
-import * as composioCore from "@composio/core";
 import type { ConnectorOwner } from "../identity/connector-owner.ts";
 import { getBouncerMode } from "../oauth/bouncer-config.ts";
 import { publicOrigin } from "../oauth/public-origin.ts";
@@ -224,16 +215,81 @@ async function withTimeout<T>(label: string, fn: () => Promise<T>): Promise<T> {
   }
 }
 
+// ── Vendor SDK (lazy) ───────────────────────────────────────────────
+
+/**
+ * The slice of `@composio/core` this adapter uses, declared locally rather than
+ * imported. The vendor is reached ONLY through the lazy dynamic import below —
+ * no top-level `@composio/core` import (static OR type-only) exists, so nothing
+ * links the vendor at module load. Each SDK call site narrows the `unknown`
+ * results to the concrete shape it needs (as the existing casts already do).
+ */
+interface ComposioClient {
+  connectedAccounts: {
+    list(query: unknown): Promise<unknown>;
+    initiate(userId: string, authConfigId: string, opts: unknown): Promise<unknown>;
+    delete(connectedAccountId: string): Promise<unknown>;
+  };
+  create(userId: string, config: unknown): Promise<unknown>;
+}
+
+interface ComposioCoreModule {
+  Composio: new (opts: {
+    apiKey: string;
+    baseURL: string;
+    disableVersionCheck: boolean;
+    allowTracking: boolean;
+  }) => ComposioClient;
+  AuthScheme: { APIKey(fields: Record<string, string>): unknown };
+}
+
+let _vendorLoadCount = 0;
+
+/**
+ * The one place `@composio/core` is imported — lazily, via a dynamic import
+ * reached only on a brokered call.
+ *
+ * `@composio/core` ships a single large bundled `index.mjs`; under bun,
+ * statically linking its named exports is order-sensitive and intermittently
+ * fails with "Export named 'AuthScheme' not found" — a static binding resolves
+ * against the real module before a test's `mock.module("@composio/core")` can
+ * apply, so it aborts at import time. Loading lazily sidesteps that entirely: a
+ * Composio-less deploy never links the vendor, and a test's mock is always
+ * registered before a call resolves this import. The module system dedups the
+ * real import, so this stays cheap on the hot path without a hand-rolled cache
+ * (a cached promise would also pin one test file's mock across every sibling).
+ */
+async function loadComposioCore(): Promise<ComposioCoreModule> {
+  _vendorLoadCount += 1;
+  // The runtime dynamic import (a call expression, not a top-level `from`
+  // import) is the only reference to the vendor. Narrow it to the local slice.
+  return (await import("@composio/core")) as unknown as ComposioCoreModule;
+}
+
+/**
+ * Test-only. Reset the vendor load counter so a test can assert a code path
+ * never triggered a vendor load. Mirrors `_resetComposioConfigForTest`.
+ */
+export function _resetComposioVendorForTest(): void {
+  _vendorLoadCount = 0;
+}
+
+/** Test-only. How many times the vendor SDK has been (lazily) loaded since the last reset. */
+export function _composioVendorLoadCountForTest(): number {
+  return _vendorLoadCount;
+}
+
 /**
  * Build an authenticated Composio SDK client. The `baseURL` override
  * is plumbed through `COMPOSIO_API_BASE_URL` (validated at startup).
  *
- * Internal — every public function in this module instantiates its
- * own client per call. The SDK is cheap to construct; sharing a
- * long-lived client across requests would couple cancellation /
- * abort semantics to its lifetime, which we don't need.
+ * Internal + async — awaits the lazy vendor load, then constructs a fresh
+ * client per call. The SDK is cheap to construct; sharing a long-lived client
+ * across requests would couple cancellation / abort semantics to its lifetime,
+ * which we don't need.
  */
-function composioClient(apiKey: string): composioCore.Composio {
+async function composioClient(apiKey: string): Promise<ComposioClient> {
+  const composioCore = await loadComposioCore();
   // `validateComposioConfig` runs full validation on its first call
   // (eagerly, at server startup, via `composioAuthRoutes`). Every
   // subsequent call — including this one, on every SDK request —
@@ -275,7 +331,7 @@ export async function initiateComposioConnection(opts: {
   authConfigId: string;
   callbackUrl: string;
 }): Promise<{ redirectUrl: string; connectedAccountId: string }> {
-  const composio = composioClient(opts.apiKey);
+  const composio = await composioClient(opts.apiKey);
   const connRequest = (await withTimeout("connectedAccounts.initiate", () =>
     composio.connectedAccounts.initiate(opts.userId, opts.authConfigId, {
       callbackUrl: opts.callbackUrl,
@@ -327,7 +383,8 @@ export async function connectComposioApiKey(opts: {
   authConfigId: string;
   fields: Record<string, string>;
 }): Promise<{ connectedAccountId: string; status: string }> {
-  const composio = composioClient(opts.apiKey);
+  const composio = await composioClient(opts.apiKey);
+  const composioCore = await loadComposioCore();
   // SDK types the `config` as a broad ConnectionData union; `AuthScheme.APIKey`
   // builds the API_KEY-shaped member ({ authScheme, val: { status, ...fields } }).
   const connRequest = (await withTimeout("connectedAccounts.initiate(apikey)", () =>
@@ -407,7 +464,7 @@ export async function findActiveComposioConnection(opts: {
   userId: string;
   authConfigId: string;
 }): Promise<{ id: string; status: string } | null> {
-  const composio = composioClient(opts.apiKey);
+  const composio = await composioClient(opts.apiKey);
   const list = (await withTimeout("connectedAccounts.list", () =>
     composio.connectedAccounts.list({
       userIds: [opts.userId],
@@ -439,7 +496,7 @@ export async function deleteComposioConnectedAccount(opts: {
   connectedAccountId: string;
 }): Promise<boolean> {
   try {
-    const composio = composioClient(opts.apiKey);
+    const composio = await composioClient(opts.apiKey);
     await withTimeout("connectedAccounts.delete", () =>
       composio.connectedAccounts.delete(opts.connectedAccountId),
     );
@@ -572,7 +629,7 @@ export async function createComposioSession(opts: {
    */
   tools?: string[];
 }): Promise<{ type: "http" | "sse"; url: string; headers?: Record<string, string> }> {
-  const composio = composioClient(opts.apiKey);
+  const composio = await composioClient(opts.apiKey);
   const config: Record<string, unknown> = {
     toolkits: [opts.toolkit],
     authConfigs: { [opts.toolkit]: opts.authConfigId },

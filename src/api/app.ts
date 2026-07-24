@@ -9,7 +9,6 @@ import { tracingMiddleware } from "./middleware/tracing.ts";
 import { authRoutes } from "./routes/auth.ts";
 import { bootstrapRoutes } from "./routes/bootstrap.ts";
 import { chatRoutes } from "./routes/chat.ts";
-import { composioAuthRoutes } from "./routes/composio-auth.ts";
 import { conversationEventRoutes } from "./routes/conversation-events.ts";
 import { eventRoutes } from "./routes/events.ts";
 import { healthRoutes } from "./routes/health.ts";
@@ -54,10 +53,15 @@ export function createApp(
   // reachable before any authenticated middleware; ordering alongside
   // authRoutes keeps that invariant obvious.
   app.route("/", mcpAuthRoutes(ctx));
-  // Composio-backed connectors. Parallel to mcpAuthRoutes — same
-  // unauthenticated-callback constraint applies. The /proxy endpoint
-  // is the white-label forwarder vendors call back to.
-  app.route("/", composioAuthRoutes(ctx));
+  // Managed-connector providers own their HTTP callback surface (Composio's
+  // `/v1/composio-auth/*`). Mounted here — parallel to mcpAuthRoutes, same
+  // unauthenticated-callback constraint — only for each REGISTERED provider, so
+  // a provider-less deploy mounts nothing and 404s at the router (honest "not
+  // installed") instead of hitting an internal config gate.
+  for (const provider of ctx.runtime.getManagedConnectorRegistry().list()) {
+    const providerRoutes = provider.routes?.(ctx);
+    if (providerRoutes) app.route("/", providerRoutes);
+  }
 
   // MCP routes BEFORE other authenticated routes — prevents other sub-app
   // wildcard middleware from intercepting /mcp requests. Hono runs use("*")

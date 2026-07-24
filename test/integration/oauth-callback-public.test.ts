@@ -20,6 +20,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { startServer } from "../../src/api/server.ts";
 import type { ServerHandle } from "../../src/api/server.ts";
+import { _resetComposioConfigForTest } from "../../src/composio/sdk.ts";
 import { Runtime } from "../../src/runtime/runtime.ts";
 import { createEchoModel } from "../helpers/echo-model.ts";
 import { createTestAuthAdapter } from "../helpers/test-auth-adapter.ts";
@@ -30,9 +31,16 @@ let handle: ServerHandle;
 let baseUrl: string;
 const API_KEY = "test-api-key-oauth-callback-public";
 const testDir = join(tmpdir(), `nimblebrain-oauth-callback-${Date.now()}`);
+const savedComposioApiKey = process.env.COMPOSIO_API_KEY;
 
 beforeAll(async () => {
 	mkdirSync(testDir, { recursive: true });
+	// The Composio callback route is owned by the Composio managed-connector
+	// provider and mounted only when the provider is registered — i.e. only when
+	// Composio is configured. Configure it so the public-callback contract below
+	// (reachable without auth) actually has a route to exercise.
+	process.env.COMPOSIO_API_KEY = "test-composio-key-oauth-callback-public";
+	_resetComposioConfigForTest();
 	runtime = await Runtime.start({
 		model: { provider: "custom", adapter: createEchoModel() },
 		noDefaultBundles: true,
@@ -52,6 +60,9 @@ afterAll(async () => {
 	handle.stop(true);
 	await runtime.shutdown();
 	rmSync(testDir, { recursive: true, force: true });
+	if (savedComposioApiKey === undefined) delete process.env.COMPOSIO_API_KEY;
+	else process.env.COMPOSIO_API_KEY = savedComposioApiKey;
+	_resetComposioConfigForTest();
 });
 
 describe("outbound-OAuth callbacks are public under adapter auth", () => {
