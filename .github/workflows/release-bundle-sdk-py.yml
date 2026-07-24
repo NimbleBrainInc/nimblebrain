@@ -38,7 +38,7 @@ jobs:
     steps:
       - uses: actions/checkout@v6
       - name: Install uv
-        uses: astral-sh/setup-uv@v6
+        uses: astral-sh/setup-uv@v9.0.0  # setup-uv dropped floating major tags (v8+); pin exact
         with:
           enable-cache: true
       - name: Install Python
@@ -69,7 +69,7 @@ jobs:
     steps:
       - uses: actions/checkout@v6
       - name: Install uv
-        uses: astral-sh/setup-uv@v6
+        uses: astral-sh/setup-uv@v9.0.0  # setup-uv dropped floating major tags (v8+); pin exact
       - name: Verify tag matches package version
         # Catches `bundle-sdk-py/v0.1.0` tagged against a pyproject.toml
         # still on `0.0.x`. Tag is the source of truth for version
@@ -92,7 +92,7 @@ jobs:
         with:
           packages-dir: packages/bundle-sdk-py/dist
       - name: Create GitHub Release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           name: bundle-sdk-py ${{ github.ref_name }}
           body: |
