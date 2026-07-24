@@ -439,6 +439,19 @@ describe("SkillsBrowser with surface='workspace' — figure/ground reground", ()
     expect(cls).toContain("focus-visible:outline-2");
   });
 
+  test("the row button points aria-controls at the region it expands", async () => {
+    mounted = await mount(React.createElement(SkillsBrowser, { surface: "workspace" }));
+    const row = Array.from(mounted.container.querySelectorAll("button")).find((b) =>
+      b.textContent?.includes("Workspace-tier rule."),
+    );
+    const controls = row?.getAttribute("aria-controls");
+    expect(controls).toBeTruthy();
+    expect(row?.getAttribute("aria-expanded")).toBe("false");
+    // The id must resolve — aria-controls pointing at nothing is worse than
+    // omitting it, since AT announces a target that isn't there.
+    expect(mounted.container.querySelector(`#${CSS.escape(controls as string)}`)).not.toBeNull();
+  });
+
   test("no per-row scope label — the group heading already names provenance", async () => {
     mounted = await mount(React.createElement(SkillsBrowser, { surface: "workspace" }));
     // `groupByScope` emits one group per scope, so a row label would be the

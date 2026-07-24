@@ -4,6 +4,7 @@ import {
   type RefObject,
   useCallback,
   useEffect,
+  useId,
   useMemo,
   useRef,
   useState,
@@ -486,7 +487,11 @@ function CatalogCard({
   return (
     <section className="overflow-hidden rounded-lg border border-border bg-card">
       <header className="flex items-baseline justify-between gap-4 border-b border-border px-3.5 py-2.5">
-        <h3 className="text-xs font-semibold text-foreground">{title}</h3>
+        {/* `text-sm font-semibold` is the settings heading vocabulary (see
+         * `Section`), so the owned card reads at the same rank as the
+         * inherited headings below it — surface, color, and size all point
+         * the same way instead of size arguing with the other two. */}
+        <h3 className="text-sm font-semibold text-foreground">{title}</h3>
         <span className="shrink-0 text-xs text-muted-foreground">{activeCount} active</span>
       </header>
       <div className="divide-y divide-border">{children}</div>
@@ -582,6 +587,9 @@ function Rule({
 }) {
   const bodyRef = useRef<HTMLDivElement | null>(null);
   const [shellH, setShellH] = useState(0);
+  // Pairs the row button's `aria-expanded` with the region it actually
+  // controls, so a screen reader can follow the disclosure to its target.
+  const bodyId = useId();
   // `detail` isn't read in the effect, but its async content renders inside
   // bodyRef — so when it loads the measured scrollHeight changes. Keeping it as
   // a dependency re-measures on load; it's a deliberate trigger, not dead code.
@@ -610,6 +618,7 @@ function Rule({
         type="button"
         onClick={onSelect}
         aria-expanded={expanded}
+        aria-controls={bodyId}
         className={cn(
           "flex w-full items-center gap-3 text-left transition-colors",
           // The focus ring is drawn *inside* the row (negative offset): the
@@ -630,7 +639,13 @@ function Rule({
             {label}
           </span>
           {mechanism && (
-            <span className="mt-0.5 block truncate text-xs text-muted-foreground">
+            <span
+              // The line truncates to keep rows one height; a long trigger
+              // list would otherwise clip with nowhere else to read it (the
+              // expanded body carries priority and name, not the mechanism).
+              title={mechanism.mono ? `${mechanism.text} ${mechanism.mono}` : mechanism.text}
+              className="mt-0.5 block truncate text-xs text-muted-foreground"
+            >
               {mechanism.text}
               {mechanism.mono && (
                 <>
@@ -654,6 +669,7 @@ function Rule({
       </button>
 
       <div
+        id={bodyId}
         style={{ maxHeight: shellH, opacity: expanded ? 1 : 0 }}
         className="overflow-hidden transition-[max-height,opacity] duration-300 ease-out"
         aria-hidden={!expanded}
