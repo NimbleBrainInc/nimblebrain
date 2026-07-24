@@ -570,6 +570,29 @@ describe("SkillsBrowser with surface='workspace' — composition list", () => {
     ).toBe("false");
   });
 
+  test("a locked tier's toggle fires no mutation", async () => {
+    // Dropping `stopPropagation` also dropped Toggle's `if (!disabled)` guard,
+    // making the `disabled` attribute the sole suppressor of a locked click.
+    // That's load-bearing now, so it gets pinned behaviorally: switching to
+    // `aria-disabled` later (the usual way to keep a locked control focusable)
+    // would silently turn `onClick={onChange}` into a live mutation.
+    mounted = await mount(React.createElement(SkillsBrowser, { surface: "workspace" }));
+    const locked = toggleFor(mounted.container, "bundle-skill");
+    // Guard against a vacuous pass — a missing toggle would satisfy the
+    // assertion below for the wrong reason.
+    expect(locked).not.toBeNull();
+    expect(locked?.disabled).toBe(true);
+
+    await act(async () => {
+      locked?.click();
+    });
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(callToolCalls.some((c) => c.tool === "activate" || c.tool === "deactivate")).toBe(false);
+  });
+
   test("the segment filter narrows the list to a single tier", async () => {
     mounted = await mount(React.createElement(SkillsBrowser, { surface: "workspace" }));
     expect(mounted.container.textContent ?? "").toContain("Workspace-tier rule.");

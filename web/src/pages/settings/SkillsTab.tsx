@@ -667,14 +667,18 @@ function SkillRow({
        * exposure to assistive tech undefined and made "toggling must not
        * expand the row" rest on `stopPropagation`. As siblings, that
        * separation is structural and needs no event plumbing. */}
-      <div className="flex items-center gap-3 px-3.5 transition-colors hover:bg-secondary">
+      {/* Only the trailing pad sits on the container. The row's leading pad and
+       * the gap before the toggle are the expander's own padding, so every
+       * pixel that tints on hover also expands the row — splitting them would
+       * leave ~26px that lights up under the cursor and does nothing. */}
+      <div className="flex items-center pr-3.5 transition-colors hover:bg-secondary">
         <button
           type="button"
           onClick={onSelect}
           aria-expanded={expanded}
           aria-controls={bodyId}
           className={cn(
-            "flex min-w-0 flex-1 items-center gap-3 py-3 text-left",
+            "flex min-w-0 flex-1 items-center gap-3 py-3 pl-3.5 pr-3 text-left",
             // The focus ring is drawn *inside* the row (negative offset): the
             // card clips overflow, so an outset ring would be cut off on the
             // first and last row. The tint alone is ~1.05:1 against the card —
