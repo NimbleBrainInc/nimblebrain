@@ -159,6 +159,21 @@ const ReactDOMClient = await import("react-dom/client");
 const { act } = await import("react");
 const { MemoryRouter } = await import("react-router-dom");
 const { SkillsBrowser } = await import("../src/pages/settings/SkillsTab");
+const { SessionProvider } = await import("../src/context/SessionContext");
+
+/** Wrap an element in a session so `useScopedRole` resolves a real org role. */
+function withOrgRole(element: React.ReactElement, orgRole: string): React.ReactElement {
+  return React.createElement(
+    SessionProvider,
+    {
+      session: {
+        authenticated: true,
+        user: { id: "u1", email: "a@b.co", displayName: "A", orgRole },
+      },
+    },
+    element,
+  );
+}
 
 interface Mounted {
   container: HTMLDivElement;
@@ -234,6 +249,30 @@ describe("SkillsBrowser with surface='workspace' (workspace settings tab)", () =
     );
     expect(link).toBeDefined();
     expect(link?.getAttribute("href")).toBe("/profile/skills");
+  });
+
+  test("org tier's manage link is hidden from non-org-admins (the guarded route dead-ends)", async () => {
+    // Default mount has no session → role "none", so the org deep link, which
+    // would bounce off the org-admin route guard, must not render.
+    mounted = await mount(React.createElement(SkillsBrowser, { surface: "workspace" }));
+    const text = mounted.container.textContent ?? "";
+    // The tier still reads correctly without the link.
+    expect(text).toContain("Organization · managed in org settings");
+    const orgLink = Array.from(mounted.container.querySelectorAll("a")).find((a) =>
+      a.textContent?.includes("Manage in org settings"),
+    );
+    expect(orgLink).toBeUndefined();
+  });
+
+  test("org tier deep-links org admins to /org/skills", async () => {
+    mounted = await mount(
+      withOrgRole(React.createElement(SkillsBrowser, { surface: "workspace" }), "admin"),
+    );
+    const orgLink = Array.from(mounted.container.querySelectorAll("a")).find((a) =>
+      a.textContent?.includes("Manage in org settings"),
+    );
+    expect(orgLink).toBeDefined();
+    expect(orgLink?.getAttribute("href")).toBe("/org/skills");
   });
 
   test("submitting + Add a skill sends scope='workspace' regardless of internal state", async () => {

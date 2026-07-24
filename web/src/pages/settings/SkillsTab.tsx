@@ -14,6 +14,7 @@ import { Button } from "../../components/ui/button";
 import { Card, CardContent } from "../../components/ui/card";
 import { Input } from "../../components/ui/input";
 import { Textarea } from "../../components/ui/textarea";
+import { roleAtLeast, useScopedRole } from "../../hooks/useScopedRole";
 import { skillMechanismLabel } from "../../lib/skill-display";
 import { linkSafety } from "../../lib/streamdown-config";
 import { parseToolResponse } from "../../lib/tool-response";
@@ -54,7 +55,9 @@ type WritableScope = "org" | "workspace" | "user";
 interface ScopeConfig {
   isWorkspaceSurface: boolean;
   lockedScope: "org" | "user" | undefined;
-  initialScopeFilter: Scope | "all";
+  /** The `scope` argument for `skills__list` ("all" = unfiltered). Distinct from
+   *  the UI's segment filter, which always starts at "all". */
+  fetchScope: Scope | "all";
   createLockedScope: WritableScope;
 }
 
@@ -64,14 +67,14 @@ function resolveScopeConfig(props: SkillsBrowserProps): ScopeConfig {
     return {
       isWorkspaceSurface: true,
       lockedScope: undefined,
-      initialScopeFilter: "all",
+      fetchScope: "all",
       createLockedScope: "workspace",
     };
   }
   return {
     isWorkspaceSurface: false,
     lockedScope: props.lockedScope,
-    initialScopeFilter: props.lockedScope,
+    fetchScope: props.lockedScope,
     createLockedScope: props.lockedScope,
   };
 }
@@ -112,6 +115,7 @@ const SEGMENT_LABEL: Record<Scope, string> = {
 function tierChrome(
   scope: Scope,
   editable: WritableScope,
+  canManageOrg: boolean,
 ): { label: string; manageTo?: string; manageLabel?: string } {
   // A tier label only renders on a multi-tier surface, which today is only the
   // workspace vantage — so "Yours" is the sole reachable editable label. Org and
@@ -126,8 +130,9 @@ function tierChrome(
   if (scope === "org")
     return {
       label: "Organization · managed in org settings",
-      manageTo: "/org/skills",
-      manageLabel: "Manage in org settings",
+      // The manage link is only shown to org admins — /org/skills is guarded, so
+      // for anyone else it would silently bounce to /profile.
+      ...(canManageOrg ? { manageTo: "/org/skills", manageLabel: "Manage in org settings" } : {}),
     };
   // The only other context tier any surface renders is the system bundle.
   return { label: "System · built in" };
@@ -144,8 +149,12 @@ function isDetailPending(editingId: string | null, detail: ReadSkill | null): bo
 }
 
 export function SkillsBrowser(props: SkillsBrowserProps) {
-  const { isWorkspaceSurface, lockedScope, initialScopeFilter, createLockedScope } =
+  const { isWorkspaceSurface, lockedScope, fetchScope, createLockedScope } =
     resolveScopeConfig(props);
+  // /org/skills is org-admin-guarded, so the org tier's "Manage in org settings"
+  // deep link would dead-end at the route guard for anyone else. Gate it on the
+  // viewer's role (independent of route) so only those who can act see it.
+  const canManageOrg = roleAtLeast(useScopedRole(), "org_admin");
 
   const [skills, setSkills] = useState<ListedSkill[]>([]);
   const [loading, setLoading] = useState(true);
@@ -165,7 +174,7 @@ export function SkillsBrowser(props: SkillsBrowserProps) {
     setError(null);
     try {
       const args: Record<string, unknown> = {};
-      if (initialScopeFilter !== "all") args.scope = initialScopeFilter;
+      if (fetchScope !== "all") args.scope = fetchScope;
       // List both active and disabled so the user can see Off rules and
       // turn them back on. The per-row toggle reflects the current state.
       const res = await callTool("skills", "list", args);
@@ -177,7 +186,7 @@ export function SkillsBrowser(props: SkillsBrowserProps) {
     } finally {
       setLoading(false);
     }
-  }, [initialScopeFilter]);
+  }, [fetchScope]);
 
   useEffect(() => {
     void fetchSkills();
@@ -430,6 +439,7 @@ export function SkillsBrowser(props: SkillsBrowserProps) {
                 key={tier.scope}
                 tier={tier}
                 editableScope={createLockedScope}
+                canManageOrg={canManageOrg}
                 showLabel={multiTier}
                 selectedId={selectedId}
                 detail={detail}
@@ -517,6 +527,7 @@ function SegmentBar({
 function TierGroup({
   tier,
   editableScope,
+  canManageOrg,
   showLabel,
   selectedId,
   detail,
@@ -529,6 +540,7 @@ function TierGroup({
 }: {
   tier: Tier;
   editableScope: WritableScope;
+  canManageOrg: boolean;
   showLabel: boolean;
   selectedId: string | null;
   detail: ReadSkill | null;
@@ -539,7 +551,7 @@ function TierGroup({
   onEdit: (id: string) => void;
   onDelete: (id: string) => void;
 }) {
-  const { label, manageTo, manageLabel } = tierChrome(tier.scope, editableScope);
+  const { label, manageTo, manageLabel } = tierChrome(tier.scope, editableScope, canManageOrg);
   return (
     <>
       {showLabel && (
