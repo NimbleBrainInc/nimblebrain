@@ -120,6 +120,15 @@ export interface TracedSubItem {
   id: string;
   /** Human-readable display. */
   source: string;
+  /**
+   * This item's own composed body — the per-skill text, split out from the
+   * parent layer's aggregate `text` so a UI can itemize the skills that a
+   * section aggregates (rather than showing one combined wall). Present for
+   * layer-3 skills (live and historical); absent for apps.
+   */
+  text?: string;
+  /** Approximate tokens for this item's body. */
+  tokens?: number;
   /** Bundle attribution when known. Drives the `bundle` filter. */
   bundle?: string;
   /** Free-form metadata appropriate to the kind (skill scope, app trustScore, etc.). */
@@ -625,6 +634,8 @@ function layer3SkillsLayers(layer3Skills?: Layer3SkillEntry[]): PendingLayer[] {
             kind: "layer3_skill" as const,
             id: entry.sourcePath ?? `nb:layer3:${entry.name}`,
             source: entry.sourcePath ?? entry.name,
+            text: entry.body,
+            tokens: approxTokens(entry.body),
             ...(bundle !== undefined ? { bundle } : {}),
             metadata: {
               name: entry.name,

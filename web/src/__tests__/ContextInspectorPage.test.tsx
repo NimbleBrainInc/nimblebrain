@@ -3,10 +3,12 @@
 //
 // The full-page inspector opened from the In-context panel. Pins:
 //   1. The budget bar renders the per-source breakdown + total.
-//   2. The composition renders the traced layers; the reading pane shows the
-//      first layer's composed body by default.
-//   3. Selecting a layer shows that layer's exact body.
-//   4. A budget bucket (Skills) filters the layer list.
+//   2. The composition renders the traced layers; the first layer auto-expands
+//      to its composed body.
+//   3. Expanding a layer shows that layer's exact body; a second click collapses it.
+//   4. A skills layer expands into individual skill bodies; a textless layer
+//      (apps) falls back to its aggregate section text.
+//   5. A budget bucket (Skills) filters the layer list.
 //
 // @testing-library/react + MemoryRouter with a param route so useParams
 // resolves slug + convId; both compose tool calls mocked. Assertions read
@@ -73,13 +75,37 @@ const COMPOSITION = {
       id: "nb:layer3-skills",
       source: "layer 3 skills",
       tokens: 3369,
-      text: "### drafting-craft\nOpen with a specific observation.",
+      text: "### drafting-craft\n…combined section…",
       subItems: [
         {
           kind: "layer3_skill" as const,
           id: "/workspaces/tenant-a/skills/drafting-craft.md",
           source: "drafting-craft",
+          text: "Open with a specific, verifiable observation.",
+          tokens: 1200,
         },
+        {
+          kind: "layer3_skill" as const,
+          id: "/workspaces/tenant-a/skills/batch-first-pass.md",
+          source: "batch-first-pass",
+          text: "Do a full first pass before revising any item.",
+          tokens: 900,
+        },
+      ],
+    },
+    {
+      // Apps carry per-app sub-items with NO body text (only metadata), so the
+      // layer must fall back to its aggregate section rather than itemize — the
+      // common production path once a workspace has apps installed.
+      kind: "apps",
+      segment: "stable" as const,
+      id: "nb:apps",
+      source: "installed apps (2)",
+      tokens: 820,
+      text: "## Installed Apps\n\ngranola — meeting notes\nslack — team chat",
+      subItems: [
+        { kind: "app" as const, id: "granola", source: "granola", bundle: "granola" },
+        { kind: "app" as const, id: "slack", source: "slack", bundle: "slack" },
       ],
     },
     {
@@ -141,11 +167,11 @@ describe("ContextInspectorPage", () => {
     expect(text).toContain("Current date");
     expect(text).toContain("per-turn"); // volatile marker on current_date
 
-    // Reading pane defaults to the first layer's composed body.
+    // The first layer auto-expands to its composed body.
     expect(text).toContain("You are a helpful assistant powered by NimbleBrain.");
   });
 
-  test("shows a layer's composed body when selected", async () => {
+  test("shows a layer's composed body when expanded, and collapses on a second click", async () => {
     const { container } = renderPage();
     await waitFor(() => expect(container.textContent).toContain("User context skill"));
 
@@ -156,6 +182,48 @@ describe("ContextInspectorPage", () => {
     await waitFor(() =>
       expect(container.textContent).toContain("Write in plain English. No em-dashes."),
     );
+
+    // A second click collapses it — the body leaves the DOM.
+    fireEvent.click(row);
+    await waitFor(() =>
+      expect(container.textContent).not.toContain("Write in plain English. No em-dashes."),
+    );
+  });
+
+  test("itemizes a skills layer into individual skill bodies", async () => {
+    const { container } = renderPage();
+    await waitFor(() => expect(container.textContent).toContain("Layer-3 skills"));
+
+    const row = buttons(container).find((b) => b.textContent?.includes("Layer-3 skills"));
+    if (!row) throw new Error("layer-3 skills row not found");
+    fireEvent.click(row);
+
+    // Each aggregated skill shows its own name and body, not one combined wall.
+    await waitFor(() =>
+      expect(container.textContent).toContain("Open with a specific, verifiable observation."),
+    );
+    const text = container.textContent ?? "";
+    expect(text).toContain("2 skills"); // the itemization caption
+    expect(text).toContain("drafting-craft");
+    expect(text).toContain("batch-first-pass");
+    expect(text).toContain("Do a full first pass before revising any item.");
+    expect(text).not.toContain("…combined section…"); // the aggregate text is not shown
+  });
+
+  test("falls back to the aggregate section when sub-items carry no body (apps)", async () => {
+    const { container } = renderPage();
+    await waitFor(() => expect(container.textContent).toContain("Apps"));
+
+    const row = buttons(container).find((b) => b.textContent?.includes("Apps"));
+    if (!row) throw new Error("apps row not found");
+    fireEvent.click(row);
+
+    // The apps layer renders its composed section text, not a per-item itemization —
+    // its sub-items have no body, so there is nothing to break out.
+    await waitFor(() => expect(container.textContent).toContain("## Installed Apps"));
+    const text = container.textContent ?? "";
+    expect(text).toContain("granola — meeting notes");
+    expect(text).not.toContain("each shown with its own body"); // not itemized
   });
 
   test("filters the layers to a budget bucket", async () => {
