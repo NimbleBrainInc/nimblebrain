@@ -1,6 +1,22 @@
 import { describe, expect, it } from "bun:test";
 import { createAnthropic } from "@ai-sdk/anthropic";
+import { listModels } from "../../src/model/catalog.ts";
 import { shortCallProviderOptions } from "../../src/model/short-call-options.ts";
+
+/**
+ * Anthropic reasoning models that reject `output_config.effort` (Haiku 4.5 and
+ * Sonnet 4.5 error on it; Opus 4.1 predates it). The mirror of `ACCEPTS_EFFORT`
+ * in the source — between them every Anthropic reasoning model in the catalog
+ * must be accounted for.
+ */
+const REJECTS_EFFORT: ReadonlySet<string> = new Set([
+  "claude-haiku-4-5",
+  "claude-haiku-4-5-20251001",
+  "claude-opus-4-1",
+  "claude-opus-4-1-20250805",
+  "claude-sonnet-4-5",
+  "claude-sonnet-4-5-20250929",
+]);
 
 /**
  * These assert at the PROVIDER boundary — the JSON body handed to fetch — not
@@ -70,6 +86,24 @@ describe("shortCallProviderOptions on the wire (anthropic)", () => {
     expect(bodies[0]!.thinking).toBeUndefined();
   });
 
+  it("sends NO effort to the default fast model", async () => {
+    // Haiku 4.5 reasons but rejects `output_config.effort`, and it is what
+    // every short call resolves to out of the box (DEFAULT_FAST_MODEL, all
+    // three .environments/ seeds, and the documented models.fast default).
+    // The provider serializes `effort` with no per-model gating, so gating on
+    // capabilities.reasoning alone would put a rejected parameter on the
+    // runtime's highest-frequency paths.
+    const { provider, bodies } = recordingAnthropic();
+    await provider("claude-haiku-4-5-20251001").doGenerate({
+      prompt: PROMPT,
+      maxOutputTokens: 512,
+      providerOptions: shortCallProviderOptions("anthropic:claude-haiku-4-5-20251001"),
+    });
+
+    expect(bodies[0]!.output_config).toBeUndefined();
+    expect(bodies[0]!.thinking).toBeUndefined();
+  });
+
   it("sends nothing extra for a non-reasoning model or an unknown slot", async () => {
     const { provider, bodies } = recordingAnthropic();
     const model = provider("claude-opus-5");
@@ -89,6 +123,37 @@ describe("shortCallProviderOptions on the wire (anthropic)", () => {
   });
 });
 
+describe("engine thinking options on the wire", () => {
+  // `buildAnthropicThinkingOptions` translates the platform's enabled+budget
+  // into adaptive+effort for adaptive-only models. engine.test.ts asserts the
+  // options object; this asserts the two facts that translation depends on —
+  // that `xhigh` survives serialization, and that bare adaptive sends no
+  // effort at all.
+  it("serializes adaptive + xhigh into thinking and output_config", async () => {
+    const { provider, bodies } = recordingAnthropic();
+    await provider("claude-opus-5").doGenerate({
+      prompt: PROMPT,
+      maxOutputTokens: 1024,
+      providerOptions: { anthropic: { thinking: { type: "adaptive" }, effort: "xhigh" } },
+    });
+
+    expect(bodies[0]!.thinking).toEqual({ type: "adaptive" });
+    expect(bodies[0]!.output_config).toEqual({ effort: "xhigh" });
+  });
+
+  it("sends no output_config for bare adaptive", async () => {
+    const { provider, bodies } = recordingAnthropic();
+    await provider("claude-opus-5").doGenerate({
+      prompt: PROMPT,
+      maxOutputTokens: 1024,
+      providerOptions: { anthropic: { thinking: { type: "adaptive" } } },
+    });
+
+    expect(bodies[0]!.thinking).toEqual({ type: "adaptive" });
+    expect(bodies[0]!.output_config).toBeUndefined();
+  });
+});
+
 describe("shortCallProviderOptions shape", () => {
   it("suppresses reasoning on the providers that expose a knob", () => {
     expect(shortCallProviderOptions("anthropic:claude-opus-5")).toEqual({
@@ -105,5 +170,31 @@ describe("shortCallProviderOptions shape", () => {
   it("returns empty for a null slot or a model outside the catalog", () => {
     expect(shortCallProviderOptions(null)).toEqual({});
     expect(shortCallProviderOptions("anthropic:not-a-real-model")).toEqual({});
+  });
+
+  it("returns empty for Anthropic reasoning models that reject effort", () => {
+    for (const id of REJECTS_EFFORT) {
+      expect(shortCallProviderOptions(`anthropic:${id}`)).toEqual({});
+    }
+  });
+
+  it("classifies every Anthropic reasoning model for output_config.effort", () => {
+    // Companion to the ADAPTIVE_ONLY_THINKING_MODELS guard in catalog.test.ts,
+    // and the same failure shape: `sync-models` adds Anthropic models
+    // automatically, but effort support is hand-maintained because models.dev
+    // doesn't track it. An unclassified model silently gets no options here —
+    // safe, but it means an operator pointing `fast` at it loses the
+    // protection without any signal.
+    //
+    // To fix a failure: decide whether the model accepts `output_config.effort`,
+    // then add it to ACCEPTS_EFFORT in src/model/short-call-options.ts or to
+    // REJECTS_EFFORT below.
+    const unclassified = listModels("anthropic")
+      .filter((m) => m.capabilities.reasoning)
+      .filter((m) => Object.keys(shortCallProviderOptions(`anthropic:${m.id}`)).length === 0)
+      .map((m) => m.id)
+      .filter((id) => !REJECTS_EFFORT.has(id));
+
+    expect(unclassified).toEqual([]);
   });
 });

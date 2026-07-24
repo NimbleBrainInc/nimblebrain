@@ -21,11 +21,39 @@ import { getModelByString, getProviderFromModel } from "./catalog.ts";
  * identical to sending nothing (`test/unit/short-call-options.test.ts` pins
  * this against the pinned provider). `output_config.effort` does reach the
  * wire, so the Anthropic arm asks for the shallowest thinking available rather
- * than none. It reduces the failure mode; it does not remove it. The guarantee
- * on the default path is the model itself — see `DEFAULT_FAST_MODEL`.
+ * than none — but only on the models that accept `effort` at all (see
+ * `ACCEPTS_EFFORT`). It reduces the failure mode; it does not remove it, and on
+ * a model outside that set it does nothing. The guarantee on the default path
+ * is the model itself — see `DEFAULT_FAST_MODEL`.
  *
  * Callers: conversation titling, history compaction, and the home briefing.
  */
+/**
+ * Anthropic model IDs that accept `output_config.effort`.
+ *
+ * **Not the same set as `capabilities.reasoning`.** Haiku 4.5 and Sonnet 4.5
+ * reason but reject `effort`, and Opus 4.1 predates it — so gating on the
+ * catalog's reasoning flag would send the parameter to models that error on
+ * it, including the default `fast` model. `@ai-sdk/anthropic` serializes
+ * `effort` unconditionally, with no per-model gating of its own.
+ *
+ * Hand-maintained for the same reason as `ADAPTIVE_ONLY_THINKING_MODELS`:
+ * models.dev doesn't track it, so `sync-models` can't. A model missing here
+ * simply gets no options — the safe direction — and
+ * `test/unit/short-call-options.test.ts` fails on any Anthropic reasoning
+ * model that isn't explicitly classified either way.
+ */
+const ACCEPTS_EFFORT: ReadonlySet<string> = new Set([
+  "claude-opus-4-5",
+  "claude-opus-4-5-20251101",
+  "claude-opus-4-6",
+  "claude-opus-4-7",
+  "claude-opus-4-8",
+  "claude-opus-5",
+  "claude-sonnet-4-6",
+  "claude-sonnet-5",
+]);
+
 export function shortCallProviderOptions(modelString: string | null): SharedV3ProviderOptions {
   if (!modelString) return {};
   const provider = getProviderFromModel(modelString);
@@ -33,7 +61,7 @@ export function shortCallProviderOptions(modelString: string | null): SharedV3Pr
   if (!model?.capabilities.reasoning) return {};
   switch (provider) {
     case "anthropic":
-      return { anthropic: { effort: "low" } };
+      return ACCEPTS_EFFORT.has(model.id) ? { anthropic: { effort: "low" } } : {};
     case "google":
       return { google: { thinkingConfig: { thinkingBudget: 0 } } };
     case "openai":
