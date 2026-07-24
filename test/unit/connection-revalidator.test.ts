@@ -280,3 +280,63 @@ describe("revalidatorIntervalMsFromEnv", () => {
     expect(warnSpy).not.toHaveBeenCalled();
   });
 });
+
+describe("ConnectionRevalidator — timer ceiling", () => {
+  /** `setTimeout`'s signed-32-bit delay ceiling (~24.9 days). */
+  const MAX_TIMER_MS = 2_147_483_647;
+  /** One year in ms — an operator's "effectively never sweep". */
+  const ONE_YEAR_MS = 31_536_000_000;
+
+  /** Capture every delay handed to `setTimeout`, driving exactly one cycle so
+   *  the startup offset AND the jittered reschedule are both observed. */
+  async function collectScheduledDelays(intervalMs: number): Promise<number[]> {
+    const { lifecycle } = fakeLifecycle([]);
+    const revalidator = new ConnectionRevalidator(lifecycle, [new ScriptedProbe()], { intervalMs });
+    const delays: number[] = [];
+    let fired = false;
+
+    const timeoutSpy = spyOn(globalThis, "setTimeout").mockImplementation(((
+      fn: () => void,
+      ms?: number,
+    ) => {
+      delays.push(ms ?? 0);
+      if (!fired) {
+        fired = true;
+        fn();
+      }
+      return 0 as unknown as ReturnType<typeof setTimeout>;
+    }) as unknown as typeof setTimeout);
+
+    try {
+      revalidator.start();
+      // Let the empty sweep settle so its `.finally` reschedules.
+      for (let i = 0; i < 10; i++) await Promise.resolve();
+    } finally {
+      timeoutSpy.mockRestore();
+      revalidator.stop();
+    }
+    return delays;
+  }
+
+  it("clamps an interval past the int32 ceiling instead of collapsing to a 1ms loop", async () => {
+    const delays = await collectScheduledDelays(ONE_YEAR_MS);
+
+    // Startup offset + at least one jittered reschedule.
+    expect(delays.length).toBeGreaterThanOrEqual(2);
+    for (const delay of delays) {
+      expect(delay).toBeLessThanOrEqual(MAX_TIMER_MS);
+      // The clamp must not land on the 1ms the runtime would have substituted.
+      expect(delay).toBeGreaterThan(1);
+    }
+  });
+
+  it("leaves a normal interval untouched", async () => {
+    const delays = await collectScheduledDelays(300_000);
+
+    expect(delays.length).toBeGreaterThanOrEqual(2);
+    // Startup offset is random within one interval; jitter is ±20% around it.
+    for (const delay of delays) {
+      expect(delay).toBeLessThanOrEqual(360_000);
+    }
+  });
+});

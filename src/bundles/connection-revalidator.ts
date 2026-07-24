@@ -51,6 +51,10 @@ const DEFAULT_CONCURRENCY = 8;
 const FLIP_THRESHOLD = 2;
 /** ±fraction jitter applied to every interval (and the startup offset). */
 const JITTER_FRACTION = 0.2;
+/** `setTimeout` holds its delay in a signed 32-bit int (~24.9 days). A larger
+ *  delay is not clamped to this ceiling — the runtime silently substitutes 1ms,
+ *  which would turn a very long configured interval into a hot loop. */
+const MAX_TIMER_MS = 2_147_483_647;
 /** Circuit breaker: a sweep that would flip more than max(ABS, FRACTION×checked)
  *  connections is treated as an upstream fault — abort, flip nothing. */
 const FLAP_BREAKER_ABS = 5;
@@ -147,11 +151,16 @@ export class ConnectionRevalidator {
     }
   }
 
+  /** The one place a delay reaches `setTimeout`, so the `MAX_TIMER_MS` ceiling
+   *  is enforced once and covers the startup offset and every jittered
+   *  reschedule alike. A capped sweep still runs, just sooner than configured —
+   *  the alternative is a 1ms loop hammering the provider API. */
   private scheduleNext(delayMs: number): void {
     if (this.stopped) return;
+    const delay = Math.min(delayMs, MAX_TIMER_MS);
     this.timer = setTimeout(() => {
       void this.sweep().finally(() => this.scheduleNext(this.jitter(this.intervalMs)));
-    }, delayMs);
+    }, delay);
   }
 
   /** ±JITTER_FRACTION around `ms`. (Runtime code — `Math.random` is allowed
