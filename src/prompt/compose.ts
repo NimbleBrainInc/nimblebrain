@@ -418,19 +418,30 @@ function taskIdentityLayers(mode: ComposeMode): PendingLayer[] {
  * Split context skills into core (priority ≤ threshold, rendered RAW in Layer 0)
  * and user (priority > threshold, wrapped in `<context-skill>` containment).
  *
- * `bundle`-scoped skills are ALWAYS placed in the `user` bucket regardless of
- * priority: they carry server-authored content, which must never render as raw
- * trusted identity in Layer 0 (that would be a prompt-injection vector). This is
- * the same install-time-not-per-prompt trust posture as the other bundle-authored
- * containment tags (`<app-guide>`, `<app-state>`, `<layer3-skill>`) — the defense
- * is XML containment, so a server that declares `loading-strategy: always` with a
- * low priority still gets contained, not promoted into the identity layer.
+ * Third-party `bundle`-scoped skills are ALWAYS placed in the `user` bucket
+ * regardless of priority: they carry server-authored content, which must never
+ * render as raw trusted identity in Layer 0 (that would be a prompt-injection
+ * vector). This is the same install-time-not-per-prompt trust posture as the
+ * other bundle-authored containment tags (`<app-guide>`, `<app-state>`,
+ * `<layer3-skill>`) — the defense is XML containment, so a server that declares
+ * `loading-strategy: always` with a low priority still gets contained, not
+ * promoted into the identity layer.
+ *
+ * The vendored core skills (soul, capabilities) are the exception. They carry
+ * `provenance.origin: "vendored"`, stamped at load by `markVendored` on the
+ * platform's own source-tree dirs — a signal a third party cannot forge
+ * (`synthesizeBundleSkill` builds bundle manifests from scratch and never sets
+ * provenance). `stampDerivedScope` also labels them `scope: "bundle"` for the
+ * mutation UI (they're immutable), but trust follows provenance, not that
+ * mutability label: a vendored skill is first-party identity, so it renders raw
+ * in Layer 0 like it's meant to, never inside `<context-skill>`.
  */
 function partitionContextSkills(contextSkills: Skill[]): { core: Skill[]; user: Skill[] } {
   const core: Skill[] = [];
   const user: Skill[] = [];
   for (const ctx of contextSkills) {
-    const isBundleAuthored = ctx.manifest.scope === "bundle";
+    const isVendored = ctx.manifest.provenance?.origin === "vendored";
+    const isBundleAuthored = ctx.manifest.scope === "bundle" && !isVendored;
     if (!isBundleAuthored && ctx.manifest.priority <= CORE_PRIORITY_THRESHOLD) {
       core.push(ctx);
     } else {
