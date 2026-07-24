@@ -2,7 +2,7 @@ import { describe, expect, it } from "bun:test";
 import {
   composioMonitorEnabled,
   revalidatorIntervalMsFromEnv,
-} from "../../src/composio/monitor-config.ts";
+} from "../../src/connectors/providers/composio/monitor-config.ts";
 
 describe("composioMonitorEnabled", () => {
   it("off when Composio isn't configured, regardless of the switch", () => {

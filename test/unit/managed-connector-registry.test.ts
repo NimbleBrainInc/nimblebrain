@@ -19,12 +19,12 @@ import {
   _composioVendorLoadCountForTest,
   _resetComposioConfigForTest,
   _resetComposioVendorForTest,
-} from "../../src/composio/sdk.ts";
-import type { ManagedConnectorProvider } from "../../src/connectors/managed-provider.ts";
+} from "../../src/connectors/providers/composio/sdk.ts";
+import type { ManagedConnectorProvider } from "../../src/connectors/providers/managed-provider.ts";
 import {
   buildManagedConnectorRegistry,
   managedConnectorRegistryOf,
-} from "../../src/connectors/provider-registry.ts";
+} from "../../src/connectors/providers/registry.ts";
 import { _resetBouncerModeForTest } from "../../src/oauth/bouncer-config.ts";
 
 const ENV_KEYS = [
@@ -129,7 +129,7 @@ describe("managedConnectorRegistryOf — the target test model (register a fake 
 describe("the vendor SDK is lazy by construction", () => {
   it("sdk.ts imports @composio/core only dynamically (no top-level import)", () => {
     const sdkSource = readFileSync(
-      join(import.meta.dir, "../../src/composio/sdk.ts"),
+      join(import.meta.dir, "../../src/connectors/providers/composio/sdk.ts"),
       "utf-8",
     );
     // A top-level `import ... from "@composio/core"` is exactly what re-links the

@@ -20,7 +20,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { startServer } from "../../src/api/server.ts";
 import type { ServerHandle } from "../../src/api/server.ts";
-import { _resetComposioConfigForTest } from "../../src/composio/sdk.ts";
+import { _resetComposioConfigForTest } from "../../src/connectors/providers/composio/sdk.ts";
 import { Runtime } from "../../src/runtime/runtime.ts";
 import { createEchoModel } from "../helpers/echo-model.ts";
 import { createTestAuthAdapter } from "../helpers/test-auth-adapter.ts";

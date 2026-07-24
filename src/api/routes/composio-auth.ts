@@ -6,7 +6,10 @@ import {
 } from "../../bundles/composio-connection.ts";
 import { WORKSPACE_PRINCIPAL_ID } from "../../bundles/connection.ts";
 import { slugifyServerName } from "../../bundles/paths.ts";
-import { consumeConnectFlow, registerConnectFlow } from "../../composio/connect-flow-registry.ts";
+import {
+  consumeConnectFlow,
+  registerConnectFlow,
+} from "../../connectors/providers/composio/connect-flow-registry.ts";
 import {
   COMPOSIO_CALLBACK_PATH,
   composioCallbackUrl,
@@ -14,7 +17,7 @@ import {
   findActiveComposioConnection,
   initiateComposioConnection,
   validateComposioConfig,
-} from "../../composio/sdk.ts";
+} from "../../connectors/providers/composio/sdk.ts";
 import { type ConnectorOwner, connectorOwnerKey } from "../../identity/connector-owner.ts";
 import { IdentityConnectorStore } from "../../identity/connector-store.ts";
 import { log } from "../../observability/log.ts";

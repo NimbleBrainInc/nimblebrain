@@ -55,7 +55,7 @@ const CUSTOM_DOMAIN_ENV = "NB_CUSTOM_DOMAIN";
 const CUSTOM_DOMAIN_CANONICAL_ENV = "NB_CUSTOM_DOMAIN_CANONICAL";
 /**
  * The chart sets this on every deployed tenant pod (from `tenant.id`) and it is
- * never set in local dev — the same deployment signal `composio/sdk.ts` keys on.
+ * never set in local dev — the same deployment signal `connectors/providers/composio/sdk.ts` keys on.
  * Used only to decide whether falling through to the localhost dev default is a
  * legitimate dev run or a misconfigured deploy that must fail closed.
  */

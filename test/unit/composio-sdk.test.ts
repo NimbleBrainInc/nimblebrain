@@ -62,7 +62,7 @@ mock.module("@composio/core", () => ({
 
 // SUT imports must come AFTER the mock.module hoist (the file order is
 // what gets hoisted, but explicit ordering keeps intent obvious).
-const sdk = await import("../../src/composio/sdk.ts");
+const sdk = await import("../../src/connectors/providers/composio/sdk.ts");
 const {
   _resetComposioConfigForTest,
   cleanupComposioBundle,

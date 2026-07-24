@@ -2,7 +2,7 @@ type BunServer = ReturnType<typeof Bun.serve>;
 
 import type { ConnectionHealthProbe } from "../bundles/connection-probe.ts";
 import { ConnectionRevalidator } from "../bundles/connection-revalidator.ts";
-import { revalidatorIntervalMsFromEnv } from "../composio/monitor-config.ts";
+import { revalidatorIntervalMsFromEnv } from "../connectors/providers/composio/monitor-config.ts";
 import type { IdentityProvider } from "../identity/provider.ts";
 import { DevIdentityProvider } from "../identity/providers/dev.ts";
 import { canonicalOrigins, webOrigin } from "../oauth/public-origin.ts";

@@ -3,7 +3,7 @@ import {
   _clearAllConnectFlows,
   consumeConnectFlow,
   registerConnectFlow,
-} from "../../src/composio/connect-flow-registry.ts";
+} from "../../src/connectors/providers/composio/connect-flow-registry.ts";
 
 const WS = { type: "workspace", wsId: "ws_test" } as const;
 const USR = { type: "user", userId: "usr_test" } as const;
