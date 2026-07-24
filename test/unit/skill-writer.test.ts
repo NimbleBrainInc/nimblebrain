@@ -75,6 +75,25 @@ describe("writeSkill", () => {
     expect(raw).not.toContain("allowed-tools");
   });
 
+  test("never persists the in-memory 'vendored' origin (loader-owned marker)", () => {
+    // markVendored stamps origin "vendored" in memory; writing such a manifest
+    // to disk drops the marker, so the file carries no provenance and reloads
+    // cleanly — the on-disk schema rejects a hand-authored "vendored" origin.
+    const manifest = sampleManifest({
+      name: "authored-copy",
+      provenance: { origin: "vendored" },
+    });
+    writeSkill(dir, "authored-copy", manifest, "body");
+
+    const raw = readFileSync(join(dir, "authored-copy.md"), "utf-8");
+    expect(raw).not.toContain("vendored");
+    expect(raw).not.toContain("provenance");
+
+    const reread = readSkill(dir, "authored-copy");
+    expect(reread).not.toBeNull();
+    expect(reread!.manifest.provenance).toBeUndefined();
+  });
+
   test("refuses to write a manifest the loader would reject — no orphan file", () => {
     // Empty description fails the canonical schema (minLength 1). The write
     // must throw BEFORE touching disk, so a "failed" create leaves nothing

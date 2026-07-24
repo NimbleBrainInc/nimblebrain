@@ -28,10 +28,18 @@ const lit = <T extends string>(...vals: T[]) => Type.Union(vals.map((v) => Type.
 
 // ── On-disk schema (the validated contract) ──────────────────────────────
 
-/** Runtime-stamped audit trail. Written at create, never hand-authored. */
+/**
+ * Audit trail. Written at create, never hand-authored. `origin: "vendored"` is
+ * deliberately absent from this on-disk contract: it is the trust marker for
+ * platform-shipped core/builtin skills and is stamped in memory by `markVendored`
+ * at load — never read from or written to a SKILL.md. Keeping it out of the
+ * frontmatter schema makes the signal loader-owned (like `scope`), so a
+ * hand-authored file cannot forge it. The runtime `SkillProvenance.origin` below
+ * still includes "vendored" for that in-memory stamp.
+ */
 const ProvenanceSchema = Type.Object(
   {
-    origin: lit("chat", "admin", "vendored", "connector", "import"),
+    origin: lit("chat", "admin", "connector", "import"),
     "conversation-id": Type.Optional(Type.String()),
     "created-by": Type.Optional(Type.String()),
     "created-at": Type.Optional(Type.String()),
