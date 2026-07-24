@@ -21,6 +21,7 @@ import type { AppInfo, BundleInstance, PlacementDeclaration } from "../bundles/t
 import { isToolVisibleToRole, type ResolvedFeatures, resolveFeatures } from "../config/features.ts";
 import { deriveOverridePath } from "../config/overrides.ts";
 import { createPrivilegeHook, NoopConfirmationGate } from "../config/privilege.ts";
+import { setConnectorsConfig } from "../connectors/providers/config.ts";
 import {
   buildManagedConnectorRegistry,
   type ManagedConnectorRegistry,
@@ -409,6 +410,12 @@ export class Runtime {
     // of per-entry-point avoids a provider-auth source failing to boot under any
     // path that forgot to register.
     registerBuiltinCredentialProviders();
+
+    // Install the declared `connectors` block at the same composition root, so
+    // every managed-connector provider resolves its config from one place
+    // regardless of entry point. Must precede any provider wiring — the
+    // registry, the mounted routes, and the revalidator probe all read it.
+    setConnectorsConfig(config.connectors);
 
     // Derive the override-file path when the caller supplied a configPath
     // but not an explicit override path. The CLI's loadConfig already
@@ -3463,8 +3470,9 @@ export class Runtime {
    * Built once from instance config and cached — the runtime dispatches all
    * brokered connector wiring (routes, revalidator probes, sessions, API-key
    * connects) through it. A provider is present IFF configured; a Composio-less
-   * deploy gets an empty registry and links no vendor. Phase 1 hydrates from
-   * the `COMPOSIO_*` env; Phase 2 will feed it from `nimblebrain.json`.
+   * deploy gets an empty registry and links no vendor. The source is the
+   * `connectors.providers.*` block installed by `start`, with each provider's
+   * legacy `<VENDOR>_*` env as its fallback.
    */
   getManagedConnectorRegistry(): ManagedConnectorRegistry {
     if (!this._managedConnectorRegistry) {

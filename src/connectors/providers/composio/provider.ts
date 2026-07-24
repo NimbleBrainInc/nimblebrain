@@ -7,19 +7,19 @@
  * constructing the provider — and holding it in the registry — links no vendor.
  * The vendor loads only when a brokered call actually runs.
  *
- * The platform-wide broker credential (`COMPOSIO_API_KEY`) is Composio's own
- * detail: it is resolved from the env here and injected into the underlying
- * helpers, never threaded through the seam's opts. Per-connector data
- * (`authConfigId`, `toolkit`, `fields`) and the owner-derived `userId` are the
- * only things callers pass.
+ * The platform-wide broker credential is Composio's own detail: it is resolved
+ * from the provider config here and injected into the underlying helpers, never
+ * threaded through the seam's opts. Per-connector data (`authConfigId`,
+ * `toolkit`, `fields`) and the owner-derived `userId` are the only things
+ * callers pass.
  */
 
 import { composioAuthRoutes } from "../../../api/routes/composio-auth.ts";
 import type { AppContext } from "../../../api/types.ts";
 import { log } from "../../../observability/log.ts";
 import type { ManagedConnectorProvider } from "../managed-provider.ts";
+import { validateComposioConfig } from "./config.ts";
 import { ComposioConnectionProbe } from "./connection-probe.ts";
-import { composioMonitorEnabled } from "./monitor-config.ts";
 import {
   composioUserId,
   connectComposioApiKey,
@@ -30,25 +30,31 @@ import {
 } from "./sdk.ts";
 
 /** The platform-wide Composio broker credential. Present by construction — the provider is built only when configured. */
-function envApiKey(): string {
-  return (process.env.COMPOSIO_API_KEY ?? "").trim();
+function brokerApiKey(): string {
+  return validateComposioConfig().apiKey;
 }
 
 /**
  * Build the Composio `ManagedConnectorProvider`. Called only when Composio is
- * configured (`buildManagedConnectorRegistry`), so `COMPOSIO_API_KEY` is set.
- * Reads the monitor kill switch once here — the same "read env once at startup"
- * contract the rest of the Composio config follows.
+ * configured (`buildManagedConnectorRegistry`), so the broker credential is
+ * present. Reads the monitor switch once here — the same "resolve config once at
+ * startup" contract the rest of the Composio config follows.
  */
 export function createComposioProvider(): ManagedConnectorProvider {
   // The revalidator probe is Composio's, and the operator can disable JUST the
-  // liveness sweep (COMPOSIO_MONITOR_ENABLED=false) without disabling the
-  // connector's auth/session brokering. When thrown, omit `probe` entirely so
-  // the runtime wires no probe for this provider — keeping the revalidator
-  // wiring in `server.ts` fully provider-agnostic.
-  const monitorEnabled = composioMonitorEnabled(true);
+  // liveness sweep without disabling the connector's auth/session brokering.
+  // When thrown, omit `probe` entirely so the runtime wires no probe for this
+  // provider — keeping the revalidator wiring in `server.ts` fully
+  // provider-agnostic.
+  const { monitorEnabled, source } = validateComposioConfig();
   if (!monitorEnabled) {
-    log.info("[connection-revalidator] disabled via COMPOSIO_MONITOR_ENABLED=false");
+    log.info(
+      `[connection-revalidator] composio probe disabled via ${
+        source === "config"
+          ? "connectors.providers.composio.monitor.enabled=false"
+          : "COMPOSIO_MONITOR_ENABLED=false"
+      }`,
+    );
   }
 
   return {
@@ -56,16 +62,16 @@ export function createComposioProvider(): ManagedConnectorProvider {
 
     userId: composioUserId,
 
-    createSession: (opts) => createComposioSession({ apiKey: envApiKey(), ...opts }),
+    createSession: (opts) => createComposioSession({ apiKey: brokerApiKey(), ...opts }),
 
-    initiate: (opts) => initiateComposioConnection({ apiKey: envApiKey(), ...opts }),
+    initiate: (opts) => initiateComposioConnection({ apiKey: brokerApiKey(), ...opts }),
 
-    connectApiKey: (opts) => connectComposioApiKey({ apiKey: envApiKey(), ...opts }),
+    connectApiKey: (opts) => connectComposioApiKey({ apiKey: brokerApiKey(), ...opts }),
 
-    findActive: (opts) => findActiveComposioConnection({ apiKey: envApiKey(), ...opts }),
+    findActive: (opts) => findActiveComposioConnection({ apiKey: brokerApiKey(), ...opts }),
 
     delete: (connectedAccountId) =>
-      deleteComposioConnectedAccount({ apiKey: envApiKey(), connectedAccountId }),
+      deleteComposioConnectedAccount({ apiKey: brokerApiKey(), connectedAccountId }),
 
     ...(monitorEnabled ? { probe: (directory) => new ComposioConnectionProbe(directory) } : {}),
 

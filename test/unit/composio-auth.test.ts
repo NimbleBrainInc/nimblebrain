@@ -60,8 +60,8 @@ import {
 } from "../../src/bundles/composio-connection.ts";
 import { slugifyServerName } from "../../src/bundles/paths.ts";
 import { IdentityConnectorStore } from "../../src/identity/connector-store.ts";
+import { _resetComposioConfigForTest } from "../../src/connectors/providers/composio/config.ts";
 import {
-  _resetComposioConfigForTest,
   composioCallbackUrl,
   composioUserId,
 } from "../../src/connectors/providers/composio/sdk.ts";

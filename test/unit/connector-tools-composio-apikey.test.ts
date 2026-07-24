@@ -76,7 +76,8 @@ import {
 } from "../../src/bundles/composio-connection.ts";
 import { BundleLifecycleManager } from "../../src/bundles/lifecycle.ts";
 import { slugifyServerName } from "../../src/bundles/paths.ts";
-import { _resetComposioConfigForTest, connectComposioApiKey } from "../../src/connectors/providers/composio/sdk.ts";
+import { _resetComposioConfigForTest } from "../../src/connectors/providers/composio/config.ts";
+import { connectComposioApiKey } from "../../src/connectors/providers/composio/sdk.ts";
 import { buildManagedConnectorRegistry } from "../../src/connectors/providers/registry.ts";
 import type { UserIdentity } from "../../src/identity/provider.ts";
 import { ConnectorDirectory } from "../../src/registries/directory.ts";

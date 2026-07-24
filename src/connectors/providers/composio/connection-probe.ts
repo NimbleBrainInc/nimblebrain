@@ -23,6 +23,7 @@ import type {
 import type { BundleRef } from "../../../bundles/types.ts";
 import { log } from "../../../observability/log.ts";
 import type { ConnectorDirectory } from "../../../registries/directory.ts";
+import { validateComposioConfig } from "./config.ts";
 import { composioUserId, findActiveComposioConnection } from "./sdk.ts";
 
 function composioConnectorId(ref: BundleRef): string | undefined {
@@ -43,7 +44,7 @@ export class ComposioConnectionProbe implements ConnectionHealthProbe {
     // Missing platform config can't distinguish "lost" from "can't check" —
     // treat as indeterminate so we never flip a healthy connection on a
     // deployment that hasn't wired the key/auth-config.
-    const apiKey = (process.env.COMPOSIO_API_KEY ?? "").trim();
+    const { apiKey } = validateComposioConfig();
     if (!apiKey) return "indeterminate";
 
     let authConfigId = "";

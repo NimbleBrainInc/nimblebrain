@@ -64,15 +64,16 @@ mock.module("@composio/core", () => ({
 // what gets hoisted, but explicit ordering keeps intent obvious).
 const sdk = await import("../../src/connectors/providers/composio/sdk.ts");
 const {
-  _resetComposioConfigForTest,
   cleanupComposioBundle,
   composioUserId,
   createComposioSession,
   deleteComposioConnectedAccount,
   findActiveComposioConnection,
   initiateComposioConnection,
-  validateComposioConfig,
 } = sdk;
+// Config resolution lives beside the adapter, not in it — see
+// `test/unit/composio-config.test.ts` for the declared-block/env precedence.
+const { _resetComposioConfigForTest } = await import("../../src/connectors/providers/composio/config.ts");
 const { mkdtempSync, rmSync } = await import("node:fs");
 const { tmpdir } = await import("node:os");
 const { join: joinPath } = await import("node:path");
@@ -117,58 +118,6 @@ afterEach(() => {
   }
   _resetComposioConfigForTest();
   _resetBouncerModeForTest();
-});
-
-// ── validateComposioConfig ──────────────────────────────────────────
-
-describe("validateComposioConfig", () => {
-  test("returns not configured when COMPOSIO_API_KEY is unset", () => {
-    expect(validateComposioConfig().configured).toBe(false);
-  });
-
-  test("returns configured with default base URL when only API key is set", () => {
-    process.env.COMPOSIO_API_KEY = "k_test";
-    const cfg = validateComposioConfig();
-    expect(cfg.configured).toBe(true);
-    expect(cfg.baseUrl).toBe("https://backend.composio.dev");
-  });
-
-  test("honors COMPOSIO_API_BASE_URL override", () => {
-    process.env.COMPOSIO_API_KEY = "k_test";
-    process.env.COMPOSIO_API_BASE_URL = "https://composio.example.com";
-    expect(validateComposioConfig().baseUrl).toBe("https://composio.example.com");
-  });
-
-  test("rejects non-http(s) COMPOSIO_API_BASE_URL (open-redirect mitigation)", () => {
-    process.env.COMPOSIO_API_KEY = "k_test";
-    process.env.COMPOSIO_API_BASE_URL = "javascript:alert(1)";
-    expect(() => validateComposioConfig()).toThrow(/http\(s\)/);
-  });
-
-  test("rejects malformed COMPOSIO_API_BASE_URL", () => {
-    process.env.COMPOSIO_API_KEY = "k_test";
-    process.env.COMPOSIO_API_BASE_URL = "not a url";
-    expect(() => validateComposioConfig()).toThrow(/valid URL/);
-  });
-
-  test("requires NB_TENANT_ID in bouncer (multi-tenant) mode", () => {
-    process.env.COMPOSIO_API_KEY = "k_test";
-    // Minimal bouncer config — both vars must be set or `getBouncerMode`
-    // throws on the partial-config branch. We're testing that bouncer +
-    // missing NB_TENANT_ID fails specifically on the composio check.
-    process.env.NB_OAUTH_BOUNCER_CALLBACK_URL = "https://b.test/v1/mcp-auth/callback";
-    process.env.NB_OAUTH_BOUNCER_TENANT_KEY = Buffer.alloc(32, 1).toString("base64");
-    // NB_TENANT_ID intentionally unset.
-    expect(() => validateComposioConfig()).toThrow();
-  });
-
-  test("caches the result across calls (set-once at startup)", () => {
-    process.env.COMPOSIO_API_KEY = "k_test";
-    const first = validateComposioConfig();
-    delete process.env.COMPOSIO_API_KEY;
-    const second = validateComposioConfig();
-    expect(second).toBe(first); // same object, no re-read
-  });
 });
 
 // ── composioUserId ──────────────────────────────────────────────────

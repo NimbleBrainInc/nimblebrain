@@ -15,12 +15,16 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
+import { _resetComposioConfigForTest } from "../../src/connectors/providers/composio/config.ts";
 import {
   _composioVendorLoadCountForTest,
-  _resetComposioConfigForTest,
   _resetComposioVendorForTest,
 } from "../../src/connectors/providers/composio/sdk.ts";
 import type { ManagedConnectorProvider } from "../../src/connectors/providers/managed-provider.ts";
+import {
+  _resetConnectorsConfigForTest,
+  setConnectorsConfig,
+} from "../../src/connectors/providers/config.ts";
 import {
   buildManagedConnectorRegistry,
   managedConnectorRegistryOf,
@@ -40,6 +44,7 @@ let saved: Record<string, string | undefined>;
 beforeEach(() => {
   saved = Object.fromEntries(ENV_KEYS.map((k) => [k, process.env[k]]));
   for (const k of ENV_KEYS) delete process.env[k];
+  _resetConnectorsConfigForTest();
   _resetComposioConfigForTest();
   _resetBouncerModeForTest();
   _resetComposioVendorForTest();
@@ -50,6 +55,7 @@ afterEach(() => {
     if (saved[k] === undefined) delete process.env[k];
     else process.env[k] = saved[k];
   }
+  _resetConnectorsConfigForTest();
   _resetComposioConfigForTest();
   _resetBouncerModeForTest();
   _resetComposioVendorForTest();
@@ -57,7 +63,7 @@ afterEach(() => {
 
 describe("buildManagedConnectorRegistry — Composio unconfigured", () => {
   it("registers no provider and never imports the vendor (the flake fix)", () => {
-    // COMPOSIO_API_KEY unset by beforeEach.
+    // Neither a declared block nor COMPOSIO_API_KEY (both cleared by beforeEach).
     const registry = buildManagedConnectorRegistry();
 
     expect(registry.get("composio")).toBeUndefined();
@@ -66,6 +72,47 @@ describe("buildManagedConnectorRegistry — Composio unconfigured", () => {
 
     // The whole point: no provider ⇒ no brokered call ⇒ the vendor SDK was
     // never dynamically imported.
+    expect(_composioVendorLoadCountForTest()).toBe(0);
+  });
+});
+
+describe("buildManagedConnectorRegistry — settings declared in nimblebrain.json", () => {
+  beforeEach(() => {
+    // The broker credential is env-only: it is what gates registration, and an
+    // installed connector's persisted transport credential references this name.
+    process.env.COMPOSIO_API_KEY = "k_env";
+  });
+
+  it("registers the provider with settings taken from the block", () => {
+    setConnectorsConfig({ providers: { composio: { baseUrl: "https://composio.internal" } } });
+
+    const registry = buildManagedConnectorRegistry();
+    expect(registry.has("composio")).toBe(true);
+    expect(registry.get("composio")?.probe).toBeDefined();
+    // Registration is a pure config read — still no vendor link.
+    expect(_composioVendorLoadCountForTest()).toBe(0);
+  });
+
+  it("honors the block's monitor switch over the env one (the block owns the settings)", () => {
+    process.env.COMPOSIO_MONITOR_ENABLED = "false";
+    setConnectorsConfig({ providers: { composio: { monitor: { enabled: true } } } });
+
+    expect(buildManagedConnectorRegistry().get("composio")?.probe).toBeDefined();
+  });
+
+  it("omits the probe under the block's kill switch", () => {
+    setConnectorsConfig({ providers: { composio: { monitor: { enabled: false } } } });
+
+    expect(buildManagedConnectorRegistry().get("composio")?.probe).toBeUndefined();
+  });
+
+  it("registers nothing when the credential is absent, however complete the block", () => {
+    delete process.env.COMPOSIO_API_KEY;
+    setConnectorsConfig({
+      providers: { composio: { baseUrl: "https://composio.internal", monitor: { enabled: true } } },
+    });
+
+    expect(buildManagedConnectorRegistry().has("composio")).toBe(false);
     expect(_composioVendorLoadCountForTest()).toBe(0);
   });
 });
