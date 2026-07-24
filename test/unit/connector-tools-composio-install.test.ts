@@ -100,6 +100,7 @@ import {
 import { ToolRegistry } from "../../src/tools/registry.ts";
 import { personalWorkspaceIdFor, WorkspaceStore } from "../../src/workspace/workspace-store.ts";
 import { _resetComposioConfigForTest } from "../../src/composio/sdk.ts";
+import { buildManagedConnectorRegistry } from "../../src/connectors/provider-registry.ts";
 import {
   composioConnectorDir,
   hasPersistedComposioConnection,
@@ -195,6 +196,7 @@ function buildHarness(): Harness {
     }),
     getUserStore: () => ({ get: async () => null }),
     getBundleInstancesForWorkspace: () => lifecycle.getInstances(),
+    getManagedConnectorRegistry: () => buildManagedConnectorRegistry(),
   } as unknown as Runtime;
 
   return { workDir, wsId, workspaceStore, workspaceRegistry, runtime };

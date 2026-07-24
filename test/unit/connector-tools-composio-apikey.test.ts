@@ -77,6 +77,7 @@ import {
 import { BundleLifecycleManager } from "../../src/bundles/lifecycle.ts";
 import { slugifyServerName } from "../../src/bundles/paths.ts";
 import { _resetComposioConfigForTest, connectComposioApiKey } from "../../src/composio/sdk.ts";
+import { buildManagedConnectorRegistry } from "../../src/connectors/provider-registry.ts";
 import type { UserIdentity } from "../../src/identity/provider.ts";
 import { ConnectorDirectory } from "../../src/registries/directory.ts";
 import { RegistryStore } from "../../src/registries/registry-store.ts";
@@ -191,6 +192,7 @@ function buildHarness(): Harness {
     getAllowInsecureRemotes: () => false,
     getEventSink: () => new NoopEventSink(),
     getBundleInstancesForWorkspace: () => lifecycle.getInstances(),
+    getManagedConnectorRegistry: () => buildManagedConnectorRegistry(),
   } as unknown as Runtime;
 
   return { workDir, wsId, runtime };
@@ -458,6 +460,7 @@ function stubCtx(opts: {
         opts.entry && (opts.entry as { id: string }).id === id ? opts.entry : null,
     }),
     getLifecycle: () => lifecycle,
+    getManagedConnectorRegistry: () => buildManagedConnectorRegistry(),
   } as unknown as Runtime;
   return {
     runtime,

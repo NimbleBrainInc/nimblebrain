@@ -24,13 +24,8 @@ import type {
   RemoteTransportConfig,
 } from "../bundles/types.ts";
 import { installBundleInWorkspace } from "../bundles/workspace-ops.ts";
-import {
-  composioUserId,
-  connectComposioApiKey,
-  createComposioSession,
-  deleteComposioConnectedAccount,
-} from "../composio/sdk.ts";
 import type { UserConfigFieldDef } from "../config/workspace-credentials.ts";
+import type { ManagedConnectorProvider } from "../connectors/managed-provider.ts";
 import { connectorSkillIdentityFrom } from "../connectors/server-detail.ts";
 import { textContent } from "../engine/content-helpers.ts";
 import { INTERNAL_TOOL_ANNOTATION, type ToolResult } from "../engine/types.ts";
@@ -81,6 +76,19 @@ export interface ManageConnectorsContext {
   /** Returns the active workspace id for this call, or null if none. */
   getWorkspaceId: () => string | null;
 }
+
+/**
+ * The registered Composio managed-connector provider, or undefined when
+ * Composio isn't configured. All Composio dispatch (userId derivation, session
+ * create, API-key connect, connected-account delete) routes through this — the
+ * tool never imports `sdk.ts` directly, so the vendor stays behind the seam.
+ */
+function composioProvider(ctx: ManageConnectorsContext): ManagedConnectorProvider | undefined {
+  return ctx.runtime.getManagedConnectorRegistry().get("composio");
+}
+
+/** Error surfaced when a Composio dispatch arm is reached but no Composio provider is registered. */
+const COMPOSIO_NOT_CONFIGURED = "Composio integration is not configured.";
 
 /** Inputs to {@link deriveConnectorStatus}. Subset of InstalledEntry's
  *  shape so the helper has a small, testable surface. */
@@ -1304,7 +1312,10 @@ async function handleInstallIdentity(
   if (action.auth === "composio") {
     const composioErr = validateComposioInstall(action, entry.name);
     if (composioErr) return errResult(composioErr);
+    const provider = composioProvider(ctx);
+    if (!provider) return errResult(COMPOSIO_NOT_CONFIGURED);
     const wiring = await buildComposioWiring(
+      provider,
       action,
       { type: "user", userId: callerId },
       entry.name,
@@ -1412,18 +1423,31 @@ async function handleConnectApiKey(
 
   // Validate submitted values against the declared fields: every required field
   // present and non-empty; unknown keys rejected (default-deny, same posture as
-  // set_user_config). Only declared keys are forwarded to Composio.
+  // set_user_config). Only declared keys are forwarded to Composio. This runs
+  // before any config gate — field shape is caller-error, independent of whether
+  // the broker is configured.
   const collected = collectApiKeyFields(composio, catalogId, rawFields);
   if ("error" in collected) return errResult(collected.error);
   const { values } = collected;
 
+  // Config gate: resolves the per-connector auth-config id and asserts the
+  // platform broker key is present (the "not configured" surface callers see).
   const env = resolveComposioApiKeyEnv(entry.name, composio.authConfigEnv);
   if ("error" in env) return errResult(env.error);
-  const { apiKey, authConfigId } = env;
+  const { authConfigId } = env;
+
+  // The key being present means Composio is configured, so the provider is
+  // registered; resolve it for the broker calls. The broker credential is the
+  // provider's own detail — only the per-connector data crosses the seam.
+  const provider = composioProvider(ctx);
+  if (!provider?.connectApiKey) return errResult(COMPOSIO_NOT_CONFIGURED);
+  // Capture the narrowed method now — the intervening awaits below would widen a
+  // property re-read back to optional.
+  const connectApiKey = provider.connectApiKey;
 
   const serverName = slugifyServerName(catalogId);
   const owner: ConnectorOwner = { type: "workspace", wsId };
-  const userId = composioUserId(owner);
+  const userId = provider.userId(owner);
   const lifecycle = ctx.runtime.getLifecycle();
   const workDir = ctx.runtime.getWorkDir();
 
@@ -1451,7 +1475,8 @@ async function handleConnectApiKey(
   if (regError) return errResult(regError);
 
   const connected = await performComposioApiKeyConnect(
-    { apiKey, userId, authConfigId, fields: values },
+    connectApiKey,
+    { userId, authConfigId, fields: values },
     catalogId,
     wsId,
   );
@@ -1467,7 +1492,13 @@ async function handleConnectApiKey(
   await saveComposioConnection(workDir, owner, catalogId, connection);
   lifecycle.recordConnectionStateChange(serverName, wsId, WORKSPACE_PRINCIPAL_ID, "running");
 
-  await revokeReplacedComposioAccount(apiKey, prior, connected.connectedAccountId, catalogId, wsId);
+  await revokeReplacedComposioAccount(
+    provider,
+    prior,
+    connected.connectedAccountId,
+    catalogId,
+    wsId,
+  );
 
   return {
     content: textContent(`Connected ${entry.name}.`),
@@ -1616,12 +1647,13 @@ async function registerApiKeySource(
  * message and never echo the submitted values.
  */
 async function performComposioApiKeyConnect(
-  params: { apiKey: string; userId: string; authConfigId: string; fields: Record<string, string> },
+  connectApiKey: NonNullable<ManagedConnectorProvider["connectApiKey"]>,
+  params: { userId: string; authConfigId: string; fields: Record<string, string> },
   catalogId: string,
   wsId: string,
 ): Promise<{ connectedAccountId: string; status: string } | { error: string }> {
   try {
-    return await connectComposioApiKey(params);
+    return await connectApiKey(params);
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     log.warn(`[connect_api_key] Composio connect failed for ${catalogId} in ${wsId}: ${msg}`);
@@ -1640,17 +1672,14 @@ async function performComposioApiKeyConnect(
  * throws; on failure the prior key may linger at Composio until removed there.
  */
 async function revokeReplacedComposioAccount(
-  apiKey: string,
+  provider: ManagedConnectorProvider,
   prior: ComposioConnection | null,
   newAccountId: string,
   catalogId: string,
   wsId: string,
 ): Promise<void> {
   if (!prior?.connectedAccountId || prior.connectedAccountId === newAccountId) return;
-  const revoked = await deleteComposioConnectedAccount({
-    apiKey,
-    connectedAccountId: prior.connectedAccountId,
-  });
+  const revoked = (await provider.delete?.(prior.connectedAccountId)) ?? false;
   if (!revoked) {
     log.warn(
       `[connect_api_key] could not revoke the replaced Composio account for ${catalogId} ` +
@@ -1961,6 +1990,7 @@ function scrubComposioHeaders(
  * start time so the secret never sits at rest.
  */
 async function buildComposioWiring(
+  provider: ManagedConnectorProvider,
   action: RemoteOAuthInstall,
   owner: ConnectorOwner,
   entryName: string,
@@ -1970,11 +2000,10 @@ async function buildComposioWiring(
     // narrowing convenience.
     return { __err: "composio wiring requested for non-composio install" };
   }
-  const userId = composioUserId(owner);
+  const userId = provider.userId(owner);
   let sessionMcp: { type: "http" | "sse"; url: string; headers?: Record<string, string> };
   try {
-    sessionMcp = await createComposioSession({
-      apiKey: (process.env.COMPOSIO_API_KEY ?? "").trim(),
+    sessionMcp = await provider.createSession({
       userId,
       toolkit: action.composio.toolkit,
       authConfigId: (process.env[action.composio.authConfigEnv] ?? "").trim(),
@@ -2182,7 +2211,10 @@ async function resolveInstallWiring(
   | { error: string }
 > {
   if (action.auth === "composio") {
+    const provider = composioProvider(ctx);
+    if (!provider) return { error: COMPOSIO_NOT_CONFIGURED };
     const composioWiring = await buildComposioWiring(
+      provider,
       action,
       { type: "workspace", wsId },
       entry.name,

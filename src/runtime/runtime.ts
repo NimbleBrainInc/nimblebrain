@@ -21,6 +21,10 @@ import type { AppInfo, BundleInstance, PlacementDeclaration } from "../bundles/t
 import { isToolVisibleToRole, type ResolvedFeatures, resolveFeatures } from "../config/features.ts";
 import { deriveOverridePath } from "../config/overrides.ts";
 import { createPrivilegeHook, NoopConfirmationGate } from "../config/privilege.ts";
+import {
+  buildManagedConnectorRegistry,
+  type ManagedConnectorRegistry,
+} from "../connectors/provider-registry.ts";
 import { generateTitle } from "../conversation/auto-title.ts";
 import { compactConversationMessages, planCompaction } from "../conversation/compaction.ts";
 import { extractOperatorTurns } from "../conversation/event-reconstructor.ts";
@@ -272,6 +276,7 @@ export class Runtime {
   private _workspaceStore: WorkspaceStore;
   private _permissionStore: PermissionStore | null = null;
   private _registryStore: RegistryStore | null = null;
+  private _managedConnectorRegistry: ManagedConnectorRegistry | null = null;
   private _identityProvider: IdentityProvider | null;
   /** Getter for the current request identity — reads from AsyncLocalStorage. */
   _getIdentity: () => UserIdentity | null = () => null;
@@ -3451,6 +3456,21 @@ export class Runtime {
    */
   getConnectorDirectory(): ConnectorDirectory {
     return new ConnectorDirectory(this.getRegistryStore());
+  }
+
+  /**
+   * The registry of configured managed-connector providers (Composio today).
+   * Built once from instance config and cached — the runtime dispatches all
+   * brokered connector wiring (routes, revalidator probes, sessions, API-key
+   * connects) through it. A provider is present IFF configured; a Composio-less
+   * deploy gets an empty registry and links no vendor. Phase 1 hydrates from
+   * the `COMPOSIO_*` env; Phase 2 will feed it from `nimblebrain.json`.
+   */
+  getManagedConnectorRegistry(): ManagedConnectorRegistry {
+    if (!this._managedConnectorRegistry) {
+      this._managedConnectorRegistry = buildManagedConnectorRegistry();
+    }
+    return this._managedConnectorRegistry;
   }
 
   /** Get the IdentityProvider (null in dev mode when no instance.json). */
