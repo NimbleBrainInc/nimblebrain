@@ -116,11 +116,17 @@ function tierChrome(
   scope: Scope,
   editable: WritableScope,
   canManageOrg: boolean,
+  canWrite: boolean,
 ): { label: string; manageTo?: string; manageLabel?: string } {
   // A tier label only renders on a multi-tier surface, which today is only the
-  // workspace vantage — so "Yours" is the sole reachable editable label. Org and
-  // user get theirs back in the PR that gives those surfaces a context tier.
-  if (scope === editable) return { label: "Yours" };
+  // workspace vantage — so the editable tier's label is the sole reachable one.
+  // Org and user get theirs back in the PR that gives those surfaces a context
+  // tier. (Which is also why the no-write label below can name the workspace:
+  // `canWrite` is only ever false on that vantage.)
+  if (scope === editable)
+    // "Yours" would claim an agency a non-admin member doesn't have over this
+    // tier — name the tier and who holds the pen instead.
+    return { label: canWrite ? "Yours" : "Workspace · managed by workspace admins" };
   if (scope === "user")
     return {
       label: "You · follows you everywhere",
@@ -151,10 +157,18 @@ function isDetailPending(editingId: string | null, detail: ReadSkill | null): bo
 export function SkillsBrowser(props: SkillsBrowserProps) {
   const { isWorkspaceSurface, lockedScope, fetchScope, createLockedScope } =
     resolveScopeConfig(props);
+  const role = useScopedRole();
   // /org/skills is org-admin-guarded, so the org tier's "Manage in org settings"
   // deep link would dead-end at the route guard for anyone else. Gate it on the
   // viewer's role (independent of route) so only those who can act see it.
-  const canManageOrg = roleAtLeast(useScopedRole(), "org_admin");
+  const canManageOrg = roleAtLeast(role, "org_admin");
+  // Workspace-scope writes require workspace admin server-side
+  // (`canWriteWorkspaceScoped`), so offering a plain member a live toggle and an
+  // Edit button just defers the refusal to save time. Reflect the role up front
+  // and let the tier render with the same locked treatment context tiers use.
+  // The other two vantages need no gate here: /org/skills is already org-admin
+  // route-guarded, and a user may always write their own profile.
+  const canWrite = createLockedScope !== "workspace" || roleAtLeast(role, "ws_admin");
 
   const [skills, setSkills] = useState<ListedSkill[]>([]);
   const [loading, setLoading] = useState(true);
@@ -361,9 +375,9 @@ export function SkillsBrowser(props: SkillsBrowserProps) {
       .map((scope) => ({
         scope,
         skills: byScope.get(scope)!,
-        editable: scope === createLockedScope,
+        editable: scope === createLockedScope && canWrite,
       }));
-  }, [skills, createLockedScope]);
+  }, [skills, createLockedScope, canWrite]);
 
   const multiTier = tiers.length > 1;
   const visibleTiers = segment === "all" ? tiers : tiers.filter((t) => t.scope === segment);
@@ -415,9 +429,18 @@ export function SkillsBrowser(props: SkillsBrowserProps) {
       {!loading && skills.length === 0 && (
         <Card>
           <CardContent className="py-8 text-center">
-            <p className="text-sm text-muted-foreground">
-              No skills here yet. Click <strong>+ Add a skill</strong> below to write one.
-            </p>
+            {/* The copy has to track the affordance — pointing a non-admin at
+             * an "+ Add a skill" button their role doesn't render is worse
+             * than saying plainly that it isn't theirs to add. */}
+            {canWrite ? (
+              <p className="text-sm text-muted-foreground">
+                No skills here yet. Click <strong>+ Add a skill</strong> below to write one.
+              </p>
+            ) : (
+              <p className="text-sm text-muted-foreground">
+                No skills here yet. Workspace admins can add them.
+              </p>
+            )}
           </CardContent>
         </Card>
       )}
@@ -440,6 +463,7 @@ export function SkillsBrowser(props: SkillsBrowserProps) {
                 tier={tier}
                 editableScope={createLockedScope}
                 canManageOrg={canManageOrg}
+                canWrite={canWrite}
                 showLabel={multiTier}
                 selectedId={selectedId}
                 detail={detail}
@@ -455,7 +479,7 @@ export function SkillsBrowser(props: SkillsBrowserProps) {
         </div>
       )}
 
-      {!loading && (
+      {!loading && canWrite && (
         <Button
           variant="outline"
           size="sm"
@@ -528,6 +552,7 @@ function TierGroup({
   tier,
   editableScope,
   canManageOrg,
+  canWrite,
   showLabel,
   selectedId,
   detail,
@@ -541,6 +566,8 @@ function TierGroup({
   tier: Tier;
   editableScope: WritableScope;
   canManageOrg: boolean;
+  /** Whether the viewer's role permits writing this surface's editable tier. */
+  canWrite: boolean;
   showLabel: boolean;
   selectedId: string | null;
   detail: ReadSkill | null;
@@ -551,7 +578,12 @@ function TierGroup({
   onEdit: (id: string) => void;
   onDelete: (id: string) => void;
 }) {
-  const { label, manageTo, manageLabel } = tierChrome(tier.scope, editableScope, canManageOrg);
+  const { label, manageTo, manageLabel } = tierChrome(
+    tier.scope,
+    editableScope,
+    canManageOrg,
+    canWrite,
+  );
   return (
     <>
       {showLabel && (

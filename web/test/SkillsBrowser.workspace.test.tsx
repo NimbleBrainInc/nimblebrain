@@ -180,6 +180,17 @@ interface Mounted {
   unmount(): void;
 }
 
+/**
+ * Mount the workspace vantage as a viewer who may write it. Workspace-scope
+ * writes require workspace admin server-side, so the editable tier's
+ * affordances — live toggle, Edit/Delete, "+ Add a skill" — only render for
+ * such a viewer. Org admins clear the bar (`roleAtLeast` is an ordering, and
+ * org roles outrank workspace ones), which is what this wrapper supplies.
+ */
+function mountAsAdmin(): Promise<Mounted> {
+  return mount(withOrgRole(React.createElement(SkillsBrowser, { surface: "workspace" }), "admin"));
+}
+
 let mounted: Mounted | null = null;
 afterEach(() => {
   mounted?.unmount();
@@ -299,7 +310,7 @@ describe("SkillsBrowser with surface='workspace' (workspace settings tab)", () =
   });
 
   test("submitting + Add a skill sends scope='workspace' regardless of internal state", async () => {
-    mounted = await mount(React.createElement(SkillsBrowser, { surface: "workspace" }));
+    mounted = await mountAsAdmin();
     await act(async () => {
       clickByText(mounted!.container, "+ Add a skill");
     });
@@ -367,7 +378,7 @@ describe("SkillsBrowser with surface='workspace' (workspace settings tab)", () =
     // The fix at SkillsTab.tsx::handleSubmit splits the manifest by
     // branch: update only carries fields the user explicitly touched
     // via the Advanced expander; create carries the full set.
-    mounted = await mount(React.createElement(SkillsBrowser, { surface: "workspace" }));
+    mounted = await mountAsAdmin();
 
     // Expand the workspace rule (the "workflow" fixture), wait for the
     // read, then click Edit.
@@ -438,7 +449,7 @@ describe("SkillsBrowser with surface='workspace' (workspace settings tab)", () =
     //
     // This test pins it: open the edit view, click the back arrow,
     // assert the URL is unchanged AND the list view is back.
-    mounted = await mount(React.createElement(SkillsBrowser, { surface: "workspace" }));
+    mounted = await mountAsAdmin();
 
     await act(async () => {
       clickByText(mounted!.container, "Workspace-tier rule.");
@@ -529,7 +540,7 @@ describe("SkillsBrowser with surface='workspace' — composition list", () => {
   });
 
   test("only the editable tier can toggle; context tiers are locked", async () => {
-    mounted = await mount(React.createElement(SkillsBrowser, { surface: "workspace" }));
+    mounted = await mountAsAdmin();
     // The toggle is a sibling of the row's expander, so it's addressed by its
     // accessible name rather than by nesting.
     expect(toggleFor(mounted.container, "bundle-skill")?.disabled).toBe(true);
@@ -552,7 +563,7 @@ describe("SkillsBrowser with surface='workspace' — composition list", () => {
   test("toggling a skill does not expand its row", async () => {
     // The behavioral half of the nesting fix: with the controls as siblings
     // this holds structurally, so it must stay true without `stopPropagation`.
-    mounted = await mount(React.createElement(SkillsBrowser, { surface: "workspace" }));
+    mounted = await mountAsAdmin();
     const expander = expanderFor(mounted.container, "Workspace-tier rule.");
     expect(expander?.getAttribute("aria-expanded")).toBe("false");
 
@@ -614,7 +625,7 @@ describe("SkillsBrowser with surface='workspace' — composition list", () => {
   });
 
   test("creating a skill clears an active filter so the new skill is visible", async () => {
-    mounted = await mount(React.createElement(SkillsBrowser, { surface: "workspace" }));
+    mounted = await mountAsAdmin();
     // Filter to a tier that holds no workspace skills, so a new one would be
     // hidden without the reset.
     await act(async () => {
@@ -660,7 +671,7 @@ describe("SkillsBrowser with surface='workspace' — composition list", () => {
       .confirm;
     (globalThis as unknown as { window: { confirm: () => boolean } }).window.confirm = () => true;
     try {
-      mounted = await mount(React.createElement(SkillsBrowser, { surface: "workspace" }));
+      mounted = await mountAsAdmin();
       // Filter to "Yours" — one deletable skill; deleting it empties the tier.
       await act(async () => {
         const yours = Array.from(mounted!.container.querySelectorAll("button[aria-pressed]")).find(
@@ -738,5 +749,76 @@ describe("SkillsBrowser with surface='workspace' — composition list", () => {
     });
     expect(mounted.container.querySelector(".streamdown-container")).not.toBeNull();
     expect(mounted.container.querySelector(".presence-assistant-message")).toBeNull();
+  });
+});
+
+// ── Write gate (workspace-admin) ─────────────────────────────────────────
+//
+// Workspace-scope writes require workspace admin server-side
+// (`canWriteWorkspaceScoped`). The surface reflects that up front instead of
+// offering controls whose save 403s. A member with no workspace-admin rights
+// resolves to role "none" here (no WorkspaceContext supplies a `userRole`),
+// which is exactly the "cannot write this workspace" case.
+describe("SkillsBrowser with surface='workspace' — the workspace-admin write gate", () => {
+  function mountAsMember(): Promise<Mounted> {
+    return mount(
+      withOrgRole(React.createElement(SkillsBrowser, { surface: "workspace" }), "member"),
+    );
+  }
+
+  test("a viewer who can't write the workspace gets no create affordance", async () => {
+    mounted = await mountAsMember();
+    const add = Array.from(mounted.container.querySelectorAll("button")).find((b) =>
+      b.textContent?.includes("+ Add a skill"),
+    );
+    expect(add).toBeUndefined();
+  });
+
+  test("an admin does get the create affordance", async () => {
+    // The negative above is only meaningful paired with its positive — without
+    // it, a broken render would pass the no-Add assertion trivially.
+    mounted = await mountAsAdmin();
+    const add = Array.from(mounted.container.querySelectorAll("button")).find((b) =>
+      b.textContent?.includes("+ Add a skill"),
+    );
+    expect(add).toBeDefined();
+  });
+
+  test("the workspace tier locks its toggle and drops the 'Yours' claim", async () => {
+    mounted = await mountAsMember();
+    // Addressed by accessible name, not by DOM nesting — the locked `Toggle`
+    // announces itself the same way wherever it sits in the row (see #720).
+    const toggle = mounted.container.querySelector(
+      'button[aria-label^="workflow —"]',
+    ) as HTMLButtonElement | null;
+    // Same locked treatment the read-only context tiers get.
+    expect(toggle?.disabled).toBe(true);
+    const text = mounted.container.textContent ?? "";
+    // "Yours" would claim an agency this viewer doesn't have over the tier.
+    expect(text).toContain("Workspace · managed by workspace admins");
+    const tierHeadings = Array.from(mounted.container.querySelectorAll("h3")).map((h) =>
+      h.textContent?.trim(),
+    );
+    expect(tierHeadings).not.toContain("Yours");
+  });
+
+  test("expanding a workspace row offers no Edit or Delete", async () => {
+    mounted = await mountAsMember();
+    await act(async () => {
+      clickByText(mounted!.container, "Workspace-tier rule.");
+    });
+    await act(async () => {
+      await Promise.resolve();
+    });
+    await act(async () => {
+      await Promise.resolve();
+    });
+    // The body renders read-only — content is there, the write controls aren't.
+    expect(mounted.container.querySelector(".streamdown-container")).not.toBeNull();
+    const labels = Array.from(mounted.container.querySelectorAll("button")).map((b) =>
+      b.textContent?.trim(),
+    );
+    expect(labels).not.toContain("Edit");
+    expect(labels.some((l) => l?.includes("Delete"))).toBe(false);
   });
 });
