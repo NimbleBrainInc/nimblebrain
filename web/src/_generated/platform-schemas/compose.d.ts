@@ -59,3 +59,44 @@ export interface ComposeAssembledContextOutput {
     modelMaxContext?: number;
     headroomTokens?: number;
 }
+/**
+ * One entry within a traced layer that aggregates operator-authored items
+ * (apps, layer-3 skills). Mirrors the runtime `TracedSubItem` minus the
+ * free-form `metadata` bag — the inspector renders id/source/bundle only.
+ */
+export interface TracedSubItemView {
+    kind: "app" | "layer3_skill";
+    id: string;
+    source: string;
+    bundle?: string;
+}
+/**
+ * One section of the composed system prompt with provenance and body — the
+ * web-facing projection of the runtime `TracedLayer`. Carries `text` (the
+ * exact composed body of the layer) so the context inspector's reading pane
+ * can show what actually entered the window. Lighter consumers may ignore
+ * `text`; it is the largest field and only the inspector renders it.
+ */
+export interface TracedLayerView {
+    kind: string;
+    segment: "stable" | "volatile";
+    id: string;
+    source: string;
+    tokens: number;
+    text: string;
+    bundle?: string;
+    subItems?: TracedSubItemView[];
+}
+/**
+ * `compose__effective_context` response as consumed by the context inspector.
+ * The runtime tool also returns the full composed `text` at the top level;
+ * that field is intentionally absent here — the inspector reads each layer's
+ * `text` and never the whole-prompt blob.
+ */
+export interface ComposeEffectiveContextOutput {
+    mode: "live" | "historical";
+    conversationId: string;
+    totalTokens: number;
+    layers: TracedLayerView[];
+    warnings: string[];
+}

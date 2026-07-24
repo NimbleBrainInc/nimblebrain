@@ -33,6 +33,17 @@ const sdkCalls: SdkCalls = {
 };
 
 mock.module("@composio/core", () => ({
+  // Shape-complete vendor seam. bun's `mock.module` is process-global and
+  // file-order sensitive, so every `@composio/core` registration must export
+  // `AuthScheme` — read by sdk.ts's connectComposioApiKey — even where the suite
+  // never calls it; omitting it leaves the key `undefined` under some discovery
+  // orders and flakes CI.
+  AuthScheme: {
+    APIKey: (params: Record<string, string>) => ({
+      authScheme: "API_KEY",
+      val: { status: "ACTIVE", ...params },
+    }),
+  },
   Composio: class {
     connectedAccounts = {
       list: (q: unknown) => sdkCalls.listImpl(q),

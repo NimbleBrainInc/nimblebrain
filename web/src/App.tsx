@@ -43,6 +43,7 @@ import { forwardConversationTitleToIframes } from "./lib/forward-conversation-ti
 import { identityAppSegment, isIdentityApp } from "./lib/identity-apps";
 import { recoverFromWorkspaceError } from "./lib/workspace-recovery";
 import { toSlug } from "./lib/workspace-slug";
+import { ContextInspectorPage } from "./pages/ContextInspectorPage";
 import { GlobalHomePage } from "./pages/GlobalHomePage";
 import { ProfilePage } from "./pages/ProfilePage";
 import { ConnectorBrowsePage } from "./pages/settings/ConnectorBrowsePage";
@@ -417,6 +418,10 @@ function AuthenticatedAppContent({
                   element={<AppWithChat placement={p} onNavigate={handleNavigate} />}
                 />
               ))}
+              {/* Full-page context inspector for a conversation — opened from the
+                  chat's In-context panel. Renders in the main area beside the
+                  docked chat (the `/w/` prefix keeps ChatChrome mounted). */}
+              <Route path="context/:convId" element={<ContextInspectorPage />} />
               {/* Workspace settings — General/Members/Usage/Apps/Connectors/Skills. */}
               <Route path="settings" element={<WorkspaceSettingsPage />}>
                 <Route index element={<Navigate to="general" replace />} />
