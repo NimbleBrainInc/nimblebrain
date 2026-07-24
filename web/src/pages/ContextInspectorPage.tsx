@@ -443,7 +443,7 @@ function AccordionRow({
         </div>
       </button>
       {open && (
-        <div className="px-6 pb-5 pl-11">
+        <div className="px-6 pt-3 pb-5 pl-11">
           <LayerBody layer={layer} />
         </div>
       )}
