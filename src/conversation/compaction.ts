@@ -1,4 +1,5 @@
 import type { LanguageModelV3 } from "@ai-sdk/provider";
+import { shortCallProviderOptions } from "../model/short-call-options.ts";
 import { type TokenUsage, tokenUsageFromV3 } from "../usage/types.ts";
 import { escapeClosingTags } from "./escape-closing-tags.ts";
 import type { HistoryCompactedEvent, StoredMessage } from "./types.ts";
@@ -53,6 +54,12 @@ export interface CompactionOptions {
    * `selectRetainedOperatorMessages`.
    */
   retainedOperatorTurns?: readonly RetainedOperatorMessage[];
+  /**
+   * Slot string backing the summarizer model. Threaded to
+   * `shortCallProviderOptions` so a reasoning summarizer doesn't spend the
+   * summary budget on thinking and return nothing.
+   */
+  modelString?: string | null;
   /**
    * Context window (tokens) of the summarizer model — the `fast` slot. The fold
    * is sized by the MAIN model's window, which can be far larger than the
@@ -481,6 +488,9 @@ export async function summarizeMessages(
     maxOutputTokens?: number;
     summarizerContextTokens?: number;
     onUsage?: (usage: TokenUsage, llmMs: number) => void;
+    /** Slot string backing `model`; suppresses thinking so the summary budget
+     *  isn't spent on reasoning. See `shortCallProviderOptions`. */
+    modelString?: string | null;
   } = {},
 ): Promise<string> {
   const transcript = formatTranscript(
@@ -494,6 +504,7 @@ export async function summarizeMessages(
       { role: "user", content: [{ type: "text", text: transcript }] },
     ],
     maxOutputTokens: opts.maxOutputTokens ?? SUMMARY_MAX_OUTPUT_TOKENS,
+    providerOptions: shortCallProviderOptions(opts.modelString ?? null),
     abortSignal: AbortSignal.timeout(SUMMARY_TIMEOUT_MS),
   });
   // Report usage before the empty-summary guard — the call was billed
@@ -520,6 +531,7 @@ export async function runCompaction(
   const summary = await summarizeMessages(model, messages.slice(0, plan.boundaryIndex), {
     summarizerContextTokens: opts.summarizerContextTokens,
     onUsage: opts.onUsage,
+    modelString: opts.modelString,
   });
   return {
     summary,

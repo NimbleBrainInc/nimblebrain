@@ -1,5 +1,5 @@
-import type { LanguageModelV3, SharedV3ProviderOptions } from "@ai-sdk/provider";
-import { getModelByString, getProviderFromModel } from "../model/catalog.ts";
+import type { LanguageModelV3 } from "@ai-sdk/provider";
+import { shortCallProviderOptions } from "../model/short-call-options.ts";
 import { log } from "../observability/log.ts";
 import { type TokenUsage, tokenUsageFromV3 } from "../usage/types.ts";
 import type { BriefingContext } from "./briefing-collector.ts";
@@ -119,40 +119,6 @@ const BRIEFING_RESPONSE_SCHEMA = {
   required: ["lede", "sections"],
   additionalProperties: false,
 };
-
-/**
- * Provider-aware options for the short structured briefing call. Suppresses
- * reasoning/thinking on every provider that exposes a knob (gated on the
- * catalog's `capabilities.reasoning` so older models that don't expose
- * the option get an empty options object). Inlined here rather than
- * abstracted into a slot-profile because briefing is the only caller
- * today; if a second caller appears, lift this into a shared helper.
- */
-function shortCallProviderOptions(modelString: string | null): SharedV3ProviderOptions {
-  if (!modelString) return {};
-  const provider = getProviderFromModel(modelString);
-  const model = getModelByString(modelString);
-  if (!model?.capabilities.reasoning) return {};
-  switch (provider) {
-    case "anthropic":
-      return { anthropic: { thinking: { type: "disabled" } } };
-    case "google":
-      return { google: { thinkingConfig: { thinkingBudget: 0 } } };
-    case "openai":
-      return { openai: { reasoningEffort: "minimal" } };
-    case "nebius":
-      // Deliberately no suppression, and NOT a silent fallthrough. Nebius rejects
-      // `reasoning_effort` (HTTP 400) on its DeepSeek/Qwen/gpt-oss reasoning
-      // models, and there's no shared alternative knob. It isn't needed anyway:
-      // under the briefing's json_schema structured-output path these models
-      // return clean JSON within the 1500-token budget (finish=stop, no reasoning
-      // dump) — verified against a live account. Do not add a `reasoning_effort`
-      // case here; it breaks the briefing rather than fixing it.
-      return {};
-    default:
-      return {};
-  }
-}
 
 /** Parsed briefing payload as returned by JSON.parse, before caller-side shape validation. */
 type BriefingResult = { lede: string; sections: BriefingSection[] };

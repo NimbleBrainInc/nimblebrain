@@ -186,6 +186,41 @@ describe("supportsEnabledThinking", () => {
 		expect(supportsEnabledThinking("openai:gpt-4o")).toBe(true);
 		expect(supportsEnabledThinking("google:gemini-2.5-pro")).toBe(true);
 	});
+
+	// Anthropic reasoning models that are known to accept `thinking.type=enabled`.
+	// Anything NOT here must be in ADAPTIVE_ONLY_THINKING_MODELS (or excluded from
+	// the catalog); see the guard below for why.
+	const ACCEPTS_ENABLED_THINKING = new Set([
+		"claude-haiku-4-5",
+		"claude-haiku-4-5-20251001",
+		"claude-opus-4-1",
+		"claude-opus-4-1-20250805",
+		"claude-opus-4-5",
+		"claude-opus-4-5-20251101",
+		"claude-opus-4-6",
+		"claude-sonnet-4-5",
+		"claude-sonnet-4-5-20250929",
+		"claude-sonnet-4-6",
+	]);
+
+	it("classifies every Anthropic reasoning model in the catalog", () => {
+		// `bun run sync-models` adds Anthropic models to the catalog — and the
+		// picker — automatically, but the enabled-vs-adaptive-only split is
+		// hand-maintained in ADAPTIVE_ONLY_THINKING_MODELS because models.dev
+		// doesn't track it. A reasoning model that lands unclassified gets the
+		// `enabled` shape and 400s on EVERY call (Opus 4.7, then 4.8 + Sonnet 5,
+		// then Opus 5 each needed an entry). This fails the sync instead.
+		//
+		// To fix a failure: decide which shape the new model takes, then either
+		// add it to ADAPTIVE_ONLY_THINKING_MODELS in src/model/catalog.ts or to
+		// ACCEPTS_ENABLED_THINKING above.
+		const unclassified = listModels("anthropic")
+			.filter((m) => m.capabilities.reasoning)
+			.map((m) => m.id)
+			.filter((id) => supportsEnabledThinking(id) && !ACCEPTS_ENABLED_THINKING.has(id));
+
+		expect(unclassified).toEqual([]);
+	});
 });
 
 describe("Fable 5 exclusion", () => {

@@ -60,12 +60,16 @@ import {
  *   maxOutputTokens 32K  → budget  28672 → "high"
  *   maxOutputTokens 128K → budget 123904 → "xhigh"
  *
- * `max` is deliberately unreachable from a derived budget. `resolveMaxOutputTokens`
- * defaults to the model's full catalog ceiling, so the top band is what an
- * install that sets no `maxOutputTokens` gets on every call — and Anthropic
- * reserves `max` for frontier problems where cost is no object, with
- * diminishing quality returns on ordinary work. `xhigh` is their recommended
- * starting point for agentic and coding workloads, and is the ceiling here.
+ * `xhigh` is the ceiling: the platform does not offer `max`, and no operator
+ * setting reaches it — `safeThinkingBudget` clamps every requested budget to
+ * `maxOutputTokens - 4096`, and effort is derived from that budget alone.
+ * This is deliberate. `resolveMaxOutputTokens` defaults to the model's full
+ * catalog ceiling, so the top band is what an install that sets no
+ * `maxOutputTokens` gets on *every* call, and Anthropic reserves `max` for
+ * frontier problems where cost is no object — diminishing quality returns on
+ * ordinary work. `xhigh` is their recommended starting point for agentic and
+ * coding workloads. Offering `max` means adding an explicit operator knob for
+ * it, not widening this band.
  */
 function budgetToEffort(budget: number): "low" | "medium" | "high" | "xhigh" {
   if (budget <= 4096) return "low";

@@ -2281,17 +2281,23 @@ export class Runtime {
     // The title call runs the `fast` slot outside the agentic loop; persist its
     // usage as an aux.usage event so it isn't invisible to cost accounting.
     const appendTitleUsage = store.appendEvent?.bind(store);
-    void generateTitle(titleModel, titleInput, output, (usage, llmMs) => {
-      recordLlmUsage("title", titleSlot, usage);
-      appendTitleUsage?.(conversation.id, {
-        ts: new Date().toISOString(),
-        type: "aux.usage",
-        source: "title",
-        model: titleSlot,
-        usage,
-        llmMs,
-      });
-    })
+    void generateTitle(
+      titleModel,
+      titleInput,
+      output,
+      (usage, llmMs) => {
+        recordLlmUsage("title", titleSlot, usage);
+        appendTitleUsage?.(conversation.id, {
+          ts: new Date().toISOString(),
+          type: "aux.usage",
+          source: "title",
+          model: titleSlot,
+          usage,
+          llmMs,
+        });
+      },
+      titleSlot,
+    )
       .then(async (title) => {
         await store.update(conversation.id, { title });
         this.defaultEvents.emit({
@@ -3653,6 +3659,7 @@ export class Runtime {
       // sized by the main model's (larger) window, so without this it overflows
       // a smaller `fast` model and compaction silently no-ops.
       summarizerContextTokens: getModelByString(fastSlot)?.limits.context,
+      modelString: fastSlot,
       now: new Date().toISOString(),
       onEvent: (event) => appendEvent(conversationId, event),
       onError: (err) =>

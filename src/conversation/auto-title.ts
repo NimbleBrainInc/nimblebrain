@@ -1,4 +1,5 @@
 import type { LanguageModelV3 } from "@ai-sdk/provider";
+import { shortCallProviderOptions } from "../model/short-call-options.ts";
 import { type TokenUsage, tokenUsageFromV3 } from "../usage/types.ts";
 import { escapeClosingTags } from "./escape-closing-tags.ts";
 
@@ -14,12 +15,19 @@ const TITLE_TIMEOUT_MS = 45_000;
  * `onUsage` observes the title call's token usage — it runs the `fast` slot
  * outside the agentic loop, so without this its cost is invisible to the
  * usage aggregator.
+ *
+ * `modelString` is the slot string backing `model`. Pass it: the 30-token
+ * budget below caps thinking *plus* the title, so on a reasoning model that
+ * thinks by default the whole allowance goes to reasoning and this returns a
+ * heuristic fallback for every conversation, silently. See
+ * `shortCallProviderOptions`.
  */
 export async function generateTitle(
   model: LanguageModelV3,
   userMessage: string,
   assistantResponse: string,
   onUsage?: (usage: TokenUsage, llmMs: number) => void,
+  modelString?: string | null,
 ): Promise<string> {
   try {
     const transcript = formatTitleTranscript(userMessage, assistantResponse);
@@ -43,6 +51,7 @@ export async function generateTitle(
         },
       ],
       maxOutputTokens: 30,
+      providerOptions: shortCallProviderOptions(modelString ?? null),
       abortSignal: AbortSignal.timeout(TITLE_TIMEOUT_MS),
     });
     onUsage?.(tokenUsageFromV3(result.usage), Date.now() - startedAt);

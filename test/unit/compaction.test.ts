@@ -270,6 +270,30 @@ describe("compactConversationMessages — large fold + small summarizer (product
 // --- compactConversationMessages (the wiring helper) -----------------------
 
 describe("compactConversationMessages", () => {
+  test("suppresses thinking on a reasoning summarizer", async () => {
+    // The summary budget caps thinking plus the summary. A reasoning
+    // summarizer that spends it thinking returns nothing, `summarizeMessages`
+    // throws "compaction summary was empty", and compaction silently no-ops
+    // while context keeps growing.
+    const msgs = conversation(40, 800);
+    let captured: Record<string, unknown> | undefined;
+    const model = {
+      doGenerate: async (o: { providerOptions?: Record<string, unknown> }) => {
+        captured = o.providerOptions;
+        return { content: [{ type: "text", text: "SUMMARY" }] };
+      },
+    } as never;
+
+    await compactConversationMessages(model, msgs, {
+      budget: 5000,
+      now: ts(99),
+      modelString: "anthropic:claude-opus-5",
+      onEvent: () => {},
+    });
+
+    expect(captured?.anthropic).toEqual({ thinking: { type: "disabled" } });
+  });
+
   test("compacts: emits one event and returns summary seed + kept tail", async () => {
     const msgs = conversation(40, 800);
     const events: HistoryCompactedEvent[] = [];

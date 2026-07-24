@@ -34,6 +34,35 @@ describe("fallbackTitle", () => {
 });
 
 describe("generateTitle", () => {
+	it("suppresses thinking on a reasoning model", async () => {
+		// The 30-token budget caps thinking PLUS the title, so a reasoning model
+		// left to think spends the whole allowance reasoning and returns no text
+		// — and the catch below turns that into a heuristic title for every
+		// conversation, silently. Opus 5 thinks by default when `thinking` is
+		// omitted, so passing nothing is not a safe default.
+		let captured: Record<string, unknown> | undefined;
+		const model = createMockModel((options) => {
+			captured = options.providerOptions as Record<string, unknown> | undefined;
+			return { content: [{ type: "text", text: "A Title" }] };
+		});
+
+		await generateTitle(model, "hello", "hi there", undefined, "anthropic:claude-opus-5");
+
+		expect(captured?.anthropic).toEqual({ thinking: { type: "disabled" } });
+	});
+
+	it("sends no provider options when the slot model is unknown", async () => {
+		let captured: Record<string, unknown> | undefined;
+		const model = createMockModel((options) => {
+			captured = options.providerOptions as Record<string, unknown> | undefined;
+			return { content: [{ type: "text", text: "A Title" }] };
+		});
+
+		await generateTitle(model, "hello", "hi there", undefined, null);
+
+		expect(captured).toEqual({});
+	});
+
 	it("uses a bounded transcript as untrusted data", async () => {
 		let transcript = "";
 		const model = createMockModel((options) => {
