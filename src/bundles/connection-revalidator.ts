@@ -51,10 +51,16 @@ const DEFAULT_CONCURRENCY = 8;
 const FLIP_THRESHOLD = 2;
 /** ±fraction jitter applied to every interval (and the startup offset). */
 const JITTER_FRACTION = 0.2;
-/** `setTimeout` holds its delay in a signed 32-bit int (~24.9 days). A larger
- *  delay is not clamped to this ceiling — the runtime silently substitutes 1ms,
- *  which would turn a very long configured interval into a hot loop. */
-const MAX_TIMER_MS = 2_147_483_647;
+/** `setTimeout` holds its delay in a signed 32-bit int. A larger delay is not
+ *  clamped to this ceiling — the runtime silently substitutes 1ms, which would
+ *  turn a very long configured interval into a hot loop. */
+const MAX_SETTIMEOUT_DELAY_MS = 2_147_483_647;
+/** Ceiling on the sweep interval (~20.7 days), leaving jitter's upper tail room
+ *  under `MAX_SETTIMEOUT_DELAY_MS`. Capping the interval rather than each delay
+ *  keeps both schedule points genuinely random: a cap applied per-delay would
+ *  pin every reschedule to the same ceiling value and synchronize the pods this
+ *  loop's jitter exists to spread out. */
+const MAX_INTERVAL_MS = Math.floor(MAX_SETTIMEOUT_DELAY_MS / (1 + JITTER_FRACTION));
 /** Circuit breaker: a sweep that would flip more than max(ABS, FRACTION×checked)
  *  connections is treated as an upstream fault — abort, flip nothing. */
 const FLAP_BREAKER_ABS = 5;
@@ -127,7 +133,17 @@ export class ConnectionRevalidator {
     opts: RevalidatorOptions = {},
   ) {
     this.probes = new Map(probes.map((p) => [p.providerId, p]));
-    this.intervalMs = opts.intervalMs ?? DEFAULT_INTERVAL_MS;
+    const requestedMs = opts.intervalMs ?? DEFAULT_INTERVAL_MS;
+    this.intervalMs = Math.min(requestedMs, MAX_INTERVAL_MS);
+    if (requestedMs > MAX_INTERVAL_MS) {
+      // The operator's number is unreachable, so say so rather than let the
+      // startup line report a cadence the loop will not keep.
+      log.warn(
+        `[connection-revalidator] interval ${Math.round(requestedMs / 1000)}s exceeds the ` +
+          `${Math.round(MAX_INTERVAL_MS / 1000)}s maximum (setTimeout's 32-bit delay limit); ` +
+          "using the maximum. To stop the sweep entirely, set COMPOSIO_MONITOR_ENABLED=false.",
+      );
+    }
     this.concurrency = Math.max(1, opts.concurrency ?? DEFAULT_CONCURRENCY);
   }
 
@@ -151,16 +167,14 @@ export class ConnectionRevalidator {
     }
   }
 
-  /** The one place a delay reaches `setTimeout`, so the `MAX_TIMER_MS` ceiling
-   *  is enforced once and covers the startup offset and every jittered
-   *  reschedule alike. A capped sweep still runs, just sooner than configured —
-   *  the alternative is a 1ms loop hammering the provider API. */
+  /** Both delays that reach here are bounded by `MAX_INTERVAL_MS`: the startup
+   *  offset is a fraction of the interval, and `jitter` widens it by at most
+   *  `JITTER_FRACTION`. So neither can overflow `setTimeout`'s 32-bit delay. */
   private scheduleNext(delayMs: number): void {
     if (this.stopped) return;
-    const delay = Math.min(delayMs, MAX_TIMER_MS);
     this.timer = setTimeout(() => {
       void this.sweep().finally(() => this.scheduleNext(this.jitter(this.intervalMs)));
-    }, delay);
+    }, delayMs);
   }
 
   /** ±JITTER_FRACTION around `ms`. (Runtime code — `Math.random` is allowed
