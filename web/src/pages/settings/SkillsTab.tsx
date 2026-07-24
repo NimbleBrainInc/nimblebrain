@@ -1,5 +1,13 @@
 import { Lightbulb, Trash2, User } from "lucide-react";
-import { type RefObject, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  type ReactNode,
+  type RefObject,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { Link } from "react-router-dom";
 import { Streamdown } from "streamdown";
 import type { ToolInput } from "../../_generated/platform-schemas/catalog";
@@ -14,10 +22,11 @@ import { Button } from "../../components/ui/button";
 import { Card, CardContent } from "../../components/ui/card";
 import { Input } from "../../components/ui/input";
 import { Textarea } from "../../components/ui/textarea";
+import { SCOPE_CLASS, skillMechanismLabel } from "../../lib/skill-display";
 import { linkSafety } from "../../lib/streamdown-config";
 import { parseToolResponse } from "../../lib/tool-response";
 import { cn } from "../../lib/utils";
-import { RequireActiveWorkspace, Section, SettingsPageHeader } from "./components";
+import { RequireActiveWorkspace, SettingsPageHeader } from "./components";
 
 // ── Wrappers ─────────────────────────────────────────────────────────────
 
@@ -75,12 +84,12 @@ function resolveScopeConfig(props: SkillsBrowserProps): ScopeConfig {
   };
 }
 
-/** Sub-header copy naming which scope's rules this view manages. */
+/** Sub-header copy naming which scope's skills this view manages. */
 function headerDescription(lockedScope: "org" | "user" | undefined, isWorkspaceSurface: boolean) {
-  if (lockedScope === "org") return "Organization-wide rules. These apply to every workspace.";
+  if (lockedScope === "org") return "Organization-wide skills. These apply to every workspace.";
   if (isWorkspaceSurface)
-    return "Rules that shape what your agent says and how it works in this workspace.";
-  return "Rules that shape your agent's behavior.";
+    return "Skills that shape what your agent says and how it works in this workspace.";
+  return "Skills that shape your agent's behavior.";
 }
 
 /** The loaded detail matching `editingId`, or null while it's absent/stale. */
@@ -197,7 +206,7 @@ export function SkillsBrowser(props: SkillsBrowserProps) {
 
   const handleDelete = useCallback(
     async (id: string) => {
-      if (!window.confirm("Delete this rule? It will be snapshotted to _versions/ first.")) return;
+      if (!window.confirm("Delete this skill? It will be snapshotted to _versions/ first.")) return;
       await runMutation("delete", { id }, () => {
         setSelectedId(null);
         setDetail(null);
@@ -316,7 +325,7 @@ export function SkillsBrowser(props: SkillsBrowserProps) {
        * accordion's per-row `shellH` state doesn't reset to 0 mid-flight
        * (which manifested as a flicker collapse). */}
       {loading && skills.length === 0 && (
-        <div className="text-sm text-muted-foreground py-4">Loading rules…</div>
+        <div className="text-sm text-muted-foreground py-4">Loading skills…</div>
       )}
       {error && (
         <Card className="mb-4">
@@ -330,7 +339,7 @@ export function SkillsBrowser(props: SkillsBrowserProps) {
         <Card>
           <CardContent className="py-8 text-center">
             <p className="text-sm text-muted-foreground">
-              No rules here yet. Click <strong>+ Add a rule</strong> below to write one.
+              No skills here yet. Click <strong>+ Add a skill</strong> below to write one.
             </p>
           </CardContent>
         </Card>
@@ -353,7 +362,6 @@ export function SkillsBrowser(props: SkillsBrowserProps) {
             <OwnSkillGroup
               key={group.scope}
               group={group}
-              flush={idx === 0}
               isWorkspaceSurface={isWorkspaceSurface}
               selectedId={selectedId}
               detail={detail}
@@ -375,7 +383,7 @@ export function SkillsBrowser(props: SkillsBrowserProps) {
           disabled={actionPending}
           className="self-start"
         >
-          + Add a rule
+          + Add a skill
         </Button>
       )}
 
@@ -422,7 +430,7 @@ function inheritedTitle(scope: Scope): string {
  */
 function ownTitle(scope: Scope, isWorkspaceSurface: boolean): string {
   if (isWorkspaceSurface) return "From your workspace";
-  return scope === "org" ? "Organization rules" : "Your rules";
+  return scope === "org" ? "Organization skills" : "Your skills";
 }
 
 /** Read-only inherited group (org / system) — derives heading and deep link from scope. */
@@ -458,10 +466,37 @@ function InheritedSkillGroup({
   );
 }
 
+/**
+ * Card surface for an operable skill group — the turn-pill's expanded
+ * treatment (`--card` on `--border`, rounded, hairline-divided rows). Scoped
+ * to this catalog on purpose: `Section` stays card-less because that reads
+ * right for form pages, but a catalog's rows and their states *are* the
+ * content, so they need a figure to sit on. Header carries the group title and
+ * the active count; rows divide inside.
+ */
+function CatalogCard({
+  title,
+  activeCount,
+  children,
+}: {
+  title: string;
+  activeCount: number;
+  children: ReactNode;
+}) {
+  return (
+    <section className="overflow-hidden rounded-lg border border-border bg-card">
+      <header className="flex items-baseline justify-between gap-4 border-b border-border px-3.5 py-2.5">
+        <h3 className="text-xs font-semibold text-foreground">{title}</h3>
+        <span className="shrink-0 text-xs text-muted-foreground">{activeCount} active</span>
+      </header>
+      <div className="divide-y divide-border">{children}</div>
+    </section>
+  );
+}
+
 /** Editable own group (workspace / org / user) — renders a Rule per skill. */
 function OwnSkillGroup({
   group,
-  flush,
   isWorkspaceSurface,
   selectedId,
   detail,
@@ -473,7 +508,6 @@ function OwnSkillGroup({
   onDelete,
 }: {
   group: GroupedSkills;
-  flush: boolean;
   isWorkspaceSurface: boolean;
   selectedId: string | null;
   detail: ReadSkill | null;
@@ -486,28 +520,22 @@ function OwnSkillGroup({
 }) {
   const activeCount = group.skills.filter((s) => s.status === "active").length;
   return (
-    <Section
-      flush={flush}
-      title={ownTitle(group.scope, isWorkspaceSurface)}
-      action={<span className="text-xs text-muted-foreground">{activeCount} active</span>}
-    >
-      <div className="divide-y divide-border">
-        {group.skills.map((s) => (
-          <Rule
-            key={s.id}
-            skill={s}
-            expanded={selectedId === s.id}
-            detail={selectedId === s.id ? detail : null}
-            detailLoading={selectedId === s.id && detailLoading}
-            onSelect={() => onSelect(s.id)}
-            onToggle={() => onToggle(s)}
-            onEdit={() => onEdit(s.id)}
-            onDelete={() => onDelete(s.id)}
-            pending={actionPending}
-          />
-        ))}
-      </div>
-    </Section>
+    <CatalogCard title={ownTitle(group.scope, isWorkspaceSurface)} activeCount={activeCount}>
+      {group.skills.map((s) => (
+        <Rule
+          key={s.id}
+          skill={s}
+          expanded={selectedId === s.id}
+          detail={selectedId === s.id ? detail : null}
+          detailLoading={selectedId === s.id && detailLoading}
+          onSelect={() => onSelect(s.id)}
+          onToggle={() => onToggle(s)}
+          onEdit={() => onEdit(s.id)}
+          onDelete={() => onDelete(s.id)}
+          pending={actionPending}
+        />
+      ))}
+    </CatalogCard>
   );
 }
 
@@ -527,26 +555,6 @@ function rowLabel(skill: ListedSkill): string {
   const desc = skill.description?.trim();
   if (desc && desc.length > 0 && desc.length <= 140) return desc;
   return skill.name;
-}
-
-/**
- * Human one-liner for how a rule reaches the prompt — surfaced in the expanded
- * view so the loading behavior is visible, not hidden in frontmatter. Rules
- * authored here are always-on; inherited/dynamic skills show their mechanism.
- */
-function loadingLabel(skill: ListedSkill): string {
-  switch (skill.loading?.mechanism) {
-    case "always":
-      return "Always on";
-    case "tool_affinity":
-      return "Loads when a matching tool is active";
-    case "trigger":
-      return "Loads on a trigger phrase";
-    case "none":
-      return "Won't auto-load yet";
-    default:
-      return skill.loadingStrategy === "always" ? "Always on" : "On demand";
-  }
 }
 
 function Rule({
@@ -590,27 +598,52 @@ function Rule({
 
   const label = rowLabel(skill);
   const labelIsName = label === skill.name;
+  // How the skill loads, stated at rest under the name — the discriminator the
+  // flat list used to hide until a row was expanded. Same vocabulary as the
+  // in-chat ledger's "Following …" line.
+  const mechanism = skillMechanismLabel(skill);
+  const hasExpandedMeta = skill.priority != null || !labelIsName;
 
   return (
-    <div className={cn("py-4", inherited && "opacity-80")}>
+    <div className={cn(inherited && "opacity-80")}>
       <button
         type="button"
         onClick={onSelect}
-        className="w-full text-left grid items-center gap-4 sm:gap-6 grid-cols-[1fr_auto]"
+        aria-expanded={expanded}
+        className={cn(
+          "flex w-full items-center gap-3 text-left transition-colors",
+          "focus-visible:bg-secondary focus-visible:outline-none",
+          inherited ? "px-0.5 py-2.5" : "px-3.5 py-3 hover:bg-secondary",
+        )}
       >
-        <div className="min-w-0 pr-1">
-          <div className={cn("text-sm leading-snug text-foreground", labelIsName && "font-mono")}>
+        <span className="min-w-0 flex-1">
+          <span
+            className={cn(
+              "block truncate text-sm leading-snug text-foreground",
+              labelIsName && "font-mono",
+            )}
+          >
             {label}
-          </div>
-        </div>
-        <div className="justify-self-end">
+          </span>
+          <span className="mt-0.5 block truncate text-xs text-muted-foreground">
+            {mechanism.text}
+            {mechanism.mono && (
+              <>
+                {" "}
+                <span className="font-mono">{mechanism.mono}</span>
+              </>
+            )}
+          </span>
+        </span>
+        <span className="flex shrink-0 items-center gap-2.5">
+          <span className={cn("text-xs font-medium", SCOPE_CLASS[skill.scope])}>{skill.scope}</span>
           <Toggle
             on={skill.status === "active"}
             onChange={onToggle}
             disabled={inherited}
             label={skill.name}
           />
-        </div>
+        </span>
       </button>
 
       <div
@@ -618,25 +651,26 @@ function Rule({
         className="overflow-hidden transition-[max-height,opacity] duration-300 ease-out"
         aria-hidden={!expanded}
       >
-        <div ref={bodyRef} className="pt-3">
+        <div ref={bodyRef} className={cn("pt-1 pb-3", inherited ? "px-0.5" : "px-3.5")}>
           {detailLoading && <p className="text-xs text-muted-foreground">Loading…</p>}
           {!detailLoading && detail && detail.id === skill.id && (
             <>
+              {/* Settings sans at text-sm — deliberately NOT the chat's serif
+               * `presence-assistant-message` voice, so a skill body never
+               * outweighs the section titles around it. */}
               <div className="max-w-prose text-sm text-foreground/80">
-                <Streamdown
-                  className="streamdown-container presence-assistant-message"
-                  linkSafety={linkSafety}
-                >
+                <Streamdown className="streamdown-container" linkSafety={linkSafety}>
                   {detail.content}
                 </Streamdown>
               </div>
-              <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1 mt-3 text-xs text-muted-foreground">
-                <span>{loadingLabel(skill)}</span>
-                {skill.priority != null && <span>· priority {skill.priority}</span>}
-                {!labelIsName && <span className="font-mono">· {skill.name}</span>}
-              </div>
+              {hasExpandedMeta && (
+                <div className="mt-3 flex flex-wrap items-baseline gap-x-3 gap-y-1 text-xs text-muted-foreground">
+                  {skill.priority != null && <span>priority {skill.priority}</span>}
+                  {!labelIsName && <span className="font-mono">{skill.name}</span>}
+                </div>
+              )}
               {!inherited && (
-                <div className="flex gap-4 mt-3">
+                <div className="mt-3 flex gap-4">
                   <Button
                     type="button"
                     variant="ghost"
@@ -699,9 +733,7 @@ function Toggle({
         disabled ? "text-muted-foreground/60 cursor-not-allowed" : "text-foreground hover:bg-muted",
       )}
     >
-      <span
-        className={cn("w-2 h-2 rounded-full", on ? "bg-emerald-500" : "bg-muted-foreground/60")}
-      />
+      <span className={cn("w-2 h-2 rounded-full", on ? "bg-success" : "bg-muted-foreground/60")} />
       {on ? "On" : "Off"}
     </button>
   );
@@ -752,12 +784,15 @@ function InheritedSection({
         onClick={() => setOpen((v) => !v)}
         className="w-full flex items-start justify-between gap-4 group"
       >
+        {/* Inherited groups are ground, not figure: lighter weight and muted
+         * color so the owned cards above read unmistakably as the operable
+         * surface. Ambient (system/bundle) is quieter still. */}
         <h3
           className={cn(
-            "flex items-center gap-2 text-sm font-semibold transition-colors",
+            "flex items-center gap-2 text-sm font-medium transition-colors",
             ambient
-              ? "text-muted-foreground/80 group-hover:text-foreground"
-              : "text-foreground/80 group-hover:text-foreground",
+              ? "text-muted-foreground/70 group-hover:text-foreground"
+              : "text-muted-foreground group-hover:text-foreground",
           )}
         >
           <span
@@ -811,8 +846,8 @@ function PersonalFooter({ count }: { count: number }) {
       <div className="text-xs text-muted-foreground flex items-center gap-2">
         <User className="h-3.5 w-3.5" />
         {count === 0
-          ? "No personal rules active here."
-          : `${count} personal rule${count === 1 ? "" : "s"} active here · follow you across every workspace.`}
+          ? "No personal skills active here."
+          : `${count} personal skill${count === 1 ? "" : "s"} active here · follow you across every workspace.`}
       </div>
       <Link
         to="/profile/skills"
@@ -850,7 +885,8 @@ function slugifyName(input: string): string {
 /** Header title for the edit view across its loading / new / edit states. */
 function editViewTitle(loading: boolean, isNew: boolean): string {
   if (loading) return "Loading…";
-  return isNew ? "A new rule for your agent" : "Edit this rule";
+  // The authoring flow only makes always-on skills, so it names what it makes.
+  return isNew ? "A new always-on skill" : "Edit this skill";
 }
 
 /** Name input with a slug hint (new) or an immutability note (edit). */
@@ -1044,8 +1080,8 @@ function EditView({
               placeholder="Match my writing voice. Avoid em-dashes."
             />
             <p className="text-xs text-muted-foreground">
-              The agent reads this as a rule. Plain English works. Use line breaks for separate
-              ideas.
+              The agent reads this skill every conversation. Plain English works. Use line breaks
+              for separate ideas.
             </p>
           </div>
 
