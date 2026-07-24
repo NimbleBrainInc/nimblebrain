@@ -44,6 +44,7 @@
     "dev:api": "bun --watch src/cli/index.ts serve -c .nimblebrain/nimblebrain.json",
     "dev:web": "cd web && bun run dev",
     "start": "bun run src/cli/index.ts serve",
+    "postinstall": "cd web && bun install",
     "install:bundles": "for ui in src/bundles/*/ui; do [ -f \"$ui/package.json\" ] && (cd \"$ui\" && bun install); done",
     "build:bundles": "for ui in src/bundles/*/ui; do [ -f \"$ui/package.json\" ] && (cd \"$ui\" && bun install && bun run build); done",
     "docs:install": "cd docs && bun install",
