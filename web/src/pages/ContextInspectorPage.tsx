@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 // Canonical shapes from `src/tools/platform/schemas/compose.ts`; mirrored
 // here via codegen so server + web can't drift.
@@ -429,12 +429,14 @@ function AccordionRow({
   onToggle: () => void;
   max: number;
 }) {
+  const bodyId = useId();
   return (
     <div className="border-b border-border">
       <button
         type="button"
         onClick={onToggle}
         aria-expanded={open}
+        aria-controls={bodyId}
         className={`w-full text-left px-6 py-3 space-y-1.5 transition-colors ${
           open ? "bg-warm/5" : "hover:bg-muted/60"
         }`}
@@ -471,7 +473,7 @@ function AccordionRow({
         </div>
       </button>
       {open && (
-        <div className="px-6 pt-3 pb-5 pl-11">
+        <div id={bodyId} className="px-6 pt-3 pb-5 pl-11">
           <LayerBody layer={layer} />
         </div>
       )}

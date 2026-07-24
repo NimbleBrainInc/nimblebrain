@@ -95,25 +95,14 @@ export interface ComposeAssembledContextOutput {
 }
 
 /**
- * One entry within a traced layer that aggregates operator-authored items
- * (apps, layer-3 skills). Mirrors the runtime `TracedSubItem` minus the
- * free-form `metadata` bag. Sub-items back the server-side `bundle` filter
- * (which keys on `bundle`); the inspector itself renders each layer's composed
- * `text`, not its sub-items.
- */
-export interface TracedSubItemView {
-  kind: "app" | "layer3_skill";
-  id: string;
-  source: string;
-  bundle?: string;
-}
-
-/**
  * One section of the composed system prompt with provenance and body — the
  * web-facing projection of the runtime `TracedLayer`. Carries `text` (the
  * exact composed body of the layer) so the context inspector can show what
- * actually entered the window. Lighter consumers may ignore
- * `text`; it is the largest field and only the inspector renders it.
+ * actually entered the window. Lighter consumers may ignore `text`; it is the
+ * largest field and only the inspector renders it. The runtime `subItems`
+ * (per-app / per-skill breakdown) are omitted: they exist for the server-side
+ * `bundle` filter, which runs on the runtime `TracedLayer`, and the inspector
+ * renders each layer's composed `text`, not its sub-items.
  */
 export interface TracedLayerView {
   kind: string;
@@ -123,7 +112,6 @@ export interface TracedLayerView {
   tokens: number;
   text: string;
   bundle?: string;
-  subItems?: TracedSubItemView[];
 }
 
 /**

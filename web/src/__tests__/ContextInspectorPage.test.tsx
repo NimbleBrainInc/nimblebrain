@@ -92,14 +92,6 @@ const COMPOSITION = {
       source: "layer 3 skills",
       tokens: 3369,
       text: SKILLS_SECTION,
-      subItems: [
-        {
-          kind: "layer3_skill" as const,
-          id: "/workspaces/tenant-a/skills/drafting-craft.md",
-          source: "drafting-craft",
-          bundle: "drafting",
-        },
-      ],
     },
     {
       kind: "current_date",
