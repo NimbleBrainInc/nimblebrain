@@ -53,7 +53,7 @@ import { composioAuthRoutes } from "../../src/api/routes/composio-auth.ts";
 import {
   _clearAllConnectFlows,
   registerConnectFlow,
-} from "../../src/composio/connect-flow-registry.ts";
+} from "../../src/connectors/providers/composio/connect-flow-registry.ts";
 import {
   composioConnectionPath,
   readComposioConnection,
@@ -64,7 +64,7 @@ import {
   _resetComposioConfigForTest,
   composioCallbackUrl,
   composioUserId,
-} from "../../src/composio/sdk.ts";
+} from "../../src/connectors/providers/composio/sdk.ts";
 
 function sha256Hex(input: string): string {
   return createHash("sha256").update(input).digest("hex");

@@ -24,7 +24,7 @@ import { createPrivilegeHook, NoopConfirmationGate } from "../config/privilege.t
 import {
   buildManagedConnectorRegistry,
   type ManagedConnectorRegistry,
-} from "../connectors/provider-registry.ts";
+} from "../connectors/providers/registry.ts";
 import { generateTitle } from "../conversation/auto-title.ts";
 import { compactConversationMessages, planCompaction } from "../conversation/compaction.ts";
 import { extractOperatorTurns } from "../conversation/event-reconstructor.ts";

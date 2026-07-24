@@ -13,8 +13,8 @@
  * `connectors.providers.*` block in `nimblebrain.json`; the seam is here.
  */
 
-import { createComposioProvider } from "../composio/provider.ts";
-import { validateComposioConfig } from "../composio/sdk.ts";
+import { createComposioProvider } from "./composio/provider.ts";
+import { validateComposioConfig } from "./composio/sdk.ts";
 import type { ConnectorAuthKind, ManagedConnectorProvider } from "./managed-provider.ts";
 
 /** Read-only lookup of the configured brokered providers, keyed by `auth-kind`. */

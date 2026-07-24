@@ -28,10 +28,10 @@
  */
 
 import type { Hono } from "hono";
-import type { AppContext, AppEnv } from "../api/types.ts";
-import type { ConnectionHealthProbe } from "../bundles/connection-probe.ts";
-import type { ConnectorOwner } from "../identity/connector-owner.ts";
-import type { ConnectorDirectory } from "../registries/directory.ts";
+import type { AppContext, AppEnv } from "../../api/types.ts";
+import type { ConnectionHealthProbe } from "../../bundles/connection-probe.ts";
+import type { ConnectorOwner } from "../../identity/connector-owner.ts";
+import type { ConnectorDirectory } from "../../registries/directory.ts";
 
 /**
  * The connector auth-kind taxonomy. `dcr` and `static` are runtime-native;

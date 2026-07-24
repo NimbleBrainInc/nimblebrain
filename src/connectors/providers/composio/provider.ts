@@ -14,10 +14,10 @@
  * only things callers pass.
  */
 
-import { composioAuthRoutes } from "../api/routes/composio-auth.ts";
-import type { AppContext } from "../api/types.ts";
-import type { ManagedConnectorProvider } from "../connectors/managed-provider.ts";
-import { log } from "../observability/log.ts";
+import { composioAuthRoutes } from "../../../api/routes/composio-auth.ts";
+import type { AppContext } from "../../../api/types.ts";
+import { log } from "../../../observability/log.ts";
+import type { ManagedConnectorProvider } from "../managed-provider.ts";
 import { ComposioConnectionProbe } from "./connection-probe.ts";
 import { composioMonitorEnabled } from "./monitor-config.ts";
 import {
