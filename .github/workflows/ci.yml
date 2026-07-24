@@ -62,6 +62,27 @@ jobs:
       - name: Verify (unit + web tests)
         run: bun run verify:test-unit
 
+  # The root unit suite must run on a fresh checkout with ONLY root deps — no
+  # `web/` or `src/bundles/*/ui` install. `test-unit` above installs both, so it
+  # cannot catch a web-only (or bundle-only) module leaking into the backend
+  # test graph: such a regression stays green there and surfaces only on a
+  # contributor's fresh clone/worktree (`bun install && bun test test/unit/`).
+  # This job reproduces that bare environment and fails loudly instead. It
+  # installs nothing beyond root deps by design — do NOT add `cd web && bun
+  # install` here; that is exactly the coverage gap it exists to close.
+  test-unit-bare-deps:
+    name: Unit Tests (root deps only)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: ${{ env.BUN_VERSION }}
+      - name: Install root dependencies only
+        run: bun install
+      - name: Unit tests must pass on root deps alone
+        run: bun run test:unit
+
   test-integration:
     name: Integration Tests
     runs-on: ubuntu-latest
@@ -159,7 +180,7 @@ jobs:
   # main commits get published.
   build-and-push:
     name: Build & Push Images
-    needs: [lint-and-check, test-unit, test-integration]
+    needs: [lint-and-check, test-unit, test-unit-bare-deps, test-integration]
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     permissions:
