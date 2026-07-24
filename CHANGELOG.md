@@ -201,6 +201,7 @@
 
 - All pre-IA settings URLs redirect to their new locations (`/settings/profile` → `/profile`, `/settings/users` → `/settings/org/users`, etc.). No action required for end users.
 - Bundle authors who want to support custom instructions: publish `app://instructions` from your MCP server. See [the bundle-author guide](https://docs.nimblebrain.ai/apps/custom-instructions/) and the `synapse-todo-board` reference implementation.
+- The connection-revalidator sweep interval is now `NB_CONNECTION_REVALIDATE_INTERVAL_SECONDS` (the cadence is provider-agnostic). The legacy `COMPOSIO_MONITOR_INTERVAL_SECONDS` is still honored (slated for removal, #727), so no action is required.
 
 ## [0.4.0] - 2026-04-24
 

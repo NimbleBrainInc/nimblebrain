@@ -1,12 +1,16 @@
-import { describe, expect, it } from "bun:test";
+import { afterEach, beforeEach, describe, expect, it, spyOn } from "bun:test";
 import type {
   ConnectionHealthProbe,
   ConnectionLiveness,
   ProbeTarget,
 } from "../../src/bundles/connection-probe.ts";
-import { ConnectionRevalidator } from "../../src/bundles/connection-revalidator.ts";
+import {
+  ConnectionRevalidator,
+  revalidatorIntervalMsFromEnv,
+} from "../../src/bundles/connection-revalidator.ts";
 import type { BundleLifecycleManager } from "../../src/bundles/lifecycle.ts";
 import type { ConnectionState } from "../../src/bundles/connection.ts";
+import { log } from "../../src/observability/log.ts";
 
 // ---------------------------------------------------------------------------
 // Fakes
@@ -179,5 +183,100 @@ describe("ConnectionRevalidator — dispatch & filtering", () => {
       rv.start();
       rv.stop();
     }).not.toThrow();
+  });
+});
+
+describe("revalidatorIntervalMsFromEnv", () => {
+  // Silence log.warn so the return-value cases (some of which exercise the legacy
+  // fallback) don't emit noise; the dedicated cases below assert on the spy.
+  let warnSpy: ReturnType<typeof spyOn>;
+  beforeEach(() => {
+    warnSpy = spyOn(log, "warn").mockImplementation(() => {});
+  });
+  afterEach(() => warnSpy.mockRestore());
+
+  it("undefined (use the revalidator default) when unset", () => {
+    expect(revalidatorIntervalMsFromEnv({})).toBeUndefined();
+  });
+
+  it("converts a positive seconds value from the generic env to ms", () => {
+    expect(
+      revalidatorIntervalMsFromEnv({ NB_CONNECTION_REVALIDATE_INTERVAL_SECONDS: "300" }),
+    ).toBe(300_000);
+    expect(
+      revalidatorIntervalMsFromEnv({ NB_CONNECTION_REVALIDATE_INTERVAL_SECONDS: "120" }),
+    ).toBe(120_000);
+  });
+
+  it("honors the legacy COMPOSIO_MONITOR_INTERVAL_SECONDS as a fallback (back-compat)", () => {
+    expect(revalidatorIntervalMsFromEnv({ COMPOSIO_MONITOR_INTERVAL_SECONDS: "300" })).toBe(300_000);
+  });
+
+  it("prefers the generic env when both are set", () => {
+    expect(
+      revalidatorIntervalMsFromEnv({
+        NB_CONNECTION_REVALIDATE_INTERVAL_SECONDS: "600",
+        COMPOSIO_MONITOR_INTERVAL_SECONDS: "300",
+      }),
+    ).toBe(600_000);
+  });
+
+  it("a declared-but-blank generic env falls through to the legacy knob (migration safety)", () => {
+    // The normal migration artifact: `NB_CONNECTION_REVALIDATE_INTERVAL_SECONDS=`
+    // copied into a chart with no value must NOT mask an operator's existing
+    // COMPOSIO_MONITOR_INTERVAL_SECONDS override.
+    expect(
+      revalidatorIntervalMsFromEnv({
+        NB_CONNECTION_REVALIDATE_INTERVAL_SECONDS: "",
+        COMPOSIO_MONITOR_INTERVAL_SECONDS: "900",
+      }),
+    ).toBe(900_000);
+    expect(
+      revalidatorIntervalMsFromEnv({
+        NB_CONNECTION_REVALIDATE_INTERVAL_SECONDS: "   ",
+        COMPOSIO_MONITOR_INTERVAL_SECONDS: "900",
+      }),
+    ).toBe(900_000);
+  });
+
+  it("a blank generic env with no legacy knob → undefined (default)", () => {
+    expect(
+      revalidatorIntervalMsFromEnv({ NB_CONNECTION_REVALIDATE_INTERVAL_SECONDS: "" }),
+    ).toBeUndefined();
+  });
+
+  it("a set-but-garbage generic env falls to the default, not the legacy knob", () => {
+    // An explicit bad value is deliberate; it should not silently resurrect the
+    // deprecated knob.
+    expect(
+      revalidatorIntervalMsFromEnv({
+        NB_CONNECTION_REVALIDATE_INTERVAL_SECONDS: "abc",
+        COMPOSIO_MONITOR_INTERVAL_SECONDS: "900",
+      }),
+    ).toBeUndefined();
+  });
+
+  it("undefined on non-positive / unparseable values", () => {
+    expect(
+      revalidatorIntervalMsFromEnv({ NB_CONNECTION_REVALIDATE_INTERVAL_SECONDS: "0" }),
+    ).toBeUndefined();
+    expect(
+      revalidatorIntervalMsFromEnv({ NB_CONNECTION_REVALIDATE_INTERVAL_SECONDS: "-5" }),
+    ).toBeUndefined();
+    expect(
+      revalidatorIntervalMsFromEnv({ NB_CONNECTION_REVALIDATE_INTERVAL_SECONDS: "abc" }),
+    ).toBeUndefined();
+  });
+
+  it("warns, naming the replacement, when the legacy knob supplies the cadence", () => {
+    revalidatorIntervalMsFromEnv({ COMPOSIO_MONITOR_INTERVAL_SECONDS: "900" });
+    const msg = String(warnSpy.mock.calls[0]?.[0] ?? "");
+    expect(msg).toContain("COMPOSIO_MONITOR_INTERVAL_SECONDS");
+    expect(msg).toContain("NB_CONNECTION_REVALIDATE_INTERVAL_SECONDS");
+  });
+
+  it("does not warn when the generic env supplies the cadence", () => {
+    revalidatorIntervalMsFromEnv({ NB_CONNECTION_REVALIDATE_INTERVAL_SECONDS: "300" });
+    expect(warnSpy).not.toHaveBeenCalled();
   });
 });

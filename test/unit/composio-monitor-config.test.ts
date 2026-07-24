@@ -1,8 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import {
-  composioMonitorEnabled,
-  revalidatorIntervalMsFromEnv,
-} from "../../src/connectors/providers/composio/monitor-config.ts";
+import { composioMonitorEnabled } from "../../src/connectors/providers/composio/monitor-config.ts";
 
 describe("composioMonitorEnabled", () => {
   it("off when Composio isn't configured, regardless of the switch", () => {
@@ -24,23 +21,5 @@ describe("composioMonitorEnabled", () => {
     expect(composioMonitorEnabled(true, { COMPOSIO_MONITOR_ENABLED: "true" })).toBe(true);
     expect(composioMonitorEnabled(true, { COMPOSIO_MONITOR_ENABLED: "yes" })).toBe(true);
     expect(composioMonitorEnabled(true, { COMPOSIO_MONITOR_ENABLED: "" })).toBe(true);
-  });
-});
-
-describe("revalidatorIntervalMsFromEnv", () => {
-  it("undefined (use default) when unset", () => {
-    expect(revalidatorIntervalMsFromEnv({})).toBeUndefined();
-  });
-
-  it("converts a positive seconds value to ms", () => {
-    expect(revalidatorIntervalMsFromEnv({ COMPOSIO_MONITOR_INTERVAL_SECONDS: "300" })).toBe(300_000);
-    expect(revalidatorIntervalMsFromEnv({ COMPOSIO_MONITOR_INTERVAL_SECONDS: "120" })).toBe(120_000);
-  });
-
-  it("falls back to default on non-positive / unparseable values", () => {
-    expect(revalidatorIntervalMsFromEnv({ COMPOSIO_MONITOR_INTERVAL_SECONDS: "0" })).toBeUndefined();
-    expect(revalidatorIntervalMsFromEnv({ COMPOSIO_MONITOR_INTERVAL_SECONDS: "-5" })).toBeUndefined();
-    expect(revalidatorIntervalMsFromEnv({ COMPOSIO_MONITOR_INTERVAL_SECONDS: "abc" })).toBeUndefined();
-    expect(revalidatorIntervalMsFromEnv({ COMPOSIO_MONITOR_INTERVAL_SECONDS: "" })).toBeUndefined();
   });
 });

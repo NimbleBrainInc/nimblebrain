@@ -1,8 +1,10 @@
 type BunServer = ReturnType<typeof Bun.serve>;
 
 import type { ConnectionHealthProbe } from "../bundles/connection-probe.ts";
-import { ConnectionRevalidator } from "../bundles/connection-revalidator.ts";
-import { revalidatorIntervalMsFromEnv } from "../connectors/providers/composio/monitor-config.ts";
+import {
+  ConnectionRevalidator,
+  revalidatorIntervalMsFromEnv,
+} from "../bundles/connection-revalidator.ts";
 import type { IdentityProvider } from "../identity/provider.ts";
 import { DevIdentityProvider } from "../identity/providers/dev.ts";
 import { canonicalOrigins, webOrigin } from "../oauth/public-origin.ts";
@@ -95,7 +97,7 @@ export function startServer(options: ServerOptions): ServerHandle {
   // Each registered managed-connector provider contributes its own probe (or
   // none) — a provider-less deploy wires nothing, and a provider that suppresses
   // its probe (e.g. Composio's COMPOSIO_MONITOR_ENABLED kill switch) simply
-  // omits it. Sweep cadence: COMPOSIO_MONITOR_INTERVAL_SECONDS (default 300).
+  // omits it. Sweep cadence: NB_CONNECTION_REVALIDATE_INTERVAL_SECONDS (default 300).
   const revalidatorProbes: ConnectionHealthProbe[] = [];
   for (const provider of runtime.getManagedConnectorRegistry().list()) {
     const probe = provider.probe?.(runtime.getConnectorDirectory());
