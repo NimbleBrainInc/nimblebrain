@@ -397,6 +397,11 @@ function ReadingPane({ layer, warnings }: { layer: TracedLayerView | null; warni
       </div>
     );
   }
+  // A section that aggregates several skills (layer-3) carries each skill's own
+  // body on its sub-items — render them individually rather than as one wall.
+  const itemized = (layer.subItems ?? []).filter(
+    (s): s is typeof s & { text: string } => typeof s.text === "string" && s.text.length > 0,
+  );
   return (
     <div className="flex flex-col min-h-0 bg-muted/50" data-testid="context-reading-pane">
       <div className="shrink-0 px-6 pt-4 pb-3 border-b border-border">
@@ -416,7 +421,7 @@ function ReadingPane({ layer, warnings }: { layer: TracedLayerView | null; warni
             {layerDescriptor(layer)}
           </div>
         )}
-        {layer.subItems && layer.subItems.length > 0 && (
+        {itemized.length === 0 && layer.subItems && layer.subItems.length > 0 && (
           <div className="mt-2 flex flex-wrap gap-1.5">
             {layer.subItems.map((sub) => (
               <span
@@ -429,11 +434,36 @@ function ReadingPane({ layer, warnings }: { layer: TracedLayerView | null; warni
             ))}
           </div>
         )}
+        {itemized.length > 0 && (
+          <div className="mt-1 text-2xs text-muted-foreground">
+            {itemized.length} skill{itemized.length === 1 ? "" : "s"}, each shown with its own body
+          </div>
+        )}
       </div>
-      <div className="overflow-y-auto flex-1 p-6">
-        <pre className="text-xs leading-relaxed whitespace-pre-wrap font-mono text-foreground bg-card border border-border rounded-lg p-4 m-0">
-          {layer.text}
-        </pre>
+      <div className="overflow-y-auto flex-1 p-6 space-y-4">
+        {itemized.length > 0 ? (
+          itemized.map((sub) => (
+            <div key={sub.id}>
+              <div className="flex items-baseline gap-2 mb-1.5">
+                <span className="text-sm font-medium truncate" title={sub.source}>
+                  {skillName(sub.id)}
+                </span>
+                {typeof sub.tokens === "number" && (
+                  <span className="text-3xs text-muted-foreground tabular-nums ml-auto shrink-0">
+                    {formatTokenCount(sub.tokens)} tok
+                  </span>
+                )}
+              </div>
+              <pre className="text-xs leading-relaxed whitespace-pre-wrap font-mono text-foreground bg-card border border-border rounded-lg p-4 m-0">
+                {sub.text}
+              </pre>
+            </div>
+          ))
+        ) : (
+          <pre className="text-xs leading-relaxed whitespace-pre-wrap font-mono text-foreground bg-card border border-border rounded-lg p-4 m-0">
+            {layer.text}
+          </pre>
+        )}
         {warnings.length > 0 && (
           <div className="mt-3 text-3xs text-muted-foreground space-y-1">
             {warnings.map((w) => (

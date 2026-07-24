@@ -57,6 +57,8 @@ interface ComposeResponse {
       kind: string;
       id: string;
       source: string;
+      text?: string;
+      tokens?: number;
       bundle?: string;
       metadata?: Record<string, unknown>;
     }>;
@@ -323,6 +325,10 @@ describe("compose_effective_context — historical mode", () => {
     expect((sub!.metadata as { recordedHash: string }).recordedHash).toBe(
       hashSkillBody(skillBody),
     );
+    // Each skill carries its own body on the sub-item (so a UI can itemize
+    // them), split out from the aggregate layer text.
+    expect(sub!.text).toBe(skillBody);
+    expect(sub!.tokens).toBeGreaterThan(0);
 
     await runtime.shutdown();
   });
@@ -543,6 +549,9 @@ describe("compose_effective_context — bundle filter", () => {
     expect(l3Filtered).toBeDefined();
     expect(l3Filtered!.subItems!.length).toBe(1);
     expect(l3Filtered!.subItems![0]!.bundle).toBe("synapse-collateral");
+    // Live mode carries each skill's body on the sub-item too.
+    expect(l3Filtered!.subItems![0]!.text).toContain("Collateral content");
+    expect(l3Filtered!.subItems![0]!.tokens).toBeGreaterThan(0);
 
     await runtime.shutdown();
   });

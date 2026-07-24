@@ -73,12 +73,21 @@ const COMPOSITION = {
       id: "nb:layer3-skills",
       source: "layer 3 skills",
       tokens: 3369,
-      text: "### drafting-craft\nOpen with a specific observation.",
+      text: "### drafting-craft\n…combined section…",
       subItems: [
         {
           kind: "layer3_skill" as const,
           id: "/workspaces/tenant-a/skills/drafting-craft.md",
           source: "drafting-craft",
+          text: "Open with a specific, verifiable observation.",
+          tokens: 1200,
+        },
+        {
+          kind: "layer3_skill" as const,
+          id: "/workspaces/tenant-a/skills/batch-first-pass.md",
+          source: "batch-first-pass",
+          text: "Do a full first pass before revising any item.",
+          tokens: 900,
         },
       ],
     },
@@ -156,6 +165,26 @@ describe("ContextInspectorPage", () => {
     await waitFor(() =>
       expect(container.textContent).toContain("Write in plain English. No em-dashes."),
     );
+  });
+
+  test("itemizes a skills layer into individual skill bodies", async () => {
+    const { container } = renderPage();
+    await waitFor(() => expect(container.textContent).toContain("Layer-3 skills"));
+
+    const row = buttons(container).find((b) => b.textContent?.includes("Layer-3 skills"));
+    if (!row) throw new Error("layer-3 skills row not found");
+    fireEvent.click(row);
+
+    // Each aggregated skill shows its own name and body, not one combined wall.
+    await waitFor(() =>
+      expect(container.textContent).toContain("Open with a specific, verifiable observation."),
+    );
+    const text = container.textContent ?? "";
+    expect(text).toContain("2 skills"); // the itemization caption
+    expect(text).toContain("drafting-craft");
+    expect(text).toContain("batch-first-pass");
+    expect(text).toContain("Do a full first pass before revising any item.");
+    expect(text).not.toContain("…combined section…"); // the aggregate text is not shown
   });
 
   test("filters the layers to a budget bucket", async () => {

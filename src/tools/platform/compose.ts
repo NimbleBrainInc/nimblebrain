@@ -579,6 +579,11 @@ function auditToSubItem(
     kind: "layer3_skill",
     id: entry.id,
     source: audit.body !== null ? entry.id : `${entry.id} (body unavailable)`,
+    // The recovered on-disk body (verbatim, or a `_versions/` snapshot on
+    // drift), split per skill so a UI can itemize them. Null when the file is
+    // gone or unparseable.
+    ...(audit.body !== null ? { text: audit.body } : {}),
+    tokens: entry.tokens,
     ...(audit.bundle ? { bundle: audit.bundle } : {}),
     metadata: {
       scope: entry.scope,

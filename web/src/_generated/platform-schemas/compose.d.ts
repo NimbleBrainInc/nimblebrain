@@ -68,6 +68,11 @@ export interface TracedSubItemView {
     kind: "app" | "layer3_skill";
     id: string;
     source: string;
+    /** The item's own composed body (per-skill), so a UI can itemize a section
+     * that aggregates several skills. Present for layer-3 skills; absent for apps. */
+    text?: string;
+    /** Approximate tokens for this item's body. */
+    tokens?: number;
     bundle?: string;
 }
 /**
