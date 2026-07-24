@@ -112,6 +112,20 @@ export function ChatChrome() {
     }
   }, [location.pathname]);
 
+  // The effect above only fires on a route *change*. A full-page main-content
+  // view like the context inspector, entered by a direct load / refresh /
+  // shared link while the chat was left fullscreen, would be covered — so
+  // collapse fullscreen once on mount when we land directly on such a route.
+  const mountCollapseHandled = useRef(false);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: one-shot on mount
+  useEffect(() => {
+    if (mountCollapseHandled.current) return;
+    mountCollapseHandled.current = true;
+    if (panelState === "fullscreen" && /^\/w\/[^/]+\/context\//.test(location.pathname)) {
+      toggleFullscreen();
+    }
+  }, []);
+
   // Deep-link: open chat from ?chat=<conversationId> on mount.
   const deepLinkHandled = useRef(false);
   // biome-ignore lint/correctness/useExhaustiveDependencies: one-shot on mount

@@ -9,6 +9,7 @@ import type {
 } from "../_generated/platform-schemas/compose";
 import { callTool } from "../api/client";
 import { useWorkspaceContext } from "../context/WorkspaceContext";
+import { orderedSources, SOURCE_LABEL, sourceDetail } from "../lib/context-sources";
 import { formatTokenCount, SCOPE_CLASS, shortSkillName } from "../lib/skill-display";
 import { parseToolResponse } from "../lib/tool-response";
 import { toSlug } from "../lib/workspace-slug";
@@ -34,8 +35,13 @@ export function InContextPopover({ conversationId }: { conversationId: string | 
   const containerRef = useRef<HTMLDivElement>(null);
   const buttonRef = useRef<HTMLButtonElement>(null);
   const { activeWorkspace } = useWorkspaceContext();
-  // Skills are workspace-scoped; "Manage" targets the focused workspace.
-  const skillsPath = activeWorkspace ? `/w/${toSlug(activeWorkspace.id)}/settings/skills` : "/";
+  // "Open full view" routes into the full-page inspector for this conversation,
+  // in the main content area beside the docked chat. Skill management lives
+  // there (the inspector) rather than cluttering this triage popover.
+  const inspectorPath =
+    activeWorkspace && conversationId
+      ? `/w/${toSlug(activeWorkspace.id)}/context/${conversationId}`
+      : null;
 
   // Memory placeholder — always empty until the seed channel ships. Kept as an
   // array so the section populates data-only when memory wiring lands.
@@ -152,37 +158,21 @@ export function InContextPopover({ conversationId }: { conversationId: string | 
             )}
           </div>
 
-          <div className="px-3.5 py-2 border-t flex items-center justify-end">
-            <Link
-              to={skillsPath}
-              className="text-2xs text-muted-foreground hover:text-foreground"
-              onClick={() => setOpen(false)}
-            >
-              Manage skills ↗
-            </Link>
-          </div>
+          {inspectorPath && (
+            <div className="px-3.5 py-2 border-t flex items-center justify-end">
+              <Link
+                to={inspectorPath}
+                className="text-2xs font-medium text-foreground hover:text-warm"
+                onClick={() => setOpen(false)}
+              >
+                Open full view ↗
+              </Link>
+            </div>
+          )}
         </div>
       )}
     </div>
   );
-}
-
-/** Order + human labels for the recorded context sources. */
-const SOURCE_ORDER = ["system_prompt", "tool_descriptions", "skills", "history"];
-const SOURCE_LABEL: Record<string, string> = {
-  system_prompt: "System prompt",
-  tool_descriptions: "Tools",
-  skills: "Skills",
-  history: "History",
-};
-
-/** Count / turns / compacted detail suffix for a source row. */
-function sourceDetail(s: AssembledContextSource): string {
-  const parts: string[] = [];
-  if (typeof s.count === "number") parts.push(`${s.count}`);
-  if (typeof s.turns === "number") parts.push(`${s.turns} turn${s.turns === 1 ? "" : "s"}`);
-  if (s.compacted) parts.push("compacted");
-  return parts.join(" · ");
 }
 
 /** Per-source token breakdown for the latest turn, with proportional bars. */
@@ -193,11 +183,7 @@ function BudgetSection({
   sources: AssembledContextSource[];
   totalTokens: number;
 }) {
-  const rank = (kind: string) => {
-    const i = SOURCE_ORDER.indexOf(kind);
-    return i === -1 ? SOURCE_ORDER.length : i;
-  };
-  const ordered = [...sources].sort((a, b) => rank(a.kind) - rank(b.kind));
+  const ordered = orderedSources(sources);
   const max = Math.max(totalTokens, 1);
   return (
     <div className="px-3.5 py-1.5 space-y-1">
