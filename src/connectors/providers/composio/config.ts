@@ -41,11 +41,7 @@
 
 import { getBouncerMode } from "../../../oauth/bouncer-config.ts";
 import { log } from "../../../observability/log.ts";
-import {
-  type ComposioProviderConfig,
-  connectorsConfigGeneration,
-  declaredProviderConfig,
-} from "../config.ts";
+import { type ComposioProviderConfig, declaredProviderConfig } from "../config.ts";
 import { composioMonitorEnabled } from "./monitor-config.ts";
 
 /** Default Composio API host. Overridable via config `baseUrl` or `COMPOSIO_API_BASE_URL`. */
@@ -72,7 +68,7 @@ export interface ComposioConfig {
   source: "config" | "env";
 }
 
-let _cached: { generation: number; config: ComposioConfig } | undefined;
+let _cached: ComposioConfig | undefined;
 
 /**
  * The resolved Composio config. Computed once and cached (production reads it on
@@ -82,11 +78,8 @@ let _cached: { generation: number; config: ComposioConfig } | undefined;
  * and logs the operator-facing status line; every later call is a cache hit.
  */
 export function validateComposioConfig(): ComposioConfig {
-  const generation = connectorsConfigGeneration();
-  if (_cached && _cached.generation === generation) return _cached.config;
-  const config = resolveComposioConfig();
-  _cached = { generation, config };
-  return config;
+  if (!_cached) _cached = resolveComposioConfig();
+  return _cached;
 }
 
 function resolveComposioConfig(): ComposioConfig {
@@ -109,8 +102,8 @@ function resolveComposioConfig(): ComposioConfig {
   const tid = requireTenantIdInBouncerMode();
 
   // Only once the provider is actually live — on an unconfigured deploy nothing
-  // is wired, so naming superseded settings would be noise beside "not configured".
-  if (declared) warnSupersededEnv();
+  // is wired, so a settings conflict is inert and shouldn't take down boot.
+  if (declared) assertNoSupersededEnv();
 
   log.info(
     `[composio] integration: configured (settings=${source}, base=${baseUrl}${tid ? `, tid=${tid}` : ""})`,
@@ -166,14 +159,31 @@ function requireTenantIdInBouncerMode(): string | undefined {
   return tid;
 }
 
-/** One warning naming every settings var the declared block supersedes. */
-function warnSupersededEnv(): void {
+/**
+ * Refuse to boot when the block and its fallback env are both set.
+ *
+ * Whole-block precedence is a *lossy* rule — the env value is discarded. For a
+ * plain value that is merely surprising, but `monitor.enabled` is a kill switch:
+ * a block added for an unrelated reason (say, a `baseUrl` change) carries no
+ * `monitor`, so the default flips a deliberately-disabled probe back on, and the
+ * consequence (connectors flipping `running → reauth_required`) surfaces long
+ * after any startup log line. A warning is not proportionate to a safety knob
+ * silently reverting.
+ *
+ * So the ambiguous state is made unreachable rather than announced. This can
+ * only fire on a deliberate config edit — the block is new, so no upgrade hits
+ * it — which is the best moment to make someone choose. Same fail-at-deploy-time
+ * posture as the base-URL and tenant-id checks above.
+ */
+function assertNoSupersededEnv(): void {
   const present = SUPERSEDED_ENV_KEYS.filter((k) => (process.env[k] ?? "").trim() !== "");
   if (present.length === 0) return;
-  log.warn(
-    `[composio] connectors.providers.composio is declared in nimblebrain.json; ignoring ${present.join(", ")}. ` +
-      "These are the fallback only when the block is absent — move the values into the block, or remove the block. " +
-      "COMPOSIO_API_KEY is unaffected: the broker credential is always read from the environment.",
+  throw new Error(
+    `[composio] connectors.providers.composio is declared in nimblebrain.json, but ${present.join(", ")} ` +
+      `${present.length === 1 ? "is" : "are"} also set. The block owns every setting, so these would be ` +
+      "silently discarded — including the monitor kill switch. Move the values into the block, or drop the " +
+      "block and keep using the environment. (COMPOSIO_API_KEY is unaffected: the broker credential is " +
+      "always read from the environment.)",
   );
 }
 

@@ -70,7 +70,7 @@ describe("config schema ↔ feature flags", () => {
 
 describe("config schema ↔ managed-connector provider config", () => {
   // The key lists come from `Record<keyof Required<T>, true>` maps in
-  // `provider-config.ts`, so a field added to one of those interfaces is a
+  // `providers/config.ts`, so a field added to one of those interfaces is a
   // compile error until it is listed, and a failure here until it is declared
   // in the schema.
   const connectors = schema.properties.connectors;

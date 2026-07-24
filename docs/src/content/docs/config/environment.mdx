@@ -78,7 +78,7 @@ The platform builds every outward-facing URL (OAuth callbacks, post-login landin
 
 Required only when the connectors catalog contains any `auth: composio` entries (Gmail, Outlook, …). See the [Composio operator guide](/deploy/composio/) for end-to-end setup.
 
-The provider's **settings** are declarable in `nimblebrain.json` under [`connectors.providers.composio`](/config/nimblebrain-json/#connectorsproviderscomposio). The two variables marked **fallback** below apply **only when that block is absent** — declare the block and they are ignored, with one startup warning naming them.
+The provider's **settings** are declarable in `nimblebrain.json` under [`connectors.providers.composio`](/config/nimblebrain-json/#connectorsproviderscomposio). The two variables marked **fallback** below apply **only when that block is absent** — declare the block and setting them alongside it is refused at startup.
 
 `COMPOSIO_API_KEY` is **not** one of them. The broker credential is always read from the environment and is never superseded by the block, because an installed connector's persisted transport credential is a `${COMPOSIO_API_KEY}` reference resolved from the process env ([why](/config/nimblebrain-json/#the-broker-credential)). `COMPOSIO_<TOOLKIT>_AUTH_CONFIG_ID` and `NB_TENANT_ID` are likewise env-only.
 

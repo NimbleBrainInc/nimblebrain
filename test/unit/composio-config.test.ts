@@ -16,7 +16,7 @@
  * construction, so the suite must never trigger a vendor load.
  */
 
-import { afterEach, beforeEach, describe, expect, it, spyOn } from "bun:test";
+import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import {
   _resetComposioConfigForTest,
   COMPOSIO_API_BASE,
@@ -28,7 +28,6 @@ import {
   setConnectorsConfig,
 } from "../../src/connectors/providers/config.ts";
 import { _resetBouncerModeForTest } from "../../src/oauth/bouncer-config.ts";
-import { log } from "../../src/observability/log.ts";
 
 const ENV_KEYS = [
   "COMPOSIO_API_KEY",
@@ -42,14 +41,16 @@ const ENV_KEYS = [
 let saved: Record<string, string | undefined>;
 
 /**
- * Install a declared block. The install's generation bump is what invalidates any
- * earlier resolution, so no explicit cache reset is needed here.
+ * Install a declared block and drop any resolution cached from an earlier read.
+ * Production installs once at the composition root ahead of every read, so the
+ * reset is a test-only affordance.
  *
  * (Named `declareComposio`, not `declare` — a function named `declare` parses as a
  * TypeScript ambient declaration and silently never runs.)
  */
 function declareComposio(composio: ComposioProviderConfig): void {
   setConnectorsConfig({ providers: { composio } });
+  _resetComposioConfigForTest();
 }
 
 beforeEach(() => {
@@ -186,88 +187,48 @@ describe("settings — the declared block", () => {
       /connectors\.providers\.composio\.baseUrl must be http\(s\)/,
     );
   });
-
-  it("recomputes when a block is installed after an earlier read", () => {
-    process.env.COMPOSIO_API_BASE_URL = "https://env.example.com";
-    expect(validateComposioConfig().baseUrl).toBe("https://env.example.com");
-
-    // No `_resetComposioConfigForTest()` here on purpose: the generation bump in
-    // `setConnectorsConfig` is what must invalidate the env-only resolution.
-    setConnectorsConfig({ providers: { composio: { baseUrl: "https://config.example.com" } } });
-    expect(validateComposioConfig().baseUrl).toBe("https://config.example.com");
-  });
 });
 
-describe("precedence — the block wins the settings, with one warning", () => {
+describe("precedence — the block owns the settings, and ambiguity is refused", () => {
   beforeEach(() => {
     process.env.COMPOSIO_API_KEY = "k_env";
   });
 
-  it("uses the block and warns once, naming every superseded settings var", () => {
+  it("refuses to boot when a superseded var is also set, naming every one", () => {
+    // Whole-block precedence would discard these. For `monitor.enabled` that
+    // means a kill switch silently reverting, so the state is made unreachable.
     process.env.COMPOSIO_API_BASE_URL = "https://env.example.com";
     process.env.COMPOSIO_MONITOR_ENABLED = "false";
     declareComposio({ baseUrl: "https://config.example.com" });
 
-    const warn = spyOn(log, "warn").mockImplementation(() => {});
-    try {
-      const cfg = validateComposioConfig();
-      expect(cfg.baseUrl).toBe("https://config.example.com");
-      // The env kill switch must not leak through — the block owns the settings whole.
-      expect(cfg.monitorEnabled).toBe(true);
-
-      expect(warn).toHaveBeenCalledTimes(1);
-      const msg = String(warn.mock.calls[0]?.[0] ?? "");
-      expect(msg).toContain("connectors.providers.composio is declared");
-      expect(msg).toContain("COMPOSIO_API_BASE_URL");
-      expect(msg).toContain("COMPOSIO_MONITOR_ENABLED");
-    } finally {
-      warn.mockRestore();
-    }
+    expect(() => validateComposioConfig()).toThrow(/COMPOSIO_API_BASE_URL/);
+    _resetComposioConfigForTest();
+    expect(() => validateComposioConfig()).toThrow(/COMPOSIO_MONITOR_ENABLED/);
   });
 
-  it("never advises removing COMPOSIO_API_KEY — it is not superseded", () => {
-    // The credential is still read from the env, so telling an operator the
-    // block supersedes it would be advice that breaks their deploy.
-    process.env.COMPOSIO_API_BASE_URL = "https://env.example.com";
+  it("cannot silently revert a deliberately-disabled probe", () => {
+    // The regression this guards: an operator running with the probe off adds a
+    // block for an unrelated reason; `monitor` is absent, so whole-block
+    // precedence would default it back on and resume flipping connectors.
+    process.env.COMPOSIO_MONITOR_ENABLED = "false";
+    declareComposio({ baseUrl: "https://composio.staging" });
+
+    expect(() => validateComposioConfig()).toThrow(/monitor kill switch/);
+  });
+
+  it("accepts the block alongside COMPOSIO_API_KEY — the credential is not superseded", () => {
     declareComposio({ baseUrl: "https://config.example.com" });
 
-    const warn = spyOn(log, "warn").mockImplementation(() => {});
-    try {
-      expect(validateComposioConfig().apiKey).toBe("k_env");
-      const ignoreList = warn.mock.calls
-        .map((c) => String(c[0] ?? ""))
-        .filter((m) => m.includes("ignoring"))
-        .join("\n");
-      expect(ignoreList).not.toContain("ignoring COMPOSIO_API_KEY");
-      expect(ignoreList).not.toContain(", COMPOSIO_API_KEY");
-    } finally {
-      warn.mockRestore();
-    }
+    const cfg = validateComposioConfig();
+    expect(cfg.apiKey).toBe("k_env");
+    expect(cfg.baseUrl).toBe("https://config.example.com");
   });
 
-  it("stays silent when the block is declared and no settings env is set", () => {
-    declareComposio({ baseUrl: "https://config.example.com" });
-
-    const warn = spyOn(log, "warn").mockImplementation(() => {});
-    try {
-      expect(validateComposioConfig().configured).toBe(true);
-      expect(warn).not.toHaveBeenCalled();
-    } finally {
-      warn.mockRestore();
-    }
-  });
-
-  it("stays silent on an unconfigured deploy — nothing is wired to supersede", () => {
+  it("is inert on an unconfigured deploy — a dormant provider shouldn't take down boot", () => {
     delete process.env.COMPOSIO_API_KEY;
     process.env.COMPOSIO_API_BASE_URL = "https://env.example.com";
     declareComposio({ baseUrl: "https://config.example.com" });
 
-    const warn = spyOn(log, "warn").mockImplementation(() => {});
-    try {
-      expect(validateComposioConfig().configured).toBe(false);
-      expect(warn).not.toHaveBeenCalled();
-    } finally {
-      warn.mockRestore();
-    }
+    expect(validateComposioConfig().configured).toBe(false);
   });
 });

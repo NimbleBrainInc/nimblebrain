@@ -92,14 +92,14 @@ The provider's settings can be declared on the config interface instead of the e
 }
 ```
 
-Precedence is whole-block: with the block present, `COMPOSIO_API_BASE_URL` and `COMPOSIO_MONITOR_ENABLED` are ignored (one startup warning names them). The revalidator's sweep cadence is provider-agnostic and stays on `NB_CONNECTION_REVALIDATE_INTERVAL_SECONDS`. `COMPOSIO_API_KEY` is unaffected — the broker credential is always read from the environment and is what gates the provider being registered at all. See [`connectors`](/config/nimblebrain-json/#connectors) for the full surface.
+Precedence is whole-block: with the block present, setting `COMPOSIO_API_BASE_URL` or `COMPOSIO_MONITOR_ENABLED` alongside it is refused at startup — pick one source per setting. The revalidator's sweep cadence is provider-agnostic and stays on `NB_CONNECTION_REVALIDATE_INTERVAL_SECONDS`. `COMPOSIO_API_KEY` is unaffected — the broker credential is always read from the environment and is what gates the provider being registered at all. See [`connectors`](/config/nimblebrain-json/#connectors) for the full surface.
 
 ### Verify integration is live
 
 On pod startup, look for this log line:
 
 ```
-[composio] integration: configured (source=env, base=https://backend.composio.dev)
+[composio] integration: configured (settings=env, base=https://backend.composio.dev)
 ```
 
 `settings` is `env` when the base URL and monitor knobs came from `COMPOSIO_*`, and `config` when `connectors.providers.composio` is declared. The API key is always environment-sourced.

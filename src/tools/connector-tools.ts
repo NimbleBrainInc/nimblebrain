@@ -1992,10 +1992,11 @@ function scrubComposioHeaders(
  * installed connector doesn't initiate a new upstream Composio session and
  * orphan the prior one. The API-key template is held verbatim in workspace.json;
  * `createRemoteTransport` resolves it from `process.env.COMPOSIO_API_KEY` at
- * start time so the secret never sits at rest. That template is an ENV
- * reference, so a deploy that declares the broker key only on the config
- * interface would leave these persisted headers resolving empty —
- * `composio/config.ts` warns loudly at startup on exactly that combination.
+ * start time so the secret never sits at rest. This template is why the broker
+ * credential is environment-only by construction (it is not a field on the
+ * declared block): persisted state points into the env namespace, so the value
+ * must live there. Binding the transport to a `TransportCredentialProvider`
+ * instead is what would let the credential be declared elsewhere.
  */
 async function buildComposioWiring(
   provider: ManagedConnectorProvider,

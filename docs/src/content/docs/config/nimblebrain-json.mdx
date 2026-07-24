@@ -343,9 +343,11 @@ The fix is for persisted state to name a *credential provider* rather than an en
 The `COMPOSIO_*` settings variables ([Environment Variables](/config/environment)) still work, as a **fallback**:
 
 - **Block omitted** — `COMPOSIO_API_BASE_URL` and `COMPOSIO_MONITOR_ENABLED` hydrate the provider's settings. Nothing changes for an existing deployment.
-- **Block present** — the block wins for **both** settings and those two are ignored, with one startup warning naming the ones that were set.
+- **Block present** — the block owns **both** settings, and setting either env var alongside it is **refused at startup** with an error naming them.
 
-Precedence is whole-block, not per-field: a block that sets only `monitor` also takes the default `baseUrl`, rather than inheriting `COMPOSIO_API_BASE_URL`. `COMPOSIO_API_KEY` is unaffected either way.
+Precedence is whole-block, not per-field: a block that sets only `monitor` also takes the default `baseUrl`, rather than inheriting `COMPOSIO_API_BASE_URL`. That makes the rule lossy, which is why the conflict is an error rather than a warning — `monitor.enabled` is a kill switch, and a block added for an unrelated reason would otherwise default a deliberately-disabled probe back on, with the consequence (connectors flipping to `reauth_required`) surfacing long after any log line. Pick one source per setting.
+
+`COMPOSIO_API_KEY` is unaffected either way — it is the credential, not a setting, and is never superseded.
 
 `NB_TENANT_ID` is likewise not part of this block. It is a deployment identity, stays env-only, and is still required when the OAuth bouncer is configured.
 

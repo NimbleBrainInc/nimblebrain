@@ -92,15 +92,16 @@ export const COMPOSIO_MONITOR_CONFIG_KEYS: string[] = Object.keys(COMPOSIO_MONIT
 // ── The installed config ─────────────────────────────────────────────
 
 let _declared: ConnectorsConfig | undefined;
-let _generation = 0;
 
 /**
  * Install the declared `connectors` block. Called once at the composition root
- * (`Runtime.start`), before any provider wiring reads it.
+ * (`Runtime.start`), ahead of every provider read — the registry build, the
+ * route mount, and the probe wiring all happen later in `start`. That ordering
+ * is the guarantee; providers cache their resolution outright and are not
+ * expected to see a second install.
  */
 export function setConnectorsConfig(config: ConnectorsConfig | undefined): void {
   _declared = config;
-  _generation += 1;
 }
 
 /** The block a provider declared, or undefined when the operator declared none. */
@@ -108,16 +109,6 @@ export function declaredProviderConfig<K extends keyof ManagedProviderConfigs>(
   id: K,
 ): ManagedProviderConfigs[K] | undefined {
   return _declared?.providers?.[id];
-}
-
-/**
- * Bumped on every install. A provider's resolver caches its resolution against
- * this counter, so a config installed *after* a read can never be shadowed by an
- * env-only value cached earlier — the resolver recomputes on the next call
- * instead. Without it, read-before-install would silently pin the fallback.
- */
-export function connectorsConfigGeneration(): number {
-  return _generation;
 }
 
 /** Test-only. Drop the installed block so a suite starts from the env-fallback path. */

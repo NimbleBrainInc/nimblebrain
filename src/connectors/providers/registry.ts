@@ -10,7 +10,7 @@
  *
  * The source of truth is the declared `connectors.providers.*` block in
  * `nimblebrain.json` (installed at the composition root, read through
- * `provider-config.ts`); a provider's legacy `<VENDOR>_*` env vars hydrate its
+ * `providers/config.ts`); a provider's legacy `<VENDOR>_*` env vars hydrate its
  * block only when the block is absent.
  */
 

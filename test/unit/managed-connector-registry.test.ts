@@ -85,6 +85,7 @@ describe("buildManagedConnectorRegistry — settings declared in nimblebrain.jso
 
   it("registers the provider with settings taken from the block", () => {
     setConnectorsConfig({ providers: { composio: { baseUrl: "https://composio.internal" } } });
+    _resetComposioConfigForTest();
 
     const registry = buildManagedConnectorRegistry();
     expect(registry.has("composio")).toBe(true);
@@ -93,15 +94,16 @@ describe("buildManagedConnectorRegistry — settings declared in nimblebrain.jso
     expect(_composioVendorLoadCountForTest()).toBe(0);
   });
 
-  it("honors the block's monitor switch over the env one (the block owns the settings)", () => {
-    process.env.COMPOSIO_MONITOR_ENABLED = "false";
+  it("wires the probe when the block enables it", () => {
     setConnectorsConfig({ providers: { composio: { monitor: { enabled: true } } } });
+    _resetComposioConfigForTest();
 
     expect(buildManagedConnectorRegistry().get("composio")?.probe).toBeDefined();
   });
 
   it("omits the probe under the block's kill switch", () => {
     setConnectorsConfig({ providers: { composio: { monitor: { enabled: false } } } });
+    _resetComposioConfigForTest();
 
     expect(buildManagedConnectorRegistry().get("composio")?.probe).toBeUndefined();
   });
@@ -111,6 +113,7 @@ describe("buildManagedConnectorRegistry — settings declared in nimblebrain.jso
     setConnectorsConfig({
       providers: { composio: { baseUrl: "https://composio.internal", monitor: { enabled: true } } },
     });
+    _resetComposioConfigForTest();
 
     expect(buildManagedConnectorRegistry().has("composio")).toBe(false);
     expect(_composioVendorLoadCountForTest()).toBe(0);
