@@ -1,15 +1,14 @@
 /**
- * Behavioral tests for `<SkillsBrowser surface="workspace" />` after the
- * skills-redesign rewrite.
+ * Behavioral tests for `<SkillsBrowser surface="workspace" />` — the workspace
+ * vantage of the composition list.
  *
  * The workspace surface owes its user:
  *
- *   1. No scope filter — sections are the partition.
- *   2. No status filter either — the per-row On/Off toggle is the
- *      enablement control.
- *   3. Sections render: workspace, inherited from organization,
- *      inherited from installed apps. User-tier skills surface only
- *      as the personal-footer count, not as a section.
+ *   1. One list of tiers, agency-first (Yours, You, Organization, System),
+ *      with a segment filter derived from the tiers present.
+ *   2. No status filter — the per-row On/Off toggle is the enablement control.
+ *   3. Personal skills render as a read-only "You" tier that deep-links to the
+ *      profile — not a footer count.
  *   4. The create form ("+ Add a skill") sends `scope: "workspace"`
  *      regardless of internal state. This is the load-bearing assertion
  *      the server's checkPathAccess can't catch.
@@ -103,12 +102,23 @@ const SKILLS_FIXTURE = [
   },
 ];
 
+// Skills the mock has "deleted" — dropped from subsequent list reads so a
+// refetch can shrink the tier set (exercises the stale-filter fallback).
+const deletedIds = new Set<string>();
+
 mock.module("../src/api/client", () => ({
   ...realClient,
   callTool: async (server: string, tool: string, args: Record<string, unknown>) => {
     callToolCalls.push({ server, tool, args });
     if (server === "skills" && tool === "list") {
-      return { structuredContent: { skills: SKILLS_FIXTURE }, isError: false };
+      return {
+        structuredContent: { skills: SKILLS_FIXTURE.filter((s) => !deletedIds.has(s.id)) },
+        isError: false,
+      };
+    }
+    if (server === "skills" && tool === "delete") {
+      deletedIds.add(args.id as string);
+      return { structuredContent: { id: args.id }, isError: false };
     }
     if (server === "skills" && tool === "create") {
       return { structuredContent: { id: "/tmp/skills/ws/test-skill.md" }, isError: false };
@@ -149,6 +159,21 @@ const ReactDOMClient = await import("react-dom/client");
 const { act } = await import("react");
 const { MemoryRouter } = await import("react-router-dom");
 const { SkillsBrowser } = await import("../src/pages/settings/SkillsTab");
+const { SessionProvider } = await import("../src/context/SessionContext");
+
+/** Wrap an element in a session so `useScopedRole` resolves a real org role. */
+function withOrgRole(element: React.ReactElement, orgRole: string): React.ReactElement {
+  return React.createElement(
+    SessionProvider,
+    {
+      session: {
+        authenticated: true,
+        user: { id: "u1", email: "a@b.co", displayName: "A", orgRole },
+      },
+    },
+    element,
+  );
+}
 
 interface Mounted {
   container: HTMLDivElement;
@@ -160,6 +185,7 @@ afterEach(() => {
   mounted?.unmount();
   mounted = null;
   callToolCalls.length = 0;
+  deletedIds.clear();
 });
 
 async function mount(element: React.ReactElement): Promise<Mounted> {
@@ -200,25 +226,53 @@ describe("SkillsBrowser with surface='workspace' (workspace settings tab)", () =
     expect(mounted.container.querySelector('select[aria-label="Filter by scope"]')).toBeNull();
   });
 
-  test("renders inherited-org, inherited-bundles sections (no user section)", async () => {
+  test("renders every tier of the composition, agency-first", async () => {
     mounted = await mount(React.createElement(SkillsBrowser, { surface: "workspace" }));
     const text = mounted.container.textContent ?? "";
-    expect(text).toContain("From your organization");
-    expect(text).toContain("From the system");
-    // User-tier skills never appear as a section — only as the
-    // personal-footer count.
-    expect(text).not.toMatch(/From user/);
+    // One list, tier dividers from `tierChrome`, ordered agency-first.
+    expect(text).toContain("You · follows you everywhere");
+    expect(text).toContain("Organization · managed in org settings");
+    expect(text).toContain("System · built in");
+    // Personal skills are a tier now, never a footer count.
+    expect(text).not.toContain("personal skills active here");
   });
 
-  test("personal-skills footer shows the correct count and links to /profile/skills", async () => {
+  test("personal skills render as a read-only tier that deep-links to the profile", async () => {
     mounted = await mount(React.createElement(SkillsBrowser, { surface: "workspace" }));
     const text = mounted.container.textContent ?? "";
-    expect(text).toContain("2 personal skills active here");
+    // The two personal fixtures are rows in the "You" tier (their descriptions).
+    expect(text).toContain("Personal skill A.");
+    expect(text).toContain("Personal skill B.");
+    // …and the tier points at where they're edited.
     const link = Array.from(mounted.container.querySelectorAll("a")).find((a) =>
       a.textContent?.includes("Edit in your profile"),
     );
     expect(link).toBeDefined();
     expect(link?.getAttribute("href")).toBe("/profile/skills");
+  });
+
+  test("org tier's manage link is hidden from non-org-admins (the guarded route dead-ends)", async () => {
+    // Default mount has no session → role "none", so the org deep link, which
+    // would bounce off the org-admin route guard, must not render.
+    mounted = await mount(React.createElement(SkillsBrowser, { surface: "workspace" }));
+    const text = mounted.container.textContent ?? "";
+    // The tier still reads correctly without the link.
+    expect(text).toContain("Organization · managed in org settings");
+    const orgLink = Array.from(mounted.container.querySelectorAll("a")).find((a) =>
+      a.textContent?.includes("Manage in org settings"),
+    );
+    expect(orgLink).toBeUndefined();
+  });
+
+  test("org tier deep-links org admins to /org/skills", async () => {
+    mounted = await mount(
+      withOrgRole(React.createElement(SkillsBrowser, { surface: "workspace" }), "admin"),
+    );
+    const orgLink = Array.from(mounted.container.querySelectorAll("a")).find((a) =>
+      a.textContent?.includes("Manage in org settings"),
+    );
+    expect(orgLink).toBeDefined();
+    expect(orgLink?.getAttribute("href")).toBe("/org/skills");
   });
 
   test("submitting + Add a skill sends scope='workspace' regardless of internal state", async () => {
@@ -402,28 +456,170 @@ describe("SkillsBrowser with surface='workspace' (workspace settings tab)", () =
   });
 });
 
-// ── Figure/ground reground (scene 6) ─────────────────────────────────────
+// ── Composition list (Variant C) ─────────────────────────────────────────
 //
-// The catalog must read owned-vs-inherited and always-vs-dynamic from the
-// resting state alone: owned groups sit on a card surface; inherited groups
-// stay ambient text; every row states its loading mechanism under the name;
-// scope renders through the palette scope tokens.
-describe("SkillsBrowser with surface='workspace' — figure/ground reground", () => {
-  test("owned group renders on a card surface; inherited groups stay ambient", async () => {
+// One list, one row grammar: every tier — the scope you edit and the read-only
+// context around it — sits in a single card. Tiers, the segment filter, and
+// each row's editability derive from the data.
+describe("SkillsBrowser with surface='workspace' — composition list", () => {
+  test("all tiers live in one card, not a card per group", async () => {
     mounted = await mount(React.createElement(SkillsBrowser, { surface: "workspace" }));
-    const cards = Array.from(mounted.container.querySelectorAll("section.bg-card"));
-    // The workspace group is the operable surface — it's carded.
-    expect(cards.some((c) => c.textContent?.includes("From your workspace"))).toBe(true);
-    // Inherited groups are ground, not figure — never inside a card.
-    const cardedText = cards.map((c) => c.textContent ?? "").join(" ");
-    expect(cardedText).not.toContain("From your organization");
-    expect(cardedText).not.toContain("From the system");
+    const cards = Array.from(mounted.container.querySelectorAll("div.bg-card"));
+    const holder = cards.find((c) => c.textContent?.includes("System · built in"));
+    expect(holder).toBeDefined();
+    // One surface carries every tier.
+    expect(holder?.textContent).toContain("You · follows you everywhere");
+    expect(holder?.textContent).toContain("Organization · managed in org settings");
+    // Tier dividers are headings, so they stay reachable by heading navigation.
+    const tierHeadings = Array.from(holder?.querySelectorAll("h3") ?? []).map((h) =>
+      h.textContent?.trim(),
+    );
+    expect(tierHeadings).toContain("System · built in");
+    expect(tierHeadings.length).toBeGreaterThanOrEqual(4);
+  });
+
+  test("a segment chip is derived for every present tier, agency-first", async () => {
+    mounted = await mount(React.createElement(SkillsBrowser, { surface: "workspace" }));
+    const chips = Array.from(mounted.container.querySelectorAll("button[aria-pressed]")).map((b) =>
+      b.textContent?.trim(),
+    );
+    expect(chips).toEqual(["All", "Yours", "You", "Org", "System"]);
   });
 
   test("each row states its loading mechanism at rest, without expanding", async () => {
     mounted = await mount(React.createElement(SkillsBrowser, { surface: "workspace" }));
-    // The always-on workspace rule shows its mechanism in the resting row.
-    expect(mounted.container.textContent ?? "").toContain("Always on · every conversation");
+    const text = mounted.container.textContent ?? "";
+    expect(text).toContain("Always on · every conversation");
+    // The org tier is visible at rest, so its tool-affinity row renders the
+    // mechanism's mono glob branch (`<span className="font-mono">`) too.
+    expect(text).toContain("On tool match");
+    expect(text).toContain("mpak__*");
+  });
+
+  test("scope renders as a token-driven tick, never a ledger label or raw hex", async () => {
+    mounted = await mount(React.createElement(SkillsBrowser, { surface: "workspace" }));
+    // The tick references the palette scope token as a CSS var.
+    expect(mounted.container.querySelector('[style*="--scope-workspace"]')).not.toBeNull();
+    expect(mounted.container.querySelector('[style*="--scope-user"]')).not.toBeNull();
+    // The in-chat ledger's label classes never leak into the catalog.
+    expect(mounted.container.querySelector(".ledger-scope--workspace")).toBeNull();
+  });
+
+  test("only the editable tier can toggle; context tiers are locked", async () => {
+    mounted = await mount(React.createElement(SkillsBrowser, { surface: "workspace" }));
+    // The system row (bundle) carries a disabled toggle...
+    const sysRow = Array.from(mounted.container.querySelectorAll("button")).find((b) =>
+      b.textContent?.includes("Bundle (Layer 1)."),
+    );
+    expect((sysRow?.querySelector("button") as HTMLButtonElement | null)?.disabled).toBe(true);
+    // ...while the workspace row's toggle is live.
+    const wsRow = Array.from(mounted.container.querySelectorAll("button")).find((b) =>
+      b.textContent?.includes("Workspace-tier rule."),
+    );
+    expect((wsRow?.querySelector("button") as HTMLButtonElement | null)?.disabled).toBeFalsy();
+  });
+
+  test("the segment filter narrows the list to a single tier", async () => {
+    mounted = await mount(React.createElement(SkillsBrowser, { surface: "workspace" }));
+    expect(mounted.container.textContent ?? "").toContain("Workspace-tier rule.");
+    await act(async () => {
+      const sys = Array.from(mounted!.container.querySelectorAll("button[aria-pressed]")).find(
+        (b) => b.textContent?.trim() === "System",
+      ) as HTMLButtonElement | undefined;
+      sys?.click();
+    });
+    const text = mounted.container.textContent ?? "";
+    expect(text).toContain("System · built in");
+    // The other tiers' rows drop out of the DOM behind the filter.
+    expect(text).not.toContain("Workspace-tier rule.");
+    expect(text).not.toContain("Personal skill A.");
+  });
+
+  test("creating a skill clears an active filter so the new skill is visible", async () => {
+    mounted = await mount(React.createElement(SkillsBrowser, { surface: "workspace" }));
+    // Filter to a tier that holds no workspace skills, so a new one would be
+    // hidden without the reset.
+    await act(async () => {
+      const sys = Array.from(mounted!.container.querySelectorAll("button[aria-pressed]")).find(
+        (b) => b.textContent?.trim() === "System",
+      ) as HTMLButtonElement | undefined;
+      sys?.click();
+    });
+    expect(mounted.container.textContent ?? "").not.toContain("Workspace-tier rule.");
+
+    await act(async () => {
+      clickByText(mounted!.container, "+ Add a skill");
+    });
+    const nameInput = mounted.container.querySelector("#rule-name") as HTMLInputElement | null;
+    const bodyInput = mounted.container.querySelector("#rule-body") as HTMLTextAreaElement | null;
+    const WindowEvent = (globalThis as unknown as { window: { Event: typeof Event } }).window.Event;
+    await act(async () => {
+      const setVal = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set;
+      setVal?.call(nameInput, "brand-new");
+      nameInput!.dispatchEvent(new WindowEvent("input", { bubbles: true }));
+      const setTa = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")?.set;
+      setTa?.call(bodyInput, "A new workspace skill.");
+      bodyInput!.dispatchEvent(new WindowEvent("input", { bubbles: true }));
+    });
+    await act(async () => {
+      clickByText(mounted!.container, "Save");
+    });
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    // The filter reset to All, so the workspace tier is visible again.
+    const text = mounted.container.textContent ?? "";
+    expect(text).toContain("Workspace-tier rule.");
+    const allChip = Array.from(mounted.container.querySelectorAll("button[aria-pressed]")).find(
+      (b) => b.textContent?.trim() === "All",
+    );
+    expect(allChip?.getAttribute("aria-pressed")).toBe("true");
+  });
+
+  test("deleting the filtered tier's last skill recovers the list to All", async () => {
+    const realConfirm = (globalThis as unknown as { window: { confirm?: () => boolean } }).window
+      .confirm;
+    (globalThis as unknown as { window: { confirm: () => boolean } }).window.confirm = () => true;
+    try {
+      mounted = await mount(React.createElement(SkillsBrowser, { surface: "workspace" }));
+      // Filter to "Yours" — one deletable skill; deleting it empties the tier.
+      await act(async () => {
+        const yours = Array.from(mounted!.container.querySelectorAll("button[aria-pressed]")).find(
+          (b) => b.textContent?.trim() === "Yours",
+        ) as HTMLButtonElement | undefined;
+        yours?.click();
+      });
+      expect(mounted.container.textContent ?? "").not.toContain("Personal skill A.");
+
+      await act(async () => {
+        clickByText(mounted!.container, "Workspace-tier rule.");
+      });
+      await act(async () => {
+        await Promise.resolve();
+      });
+      await act(async () => {
+        await Promise.resolve();
+      });
+      await act(async () => {
+        clickByText(mounted!.container, "Delete");
+      });
+      await act(async () => {
+        await Promise.resolve();
+      });
+      await act(async () => {
+        await Promise.resolve();
+      });
+
+      // The workspace tier is gone; the filter must fall back to All rather than
+      // strand the user on an empty filtered view.
+      const text = mounted.container.textContent ?? "";
+      expect(text).not.toContain("Workspace-tier rule.");
+      expect(text).toContain("Personal skill A.");
+    } finally {
+      (globalThis as unknown as { window: { confirm?: () => boolean } }).window.confirm =
+        realConfirm;
+    }
   });
 
   test("a row carries a visible focus indicator, not just a background tint", async () => {
@@ -431,10 +627,9 @@ describe("SkillsBrowser with surface='workspace' — figure/ground reground", ()
     const row = Array.from(mounted.container.querySelectorAll("button")).find((b) =>
       b.textContent?.includes("Workspace-tier rule."),
     );
-    expect(row).toBeDefined();
     const cls = row?.className ?? "";
-    // The tint alone is ~1.05:1 against the card — a keyboard user needs an
-    // actual indicator, so the row must never suppress its outline outright.
+    // The focus tint alone is ~1.05:1 against the card — a keyboard user needs a
+    // real indicator, so the row must never suppress its outline.
     expect(cls).not.toContain("focus-visible:outline-none");
     expect(cls).toContain("focus-visible:outline-2");
   });
@@ -452,33 +647,8 @@ describe("SkillsBrowser with surface='workspace' — figure/ground reground", ()
     expect(mounted.container.querySelector(`#${CSS.escape(controls as string)}`)).not.toBeNull();
   });
 
-  test("no per-row scope label — the group heading already names provenance", async () => {
-    mounted = await mount(React.createElement(SkillsBrowser, { surface: "workspace" }));
-    // `groupByScope` emits one group per scope, so a row label would be the
-    // same word on every row of its group.
-    expect(mounted.container.querySelector(".ledger-scope--workspace")).toBeNull();
-    expect(mounted.container.querySelector(".ledger-scope--bundle")).toBeNull();
-  });
-
-  test("an inherited row still states its mechanism once its group is opened", async () => {
-    mounted = await mount(React.createElement(SkillsBrowser, { surface: "workspace" }));
-    // Inherited sections are collapsed at rest; open the org group.
-    await act(async () => {
-      clickByText(mounted!.container, "From your organization");
-    });
-    await act(async () => {
-      await Promise.resolve();
-    });
-    const text = mounted.container.textContent ?? "";
-    // The org skill is tool-affinity — the mechanism line and its glob show.
-    expect(text).toContain("On tool match");
-    expect(text).toContain("mpak__*");
-    expect(mounted.container.querySelector(".ledger-scope--org")).toBeNull();
-  });
-
   test("expanded skill body is settings sans, not the chat serif voice", async () => {
     mounted = await mount(React.createElement(SkillsBrowser, { surface: "workspace" }));
-    // Expand the workspace rule (its label is the description).
     await act(async () => {
       clickByText(mounted!.container, "Workspace-tier rule.");
     });
@@ -488,7 +658,6 @@ describe("SkillsBrowser with surface='workspace' — figure/ground reground", ()
     await act(async () => {
       await Promise.resolve();
     });
-    // The markdown renders, but never in the chat transcript's serif voice.
     expect(mounted.container.querySelector(".streamdown-container")).not.toBeNull();
     expect(mounted.container.querySelector(".presence-assistant-message")).toBeNull();
   });

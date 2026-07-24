@@ -30,7 +30,37 @@ mock.module("../src/api/client", () => ({
   callTool: async (server: string, tool: string, args: Record<string, unknown>) => {
     callToolCalls.push({ server, tool, args });
     if (server === "skills" && tool === "list") {
-      return { structuredContent: { skills: [] }, isError: false };
+      return {
+        structuredContent: {
+          skills: [
+            {
+              id: "/tmp/org/a.md",
+              name: "org-a",
+              description: "Org rule A.",
+              scope: "org",
+              layer: 3,
+              status: "active",
+              priority: 50,
+              tokens: 40,
+              source: { path: "/tmp/org/a.md" },
+              loading: { wouldLoad: true, mechanism: "always" },
+            },
+            {
+              id: "/tmp/org/b.md",
+              name: "org-b",
+              description: "Org rule B.",
+              scope: "org",
+              layer: 3,
+              status: "disabled",
+              priority: 50,
+              tokens: 30,
+              source: { path: "/tmp/org/b.md" },
+              loading: { wouldLoad: true, mechanism: "always" },
+            },
+          ],
+        },
+        isError: false,
+      };
     }
     if (server === "skills" && tool === "create") {
       return { structuredContent: { id: "/tmp/org/test.md" }, isError: false };
@@ -142,5 +172,14 @@ describe("SkillsBrowser with lockedScope='org' (org-admin /org/skills surface)",
     const listCall = callToolCalls.find((c) => c.server === "skills" && c.tool === "list");
     expect(listCall).toBeDefined();
     expect(listCall!.args.scope).toBe("org");
+  });
+
+  test("a single-tier surface still shows the count, and no segment filter", async () => {
+    mounted = await mount(React.createElement(SkillsBrowser, { lockedScope: "org" }));
+    const text = mounted.container.textContent ?? "";
+    // The count is visible even though there's only one tier (one active, one off).
+    expect(text).toContain("2 skills · 1 on");
+    // One tier → nothing to slice → no segment chips.
+    expect(mounted.container.querySelector("button[aria-pressed]")).toBeNull();
   });
 });
