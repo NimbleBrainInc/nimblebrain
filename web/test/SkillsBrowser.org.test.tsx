@@ -95,10 +95,10 @@ describe("SkillsBrowser with lockedScope='org' (org-admin /org/skills surface)",
     expect(mounted.container.querySelector('select[aria-label="Filter by scope"]')).toBeNull();
   });
 
-  test("submitting + Add a rule sends scope='org' regardless of internal state", async () => {
+  test("submitting + Add a skill sends scope='org' regardless of internal state", async () => {
     mounted = await mount(React.createElement(SkillsBrowser, { lockedScope: "org" }));
     await act(async () => {
-      clickByText(mounted!.container, "+ Add a rule");
+      clickByText(mounted!.container, "+ Add a skill");
     });
 
     const nameInput = mounted.container.querySelector("#rule-name") as HTMLInputElement | null;

@@ -101,7 +101,7 @@ describe("ProfileSkillsTab (the /profile/skills surface)", () => {
   test("create form sends scope='user' regardless of internal state", async () => {
     mounted = await mount(React.createElement(ProfileSkillsTab));
     await act(async () => {
-      clickByText(mounted!.container, "+ Add a rule");
+      clickByText(mounted!.container, "+ Add a skill");
     });
 
     const nameInput = mounted.container.querySelector("#rule-name") as HTMLInputElement | null;
