@@ -533,6 +533,10 @@ describe("SkillsBrowser with surface='workspace' — composition list", () => {
     // The toggle is a sibling of the row's expander, so it's addressed by its
     // accessible name rather than by nesting.
     expect(toggleFor(mounted.container, "bundle-skill")?.disabled).toBe(true);
+    // `toBeFalsy` is satisfied by `undefined`, so a lookup that finds nothing
+    // would assert nothing. Pin the lookup first. (The locked assertion above
+    // needs no such guard — `toBe(true)` already fails on `undefined`.)
+    expect(toggleFor(mounted.container, "workflow")).not.toBeNull();
     expect(toggleFor(mounted.container, "workflow")?.disabled).toBeFalsy();
   });
 

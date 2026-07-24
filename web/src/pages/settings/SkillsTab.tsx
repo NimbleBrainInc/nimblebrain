@@ -667,10 +667,12 @@ function SkillRow({
        * exposure to assistive tech undefined and made "toggling must not
        * expand the row" rest on `stopPropagation`. As siblings, that
        * separation is structural and needs no event plumbing. */}
-      {/* Only the trailing pad sits on the container. The row's leading pad and
-       * the gap before the toggle are the expander's own padding, so every
-       * pixel that tints on hover also expands the row — splitting them would
-       * leave ~26px that lights up under the cursor and does nothing. */}
+      {/* The leading pad and the gap before the toggle are the expander's own
+       * padding, so the whole label run expands on click; leaving them on the
+       * container cost ~26px that lit up under the cursor and did nothing.
+       * What still tints without expanding is the trailing pad past the toggle
+       * and the bands above and below it — a strip at the right edge, left as
+       * plain padding rather than stretched into either control's hit area. */}
       <div className="flex items-center pr-3.5 transition-colors hover:bg-secondary">
         <button
           type="button"
