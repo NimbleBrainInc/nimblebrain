@@ -63,7 +63,14 @@ Browse and configure the workspace's connectors — point-and-click OAuth integr
 
 ### Skills (`/w/<id>/settings/skills`)
 
-The skills available in this workspace.
+The skills that shape your agent's behavior in this workspace, grouped by where they come from. **From your workspace** is the group you operate — the skills you own here sit on a card, and each row states at rest how it loads:
+
+- **Always on · every conversation** — composed into the agent's instructions on every turn.
+- **On tool match `<glob>`** — loaded when a matching tool comes into play.
+- **On trigger "&lt;phrase&gt;"** — loaded when the phrase appears in the conversation.
+- **Won't auto-load yet** — authored but no loading path reaches it, so it stays inert until you give it one.
+
+Toggle any owned skill on or off, or expand a row to read and edit its body. Skills inherited **from your organization** and **from the system** show below as read-only, collapsed groups. Your personal skills — which follow you across every workspace — surface as a footer link to your profile. Add a new always-on skill with **+ Add a skill**.
 
 ## Organization (admin only)
 

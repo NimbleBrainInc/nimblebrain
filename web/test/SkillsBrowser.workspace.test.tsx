@@ -10,7 +10,7 @@
  *   3. Sections render: workspace, inherited from organization,
  *      inherited from installed apps. User-tier skills surface only
  *      as the personal-footer count, not as a section.
- *   4. The create form ("+ Add a rule") sends `scope: "workspace"`
+ *   4. The create form ("+ Add a skill") sends `scope: "workspace"`
  *      regardless of internal state. This is the load-bearing assertion
  *      the server's checkPathAccess can't catch.
  *   5. Initial skills__list fetch is unfiltered by scope.
@@ -46,6 +46,8 @@ const SKILLS_FIXTURE = [
     priority: 50,
     tokens: 100,
     source: { path: "/tmp/skills/ws/workflow.md" },
+    loadingStrategy: "always",
+    loading: { wouldLoad: true, mechanism: "always" },
   },
   {
     id: "/tmp/skills/org/voice.md",
@@ -58,6 +60,8 @@ const SKILLS_FIXTURE = [
     priority: 30,
     tokens: 50,
     source: { path: "/tmp/skills/org/voice.md" },
+    toolAffinity: ["mpak__*"],
+    loading: { wouldLoad: true, mechanism: "tool_affinity" },
   },
   {
     id: "skill://bundle/usage",
@@ -70,6 +74,8 @@ const SKILLS_FIXTURE = [
     priority: 50,
     tokens: 80,
     source: { uri: "skill://bundle/usage" },
+    triggers: ["cut a release"],
+    loading: { wouldLoad: true, mechanism: "trigger" },
   },
   {
     id: "/tmp/skills/user/personal-1.md",
@@ -207,7 +213,7 @@ describe("SkillsBrowser with surface='workspace' (workspace settings tab)", () =
   test("personal-skills footer shows the correct count and links to /profile/skills", async () => {
     mounted = await mount(React.createElement(SkillsBrowser, { surface: "workspace" }));
     const text = mounted.container.textContent ?? "";
-    expect(text).toContain("2 personal rules active here");
+    expect(text).toContain("2 personal skills active here");
     const link = Array.from(mounted.container.querySelectorAll("a")).find((a) =>
       a.textContent?.includes("Edit in your profile"),
     );
@@ -215,10 +221,10 @@ describe("SkillsBrowser with surface='workspace' (workspace settings tab)", () =
     expect(link?.getAttribute("href")).toBe("/profile/skills");
   });
 
-  test("submitting + Add a rule sends scope='workspace' regardless of internal state", async () => {
+  test("submitting + Add a skill sends scope='workspace' regardless of internal state", async () => {
     mounted = await mount(React.createElement(SkillsBrowser, { surface: "workspace" }));
     await act(async () => {
-      clickByText(mounted!.container, "+ Add a rule");
+      clickByText(mounted!.container, "+ Add a skill");
     });
 
     const nameInput = mounted.container.querySelector("#rule-name") as HTMLInputElement | null;
@@ -385,13 +391,92 @@ describe("SkillsBrowser with surface='workspace' (workspace settings tab)", () =
       await Promise.resolve();
     });
 
-    // List view is back — the "+ Add a rule" affordance only renders
+    // List view is back — the "+ Add a skill" affordance only renders
     // on the list, not the edit view.
     const hasAddRule = Array.from(mounted.container.querySelectorAll("button")).some((b) =>
-      b.textContent?.includes("+ Add a rule"),
+      b.textContent?.includes("+ Add a skill"),
     );
     expect(hasAddRule).toBe(true);
     // And we're NOT still in edit mode — the rule-name input is gone.
     expect(mounted.container.querySelector("#rule-name")).toBeNull();
+  });
+});
+
+// ── Figure/ground reground (scene 6) ─────────────────────────────────────
+//
+// The catalog must read owned-vs-inherited and always-vs-dynamic from the
+// resting state alone: owned groups sit on a card surface; inherited groups
+// stay ambient text; every row states its loading mechanism under the name;
+// scope renders through the palette scope tokens.
+describe("SkillsBrowser with surface='workspace' — figure/ground reground", () => {
+  test("owned group renders on a card surface; inherited groups stay ambient", async () => {
+    mounted = await mount(React.createElement(SkillsBrowser, { surface: "workspace" }));
+    const cards = Array.from(mounted.container.querySelectorAll("section.bg-card"));
+    // The workspace group is the operable surface — it's carded.
+    expect(cards.some((c) => c.textContent?.includes("From your workspace"))).toBe(true);
+    // Inherited groups are ground, not figure — never inside a card.
+    const cardedText = cards.map((c) => c.textContent ?? "").join(" ");
+    expect(cardedText).not.toContain("From your organization");
+    expect(cardedText).not.toContain("From the system");
+  });
+
+  test("each row states its loading mechanism at rest, without expanding", async () => {
+    mounted = await mount(React.createElement(SkillsBrowser, { surface: "workspace" }));
+    // The always-on workspace rule shows its mechanism in the resting row.
+    expect(mounted.container.textContent ?? "").toContain("Always on · every conversation");
+  });
+
+  test("a row carries a visible focus indicator, not just a background tint", async () => {
+    mounted = await mount(React.createElement(SkillsBrowser, { surface: "workspace" }));
+    const row = Array.from(mounted.container.querySelectorAll("button")).find((b) =>
+      b.textContent?.includes("Workspace-tier rule."),
+    );
+    expect(row).toBeDefined();
+    const cls = row?.className ?? "";
+    // The tint alone is ~1.05:1 against the card — a keyboard user needs an
+    // actual indicator, so the row must never suppress its outline outright.
+    expect(cls).not.toContain("focus-visible:outline-none");
+    expect(cls).toContain("focus-visible:outline-2");
+  });
+
+  test("no per-row scope label — the group heading already names provenance", async () => {
+    mounted = await mount(React.createElement(SkillsBrowser, { surface: "workspace" }));
+    // `groupByScope` emits one group per scope, so a row label would be the
+    // same word on every row of its group.
+    expect(mounted.container.querySelector(".ledger-scope--workspace")).toBeNull();
+    expect(mounted.container.querySelector(".ledger-scope--bundle")).toBeNull();
+  });
+
+  test("an inherited row still states its mechanism once its group is opened", async () => {
+    mounted = await mount(React.createElement(SkillsBrowser, { surface: "workspace" }));
+    // Inherited sections are collapsed at rest; open the org group.
+    await act(async () => {
+      clickByText(mounted!.container, "From your organization");
+    });
+    await act(async () => {
+      await Promise.resolve();
+    });
+    const text = mounted.container.textContent ?? "";
+    // The org skill is tool-affinity — the mechanism line and its glob show.
+    expect(text).toContain("On tool match");
+    expect(text).toContain("mpak__*");
+    expect(mounted.container.querySelector(".ledger-scope--org")).toBeNull();
+  });
+
+  test("expanded skill body is settings sans, not the chat serif voice", async () => {
+    mounted = await mount(React.createElement(SkillsBrowser, { surface: "workspace" }));
+    // Expand the workspace rule (its label is the description).
+    await act(async () => {
+      clickByText(mounted!.container, "Workspace-tier rule.");
+    });
+    await act(async () => {
+      await Promise.resolve();
+    });
+    await act(async () => {
+      await Promise.resolve();
+    });
+    // The markdown renders, but never in the chat transcript's serif voice.
+    expect(mounted.container.querySelector(".streamdown-container")).not.toBeNull();
+    expect(mounted.container.querySelector(".presence-assistant-message")).toBeNull();
   });
 });
