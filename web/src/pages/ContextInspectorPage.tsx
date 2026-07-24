@@ -9,6 +9,7 @@ import type {
   TracedLayerView,
 } from "../_generated/platform-schemas/compose";
 import { callTool } from "../api/client";
+import { orderedSources, SOURCE_LABEL, sourceDetail } from "../lib/context-sources";
 import { formatTokenCount } from "../lib/skill-display";
 import { parseToolResponse } from "../lib/tool-response";
 
@@ -162,23 +163,8 @@ export function ContextInspectorPage() {
 
 // ── budget bar ─────────────────────────────────────────────────────────────
 
-const SOURCE_ORDER = ["system_prompt", "tool_descriptions", "skills", "history"];
-const SOURCE_LABEL: Record<string, string> = {
-  system_prompt: "System prompt",
-  tool_descriptions: "Tools",
-  skills: "Skills",
-  history: "History",
-};
 /** Budget buckets that map onto composed layers (the drill is meaningful). */
 const DRILLABLE = new Set(["system_prompt", "skills"]);
-
-function sourceDetail(s: AssembledContextSource): string {
-  const parts: string[] = [];
-  if (typeof s.count === "number") parts.push(`${s.count}`);
-  if (typeof s.turns === "number") parts.push(`${s.turns} turn${s.turns === 1 ? "" : "s"}`);
-  if (s.compacted) parts.push("compacted");
-  return parts.join(" · ");
-}
 
 function BudgetBar({
   sources,
@@ -191,7 +177,7 @@ function BudgetBar({
   active: string | null;
   onSelect: (bucket: string | null) => void;
 }) {
-  const ordered = [...sources].sort((a, b) => rank(a.kind) - rank(b.kind));
+  const ordered = orderedSources(sources);
   const max = Math.max(totalTokens, 1);
   return (
     <div className="shrink-0 px-6 py-4 border-b border-border" data-testid="context-budget">
@@ -266,11 +252,6 @@ function BudgetBar({
       </div>
     </div>
   );
-}
-
-function rank(kind: string): number {
-  const i = SOURCE_ORDER.indexOf(kind);
-  return i === -1 ? SOURCE_ORDER.length : i;
 }
 
 // ── layer list ───────────────────────────────────────────────────────────
