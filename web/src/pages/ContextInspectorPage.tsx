@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { useNavigate, useParams } from "react-router-dom";
+import { Link, useNavigate, useParams } from "react-router-dom";
 // Canonical shapes from `src/tools/platform/schemas/compose.ts`; mirrored
 // here via codegen so server + web can't drift.
 import type {
@@ -92,12 +92,19 @@ export function ContextInspectorPage() {
   return (
     <div className="h-full flex flex-col overflow-hidden" data-testid="context-inspector-page">
       <header className="shrink-0 px-6 pt-5 pb-4 border-b border-border">
-        <div className="text-2xs text-muted-foreground mb-1.5">
-          <button type="button" onClick={goBack} className="hover:text-foreground">
-            ← Back
-          </button>
-          <span className="mx-1.5 text-muted-foreground/60">·</span>
-          <span className="font-mono">{convId}</span>
+        <div className="text-2xs text-muted-foreground mb-1.5 flex items-center justify-between gap-3">
+          <span className="min-w-0 truncate">
+            <button type="button" onClick={goBack} className="hover:text-foreground">
+              ← Back
+            </button>
+            <span className="mx-1.5 text-muted-foreground/60">·</span>
+            <span className="font-mono">{convId}</span>
+          </span>
+          {slug && (
+            <Link to={`/w/${slug}/settings/skills`} className="shrink-0 hover:text-foreground">
+              Manage skills ↗
+            </Link>
+          )}
         </div>
         <div className="flex items-baseline justify-between gap-4 flex-wrap">
           <h1 className="text-2xl font-serif font-medium text-foreground">Assembled context</h1>
@@ -281,12 +288,15 @@ function layerDescriptor(l: TracedLayerView): string {
   return isNamedFile(l) ? (LAYER_LABEL[l.kind] ?? l.kind) : "";
 }
 
-/** A budget bucket selects the layers composed under it. Tools/history aren't composed. */
+/**
+ * A budget bucket selects the layers composed under it. Only `system_prompt`
+ * and `skills` are drillable (tools/history aren't composed into the prompt —
+ * their segments are disabled), so `bucket` is only ever null or one of those.
+ */
 function filterLayers(layers: TracedLayerView[], bucket: string | null): TracedLayerView[] {
-  if (!bucket) return layers;
   if (bucket === "skills") return layers.filter((l) => l.kind === "layer3_skills");
   if (bucket === "system_prompt") return layers.filter((l) => l.kind !== "layer3_skills");
-  return [];
+  return layers;
 }
 
 function LayerListPane({
@@ -319,11 +329,9 @@ function LayerListPane({
         {error && <div className="px-5 py-3 text-xs text-destructive">{error}</div>}
         {!loading && !error && layers.length === 0 && (
           <div className="px-5 py-3 text-xs text-muted-foreground">
-            {bucket === "tool_descriptions"
-              ? "Tool descriptions aren't composed into the prompt — they're the model's tool list. Their token cost is in the budget above."
-              : bucket === "history"
-                ? "Conversation history isn't part of the composed prompt. It's the messages themselves."
-                : "Nothing composes for this conversation right now."}
+            {bucket === "skills"
+              ? "No matched skills entered this turn's prompt. The budget above still counts everything that loaded."
+              : "Nothing composes for this conversation right now."}
           </div>
         )}
         {layers.map((l) => {
