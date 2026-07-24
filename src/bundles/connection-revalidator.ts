@@ -61,6 +61,47 @@ export interface RevalidatorOptions {
   concurrency?: number;
 }
 
+/**
+ * Parse the revalidator's sweep interval from env → milliseconds, or `undefined`
+ * to let the revalidator fall back to `DEFAULT_INTERVAL_MS`. A non-positive /
+ * unparseable value also yields `undefined` rather than a 0ms (hot-loop) or
+ * negative interval.
+ *
+ * The cadence is generic (it paces the provider-agnostic sweep), so it reads the
+ * generic `NB_CONNECTION_REVALIDATE_INTERVAL_SECONDS`. The legacy
+ * `COMPOSIO_MONITOR_INTERVAL_SECONDS` is honored as a fallback — it was the only
+ * knob when the revalidator was Composio-only — so no deployment breaks; when it
+ * is the value's actual source, one deprecation warning fires (this runs once
+ * per process, at server start, so no de-dupe flag is needed).
+ */
+export function revalidatorIntervalMsFromEnv(
+  env: Record<string, string | undefined> = process.env,
+): number | undefined {
+  // Coalesce on the first USABLE (non-blank) value, not the first non-nullish
+  // one: a declared-but-blank `NB_CONNECTION_REVALIDATE_INTERVAL_SECONDS=` — a
+  // normal migration artifact (copy the new row into a chart, leave it empty) —
+  // must fall through to the legacy knob, not mask it. A set-but-garbage new
+  // value is deliberate and falls to the default rather than resurrecting the
+  // deprecated knob.
+  const generic = env.NB_CONNECTION_REVALIDATE_INTERVAL_SECONDS?.trim() ?? "";
+  const legacy = env.COMPOSIO_MONITOR_INTERVAL_SECONDS?.trim() ?? "";
+  const raw = generic !== "" ? generic : legacy;
+  const seconds = Number.parseInt(raw, 10);
+  if (!(Number.isFinite(seconds) && seconds > 0)) return undefined;
+
+  // Warn when the legacy knob is what actually supplied the cadence, so an
+  // operator running only COMPOSIO_MONITOR_INTERVAL_SECONDS migrates before #727
+  // removes it — otherwise their configured cadence would silently revert to the
+  // default the day that fallback is dropped.
+  if (generic === "" && legacy !== "") {
+    log.warn(
+      "[connection-revalidator] COMPOSIO_MONITOR_INTERVAL_SECONDS is deprecated; set " +
+        "NB_CONNECTION_REVALIDATE_INTERVAL_SECONDS instead (this fallback is slated for removal, #727).",
+    );
+  }
+  return seconds * 1000;
+}
+
 interface Candidate {
   target: ProbeTarget;
   key: string;

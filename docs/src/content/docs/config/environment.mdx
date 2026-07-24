@@ -35,6 +35,7 @@ A provider's API key can be supplied here or in `nimblebrain.json` under `provid
 | `NB_TOOL_RATE_LIMIT` | No | `600` | Tool calls per minute per identity. |
 | `NB_MCP_RATE_LIMIT` | No | `300` | `/mcp` JSON-RPC requests per minute per identity. |
 | `NB_TIMEZONE` | No | `Pacific/Honolulu` | Default IANA timezone for time-aware features (e.g. automation schedules) when an identity has no timezone preference. |
+| `NB_CONNECTION_REVALIDATE_INTERVAL_SECONDS` | No | `300` | Sweep interval for the connection-revalidation monitor, which re-checks connectors whose upstream credential can lapse without a transport 401 (e.g. Composio). Provider-agnostic. Non-positive / unparseable values fall back to the default; a **blank** value falls through to the legacy `COMPOSIO_MONITOR_INTERVAL_SECONDS` (a set-but-empty var never masks it). |
 
 ### Public origin and callbacks
 
@@ -84,7 +85,7 @@ Required only when the connectors catalog contains any `auth: composio` entries 
 | `COMPOSIO_API_BASE_URL` | No | `https://backend.composio.dev` | Override the Composio SDK base URL (self-hosted, staging). Must be `http(s)`. |
 | `NB_TENANT_ID` | When multi-tenant pods share a Composio account | — | Per-pod tenant identifier prepended to the wsId so two tenants never collide in Composio's namespace. **Required** in bouncer (multi-tenant) mode — startup fails without it. Single-tenant deployments can omit it. |
 | `COMPOSIO_MONITOR_ENABLED` | No | `true` when `COMPOSIO_API_KEY` is set | Kill switch for the connection-revalidation monitor. Set to `false` (case/whitespace-insensitive) to disable. Read once at startup. |
-| `COMPOSIO_MONITOR_INTERVAL_SECONDS` | No | `300` | Poll interval for the Composio connection monitor. Non-positive / unparseable values fall back to the default. |
+| `COMPOSIO_MONITOR_INTERVAL_SECONDS` | No | `300` | **Deprecated alias** for [`NB_CONNECTION_REVALIDATE_INTERVAL_SECONDS`](#runtime--server) (the sweep cadence is provider-agnostic). Still honored; slated for removal ([#727](https://github.com/NimbleBrainInc/nimblebrain/issues/727)). |
 
 ### Observability (OpenTelemetry + logs)
 
