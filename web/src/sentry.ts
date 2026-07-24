@@ -1,4 +1,4 @@
-import * as Sentry from "@sentry/react";
+import type * as Sentry from "@sentry/react";
 import { getConfig } from "./config";
 
 /**
@@ -15,7 +15,15 @@ import { getConfig } from "./config";
  * `sendDefaultPii: false` plus the `beforeSend` / `beforeBreadcrumb` scrubs.
  */
 
-let initialized = false;
+// The Sentry SDK, supplied by the browser entry point (main.tsx → initSentry).
+// This module is imported by api/client.ts, and the shared bridge protocol imports
+// api/client, so it is reachable from non-browser consumers (the root unit suite
+// exercises the bridge). Keeping @sentry/react a type-only import here — the value
+// arrives by injection — means the browser SDK loads only where it runs, mirroring
+// the server's out-of-kernel seam (instrument/sentry.ts). `sdk` is null until
+// initialized, and stays null on every backend/test import, where each helper below
+// no-ops. A truthy `sdk` is the "Sentry is live" signal.
+let sdk: typeof import("@sentry/react") | null = null;
 // One Sentry event per involuntary-logout *incident*, not per concurrent 401.
 // The app fires parallel /v1 requests; a real logout resolves the single-flighted
 // refresh as rejected for all of them, so each awaiting caller would otherwise
@@ -39,15 +47,15 @@ export function resetLogoutGuard(): void {
   loggedOutCaptured = false;
 }
 
-export function initSentry(): void {
-  if (initialized) return;
+export function initSentry(sentry: typeof import("@sentry/react")): void {
+  if (sdk) return;
   const cfg = getConfig();
   const s = cfg.sentry;
   // Off unless a DSN is present and not explicitly disabled.
   if (!s?.dsn || s.enabled === false) return;
-  initialized = true;
+  sdk = sentry;
 
-  Sentry.init({
+  sentry.init({
     dsn: s.dsn,
     environment: cfg.environment,
     release: cfg.release,
@@ -57,7 +65,7 @@ export function initSentry(): void {
     // No Session Replay either: replayIntegration records the DOM (prompts, tool
     // results, file contents) — the content the trust rule forbids (cf.
     // telemetry.ts disabling PostHog session recording).
-    integrations: (s.tracesSampleRate ?? 0) > 0 ? [Sentry.browserTracingIntegration()] : [],
+    integrations: (s.tracesSampleRate ?? 0) > 0 ? [sentry.browserTracingIntegration()] : [],
     tracesSampleRate: s.tracesSampleRate ?? 0,
     // tracePropagationTargets is left at the SDK default (same-origin), which is
     // exactly our case — all API calls are same-origin /v1/* proxied to the
@@ -79,7 +87,7 @@ export function initSentry(): void {
 
   // tenant_id is a deployment constant (NB_TENANT_ID via runtime config) — stamp
   // it once. workspace_id and user are per-session (set via the helpers below).
-  if (cfg.tenantId) Sentry.setTag("tenant_id", cfg.tenantId);
+  if (cfg.tenantId) sentry.setTag("tenant_id", cfg.tenantId);
 }
 
 /** Drop PII from the event envelope before it leaves the browser. Exported for tests. */
@@ -112,29 +120,29 @@ export function beforeBreadcrumb(crumb: Sentry.Breadcrumb): Sentry.Breadcrumb | 
 
 /** Set the per-session opaque user id (never email/displayName). */
 export function setSentryUser(userId: string | null | undefined): void {
-  if (!initialized) return;
+  if (!sdk) return;
   // A new authenticated session starts a fresh logout incident.
   if (userId) resetLogoutGuard();
-  Sentry.setUser(userId ? { id: userId } : null);
+  sdk.setUser(userId ? { id: userId } : null);
 }
 
 /** Keep the `workspace_id` tag in sync with the focused workspace. */
 export function setSentryWorkspace(workspaceId: string | null | undefined): void {
-  if (!initialized) return;
-  Sentry.setTag("workspace_id", workspaceId ?? undefined);
+  if (!sdk) return;
+  sdk.setTag("workspace_id", workspaceId ?? undefined);
 }
 
 /** Clear per-session identity on logout (tenant_id stays — it's deployment-wide). */
 export function clearSentryContext(): void {
-  if (!initialized) return;
-  Sentry.setUser(null);
-  Sentry.setTag("workspace_id", undefined);
+  if (!sdk) return;
+  sdk.setUser(null);
+  sdk.setTag("workspace_id", undefined);
 }
 
 /** Record a refresh-outcome breadcrumb (see fetch-with-refresh.ts). */
 export function addAuthBreadcrumb(message: string): void {
-  if (!initialized) return;
-  Sentry.addBreadcrumb({ category: "auth", message, level: "info" });
+  if (!sdk) return;
+  sdk.addBreadcrumb({ category: "auth", message, level: "info" });
 }
 
 /**
@@ -170,6 +178,6 @@ export function isReportableLogout(reason: string): boolean {
  * genuine `retry_401` in the same session.
  */
 export function captureLogout(reason: string): void {
-  if (!initialized || !isReportableLogout(reason) || !consumeLogoutOnce()) return;
-  Sentry.captureMessage(`involuntary logout: ${reason}`, "warning");
+  if (!sdk || !isReportableLogout(reason) || !consumeLogoutOnce()) return;
+  sdk.captureMessage(`involuntary logout: ${reason}`, "warning");
 }
