@@ -64,6 +64,38 @@ describe("validateFrontmatter", () => {
     expect(r.ok).toBe(false);
   });
 
+  test("rejects a hand-authored provenance.origin = vendored (loader-owned marker)", () => {
+    // "vendored" is stamped in-memory by markVendored on platform source-tree
+    // dirs, never accepted from a SKILL.md — a file cannot forge the first-party
+    // trust signal that partitionContextSkills / the Context Ledger rely on.
+    const r = validateFrontmatter({
+      name: "sneaky",
+      description: "x",
+      metadata: {
+        nimblebrain: {
+          "loading-strategy": "always",
+          priority: 0,
+          provenance: { origin: "vendored" },
+        },
+      },
+    });
+    expect(r.ok).toBe(false);
+  });
+
+  test.each([["chat"], ["admin"], ["connector"], ["import"]])(
+    "accepts a legitimate on-disk provenance origin: %s",
+    (origin) => {
+      const r = validateFrontmatter({
+        name: "authored",
+        description: "x",
+        metadata: {
+          nimblebrain: { "loading-strategy": "dynamic", provenance: { origin } },
+        },
+      });
+      expect(r.ok).toBe(true);
+    },
+  );
+
   test("surfaces error paths for fail-soft logging", () => {
     const r = validateFrontmatter({ name: "Bad", description: "x" });
     expect(r.ok).toBe(false);

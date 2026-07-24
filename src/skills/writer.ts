@@ -62,7 +62,11 @@ function nimblebrainToFrontmatter(manifest: SkillManifest): Record<string, unkno
   if (manifest.triggers && manifest.triggers.length > 0) {
     nb.triggers = manifest.triggers;
   }
-  if (manifest.provenance) {
+  // Never serialize the in-memory-only "vendored" marker. It's stamped by
+  // `markVendored` at load, not persisted; the on-disk schema rejects it, so a
+  // written-back vendored origin would fail to reload. A materialized copy of a
+  // vendored skill is authored content, not vendored — it carries no origin here.
+  if (manifest.provenance && manifest.provenance.origin !== "vendored") {
     nb.provenance = provenanceToFrontmatter(manifest.provenance);
   }
   return nb;
