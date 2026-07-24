@@ -112,8 +112,15 @@ const COMPOSITION = {
   ],
 };
 
-const callTool = mock(async (server: string, tool: string) => {
-  if (server === "compose" && tool === "assembled_context") return { structuredContent: DIGEST };
+// A conversation whose budget (assembled_context) read fails — used to prove a
+// switch surfaces B's error rather than leaving A's budget on screen.
+const CONV_BUDGET_FAIL = "conv_00000000000000ff";
+
+const callTool = mock(async (server: string, tool: string, args?: { conversation_id?: string }) => {
+  if (server === "compose" && tool === "assembled_context") {
+    if (args?.conversation_id === CONV_BUDGET_FAIL) throw new Error("BUDGET-READ-FAILED-FOR-B");
+    return { structuredContent: DIGEST };
+  }
   if (server === "compose" && tool === "effective_context")
     return { structuredContent: COMPOSITION };
   throw new Error(`unexpected callTool ${server}__${tool}`);
@@ -252,6 +259,38 @@ describe("ContextInspectorPage", () => {
         "You are a helpful assistant powered by NimbleBrain.",
       ),
     );
+  });
+
+  test("surfaces the new conversation's budget error rather than leaving the old budget on screen", async () => {
+    function Nav() {
+      const navigate = useNavigate();
+      return (
+        <button type="button" onClick={() => navigate(`/w/abc123/context/${CONV_BUDGET_FAIL}`)}>
+          go-fail
+        </button>
+      );
+    }
+    const { container } = render(
+      <MemoryRouter initialEntries={[`/w/abc123/context/${CONV_ID}`]}>
+        <Nav />
+        <Routes>
+          <Route path="/w/:slug/context/:convId" element={<ContextInspectorPage />} />
+        </Routes>
+      </MemoryRouter>,
+    );
+
+    // A's budget loads.
+    await waitFor(() => expect(container.textContent).toContain("43.0k"));
+
+    // Switch to a conversation whose budget read fails. The prior budget must
+    // not linger as B's, and the error must surface (both gate on an absent
+    // digest, so the switch has to clear it).
+    const go = buttons(container).find((b) => b.textContent?.includes("go-fail"));
+    if (!go) throw new Error("nav button not found");
+    fireEvent.click(go);
+
+    await waitFor(() => expect(container.textContent).toContain("BUDGET-READ-FAILED-FOR-B"));
+    expect(container.textContent).not.toContain("43.0k");
   });
 
   test("filters the layers to a budget bucket", async () => {

@@ -19,8 +19,8 @@ import { parseToolResponse } from "../lib/tool-response";
  * Answers "what is in this conversation's context window, and what is the exact
  * text of each part." A single scrolling column: the budget frames the whole
  * window, then each composition layer expands in place to reveal its composed
- * body (a skills layer expands into its individual skills). One scroll region,
- * so it stays legible however narrow the column gets beside the docked chat.
+ * body verbatim. One scroll region, so it stays legible however narrow the
+ * column gets beside the docked chat.
  *
  * Pure views over telemetry the runtime already records —
  * `compose__assembled_context` (the budget + skills digest) and
@@ -47,9 +47,12 @@ export function ContextInspectorPage() {
     setBudgetError(null);
     setCompositionError(null);
     // Switching conversations reuses this component instance, so drop the prior
-    // conversation's composition + expansion state and re-arm the auto-open —
-    // otherwise the new conversation shows A's open rows (or, with no overlap,
-    // nothing at all). The budget keeps rendering while the layers re-arm.
+    // conversation's data (budget + composition), expansion state, and the
+    // auto-open latch. Otherwise B shows A's budget and open rows, and — because
+    // the empty/error branches gate on an absent digest — a failed B budget read
+    // would leave A's numbers on screen instead of surfacing the error. Each
+    // read repopulates independently as it resolves.
+    setDigest(null);
     setComposition(null);
     setOpen(new Set());
     openedInitial.current = false;
@@ -157,7 +160,7 @@ export function ContextInspectorPage() {
       )}
 
       {digest && digest.runId !== null && (
-        <div className="flex-1 min-h-0 overflow-y-auto" data-testid="context-layers">
+        <div className="flex-1 min-h-0 overflow-y-auto">
           <BudgetBar
             sources={digest.sources}
             totalTokens={digest.totalTokens}
