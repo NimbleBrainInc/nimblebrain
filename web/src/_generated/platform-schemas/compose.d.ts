@@ -78,8 +78,8 @@ export interface TracedSubItemView {
 /**
  * One section of the composed system prompt with provenance and body — the
  * web-facing projection of the runtime `TracedLayer`. Carries `text` (the
- * exact composed body of the layer) so the context inspector's reading pane
- * can show what actually entered the window. Lighter consumers may ignore
+ * exact composed body of the layer) so the context inspector can show what
+ * actually entered the window. Lighter consumers may ignore
  * `text`; it is the largest field and only the inspector renders it.
  */
 export interface TracedLayerView {
