@@ -227,6 +227,7 @@ export function getProviderFromModel(modelString: string): string {
 const ADAPTIVE_ONLY_THINKING_MODELS: ReadonlySet<string> = new Set([
   "claude-opus-4-7",
   "claude-opus-4-8",
+  "claude-opus-5",
   "claude-sonnet-5",
 ]);
 

@@ -172,6 +172,7 @@ describe("supportsEnabledThinking", () => {
 		// translate to thinking.type=adaptive + output_config.effort.
 		expect(supportsEnabledThinking("claude-opus-4-7")).toBe(false);
 		expect(supportsEnabledThinking("claude-opus-4-8")).toBe(false);
+		expect(supportsEnabledThinking("claude-opus-5")).toBe(false);
 		expect(supportsEnabledThinking("claude-sonnet-5")).toBe(false);
 		expect(supportsEnabledThinking("anthropic:claude-opus-4-8")).toBe(false);
 	});
