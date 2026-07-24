@@ -1,15 +1,14 @@
 /**
- * Behavioral tests for `<SkillsBrowser surface="workspace" />` after the
- * skills-redesign rewrite.
+ * Behavioral tests for `<SkillsBrowser surface="workspace" />` — the workspace
+ * vantage of the composition list.
  *
  * The workspace surface owes its user:
  *
- *   1. No scope filter — sections are the partition.
- *   2. No status filter either — the per-row On/Off toggle is the
- *      enablement control.
- *   3. Sections render: workspace, inherited from organization,
- *      inherited from installed apps. User-tier skills surface only
- *      as the personal-footer count, not as a section.
+ *   1. One list of tiers, agency-first (Yours, You, Organization, System),
+ *      with a segment filter derived from the tiers present.
+ *   2. No status filter — the per-row On/Off toggle is the enablement control.
+ *   3. Personal skills render as a read-only "You" tier that deep-links to the
+ *      profile — not a footer count.
  *   4. The create form ("+ Add a skill") sends `scope: "workspace"`
  *      regardless of internal state. This is the load-bearing assertion
  *      the server's checkPathAccess can't catch.
@@ -432,7 +431,12 @@ describe("SkillsBrowser with surface='workspace' — composition list", () => {
 
   test("each row states its loading mechanism at rest, without expanding", async () => {
     mounted = await mount(React.createElement(SkillsBrowser, { surface: "workspace" }));
-    expect(mounted.container.textContent ?? "").toContain("Always on · every conversation");
+    const text = mounted.container.textContent ?? "";
+    expect(text).toContain("Always on · every conversation");
+    // The org tier is visible at rest, so its tool-affinity row renders the
+    // mechanism's mono glob branch (`<span className="font-mono">`) too.
+    expect(text).toContain("On tool match");
+    expect(text).toContain("mpak__*");
   });
 
   test("scope renders as a token-driven tick, never a ledger label or raw hex", async () => {

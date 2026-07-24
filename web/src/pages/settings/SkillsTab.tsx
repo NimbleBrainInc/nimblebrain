@@ -92,7 +92,7 @@ function headerDescription(lockedScope: "org" | "user" | undefined, isWorkspaceS
 // filter, while the workspace fetch (unscoped) shows the full stack.
 const TIER_ORDER: Record<WritableScope, Scope[]> = {
   workspace: ["workspace", "user", "org", "bundle"],
-  org: ["org", "bundle"],
+  org: ["org"],
   user: ["user"],
 };
 
@@ -313,6 +313,10 @@ export function SkillsBrowser(props: SkillsBrowserProps) {
           (result) => {
             setView("list");
             setEditingId(null);
+            // The new skill lands in the editable tier; clear any active filter
+            // so it's visible instead of landing behind a segment showing
+            // another tier (only edits of an already-shown row stay put).
+            setSegment("all");
             if (result.id) setSelectedId(result.id);
           },
         );
@@ -416,14 +420,15 @@ export function SkillsBrowser(props: SkillsBrowserProps) {
 
       {skills.length > 0 && (
         <div className="space-y-3">
-          {multiTier && (
-            <div className="flex items-center gap-3">
-              <SegmentBar tiers={tiers} value={segment} onChange={setSegment} />
-              <span className="ml-auto text-xs text-muted-foreground tabular-nums">
-                {visibleSkills.length} skill{visibleSkills.length === 1 ? "" : "s"} · {onCount} on
-              </span>
-            </div>
-          )}
+          {/* The count always shows; the segment filter only when there's more
+           * than one tier to slice (single-scope surfaces have nothing to
+           * filter). */}
+          <div className="flex items-center gap-3">
+            {multiTier && <SegmentBar tiers={tiers} value={segment} onChange={setSegment} />}
+            <span className="ml-auto text-xs text-muted-foreground tabular-nums">
+              {visibleSkills.length} skill{visibleSkills.length === 1 ? "" : "s"} · {onCount} on
+            </span>
+          </div>
           <div className="overflow-hidden rounded-lg border border-border bg-card divide-y divide-border">
             {visibleTiers.map((tier) => (
               <TierGroup
