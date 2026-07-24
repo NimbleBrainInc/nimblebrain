@@ -40,16 +40,6 @@ const MANUAL_LIMIT_OVERRIDES: Record<string, { context?: number; output?: number
 const MANUAL_DEPRECATIONS = new Set<string>([
   // Google shutdown 2026-03-09 (successor: gemini-3.1-pro-preview)
   "google:gemini-3-pro-preview",
-  // OpenAI shutdown 2026-07-23
-  "openai:gpt-5-chat-latest",
-  "openai:gpt-5-codex",
-  "openai:gpt-5.1-chat-latest",
-  "openai:gpt-5.1-codex",
-  "openai:gpt-5.1-codex-max",
-  "openai:gpt-5.1-codex-mini",
-  "openai:gpt-5.2-codex",
-  "openai:o3-deep-research",
-  "openai:o4-mini-deep-research",
   // OpenAI shutdown 2026-10-23
   "openai:gpt-4-turbo",
   "openai:gpt-4.1-nano",

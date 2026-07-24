@@ -52,19 +52,26 @@ import {
 /**
  * Map a thinking budget (tokens) to an Anthropic effort tier. Used when
  * translating the platform's `enabled`-mode budget to the adaptive+effort
- * shape required by adaptive-only models like Opus 4.7. Bands are
+ * shape required by adaptive-only models like Opus 5. Bands are
  * calibrated against `safeThinkingBudget` output so the effort tier
  * scales with `maxOutputTokens`:
  *   maxOutputTokens 8K   → budget   4096 → "low"
  *   maxOutputTokens 16K  → budget  12288 → "medium"
  *   maxOutputTokens 32K  → budget  28672 → "high"
- *   maxOutputTokens 128K → budget 123904 → "max"
+ *   maxOutputTokens 128K → budget 123904 → "xhigh"
+ *
+ * `max` is deliberately unreachable from a derived budget. `resolveMaxOutputTokens`
+ * defaults to the model's full catalog ceiling, so the top band is what an
+ * install that sets no `maxOutputTokens` gets on every call — and Anthropic
+ * reserves `max` for frontier problems where cost is no object, with
+ * diminishing quality returns on ordinary work. `xhigh` is their recommended
+ * starting point for agentic and coding workloads, and is the ceiling here.
  */
-function budgetToEffort(budget: number): "low" | "medium" | "high" | "max" {
+function budgetToEffort(budget: number): "low" | "medium" | "high" | "xhigh" {
   if (budget <= 4096) return "low";
   if (budget <= 16384) return "medium";
   if (budget <= 32768) return "high";
-  return "max";
+  return "xhigh";
 }
 
 /**

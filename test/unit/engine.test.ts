@@ -1736,9 +1736,12 @@ describe("AgentEngine", () => {
       expect(po?.anthropic?.effort).toBe("medium");
     });
 
-    it("maps a large enabled budget to effort=max on adaptive-only models", async () => {
-      // 128K-cap path: safeThinkingBudget ≈ 123904 → effort=max. Confirms
-      // the budget→effort tiers don't quietly cap at "high".
+    it("maps a large enabled budget to effort=xhigh on adaptive-only models", async () => {
+      // 128K-cap path: safeThinkingBudget ≈ 123904 → effort=xhigh. Confirms
+      // the tiers neither quietly cap at "high" nor reach "max" — the top
+      // band is what an install with no maxOutputTokens gets on every call,
+      // and "max" is reserved for frontier work rather than handed out by
+      // default.
       const captured: Array<Record<string, unknown>> = [];
       const model: LanguageModelV3 = { ...createEchoModel({ responses: [{ text: "ok" }] }) };
       const orig = model.doStream.bind(model);
@@ -1766,7 +1769,7 @@ describe("AgentEngine", () => {
         | { anthropic?: { thinking?: { type: string }; effort?: string } }
         | undefined;
       expect(po?.anthropic?.thinking).toEqual({ type: "adaptive" });
-      expect(po?.anthropic?.effort).toBe("max");
+      expect(po?.anthropic?.effort).toBe("xhigh");
     });
 
     it("translates thinking=adaptive without budget", async () => {
