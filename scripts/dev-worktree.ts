@@ -60,9 +60,9 @@ function seedConfigIfMissing(): void {
     // dev:worktree starts in the same shape the rest of the platform's dev
     // environments use.
     models: {
-      default: "anthropic:claude-sonnet-4-6",
+      default: "anthropic:claude-opus-5",
       fast: "anthropic:claude-haiku-4-5-20251001",
-      reasoning: "anthropic:claude-opus-4-6",
+      reasoning: "anthropic:claude-opus-5",
     },
   };
   writeFileSync(CONFIG_PATH, `${JSON.stringify(seed, null, 2)}\n`);
