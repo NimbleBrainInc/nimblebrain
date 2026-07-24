@@ -116,7 +116,7 @@ import type { Skill } from "../skills/types.ts";
 import { TelemetryManager } from "../telemetry/manager.ts";
 import { PostHogEventSink } from "../telemetry/posthog-sink.ts";
 import type { DelegateContext } from "../tools/delegate.ts";
-import { isIdentitySource } from "../tools/identity-sources.ts";
+import { isIdentitySource, isTaskForbiddenIdentityTool } from "../tools/identity-sources.ts";
 import { McpSource } from "../tools/mcp-source.ts";
 import { namespacedToolName } from "../tools/namespace.ts";
 import { SharedSourceRef, type ToolRegistry } from "../tools/registry.ts";
@@ -592,6 +592,12 @@ export class Runtime {
         const rt = rtHolder.rt;
         const wsId = rt._currentWorkspaceId?.();
         const orgRole = getRequestContext()?.identity?.orgRole;
+        // In an unattended run the automations source denies the authoring
+        // surface at any delegation depth; keep it out of the child's default
+        // active set too, so the sub-agent isn't shown a tool it can't call.
+        const unattended = getRequestContext()?.unattended === true;
+        const identityToolVisible = (name: string): boolean =>
+          isToolVisibleToRole(name, orgRole) && !(unattended && isTaskForbiddenIdentityTool(name));
         if (!wsId) {
           // Dev / CLI path without a workspace in scope — return identity
           // tools only. Hard-failing here would break the existing CLI
@@ -599,7 +605,7 @@ export class Runtime {
           // context. The workspace door simply contributes nothing.
           const identityTools = await rt.listIdentitySourceTools();
           return identityTools
-            .filter((t) => isToolVisibleToRole(t.name, orgRole))
+            .filter((t) => identityToolVisible(t.name))
             .map((t) => ({
               name: t.name,
               description: t.description,
@@ -622,7 +628,7 @@ export class Runtime {
               ...(t.annotations !== undefined ? { annotations: t.annotations } : {}),
             })),
           ...identityTools
-            .filter((t) => isToolVisibleToRole(t.name, orgRole))
+            .filter((t) => identityToolVisible(t.name))
             .map((t) => ({
               name: t.name,
               description: t.description,
@@ -1696,6 +1702,12 @@ export class Runtime {
     // focused workspace's tools (or the session/personal workspace if no focus)
     // + identity tools. `nb__search`'s corpus is that same workspace — no
     // cross-workspace reach.
+    //
+    // A task run is unattended and can ingest untrusted content, so the
+    // automation-authoring surface is subtracted from its identity tools: it
+    // must not be able to rewrite/spawn/fire automations from inside a run
+    // (`isTaskForbiddenIdentityTool`). Chat keeps those tools — that path has a
+    // human in the loop.
     const toolsRegistry = await this.ensureWorkspaceRegistry(workWsId);
     const [focusedTools, identityTools] = await Promise.all([
       toolsRegistry.availableTools(),
@@ -1711,7 +1723,11 @@ export class Runtime {
           ...(t.annotations !== undefined ? { annotations: t.annotations } : {}),
         })),
       ...identityTools
-        .filter((t) => isToolVisibleToRole(t.name, requestIdentity.orgRole))
+        .filter(
+          (t) =>
+            !isTaskForbiddenIdentityTool(t.name) &&
+            isToolVisibleToRole(t.name, requestIdentity.orgRole),
+        )
         .map((t) => ({
           name: t.name,
           description: t.description,
@@ -1969,6 +1985,11 @@ export class Runtime {
       // provenance workspace (`workWsId`) — the same partition the rehydration
       // read uses, not the personal `sessionWsId` scope.
       fileWorkspaceId: workWsId,
+      // Unattended run: bars the automation-authoring surface. Rides the ALS
+      // context (preserved across the per-call restamp), so a delegated sub-agent
+      // inherits it and the wall holds at any depth — enforced at the automations
+      // source, not per-router-construction. See `createAutomationsSource`.
+      unattended: true,
     };
     engineConfig.toolPromotion = this.buildToolPromotionFactory();
 

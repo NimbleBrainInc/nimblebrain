@@ -121,6 +121,13 @@ export interface ExecutorContext {
  * `allowedTools`, but operator file edits and bundle-contributed
  * schedules can still set it — so the guard lives at the executor,
  * which sees the merged Automation regardless of how it was authored.
+ *
+ * This is a narrow, operator-input guard, NOT the run-time boundary: an
+ * unattended run is barred from the whole automation-authoring surface at
+ * dispatch by `identity-sources.ts::isTaskForbiddenIdentityTool` (ambient,
+ * enforced in `IdentityToolRouter`), which is the authoritative list. Removing
+ * this guard in favor of that one is tracked as a cleanup (see the automations
+ * recursive-guard issue); until then, keep the two from drifting.
  */
 const RECURSIVE_TOOL_PATTERNS = [
   "automations__create",

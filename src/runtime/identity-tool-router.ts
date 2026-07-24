@@ -117,6 +117,11 @@ function buildPerCallContext(
     // tools with no workspace in scope even when the chat set one.
     ...(outer?.fileWorkspaceId !== undefined ? { fileWorkspaceId: outer.fileWorkspaceId } : {}),
     ...(outer?.toolPromotion !== undefined ? { toolPromotion: outer.toolPromotion } : {}),
+    // `unattended` rides the restamp so a tool dispatched from an unattended run
+    // — including a delegated sub-agent, which runs inside the parent call's
+    // restamped context — stays walled from the automation-authoring surface.
+    // Dropping it here would reopen the wall for anything below the top level.
+    ...(outer?.unattended !== undefined ? { unattended: outer.unattended } : {}),
   };
 }
 

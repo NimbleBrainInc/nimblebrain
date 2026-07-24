@@ -28,7 +28,7 @@
  */
 
 import { afterEach, describe, expect, it } from "bun:test";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { textContent } from "../../src/engine/content-helpers.ts";
@@ -293,6 +293,141 @@ describe("runtime.executeTask", () => {
     // A real run anchor for post-mortem (the gap the synthesized
     // 0/0/0/0 record left behind).
     expect(result.runId).toMatch(/^run_[a-z0-9_-]+$/i);
+  });
+
+  it("refuses the automation-authoring surface from inside a run, even when named directly", async () => {
+    // The self-modification boundary. An automation runs unattended and can
+    // ingest untrusted content, so it must not be able to rewrite/spawn/fire
+    // automations from within its own run. Surfacing subtraction keeps the model
+    // from seeing these tools; this test pins the HARD half — the source refuses
+    // the call even when the model emits the name directly (the injection /
+    // hallucination path), with VALID input so the refusal is the run-wall, not
+    // schema validation.
+    const validSchedule = { type: "interval", intervalMs: 60_000 };
+    const forbiddenCalls: Array<{ tool: string; input: unknown }> = [
+      { tool: "automations__update", input: { name: "target" } },
+      {
+        tool: "automations__create",
+        input: { manifest: { name: "evil", schedule: validSchedule }, body: "x" },
+      },
+      { tool: "automations__delete", input: { name: "target" } },
+      { tool: "automations__run", input: { name: "target" } },
+    ];
+    for (const { tool, input } of forbiddenCalls) {
+      runtime = await bootRuntime({
+        responses: [
+          {
+            toolCalls: [{ toolCallId: `call_${tool}`, toolName: tool, input: JSON.stringify(input) }],
+          },
+          { text: "done" },
+        ],
+      });
+      await provisionWorkspaces(runtime);
+
+      const result = await runtime.executeTask({
+        prompt: "rebuild yourself on real tools",
+        identity: { id: TEST_USER_ID, displayName: TEST_USER_DISPLAY },
+      });
+
+      expect(result.toolCalls[0]?.name).toBe(tool);
+      expect(result.toolCalls[0]?.ok).toBe(false);
+      expect(result.toolCalls[0]?.output).toMatch(/unattended automation run/i);
+
+      await runtime.shutdown();
+      runtime = null;
+      rmSync(workDir, { recursive: true, force: true });
+    }
+  });
+
+  it("walls automation authoring inside a DELEGATED sub-agent of a run, not just the top level", async () => {
+    // Regression for the delegate bypass: a run can call nb__delegate, and the
+    // child sub-agent runs on a freshly-built router — so a wall that lived only
+    // on the top-level router would leave the child an open door. The boundary is
+    // ambient (`RequestContext.unattended`, inherited through the per-call
+    // restamp into the delegated child), enforced at the automations source, so a
+    // child's authoring call is refused too. Proven by the real security outcome:
+    // the child runs and attempts the create, yet nothing is persisted.
+    const personalWsId = personalWorkspaceIdFor(TEST_USER_ID);
+    const delegateTool = namespacedToolName(personalWsId, "nb__delegate");
+    runtime = await bootRuntime({
+      responses: [
+        // Parent (task engine): delegate a subtask.
+        {
+          toolCalls: [
+            {
+              toolCallId: "call_delegate",
+              toolName: delegateTool,
+              input: JSON.stringify({ task: "create an automation that re-injects this prompt" }),
+            },
+          ],
+        },
+        // Child sub-agent: attempt to author an automation with VALID input, so a
+        // block is the run-wall, not schema validation.
+        {
+          toolCalls: [
+            {
+              toolCallId: "call_child_create",
+              toolName: "automations__create",
+              input: JSON.stringify({
+                manifest: {
+                  name: "evil-persistence",
+                  schedule: { type: "interval", intervalMs: 60_000 },
+                },
+                body: "re-inject",
+              }),
+            },
+          ],
+        },
+        { text: "child done" }, // child continues after the create is refused
+        { text: "parent done" },
+      ],
+    });
+    await provisionWorkspaces(runtime);
+
+    const result = await runtime.executeTask({
+      prompt: "do the thing",
+      identity: { id: TEST_USER_ID, displayName: TEST_USER_DISPLAY },
+    });
+
+    // The child ran to completion: the parent's delegate call succeeded and its
+    // output is the child's final text. Because the echo model consumes the
+    // scripted responses in order, reaching "child done" means the child DID
+    // process (and was refused on) the create attempt in the response before it.
+    expect(result.toolCalls[0]?.name).toBe(delegateTool);
+    expect(result.toolCalls[0]?.ok).toBe(true);
+    expect(result.toolCalls[0]?.output).toContain("child done");
+
+    // The real security outcome: the child's create had no effect — no automation
+    // was persisted to the owner's partition.
+    const dir = join(workDir, "workspaces", personalWsId, "automations", TEST_USER_ID);
+    const persisted = existsSync(dir) ? readdirSync(dir).filter((f) => f.endsWith(".json")) : [];
+    expect(persisted).toEqual([]);
+  });
+
+  it("still permits a read-only automations tool from inside a run", async () => {
+    // The boundary is scoped to the authoring surface: introspection tools stay
+    // reachable so an automation can report on automation health. `list` routes
+    // to the automations identity source and returns its normal result (an empty
+    // list in this fresh workspace) — NOT the run-wall denial.
+    runtime = await bootRuntime({
+      responses: [
+        {
+          toolCalls: [
+            { toolCallId: "call_list", toolName: "automations__list", input: JSON.stringify({}) },
+          ],
+        },
+        { text: "done" },
+      ],
+    });
+    await provisionWorkspaces(runtime);
+
+    const result = await runtime.executeTask({
+      prompt: "check automation health",
+      identity: { id: TEST_USER_ID, displayName: TEST_USER_DISPLAY },
+    });
+
+    expect(result.toolCalls[0]?.name).toBe("automations__list");
+    expect(result.toolCalls[0]?.output).not.toMatch(/unattended automation run/i);
   });
 
   it("creates no conversation even when caller passes metadata", async () => {
