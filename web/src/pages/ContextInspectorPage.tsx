@@ -37,45 +37,54 @@ export function ContextInspectorPage() {
   const [open, setOpen] = useState<Set<string>>(new Set());
   const [bucket, setBucket] = useState<string | null>(null);
 
-  // Re-armed on every conversation load (below), so the first layer auto-expands
-  // for each conversation — the route element is reused across a :convId change.
+  // Re-armed by the load effect below on every :convId change, so the first
+  // layer auto-expands for each conversation (the route element is reused).
   const openedInitial = useRef(false);
 
-  const load = useCallback(async () => {
+  // Load the budget + composition for the current conversation. The route
+  // element is reused across a :convId change (the docked chat stays mounted),
+  // so each change drops the prior conversation's data, expansion state, and
+  // auto-open latch, and — via the cleanup flag — ignores that conversation's
+  // reads still in flight. Otherwise a slow A read lands in B's view (B's id
+  // over A's budget, A's composed body as B's). The two reads are independent,
+  // so each renders as it resolves and one failing doesn't blank the other;
+  // the empty/error branches gate on an absent digest, so clearing it also lets
+  // a failed budget read surface rather than leaving stale numbers on screen.
+  useEffect(() => {
     if (!convId) return;
+    let cancelled = false;
     setLoading(true);
     setBudgetError(null);
     setCompositionError(null);
-    // Switching conversations reuses this component instance, so drop the prior
-    // conversation's data (budget + composition), expansion state, and the
-    // auto-open latch. Otherwise B shows A's budget and open rows, and — because
-    // the empty/error branches gate on an absent digest — a failed B budget read
-    // would leave A's numbers on screen instead of surfacing the error. Each
-    // read repopulates independently as it resolves.
     setDigest(null);
     setComposition(null);
     setOpen(new Set());
     openedInitial.current = false;
-    // Independent reads: the budget (small, recorded) and the composition
-    // (larger, recomposed) render as each resolves; one failing doesn't blank
-    // the other.
     const budget = callTool("compose", "assembled_context", { conversation_id: convId })
-      .then((res) => setDigest(parseToolResponse<ComposeAssembledContextOutput>(res)))
-      .catch((err) =>
-        setBudgetError(err instanceof Error ? err.message : "Failed to load the budget."),
-      );
+      .then((res) => {
+        if (!cancelled) setDigest(parseToolResponse<ComposeAssembledContextOutput>(res));
+      })
+      .catch((err) => {
+        if (!cancelled)
+          setBudgetError(err instanceof Error ? err.message : "Failed to load the budget.");
+      });
     const comp = callTool("compose", "effective_context", { conversation_id: convId })
-      .then((res) => setComposition(parseToolResponse<ComposeEffectiveContextOutput>(res)))
-      .catch((err) =>
-        setCompositionError(err instanceof Error ? err.message : "Failed to compose the context."),
-      );
-    await Promise.allSettled([budget, comp]);
-    setLoading(false);
+      .then((res) => {
+        if (!cancelled) setComposition(parseToolResponse<ComposeEffectiveContextOutput>(res));
+      })
+      .catch((err) => {
+        if (!cancelled)
+          setCompositionError(
+            err instanceof Error ? err.message : "Failed to compose the context.",
+          );
+      });
+    void Promise.allSettled([budget, comp]).then(() => {
+      if (!cancelled) setLoading(false);
+    });
+    return () => {
+      cancelled = true;
+    };
   }, [convId]);
-
-  useEffect(() => {
-    void load();
-  }, [load]);
 
   const visibleLayers = useMemo(
     () => (composition ? filterLayers(composition.layers, bucket) : []),
@@ -84,8 +93,7 @@ export function ContextInspectorPage() {
 
   // Open the first layer once the composition arrives, so the reader lands on
   // something rather than an all-collapsed list. Toggles after that are the
-  // user's; a re-filter doesn't force anything back open. The latch is re-armed
-  // per conversation in `load`.
+  // user's. The latch is re-armed by the load effect above per conversation.
   useEffect(() => {
     if (!openedInitial.current && visibleLayers.length > 0) {
       openedInitial.current = true;
@@ -101,6 +109,23 @@ export function ContextInspectorPage() {
       return next;
     });
   }, []);
+
+  // Selecting a budget bucket is a drill-in, so reveal it: open the first layer
+  // that becomes visible under the filter (added, not replacing, so the reader's
+  // other expansions survive). Clearing the filter forces nothing open.
+  const selectBucket = useCallback(
+    (next: string | null) => {
+      setBucket(next);
+      if (next && composition) {
+        const visible = filterLayers(composition.layers, next);
+        if (visible.length > 0) {
+          const first = layerKey(visible[0]);
+          setOpen((prev) => new Set(prev).add(first));
+        }
+      }
+    },
+    [composition],
+  );
 
   const navigate = useNavigate();
   // Return to wherever the inspector was opened from (an app, the conversations
@@ -165,7 +190,7 @@ export function ContextInspectorPage() {
             sources={digest.sources}
             totalTokens={digest.totalTokens}
             active={bucket}
-            onSelect={setBucket}
+            onSelect={selectBucket}
           />
           <LayerAccordion
             layers={visibleLayers}

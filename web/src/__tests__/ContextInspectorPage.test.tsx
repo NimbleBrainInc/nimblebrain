@@ -17,7 +17,7 @@
 // ---------------------------------------------------------------------------
 
 import { describe, expect, mock, test } from "bun:test";
-import { fireEvent, render, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, waitFor } from "@testing-library/react";
 import { MemoryRouter, Route, Routes, useNavigate } from "react-router-dom";
 import { realClient } from "../../test/setup";
 
@@ -116,13 +116,53 @@ const COMPOSITION = {
 // switch surfaces B's error rather than leaving A's budget on screen.
 const CONV_BUDGET_FAIL = "conv_00000000000000ff";
 
+// A conversation whose reads are held open, to prove that a slow read from a
+// conversation the user navigated away from is ignored rather than landing in
+// the new view. Its reads resolve to a distinctive body once released.
+const CONV_STALE = "conv_0000000000000aaa";
+const STALE_BODY = "STALE-BODY-FROM-PREVIOUS-CONVERSATION";
+let releaseStale: () => void = () => {};
+const staleGate = new Promise<void>((r) => {
+  releaseStale = r;
+});
+const staleReads: Promise<unknown>[] = [];
+
 const callTool = mock(async (server: string, tool: string, args?: { conversation_id?: string }) => {
+  const cid = args?.conversation_id;
   if (server === "compose" && tool === "assembled_context") {
-    if (args?.conversation_id === CONV_BUDGET_FAIL) throw new Error("BUDGET-READ-FAILED-FOR-B");
+    if (cid === CONV_BUDGET_FAIL) throw new Error("BUDGET-READ-FAILED-FOR-B");
+    if (cid === CONV_STALE) {
+      const p = staleGate.then(() => ({
+        structuredContent: { ...DIGEST, conversationId: CONV_STALE },
+      }));
+      staleReads.push(p);
+      return p;
+    }
     return { structuredContent: DIGEST };
   }
-  if (server === "compose" && tool === "effective_context")
+  if (server === "compose" && tool === "effective_context") {
+    if (cid === CONV_STALE) {
+      const p = staleGate.then(() => ({
+        structuredContent: {
+          ...COMPOSITION,
+          conversationId: CONV_STALE,
+          layers: [
+            {
+              kind: "default_identity",
+              segment: "stable" as const,
+              id: "nb:default-identity",
+              source: "stale identity",
+              tokens: 100,
+              text: STALE_BODY,
+            },
+          ],
+        },
+      }));
+      staleReads.push(p);
+      return p;
+    }
     return { structuredContent: COMPOSITION };
+  }
   throw new Error(`unexpected callTool ${server}__${tool}`);
 });
 
@@ -293,17 +333,66 @@ describe("ContextInspectorPage", () => {
     expect(container.textContent).not.toContain("43.0k");
   });
 
-  test("filters the layers to a budget bucket", async () => {
+  test("ignores a slow read from a conversation the user has navigated away from", async () => {
+    const CONV_FRESH = "conv_0000000000000bbb";
+    function Nav() {
+      const navigate = useNavigate();
+      return (
+        <button type="button" onClick={() => navigate(`/w/abc123/context/${CONV_FRESH}`)}>
+          go-fresh
+        </button>
+      );
+    }
+    const { container } = render(
+      <MemoryRouter initialEntries={[`/w/abc123/context/${CONV_STALE}`]}>
+        <Nav />
+        <Routes>
+          <Route path="/w/:slug/context/:convId" element={<ContextInspectorPage />} />
+        </Routes>
+      </MemoryRouter>,
+    );
+
+    // CONV_STALE's reads are held open — the page is still loading.
+    await waitFor(() => expect(container.textContent).toContain("Loading context"));
+
+    // Navigate to a fresh conversation whose reads resolve immediately.
+    const go = buttons(container).find((b) => b.textContent?.includes("go-fresh"));
+    if (!go) throw new Error("nav button not found");
+    fireEvent.click(go);
+    await waitFor(() =>
+      expect(container.textContent).toContain(
+        "You are a helpful assistant powered by NimbleBrain.",
+      ),
+    );
+
+    // Release the previous conversation's slow reads. Their late resolution must
+    // not overwrite the current view (the fix ignores a cancelled load's setters).
+    await act(async () => {
+      releaseStale();
+      await Promise.allSettled(staleReads);
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(container.textContent).not.toContain(STALE_BODY);
+    expect(container.textContent).toContain("You are a helpful assistant powered by NimbleBrain.");
+  });
+
+  test("drilling into a budget bucket filters and reveals that layer", async () => {
     const { container } = renderPage();
     await waitFor(() => expect(container.textContent).toContain("Identity (default)"));
 
     // The budget "Skills" bucket (its label starts with "Skills"; the layer is
-    // "Layer-3 skills"). Clicking it narrows the list to composed skill layers.
+    // "Layer-3 skills"). Clicking it narrows the list to composed skill layers
+    // and opens the drilled layer rather than landing on a collapsed row.
     const skillsBucket = buttons(container).find((b) => b.textContent?.trim().startsWith("Skills"));
     if (!skillsBucket) throw new Error("skills bucket not found");
     fireEvent.click(skillsBucket);
 
     await waitFor(() => expect(container.textContent).not.toContain("Identity (default)"));
     expect(container.textContent).toContain("Layer-3 skills");
+    // The drilled layer is expanded — its composed section is on screen.
+    expect(container.textContent).toContain("## Skills");
   });
 });
