@@ -163,7 +163,21 @@ import {
 } from "./workspace-runtime.ts";
 
 const DEFAULT_WORK_DIR = join(homedir(), ".nimblebrain");
-const DEFAULT_MODEL = "claude-sonnet-4-6";
+const DEFAULT_MODEL = "claude-opus-5";
+/**
+ * Fallback for the `fast` slot when nothing configures it. Deliberately NOT
+ * `DEFAULT_MODEL`: the slot backs short auxiliary calls (conversation titling,
+ * history compaction, the home briefing) made outside the agentic loop on
+ * budgets sized to their answer. Those run constantly, so pointing them at the
+ * frontier tier is the platform's highest-frequency spend — and `max_tokens`
+ * caps thinking plus visible text together, so a model that thinks by default
+ * (Opus 5 does; Opus 4.8 and earlier do not) can consume a small budget
+ * reasoning and return nothing.
+ *
+ * Scoped to the unconfigured case only: an explicit `defaultModel` still
+ * governs every unset slot, so operators who set one see no change.
+ */
+const DEFAULT_FAST_MODEL = "claude-haiku-4-5-20251001";
 
 import { DEFAULT_MAX_INPUT_TOKENS, DEFAULT_MAX_ITERATIONS } from "../limits.ts";
 import { resolveMaxOutputTokens } from "./resolve-max-output-tokens.ts";
@@ -539,7 +553,7 @@ export class Runtime {
       const fallback = config.defaultModel ?? DEFAULT_MODEL;
       const slots: ModelSlots = {
         default: models?.default ?? fallback,
-        fast: models?.fast ?? fallback,
+        fast: models?.fast ?? config.defaultModel ?? DEFAULT_FAST_MODEL,
         reasoning: models?.reasoning ?? fallback,
       };
       return slots[slot];
@@ -3588,7 +3602,7 @@ export class Runtime {
     const fallback = this.config.defaultModel ?? DEFAULT_MODEL;
     const base: ModelSlots = {
       default: resolveModelString(models?.default ?? fallback),
-      fast: resolveModelString(models?.fast ?? fallback),
+      fast: resolveModelString(models?.fast ?? this.config.defaultModel ?? DEFAULT_FAST_MODEL),
       reasoning: resolveModelString(models?.reasoning ?? fallback),
     };
     // Merge workspace model overrides from request context (partial — only overrides specified slots)
