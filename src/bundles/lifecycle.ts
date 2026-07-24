@@ -1,8 +1,8 @@
 import { existsSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
-import { cleanupComposioBundle } from "../composio/sdk.ts";
 import { resolveConnectorSkillsConfig } from "../config/connector-skills.ts";
+import { cleanupComposioBundle } from "../connectors/providers/composio/sdk.ts";
 import type { EventSink } from "../engine/types.ts";
 import { IdentityConnectorStore } from "../identity/connector-store.ts";
 import { fleetIssuerOption } from "../oauth/fleet-assertion.ts";

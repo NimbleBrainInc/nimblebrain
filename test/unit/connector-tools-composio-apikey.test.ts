@@ -1,6 +1,6 @@
 /**
  * Tests for the API-key Composio path:
- *   - `connectComposioApiKey` in `src/composio/sdk.ts` (the SDK helper that
+ *   - `connectComposioApiKey` in `src/connectors/providers/composio/sdk.ts` (the SDK helper that
  *     hands the user's key to Composio and verifies via `waitForConnection`)
  *   - `manage_connectors.connect_api_key` validation + trust boundary in
  *     `src/tools/connector-tools.ts`
@@ -76,8 +76,8 @@ import {
 } from "../../src/bundles/composio-connection.ts";
 import { BundleLifecycleManager } from "../../src/bundles/lifecycle.ts";
 import { slugifyServerName } from "../../src/bundles/paths.ts";
-import { _resetComposioConfigForTest, connectComposioApiKey } from "../../src/composio/sdk.ts";
-import { buildManagedConnectorRegistry } from "../../src/connectors/provider-registry.ts";
+import { _resetComposioConfigForTest, connectComposioApiKey } from "../../src/connectors/providers/composio/sdk.ts";
+import { buildManagedConnectorRegistry } from "../../src/connectors/providers/registry.ts";
 import type { UserIdentity } from "../../src/identity/provider.ts";
 import { ConnectorDirectory } from "../../src/registries/directory.ts";
 import { RegistryStore } from "../../src/registries/registry-store.ts";

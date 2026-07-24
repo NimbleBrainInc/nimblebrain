@@ -34,10 +34,10 @@
  *     short-circuits when `COMPOSIO_API_KEY` is unset.
  */
 
-import type { ConnectorOwner } from "../identity/connector-owner.ts";
-import { getBouncerMode } from "../oauth/bouncer-config.ts";
-import { publicOrigin } from "../oauth/public-origin.ts";
-import { log } from "../observability/log.ts";
+import type { ConnectorOwner } from "../../../identity/connector-owner.ts";
+import { getBouncerMode } from "../../../oauth/bouncer-config.ts";
+import { publicOrigin } from "../../../oauth/public-origin.ts";
+import { log } from "../../../observability/log.ts";
 
 /** Default Composio API host. Overridable via `COMPOSIO_API_BASE_URL`. */
 export const COMPOSIO_API_BASE = "https://backend.composio.dev";
@@ -549,7 +549,7 @@ export async function cleanupComposioBundle(opts: {
   // Cleanup is rare (uninstall / disconnect), so the import cost is
   // negligible vs. the architectural cleanliness.
   const { readComposioConnection, deleteComposioConnection } = await import(
-    "../bundles/composio-connection.ts"
+    "../../../bundles/composio-connection.ts"
   );
 
   let upstreamDeleted = false;

@@ -32,8 +32,8 @@ mock.module("@composio/core", () => ({
   },
 }));
 
-const { ComposioConnectionProbe } = await import("../../src/composio/connection-probe.ts");
-const { _resetComposioConfigForTest } = await import("../../src/composio/sdk.ts");
+const { ComposioConnectionProbe } = await import("../../src/connectors/providers/composio/connection-probe.ts");
+const { _resetComposioConfigForTest } = await import("../../src/connectors/providers/composio/sdk.ts");
 
 function fakeDirectory(authConfigEnv: string | undefined): ConnectorDirectory {
   return {
