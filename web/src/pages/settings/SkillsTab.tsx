@@ -22,7 +22,7 @@ import { Button } from "../../components/ui/button";
 import { Card, CardContent } from "../../components/ui/card";
 import { Input } from "../../components/ui/input";
 import { Textarea } from "../../components/ui/textarea";
-import { SCOPE_CLASS, skillMechanismLabel } from "../../lib/skill-display";
+import { skillMechanismLabel } from "../../lib/skill-display";
 import { linkSafety } from "../../lib/streamdown-config";
 import { parseToolResponse } from "../../lib/tool-response";
 import { cn } from "../../lib/utils";
@@ -612,7 +612,11 @@ function Rule({
         aria-expanded={expanded}
         className={cn(
           "flex w-full items-center gap-3 text-left transition-colors",
-          "focus-visible:bg-secondary focus-visible:outline-none",
+          // The focus ring is drawn *inside* the row (negative offset): the
+          // card clips overflow, so an outset ring would be cut off on the
+          // first and last row. The tint alone is ~1.05:1 against the card —
+          // nowhere near the 3:1 a focus indicator owes a keyboard user.
+          "focus-visible:bg-secondary focus-visible:outline-2 focus-visible:outline-ring focus-visible:-outline-offset-2",
           inherited ? "px-0.5 py-2.5" : "px-3.5 py-3 hover:bg-secondary",
         )}
       >
@@ -625,25 +629,28 @@ function Rule({
           >
             {label}
           </span>
-          <span className="mt-0.5 block truncate text-xs text-muted-foreground">
-            {mechanism.text}
-            {mechanism.mono && (
-              <>
-                {" "}
-                <span className="font-mono">{mechanism.mono}</span>
-              </>
-            )}
-          </span>
+          {mechanism && (
+            <span className="mt-0.5 block truncate text-xs text-muted-foreground">
+              {mechanism.text}
+              {mechanism.mono && (
+                <>
+                  {" "}
+                  <span className="font-mono">{mechanism.mono}</span>
+                </>
+              )}
+            </span>
+          )}
         </span>
-        <span className="flex shrink-0 items-center gap-2.5">
-          <span className={cn("text-xs font-medium", SCOPE_CLASS[skill.scope])}>{skill.scope}</span>
-          <Toggle
-            on={skill.status === "active"}
-            onChange={onToggle}
-            disabled={inherited}
-            label={skill.name}
-          />
-        </span>
+        {/* No per-row scope label: `groupByScope` emits one group per scope,
+         * so it would be the same word on every row of a group whose heading
+         * already names the provenance. The in-chat ledger shows scope because
+         * its list genuinely mixes tiers; this catalog never does. */}
+        <Toggle
+          on={skill.status === "active"}
+          onChange={onToggle}
+          disabled={inherited}
+          label={skill.name}
+        />
       </button>
 
       <div
@@ -729,7 +736,7 @@ function Toggle({
       disabled={disabled}
       aria-label={`${on ? "Turn off" : "Turn on"} ${label}`}
       className={cn(
-        "inline-flex items-center gap-2 px-2 py-1 rounded-sm text-xs font-medium select-none",
+        "inline-flex shrink-0 items-center gap-2 px-2 py-1 rounded-sm text-xs font-medium select-none",
         disabled ? "text-muted-foreground/60 cursor-not-allowed" : "text-foreground hover:bg-muted",
       )}
     >

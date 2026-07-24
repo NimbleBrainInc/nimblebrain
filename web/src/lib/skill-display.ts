@@ -42,7 +42,6 @@ export interface SkillMechanismLabel {
 /** The subset of a skill summary that determines its loading mechanism. */
 export interface SkillMechanismInput {
   loading?: { mechanism: "always" | "tool_affinity" | "trigger" | "none" };
-  loadingStrategy?: string;
   toolAffinity?: string[];
   triggers?: string[];
 }
@@ -50,14 +49,15 @@ export interface SkillMechanismInput {
 /**
  * Resting mechanism line for a catalog row, in the ledger's vocabulary
  * ("Following …" in chat; "Always on / On tool match / On trigger" here).
- * Falls back to `loadingStrategy` when the derived `loading` field is absent
- * (older list reads), and to the honesty state ("Won't auto-load yet") for a
- * skill no loader path reaches.
+ *
+ * `loading` is derived server-side by `resolveLoadingMechanism` and is the
+ * only input trusted here — re-deriving it from `loadingStrategy`/affinity/
+ * triggers in the web tier would be a second, drift-prone copy of that
+ * predicate. `skills__list` populates it on every row, so `null` (caller
+ * renders no line) means genuinely unknown, never "won't load".
  */
-export function skillMechanismLabel(skill: SkillMechanismInput): SkillMechanismLabel {
-  const mechanism =
-    skill.loading?.mechanism ?? (skill.loadingStrategy === "always" ? "always" : "none");
-  switch (mechanism) {
+export function skillMechanismLabel(skill: SkillMechanismInput): SkillMechanismLabel | null {
+  switch (skill.loading?.mechanism) {
     case "always":
       return { text: "Always on · every conversation" };
     case "tool_affinity": {
@@ -72,8 +72,10 @@ export function skillMechanismLabel(skill: SkillMechanismInput): SkillMechanismL
         ? { text: `On trigger ${phrases.map((p) => `"${p}"`).join(", ")}` }
         : { text: "On trigger" };
     }
-    default:
+    case "none":
       return { text: "Won't auto-load yet" };
+    default:
+      return null;
   }
 }
 

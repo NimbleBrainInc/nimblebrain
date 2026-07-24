@@ -426,11 +426,25 @@ describe("SkillsBrowser with surface='workspace' — figure/ground reground", ()
     expect(mounted.container.textContent ?? "").toContain("Always on · every conversation");
   });
 
-  test("scope renders through the palette scope token class, not a literal color", async () => {
+  test("a row carries a visible focus indicator, not just a background tint", async () => {
     mounted = await mount(React.createElement(SkillsBrowser, { surface: "workspace" }));
-    const scope = mounted.container.querySelector(".ledger-scope--workspace");
-    expect(scope).not.toBeNull();
-    expect(scope?.textContent).toBe("workspace");
+    const row = Array.from(mounted.container.querySelectorAll("button")).find((b) =>
+      b.textContent?.includes("Workspace-tier rule."),
+    );
+    expect(row).toBeDefined();
+    const cls = row?.className ?? "";
+    // The tint alone is ~1.05:1 against the card — a keyboard user needs an
+    // actual indicator, so the row must never suppress its outline outright.
+    expect(cls).not.toContain("focus-visible:outline-none");
+    expect(cls).toContain("focus-visible:outline-2");
+  });
+
+  test("no per-row scope label — the group heading already names provenance", async () => {
+    mounted = await mount(React.createElement(SkillsBrowser, { surface: "workspace" }));
+    // `groupByScope` emits one group per scope, so a row label would be the
+    // same word on every row of its group.
+    expect(mounted.container.querySelector(".ledger-scope--workspace")).toBeNull();
+    expect(mounted.container.querySelector(".ledger-scope--bundle")).toBeNull();
   });
 
   test("an inherited row still states its mechanism once its group is opened", async () => {
@@ -446,8 +460,7 @@ describe("SkillsBrowser with surface='workspace' — figure/ground reground", ()
     // The org skill is tool-affinity — the mechanism line and its glob show.
     expect(text).toContain("On tool match");
     expect(text).toContain("mpak__*");
-    // …and its scope renders through the org token class.
-    expect(mounted.container.querySelector(".ledger-scope--org")).not.toBeNull();
+    expect(mounted.container.querySelector(".ledger-scope--org")).toBeNull();
   });
 
   test("expanded skill body is settings sans, not the chat serif voice", async () => {

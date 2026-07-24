@@ -45,11 +45,18 @@ describe("skillMechanismLabel", () => {
     });
   });
 
-  it("falls back to loadingStrategy when the derived loading field is absent", () => {
-    expect(skillMechanismLabel({ loadingStrategy: "always" })).toEqual({
-      text: "Always on · every conversation",
+  it("names the mechanism even when its payload is empty", () => {
+    expect(skillMechanismLabel({ loading: { mechanism: "tool_affinity" } })).toEqual({
+      text: "On tool match",
     });
-    // No loading info at all → the honesty state, never a silent "on demand".
-    expect(skillMechanismLabel({})).toEqual({ text: "Won't auto-load yet" });
+    expect(skillMechanismLabel({ loading: { mechanism: "trigger" }, triggers: [] })).toEqual({
+      text: "On trigger",
+    });
+  });
+
+  it("returns null when the derived loading field is absent", () => {
+    // `skills__list` always populates `loading`. Absent means genuinely
+    // unknown, so the row states nothing rather than claiming "won't load".
+    expect(skillMechanismLabel({})).toBeNull();
   });
 });
