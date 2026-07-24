@@ -62,7 +62,9 @@ export interface ComposeAssembledContextOutput {
 /**
  * One entry within a traced layer that aggregates operator-authored items
  * (apps, layer-3 skills). Mirrors the runtime `TracedSubItem` minus the
- * free-form `metadata` bag — the inspector renders id/source/bundle only.
+ * free-form `metadata` bag. Sub-items back the server-side `bundle` filter
+ * (which keys on `bundle`); the inspector itself renders each layer's composed
+ * `text`, not its sub-items.
  */
 export interface TracedSubItemView {
     kind: "app" | "layer3_skill";

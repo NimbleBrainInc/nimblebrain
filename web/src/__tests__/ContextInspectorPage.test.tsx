@@ -18,7 +18,7 @@
 
 import { describe, expect, mock, test } from "bun:test";
 import { fireEvent, render, waitFor } from "@testing-library/react";
-import { MemoryRouter, Route, Routes } from "react-router-dom";
+import { MemoryRouter, Route, Routes, useNavigate } from "react-router-dom";
 import { realClient } from "../../test/setup";
 
 (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -200,6 +200,58 @@ describe("ContextInspectorPage", () => {
     expect(text).toContain("## Skills");
     expect(text).toContain("scope: workspace; loaded: tool_affinity");
     expect(text).toContain("<layer3-skill>");
+  });
+
+  test("re-arms the first-layer auto-open when the conversation changes", async () => {
+    // The inspector route element is reused across a :convId change (the docked
+    // chat stays mounted), so the auto-open latch and expansion state must reset
+    // per conversation — otherwise B inherits A's expansion (or shows nothing).
+    const CONV_B = "conv_00000000000000bb";
+    function Nav() {
+      const navigate = useNavigate();
+      return (
+        <button type="button" onClick={() => navigate(`/w/abc123/context/${CONV_B}`)}>
+          go-to-b
+        </button>
+      );
+    }
+    const { container } = render(
+      <MemoryRouter initialEntries={[`/w/abc123/context/${CONV_ID}`]}>
+        <Nav />
+        <Routes>
+          <Route path="/w/:slug/context/:convId" element={<ContextInspectorPage />} />
+        </Routes>
+      </MemoryRouter>,
+    );
+
+    // A mounts with its first layer auto-expanded.
+    await waitFor(() =>
+      expect(container.textContent).toContain(
+        "You are a helpful assistant powered by NimbleBrain.",
+      ),
+    );
+
+    // User collapses it — nothing is expanded now.
+    const idRow = buttons(container).find((b) => b.textContent?.includes("Identity (default)"));
+    if (!idRow) throw new Error("identity row not found");
+    fireEvent.click(idRow);
+    await waitFor(() =>
+      expect(container.textContent).not.toContain(
+        "You are a helpful assistant powered by NimbleBrain.",
+      ),
+    );
+
+    // Switch conversations on the reused route element: the first layer must
+    // auto-expand again rather than staying collapsed from A.
+    const go = buttons(container).find((b) => b.textContent?.includes("go-to-b"));
+    if (!go) throw new Error("nav button not found");
+    fireEvent.click(go);
+
+    await waitFor(() =>
+      expect(container.textContent).toContain(
+        "You are a helpful assistant powered by NimbleBrain.",
+      ),
+    );
   });
 
   test("filters the layers to a budget bucket", async () => {

@@ -37,11 +37,22 @@ export function ContextInspectorPage() {
   const [open, setOpen] = useState<Set<string>>(new Set());
   const [bucket, setBucket] = useState<string | null>(null);
 
+  // Re-armed on every conversation load (below), so the first layer auto-expands
+  // for each conversation — the route element is reused across a :convId change.
+  const openedInitial = useRef(false);
+
   const load = useCallback(async () => {
     if (!convId) return;
     setLoading(true);
     setBudgetError(null);
     setCompositionError(null);
+    // Switching conversations reuses this component instance, so drop the prior
+    // conversation's composition + expansion state and re-arm the auto-open —
+    // otherwise the new conversation shows A's open rows (or, with no overlap,
+    // nothing at all). The budget keeps rendering while the layers re-arm.
+    setComposition(null);
+    setOpen(new Set());
+    openedInitial.current = false;
     // Independent reads: the budget (small, recorded) and the composition
     // (larger, recomposed) render as each resolves; one failing doesn't blank
     // the other.
@@ -70,8 +81,8 @@ export function ContextInspectorPage() {
 
   // Open the first layer once the composition arrives, so the reader lands on
   // something rather than an all-collapsed list. Toggles after that are the
-  // user's; a re-filter doesn't force anything back open.
-  const openedInitial = useRef(false);
+  // user's; a re-filter doesn't force anything back open. The latch is re-armed
+  // per conversation in `load`.
   useEffect(() => {
     if (!openedInitial.current && visibleLayers.length > 0) {
       openedInitial.current = true;
@@ -82,7 +93,8 @@ export function ContextInspectorPage() {
   const toggle = useCallback((key: string) => {
     setOpen((prev) => {
       const next = new Set(prev);
-      next.has(key) ? next.delete(key) : next.add(key);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
       return next;
     });
   }, []);
@@ -186,7 +198,10 @@ function BudgetBar({
   const ordered = orderedSources(sources);
   const max = Math.max(totalTokens, 1);
   return (
-    <div className="px-6 py-4 border-b border-border" data-testid="context-budget">
+    <div
+      className="sticky top-0 z-10 bg-background px-6 py-4 border-b border-border"
+      data-testid="context-budget"
+    >
       {/* Equal-width cards: the token size drives the inner bar, never the card
           width, so a small bucket (history) stays readable next to a large one
           (tools) at any container width. */}
@@ -442,7 +457,7 @@ function AccordionRow({
  *  a re-derived copy of it. */
 function LayerBody({ layer }: { layer: TracedLayerView }) {
   return (
-    <pre className="text-xs leading-relaxed whitespace-pre-wrap font-mono text-foreground bg-muted/40 border border-border rounded-lg p-4 m-0">
+    <pre className="text-xs leading-relaxed whitespace-pre-wrap break-words font-mono text-foreground bg-muted/40 border border-border rounded-lg p-4 m-0">
       {layer.text}
     </pre>
   );
