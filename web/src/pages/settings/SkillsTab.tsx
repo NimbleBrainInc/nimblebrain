@@ -113,29 +113,24 @@ function tierChrome(
   scope: Scope,
   editable: WritableScope,
 ): { label: string; manageTo?: string; manageLabel?: string } {
-  if (scope === editable) {
-    if (scope === "org") return { label: "Organization" };
-    if (scope === "user") return { label: "Your skills" };
-    return { label: "Yours" };
-  }
-  switch (scope) {
-    case "user":
-      return {
-        label: "You · follows you everywhere",
-        manageTo: "/profile/skills",
-        manageLabel: "Edit in your profile",
-      };
-    case "org":
-      return {
-        label: "Organization · managed in org settings",
-        manageTo: "/org/skills",
-        manageLabel: "Manage in org settings",
-      };
-    case "bundle":
-      return { label: "System · built in" };
-    default:
-      return { label: scope };
-  }
+  // A tier label only renders on a multi-tier surface, which today is only the
+  // workspace vantage — so "Yours" is the sole reachable editable label. Org and
+  // user get theirs back in the PR that gives those surfaces a context tier.
+  if (scope === editable) return { label: "Yours" };
+  if (scope === "user")
+    return {
+      label: "You · follows you everywhere",
+      manageTo: "/profile/skills",
+      manageLabel: "Edit in your profile",
+    };
+  if (scope === "org")
+    return {
+      label: "Organization · managed in org settings",
+      manageTo: "/org/skills",
+      manageLabel: "Manage in org settings",
+    };
+  // The only other context tier any surface renders is the system bundle.
+  return { label: "System · built in" };
 }
 
 /** The loaded detail matching `editingId`, or null while it's absent/stale. */
@@ -486,7 +481,8 @@ function SegmentBar({
 }) {
   const options: Array<Scope | "all"> = ["all", ...tiers.map((t) => t.scope)];
   return (
-    <div className="inline-flex gap-0.5 rounded-md border border-border bg-secondary p-0.5">
+    <fieldset className="inline-flex gap-0.5 rounded-md border border-border bg-secondary p-0.5">
+      <legend className="sr-only">Filter by tier</legend>
       {options.map((opt) => {
         const active = value === opt;
         return (
@@ -507,7 +503,7 @@ function SegmentBar({
           </button>
         );
       })}
-    </div>
+    </fieldset>
   );
 }
 
@@ -547,9 +543,11 @@ function TierGroup({
   return (
     <>
       {showLabel && (
-        <div className="bg-secondary/40 px-3.5 py-2 text-2xs font-semibold uppercase tracking-wide text-muted-foreground">
+        // An `h3` (not a styled div) so the tiers stay reachable by heading
+        // navigation — one tier below the page's `h2`, matching `Section`.
+        <h3 className="bg-secondary/40 px-3.5 py-2 text-2xs font-semibold uppercase tracking-wide text-muted-foreground">
           {label}
-        </div>
+        </h3>
       )}
       {tier.skills.map((s) => (
         <SkillRow

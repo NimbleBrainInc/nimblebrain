@@ -102,12 +102,23 @@ const SKILLS_FIXTURE = [
   },
 ];
 
+// Skills the mock has "deleted" — dropped from subsequent list reads so a
+// refetch can shrink the tier set (exercises the stale-filter fallback).
+const deletedIds = new Set<string>();
+
 mock.module("../src/api/client", () => ({
   ...realClient,
   callTool: async (server: string, tool: string, args: Record<string, unknown>) => {
     callToolCalls.push({ server, tool, args });
     if (server === "skills" && tool === "list") {
-      return { structuredContent: { skills: SKILLS_FIXTURE }, isError: false };
+      return {
+        structuredContent: { skills: SKILLS_FIXTURE.filter((s) => !deletedIds.has(s.id)) },
+        isError: false,
+      };
+    }
+    if (server === "skills" && tool === "delete") {
+      deletedIds.add(args.id as string);
+      return { structuredContent: { id: args.id }, isError: false };
     }
     if (server === "skills" && tool === "create") {
       return { structuredContent: { id: "/tmp/skills/ws/test-skill.md" }, isError: false };
@@ -159,6 +170,7 @@ afterEach(() => {
   mounted?.unmount();
   mounted = null;
   callToolCalls.length = 0;
+  deletedIds.clear();
 });
 
 async function mount(element: React.ReactElement): Promise<Mounted> {
@@ -419,6 +431,12 @@ describe("SkillsBrowser with surface='workspace' — composition list", () => {
     // One surface carries every tier.
     expect(holder?.textContent).toContain("You · follows you everywhere");
     expect(holder?.textContent).toContain("Organization · managed in org settings");
+    // Tier dividers are headings, so they stay reachable by heading navigation.
+    const tierHeadings = Array.from(holder?.querySelectorAll("h3") ?? []).map((h) =>
+      h.textContent?.trim(),
+    );
+    expect(tierHeadings).toContain("System · built in");
+    expect(tierHeadings.length).toBeGreaterThanOrEqual(4);
   });
 
   test("a segment chip is derived for every present tier, agency-first", async () => {
@@ -478,12 +496,101 @@ describe("SkillsBrowser with surface='workspace' — composition list", () => {
     expect(text).not.toContain("Personal skill A.");
   });
 
+  test("creating a skill clears an active filter so the new skill is visible", async () => {
+    mounted = await mount(React.createElement(SkillsBrowser, { surface: "workspace" }));
+    // Filter to a tier that holds no workspace skills, so a new one would be
+    // hidden without the reset.
+    await act(async () => {
+      const sys = Array.from(mounted!.container.querySelectorAll("button[aria-pressed]")).find(
+        (b) => b.textContent?.trim() === "System",
+      ) as HTMLButtonElement | undefined;
+      sys?.click();
+    });
+    expect(mounted.container.textContent ?? "").not.toContain("Workspace-tier rule.");
+
+    await act(async () => {
+      clickByText(mounted!.container, "+ Add a skill");
+    });
+    const nameInput = mounted.container.querySelector("#rule-name") as HTMLInputElement | null;
+    const bodyInput = mounted.container.querySelector("#rule-body") as HTMLTextAreaElement | null;
+    const WindowEvent = (globalThis as unknown as { window: { Event: typeof Event } }).window.Event;
+    await act(async () => {
+      const setVal = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set;
+      setVal?.call(nameInput, "brand-new");
+      nameInput!.dispatchEvent(new WindowEvent("input", { bubbles: true }));
+      const setTa = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")?.set;
+      setTa?.call(bodyInput, "A new workspace skill.");
+      bodyInput!.dispatchEvent(new WindowEvent("input", { bubbles: true }));
+    });
+    await act(async () => {
+      clickByText(mounted!.container, "Save");
+    });
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    // The filter reset to All, so the workspace tier is visible again.
+    const text = mounted.container.textContent ?? "";
+    expect(text).toContain("Workspace-tier rule.");
+    const allChip = Array.from(mounted.container.querySelectorAll("button[aria-pressed]")).find(
+      (b) => b.textContent?.trim() === "All",
+    );
+    expect(allChip?.getAttribute("aria-pressed")).toBe("true");
+  });
+
+  test("deleting the filtered tier's last skill recovers the list to All", async () => {
+    const realConfirm = (globalThis as unknown as { window: { confirm?: () => boolean } }).window
+      .confirm;
+    (globalThis as unknown as { window: { confirm: () => boolean } }).window.confirm = () => true;
+    try {
+      mounted = await mount(React.createElement(SkillsBrowser, { surface: "workspace" }));
+      // Filter to "Yours" — one deletable skill; deleting it empties the tier.
+      await act(async () => {
+        const yours = Array.from(mounted!.container.querySelectorAll("button[aria-pressed]")).find(
+          (b) => b.textContent?.trim() === "Yours",
+        ) as HTMLButtonElement | undefined;
+        yours?.click();
+      });
+      expect(mounted.container.textContent ?? "").not.toContain("Personal skill A.");
+
+      await act(async () => {
+        clickByText(mounted!.container, "Workspace-tier rule.");
+      });
+      await act(async () => {
+        await Promise.resolve();
+      });
+      await act(async () => {
+        await Promise.resolve();
+      });
+      await act(async () => {
+        clickByText(mounted!.container, "Delete");
+      });
+      await act(async () => {
+        await Promise.resolve();
+      });
+      await act(async () => {
+        await Promise.resolve();
+      });
+
+      // The workspace tier is gone; the filter must fall back to All rather than
+      // strand the user on an empty filtered view.
+      const text = mounted.container.textContent ?? "";
+      expect(text).not.toContain("Workspace-tier rule.");
+      expect(text).toContain("Personal skill A.");
+    } finally {
+      (globalThis as unknown as { window: { confirm?: () => boolean } }).window.confirm =
+        realConfirm;
+    }
+  });
+
   test("a row carries a visible focus indicator, not just a background tint", async () => {
     mounted = await mount(React.createElement(SkillsBrowser, { surface: "workspace" }));
     const row = Array.from(mounted.container.querySelectorAll("button")).find((b) =>
       b.textContent?.includes("Workspace-tier rule."),
     );
     const cls = row?.className ?? "";
+    // The focus tint alone is ~1.05:1 against the card — a keyboard user needs a
+    // real indicator, so the row must never suppress its outline.
     expect(cls).not.toContain("focus-visible:outline-none");
     expect(cls).toContain("focus-visible:outline-2");
   });
@@ -496,6 +603,8 @@ describe("SkillsBrowser with surface='workspace' — composition list", () => {
     const controls = row?.getAttribute("aria-controls");
     expect(controls).toBeTruthy();
     expect(row?.getAttribute("aria-expanded")).toBe("false");
+    // The id must resolve — aria-controls pointing at nothing is worse than
+    // omitting it, since AT announces a target that isn't there.
     expect(mounted.container.querySelector(`#${CSS.escape(controls as string)}`)).not.toBeNull();
   });
 
