@@ -164,6 +164,21 @@ import {
 
 const DEFAULT_WORK_DIR = join(homedir(), ".nimblebrain");
 const DEFAULT_MODEL = "claude-opus-5";
+/**
+ * Fallback for the `fast` slot when neither `models.fast` nor an operator
+ * `defaultModel` names one. Deliberately NOT `DEFAULT_MODEL`: the slot exists
+ * for short auxiliary calls (conversation titling, history compaction, the
+ * home briefing) made outside the agentic loop on budgets sized to their
+ * answer, not to a reasoning trace. Pointing it at a frontier model is both
+ * 5x the token price on the runtime's highest-frequency paths and a
+ * correctness risk — on models that think unless told otherwise, `max_tokens`
+ * caps thinking plus visible text together, so a 30-token title budget can be
+ * spent entirely on reasoning and return nothing. Anthropic's `thinking:
+ * {type: "disabled"}` is not expressible through the current provider (it is
+ * dropped before serialization), so the durable guarantee is the model choice
+ * itself.
+ */
+const DEFAULT_FAST_MODEL = "claude-haiku-4-5-20251001";
 
 import { DEFAULT_MAX_INPUT_TOKENS, DEFAULT_MAX_ITERATIONS } from "../limits.ts";
 import { resolveMaxOutputTokens } from "./resolve-max-output-tokens.ts";
@@ -539,7 +554,7 @@ export class Runtime {
       const fallback = config.defaultModel ?? DEFAULT_MODEL;
       const slots: ModelSlots = {
         default: models?.default ?? fallback,
-        fast: models?.fast ?? fallback,
+        fast: models?.fast ?? config.defaultModel ?? DEFAULT_FAST_MODEL,
         reasoning: models?.reasoning ?? fallback,
       };
       return slots[slot];
@@ -3594,7 +3609,7 @@ export class Runtime {
     const fallback = this.config.defaultModel ?? DEFAULT_MODEL;
     const base: ModelSlots = {
       default: resolveModelString(models?.default ?? fallback),
-      fast: resolveModelString(models?.fast ?? fallback),
+      fast: resolveModelString(models?.fast ?? this.config.defaultModel ?? DEFAULT_FAST_MODEL),
       reasoning: resolveModelString(models?.reasoning ?? fallback),
     };
     // Merge workspace model overrides from request context (partial — only overrides specified slots)

@@ -497,6 +497,7 @@ export async function summarizeMessages(
     messages,
     summarizerTranscriptBudgetTokens(opts.summarizerContextTokens),
   );
+  const providerOptions = shortCallProviderOptions(opts.modelString ?? null);
   const startedAt = Date.now();
   const result = await model.doGenerate({
     prompt: [
@@ -504,7 +505,7 @@ export async function summarizeMessages(
       { role: "user", content: [{ type: "text", text: transcript }] },
     ],
     maxOutputTokens: opts.maxOutputTokens ?? SUMMARY_MAX_OUTPUT_TOKENS,
-    providerOptions: shortCallProviderOptions(opts.modelString ?? null),
+    ...(Object.keys(providerOptions).length > 0 ? { providerOptions } : {}),
     abortSignal: AbortSignal.timeout(SUMMARY_TIMEOUT_MS),
   });
   // Report usage before the empty-summary guard — the call was billed

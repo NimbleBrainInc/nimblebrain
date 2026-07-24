@@ -9,6 +9,16 @@ import { escapeClosingTags } from "./escape-closing-tags.ts";
 const TITLE_TIMEOUT_MS = 45_000;
 
 /**
+ * Output ceiling for the title call. A title is a handful of tokens, so this
+ * is not a target — it's headroom. `max_tokens` bounds thinking *plus* visible
+ * text on reasoning models, and a ceiling sized to the answer alone lets a
+ * short reasoning trace consume the whole allowance and return no title (the
+ * failure is silent: the catch below yields a truncated first message
+ * instead). Costs nothing in practice — the model still emits ~10 tokens.
+ */
+const TITLE_MAX_OUTPUT_TOKENS = 512;
+
+/**
  * Generate a short conversation title using the provided model.
  * Non-blocking — call fire-and-forget after first turn.
  *
@@ -16,11 +26,11 @@ const TITLE_TIMEOUT_MS = 45_000;
  * outside the agentic loop, so without this its cost is invisible to the
  * usage aggregator.
  *
- * `modelString` is the slot string backing `model`. Pass it: the 30-token
- * budget below caps thinking *plus* the title, so on a reasoning model that
- * thinks by default the whole allowance goes to reasoning and this returns a
- * heuristic fallback for every conversation, silently. See
- * `shortCallProviderOptions`.
+ * `modelString` is the slot string backing `model`. Pass it: the output
+ * ceiling caps thinking *plus* the title, so on a reasoning model that thinks
+ * by default a long enough trace leaves no room for the title and this returns
+ * a heuristic fallback for every conversation, silently. See
+ * `shortCallProviderOptions` and `TITLE_MAX_OUTPUT_TOKENS`.
  */
 export async function generateTitle(
   model: LanguageModelV3,
@@ -31,6 +41,7 @@ export async function generateTitle(
 ): Promise<string> {
   try {
     const transcript = formatTitleTranscript(userMessage, assistantResponse);
+    const providerOptions = shortCallProviderOptions(modelString ?? null);
     const startedAt = Date.now();
     const result = await model.doGenerate({
       prompt: [
@@ -50,8 +61,8 @@ export async function generateTitle(
           ],
         },
       ],
-      maxOutputTokens: 30,
-      providerOptions: shortCallProviderOptions(modelString ?? null),
+      maxOutputTokens: TITLE_MAX_OUTPUT_TOKENS,
+      ...(Object.keys(providerOptions).length > 0 ? { providerOptions } : {}),
       abortSignal: AbortSignal.timeout(TITLE_TIMEOUT_MS),
     });
     onUsage?.(tokenUsageFromV3(result.usage), Date.now() - startedAt);

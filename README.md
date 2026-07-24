@@ -714,6 +714,8 @@ These are non-negotiable patterns. Violating them causes production bugs:
 | Conversation store | JSONL in `~/.nimblebrain/conversations/` |
 | Conversation store (programmatic) | In-memory |
 
+> **Cost note.** Out of the box `default` and `reasoning` are a frontier model, and an unset `maxOutputTokens` resolves to that model's own ceiling — so every call is sized for 128,000 output tokens and asks for `xhigh` thinking effort. That is a deliberate quality-first default, not a mistake, but it is not the cheapest configuration. Point `models.default` at a smaller model, or set `maxOutputTokens`, if spend matters more than headroom. The `fast` slot is Haiku precisely so titling, compaction, and briefing don't inherit this.
+
 ### Dependencies
 
 | Package | Purpose |

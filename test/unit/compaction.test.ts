@@ -270,11 +270,9 @@ describe("compactConversationMessages — large fold + small summarizer (product
 // --- compactConversationMessages (the wiring helper) -----------------------
 
 describe("compactConversationMessages", () => {
-  test("suppresses thinking on a reasoning summarizer", async () => {
-    // The summary budget caps thinking plus the summary. A reasoning
-    // summarizer that spends it thinking returns nothing, `summarizeMessages`
-    // throws "compaction summary was empty", and compaction silently no-ops
-    // while context keeps growing.
+  test("threads the slot string into the short-call options", async () => {
+    // What reaches the wire is pinned in short-call-options.test.ts; this only
+    // checks the slot string is threaded through to the helper at all.
     const msgs = conversation(40, 800);
     let captured: Record<string, unknown> | undefined;
     const model = {
@@ -291,7 +289,7 @@ describe("compactConversationMessages", () => {
       onEvent: () => {},
     });
 
-    expect(captured?.anthropic).toEqual({ thinking: { type: "disabled" } });
+    expect(captured?.anthropic).toEqual({ effort: "low" });
   });
 
   test("compacts: emits one event and returns summary seed + kept tail", async () => {

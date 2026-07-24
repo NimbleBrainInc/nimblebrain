@@ -60,9 +60,11 @@ import {
  *   maxOutputTokens 32K  → budget  28672 → "high"
  *   maxOutputTokens 128K → budget 123904 → "xhigh"
  *
- * `xhigh` is the ceiling: the platform does not offer `max`, and no operator
- * setting reaches it — `safeThinkingBudget` clamps every requested budget to
- * `maxOutputTokens - 4096`, and effort is derived from that budget alone.
+ * `xhigh` is the ceiling: the platform does not offer `max`. Nothing reaches
+ * it, because this function is the only source of `effort` and its top band
+ * ends here — not because budgets are bounded. (They aren't, uniformly:
+ * `safeThinkingBudget` clamps the `enabled` path to `maxOutputTokens - 4096`,
+ * but the `adaptive` path passes an operator budget through untouched.)
  * This is deliberate. `resolveMaxOutputTokens` defaults to the model's full
  * catalog ceiling, so the top band is what an install that sets no
  * `maxOutputTokens` gets on *every* call, and Anthropic reserves `max` for

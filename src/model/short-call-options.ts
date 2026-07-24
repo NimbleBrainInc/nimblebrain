@@ -15,8 +15,16 @@ import { getModelByString, getProviderFromModel } from "./catalog.ts";
  * make this the default rather than the exception: on Claude Opus 5, omitting
  * `thinking` entirely runs adaptive thinking, where Opus 4.7/4.8 ran none.
  *
- * Callers: conversation titling (30-token budget), history compaction, and
- * the home briefing.
+ * **Anthropic cannot be told to stop thinking from here.** `@ai-sdk/anthropic`
+ * serializes a `thinking` block only for `enabled` and `adaptive`; `disabled`
+ * is accepted by the options schema and then dropped, producing a request byte-
+ * identical to sending nothing (`test/unit/short-call-options.test.ts` pins
+ * this against the pinned provider). `output_config.effort` does reach the
+ * wire, so the Anthropic arm asks for the shallowest thinking available rather
+ * than none. It reduces the failure mode; it does not remove it. The guarantee
+ * on the default path is the model itself — see `DEFAULT_FAST_MODEL`.
+ *
+ * Callers: conversation titling, history compaction, and the home briefing.
  */
 export function shortCallProviderOptions(modelString: string | null): SharedV3ProviderOptions {
   if (!modelString) return {};
@@ -25,7 +33,7 @@ export function shortCallProviderOptions(modelString: string | null): SharedV3Pr
   if (!model?.capabilities.reasoning) return {};
   switch (provider) {
     case "anthropic":
-      return { anthropic: { thinking: { type: "disabled" } } };
+      return { anthropic: { effort: "low" } };
     case "google":
       return { google: { thinkingConfig: { thinkingBudget: 0 } } };
     case "openai":
