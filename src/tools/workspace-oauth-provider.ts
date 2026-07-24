@@ -402,6 +402,14 @@ async function postRevoke(
     method: "POST",
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
     body: params.toString(),
+    // Don't follow redirects on a request that carries the refresh token +
+    // client_secret: `validateBundleUrl` vetted `endpoint`, but a 307/308
+    // would re-POST the credential body to an unvetted `Location` (a
+    // cross-origin/internal target). `manual` keeps the credential on the
+    // validated origin — the redirect is surfaced as a non-2xx (RFC 7009
+    // servers respond directly, so a 3xx is non-conformant) and falls through
+    // to the failed-revoke return below, never chased.
+    redirect: "manual",
   });
 
   if (res.ok) return true;
@@ -1773,9 +1781,10 @@ export class WorkspaceOAuthProvider implements OAuthClientProvider {
         bundleOrigin,
         this.allowInsecureRemotes,
       );
-      // Try each AS in order. First one that advertises a string revocation_endpoint
-      // wins — including an empty string (a downstream `if (endpoint)` guard then
-      // skips the actual revoke), matching the original first-string-wins semantics.
+      // Try each AS in order. First one that advertises a usable
+      // revocation_endpoint (a well-formed URL that passes SSRF/scheme
+      // validation) wins. An AS whose endpoint is malformed, relative, or
+      // rejected yields undefined and we fall through to the next origin.
       for (const asOrigin of asOrigins) {
         const endpoint = await this.fetchRevocationEndpoint(fetcher, asOrigin);
         if (endpoint !== undefined) return endpoint;
@@ -1805,7 +1814,21 @@ export class WorkspaceOAuthProvider implements OAuthClientProvider {
       const res = await fetcher(metadataUrl);
       if (!res.ok) return undefined;
       const meta = (await res.json()) as { revocation_endpoint?: unknown };
-      if (typeof meta.revocation_endpoint === "string") return meta.revocation_endpoint;
+      if (typeof meta.revocation_endpoint === "string") {
+        // The endpoint is a URL lifted from the (attacker-influenceable) AS
+        // metadata *body* — an independent target from the metadata URL
+        // validated above, and one we POST the refresh token + client_secret
+        // to. Re-validate it against the same SSRF/scheme rules so a
+        // malicious server can't point revocation at a private/metadata
+        // address or a non-HTTPS host. A malformed or rejected endpoint
+        // throws into the catch below → treated as "none advertised", which
+        // matches this method's best-effort contract (local cleanup still
+        // runs; upstream tokens lapse at their natural expiry).
+        validateBundleUrl(new URL(meta.revocation_endpoint), {
+          allowInsecure: this.allowInsecureRemotes,
+        });
+        return meta.revocation_endpoint;
+      }
     } catch (innerErr) {
       log.debug(
         "mcp",
