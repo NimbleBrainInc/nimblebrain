@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 // Canonical shapes from `src/tools/platform/schemas/compose.ts`; mirrored
 // here via codegen so server + web can't drift.
@@ -17,12 +17,14 @@ import { parseToolResponse } from "../lib/tool-response";
  * Full-page context inspector — the room the In-context popover opens into.
  *
  * Answers "what is in this conversation's context window, and what is the exact
- * text of each part." The budget bar (recorded latest turn) frames the whole
- * window; the layer list drills the live composition; the reading pane shows a
- * layer's composed body verbatim. Both reads are pure views over telemetry the
- * runtime already records — `compose__assembled_context` (the budget + skills
- * digest) and `compose__effective_context` (the composition, layer by layer,
- * with bodies).
+ * text of each part." A single scrolling column: the budget frames the whole
+ * window, then each composition layer expands in place to reveal its composed
+ * body verbatim. One scroll region, so it stays legible however narrow the
+ * column gets beside the docked chat.
+ *
+ * Pure views over telemetry the runtime already records —
+ * `compose__assembled_context` (the budget + skills digest) and
+ * `compose__effective_context` (the composition, layer by layer, with bodies).
  */
 export function ContextInspectorPage() {
   const { slug, convId } = useParams<{ slug: string; convId: string }>();
@@ -32,52 +34,98 @@ export function ContextInspectorPage() {
   const [budgetError, setBudgetError] = useState<string | null>(null);
   const [compositionError, setCompositionError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
-  const [selectedLayer, setSelectedLayer] = useState<string | null>(null);
+  const [open, setOpen] = useState<Set<string>>(new Set());
   const [bucket, setBucket] = useState<string | null>(null);
 
-  const load = useCallback(async () => {
+  // Re-armed by the load effect below on every :convId change, so the first
+  // layer auto-expands for each conversation (the route element is reused).
+  const openedInitial = useRef(false);
+
+  // Load the budget + composition for the current conversation. The route
+  // element is reused across a :convId change (the docked chat stays mounted),
+  // so each change drops the prior conversation's data, expansion state, and
+  // auto-open latch, and — via the cleanup flag — ignores that conversation's
+  // reads still in flight. Otherwise a slow A read lands in B's view (B's id
+  // over A's budget, A's composed body as B's). The two reads are independent,
+  // so each renders as it resolves and one failing doesn't blank the other;
+  // the empty/error branches gate on an absent digest, so clearing it also lets
+  // a failed budget read surface rather than leaving stale numbers on screen.
+  useEffect(() => {
     if (!convId) return;
+    let cancelled = false;
     setLoading(true);
     setBudgetError(null);
     setCompositionError(null);
-    // Independent reads: the budget (small, recorded) and the composition
-    // (larger, recomposed) render as each resolves; one failing doesn't blank
-    // the other.
+    setDigest(null);
+    setComposition(null);
+    setOpen(new Set());
+    openedInitial.current = false;
     const budget = callTool("compose", "assembled_context", { conversation_id: convId })
-      .then((res) => setDigest(parseToolResponse<ComposeAssembledContextOutput>(res)))
-      .catch((err) =>
-        setBudgetError(err instanceof Error ? err.message : "Failed to load the budget."),
-      );
+      .then((res) => {
+        if (!cancelled) setDigest(parseToolResponse<ComposeAssembledContextOutput>(res));
+      })
+      .catch((err) => {
+        if (!cancelled)
+          setBudgetError(err instanceof Error ? err.message : "Failed to load the budget.");
+      });
     const comp = callTool("compose", "effective_context", { conversation_id: convId })
-      .then((res) => setComposition(parseToolResponse<ComposeEffectiveContextOutput>(res)))
-      .catch((err) =>
-        setCompositionError(err instanceof Error ? err.message : "Failed to compose the context."),
-      );
-    await Promise.allSettled([budget, comp]);
-    setLoading(false);
+      .then((res) => {
+        if (!cancelled) setComposition(parseToolResponse<ComposeEffectiveContextOutput>(res));
+      })
+      .catch((err) => {
+        if (!cancelled)
+          setCompositionError(
+            err instanceof Error ? err.message : "Failed to compose the context.",
+          );
+      });
+    void Promise.allSettled([budget, comp]).then(() => {
+      if (!cancelled) setLoading(false);
+    });
+    return () => {
+      cancelled = true;
+    };
   }, [convId]);
 
-  useEffect(() => {
-    void load();
-  }, [load]);
-
-  // Select the first visible layer once the composition arrives, so the
-  // reading pane is never empty when there's something to read.
   const visibleLayers = useMemo(
     () => (composition ? filterLayers(composition.layers, bucket) : []),
     [composition, bucket],
   );
-  useEffect(() => {
-    if (visibleLayers.length === 0) {
-      setSelectedLayer(null);
-      return;
-    }
-    if (!visibleLayers.some((l) => layerKey(l) === selectedLayer)) {
-      setSelectedLayer(layerKey(visibleLayers[0]));
-    }
-  }, [visibleLayers, selectedLayer]);
 
-  const selected = visibleLayers.find((l) => layerKey(l) === selectedLayer) ?? null;
+  // Open the first layer once the composition arrives, so the reader lands on
+  // something rather than an all-collapsed list. Toggles after that are the
+  // user's. The latch is re-armed by the load effect above per conversation.
+  useEffect(() => {
+    if (!openedInitial.current && visibleLayers.length > 0) {
+      openedInitial.current = true;
+      setOpen(new Set([layerKey(visibleLayers[0])]));
+    }
+  }, [visibleLayers]);
+
+  const toggle = useCallback((key: string) => {
+    setOpen((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  }, []);
+
+  // Selecting a budget bucket is a drill-in, so reveal it: open the first layer
+  // that becomes visible under the filter (added, not replacing, so the reader's
+  // other expansions survive). Clearing the filter forces nothing open.
+  const selectBucket = useCallback(
+    (next: string | null) => {
+      setBucket(next);
+      if (next && composition) {
+        const visible = filterLayers(composition.layers, next);
+        if (visible.length > 0) {
+          const first = layerKey(visible[0]);
+          setOpen((prev) => new Set(prev).add(first));
+        }
+      }
+    },
+    [composition],
+  );
 
   const navigate = useNavigate();
   // Return to wherever the inspector was opened from (an app, the conversations
@@ -137,25 +185,23 @@ export function ContextInspectorPage() {
       )}
 
       {digest && digest.runId !== null && (
-        <>
+        <div className="flex-1 min-h-0 overflow-y-auto">
           <BudgetBar
             sources={digest.sources}
             totalTokens={digest.totalTokens}
             active={bucket}
-            onSelect={setBucket}
+            onSelect={selectBucket}
           />
-          <div className="flex-1 min-h-0 grid grid-cols-[minmax(0,44%)_minmax(0,1fr)]">
-            <LayerListPane
-              layers={visibleLayers}
-              bucket={bucket}
-              selected={selectedLayer}
-              onSelect={setSelectedLayer}
-              loading={loading && !composition}
-              error={compositionError}
-            />
-            <ReadingPane layer={selected} warnings={composition?.warnings ?? []} />
-          </div>
-        </>
+          <LayerAccordion
+            layers={visibleLayers}
+            open={open}
+            onToggle={toggle}
+            bucket={bucket}
+            loading={loading && !composition}
+            error={compositionError}
+            warnings={composition?.warnings ?? []}
+          />
+        </div>
       )}
     </div>
   );
@@ -180,7 +226,10 @@ function BudgetBar({
   const ordered = orderedSources(sources);
   const max = Math.max(totalTokens, 1);
   return (
-    <div className="shrink-0 px-6 py-4 border-b border-border" data-testid="context-budget">
+    <div
+      className="sticky top-0 z-10 bg-background px-6 py-4 border-b border-border"
+      data-testid="context-budget"
+    >
       {/* Equal-width cards: the token size drives the inner bar, never the card
           width, so a small bucket (history) stays readable next to a large one
           (tools) at any container width. */}
@@ -254,7 +303,7 @@ function BudgetBar({
   );
 }
 
-// ── layer list ───────────────────────────────────────────────────────────
+// ── layers (drill-in-place) ────────────────────────────────────────────────
 
 const LAYER_LABEL: Record<string, string> = {
   default_identity: "Identity (default)",
@@ -311,139 +360,135 @@ function filterLayers(layers: TracedLayerView[], bucket: string | null): TracedL
   return layers;
 }
 
-function LayerListPane({
+function LayerAccordion({
   layers,
+  open,
+  onToggle,
   bucket,
-  selected,
-  onSelect,
   loading,
   error,
+  warnings,
 }: {
   layers: TracedLayerView[];
+  open: Set<string>;
+  onToggle: (key: string) => void;
   bucket: string | null;
-  selected: string | null;
-  onSelect: (key: string) => void;
   loading: boolean;
   error: string | null;
+  warnings: string[];
 }) {
   const max = Math.max(...layers.map((l) => l.tokens), 1);
   return (
-    <div className="border-r border-border flex flex-col min-h-0" data-testid="context-layers">
-      <div className="shrink-0 px-5 pt-3 pb-2 text-3xs font-semibold uppercase tracking-wider text-muted-foreground">
+    <div>
+      <div className="px-6 pt-3 pb-2 text-3xs font-semibold uppercase tracking-wider text-muted-foreground">
         Composition
         <span className="font-normal normal-case tracking-normal text-2xs text-muted-foreground/60">
           {" "}
           · what would load now
         </span>
       </div>
-      <div className="overflow-y-auto flex-1">
-        {loading && <div className="px-5 py-3 text-xs text-muted-foreground">Composing…</div>}
-        {error && <div className="px-5 py-3 text-xs text-destructive">{error}</div>}
-        {!loading && !error && layers.length === 0 && (
-          <div className="px-5 py-3 text-xs text-muted-foreground">
-            {bucket === "skills"
-              ? "No matched skills entered this turn's prompt. The budget above still counts everything that loaded."
-              : "Nothing composes for this conversation right now."}
-          </div>
-        )}
-        {layers.map((l) => {
-          const isSel = layerKey(l) === selected;
-          return (
-            <button
-              key={layerKey(l)}
-              type="button"
-              onClick={() => onSelect(layerKey(l))}
-              className={`w-full text-left px-5 py-2.5 space-y-1 transition-colors ${
-                isSel ? "bg-warm/10 shadow-[inset_3px_0_0_var(--warm)]" : "hover:bg-muted"
-              }`}
-            >
-              <div className="flex items-baseline gap-2">
-                <span className="text-sm font-medium flex-1 min-w-0 truncate">
-                  {layerTitle(l)}
-                  {l.segment === "volatile" && (
-                    <span className="text-3xs text-muted-foreground/60"> · per-turn</span>
-                  )}
-                </span>
-                <span className="text-3xs text-muted-foreground tabular-nums shrink-0">
-                  {formatTokenCount(l.tokens)} tok
-                </span>
-              </div>
-              <span className="block h-1 rounded-full bg-muted overflow-hidden">
-                <span
-                  className="block h-full rounded-full bg-muted-foreground/80"
-                  style={{ width: `${Math.round((l.tokens / max) * 100)}%` }}
-                />
-              </span>
-              {layerDescriptor(l) && (
-                <div className="text-3xs text-muted-foreground/80 truncate" title={l.source}>
-                  {layerDescriptor(l)}
-                </div>
-              )}
-            </button>
-          );
-        })}
-      </div>
+      {loading && <div className="px-6 py-3 text-xs text-muted-foreground">Composing…</div>}
+      {error && <div className="px-6 py-3 text-xs text-destructive">{error}</div>}
+      {!loading && !error && layers.length === 0 && (
+        <div className="px-6 py-3 text-xs text-muted-foreground">
+          {bucket === "skills"
+            ? "No matched skills entered this turn's prompt. The budget above still counts everything that loaded."
+            : "Nothing composes for this conversation right now."}
+        </div>
+      )}
+      {layers.map((l) => (
+        <AccordionRow
+          key={layerKey(l)}
+          layer={l}
+          open={open.has(layerKey(l))}
+          onToggle={() => onToggle(layerKey(l))}
+          max={max}
+        />
+      ))}
+      {warnings.length > 0 && layers.length > 0 && (
+        <div className="px-6 py-4 text-3xs text-muted-foreground space-y-1 border-t border-border">
+          {warnings.map((w) => (
+            <p key={w} className="m-0">
+              {w}
+            </p>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
 
-// ── reading pane ───────────────────────────────────────────────────────────
-
-function ReadingPane({ layer, warnings }: { layer: TracedLayerView | null; warnings: string[] }) {
-  if (!layer) {
-    return (
-      <div className="flex items-center justify-center p-8 text-sm text-muted-foreground/60 bg-muted/50">
-        Select a layer to read its composed body.
-      </div>
-    );
-  }
+function AccordionRow({
+  layer,
+  open,
+  onToggle,
+  max,
+}: {
+  layer: TracedLayerView;
+  open: boolean;
+  onToggle: () => void;
+  max: number;
+}) {
+  const bodyId = useId();
   return (
-    <div className="flex flex-col min-h-0 bg-muted/50" data-testid="context-reading-pane">
-      <div className="shrink-0 px-6 pt-4 pb-3 border-b border-border">
-        <div className="flex items-baseline gap-2 flex-wrap">
-          <h2 className="text-base font-semibold">{layerTitle(layer)}</h2>
-          {layer.segment === "volatile" && (
-            <span className="text-3xs rounded-full px-2 py-0.5 bg-muted text-muted-foreground">
-              per-turn
-            </span>
-          )}
-          <span className="text-2xs text-muted-foreground tabular-nums ml-auto">
+    <div className="border-b border-border">
+      <button
+        type="button"
+        onClick={onToggle}
+        aria-expanded={open}
+        aria-controls={bodyId}
+        className={`w-full text-left px-6 py-3 space-y-1.5 transition-colors ${
+          open ? "bg-warm/5" : "hover:bg-muted/60"
+        }`}
+      >
+        <div className="flex items-center gap-2">
+          <span
+            className={`text-muted-foreground shrink-0 transition-transform ${open ? "rotate-90" : ""}`}
+            aria-hidden
+          >
+            ▸
+          </span>
+          <span className="text-sm font-medium flex-1 min-w-0 truncate" title={layer.source}>
+            {layerTitle(layer)}
+            {layer.segment === "volatile" && (
+              <span className="text-3xs text-muted-foreground/60"> · per-turn</span>
+            )}
+          </span>
+          <span className="text-3xs text-muted-foreground tabular-nums shrink-0">
             {formatTokenCount(layer.tokens)} tok
           </span>
         </div>
-        {layerDescriptor(layer) && (
-          <div className="mt-1 text-2xs text-muted-foreground" title={layer.source}>
-            {layerDescriptor(layer)}
-          </div>
-        )}
-        {layer.subItems && layer.subItems.length > 0 && (
-          <div className="mt-2 flex flex-wrap gap-1.5">
-            {layer.subItems.map((sub) => (
-              <span
-                key={sub.id}
-                className="text-3xs rounded px-1.5 py-0.5 bg-muted text-muted-foreground"
-                title={sub.source}
-              >
-                {skillName(sub.id)}
-              </span>
-            ))}
-          </div>
-        )}
-      </div>
-      <div className="overflow-y-auto flex-1 p-6">
-        <pre className="text-xs leading-relaxed whitespace-pre-wrap font-mono text-foreground bg-card border border-border rounded-lg p-4 m-0">
-          {layer.text}
-        </pre>
-        {warnings.length > 0 && (
-          <div className="mt-3 text-3xs text-muted-foreground space-y-1">
-            {warnings.map((w) => (
-              <p key={w} className="m-0">
-                {w}
-              </p>
-            ))}
-          </div>
-        )}
-      </div>
+        <div className="pl-5 flex items-center gap-2">
+          <span className="block h-1 flex-1 rounded-full bg-muted overflow-hidden">
+            <span
+              className="block h-full rounded-full bg-muted-foreground/80"
+              style={{ width: `${Math.round((layer.tokens / max) * 100)}%` }}
+            />
+          </span>
+          {layerDescriptor(layer) && (
+            <span className="text-3xs text-muted-foreground/80 shrink-0">
+              {layerDescriptor(layer)}
+            </span>
+          )}
+        </div>
+      </button>
+      {open && (
+        <div id={bodyId} className="px-6 pt-3 pb-5 pl-11">
+          <LayerBody layer={layer} />
+        </div>
+      )}
     </div>
+  );
+}
+
+/** The layer's composed body, verbatim — the exact text that entered the window
+ *  (section header, each skill's provenance line, the containment wrapper, and
+ *  the bodies), so the inspector shows the truth the runtime composed rather than
+ *  a re-derived copy of it. */
+function LayerBody({ layer }: { layer: TracedLayerView }) {
+  return (
+    <pre className="text-xs leading-relaxed whitespace-pre-wrap break-words font-mono text-foreground bg-muted/40 border border-border rounded-lg p-4 m-0">
+      {layer.text}
+    </pre>
   );
 }
