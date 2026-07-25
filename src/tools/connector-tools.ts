@@ -984,13 +984,14 @@ async function handleListInstalled(
   // registry (includes local stdio, local URL, Synapse apps, and remote
   // OAuth). The `list_apps` tool surfaces the same registry-installed set.
   //
-  // Read directly from the lifecycle's instance map. The shorthand
-  // `getBundleInstancesForWorkspace` additionally filters by
-  // `wsRegistry.sourceNames()` — appropriate for the agent's app list
-  // (disconnected bundle = unusable for tool calls), wrong for the
-  // management UI. After Disconnect we tear down the McpSource
-  // intentionally; the bundle is still INSTALLED and the user needs to see
-  // it on this page to click Connect again.
+  // Read directly from the lifecycle's instance map, NOT the shorthand
+  // `getBundleInstancesForWorkspace` — see the rationale on that method for why
+  // its registry filter is load-bearing and why this page must bypass it.
+  //
+  // The short version: a bundle can be installed and unregistered (torn down by
+  // Disconnect, or a boot-start that failed), and this page is where the user
+  // clicks Connect / Reconnect to get it back. Filtering it out would hide the
+  // only affordance that recovers it.
   if ((scope === "all" || scope === "workspace") && wsId) {
     const deps: InstalledEntryDeps = {
       ctx,

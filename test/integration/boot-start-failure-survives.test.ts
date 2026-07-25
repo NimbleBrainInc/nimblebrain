@@ -196,8 +196,8 @@ describe("startWorkspaceBundles — unreachable URL bundle at boot", () => {
     const summary = lines.find((l) => l.includes("bundles in"));
     expect(summary).toContain("Started 0/1 bundles");
     expect(summary).toContain("1 failed to start");
-    // It must not promise a retry: recovery runs through the app's own doors, so
-    // a UI-less bundle has nothing to trigger it and stays down until restart.
+    // The line reports the count and the tally, and promises nothing about
+    // recovery — which is a different subsystem's business.
     expect(summary).not.toContain("retried");
   }, 30_000);
 
