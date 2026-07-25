@@ -96,8 +96,6 @@ describe("theme token map", () => {
     expect(light["--color-text-accent"]).not.toBe(dark["--color-text-accent"]);
   });
 
-
-
   test("all token keys use valid prefixes", () => {
     const validPrefixes = ["--color-", "--font-", "--border-", "--shadow-", "--nb-"];
     for (const key of Object.keys(LIGHT_TOKENS)) {
@@ -117,8 +115,11 @@ describe("theme token map", () => {
 });
 
 describe("buildThemeStyleBlock", () => {
-
-
+  test("wraps the declarations in a <style> tag with a :root block", () => {
+    const block = buildThemeStyleBlock("light");
+    expect(block).toContain("<style");
+    expect(block).toContain(":root {");
+  });
 
   test("body reset uses var() references, not hardcoded values", () => {
     const block = buildThemeStyleBlock("light");

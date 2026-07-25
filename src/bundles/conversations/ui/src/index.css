@@ -13,12 +13,6 @@ body {
 }
 #root { height: 100%; width: 100%; overflow-y: auto; display: flex; flex-direction: column; }
 
-/* ===== Utility ===== */
-.display {
-  font-family: var(--nb-font-heading, system-ui, sans-serif);
-  letter-spacing: -0.025em;
-}
-
 /* ===== Scrollbar ===== */
 ::-webkit-scrollbar { width: 6px; }
 ::-webkit-scrollbar-track { background: transparent; }

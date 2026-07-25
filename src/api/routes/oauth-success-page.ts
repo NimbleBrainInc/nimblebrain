@@ -23,7 +23,7 @@
 
 import { createHash } from "node:crypto";
 
-export const SUCCESS_PAGE_STYLE = `html,body{margin:0;height:100%}
+const SUCCESS_PAGE_STYLE = `html,body{margin:0;height:100%}
 body{font-family:'Hanken Grotesk',system-ui,-apple-system,BlinkMacSystemFont,sans-serif;background:#ffffff;color:#09090b;display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:100vh;padding:1rem;box-sizing:border-box;-webkit-font-smoothing:antialiased}
 .h{font-family:'Hanken Grotesk',system-ui,sans-serif;font-size:clamp(2.5rem,6.5vw,4.25rem);font-weight:500;letter-spacing:-0.02em;margin:0;animation:rise .35s ease-out both}
 .wm{margin-top:1.5rem;font-size:.7rem;letter-spacing:.2em;text-transform:uppercase;color:#5c5c66;font-weight:700;display:flex;align-items:center;gap:.55rem;animation:rise .35s ease-out .08s both}
@@ -48,3 +48,24 @@ const SUCCESS_PAGE_STYLE_SHA256 = createHash("sha256").update(SUCCESS_PAGE_STYLE
  * no directive (CSP does not gate `http-equiv="refresh"`).
  */
 export const SUCCESS_PAGE_CSP = `default-src 'none'; style-src 'sha256-${SUCCESS_PAGE_STYLE_SHA256}'; frame-ancestors 'none'; base-uri 'none'`;
+
+/**
+ * Render the page as a string. Both callers serve the identical document apart from the
+ * `<title>`, so the markup lives here with the style it depends on — including
+ * the one brand value in it, the wordmark's `fill`.
+ *
+ * `returnUrl` must already be HTML-escaped: it is interpolated into both an
+ * `http-equiv="refresh"` content attribute and an `href`, and the callers hold
+ * the escaping helper.
+ */
+export function successPageHtml(title: string, escapedReturnUrl: string): string {
+  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>${title}</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta http-equiv="refresh" content="1;url=${escapedReturnUrl}">
+<style>${SUCCESS_PAGE_STYLE}</style></head>
+<body>
+<h1 class="h">You're in.</h1>
+<div class="wm"><svg viewBox="0 0 12 12" aria-hidden="true"><path d="M6 0L12 6L6 12L0 6Z" fill="#0055FF"/></svg>NimbleBrain</div>
+<p class="fb">not redirecting? <a href="${escapedReturnUrl}">go back &rarr;</a></p>
+</body></html>`;
+}

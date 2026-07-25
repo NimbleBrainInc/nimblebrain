@@ -83,10 +83,10 @@ body {
 .dot-success { background: #22c55e; }
 .dot-failure { background: #ef4444; }
 .dot-timeout { background: #eab308; }
-.dot-disabled { background: #9797a0; }
+.dot-disabled { background: #a3a3a3; }
 .dot-backoff { background: #f97316; }
 .dot-running { background: #3b82f6; animation: breathe 1.5s ease-in-out infinite; }
-.dot-skipped { background: #9797a0; }
+.dot-skipped { background: #a3a3a3; }
 
 .backoff-badge {
   display: inline-flex; align-items: center; gap: 4px;

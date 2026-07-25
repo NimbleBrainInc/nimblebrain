@@ -29,10 +29,13 @@ export function getThemeTokens(mode: ThemeMode): ThemeTokens {
  * Reboot's `@reboot-dev/reboot-react` (via ext-apps SDK) validate against this
  * set and reject unknown keys, so anything the host sends must be in here.
  *
- * NB extensions (`--nb-*`) and out-of-spec tokens (`--color-text-accent`,
- * `--font-text-base-*`) are still injected into the iframe's inline `<style>`
- * block by `buildThemeStyleBlock` — they just don't cross the protocol
- * boundary. Iframe content that needs them uses them as local CSS vars.
+ * Everything the host injects that is *not* in this set — the `--nb-*`
+ * extensions, plus NimbleBrain's own additions to spec-shaped families
+ * (`--color-text-accent`, and the `3xs`/`2xs`/`base` steps of the type scale) —
+ * still reaches the iframe's inline `<style>` block via `buildThemeStyleBlock`.
+ * It just doesn't cross the protocol boundary. Iframe content that needs those
+ * uses them as local CSS vars. Stated as the rule rather than a list: an
+ * enumeration here silently mis-classifies the next token added.
  *
  * If the spec's variable enum grows, add entries here. TypeScript catches the
  * need via the `satisfies` check below — any key absent from

@@ -165,9 +165,7 @@ export function ConnectorDetailPage() {
               onBlur={() => setUninstallArmed(false)}
               disabled={acting !== null}
               className={`text-xs hover:underline disabled:opacity-60 ${
-                uninstallArmed
-                  ? "text-destructive font-semibold"
-                  : "text-destructive/80 hover:text-destructive"
+                uninstallArmed ? "text-destructive font-semibold" : "text-destructive"
               }`}
             >
               {acting === "uninstall"

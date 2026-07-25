@@ -17,7 +17,7 @@ import { requireAuth } from "../middleware/auth.ts";
 import { requireWorkspace } from "../middleware/workspace.ts";
 import { type AppContext, type AppEnv, apiError } from "../types.ts";
 import { profileConnectorsUrl, workspaceConnectorsUrl } from "./connectors-redirect.ts";
-import { SUCCESS_PAGE_CSP, SUCCESS_PAGE_STYLE } from "./oauth-success-page.ts";
+import { SUCCESS_PAGE_CSP, successPageHtml } from "./oauth-success-page.ts";
 
 /**
  * OAuth integration routes for outbound flows where NimbleBrain is the
@@ -477,22 +477,12 @@ function renderSuccessPage(
       : workspaceConnectorsUrl(flowOwner?.wsId ?? "");
   const safeReturnUrl = escapeHtml(returnUrl);
   // Override the platform-default CSP (`default-src 'none'`) for this
-  // response only. Without this the inline <style> below is blocked and
-  // the page renders unstyled in any deployment that doesn't override
+  // response only. Without this the page's inline <style> is blocked and
+  // it renders unstyled in any deployment that doesn't override
   // NB_CSP — i.e. all of them. The hash pins us to exactly the bytes
   // we serve.
   c.header("Content-Security-Policy", SUCCESS_PAGE_CSP);
-  return c.html(
-    `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Authorization complete</title>
-<meta name="viewport" content="width=device-width,initial-scale=1">
-<meta http-equiv="refresh" content="1;url=${safeReturnUrl}">
-<style>${SUCCESS_PAGE_STYLE}</style></head>
-<body>
-<h1 class="h">You're in.</h1>
-<div class="wm"><svg viewBox="0 0 12 12" aria-hidden="true"><path d="M6 0L12 6L6 12L0 6Z" fill="#0055FF"/></svg>NimbleBrain</div>
-<p class="fb">not redirecting? <a href="${safeReturnUrl}">go back &rarr;</a></p>
-</body></html>`,
-  );
+  return c.html(successPageHtml("Authorization complete", safeReturnUrl));
 }
 
 function sha256Hex(input: string): string {

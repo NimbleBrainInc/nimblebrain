@@ -26,7 +26,7 @@ import { requireAuth } from "../middleware/auth.ts";
 import { requireWorkspace } from "../middleware/workspace.ts";
 import { type AppContext, type AppEnv, apiError } from "../types.ts";
 import { profileConnectorsUrl, workspaceConnectorsUrl } from "./connectors-redirect.ts";
-import { SUCCESS_PAGE_CSP, SUCCESS_PAGE_STYLE } from "./oauth-success-page.ts";
+import { SUCCESS_PAGE_CSP, successPageHtml } from "./oauth-success-page.ts";
 
 /**
  * OAuth integration routes for connectors backed by Composio as a
@@ -212,17 +212,7 @@ export function composioAuthRoutes(ctx: AppContext) {
     const returnUrl = connectorsReturnUrl(owner);
     const safeReturnUrl = escapeHtml(returnUrl);
     c.header("Content-Security-Policy", SUCCESS_PAGE_CSP);
-    return c.html(
-      `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Connection complete</title>
-<meta name="viewport" content="width=device-width,initial-scale=1">
-<meta http-equiv="refresh" content="1;url=${safeReturnUrl}">
-<style>${SUCCESS_PAGE_STYLE}</style></head>
-<body>
-<h1 class="h">You're in.</h1>
-<div class="wm"><svg viewBox="0 0 12 12" aria-hidden="true"><path d="M6 0L12 6L6 12L0 6Z" fill="#0055FF"/></svg>NimbleBrain</div>
-<p class="fb">not redirecting? <a href="${safeReturnUrl}">go back &rarr;</a></p>
-</body></html>`,
-    );
+    return c.html(successPageHtml("Connection complete", safeReturnUrl));
   });
 
   // ── GET /v1/composio-auth/proxy ───────────────────────────────────
