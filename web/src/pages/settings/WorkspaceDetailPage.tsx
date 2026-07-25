@@ -17,6 +17,7 @@ import {
   TableRow,
 } from "../../components/ui/table";
 import { useSession } from "../../context/SessionContext";
+import { canWriteWorkspace } from "../../hooks/useScopedRole";
 import {
   CopyableWorkspaceId,
   EmptyState,
@@ -35,7 +36,8 @@ interface Workspace {
 
 interface Member {
   userId: string;
-  role: string;
+  /** The server's membership roles — the same union `canWriteWorkspace` reads. */
+  role: "admin" | "member";
 }
 
 interface UserInfo {
@@ -189,7 +191,12 @@ export function WorkspaceDetailPage() {
   // members". Membership is therefore the only thing this may read; an org-role
   // check here would render controls the server refuses, and `handleAdd`
   // doesn't inspect the result, so the refusal would be silent (#749).
-  const canManageMembers = members.some((m) => m.userId === currentUserId && m.role === "admin");
+  // Same rule as every other workspace write, reached differently: this page
+  // addresses a workspace by id, so it passes that workspace's membership role
+  // rather than using the active-workspace hook (which would answer for the
+  // viewer's focused workspace — usually their personal one, where they are
+  // always admin).
+  const canManageMembers = canWriteWorkspace(members.find((m) => m.userId === currentUserId)?.role);
 
   // The org-scoped Workspaces list lives at /org/workspaces.
   const backTo = "/org/workspaces";

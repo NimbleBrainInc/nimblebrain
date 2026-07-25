@@ -97,17 +97,16 @@ describe("roleAtLeast", () => {
 
 describe("canWriteWorkspace", () => {
   test("a workspace admin may write", () => {
-    expect(canWriteWorkspace(workspace("admin"))).toBe(true);
+    expect(canWriteWorkspace("admin")).toBe(true);
   });
 
   test("a workspace member may not", () => {
-    expect(canWriteWorkspace(workspace("member"))).toBe(false);
+    expect(canWriteWorkspace("member")).toBe(false);
   });
 
   test("a non-member may not", () => {
-    // `userRole: undefined` is the server's "Not a member" denial.
-    expect(canWriteWorkspace(workspace())).toBe(false);
-    expect(canWriteWorkspace(null)).toBe(false);
+    // `undefined` is the server's "Not a member" denial.
+    expect(canWriteWorkspace(undefined)).toBe(false);
   });
 
   test("org role grants no bypass — the whole point of this helper", () => {
@@ -120,13 +119,13 @@ describe("canWriteWorkspace", () => {
     // Reach says yes...
     expect(roleAtLeast(resolveScopedRole(orgAdminWhoIsOnlyAMember, ws), "ws_admin")).toBe(true);
     // ...and write says no. If these ever agree, one of them is wrong.
-    expect(canWriteWorkspace(ws)).toBe(false);
+    expect(canWriteWorkspace(ws.userRole)).toBe(false);
   });
 
   test("org owner gets no bypass either", () => {
     expect(roleAtLeast(resolveScopedRole(session("owner"), workspace("member")), "ws_admin")).toBe(
       true,
     );
-    expect(canWriteWorkspace(workspace("member"))).toBe(false);
+    expect(canWriteWorkspace("member")).toBe(false);
   });
 });
