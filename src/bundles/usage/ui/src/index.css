@@ -67,7 +67,7 @@ th {
   color: var(--color-text-secondary, #5c5c66);
   text-transform: uppercase;
   letter-spacing: 0.5px;
-  background: var(--color-background-primary, #ffffff);
+  background: var(--color-background-tertiary, #f4f4f5);
   border-bottom: 1px solid var(--color-border-primary, #e4e4e7);
 }
 th.right, td.right { text-align: right; }

@@ -93,29 +93,29 @@ The platform injects the following tokens into every iframe. Most ext-apps spec 
 
 ### Colors (ext-apps spec)
 
-| Token | Light | Dark | Use for |
-|-------|-------|------|---------|
-| `--color-background-primary` | `#ffffff` | `#000000` | Page background |
-| `--color-background-secondary` | `#ffffff` | `#0e0e10` | Card / panel backgrounds |
-| `--color-background-tertiary` | `#f4f4f5` | `#161618` | Subtle / nested backgrounds |
-| `--color-text-primary` | `#09090b` | `#fafafa` | Body text |
-| `--color-text-secondary` | `#5c5c66` | `#9b9ba4` | Captions, metadata, placeholders |
-| `--color-text-tertiary` | `#6b6b73` | `#82828c` | De-emphasized text |
-| `--color-text-accent` | `#0055FF` | `#4d90ff` | Links, primary buttons, AI accents (load-only — does not refresh on toggle) |
-| `--color-border-primary` | `#e4e4e7` | `#232326` | Borders, dividers |
-| `--color-border-secondary` | `#e4e4e7` | `#232326` | Secondary borders |
-| `--color-ring-primary` | `#0055FF` | `#4d90ff` | Focus rings |
+| Token | Use for |
+|-------|---------|
+| `--color-background-primary` | Page background |
+| `--color-background-secondary` | Card / panel backgrounds |
+| `--color-background-tertiary` | Subtle / nested backgrounds |
+| `--color-text-primary` | Body text |
+| `--color-text-secondary` | Captions, metadata, placeholders |
+| `--color-text-tertiary` | De-emphasized text |
+| `--color-text-accent` | Links, primary buttons, AI accents (load-only — does not refresh on toggle) |
+| `--color-border-primary` | Borders, dividers |
+| `--color-border-secondary` | Secondary borders |
+| `--color-ring-primary` | Focus rings |
 
 ### Typography (ext-apps spec)
 
-| Token | Value | Use for |
-|-------|-------|---------|
-| `--font-sans` | `'Hanken Grotesk', system-ui, sans-serif` | Body font |
-| `--font-mono` | `'JetBrains Mono Variable', ui-monospace, SFMono-Regular, monospace` | Code / monospace font |
-| `--font-weight-normal` | `400` | Normal weight |
-| `--font-weight-medium` | `500` | Medium weight |
-| `--font-weight-semibold` | `600` | Semibold weight |
-| `--font-weight-bold` | `700` | Bold weight |
+| Token | Use for |
+|-------|---------|
+| `--font-sans` | Body font |
+| `--font-mono` | Code / monospace font |
+| `--font-weight-normal` | Normal weight |
+| `--font-weight-medium` | Medium weight |
+| `--font-weight-semibold` | Semibold weight |
+| `--font-weight-bold` | Bold weight |
 | `--font-text-xs-size` / `-line-height` | `0.75rem` / `1rem` | Extra-small body text |
 | `--font-text-sm-size` / `-line-height` | `0.875rem` / `1.25rem` | Small body text |
 | `--font-text-base-size` / `-line-height` | `1rem` / `1.5rem` | Base body text |
@@ -126,38 +126,42 @@ The platform injects the following tokens into every iframe. Most ext-apps spec 
 
 ### Layout (ext-apps spec)
 
-| Token | Value | Use for |
-|-------|-------|---------|
-| `--border-radius-xs` | `0.25rem` | Tight corners |
-| `--border-radius-sm` | `0.5rem` | Small corners |
-| `--border-radius-md` | `0.75rem` | Default corners |
-| `--border-radius-lg` | `1rem` | Large corners |
-| `--border-radius-xl` | `1.5rem` | Extra-large corners |
-| `--border-width-regular` | `1px` | Standard border width |
+| Token | Use for |
+|-------|---------|
+| `--border-radius-xs` | Tight corners |
+| `--border-radius-sm` | Small corners |
+| `--border-radius-md` | Default corners |
+| `--border-radius-lg` | Large corners |
+| `--border-radius-xl` | Extra-large corners |
+| `--border-width-regular` | Standard border width |
 
 ### Effects (ext-apps spec)
 
-| Token | Light | Dark | Use for |
-|-------|-------|------|---------|
-| `--shadow-hairline` | `0 0 0 1px rgba(0,0,0,0.06)` | `0 0 0 1px rgba(255,255,255,0.06)` | Hairline outline |
-| `--shadow-sm` | `0 1px 2px rgba(0,0,0,0.05)` | `0 1px 2px rgba(0,0,0,0.3)` | Small elevation |
-| `--shadow-md` | `0 4px 6px -1px rgba(0,0,0,0.1)` | `0 4px 6px -1px rgba(0,0,0,0.4)` | Medium elevation |
-| `--shadow-lg` | `0 10px 15px -3px rgba(0,0,0,0.1)` | `0 10px 15px -3px rgba(0,0,0,0.4)` | Large elevation |
+| Token | Use for |
+|-------|---------|
+| `--shadow-hairline` | Hairline outline |
+| `--shadow-sm` | Small elevation |
+| `--shadow-md` | Medium elevation |
+| `--shadow-lg` | Large elevation |
+
+<Aside type="tip">
+These tables list the tokens, not their values. The values are whatever the host injects for the active theme and change with it — read them at runtime from the iframe's `:root` rather than hard-coding them, and let the fallback in your own `var()` carry the standalone case.
+</Aside>
 
 ### NimbleBrain extensions (`--nb-*`)
 
 These have no ext-apps spec equivalent. They are injected into the iframe's `<style>` block at load but do **not** cross the protocol boundary, so they will not refresh on a live theme toggle (see the caveat above).
 
-| Token | Light | Dark | Use for |
-|-------|-------|------|---------|
-| `--nb-color-accent-foreground` | `#ffffff` | `#000000` | Text on accent backgrounds |
-| `--nb-color-danger` | `#c02a24` | `#f0736a` | Errors, destructive actions |
-| `--nb-color-success` | `#0f7a4f` | `#3fbf85` | Success indicators |
-| `--nb-color-warning` | `#8a5f0a` | `#e0aa3c` | Warning indicators |
-| `--nb-color-processing` | `#6d3ecf` | `#a68bfa` | In-progress / processing state |
-| `--nb-color-processing-light` | `#f0ecfd` | `#161234` | Processing background |
-| `--nb-color-info-light` | `#eaf0ff` | `#0b1a33` | Info background |
-| `--nb-font-heading` | `'Hanken Grotesk', system-ui, sans-serif` | same | Heading font |
+| Token | Use for |
+|-------|---------|
+| `--nb-color-accent-foreground` | Text on accent backgrounds |
+| `--nb-color-danger` | Errors, destructive actions |
+| `--nb-color-success` | Success indicators |
+| `--nb-color-warning` | Warning indicators |
+| `--nb-color-processing` | In-progress / processing state |
+| `--nb-color-processing-light` | Processing background |
+| `--nb-color-info-light` | Info background |
+| `--nb-font-heading` | Heading font |
 
 <Aside type="note">
 The host injects font *names*, not font *files*. A `srcdoc` iframe is its own document and inherits no `@font-face` from the shell, so unless your app loads the face itself the value resolves to the fallback stack. Design against the fallback and treat the brand face as an enhancement — or load it in your own bundle.

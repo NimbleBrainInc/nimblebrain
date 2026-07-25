@@ -160,7 +160,7 @@ export function LinkSafetyModal({ isOpen, onClose, onConfirm, url }: LinkSafetyM
           <button
             type="button"
             onClick={handleVisit}
-            className="ml-auto inline-flex items-center gap-1.5 rounded-lg bg-primary px-4 py-2 text-sm font-semibold text-primary-foreground hover:bg-primary/80 transition-all"
+            className="ml-auto inline-flex items-center gap-1.5 rounded-lg bg-primary px-4 py-2 text-sm font-semibold text-primary-foreground hover:bg-primary/90 transition-all"
           >
             Visit site
             <ArrowUpRight style={{ width: 15, height: 15 }} />

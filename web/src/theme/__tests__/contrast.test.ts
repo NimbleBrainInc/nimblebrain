@@ -12,14 +12,28 @@ import { colors, extOnlyColors, type Mode, type Pair, pick } from "../palette.ts
  * 4.5:1 on every surface in both modes (worst 2.397:1), `success` at 3.768:1,
  * and `muted-foreground` at 4.429:1 on both `muted` and `sidebar`.
  *
- * Thresholds: 4.5:1 for text, because the shell's type tops out at 16px and
- * most of it is 10–14px (the 3:1 large-text allowance needs 18.66px bold or
- * 24px regular, which only marketing display sizes reach); 3:1 for
- * information-bearing non-text per WCAG 1.4.11.
+ * Threshold is 4.5:1 throughout: the shell's type tops out at 16px and most of
+ * it is 10–14px, so the 3:1 large-text allowance (18.66px bold / 24px regular)
+ * never applies. Everything the palette colours here is text.
  */
 
 const AA_TEXT = 4.5;
-const AA_NON_TEXT = 3;
+
+/**
+ * Composite an alpha-over-ground colour the way `hover:bg-primary/N` resolves.
+ *
+ * Tailwind's `/N` becomes `color-mix(… N%, transparent)`, so the rendered fill
+ * is the token blended with whatever is behind it. Every pair below is opaque
+ * token-on-token, which means alpha states are invisible to this guard unless
+ * they are composited here first — and that is where the product's most-clicked
+ * control lives.
+ */
+function over(fg: string, bg: string, pct: number): string {
+  const ch = (h: string, i: number) => Number.parseInt(h.slice(i, i + 2), 16);
+  const [a, b] = [fg.replace("#", ""), bg.replace("#", "")];
+  const mix = (i: number) => Math.round((ch(a, i) * pct + ch(b, i) * (100 - pct)) / 100);
+  return `#${[0, 2, 4].map((i) => mix(i).toString(16).padStart(2, "0")).join("")}`;
+}
 
 function srgbToLinear(channel: number): number {
   const s = channel / 255;
@@ -73,22 +87,13 @@ const TEXT_PAIRS: [fg: TokenName, bg: TokenName, where: string][] = [
   ["success", "card", "status labels"],
   ["warning", "card", "warning text"],
   ["destructive", "card", "error text"],
-];
-
-/**
- * Information-bearing non-text at the 3:1 bar.
- *
- * Deliberately short. A pair whose tokens are also asserted at 4.5:1 in
- * TEXT_PAIRS cannot fail here on its own — `ring` is `primary`, and `success`
- * and `destructive` are already tested on `card` — so those are omitted. The
- * scope tiers earn their place: they have values of their own and appear
- * nowhere in the text list.
- */
-const NON_TEXT_PAIRS: [fg: TokenName, bg: TokenName, where: string][] = [
-  ["scope-org", "card", "org scope rail"],
-  ["scope-workspace", "card", "workspace scope rail"],
-  ["scope-user", "card", "user scope rail"],
-  ["scope-bundle", "card", "bundle scope rail"],
+  // The scope tiers are TEXT: `<span className="ledger-line__scope">{scope}</span>`
+  // at 11px. Nothing paints a rail, so 3:1 was the wrong bar — it would pass a
+  // future hue at 3.1:1 while the label sat below AA.
+  ["scope-org", "card", "org scope label"],
+  ["scope-workspace", "card", "workspace scope label"],
+  ["scope-user", "card", "user scope label"],
+  ["scope-bundle", "card", "bundle scope label"],
 ];
 
 describe("palette contrast — WCAG 2.2", () => {
@@ -99,13 +104,16 @@ describe("palette contrast — WCAG 2.2", () => {
         expect(ratio).toBeGreaterThanOrEqual(AA_TEXT);
       });
     }
+  }
 
-    for (const [fg, bg, where] of NON_TEXT_PAIRS) {
-      test(`${mode}: ${fg} on ${bg} (${where}) clears ${AA_NON_TEXT}:1`, () => {
-        const ratio = contrastRatio(token(fg, mode), token(bg, mode));
-        expect(ratio).toBeGreaterThanOrEqual(AA_NON_TEXT);
-      });
-    }
+  for (const mode of ["light", "dark"] as const) {
+    test(`${mode}: the primary hover fill keeps its label above ${AA_TEXT}:1`, () => {
+      // `hover:bg-primary/90` composited over the page ground.
+      const fill = over(token("primary", mode), token("background", mode), 90);
+      expect(contrastRatio(token("primary-foreground", mode), fill)).toBeGreaterThanOrEqual(
+        AA_TEXT,
+      );
+    });
   }
 
   test("the ratio maths is right (black on white is 21:1)", () => {

@@ -72,7 +72,7 @@ body{font-family:'Hanken Grotesk',system-ui,-apple-system,BlinkMacSystemFont,san
 .fb a{color:#09090b;text-decoration:none;border-bottom:1px dotted #9797a0}
 .fb a:hover{color:#0055FF;border-bottom-color:#0055FF}
 @keyframes rise{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:translateY(0)}}
-@media (prefers-color-scheme:dark){body{background:#000000;color:#fafafa}.wm{color:#9b9ba4}.fb{color:#9b9ba4}.fb a{color:#fafafa;border-bottom-color:#232326}.fb a:hover{color:#4d90ff;border-bottom-color:#4d90ff}}
+@media (prefers-color-scheme:dark){body{background:#000000;color:#fafafa}.wm{color:#9b9ba4}.fb{color:#9b9ba4}.fb a{color:#fafafa;border-bottom-color:#9b9ba4}.fb a:hover{color:#4d90ff;border-bottom-color:#4d90ff}}
 @media (prefers-reduced-motion:reduce){.h,.wm{animation:none}}`;
 const SUCCESS_PAGE_STYLE_SHA256 = createHash("sha256").update(SUCCESS_PAGE_STYLE).digest("base64");
 const SUCCESS_PAGE_CSP = `default-src 'none'; style-src 'sha256-${SUCCESS_PAGE_STYLE_SHA256}'; frame-ancestors 'none'; base-uri 'none'`;

@@ -263,8 +263,8 @@ export function createAppIframe(
   // `_meta.ui.prefersBorder`. The background-color pairs with the border
   // because a bare border on a transparent frame looks half-finished.
   if (options?.prefersBorder) {
-    iframe.style.border = "1px solid var(--nb-border, rgba(0, 0, 0, 0.12))";
-    iframe.style.background = "var(--nb-surface, #ffffff)";
+    iframe.style.border = "1px solid var(--border)";
+    iframe.style.background = "var(--card)";
   } else {
     iframe.style.border = "none";
   }
