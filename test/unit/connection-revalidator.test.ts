@@ -335,9 +335,16 @@ describe("ConnectionRevalidator — timer ceiling", () => {
   it("keeps reschedules jittered at the cap, so capped pods still spread out", async () => {
     // Capping each delay instead of the interval would pin every reschedule to
     // the ceiling, synchronizing every pod sharing the provider key.
-    const delays = await collectScheduledDelays(ONE_YEAR_MS, 6);
+    const [, ...reschedules] = await collectScheduledDelays(ONE_YEAR_MS, 6);
 
-    expect(new Set(delays).size).toBeGreaterThan(1);
+    // Assert on the reschedules alone. The startup offset is random under the
+    // per-delay cap too, so including it lets that implementation pass ~7% of
+    // runs. Landing exactly on the ceiling is its signature.
+    expect(reschedules.length).toBeGreaterThan(1);
+    expect(new Set(reschedules).size).toBeGreaterThan(1);
+    for (const delay of reschedules) {
+      expect(delay).not.toBe(MAX_SETTIMEOUT_DELAY_MS);
+    }
   });
 
   it("holds the ceiling for an interval whose jitter alone would overflow", async () => {
@@ -357,9 +364,10 @@ describe("ConnectionRevalidator — timer ceiling", () => {
 
     expect(delays.length).toBeGreaterThanOrEqual(2);
     // Startup offset is random within one interval; jitter is ±20% around it.
+    // No lower-bound assertion: no overflow is reachable at this interval, so
+    // one would guard nothing and would flake on a small random offset.
     for (const delay of delays) {
       expect(delay).toBeLessThanOrEqual(360_000);
-      expect(delay).toBeGreaterThan(1);
     }
   });
 });

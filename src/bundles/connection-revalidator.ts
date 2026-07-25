@@ -140,8 +140,10 @@ export class ConnectionRevalidator {
       // startup line report a cadence the loop will not keep.
       log.warn(
         `[connection-revalidator] interval ${Math.round(requestedMs / 1000)}s exceeds the ` +
-          `${Math.round(MAX_INTERVAL_MS / 1000)}s maximum (setTimeout's 32-bit delay limit); ` +
-          "using the maximum. To stop the sweep entirely, set COMPOSIO_MONITOR_ENABLED=false.",
+          // Floor, not round: the advertised value has to be one the loop will
+          // actually accept if the operator sets it.
+          `${Math.floor(MAX_INTERVAL_MS / 1000)}s maximum (setTimeout's 32-bit delay limit); ` +
+          "using the maximum. To stop the sweep entirely, disable the monitor.",
       );
     }
     this.concurrency = Math.max(1, opts.concurrency ?? DEFAULT_CONCURRENCY);
@@ -152,7 +154,7 @@ export class ConnectionRevalidator {
   start(): void {
     if (this.timer || this.probes.size === 0) return;
     log.info(
-      `[connection-revalidator] starting (interval=${Math.round(this.intervalMs / 1000)}s, ` +
+      `[connection-revalidator] starting (interval=${Math.floor(this.intervalMs / 1000)}s, ` +
         `providers=${[...this.probes.keys()].join(",")})`,
     );
     // Random first offset within one interval so pods don't align on boot.
