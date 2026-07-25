@@ -76,9 +76,7 @@ afterEach(() => {
 
 describe("the broker credential is env-only", () => {
   it("reports not configured when COMPOSIO_API_KEY is unset", () => {
-    const cfg = validateComposioConfig();
-    expect(cfg.apiKey).toBe("");
-    expect(cfg.apiKey).toBe("");
+    expect(validateComposioConfig().apiKey).toBe("");
   });
 
   it("stays unconfigured when only a settings block is declared", () => {
@@ -95,7 +93,6 @@ describe("the broker credential is env-only", () => {
     declareComposio({ baseUrl: "https://composio.internal" });
 
     const cfg = validateComposioConfig();
-    expect(cfg.apiKey).toBe("k_env");
     expect(cfg.apiKey).toBe("k_env");
     expect(cfg.baseUrl).toBe("https://composio.internal");
   });
@@ -120,9 +117,8 @@ describe("settings — env fallback when no block is declared", () => {
   });
 
   it("honors the monitor kill switch, and only on an explicit false", () => {
-    // Absorbed from the deleted monitor-config suite: default ON, disabled only
-    // by a case/whitespace-insensitive `false`, so a malformed value fails safe
-    // to enabled rather than silently stopping the probe.
+    // Default ON: disabled only by a case/whitespace-insensitive `false`, so a
+    // malformed value fails safe to enabled rather than silently stopping the probe.
     for (const [value, expected] of [
       ["false", false],
       ["FALSE", false],
