@@ -36,20 +36,12 @@
     --text-lg: var(--font-text-lg-size);
     --text-lg--line-height: var(--font-text-lg-line-height);
 
-    --color-sidebar-ring: var(--sidebar-ring);
     --color-sidebar-border: var(--sidebar-border);
-    --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
-    --color-sidebar-primary: var(--sidebar-primary);
     --color-sidebar-foreground: var(--sidebar-foreground);
     --color-sidebar: var(--sidebar);
     --color-sidebar-hover: var(--sidebar-hover);
     --sidebar-width: var(--sidebar-width);
     --sidebar-width-collapsed: var(--sidebar-width-collapsed);
-    --color-chart-5: var(--chart-5);
-    --color-chart-4: var(--chart-4);
-    --color-chart-3: var(--chart-3);
-    --color-chart-2: var(--chart-2);
-    --color-chart-1: var(--chart-1);
     --color-ring: var(--ring);
     --color-input: var(--input);
     --color-border: var(--border);
@@ -69,11 +61,8 @@
     --color-foreground: var(--foreground);
     --color-background: var(--background);
     --color-success: var(--success);
-    --color-success-foreground: var(--success-foreground);
     --color-warning: var(--warning);
-    --color-warning-foreground: var(--warning-foreground);
     --color-processing: var(--processing);
-    --color-processing-foreground: var(--processing-foreground);
     --color-processing-light: var(--processing-light);
     --color-info-light: var(--info-light);
     /* Radius scale — single-sourced from src/theme/palette.ts (radiusScale),

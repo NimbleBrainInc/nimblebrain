@@ -83,13 +83,19 @@ const TEXT_PAIRS: [fg: TokenName, bg: TokenName, where: string][] = [
   ["primary", "card", "links inside cards"],
   ["primary-foreground", "primary", "primary button label"],
   ["processing", "background", "in-progress accent"],
-  ["processing", "processing-light", "badge text on tint"],
+  // No shell component paints this pair; both tokens project into the iframe
+  // token map, so it is asserted as an ext-apps contract pairing.
+  ["processing", "processing-light", "ext-apps tint pairing"],
   ["success", "card", "status labels"],
   ["warning", "card", "warning text"],
   ["destructive", "card", "error text"],
   // The scope tiers are TEXT: `<span className="ledger-line__scope">{scope}</span>`
-  // at 11px. Nothing paints a rail, so 3:1 was the wrong bar — it would pass a
-  // future hue at 3.1:1 while the label sat below AA.
+  // at 11px, so 4.5:1 is the bar. They are also painted as a non-text tick
+  // (`SkillsTab.tsx`), but that one is `aria-hidden` and sits beside a tier
+  // divider that names the scope in words — decorative, so 1.4.11 does not
+  // apply to it. Asserting the text bar covers both regardless: 4.5:1 is
+  // strictly stricter than the 3:1 a non-text element would need. Should that
+  // tick ever become load-bearing, it is already covered.
   ["scope-org", "card", "org scope label"],
   ["scope-workspace", "card", "workspace scope label"],
   ["scope-user", "card", "user scope label"],

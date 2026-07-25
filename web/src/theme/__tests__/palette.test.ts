@@ -144,7 +144,7 @@ describe("paletteToRootCss — shell :root/.dark match current values", () => {
       "--background: #ffffff;",
       "--primary: #0055FF;",
       "--processing: #6d3ecf;",
-      "--chart-1: #0055FF;",
+      "--scope-org: #1d4ed8;",
       "--sidebar-width: 240px;",
     ]) {
       expect(rootBlock).toContain(decl);
