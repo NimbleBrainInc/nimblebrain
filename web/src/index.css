@@ -2,8 +2,8 @@
 @import "tw-animate-css";
 @import "shadcn/tailwind.css";
 
-/* Fonts: Satoshi (body) + Erode (display) via Fontshare */
-/* JetBrains Mono via Fontsource */
+/* Fonts: Hanken Grotesk (display + UI) and Newsreader (agent prose in chat)
+   via Google Fonts, loaded in index.html; JetBrains Mono via Fontsource */
 @import "@fontsource-variable/jetbrains-mono";
 
 /* Brand palette :root/.dark values — generated from src/theme/palette.ts */
@@ -38,8 +38,6 @@
 
     --color-sidebar-ring: var(--sidebar-ring);
     --color-sidebar-border: var(--sidebar-border);
-    --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
-    --color-sidebar-accent: var(--sidebar-accent);
     --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
     --color-sidebar-primary: var(--sidebar-primary);
     --color-sidebar-foreground: var(--sidebar-foreground);
@@ -184,7 +182,7 @@
   font-weight: var(--font-weight-normal);
   color: var(--foreground);
   background: var(--muted);
-  padding: 0.5rem 0.8125rem;
+  padding: 0.5rem 0.75rem;
   border-radius: var(--border-radius-md);
   /* Radius decreases toward the speaker's edge — the corner nearest the
      sender is tightened so the bubble points at its origin. */
@@ -410,7 +408,7 @@
   opacity: 0.5;
   display: inline-block;
 }
-.turn-pill__icon--error { color: var(--primary); }
+.turn-pill__icon--error { color: var(--destructive); }
 .turn-pill__icon--running {
   color: var(--primary);
   animation: spin 1s linear infinite;
@@ -653,9 +651,9 @@
   word-break: break-word;
 }
 .turn-pill__pre--error {
-  background: var(--primary-light);
-  border-color: var(--primary);
-  color: var(--primary);
+  background: color-mix(in srgb, var(--destructive) 10%, transparent);
+  border-color: var(--destructive);
+  color: var(--destructive);
 }
 
 /* ───────────────────────────────────────────────────────────────────────

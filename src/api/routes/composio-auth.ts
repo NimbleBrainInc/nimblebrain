@@ -64,15 +64,15 @@ import { profileConnectorsUrl, workspaceConnectorsUrl } from "./connectors-redir
  * second before the meta-refresh fires; brevity is the point.
  */
 const SUCCESS_PAGE_STYLE = `html,body{margin:0;height:100%}
-body{font-family:'Satoshi',system-ui,-apple-system,BlinkMacSystemFont,sans-serif;background:#faf9f7;color:#171717;display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:100vh;padding:1rem;box-sizing:border-box;-webkit-font-smoothing:antialiased}
-.h{font-family:'Erode',Georgia,serif;font-size:clamp(2.5rem,6.5vw,4.25rem);font-weight:500;letter-spacing:-0.02em;margin:0;animation:rise .35s ease-out both}
+body{font-family:'Hanken Grotesk',system-ui,-apple-system,BlinkMacSystemFont,sans-serif;background:#ffffff;color:#09090b;display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:100vh;padding:1rem;box-sizing:border-box;-webkit-font-smoothing:antialiased}
+.h{font-family:'Hanken Grotesk',system-ui,sans-serif;font-size:clamp(2.5rem,6.5vw,4.25rem);font-weight:500;letter-spacing:-0.02em;margin:0;animation:rise .35s ease-out both}
 .wm{margin-top:1.5rem;font-size:.7rem;letter-spacing:.2em;text-transform:uppercase;color:#737373;font-weight:700;display:flex;align-items:center;gap:.55rem;animation:rise .35s ease-out .08s both}
 .wm svg{width:.65rem;height:.65rem;display:block}
 .fb{position:fixed;bottom:1.25rem;font-size:.75rem;color:#525252;margin:0;font-weight:500}
 .fb a{color:#404040;text-decoration:none;border-bottom:1px dotted #a3a3a3}
-.fb a:hover{color:#d4620a;border-bottom-color:#d4620a}
+.fb a:hover{color:#0055FF;border-bottom-color:#0055FF}
 @keyframes rise{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:translateY(0)}}
-@media (prefers-color-scheme:dark){body{background:#0a0a09;color:#e5e5e5}.wm{color:#a3a3a3}.fb{color:#a3a3a3}.fb a{color:#d4d4d4;border-bottom-color:#525252}.fb a:hover{color:#f59542;border-bottom-color:#f59542}}
+@media (prefers-color-scheme:dark){body{background:#000000;color:#fafafa}.wm{color:#a3a3a3}.fb{color:#a3a3a3}.fb a{color:#d4d4d4;border-bottom-color:#525252}.fb a:hover{color:#4d90ff;border-bottom-color:#4d90ff}}
 @media (prefers-reduced-motion:reduce){.h,.wm{animation:none}}`;
 const SUCCESS_PAGE_STYLE_SHA256 = createHash("sha256").update(SUCCESS_PAGE_STYLE).digest("base64");
 const SUCCESS_PAGE_CSP = `default-src 'none'; style-src 'sha256-${SUCCESS_PAGE_STYLE_SHA256}'; frame-ancestors 'none'; base-uri 'none'`;
@@ -237,7 +237,7 @@ export function composioAuthRoutes(ctx: AppContext) {
 <style>${SUCCESS_PAGE_STYLE}</style></head>
 <body>
 <h1 class="h">You're in.</h1>
-<div class="wm"><svg viewBox="0 0 12 12" aria-hidden="true"><path d="M6 0L12 6L6 12L0 6Z" fill="#d4620a"/></svg>NimbleBrain</div>
+<div class="wm"><svg viewBox="0 0 12 12" aria-hidden="true"><path d="M6 0L12 6L6 12L0 6Z" fill="#0055FF"/></svg>NimbleBrain</div>
 <p class="fb">not redirecting? <a href="${safeReturnUrl}">go back &rarr;</a></p>
 </body></html>`,
     );

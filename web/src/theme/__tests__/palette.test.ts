@@ -1,6 +1,5 @@
 import { describe, expect, test } from "bun:test";
 import { getSpecThemeTokens } from "../../bridge/theme.ts";
-import { fonts } from "../palette.ts";
 import { paletteToExtAppsTokens, paletteToRootCss } from "../projections.ts";
 
 /**
@@ -33,6 +32,8 @@ const ANCHORS = {
     "--color-text-accent": "#0055FF",
     "--color-ring-primary": "#0055FF",
     "--color-border-primary": "#e4e4e7",
+    "--font-sans": "'Hanken Grotesk', system-ui, sans-serif",
+    "--nb-font-heading": "'Hanken Grotesk', system-ui, sans-serif",
   },
   dark: {
     "--color-background-primary": "#000000",
@@ -98,13 +99,6 @@ describe("paletteToExtAppsTokens — structure and anchors", () => {
     }
   });
 
-  test("font stacks come from the palette, not a literal", () => {
-    const map = paletteToExtAppsTokens("light");
-    expect(map["--font-sans"]).toBe(fonts.sans);
-    expect(map["--font-mono"]).toBe(fonts.mono);
-    expect(map["--nb-font-heading"]).toBe(fonts.heading);
-  });
-
   test("no stale Inter in either mode", () => {
     for (const mode of ["light", "dark"] as const) {
       expect(JSON.stringify(paletteToExtAppsTokens(mode))).not.toContain("Inter");
@@ -140,7 +134,6 @@ describe("paletteToRootCss — shell :root/.dark match current values", () => {
       "--primary: #0055FF;",
       "--primary-light: #eaf0ff;",
       "--processing: #6d3ecf;",
-      "--sidebar-accent: #eaf0ff;",
       "--chart-1: #0055FF;",
       "--sidebar-width: 240px;",
     ]) {

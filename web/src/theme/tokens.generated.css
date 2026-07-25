@@ -42,8 +42,6 @@
   --sidebar-foreground: #5c5c66;
   --sidebar-primary: #0055FF;
   --sidebar-primary-foreground: #ffffff;
-  --sidebar-accent: #eaf0ff;
-  --sidebar-accent-foreground: #0055FF;
   --sidebar-border: #e4e4e7;
   --sidebar-ring: #0055FF;
   --sidebar-hover: #f4f4f5;
@@ -128,8 +126,6 @@
   --sidebar-foreground: #9b9ba4;
   --sidebar-primary: #4d90ff;
   --sidebar-primary-foreground: #000000;
-  --sidebar-accent: #0b1a33;
-  --sidebar-accent-foreground: #4d90ff;
   --sidebar-border: #232326;
   --sidebar-ring: #4d90ff;
   --sidebar-hover: #0e0e10;

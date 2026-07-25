@@ -64,7 +64,7 @@ export function ReleaseUpdateBanner({ collapsed = false }: { collapsed?: boolean
       </div>
       <Button
         size="sm"
-        variant="primary"
+        variant="default"
         className="mt-1.5 w-full"
         onClick={() => window.location.reload()}
       >

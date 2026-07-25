@@ -12,7 +12,7 @@ interface LogoProps {
  * NimbleBrain logo component.
  *
  * - "icon": square logo mark only
- * - "wordmark": "NimbleBrain" in the heading font (Erode)
+ * - "wordmark": "NimbleBrain" in the heading font
  * - "full": square icon + text wordmark (the standard lockup)
  */
 export function Logo({ variant = "full", height = 24, className = "" }: LogoProps) {

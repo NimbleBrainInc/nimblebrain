@@ -1,13 +1,10 @@
 /**
- * Pure projections of the canonical {@link palette} into the two
- * representations the host needs:
+ * Build the ext-apps token map for a mode.
  *
- *  - {@link paletteToExtAppsTokens} → the MCP ext-apps token map injected into
- *    embedded-app iframes (consumed by `bridge/theme.ts`).
- *  - {@link paletteToRootCss} → the `:root`/`.dark` CSS blocks the shell renders
- *    from (generated into `tokens.generated.css`, imported by `index.css`).
- *
- * No DOM, no side effects. Given the palette, return data.
+ * Spec keys follow the MCP ext-apps contract. Brand-semantic values with no
+ * spec equivalent ride as `--nb-*` extensions: they are injected into the
+ * iframe's style block but filtered off the protocol boundary by
+ * `getSpecThemeTokens`.
  */
 
 import {

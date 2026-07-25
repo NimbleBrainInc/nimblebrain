@@ -54,7 +54,8 @@ export const colors = {
   popover: ["#ffffff", "#0e0e10"],
   "popover-foreground": ["#09090b", "#fafafa"],
   // NimbleBrain Blue. The single accent: every primary action, focus ring, and
-  // live state. There is no second accent hue — see the file header.
+  // live state. There is no second accent hue; status colours are the only
+  // other hues in the interface.
   primary: ["#0055FF", "#4d90ff"],
   "primary-foreground": ["#ffffff", "#000000"],
   secondary: ["#f4f4f5", "#161618"],
@@ -94,8 +95,6 @@ export const colors = {
   "sidebar-foreground": ["#5c5c66", "#9b9ba4"],
   "sidebar-primary": ["#0055FF", "#4d90ff"],
   "sidebar-primary-foreground": ["#ffffff", "#000000"],
-  "sidebar-accent": ["#eaf0ff", "#0b1a33"],
-  "sidebar-accent-foreground": ["#0055FF", "#4d90ff"],
   "sidebar-border": ["#e4e4e7", "#232326"],
   "sidebar-ring": ["#0055FF", "#4d90ff"],
   "sidebar-hover": ["#f4f4f5", "#0e0e10"],
@@ -108,10 +107,11 @@ export const colors = {
  */
 export const extOnlyColors = {
   "background-tertiary": ["#f4f4f5", "#161618"],
-  // Audited: 4.5:1 against every surface it renders on, in both modes. It
-  // carries tallies, kbd hints, section labels, and row metadata — the densest
-  // text in the product — so it is not a decorative grey.
-  "text-tertiary": ["#71717a", "#82828c"],
+  // Ext-apps only: `paletteToRootCss` emits `colors`, so the shell never sees
+  // these. They reach embedded iframes via `paletteToExtAppsTokens`, which is
+  // the only place they meet — and `contrast.test.ts` checks that pair, which
+  // the first version of this palette did not and which failed at 4.397:1.
+  "text-tertiary": ["#6b6b73", "#82828c"],
 } as const satisfies Record<string, Pair>;
 
 /**

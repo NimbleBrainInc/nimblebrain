@@ -59,9 +59,12 @@ const TEXT_PAIRS: [fg: TokenName, bg: TokenName, where: string][] = [
   ["muted-foreground", "card", "row sub-lines"],
   ["muted-foreground", "muted", "group headers"],
   ["muted-foreground", "sidebar", "sidebar nav rows"],
-  ["text-tertiary", "background", "tallies, kbd hints"],
-  ["text-tertiary", "card", "row metadata"],
-  ["text-tertiary", "sidebar", "section labels"],
+  // `text-tertiary` and `background-tertiary` are ext-apps-only: the shell's
+  // `:root` never emits them, so the only surface they meet is an embedded
+  // iframe, where both are injected together.
+  ["text-tertiary", "background-tertiary", "iframe metadata on a tertiary surface"],
+  ["text-tertiary", "background", "iframe metadata on the base surface"],
+  ["text-tertiary", "card", "iframe metadata on a raised surface"],
   ["primary", "background", "links, accent text"],
   ["primary", "card", "links inside cards"],
   ["primary-foreground", "primary", "primary button label"],
@@ -71,7 +74,6 @@ const TEXT_PAIRS: [fg: TokenName, bg: TokenName, where: string][] = [
   ["success", "card", "status labels"],
   ["warning", "card", "warning text"],
   ["destructive", "card", "error text"],
-  ["sidebar-accent-foreground", "sidebar-accent", "active sidebar row"],
 ];
 
 /** Information-bearing non-text. A decorative hairline would not belong here. */

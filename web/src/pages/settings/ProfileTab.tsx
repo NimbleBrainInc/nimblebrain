@@ -91,7 +91,6 @@ export function ProfileTab() {
         // Profile doesn't track dirty: a user reading their own settings
         // expects Save to be available without first re-typing a value.
         disabled: saving,
-        variant: "primary",
       }}
     >
       <Section flush>
