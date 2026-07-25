@@ -445,11 +445,9 @@ type PrimaryAction =
 function resolveAction(
   installed: InstalledConnector,
   hasOperatorEntry: boolean,
-  /** True when the auth CTA rotates a credential the server admin-gates.
-   *  Every auth flow here binds the *workspace's* shared credential — none is
-   *  per-caller — so this asks which rotations the server refuses, not whose
-   *  account is involved. `handleConnectApiKey` refuses a non-admin once a
-   *  connected account already exists. */
+  /** True when the auth CTA rotates a credential the server admin-gates —
+   *  `handleConnectApiKey`, once a connected account exists. See the `oauth`
+   *  note on `PrimaryAction` for why the other auth paths stay ungated. */
   authRotatesSharedCredential: boolean,
 ): PrimaryAction | null {
   const isRemote = installed.type === "remote";

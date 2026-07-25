@@ -112,8 +112,8 @@ describe("CardAction — the install gate", () => {
   });
 
   test("the gate covers the mpak path too, not just the default one", async () => {
-    // Three byte-identical Install branches were collapsed into one gated
-    // return; this pins that the collapse actually covers them.
+    // One gated return serves every install path; this pins that the mpak
+    // path is one of them.
     mounted = await render(false, { entry: entry({ install: { kind: "mpak-bundle" } }) });
     expect(findButton(mounted.container, "Install")).toBeNull();
     expect(mounted.container.textContent).toContain("Workspace admin required");

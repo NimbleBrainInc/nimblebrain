@@ -775,6 +775,59 @@ describe("ConnectorStatusHero", () => {
     expect(findButton(mounted.container, "Reconnect")).not.toBeNull();
   });
 
+  test("a composio OAUTH2 connector stays open to a member — the server grants it", async () => {
+    // `authScheme` is optional and defaults to OAUTH2, so the ordinary composio
+    // connector has none and takes /v1/composio-auth/initiate — requireAuth +
+    // requireWorkspace, no admin check (#755). Gating it here would hide
+    // Reconnect while the server still grants it, which is the client/server
+    // divergence #741 exists to remove. This pins the API_KEY discriminator:
+    // without it, every composio connector would be gated.
+    mounted = await mount(
+      <ConnectorStatusHero
+        installed={composioApiKeyConnector({
+          status: "needs_auth",
+          state: "reauth_required",
+          catalog: {
+            id: "com.posthog/analytics",
+            name: "PostHog",
+            description: "Analytics",
+            iconUrl: "",
+            url: "https://mcp.posthog.test/mcp",
+            auth: "composio",
+            composio: { toolkit: "posthog" },
+          },
+        })}
+        canManage={false}
+        onChanged={() => {}}
+      />,
+    );
+    expect(findButton(mounted.container, "Reconnect")).not.toBeNull();
+  });
+
+  test("a composio API-key connector in `failed` is gated too, not just reauth_required", async () => {
+    // `failed` is the other arm of the rotation predicate — a remote bundle
+    // that died still offers Reconnect, and for an API-key connector that is
+    // the same admin-gated rotation.
+    mounted = await mount(
+      <ConnectorStatusHero
+        installed={composioApiKeyConnector({ status: "failed", state: "crashed" })}
+        canManage={false}
+        onChanged={() => {}}
+      />,
+    );
+    expect(findButton(mounted.container, "Reconnect")).toBeNull();
+    mounted.unmount();
+
+    mounted = await mount(
+      <ConnectorStatusHero
+        installed={composioApiKeyConnector({ status: "failed", state: "crashed" })}
+        canManage={true}
+        onChanged={() => {}}
+      />,
+    );
+    expect(findButton(mounted.container, "Reconnect")).not.toBeNull();
+  });
+
   test("composio API-key first Connect stays open to a member — no account to rotate yet", async () => {
     // The server only refuses once `prior.connectedAccountId` exists, so the
     // gate must not swallow the first-time case.

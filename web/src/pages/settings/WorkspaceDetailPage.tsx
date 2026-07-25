@@ -184,10 +184,11 @@ export function WorkspaceDetailPage() {
   const availableUsers = allUsers.filter((u) => !memberUserIds.has(u.id));
 
   // Member management is a workspace-scoped write: `canManageMembers` routes
-  // through `canWriteWorkspaceScoped`, whose comment says outright that "an org
-  // admin/owner who is not a workspace admin member cannot manage members". An
-  // `isOrgAdmin ||` here rendered an enabled Add member button for exactly that
-  // user, and the add silently no-opped against the server's refusal.
+  // through `canWriteWorkspaceScoped`, which grants an org admin no bypass —
+  // "an org admin/owner who is not a workspace admin member cannot manage
+  // members". Membership is therefore the only thing this may read; an org-role
+  // check here would render controls the server refuses, and `handleAdd`
+  // doesn't inspect the result, so the refusal would be silent (#749).
   const canManageMembers = members.some((m) => m.userId === currentUserId && m.role === "admin");
 
   // The org-scoped Workspaces list lives at /org/workspaces.

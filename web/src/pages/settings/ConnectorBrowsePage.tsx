@@ -360,10 +360,9 @@ function DirectoryCard({
 }
 
 /**
- * The card's action slot. Exported for test: it owns the install gate, and
- * gating install was the substantive behaviour change on this page — a
- * module-private component left it unpinned, so deleting the gate kept the
- * suite green while every member got an Install button the server refuses.
+ * The card's action slot. Exported so the install gate is directly testable:
+ * it is the only thing standing between a workspace member and an Install
+ * button the server refuses.
  */
 export function CardAction({
   entry,
@@ -401,10 +400,9 @@ export function CardAction({
   }
   // Every remaining path is an install, and installing is a workspace-scoped
   // write — `workspaceInstallAdmission` refuses a non-admin with "Workspace
-  // admin role required to install connectors." An enabled button here just
-  // moves that refusal to after the click, which is the whole defect this
-  // branch removes. The three install branches were byte-identical, so the
-  // gate lives in one place rather than three.
+  // admin role required to install connectors." An enabled button would move
+  // that refusal to after the click. One gated return covers every install
+  // path, so a new one can't miss the gate by being added elsewhere.
   return canManage ? (
     <Button type="button" variant="outline" size="sm" onClick={onInstall} disabled={busy}>
       {busy ? "Installing…" : "Install"}
