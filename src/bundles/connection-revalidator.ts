@@ -51,6 +51,16 @@ const DEFAULT_CONCURRENCY = 8;
 const FLIP_THRESHOLD = 2;
 /** ±fraction jitter applied to every interval (and the startup offset). */
 const JITTER_FRACTION = 0.2;
+/** `setTimeout` holds its delay in a signed 32-bit int. A larger delay is not
+ *  clamped to this ceiling — the runtime silently substitutes 1ms, which would
+ *  turn a very long configured interval into a hot loop. */
+const MAX_SETTIMEOUT_DELAY_MS = 2_147_483_647;
+/** Ceiling on the sweep interval (~20.7 days), leaving jitter's upper tail room
+ *  under `MAX_SETTIMEOUT_DELAY_MS`. Capping the interval rather than each delay
+ *  keeps both schedule points genuinely random: a cap applied per-delay would
+ *  pin every reschedule to the same ceiling value and synchronize the pods this
+ *  loop's jitter exists to spread out. */
+const MAX_INTERVAL_MS = Math.floor(MAX_SETTIMEOUT_DELAY_MS / (1 + JITTER_FRACTION));
 /** Circuit breaker: a sweep that would flip more than max(ABS, FRACTION×checked)
  *  connections is treated as an upstream fault — abort, flip nothing. */
 const FLAP_BREAKER_ABS = 5;
@@ -123,7 +133,19 @@ export class ConnectionRevalidator {
     opts: RevalidatorOptions = {},
   ) {
     this.probes = new Map(probes.map((p) => [p.providerId, p]));
-    this.intervalMs = opts.intervalMs ?? DEFAULT_INTERVAL_MS;
+    const requestedMs = opts.intervalMs ?? DEFAULT_INTERVAL_MS;
+    this.intervalMs = Math.min(requestedMs, MAX_INTERVAL_MS);
+    if (requestedMs > MAX_INTERVAL_MS) {
+      // The operator's number is unreachable, so say so rather than let the
+      // startup line report a cadence the loop will not keep.
+      log.warn(
+        `[connection-revalidator] interval ${Math.round(requestedMs / 1000)}s exceeds the ` +
+          // Floor, not round: the advertised value has to be one the loop will
+          // actually accept if the operator sets it.
+          `${Math.floor(MAX_INTERVAL_MS / 1000)}s maximum (setTimeout's 32-bit delay limit); ` +
+          "using the maximum. To stop the sweep entirely, disable the monitor.",
+      );
+    }
     this.concurrency = Math.max(1, opts.concurrency ?? DEFAULT_CONCURRENCY);
   }
 
@@ -132,7 +154,7 @@ export class ConnectionRevalidator {
   start(): void {
     if (this.timer || this.probes.size === 0) return;
     log.info(
-      `[connection-revalidator] starting (interval=${Math.round(this.intervalMs / 1000)}s, ` +
+      `[connection-revalidator] starting (interval=${Math.floor(this.intervalMs / 1000)}s, ` +
         `providers=${[...this.probes.keys()].join(",")})`,
     );
     // Random first offset within one interval so pods don't align on boot.
@@ -147,6 +169,9 @@ export class ConnectionRevalidator {
     }
   }
 
+  /** Both delays that reach here are bounded by `MAX_INTERVAL_MS`: the startup
+   *  offset is a fraction of the interval, and `jitter` widens it by at most
+   *  `JITTER_FRACTION`. So neither can overflow `setTimeout`'s 32-bit delay. */
   private scheduleNext(delayMs: number): void {
     if (this.stopped) return;
     this.timer = setTimeout(() => {

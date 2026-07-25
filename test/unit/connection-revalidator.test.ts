@@ -280,3 +280,94 @@ describe("revalidatorIntervalMsFromEnv", () => {
     expect(warnSpy).not.toHaveBeenCalled();
   });
 });
+
+describe("ConnectionRevalidator — timer ceiling", () => {
+  /** `setTimeout`'s signed-32-bit delay ceiling (~24.9 days). */
+  const MAX_SETTIMEOUT_DELAY_MS = 2_147_483_647;
+  /** One year in ms — an operator's "effectively never sweep". */
+  const ONE_YEAR_MS = 31_536_000_000;
+
+  /** Capture the delays handed to `setTimeout`, driving `cycles` sweeps so the
+   *  startup offset AND the jittered reschedules are both observed. */
+  async function collectScheduledDelays(intervalMs: number, cycles = 1): Promise<number[]> {
+    const { lifecycle } = fakeLifecycle([]);
+    const revalidator = new ConnectionRevalidator(lifecycle, [new ScriptedProbe()], { intervalMs });
+    const delays: number[] = [];
+    let fired = 0;
+
+    const timeoutSpy = spyOn(globalThis, "setTimeout").mockImplementation(((
+      fn: () => void,
+      ms?: number,
+    ) => {
+      delays.push(ms ?? 0);
+      // `sweep()` is async, so this only kicks off the chain; the next
+      // `setTimeout` lands after the microtask flush below.
+      if (fired < cycles) {
+        fired++;
+        fn();
+      }
+      return 0 as unknown as ReturnType<typeof setTimeout>;
+    }) as unknown as typeof setTimeout);
+
+    try {
+      revalidator.start();
+      // Let each empty sweep settle so its `.finally` reschedules.
+      for (let i = 0; i < cycles * 10; i++) await Promise.resolve();
+    } finally {
+      timeoutSpy.mockRestore();
+      revalidator.stop();
+    }
+    return delays;
+  }
+
+  it("caps an interval past the ceiling instead of collapsing to a 1ms loop", async () => {
+    const delays = await collectScheduledDelays(ONE_YEAR_MS);
+
+    // Startup offset + at least one jittered reschedule.
+    expect(delays.length).toBeGreaterThanOrEqual(2);
+    for (const delay of delays) {
+      expect(delay).toBeLessThanOrEqual(MAX_SETTIMEOUT_DELAY_MS);
+      // Never the 1ms the runtime would have substituted on overflow.
+      expect(delay).toBeGreaterThan(1);
+    }
+  });
+
+  it("keeps reschedules jittered at the cap, so capped pods still spread out", async () => {
+    // Capping each delay instead of the interval would pin every reschedule to
+    // the ceiling, synchronizing every pod sharing the provider key.
+    const [, ...reschedules] = await collectScheduledDelays(ONE_YEAR_MS, 6);
+
+    // Assert on the reschedules alone. The startup offset is random under the
+    // per-delay cap too, so including it lets that implementation pass ~7% of
+    // runs. Landing exactly on the ceiling is its signature.
+    expect(reschedules.length).toBeGreaterThan(1);
+    expect(new Set(reschedules).size).toBeGreaterThan(1);
+    for (const delay of reschedules) {
+      expect(delay).not.toBe(MAX_SETTIMEOUT_DELAY_MS);
+    }
+  });
+
+  it("holds the ceiling for an interval whose jitter alone would overflow", async () => {
+    // ~23.1 days: under setTimeout's limit on its own, over it once jitter
+    // widens it by 20%. This is the band a cap applied at the env layer misses.
+    const delays = await collectScheduledDelays(2_000_000_000, 4);
+
+    expect(delays.length).toBeGreaterThanOrEqual(2);
+    for (const delay of delays) {
+      expect(delay).toBeLessThanOrEqual(MAX_SETTIMEOUT_DELAY_MS);
+      expect(delay).toBeGreaterThan(1);
+    }
+  });
+
+  it("leaves a normal interval untouched", async () => {
+    const delays = await collectScheduledDelays(300_000);
+
+    expect(delays.length).toBeGreaterThanOrEqual(2);
+    // Startup offset is random within one interval; jitter is ±20% around it.
+    // No lower-bound assertion: no overflow is reachable at this interval, so
+    // one would guard nothing and would flake on a small random offset.
+    for (const delay of delays) {
+      expect(delay).toBeLessThanOrEqual(360_000);
+    }
+  });
+});
