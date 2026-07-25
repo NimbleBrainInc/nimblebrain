@@ -7,27 +7,18 @@
  * (and therefore whether to register a provider at all) without linking the
  * vendor. `sdk.ts` is the vendor adapter; this is its config.
  *
- * Two layers, split on what the value *is*:
+ * Every field — the broker credential included — is declarable, and each falls
+ * back on its own: a field declared in the block wins, a field left out (or left
+ * blank) reads its `COMPOSIO_*` var. Nothing is ever silently discarded, so an
+ * upgrade from the env-sniffing era breaks nothing and a block added for one
+ * setting can't disturb another. Same shape as `providers.*.apiKey` falling back
+ * to `ANTHROPIC_API_KEY` elsewhere in this schema.
  *
- *   - **Settings** (`baseUrl`, `monitorEnabled`) are declarable, and each falls
- *     back on its own: a field declared in the block wins, a field left out
- *     reads its `COMPOSIO_*` var. Nothing is ever silently discarded, so an
- *     upgrade from the env-sniffing era breaks nothing and a block added for one
- *     setting can't disturb another. Same shape as `providers.*.apiKey` falling
- *     back to `ANTHROPIC_API_KEY` elsewhere in this schema.
- *   - **The broker credential** comes from `COMPOSIO_API_KEY` only. It is NOT a
- *     declarable field.
- *
- * Why the credential is env-only *today*: a connector installed through Composio
- * persists its transport credential as the secret reference `${COMPOSIO_API_KEY}`
- * in `workspace.json`, resolved from the process env at transport-build time.
- * That is a durable reference into the environment namespace, so a credential
- * declared anywhere else would leave installed connectors authenticating with an
- * empty header. The fix is to persist a *credential provider* name instead of an
- * env reference (`TransportCredentialProvider`, the kernel's generic seam — see
- * `src/tools/credential-provider.ts`), at which point resolution becomes this
- * module's private business and the credential can join the declared block. Until
- * then the credential stays where persisted state already points.
+ * The credential is declarable because nothing persisted points at where it
+ * lives: an installed connector's transport names the `composio` credential
+ * provider (`transport-credential.ts`), so resolution is this module's private
+ * business. Refs written before that seam carry a `${COMPOSIO_API_KEY}` env
+ * reference and are mapped forward on read.
  *
  * Validation is applied to the *resolved* values regardless of source:
  *
@@ -50,7 +41,7 @@ export const COMPOSIO_API_BASE = "https://backend.composio.dev";
 /** Resolved Composio provider config. Every consumer of a `COMPOSIO_*` value reads it from here. */
 export interface ComposioConfig {
   /**
-   * The platform-wide broker credential, from `COMPOSIO_API_KEY`. Empty when
+   * The platform-wide broker credential — declared or from the env. Empty when
    * Composio is unconfigured — its presence IS the gate on registering the
    * provider, so there is no separate `configured` flag to drift from it.
    */
@@ -83,9 +74,12 @@ export function validateComposioConfig(): ComposioConfig {
 function resolveComposioConfig(): ComposioConfig {
   const declared = declaredProviderConfig("composio");
 
-  const apiKey = process.env.COMPOSIO_API_KEY?.trim() ?? "";
+  const apiKey = declared?.apiKey?.trim() || (process.env.COMPOSIO_API_KEY?.trim() ?? "");
   if (!apiKey) {
-    log.info("[composio] integration: not configured (set COMPOSIO_API_KEY to enable)");
+    log.info(
+      "[composio] integration: not configured (set connectors.providers.composio.apiKey " +
+        "or COMPOSIO_API_KEY to enable)",
+    );
     return { apiKey: "", baseUrl: COMPOSIO_API_BASE, monitorEnabled: false };
   }
 

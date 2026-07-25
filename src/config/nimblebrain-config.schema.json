@@ -362,9 +362,13 @@
           "type": "object",
           "properties": {
             "composio": {
-              "description": "Composio (auth broker + hosted MCP sessions) settings. The broker credential is NOT declared here — it is read from COMPOSIO_API_KEY, because an installed connector's persisted transport credential is an env reference into that name. Each setting falls back per field to its env var when left out: COMPOSIO_API_BASE_URL, COMPOSIO_MONITOR_ENABLED.",
+              "description": "Composio (auth broker + hosted MCP sessions). Each field falls back per field to its env var when left out: COMPOSIO_API_KEY, COMPOSIO_API_BASE_URL, COMPOSIO_MONITOR_ENABLED.",
               "type": "object",
               "properties": {
+                "apiKey": {
+                  "type": "string",
+                  "description": "Platform-wide Composio API key — the broker credential, and the gate on registering the provider at all. Falls back to COMPOSIO_API_KEY. A secret in a mounted config file is the operator's call; the env fallback remains the better posture for most deployments."
+                },
                 "baseUrl": {
                   "type": "string",
                   "description": "Composio API base URL override (self-hosted / staging). Must be http(s). Default: https://backend.composio.dev"

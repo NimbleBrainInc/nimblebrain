@@ -21,6 +21,7 @@ import type { AppInfo, BundleInstance, PlacementDeclaration } from "../bundles/t
 import { isToolVisibleToRole, type ResolvedFeatures, resolveFeatures } from "../config/features.ts";
 import { deriveOverridePath } from "../config/overrides.ts";
 import { createPrivilegeHook, NoopConfirmationGate } from "../config/privilege.ts";
+import { registerComposioCredentialProvider } from "../connectors/providers/composio/transport-credential.ts";
 import { setConnectorsConfig } from "../connectors/providers/config.ts";
 import {
   buildManagedConnectorRegistry,
@@ -410,6 +411,10 @@ export class Runtime {
     // of per-entry-point avoids a provider-auth source failing to boot under any
     // path that forgot to register.
     registerBuiltinCredentialProviders();
+    // Composio's transport credential, registered here for the same reason: a
+    // connected Composio connector starts inside `startWorkspaceBundles` below,
+    // and an unregistered credential name fails its source start.
+    registerComposioCredentialProvider();
 
     // Install the declared `connectors` block at the same composition root, so
     // every managed-connector provider resolves its config from one place

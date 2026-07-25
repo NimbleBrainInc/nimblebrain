@@ -26,6 +26,7 @@ import type {
 import { installBundleInWorkspace } from "../bundles/workspace-ops.ts";
 import type { UserConfigFieldDef } from "../config/workspace-credentials.ts";
 import { validateComposioConfig } from "../connectors/providers/composio/config.ts";
+import { COMPOSIO_CREDENTIAL_PROVIDER } from "../connectors/providers/composio/transport-credential.ts";
 import type { ManagedConnectorProvider } from "../connectors/providers/managed-provider.ts";
 import { connectorSkillIdentityFrom } from "../connectors/server-detail.ts";
 import { textContent } from "../engine/content-helpers.ts";
@@ -1307,8 +1308,8 @@ async function handleInstallIdentity(
   // Resolve install wiring, owner-generic. DCR carries none (no session, no client
   // secret). Composio creates the upstream session bound to the caller's identity
   // (`{type:"user"}`, not a workspace) and returns the per-install session URL +
-  // `${COMPOSIO_API_KEY}` transport template — the same wiring the workspace path
-  // builds via `resolveInstallWiring`, owner-swapped.
+  // a transport naming the `composio` credential provider — the same wiring the
+  // workspace path builds via `resolveInstallWiring`, owner-swapped.
   let composioWiring: { url: string; transport: RemoteTransportConfig } | undefined;
   if (action.auth === "composio") {
     const composioErr = validateComposioInstall(action, entry.name);
@@ -1584,8 +1585,9 @@ function collectApiKeyFields(
 /** Operator-facing message for a Composio install attempted with no broker credential configured. */
 function composioUnconfiguredMessage(entryName: string): string {
   return (
-    `"${entryName}" requires COMPOSIO_API_KEY in the platform env. ` +
-    "Set the platform-wide Composio broker credential and restart the API."
+    `"${entryName}" requires a platform-wide Composio broker credential. Set ` +
+    "connectors.providers.composio.apiKey in nimblebrain.json (or COMPOSIO_API_KEY " +
+    "in the platform env) and restart the API."
   );
 }
 
@@ -1967,11 +1969,19 @@ async function validateRemoteOAuthInstall(
 }
 
 /**
- * Scrub the Composio session's response headers for persistence: drop the
- * `x-api-key` (re-added from the env template at transport build time) and
- * substitute any inlined copy of the API key with the env placeholder so the
- * secret never lands in workspace.json. `replaceAll` handles a future response
- * shape that repeats the key twice in one value.
+ * Scrub the Composio session's response headers for persistence: the credential
+ * is attached at transport-build time by the `composio` credential provider, so
+ * any header carrying it — the `x-api-key` itself, or a copy inlined elsewhere —
+ * is dropped rather than persisted. Nothing written to workspace.json references
+ * the secret, by value or by name.
+ *
+ * The non-`x-api-key` branch guards a response shape we do not control: the
+ * vendor could return the broker key embedded in some other header, and this
+ * function is the last step before the value is persisted. Dropping is lossier
+ * than the rewrite it replaces — that header is discarded rather than kept with
+ * a resolvable placeholder — but keeping it would mean re-persisting an env
+ * reference, which is what this seam removes. No live impact: Composio returns
+ * only `x-api-key` today.
  */
 function scrubComposioHeaders(
   headers: Record<string, string> | undefined,
@@ -1980,23 +1990,21 @@ function scrubComposioHeaders(
   const extraHeaders: Record<string, string> = {};
   for (const [k, v] of Object.entries(headers ?? {})) {
     if (k.toLowerCase() === "x-api-key") continue;
-    // biome-ignore lint/suspicious/noTemplateCurlyInString: deliberate placeholder — resolved by `resolveEnvTemplate` at transport build time
-    extraHeaders[k] = v.includes(apiKey) ? v.replaceAll(apiKey, "${COMPOSIO_API_KEY}") : v;
+    if (apiKey && v.includes(apiKey)) continue;
+    extraHeaders[k] = v;
   }
   return extraHeaders;
 }
 
 /**
- * Composio MCP wiring (session URL + transport + x-api-key template). Called
- * only on the fresh-install branch — gating it on dedup means a re-click on an
- * installed connector doesn't initiate a new upstream Composio session and
- * orphan the prior one. The API-key template is held verbatim in workspace.json;
- * `createRemoteTransport` resolves it from `process.env.COMPOSIO_API_KEY` at
- * start time so the secret never sits at rest. This template is why the broker
- * credential is environment-only by construction (it is not a field on the
- * declared block): persisted state points into the env namespace, so the value
- * must live there. Binding the transport to a `TransportCredentialProvider`
- * instead is what would let the credential be declared elsewhere.
+ * Composio MCP wiring (session URL + transport). Called only on the fresh-install
+ * branch — gating it on dedup means a re-click on an installed connector doesn't
+ * initiate a new upstream Composio session and orphan the prior one.
+ *
+ * The persisted transport names the `composio` credential provider rather than
+ * carrying the key or an env reference to it, so the secret never sits at rest
+ * AND resolution stays the provider's own business — which is what lets the
+ * broker credential be declared in `nimblebrain.json` instead of the env.
  */
 async function buildComposioWiring(
   provider: ManagedConnectorProvider,
@@ -2030,12 +2038,7 @@ async function buildComposioWiring(
     url: sessionMcp.url,
     transport: {
       type: sessionMcp.type === "sse" ? "sse" : "streamable-http",
-      auth: {
-        type: "header",
-        name: "x-api-key",
-        // biome-ignore lint/suspicious/noTemplateCurlyInString: deliberate placeholder — resolved by `resolveEnvTemplate` at transport build time
-        value: "${COMPOSIO_API_KEY}",
-      },
+      auth: { type: "provider", provider: COMPOSIO_CREDENTIAL_PROVIDER, config: {} },
       ...(Object.keys(extraHeaders).length > 0 ? { headers: extraHeaders } : {}),
     },
   };
@@ -2096,7 +2099,10 @@ function buildRemoteBundleRef(
     // in the bundled catalog today. A `provider`-auth entry also carries its
     // credential class here: provider + config are copied VERBATIM from the
     // (operator-authored) catalog entry — never tenant input — which is what
-    // makes a self-installable platform connector safe.
+    // makes a self-installable platform connector safe. That provenance is
+    // specific to THIS branch: the composio branch above also yields provider
+    // auth, but from a vendor session response, so `provider` auth alone is not
+    // a catalog-provenance signal (see `isMintedFleetSource`).
     transport:
       composioWiring?.transport ??
       (action.auth === "provider" && action.providerAuth

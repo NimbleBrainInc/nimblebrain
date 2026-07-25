@@ -51,6 +51,7 @@ import {
   type BundleMcpDeps,
   buildUrlOAuthProvider,
   composeBundleMcpContext,
+  resolveRefTransport,
   startBundleSource,
 } from "./startup.ts";
 import type {
@@ -1405,7 +1406,11 @@ export class BundleLifecycleManager {
       {
         type: "remote",
         url: new URL(ref.url),
-        transportConfig: ref.transport,
+        // Mapped, like the boot path: unlike the identity flow below, this one
+        // builds its OAuth provider unconditionally, so a Composio ref with a
+        // legacy env-template auth can reach here (Reconnect / `/v1/mcp-auth/
+        // initiate`) and would otherwise resolve an empty `x-api-key`.
+        transportConfig: resolveRefTransport(ref).transportConfig,
         // Honor the per-call flag, same source the OAuth provider above and the
         // startup-time validateBundleUrl use — not the manager default — so the
         // transport's SSRF guard agrees with what this install was authorized for.
@@ -2569,7 +2574,7 @@ export class BundleLifecycleManager {
     // user-presence signal is `credentials/composio/<connectorId>/connection.json`,
     // not the mcp-oauth tokens.json. Bundles carry the catalog id forward on
     // `ref.composio.connectorId` so this probe is local; we don't need the
-    // catalog to derive the path. Composio bundles carry header auth but STILL
+    // catalog to derive the path. Composio bundles carry static auth but STILL
     // need a per-user connect, so they route to the composio probe (check
     // FIRST). Other static-auth sources (provider / bearer / header) carry their
     // own credential and auto-connect — no interactive Connect step — so they

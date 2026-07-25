@@ -126,7 +126,7 @@ type UrlBundleRef = Extract<BundleRef, { url: string }>;
 /**
  * Whether a boot-time URL bundle already has credentials to auto-start with.
  *
- * Composio bundles carry header auth but STILL need a per-user connect, so they
+ * Composio bundles carry static auth but STILL need a per-user connect, so they
  * route to the composio probe (checked FIRST — they're also static-auth by
  * transport, but must not skip the connect gate). Other static-auth sources
  * (provider / bearer / header) carry their own credential and mint/present on

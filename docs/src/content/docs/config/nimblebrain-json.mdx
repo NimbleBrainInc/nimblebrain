@@ -311,6 +311,7 @@ A provider is registered — and its callback routes, liveness probe, and vendor
   "connectors": {
     "providers": {
       "composio": {
+        "apiKey": "…",
         "baseUrl": "https://backend.composio.dev",
         "monitorEnabled": true
       }
@@ -323,6 +324,7 @@ A provider is registered — and its callback routes, liveness probe, and vendor
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
+| `apiKey` | `string` | — | Platform-wide Composio API key — the broker credential. See [The broker credential](#the-broker-credential). |
 | `baseUrl` | `string` | `https://backend.composio.dev` | Composio API base URL override (self-hosted / staging). Must be `http(s)` — any other scheme is rejected at startup, because it would turn `/v1/composio-auth/proxy` into an open redirect. |
 | `monitorEnabled` | `boolean` | `true` | Run Composio's arm of the connection-revalidator probe, which detects connections whose downstream vendor account lapsed while the platform key stayed valid. |
 
@@ -332,11 +334,18 @@ One instance serves one tenant, so this is a single config layer: there is no pe
 
 ### The broker credential
 
-**The Composio API key is not declared here.** It is read from `COMPOSIO_API_KEY` in the process environment, and the config block does not supersede it.
+`apiKey` is the platform-wide Composio API key and the gate on registering the provider at all — without it (here or in `COMPOSIO_API_KEY`) the integration stays dormant.
 
-This is deliberate, and it is about *where persisted state points*. A connector installed through Composio persists its transport credential in `workspace.json` as the secret reference `` `${COMPOSIO_API_KEY}` `` — the key itself never sits at rest — and resolves it from the process environment each time the connection starts. That reference is a durable pointer into the environment namespace, so a credential declared anywhere else would leave already-installed connectors authenticating with an empty header.
+It is declarable because nothing persisted points at where it lives. A connector installed through Composio records `auth: { type: "provider", provider: "composio" }` in `workspace.json` — it names the credential it needs, not a place to find it — so the key never sits at rest and resolution stays the provider's own business. Connectors installed before that change carry a `${COMPOSIO_API_KEY}` environment reference and are mapped forward when they start, so both resolve identically with no operator action.
 
-The fix is for persisted state to name a *credential provider* rather than an environment variable, at which point resolution becomes the provider's private business and the credential can join the block. Until then it stays where persisted state already points. Keep it in your secret store → pod environment, which is the better posture for a secret regardless.
+<Aside type="note">
+  **Which home to pick.** Both work; they suit different deployments.
+
+  - **Environment (`COMPOSIO_API_KEY`)** — right for multi-tenant and any deployment with a secret store. The key stays out of `nimblebrain.json`, which is operator-managed and rewritten on every deploy, and rotation is a secret-store change rather than a config edit.
+  - **`apiKey` in the block** — right for single-tenant, self-hosted, and local setups, where one config file is simpler than standing up a second mechanism for one value.
+
+  The field exists so the choice is yours; before the transport credential named a provider rather than an environment variable, only the first option was possible at all.
+</Aside>
 
 ### Environment fallback and precedence
 
@@ -344,12 +353,11 @@ The `COMPOSIO_*` settings variables ([Environment Variables](/config/environment
 
 Precedence is **per field**: a setting declared in the block wins, a setting left out reads its env var. So a block that sets only `baseUrl` leaves `monitorEnabled` on `COMPOSIO_MONITOR_ENABLED`, and nothing you configured elsewhere is silently discarded. This is the same shape as `providers.anthropic.apiKey` falling back to `ANTHROPIC_API_KEY`.
 
-| Setting | Env fallback |
+| Field | Env fallback |
 |---|---|
+| `apiKey` | `COMPOSIO_API_KEY` |
 | `baseUrl` | `COMPOSIO_API_BASE_URL` |
 | `monitorEnabled` | `COMPOSIO_MONITOR_ENABLED` |
-
-`COMPOSIO_API_KEY` is not in this table — it is the credential, not a setting, and is not declarable.
 
 `NB_TENANT_ID` is likewise not part of this block. It is a deployment identity, stays env-only, and is still required when the OAuth bouncer is configured.
 

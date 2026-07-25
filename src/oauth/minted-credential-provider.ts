@@ -1,4 +1,5 @@
 import type { FetchLike } from "@modelcontextprotocol/sdk/shared/transport.js";
+import type { RemoteTransportConfig } from "../bundles/types.ts";
 import {
   registerCredentialProvider,
   type TransportCredential,
@@ -13,6 +14,21 @@ import {
 /** The provider name a catalog/source auth config selects: `{ type: "provider";
  *  provider: "minted"; config: { audience, scope, issuer? } }`. */
 export const MINTED_PROVIDER = "minted";
+
+/**
+ * Whether a transport is the operator-provisioned fleet rail — the one carrying
+ * the catalog provenance that `validateBundleUrl`'s `fleetInternal` exception
+ * assumes (in-cluster `.svc` over plain HTTP).
+ *
+ * Keyed on the provider NAME, deliberately. `auth.type === "provider"` used to be
+ * synonymous with "minted", so callers keyed on the kind; it no longer is. A
+ * brokered connector names a credential provider too, but its URL comes from the
+ * vendor's API response and is persisted into tenant state, so it carries none of
+ * the provenance the exception rests on.
+ */
+export function isMintedFleetSource(config: RemoteTransportConfig | undefined): boolean {
+  return config?.auth?.type === "provider" && config.auth.provider === MINTED_PROVIDER;
+}
 
 /**
  * The platform minting provider. Mints a short-lived, workspace-scoped service

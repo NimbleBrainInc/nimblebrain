@@ -3,6 +3,7 @@ import { SSEClientTransport } from "@modelcontextprotocol/sdk/client/sse.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import type { FetchLike, Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
 import type { RemoteTransportConfig } from "../bundles/types.ts";
+import { isMintedFleetSource } from "../oauth/minted-credential-provider.ts";
 import { getCredentialProvider } from "./credential-provider.ts";
 import { createOAuthRefreshFetch } from "./oauth-refresh-fetch.ts";
 import { createSsrfGuardedFetch } from "./ssrf-guarded-fetch.ts";
@@ -158,12 +159,15 @@ export function createRemoteTransport(
   // that would let a hostile server 30x our fetch into the cluster network or
   // cloud metadata. Interpose manual, per-hop-validated redirect handling over
   // whatever fetch the transport would otherwise use (minting / OAuth-refresh /
-  // global). A `provider`-auth source is the operator-vetted fleet rail and may
-  // point at an in-cluster `http://*.svc` endpoint, so its configured URL is
-  // validated with `fleetInternal` — redirect targets never are.
+  // global). A `minted` source is the operator-vetted fleet rail and may point at
+  // an in-cluster `http://*.svc` endpoint, so its configured URL is validated
+  // with `fleetInternal`. Redirect targets inherit it too — deliberately: hops
+  // are same-origin only (`resolveRedirect`), which is the primary control, and
+  // the per-hop `validateBundleUrl` is its backstop. Other credential providers
+  // (brokered connectors) get no such exception at all.
   const guardedFetch: FetchLike = createSsrfGuardedFetch(transportFetch, {
     allowInsecure: opts?.allowInsecure ?? false,
-    fleetInternal: config?.auth?.type === "provider",
+    fleetInternal: isMintedFleetSource(config),
   });
 
   const requestInit: RequestInit = Object.keys(headers).length > 0 ? { headers } : {};

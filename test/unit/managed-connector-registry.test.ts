@@ -78,8 +78,8 @@ describe("buildManagedConnectorRegistry — Composio unconfigured", () => {
 
 describe("buildManagedConnectorRegistry — settings declared in nimblebrain.json", () => {
   beforeEach(() => {
-    // The broker credential is env-only: it is what gates registration, and an
-    // installed connector's persisted transport credential references this name.
+    // The credential is what gates registration. Declared or from the env — this
+    // suite drives the env arm; `composio-config.test.ts` owns the precedence.
     process.env.COMPOSIO_API_KEY = "k_env";
   });
 

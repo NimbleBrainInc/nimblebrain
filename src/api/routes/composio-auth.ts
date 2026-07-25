@@ -337,8 +337,9 @@ function resolveComposioCredentials(
   const { apiKey } = validateComposioConfig();
   if (!apiKey) {
     log.warn(
-      "[composio-auth] COMPOSIO_API_KEY not set; cannot initiate connection " +
-        `for ${connectorId} (${logCtx})`,
+      "[composio-auth] no Composio broker credential configured " +
+        "(connectors.providers.composio.apiKey / COMPOSIO_API_KEY); " +
+        `cannot initiate connection for ${connectorId} (${logCtx})`,
     );
     return apiError(500, "composio_unconfigured", "Composio integration not configured.");
   }

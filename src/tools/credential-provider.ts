@@ -38,6 +38,17 @@ export function registerCredentialProvider(
   REGISTRY.set(name, provider);
 }
 
+/**
+ * Test-only. Clear the registry so a suite can assert what a *composition root*
+ * registered, rather than what a sibling test file happened to leave behind —
+ * the registry is process-global and `bun test` shares one process, so without
+ * this a "was it registered at boot?" assertion is satisfied by any earlier
+ * registration and pins nothing.
+ */
+export function _resetCredentialProvidersForTest(): void {
+  REGISTRY.clear();
+}
+
 /** Look up a registered provider by name, or undefined if none is registered. */
 export function getCredentialProvider(name: string): TransportCredentialProvider | undefined {
   return REGISTRY.get(name);
