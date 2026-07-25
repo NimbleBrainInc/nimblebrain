@@ -5,6 +5,7 @@ import type {
   EngineConfig,
   EngineEvent,
   EventSink,
+  ThinkingEffort,
   ToolCall,
   ToolResult,
   ToolRouter,
@@ -76,6 +77,8 @@ export interface DelegateContext {
   configMaxOutputTokens?: number;
   /** Operator-pinned thinking mode (raw runtime config, may be undefined). */
   configThinking?: "off" | "adaptive" | "enabled";
+  /** Operator-pinned reasoning depth (raw runtime config, may be undefined). */
+  configThinkingEffort?: ThinkingEffort;
   /** Operator-pinned thinking budget (raw runtime config, may be undefined). */
   configThinkingBudgetTokens?: number;
   /**
@@ -256,9 +259,9 @@ function buildChildConfig(
   });
   const childThinking = resolveThinking({
     configMode: ctx.configThinking,
+    configEffort: ctx.configThinkingEffort,
     configBudgetTokens: ctx.configThinkingBudgetTokens,
     model: modelString,
-    maxOutputTokens: childMaxOutputTokens,
   });
   return {
     model: modelString,

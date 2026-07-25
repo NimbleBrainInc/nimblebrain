@@ -55,6 +55,7 @@ import type {
   EngineResult,
   EventSink,
   SkillsLoadedPayload,
+  ThinkingEffort,
   ToolPromotionResult,
   ToolRouter,
   ToolSchema,
@@ -173,6 +174,17 @@ import { resolveMaxOutputTokens } from "./resolve-max-output-tokens.ts";
 import { resolveMessageBudget } from "./resolve-message-budget.ts";
 import { resolveThinking } from "./resolve-thinking.ts";
 import { isToolEligibleForPromotion } from "./tool-eligibility.ts";
+
+/**
+ * Apply one clearable config field: `undefined` leaves it alone, `null` clears
+ * it back to the platform default, anything else sets it.
+ *
+ * Shared by the three thinking fields so a clear can't be honored on one and
+ * dropped on another.
+ */
+function applyClearable<T>(current: T | undefined, patched: T | null | undefined): T | undefined {
+  return patched === undefined ? current : (patched ?? undefined);
+}
 
 /** Known model slot names. */
 const MODEL_SLOTS = ["default", "fast", "reasoning"] as const;
@@ -677,6 +689,7 @@ export class Runtime {
       // the child's model rather than the parent's.
       configMaxOutputTokens: config.maxOutputTokens,
       configThinking: config.thinking,
+      configThinkingEffort: config.thinkingEffort,
       configThinkingBudgetTokens: config.thinkingBudgetTokens,
       // Per-engine isolation for tool promotion: child engines get their
       // own controls installed in reqCtx (with save/restore) instead of
@@ -1421,9 +1434,9 @@ export class Runtime {
 
     const resolvedThinking = resolveThinking({
       configMode: this.config.thinking,
+      configEffort: this.config.thinkingEffort,
       configBudgetTokens: this.config.thinkingBudgetTokens,
       model: resolvedModelString,
-      maxOutputTokens: resolvedMaxOutputTokens,
     });
 
     // Compose the per-call message budget from the model's actual context
@@ -1845,9 +1858,9 @@ export class Runtime {
     });
     const resolvedThinking = resolveThinking({
       configMode: this.config.thinking,
+      configEffort: this.config.thinkingEffort,
       configBudgetTokens: this.config.thinkingBudgetTokens,
       model: resolvedModelString,
-      maxOutputTokens: resolvedMaxOutputTokens,
     });
     // Per-request override beats config beats default. The UI exposes a
     // per-automation `maxInputTokens` field; honoring it here makes that
@@ -3803,6 +3816,7 @@ export class Runtime {
     maxOutputTokens?: number;
     maxToolResultSize?: number;
     thinking?: "off" | "adaptive" | "enabled" | null;
+    thinkingEffort?: ThinkingEffort | null;
     thinkingBudgetTokens?: number | null;
     preferences?: Record<string, string>;
   }) {
@@ -3822,15 +3836,17 @@ export class Runtime {
     if (patch.maxOutputTokens !== undefined) this.config.maxOutputTokens = patch.maxOutputTokens;
     if (patch.maxToolResultSize !== undefined)
       this.config.maxToolResultSize = patch.maxToolResultSize;
-    // For `thinking` / `thinkingBudgetTokens`, `null` is the explicit
-    // "clear my override" sentinel — distinct from `undefined` (leave alone).
-    if (patch.thinking !== undefined) {
-      this.config.thinking = patch.thinking === null ? undefined : patch.thinking;
-    }
-    if (patch.thinkingBudgetTokens !== undefined) {
-      this.config.thinkingBudgetTokens =
-        patch.thinkingBudgetTokens === null ? undefined : patch.thinkingBudgetTokens;
-    }
+    // Every field typed `| null` treats `null` as the explicit "clear my
+    // override" sentinel, distinct from `undefined` ("leave it alone"). The
+    // distinction is load-bearing: this method gates on `!== undefined`, so a
+    // clear expressed as `undefined` writes to disk but never reaches the
+    // live process.
+    this.config.thinking = applyClearable(this.config.thinking, patch.thinking);
+    this.config.thinkingEffort = applyClearable(this.config.thinkingEffort, patch.thinkingEffort);
+    this.config.thinkingBudgetTokens = applyClearable(
+      this.config.thinkingBudgetTokens,
+      patch.thinkingBudgetTokens,
+    );
   }
 
   /**
@@ -4176,6 +4192,8 @@ export class Runtime {
     maxOutputTokens: number;
     /** Operator-pinned thinking mode if set; absent when relying on model-default policy. */
     thinking?: "off" | "adaptive" | "enabled";
+    /** Operator-pinned reasoning depth if set; absent when relying on DEFAULT_THINKING_EFFORT. */
+    thinkingEffort?: ThinkingEffort;
     thinkingBudgetTokens?: number;
   } {
     return {
@@ -4188,6 +4206,9 @@ export class Runtime {
         model: this.getDefaultModel(),
       }),
       ...(this.config.thinking !== undefined ? { thinking: this.config.thinking } : {}),
+      ...(this.config.thinkingEffort !== undefined
+        ? { thinkingEffort: this.config.thinkingEffort }
+        : {}),
       ...(this.config.thinkingBudgetTokens !== undefined
         ? { thinkingBudgetTokens: this.config.thinkingBudgetTokens }
         : {}),

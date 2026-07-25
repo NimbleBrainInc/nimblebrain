@@ -14,6 +14,7 @@ import type {
   ToolResult,
   ToolSchema,
 } from "../../src/engine/types.ts";
+import { DEFAULT_THINKING_EFFORT } from "../../src/engine/types.ts";
 import { textContent } from "../../src/engine/content-helpers.ts";
 import {
   getRequestContext,
@@ -1701,72 +1702,121 @@ describe("AgentEngine", () => {
       expect(po?.anthropic?.thinking).toEqual({ type: "enabled", budgetTokens: 4096 });
     });
 
-    it("translates enabled→adaptive+effort for adaptive-only models (Opus 4.7)", async () => {
-      // Opus 4.7 rejects `thinking.type=enabled` with an API error pointing
-      // at `output_config.effort`. The engine translates the platform's
-      // enabled+budget into adaptive+effort on the fly. Budget=12288 maps
-      // to effort=medium (the safeThinkingBudget output for a 16K cap).
-      const captured: Array<Record<string, unknown>> = [];
-      const model: LanguageModelV3 = { ...createEchoModel({ responses: [{ text: "ok" }] }) };
-      const orig = model.doStream.bind(model);
-      model.doStream = async (o) => {
-        captured.push(o as unknown as Record<string, unknown>);
-        return orig(o);
-      };
+    // One resolved value, four provider dialects. `maxOutputTokens` is 16384,
+    // so the token-metered providers get `(16384 - 4096) * share`.
+    describe("provider dialects", () => {
+      async function providerOptionsFor(
+        model: string,
+        thinking: EngineConfig["thinking"],
+      ): Promise<Record<string, Record<string, unknown>>> {
+        const captured: Array<Record<string, unknown>> = [];
+        const m: LanguageModelV3 = { ...createEchoModel({ responses: [{ text: "ok" }] }) };
+        const orig = m.doStream.bind(m);
+        m.doStream = async (o) => {
+          captured.push(o as unknown as Record<string, unknown>);
+          return orig(o);
+        };
+        await new AgentEngine(
+          m,
+          new StaticToolRouter([], () => ({ content: textContent(""), isError: false })),
+          new NoopEventSink(),
+        ).run(
+          { ...defaultConfig, model, thinking },
+          "",
+          [{ role: "user", content: [{ type: "text", text: "x" }] }],
+          [],
+        );
+        return (captured[0]!.providerOptions ?? {}) as Record<string, Record<string, unknown>>;
+      }
 
-      await new AgentEngine(
-        model,
-        new StaticToolRouter([], () => ({ content: textContent(""), isError: false })),
-        new NoopEventSink(),
-      ).run(
-        {
-          ...defaultConfig,
-          model: "anthropic:claude-opus-4-7",
-          thinking: { mode: "enabled", budgetTokens: 12288 },
-        },
-        "",
-        [{ role: "user", content: [{ type: "text", text: "x" }] }],
-        [],
-      );
+      it("sends an effort tier verbatim to effort-shaped Anthropic models", async () => {
+        // The tier the operator chose reaches the wire unchanged. Nothing is
+        // derived from the output ceiling, so `xhigh` is reachable — under the
+        // old budget→effort bands no budget ever produced it.
+        const po = await providerOptionsFor("anthropic:claude-opus-5", {
+          mode: "effort",
+          effort: "xhigh",
+        });
+        expect(po.anthropic?.thinking).toEqual({ type: "adaptive" });
+        expect(po.anthropic?.effort).toBe("xhigh");
+      });
 
-      const po = captured[0]!.providerOptions as
-        | { anthropic?: { thinking?: { type: string }; effort?: string } }
-        | undefined;
-      expect(po?.anthropic?.thinking).toEqual({ type: "adaptive" });
-      expect(po?.anthropic?.effort).toBe("medium");
-    });
+      it("sizes a budget from the tier for budget-shaped Anthropic models", async () => {
+        // Sonnet 4.6 takes `enabled` + a token budget. The tier is converted
+        // here, not upstream, so the resolver stays provider-neutral.
+        const po = await providerOptionsFor("anthropic:claude-sonnet-4-6", {
+          mode: "effort",
+          effort: "high",
+        });
+        expect(po.anthropic?.thinking).toEqual({
+          type: "enabled",
+          budgetTokens: Math.floor((16384 - 4096) * 0.6),
+        });
+      });
 
-    it("maps a large enabled budget to effort=max on adaptive-only models", async () => {
-      // 128K-cap path: safeThinkingBudget ≈ 123904 → effort=max. Confirms
-      // the budget→effort tiers don't quietly cap at "high".
-      const captured: Array<Record<string, unknown>> = [];
-      const model: LanguageModelV3 = { ...createEchoModel({ responses: [{ text: "ok" }] }) };
-      const orig = model.doStream.bind(model);
-      model.doStream = async (o) => {
-        captured.push(o as unknown as Record<string, unknown>);
-        return orig(o);
-      };
+      it("maps effort to reasoningEffort for OpenAI", async () => {
+        const po = await providerOptionsFor("openai:gpt-5.1", { mode: "effort", effort: "high" });
+        expect(po.openai?.reasoningEffort).toBe("high");
+      });
 
-      await new AgentEngine(
-        model,
-        new StaticToolRouter([], () => ({ content: textContent(""), isError: false })),
-        new NoopEventSink(),
-      ).run(
-        {
-          ...defaultConfig,
-          model: "anthropic:claude-opus-4-7",
-          thinking: { mode: "enabled", budgetTokens: 123904 },
-        },
-        "",
-        [{ role: "user", content: [{ type: "text", text: "x" }] }],
-        [],
-      );
+      it("clamps max to xhigh for OpenAI, whose ladder stops there", async () => {
+        const po = await providerOptionsFor("openai:gpt-5.1", { mode: "effort", effort: "max" });
+        expect(po.openai?.reasoningEffort).toBe("xhigh");
+      });
 
-      const po = captured[0]!.providerOptions as
-        | { anthropic?: { thinking?: { type: string }; effort?: string } }
-        | undefined;
-      expect(po?.anthropic?.thinking).toEqual({ type: "adaptive" });
-      expect(po?.anthropic?.effort).toBe("max");
+      it("maps effort onto the nebius key for open-weight models", async () => {
+        // DeepSeek/Kimi et al. route through the OpenAI-compatible adapter,
+        // but the options key is the provider id, not "openai".
+        const po = await providerOptionsFor("nebius:deepseek-ai/DeepSeek-R1", {
+          mode: "effort",
+          effort: "low",
+        });
+        expect(po.nebius?.reasoningEffort).toBe("low");
+        expect(po.openai).toBeUndefined();
+      });
+
+      it("sizes a thinkingBudget from the tier for Google", async () => {
+        const po = await providerOptionsFor("google:gemini-3.6-flash", {
+          mode: "effort",
+          effort: "low",
+        });
+        expect(po.google?.thinkingConfig).toEqual({
+          thinkingBudget: Math.floor((16384 - 4096) * 0.15),
+        });
+      });
+
+      it("expresses off in each provider's own vocabulary", async () => {
+        expect(
+          (await providerOptionsFor("openai:gpt-5.1", { mode: "off" })).openai?.reasoningEffort,
+        ).toBe("none");
+        expect(
+          (await providerOptionsFor("google:gemini-3.6-flash", { mode: "off" })).google
+            ?.thinkingConfig,
+        ).toEqual({ thinkingBudget: 0 });
+      });
+
+      it("uses Google's -1 sentinel for adaptive", async () => {
+        const po = await providerOptionsFor("google:gemini-3.6-flash", { mode: "adaptive" });
+        expect(po.google?.thinkingConfig).toEqual({ thinkingBudget: -1 });
+      });
+
+      it("falls back to the default tier when a budget can't be metered", async () => {
+        // An explicit token budget is meaningless on an effort-shaped model.
+        // It resolves to the default tier rather than being quantized into
+        // one — a budget carries no depth to recover.
+        const po = await providerOptionsFor("anthropic:claude-opus-5", {
+          mode: "enabled",
+          budgetTokens: 8000,
+        });
+        expect(po.anthropic?.thinking).toEqual({ type: "adaptive" });
+        expect(po.anthropic?.effort).toBe(DEFAULT_THINKING_EFFORT);
+      });
+
+      it("says nothing to a provider it doesn't know", async () => {
+        expect(await providerOptionsFor("mystery:some-model", { mode: "effort", effort: "max" })).toEqual(
+          {},
+        );
+      });
     });
 
     it("translates thinking=adaptive without budget", async () => {
@@ -1793,42 +1843,6 @@ describe("AgentEngine", () => {
         | { anthropic?: { thinking?: { type: string } } }
         | undefined;
       expect(po?.anthropic?.thinking).toEqual({ type: "adaptive" });
-    });
-
-    it("maps operator adaptive+budget to effort on adaptive-only models", async () => {
-      // Operator path: thinking="adaptive" + thinkingBudgetTokens=12288 in
-      // tenant config. resolveThinking passes the budget through verbatim;
-      // for adaptive-only models the engine maps it to effort so the
-      // operator's intended cap actually constrains thinking (the SDK
-      // would otherwise drop budgetTokens on adaptive).
-      const captured: Array<Record<string, unknown>> = [];
-      const model: LanguageModelV3 = { ...createEchoModel({ responses: [{ text: "ok" }] }) };
-      const orig = model.doStream.bind(model);
-      model.doStream = async (o) => {
-        captured.push(o as unknown as Record<string, unknown>);
-        return orig(o);
-      };
-
-      await new AgentEngine(
-        model,
-        new StaticToolRouter([], () => ({ content: textContent(""), isError: false })),
-        new NoopEventSink(),
-      ).run(
-        {
-          ...defaultConfig,
-          model: "anthropic:claude-opus-4-7",
-          thinking: { mode: "adaptive", budgetTokens: 12288 },
-        },
-        "",
-        [{ role: "user", content: [{ type: "text", text: "x" }] }],
-        [],
-      );
-
-      const po = captured[0]!.providerOptions as
-        | { anthropic?: { thinking?: { type: string }; effort?: string } }
-        | undefined;
-      expect(po?.anthropic?.thinking).toEqual({ type: "adaptive" });
-      expect(po?.anthropic?.effort).toBe("medium");
     });
 
     it("does NOT set providerOptions when thinking is undefined", async () => {

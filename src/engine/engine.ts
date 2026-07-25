@@ -35,6 +35,7 @@ import { toolSchemaForLlm } from "./tool-schema-for-llm.ts";
 import {
   CONNECTOR_SKILL_SYNTHETIC,
   type ConnectorSkillCandidate,
+  DEFAULT_THINKING_EFFORT,
   type EngineConfig,
   type EngineResult,
   type EventSink,
@@ -42,6 +43,7 @@ import {
   isInternalTool,
   type ResolvedThinking,
   type StopReason,
+  type ThinkingEffort,
   type ToolCall,
   type ToolCallRecord,
   type ToolResult,
@@ -49,98 +51,171 @@ import {
   type ToolSchema,
 } from "./types.ts";
 
+/** Tokens reserved for visible content so thinking can't consume the whole reply. */
+const MIN_VISIBLE_OUTPUT_TOKENS = 4096;
+
+/** Anthropic's stated minimum thinking budget. Below this the API rejects. */
+const MIN_THINKING_BUDGET_TOKENS = 1024;
+
+/** Share of the available output budget each effort tier is allowed to think with. */
+const EFFORT_BUDGET_SHARE: Record<ThinkingEffort, number> = {
+  low: 0.15,
+  medium: 0.35,
+  high: 0.6,
+  xhigh: 0.8,
+  max: 1,
+};
+
 /**
- * Map a thinking budget (tokens) to an Anthropic effort tier. Used when
- * translating the platform's `enabled`-mode budget to the adaptive+effort
- * shape required by adaptive-only models like Opus 4.7. Bands are
- * calibrated against `safeThinkingBudget` output so the effort tier
- * scales with `maxOutputTokens`:
- *   maxOutputTokens 8K   → budget   4096 → "low"
- *   maxOutputTokens 16K  → budget  12288 → "medium"
- *   maxOutputTokens 32K  → budget  28672 → "high"
- *   maxOutputTokens 128K → budget 123904 → "max"
+ * Size a token budget for providers that meter thinking in tokens
+ * (Anthropic up to 4.6, Google) from the operator's chosen depth.
+ *
+ * This direction is sound where the reverse was not: the operator named a
+ * depth, and the model's own output ceiling is the natural scale to express
+ * it against. Deriving a *depth* from a ceiling nobody set was the defect —
+ * there was no intent in that number to recover.
+ *
+ * Always leaves `MIN_VISIBLE_OUTPUT_TOKENS` for the answer itself, because
+ * a model that spends its whole budget reasoning emits an empty turn (seen
+ * in production on Opus 4.7 with a tight `max_tokens`).
  */
-function budgetToEffort(budget: number): "low" | "medium" | "high" | "max" {
-  if (budget <= 4096) return "low";
-  if (budget <= 16384) return "medium";
-  if (budget <= 32768) return "high";
-  return "max";
+function effortToBudget(effort: ThinkingEffort, maxOutputTokens: number): number {
+  const available = maxOutputTokens - MIN_VISIBLE_OUTPUT_TOKENS;
+  return Math.max(MIN_THINKING_BUDGET_TOKENS, Math.floor(available * EFFORT_BUDGET_SHARE[effort]));
 }
 
 /**
- * Build the `providerOptions.anthropic` thinking shape for the resolved config.
- * Adaptive-only models (e.g. Opus 4.7) reject `thinking.type=enabled` outright,
- * and drop `budgetTokens` on adaptive; both are translated to
- * `thinking.type=adaptive` plus a top-level `effort` mapped from the budget so
- * the operator's intended cap actually constrains thinking.
+ * Clamp the platform ladder onto OpenAI's, which tops out at `xhigh`.
+ * Nebius-hosted open-weight models (DeepSeek, Kimi, …) route through the
+ * OpenAI-compatible adapter and take the same option.
+ */
+function toOpenAIEffort(effort: ThinkingEffort): "low" | "medium" | "high" | "xhigh" {
+  return effort === "max" ? "xhigh" : effort;
+}
+
+/**
+ * Build Anthropic's thinking options.
+ *
+ * Anthropic speaks two dialects and the split is per-model: 4.7, 4.8, and
+ * the 5-series reject `thinking.type=enabled` and take
+ * `thinking.type=adaptive` plus `output_config.effort`; everything earlier
+ * takes `thinking.type=enabled` with a token budget.
  */
 function buildAnthropicThinkingOptions(
   model: string,
   thinking: ResolvedThinking,
+  maxOutputTokens: number,
 ): SharedV3ProviderOptions {
-  if (thinking.mode === "off") {
-    return { anthropic: { thinking: { type: "disabled" } } };
+  const effortShaped = !supportsEnabledThinking(model);
+
+  switch (thinking.mode) {
+    case "off":
+      // Effort-shaped models have no "do not reason" state, and the SDK
+      // validates `type: "disabled"` then never serializes it — so this is
+      // accepted and silently ignored, and the model reasons anyway. Sent
+      // regardless because it is honored on the budget-shaped models.
+      return { anthropic: { thinking: { type: "disabled" } } };
+    case "adaptive":
+      return { anthropic: { thinking: { type: "adaptive" } } };
+    case "effort":
+      return effortShaped
+        ? { anthropic: { thinking: { type: "adaptive" }, effort: thinking.effort } }
+        : {
+            anthropic: {
+              thinking: {
+                type: "enabled",
+                budgetTokens: effortToBudget(thinking.effort, maxOutputTokens),
+              },
+            },
+          };
+    case "enabled":
+      // An explicit token budget can't be metered on an effort-shaped model.
+      // Fall back to the default tier rather than quantizing the number into
+      // one — a budget carries no depth to recover.
+      return effortShaped
+        ? {
+            anthropic: {
+              thinking: { type: "adaptive" },
+              effort: DEFAULT_THINKING_EFFORT,
+            },
+          }
+        : {
+            anthropic: {
+              thinking: { type: "enabled", budgetTokens: thinking.budgetTokens },
+            },
+          };
   }
-  const adaptiveOnly = !supportsEnabledThinking(model);
-  if (thinking.mode === "adaptive") {
-    // Adaptive with an explicit budget on adaptive-only models maps to
-    // effort so the operator's intended cap actually constrains thinking
-    // (the SDK drops budgetTokens on adaptive otherwise). For models that
-    // accept enabled, adaptive is left bare — the model decides.
-    if (adaptiveOnly && thinking.budgetTokens != null) {
+}
+
+/** Build OpenAI-family options (`openai`, and `nebius` via the compatible adapter). */
+function buildOpenAIThinkingOptions(
+  providerKey: string,
+  thinking: ResolvedThinking,
+): SharedV3ProviderOptions {
+  switch (thinking.mode) {
+    case "off":
+      return { [providerKey]: { reasoningEffort: "none" } };
+    case "adaptive":
+      // No adaptive equivalent — omitting the option is the closest thing:
+      // the model applies its own per-call default.
+      return {};
+    case "effort":
+      return { [providerKey]: { reasoningEffort: toOpenAIEffort(thinking.effort) } };
+    case "enabled":
+      // Token budgets aren't expressible here; use the default depth.
+      return { [providerKey]: { reasoningEffort: toOpenAIEffort(DEFAULT_THINKING_EFFORT) } };
+  }
+}
+
+/** Build Google Gemini options. Gemini meters thinking in tokens, like Anthropic's older dialect. */
+function buildGoogleThinkingOptions(
+  thinking: ResolvedThinking,
+  maxOutputTokens: number,
+): SharedV3ProviderOptions {
+  switch (thinking.mode) {
+    case "off":
+      return { google: { thinkingConfig: { thinkingBudget: 0 } } };
+    case "adaptive":
+      // Gemini's own "decide per call" signal.
+      return { google: { thinkingConfig: { thinkingBudget: -1 } } };
+    case "effort":
       return {
-        anthropic: {
-          thinking: { type: "adaptive" },
-          effort: budgetToEffort(thinking.budgetTokens),
+        google: {
+          thinkingConfig: { thinkingBudget: effortToBudget(thinking.effort, maxOutputTokens) },
         },
       };
-    }
-    return { anthropic: { thinking: { type: "adaptive" } } };
+    case "enabled":
+      return { google: { thinkingConfig: { thinkingBudget: thinking.budgetTokens } } };
   }
-  // mode === "enabled"
-  if (adaptiveOnly) {
-    // Anthropic rejects `thinking.type=enabled` for these models with a
-    // specific error pointing at `output_config.effort`. Translate the
-    // platform's enabled+budget into adaptive+effort here so the
-    // resolver stays provider-neutral.
-    return {
-      anthropic: {
-        thinking: { type: "adaptive" },
-        ...(thinking.budgetTokens != null ? { effort: budgetToEffort(thinking.budgetTokens) } : {}),
-      },
-    };
-  }
-  return {
-    anthropic: {
-      thinking: {
-        type: "enabled",
-        ...(thinking.budgetTokens != null ? { budgetTokens: thinking.budgetTokens } : {}),
-      },
-    },
-  };
 }
 
 /**
- * Translate the platform's provider-neutral thinking config into the
- * call's `providerOptions` shape. Each provider has its own option name
- * and discriminated-union shape; we keep them confined to this helper
- * so adding a new provider doesn't ripple through the engine loop.
+ * Translate the platform's provider-neutral thinking config into the call's
+ * `providerOptions` shape.
  *
- * Today: Anthropic only. OpenAI o-series (`reasoningEffort`) and
- * Google Gemini 2.5 (`thinkingConfig`) are TODO and ignored — those
- * providers fall back to their own defaults until wired in.
+ * Every provider is reached through one table here, so the resolver upstream
+ * never has to know which dialect a model speaks — it decides whether to
+ * reason and how hard, and this decides how to say it.
  */
 function buildThinkingProviderOptions(
   model: string,
   thinking: ResolvedThinking | undefined,
+  maxOutputTokens: number,
 ): SharedV3ProviderOptions {
   if (!thinking) return {};
-  if (getProviderFromModel(model) === "anthropic") {
-    return buildAnthropicThinkingOptions(model, thinking);
+  switch (getProviderFromModel(model)) {
+    case "anthropic":
+      return buildAnthropicThinkingOptions(model, thinking, maxOutputTokens);
+    case "openai":
+      return buildOpenAIThinkingOptions("openai", thinking);
+    case "nebius":
+      return buildOpenAIThinkingOptions("nebius", thinking);
+    case "google":
+      return buildGoogleThinkingOptions(thinking, maxOutputTokens);
+    default:
+      // Unknown provider: say nothing and let it apply its own default.
+      return {};
   }
-  // openai / google: not yet wired. The provider falls back to its own
-  // default behavior. Tracked for follow-up.
-  return {};
 }
 
 /**
@@ -814,7 +889,11 @@ export class AgentEngine {
 
         callMessages = appendFinalStepReminder(callMessages, iteration, maxIter);
 
-        const callProviderOptions = buildThinkingProviderOptions(config.model, config.thinking);
+        const callProviderOptions = buildThinkingProviderOptions(
+          config.model,
+          config.thinking,
+          config.maxOutputTokens,
+        );
 
         const callProvider = getProviderFromModel(config.model);
         const callOnce = (msgs: LanguageModelV3Message[]) => {

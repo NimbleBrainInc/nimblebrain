@@ -1,4 +1,5 @@
 import { describe, expect, it } from "bun:test";
+import { DEFAULT_THINKING_EFFORT } from "../../src/engine/types.ts";
 import { resolveThinking } from "../../src/runtime/resolve-thinking.ts";
 
 describe("resolveThinking", () => {
@@ -16,64 +17,56 @@ describe("resolveThinking", () => {
 		expect(resolveThinking({ model: "anthropic:claude-3-5-haiku-20241022" })).toBeUndefined();
 	});
 
-	it("defaults to enabled-with-capped-budget for catalog-flagged reasoning models", () => {
-		// Opus 4.7 has capabilities.reasoning = true. The platform default is
-		// `enabled` (not `adaptive`) so we keep direct control over thinking
-		// spend; budget is clamped to leave room for visible output.
-		expect(
-			resolveThinking({ model: "anthropic:claude-opus-4-7", maxOutputTokens: 16384 }),
-		).toEqual({ mode: "enabled", budgetTokens: 16384 - 4096 });
-	});
-
-	it("default budget floors at 1024 (Anthropic minimum) when maxOutputTokens is tiny", () => {
-		// Even when maxOutputTokens is below the visible-tokens floor, we
-		// emit at least 1024 — the API rejects anything lower.
-		expect(
-			resolveThinking({ model: "anthropic:claude-opus-4-7", maxOutputTokens: 2000 }),
-		).toEqual({ mode: "enabled", budgetTokens: 1024 });
-	});
-
-	it("default budget falls back to 1024 when maxOutputTokens is omitted", () => {
-		// Caller didn't pass maxOutputTokens (legacy callsite). Fall back to
-		// the safe minimum rather than emitting a budget-less `enabled`,
-		// which the SDK rejects with a warning.
+	it("defaults reasoning models to the default effort tier", () => {
+		// The platform default states a depth rather than a token budget, so it
+		// carries the same meaning to every provider.
 		expect(resolveThinking({ model: "anthropic:claude-opus-4-7" })).toEqual({
-			mode: "enabled",
-			budgetTokens: 1024,
+			mode: "effort",
+			effort: DEFAULT_THINKING_EFFORT,
 		});
 	});
 
-	it("operator off wins over model default", () => {
+	it("uses the operator's effort tier on the default path", () => {
 		expect(
-			resolveThinking({
-				configMode: "off",
-				model: "anthropic:claude-opus-4-7",
-				maxOutputTokens: 16384,
-			}),
-		).toEqual({ mode: "off" });
+			resolveThinking({ model: "anthropic:claude-opus-4-7", configEffort: "xhigh" }),
+		).toEqual({ mode: "effort", effort: "xhigh" });
 	});
 
-	it("operator adaptive is passed through (provider picks budget)", () => {
+	it("never reads an output ceiling", () => {
+		// The regression this whole shape exists to prevent: with no operator
+		// ceiling, `maxOutputTokens` is the model's own catalog maximum, and
+		// sizing thinking from it turned a number nobody chose into a directive
+		// to reason maximally on every call. The resolver no longer accepts the
+		// value at all, so the same input can only produce one answer.
+		const small = resolveThinking({ model: "anthropic:claude-opus-5" });
+		const large = resolveThinking({ model: "anthropic:claude-opus-4-7" });
+		expect(small).toEqual({ mode: "effort", effort: DEFAULT_THINKING_EFFORT });
+		expect(large).toEqual(small);
+	});
+
+	it("operator off wins over model default", () => {
+		expect(resolveThinking({ configMode: "off", model: "anthropic:claude-opus-4-7" })).toEqual({
+			mode: "off",
+		});
+	});
+
+	it("operator adaptive is passed through bare", () => {
 		expect(
-			resolveThinking({
-				configMode: "adaptive",
-				model: "anthropic:claude-opus-4-7",
-				maxOutputTokens: 16384,
-			}),
+			resolveThinking({ configMode: "adaptive", model: "anthropic:claude-opus-4-7" }),
 		).toEqual({ mode: "adaptive" });
 	});
 
-	it("operator adaptive with budget is passed through verbatim", () => {
-		// The Anthropic SDK currently drops the budget on adaptive, but we
-		// pass it through so a future SDK that honors it gets the value.
+	it("drops effort and budget on adaptive", () => {
+		// Adaptive means "you decide". Attaching a depth or a cap to it states
+		// two contradictory things, so the mode wins and the rest is dropped.
 		expect(
 			resolveThinking({
 				configMode: "adaptive",
+				configEffort: "max",
 				configBudgetTokens: 8000,
 				model: "anthropic:claude-opus-4-7",
-				maxOutputTokens: 16384,
 			}),
-		).toEqual({ mode: "adaptive", budgetTokens: 8000 });
+		).toEqual({ mode: "adaptive" });
 	});
 
 	it("operator config can enable thinking on a non-reasoning model", () => {
@@ -81,48 +74,48 @@ describe("resolveThinking", () => {
 			resolveThinking({
 				configMode: "enabled",
 				model: "anthropic:claude-3-5-haiku-20241022",
-				configBudgetTokens: 4000,
-				maxOutputTokens: 16384,
 			}),
-		).toEqual({ mode: "enabled", budgetTokens: 4000 });
+		).toEqual({ mode: "effort", effort: DEFAULT_THINKING_EFFORT });
 	});
 
-	it("operator-set budget on enabled is clamped to leave visible-output room", () => {
-		// Operator says "give me 50K of thinking" but maxOutputTokens is 16K.
-		// We clamp down so visible content gets at least MIN_VISIBLE_OUTPUT_TOKENS.
+	it("an explicit budget outranks an effort tier", () => {
+		// The budget is the more specific instruction. Providers that can't
+		// meter tokens fall back to the tier in the engine, not here.
 		expect(
 			resolveThinking({
 				configMode: "enabled",
-				configBudgetTokens: 50_000,
-				maxOutputTokens: 16384,
+				configEffort: "low",
+				configBudgetTokens: 8000,
+				model: "anthropic:claude-sonnet-4-6",
 			}),
-		).toEqual({ mode: "enabled", budgetTokens: 16384 - 4096 });
+		).toEqual({ mode: "enabled", budgetTokens: 8000 });
 	});
 
-	it("operator-set lower budget is preserved (not raised)", () => {
-		// Clamping is one-directional: we lower a too-large budget, never
-		// raise a deliberately small one.
+	it("honors a budget set without a thinking mode", () => {
 		expect(
-			resolveThinking({
-				configMode: "enabled",
-				configBudgetTokens: 2000,
-				maxOutputTokens: 16384,
-			}),
-		).toEqual({ mode: "enabled", budgetTokens: 2000 });
+			resolveThinking({ configBudgetTokens: 8000, model: "anthropic:claude-opus-4-7" }),
+		).toEqual({ mode: "enabled", budgetTokens: 8000 });
+	});
+
+	it("passes an operator budget through unclamped", () => {
+		// Clamping against the output ceiling now happens in the engine, which
+		// is the only layer that knows whether the provider meters tokens at all.
+		expect(
+			resolveThinking({ configMode: "enabled", configBudgetTokens: 50_000 }),
+		).toEqual({ mode: "enabled", budgetTokens: 50_000 });
 	});
 
 	it("zero / negative budget tokens are ignored (treated as unset)", () => {
-		expect(
-			resolveThinking({ configMode: "enabled", configBudgetTokens: 0, maxOutputTokens: 16384 }),
-		).toEqual({ mode: "enabled", budgetTokens: 16384 - 4096 });
+		expect(resolveThinking({ configMode: "enabled", configBudgetTokens: 0 })).toEqual({
+			mode: "effort",
+			effort: DEFAULT_THINKING_EFFORT,
+		});
 	});
 
-	it("enabled without maxOutputTokens or budget falls back to 1024", () => {
-		// Legacy callsite path. Always emit a budget — the SDK rejects
-		// `enabled` without one (warning + default of 1024 anyway).
+	it("enabled with nothing else falls back to the default tier", () => {
 		expect(resolveThinking({ configMode: "enabled" })).toEqual({
-			mode: "enabled",
-			budgetTokens: 1024,
+			mode: "effort",
+			effort: DEFAULT_THINKING_EFFORT,
 		});
 	});
 });

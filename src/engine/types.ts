@@ -231,22 +231,52 @@ export interface EngineHooks {
 }
 
 /**
- * Provider-neutral extended-thinking config. The engine translates this
- * to per-provider options at call time:
- *   - Anthropic — `providerOptions.anthropic.thinking.{type,budgetTokens?}`
- *   - OpenAI o-series — `providerOptions.openai.reasoningEffort` (TODO)
- *   - Google Gemini 2.5 — `providerOptions.google.thinkingConfig` (TODO)
- *   - Any other provider — ignored
+ * Provider-neutral reasoning depth — how hard the model should think,
+ * expressed independently of how any one provider spells it.
+ *
+ * This is the platform's canonical currency for thinking. Providers that
+ * take an effort tier natively receive it directly; providers that take a
+ * token budget have one sized from it. The reverse (deriving a tier from a
+ * budget) is not done, because a budget the operator never set has no
+ * intent in it to recover.
+ *
+ * The ladder is Anthropic's, which is the widest of the providers in use.
+ * `max` has no OpenAI equivalent and clamps to `xhigh` there.
+ */
+export type ThinkingEffort = "low" | "medium" | "high" | "xhigh" | "max";
+
+/**
+ * Depth used when reasoning is on but the operator named no tier.
+ *
+ * `medium` rather than the top of the ladder: the default applies to every
+ * turn on a reasoning model, including trivial ones, and the deepest tiers
+ * cost real latency and tokens. An operator who wants more says so.
+ */
+export const DEFAULT_THINKING_EFFORT: ThinkingEffort = "medium";
+
+/**
+ * Provider-neutral extended-thinking config. The engine translates this to
+ * per-provider options at call time in `buildThinkingProviderOptions`.
+ *
+ * Four arms, because providers genuinely differ in what they accept:
+ *   - `off`      — do not reason. Not enforceable on every model; see the
+ *                  engine's Anthropic branch.
+ *   - `adaptive` — the model decides per call. No depth expressed.
+ *   - `effort`   — reason at a named depth. The portable arm, and the one
+ *                  the platform default path produces.
+ *   - `enabled`  — reason within an explicit token budget. Only meaningful
+ *                  on budget-shaped providers, and only when an operator
+ *                  actually set the number.
  *
  * Resolution priority is handled upstream (see resolveThinking in
  * src/runtime/resolve-thinking.ts); the engine receives an already-
  * resolved value or `undefined` for "let the provider default decide".
  */
-export interface ResolvedThinking {
-  mode: "off" | "adaptive" | "enabled";
-  /** Token budget for `enabled`. Ignored for `off`/`adaptive`. */
-  budgetTokens?: number;
-}
+export type ResolvedThinking =
+  | { mode: "off" }
+  | { mode: "adaptive" }
+  | { mode: "effort"; effort: ThinkingEffort }
+  | { mode: "enabled"; budgetTokens: number };
 
 /** Engine configuration per run. */
 export interface EngineConfig {
