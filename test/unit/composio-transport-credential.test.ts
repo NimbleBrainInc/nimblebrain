@@ -88,24 +88,9 @@ describe("the credential provider attaches the resolved broker key", () => {
 });
 
 describe("registration happens at the composition root", () => {
-  it("is registered by the same call chain Runtime.start runs, before bundles start", async () => {
-    // The bug this pins: registering from `createComposioProvider` was too late.
-    // The managed-connector registry is built lazily, after `Runtime.start`
-    // returns, but a connected Composio connector starts *inside* start() —
-    // so `applyProviderAuth` threw and every Composio source failed on boot.
-    const { registerBuiltinCredentialProviders } = await import(
-      "../../src/oauth/minted-credential-provider.ts"
-    );
-    const { registerComposioCredentialProvider } = await import(
-      "../../src/connectors/providers/composio/transport-credential.ts"
-    );
-    const { getCredentialProvider } = await import("../../src/tools/credential-provider.ts");
-
-    registerBuiltinCredentialProviders();
-    registerComposioCredentialProvider();
-
-    expect(getCredentialProvider(COMPOSIO_CREDENTIAL_PROVIDER)).toBeDefined();
-  });
+  // Whether `Runtime.start` actually performs the registration is pinned by
+  // `test/integration/composio-credential-boot.test.ts` — asserting it here
+  // would only prove that calling the register function registers.
 
   it("resolves a config-only key onto a legacy ref's transport header — the headline case", async () => {
     // The single combination this PR exists to enable, end to end and in one

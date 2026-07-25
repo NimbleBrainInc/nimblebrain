@@ -110,6 +110,17 @@ function isLegacyEnvTemplateAuth(auth: RemoteTransportConfig["auth"]): boolean {
  *
  * Returns `config` unchanged for every other shape, so a non-Composio ref and an
  * already-migrated one both pass straight through.
+ *
+ * **Scope: `auth` only, not `headers`.** The pre-seam scrub rewrote any *other*
+ * response header embedding the key into a `${COMPOSIO_API_KEY}` template too,
+ * and `buildRequestHeaders` still resolves those from the process env — so on a
+ * config-only deploy such a header would resolve empty. Left unmapped
+ * deliberately: no such ref exists (Composio returns only `x-api-key`), and the
+ * two cases differ in severity. `scrubComposioHeaders` keeps its drop branch
+ * because writing a key-bearing header would put a secret at rest; an unmapped
+ * legacy header only produces an empty value, which surfaces as an auth failure
+ * rather than a leak. If one is ever found in the field, drop it here rather
+ * than re-resolving it — that is what a fresh install now does.
  */
 export function composioTransportConfig(
   config: RemoteTransportConfig | undefined,
