@@ -1,12 +1,20 @@
 // ---------------------------------------------------------------------------
 // Bootstrap mappers — server response → client context state
 //
-// `userRole` is load-bearing: it drives every workspace-scoped permission
-// gate via `useScopedRole`. Dropping it on the way through resolves any
-// non-org-admin member to role="none" and filters their settings nav down
-// to "About" only — a bug we shipped once and won't ship again. Anchor
-// the mapping in tested helpers so a future contributor can't accidentally
-// re-introduce the omission via either entry path (bootstrap response or
+// `userRole` is load-bearing, and for two consumers, not one:
+//
+//   - `useScopedRole` — *reach*. Dropping it resolves any non-org-admin member
+//     to role="none" and filters their settings nav down to "About" only — a
+//     bug we shipped once and won't ship again.
+//   - `canWriteWorkspace` — *writes*. It reads the role directly, without going
+//     through `useScopedRole` at all; that split is deliberate, because the
+//     role ordering escalates org admins and the server does not.
+//
+// So dropping it no longer only hurts non-org-admins: an org admin used to sail
+// past a missing `userRole` via the early return in `resolveScopedRole`, and now
+// loses every workspace write too, org owners included. Anchor the mapping in
+// tested helpers so a future contributor can't accidentally re-introduce the
+// omission via either entry path (bootstrap response or
 // `manage_workspaces.list` fallback).
 // ---------------------------------------------------------------------------
 

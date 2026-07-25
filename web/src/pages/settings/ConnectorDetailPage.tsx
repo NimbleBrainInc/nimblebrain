@@ -11,7 +11,7 @@ import { OAuthConnectionSection } from "../../components/connectors/OAuthConnect
 import { OperatorOAuthSection } from "../../components/connectors/OperatorOAuthSection";
 import { ToolPermissionsTable } from "../../components/connectors/ToolPermissionsTable";
 import { Button } from "../../components/ui/button";
-import { roleAtLeast, useScopedRole } from "../../hooks/useScopedRole";
+import { useCanWriteActiveWorkspace } from "../../hooks/useScopedRole";
 
 /**
  * Per-connector Configure page. The visual hierarchy is driven by
@@ -54,11 +54,11 @@ export function ConnectorDetailPage() {
   // few uses and silently makes destructive buttons no-op.
   const [uninstallArmed, setUninstallArmed] = useState(false);
 
-  const role = useScopedRole();
-  // Edit gates ride on ws_admin. In a personal workspace the sole owner
-  // is its admin (the workspace store enforces that invariant), so the
-  // same check covers both cases.
-  const canManage = roleAtLeast(role, "ws_admin");
+  // Edit gates ride on workspace-admin *membership*, matching the server's
+  // `canWriteWorkspaceScoped`. In a personal workspace the sole owner is its
+  // admin (the workspace store enforces that invariant), so the same check
+  // covers both cases.
+  const canManage = useCanWriteActiveWorkspace();
 
   const refresh = useCallback(async () => {
     setError(null);

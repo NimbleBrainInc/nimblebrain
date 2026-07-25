@@ -1,5 +1,5 @@
 import { useWorkspaceContext } from "../../context/WorkspaceContext";
-import { roleAtLeast, useScopedRole } from "../../hooks/useScopedRole";
+import { useCanWriteActiveWorkspace } from "../../hooks/useScopedRole";
 import {
   CopyableWorkspaceId,
   RequireActiveWorkspace,
@@ -9,12 +9,15 @@ import {
 } from "./components";
 
 /**
- * Workspace "General" tab — name, MCP connection, and custom instructions.
+ * Workspace "General" tab — the MCP connection details and the workspace's
+ * custom instructions.
  *
  * Route: /w/:slug/settings/general (the workspace is the URL slug).
- * Permission: any workspace member can read; workspace admins (or org
- * admins/owners) can edit. The `WorkspaceInstructions` editor disables
- * itself when `canEdit` is false; the backend independently enforces.
+ * Permission: any workspace member can read; only a workspace **admin member**
+ * can edit. Org admins get no bypass — `write_instructions` at workspace scope
+ * routes through `canWriteWorkspaceScoped`, which never consults `orgRole`. The
+ * `WorkspaceInstructions` editor disables itself when `canEdit` is false; the
+ * backend independently enforces.
  */
 export function WorkspaceGeneralTab() {
   return (
@@ -26,8 +29,9 @@ export function WorkspaceGeneralTab() {
 
 function Inner() {
   const { activeWorkspace } = useWorkspaceContext();
-  const role = useScopedRole();
-  const canEdit = roleAtLeast(role, "ws_admin");
+  // The instructions editor writes workspace-owned state, gated server-side by
+  // `canWriteWorkspaceScoped` — membership admin, no org bypass.
+  const canEdit = useCanWriteActiveWorkspace();
 
   // RequireActiveWorkspace guarantees activeWorkspace is non-null here.
   const ws = activeWorkspace!;

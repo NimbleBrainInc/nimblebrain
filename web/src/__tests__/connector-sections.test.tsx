@@ -15,9 +15,13 @@
 //      pending_auth / starting → no button). A regression here would
 //      strand the user with no way to recover a broken connection.
 //
-//   3. `canManage=false` hides every mutation affordance. Non-admin
-//      members see status text only — no Edit, Disconnect, Connect, or
-//      Clear buttons.
+//   3. `canManage=false` hides the affordances the server admin-gates —
+//      Edit, Disconnect, Clear, Cancel — while member-actionable ones
+//      (authorising your *own* account via a native OAuth flow) stay.
+//      "Member-actionable" here means the server permits it, not that the
+//      flow is per-caller — native OAuth binds the workspace's shared
+//      credential under `WORKSPACE_PRINCIPAL_ID`. Hiding too much strands a
+//      member who could have acted; showing too much hands them a 403.
 //
 // Same plumbing as ResourceLinkView.test.tsx: bun:test + react-dom/client
 // + happy-dom (via web/test/setup.ts), no @testing-library/react.
@@ -197,6 +201,26 @@ function dcrConnector(over: Partial<InstalledConnector> = {}): InstalledConnecto
       iconUrl: "",
       url: "https://api.granola.test/mcp",
       auth: "dcr",
+    },
+    ...over,
+  };
+}
+
+/** Composio API-key connector — the one auth path the server admin-gates. */
+function composioApiKeyConnector(over: Partial<InstalledConnector> = {}): InstalledConnector {
+  return {
+    ...dcrConnector(),
+    serverName: "posthog",
+    bundleName: "posthog",
+    catalogId: "com.posthog/analytics",
+    catalog: {
+      id: "com.posthog/analytics",
+      name: "PostHog",
+      description: "Analytics",
+      iconUrl: "",
+      url: "https://mcp.posthog.test/mcp",
+      auth: "composio",
+      composio: { toolkit: "posthog", authScheme: "API_KEY" },
     },
     ...over,
   };
@@ -673,6 +697,166 @@ describe("ConnectorStatusHero", () => {
       />,
     );
     expect(findButton(mounted.container, "Connect")).not.toBeNull();
+  });
+
+  test("Cancel is hidden when canManage=false — disconnect is admin-gated server-side", async () => {
+    // Cancel calls `disconnectConnector`, and `handleDisconnect` refuses a
+    // non-admin outright. Offering it left a member clicking into a red
+    // "Workspace admin role required" with the connector still wedged.
+    mounted = await mount(
+      <ConnectorStatusHero
+        installed={dcrConnector({ status: "connecting", state: "pending_auth" })}
+        canManage={false}
+        onChanged={() => {}}
+      />,
+    );
+    expect(findButton(mounted.container, "Cancel")).toBeNull();
+    // Suppressing the CTA without saying why leaves a pulsing dot and no
+    // explanation — the regression that copy exists to prevent, so it gets
+    // pinned rather than resting on the button assertion above.
+    expect(mounted.container.textContent).toContain("Workspace admin required");
+    mounted.unmount();
+
+    // ...and present for someone who can actually complete it.
+    mounted = await mount(
+      <ConnectorStatusHero
+        installed={dcrConnector({ status: "connecting", state: "pending_auth" })}
+        canManage={true}
+        onChanged={() => {}}
+      />,
+    );
+    expect(findButton(mounted.container, "Cancel")).not.toBeNull();
+  });
+
+  test("a member blocked on operator setup is told that, not just that they lack the role", async () => {
+    // The hero half of a must-match pair: ConnectorBrowsePage says "Operator
+    // setup required" for this same user in this same state, and that string
+    // is pinned in connector-browse-card-action.test.tsx. Pinning one side
+    // doesn't pin the pair — this is the other side.
+    mounted = await mount(
+      <ConnectorStatusHero
+        installed={staticAuthConnector({
+          status: "needs_setup",
+          missingOperatorSetup: true,
+          operatorOAuth: undefined,
+          statusReason: "OAuth app not configured for this workspace.",
+        })}
+        canManage={false}
+        onChanged={() => {}}
+      />,
+    );
+    expect(findButton(mounted.container, "Set up OAuth")).toBeNull();
+    expect(mounted.container.textContent).toContain("Operator setup required");
+    // ...and not the generic wording, which is what the ternary exists to avoid.
+    expect(mounted.container.textContent).not.toContain("Workspace admin required");
+  });
+
+  test("composio API-key Reconnect is hidden from a member — rotation is admin-gated", async () => {
+    // `handleConnectApiKey` refuses a non-admin once a connected account
+    // exists, which is exactly reauth_required/failed. Offering Reconnect
+    // there walks a member through the key form to a refusal on submit.
+    mounted = await mount(
+      <ConnectorStatusHero
+        installed={composioApiKeyConnector({ status: "needs_auth", state: "reauth_required" })}
+        canManage={false}
+        onChanged={() => {}}
+      />,
+    );
+    expect(findButton(mounted.container, "Reconnect")).toBeNull();
+    mounted.unmount();
+
+    mounted = await mount(
+      <ConnectorStatusHero
+        installed={composioApiKeyConnector({ status: "needs_auth", state: "reauth_required" })}
+        canManage={true}
+        onChanged={() => {}}
+      />,
+    );
+    expect(findButton(mounted.container, "Reconnect")).not.toBeNull();
+  });
+
+  test("a composio OAUTH2 connector stays open to a member — the server grants it", async () => {
+    // `authScheme` is optional and defaults to OAUTH2, so the ordinary composio
+    // connector has none and takes /v1/composio-auth/initiate — requireAuth +
+    // requireWorkspace, no admin check (#755). Gating it here would hide
+    // Reconnect while the server still grants it, which is the client/server
+    // divergence #741 exists to remove. This pins the API_KEY discriminator:
+    // without it, every composio connector would be gated.
+    mounted = await mount(
+      <ConnectorStatusHero
+        installed={composioApiKeyConnector({
+          status: "needs_auth",
+          state: "reauth_required",
+          catalog: {
+            id: "com.posthog/analytics",
+            name: "PostHog",
+            description: "Analytics",
+            iconUrl: "",
+            url: "https://mcp.posthog.test/mcp",
+            auth: "composio",
+            composio: { toolkit: "posthog" },
+          },
+        })}
+        canManage={false}
+        onChanged={() => {}}
+      />,
+    );
+    expect(findButton(mounted.container, "Reconnect")).not.toBeNull();
+  });
+
+  test("a composio API-key connector in `failed` is gated too, not just reauth_required", async () => {
+    // `failed` is the other arm of the rotation predicate — a remote bundle
+    // that died still offers Reconnect, and for an API-key connector that is
+    // the same admin-gated rotation.
+    mounted = await mount(
+      <ConnectorStatusHero
+        installed={composioApiKeyConnector({ status: "failed", state: "crashed" })}
+        canManage={false}
+        onChanged={() => {}}
+      />,
+    );
+    expect(findButton(mounted.container, "Reconnect")).toBeNull();
+    mounted.unmount();
+
+    mounted = await mount(
+      <ConnectorStatusHero
+        installed={composioApiKeyConnector({ status: "failed", state: "crashed" })}
+        canManage={true}
+        onChanged={() => {}}
+      />,
+    );
+    expect(findButton(mounted.container, "Reconnect")).not.toBeNull();
+  });
+
+  test("composio API-key first Connect stays open to a member — no account to rotate yet", async () => {
+    // The server only refuses once `prior.connectedAccountId` exists, so the
+    // gate must not swallow the first-time case.
+    mounted = await mount(
+      <ConnectorStatusHero
+        installed={composioApiKeyConnector({ status: "needs_auth", state: "not_authenticated" })}
+        canManage={false}
+        onChanged={() => {}}
+      />,
+    );
+    expect(findButton(mounted.container, "Connect")).not.toBeNull();
+  });
+
+  test("a connector with no catalog entry falls back to the ungated native path", async () => {
+    // `catalog` is optional on InstalledConnector. Without it the composio
+    // predicate can't fire, so this degrades to the same ungated behaviour a
+    // native flow has — documented, and it resolves when that gap does.
+    mounted = await mount(
+      <ConnectorStatusHero
+        installed={composioApiKeyConnector({
+          status: "needs_auth",
+          state: "reauth_required",
+          catalog: undefined,
+        })}
+        canManage={false}
+        onChanged={() => {}}
+      />,
+    );
+    expect(findButton(mounted.container, "Reconnect")).not.toBeNull();
   });
 });
 

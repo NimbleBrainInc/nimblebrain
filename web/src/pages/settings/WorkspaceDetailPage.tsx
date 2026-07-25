@@ -17,6 +17,7 @@ import {
   TableRow,
 } from "../../components/ui/table";
 import { useSession } from "../../context/SessionContext";
+import { canWriteWorkspace } from "../../hooks/useScopedRole";
 import {
   CopyableWorkspaceId,
   EmptyState,
@@ -35,7 +36,24 @@ interface Workspace {
 
 interface Member {
   userId: string;
-  role: string;
+  /** The server's membership roles — the same union `canWriteWorkspace` reads. */
+  role: "admin" | "member";
+}
+
+/**
+ * The signed-in user's membership role in the workspace this page is showing,
+ * or `undefined` when they aren't a member of it.
+ *
+ * Exported so the gate's *argument* is testable, not just the rule it feeds.
+ * The rule (`canWriteWorkspace`) is pinned in `useScopedRole.test.ts`; pinning
+ * it doesn't pin this lookup, which is where this page could go wrong.
+ *
+ * The `userId` guard is load-bearing: `currentUserId` is `session?.user?.id`
+ * and can be undefined while the session loads. Without it, `find` would match
+ * any member record whose `userId` were also undefined.
+ */
+export function memberRoleFor(members: Member[], userId: string | undefined) {
+  return userId ? members.find((m) => m.userId === userId)?.role : undefined;
 }
 
 interface UserInfo {
@@ -44,8 +62,6 @@ interface UserInfo {
   displayName: string;
   orgRole: string;
 }
-
-const ADMIN_ROLES = new Set(["admin", "owner"]);
 
 function formatDate(iso?: string): string {
   if (!iso) return "—";
@@ -77,7 +93,6 @@ export function WorkspaceDetailPage() {
   const { slug } = useParams<{ slug: string }>();
   const id = resolveWorkspaceId(slug);
   const session = useSession();
-  const isOrgAdmin = ADMIN_ROLES.has(session?.user?.orgRole ?? "");
 
   const [workspace, setWorkspace] = useState<Workspace | null>(null);
   const [members, setMembers] = useState<Member[]>([]);
@@ -186,8 +201,18 @@ export function WorkspaceDetailPage() {
   const memberUserIds = new Set(members.map((m) => m.userId));
   const availableUsers = allUsers.filter((u) => !memberUserIds.has(u.id));
 
-  const isWsAdmin =
-    isOrgAdmin || members.some((m) => m.userId === currentUserId && m.role === "admin");
+  // Member management is a workspace-scoped write: `canManageMembers` routes
+  // through `canWriteWorkspaceScoped`, which grants an org admin no bypass —
+  // "an org admin/owner who is not a workspace admin member cannot manage
+  // members". Membership is therefore the only thing this may read; an org-role
+  // check here would render controls the server refuses, and `handleAdd`
+  // doesn't inspect the result, so the refusal would be silent (#749).
+  // Same rule as every other workspace write, reached differently: this page
+  // addresses a workspace by id, so it passes that workspace's membership role
+  // rather than using the active-workspace hook (which would answer for the
+  // viewer's focused workspace — usually their personal one, where they are
+  // always admin).
+  const canManageMembers = canWriteWorkspace(memberRoleFor(members, currentUserId));
 
   // The org-scoped Workspaces list lives at /org/workspaces.
   const backTo = "/org/workspaces";
@@ -259,7 +284,7 @@ export function WorkspaceDetailPage() {
         title="Members"
         icon={<Users className="h-4 w-4" />}
         action={
-          isWsAdmin ? (
+          canManageMembers ? (
             <AddMemberButton
               showAdd={showAdd}
               onToggle={() => {
@@ -290,7 +315,7 @@ export function WorkspaceDetailPage() {
             <MembersTable
               members={members}
               userMap={userMap}
-              isWsAdmin={isWsAdmin}
+              canManageMembers={canManageMembers}
               adminCount={adminCount}
               currentUserId={currentUserId}
               removingId={removingId}
@@ -412,7 +437,7 @@ function AddMemberForm({
 function MembersTable({
   members,
   userMap,
-  isWsAdmin,
+  canManageMembers,
   adminCount,
   currentUserId,
   removingId,
@@ -420,7 +445,7 @@ function MembersTable({
 }: {
   members: Member[];
   userMap: Map<string, UserInfo>;
-  isWsAdmin: boolean;
+  canManageMembers: boolean;
   adminCount: number;
   currentUserId: string | undefined;
   removingId: string | null;
@@ -433,7 +458,7 @@ function MembersTable({
           <TableHead>Display Name</TableHead>
           <TableHead>Email</TableHead>
           <TableHead>Role</TableHead>
-          {isWsAdmin && <TableHead className="w-[60px]" />}
+          {canManageMembers && <TableHead className="w-[60px]" />}
         </TableRow>
       </TableHeader>
       <TableBody>
@@ -450,7 +475,7 @@ function MembersTable({
               <TableCell>
                 <RoleBadge role={m.role} />
               </TableCell>
-              {isWsAdmin && (
+              {canManageMembers && (
                 <TableCell>
                   <Button
                     size="sm"

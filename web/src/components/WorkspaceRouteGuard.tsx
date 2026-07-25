@@ -27,7 +27,9 @@ const loadingWorkspace = (
  * by the time anything below reads it, with no loading-screen gate — so a
  * switch never flashes "Loading workspace…" (the route and the ambient id
  * always agree on the frame the Outlet renders, even though the React-state
- * `activeWorkspace` reconciles a render later for display-only consumers).
+ * `activeWorkspace` reconciles a render later for display-oriented consumers).
+ * `useCanWriteActiveWorkspace` reads that lagging state too, so the frame is
+ * not purely cosmetic — though the server still refuses either way.
  */
 export function WorkspaceRouteGuard() {
   const { slug } = useParams<{ slug: string }>();

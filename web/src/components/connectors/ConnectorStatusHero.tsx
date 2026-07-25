@@ -83,7 +83,25 @@ export function ConnectorStatusHero({
     };
   }, [cat, installed.iconUrl]);
 
-  const action = resolveAction(installed, !!directoryEntry);
+  // A composio API-key connector has no redirect: its auth CTA opens the key
+  // modal and calls `connect_api_key`, which admin-gates once a connected
+  // account exists. Reconnect/failed are exactly that case. This is the one
+  // auth path the server *does* gate, which is why it is the one gated here.
+  //
+  // Unlike `canWriteWorkspace`, this is a *proxy*, not a term-for-term mirror:
+  // the server's condition is `prior?.connectedAccountId` existing, which the
+  // client can't see, so it stands in reauth_required/failed. The divergence
+  // is fail-closed — a never-connected connector that reached `failed` gates a
+  // member who could have done a first connect. Annoying, not unsafe.
+  //
+  // Falls to `false` when `catalog` is absent (it is optional on
+  // `InstalledConnector`), leaving the same ungated behaviour as a native
+  // flow — no worse than the gap above, and it resolves with it.
+  const authRotatesSharedCredential =
+    cat?.auth === "composio" &&
+    cat.composio?.authScheme === "API_KEY" &&
+    (installed.state === "reauth_required" || installed.status === "failed");
+  const action = resolveAction(installed, !!directoryEntry, authRotatesSharedCredential);
 
   /** Surface an unknown error's message on the hero. */
   const reportError = (err: unknown) => setError(err instanceof Error ? err.message : String(err));
@@ -303,6 +321,11 @@ function StatusBlock({
 }) {
   if (installed.status === "ready") return null;
 
+  // The span and the button are the two arms of one decision, so they read a
+  // single value. Admin-gated actions are withheld from a non-admin; the rest
+  // stay, because the server permits them (see the `oauth` note above).
+  const blocked = !!action?.adminOnly && !canManage;
+
   return (
     <div className="flex items-start justify-between gap-4 px-4 py-3 border border-border/60 rounded-sm bg-muted/20">
       <div className="flex items-start gap-3 min-w-0">
@@ -314,7 +337,18 @@ function StatusBlock({
           )}
         </div>
       </div>
-      {action && canManageAction(action, canManage) && (
+      {/* A suppressed CTA leaves a member with a pulsing dot and no
+       * explanation — worse than the refusal they used to click into. Say
+       * why, matching the "Workspace admin required" copy the browse page
+       * shows in the same situation. */}
+      {blocked && (
+        <span className="shrink-0 text-xs text-muted-foreground">
+          {action?.kind === "open-operator-modal"
+            ? "Operator setup required"
+            : "Workspace admin required"}
+        </span>
+      )}
+      {action && !blocked && (
         <Button
           type="button"
           variant="outline"
@@ -374,8 +408,26 @@ function statusLabel(status: InstalledConnector["status"]): string {
 type PrimaryAction =
   | { kind: "open-bundle-modal"; label: string; adminOnly: true }
   | { kind: "open-operator-modal"; label: string; adminOnly: true }
-  | { kind: "oauth"; label: string; adminOnly: false }
-  | { kind: "cancel"; label: string; adminOnly: false };
+  // `oauth` is admin-only when it rotates a shared credential and ungated
+  // otherwise — conditional rather than fixed by kind.
+  //
+  // "Ungated otherwise" tracks the server, not a claim that the flow is
+  // per-caller. It isn't: the auth CTA binds the *workspace's* shared
+  // credential to whoever ran it, via one of two routes — `runOAuth` dispatches
+  // to `/v1/composio-auth/initiate` for a composio entry and
+  // `/v1/mcp-auth/initiate` otherwise (which hardcodes
+  // `WORKSPACE_PRINCIPAL_ID`). **Both** carry `requireAuth` + `requireWorkspace`
+  // only, with no admin check, so gating here would hide a capability the
+  // server grants.
+  //
+  // The gap is server-side and filed (#755). Note `authScheme` is optional and
+  // defaults to OAUTH2, so a composio connector usually takes the composio
+  // route and is *not* covered by the API_KEY predicate below. Gating only one
+  // route and flipping this to `adminOnly: true` would therefore re-create the
+  // client/server disagreement this file exists to remove — the conditional
+  // collapses when **both** routes are gated, not one.
+  | { kind: "oauth"; label: string; adminOnly: boolean }
+  | { kind: "cancel"; label: string; adminOnly: true };
 
 /**
  * Map the connector's status to the appropriate primary CTA. The
@@ -393,6 +445,10 @@ type PrimaryAction =
 function resolveAction(
   installed: InstalledConnector,
   hasOperatorEntry: boolean,
+  /** True when the auth CTA rotates a credential the server admin-gates —
+   *  `handleConnectApiKey`, once a connected account exists. See the `oauth`
+   *  note on `PrimaryAction` for why the other auth paths stay ungated. */
+  authRotatesSharedCredential: boolean,
 ): PrimaryAction | null {
   const isRemote = installed.type === "remote";
 
@@ -408,7 +464,13 @@ function resolveAction(
       // page reads "Connecting…" forever. Cancel disconnects (resets to
       // `not_authenticated`), after which the normal Connect CTA reappears.
       // stdio bundles ("starting") have no OAuth to cancel — wait them out.
-      return isRemote ? { kind: "cancel", label: "Cancel", adminOnly: false } : null;
+      //
+      // Admin-only: cancelling calls `disconnectConnector`, and `handleDisconnect`
+      // refuses a non-admin outright ("Workspace admin role required to disconnect
+      // shared connectors"). The OAuth runs as `WORKSPACE_PRINCIPAL_ID`, so there
+      // is no per-member session for a member to cancel — the server is right to
+      // refuse, and offering the button only wedges them with a red error.
+      return isRemote ? { kind: "cancel", label: "Cancel", adminOnly: true } : null;
 
     case "needs_setup": {
       // Operator OAuth missing comes first: a static-auth catalog
@@ -429,7 +491,7 @@ function resolveAction(
       // First-time auth vs re-auth: same flow, different verb. The
       // user has stronger context if we tell them which.
       const verb = installed.state === "reauth_required" ? "Reconnect" : "Connect";
-      return { kind: "oauth", label: verb, adminOnly: false };
+      return { kind: "oauth", label: verb, adminOnly: authRotatesSharedCredential };
     }
 
     case "failed":
@@ -437,14 +499,8 @@ function resolveAction(
       // upstream rejected, transport blip). Failed local bundle →
       // statusReason is shown but no one-click action; the admin
       // diagnoses via the chat agent or logs.
-      return isRemote ? { kind: "oauth", label: "Reconnect", adminOnly: false } : null;
+      return isRemote
+        ? { kind: "oauth", label: "Reconnect", adminOnly: authRotatesSharedCredential }
+        : null;
   }
-}
-
-/** Admin-gated affordances disappear for non-admin members.
- *  Workspace-member-actionable affordances (OAuth flows for the
- *  caller's own account) stay visible. */
-function canManageAction(action: PrimaryAction, canManage: boolean): boolean {
-  if (action.adminOnly && !canManage) return false;
-  return true;
 }

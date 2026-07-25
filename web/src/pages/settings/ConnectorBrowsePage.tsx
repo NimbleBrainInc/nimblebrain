@@ -13,7 +13,7 @@ import { ComposioApiKeyModal } from "../../components/connectors/ComposioApiKeyM
 import { ConnectorIcon } from "../../components/connectors/ConnectorIcon";
 import { OperatorSetupModal } from "../../components/connectors/OperatorSetupModal";
 import { Button } from "../../components/ui/button";
-import { roleAtLeast, useScopedRole } from "../../hooks/useScopedRole";
+import { useCanWriteActiveWorkspace } from "../../hooks/useScopedRole";
 
 /** The remote-OAuth variant of a directory entry's install descriptor. */
 type RemoteOAuthInstall = Extract<DirectoryEntry["install"], { kind: "remote-oauth" }>;
@@ -44,8 +44,10 @@ export function ConnectorBrowsePage() {
     serverName: string;
   } | null>(null);
 
-  const role = useScopedRole();
-  const isWsAdmin = roleAtLeast(role, "ws_admin");
+  // Installing a connector writes workspace-owned state, so this is the
+  // membership gate, not the reach gate — an org admin who is only a member
+  // here is refused by `canWriteWorkspaceScoped` server-side.
+  const canManage = useCanWriteActiveWorkspace();
   const navigate = useNavigate();
   const { slug } = useParams<{ slug: string }>();
 
@@ -246,7 +248,7 @@ export function ConnectorBrowsePage() {
               key={`${entry.registryId}::${entry.id}`}
               entry={entry}
               busy={busyId === `${entry.registryId}::${entry.id}`}
-              isWsAdmin={isWsAdmin}
+              canManage={canManage}
               onInstall={() => onInstall(entry)}
               onSetUp={() => setSetupModalEntry(entry)}
             />
@@ -318,17 +320,16 @@ export function ConnectorBrowsePage() {
 function DirectoryCard({
   entry,
   busy,
-  isWsAdmin,
+  canManage,
   onInstall,
   onSetUp,
 }: {
   entry: DirectoryEntry;
   busy: boolean;
-  isWsAdmin: boolean;
+  canManage: boolean;
   onInstall: () => void;
   onSetUp: () => void;
 }) {
-  const isMpak = entry.install.kind === "mpak-bundle";
   const isStaticAuth = entry.install.kind === "remote-oauth" && entry.install.auth === "static";
   const operatorReady = entry.operatorConfigured === true;
 
@@ -345,12 +346,10 @@ function DirectoryCard({
       </div>
       <div className="mt-auto flex items-end justify-end">
         <CardAction
-          entry={entry}
           busy={busy}
-          isWsAdmin={isWsAdmin}
+          canManage={canManage}
           isStaticAuth={isStaticAuth}
           operatorReady={operatorReady}
-          isMpakStub={isMpak}
           onInstall={onInstall}
           onSetUp={onSetUp}
         />
@@ -359,62 +358,53 @@ function DirectoryCard({
   );
 }
 
-function CardAction({
-  entry,
+/**
+ * The card's action slot. Exported so the install gate is directly testable:
+ * it is the only thing standing between a workspace member and an Install
+ * button the server refuses.
+ */
+export function CardAction({
   busy,
-  isWsAdmin,
+  canManage,
   isStaticAuth,
   operatorReady,
-  isMpakStub,
   onInstall,
   onSetUp,
 }: {
-  entry: DirectoryEntry;
   busy: boolean;
-  isWsAdmin: boolean;
+  canManage: boolean;
   isStaticAuth: boolean;
   operatorReady: boolean;
-  isMpakStub: boolean;
   onInstall: () => void;
   onSetUp: () => void;
 }) {
-  // Tailwind classes shared by every action button on the card. Outline
-  // style — the previous bold primary fill made the grid feel
-  // overstimulating with 30+ "Install" buttons stacked. The portal URL
-  // surfaces inside OperatorSetupModal, so the small `app.asana.com`
-  // hint that used to live under each Set up button is intentionally
-  // gone here.
+  // Outline rather than filled: a grid of 30+ buttons reads as noise with a
+  // bold primary fill on every card. The portal URL lives in
+  // OperatorSetupModal, so no per-card hint is needed here.
+  //
   // Static-auth flow:
   //   - not configured + admin     → Set up
   //   - not configured + non-admin → "Operator setup required"
   //   - configured                 → Install (rotation lives on Configure now)
-  if (isStaticAuth && entry.install.kind === "remote-oauth") {
-    if (!operatorReady) {
-      if (isWsAdmin) {
-        return (
-          <Button type="button" variant="outline" size="sm" onClick={onSetUp}>
-            Set up
-          </Button>
-        );
-      }
-      return <span className="text-xs text-muted-foreground">Operator setup required</span>;
-    }
-    return (
-      <Button type="button" variant="outline" size="sm" onClick={onInstall} disabled={busy}>
-        {busy ? "Installing…" : "Install"}
+  if (isStaticAuth && !operatorReady) {
+    return canManage ? (
+      <Button type="button" variant="outline" size="sm" onClick={onSetUp}>
+        Set up
       </Button>
+    ) : (
+      <span className="text-xs text-muted-foreground">Operator setup required</span>
     );
   }
-  if (isMpakStub) {
-    return (
-      <Button type="button" variant="outline" size="sm" onClick={onInstall} disabled={busy}>
-        {busy ? "Installing…" : "Install"}
-      </Button>
-    );
-  }
-  return (
+  // Every remaining path is an install, and installing is a workspace-scoped
+  // write — `workspaceInstallAdmission` refuses a non-admin with "Workspace
+  // admin role required to install connectors." An enabled button would move
+  // that refusal to after the click. One gated return covers every install
+  // path, so a new one can't miss the gate by being added elsewhere.
+  return canManage ? (
     <Button type="button" variant="outline" size="sm" onClick={onInstall} disabled={busy}>
       {busy ? "Installing…" : "Install"}
     </Button>
+  ) : (
+    <span className="text-xs text-muted-foreground">Workspace admin required</span>
   );
 }
