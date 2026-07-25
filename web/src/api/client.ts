@@ -713,6 +713,13 @@ export interface InstalledConnector {
   type: "remote" | "local";
   state: string;
   scope: "workspace";
+  /**
+   * Whether the workspace already holds a credential for this connector.
+   * Server-derived from disk — `state` cannot answer it, and the two disagree
+   * in both directions. Gates the re-connect CTA so the UI agrees with
+   * `requireAdminForReconnect`, which reads the same files.
+   */
+  hasCredential?: boolean;
   /** Whether this connector exposes a UI surface (auto-mounts a sidebar entry). */
   interactive: boolean;
   toolCount: number;

@@ -598,6 +598,14 @@ type InstalledEntry = {
   handshakeVersion?: string;
   type: "remote" | "local";
   state: string;
+  /**
+   * Whether a credential is already persisted for this connector.
+   *
+   * Existence only, never validity. `state` cannot answer this — it is derived
+   * without reading credential files — and the two genuinely disagree in both
+   * directions, so the client gates re-connect on this rather than inferring it.
+   */
+  hasCredential: boolean;
   // Stage 2: only workspace-scope connectors exist. Personal connectors
   // live in the caller's personal workspace; the legacy `"user"` arm was
   // removed in T008/T009 — every population site below emits `"workspace"`.
@@ -888,6 +896,29 @@ async function applyTransportSpecificProbes(
  * (tools() round-trip, manifest probe, credential reads) happens here so the
  * single-connector path skips it for every non-matching instance.
  */
+/**
+ * Whether this workspace connector already holds a credential on disk.
+ *
+ * Existence only, never validity — the same contract `hasMcpOAuthTokens` and
+ * `hasPersistedComposioConnection` document, and the same question
+ * `requireAdminForReconnect` asks before refusing a member's re-connect. Both
+ * sides must read the same files or the UI and the route disagree.
+ */
+function connectorHasCredential(
+  workDir: string,
+  wsId: string,
+  serverName: string,
+  cat: ConnectorCatalogEntry | undefined,
+): boolean {
+  const owner = { type: "workspace" as const, wsId };
+  // Composio keeps a connected account, not OAuth tokens, and keys it on the
+  // catalog id rather than the server name — the same split the two initiate
+  // routes make.
+  return cat?.auth === "composio"
+    ? hasPersistedComposioConnection(workDir, owner, cat.id)
+    : hasMcpOAuthTokens(workDir, owner, serverName);
+}
+
 async function buildInstalledEntry(
   deps: InstalledEntryDeps,
   instance: BundleInstance,
@@ -929,6 +960,24 @@ async function buildInstalledEntry(
     interactive,
     toolCount,
     trustScore: instance.trustScore ?? null,
+    // Whether a credential is already persisted for this connector. Read from
+    // disk, because `state` cannot answer it: `deriveConnectorStatus` is a pure
+    // function of `StatusInputs`, which carries no credential fact. The two
+    // genuinely disagree in both directions — a composio callback persists
+    // `connection.json` *before* registering the source and tolerates that
+    // registration failing, leaving credential-present/`not_authenticated`; and
+    // `startAuth` records `dead` on a failure that wrote no tokens at all.
+    //
+    // The client gates re-connect on this rather than guessing from `state`, so
+    // it agrees with `requireAdminForReconnect`, which reads the same files.
+    // Same probe `handleListPersonalConnectors` already runs on the identity
+    // plane, for the same reason.
+    hasCredential: connectorHasCredential(
+      deps.ctx.runtime.getWorkDir(),
+      deps.wsId,
+      instance.serverName,
+      cat,
+    ),
     ...(iconUrl ? { iconUrl } : {}),
   };
 

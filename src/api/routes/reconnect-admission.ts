@@ -24,7 +24,7 @@ import { type AppContext, type AppEnv, apiError } from "../types.ts";
  * `hasCredential` is passed as a thunk so each route supplies its own
  * purpose-built, side-effect-free existence check (`hasMcpOAuthTokens` /
  * `hasPersistedComposioConnection`) rather than this module reaching into two
- * storage layouts, and so the read is skipped entirely for an admin.
+ * storage layouts.
  *
  * Returns the refusal, or null to proceed.
  */
@@ -35,16 +35,20 @@ export async function requireAdminForReconnect(
   hasCredential: () => boolean,
 ): Promise<Response | null> {
   const identity = c.var.identity;
-  // `requireWorkspace` already established membership; an admin passes here
-  // whether or not a credential exists, so the disk read is skipped for them.
+  // `requireWorkspace` already resolved this workspace and discarded the
+  // object, so this is a second read of the same file. Threading it through the
+  // context would remove that; not done here to keep the change to the gate.
   const ws = await ctx.workspaceStore.get(wsId);
+  // A null workspace refuses everyone, admins included. Unreachable — the
+  // middleware above resolved it — but fail-closed is the right direction for
+  // the branch that can't be reasoned about.
   if (ws && canWriteWorkspaceScoped(identity, ws).allowed) return null;
 
   if (!hasCredential()) return null;
 
   return apiError(
     403,
-    "workspace_admin_required",
+    "forbidden",
     "This connector is already connected. Replacing the workspace's shared credential requires the workspace admin role.",
   );
 }

@@ -83,22 +83,7 @@ export function ConnectorStatusHero({
     };
   }, [cat, installed.iconUrl]);
 
-  // Every auth path here rotates the *workspace's* shared credential, and the
-  // server admin-gates all three: `handleConnectApiKey` for a composio API key,
-  // and both `/v1/mcp-auth/initiate` and `/v1/composio-auth/initiate` for the
-  // redirect flows. So the predicate is the state, not the auth kind.
-  //
-  // A FIRST connect stays open to a member — nothing is being replaced — which
-  // is why this keys on reauth_required/failed rather than gating outright.
-  //
-  // It is a *proxy*, not a term-for-term mirror like `canWriteWorkspace`: the
-  // server asks whether a credential already exists, which the client can't
-  // see. The divergence is fail-closed — a never-connected connector that
-  // reached `failed` gates a member who could have done a first connect.
-  // Annoying, not unsafe.
-  const authRotatesSharedCredential =
-    installed.state === "reauth_required" || installed.status === "failed";
-  const action = resolveAction(installed, !!directoryEntry, authRotatesSharedCredential);
+  const action = resolveAction(installed, !!directoryEntry);
 
   /** Surface an unknown error's message on the hero. */
   const reportError = (err: unknown) => setError(err instanceof Error ? err.message : String(err));
@@ -434,11 +419,10 @@ type PrimaryAction =
 function resolveAction(
   installed: InstalledConnector,
   hasOperatorEntry: boolean,
-  /** True when the auth CTA rotates a credential the server admin-gates —
-   *  `handleConnectApiKey`, once a connected account exists. See the `oauth`
-   *  note on `PrimaryAction` for why the other auth paths stay ungated. */
-  authRotatesSharedCredential: boolean,
 ): PrimaryAction | null {
+  // Re-connect is admin-gated server-side; a first connect is not. `installed`
+  // carries the server's own answer, so this doesn't take it as a parameter.
+  const rotatesSharedCredential = installed.hasCredential === true;
   const isRemote = installed.type === "remote";
 
   switch (installed.status) {
@@ -480,7 +464,7 @@ function resolveAction(
       // First-time auth vs re-auth: same flow, different verb. The
       // user has stronger context if we tell them which.
       const verb = installed.state === "reauth_required" ? "Reconnect" : "Connect";
-      return { kind: "oauth", label: verb, adminOnly: authRotatesSharedCredential };
+      return { kind: "oauth", label: verb, adminOnly: rotatesSharedCredential };
     }
 
     case "failed":
@@ -489,7 +473,7 @@ function resolveAction(
       // statusReason is shown but no one-click action; the admin
       // diagnoses via the chat agent or logs.
       return isRemote
-        ? { kind: "oauth", label: "Reconnect", adminOnly: authRotatesSharedCredential }
+        ? { kind: "oauth", label: "Reconnect", adminOnly: rotatesSharedCredential }
         : null;
   }
 }

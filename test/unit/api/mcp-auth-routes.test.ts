@@ -2,7 +2,6 @@ import { createHash, randomBytes } from "node:crypto";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { mcpOAuthDir } from "../../../src/tools/workspace-oauth-provider.ts";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { Hono } from "hono";
 import { securityHeaders } from "../../../src/api/middleware/security-headers.ts";
@@ -11,6 +10,7 @@ import type { AppContext, AppEnv } from "../../../src/api/types.ts";
 import { ConnectorBusyError } from "../../../src/bundles/lifecycle.ts";
 import { IdentityConnectorStore } from "../../../src/identity/connector-store.ts";
 import { _clearAll, register as registerFlow } from "../../../src/tools/oauth-flow-registry.ts";
+import { mcpOAuthDir } from "../../../src/tools/workspace-oauth-provider.ts";
 
 /**
  * Unit coverage for `mcpAuthRoutes` — the route is the security boundary
@@ -783,7 +783,7 @@ describe("POST /v1/mcp-auth/initiate — reconnect admission", () => {
     const res = await post(app);
     expect(res.status).toBe(403);
     const body = (await res.json()) as { error?: string };
-    expect(body.error).toBe("workspace_admin_required");
+    expect(body.error).toBe("forbidden");
   });
 
   test("a workspace admin may re-connect", async () => {

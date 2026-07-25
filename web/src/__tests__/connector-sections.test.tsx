@@ -757,7 +757,11 @@ describe("ConnectorStatusHero", () => {
     // there walks a member through the key form to a refusal on submit.
     mounted = await mount(
       <ConnectorStatusHero
-        installed={composioApiKeyConnector({ status: "needs_auth", state: "reauth_required" })}
+        installed={composioApiKeyConnector({
+          status: "needs_auth",
+          state: "reauth_required",
+          hasCredential: true,
+        })}
         canManage={false}
         onChanged={() => {}}
       />,
@@ -767,7 +771,11 @@ describe("ConnectorStatusHero", () => {
 
     mounted = await mount(
       <ConnectorStatusHero
-        installed={composioApiKeyConnector({ status: "needs_auth", state: "reauth_required" })}
+        installed={composioApiKeyConnector({
+          status: "needs_auth",
+          state: "reauth_required",
+          hasCredential: true,
+        })}
         canManage={true}
         onChanged={() => {}}
       />,
@@ -787,6 +795,7 @@ describe("ConnectorStatusHero", () => {
         installed={composioApiKeyConnector({
           status: "needs_auth",
           state: "reauth_required",
+          hasCredential: true,
           catalog: {
             id: "com.posthog/analytics",
             name: "PostHog",
@@ -804,13 +813,17 @@ describe("ConnectorStatusHero", () => {
     expect(findButton(mounted.container, "Reconnect")).toBeNull();
   });
 
-  test("a composio API-key connector in `failed` is gated too, not just reauth_required", async () => {
-    // `failed` is the other arm of the rotation predicate — a remote bundle
-    // that died still offers Reconnect, and for an API-key connector that is
-    // the same admin-gated rotation.
+  test("a connector that already holds a credential is gated, whatever its state", async () => {
+    // `failed` is reachable with a credential on disk (the source died after
+    // authing) and reachable without one (`startAuth` failed before writing
+    // tokens). The gate keys on the credential, so only the first is refused.
     mounted = await mount(
       <ConnectorStatusHero
-        installed={composioApiKeyConnector({ status: "failed", state: "crashed" })}
+        installed={composioApiKeyConnector({
+          status: "failed",
+          state: "crashed",
+          hasCredential: true,
+        })}
         canManage={false}
         onChanged={() => {}}
       />,
@@ -820,7 +833,11 @@ describe("ConnectorStatusHero", () => {
 
     mounted = await mount(
       <ConnectorStatusHero
-        installed={composioApiKeyConnector({ status: "failed", state: "crashed" })}
+        installed={composioApiKeyConnector({
+          status: "failed",
+          state: "crashed",
+          hasCredential: true,
+        })}
         canManage={true}
         onChanged={() => {}}
       />,
@@ -841,24 +858,22 @@ describe("ConnectorStatusHero", () => {
     expect(findButton(mounted.container, "Connect")).not.toBeNull();
   });
 
-  test("a connector with no catalog entry is gated too — the predicate is the state", async () => {
-    // `catalog` is optional on InstalledConnector. The gate no longer reads it:
-    // all three auth paths rotate the workspace's shared credential and all
-    // three admin-gate the replace, so the predicate is the connector's state.
-    // Before #755 this asserted the opposite, when only the API-key path was
-    // gated and an absent catalog fell through to the ungated native flow.
+  test("a `failed` connector with NO credential stays open — the state alone doesn't gate", async () => {
+    // `startAuth` records `dead`/`failed` on a failure that wrote no tokens, so
+    // this is the member the server deliberately still permits to connect.
+    // Gating on state would strand them; gating on the credential doesn't.
     mounted = await mount(
       <ConnectorStatusHero
         installed={composioApiKeyConnector({
-          status: "needs_auth",
-          state: "reauth_required",
+          status: "failed",
+          state: "crashed",
           catalog: undefined,
         })}
         canManage={false}
         onChanged={() => {}}
       />,
     );
-    expect(findButton(mounted.container, "Reconnect")).toBeNull();
+    expect(findButton(mounted.container, "Reconnect")).not.toBeNull();
   });
 });
 

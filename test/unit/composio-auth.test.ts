@@ -573,7 +573,10 @@ describe("POST /v1/composio-auth/initiate", () => {
     app: Hono<AppEnv>;
     ctx: ReturnType<typeof stubCtx>;
   } {
-    const ctx = stubCtx(gate?.workDir ?? "/tmp/nb-initiate-test", catalogEntry, {
+    // Isolated per app: the reconnect gate `existsSync`es beneath this path, so
+    // a fixed /tmp dir would let a stray connection.json from any earlier run
+    // silently turn the happy-path cases into 403s.
+    const ctx = stubCtx(gate?.workDir ?? mkdtempSync(join(tmpdir(), "nb-initiate-")), catalogEntry, {
       ...(gate?.members ? { members: gate.members } : {}),
     });
     // Override authOptions with a dev-mode shape so requireAuth passes
@@ -653,7 +656,7 @@ describe("POST /v1/composio-auth/initiate", () => {
       });
       const res = await post(app);
       expect(res.status).toBe(403);
-      expect(((await res.json()) as { error?: string }).error).toBe("workspace_admin_required");
+      expect(((await res.json()) as { error?: string }).error).toBe("forbidden");
     });
 
     test("a workspace admin may re-connect", async () => {
