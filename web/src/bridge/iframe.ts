@@ -221,7 +221,11 @@ export function injectCSP(html: string, policy: string): string {
  *   iframe.contentWindow` (not origin), so postMessage still works; a real
  *   per-app origin, if ever needed, comes from the sandbox-proxy pattern in
  *   the TODO below — never from same-origin.
- * - allow-forms, allow-top-navigation, allow-modals.
+ * - allow-forms, allow-top-navigation.
+ * - allow-modals: withheld deliberately. A sandboxed app calling native
+ *   `<dialog>.showModal()` / `alert()` / `print()` throws here and white-screens
+ *   the app — do NOT grant this to "fix" that. App UIs must use a non-modal
+ *   overlay instead (e.g. @nimblebrain/synapse `Drawer`, a `<div role="dialog">`).
  */
 export function createAppIframe(
   html: string,
