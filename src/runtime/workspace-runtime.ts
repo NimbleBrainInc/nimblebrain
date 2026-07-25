@@ -351,10 +351,14 @@ export async function startWorkspaceBundles(
       // recoverable (see `unstartedUrlBundleEntry`); the seeder reads
       // `startError` and records `dead`, not `running`.
       //
-      // Named/path bundles stay dropped: re-spawning one needs the
-      // credential-resolving `startBundleSource` path, which `tryRecoverSource`
-      // deliberately declines, so a surviving entry would promise a recovery
-      // that never comes.
+      // Named/path bundles stay dropped, for two reasons. The decisive one:
+      // only a URL ref reaches `seedUrlConnectionState`, and
+      // `buildSeededInstance` hardcodes `state: "running"` — so a surviving
+      // named entry would seed a permanently *running* instance for a dead
+      // bundle, which is worse than absence, not better. Second, re-spawning
+      // one needs the credential-resolving `startBundleSource` path that
+      // `tryRecoverSource` declines, so the entry would promise a recovery that
+      // never comes.
       if ("url" in entry.bundle) {
         resultEntries[idx] = unstartedUrlBundleEntry(entry, entry.bundle, msg);
       }

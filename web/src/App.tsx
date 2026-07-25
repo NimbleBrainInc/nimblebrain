@@ -445,7 +445,10 @@ function AuthenticatedAppContent({
                   gets reported as gone (Back after a switch, or a shared
                   `/w/<other>/app/<x>` link). Entering the branch also lets the
                   guard switch the workspace so the route can materialise. */}
-              <Route path="*" element={<WorkspaceNotFoundPage {...{ shellWorkspaceId }} />} />
+              <Route
+                path="*"
+                element={<WorkspaceNotFoundPage shellWorkspaceId={shellWorkspaceId} />}
+              />
             </Route>
 
             {/* Profile — top-level, identity-bound. Tabbed surface

@@ -77,11 +77,11 @@ describe("startWorkspaceBundles — unreachable URL bundle at boot", () => {
   }, 30_000);
 
   test("failedNamedBundle_isDroppedNotKept", async () => {
-    // The asymmetry is deliberate: `tryRecoverSource` declines a non-URL ref
-    // (it needs the credential-resolving spawn path), so keeping a named
-    // bundle's entry would leave a permanently-broken app in the shell
-    // promising a recovery that can never run. Pins the reasoning against a
-    // future edit that "unifies" the two branches.
+    // The asymmetry is deliberate. Only a URL ref reaches
+    // `seedUrlConnectionState`, and `buildSeededInstance` hardcodes
+    // `state: "running"` — so keeping a named bundle's entry would seed a
+    // permanently *running* instance for a dead bundle. Pins the invariant
+    // against a future edit that "unifies" the two branches.
     const store = new WorkspaceStore(workDir);
     const ws = await store.create("Fleet");
     await store.update(ws.id, {
