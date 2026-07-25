@@ -30,18 +30,33 @@ interface StubOptions {
   memberOf?: string[];
   captureCall?: (args: { server: string; uri: string; workspaceId: string }) => void;
   captureIdentityCall?: (args: { server: string; uri: string }) => void;
+  /**
+   * Sources that are installed-but-not-registered and CAN be revived — the
+   * boot-race shape. `recoverWorkspaceSource` adds them to the registry, as the
+   * real self-heal does after a successful re-spawn.
+   */
+  recoverable?: string[];
 }
 
 function makeStubRuntime(opts: StubOptions = {}): Runtime {
   const sources = new Set(opts.sources ?? ["calendar"]);
   const identitySources = new Set(opts.identitySources ?? []);
   const memberOf = opts.memberOf ?? [];
+  const recoverable = new Set(opts.recoverable ?? []);
   const registry = {
     hasSource: (name: string) => sources.has(name),
   };
   return {
     getIdentitySource: (name: string) => (identitySources.has(name) ? { name } : undefined),
     ensureWorkspaceRegistry: async () => registry,
+    // Mirrors the real contract: true when already registered, otherwise a
+    // best-effort re-spawn reporting whether the source is registered after it.
+    recoverWorkspaceSource: async (_wsId: string, name: string) => {
+      if (sources.has(name)) return true;
+      if (!recoverable.has(name)) return false;
+      sources.add(name);
+      return true;
+    },
     getWorkspaceStore: () => ({
       getWorkspacesForUser: async () => memberOf.map((id) => ({ id })),
     }),
@@ -101,6 +116,23 @@ describe("handleReadResource", () => {
     expect(res.status).toBe(403);
     const body = await res.json();
     expect(body.error).toBe("workspace_access_denied");
+  });
+
+  it("revives an installed-but-unregistered source instead of 403ing", async () => {
+    // A bundle whose endpoint was unreachable at boot is installed but absent
+    // from the registry. Membership alone would call that permanently gone; the
+    // door self-heals first, the same way the engine's tool door does.
+    const runtime = makeStubRuntime({
+      sources: [],
+      recoverable: ["calendar"],
+      resource: { text: "<html>ok</html>", mimeType: "text/html" },
+    });
+    const res = await handleReadResource(
+      req({ server: "calendar", uri: "ui://calendar/main" }),
+      runtime,
+      { workspaceId: "w1" },
+    );
+    expect(res.status).toBe(200);
   });
 
   it("returns 404 when the resource is missing", async () => {

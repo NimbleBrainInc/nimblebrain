@@ -39,6 +39,14 @@ export interface ProcessInventoryEntry {
   serverName: string;
   /** Manifest metadata captured during startup (if available). */
   meta?: LocalBundleMeta | null;
+  /**
+   * Set when boot-start failed for an installed URL bundle. The entry survives
+   * so the bundle keeps its lifecycle instance and placements, but the message
+   * is what stops the seeder from recording an inaccurate `running` — it seeds
+   * `dead` with this as `lastError` instead. Absent means the bundle either
+   * started or was never attempted (the not-authenticated skip).
+   */
+  startError?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -148,10 +156,25 @@ function urlBundleHasBootAuth(
   return bundleHasStaticAuth(bundle) || hasPersistedWorkspaceOAuthTokens(workDir, wsId, serverName);
 }
 
-/** Placeholder inventory entry for a URL bundle skipped at boot (no tokens yet). */
-function skippedUrlBundleEntry(
+/**
+ * Inventory entry for an installed URL bundle that is NOT running after the boot
+ * loop — either never attempted (no tokens yet) or attempted and failed
+ * (`startError`).
+ *
+ * The entry survives either way because installed and running are independent
+ * facts. Only surviving entries reach `seedWorkspaceBundleInstances`, so a
+ * dropped entry costs the bundle its lifecycle instance AND its placements: the
+ * app vanishes from the shell, and `tryRecoverSource` — which resolves the ref
+ * off that instance — can never revive it. Keeping it means the app stays
+ * visible with an honest connection state and heals on next use.
+ *
+ * `meta.ui` carries the ref's placements forward so the sidebar entry survives
+ * with it.
+ */
+function unstartedUrlBundleEntry(
   entry: ProcessInventoryEntry,
   bundle: UrlBundleRef,
+  startError?: string,
 ): ProcessInventoryEntry {
   return {
     ...entry,
@@ -161,6 +184,7 @@ function skippedUrlBundleEntry(
       briefing: null,
       type: "plain" as const,
     },
+    ...(startError ? { startError } : {}),
   };
 }
 
@@ -279,7 +303,7 @@ export async function startWorkspaceBundles(
       log.info(
         `[bundles] Skipping boot start for URL bundle "${entry.serverName}" — no tokens yet (state: not_authenticated)`,
       );
-      resultEntries[idx] = skippedUrlBundleEntry(entry, entry.bundle);
+      resultEntries[idx] = unstartedUrlBundleEntry(entry, entry.bundle);
       return;
     }
 
@@ -321,14 +345,34 @@ export async function startWorkspaceBundles(
       process.stderr.write(
         `[workspace-runtime] Failed to start ${entry.serverName} in ${wsId}: ${msg}\n`,
       );
+      // A URL bundle that failed to start is still installed, and the failure is
+      // often transient — a dependency that was mid-roll when this loop ran, and
+      // is reachable seconds later. Keep the entry so it stays visible and
+      // recoverable (see `unstartedUrlBundleEntry`); the seeder reads
+      // `startError` and records `dead`, not `running`.
+      //
+      // Named/path bundles stay dropped: re-spawning one needs the
+      // credential-resolving `startBundleSource` path, which `tryRecoverSource`
+      // deliberately declines, so a surviving entry would promise a recovery
+      // that never comes.
+      if ("url" in entry.bundle) {
+        resultEntries[idx] = unstartedUrlBundleEntry(entry, entry.bundle, msg);
+      }
     }
   });
 
   const finalEntries = resultEntries.filter((e): e is ProcessInventoryEntry => !!e);
+  // A failed URL bundle survives as an entry (it stays installed), so the
+  // started count excludes it explicitly — otherwise this line reads "20/20"
+  // while three bundles are dead, and the one boot-time signal that a
+  // dependency was unreachable disappears.
+  const failed = finalEntries.filter((e) => e.startError).length;
   if (flat.length > 0) {
     const elapsedMs = Date.now() - startMs;
     log.info(
-      `[workspace-runtime] Started ${finalEntries.length}/${flat.length} bundles in ${elapsedMs}ms (concurrency=${concurrency})`,
+      `[workspace-runtime] Started ${finalEntries.length - failed}/${flat.length} bundles in ${elapsedMs}ms (concurrency=${concurrency})${
+        failed > 0 ? ` — ${failed} failed to start (kept installed, retried on next use)` : ""
+      }`,
     );
   }
   return { registries, entries: finalEntries };

@@ -2524,6 +2524,10 @@ export class BundleLifecycleManager {
     /** Per-workspace ToolRegistry. Optional for backward compat with
      *  test callers; production callers should always pass it. */
     registry?: ToolRegistry,
+    /** Boot-start failure message for an installed-but-not-running URL bundle.
+     *  Set only by the boot seeder; makes the seeded Connection `dead` instead
+     *  of the auth-derived state. */
+    startError?: string,
   ): void {
     void registry; // registry is no longer used; kept for caller backward compat
 
@@ -2539,7 +2543,7 @@ export class BundleLifecycleManager {
 
     // For URL bundles, derive the boot-time Connection state.
     if ("url" in ref) {
-      this.seedUrlConnectionState(serverName, wsId, ref);
+      this.seedUrlConnectionState(serverName, wsId, ref, startError);
     }
   }
 
@@ -2550,16 +2554,35 @@ export class BundleLifecycleManager {
    *      persisted but rejected — the SDK fell back to the interactive branch
    *      and the URL was buffered). Record `reauth_required` with the captured
    *      URL so the UI shows a "Reconnect" affordance instead of "Connect".
-   *   2. No persisted auth on disk → record `not_authenticated`. The bundle is
+   *   2. Boot-start was attempted and threw (`startError`) → record `dead` with
+   *      the message. Reconnecting is not the recovery path here (the
+   *      credential is fine; the endpoint was unreachable), so this must not
+   *      fall through to the auth-derived states below.
+   *   3. No persisted auth on disk → record `not_authenticated`. The bundle is
    *      silently installed; the user discovers it on the Connections page and
    *      clicks Connect to initiate OAuth.
-   *   3. Auth present and source.start() succeeded → record `running`.
+   *   4. Auth present and source.start() succeeded → record `running`.
    */
-  private seedUrlConnectionState(serverName: string, wsId: string, ref: UrlBundleRef): void {
+  private seedUrlConnectionState(
+    serverName: string,
+    wsId: string,
+    ref: UrlBundleRef,
+    startError?: string,
+  ): void {
     const pendingAuthUrl = consumePendingAuth(wsId, serverName);
     if (pendingAuthUrl) {
       this.recordConnectionStateChange(serverName, wsId, "_workspace", "reauth_required", {
         authorizationUrl: pendingAuthUrl,
+      });
+      return;
+    }
+
+    // Boot-start failed. The bundle stays installed and its placements stay
+    // registered, but the connection is `dead` — the state whose recovery path
+    // is "try again", which is what `tryRecoverSource` does on next use.
+    if (startError) {
+      this.recordConnectionStateChange(serverName, wsId, "_workspace", "dead", {
+        lastError: startError,
       });
       return;
     }
@@ -2574,9 +2597,9 @@ export class BundleLifecycleManager {
     // FIRST). Other static-auth sources (provider / bearer / header) carry their
     // own credential and auto-connect — no interactive Connect step — so they
     // must not seed `not_authenticated` (which the UI renders as a "Connect"
-    // button that would spin a bogus OAuth flow). A surviving entry here means
-    // boot-start succeeded (failed starts are filtered before seedInstance
-    // runs), so `running` is accurate.
+    // button that would spin a bogus OAuth flow). Reaching here means boot-start
+    // either succeeded or was never attempted — a failure returned above on
+    // `startError` — so `running` is accurate.
     const hasAuth =
       "composio" in ref && ref.composio
         ? hasPersistedComposioConnection(

@@ -1,10 +1,12 @@
+import type { McpUiResourceMeta } from "@modelcontextprotocol/ext-apps";
 import { useEffect, useRef, useSyncExternalStore } from "react";
 import { getResources, uiPathFromUri } from "../api/client";
 import type { BridgeHandle } from "../bridge/bridge";
 import { createBridge } from "../bridge/bridge";
 import { buildHostContext, buildHostExtensions } from "../bridge/host-extensions";
+import type { CreateIframeOptions } from "../bridge/iframe";
 import { createAppIframe } from "../bridge/iframe";
-import type { UiChatContext } from "../bridge/types";
+import type { BridgeCallbacks, UiChatContext } from "../bridge/types";
 import { useTheme } from "../context/ThemeContext";
 import { useWorkspaceContext } from "../context/WorkspaceContext";
 import { chatStore } from "../hooks/chat-store";
@@ -23,6 +25,70 @@ interface SlotRendererProps {
    * Only the home route sets this (from `?force=1`); inert elsewhere.
    */
   forceRefresh?: boolean;
+}
+
+/**
+ * Placeholder appended in place of an app whose UI resource failed to load.
+ *
+ * Without it a failed placement leaves the container empty, which renders as
+ * blank space — the same thing a crashed app looks like, with no way to tell
+ * them apart. The container is populated imperatively (the effect clears it via
+ * `innerHTML`), so React state would be clobbered on the next pass; appending a
+ * node keeps the failure in the DOM the iframe would have occupied.
+ *
+ * Text goes through `textContent`, never `innerHTML` — the label is
+ * bundle-authored and the message is server-supplied.
+ */
+function appendLoadError(container: HTMLElement, entry: PlacementEntry, err: unknown): void {
+  const box = document.createElement("div");
+  box.className = "flex flex-col items-center justify-center h-full gap-2 p-6 text-sm text-center";
+  const title = document.createElement("span");
+  title.className = "text-foreground";
+  title.textContent = `${entry.label ?? entry.serverName} couldn’t be loaded.`;
+  const detail = document.createElement("span");
+  detail.className = "text-muted-foreground max-w-md";
+  detail.textContent = err instanceof Error ? err.message : "Unknown error";
+  box.append(title, detail);
+  container.appendChild(box);
+}
+
+/**
+ * Mount one placement's sandboxed iframe into `container` and wire its bridge.
+ *
+ * Extracted from the render loop so that loop stays a readable
+ * fetch/mount/handle-failure sequence — the per-placement DOM and CSP plumbing
+ * is incidental to it.
+ */
+function mountPlacement(
+  container: HTMLElement,
+  entry: PlacementEntry,
+  resource: { html: string; metaUi?: McpUiResourceMeta },
+  themeMode: CreateIframeOptions["themeMode"],
+  callbacks: BridgeCallbacks,
+): BridgeHandle {
+  const { html, metaUi } = resource;
+  const iframe = createAppIframe(html, entry.serverName, {
+    themeMode,
+    connectDomains: metaUi?.csp?.connectDomains,
+    resourceDomains: metaUi?.csp?.resourceDomains,
+    frameDomains: metaUi?.csp?.frameDomains,
+    baseUriDomains: metaUi?.csp?.baseUriDomains,
+    permissions: metaUi?.permissions,
+    prefersBorder: metaUi?.prefersBorder,
+  });
+  iframe.style.width = "100%";
+  iframe.style.height = "100%";
+  iframe.style.display = "block";
+  iframe.style.opacity = "0";
+  iframe.style.transition = "opacity 200ms ease-in";
+
+  container.appendChild(iframe);
+  // Trigger fade-in after the iframe is in the DOM
+  requestAnimationFrame(() => {
+    iframe.style.opacity = "1";
+  });
+
+  return createBridge(iframe, entry.serverName, callbacks);
 }
 
 export function SlotRenderer({
@@ -86,54 +152,41 @@ export function SlotRenderer({
     let cancelled = false;
     const bridges: BridgeHandle[] = [];
 
+    // Every placement's bridge gets the same callbacks — each one reads a ref,
+    // so none of them close over the entry. Built once outside the loop.
+    const bridgeCallbacks: BridgeCallbacks = {
+      onChat: (...args) => onChatRef.current?.(...args),
+      onNavigate: (...args) => onNavigateRef.current?.(...args),
+      onPromptAction: (...args) => onPromptActionRef.current?.(...args),
+      getHostExtensions: () =>
+        buildHostExtensions(workspaceRef.current, forceRefreshRef.current, streamingIdsRef.current),
+    };
+
+    // Fetch + mount one placement. A failure is contained here: it renders its
+    // own message in place of the iframe and yields no bridge, so one broken app
+    // never stops the placements after it from mounting.
+    async function renderOne(entry: PlacementEntry): Promise<BridgeHandle | null> {
+      try {
+        // Pass the full path after ui:// (e.g., "ui://crm/main" -> "crm/main")
+        const resourcePath = uiPathFromUri(entry.resourceUri);
+        const resource = await getResources(entry.serverName, resourcePath);
+        if (cancelled) return null;
+        return mountPlacement(container!, entry, resource, modeRef.current, bridgeCallbacks);
+      } catch (err) {
+        console.warn(`Failed to load placement ${entry.resourceUri}:`, err);
+        if (!cancelled) appendLoadError(container!, entry, err);
+        return null;
+      }
+    }
+
     async function renderPlacements() {
       // Clear existing content
       container!.innerHTML = "";
 
       for (const entry of filtered) {
         if (cancelled) break;
-        try {
-          // Pass the full path after ui:// (e.g., "ui://crm/main" -> "crm/main")
-          const resourcePath = uiPathFromUri(entry.resourceUri);
-          const { html, metaUi } = await getResources(entry.serverName, resourcePath);
-          if (cancelled) break;
-
-          const iframe = createAppIframe(html, entry.serverName, {
-            themeMode: modeRef.current,
-            connectDomains: metaUi?.csp?.connectDomains,
-            resourceDomains: metaUi?.csp?.resourceDomains,
-            frameDomains: metaUi?.csp?.frameDomains,
-            baseUriDomains: metaUi?.csp?.baseUriDomains,
-            permissions: metaUi?.permissions,
-            prefersBorder: metaUi?.prefersBorder,
-          });
-          iframe.style.width = "100%";
-          iframe.style.height = "100%";
-          iframe.style.display = "block";
-          iframe.style.opacity = "0";
-          iframe.style.transition = "opacity 200ms ease-in";
-
-          container!.appendChild(iframe);
-          // Trigger fade-in after the iframe is in the DOM
-          requestAnimationFrame(() => {
-            iframe.style.opacity = "1";
-          });
-
-          const bridge = createBridge(iframe, entry.serverName, {
-            onChat: (...args) => onChatRef.current?.(...args),
-            onNavigate: (...args) => onNavigateRef.current?.(...args),
-            onPromptAction: (...args) => onPromptActionRef.current?.(...args),
-            getHostExtensions: () =>
-              buildHostExtensions(
-                workspaceRef.current,
-                forceRefreshRef.current,
-                streamingIdsRef.current,
-              ),
-          });
-          bridges.push(bridge);
-        } catch (err) {
-          console.warn(`Failed to load placement ${entry.resourceUri}:`, err);
-        }
+        const bridge = await renderOne(entry);
+        if (bridge) bridges.push(bridge);
       }
       bridgesRef.current = bridges;
     }

@@ -45,6 +45,7 @@ import { recoverFromWorkspaceError } from "./lib/workspace-recovery";
 import { toSlug } from "./lib/workspace-slug";
 import { ContextInspectorPage } from "./pages/ContextInspectorPage";
 import { GlobalHomePage } from "./pages/GlobalHomePage";
+import { NotFoundPage } from "./pages/NotFoundPage";
 import { ProfilePage } from "./pages/ProfilePage";
 import { ConnectorBrowsePage } from "./pages/settings/ConnectorBrowsePage";
 import { ConnectorDetailPage } from "./pages/settings/ConnectorDetailPage";
@@ -511,6 +512,18 @@ function AuthenticatedAppContent({
               />
               <Route path="about" element={<OrgAboutTab />} />
             </Route>
+
+            {/* Nothing matched. Must stay last, and must exist: without it an
+                unmatched path renders `null` into the main area, which reads as
+                a broken app rather than a bad URL. Most often reached via an app
+                route whose placement is gone (uninstalled, or installed but not
+                running). Gated on the shell's placements having caught up with
+                the focused workspace, so the mid-switch window shows pending
+                instead of falsely claiming the route doesn't exist. */}
+            <Route
+              path="*"
+              element={<NotFoundPage settled={shellWorkspaceId === wsCtx.activeWorkspace?.id} />}
+            />
           </Routes>
         </ErrorBoundary>
       </ShellLayout>

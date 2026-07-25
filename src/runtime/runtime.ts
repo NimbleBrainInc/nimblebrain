@@ -4394,8 +4394,13 @@ function registerPlatformPlacements(
 }
 
 /**
- * Seed lifecycle instances for boot-started workspace bundles, then re-register
- * any placements they carry.
+ * Seed lifecycle instances for every workspace bundle that survived the boot
+ * loop, then re-register any placements they carry.
+ *
+ * "Survived" is not "started": a URL bundle that was skipped (no tokens) or that
+ * failed to start is seeded too, carrying `startError` so its Connection is
+ * recorded honestly. Seeding it is what keeps the app in the shell and gives
+ * `tryRecoverSource` the persisted ref it needs to revive the source on next use.
  *
  * Operators are expected to have run `bun run migrate:user-creds` before
  * deploying Stage 2 (see the Stage 2 deploy runbook). The runtime no longer
@@ -4410,10 +4415,19 @@ function seedWorkspaceBundleInstances(
   entries: ProcessInventoryEntry[],
 ): void {
   for (const entry of entries) {
-    const { serverName: sn, bundle: ref, meta, wsId, dataDir } = entry;
+    const { serverName: sn, bundle: ref, meta, wsId, dataDir, startError } = entry;
     const label = "name" in ref ? ref.name : "url" in ref ? ref.url : ref.path;
     const wsRegistry = workspaceRegistries.get(wsId);
-    lifecycle.seedInstance(sn, label, ref, meta ?? undefined, wsId, dataDir, wsRegistry);
+    lifecycle.seedInstance(
+      sn,
+      label,
+      ref,
+      meta ?? undefined,
+      wsId,
+      dataDir,
+      wsRegistry,
+      startError,
+    );
 
     const instance = lifecycle.getInstance(sn, wsId);
     if (instance?.ui?.placements && instance.ui.placements.length > 0) {

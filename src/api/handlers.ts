@@ -618,6 +618,36 @@ export function handleHealth(healthMonitor: HealthMonitor | null): Response {
 }
 
 /**
+ * Is `sourceName` present in `wsId`'s registry — re-registering it first if it
+ * is installed but missing?
+ *
+ * Registry membership is the authoritative "is this available here?" check, but
+ * a source can be installed and absent: a remote bundle whose endpoint was
+ * unreachable during the boot loop, or one torn down by a reconnect without a
+ * re-add. Treating absent as permanently-gone is what turns a dependency that
+ * was down for seconds into an app that stays broken until the pod restarts.
+ *
+ * `recoverWorkspaceSource` short-circuits to a plain `hasSource` when present,
+ * is cooldown-guarded (at most one respawn per source per window, so this is
+ * safe on a request path), never throws, and declines anything it can't revive
+ * — so it is a drop-in for the raw membership check. On `true` the caller's
+ * `registry` reference holds the source.
+ *
+ * The engine's tool door already self-heals this way (`src/orchestrator/route.ts`
+ * `attemptSourceRecovery`); the REST doors share the helper so they can't drift
+ * into being the one path where a recoverable source reads as gone.
+ */
+async function workspaceSourceAvailable(
+  runtime: Runtime,
+  registry: ToolRegistry,
+  wsId: string,
+  sourceName: string,
+): Promise<boolean> {
+  if (registry.hasSource(sourceName)) return true;
+  return runtime.recoverWorkspaceSource(wsId, sourceName);
+}
+
+/**
  * Serve a ui:// resource from an identity app (conversations, …) for GET
  * /v1/apps/:name/resources/:path. Identity apps live OUTSIDE any workspace and
  * read from the kernel identity source; "primary" resolves to the source's
@@ -684,7 +714,7 @@ export async function handleResourceProxy(
   if (!resolved.ok) return resolved.response;
   const { workspaceId: wsId, sourceName } = resolved;
   const wsRegistry = await runtime.ensureWorkspaceRegistry(wsId);
-  if (!wsRegistry.hasSource(sourceName)) {
+  if (!(await workspaceSourceAvailable(runtime, wsRegistry, wsId, sourceName))) {
     return apiError(
       403,
       "workspace_access_denied",
@@ -1018,7 +1048,7 @@ export async function handleReadResource(
   const { workspaceId, sourceName } = resolved;
 
   const wsRegistry = await runtime.ensureWorkspaceRegistry(workspaceId);
-  if (!wsRegistry.hasSource(sourceName)) {
+  if (!(await workspaceSourceAvailable(runtime, wsRegistry, workspaceId, sourceName))) {
     return apiError(
       403,
       "workspace_access_denied",
@@ -1116,7 +1146,14 @@ async function resolveToolCallTarget(
   );
   if (!resolved.ok) return { ok: false, response: resolved.response };
   const workspaceRegistry = await runtime.ensureWorkspaceRegistry(resolved.workspaceId);
-  if (!workspaceRegistry.hasSource(resolved.sourceName)) {
+  if (
+    !(await workspaceSourceAvailable(
+      runtime,
+      workspaceRegistry,
+      resolved.workspaceId,
+      resolved.sourceName,
+    ))
+  ) {
     return {
       ok: false,
       response: apiError(404, "tool_not_found", `Tool "${tool}" not found on server "${server}"`, {
