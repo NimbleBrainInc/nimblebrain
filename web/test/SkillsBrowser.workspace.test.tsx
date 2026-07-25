@@ -798,9 +798,10 @@ describe("SkillsBrowser with surface='workspace' — composition list", () => {
 //
 // Workspace-scope writes require workspace admin server-side
 // (`canWriteWorkspaceScoped`). The surface reflects that up front instead of
-// offering controls whose save 403s. A member with no workspace-admin rights
-// resolves to role "none" here (no WorkspaceContext supplies a `userRole`),
-// which is exactly the "cannot write this workspace" case.
+// offering controls whose save 403s. Each mount below supplies a real
+// membership role through `WorkspaceProvider` — `admin`, `member`, or absent
+// for a non-member — because that is what the gate reads. It never consults
+// `useScopedRole`, which would escalate an org admin straight past it.
 describe("SkillsBrowser with surface='workspace' — the workspace-admin write gate", () => {
   /** A real workspace member — the role the server denies, and the common case. */
   function mountAsMember(): Promise<Mounted> {

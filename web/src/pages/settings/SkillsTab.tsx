@@ -111,11 +111,12 @@ const SEGMENT_LABEL: Record<Scope, string> = {
 /**
  * The chip label for a tier. "Yours" is an ownership claim, so it holds only
  * while the viewer can actually write the tier — otherwise the filter bar would
- * contradict the tier heading two elements below it. Reads `tier.editable`
- * rather than taking `canWrite` again, so the claim has one source.
+ * contradict the tier heading two elements below it. Keyed on the scope the
+ * string actually names, so the condition and the copy can't drift apart, and
+ * reading `tier.editable` keeps the claim to one source.
  */
-function segmentLabel(tier: Tier, editable: WritableScope): string {
-  if (tier.scope === editable && !tier.editable) return "Workspace";
+function segmentLabel(tier: Tier): string {
+  if (tier.scope === "workspace" && !tier.editable) return "Workspace";
   return SEGMENT_LABEL[tier.scope];
 }
 
@@ -474,14 +475,7 @@ export function SkillsBrowser(props: SkillsBrowserProps) {
            * than one tier to slice (single-scope surfaces have nothing to
            * filter). */}
           <div className="flex items-center gap-3">
-            {multiTier && (
-              <SegmentBar
-                tiers={tiers}
-                editableScope={createLockedScope}
-                value={segment}
-                onChange={setSegment}
-              />
-            )}
+            {multiTier && <SegmentBar tiers={tiers} value={segment} onChange={setSegment} />}
             <span className="ml-auto text-xs text-muted-foreground tabular-nums">
               {visibleSkills.length} skill{visibleSkills.length === 1 ? "" : "s"} · {onCount} on
             </span>
@@ -535,12 +529,10 @@ interface Tier {
 /** Segmented filter over the composition list — "All" plus one chip per tier. */
 function SegmentBar({
   tiers,
-  editableScope,
   value,
   onChange,
 }: {
   tiers: Tier[];
-  editableScope: WritableScope;
   value: Scope | "all";
   onChange: (value: Scope | "all") => void;
 }) {
@@ -565,7 +557,7 @@ function SegmentBar({
                 : "text-muted-foreground hover:text-foreground",
             )}
           >
-            {opt === "all" ? "All" : segmentLabel(opt, editableScope)}
+            {opt === "all" ? "All" : segmentLabel(opt)}
           </button>
         );
       })}
