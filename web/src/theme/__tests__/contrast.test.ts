@@ -7,15 +7,19 @@ import { colors, extOnlyColors, type Mode, type Pair, pick } from "../palette.ts
  * derives ratios from the actual values, so it fails on a bad colour even if
  * every fixture in the repo was regenerated from that same bad colour.
  *
- * It earns its place: eleven opaque text pairs in this palette's predecessor
- * were below AA and nothing caught them. `warning` sat at 2.148:1 on card,
- * `text-tertiary` below 4.5:1 on every surface in both modes (worst 2.397:1),
- * `success` and `scope-workspace` at 3.768:1, and `muted-foreground` at 4.429:1
- * on both `muted` and `sidebar`.
+ * It earns its place. This palette's predecessor was full of pairs below AA
+ * and nothing caught them: `warning` sat at 2.148:1 on card, `text-tertiary`
+ * below 4.5:1 on every surface in both modes (worst 2.397:1), `success` and
+ * `scope-workspace` at 3.768:1, `muted-foreground` at 4.429:1 on both `muted`
+ * and `sidebar`. No total is quoted here on purpose — it moves whenever the
+ * pair set widens, and a count in a docblock has no way to notice.
  *
- * Threshold is 4.5:1 throughout: the shell's type tops out at 16px and most of
- * it is 10–14px, so the 3:1 large-text allowance (18.66px bold / 24px regular)
- * never applies. Every pair asserted here is text.
+ * Threshold is 4.5:1 throughout, including for type that would qualify for the
+ * 3:1 large-text allowance (18.66px bold / 24px regular — the shell has page
+ * titles at 24–36px and sets assistant prose at 18px). That allowance is a
+ * relaxation, and declining it costs nothing here: every value in the palette
+ * clears the stricter bar, so there is no reason to carve out a looser one and
+ * then have to track which surfaces may use it.
  *
  * Coverage comes from two places, and the split matters. The `<x>-foreground`
  * on `<x>` pairs are **derived** — every foreground token in the palette is
@@ -164,11 +168,17 @@ describe("palette contrast — WCAG 2.2", () => {
   }
 
   /**
-   * The tinted-badge family: `bg-<hue>/10` (light) or `/20` (dark) behind
-   * `text-<hue>`, declared once in `ui/badge.tsx` and `ui/button.tsx`. Nothing
-   * consumes these variants today, so a failure here is latent — which is
-   * exactly why it needs asserting: the first `<Badge variant="success">` would
-   * otherwise ship below AA against a green suite.
+   * The tinted family: `<hue>` text on a 10% (light) or 20% (dark) tint of
+   * itself.
+   *
+   * This renders today. `.turn-pill__pre--error` (`index.css`) paints
+   * `--destructive` on a 10% mix of `--destructive`, on every failed tool call
+   * in `BlockTimeline.tsx`. Do not delete these assertions as hypothetical.
+   *
+   * The `cva` variants that declare the same pattern — `Badge` and `Button`'s
+   * `destructive`/`success`/`warning`/`processing` — have no call sites yet, so
+   * for those four hues the assertion is the thing standing between a first
+   * `<Badge variant="success">` and shipping below AA against a green suite.
    */
   const TINTED: TokenName[] = ["destructive", "success", "warning", "processing", "primary"];
   // Resting state only: /10 in light, /20 in dark.
@@ -178,8 +188,9 @@ describe("palette contrast — WCAG 2.2", () => {
   // text's own hue always moves the fill toward the text, so hover reduces
   // contrast by construction: the safe ceiling is /12 for `success` in light,
   // which is indistinguishable from the /10 resting state. The mechanism is
-  // wrong, not the value, and no component consumes these variants today —
-  // fixing it belongs with the decision about whether they should exist at all.
+  // wrong, not the value — and the one live consumer has no hover state, so
+  // fixing it belongs with the decision about whether those variants (#759)
+  // should exist at all.
   for (const mode of ["light", "dark"] as const) {
     const pct = mode === "light" ? 10 : 20;
     for (const hue of TINTED) {

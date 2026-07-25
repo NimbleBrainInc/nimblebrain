@@ -20,15 +20,6 @@ import { profileConnectorsUrl, workspaceConnectorsUrl } from "./connectors-redir
 import { SUCCESS_PAGE_CSP, SUCCESS_PAGE_STYLE } from "./oauth-success-page.ts";
 
 /**
- * Inline CSS for the OAuth success page. Held in a module constant so the
- * SHA-256 below is computed once over the same string the response embeds —
- * the route's CSP allowlists exactly that hash, so any edit here that isn't
- * paired with re-running tests will surface as an unstyled page (the hash
- * stops matching, the browser blocks the <style>). Kept terse: this page is
- * visible for one second before meta-refresh fires.
- */
-
-/**
  * OAuth integration routes for outbound flows where NimbleBrain is the
  * client against a remote MCP server's authorization server.
  *
