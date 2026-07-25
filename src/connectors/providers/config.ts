@@ -12,12 +12,6 @@
  * silently discarded, so an upgrade from the env-sniffing era breaks nothing and
  * declaring one setting can't disturb another.
  *
- * A provider's **broker credential is not a setting and is not declared here.**
- * It stays in the environment while a connector's persisted transport credential
- * is still an env reference; binding it to a `TransportCredentialProvider`
- * (`src/tools/credential-provider.ts`) is what makes it declarable. Persisted
- * state must name *what* credential it needs, never *where* the value comes from.
- *
  * Each provider owns its own resolution (Composio's is `providers/composio/config.ts`);
  * this module only holds what was declared.
  */
@@ -27,6 +21,17 @@
  * credential is read from `COMPOSIO_API_KEY`; see the module note above.
  */
 export interface ComposioProviderConfig {
+  /**
+   * Platform-wide Composio API key — the broker credential, and the gate on
+   * registering the provider at all. Falls back to `COMPOSIO_API_KEY`.
+   *
+   * Declarable because a connector's persisted transport credential names the
+   * `composio` credential provider rather than an env var, so resolution is this
+   * provider's own business. Keeping a secret in a mounted config file is still
+   * the operator's call — the env fallback remains the better posture for most
+   * deployments.
+   */
+  apiKey?: string;
   /** Composio API base URL override (self-hosted / staging). Must be http(s). */
   baseUrl?: string;
   /**
@@ -65,6 +70,7 @@ const MANAGED_PROVIDER_FIELDS: Record<keyof Required<ManagedProviderConfigs>, tr
 };
 
 const COMPOSIO_PROVIDER_FIELDS: Record<keyof Required<ComposioProviderConfig>, true> = {
+  apiKey: true,
   baseUrl: true,
   monitorEnabled: true,
 };

@@ -78,13 +78,13 @@ The platform builds every outward-facing URL (OAuth callbacks, post-login landin
 
 Required only when the connectors catalog contains any `auth: composio` entries (Gmail, Outlook, …). See the [Composio operator guide](/deploy/composio/) for end-to-end setup.
 
-The provider's **settings** are declarable in `nimblebrain.json` under [`connectors.providers.composio`](/config/nimblebrain-json/#connectorsproviderscomposio). The two variables marked **fallback** below apply **per field** — each is read only when the block leaves that setting out, so declaring one setting never disturbs another.
+The provider's **settings** are declarable in `nimblebrain.json` under [`connectors.providers.composio`](/config/nimblebrain-json/#connectorsproviderscomposio). The three variables marked **fallback** below apply **per field** — each is read only when the block leaves that setting out, so declaring one setting never disturbs another.
 
-`COMPOSIO_API_KEY` is **not** one of them. The broker credential is always read from the environment and is never superseded by the block, because an installed connector's persisted transport credential is a `${COMPOSIO_API_KEY}` reference resolved from the process env ([why](/config/nimblebrain-json/#the-broker-credential)). `COMPOSIO_<TOOLKIT>_AUTH_CONFIG_ID` and `NB_TENANT_ID` are likewise env-only.
+`COMPOSIO_API_KEY` falls back the same way — it is declarable as `connectors.providers.composio.apiKey`, though the environment remains the better posture for a secret ([why](/config/nimblebrain-json/#the-broker-credential)). `COMPOSIO_<TOOLKIT>_AUTH_CONFIG_ID` and `NB_TENANT_ID` are env-only.
 
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
-| `COMPOSIO_API_KEY` | When the catalog has `auth: composio` entries | — | Platform-wide Composio API key — the broker credential, and the gate on registering the provider at all. **Environment-only**, not declarable and not superseded by the config block. Read once at startup. Without it, the Composio integration reports "not configured" and installs of `auth: composio` entries fail. |
+| `COMPOSIO_API_KEY` | When the catalog has `auth: composio` entries | — | *(fallback for `…composio.apiKey`)* Platform-wide Composio API key — the broker credential, and the gate on registering the provider at all. Read once at startup. Without it, the Composio integration reports "not configured" and installs of `auth: composio` entries fail. |
 | `COMPOSIO_<TOOLKIT>_AUTH_CONFIG_ID` | One per `auth: composio` entry | — | The `ac_…` id from the Composio dashboard for this toolkit's auth config. The variable name is declared by the catalog entry's `composio.authConfigEnv`. Example: `COMPOSIO_GMAIL_AUTH_CONFIG_ID=ac_xxx`. |
 | `COMPOSIO_API_BASE_URL` | No | `https://backend.composio.dev` | *(fallback for `…composio.baseUrl`)* Override the Composio SDK base URL (self-hosted, staging). Must be `http(s)`. |
 | `NB_TENANT_ID` | When multi-tenant pods share a Composio account | — | Per-pod tenant identifier prepended to the wsId so two tenants never collide in Composio's namespace. **Required** in bouncer (multi-tenant) mode — startup fails without it. Single-tenant deployments can omit it. |

@@ -17,6 +17,7 @@
 import { composioAuthRoutes } from "../../../api/routes/composio-auth.ts";
 import type { AppContext } from "../../../api/types.ts";
 import { log } from "../../../observability/log.ts";
+import { registerCredentialProvider } from "../../../tools/credential-provider.ts";
 import type { ManagedConnectorProvider } from "../managed-provider.ts";
 import { validateComposioConfig } from "./config.ts";
 import { ComposioConnectionProbe } from "./connection-probe.ts";
@@ -28,6 +29,10 @@ import {
   findActiveComposioConnection,
   initiateComposioConnection,
 } from "./sdk.ts";
+import {
+  COMPOSIO_CREDENTIAL_PROVIDER,
+  composioCredentialProvider,
+} from "./transport-credential.ts";
 
 /** The platform-wide Composio broker credential. Present by construction — the provider is built only when configured. */
 function brokerApiKey(): string {
@@ -46,6 +51,12 @@ export function createComposioProvider(): ManagedConnectorProvider {
   // When thrown, omit `probe` entirely so the runtime wires no probe for this
   // provider — keeping the revalidator wiring in `server.ts` fully
   // provider-agnostic.
+  // The provider registers its own transport credential, so the registration is
+  // configuration-gated by construction: a Composio-less deploy leaves the name
+  // unregistered and a stray ref naming it fails loudly at source start rather
+  // than authenticating with an empty header.
+  registerCredentialProvider(COMPOSIO_CREDENTIAL_PROVIDER, composioCredentialProvider);
+
   const { monitorEnabled } = validateComposioConfig();
   if (!monitorEnabled) {
     log.info(

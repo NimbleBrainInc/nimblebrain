@@ -26,6 +26,7 @@ import type {
 import { installBundleInWorkspace } from "../bundles/workspace-ops.ts";
 import type { UserConfigFieldDef } from "../config/workspace-credentials.ts";
 import { validateComposioConfig } from "../connectors/providers/composio/config.ts";
+import { COMPOSIO_CREDENTIAL_PROVIDER } from "../connectors/providers/composio/transport-credential.ts";
 import type { ManagedConnectorProvider } from "../connectors/providers/managed-provider.ts";
 import { connectorSkillIdentityFrom } from "../connectors/server-detail.ts";
 import { textContent } from "../engine/content-helpers.ts";
@@ -1967,11 +1968,11 @@ async function validateRemoteOAuthInstall(
 }
 
 /**
- * Scrub the Composio session's response headers for persistence: drop the
- * `x-api-key` (re-added from the env template at transport build time) and
- * substitute any inlined copy of the API key with the env placeholder so the
- * secret never lands in workspace.json. `replaceAll` handles a future response
- * shape that repeats the key twice in one value.
+ * Scrub the Composio session's response headers for persistence: the credential
+ * is attached at transport-build time by the `composio` credential provider, so
+ * any header carrying it — the `x-api-key` itself, or a copy inlined elsewhere —
+ * is dropped rather than persisted. Nothing written to workspace.json references
+ * the secret, by value or by name.
  */
 function scrubComposioHeaders(
   headers: Record<string, string> | undefined,
@@ -1980,23 +1981,21 @@ function scrubComposioHeaders(
   const extraHeaders: Record<string, string> = {};
   for (const [k, v] of Object.entries(headers ?? {})) {
     if (k.toLowerCase() === "x-api-key") continue;
-    // biome-ignore lint/suspicious/noTemplateCurlyInString: deliberate placeholder — resolved by `resolveEnvTemplate` at transport build time
-    extraHeaders[k] = v.includes(apiKey) ? v.replaceAll(apiKey, "${COMPOSIO_API_KEY}") : v;
+    if (apiKey && v.includes(apiKey)) continue;
+    extraHeaders[k] = v;
   }
   return extraHeaders;
 }
 
 /**
- * Composio MCP wiring (session URL + transport + x-api-key template). Called
- * only on the fresh-install branch — gating it on dedup means a re-click on an
- * installed connector doesn't initiate a new upstream Composio session and
- * orphan the prior one. The API-key template is held verbatim in workspace.json;
- * `createRemoteTransport` resolves it from `process.env.COMPOSIO_API_KEY` at
- * start time so the secret never sits at rest. This template is why the broker
- * credential is environment-only by construction (it is not a field on the
- * declared block): persisted state points into the env namespace, so the value
- * must live there. Binding the transport to a `TransportCredentialProvider`
- * instead is what would let the credential be declared elsewhere.
+ * Composio MCP wiring (session URL + transport). Called only on the fresh-install
+ * branch — gating it on dedup means a re-click on an installed connector doesn't
+ * initiate a new upstream Composio session and orphan the prior one.
+ *
+ * The persisted transport names the `composio` credential provider rather than
+ * carrying the key or an env reference to it, so the secret never sits at rest
+ * AND resolution stays the provider's own business — which is what lets the
+ * broker credential be declared in `nimblebrain.json` instead of the env.
  */
 async function buildComposioWiring(
   provider: ManagedConnectorProvider,
@@ -2030,12 +2029,7 @@ async function buildComposioWiring(
     url: sessionMcp.url,
     transport: {
       type: sessionMcp.type === "sse" ? "sse" : "streamable-http",
-      auth: {
-        type: "header",
-        name: "x-api-key",
-        // biome-ignore lint/suspicious/noTemplateCurlyInString: deliberate placeholder — resolved by `resolveEnvTemplate` at transport build time
-        value: "${COMPOSIO_API_KEY}",
-      },
+      auth: { type: "provider", provider: COMPOSIO_CREDENTIAL_PROVIDER, config: {} },
       ...(Object.keys(extraHeaders).length > 0 ? { headers: extraHeaders } : {}),
     },
   };

@@ -8,7 +8,7 @@
  *
  * What's covered:
  *   - ref.composio.connectorId is stamped on the persisted BundleRef
- *   - transport.auth.value is the `${COMPOSIO_API_KEY}` template
+ *   - transport.auth names the `composio` credential provider
  *     (literal API key never appears in workspace.json)
  *   - extra headers containing the API key are scrubbed to the
  *     template form
@@ -277,32 +277,35 @@ describe("manage_connectors.install (composio-auth)", () => {
     expect(installed?.composio?.connectorId).toBe(GMAIL_ID);
   });
 
-  test("(b) transport.auth.value is the template — literal API key never appears in workspace.json", async () => {
+  test("(b) transport.auth names the credential provider — neither the key nor an env reference to it lands on disk", async () => {
     process.env.COMPOSIO_API_KEY = "secret-api-key-DO-NOT-LEAK";
     process.env.COMPOSIO_GMAIL_AUTH_CONFIG_ID = "ac_gmail";
 
     const installed = await installAndReadPersistedRef();
-    expect(installed?.transport?.auth?.type).toBe("header");
+    expect(installed?.transport?.auth?.type).toBe("provider");
     expect(
-      (installed?.transport?.auth as { value?: string } | undefined)?.value,
-    ).toBe("${COMPOSIO_API_KEY}");
+      (installed?.transport?.auth as { provider?: string } | undefined)?.provider,
+    ).toBe("composio");
 
-    // Full disk-shape audit: serialize what was persisted and prove
-    // the literal secret appears nowhere. This is the load-bearing
-    // assertion of the whole template-substitution design.
+    // Full disk-shape audit. The secret must not be on disk — and neither must
+    // the env var's NAME: a persisted `${COMPOSIO_API_KEY}` is a durable pointer
+    // into the environment namespace, which is what stopped the credential from
+    // being declarable anywhere else.
     const serialized = JSON.stringify(installed);
     expect(serialized.includes("secret-api-key-DO-NOT-LEAK")).toBe(false);
+    expect(serialized.includes("COMPOSIO_API_KEY")).toBe(false);
   });
 
-  test("(c) extra headers containing the API key are scrubbed to the template (replaceAll)", async () => {
+  test("(c) extra headers containing the API key are dropped, not templated", async () => {
     process.env.COMPOSIO_API_KEY = "secret-api-key";
     process.env.COMPOSIO_GMAIL_AUTH_CONFIG_ID = "ac_gmail";
 
     // Composio's session sometimes returns headers beyond x-api-key.
     // Defensive: if the API key appears anywhere inside one (e.g. a
-    // hypothetical `Authorization: Bearer secret-api-key` shape),
-    // the install path must scrub it before the BundleRef hits disk.
-    // Twice in one value validates the `replaceAll` over `replace`.
+    // hypothetical `Authorization: Bearer secret-api-key` shape), the install
+    // path must drop it before the BundleRef hits disk. The credential is
+    // attached at transport-build time by the credential provider, so there is
+    // nothing to substitute a placeholder for.
     composioCalls.createImpl = async () => ({
       sessionId: "session_test",
       mcp: {
@@ -323,11 +326,9 @@ describe("manage_connectors.install (composio-auth)", () => {
     // transport.headers.
     expect(installed?.transport?.headers?.["x-api-key"]).toBeUndefined();
 
-    // The debug header had the secret TWICE. Both occurrences must
-    // be scrubbed. `replaceAll`, not `replace`.
-    expect(installed?.transport?.headers?.["x-debug-echo"]).toBe(
-      "${COMPOSIO_API_KEY}-then-${COMPOSIO_API_KEY}-again",
-    );
+    // A header carrying the secret is dropped wholesale rather than rewritten
+    // into an env reference.
+    expect(installed?.transport?.headers?.["x-debug-echo"]).toBeUndefined();
 
     // The clean header passes through unchanged.
     expect(installed?.transport?.headers?.["x-static-header"]).toBe("no-secret-here");
@@ -635,11 +636,10 @@ describe("manage_connectors.install scope:identity (composio personal connector)
     const ws = await h.workspaceStore.get(h.wsId);
     expect(ws?.bundles ?? []).toHaveLength(0);
 
-    // The literal API key never lands on disk — transport carries the template.
+    // Neither the key nor an env reference to it lands on disk — the transport
+    // names the credential provider.
     expect(JSON.stringify(ref).includes("k_test")).toBe(false);
-    expect((ref.transport?.auth as { value?: string } | undefined)?.value).toBe(
-      "${COMPOSIO_API_KEY}",
-    );
+    expect((ref.transport?.auth as { provider?: string } | undefined)?.provider).toBe("composio");
   });
 
   test("(j) list_personal_connectors exposes auth:composio + the connectorId (cid) — the Connect route's key", async () => {

@@ -5,6 +5,7 @@ import {
   friendlyMpakConfigError,
   type UserConfigFieldDef,
 } from "../config/workspace-credentials.ts";
+import { composioTransportConfig } from "../connectors/providers/composio/transport-credential.ts";
 import type { EventSink } from "../engine/types.ts";
 import {
   assertHostCapabilitiesAvailable,
@@ -561,7 +562,7 @@ async function startUrlBundleSource(
     {
       type: "remote",
       url: new URL(ref.url),
-      transportConfig: ref.transport,
+      transportConfig: composioTransportConfig(ref.transport),
       allowInsecure: opts?.allowInsecureRemotes === true,
       authProvider,
     },
