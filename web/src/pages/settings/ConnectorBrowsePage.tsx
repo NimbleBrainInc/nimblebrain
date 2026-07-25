@@ -346,7 +346,6 @@ function DirectoryCard({
       </div>
       <div className="mt-auto flex items-end justify-end">
         <CardAction
-          entry={entry}
           busy={busy}
           canManage={canManage}
           isStaticAuth={isStaticAuth}
@@ -365,7 +364,6 @@ function DirectoryCard({
  * button the server refuses.
  */
 export function CardAction({
-  entry,
   busy,
   canManage,
   isStaticAuth,
@@ -373,7 +371,6 @@ export function CardAction({
   onInstall,
   onSetUp,
 }: {
-  entry: DirectoryEntry;
   busy: boolean;
   canManage: boolean;
   isStaticAuth: boolean;
@@ -389,7 +386,7 @@ export function CardAction({
   //   - not configured + admin     → Set up
   //   - not configured + non-admin → "Operator setup required"
   //   - configured                 → Install (rotation lives on Configure now)
-  if (isStaticAuth && entry.install.kind === "remote-oauth" && !operatorReady) {
+  if (isStaticAuth && !operatorReady) {
     return canManage ? (
       <Button type="button" variant="outline" size="sm" onClick={onSetUp}>
         Set up

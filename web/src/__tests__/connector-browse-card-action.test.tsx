@@ -10,7 +10,6 @@
 // ---------------------------------------------------------------------------
 
 import { afterEach, describe, expect, test } from "bun:test";
-import type { DirectoryEntry } from "../api/client";
 import { CardAction } from "../pages/settings/ConnectorBrowsePage";
 
 (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -63,27 +62,9 @@ function findButton(container: HTMLElement, text: string): HTMLButtonElement | n
   return (match as HTMLButtonElement | undefined) ?? null;
 }
 
-function entry(overrides: Partial<DirectoryEntry> = {}): DirectoryEntry {
-  return {
-    id: "ai.granola/mcp",
-    registryId: "curated",
-    registryType: "static",
-    name: "Granola",
-    description: "Meeting notes",
-    install: {
-      kind: "remote-oauth",
-      url: "https://mcp.granola.ai/mcp",
-      transportType: "streamable-http",
-      auth: "dcr",
-    },
-    ...overrides,
-  };
-}
-
 function render(canManage: boolean, over: Partial<Parameters<typeof CardAction>[0]> = {}) {
   return mount(
     <CardAction
-      entry={entry()}
       busy={false}
       canManage={canManage}
       isStaticAuth={false}
@@ -109,14 +90,6 @@ describe("CardAction — the install gate", () => {
     // that rendered nothing at all would satisfy it.
     mounted = await render(true);
     expect(findButton(mounted.container, "Install")).not.toBeNull();
-  });
-
-  test("the gate covers the mpak path too, not just the default one", async () => {
-    // One gated return serves every install path; this pins that the mpak
-    // path is one of them.
-    mounted = await render(false, { entry: entry({ install: { kind: "mpak-bundle" } }) });
-    expect(findButton(mounted.container, "Install")).toBeNull();
-    expect(mounted.container.textContent).toContain("Workspace admin required");
   });
 });
 
