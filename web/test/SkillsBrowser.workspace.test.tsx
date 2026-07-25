@@ -220,6 +220,29 @@ function clickByText(container: HTMLElement, text: string): boolean {
   return false;
 }
 
+/**
+ * A skill's on/off toggle, addressed by accessible name. The toggle is a
+ * *sibling* of the row's expander, so it can't be reached by querying inside
+ * the expander — and addressing it by name is what a screen-reader user does.
+ * Covers both `Toggle` label forms: locked (`<name> — on, managed elsewhere`)
+ * and live (`Turn off <name>`).
+ */
+function toggleFor(container: HTMLElement, skillName: string): HTMLButtonElement | null {
+  const match = Array.from(container.querySelectorAll("button")).find((b) => {
+    const label = b.getAttribute("aria-label") ?? "";
+    return label.startsWith(`${skillName} — `) || label.endsWith(` ${skillName}`);
+  });
+  return (match as HTMLButtonElement | undefined) ?? null;
+}
+
+/** The row expander button carrying `text`. */
+function expanderFor(container: HTMLElement, text: string): HTMLButtonElement | null {
+  const match = Array.from(container.querySelectorAll("button[aria-expanded]")).find((b) =>
+    b.textContent?.includes(text),
+  );
+  return (match as HTMLButtonElement | undefined) ?? null;
+}
+
 describe("SkillsBrowser with surface='workspace' (workspace settings tab)", () => {
   test("does not render a scope filter", async () => {
     mounted = await mount(React.createElement(SkillsBrowser, { surface: "workspace" }));
@@ -507,16 +530,71 @@ describe("SkillsBrowser with surface='workspace' — composition list", () => {
 
   test("only the editable tier can toggle; context tiers are locked", async () => {
     mounted = await mount(React.createElement(SkillsBrowser, { surface: "workspace" }));
-    // The system row (bundle) carries a disabled toggle...
-    const sysRow = Array.from(mounted.container.querySelectorAll("button")).find((b) =>
-      b.textContent?.includes("Bundle (Layer 1)."),
+    // The toggle is a sibling of the row's expander, so it's addressed by its
+    // accessible name rather than by nesting.
+    expect(toggleFor(mounted.container, "bundle-skill")?.disabled).toBe(true);
+    // `toBeFalsy` is satisfied by `undefined`, so a lookup that finds nothing
+    // would assert nothing. Pin the lookup first. (The locked assertion above
+    // needs no such guard — `toBe(true)` already fails on `undefined`.)
+    expect(toggleFor(mounted.container, "workflow")).not.toBeNull();
+    expect(toggleFor(mounted.container, "workflow")?.disabled).toBeFalsy();
+  });
+
+  test("no control in a row is nested inside another control", async () => {
+    // `button` takes no interactive descendants. Nesting left the toggle's
+    // exposure to AT undefined and made toggle-vs-expand rest on
+    // `stopPropagation`; siblings make the separation structural.
+    mounted = await mount(React.createElement(SkillsBrowser, { surface: "workspace" }));
+    expect(mounted.container.querySelectorAll("button button").length).toBe(0);
+    expect(mounted.container.querySelectorAll("button a, a button").length).toBe(0);
+  });
+
+  test("toggling a skill does not expand its row", async () => {
+    // The behavioral half of the nesting fix: with the controls as siblings
+    // this holds structurally, so it must stay true without `stopPropagation`.
+    mounted = await mount(React.createElement(SkillsBrowser, { surface: "workspace" }));
+    const expander = expanderFor(mounted.container, "Workspace-tier rule.");
+    expect(expander?.getAttribute("aria-expanded")).toBe("false");
+
+    await act(async () => {
+      toggleFor(mounted!.container, "workflow")?.click();
+    });
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    // The toggle fired...
+    const toggleCall = callToolCalls.find(
+      (c) => c.server === "skills" && (c.tool === "activate" || c.tool === "deactivate"),
     );
-    expect((sysRow?.querySelector("button") as HTMLButtonElement | null)?.disabled).toBe(true);
-    // ...while the workspace row's toggle is live.
-    const wsRow = Array.from(mounted.container.querySelectorAll("button")).find((b) =>
-      b.textContent?.includes("Workspace-tier rule."),
-    );
-    expect((wsRow?.querySelector("button") as HTMLButtonElement | null)?.disabled).toBeFalsy();
+    expect(toggleCall).toBeDefined();
+    // ...and the row stayed collapsed.
+    expect(
+      expanderFor(mounted.container, "Workspace-tier rule.")?.getAttribute("aria-expanded"),
+    ).toBe("false");
+  });
+
+  test("a locked tier's toggle fires no mutation", async () => {
+    // Dropping `stopPropagation` also dropped Toggle's `if (!disabled)` guard,
+    // making the `disabled` attribute the sole suppressor of a locked click.
+    // That's load-bearing now, so it gets pinned behaviorally: switching to
+    // `aria-disabled` later (the usual way to keep a locked control focusable)
+    // would silently turn `onClick={onChange}` into a live mutation.
+    mounted = await mount(React.createElement(SkillsBrowser, { surface: "workspace" }));
+    const locked = toggleFor(mounted.container, "bundle-skill");
+    // Guard against a vacuous pass — a missing toggle would satisfy the
+    // assertion below for the wrong reason.
+    expect(locked).not.toBeNull();
+    expect(locked?.disabled).toBe(true);
+
+    await act(async () => {
+      locked?.click();
+    });
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(callToolCalls.some((c) => c.tool === "activate" || c.tool === "deactivate")).toBe(false);
   });
 
   test("the segment filter narrows the list to a single tier", async () => {
