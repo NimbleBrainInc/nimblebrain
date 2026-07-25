@@ -2,6 +2,10 @@ import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import { log } from "../observability/log.ts";
+import {
+  isPersonalConnectorName,
+  PERSONAL_CONNECTOR_PREFIX,
+} from "../tools/identity-sources.ts";
 import { WorkspaceContext } from "../workspace/context.ts";
 import { resolveLocalBundle } from "./resolve.ts";
 import type { BundleRef } from "./types.ts";
@@ -40,6 +44,12 @@ export function isReservedServerName(serverName: string): boolean {
 export function validateServerName(serverName: string): void {
   if (isReservedServerName(serverName)) {
     throw new Error(`Source name '${serverName}' is reserved for system tools`);
+  }
+  if (isPersonalConnectorName(serverName)) {
+    throw new Error(
+      `Source name '${serverName}' is reserved: the '${PERSONAL_CONNECTOR_PREFIX}' prefix marks ` +
+        `a personal connector on the identity door, and a workspace source using it would shadow one.`,
+    );
   }
 }
 
@@ -87,6 +97,99 @@ export function slugifyServerName(canonicalName: string): string {
     .replace(/[^a-z0-9-]/g, "-")
     .replace(/-+/g, "-")
     .replace(/^-|-$/g, "");
+}
+
+/**
+ * Every `serverName` a PERSISTED ref may carry for this canonical name: the
+ * current wire name, plus the legacy namespace-preserving slug that refs stamped
+ * before the wire-name change.
+ *
+ * Use ONLY where catalog entries are joined against stored refs (`workspace.json`
+ * bundles, `users/<id>/connectors.json`). Everywhere a name is computed fresh —
+ * an install, an auth route — call `shortServerName` directly; adding the legacy
+ * form there would stamp it into new data.
+ *
+ * TRANSITIONAL. Delete the legacy candidate once `migrate:server-names` has run
+ * on every tenant and no stored ref carries the long form. Until then a join that
+ * checks only one form silently reports an installed connector as absent.
+ */
+export function persistedServerNameCandidates(canonicalName: string): readonly string[] {
+  const wire = shortServerName(canonicalName);
+  const legacy = slugifyServerName(canonicalName);
+  return wire === legacy ? [wire] : [wire, legacy];
+}
+
+/** Normalize an already-chosen label to the source alphabet (`[a-z0-9-]`). */
+function kebab(label: string): string {
+  return label
+    .toLowerCase()
+    .replace(/[^a-z0-9-]/g, "-")
+    .replace(/-+/g, "-")
+    .replace(/^-|-$/g, "");
+}
+
+/**
+ * The **wire** name for a canonical `ServerDetail.name` — what the model sees as
+ * the `<source>` segment of `<source>__<tool>`.
+ *
+ * `slugifyServerName` answers a different question and stays as it is: it is the
+ * globally-unique storage identity, and it is long precisely because it preserves
+ * the entire reverse-DNS namespace. That is the right property for a key that
+ * must never collide with any other server anywhere.
+ *
+ * It is the wrong property for a tool name. OpenAI-compatible providers cap
+ * function names at 64 characters, and a reverse-DNS namespace spends ~19 of them
+ * on scaffolding (`ai-`, the vendor, `-mcp`) that identifies nothing the caller
+ * needs: within one session a source competes with roughly ten others, not with
+ * the whole registry.
+ *
+ * So this returns a **local** name, and the uniqueness it must hold is
+ * correspondingly local:
+ *
+ *   - **within an owner** — permissions live at `users/<id>/permissions.json` or
+ *     `workspaces/<id>/permissions.json`, and OAuth credentials under the same
+ *     two roots, so two servers only conflict if the same owner installs both;
+ *   - **across the curated catalog** — which is keyed by this name, and which we
+ *     control. `catalog-server-names.test.ts` asserts injectivity there.
+ *
+ * Global uniqueness is NOT required, and buying it is what cost the characters.
+ *
+ * The rule, in order:
+ *
+ *   1. the path segment, less a trailing `-mcp` (the segment is what names the
+ *      server; `-mcp` says only "this is an MCP server", which they all are);
+ *   2. when that leaves nothing meaningful — the segment was bare `mcp`, the
+ *      vendor's whole identity — the vendor's last DNS label.
+ *
+ *     ai.nimblebrain/precision-outbound-mcp → precision-outbound
+ *     ai.nimblebrain/people-mcp             → people
+ *     io.asana/mcp                          → asana
+ *     com.acme.crm/mcp                      → crm
+ *     dev.mpak.exampleinc/echo              → echo
+ *     @exampleinc/echo                      → echo
+ *
+ * Two vendors whose names reduce alike (`com.acme.crm/mcp` and
+ * `com.foobar.crm/mcp` both → `crm`) collide. That is deliberate and is the
+ * trade this function makes: the collision surfaces as a **fail-closed install
+ * error** in the owner that hits it, and as a red catalog test if we ever ship
+ * two such entries. It is not silently disambiguated with a counter or a hash —
+ * an auto-generated `crm-2` is unreadable to the model, which has to choose
+ * between them, and unreadable names are how a tool call goes to the wrong
+ * connector.
+ */
+export function shortServerName(canonicalName: string): string {
+  const cleaned = canonicalName.toLowerCase().replace(/^@/, "");
+  const slashIdx = cleaned.indexOf("/");
+  const vendor = slashIdx > 0 ? cleaned.slice(0, slashIdx) : "";
+  const segment = slashIdx >= 0 ? cleaned.slice(slashIdx + 1) : cleaned;
+
+  const withoutSuffix = segment.replace(/-mcp$/, "");
+  if (withoutSuffix.length > 0 && withoutSuffix !== "mcp") return kebab(withoutSuffix);
+
+  const vendorLabel = vendor.split(".").pop() ?? "";
+  // Fall back to the full slug rather than returning empty: a nameless source
+  // is unroutable, and being long is recoverable where being absent is not.
+  return kebab(vendorLabel) || slugifyServerName(canonicalName);
 }
 
 /**

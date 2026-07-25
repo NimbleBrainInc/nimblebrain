@@ -5,7 +5,7 @@ import {
   saveComposioConnection,
 } from "../../bundles/composio-connection.ts";
 import { WORKSPACE_PRINCIPAL_ID } from "../../bundles/connection.ts";
-import { slugifyServerName } from "../../bundles/paths.ts";
+import { shortServerName } from "../../bundles/paths.ts";
 import { validateComposioConfig } from "../../connectors/providers/composio/config.ts";
 import {
   consumeConnectFlow,
@@ -146,7 +146,7 @@ export function composioAuthRoutes(ctx: AppContext) {
     // (`/v1/mcp-auth/initiate-identity`). Without this the callback would persist
     // a `connection.json` under the user root with no install record to read it —
     // a dangling (own-credential-only) state. Not-installed is a 404 client error.
-    const serverName = slugifyServerName(connectorId);
+    const serverName = shortServerName(connectorId);
     const installed = await new IdentityConnectorStore({ workDir: ctx.runtime.getWorkDir() }).get(
       userId,
       serverName,
@@ -384,7 +384,7 @@ async function adoptExistingComposioConnection(
       // the user sees an honest error here, and a retry runs the
       // same adopt-existing path with no half-written state to
       // reconcile.
-      const serverName = slugifyServerName(connectorId);
+      const serverName = shortServerName(connectorId);
       const lifecycle = ctx.runtime.getLifecycle();
       try {
         if (owner.type === "workspace") {
@@ -619,7 +619,7 @@ async function recoverCallbackSource(
   // the source back up from the persisted BundleRef if it's missing,
   // no-ops if it's already there (first-connect path, where the
   // install-eager-start already registered).
-  const serverName = slugifyServerName(cid);
+  const serverName = shortServerName(cid);
   try {
     const lifecycle = ctx.runtime.getLifecycle();
     if (owner.type === "workspace") {

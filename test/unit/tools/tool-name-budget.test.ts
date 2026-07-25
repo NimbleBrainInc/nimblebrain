@@ -17,7 +17,7 @@
  */
 
 import { describe, expect, test } from "bun:test";
-import { slugifyServerName } from "../../../src/bundles/paths.ts";
+import { shortServerName, slugifyServerName } from "../../../src/bundles/paths.ts";
 import { personalConnectorWireName } from "../../../src/tools/identity-sources.ts";
 
 /**
@@ -55,7 +55,7 @@ const TOOL_NAMES = [
 function wireNames(): string[] {
   const names: string[] = [];
   for (const canonical of CANONICAL_SERVER_NAMES) {
-    const source = slugifyServerName(canonical);
+    const source = shortServerName(canonical);
     for (const tool of TOOL_NAMES) {
       names.push(`${source}__${tool}`);
       names.push(`${personalConnectorWireName(source)}__${tool}`);
@@ -85,6 +85,10 @@ describe("wire-name budget", () => {
     // so it cannot happen — assert it so a future edit to that function cannot
     // quietly break dispatch.
     for (const canonical of [...CANONICAL_SERVER_NAMES, "com.acme/my_weird_name", "io.foo/a__b"]) {
+      // Both names matter: `shortServerName` is what reaches the wire, and
+      // `slugifyServerName` remains the storage identity and the legacy wire
+      // form that resumed conversations still present.
+      expect(shortServerName(canonical)).not.toInclude("_");
       expect(slugifyServerName(canonical)).not.toInclude("_");
     }
   });
@@ -94,7 +98,7 @@ describe("wire-name budget", () => {
     // credentials. With workspace names bare, only the marker separates them,
     // and install-time checks cannot prevent the collision: the guard sees only
     // the caller's own connectors, never another member's.
-    const workspace = slugifyServerName("com.google/gmail");
+    const workspace = shortServerName("com.google/gmail");
     const personal = personalConnectorWireName(workspace);
     expect(personal).not.toBe(workspace);
     expect(personal.startsWith(workspace)).toBe(false);
@@ -105,7 +109,7 @@ describe("wire-name budget", () => {
     // stored per user / per workspace) and across the curated catalog, which is
     // keyed by slug. It is NOT required globally, so a future shortening scheme
     // only has to hold this weaker property.
-    const slugs = CANONICAL_SERVER_NAMES.map(slugifyServerName);
+    const slugs = CANONICAL_SERVER_NAMES.map(shortServerName);
     expect(new Set(slugs).size).toBe(slugs.length);
   });
 });

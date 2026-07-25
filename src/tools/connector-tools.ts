@@ -15,7 +15,8 @@ import {
   deriveServerName,
   isReservedServerName,
   serverNameFromRef,
-  slugifyServerName,
+  persistedServerNameCandidates,
+  shortServerName,
 } from "../bundles/paths.ts";
 import { startBundleSource } from "../bundles/startup.ts";
 import type {
@@ -1216,7 +1217,7 @@ async function personalConnectorCollisionGuard(
   entry: DirectoryEntry,
 ): Promise<ToolResult | null> {
   if (ws.isPersonal === true) return null;
-  const serverName = slugifyServerName(entry.id);
+  const serverName = shortServerName(entry.id);
   const personal = await new IdentityConnectorStore({ workDir: ctx.runtime.getWorkDir() }).get(
     callerId,
     serverName,
@@ -1279,7 +1280,7 @@ async function handleInstallIdentity(
   // is validated upstream by `parseDirectoryEntry`.
   const action = entry.install;
 
-  const serverName = slugifyServerName(entry.id);
+  const serverName = shortServerName(entry.id);
 
   // Reserved-name guard: a connector whose slug collides with a system-tool
   // prefix (e.g. `nb`) would surface its tools as `nb__…` in the trusted system
@@ -1474,7 +1475,7 @@ async function handleConnectApiKey(
   // property re-read back to optional.
   const connectApiKey = provider.connectApiKey;
 
-  const serverName = slugifyServerName(catalogId);
+  const serverName = shortServerName(catalogId);
   const owner: ConnectorOwner = { type: "workspace", wsId };
   const userId = provider.userId(owner);
   const lifecycle = ctx.runtime.getLifecycle();
@@ -1857,7 +1858,7 @@ async function handleInstallRemoteOAuth(
   // serverName is the slugified canonical reverse-DNS form — opaque,
   // URL-safe, filesystem-safe, collision-free by construction. See
   // `slugifyServerName` for the rule. mpak install path mirrors this.
-  const serverName = slugifyServerName(entry.id);
+  const serverName = shortServerName(entry.id);
 
   const lifecycle = ctx.runtime.getLifecycle();
 
@@ -2501,7 +2502,7 @@ async function handleInstallMpak(
   // serverName so this install — and every lookup that follows — uses
   // the same opaque, URL-safe, collision-free identifier the catalog
   // source emits. Matches the remote-OAuth path's slugify call.
-  const ref: BundleRef = { name: bundleName, serverName: slugifyServerName(entry.id) };
+  const ref: BundleRef = { name: bundleName, serverName: shortServerName(entry.id) };
   let inventoryEntry: Awaited<ReturnType<typeof installBundleInWorkspace>>;
   try {
     inventoryEntry = await installBundleInWorkspace(
@@ -3033,7 +3034,10 @@ async function handleListPersonalCatalog(
       e.install.kind === "remote-oauth" &&
       // Lockstep with handleInstallIdentity's gate — offered ⊆ acceptable.
       (e.install.auth === "dcr" || e.install.auth === "composio") &&
-      !installedServerNames.has(slugifyServerName(e.id)),
+      // Joined against PERSISTED refs, so a pre-migration ref still carries the
+      // legacy slug — match either form or an installed connector reappears as
+      // available and gets offered for a duplicate install.
+      !persistedServerNameCandidates(e.id).some((n) => installedServerNames.has(n)),
   );
 
   return {
@@ -3067,7 +3071,13 @@ async function handleListPersonalConnectors(
   // slug the ref stamps) — the URL ref carries no human name/description. Falls
   // back to the slug when the catalog no longer lists the connector.
   const catalog = await ctx.runtime.getConnectorDirectory().catalogEntries();
-  const byServerName = new Map(catalog.map((e) => [slugifyServerName(e.id), e]));
+  // Keyed by every form a stored ref may carry, for the same reason as the
+  // availability join above: a pre-migration ref keyed only by the wire name
+  // would miss the catalog entry and silently fall back to showing the raw slug
+  // instead of the connector's real title and description.
+  const byServerName = new Map(
+    catalog.flatMap((e) => persistedServerNameCandidates(e.id).map((n) => [n, e] as const)),
+  );
 
   const workDir = ctx.runtime.getWorkDir();
   const owner = { type: "user", userId: callerId } as const;
