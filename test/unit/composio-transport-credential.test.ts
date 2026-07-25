@@ -19,11 +19,13 @@ import {
   COMPOSIO_CREDENTIAL_PROVIDER,
   composioCredentialProvider,
   composioTransportConfig,
+  registerComposioCredentialProvider,
 } from "../../src/connectors/providers/composio/transport-credential.ts";
 import {
   _resetConnectorsConfigForTest,
   setConnectorsConfig,
 } from "../../src/connectors/providers/config.ts";
+import { createRemoteTransport } from "../../src/tools/remote-transport.ts";
 
 const ENV_KEYS = ["COMPOSIO_API_KEY", "COMPOSIO_API_BASE_URL"] as const;
 let saved: Record<string, string | undefined>;
@@ -177,5 +179,33 @@ describe("legacy refs map forward on read", () => {
       expect(composioTransportConfig(config)).toBe(config);
     }
     expect(composioTransportConfig(undefined)).toBeUndefined();
+  });
+});
+
+describe("the transport's own SSRF posture, not just the URL gate's", () => {
+  // `startAuthInner` (Reconnect / `POST /v1/mcp-auth/initiate`) builds its source
+  // WITHOUT calling `validateBundleUrl` — grep it: the only call sites are
+  // `startup.ts`, `ssrf-guarded-fetch.ts` and `workspace-oauth-provider.ts`. So on
+  // that path `isMintedFleetSource` inside `createRemoteTransport` is the ONLY
+  // thing deciding whether a brokered session URL reaches an in-cluster service
+  // over plain HTTP. `ref-transport-resolution.test.ts` covers the boot path's
+  // gate; this covers the transport's.
+  const IN_CLUSTER = "http://composio-session.mcp-shared.svc.cluster.local/mcp";
+
+  function guardedFetchFor(provider: string): (u: string) => Promise<unknown> {
+    const transport = createRemoteTransport(new URL(IN_CLUSTER), {
+      type: "streamable-http",
+      auth: { type: "provider", provider, config: {} },
+    } as never);
+    return (transport as unknown as Record<string, (u: string) => Promise<unknown>>)._fetch;
+  }
+
+  it("refuses an in-cluster plain-HTTP target for a brokered Composio session", async () => {
+    // The regression: widening this back to `auth.type === "provider"` grants a
+    // vendor-supplied, tenant-persisted session URL the fleet rail's exception.
+    process.env.COMPOSIO_API_KEY = "k_env";
+    registerComposioCredentialProvider();
+
+    await expect(guardedFetchFor("composio")(IN_CLUSTER)).rejects.toThrow(/HTTPS|http/i);
   });
 });

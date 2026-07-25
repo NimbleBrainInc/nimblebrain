@@ -161,8 +161,10 @@ export function createRemoteTransport(
   // whatever fetch the transport would otherwise use (minting / OAuth-refresh /
   // global). A `minted` source is the operator-vetted fleet rail and may point at
   // an in-cluster `http://*.svc` endpoint, so its configured URL is validated
-  // with `fleetInternal` — redirect targets never are, and other credential
-  // providers (brokered connectors) get no such exception.
+  // with `fleetInternal`. Redirect targets inherit it too — deliberately: hops
+  // are same-origin only (`resolveRedirect`), which is the primary control, and
+  // the per-hop `validateBundleUrl` is its backstop. Other credential providers
+  // (brokered connectors) get no such exception at all.
   const guardedFetch: FetchLike = createSsrfGuardedFetch(transportFetch, {
     allowInsecure: opts?.allowInsecure ?? false,
     fleetInternal: isMintedFleetSource(config),
