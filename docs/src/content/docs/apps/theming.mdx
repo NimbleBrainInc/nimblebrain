@@ -81,15 +81,17 @@ window.addEventListener('message', (event) => {
 <Aside type="caution">
 **Live-update caveat.** The initial `<style>` block injected at load carries the full token set. But the `ui/notifications/host-context-changed` payload sent on a dark-mode toggle carries **only the tokens in the host's allow-list** — most, but not all, ext-apps spec tokens. These do **not** refresh live on a toggle:
 
-- the `--nb-*` extension tokens (injected at load only), and
-- `--color-text-accent`, `--font-text-base-size`, and `--font-text-base-line-height` — spec tokens the host filters out of the toggle payload.
+The rule, rather than a list you would have to keep checking: **only keys in the ext-apps spec's own variable enum cross the boundary.** Two families of what the host injects are not in it, so neither refreshes:
+
+- the `--nb-*` extension tokens, which have no spec equivalent by definition, and
+- NimbleBrain's additions to spec-shaped families — `--color-text-accent`, and the `3xs`, `2xs` and `base` steps of the type scale (the spec enum carries only `xs`, `sm`, `md` and `lg`).
 
 Drive any surface that must flip between light and dark from the spec tokens that *do* cross: `--color-background-*`, `--color-text-primary` / `-secondary` / `-tertiary`, `--color-border-*`, and `--color-ring-*`. Do **not** key light/dark styling off `--color-text-accent` — it is injected at load but never updates on a toggle.
 </Aside>
 
 ## Token reference
 
-The platform injects the following tokens into every iframe. Most ext-apps spec tokens also cross the protocol boundary and refresh live on theme changes; the `--nb-*` extensions — plus `--color-text-accent`, `--font-text-base-size`, and `--font-text-base-line-height` — are injected at load only and do not refresh on a toggle.
+The platform injects the following tokens into every iframe. Those in the ext-apps spec's variable enum also cross the protocol boundary and refresh live on theme changes; everything else — the `--nb-*` extensions, and NimbleBrain's own additions to spec-shaped families — is injected at load only. See the caveat above.
 
 ### Colors (ext-apps spec)
 

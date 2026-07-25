@@ -7,14 +7,26 @@ import { colors, extOnlyColors, type Mode, type Pair, pick } from "../palette.ts
  * derives ratios from the actual values, so it fails on a bad colour even if
  * every fixture in the repo was regenerated from that same bad colour.
  *
- * It earns its place: ten pairs in this palette's predecessor were below AA and
- * nothing caught them. `warning` sat at 2.148:1 on card, `text-tertiary` below
- * 4.5:1 on every surface in both modes (worst 2.397:1), `success` at 3.768:1,
- * and `muted-foreground` at 4.429:1 on both `muted` and `sidebar`.
+ * It earns its place: eleven opaque text pairs in this palette's predecessor
+ * were below AA and nothing caught them. `warning` sat at 2.148:1 on card,
+ * `text-tertiary` below 4.5:1 on every surface in both modes (worst 2.397:1),
+ * `success` and `scope-workspace` at 3.768:1, and `muted-foreground` at 4.429:1
+ * on both `muted` and `sidebar`.
  *
  * Threshold is 4.5:1 throughout: the shell's type tops out at 16px and most of
  * it is 10–14px, so the 3:1 large-text allowance (18.66px bold / 24px regular)
- * never applies. Everything the palette colours here is text.
+ * never applies. Every pair asserted here is text.
+ *
+ * Coverage comes from two places, and the split matters. The `<x>-foreground`
+ * on `<x>` pairs are **derived** — every foreground token in the palette is
+ * paired with its base automatically, and a foreground with no base is a
+ * failure rather than a silent skip. That half needs no maintenance: adding a
+ * token to the palette adds its assertion. The pairs in `TEXT_PAIRS` are the
+ * ones no convention can reach — a foreground rendered over a ground that is
+ * not its own base — and those are hand-listed by necessity. Prefer widening
+ * the derived rule over appending to the list; a hand-maintained list of what
+ * to check is a denylist by omission, and this file has been bitten by that
+ * twice.
  */
 
 const AA_TEXT = 4.5;
@@ -64,14 +76,33 @@ function token(name: TokenName, mode: Mode): string {
   return pick(pair, mode);
 }
 
-/** Text pairs the shell actually renders, and where each appears. */
+/**
+ * `<x>-foreground` on `<x>`, derived from the palette rather than listed.
+ *
+ * The naming convention *is* the pairing: `text-card-foreground` is only ever
+ * painted on `bg-card`, `text-sidebar-foreground` on `bg-sidebar`, and so on
+ * through every shadcn surface. Deriving it means a token added to the palette
+ * arrives already asserted, and it closes the hole that made this necessary —
+ * five of these were rendered in the shell (`ui/card.tsx`, `ui/badge.tsx`,
+ * `InContextPopover.tsx`, `CommandRow.tsx`, and 39 sidebar sites) while sitting
+ * outside a hand-written list, passing only because they happened to be
+ * byte-identical to a token that was listed.
+ */
+const DERIVED_PAIRS = Object.keys(colors)
+  .filter((name) => name.endsWith("-foreground"))
+  .map((fg) => [fg as TokenName, fg.replace(/-foreground$/, "") as TokenName] as const);
+
+/**
+ * Text pairs no naming convention can reach: a foreground rendered over a
+ * ground that is not its own base. Hand-listed by necessity — add here only
+ * when the derived rule genuinely cannot express the pairing.
+ */
 const TEXT_PAIRS: [fg: TokenName, bg: TokenName, where: string][] = [
   ["foreground", "background", "body copy"],
   ["foreground", "card", "card content"],
   ["foreground", "muted", "segmented controls, active nav"],
   ["muted-foreground", "background", "lead paragraphs"],
   ["muted-foreground", "card", "row sub-lines"],
-  ["muted-foreground", "muted", "group headers"],
   ["muted-foreground", "sidebar", "sidebar nav rows"],
   // `text-tertiary` and `background-tertiary` are ext-apps-only: the shell's
   // `:root` never emits them, so the only surface they meet is an embedded
@@ -81,7 +112,11 @@ const TEXT_PAIRS: [fg: TokenName, bg: TokenName, where: string][] = [
   ["text-tertiary", "card", "iframe metadata on a raised surface"],
   ["primary", "background", "links, accent text"],
   ["primary", "card", "links inside cards"],
-  ["primary-foreground", "primary", "primary button label"],
+  // `.turn-pill__copy:hover` (index.css): `--primary` at 10px on `--info-light`.
+  // The tightest pair in the shell — 4.917:1 light, and this palette moved it
+  // *toward* the floor from 5.081:1, so it is listed rather than left to the
+  // ambient assumption that accent-on-tint is comfortable.
+  ["primary", "info-light", "turn-pill copy button, hover"],
   ["processing", "background", "in-progress accent"],
   // No shell component paints this pair; both tokens project into the iframe
   // token map, so it is asserted as an ext-apps contract pairing.
@@ -101,6 +136,22 @@ const TEXT_PAIRS: [fg: TokenName, bg: TokenName, where: string][] = [
   ["scope-user", "card", "user scope label"],
   ["scope-bundle", "card", "bundle scope label"],
 ];
+
+describe("palette contrast — derived <x>-foreground on <x>", () => {
+  test("every -foreground token has a base, so the rule is total", () => {
+    const orphans = DERIVED_PAIRS.filter(([, base]) => !(base in colors)).map(([fg]) => fg);
+    expect(orphans).toEqual([]);
+    expect(DERIVED_PAIRS.length).toBeGreaterThan(0);
+  });
+
+  for (const mode of ["light", "dark"] as const) {
+    for (const [fg, base] of DERIVED_PAIRS) {
+      test(`${mode}: ${fg} on ${base} clears ${AA_TEXT}:1`, () => {
+        expect(contrastRatio(token(fg, mode), token(base, mode))).toBeGreaterThanOrEqual(AA_TEXT);
+      });
+    }
+  }
+});
 
 describe("palette contrast — WCAG 2.2", () => {
   for (const mode of ["light", "dark"] as const) {
