@@ -753,7 +753,8 @@ export function createCoreToolDefs(runtime: Runtime): InProcessTool[] {
               "off: requests no reasoning — not enforceable on adaptive-only Anthropic models " +
               "(including the default), where the AI SDK adapter never sends the flag and the model " +
               "applies its own default. adaptive: model decides per call. " +
-              "enabled: always reason (use thinkingBudgetTokens to cap). " +
+              "enabled: request reasoning on every turn (use thinkingBudgetTokens to cap). " +
+              "On adaptive-only models with no ceiling or budget set, this behaves as adaptive. " +
               "Use clearThinking=true to revert to the platform default.",
           },
           clearThinking: {
@@ -766,6 +767,7 @@ export function createCoreToolDefs(runtime: Runtime): InProcessTool[] {
             type: "number",
             description:
               "Token budget when thinking=enabled. Counts toward maxOutputTokens. " +
+              "Also honored for adaptive, where it selects an effort tier. " +
               "Anthropic requires a minimum of 1,024.",
           },
           clearThinkingBudget: {

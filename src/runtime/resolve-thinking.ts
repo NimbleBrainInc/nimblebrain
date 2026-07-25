@@ -86,7 +86,12 @@ function wouldInventEffort(input: ResolveThinkingInput): boolean {
   );
 }
 
-/** Adaptive carries an operator budget only when positive; the Anthropic adapter currently drops it, but a future provider may honor it. */
+/**
+ * Adaptive carries an operator budget only when positive. The budget is not
+ * inert: on an adaptive-only model the engine maps it to an
+ * `output_config.effort` tier. See the `thinkingBudgetTokens` docstring in
+ * `runtime/types.ts`, which owns this rule.
+ */
 function adaptiveThinking(configBudgetTokens?: number): ResolvedThinking {
   if (configBudgetTokens != null && configBudgetTokens > 0) {
     return { mode: "adaptive", budgetTokens: configBudgetTokens };
@@ -105,10 +110,13 @@ function resolveOverride(
   if (configMode === "adaptive") {
     return adaptiveThinking(input.configBudgetTokens);
   }
-  // `enabled` means "always reason", not "reason maximally". With nothing
-  // configured to size it, an adaptive-only model gets bare adaptive — still
-  // always reasoning, but at a depth the model picks rather than one derived
-  // from its catalog ceiling.
+  // `enabled` asks for reasoning; it does not ask for maximum reasoning. With
+  // no ceiling and no budget to size it, the only number available on an
+  // adaptive-only model is the catalog maximum, and a tier derived from that
+  // requests the deepest setting on every call. Bare adaptive is the honest
+  // fallback — note it is genuinely weaker than `enabled`: the model may
+  // choose not to reason on a given turn. That collapse is documented in the
+  // config reference.
   if (wouldInventEffort(input)) {
     return { mode: "adaptive" };
   }
