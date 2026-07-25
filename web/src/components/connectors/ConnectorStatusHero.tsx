@@ -88,6 +88,12 @@ export function ConnectorStatusHero({
   // account exists. Reconnect/failed are exactly that case. This is the one
   // auth path the server *does* gate, which is why it is the one gated here.
   //
+  // Unlike `canWriteWorkspace`, this is a *proxy*, not a term-for-term mirror:
+  // the server's condition is `prior?.connectedAccountId` existing, which the
+  // client can't see, so it stands in reauth_required/failed. The divergence
+  // is fail-closed — a never-connected connector that reached `failed` gates a
+  // member who could have done a first connect. Annoying, not unsafe.
+  //
   // Falls to `false` when `catalog` is absent (it is optional on
   // `InstalledConnector`), leaving the same ungated behaviour as a native
   // flow — no worse than the gap above, and it resolves with it.

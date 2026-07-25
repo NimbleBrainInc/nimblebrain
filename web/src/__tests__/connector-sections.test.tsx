@@ -711,6 +711,10 @@ describe("ConnectorStatusHero", () => {
       />,
     );
     expect(findButton(mounted.container, "Cancel")).toBeNull();
+    // Suppressing the CTA without saying why leaves a pulsing dot and no
+    // explanation — the regression that copy exists to prevent, so it gets
+    // pinned rather than resting on the button assertion above.
+    expect(mounted.container.textContent).toContain("Workspace admin required");
     mounted.unmount();
 
     // ...and present for someone who can actually complete it.
