@@ -207,6 +207,7 @@ export function loadConfig(flags: CliFlags = {}): RuntimeConfig {
     logging: fileConfig.logging as RuntimeConfig["logging"],
     http: fileConfig.http as RuntimeConfig["http"],
     features: fileConfig.features as RuntimeConfig["features"],
+    connectors: fileConfig.connectors as RuntimeConfig["connectors"],
     files: fileConfig.files as RuntimeConfig["files"],
     // Pass config path for bundle install/uninstall persistence
     configPath,

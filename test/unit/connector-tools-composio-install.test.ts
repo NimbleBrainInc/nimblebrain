@@ -99,7 +99,7 @@ import {
 } from "../../src/tools/connector-tools.ts";
 import { ToolRegistry } from "../../src/tools/registry.ts";
 import { personalWorkspaceIdFor, WorkspaceStore } from "../../src/workspace/workspace-store.ts";
-import { _resetComposioConfigForTest } from "../../src/connectors/providers/composio/sdk.ts";
+import { _resetComposioConfigForTest } from "../../src/connectors/providers/composio/config.ts";
 import { buildManagedConnectorRegistry } from "../../src/connectors/providers/registry.ts";
 import {
   composioConnectorDir,

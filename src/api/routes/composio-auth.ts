@@ -6,6 +6,7 @@ import {
 } from "../../bundles/composio-connection.ts";
 import { WORKSPACE_PRINCIPAL_ID } from "../../bundles/connection.ts";
 import { slugifyServerName } from "../../bundles/paths.ts";
+import { validateComposioConfig } from "../../connectors/providers/composio/config.ts";
 import {
   consumeConnectFlow,
   registerConnectFlow,
@@ -16,7 +17,6 @@ import {
   composioUserId,
   findActiveComposioConnection,
   initiateComposioConnection,
-  validateComposioConfig,
 } from "../../connectors/providers/composio/sdk.ts";
 import { type ConnectorOwner, connectorOwnerKey } from "../../identity/connector-owner.ts";
 import { IdentityConnectorStore } from "../../identity/connector-store.ts";
@@ -111,9 +111,9 @@ function connectorsReturnUrl(owner: ConnectorOwner): string {
 
 export function composioAuthRoutes(ctx: AppContext) {
   // Eager startup validation — same pattern as `getBouncerMode()` in
-  // `mcpAuthRoutes`. Misconfigured `COMPOSIO_API_BASE_URL` or missing
-  // `NB_TENANT_ID` in multi-tenant mode throws here, at server start,
-  // not on the first user click.
+  // `mcpAuthRoutes`. A misconfigured base URL or missing `NB_TENANT_ID`
+  // in multi-tenant mode throws here, at server start, not on the first
+  // user click.
   validateComposioConfig();
 
   const app = new Hono<AppEnv>();
@@ -253,12 +253,11 @@ export function composioAuthRoutes(ctx: AppContext) {
   // the response body is empty, only the Location header matters.
   app.get("/v1/composio-auth/proxy", (c) => {
     c.header("Cache-Control", "no-store");
-    // Read from the validated cached config rather than re-reading
-    // `process.env.COMPOSIO_API_BASE_URL` each request. The cache
-    // value has already passed the http(s) protocol check at
-    // startup; reading process.env directly would bypass that
-    // guard if env mutated post-startup (unlikely in production
-    // but cheap defense-in-depth).
+    // Read from the validated cached config rather than re-reading the
+    // raw source each request. The cached value has already passed the
+    // http(s) protocol check at startup; reading the source directly
+    // would bypass that guard if it mutated post-startup (unlikely in
+    // production but cheap defense-in-depth).
     const apiBase = validateComposioConfig().baseUrl;
     const url = new URL(c.req.url);
     const target = `${apiBase.replace(/\/+$/, "")}${COMPOSIO_CALLBACK_PATH}${url.search}`;
@@ -323,19 +322,19 @@ async function loadInitiateCatalogEntry(
   return entry as ComposioCatalogEntry;
 }
 
-/** Resolve the platform Composio API key and the connector's auth-config id from env, else an error Response. */
+/** Resolve the platform Composio API key and the connector's auth-config id, else an error Response. */
 function resolveComposioCredentials(
   entry: ComposioCatalogEntry,
   connectorId: string,
   logCtx: string,
 ): { apiKey: string; authConfigId: string } | Response {
-  // Platform-wide Composio API key. Single source for the whole
+  // Platform-wide Composio broker credential. Single source for the whole
   // deployment; per-owner isolation lives in `user_id` (the Composio-side
   // identity, derived from the workspace or the user). A missing key is an
   // operator config error — surface a generic 500 and log specifics rather
-  // than telling the API caller which env var to set (the API isn't
+  // than telling the API caller what to configure (the API isn't
   // operator-facing). `logCtx` is the owner label, for log context only.
-  const apiKey = process.env.COMPOSIO_API_KEY?.trim();
+  const { apiKey } = validateComposioConfig();
   if (!apiKey) {
     log.warn(
       "[composio-auth] COMPOSIO_API_KEY not set; cannot initiate connection " +

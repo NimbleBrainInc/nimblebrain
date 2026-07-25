@@ -25,6 +25,7 @@ import type {
 } from "../bundles/types.ts";
 import { installBundleInWorkspace } from "../bundles/workspace-ops.ts";
 import type { UserConfigFieldDef } from "../config/workspace-credentials.ts";
+import { validateComposioConfig } from "../connectors/providers/composio/config.ts";
 import type { ManagedConnectorProvider } from "../connectors/providers/managed-provider.ts";
 import { connectorSkillIdentityFrom } from "../connectors/server-detail.ts";
 import { textContent } from "../engine/content-helpers.ts";
@@ -1432,9 +1433,9 @@ async function handleConnectApiKey(
 
   // Config gate: resolves the per-connector auth-config id and asserts the
   // platform broker key is present (the "not configured" surface callers see).
-  const env = resolveComposioApiKeyEnv(entry.name, composio.authConfigEnv);
-  if ("error" in env) return errResult(env.error);
-  const { authConfigId } = env;
+  const gate = resolveComposioApiKeyCredentials(entry.name, composio.authConfigEnv);
+  if ("error" in gate) return errResult(gate.error);
+  const { authConfigId } = gate;
 
   // The key being present means Composio is configured, so the provider is
   // registered; resolve it for the broker calls. The broker credential is the
@@ -1580,21 +1581,27 @@ function collectApiKeyFields(
   return coerceApiKeyValues(declared, rawFields);
 }
 
+/** Operator-facing message for a Composio install attempted with no broker credential configured. */
+function composioUnconfiguredMessage(entryName: string): string {
+  return (
+    `"${entryName}" requires COMPOSIO_API_KEY in the platform env. ` +
+    "Set the platform-wide Composio broker credential and restart the API."
+  );
+}
+
 /**
- * Resolve the platform-env Composio credentials for an API-key connect. Missing
- * keys are a deploy-time error; surface a clear (non-secret) message.
+ * Resolve the platform Composio credentials for an API-key connect: the broker
+ * credential from the provider config, the connector's auth-config id from the
+ * env var its catalog entry names. Missing values are a deploy-time error;
+ * surface a clear (non-secret) message.
  */
-function resolveComposioApiKeyEnv(
+function resolveComposioApiKeyCredentials(
   entryName: string,
   authConfigEnv: string,
 ): { apiKey: string; authConfigId: string } | { error: string } {
-  const apiKey = process.env.COMPOSIO_API_KEY?.trim();
+  const { apiKey } = validateComposioConfig();
   if (!apiKey) {
-    return {
-      error:
-        `"${entryName}" requires COMPOSIO_API_KEY in the platform env. ` +
-        "Set the platform-wide Composio API key and restart the API.",
-    };
+    return { error: composioUnconfiguredMessage(entryName) };
   }
   const authConfigId = process.env[authConfigEnv]?.trim();
   if (!authConfigId) {
@@ -1906,20 +1913,18 @@ async function handleInstallRemoteOAuth(
 }
 
 /**
- * Composio-auth install prerequisites: the composio config block plus the
- * platform-env credentials it names. Returns an error string, or null when the
- * install isn't composio-auth or every prerequisite is present.
+ * Composio-auth install prerequisites: the catalog entry's composio block, the
+ * platform broker credential, and the per-connector auth-config env var the
+ * entry names. Returns an error string, or null when the install isn't
+ * composio-auth or every prerequisite is present.
  */
 function validateComposioInstall(action: RemoteOAuthInstall, entryName: string): string | null {
   if (action.auth !== "composio") return null;
   if (!action.composio) {
     return `"${entryName}" is composio-auth but missing composio config block.`;
   }
-  if (!process.env.COMPOSIO_API_KEY?.trim()) {
-    return (
-      `"${entryName}" requires COMPOSIO_API_KEY in the platform env. ` +
-      "Set the platform-wide Composio API key and restart the API."
-    );
+  if (!validateComposioConfig().apiKey) {
+    return composioUnconfiguredMessage(entryName);
   }
   if (!process.env[action.composio.authConfigEnv]?.trim()) {
     return (
@@ -1987,7 +1992,11 @@ function scrubComposioHeaders(
  * installed connector doesn't initiate a new upstream Composio session and
  * orphan the prior one. The API-key template is held verbatim in workspace.json;
  * `createRemoteTransport` resolves it from `process.env.COMPOSIO_API_KEY` at
- * start time so the secret never sits at rest.
+ * start time so the secret never sits at rest. This template is why the broker
+ * credential is environment-only by construction (it is not a field on the
+ * declared block): persisted state points into the env namespace, so the value
+ * must live there. Binding the transport to a `TransportCredentialProvider`
+ * instead is what would let the credential be declared elsewhere.
  */
 async function buildComposioWiring(
   provider: ManagedConnectorProvider,
@@ -2015,7 +2024,7 @@ async function buildComposioWiring(
     const msg = err instanceof Error ? err.message : String(err);
     return { __err: `Composio session creation failed for "${entryName}": ${msg}` };
   }
-  const apiKey = (process.env.COMPOSIO_API_KEY ?? "").trim();
+  const { apiKey } = validateComposioConfig();
   const extraHeaders = scrubComposioHeaders(sessionMcp.headers, apiKey);
   return {
     url: sessionMcp.url,

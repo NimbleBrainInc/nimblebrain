@@ -8,13 +8,14 @@
  * what makes an optional vendor (Composio) stop linking at boot for deploys
  * that don't use it.
  *
- * Phase 1 hydrates from the existing `COMPOSIO_*` env (no config-schema change
- * yet). Phase 2 will feed the same builder from the declared
- * `connectors.providers.*` block in `nimblebrain.json`; the seam is here.
+ * The source of truth is the declared `connectors.providers.*` block in
+ * `nimblebrain.json` (installed at the composition root, read through
+ * `providers/config.ts`); a provider's legacy `<VENDOR>_*` env vars hydrate its
+ * block only when the block is absent.
  */
 
+import { validateComposioConfig } from "./composio/config.ts";
 import { createComposioProvider } from "./composio/provider.ts";
-import { validateComposioConfig } from "./composio/sdk.ts";
 import type { ConnectorAuthKind, ManagedConnectorProvider } from "./managed-provider.ts";
 
 /** Read-only lookup of the configured brokered providers, keyed by `auth-kind`. */
@@ -59,16 +60,17 @@ export function managedConnectorRegistryOf(
 }
 
 /**
- * Build the registry from instance config. Phase 1: the only source is the
- * `COMPOSIO_*` env, surfaced through `validateComposioConfig()`. Constructing a
- * provider links no vendor (the SDK loads lazily inside the impl), so this is
- * safe to call at startup unconditionally; the gate is purely whether a
- * provider is *present*.
+ * Build the registry from instance config. Each provider's own resolver decides
+ * whether it is configured — Composio's (`validateComposioConfig()`) reads the
+ * declared `connectors.providers.composio` block, falling back to `COMPOSIO_*`
+ * env when it is absent. Constructing a provider links no vendor (the SDK loads
+ * lazily inside the impl), so this is safe to call at startup unconditionally;
+ * the gate is purely whether a provider is *present*.
  */
 export function buildManagedConnectorRegistry(): ManagedConnectorRegistry {
   const providers: ManagedConnectorProvider[] = [];
 
-  if (validateComposioConfig().configured) {
+  if (validateComposioConfig().apiKey) {
     providers.push(createComposioProvider());
   }
 

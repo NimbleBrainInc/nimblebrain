@@ -1,6 +1,7 @@
 import type { LanguageModelV3 } from "@ai-sdk/provider";
 import type { FeatureFlags } from "../config/features.ts";
 import type { ConfirmationGate } from "../config/privilege.ts";
+import type { ConnectorsConfig } from "../connectors/providers/config.ts";
 import type { EventSink } from "../engine/types.ts";
 import type { ContentPart, FileReference } from "../files/types.ts";
 import type { UserIdentity } from "../identity/provider.ts";
@@ -119,6 +120,14 @@ export interface RuntimeConfig {
 
   /** Feature flags to enable/disable capabilities. All default to true. */
   features?: FeatureFlags;
+
+  /**
+   * Managed-connector providers (Composio today). A provider is registered —
+   * and its routes, probe, and vendor SDK reached — only when its block is
+   * declared here, or hydrated from its legacy `<VENDOR>_*` env when the block
+   * is absent. See `src/connectors/providers/config.ts`.
+   */
+  connectors?: ConnectorsConfig;
 
   /** Confirmation gate for privileged operations and credential prompts. */
   confirmationGate?: ConfirmationGate;

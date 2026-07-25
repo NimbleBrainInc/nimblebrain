@@ -75,6 +75,25 @@ NB_TENANT_ID=tenant-a
 
 The full reference is in [Environment Variables → Composio aggregator](/config/environment/#composio-aggregator).
 
+### Declaring the provider in `nimblebrain.json`
+
+The provider's settings can be declared on the config interface instead of the environment. The API key stays in the environment either way:
+
+```json
+{
+  "connectors": {
+    "providers": {
+      "composio": {
+        "baseUrl": "https://backend.composio.dev",
+        "monitorEnabled": true
+      }
+    }
+  }
+}
+```
+
+Precedence is per field: a setting declared here wins, a setting left out reads its env var (`COMPOSIO_API_BASE_URL`, `COMPOSIO_MONITOR_ENABLED`). The revalidator's sweep cadence is provider-agnostic and stays on `NB_CONNECTION_REVALIDATE_INTERVAL_SECONDS`. `COMPOSIO_API_KEY` is unaffected — the broker credential is always read from the environment and is what gates the provider being registered at all. See [`connectors`](/config/nimblebrain-json/#connectors) for the full surface.
+
 ### Verify integration is live
 
 On pod startup, look for this log line:
@@ -83,9 +102,9 @@ On pod startup, look for this log line:
 [composio] integration: configured (base=https://backend.composio.dev)
 ```
 
-If you see `integration: not configured` instead, `COMPOSIO_API_KEY` isn't reaching the pod.
+If you see `integration: not configured` instead, no API key is reaching the pod.
 
-If the platform refuses to start with `NB_TENANT_ID is required when running in bouncer (multi-tenant) mode` or `COMPOSIO_API_BASE_URL must be http(s)`, the deployment config is malformed — fix per the error message.
+If the platform refuses to start with `NB_TENANT_ID is required when running in bouncer (multi-tenant) mode` or `must be http(s)`, the deployment config is malformed — fix per the error message.
 
 <Aside type="caution">
   **Rotating an `ac_…` requires a pod restart.** The platform reads and validates Composio config once at startup and caches the result for the process lifetime. After you update an auth-config secret in your store, force the secret reconciler to refresh the in-pod value, then roll the deployment. A stale id won't fail at boot — it'll fail at first install with `400 Invalid auth config IDs`.

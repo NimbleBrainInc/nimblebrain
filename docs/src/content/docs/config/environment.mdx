@@ -35,7 +35,7 @@ A provider's API key can be supplied here or in `nimblebrain.json` under `provid
 | `NB_TOOL_RATE_LIMIT` | No | `600` | Tool calls per minute per identity. |
 | `NB_MCP_RATE_LIMIT` | No | `300` | `/mcp` JSON-RPC requests per minute per identity. |
 | `NB_TIMEZONE` | No | `Pacific/Honolulu` | Default IANA timezone for time-aware features (e.g. automation schedules) when an identity has no timezone preference. |
-| `NB_CONNECTION_REVALIDATE_INTERVAL_SECONDS` | No | `300` | Sweep interval for the connection-revalidation monitor, which re-checks connectors whose upstream credential can lapse without a transport 401 (e.g. Composio). Provider-agnostic. Non-positive / unparseable values fall back to the default; a **blank** value falls through to the legacy `COMPOSIO_MONITOR_INTERVAL_SECONDS` (a set-but-empty var never masks it). Capped at `1789569` (~20.7 days), the largest interval the runtime can schedule; a higher value logs a warning and uses the cap. To stop the sweep entirely use `COMPOSIO_MONITOR_ENABLED=false` rather than a very large interval. |
+| `NB_CONNECTION_REVALIDATE_INTERVAL_SECONDS` | No | `300` | Sweep interval for the connection-revalidation monitor, which re-checks connectors whose upstream credential can lapse without a transport 401 (e.g. Composio). Provider-agnostic. Non-positive / unparseable values fall back to the default; a **blank** value falls through to the legacy `COMPOSIO_MONITOR_INTERVAL_SECONDS` (a set-but-empty var never masks it). Capped at `1789569` (~20.7 days), the largest interval the runtime can schedule; a higher value logs a warning and uses the cap. To stop the sweep entirely set `connectors.providers.composio.monitorEnabled: false` (or its `COMPOSIO_MONITOR_ENABLED=false` fallback) rather than a very large interval. |
 
 ### Public origin and callbacks
 
@@ -78,13 +78,17 @@ The platform builds every outward-facing URL (OAuth callbacks, post-login landin
 
 Required only when the connectors catalog contains any `auth: composio` entries (Gmail, Outlook, …). See the [Composio operator guide](/deploy/composio/) for end-to-end setup.
 
+The provider's **settings** are declarable in `nimblebrain.json` under [`connectors.providers.composio`](/config/nimblebrain-json/#connectorsproviderscomposio). The two variables marked **fallback** below apply **per field** — each is read only when the block leaves that setting out, so declaring one setting never disturbs another.
+
+`COMPOSIO_API_KEY` is **not** one of them. The broker credential is always read from the environment and is never superseded by the block, because an installed connector's persisted transport credential is a `${COMPOSIO_API_KEY}` reference resolved from the process env ([why](/config/nimblebrain-json/#the-broker-credential)). `COMPOSIO_<TOOLKIT>_AUTH_CONFIG_ID` and `NB_TENANT_ID` are likewise env-only.
+
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
-| `COMPOSIO_API_KEY` | When the catalog has `auth: composio` entries | — | Platform-wide Composio API key. Read once at startup. Without it, the Composio integration reports "not configured" and installs of `auth: composio` entries fail. |
+| `COMPOSIO_API_KEY` | When the catalog has `auth: composio` entries | — | Platform-wide Composio API key — the broker credential, and the gate on registering the provider at all. **Environment-only**, not declarable and not superseded by the config block. Read once at startup. Without it, the Composio integration reports "not configured" and installs of `auth: composio` entries fail. |
 | `COMPOSIO_<TOOLKIT>_AUTH_CONFIG_ID` | One per `auth: composio` entry | — | The `ac_…` id from the Composio dashboard for this toolkit's auth config. The variable name is declared by the catalog entry's `composio.authConfigEnv`. Example: `COMPOSIO_GMAIL_AUTH_CONFIG_ID=ac_xxx`. |
-| `COMPOSIO_API_BASE_URL` | No | `https://backend.composio.dev` | Override the Composio SDK base URL (self-hosted, staging). Must be `http(s)`. |
+| `COMPOSIO_API_BASE_URL` | No | `https://backend.composio.dev` | *(fallback for `…composio.baseUrl`)* Override the Composio SDK base URL (self-hosted, staging). Must be `http(s)`. |
 | `NB_TENANT_ID` | When multi-tenant pods share a Composio account | — | Per-pod tenant identifier prepended to the wsId so two tenants never collide in Composio's namespace. **Required** in bouncer (multi-tenant) mode — startup fails without it. Single-tenant deployments can omit it. |
-| `COMPOSIO_MONITOR_ENABLED` | No | `true` when `COMPOSIO_API_KEY` is set | Kill switch for the connection-revalidation monitor. Set to `false` (case/whitespace-insensitive) to disable. Read once at startup. |
+| `COMPOSIO_MONITOR_ENABLED` | No | `true` when the provider is configured | *(fallback for `…composio.monitorEnabled`)* Kill switch for the connection-revalidation monitor. Set to `false` (case/whitespace-insensitive) to disable. Read once at startup. |
 | `COMPOSIO_MONITOR_INTERVAL_SECONDS` | No | `300` | **Deprecated alias** for [`NB_CONNECTION_REVALIDATE_INTERVAL_SECONDS`](#runtime--server) (the sweep cadence is provider-agnostic). Still honored; slated for removal ([#727](https://github.com/NimbleBrainInc/nimblebrain/issues/727)). |
 
 ### Observability (OpenTelemetry + logs)

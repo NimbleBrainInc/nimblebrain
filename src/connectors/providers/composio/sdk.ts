@@ -6,41 +6,31 @@
  *
  * Responsibilities:
  *
- *   1. Build an authenticated `Composio` client from `COMPOSIO_API_KEY`
- *      and an optional `COMPOSIO_API_BASE_URL` override (used by tests
- *      and self-hosted shims).
+ *   1. Build an authenticated `Composio` client from the resolved
+ *      provider config (`./config.ts`) — the declared
+ *      `connectors.providers.composio` block, or the `COMPOSIO_*` env
+ *      fallback.
  *   2. Wrap every SDK call in a 10s timeout so a hanging Composio API
  *      can't block install / connect / disconnect requests indefinitely.
  *   3. Compute the platform-side `user_id` value passed to Composio for
  *      every action — the formula is exported so the routes and the
  *      install path stay in lockstep (drift would route tool calls to
  *      a different Composio namespace and silently 404).
- *   4. Eagerly validate operator config at server start so deploy-time
- *      misconfiguration surfaces with a precise error rather than a
- *      generic 500 on the first user click.
  *
  * Architectural notes:
  *
- *   - **Single platform-wide API key.** One `COMPOSIO_API_KEY` per
+ *   - **Single platform-wide API key.** One broker credential per
  *     pod. Per-workspace isolation lives in the Composio `user_id`
  *     value (see `composioUserId`).
- *   - **Multi-tenant safety.** When the bouncer is configured (a
- *     reliable signal of multi-tenant deployment), `NB_TENANT_ID`
- *     is required so the Composio `user_id` is globally unique.
- *     Without the tenant prefix, two tenants with the same `wsId`
- *     would collide in Composio's namespace.
  *   - **`auth: composio` only.** This module is dormant when no
- *     Composio-backed connector is installed. `validateComposioConfig`
- *     short-circuits when `COMPOSIO_API_KEY` is unset.
+ *     Composio-backed connector is installed; an unconfigured deploy
+ *     registers no provider, so nothing here ever runs and the vendor
+ *     SDK is never loaded.
  */
 
 import type { ConnectorOwner } from "../../../identity/connector-owner.ts";
-import { getBouncerMode } from "../../../oauth/bouncer-config.ts";
 import { publicOrigin } from "../../../oauth/public-origin.ts";
-import { log } from "../../../observability/log.ts";
-
-/** Default Composio API host. Overridable via `COMPOSIO_API_BASE_URL`. */
-export const COMPOSIO_API_BASE = "https://backend.composio.dev";
+import { validateComposioConfig } from "./config.ts";
 
 /**
  * Path Composio's hosted callback lives at — the destination of the
@@ -61,99 +51,6 @@ const COMPOSIO_TIMEOUT_MS = 10_000;
  * surfaces first instead of our generic abort.
  */
 const COMPOSIO_APIKEY_VERIFY_MS = 8_000;
-
-// ── Config validation ────────────────────────────────────────────────
-
-/**
- * Inspect the process env for Composio configuration. Called eagerly
- * by `composioAuthRoutes(ctx)` at server startup so misconfiguration
- * fails fast with a precise message.
- *
- * Throws on:
- *   - `COMPOSIO_API_BASE_URL` set but not parseable / not http(s)
- *     (open-redirect surface on `/v1/composio-auth/proxy`)
- *   - Bouncer mode active but `NB_TENANT_ID` unset (multi-tenant
- *     deployment would silently collapse all tenants' Composio
- *     connections into one namespace)
- *
- * Returns:
- *   - `{ configured: false }` when `COMPOSIO_API_KEY` is unset.
- *     Composio integration is dormant — no startup warnings, no
- *     route surface activity until an operator sets the key.
- *   - `{ configured: true, baseUrl }` when ready to serve.
- *
- * Side-effects: emits one `[composio]` log line on first call so
- * operators see the integration status in pod logs without grepping
- * for it.
- */
-export interface ComposioConfig {
-  configured: boolean;
-  baseUrl: string;
-}
-
-let _cachedConfig: ComposioConfig | undefined;
-
-export function validateComposioConfig(): ComposioConfig {
-  if (_cachedConfig) return _cachedConfig;
-
-  const apiKey = process.env.COMPOSIO_API_KEY?.trim();
-  if (!apiKey) {
-    log.info("[composio] integration: not configured (set COMPOSIO_API_KEY to enable)");
-    _cachedConfig = { configured: false, baseUrl: COMPOSIO_API_BASE };
-    return _cachedConfig;
-  }
-
-  const rawBaseUrl = process.env.COMPOSIO_API_BASE_URL?.trim();
-  let baseUrl = COMPOSIO_API_BASE;
-  if (rawBaseUrl) {
-    let parsed: URL;
-    try {
-      parsed = new URL(rawBaseUrl);
-    } catch {
-      throw new Error(`[composio] COMPOSIO_API_BASE_URL is not a valid URL: "${rawBaseUrl}"`);
-    }
-    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
-      throw new Error(
-        `[composio] COMPOSIO_API_BASE_URL must be http(s): "${rawBaseUrl}". ` +
-          "Other schemes would expose `/v1/composio-auth/proxy` as an open redirect.",
-      );
-    }
-    baseUrl = rawBaseUrl;
-  }
-
-  // Multi-tenant safety: the Composio `user_id` formula uses
-  // `NB_TENANT_ID:wsId` when the tenant id is set. In multi-tenant
-  // deploys (signalled by an active bouncer config) we MUST have the
-  // tenant prefix or two tenants with the same wsId would share a
-  // Composio namespace. Fail loud at startup so the misconfig is
-  // caught at deploy time, not at first user click.
-  const bouncer = getBouncerMode();
-  const tid = process.env.NB_TENANT_ID?.trim();
-  if (bouncer && !tid) {
-    throw new Error(
-      "[composio] NB_TENANT_ID is required when running in bouncer (multi-tenant) mode. " +
-        "Without a tenant prefix, Composio `user_id` collisions could leak connected " +
-        "accounts across tenants. Set NB_TENANT_ID via the deployment env to a stable " +
-        "per-pod tenant identifier.",
-    );
-  }
-
-  log.info(`[composio] integration: configured (base=${baseUrl}${tid ? `, tid=${tid}` : ""})`);
-  _cachedConfig = { configured: true, baseUrl };
-  return _cachedConfig;
-}
-
-/**
- * Test-only. Reset cached config between tests.
- *
- * Production code reads env once at process start and never re-reads —
- * operators must restart the platform after changing
- * `COMPOSIO_API_KEY`, `COMPOSIO_API_BASE_URL`, or `NB_TENANT_ID`.
- * Mirrors the bouncer-config caching contract.
- */
-export function _resetComposioConfigForTest(): void {
-  _cachedConfig = undefined;
-}
 
 // ── User-ID formula ─────────────────────────────────────────────────
 
@@ -280,8 +177,9 @@ export function _composioVendorLoadCountForTest(): number {
 }
 
 /**
- * Build an authenticated Composio SDK client. The `baseURL` override
- * is plumbed through `COMPOSIO_API_BASE_URL` (validated at startup).
+ * Build an authenticated Composio SDK client. The `baseURL` comes from the
+ * resolved provider config (declared block or env fallback, validated at
+ * startup).
  *
  * Internal + async — awaits the lazy vendor load, then constructs a fresh
  * client per call. The SDK is cheap to construct; sharing a long-lived client
@@ -293,9 +191,9 @@ async function composioClient(apiKey: string): Promise<ComposioClient> {
   // `validateComposioConfig` runs full validation on its first call
   // (eagerly, at server startup, via `composioAuthRoutes`). Every
   // subsequent call — including this one, on every SDK request —
-  // returns the cached `ComposioConfig` without re-reading env or
-  // re-validating. The "validate" in the name reflects the
-  // first-call semantics; here it's a fast cache hit.
+  // returns the cached `ComposioConfig` without re-resolving. The
+  // "validate" in the name reflects the first-call semantics; here
+  // it's a fast cache hit.
   const cfg = validateComposioConfig();
   // Opt out of the SDK's two per-request "phone home" behaviors. This client
   // is constructed per request (see above), so both fire on every call:
@@ -519,12 +417,12 @@ export async function deleteComposioConnectedAccount(opts: {
  * the return value to surface revoke status; uninstall just calls
  * for side-effects.
  *
- * Reads `COMPOSIO_API_KEY` from `process.env`. If unset, the
- * upstream-delete step is skipped (`upstreamDeleted: false`) — the
- * local file still gets removed so platform state is consistent
- * even when the SDK is unreachable. Operators following the
- * `uninstall → revoke at Composio dashboard` flow are explicitly
- * supported by this design.
+ * Reads the broker credential from the resolved provider config. If
+ * Composio isn't configured, the upstream-delete step is skipped
+ * (`upstreamDeleted: false`) — the local file still gets removed so
+ * platform state is consistent even when the SDK is unreachable.
+ * Operators following the `uninstall → revoke at Composio dashboard`
+ * flow are explicitly supported by this design.
  *
  * Why both layers in one function: the alternative is two function
  * calls in every teardown path, each guarded by its own try/catch.
@@ -556,7 +454,15 @@ export async function cleanupComposioBundle(opts: {
   let localDeleted = false;
   let lastError: string | undefined;
 
-  const apiKey = process.env.COMPOSIO_API_KEY?.trim();
+  // `validateComposioConfig` throws on a misconfigured base URL / missing tenant
+  // id, and this helper's contract (relied on by `lifecycle.disconnect`) is that
+  // it never throws — a config error must not strand `connection.json` on disk.
+  let apiKey = "";
+  try {
+    apiKey = validateComposioConfig().apiKey;
+  } catch (err) {
+    lastError = err instanceof Error ? err.message : String(err);
+  }
 
   let connectedAccountId: string | undefined;
   try {

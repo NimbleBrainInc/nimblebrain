@@ -96,7 +96,7 @@ export function startServer(options: ServerOptions): ServerHandle {
   // a transport 401 (Composio) and flip stale connections to reauth_required.
   // Each registered managed-connector provider contributes its own probe (or
   // none) — a provider-less deploy wires nothing, and a provider that suppresses
-  // its probe (e.g. Composio's COMPOSIO_MONITOR_ENABLED kill switch) simply
+  // its probe (Composio's monitor kill switch, config- or env-declared) simply
   // omits it. Sweep cadence: NB_CONNECTION_REVALIDATE_INTERVAL_SECONDS (default 300).
   const revalidatorProbes: ConnectionHealthProbe[] = [];
   for (const provider of runtime.getManagedConnectorRegistry().list()) {
