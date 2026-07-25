@@ -120,9 +120,22 @@ describe("settings — env fallback when no block is declared", () => {
     expect(validateComposioConfig().baseUrl).toBe(COMPOSIO_API_BASE);
   });
 
-  it("honors the monitor kill switch", () => {
-    process.env.COMPOSIO_MONITOR_ENABLED = "false";
-    expect(validateComposioConfig().monitorEnabled).toBe(false);
+  it("honors the monitor kill switch, and only on an explicit false", () => {
+    // Absorbed from the deleted monitor-config suite: default ON, disabled only
+    // by a case/whitespace-insensitive `false`, so a malformed value fails safe
+    // to enabled rather than silently stopping the probe.
+    for (const [value, expected] of [
+      ["false", false],
+      ["FALSE", false],
+      ["  false ", false],
+      ["true", true],
+      ["yes", true],
+      ["", true],
+    ] as const) {
+      process.env.COMPOSIO_MONITOR_ENABLED = value;
+      _resetComposioConfigForTest();
+      expect(validateComposioConfig().monitorEnabled).toBe(expected);
+    }
   });
 
   it("rejects a non-http(s) COMPOSIO_API_BASE_URL (open-redirect mitigation)", () => {

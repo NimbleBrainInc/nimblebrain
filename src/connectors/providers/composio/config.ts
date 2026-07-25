@@ -42,17 +42,30 @@
 import { getBouncerMode } from "../../../oauth/bouncer-config.ts";
 import { log } from "../../../observability/log.ts";
 import { type ComposioProviderConfig, declaredProviderConfig } from "../config.ts";
-import { composioMonitorEnabled } from "./monitor-config.ts";
 
 /** Default Composio API host. Overridable via config `baseUrl` or `COMPOSIO_API_BASE_URL`. */
 export const COMPOSIO_API_BASE = "https://backend.composio.dev";
 
 /**
- * The settings env vars a declared block supersedes — named in the ignore
- * warning. `COMPOSIO_API_KEY` is deliberately absent: it is the credential, not
- * a setting, and persisted transport references still resolve it from the env.
+ * Each declarable setting mapped to the env var(s) a declared block supersedes.
+ *
+ * Keyed on `ComposioProviderConfig`, so adding a setting is a *compile* error
+ * until its fallback is declared — an empty list being the explicit "this one
+ * has none". Without that tie the conflict check below is a hand-maintained
+ * denylist that goes stale the first time the block grows, and whole-block
+ * precedence resumes silently discarding env values for the new field. That is
+ * the hole the throw exists to close, so it gets the same treatment as the
+ * schema surface.
+ *
+ * `COMPOSIO_API_KEY` is deliberately absent: it is the credential, not a
+ * setting, and persisted transport references still resolve it from the env.
  */
-const SUPERSEDED_ENV_KEYS = ["COMPOSIO_API_BASE_URL", "COMPOSIO_MONITOR_ENABLED"] as const;
+const SETTING_FALLBACK_ENV: Record<keyof Required<ComposioProviderConfig>, readonly string[]> = {
+  baseUrl: ["COMPOSIO_API_BASE_URL"],
+  monitor: ["COMPOSIO_MONITOR_ENABLED"],
+};
+
+const SUPERSEDED_ENV_KEYS: readonly string[] = Object.values(SETTING_FALLBACK_ENV).flat();
 
 /** Resolved Composio provider config. Every consumer of a `COMPOSIO_*` value reads it from here. */
 export interface ComposioConfig {
@@ -113,7 +126,7 @@ function resolveComposioConfig(): ComposioConfig {
     configured: true,
     apiKey,
     baseUrl,
-    monitorEnabled: declared ? (declared.monitor?.enabled ?? true) : composioMonitorEnabled(true),
+    monitorEnabled: declared ? (declared.monitor?.enabled ?? true) : monitorEnabledFromEnv(),
     source,
   };
 }
@@ -157,6 +170,15 @@ function requireTenantIdInBouncerMode(): string | undefined {
     );
   }
   return tid;
+}
+
+/**
+ * The env arm of the Composio probe's kill switch. Default ON — only an explicit
+ * `false` (case/whitespace-insensitive) disables, so an unset or malformed value
+ * fails safe to enabled. Reached only when no block is declared.
+ */
+function monitorEnabledFromEnv(): boolean {
+  return (process.env.COMPOSIO_MONITOR_ENABLED ?? "true").trim().toLowerCase() !== "false";
 }
 
 /**
