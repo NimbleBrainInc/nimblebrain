@@ -172,6 +172,7 @@ describe("supportsEnabledThinking", () => {
 		// translate to thinking.type=adaptive + output_config.effort.
 		expect(supportsEnabledThinking("claude-opus-4-7")).toBe(false);
 		expect(supportsEnabledThinking("claude-opus-4-8")).toBe(false);
+		expect(supportsEnabledThinking("claude-opus-5")).toBe(false);
 		expect(supportsEnabledThinking("claude-sonnet-5")).toBe(false);
 		expect(supportsEnabledThinking("anthropic:claude-opus-4-8")).toBe(false);
 	});
@@ -184,6 +185,50 @@ describe("supportsEnabledThinking", () => {
 	it("returns true for non-Anthropic providers", () => {
 		expect(supportsEnabledThinking("openai:gpt-4o")).toBe(true);
 		expect(supportsEnabledThinking("google:gemini-2.5-pro")).toBe(true);
+	});
+
+	// Anthropic reasoning models known to accept `thinking.type=enabled`.
+	// Anything absent must be in ADAPTIVE_ONLY_THINKING_MODELS — see the guard.
+	const ACCEPTS_ENABLED_THINKING = new Set([
+		"claude-haiku-4-5",
+		"claude-haiku-4-5-20251001",
+		"claude-opus-4-1",
+		"claude-opus-4-1-20250805",
+		"claude-opus-4-5",
+		"claude-opus-4-5-20251101",
+		"claude-opus-4-6",
+		"claude-sonnet-4-5",
+		"claude-sonnet-4-5-20250929",
+		"claude-sonnet-4-6",
+	]);
+
+	it("classifies every Anthropic reasoning model in the catalog", () => {
+		// `bun run sync-models` adds Anthropic models to the catalog — and the
+		// picker — automatically, but the enabled-vs-adaptive-only split is
+		// hand-maintained because models.dev doesn't track it. A reasoning
+		// model that lands unclassified gets the `enabled` shape and 400s on
+		// EVERY call: Opus 4.7, then 4.8 + Sonnet 5, then Opus 5 each needed a
+		// manual entry. This fails the sync instead of shipping a broken model.
+		//
+		// To fix a failure: decide which shape the new model takes, then add it
+		// to ADAPTIVE_ONLY_THINKING_MODELS in src/model/catalog.ts or to
+		// ACCEPTS_ENABLED_THINKING above.
+		const unclassified = listModels("anthropic")
+			.filter((m) => m.capabilities.reasoning)
+			.map((m) => m.id)
+			.filter((id) => supportsEnabledThinking(id) && !ACCEPTS_ENABLED_THINKING.has(id));
+
+		expect(unclassified).toEqual([]);
+	});
+
+	it("keeps the two classifications disjoint", () => {
+		// The check above short-circuits on supportsEnabledThinking, so an id
+		// listed in BOTH sets would slip through it — a contradictory
+		// classification that reads as deliberate. Assert the intersection is
+		// empty so the pair stays a genuine partition.
+		const inBoth = [...ACCEPTS_ENABLED_THINKING].filter((id) => !supportsEnabledThinking(id));
+
+		expect(inBoth).toEqual([]);
 	});
 });
 
