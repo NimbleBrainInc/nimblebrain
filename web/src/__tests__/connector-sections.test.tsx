@@ -728,6 +728,29 @@ describe("ConnectorStatusHero", () => {
     expect(findButton(mounted.container, "Cancel")).not.toBeNull();
   });
 
+  test("a member blocked on operator setup is told that, not just that they lack the role", async () => {
+    // The hero half of a must-match pair: ConnectorBrowsePage says "Operator
+    // setup required" for this same user in this same state, and that string
+    // is pinned in connector-browse-card-action.test.tsx. Pinning one side
+    // doesn't pin the pair — this is the other side.
+    mounted = await mount(
+      <ConnectorStatusHero
+        installed={staticAuthConnector({
+          status: "needs_setup",
+          missingOperatorSetup: true,
+          operatorOAuth: undefined,
+          statusReason: "OAuth app not configured for this workspace.",
+        })}
+        canManage={false}
+        onChanged={() => {}}
+      />,
+    );
+    expect(findButton(mounted.container, "Set up OAuth")).toBeNull();
+    expect(mounted.container.textContent).toContain("Operator setup required");
+    // ...and not the generic wording, which is what the ternary exists to avoid.
+    expect(mounted.container.textContent).not.toContain("Workspace admin required");
+  });
+
   test("composio API-key Reconnect is hidden from a member — rotation is admin-gated", async () => {
     // `handleConnectApiKey` refuses a non-admin once a connected account
     // exists, which is exactly reauth_required/failed. Offering Reconnect

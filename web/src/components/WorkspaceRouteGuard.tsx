@@ -28,13 +28,8 @@ const loadingWorkspace = (
  * switch never flashes "Loading workspace…" (the route and the ambient id
  * always agree on the frame the Outlet renders, even though the React-state
  * `activeWorkspace` reconciles a render later for display-oriented consumers).
- *
- * That React-state lag now reaches one non-display consumer:
- * `useCanWriteActiveWorkspace` reads `activeWorkspace.userRole` to gate
- * workspace-scoped writes. On a switch the affordances render against the
- * previous workspace's role for one frame. Not reachable in practice — the
- * frame isn't clickable and the server refuses regardless — but it is no
- * longer true that only cosmetics read this.
+ * `useCanWriteActiveWorkspace` reads that lagging state too, so the frame is
+ * not purely cosmetic — though the server still refuses either way.
  */
 export function WorkspaceRouteGuard() {
   const { slug } = useParams<{ slug: string }>();

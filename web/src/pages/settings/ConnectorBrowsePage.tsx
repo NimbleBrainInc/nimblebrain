@@ -382,12 +382,10 @@ export function CardAction({
   onInstall: () => void;
   onSetUp: () => void;
 }) {
-  // Tailwind classes shared by every action button on the card. Outline
-  // style — the previous bold primary fill made the grid feel
-  // overstimulating with 30+ "Install" buttons stacked. The portal URL
-  // surfaces inside OperatorSetupModal, so the small `app.asana.com`
-  // hint that used to live under each Set up button is intentionally
-  // gone here.
+  // Outline rather than filled: a grid of 30+ buttons reads as noise with a
+  // bold primary fill on every card. The portal URL lives in
+  // OperatorSetupModal, so no per-card hint is needed here.
+  //
   // Static-auth flow:
   //   - not configured + admin     → Set up
   //   - not configured + non-admin → "Operator setup required"

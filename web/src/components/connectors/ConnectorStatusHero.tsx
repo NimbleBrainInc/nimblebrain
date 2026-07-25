@@ -321,6 +321,11 @@ function StatusBlock({
 }) {
   if (installed.status === "ready") return null;
 
+  // The span and the button are the two arms of one decision, so they read a
+  // single value. Admin-gated actions are withheld from a non-admin; the rest
+  // stay, because the server permits them (see the `oauth` note above).
+  const blocked = !!action?.adminOnly && !canManage;
+
   return (
     <div className="flex items-start justify-between gap-4 px-4 py-3 border border-border/60 rounded-sm bg-muted/20">
       <div className="flex items-start gap-3 min-w-0">
@@ -336,16 +341,14 @@ function StatusBlock({
        * explanation — worse than the refusal they used to click into. Say
        * why, matching the "Workspace admin required" copy the browse page
        * shows in the same situation. */}
-      {action && !canManageAction(action, canManage) && (
+      {blocked && (
         <span className="shrink-0 text-xs text-muted-foreground">
-          {/* Name the blocker the member can see, not just their role. The
-           * browse page says the same thing for the same situation. */}
-          {action.kind === "open-operator-modal"
+          {action?.kind === "open-operator-modal"
             ? "Operator setup required"
             : "Workspace admin required"}
         </span>
       )}
-      {action && canManageAction(action, canManage) && (
+      {action && !blocked && (
         <Button
           type="button"
           variant="outline"
@@ -442,9 +445,11 @@ type PrimaryAction =
 function resolveAction(
   installed: InstalledConnector,
   hasOperatorEntry: boolean,
-  /** True when the auth CTA would rotate a shared credential rather than
-   *  authorise the caller's own account — `handleConnectApiKey` refuses a
-   *  non-admin once a connected account already exists. */
+  /** True when the auth CTA rotates a credential the server admin-gates.
+   *  Every auth flow here binds the *workspace's* shared credential — none is
+   *  per-caller — so this asks which rotations the server refuses, not whose
+   *  account is involved. `handleConnectApiKey` refuses a non-admin once a
+   *  connected account already exists. */
   authRotatesSharedCredential: boolean,
 ): PrimaryAction | null {
   const isRemote = installed.type === "remote";
@@ -500,12 +505,4 @@ function resolveAction(
         ? { kind: "oauth", label: "Reconnect", adminOnly: authRotatesSharedCredential }
         : null;
   }
-}
-
-/** Admin-gated affordances disappear for non-admin members.
- *  Workspace-member-actionable affordances (OAuth flows for the
- *  caller's own account) stay visible. */
-function canManageAction(action: PrimaryAction, canManage: boolean): boolean {
-  if (action.adminOnly && !canManage) return false;
-  return true;
 }
