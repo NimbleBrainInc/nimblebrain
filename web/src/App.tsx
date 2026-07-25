@@ -45,7 +45,7 @@ import { recoverFromWorkspaceError } from "./lib/workspace-recovery";
 import { toSlug } from "./lib/workspace-slug";
 import { ContextInspectorPage } from "./pages/ContextInspectorPage";
 import { GlobalHomePage } from "./pages/GlobalHomePage";
-import { NotFoundPage } from "./pages/NotFoundPage";
+import { NotFoundPage, WorkspaceNotFoundPage } from "./pages/NotFoundPage";
 import { ProfilePage } from "./pages/ProfilePage";
 import { ConnectorBrowsePage } from "./pages/settings/ConnectorBrowsePage";
 import { ConnectorDetailPage } from "./pages/settings/ConnectorDetailPage";
@@ -443,13 +443,9 @@ function AuthenticatedAppContent({
                   shell keeps serving the previously-focused workspace's
                   placements — and an app that IS installed one workspace over
                   gets reported as gone (Back after a switch, or a shared
-                  `/w/<other>/app/<x>` link). Entering the branch also makes
-                  `settled` do its job: the guard switches the workspace, the
-                  shell refetches, and the route materialises. */}
-              <Route
-                path="*"
-                element={<NotFoundPage settled={shellWorkspaceId === wsCtx.activeWorkspace?.id} />}
-              />
+                  `/w/<other>/app/<x>` link). Entering the branch also lets the
+                  guard switch the workspace so the route can materialise. */}
+              <Route path="*" element={<WorkspaceNotFoundPage {...{ shellWorkspaceId }} />} />
             </Route>
 
             {/* Profile — top-level, identity-bound. Tabbed surface

@@ -1,4 +1,5 @@
-import { Link } from "react-router-dom";
+import { Link, useParams } from "react-router-dom";
+import { toWsId } from "../lib/workspace-slug";
 
 /**
  * Terminal route for a URL that matches no other route.
@@ -39,4 +40,25 @@ export function NotFoundPage({ settled }: { settled: boolean }) {
       </Link>
     </div>
   );
+}
+
+/**
+ * The workspace-scoped not-found, mounted at `/w/:slug/*`.
+ *
+ * Settledness is measured against the **route slug**, not the ambient
+ * `activeWorkspace`. The slug is the stable truth — every other signal is a
+ * lagging projection of it (`WorkspaceRouteGuard` sets the React-state workspace
+ * in an effect, "a render later"; the shell's placements land later still). So
+ * on the first commit after a cross-workspace navigation, `activeWorkspace` and
+ * `shellWorkspaceId` both still name the *previous* workspace and compare equal
+ * — which would report settled and paint "not available" for an app that is
+ * installed in the workspace the URL actually names.
+ *
+ * Comparing the shell against the slug can't go wrong that way: they differ
+ * until the shell has genuinely caught up. Same shape, and same reason, as
+ * `WorkspaceOverviewPage`'s `appsReady` and `WorkspaceNav`'s `ready`.
+ */
+export function WorkspaceNotFoundPage({ shellWorkspaceId }: { shellWorkspaceId?: string }) {
+  const { slug } = useParams<{ slug: string }>();
+  return <NotFoundPage settled={!!slug && shellWorkspaceId === toWsId(slug)} />;
 }

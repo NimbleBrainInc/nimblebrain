@@ -19,6 +19,8 @@ interface ToolCallStub {
   memberOf?: string[];
   sourceName?: string;
   toolNames?: string[];
+  /** Installed but unregistered until revived — the boot-race shape. */
+  recoverable?: string;
 }
 
 function makeToolCallRuntime(opts: ToolCallStub = {}): { runtime: Runtime; executed: string[] } {
@@ -30,8 +32,9 @@ function makeToolCallRuntime(opts: ToolCallStub = {}): { runtime: Runtime; execu
     name: sourceName,
     tools: async () => toolNames.map((name) => ({ name })),
   };
+  const present = new Set(opts.recoverable ? [] : [sourceName]);
   const registry = {
-    hasSource: (n: string) => n === sourceName,
+    hasSource: (n: string) => present.has(n),
     getSources: () => [source],
     execute: async (call: { name: string }) => {
       executed.push(call.name);
@@ -44,6 +47,12 @@ function makeToolCallRuntime(opts: ToolCallStub = {}): { runtime: Runtime; execu
       getWorkspacesForUser: async () => memberOf.map((id) => ({ id })),
     }),
     ensureWorkspaceRegistry: async () => registry,
+    recoverWorkspaceSource: async (_wsId: string, name: string) => {
+      if (present.has(name)) return true;
+      if (name !== opts.recoverable) return false;
+      present.add(name);
+      return true;
+    },
   } as unknown as Runtime;
   return { runtime, executed };
 }
@@ -68,6 +77,23 @@ describe("handleToolCall — qualified cross-workspace server", () => {
     );
     expect(res.status).toBe(200);
     // Bare tool ("preview") normalized to the registry's `<bareSource>__<tool>`.
+    expect(executed).toEqual(["synapse-collateral__preview"]);
+  });
+
+  it("revives an installed-but-unregistered source instead of 404ing the tool", async () => {
+    // Same boot-race shape as the resource doors: installed, absent from the
+    // registry, recoverable. Membership alone would report the tool missing.
+    const { runtime, executed } = makeToolCallRuntime({
+      memberOf: ["ws_nimblebrain_shared"],
+      recoverable: "synapse-collateral",
+    });
+    const res = await handleToolCall(
+      toolReq({ server: "ws_nimblebrain_shared-synapse-collateral", tool: "preview" }),
+      runtime,
+      features,
+      { workspaceId: "ws_user_u1", identity: identityU1 },
+    );
+    expect(res.status).toBe(200);
     expect(executed).toEqual(["synapse-collateral__preview"]);
   });
 
@@ -137,26 +163,41 @@ describe("handleToolCall — qualified cross-workspace server", () => {
 
 // ── handleResourceProxy (GET /v1/apps/:name/resources/*) ────────────
 
-function makeProxyRuntime(opts: { memberOf?: string[]; sourceName?: string }): {
+function makeProxyRuntime(opts: {
+  memberOf?: string[];
+  sourceName?: string;
+  /** Installed but unregistered until revived — the boot-race shape. */
+  recoverable?: string;
+}): {
   runtime: Runtime;
   calls: Array<{ server: string; uri: string; wsId: string }>;
+  recoverCalls: Array<{ wsId: string; name: string }>;
 } {
   const memberOf = opts.memberOf ?? [];
   const sourceName = opts.sourceName ?? "synapse-collateral";
+  const present = new Set(opts.recoverable ? [] : [sourceName]);
   const calls: Array<{ server: string; uri: string; wsId: string }> = [];
-  const registry = { hasSource: (n: string) => n === sourceName };
+  const recoverCalls: Array<{ wsId: string; name: string }> = [];
+  const registry = { hasSource: (n: string) => present.has(n) };
   const runtime = {
     getIdentitySource: () => undefined,
     getWorkspaceStore: () => ({
       getWorkspacesForUser: async () => memberOf.map((id) => ({ id })),
     }),
     ensureWorkspaceRegistry: async () => registry,
+    recoverWorkspaceSource: async (wsId: string, name: string) => {
+      recoverCalls.push({ wsId, name });
+      if (present.has(name)) return true;
+      if (name !== opts.recoverable) return false;
+      present.add(name);
+      return true;
+    },
     readAppResource: async (server: string, uri: string, wsId: string) => {
       calls.push({ server, uri, wsId });
       return { text: "ok", mimeType: "text/plain" };
     },
   } as unknown as Runtime;
-  return { runtime, calls };
+  return { runtime, calls, recoverCalls };
 }
 
 describe("handleResourceProxy — qualified cross-workspace app", () => {
@@ -185,5 +226,30 @@ describe("handleResourceProxy — qualified cross-workspace app", () => {
     expect(res.status).toBe(403);
     expect((await res.json()).error).toBe("workspace_access_denied");
     expect(calls).toEqual([]);
+  });
+
+  it("revives an installed-but-unregistered app, addressed by the resolved workspace", async () => {
+    // A bundle whose endpoint was unreachable at boot is installed but absent
+    // from the registry. Membership alone reads that as permanently gone.
+    const { runtime, calls, recoverCalls } = makeProxyRuntime({
+      memberOf: ["ws_nimblebrain_shared"],
+      recoverable: "synapse-collateral",
+    });
+    const res = await handleResourceProxy(
+      "ws_nimblebrain_shared-synapse-collateral",
+      "main",
+      runtime,
+      "ws_user_u1",
+      identityU1,
+    );
+    expect(res.status).toBe(200);
+    // The heal must target the RESOLVED workspace and the BARE source name —
+    // the ambient workspace or the qualified name here would heal nothing.
+    expect(recoverCalls).toEqual([
+      { wsId: "ws_nimblebrain_shared", name: "synapse-collateral" },
+    ]);
+    expect(calls).toEqual([
+      { server: "synapse-collateral", uri: "main", wsId: "ws_nimblebrain_shared" },
+    ]);
   });
 });

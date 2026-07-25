@@ -76,6 +76,30 @@ describe("startWorkspaceBundles — unreachable URL bundle at boot", () => {
     expect(entry?.meta?.ui?.placements?.[0]?.resourceUri).toBe("ui://unreachable/main");
   }, 30_000);
 
+  test("failedNamedBundle_isDroppedNotKept", async () => {
+    // The asymmetry is deliberate: `tryRecoverSource` declines a non-URL ref
+    // (it needs the credential-resolving spawn path), so keeping a named
+    // bundle's entry would leave a permanently-broken app in the shell
+    // promising a recovery that can never run. Pins the reasoning against a
+    // future edit that "unifies" the two branches.
+    const store = new WorkspaceStore(workDir);
+    const ws = await store.create("Fleet");
+    await store.update(ws.id, {
+      bundles: [{ name: "@nimblebrain/does-not-exist" } as unknown as BundleRef],
+    });
+
+    const { entries } = await startWorkspaceBundles(
+      store,
+      [],
+      null,
+      new NoopEventSink(),
+      undefined,
+      { workDir, allowInsecureRemotes: true },
+    );
+
+    expect(entries.find((e) => e.serverName.includes("does-not-exist"))).toBeUndefined();
+  }, 30_000);
+
   test("failedUrlBundle_isNotRegisteredAsASource", async () => {
     // Surviving the inventory is not the same as being usable: the source must
     // still be absent from the registry so callers get a clean "unavailable"
