@@ -14,6 +14,7 @@ import { Button } from "../../components/ui/button";
 import { Card, CardContent } from "../../components/ui/card";
 import { Input } from "../../components/ui/input";
 import { Textarea } from "../../components/ui/textarea";
+import { useWorkspaceContext } from "../../context/WorkspaceContext";
 import { roleAtLeast, useScopedRole } from "../../hooks/useScopedRole";
 import { skillMechanismLabel } from "../../lib/skill-display";
 import { linkSafety } from "../../lib/streamdown-config";
@@ -108,6 +109,17 @@ const SEGMENT_LABEL: Record<Scope, string> = {
 };
 
 /**
+ * The chip label for a tier. "Yours" is an ownership claim, so it holds only
+ * while the viewer can actually write the tier — otherwise the filter bar would
+ * contradict the tier heading two elements below it. Reads `tier.editable`
+ * rather than taking `canWrite` again, so the claim has one source.
+ */
+function segmentLabel(tier: Tier, editable: WritableScope): string {
+  if (tier.scope === editable && !tier.editable) return "Workspace";
+  return SEGMENT_LABEL[tier.scope];
+}
+
+/**
  * A tier's divider label and, when it's read-only on this surface, the deep
  * link to where it *is* edited. The editable tier names itself plainly; a
  * context tier names its provenance and points home.
@@ -116,7 +128,7 @@ function tierChrome(
   scope: Scope,
   editable: WritableScope,
   canManageOrg: boolean,
-  canWrite: boolean,
+  writable: boolean,
 ): { label: string; manageTo?: string; manageLabel?: string } {
   // A tier label only renders on a multi-tier surface, which today is only the
   // workspace vantage — so the editable tier's label is the sole reachable one.
@@ -126,7 +138,7 @@ function tierChrome(
   if (scope === editable)
     // "Yours" would claim an agency a non-admin member doesn't have over this
     // tier — name the tier and who holds the pen instead.
-    return { label: canWrite ? "Yours" : "Workspace · managed by workspace admins" };
+    return { label: writable ? "Yours" : "Workspace · managed by workspace admins" };
   if (scope === "user")
     return {
       label: "You · follows you everywhere",
@@ -158,6 +170,7 @@ export function SkillsBrowser(props: SkillsBrowserProps) {
   const { isWorkspaceSurface, lockedScope, fetchScope, createLockedScope } =
     resolveScopeConfig(props);
   const role = useScopedRole();
+  const { activeWorkspace } = useWorkspaceContext();
   // /org/skills is org-admin-guarded, so the org tier's "Manage in org settings"
   // deep link would dead-end at the route guard for anyone else. Gate it on the
   // viewer's role (independent of route) so only those who can act see it.
@@ -166,9 +179,19 @@ export function SkillsBrowser(props: SkillsBrowserProps) {
   // (`canWriteWorkspaceScoped`), so offering a plain member a live toggle and an
   // Edit button just defers the refusal to save time. Reflect the role up front
   // and let the tier render with the same locked treatment context tiers use.
+  //
+  // This reads the *membership* role, not `useScopedRole`. That hook resolves an
+  // org admin to `org_admin` before it ever looks at the workspace, and
+  // `roleAtLeast(…, "ws_admin")` would then pass — but `canWriteWorkspaceScoped`
+  // never consults `orgRole` ("there is no org-admin bypass for workspace-scoped
+  // writes", `src/workspace/authz.ts`). Gating on the escalated role would hand
+  // the affordances to an org admin who is only a *member* here and land them on
+  // the 403 this PR exists to prevent. `userRole === "admin"` is precisely the
+  // server's condition; `undefined` means not a member, which also denies.
+  //
   // The other two vantages need no gate here: /org/skills is already org-admin
   // route-guarded, and a user may always write their own profile.
-  const canWrite = createLockedScope !== "workspace" || roleAtLeast(role, "ws_admin");
+  const canWrite = createLockedScope !== "workspace" || activeWorkspace?.userRole === "admin";
 
   const [skills, setSkills] = useState<ListedSkill[]>([]);
   const [loading, setLoading] = useState(true);
@@ -451,7 +474,14 @@ export function SkillsBrowser(props: SkillsBrowserProps) {
            * than one tier to slice (single-scope surfaces have nothing to
            * filter). */}
           <div className="flex items-center gap-3">
-            {multiTier && <SegmentBar tiers={tiers} value={segment} onChange={setSegment} />}
+            {multiTier && (
+              <SegmentBar
+                tiers={tiers}
+                editableScope={createLockedScope}
+                value={segment}
+                onChange={setSegment}
+              />
+            )}
             <span className="ml-auto text-xs text-muted-foreground tabular-nums">
               {visibleSkills.length} skill{visibleSkills.length === 1 ? "" : "s"} · {onCount} on
             </span>
@@ -463,7 +493,6 @@ export function SkillsBrowser(props: SkillsBrowserProps) {
                 tier={tier}
                 editableScope={createLockedScope}
                 canManageOrg={canManageOrg}
-                canWrite={canWrite}
                 showLabel={multiTier}
                 selectedId={selectedId}
                 detail={detail}
@@ -506,24 +535,27 @@ interface Tier {
 /** Segmented filter over the composition list — "All" plus one chip per tier. */
 function SegmentBar({
   tiers,
+  editableScope,
   value,
   onChange,
 }: {
   tiers: Tier[];
+  editableScope: WritableScope;
   value: Scope | "all";
   onChange: (value: Scope | "all") => void;
 }) {
-  const options: Array<Scope | "all"> = ["all", ...tiers.map((t) => t.scope)];
+  const options: Array<Tier | "all"> = ["all", ...tiers];
   return (
     <fieldset className="inline-flex gap-0.5 rounded-md border border-border bg-secondary p-0.5">
       <legend className="sr-only">Filter by tier</legend>
       {options.map((opt) => {
-        const active = value === opt;
+        const scope = opt === "all" ? "all" : opt.scope;
+        const active = value === scope;
         return (
           <button
-            key={opt}
+            key={scope}
             type="button"
-            onClick={() => onChange(opt)}
+            onClick={() => onChange(scope)}
             aria-pressed={active}
             className={cn(
               "rounded px-2.5 py-1 text-xs font-medium transition-colors",
@@ -533,7 +565,7 @@ function SegmentBar({
                 : "text-muted-foreground hover:text-foreground",
             )}
           >
-            {opt === "all" ? "All" : SEGMENT_LABEL[opt]}
+            {opt === "all" ? "All" : segmentLabel(opt, editableScope)}
           </button>
         );
       })}
@@ -552,7 +584,6 @@ function TierGroup({
   tier,
   editableScope,
   canManageOrg,
-  canWrite,
   showLabel,
   selectedId,
   detail,
@@ -566,8 +597,6 @@ function TierGroup({
   tier: Tier;
   editableScope: WritableScope;
   canManageOrg: boolean;
-  /** Whether the viewer's role permits writing this surface's editable tier. */
-  canWrite: boolean;
   showLabel: boolean;
   selectedId: string | null;
   detail: ReadSkill | null;
@@ -578,11 +607,14 @@ function TierGroup({
   onEdit: (id: string) => void;
   onDelete: (id: string) => void;
 }) {
+  // `tier.editable` is `scope === editableScope && canWrite`, and this branch of
+  // `tierChrome` only reads it where those scopes match — so it already carries
+  // `canWrite` and the prop would be a second copy of the same bit.
   const { label, manageTo, manageLabel } = tierChrome(
     tier.scope,
     editableScope,
     canManageOrg,
-    canWrite,
+    tier.editable,
   );
   return (
     <>

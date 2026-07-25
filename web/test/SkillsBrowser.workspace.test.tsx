@@ -160,6 +160,7 @@ const { act } = await import("react");
 const { MemoryRouter } = await import("react-router-dom");
 const { SkillsBrowser } = await import("../src/pages/settings/SkillsTab");
 const { SessionProvider } = await import("../src/context/SessionContext");
+const { WorkspaceProvider } = await import("../src/context/WorkspaceContext");
 
 /** Wrap an element in a session so `useScopedRole` resolves a real org role. */
 function withOrgRole(element: React.ReactElement, orgRole: string): React.ReactElement {
@@ -181,14 +182,53 @@ interface Mounted {
 }
 
 /**
- * Mount the workspace vantage as a viewer who may write it. Workspace-scope
- * writes require workspace admin server-side, so the editable tier's
- * affordances — live toggle, Edit/Delete, "+ Add a skill" — only render for
- * such a viewer. Org admins clear the bar (`roleAtLeast` is an ordering, and
- * org roles outrank workspace ones), which is what this wrapper supplies.
+ * Wrap in a session *and* an active workspace carrying a real membership role.
+ *
+ * The write gate reads `activeWorkspace.userRole`, mirroring the server's
+ * `canWriteWorkspaceScoped` (member **and** `role === "admin"`). It deliberately
+ * does NOT read `useScopedRole`, which escalates an org admin to `org_admin`
+ * before it ever looks at the workspace — the server has no such bypass. So the
+ * roles that matter here are the workspace ones, and these helpers supply them.
+ *
+ * `userRole: undefined` models a non-member (the server's other denial).
  */
+function withWorkspaceRole(
+  element: React.ReactElement,
+  userRole: "admin" | "member" | undefined,
+  orgRole = "member",
+): React.ReactElement {
+  return React.createElement(
+    SessionProvider,
+    {
+      session: {
+        authenticated: true,
+        user: { id: "u1", email: "a@b.co", displayName: "A", orgRole },
+      },
+    },
+    React.createElement(
+      WorkspaceProvider,
+      {
+        initialWorkspaces: [
+          {
+            id: "ws_test",
+            name: "Test",
+            memberCount: 2,
+            bundles: [],
+            ...(userRole ? { userRole } : {}),
+          },
+        ],
+        initialActiveId: "ws_test",
+      },
+      element,
+    ),
+  );
+}
+
+/** Mount the workspace vantage as a workspace admin — the one role that may write it. */
 function mountAsAdmin(): Promise<Mounted> {
-  return mount(withOrgRole(React.createElement(SkillsBrowser, { surface: "workspace" }), "admin"));
+  return mount(
+    withWorkspaceRole(React.createElement(SkillsBrowser, { surface: "workspace" }), "admin"),
+  );
 }
 
 let mounted: Mounted | null = null;
@@ -513,7 +553,9 @@ describe("SkillsBrowser with surface='workspace' — composition list", () => {
   });
 
   test("a segment chip is derived for every present tier, agency-first", async () => {
-    mounted = await mount(React.createElement(SkillsBrowser, { surface: "workspace" }));
+    // As a writer — "Yours" is an ownership claim, so the chip only reads that
+    // way for someone who can actually write the tier.
+    mounted = await mountAsAdmin();
     const chips = Array.from(mounted.container.querySelectorAll("button[aria-pressed]")).map((b) =>
       b.textContent?.trim(),
     );
@@ -760,9 +802,10 @@ describe("SkillsBrowser with surface='workspace' — composition list", () => {
 // resolves to role "none" here (no WorkspaceContext supplies a `userRole`),
 // which is exactly the "cannot write this workspace" case.
 describe("SkillsBrowser with surface='workspace' — the workspace-admin write gate", () => {
+  /** A real workspace member — the role the server denies, and the common case. */
   function mountAsMember(): Promise<Mounted> {
     return mount(
-      withOrgRole(React.createElement(SkillsBrowser, { surface: "workspace" }), "member"),
+      withWorkspaceRole(React.createElement(SkillsBrowser, { surface: "workspace" }), "member"),
     );
   }
 
@@ -796,10 +839,40 @@ describe("SkillsBrowser with surface='workspace' — the workspace-admin write g
     const text = mounted.container.textContent ?? "";
     // "Yours" would claim an agency this viewer doesn't have over the tier.
     expect(text).toContain("Workspace · managed by workspace admins");
-    const tierHeadings = Array.from(mounted.container.querySelectorAll("h3")).map((h) =>
-      h.textContent?.trim(),
+    // Anywhere on the surface, not just the heading — the filter chip makes the
+    // same ownership claim two elements away, so scoping this to `h3` would let
+    // the contradiction through.
+    expect(text).not.toContain("Yours");
+  });
+
+  test("an org admin who is only a workspace member is still denied", async () => {
+    // The server never consults `orgRole` for workspace-scope writes
+    // (`canWriteWorkspaceScoped`), so neither may the UI. Gating on
+    // `useScopedRole` would escalate this identity to `org_admin`, pass
+    // `roleAtLeast(…, "ws_admin")`, and hand them a Save that 403s.
+    mounted = await mount(
+      withWorkspaceRole(
+        React.createElement(SkillsBrowser, { surface: "workspace" }),
+        "member",
+        "admin",
+      ),
     );
-    expect(tierHeadings).not.toContain("Yours");
+    const add = Array.from(mounted.container.querySelectorAll("button")).find((b) =>
+      b.textContent?.includes("+ Add a skill"),
+    );
+    expect(add).toBeUndefined();
+    expect(mounted.container.textContent ?? "").toContain("Workspace · managed by workspace admins");
+  });
+
+  test("a non-member of the workspace is denied", async () => {
+    // `userRole: undefined` is the server's other denial ("Not a member").
+    mounted = await mount(
+      withWorkspaceRole(React.createElement(SkillsBrowser, { surface: "workspace" }), undefined),
+    );
+    const add = Array.from(mounted.container.querySelectorAll("button")).find((b) =>
+      b.textContent?.includes("+ Add a skill"),
+    );
+    expect(add).toBeUndefined();
   });
 
   test("expanding a workspace row offers no Edit or Delete", async () => {
