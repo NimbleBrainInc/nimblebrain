@@ -83,24 +83,21 @@ export function ConnectorStatusHero({
     };
   }, [cat, installed.iconUrl]);
 
-  // A composio API-key connector has no redirect: its auth CTA opens the key
-  // modal and calls `connect_api_key`, which admin-gates once a connected
-  // account exists. Reconnect/failed are exactly that case. This is the one
-  // auth path the server *does* gate, which is why it is the one gated here.
+  // Every auth path here rotates the *workspace's* shared credential, and the
+  // server admin-gates all three: `handleConnectApiKey` for a composio API key,
+  // and both `/v1/mcp-auth/initiate` and `/v1/composio-auth/initiate` for the
+  // redirect flows. So the predicate is the state, not the auth kind.
   //
-  // Unlike `canWriteWorkspace`, this is a *proxy*, not a term-for-term mirror:
-  // the server's condition is `prior?.connectedAccountId` existing, which the
-  // client can't see, so it stands in reauth_required/failed. The divergence
-  // is fail-closed — a never-connected connector that reached `failed` gates a
-  // member who could have done a first connect. Annoying, not unsafe.
+  // A FIRST connect stays open to a member — nothing is being replaced — which
+  // is why this keys on reauth_required/failed rather than gating outright.
   //
-  // Falls to `false` when `catalog` is absent (it is optional on
-  // `InstalledConnector`), leaving the same ungated behaviour as a native
-  // flow — no worse than the gap above, and it resolves with it.
+  // It is a *proxy*, not a term-for-term mirror like `canWriteWorkspace`: the
+  // server asks whether a credential already exists, which the client can't
+  // see. The divergence is fail-closed — a never-connected connector that
+  // reached `failed` gates a member who could have done a first connect.
+  // Annoying, not unsafe.
   const authRotatesSharedCredential =
-    cat?.auth === "composio" &&
-    cat.composio?.authScheme === "API_KEY" &&
-    (installed.state === "reauth_required" || installed.status === "failed");
+    installed.state === "reauth_required" || installed.status === "failed";
   const action = resolveAction(installed, !!directoryEntry, authRotatesSharedCredential);
 
   /** Surface an unknown error's message on the hero. */
@@ -408,24 +405,16 @@ function statusLabel(status: InstalledConnector["status"]): string {
 type PrimaryAction =
   | { kind: "open-bundle-modal"; label: string; adminOnly: true }
   | { kind: "open-operator-modal"; label: string; adminOnly: true }
-  // `oauth` is admin-only when it rotates a shared credential and ungated
-  // otherwise — conditional rather than fixed by kind.
+  // `oauth` is admin-only when it *replaces* a credential and open otherwise —
+  // conditional rather than fixed by kind, because a first connect and a
+  // reconnect are the same CTA.
   //
-  // "Ungated otherwise" tracks the server, not a claim that the flow is
-  // per-caller. It isn't: the auth CTA binds the *workspace's* shared
-  // credential to whoever ran it, via one of two routes — `runOAuth` dispatches
-  // to `/v1/composio-auth/initiate` for a composio entry and
-  // `/v1/mcp-auth/initiate` otherwise (which hardcodes
-  // `WORKSPACE_PRINCIPAL_ID`). **Both** carry `requireAuth` + `requireWorkspace`
-  // only, with no admin check, so gating here would hide a capability the
-  // server grants.
-  //
-  // The gap is server-side and filed (#755). Note `authScheme` is optional and
-  // defaults to OAUTH2, so a composio connector usually takes the composio
-  // route and is *not* covered by the API_KEY predicate below. Gating only one
-  // route and flipping this to `adminOnly: true` would therefore re-create the
-  // client/server disagreement this file exists to remove — the conditional
-  // collapses when **both** routes are gated, not one.
+  // The CTA binds the *workspace's* shared credential, never a per-caller one,
+  // whichever of the three paths it takes: `handleConnectApiKey` for a composio
+  // API key, `/v1/composio-auth/initiate` for a composio redirect, and
+  // `/v1/mcp-auth/initiate` (which hardcodes `WORKSPACE_PRINCIPAL_ID`)
+  // otherwise. All three admin-gate the replace and leave the first connect to
+  // any member, so this mirrors that rather than gating by auth kind.
   | { kind: "oauth"; label: string; adminOnly: boolean }
   | { kind: "cancel"; label: string; adminOnly: true };
 

@@ -775,13 +775,13 @@ describe("ConnectorStatusHero", () => {
     expect(findButton(mounted.container, "Reconnect")).not.toBeNull();
   });
 
-  test("a composio OAUTH2 connector stays open to a member — the server grants it", async () => {
+  test("a composio OAUTH2 reconnect is gated for a member — the server refuses it", async () => {
     // `authScheme` is optional and defaults to OAUTH2, so the ordinary composio
-    // connector has none and takes /v1/composio-auth/initiate — requireAuth +
-    // requireWorkspace, no admin check (#755). Gating it here would hide
-    // Reconnect while the server still grants it, which is the client/server
-    // divergence #741 exists to remove. This pins the API_KEY discriminator:
-    // without it, every composio connector would be gated.
+    // connector has none and takes /v1/composio-auth/initiate. That route now
+    // admin-gates the replace (#755), so the CTA must too — leaving it open
+    // would be the client/server divergence #741 exists to remove, pointing the
+    // other way. Before #755 this test asserted the opposite, correctly: the
+    // route was ungated then.
     mounted = await mount(
       <ConnectorStatusHero
         installed={composioApiKeyConnector({
@@ -801,7 +801,7 @@ describe("ConnectorStatusHero", () => {
         onChanged={() => {}}
       />,
     );
-    expect(findButton(mounted.container, "Reconnect")).not.toBeNull();
+    expect(findButton(mounted.container, "Reconnect")).toBeNull();
   });
 
   test("a composio API-key connector in `failed` is gated too, not just reauth_required", async () => {
@@ -841,10 +841,12 @@ describe("ConnectorStatusHero", () => {
     expect(findButton(mounted.container, "Connect")).not.toBeNull();
   });
 
-  test("a connector with no catalog entry falls back to the ungated native path", async () => {
-    // `catalog` is optional on InstalledConnector. Without it the composio
-    // predicate can't fire, so this degrades to the same ungated behaviour a
-    // native flow has — documented, and it resolves when that gap does.
+  test("a connector with no catalog entry is gated too — the predicate is the state", async () => {
+    // `catalog` is optional on InstalledConnector. The gate no longer reads it:
+    // all three auth paths rotate the workspace's shared credential and all
+    // three admin-gate the replace, so the predicate is the connector's state.
+    // Before #755 this asserted the opposite, when only the API-key path was
+    // gated and an absent catalog fell through to the ungated native flow.
     mounted = await mount(
       <ConnectorStatusHero
         installed={composioApiKeyConnector({
@@ -856,7 +858,7 @@ describe("ConnectorStatusHero", () => {
         onChanged={() => {}}
       />,
     );
-    expect(findButton(mounted.container, "Reconnect")).not.toBeNull();
+    expect(findButton(mounted.container, "Reconnect")).toBeNull();
   });
 });
 

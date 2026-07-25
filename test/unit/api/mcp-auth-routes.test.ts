@@ -3,9 +3,6 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { mcpOAuthDir } from "../../../src/tools/workspace-oauth-provider.ts";
-import { mkdtempSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { Hono } from "hono";
 import { securityHeaders } from "../../../src/api/middleware/security-headers.ts";
@@ -315,16 +312,7 @@ describe("GET /v1/mcp-auth/callback", () => {
         getAllowInsecureRemotes: () => false,
       },
       authOptions: { mode: { type: "dev" }, eventSink: { emit: () => {} } },
-      // The reconnect gate reads the workspace to resolve the caller's
-    // membership role. Default: the test user is an admin, so first-connect
-    // and reconnect both pass and the existing cases are unaffected. Tests
-    // that exercise the gate override `members`.
-    workspaceStore: {
-      get: async (_id: string) => ({
-        id: WS_ID,
-        members: members ?? [{ userId: USER_ID, role: "admin" }],
-      }),
-    },
+      workspaceStore: {},
       secureCookies: false,
     } as unknown as AppContext;
     const wrapped = new Hono<AppEnv>();
@@ -758,11 +746,11 @@ describe("POST /v1/mcp-auth/initiate — reconnect admission", () => {
     writeFileSync(join(dir, "tokens.json"), JSON.stringify({ access_token: "t" }));
   }
 
-  function post(app: Hono<AppEnv>): Promise<Response> {
+  async function post(app: Hono<AppEnv>): Promise<Response> {
     // Setting `identity` makes the route's own `requireWorkspace` enforce
     // rather than pass through, so these requests carry the header a real
     // caller sends.
-    return app.request("http://localhost/v1/mcp-auth/initiate", {
+    return await app.request("http://localhost/v1/mcp-auth/initiate", {
       method: "POST",
       headers: { "content-type": "application/json", "X-Workspace-Id": WS_ID },
       body: JSON.stringify({ serverName: "granola" }),

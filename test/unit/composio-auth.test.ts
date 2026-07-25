@@ -1,8 +1,8 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { createHash } from "node:crypto";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { Hono } from "hono";
 
 // ── @composio/core mock ─────────────────────────────────────────────
@@ -117,6 +117,7 @@ function stubCtx(
     ensureSourceRegisteredError?: Error;
     getIdentityConnectorSourceError?: Error;
     userId?: string;
+    members?: Array<{ userId: string; role: "admin" | "member" }>;
   } = {},
 ): AppContext & { __lifecycleCalls: StubLifecycleCalls } {
   const calls: StubLifecycleCalls = {
@@ -180,7 +181,14 @@ function stubCtx(
 
   return {
     runtime,
-    workspaceStore: { get: async () => null } as unknown as AppContext["workspaceStore"],
+    // Default `null` keeps every pre-existing test on the path it had: the
+    // reconnect gate can't resolve a role, so it falls through to the
+    // credential check, and with no connection.json that permits the call.
+    // Tests that exercise the gate pass `members`.
+    workspaceStore: {
+      get: async () =>
+        options.members ? { id: "ws_test", members: options.members } : null,
+    } as unknown as AppContext["workspaceStore"],
     authOptions: {} as AppContext["authOptions"],
     secureCookies: false,
     __lifecycleCalls: calls,
@@ -554,11 +562,20 @@ describe("POST /v1/composio-auth/initiate", () => {
    * middleware land after this and are no-ops in dev mode with our
    * canned context.
    */
-  function makeApp(catalogEntry: ReturnType<typeof composioEntry> | null): {
+  function makeApp(
+    catalogEntry: ReturnType<typeof composioEntry> | null,
+    gate?: {
+      workDir?: string;
+      members?: Array<{ userId: string; role: "admin" | "member" }>;
+      caller?: { id: string; orgRole?: string };
+    },
+  ): {
     app: Hono<AppEnv>;
     ctx: ReturnType<typeof stubCtx>;
   } {
-    const ctx = stubCtx("/tmp/nb-initiate-test", catalogEntry);
+    const ctx = stubCtx(gate?.workDir ?? "/tmp/nb-initiate-test", catalogEntry, {
+      ...(gate?.members ? { members: gate.members } : {}),
+    });
     // Override authOptions with a dev-mode shape so requireAuth passes
     // through. The unknown cast is unavoidable — the AuthMiddlewareOptions
     // type isn't exported broadly and the runtime check just needs
@@ -570,11 +587,95 @@ describe("POST /v1/composio-auth/initiate", () => {
     const app = new Hono<AppEnv>();
     app.use("*", async (c, next) => {
       c.set("workspaceId", WS_ID);
+      // Dev-mode `requireAuth` leaves identity unset; the reconnect gate needs
+      // one to resolve a membership role.
+      if (gate?.caller) c.set("identity", gate.caller as never);
       await next();
     });
     app.route("/", composioAuthRoutes(ctx));
     return { app, ctx };
   }
+
+  // ── Reconnect admission (#755) ────────────────────────────────────
+  //
+  // This route persists `owner: { type: "workspace" }`, so re-running it
+  // replaces the shared connected account every member's agent acts as. The
+  // mcp-auth sibling carries the same gate; this is the path an ordinary
+  // composio connector actually takes, since `authScheme` defaults to OAUTH2.
+  describe("reconnect admission", () => {
+    const CONNECTOR = "com.google/gmail";
+    const CALLER = { id: "usr_test" };
+    let workDir: string;
+
+    function seedExistingConnection(): void {
+      // Through the production path helper, so a key change breaks this test
+      // rather than silently making the gate a no-op.
+      const file = composioConnectionPath(workDir, { type: "workspace", wsId: WS_ID }, CONNECTOR);
+      mkdirSync(dirname(file), { recursive: true });
+      writeFileSync(file, JSON.stringify({ connectedAccountId: "ca_existing" }));
+    }
+
+    async function post(app: Hono<AppEnv>): Promise<Response> {
+      // Supplying `identity` makes the route's own `requireWorkspace` enforce
+      // rather than pass through, so these carry the header a real caller sends.
+      return await app.request("http://nb.test/v1/composio-auth/initiate", {
+        method: "POST",
+        headers: { "content-type": "application/json", "X-Workspace-Id": WS_ID },
+        body: JSON.stringify({ connectorId: CONNECTOR }),
+      });
+    }
+
+    beforeEach(() => {
+      process.env.COMPOSIO_API_KEY = "k_test";
+      process.env.COMPOSIO_GMAIL_AUTH_CONFIG_ID = "ac_gmail_test";
+      workDir = mkdtempSync(join(tmpdir(), "nb-composio-gate-"));
+    });
+
+    afterEach(() => {
+      rmSync(workDir, { recursive: true, force: true });
+    });
+
+    test("a member may run the FIRST connect — nothing is being replaced", async () => {
+      const { app } = makeApp(composioEntry(CONNECTOR), {
+        workDir,
+        members: [{ userId: CALLER.id, role: "member" }],
+        caller: CALLER,
+      });
+      expect((await post(app)).status).toBe(200);
+    });
+
+    test("a member may NOT re-connect once a connected account exists", async () => {
+      seedExistingConnection();
+      const { app } = makeApp(composioEntry(CONNECTOR), {
+        workDir,
+        members: [{ userId: CALLER.id, role: "member" }],
+        caller: CALLER,
+      });
+      const res = await post(app);
+      expect(res.status).toBe(403);
+      expect(((await res.json()) as { error?: string }).error).toBe("workspace_admin_required");
+    });
+
+    test("a workspace admin may re-connect", async () => {
+      seedExistingConnection();
+      const { app } = makeApp(composioEntry(CONNECTOR), {
+        workDir,
+        members: [{ userId: CALLER.id, role: "admin" }],
+        caller: CALLER,
+      });
+      expect((await post(app)).status).toBe(200);
+    });
+
+    test("an org admin who is only a member is refused — orgRole grants no bypass", async () => {
+      seedExistingConnection();
+      const { app } = makeApp(composioEntry(CONNECTOR), {
+        workDir,
+        members: [{ userId: CALLER.id, role: "member" }],
+        caller: { ...CALLER, orgRole: "admin" },
+      });
+      expect((await post(app)).status).toBe(403);
+    });
+  });
 
   test("(a) happy path: fresh flow returns redirect URL + binds nonce cookie", async () => {
     process.env.COMPOSIO_API_KEY = "k_test";
