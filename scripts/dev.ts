@@ -14,6 +14,7 @@ import { parseArgs } from "node:util";
 import { type Subprocess, spawn } from "bun";
 import { log } from "../src/observability/log.ts";
 import { setAppDevMode } from "../src/runtime/dev-registry.ts";
+import { prepareCheckout } from "./lib/dev-prepare.ts";
 
 interface DevOptions {
   port: number;
@@ -249,6 +250,11 @@ function installShutdown(children: Subprocess[]): () => boolean {
 async function runDev(options: DevOptions): Promise<void> {
   const { port, noWeb, config, debug, app: appPath, appPort = 5173 } = options;
   const children: Subprocess[] = [];
+
+  // A fresh clone has no web deps and no bundle dists, and the README quickstart
+  // builds neither. Runs after arg parsing so `--no-web` does not install
+  // dependencies the run will never load.
+  prepareCheckout(join(import.meta.dir, ".."), { web: !noWeb });
 
   // The runtime entry, relative to this script (scripts/ -> ../src/cli/index.ts).
   const cliEntry = join(import.meta.dir, "..", "src", "cli", "index.ts");

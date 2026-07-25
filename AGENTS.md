@@ -32,6 +32,14 @@ bun run build:bundles      # Rebuild every src/bundles/*/ui (vite single-file)
 
 **A fresh checkout/worktree must install `web/` AND every `src/bundles/*/ui/` before `bun run verify`.** `verify:test-unit` runs `test:web` + `test:bundles`, which execute those separate packages; root `bun install` doesn't cover them, so verify fails with a missing-module error (e.g. `Cannot find package 'dompurify'`) until they're installed. **But `test:unit` itself runs on root deps alone** — the backend unit suite imports the shared bridge protocol (`web/src/bridge/*`), so a web-only *value* import must never leak into that graph: keep such deps type-only and inject the value at the browser entry (`web/src/sentry.ts` is the pattern). The `Unit Tests (root deps only)` CI job enforces this; only `test:web`/`test:bundles` need the `web/` + bundle installs.
 
+**A fresh checkout prepares itself.** `node_modules` and `dist/` are both gitignored, so a
+new clone or worktree has neither. Every dev launcher — `dev`, `dev:empty`, `dev:minimal`,
+`dev:docs-demo`, `dev:worktree` — installs `web/` dependencies and builds any bundle UI
+missing its `dist/index.html` before starting, so the quickstart does not need those steps.
+`dev:worktree` additionally installs **root** dependencies, which it must: `scripts/dev.ts`
+imports from `src/`, so it cannot install the dependencies it needs in order to load. Only
+what is absent is done — see the rebuild note below.
+
 **`bun run dev` does NOT rebuild bundles.** The API serves each bundle from its pre-built `src/bundles/<name>/ui/dist/index.html`. After editing any file under `src/bundles/*/ui/src/`, run `bun run build:bundles` and restart the dev server (the API reads dist on iframe mount; it doesn't watch the file). Forgetting this means the iframe loads stale code while your changes look "live" in the source tree — a high-confusion failure mode.
 
 **Before opening a PR, run `bun run verify`.** It is the single command that mirrors CI, enforced by construction: `.github/workflows/ci.yml` invokes only `verify:*` subscripts (plus `test:integration`) — no inline check steps. To add or change a check, edit the matching subscript in `package.json`; CI picks it up automatically. If CI ever catches something `verify` didn't, the fix is to update the subscript, not the checklist. Tool-level parity is the gate; discipline-level rules are not.

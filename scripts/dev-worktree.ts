@@ -30,6 +30,7 @@ import { spawn } from "node:child_process";
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { loadDotenvIntoProcess } from "./lib/dev-env.ts";
+import { installIfMissing } from "./lib/dev-prepare.ts";
 
 // Anchor the worktree root from the script's location, not `process.cwd()`,
 // so `bun run scripts/dev-worktree.ts` from a subdirectory still resolves
@@ -77,6 +78,12 @@ seedConfigIfMissing();
 // `direnv` / `mise` workflows aren't disrupted. Silent when no .env
 // found — the prior "set in your shell" contract still works.
 const envResult = loadDotenvIntoProcess(WORKTREE_ROOT);
+
+// Root ONLY. `scripts/dev.ts` imports from `src/`, so it cannot install the
+// deps it needs to be loaded — that has to happen before it is spawned. Web
+// deps and bundle builds live in `scripts/lib/dev-prepare.ts`, which dev.ts
+// runs, so every launcher gets them and not just this one.
+installIfMissing("root", WORKTREE_ROOT, "[dev:worktree]");
 
 console.log("[dev:worktree] Starting");
 console.log(`[dev:worktree]   Worktree: ${WORKTREE_ROOT}`);
