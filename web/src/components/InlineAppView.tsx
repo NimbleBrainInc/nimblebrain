@@ -16,7 +16,23 @@ export interface InlineAppViewProps {
 }
 
 const DEFAULT_HEIGHT = 200;
-const MAX_HEIGHT = 600;
+// Runaway guard, NOT a layout budget. An inline app renders at whatever height
+// its content reports, the same as it would in any other MCP host.
+//
+// Any bound shorter than the content hides it *silently*: INLINE_SIZING_CSS sets
+// `overflow:hidden` inside the frame and the wrapper clips too, so there is no
+// scrollbar and no affordance — a truncated card is indistinguishable from a tool
+// that returned less. That is why the ceiling sits far above real content instead
+// of at a layout budget; it exists only so an app reporting an absurd height
+// cannot mint a multi-million-pixel element.
+//
+// It also terminates a growth loop this component cannot otherwise stop:
+// INLINE_SIZING_CSS neutralizes `100vh` on `html,body` only, so a descendant with
+// `min-height:100vh` resolves against the iframe viewport, and an app shaped as
+// that element plus a trailing sibling of height K reports H+K, then H+2K, and so
+// on. Such an app is misshapen for an inline widget either way; the guard bounds
+// how badly it fails.
+const RUNAWAY_HEIGHT_GUARD = 20_000;
 
 // Force content-based sizing in inline widget iframes.
 // Full-page app templates often set height: 100vh or min-height: 100% which
@@ -28,7 +44,7 @@ const INLINE_SIZING_CSS = `<style>html,body{height:auto!important;min-height:0!i
 // read `iframe.contentDocument` to measure it — the content must report its own
 // size. A ResizeObserver posts `ui/notifications/size-changed` (the ext-apps
 // resize protocol the bridge already routes to `onResize`) on every content
-// change plus once on start; the host caps at MAX_HEIGHT and floors at >0.
+// change plus once on start; the host floors at >0 and otherwise honors it.
 // Reports `body.scrollHeight` (true content height, so the widget shrinks as
 // well as grows) — NOT `documentElement.scrollHeight`, whose viewport floor
 // ratchets the height and never lets it shrink. An empty root (async app,
@@ -127,13 +143,13 @@ export function InlineAppView({ appName, resourceUri, toolResult }: InlineAppVie
 
         const bridge = createBridge(iframe, appName, {
           onResize: (newHeight) => {
-            // Cap at MAX_HEIGHT and ignore non-positive heights. The in-iframe
-            // reporter fires once on DOMContentLoaded — when an async-rendering
-            // app's root is still empty, scrollHeight ≈ 0 — so without this
-            // lower bound the widget would collapse to ~0px until content mounts
-            // and the ResizeObserver reports again. Restores the guard the old
-            // contentDocument observer had.
-            const h = Math.min(newHeight, MAX_HEIGHT);
+            // Ignore non-positive heights. The in-iframe reporter fires once on
+            // DOMContentLoaded — when an async-rendering app's root is still
+            // empty, `scrollHeight` ≈ 0 — so without this lower bound the widget
+            // collapses to ~0px until content mounts and the ResizeObserver
+            // reports again. The upper bound is only the runaway guard; the
+            // widget otherwise takes whatever height its content reports.
+            const h = Math.min(newHeight, RUNAWAY_HEIGHT_GUARD);
             if (h > 0) {
               setHeight(h);
               iframe.style.height = `${h}px`;
