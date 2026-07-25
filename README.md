@@ -221,7 +221,6 @@ A fully specified example:
   "features":  { "bundleManagement": true },
   "maxIterations": 25,
   "maxInputTokens": 500000,
-  "maxOutputTokens": 16384,
   "workDir": "~/.nimblebrain"
 }
 ```

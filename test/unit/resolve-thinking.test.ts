@@ -97,6 +97,22 @@ describe("resolveThinking", () => {
 		).toEqual({ mode: "enabled", budgetTokens: 16384 - 4096 });
 	});
 
+	it("honors a budget set without a thinking mode on an adaptive-only model", () => {
+		// The carve-out steps aside when a budget is set, on the grounds that the
+		// operator supplied intent. The path it hands off to must then use that
+		// budget — substituting the catalog ceiling would re-derive the "max
+		// reasoning from a number nobody chose" tier the carve-out exists to
+		// prevent, via the very condition that disabled it.
+		expect(
+			resolveThinking({
+				configBudgetTokens: 8000,
+				model: "anthropic:claude-opus-5",
+				maxOutputTokens: 128000,
+				maxOutputTokensConfigured: false,
+			}),
+		).toEqual({ mode: "enabled", budgetTokens: 8000 });
+	});
+
 	it("still derives a budget on an adaptive-only model when the operator set a ceiling", () => {
 		// The one case where the number means something: the operator chose it,
 		// so the effort tier the engine derives from it reflects intent.

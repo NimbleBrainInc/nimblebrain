@@ -188,9 +188,12 @@ export function resolveThinking(input: ResolveThinkingInput): ResolvedThinking |
 
   // Default for reasoning models: enabled with a capped budget so the model
   // can't spend the whole output budget on internal thinking and emit no
-  // visible content.
+  // visible content. An operator budget is honored here even with no
+  // `thinking` mode set — `wouldInventEffort` above steps aside precisely
+  // because that budget is operator intent, so discarding it here would
+  // substitute the catalog ceiling for the number they chose.
   return {
     mode: "enabled",
-    budgetTokens: enabledBudget(input.maxOutputTokens),
+    budgetTokens: enabledBudget(input.maxOutputTokens, input.configBudgetTokens),
   };
 }

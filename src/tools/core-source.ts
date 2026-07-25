@@ -205,9 +205,13 @@ function validateModelConfigPatch(input: Record<string, unknown>, runtime: Runti
 }
 
 /**
- * Apply a numeric override where `null` means "clear this, fall back to the
- * platform's derived value" — the same convention `thinking` uses. Shared so
- * the clear path can't exist on one of the two write sites and not the other.
+ * Apply a numeric override to the on-disk object, where `null` means "clear
+ * this, fall back to the platform's derived value" — the same convention
+ * `thinking` uses.
+ *
+ * One of a matched pair with `nullableNumberPatch` below: a clear has to land
+ * on both write sites (disk and live runtime) or the two diverge, so they are
+ * written and read together even though each has a single caller.
  */
 function applyNullableNumber(target: Record<string, unknown>, key: string, value: unknown): void {
   if (value === null) {
