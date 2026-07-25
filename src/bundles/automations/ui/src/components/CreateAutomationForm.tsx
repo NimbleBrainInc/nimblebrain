@@ -355,7 +355,7 @@ export function CreateAutomationForm({
               style={{
                 padding: 12,
                 borderRadius: 6,
-                border: "1px solid var(--color-border, #e4e4e7)",
+                border: "1px solid var(--color-border-primary, #e4e4e7)",
                 fontSize: 13,
               }}
             >

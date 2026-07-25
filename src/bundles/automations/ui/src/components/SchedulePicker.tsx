@@ -139,10 +139,10 @@ export function SchedulePicker({
 
   const inputStyle = {
     padding: "4px 8px",
-    border: "1px solid var(--color-border, #e4e4e7)",
+    border: "1px solid var(--color-border-primary, #e4e4e7)",
     borderRadius: 4,
     fontSize: 13,
-    background: "var(--color-bg-surface, #fff)",
+    background: "var(--color-background-secondary, #ffffff)",
     color: "var(--color-text-primary, #09090b)",
   } as const;
 
