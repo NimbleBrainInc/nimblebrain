@@ -113,7 +113,8 @@ function resolveOverride(
  *                      accept a budget on adaptive — the model decides per
  *                      call. Use `enabled` for predictable behavior.
  *   2. No override + reasoning-capable model → `enabled` with a safe
- *      budget. (Adaptive was the previous default but consumed entire
+ *      budget — EXCEPT on an adaptive-only model with no operator ceiling,
+ *      which gets bare `adaptive` (see the carve-out below). (Adaptive was the previous default but consumed entire
  *      output budgets in production; switched to `enabled` so the
  *      platform stays in control of thinking spend.)
  *   3. No override + non-reasoning model → `undefined` (engine omits

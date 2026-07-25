@@ -575,8 +575,7 @@ export class Runtime {
     // Build delegate context for nb__delegate tool
     // Use a late-bound getter for defaultModel so it reflects live config changes
     const getDefaultModel = () => {
-      const models = config.models;
-      return models?.default ?? config.defaultModel ?? DEFAULT_MODEL;
+      return baseModelSlots(config.models, config.defaultModel).default;
     };
     const resolveSlot = (s: string): string => {
       const slot = parseAliasRef(s);
@@ -3798,6 +3797,17 @@ export class Runtime {
    * a model, the default-slot model is used (so the bare call returns the
    * cap that applies to a default chat turn).
    */
+  /**
+   * The operator's configured output ceiling, or `undefined` when they set
+   * none. Distinct from `getMaxOutputTokens()`, which resolves to the model's
+   * catalog limit — a caller that cannot tell those apart will report a
+   * derived default as if it were a choice, and any client echoing it back
+   * turns it into one. See `resolveThinking`'s adaptive-only carve-out.
+   */
+  getConfiguredMaxOutputTokens(): number | undefined {
+    return this.config.maxOutputTokens;
+  }
+
   getMaxOutputTokens(model?: string): number {
     return resolveMaxOutputTokens({
       configValue: this.config.maxOutputTokens,

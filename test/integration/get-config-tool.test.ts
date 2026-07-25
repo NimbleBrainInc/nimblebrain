@@ -42,8 +42,14 @@ describe("get_config tool", () => {
 			expect(config.maxIterations).toBeGreaterThan(0);
 			expect(typeof config.maxInputTokens).toBe("number");
 			expect((config.maxInputTokens as number)).toBeGreaterThan(0);
-			expect(typeof config.maxOutputTokens).toBe("number");
-			expect((config.maxOutputTokens as number)).toBeGreaterThan(0);
+			// The resolved ceiling is reported for display, but `maxOutputTokens`
+			// itself is absent unless the operator set one. Reporting it would let
+			// the settings UI echo it back on save, which flips the field from
+			// unset to set and makes `resolveThinking` derive a thinking budget —
+			// `effort: "max"` on every call for an adaptive-only model.
+			expect(typeof config.resolvedMaxOutputTokens).toBe("number");
+			expect((config.resolvedMaxOutputTokens as number)).toBeGreaterThan(0);
+			expect(config.maxOutputTokens).toBeUndefined();
 		} finally {
 			await runtime.shutdown();
 		}

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import type { AgentProfile, ModelSlots } from "../../../src/runtime/types.ts";
+import type { AgentProfile } from "../../../src/runtime/types.ts";
 import type { Workspace } from "../../../src/workspace/types.ts";
 
 // ---------------------------------------------------------------------------

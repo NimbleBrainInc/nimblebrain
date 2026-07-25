@@ -23,7 +23,10 @@ interface ModelConfig {
   availableModels: Record<string, ModelEntry[]>;
   maxIterations: number;
   maxInputTokens: number;
-  maxOutputTokens: number;
+  /** Only present when the operator explicitly set it. */
+  maxOutputTokens?: number;
+  /** The ceiling actually in force — catalog-derived when unset. Display only. */
+  resolvedMaxOutputTokens: number;
   thinking?: ThinkingMode;
   thinkingBudgetTokens?: number;
 }
@@ -96,7 +99,9 @@ export function ModelTab() {
   const [reasoningModel, setReasoningModel] = useState("");
   const [maxIterations, setMaxIterations] = useState(10);
   const [maxInputTokens, setMaxInputTokens] = useState(500000);
-  const [maxOutputTokens, setMaxOutputTokens] = useState(16384);
+  // null = not set by the operator; the resolved ceiling applies.
+  const [maxOutputTokens, setMaxOutputTokens] = useState<number | null>(null);
+  const [resolvedMaxOutputTokens, setResolvedMaxOutputTokens] = useState(16384);
   // Empty string is the "no override — use platform default" sentinel
   // for the select. On save, that becomes a literal `null` to the tool,
   // which clears any persisted operator override.
@@ -121,7 +126,8 @@ export function ModelTab() {
         setReasoningModel(qualify(config.models.reasoning));
         setMaxIterations(config.maxIterations ?? 10);
         setMaxInputTokens(config.maxInputTokens ?? 500000);
-        setMaxOutputTokens(config.maxOutputTokens ?? 16384);
+        setMaxOutputTokens(config.maxOutputTokens ?? null);
+        setResolvedMaxOutputTokens(config.resolvedMaxOutputTokens);
         setThinking(config.thinking ?? THINKING_DEFAULT);
         if (config.thinkingBudgetTokens != null) {
           setThinkingBudgetTokens(config.thinkingBudgetTokens);
@@ -156,7 +162,9 @@ export function ModelTab() {
         },
         maxIterations,
         maxInputTokens,
-        maxOutputTokens,
+        // Omit when unset — sending the resolved ceiling back would persist a
+        // value the operator never chose.
+        ...(maxOutputTokens != null ? { maxOutputTokens } : {}),
         ...thinkingPatch,
       });
       setFeedback({ type: "success", message: "Model configuration saved." });
@@ -246,8 +254,11 @@ export function ModelTab() {
               id="maxOutputTokens"
               type="number"
               min={0}
-              value={maxOutputTokens}
-              onChange={(e) => setMaxOutputTokens(Number(e.target.value))}
+              value={maxOutputTokens ?? ""}
+              placeholder={`${resolvedMaxOutputTokens} (model default)`}
+              onChange={(e) =>
+                setMaxOutputTokens(e.target.value === "" ? null : Number(e.target.value))
+              }
             />
           </div>
         </div>

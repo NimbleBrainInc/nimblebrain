@@ -704,7 +704,7 @@ These are non-negotiable patterns. Violating them causes production bugs:
 | `models.reasoning` | `anthropic:claude-opus-5` |
 | Max iterations | 25 (hard cap: 50) |
 | Max input tokens | 500,000 |
-| Max output tokens | 16,384 |
+| Max output tokens | the model's catalog `limits.output` (128,000 on Sonnet 5 and Opus 5); 16,384 only when the model isn't in the catalog |
 | Max history messages | 40 |
 | Max tool result size | 1,000,000 chars (0 disables) |
 | Default bundles | none (platform capabilities are built in) |

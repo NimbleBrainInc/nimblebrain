@@ -530,6 +530,26 @@ function scheduleBriefingRefresh(
  * Returns raw InProcessTool[] — caller (the `nb` system source factory)
  * passes them to `defineInProcessApp` to build the in-process MCP server.
  */
+/**
+ * Config fields `get_config` reports only when the operator explicitly set
+ * them. Anything resolved from a default belongs elsewhere in the payload: a
+ * client that reads a derived value and saves it back turns a default into a
+ * choice. `maxOutputTokens` is the sharp case — persisting it makes
+ * `resolveThinking` derive a thinking budget, which on an adaptive-only model
+ * becomes an `effort: "max"` directive on every call.
+ */
+function operatorSetFields(runtime: Runtime): Record<string, unknown> {
+  const cfg = runtime.getRuntimeConfig();
+  const configuredMaxOutput = runtime.getConfiguredMaxOutputTokens();
+  return {
+    ...(configuredMaxOutput !== undefined ? { maxOutputTokens: configuredMaxOutput } : {}),
+    ...(cfg.thinking !== undefined ? { thinking: cfg.thinking } : {}),
+    ...(cfg.thinkingBudgetTokens !== undefined
+      ? { thinkingBudgetTokens: cfg.thinkingBudgetTokens }
+      : {}),
+  };
+}
+
 export function createCoreToolDefs(runtime: Runtime): InProcessTool[] {
   // Per-workspace briefing caches keyed by workspace ID (or "_global" for dev mode).
   const briefingCaches = new Map<string, BriefingCache>();
@@ -579,7 +599,6 @@ export function createCoreToolDefs(runtime: Runtime): InProcessTool[] {
           const maxIterations = runtime.getMaxIterations();
           const maxInputTokens = runtime.getMaxInputTokens();
           const maxOutputTokens = runtime.getMaxOutputTokens();
-          const runtimeConfig = runtime.getRuntimeConfig();
           const identity = runtime.getCurrentIdentity();
           const preferences = identity?.preferences ?? {};
           return {
@@ -591,11 +610,14 @@ export function createCoreToolDefs(runtime: Runtime): InProcessTool[] {
               availableModels,
               maxIterations,
               maxInputTokens,
-              maxOutputTokens,
-              ...(runtimeConfig.thinking !== undefined ? { thinking: runtimeConfig.thinking } : {}),
-              ...(runtimeConfig.thinkingBudgetTokens !== undefined
-                ? { thinkingBudgetTokens: runtimeConfig.thinkingBudgetTokens }
-                : {}),
+              // The RESOLVED ceiling, for display only — it is the model's
+              // catalog limit when the operator set nothing. Reported under a
+              // distinct name so a client can show it without echoing it back:
+              // persisting it would flip `maxOutputTokens` from unset to set
+              // and, on an adaptive-only model, turn the derived effort tier
+              // into `max` on every call. See `resolveThinking`.
+              resolvedMaxOutputTokens: maxOutputTokens,
+              ...operatorSetFields(runtime),
               preferences: {
                 displayName: identity?.displayName ?? "",
                 timezone: preferences.timezone ?? "",
