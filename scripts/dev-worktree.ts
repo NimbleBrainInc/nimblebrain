@@ -26,10 +26,11 @@
  * Share state across worktrees:  `NB_WORK_DIR=/abs/path bun run dev:worktree`
  */
 
-import { spawn, spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, readdirSync, writeFileSync } from "node:fs";
+import { spawn } from "node:child_process";
+import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { loadDotenvIntoProcess } from "./lib/dev-env.ts";
+import { installIfMissing } from "./lib/dev-prepare.ts";
 
 // Anchor the worktree root from the script's location, not `process.cwd()`,
 // so `bun run scripts/dev-worktree.ts` from a subdirectory still resolves
@@ -71,77 +72,6 @@ function seedConfigIfMissing(): void {
 
 seedConfigIfMissing();
 
-/** Run `bun install` in a package dir that has no `node_modules` yet. */
-function installIfMissing(label: string, dir: string): void {
-  if (!existsSync(join(dir, "package.json"))) return;
-  if (existsSync(join(dir, "node_modules"))) return;
-  console.log(`[dev:worktree]   Installing ${label} dependencies`);
-  const result = spawnSync("bun", ["install"], { cwd: dir, stdio: "inherit" });
-  if (result.status !== 0) {
-    console.error(`[dev:worktree] Failed to install ${label}: cd ${dir} && bun install`);
-    process.exit(1);
-  }
-}
-
-/**
- * Install what a fresh worktree is missing.
- *
- * `node_modules` and `dist` are both gitignored, so a NEW WORKTREE HAS NEITHER.
- * The web install is the first wall you hit — without it Vite is unresolvable
- * and dev exits 127 before any iframe mounts — and the bundle dist is the
- * second. Fixing only the second leaves the papercut this exists to remove.
- */
-function prepareWorktree(): void {
-  // Root FIRST. Without it the API cannot resolve its own dependencies and dies
-  // after the web install and the bundle builds have already run — about a
-  // minute of work before the failure it was always going to hit.
-  installIfMissing("root", WORKTREE_ROOT);
-  installIfMissing("web", join(WORKTREE_ROOT, "web"));
-  buildMissingBundleUis();
-}
-
-/**
- * Build any bundle UI that has no `dist/` yet.
- *
- * `dist` is gitignored, so a FRESH WORKTREE NEVER HAS IT — every new worktree
- * would otherwise start, look healthy, and then render "UI not built" the first
- * time a bundle iframe mounts. That is a guaranteed papercut rather than an
- * occasional one, which is why it belongs here and not in a runbook.
- *
- * Only builds what is missing. `bun run dev` deliberately does NOT rebuild
- * bundles on every start — after editing bundle source you still run
- * `bun run build:bundles` yourself — so this closes the first-run hole without
- * taking that behaviour away.
- */
-function buildMissingBundleUis(): void {
-  const bundlesDir = join(WORKTREE_ROOT, "src", "bundles");
-  if (!existsSync(bundlesDir)) return;
-
-  const missing = readdirSync(bundlesDir, { withFileTypes: true })
-    .filter((e) => e.isDirectory())
-    .map((e) => ({ name: e.name, ui: join(bundlesDir, e.name, "ui") }))
-    .filter((b) => existsSync(join(b.ui, "package.json")))
-    .filter((b) => !existsSync(join(b.ui, "dist", "index.html")));
-
-  if (missing.length === 0) return;
-
-  console.log(
-    `[dev:worktree]   Building ${missing.length} bundle UI(s) with no dist: ${missing.map((b) => b.name).join(", ")}`,
-  );
-  for (const bundle of missing) {
-    for (const args of [["install"], ["run", "build"]]) {
-      const result = spawnSync("bun", args, { cwd: bundle.ui, stdio: "inherit" });
-      if (result.status !== 0) {
-        console.error(
-          `[dev:worktree] Failed to build ${bundle.name} UI (bun ${args.join(" ")}).\n` +
-            `[dev:worktree] Build it manually: cd ${bundle.ui} && bun install && bun run build`,
-        );
-        process.exit(1);
-      }
-    }
-  }
-}
-
 // Auto-load .env BEFORE the spawn so the child process inherits keys.
 // Discovery is worktree-local first, then the main repo (shared `.env`
 // via `git rev-parse --git-common-dir`). Shell exports always win, so
@@ -149,7 +79,11 @@ function buildMissingBundleUis(): void {
 // found — the prior "set in your shell" contract still works.
 const envResult = loadDotenvIntoProcess(WORKTREE_ROOT);
 
-prepareWorktree();
+// Root ONLY. `scripts/dev.ts` imports from `src/`, so it cannot install the
+// deps it needs to be loaded — that has to happen before it is spawned. Web
+// deps and bundle builds live in `scripts/lib/dev-prepare.ts`, which dev.ts
+// runs, so every launcher gets them and not just this one.
+installIfMissing("root", WORKTREE_ROOT);
 
 console.log("[dev:worktree] Starting");
 console.log(`[dev:worktree]   Worktree: ${WORKTREE_ROOT}`);

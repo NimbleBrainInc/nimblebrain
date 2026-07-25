@@ -14,6 +14,7 @@ import { parseArgs } from "node:util";
 import { type Subprocess, spawn } from "bun";
 import { log } from "../src/observability/log.ts";
 import { setAppDevMode } from "../src/runtime/dev-registry.ts";
+import { prepareCheckout } from "./lib/dev-prepare.ts";
 
 interface DevOptions {
   port: number;
@@ -297,6 +298,10 @@ async function runDev(options: DevOptions): Promise<void> {
 }
 
 async function main(): Promise<void> {
+  // Before anything spawns: a fresh clone has no web deps and no bundle dists,
+  // and the README quickstart builds neither.
+  prepareCheckout(join(import.meta.dir, ".."));
+
   const rest = process.argv.slice(2);
   const { values } = parseArgs({
     args: rest,

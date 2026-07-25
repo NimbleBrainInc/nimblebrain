@@ -27,6 +27,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { workspaceConversationsDir } from "../src/conversation/paths.ts";
+import { DEV_IDENTITY } from "../src/identity/providers/dev.ts";
 import { personalWorkspaceIdFor } from "../src/workspace/workspace-store.ts";
 
 const WORKTREE_ROOT = dirname(import.meta.dir);
@@ -44,43 +45,25 @@ if (!force && !workDir.includes(".nimblebrain-worktree")) {
   process.exit(1);
 }
 
-const USER_ID = "usr_default";
+const USER_ID = DEV_IDENTITY.id;
 // Both of these formats are single-site by convention (`check:personal-workspace-id`,
 // `check:conversation-paths`). Those lints scope to `src/`, so a hand-built string
 // here would pass CI and silently write where nothing reads.
 const WORKSPACE_ID = personalWorkspaceIdFor(USER_ID);
 const MODEL = "anthropic:claude-sonnet-4-6";
-/** Marks a file as this script's, so a re-run never clobbers a real one. */
-const SEED_SOURCE = "scripts/seed-dev-data.ts";
-const SEED_MARKER = `<!-- seeded by ${SEED_SOURCE} -->`;
-
-/** True when a conversation's line-0 header records this script as its author. */
-function firstLineIsSeeded(path: string): boolean {
-  const firstLine = readFileSync(path, "utf8").split("\n", 1)[0] ?? "";
-  try {
-    const header = JSON.parse(firstLine) as { metadata?: { seededBy?: unknown } };
-    return header.metadata?.seededBy === SEED_SOURCE;
-  } catch {
-    return false;
-  }
-}
-
 /**
  * Write only when it is safe to: the file is absent, or already byte-identical
  * to what we would produce.
  *
- * Provenance alone is not enough. A file this script wrote becomes REAL the
- * moment anything else touches it — the runtime appends your turns to a seeded
- * thread as soon as you chat in one — so "we wrote it" does not imply "we may
- * replace it". Identical content is the only safe overwrite, and it is a no-op.
+ * Byte equality is the whole guarantee, and provenance would not add to it. A
+ * file this script wrote becomes REAL the moment anything else touches it — the
+ * runtime appends your turns to a seeded thread as soon as you chat in one — so
+ * "we wrote it" never implied "we may replace it".
  */
-function writeIfSafe(path: string, contents: string, ours: (p: string) => boolean): string | null {
+function writeIfSafe(path: string, contents: string): string | null {
   if (existsSync(path)) {
     if (readFileSync(path, "utf8") === contents) return path;
-    const reason = ours(path)
-      ? "seeded earlier but changed since — real turns would be lost"
-      : "exists and was not written by this script";
-    console.warn(`[seed]   skipped ${path} — ${reason}`);
+    console.warn(`[seed]   skipped ${path} — exists and differs from what this script writes`);
     return null;
   }
   mkdirSync(dirname(path), { recursive: true });
@@ -268,14 +251,11 @@ function writeThread(thread: Thread): string | null {
       ownerId: USER_ID,
       workspaceId: WORKSPACE_ID,
       format: "events",
-      // `metadata` is caller-provided and never validated by the runtime, so it
-      // is the right place to record provenance without inventing a field.
-      metadata: { seededBy: SEED_SOURCE },
     }),
     ...events.map((e) => JSON.stringify(e)),
   ];
 
-  return writeIfSafe(path, `${lines.join("\n")}\n`, firstLineIsSeeded);
+  return writeIfSafe(path, `${lines.join("\n")}\n`);
 }
 
 function writeSkill(baseDir: string, skill: SeedSkill): string | null {
@@ -294,16 +274,25 @@ function writeSkill(baseDir: string, skill: SeedSkill): string | null {
     ...(skill.always ? [] : ["    triggers:", `      - ${skill.name.replace(/-/g, " ")}`]),
     "---",
     "",
-    `${SEED_MARKER}`,
-    "",
     skill.body,
     "",
   ].join("\n");
-  return writeIfSafe(target, frontmatter, (p) => readFileSync(p, "utf8").includes(SEED_MARKER));
+  return writeIfSafe(target, frontmatter);
 }
 
-if (!existsSync(workDir)) {
-  console.error(`[seed] No workdir at ${workDir}. Start the app once so it seeds, then re-run.`);
+// Require the WORKSPACE, not just the workdir. Creating
+// `workspaces/<wsId>/…` ourselves would land it at the default 0755, and a
+// recursive mkdir never chmods a directory that already exists — so
+// WorkspaceStore.create's `mode: 0o700` would never take effect, and that 0700
+// root is the only protection on conversation JSONLs. Waiting for the app to
+// provision it also removes the "seeded into a workspace the runtime has not
+// registered" state.
+const workspaceRoot = join(workDir, "workspaces", WORKSPACE_ID);
+if (!existsSync(join(workspaceRoot, "workspace.json"))) {
+  console.error(
+    `[seed] No provisioned workspace at ${workspaceRoot}.\n` +
+      `[seed] Start the app once so it provisions one, then re-run.`,
+  );
   process.exit(1);
 }
 
