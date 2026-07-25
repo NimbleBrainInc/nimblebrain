@@ -302,9 +302,9 @@ The 8 h default is tuned for a connector left open during a working day. Tighten
 
 ## connectors
 
-Managed-connector providers. A **managed-connector provider** is a third party that brokers a connector's auth (OAuth or API key) *and* hosts the MCP session on your tenant's behalf. Composio is the one shipped today.
+Managed-connector providers. A **managed-connector provider** is a third party that brokers a connector's auth (OAuth or API key) *and* hosts the MCP session on your tenant's behalf. Composio and Smithery ship today.
 
-A provider is registered — and its callback routes, liveness probe, and vendor SDK reached — **only when its broker credential is present**. A deployment without one carries no provider: the `/v1/composio-auth/*` routes are not mounted, no revalidation sweep runs, and the vendor SDK is never loaded.
+A provider is registered — and its callback routes, liveness probe, and vendor SDK reached — **only when everything it needs to identify itself resolves**: the broker credential for both, plus a namespace for Smithery (see its table below). A deployment without one carries no provider: the `/v1/composio-auth/*` routes are not mounted, no revalidation sweep runs, and the vendor SDK is never loaded.
 
 ```json
 {
@@ -313,6 +313,10 @@ A provider is registered — and its callback routes, liveness probe, and vendor
       "composio": {
         "apiKey": "…",
         "baseUrl": "https://backend.composio.dev",
+        "monitorEnabled": true
+      },
+      "smithery": {
+        "namespace": "my-namespace",
         "monitorEnabled": true
       }
     }
@@ -332,6 +336,17 @@ The probe's **sweep cadence is not here.** One revalidator serves every provider
 
 One instance serves one tenant, so this is a single config layer: there is no per-tenant merge. Intra-tenant isolation is unchanged — the single broker account still serves every workspace and user in the tenant, namespaced by the Composio `user_id`.
 
+### connectors.providers.smithery
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `apiKey` | `string` | — | Platform-wide Smithery API key. Falls back to `SMITHERY_API_KEY`. Its presence, with a namespace, is the gate on registering the provider at all. |
+| `namespace` | `string` | — | Smithery namespace brokered connections are created under. **Required** — a namespace is globally unique and account-owned at Smithery, so there is no safe default; without one the provider stays unregistered even with a credential present. |
+| `baseUrl` | `string` | `https://api.smithery.ai` | Connect API base URL override. Must be `http(s)` — the session URL derived from it becomes an installed connector's remote MCP target. |
+| `monitorEnabled` | `boolean` | `true` | Run Smithery's arm of the connection-revalidator probe. It detects a connection deleted at the broker; a lapsed authorization is logged, not flipped, until a verdict can carry a remedy URL. |
+
+Smithery contributes **no callback routes**: it brokers OAuth on its own hosted setup page rather than redirecting back to us, so there is no equivalent of `/v1/composio-auth/*` to mount. See [Connectors Catalog](/config/connectors-catalog/) for authoring an `auth: smithery` entry.
+
 ### The broker credential
 
 `apiKey` is the platform-wide Composio API key and the gate on registering the provider at all — without it (here or in `COMPOSIO_API_KEY`) the integration stays dormant.
@@ -349,7 +364,7 @@ It is declarable because nothing persisted points at where it lives. A connector
 
 ### Environment fallback and precedence
 
-The `COMPOSIO_*` settings variables ([Environment Variables](/config/environment)) still work, as a **fallback**:
+The `COMPOSIO_*` and `SMITHERY_*` variables ([Environment Variables](/config/environment)) still work, as a **fallback**:
 
 Precedence is **per field**: a setting declared in the block wins, a setting left out reads its env var. So a block that sets only `baseUrl` leaves `monitorEnabled` on `COMPOSIO_MONITOR_ENABLED`, and nothing you configured elsewhere is silently discarded. This is the same shape as `providers.anthropic.apiKey` falling back to `ANTHROPIC_API_KEY`.
 

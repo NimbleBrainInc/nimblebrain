@@ -24,6 +24,7 @@ import {
   getNimbleBrainHostMeta,
   type NimbleBrainConnectorMeta,
   type ServerDetail,
+  type SmitheryConnectorConfig,
 } from "../connectors/server-detail.ts";
 import { validateAdditionalAuthorizationParams } from "../util/oauth-params.ts";
 import { isHttpUrl } from "../util/url.ts";
@@ -56,11 +57,12 @@ export interface ProjectionContext {
  * shape both sites previously inlined.
  */
 function connectorMetaAuthFields(meta: NimbleBrainConnectorMeta | undefined): {
-  auth: "dcr" | "static" | "composio" | "provider";
+  auth: "dcr" | "static" | "composio" | "smithery" | "provider";
   requiredScopes?: string[];
   additionalAuthorizationParams?: Record<string, string>;
   operatorSetup?: { portalUrl: string; hint: string; clientSecretKey: string };
   composio?: ComposioConnectorConfig;
+  smithery?: SmitheryConnectorConfig;
   providerAuth?: { provider: string; config: Record<string, unknown> };
 } {
   return {
@@ -71,6 +73,7 @@ function connectorMetaAuthFields(meta: NimbleBrainConnectorMeta | undefined): {
       : {}),
     ...(meta?.operatorSetup ? { operatorSetup: meta.operatorSetup } : {}),
     ...(meta?.composio ? { composio: meta.composio } : {}),
+    ...(meta?.smithery ? { smithery: meta.smithery } : {}),
     ...(meta?.providerAuth ? { providerAuth: meta.providerAuth } : {}),
   };
 }
@@ -156,7 +159,7 @@ export interface ConnectorCatalogEntry {
   iconUrl?: string;
   /** Remote MCP server URL — the value that goes into the bundle `url`. */
   url: string;
-  auth: "dcr" | "static" | "composio" | "provider";
+  auth: "dcr" | "static" | "composio" | "smithery" | "provider";
   requiredScopes?: string[];
   additionalAuthorizationParams?: Record<string, string>;
   operatorSetup?: { portalUrl: string; hint: string; clientSecretKey: string };
@@ -167,6 +170,7 @@ export interface ConnectorCatalogEntry {
    * `connection.json`. Absent on dcr/static entries.
    */
   composio?: ComposioConnectorConfig;
+  smithery?: SmitheryConnectorConfig;
   /**
    * Required for `auth: "provider"` entries: the credential provider name + its
    * opaque config (e.g. `{ provider: "minted", config: { audience, scope } }`).

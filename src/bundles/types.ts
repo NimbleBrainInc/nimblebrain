@@ -202,6 +202,23 @@ export type BundleRef =
        * branch. Undefined for dcr/static OAuth bundles.
        */
       composio?: { connectorId: string };
+      /**
+       * Smithery-backed connectors carry four coordinates, each load-bearing:
+       * `connectorId` resolves the catalog entry (the persisted url is a
+       * per-install session URL that misses the url→catalog map, same as
+       * Composio); `connectionId` is what the liveness probe reads and what
+       * teardown deletes at the broker; `namespace` pins the probe and the
+       * delete to the namespace the connection was CREATED in, so repointing
+       * `SMITHERY_NAMESPACE` can't make either act on the wrong one. Set at
+       * install time by `handleInstallRemoteOAuth`'s smithery branch. Undefined
+       * for every other auth kind.
+       */
+      smithery?: {
+        connectorId: string;
+        connectionId: string;
+        namespace: string;
+        baseUrl: string;
+      };
     };
 
 /**

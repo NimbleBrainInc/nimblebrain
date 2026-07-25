@@ -659,7 +659,7 @@ export interface ConnectorCatalogEntry {
   /** Optional brand icon URL — omitted when the entry ships no icon; the UI falls back to a letter-avatar. */
   iconUrl?: string;
   url: string;
-  auth: "dcr" | "static" | "composio" | "provider";
+  auth: "dcr" | "static" | "composio" | "smithery" | "provider";
   requiredScopes?: string[];
   additionalAuthorizationParams?: Record<string, string>;
   operatorSetup?: { portalUrl: string; hint: string; clientSecretKey: string };
@@ -1079,7 +1079,7 @@ export interface DirectoryEntry {
     | {
         kind: "remote-oauth";
         url: string;
-        auth: "dcr" | "static" | "composio" | "provider";
+        auth: "dcr" | "static" | "composio" | "smithery" | "provider";
         requiredScopes?: string[];
         additionalAuthorizationParams?: Record<string, string>;
         operatorSetup?: { portalUrl: string; hint: string; clientSecretKey: string };

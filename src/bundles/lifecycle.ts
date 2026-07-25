@@ -3,6 +3,7 @@ import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { resolveConnectorSkillsConfig } from "../config/connector-skills.ts";
 import { cleanupComposioBundle } from "../connectors/providers/composio/sdk.ts";
+import { cleanupSmitheryBundle } from "../connectors/providers/smithery/provider.ts";
 import type { EventSink } from "../engine/types.ts";
 import { IdentityConnectorStore } from "../identity/connector-store.ts";
 import { fleetIssuerOption } from "../oauth/fleet-assertion.ts";
@@ -868,6 +869,25 @@ export class BundleLifecycleManager {
     if (composioRef) {
       await this.cleanupComposioCredentials(instance, serverName, composioRef.connectorId, workDir);
     }
+    // Smithery holds the connection (and any upstream grant) entirely on its
+    // side, so there is no local credential dir to clear — the broker delete is
+    // the whole teardown. Same reason as Composio's: uninstall without a prior
+    // disconnect is the realistic flow, and skipping this orphans the
+    // connection at the broker forever.
+    const smitheryRef =
+      instance.ref && "smithery" in instance.ref ? instance.ref.smithery : undefined;
+    if (smitheryRef?.connectionId) {
+      const { lastError } = await cleanupSmitheryBundle({
+        connectionId: smitheryRef.connectionId,
+        namespace: smitheryRef.namespace,
+        baseUrl: smitheryRef.baseUrl,
+      });
+      if (lastError) {
+        process.stderr.write(
+          `[lifecycle] Failed to revoke Smithery connection for "${serverName}" in ${instance.wsId}: ${lastError}\n`,
+        );
+      }
+    }
   }
 
   /**
@@ -1691,6 +1711,15 @@ export class BundleLifecycleManager {
         ...(lastError ? { revokeError: lastError } : {}),
       };
     }
+
+    // Smithery deliberately has NO disconnect branch. Deleting the brokered
+    // connection here would be a one-way door: `createSession` runs only on a
+    // fresh install (it sits behind the dedupe check), and Smithery contributes
+    // no reconnect route of its own — so a disconnected connector could never be
+    // reconnected, only uninstalled and reinstalled. Teardown belongs on
+    // uninstall, where reinstall genuinely re-mints the connection; disconnect
+    // falls through to the generic path below, which drops the local source and
+    // records `not_authenticated` without destroying anything upstream.
 
     const provider = new WorkspaceOAuthProvider({
       owner: { type: "workspace", wsId },

@@ -37,7 +37,7 @@
 
 import { log } from "../observability/log.ts";
 import {
-  bundleProviderId,
+  brokeredRef,
   type ConnectionHealthProbe,
   type ConnectionLiveness,
   type ProbeTarget,
@@ -225,7 +225,7 @@ export class ConnectionRevalidator {
     const verdicts = new Array<ConnectionLiveness>(targets.length);
     let errors = 0;
     await this.forEachBounded(targets, async (t, i) => {
-      const probe = this.probes.get(bundleProviderId(t.ref) ?? "");
+      const probe = this.probes.get(brokeredRef(t.ref)?.providerId ?? "");
       if (!probe) {
         verdicts[i] = "indeterminate";
         return;
@@ -328,7 +328,7 @@ export class ConnectionRevalidator {
   /** `running` probe targets for one instance — empty when its provider has no registered probe. */
   private instanceTargets(inst: BundleInstance): ProbeTarget[] {
     const ref = inst.ref;
-    const providerId = bundleProviderId(ref);
+    const providerId = brokeredRef(ref)?.providerId ?? null;
     if (!providerId || !this.probes.has(providerId) || !ref) return [];
 
     const conns = inst.connections;

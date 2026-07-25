@@ -91,6 +91,22 @@ The provider's **settings** are declarable in `nimblebrain.json` under [`connect
 | `COMPOSIO_MONITOR_ENABLED` | No | `true` when the provider is configured | *(fallback for `…composio.monitorEnabled`)* Kill switch for the connection-revalidation monitor. Set to `false` (case/whitespace-insensitive) to disable. Read once at startup. |
 | `COMPOSIO_MONITOR_INTERVAL_SECONDS` | No | `300` | **Deprecated alias** for [`NB_CONNECTION_REVALIDATE_INTERVAL_SECONDS`](#runtime--server) (the sweep cadence is provider-agnostic). Still honored; slated for removal ([#727](https://github.com/NimbleBrainInc/nimblebrain/issues/727)). |
 
+### Smithery broker
+
+Required only when the connectors catalog contains any `auth: smithery` entries. Smithery brokers the connection and hosts the MCP session; the platform stores no upstream credential.
+
+A credential **and** a namespace must both resolve — a Smithery namespace is globally unique and account-owned, so there is no safe default. Setting only the key logs a warning and leaves the integration disabled.
+
+Every variable below is a per-field fallback for [`connectors.providers.smithery`](/config/nimblebrain-json/#connectorsproviderssmithery) — including the API key, because an installed connector's transport names the `smithery` credential provider rather than an env var.
+
+| Variable | Required | Default | Description |
+|----------|----------|---------|-------------|
+| `SMITHERY_API_KEY` | When the catalog has `auth: smithery` entries | — | Platform-wide Smithery API key, from [smithery.ai/account/api-keys](https://smithery.ai/account/api-keys). Read once at startup. Fallback for `connectors.providers.smithery.apiKey`. |
+| `SMITHERY_NAMESPACE` | With `SMITHERY_API_KEY` | — | The Smithery namespace brokered connections are created under. Connections are named per (workspace, server) inside it. Fallback for `connectors.providers.smithery.namespace`. |
+| `SMITHERY_MONITOR_ENABLED` | No | `true` when configured | Kill switch for Smithery's arm of the connection-revalidator probe. Fallback for `connectors.providers.smithery.monitorEnabled`. |
+| `SMITHERY_API_BASE_URL` | No | `https://api.smithery.ai` | Override the Connect API base URL. Must be `http(s)` — the session URL derived from it becomes a bundle's remote MCP target. Fallback for `connectors.providers.smithery.baseUrl`. |
+| `NB_TENANT_ID` | When multi-tenant pods share a Smithery account | — | Prepended to the workspace id so two tenants never collide in the namespace. Same variable as the Composio prefix above. |
+
 ### Observability (OpenTelemetry + logs)
 
 Vendor-neutral. Trace ids always exist for log correlation; export only happens when an OTLP endpoint is configured, so local dev and OSS checkouts need no infrastructure.

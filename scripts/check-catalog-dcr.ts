@@ -78,9 +78,9 @@ interface CheckResult {
 }
 
 /**
- * Pick the entries this probe checks: `auth: "dcr"` with at least one
- * remote to reach. Static-auth and Composio entries are skipped (their
- * failure modes aren't catalog DCR rot). Exported + pure so an offline
+ * Pick the entries this probe checks: ONLY `auth: "dcr"`, with at least one
+ * remote to reach. Every other auth kind is skipped — their failure modes
+ * aren't catalog DCR rot. Exported + pure so an offline
  * unit test exercises the selection — and the script's imports against
  * the platform source — without the network probe or process exit.
  */

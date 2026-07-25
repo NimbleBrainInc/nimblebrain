@@ -152,6 +152,22 @@ export interface ComposioConnectorConfig {
 }
 
 /**
+ * Config for an `auth: "smithery"` connector — carried on the connector `_meta`
+ * and threaded verbatim through the install action and directory entry.
+ *
+ * - `server`: the Smithery registry qualified name (`nimblebrain/bassethound`).
+ *   Handed to Smithery's Connect API as the connection target; Smithery resolves
+ *   it to the deployed endpoint, so the catalog never names an MCP URL.
+ *
+ * Deliberately one field. Smithery needs no per-deployment env indirection (a
+ * qualified name is global, unlike Composio's per-account `auth_config_id`) and
+ * no tool allowlist (the connection exposes the server's own surface).
+ */
+export interface SmitheryConnectorConfig {
+  server: string;
+}
+
+/**
  * NimbleBrain-specific extension carried inside `ServerDetail._meta`
  * under the key `ai.nimblebrain/connector`. Holds the platform-specific
  * fields that don't fit upstream slots: OAuth flow type, operator-setup
@@ -172,11 +188,14 @@ export interface NimbleBrainConnectorMeta {
    * - `composio`: Composio aggregator holds the vendor's tokens.
    *   Platform persists only an opaque `connectedAccountId` per
    *   workspace. Required: the `composio` block below.
+   * - `smithery`: Smithery brokers the connection and hosts the MCP
+   *   session. Platform persists only the derived connection id.
+   *   Required: the `smithery` block below.
    * - `provider`: a platform-managed connector whose credential is produced
    *   server-side by a named credential provider (no user/operator OAuth, no
    *   per-user secret). Required: the `providerAuth` block below.
    */
-  auth?: "dcr" | "static" | "composio" | "provider";
+  auth?: "dcr" | "static" | "composio" | "smithery" | "provider";
   /** Required for `auth: "static"`: where the operator creates the OAuth app. */
   operatorSetup?: {
     portalUrl: string;
@@ -192,6 +211,13 @@ export interface NimbleBrainConnectorMeta {
    * specify a server id.
    */
   composio?: ComposioConnectorConfig;
+  /**
+   * Required for `auth: "smithery"`. See {@link SmitheryConnectorConfig}.
+   *
+   * The MCP URL and headers come from Smithery's Connect API at install time —
+   * operators name the registry server, not an endpoint.
+   */
+  smithery?: SmitheryConnectorConfig;
   /**
    * Required for `auth: "provider"`. Names the credential provider and its
    * opaque config — e.g. `{ provider: "minted", config: { audience, scope } }`.

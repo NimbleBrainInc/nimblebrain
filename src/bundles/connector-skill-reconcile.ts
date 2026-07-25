@@ -37,6 +37,7 @@ import { resolveConnectorSkillsConfig } from "../config/connector-skills.ts";
 import { connectorSkillIdentityFrom } from "../connectors/server-detail.ts";
 import { log } from "../observability/log.ts";
 import type { ConnectorCatalogEntry } from "../registries/projection.ts";
+import { brokeredRef } from "./connection-probe.ts";
 import { serverNameFromRef } from "./paths.ts";
 import type { BundleRef, ConnectorSkillLockEntry } from "./types.ts";
 
@@ -148,13 +149,18 @@ async function resolveIdentity(
   if (existing) return existing;
   if (!(await loadCatalog(deps, catalog))) return null;
 
-  const toolkit = ref.composio?.connectorId
-    ? catalog.byId?.get(ref.composio.connectorId)?.composio?.toolkit
-    : undefined;
+  // A brokered ref persists a per-install session URL, so the url→catalog lookup
+  // below misses and the stamped catalog id is the only way back to the entry.
+  // Without this a brokered connector derives its identity from the slugified
+  // serverName (`ai-bassethound-mcp`) instead of the canonical reverse-DNS id
+  // (`ai.bassethound/mcp`), and never picks up a curated overlay at boot.
+  const brokeredId = brokeredRef(ref)?.connectorId;
+  const brokered = brokeredId ? catalog.byId?.get(brokeredId) : undefined;
+  const toolkit = brokered?.composio?.toolkit;
   // A DCR connector's persisted url is its real endpoint, so the catalog yields
   // the canonical reverse-DNS id (`com.dropbox/mcp`) that connectorSkillIdentityFrom
   // needs — NOT the slugified serverName (`com-dropbox-mcp`).
-  const canonicalName = catalog.byUrl?.get(ref.url)?.id ?? serverName;
+  const canonicalName = brokered?.id ?? catalog.byUrl?.get(ref.url)?.id ?? serverName;
   return connectorSkillIdentityFrom(toolkit, canonicalName);
 }
 

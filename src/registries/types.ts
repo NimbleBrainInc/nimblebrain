@@ -33,7 +33,11 @@
  *     (advanced; bypasses curation).
  */
 
-import type { ComposioConnectorConfig, ServerDetail } from "../connectors/server-detail.ts";
+import type {
+  ComposioConnectorConfig,
+  ServerDetail,
+  SmitheryConnectorConfig,
+} from "../connectors/server-detail.ts";
 
 /** Stable registry kind, used for source-type-driven dispatch. */
 export type RegistryType = "static" | "mpak" | "mcp" | "custom-url";
@@ -133,7 +137,7 @@ export interface RemoteOAuthInstall {
    * the handshake.
    */
   transportType: "streamable-http" | "sse";
-  auth: "dcr" | "static" | "composio" | "provider";
+  auth: "dcr" | "static" | "composio" | "smithery" | "provider";
   requiredScopes?: string[];
   additionalAuthorizationParams?: Record<string, string>;
   operatorSetup?: { portalUrl: string; hint: string; clientSecretKey: string };
@@ -143,6 +147,11 @@ export interface RemoteOAuthInstall {
    * {@link ComposioConnectorConfig} for the canonical shape.
    */
   composio?: ComposioConnectorConfig;
+  /**
+   * Required for `auth: "smithery"`. Names the Smithery registry server the
+   * brokered connection targets. See {@link SmitheryConnectorConfig}.
+   */
+  smithery?: SmitheryConnectorConfig;
   /**
    * Required for `auth: "provider"`. Names the credential provider and its
    * opaque config (e.g. `{ provider: "minted", config: { audience, scope } }`).

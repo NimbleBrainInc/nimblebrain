@@ -17,6 +17,8 @@
 import { validateComposioConfig } from "./composio/config.ts";
 import { createComposioProvider } from "./composio/provider.ts";
 import type { ConnectorAuthKind, ManagedConnectorProvider } from "./managed-provider.ts";
+import { validateSmitheryConfig } from "./smithery/config.ts";
+import { createSmitheryProvider } from "./smithery/provider.ts";
 
 /** Read-only lookup of the configured brokered providers, keyed by `auth-kind`. */
 export interface ManagedConnectorRegistry {
@@ -61,17 +63,24 @@ export function managedConnectorRegistryOf(
 
 /**
  * Build the registry from instance config. Each provider's own resolver decides
- * whether it is configured — Composio's (`validateComposioConfig()`) reads the
- * declared `connectors.providers.composio` block, falling back to `COMPOSIO_*`
- * env when it is absent. Constructing a provider links no vendor (the SDK loads
- * lazily inside the impl), so this is safe to call at startup unconditionally;
- * the gate is purely whether a provider is *present*.
+ * whether it is configured — it reads its declared `connectors.providers.<kind>`
+ * block, falling back to the legacy `<VENDOR>_*` env when the block is absent.
+ * Constructing a provider links no vendor (clients load lazily inside each
+ * impl), so this is safe to call at startup unconditionally; the gate is purely
+ * whether a provider is *present*.
  */
 export function buildManagedConnectorRegistry(): ManagedConnectorRegistry {
   const providers: ManagedConnectorProvider[] = [];
 
   if (validateComposioConfig().apiKey) {
     providers.push(createComposioProvider());
+  }
+
+  // `apiKey` alone is the gate: the resolver returns a wholly-unconfigured
+  // block (empty key) when no namespace resolves, so a half-configured provider
+  // never reaches here. Same one-condition shape as Composio's above.
+  if (validateSmitheryConfig().apiKey) {
+    providers.push(createSmitheryProvider());
   }
 
   return new MapManagedConnectorRegistry(providers);

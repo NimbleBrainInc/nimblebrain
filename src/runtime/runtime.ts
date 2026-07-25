@@ -27,6 +27,7 @@ import {
   buildManagedConnectorRegistry,
   type ManagedConnectorRegistry,
 } from "../connectors/providers/registry.ts";
+import { registerSmitheryCredentialProvider } from "../connectors/providers/smithery/transport-credential.ts";
 import { generateTitle } from "../conversation/auto-title.ts";
 import { compactConversationMessages, planCompaction } from "../conversation/compaction.ts";
 import { extractOperatorTurns } from "../conversation/event-reconstructor.ts";
@@ -415,6 +416,7 @@ export class Runtime {
     // connected Composio connector starts inside `startWorkspaceBundles` below,
     // and an unregistered credential name fails its source start.
     registerComposioCredentialProvider();
+    registerSmitheryCredentialProvider();
 
     // Install the declared `connectors` block at the same composition root, so
     // every managed-connector provider resolves its config from one place
@@ -3475,11 +3477,12 @@ export class Runtime {
   }
 
   /**
-   * The registry of configured managed-connector providers (Composio today).
+   * The registry of configured managed-connector providers (Composio and
+   * Smithery today).
    * Built once from instance config and cached — the runtime dispatches all
    * brokered connector wiring (routes, revalidator probes, sessions, API-key
-   * connects) through it. A provider is present IFF configured; a Composio-less
-   * deploy gets an empty registry and links no vendor. The source is the
+   * connects) through it. A provider is present IFF configured; a deploy with no
+   * configured provider gets an empty registry and links no vendor. The source is the
    * `connectors.providers.*` block installed by `start`, with each provider's
    * legacy `<VENDOR>_*` env as its fallback.
    */

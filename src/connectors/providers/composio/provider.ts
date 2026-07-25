@@ -59,7 +59,21 @@ export function createComposioProvider(): ManagedConnectorProvider {
 
     userId: composioUserId,
 
-    createSession: (opts) => createComposioSession({ apiKey: brokerApiKey(), ...opts }),
+    // `authConfigId` is optional at the seam (a provider that keys a session on
+    // a server slug alone has no auth-config concept). Composio DOES require
+    // one — every session binds a toolkit to an auth config — so it asserts that
+    // here, at its own boundary, rather than the seam demanding it of everyone.
+    // `async` so the rejection is a rejected promise, not a synchronous throw:
+    // the seam declares `Promise<ManagedSession>`, and a caller that chains
+    // `.catch()` instead of `await`-ing inside a try would otherwise be hit by
+    // an exception the type says cannot happen.
+    createSession: async (opts) => {
+      const authConfigId = opts.authConfigId?.trim();
+      if (!authConfigId) {
+        throw new Error(`Composio session for toolkit "${opts.toolkit}" requires an authConfigId.`);
+      }
+      return createComposioSession({ apiKey: brokerApiKey(), ...opts, authConfigId });
+    },
 
     initiate: (opts) => initiateComposioConnection({ apiKey: brokerApiKey(), ...opts }),
 
