@@ -87,6 +87,47 @@ describe("the credential provider attaches the resolved broker key", () => {
   });
 });
 
+describe("registration happens at the composition root", () => {
+  it("is registered by the same call chain Runtime.start runs, before bundles start", async () => {
+    // The bug this pins: registering from `createComposioProvider` was too late.
+    // The managed-connector registry is built lazily, after `Runtime.start`
+    // returns, but a connected Composio connector starts *inside* start() —
+    // so `applyProviderAuth` threw and every Composio source failed on boot.
+    const { registerBuiltinCredentialProviders } = await import(
+      "../../src/oauth/minted-credential-provider.ts"
+    );
+    const { registerComposioCredentialProvider } = await import(
+      "../../src/connectors/providers/composio/transport-credential.ts"
+    );
+    const { getCredentialProvider } = await import("../../src/tools/credential-provider.ts");
+
+    registerBuiltinCredentialProviders();
+    registerComposioCredentialProvider();
+
+    expect(getCredentialProvider(COMPOSIO_CREDENTIAL_PROVIDER)).toBeDefined();
+  });
+
+  it("builds a transport for a mapped legacy ref without a registry lookup", async () => {
+    const { registerComposioCredentialProvider } = await import(
+      "../../src/connectors/providers/composio/transport-credential.ts"
+    );
+    const { createRemoteTransport } = await import("../../src/tools/remote-transport.ts");
+    process.env.COMPOSIO_API_KEY = "k_env";
+    registerComposioCredentialProvider();
+
+    // The end-to-end path a boot-start takes: persisted legacy ref → forward map
+    // → transport. Previously threw "provider \"composio\" is not registered".
+    expect(() =>
+      createRemoteTransport(
+        new URL("https://composio.test/mcp"),
+        composioTransportConfig(LEGACY_AUTH),
+        undefined,
+        {},
+      ),
+    ).not.toThrow();
+  });
+});
+
 describe("legacy refs map forward on read", () => {
   it("rewrites the env-template auth to name the provider", () => {
     const migrated = composioTransportConfig(LEGACY_AUTH);

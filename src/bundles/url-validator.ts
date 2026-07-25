@@ -150,12 +150,17 @@ function assertAllowedHttp(
   url: URL,
   opts: { allowInsecure: boolean; fleetInternal: boolean },
 ): void {
-  // Operator-provisioned fleet sources (provider auth) may reach in-cluster
-  // services over plain HTTP — the fleet's trust boundary is NetworkPolicy +
-  // the verified token (ARCHITECTURE P4), not TLS. This is a production posture
-  // scoped to the cluster DNS suffix, NOT the dev-only `allowInsecure` flag, and
-  // it cannot be self-selected by a tenant (a `provider` auth config comes from
-  // the vetted catalog entry, never tenant input).
+  // Operator-provisioned fleet sources may reach in-cluster services over plain
+  // HTTP — the fleet's trust boundary is NetworkPolicy + the verified token
+  // (ARCHITECTURE P4), not TLS. This is a production posture scoped to the
+  // cluster DNS suffix, NOT the dev-only `allowInsecure` flag.
+  //
+  // Callers must key this on the `minted` credential provider specifically, NOT
+  // on `auth.type === "provider"`. Provider auth is no longer synonymous with
+  // "came from the vetted catalog": a brokered connector (Composio) also names a
+  // credential provider, but its URL comes from the vendor's API response and is
+  // persisted into tenant state. Only the minted rail carries the operator
+  // provenance this exception assumes.
   if (opts.fleetInternal && isInClusterHostname(url.hostname)) {
     return;
   }

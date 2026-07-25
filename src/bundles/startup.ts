@@ -16,6 +16,7 @@ import {
 import { resolveUserDisplayName } from "../identity/user.ts";
 import { fleetIssuerOption } from "../oauth/fleet-assertion.ts";
 import { mcpAuthCallbackUrl } from "../oauth/mcp-callback-url.ts";
+import { isMintedFleetSource } from "../oauth/minted-credential-provider.ts";
 import { log } from "../observability/log.ts";
 import { FileCredentialStore } from "../tools/credential-store.ts";
 import { type BundleMcpContext, McpSource } from "../tools/mcp-source.ts";
@@ -513,13 +514,18 @@ async function startUrlBundleSource(
   warnUnrecognizedUrlAuthType(ref, serverName);
 
   // SSRF protection: validate URL before connecting. Provider-auth sources are
-  // the operator-provisioned fleet rail (a `provider` auth config can't be set
-  // from tenant input — it comes from the vetted catalog entry), so they may
-  // reach in-cluster `.svc` services over plain HTTP — see `validateBundleUrl`'s
-  // `fleetInternal` path.
+  // the operator-provisioned fleet rail — the `minted` credential provider,
+  // whose URL comes from the vetted catalog entry — so they may reach in-cluster
+  // `.svc` services over plain HTTP. See `validateBundleUrl`'s `fleetInternal`
+  // path. Keyed on the provider NAME, not on `auth.type === "provider"`: a
+  // brokered connector also names a credential provider, but its URL comes from
+  // the vendor's API response, so it carries no operator provenance.
+  // Map legacy Composio refs forward ONCE, and use the same value for the URL
+  // gate and the transport below — otherwise one ref gets two trust verdicts.
+  const transportConfig = composioTransportConfig(ref.transport);
   validateBundleUrl(new URL(ref.url), {
     allowInsecure: opts?.allowInsecureRemotes,
-    fleetInternal: ref.transport?.auth?.type === "provider",
+    fleetInternal: isMintedFleetSource(transportConfig),
   });
   log.info(`[bundles] Starting remote bundle ${ref.url} as ${sourceName}...`);
 
@@ -562,7 +568,7 @@ async function startUrlBundleSource(
     {
       type: "remote",
       url: new URL(ref.url),
-      transportConfig: composioTransportConfig(ref.transport),
+      transportConfig,
       allowInsecure: opts?.allowInsecureRemotes === true,
       authProvider,
     },

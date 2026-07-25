@@ -26,9 +26,10 @@
  */
 
 import type { RemoteTransportConfig } from "../../../bundles/types.ts";
-import type {
-  TransportCredential,
-  TransportCredentialProvider,
+import {
+  registerCredentialProvider,
+  type TransportCredential,
+  type TransportCredentialProvider,
 } from "../../../tools/credential-provider.ts";
 import { validateComposioConfig } from "./config.ts";
 
@@ -51,10 +52,10 @@ const LEGACY_ENV_TEMPLATE = "${COMPOSIO_API_KEY}";
  * design: one Composio account serves the whole tenant, and per-owner isolation
  * lives in the Composio-side `user_id`, not in the credential.
  *
- * Throws when Composio is unconfigured. The provider is registered only when it
- * *is* configured, so this is unreachable in practice — but an empty header
- * would produce a silent 401 at first tool call, which is the failure mode this
- * whole seam exists to remove. Failing at source start names the cause instead.
+ * Throws when Composio is unconfigured rather than attaching an empty header —
+ * a blank `x-api-key` is a silent 401 at first tool call, which is the failure
+ * mode this seam exists to remove. Registration is unconditional (see below), so
+ * this is the gate, and it names the cause at source start.
  */
 export const composioCredentialProvider: TransportCredentialProvider = {
   credentialFor(): TransportCredential {
@@ -69,6 +70,24 @@ export const composioCredentialProvider: TransportCredentialProvider = {
     return { headers: { [COMPOSIO_AUTH_HEADER]: apiKey } };
   },
 };
+
+/**
+ * Register the credential provider at the composition root.
+ *
+ * Must run before `startWorkspaceBundles`: a connected Composio connector starts
+ * at boot, and `applyProviderAuth` throws for an unregistered name — which would
+ * drop the source from the registry and take the connector's tools down on every
+ * restart. Registering from the provider factory instead is too late, because the
+ * managed-connector registry is built lazily, after `Runtime.start` returns.
+ *
+ * Unconditional by design. Gating on "is Composio configured" would buy nothing:
+ * a ref naming this provider on a Composio-less deploy still fails, and
+ * `credentialFor`'s error ("no broker credential configured") names the cause
+ * better than the registry's generic "provider not registered".
+ */
+export function registerComposioCredentialProvider(): void {
+  registerCredentialProvider(COMPOSIO_CREDENTIAL_PROVIDER, composioCredentialProvider);
+}
 
 /** Whether `auth` is the pre-seam `x-api-key: ${COMPOSIO_API_KEY}` header form. */
 function isLegacyEnvTemplateAuth(auth: RemoteTransportConfig["auth"]): boolean {
