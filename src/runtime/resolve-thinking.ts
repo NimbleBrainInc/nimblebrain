@@ -86,9 +86,16 @@ function resolveOverride(
 /**
  * Resolve the effective thinking mode for an LLM call.
  *
- * Platform invariant: when thinking is on, at least
- * `MIN_VISIBLE_OUTPUT_TOKENS` are reserved for visible content. The model
- * can never spend the whole output budget on reasoning and emit nothing.
+ * When thinking is on, this reserves at least `MIN_VISIBLE_OUTPUT_TOKENS`
+ * for visible content, so the model has room to actually answer.
+ *
+ * The reservation is only *enforced at the API* for models that accept
+ * `thinking.type=enabled`, because that is the shape that carries
+ * `budgetTokens`. On adaptive-only models (see `ADAPTIVE_ONLY_THINKING_MODELS`)
+ * the engine drops the budget and sends `output_config.effort` derived from
+ * it, so the floor becomes a hint about depth rather than a hard split of the
+ * output ceiling. Those models are the out-of-box default, so don't read this
+ * as a guarantee the provider is holding.
  *
  * Resolution priority:
  *   1. Operator override (`configMode`):

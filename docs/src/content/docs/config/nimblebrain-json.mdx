@@ -133,6 +133,23 @@ The `models` object declares three role-based slots. Each value is a `provider:m
 | `fast` | Title generation, briefing, skill matching — cheap/fast workloads (still needs a large context window, see below) |
 | `reasoning` | Complex analysis, planning, long-horizon tasks |
 
+### Fallbacks when a slot is unset
+
+Every slot is optional. An unset slot resolves in this order:
+
+| Slot | Unset → falls back to |
+|------|------------------------|
+| `default` | `defaultModel`, else `anthropic:claude-opus-5` |
+| `reasoning` | `defaultModel`, else `anthropic:claude-opus-5` |
+| `fast` | `defaultModel`, else `anthropic:claude-haiku-4-5-20251001` |
+
+`fast` is deliberately asymmetric: with nothing configured it lands on a small model rather than following `default`. The slot backs short, single-shot calls made outside the agent loop — titling, history compaction, the briefing — on output budgets sized to their answer. Two reasons that matters:
+
+- **Cost.** Titling runs on essentially every conversation, so this is the platform's highest-frequency model call. A frontier model here is its largest avoidable spend.
+- **Correctness.** `max_tokens` bounds thinking *and* visible text together. On a model that reasons when not asked to, a small budget can go entirely to a reasoning trace and return no content — titling then falls back to a truncated first message, silently.
+
+An explicit `defaultModel` still governs every unset slot, `fast` included. That keeps single-provider deployments working: if `fast` skipped straight to a Claude model, an installation configured with only Google or only Nebius credentials would resolve the slot to a model it cannot call. If you set `defaultModel` to a frontier model and want the cheap-slot behavior, set `models.fast` explicitly.
+
 A workspace can override individual slots via `workspace.json → models`. When a `nb__delegate` call or agent profile specifies a slot name (e.g. `"model": "fast"`), it's resolved against these slots.
 
 <Aside type="caution">

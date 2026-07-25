@@ -254,7 +254,7 @@ Each workspace has its own config at `<workDir>/workspaces/<ws-id>/workspace.jso
       "maxIterations": 8
     }
   },
-  "models": { "default": "anthropic:claude-opus-4-6" },
+  "models": { "default": "anthropic:claude-sonnet-4-6" },
   "identity": { "name": "Acme Copilot" }
 }
 ```

@@ -36,7 +36,13 @@ const MANUAL_LIMIT_OVERRIDES: Record<string, { context?: number; output?: number
 };
 
 // Models the upstream API hasn't flagged yet but we know are scheduled for shutdown.
-// Format: "<provider>:<modelId>". Remove an entry once models.dev catches up.
+// Format: "<provider>:<modelId>".
+//
+// Remove an entry once models.dev catches up — either by flagging the model
+// deprecated itself, or by dropping it from the API entirely once it shuts
+// down. The second case is easy to miss and leaves a permanently dead entry:
+// `buildProviderModels` iterates only models still present upstream, so an id
+// that no longer exists there can never match again.
 const MANUAL_DEPRECATIONS = new Set<string>([
   // Google shutdown 2026-03-09 (successor: gemini-3.1-pro-preview)
   "google:gemini-3-pro-preview",

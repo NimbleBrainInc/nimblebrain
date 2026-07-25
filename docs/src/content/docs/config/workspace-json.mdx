@@ -35,7 +35,7 @@ In dev mode (no [`instance.json`](/config/instance-json/), no auth configured) t
       "model": "fast"
     }
   },
-  "models": { "default": "anthropic:claude-opus-4-6" },
+  "models": { "default": "anthropic:claude-sonnet-4-6" },
   "identity": "You are the Acme Product Copilot. Be concise. Prefer data-backed answers.",
   "createdAt": "2026-03-05T10:00:00.000Z",
   "updatedAt": "2026-04-15T09:15:00.000Z"
@@ -78,11 +78,11 @@ Any workspace can override individual model slots. Slots you don't specify fall 
 
 ```json
 {
-  "models": { "default": "anthropic:claude-opus-4-6" }
+  "models": { "default": "anthropic:claude-sonnet-4-6" }
 }
 ```
 
-Here the workspace uses Opus for `default` but still uses the instance defaults for `fast` and `reasoning`.
+Here the workspace pins Sonnet for `default` but still uses the instance defaults for `fast` and `reasoning`.
 
 ## Identity override
 

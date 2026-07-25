@@ -220,6 +220,16 @@ describe("supportsEnabledThinking", () => {
 
 		expect(unclassified).toEqual([]);
 	});
+
+	it("keeps the two classifications disjoint", () => {
+		// The check above short-circuits on supportsEnabledThinking, so an id
+		// listed in BOTH sets would slip through it — a contradictory
+		// classification that reads as deliberate. Assert the intersection is
+		// empty so the pair stays a genuine partition.
+		const inBoth = [...ACCEPTS_ENABLED_THINKING].filter((id) => !supportsEnabledThinking(id));
+
+		expect(inBoth).toEqual([]);
+	});
 });
 
 describe("Fable 5 exclusion", () => {
