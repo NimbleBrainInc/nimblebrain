@@ -2,7 +2,7 @@ export const STYLES = `
 *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
 html, body, #root { height: 100%; width: 100%; overflow: hidden; }
 body {
-  font-family: var(--font-sans, 'Inter', system-ui, -apple-system, sans-serif);
+  font-family: var(--font-sans, system-ui, sans-serif);
   font-size: 15px;
   line-height: 1.5;
   color: var(--color-text-primary, #09090b);
@@ -234,7 +234,7 @@ body {
 .detail-prompt-hint {
   position: absolute; top: 8px; right: 10px;
   font-size: 10px; color: var(--color-text-secondary, #5c5c66);
-  font-family: var(--font-sans, 'Inter', system-ui, sans-serif);
+  font-family: var(--font-sans, system-ui, sans-serif);
   opacity: 0; transition: opacity 0.15s;
 }
 .detail-prompt:hover .detail-prompt-hint { opacity: 1; }

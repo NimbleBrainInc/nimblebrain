@@ -92,6 +92,21 @@ function malformedRows(path: string, source: string): BadRow[] {
     // A row directly above a delimiter is the header — it defines the width.
     if (isDelimiter(lines[i + 1] ?? "")) {
       want = splitCells(line).length;
+      // GFM requires the delimiter to have exactly as many cells as the header.
+      // If it doesn't, the block is not a table at all: it publishes as a
+      // paragraph of literal pipes — the same visible failure as a short row,
+      // reached a different way, so it is reported the same way.
+      const delim = splitCells(lines[i + 1] ?? "").length;
+      if (delim !== want) {
+        bad.push({
+          file: path.slice(DOCS.length + 1),
+          line: i + 2,
+          want,
+          got: delim,
+          text: (lines[i + 1] ?? "").trim(),
+        });
+        want = 0;
+      }
       continue;
     }
     if (want === 0) continue; // a pipe line outside any table
@@ -114,6 +129,12 @@ describe("docs markdown tables", () => {
   test("a table written without outer pipes is checked, not skipped", () => {
     const source = ["a | b", "--|--", "c | d", "e | f | g", ""].join("\n");
     expect(malformedRows(join(DOCS, "x.md"), source).map((b) => [b.want, b.got])).toEqual([[2, 3]]);
+  });
+
+  test("a delimiter narrower than its header is reported, not skipped", () => {
+    // GFM rejects the whole block, so this publishes as literal pipes.
+    const source = ["| a | b | c |", "|---|---|", "| d | e | f |", ""].join("\n");
+    expect(malformedRows(join(DOCS, "x.md"), source).map((b) => [b.want, b.got])).toEqual([[3, 2]]);
   });
 
   test("a fenced code block containing pipes is ignored", () => {

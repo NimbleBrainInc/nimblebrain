@@ -1,7 +1,7 @@
 *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
 html, body { height: 100%; width: 100%; overflow: hidden; }
 body {
-  font-family: var(--font-sans, 'Inter', system-ui, sans-serif);
+  font-family: var(--font-sans, system-ui, sans-serif);
   font-size: 14px; line-height: 1.5;
   color: var(--color-text-primary, #09090b);
   background: var(--color-background-primary, #ffffff);

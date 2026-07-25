@@ -25,11 +25,13 @@ import {
 /**
  * Build the ext-apps token map for a mode.
  *
- * Spec keys follow the MCP ext-apps contract. Brand-semantic values with no
- * spec equivalent (`--nb-color-processing{,-light}`,
- * `--nb-color-info-light`, `--nb-font-heading`) ride as `--nb-*` extensions:
- * injected into the iframe's style block, filtered off the protocol boundary by
- * `getSpecThemeTokens`.
+ * Spec keys follow the MCP ext-apps contract. Anything with no spec equivalent
+ * rides as a `--nb-*` extension — the prefix *is* the rule, so there is no list
+ * to keep in step: `--nb-*` keys are injected into the iframe's style block and
+ * filtered off the protocol boundary by `getSpecThemeTokens`. (Note the
+ * converse does not hold: a few spec-shaped keys are also filtered, because
+ * NimbleBrain emits more of a family than the spec enumerates. `theme.ts` has
+ * that rule.)
  */
 export function paletteToExtAppsTokens(mode: Mode): Record<string, string> {
   const c = (name: keyof typeof colors) => pick(colors[name], mode);

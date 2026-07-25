@@ -65,6 +65,7 @@ export const colors = {
   accent: ["#f4f4f5", "#161618"],
   "accent-foreground": ["#09090b", "#fafafa"],
   destructive: ["#c02a24", "#f0736a"],
+  "destructive-foreground": ["#ffffff", "#000000"],
   border: ["#e4e4e7", "#232326"],
   input: ["#e4e4e7", "#232326"],
   ring: ["#0055FF", "#4d90ff"],
