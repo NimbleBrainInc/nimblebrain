@@ -130,6 +130,14 @@ interface Harness {
   lifecycle: BundleLifecycleManager;
   workspaceRegistry: ToolRegistry;
   runtime: Runtime;
+  /** Tool-policy writes the stub permission store received, newest last. */
+  permissionWrites: PermissionWrite[];
+}
+
+interface PermissionWrite {
+  owner: { scope: "workspace" | "user"; wsId?: string; userId?: string };
+  serverName: string;
+  tools: Record<string, "allow" | "disallow">;
 }
 
 /**
@@ -139,6 +147,7 @@ interface Harness {
  * us to satisfy 100+ unrelated methods.
  */
 function buildHarness(opts: { adminId?: string } = {}): Harness {
+  const permissionWrites: PermissionWrite[] = [];
   const workDir = mkdtempSync(join(tmpdir(), "nb-connector-tools-"));
   const wsId = "ws_acme";
   const workspaceStore = new WorkspaceStore(workDir);
@@ -222,15 +231,9 @@ function buildHarness(opts: { adminId?: string } = {}): Harness {
     lifecycle,
     workspaceRegistry,
     runtime,
+    permissionWrites,
   };
 }
-
-/** Tool-policy writes the stub permission store received, newest last. */
-const permissionWrites: Array<{
-  owner: { scope: "workspace" | "user"; wsId?: string; userId?: string };
-  serverName: string;
-  tools: Record<string, "allow" | "disallow">;
-}> = [];
 
 async function provisionWorkspace(
   h: Harness,
@@ -1097,7 +1100,6 @@ describe("manage_connectors.set_permissions", () => {
 
   afterEach(() => {
     rmSync(h.workDir, { recursive: true, force: true });
-    permissionWrites.length = 0;
   });
 
   test("rejects unknown serverName — fail-fast on typos", async () => {
@@ -1150,7 +1152,7 @@ describe("manage_connectors.set_permissions", () => {
     expect((result.structuredContent as { ok?: boolean } | undefined)?.ok).toBe(true);
     // ...and the policy actually persisted, so this can't pass on a handler
     // that returns ok without writing.
-    const last = permissionWrites.at(-1);
+    const last = h.permissionWrites.at(-1);
     expect(last?.owner.scope).toBe("workspace");
     expect(last?.tools).toEqual({ read: "disallow" });
   });
