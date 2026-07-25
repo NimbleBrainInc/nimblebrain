@@ -20,8 +20,10 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { NoopEventSink } from "../../src/adapters/noop-events.ts";
 import type { BundleRef } from "../../src/bundles/types.ts";
 import { log } from "../../src/observability/log.ts";
+import { Runtime } from "../../src/runtime/runtime.ts";
 import { startWorkspaceBundles } from "../../src/runtime/workspace-runtime.ts";
 import { WorkspaceStore } from "../../src/workspace/workspace-store.ts";
+import { createEchoModel } from "../helpers/echo-model.ts";
 
 const UNREACHABLE = "http://127.0.0.1:1/mcp";
 
@@ -77,6 +79,38 @@ describe("startWorkspaceBundles — unreachable URL bundle at boot", () => {
     expect(entry?.meta?.ui?.placements?.[0]?.resourceUri).toBe("ui://unreachable/main");
   }, 30_000);
 
+  test("bootToSeededConnection_recordsDeadEndToEnd", async () => {
+    // The two halves — the entry carries `startError`, and `seedInstance(…,
+    // startError)` records `dead` — are each pinned in isolation. This pins the
+    // JOIN, which is a single argument in `seedWorkspaceBundleInstances`.
+    // Dropping it type-checks and leaves every other suite green, and the
+    // resulting behavior is not merely unpinned but WRONG: the seeder falls
+    // through to the auth-derived branch and a static-auth bundle seeds
+    // `running` while dead, which `seedInstance_withoutStartError_
+    // stillRecordsRunning` actively certifies as correct.
+    const store = new WorkspaceStore(workDir);
+    const ws = await store.create("Fleet");
+    await store.update(ws.id, { bundles: [unreachableBundle("unreachable")] });
+
+    const runtime = await Runtime.start({
+      model: { provider: "custom", adapter: createEchoModel() },
+      noDefaultBundles: true,
+      logging: { disabled: true },
+      allowInsecureRemotes: true,
+      workDir,
+    });
+    try {
+      const connection = runtime
+        .getLifecycle()
+        .getInstance("unreachable", ws.id)
+        ?.connections?.get("_workspace");
+      expect(connection?.state).toBe("dead");
+      expect(connection?.lastError).toBeTruthy();
+    } finally {
+      await runtime.shutdown();
+    }
+  }, 30_000);
+
   test("startedCount_excludesTheFailedBundleAndNamesIt", async () => {
     // This line is the only boot-time signal that a dependency was unreachable —
     // it is how the staging incident was found. A surviving entry would inflate
@@ -101,6 +135,9 @@ describe("startWorkspaceBundles — unreachable URL bundle at boot", () => {
     const summary = lines.find((l) => l.includes("bundles in"));
     expect(summary).toContain("Started 0/1 bundles");
     expect(summary).toContain("1 failed to start");
+    // It must not promise a retry: recovery runs through the app's own doors, so
+    // a UI-less bundle has nothing to trigger it and stays down until restart.
+    expect(summary).not.toContain("retried");
   }, 30_000);
 
   test("failedNamedBundle_isDroppedNotKept", async () => {

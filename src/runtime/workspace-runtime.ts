@@ -371,12 +371,18 @@ export async function startWorkspaceBundles(
   // started count excludes it explicitly — otherwise this line reads "20/20"
   // while three bundles are dead, and the one boot-time signal that a
   // dependency was unreachable disappears.
+  //
+  // The count and the failure tally are all this line promises. It deliberately
+  // does NOT say the bundle will be retried: recovery is reachable through the
+  // app's own doors, so a bundle with no UI has nothing to trigger it and stays
+  // down until the process restarts (see the known limitation on #757). An
+  // operator debugging a UI-less bundle must not be told to wait.
   const failed = finalEntries.filter((e) => e.startError).length;
   if (flat.length > 0) {
     const elapsedMs = Date.now() - startMs;
     log.info(
       `[workspace-runtime] Started ${finalEntries.length - failed}/${flat.length} bundles in ${elapsedMs}ms (concurrency=${concurrency})${
-        failed > 0 ? ` — ${failed} failed to start (kept installed, retried on next use)` : ""
+        failed > 0 ? ` — ${failed} failed to start` : ""
       }`,
     );
   }

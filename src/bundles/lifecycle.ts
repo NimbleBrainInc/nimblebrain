@@ -2505,8 +2505,11 @@ export class BundleLifecycleManager {
   }
 
   /**
-   * Seed instances from the initial bundle startup (called by Runtime.start
-   * after bundles are already running).
+   * Seed instances from the initial bundle startup, and from the install path.
+   *
+   * A seeded bundle is not necessarily a running one: a URL bundle that was
+   * skipped for having no tokens, or that was attempted and failed
+   * (`startError`), is seeded too — the state is derived below, not assumed.
    *
    * Stage 2: every URL bundle binds to its workspace explicitly. The
    * disk-read boundary (`buildProcessInventory`) calls
@@ -2645,8 +2648,17 @@ function deriveInstallSource(ref: BundleRef): NonNullable<BundleInstance["instal
 }
 
 /**
- * Build the `BundleInstance` `seedInstance` records for an already-running
- * bundle. Derives `entityDataRoot` from `dataDir` + upjack namespace, resolves
+ * Build the `BundleInstance` `seedInstance` records.
+ *
+ * **`state` is hardcoded `"running"` here and corrected afterwards, only for URL
+ * refs** — `seedUrlConnectionState` is what resolves `dead` / `not_authenticated`
+ * / `reauth_required` / `running` and recomputes `instance.state` from the
+ * Connection. A named or path ref never reaches it, so anything this builds for
+ * one stays `running` whether or not it started. That is why the boot loop drops
+ * a failed named bundle instead of keeping it (see `unstartedUrlBundleEntry`):
+ * keeping it would seed a permanently running instance for a dead bundle.
+ *
+ * Derives `entityDataRoot` from `dataDir` + upjack namespace, resolves
  * `oauthScope` for URL bundles (post-Stage-2 the only legal value is
  * `"workspace"`), and the install channel from the ref shape. `dataDir` is
  * already the canonical bundle-data parent (slug = manifest.name) thanks to
