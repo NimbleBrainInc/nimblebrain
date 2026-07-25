@@ -5,10 +5,11 @@
  *
  * The contract under test splits on what the value *is*:
  *
- *   - **settings** (`baseUrl`, `monitor`) — block absent hydrates from env
- *     (back-compat; an upgrade breaks nothing); block present wins for every
- *     setting, and one warning names the env vars being ignored.
- *   - **the broker credential** — always `COMPOSIO_API_KEY`, never superseded,
+ *   - **settings** (`baseUrl`, `monitorEnabled`) — each falls back on its own. A
+ *     setting declared in the block wins; a setting left out — or left blank —
+ *     reads its `COMPOSIO_*` var. Nothing is ever silently discarded, so
+ *     declaring one setting cannot disturb another.
+ *   - **the broker credential** — always `COMPOSIO_API_KEY`, never declarable,
  *     because an installed connector's persisted transport credential is an env
  *     reference into that name.
  *
@@ -76,7 +77,7 @@ afterEach(() => {
 describe("the broker credential is env-only", () => {
   it("reports not configured when COMPOSIO_API_KEY is unset", () => {
     const cfg = validateComposioConfig();
-    expect(cfg.configured).toBe(false);
+    expect(cfg.apiKey).toBe("");
     expect(cfg.apiKey).toBe("");
   });
 
@@ -84,7 +85,7 @@ describe("the broker credential is env-only", () => {
     // The block cannot supply a credential, so declaring one must not make the
     // provider look configured.
     declareComposio({ baseUrl: "https://composio.internal" });
-    expect(validateComposioConfig().configured).toBe(false);
+    expect(validateComposioConfig().apiKey).toBe("");
   });
 
   it("resolves from the env even when a block is declared", () => {
@@ -94,7 +95,7 @@ describe("the broker credential is env-only", () => {
     declareComposio({ baseUrl: "https://composio.internal" });
 
     const cfg = validateComposioConfig();
-    expect(cfg.configured).toBe(true);
+    expect(cfg.apiKey).toBe("k_env");
     expect(cfg.apiKey).toBe("k_env");
     expect(cfg.baseUrl).toBe("https://composio.internal");
   });
@@ -109,7 +110,6 @@ describe("settings — env fallback when no block is declared", () => {
     process.env.COMPOSIO_API_BASE_URL = "https://composio.example.com";
 
     expect(validateComposioConfig()).toMatchObject({
-      configured: true,
       baseUrl: "https://composio.example.com",
       monitorEnabled: true,
     });
@@ -174,7 +174,6 @@ describe("settings — the declared block", () => {
     });
 
     expect(validateComposioConfig()).toMatchObject({
-      configured: true,
       baseUrl: "https://composio.internal",
       monitorEnabled: true,
     });
@@ -222,6 +221,17 @@ describe("precedence — per field, so nothing is silently discarded", () => {
     const cfg = validateComposioConfig();
     expect(cfg.baseUrl).toBe("https://composio.staging");
     expect(cfg.monitorEnabled).toBe(false);
+  });
+
+  it("treats a blank declared value as absent, so the env fallback still applies", () => {
+    // A templated deploy renders an unset value to "". Counting that as a
+    // declaration would discard the operator's env value — the loss this
+    // precedence model exists to prevent.
+    process.env.COMPOSIO_API_BASE_URL = "https://composio.internal";
+    for (const blank of ["", "   "]) {
+      declareComposio({ baseUrl: blank });
+      expect(validateComposioConfig().baseUrl).toBe("https://composio.internal");
+    }
   });
 
   it("mixes the two sources in one resolution", () => {

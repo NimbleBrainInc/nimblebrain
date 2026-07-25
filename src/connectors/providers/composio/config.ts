@@ -49,9 +49,11 @@ export const COMPOSIO_API_BASE = "https://backend.composio.dev";
 
 /** Resolved Composio provider config. Every consumer of a `COMPOSIO_*` value reads it from here. */
 export interface ComposioConfig {
-  /** Whether the broker credential resolved — the gate on registering the provider at all. */
-  configured: boolean;
-  /** The platform-wide broker credential, from `COMPOSIO_API_KEY`. Empty when unconfigured. */
+  /**
+   * The platform-wide broker credential, from `COMPOSIO_API_KEY`. Empty when
+   * Composio is unconfigured — its presence IS the gate on registering the
+   * provider, so there is no separate `configured` flag to drift from it.
+   */
   apiKey: string;
   /** Validated http(s) API base. */
   baseUrl: string;
@@ -84,7 +86,7 @@ function resolveComposioConfig(): ComposioConfig {
   const apiKey = process.env.COMPOSIO_API_KEY?.trim() ?? "";
   if (!apiKey) {
     log.info("[composio] integration: not configured (set COMPOSIO_API_KEY to enable)");
-    return { configured: false, apiKey: "", baseUrl: COMPOSIO_API_BASE, monitorEnabled: false };
+    return { apiKey: "", baseUrl: COMPOSIO_API_BASE, monitorEnabled: false };
   }
 
   const baseUrl = resolveBaseUrl(declared?.baseUrl);
@@ -93,16 +95,24 @@ function resolveComposioConfig(): ComposioConfig {
   log.info(`[composio] integration: configured (base=${baseUrl}${tid ? `, tid=${tid}` : ""})`);
 
   return {
-    configured: true,
     apiKey,
     baseUrl,
     monitorEnabled: declared?.monitorEnabled ?? monitorEnabledFromEnv(),
   };
 }
 
-/** Resolve + validate the API base: the declared value, else the env, else the default. */
-function resolveBaseUrl(declared: string | undefined): string {
-  const raw = (declared ?? process.env.COMPOSIO_API_BASE_URL)?.trim();
+/**
+ * Resolve + validate the API base: the declared value, else the env, else the default.
+ *
+ * A blank declared value counts as *absent*, so the env fallback still applies. A
+ * templated deploy renders `"baseUrl": "{{ .Values… }}"` to `""` when the value is
+ * unset, and treating that as a declaration would discard the operator's
+ * `COMPOSIO_API_BASE_URL` and silently point a self-hosted platform at the public
+ * backend — the exact loss per-field precedence exists to prevent.
+ */
+function resolveBaseUrl(declaredRaw: string | undefined): string {
+  const declared = declaredRaw?.trim() || undefined;
+  const raw = declared ?? process.env.COMPOSIO_API_BASE_URL?.trim();
   if (!raw) return COMPOSIO_API_BASE;
 
   const label = declared ? "connectors.providers.composio.baseUrl" : "COMPOSIO_API_BASE_URL";

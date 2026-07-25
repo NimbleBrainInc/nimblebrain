@@ -70,7 +70,7 @@ export function managedConnectorRegistryOf(
 export function buildManagedConnectorRegistry(): ManagedConnectorRegistry {
   const providers: ManagedConnectorProvider[] = [];
 
-  if (validateComposioConfig().configured) {
+  if (validateComposioConfig().apiKey) {
     providers.push(createComposioProvider());
   }
 

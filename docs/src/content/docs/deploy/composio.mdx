@@ -102,8 +102,6 @@ On pod startup, look for this log line:
 [composio] integration: configured (base=https://backend.composio.dev)
 ```
 
-The API key is always environment-sourced.
-
 If you see `integration: not configured` instead, no API key is reaching the pod.
 
 If the platform refuses to start with `NB_TENANT_ID is required when running in bouncer (multi-tenant) mode` or `must be http(s)`, the deployment config is malformed — fix per the error message.

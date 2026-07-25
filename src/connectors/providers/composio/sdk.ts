@@ -454,7 +454,15 @@ export async function cleanupComposioBundle(opts: {
   let localDeleted = false;
   let lastError: string | undefined;
 
-  const { apiKey } = validateComposioConfig();
+  // `validateComposioConfig` throws on a misconfigured base URL / missing tenant
+  // id, and this helper's contract (relied on by `lifecycle.disconnect`) is that
+  // it never throws — a config error must not strand `connection.json` on disk.
+  let apiKey = "";
+  try {
+    apiKey = validateComposioConfig().apiKey;
+  } catch (err) {
+    lastError = err instanceof Error ? err.message : String(err);
+  }
 
   let connectedAccountId: string | undefined;
   try {
