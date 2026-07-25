@@ -16,10 +16,7 @@
  * this module only holds what was declared.
  */
 
-/**
- * The declared `connectors.providers.composio` block — settings only. The broker
- * credential is read from `COMPOSIO_API_KEY`; see the module note above.
- */
+/** The declared `connectors.providers.composio` block. */
 export interface ComposioProviderConfig {
   /**
    * Platform-wide Composio API key — the broker credential, and the gate on

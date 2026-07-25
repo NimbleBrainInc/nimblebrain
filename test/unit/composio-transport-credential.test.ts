@@ -107,6 +107,34 @@ describe("registration happens at the composition root", () => {
     expect(getCredentialProvider(COMPOSIO_CREDENTIAL_PROVIDER)).toBeDefined();
   });
 
+  it("resolves a config-only key onto a legacy ref's transport header — the headline case", async () => {
+    // The single combination this PR exists to enable, end to end and in one
+    // test: broker credential declared ONLY in nimblebrain.json, nothing in the
+    // environment, against a ref installed before the seam existed. Asserting
+    // the header VALUE, not just that nothing threw — the two halves passing
+    // separately is what let the boot-ordering bug through.
+    delete process.env.COMPOSIO_API_KEY;
+    setConnectorsConfig({ providers: { composio: { apiKey: "k_config" } } });
+    _resetComposioConfigForTest();
+    const { registerComposioCredentialProvider } = await import(
+      "../../src/connectors/providers/composio/transport-credential.ts"
+    );
+    const { createRemoteTransport } = await import("../../src/tools/remote-transport.ts");
+    registerComposioCredentialProvider();
+
+    const transport = createRemoteTransport(
+      new URL("https://composio.test/mcp"),
+      composioTransportConfig(LEGACY_AUTH),
+      undefined,
+      {},
+    );
+    const requestInit = (transport as unknown as Record<string, unknown>)._requestInit as
+      | RequestInit
+      | undefined;
+    const headers = requestInit?.headers as Record<string, string> | undefined;
+    expect(headers?.["x-api-key"]).toBe("k_config");
+  });
+
   it("builds a transport for a mapped legacy ref without a registry lookup", async () => {
     const { registerComposioCredentialProvider } = await import(
       "../../src/connectors/providers/composio/transport-credential.ts"

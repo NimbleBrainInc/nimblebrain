@@ -105,8 +105,8 @@ function isLegacyEnvTemplateAuth(auth: RemoteTransportConfig["auth"]): boolean {
  * action, and leaves `workspace.json` untouched — a ref written before the seam
  * behaves identically to one written after it, including on a deploy whose
  * broker credential now lives in `nimblebrain.json` rather than the env. Once no
- * legacy refs remain in the field this collapses to the identity function and
- * can be deleted.
+ * legacy refs remain in the field this collapses to the identity function and can
+ * be deleted — tracked in #756.
  *
  * Returns `config` unchanged for every other shape, so a non-Composio ref and an
  * already-migrated one both pass straight through.

@@ -339,7 +339,12 @@ One instance serves one tenant, so this is a single config layer: there is no pe
 It is declarable because nothing persisted points at where it lives. A connector installed through Composio records `auth: { type: "provider", provider: "composio" }` in `workspace.json` — it names the credential it needs, not a place to find it — so the key never sits at rest and resolution stays the provider's own business. Connectors installed before that change carry a `${COMPOSIO_API_KEY}` environment reference and are mapped forward when they start, so both resolve identically with no operator action.
 
 <Aside type="note">
-  **A secret in a mounted config file is still your call.** Declaring `apiKey` here works, but `COMPOSIO_API_KEY` sourced from a secret store into the pod environment remains the better posture for most deployments — `nimblebrain.json` is operator-managed and overwritten on every deploy. Use the block for `baseUrl` and `monitorEnabled`, and reach for `apiKey` when a single-tenant or local setup makes one config file simpler than two mechanisms.
+  **Which home to pick.** Both work; they suit different deployments.
+
+  - **Environment (`COMPOSIO_API_KEY`)** — right for multi-tenant and any deployment with a secret store. The key stays out of `nimblebrain.json`, which is operator-managed and rewritten on every deploy, and rotation is a secret-store change rather than a config edit.
+  - **`apiKey` in the block** — right for single-tenant, self-hosted, and local setups, where one config file is simpler than standing up a second mechanism for one value.
+
+  The field exists so the choice is yours; before the transport credential named a provider rather than an environment variable, only the first option was possible at all.
 </Aside>
 
 ### Environment fallback and precedence
