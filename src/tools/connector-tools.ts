@@ -1878,7 +1878,7 @@ async function handleInstallRemoteOAuth(
   if (skillsLock.length > 0) ref.skillsLock = skillsLock;
   await ctx.runtime.getWorkspaceStore().update(wsId, { bundles: [...ws.bundles, ref] });
   const wsRegistry = ctx.runtime.getRegistryForWorkspace(wsId);
-  lifecycle.seedInstance(serverName, action.url, ref, undefined, wsId, undefined, wsRegistry);
+  lifecycle.seedInstance(serverName, action.url, ref, undefined, wsId);
   lifecycle.notifyInstalled(serverName, wsId);
 
   // Static-credential URL bundles authenticate without an MCP-side OAuth flow,
@@ -2159,8 +2159,7 @@ function handleDuplicateInstall(
   // alreadyInstalled — the latter would skip seedInstance and fail the next
   // OAuth initiate.
   if (!lifecycle.getInstance(dupServerName, wsId)) {
-    const wsRegistry = ctx.runtime.getRegistryForWorkspace(wsId);
-    lifecycle.seedInstance(dupServerName, action.url, dup, undefined, wsId, undefined, wsRegistry);
+    lifecycle.seedInstance(dupServerName, action.url, dup, undefined, wsId);
     lifecycle.notifyInstalled(dupServerName, wsId);
     return {
       content: textContent(`Reattached "${entry.name}" (recovered orphan entry).`),
@@ -2376,7 +2375,6 @@ async function handleInstallMpak(
     inventoryEntry.meta ?? undefined,
     wsId,
     inventoryEntry.dataDir,
-    registry,
   );
   // Register placements + emit bundle.installed so the web shell's
   // sidebar refreshes without a reboot. seedInstance is intentionally

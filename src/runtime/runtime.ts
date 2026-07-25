@@ -854,12 +854,7 @@ export class Runtime {
     lifecycle.setWorkspaceRegistries(workspaceRegistries);
 
     // Seed lifecycle instances for workspace bundles.
-    seedWorkspaceBundleInstances(
-      lifecycle,
-      workspaceRegistries,
-      placementRegistry,
-      workspaceBundleEntries,
-    );
+    seedWorkspaceBundleInstances(lifecycle, placementRegistry, workspaceBundleEntries);
 
     // Reconcile connector-skill overlays to the pinned version. Overlays bind
     // only at connector install, and the pin is deploy-time config — so boot
@@ -4410,24 +4405,13 @@ function registerPlatformPlacements(
  */
 function seedWorkspaceBundleInstances(
   lifecycle: BundleLifecycleManager,
-  workspaceRegistries: Map<string, ToolRegistry>,
   placementRegistry: PlacementRegistry,
   entries: ProcessInventoryEntry[],
 ): void {
   for (const entry of entries) {
     const { serverName: sn, bundle: ref, meta, wsId, dataDir, startError } = entry;
     const label = "name" in ref ? ref.name : "url" in ref ? ref.url : ref.path;
-    const wsRegistry = workspaceRegistries.get(wsId);
-    lifecycle.seedInstance(
-      sn,
-      label,
-      ref,
-      meta ?? undefined,
-      wsId,
-      dataDir,
-      wsRegistry,
-      startError,
-    );
+    lifecycle.seedInstance(sn, label, ref, meta ?? undefined, wsId, dataDir, startError);
 
     const instance = lifecycle.getInstance(sn, wsId);
     if (instance?.ui?.placements && instance.ui.placements.length > 0) {

@@ -435,6 +435,21 @@ function AuthenticatedAppContent({
                 <Route path="connectors/:serverName" element={<ConnectorDetailPage />} />
                 <Route path="skills" element={<SkillsTab />} />
               </Route>
+              {/* Unmatched path INSIDE a workspace. This has to be a child of
+                  `/w/:slug`, not the top-level splat: the router ranks by
+                  specificity, so a top-level `*` swallows `/w/<slug>/…` whole
+                  and `WorkspaceRouteGuard` never mounts. The guard is what
+                  projects the slug onto the ambient workspace, so without it the
+                  shell keeps serving the previously-focused workspace's
+                  placements — and an app that IS installed one workspace over
+                  gets reported as gone (Back after a switch, or a shared
+                  `/w/<other>/app/<x>` link). Entering the branch also makes
+                  `settled` do its job: the guard switches the workspace, the
+                  shell refetches, and the route materialises. */}
+              <Route
+                path="*"
+                element={<NotFoundPage settled={shellWorkspaceId === wsCtx.activeWorkspace?.id} />}
+              />
             </Route>
 
             {/* Profile — top-level, identity-bound. Tabbed surface
@@ -513,17 +528,14 @@ function AuthenticatedAppContent({
               <Route path="about" element={<OrgAboutTab />} />
             </Route>
 
-            {/* Nothing matched. Must stay last, and must exist: without it an
-                unmatched path renders `null` into the main area, which reads as
-                a broken app rather than a bad URL. Most often reached via an app
-                route whose placement is gone (uninstalled, or installed but not
-                running). Gated on the shell's placements having caught up with
-                the focused workspace, so the mid-switch window shows pending
-                instead of falsely claiming the route doesn't exist. */}
-            <Route
-              path="*"
-              element={<NotFoundPage settled={shellWorkspaceId === wsCtx.activeWorkspace?.id} />}
-            />
+            {/* Nothing matched, outside any workspace. Must exist: an unmatched
+                path otherwise renders `null` into the main area, which reads as
+                a broken app rather than a bad URL. Workspace-scoped misses are
+                handled by the sibling splat under `/w/:slug` — see the note
+                there for why they can't be served from here. Nothing outside a
+                workspace depends on shell placements, so this one is always
+                settled. */}
+            <Route path="*" element={<NotFoundPage settled />} />
           </Routes>
         </ErrorBoundary>
       </ShellLayout>

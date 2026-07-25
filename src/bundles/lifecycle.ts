@@ -2521,16 +2521,11 @@ export class BundleLifecycleManager {
     manifestMeta: SeedManifestMeta | undefined,
     wsId: string,
     dataDir?: string,
-    /** Per-workspace ToolRegistry. Optional for backward compat with
-     *  test callers; production callers should always pass it. */
-    registry?: ToolRegistry,
     /** Boot-start failure message for an installed-but-not-running URL bundle.
      *  Set only by the boot seeder; makes the seeded Connection `dead` instead
      *  of the auth-derived state. */
     startError?: string,
   ): void {
-    void registry; // registry is no longer used; kept for caller backward compat
-
     // Track A: validate authorize-URL params at the seed boundary.
     // Catches reserved-key collisions (client_id, state, PKCE, scope, etc.)
     // before they break OAuth flows at runtime.

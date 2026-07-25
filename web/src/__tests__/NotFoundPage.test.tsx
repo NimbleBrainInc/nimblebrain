@@ -22,7 +22,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 const React = await import("react");
 const ReactDOMClient = await import("react-dom/client");
 const { act } = await import("react");
-const { MemoryRouter } = await import("react-router-dom");
+const { MemoryRouter, matchRoutes } = await import("react-router-dom");
 const { NotFoundPage } = await import("../pages/NotFoundPage");
 
 interface Mounted {
@@ -69,5 +69,58 @@ describe("NotFoundPage", () => {
     const { container } = await mount(false);
     expect(container.textContent).toContain("Loading");
     expect(container.textContent).not.toContain("isn’t available");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Where the splat has to live.
+//
+// React Router ranks branches by specificity, not source order, so a lone
+// top-level `*` swallows `/w/<slug>/…` whole — the `/w/:slug` branch is never
+// entered and `WorkspaceRouteGuard` never mounts. The guard is what projects the
+// slug onto the ambient workspace, so without it the shell keeps serving the
+// previously-focused workspace's placements and reports an app that is
+// installed one workspace over as gone.
+//
+// This pins the router semantics that make the child splat necessary, against a
+// config mirroring App.tsx's shape. It does NOT read App.tsx, so it cannot catch
+// someone deleting the child splat there as a duplicate — the comment at that
+// route is what guards against it. What this file owns is the reason.
+// ---------------------------------------------------------------------------
+
+const withChildSplat = [
+  { path: "/" },
+  {
+    path: "/w/:slug",
+    children: [{ index: true }, { path: "app/crm" }, { path: "*" }],
+  },
+  { path: "*" },
+];
+
+const topLevelSplatOnly = [
+  { path: "/" },
+  { path: "/w/:slug", children: [{ index: true }, { path: "app/crm" }] },
+  { path: "*" },
+];
+
+const branch = (routes: Parameters<typeof matchRoutes>[0], url: string): (string | undefined)[] =>
+  (matchRoutes(routes, url) ?? []).map((m) => m.route.path);
+
+describe("workspace-scoped not-found routing", () => {
+  test("unknownAppUnderWorkspace_entersTheGuardBranch", () => {
+    expect(branch(withChildSplat, "/w/abc/app/ghost")).toEqual(["/w/:slug", "*"]);
+  });
+
+  test("topLevelSplatAlone_bypassesTheGuardEntirely", () => {
+    // The shape this replaced. Documents the failure so it isn't reintroduced.
+    expect(branch(topLevelSplatOnly, "/w/abc/app/ghost")).toEqual(["*"]);
+  });
+
+  test("knownAppUnderWorkspace_stillWins", () => {
+    expect(branch(withChildSplat, "/w/abc/app/crm")).toEqual(["/w/:slug", "app/crm"]);
+  });
+
+  test("nonWorkspacePath_stillFallsToTheTopLevelSplat", () => {
+    expect(branch(withChildSplat, "/nonsense")).toEqual(["*"]);
   });
 });
