@@ -40,9 +40,28 @@ export interface ComposioProviderConfig {
   monitorEnabled?: boolean;
 }
 
+/**
+ * The declared `connectors.providers.smithery` block — settings only. The broker
+ * credential is read from `SMITHERY_API_KEY`; see the module note above.
+ */
+export interface SmitheryProviderConfig {
+  /** Platform-wide Smithery API key. Falls back to `SMITHERY_API_KEY`. */
+  apiKey?: string;
+  /** Smithery namespace brokered connections are created under. Falls back to `SMITHERY_NAMESPACE`. */
+  namespace?: string;
+  /** Connect API base URL override. Must be http(s). Falls back to `SMITHERY_API_BASE_URL`. */
+  baseUrl?: string;
+  /**
+   * Run Smithery's arm of the connection-revalidator probe. Default: true when
+   * the provider is configured; falls back to `SMITHERY_MONITOR_ENABLED`.
+   */
+  monitorEnabled?: boolean;
+}
+
 /** Declared provider blocks, keyed by the connector `auth-kind` the provider owns. */
 export interface ManagedProviderConfigs {
   composio?: ComposioProviderConfig;
+  smithery?: SmitheryProviderConfig;
 }
 
 /** The `connectors` block of `nimblebrain.json`. */
@@ -64,6 +83,7 @@ const CONNECTORS_FIELDS: Record<keyof Required<ConnectorsConfig>, true> = {
 
 const MANAGED_PROVIDER_FIELDS: Record<keyof Required<ManagedProviderConfigs>, true> = {
   composio: true,
+  smithery: true,
 };
 
 const COMPOSIO_PROVIDER_FIELDS: Record<keyof Required<ComposioProviderConfig>, true> = {
@@ -76,8 +96,17 @@ const COMPOSIO_PROVIDER_FIELDS: Record<keyof Required<ComposioProviderConfig>, t
 export const CONNECTORS_CONFIG_KEYS: string[] = Object.keys(CONNECTORS_FIELDS);
 /** Every provider a `connectors.providers` block may declare. */
 export const MANAGED_PROVIDER_KEYS: string[] = Object.keys(MANAGED_PROVIDER_FIELDS);
+const SMITHERY_PROVIDER_FIELDS: Record<keyof Required<SmitheryProviderConfig>, true> = {
+  apiKey: true,
+  namespace: true,
+  baseUrl: true,
+  monitorEnabled: true,
+};
+
 /** Every key the `connectors.providers.composio` block accepts. */
 export const COMPOSIO_PROVIDER_CONFIG_KEYS: string[] = Object.keys(COMPOSIO_PROVIDER_FIELDS);
+/** Every key the `connectors.providers.smithery` block accepts. */
+export const SMITHERY_PROVIDER_CONFIG_KEYS: string[] = Object.keys(SMITHERY_PROVIDER_FIELDS);
 
 // ── The installed config ─────────────────────────────────────────────
 

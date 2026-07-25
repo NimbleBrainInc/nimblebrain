@@ -18,12 +18,14 @@ function connector(fields: {
   serverName: string;
   skillsLock?: ConnectorSkillLockEntry[];
   composio?: { connectorId: string };
+  smithery?: { connectorId: string; connectionId: string; namespace: string; baseUrl: string };
 }): BundleRef {
   return {
     url: fields.url ?? "https://example.test/mcp",
     serverName: fields.serverName,
     ...(fields.skillsLock ? { skillsLock: fields.skillsLock } : {}),
     ...(fields.composio ? { composio: fields.composio } : {}),
+    ...(fields.smithery ? { smithery: fields.smithery } : {}),
   };
 }
 
@@ -134,6 +136,32 @@ describe("reconcileConnectorSkills", () => {
     await reconcileConnectorSkills(deps);
 
     expect(cap.syncCalls[0]!.identity).toBe("outlook");
+  });
+
+  it("first-binds a smithery connector from the catalog id, not the session url", async () => {
+    // Smithery's persisted url is a per-install broker session, so byUrl misses
+    // and the stamped catalog id is the only route back to the canonical
+    // reverse-DNS name. Without it the identity is the slug
+    // (`ai-bassethound-mcp`) and the connector never picks up its overlay.
+    const smithery = connector({
+      url: "https://api.smithery.ai/connect/ns/nb-abc/mcp",
+      serverName: "ai-bassethound-mcp",
+      smithery: {
+        connectorId: "ai.bassethound/mcp",
+        connectionId: "nb-abc",
+        namespace: "ns",
+        baseUrl: "https://api.smithery.ai",
+      },
+    });
+    const { deps, cap } = buildDeps(
+      [{ id: "ws_a", bundles: [smithery] }],
+      (identity) => (identity === "bassethound" ? [lock("bassethound", PIN)] : []),
+      { byId: catalog({ "ai.bassethound/mcp": { id: "ai.bassethound/mcp" } }) },
+    );
+
+    await reconcileConnectorSkills(deps);
+
+    expect(cap.syncCalls[0]!.identity).toBe("bassethound");
   });
 
   it("leaves a connector untouched and does not persist when the fetch returns nothing", async () => {

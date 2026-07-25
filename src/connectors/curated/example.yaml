@@ -6,8 +6,9 @@
 # the `ServerDetail` wire shape (the upstream MCP registry schema,
 # ajv-validated against `schemas/server.schema.json`).
 #
-# It deliberately ships ONLY plain DCR entries. Production curation —
-# the full connector set, `auth: static` operator-setup entries, and
+# It deliberately ships ONLY plain DCR entries — every entry here must
+# install with zero operator setup. Production curation — the full
+# connector set, `auth: static` operator-setup entries, and
 # Composio-backed toolkits — is deployment configuration, not runtime
 # code: a deployment points `NB_CURATED_CATALOG_DIR` at a mounted
 # directory of catalog files, which replaces this example wholesale.

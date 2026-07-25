@@ -380,6 +380,30 @@
                 }
               },
               "additionalProperties": false
+            },
+            "smithery": {
+              "description": "Smithery (auth broker + hosted MCP sessions). Each field falls back per field to its env var when left out: SMITHERY_API_KEY, SMITHERY_NAMESPACE, SMITHERY_API_BASE_URL, SMITHERY_MONITOR_ENABLED. The provider registers only when both a credential and a namespace resolve.",
+              "type": "object",
+              "properties": {
+                "apiKey": {
+                  "type": "string",
+                  "description": "Platform-wide Smithery API key. Falls back to SMITHERY_API_KEY. Its presence (with a namespace) is the gate on registering the provider at all."
+                },
+                "namespace": {
+                  "type": "string",
+                  "description": "Smithery namespace brokered connections are created under. Globally unique and account-owned, so there is no default — without it the provider stays unregistered even with a credential present."
+                },
+                "baseUrl": {
+                  "type": "string",
+                  "description": "Connect API base URL override. Must be http(s) — the session URL derived from it becomes an installed connector's remote MCP target. Default: https://api.smithery.ai"
+                },
+                "monitorEnabled": {
+                  "type": "boolean",
+                  "description": "Run Smithery's arm of the connection-revalidator probe. It detects a connection deleted at the broker; a lapsed authorization is logged, not flipped, until a verdict can carry a remedy URL. Default: true when the provider is configured; falls back to SMITHERY_MONITOR_ENABLED. The sweep cadence is provider-agnostic and is set via NB_CONNECTION_REVALIDATE_INTERVAL_SECONDS, not here.",
+                  "default": true
+                }
+              },
+              "additionalProperties": false
             }
           },
           "additionalProperties": false

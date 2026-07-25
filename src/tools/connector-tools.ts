@@ -8,6 +8,7 @@ import {
   saveComposioConnection,
 } from "../bundles/composio-connection.ts";
 import { WORKSPACE_PRINCIPAL_ID } from "../bundles/connection.ts";
+import { brokeredRef } from "../bundles/connection-probe.ts";
 import { sanitizePlacements } from "../bundles/defaults.ts";
 import { getMpak } from "../bundles/mpak.ts";
 import {
@@ -27,7 +28,11 @@ import { installBundleInWorkspace } from "../bundles/workspace-ops.ts";
 import type { UserConfigFieldDef } from "../config/workspace-credentials.ts";
 import { validateComposioConfig } from "../connectors/providers/composio/config.ts";
 import { COMPOSIO_CREDENTIAL_PROVIDER } from "../connectors/providers/composio/transport-credential.ts";
-import type { ManagedConnectorProvider } from "../connectors/providers/managed-provider.ts";
+import type {
+  ManagedConnectorProvider,
+  ManagedSession,
+} from "../connectors/providers/managed-provider.ts";
+import { SMITHERY_CREDENTIAL_PROVIDER } from "../connectors/providers/smithery/transport-credential.ts";
 import { connectorSkillIdentityFrom } from "../connectors/server-detail.ts";
 import { textContent } from "../engine/content-helpers.ts";
 import { INTERNAL_TOOL_ANNOTATION, type ToolResult } from "../engine/types.ts";
@@ -91,6 +96,22 @@ function composioProvider(ctx: ManageConnectorsContext): ManagedConnectorProvide
 
 /** Error surfaced when a Composio dispatch arm is reached but no Composio provider is registered. */
 const COMPOSIO_NOT_CONFIGURED = "Composio integration is not configured.";
+
+/**
+ * The registered Smithery managed-connector provider, or undefined when
+ * Smithery isn't configured. Smithery dispatch (userId derivation, session
+ * create) routes through this — the tool never imports the Connect client
+ * directly, so the broker stays behind the seam.
+ */
+function smitheryProvider(ctx: ManageConnectorsContext): ManagedConnectorProvider | undefined {
+  return ctx.runtime.getManagedConnectorRegistry().get("smithery");
+}
+
+/** Error surfaced when a Smithery dispatch arm is reached but no Smithery provider is registered. */
+const SMITHERY_NOT_CONFIGURED =
+  "Smithery integration is not configured. Set SMITHERY_API_KEY in the platform env, " +
+  "declare connectors.providers.smithery.namespace (or set SMITHERY_NAMESPACE), " +
+  "and restart the API.";
 
 /** Inputs to {@link deriveConnectorStatus}. Subset of InstalledEntry's
  *  shape so the helper has a small, testable surface. */
@@ -671,9 +692,14 @@ interface InstalledEntryDeps {
 
 /**
  * Match a bundle instance's ref to its catalog entry. Prefers a URL match;
- * composio-backed bundles store a per-install session URL that misses
- * `catalogByUrl`, so they fall back to the catalog id carried on
- * `ref.composio.connectorId` (stamped by the install path alongside the URL).
+ * EVERY brokered bundle stores a per-install session URL that misses
+ * `catalogByUrl`, so they fall back to the catalog id their provider stamped on
+ * the ref at install — recovered by `brokeredRef`, which owns the
+ * provider list.
+ *
+ * The fallback must cover each brokered kind: without it the connector reads as
+ * uncatalogued — slug instead of display name, letter avatar instead of icon,
+ * and every catalog-gated section of the Configure page dark.
  */
 function resolveInstanceCatalog(
   instance: BundleInstance,
@@ -683,13 +709,10 @@ function resolveInstanceCatalog(
   const ref = instance.ref;
   const isRemote = !!ref && "url" in ref;
   const url = isRemote ? (ref as { url: string }).url : undefined;
-  const composioConnectorId =
-    isRemote && "composio" in (ref as Record<string, unknown>)
-      ? (ref as { composio?: { connectorId?: string } }).composio?.connectorId
-      : undefined;
+  const connectorId = isRemote ? brokeredRef(ref)?.connectorId : undefined;
   let cat = url ? catalogByUrl.get(url) : undefined;
-  if (!cat && composioConnectorId) {
-    cat = catalogById.get(composioConnectorId);
+  if (!cat && connectorId) {
+    cat = catalogById.get(connectorId);
   }
   return { isRemote, url, cat };
 }
@@ -1314,7 +1337,7 @@ async function handleInstallIdentity(
   // (`{type:"user"}`, not a workspace) and returns the per-install session URL +
   // a transport naming the `composio` credential provider — the same wiring the
   // workspace path builds via `resolveInstallWiring`, owner-swapped.
-  let composioWiring: { url: string; transport: RemoteTransportConfig } | undefined;
+  let composioWiring: BrokeredWiring | undefined;
   if (action.auth === "composio") {
     const composioErr = validateComposioInstall(action, entry.name);
     if (composioErr) return errResult(composioErr);
@@ -1867,7 +1890,7 @@ async function handleInstallRemoteOAuth(
     serverName,
     entry.id,
     trustedUi,
-    wiring.composioWiring,
+    wiring.brokeredWiring,
     wiring.staticOAuthClient,
   );
   // Bind the curated connector-skill overlay, if one is curated for this
@@ -1901,7 +1924,7 @@ async function handleInstallRemoteOAuth(
   // here. Eager-start is a UX optimization; a failure returns a warning, not an
   // error, because the install itself has still succeeded.
   let startWarning: string | undefined;
-  if (action.auth === "composio" || action.auth === "provider") {
+  if (action.auth === "composio" || action.auth === "smithery" || action.auth === "provider") {
     startWarning = await eagerStartRemoteSource(ctx, ref, wsRegistry, wsId, entry, action);
   }
   return {
@@ -1916,6 +1939,22 @@ async function handleInstallRemoteOAuth(
     },
     isError: false,
   };
+}
+
+/**
+ * What a brokered provider (Composio, Smithery) produces at install time: the
+ * minted session URL, the transport that reaches it, and any marker the
+ * provider needs persisted on the BundleRef for later liveness probing.
+ *
+ * The broker credential never appears here. The transport names a credential
+ * PROVIDER (`auth: { type: "provider", provider }`), which attaches the secret
+ * at transport-build time — so neither the value nor the environment variable's
+ * name is at rest in workspace.json.
+ */
+interface BrokeredWiring {
+  url: string;
+  transport: RemoteTransportConfig;
+  smithery?: { connectorId: string; connectionId: string; namespace: string; baseUrl: string };
 }
 
 /**
@@ -1969,6 +2008,23 @@ async function validateRemoteOAuthInstall(
     }
     return { action: { ...action, url: trusted.url, providerAuth: trusted.providerAuth } };
   }
+  // Smithery is the same threat as `provider` and needs the same treatment: the
+  // install spends the PLATFORM's broker credential to create a connection at
+  // the operator's Smithery account, so the target server must come from the
+  // operator-published catalog, never from the caller. Otherwise a workspace
+  // admin forges an entry naming any registry server and gets a
+  // pre-authenticated, eager-started MCP source charged to the operator's
+  // account. Unlike Composio there is no incidental bound (no per-connector
+  // auth-config env var to be missing), so this check IS the bound.
+  if (action.auth === "smithery") {
+    const trusted = await ctx.runtime.getConnectorDirectory().catalogById(entry.id);
+    if (!trusted || trusted.auth !== "smithery" || !trusted.smithery?.server?.trim()) {
+      return {
+        error: `"${entry.name}" is not a recognized Smithery connector — refusing a smithery-auth install from an unverified entry.`,
+      };
+    }
+    return { action: { ...action, smithery: trusted.smithery } };
+  }
   return { action };
 }
 
@@ -2015,7 +2071,7 @@ async function buildComposioWiring(
   action: RemoteOAuthInstall,
   owner: ConnectorOwner,
   entryName: string,
-): Promise<{ url: string; transport: RemoteTransportConfig } | { __err: string }> {
+): Promise<BrokeredWiring | { __err: string }> {
   if (action.auth !== "composio" || !action.composio) {
     // Unreachable — guards above ensure the shape. Typed for the caller's
     // narrowing convenience.
@@ -2045,6 +2101,68 @@ async function buildComposioWiring(
       auth: { type: "provider", provider: COMPOSIO_CREDENTIAL_PROVIDER, config: {} },
       ...(Object.keys(extraHeaders).length > 0 ? { headers: extraHeaders } : {}),
     },
+  };
+}
+
+/**
+ * Smithery MCP wiring (brokered session URL + transport + Authorization
+ * template). Called only on the fresh-install branch, matching the Composio
+ * discipline — a re-click on an installed connector must not re-upsert the
+ * broker connection.
+ *
+ * The connection id is derived deterministically from (owner, server) inside the
+ * provider, so the marker persisted here is a cache for the liveness probe, not
+ * a source of truth.
+ */
+async function buildSmitheryWiring(
+  provider: ManagedConnectorProvider,
+  action: RemoteOAuthInstall,
+  owner: ConnectorOwner,
+  entryId: string,
+  entryName: string,
+): Promise<BrokeredWiring | { __err: string }> {
+  if (action.auth !== "smithery" || !action.smithery) {
+    // Unreachable — guards above ensure the shape. Typed for the caller's
+    // narrowing convenience.
+    return { __err: "smithery wiring requested for non-smithery install" };
+  }
+  const server = action.smithery.server;
+  const userId = provider.userId(owner);
+  let sessionMcp: ManagedSession;
+  try {
+    sessionMcp = await provider.createSession({ userId, toolkit: server });
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    return { __err: `Smithery session creation failed for "${entryName}": ${msg}` };
+  }
+
+  // An absent coordinate is a seam-contract violation, not a benign default:
+  // an empty connectionId still leaves `ref.smithery` truthy, so the revalidator
+  // would claim the connector and answer `indeterminate` forever while uninstall
+  // silently skipped teardown. Fail the install instead.
+  const connectionId = sessionMcp.providerRef?.connectionId ?? "";
+  const namespace = sessionMcp.providerRef?.namespace ?? "";
+  const baseUrl = sessionMcp.providerRef?.baseUrl ?? "";
+  if (!connectionId || !namespace || !baseUrl) {
+    return {
+      __err:
+        `Smithery session for "${entryName}" returned no connection coordinates — ` +
+        "refusing to persist a connector the revalidator and uninstall cannot address.",
+    };
+  }
+
+  return {
+    url: sessionMcp.url,
+    transport: {
+      type: sessionMcp.type === "sse" ? "sse" : "streamable-http",
+      // Name the credential, don't point at where it lives: the `smithery`
+      // credential provider attaches the bearer at transport-build time, so
+      // neither the secret nor an env var's NAME lands in workspace.json.
+      auth: { type: "provider", provider: SMITHERY_CREDENTIAL_PROVIDER, config: {} },
+    },
+    // The provider hands back the coordinates it minted; the tool layer stores
+    // them verbatim and never parses the broker's id format itself.
+    smithery: { connectorId: entryId, connectionId, namespace, baseUrl },
   };
 }
 
@@ -2091,11 +2209,11 @@ function buildRemoteBundleRef(
   serverName: string,
   entryId: string,
   trustedUi: ConnectorCatalogEntry["ui"],
-  composioWiring: { url: string; transport: RemoteTransportConfig } | undefined,
+  brokeredWiring: BrokeredWiring | undefined,
   staticOAuthClient: { clientId: string; clientSecretKey: string } | undefined,
 ): BundleRef {
   return {
-    url: composioWiring?.url ?? action.url,
+    url: brokeredWiring?.url ?? action.url,
     serverName,
     // Pin the transport class the source advertised. Default would be
     // streamable-http (createRemoteTransport's fallback), which is wrong for
@@ -2108,7 +2226,7 @@ function buildRemoteBundleRef(
     // auth, but from a vendor session response, so `provider` auth alone is not
     // a catalog-provenance signal (see `isMintedFleetSource`).
     transport:
-      composioWiring?.transport ??
+      brokeredWiring?.transport ??
       (action.auth === "provider" && action.providerAuth
         ? {
             type: action.transportType,
@@ -2138,6 +2256,9 @@ function buildRemoteBundleRef(
     // state derivation can probe the right `connection.json` path under
     // `credentials/composio/<connectorId>/`.
     ...(action.auth === "composio" ? { composio: { connectorId: entryId } } : {}),
+    // Smithery marker — the derived broker connection coordinates, so the
+    // liveness probe can read the connection's status directly.
+    ...(brokeredWiring?.smithery ? { smithery: brokeredWiring.smithery } : {}),
     // Host UI placement from the operator-trusted catalog (see `trustedUi`).
     // Persisted on the ref so the placement survives restarts; the lifecycle
     // registers + re-validates it via `startBundleSource` → `instance.ui`.
@@ -2223,7 +2344,7 @@ async function resolveInstallWiring(
   action: RemoteOAuthInstall,
 ): Promise<
   | {
-      composioWiring?: { url: string; transport: RemoteTransportConfig };
+      brokeredWiring?: BrokeredWiring;
       staticOAuthClient?: { clientId: string; clientSecretKey: string };
     }
   | { error: string }
@@ -2231,14 +2352,27 @@ async function resolveInstallWiring(
   if (action.auth === "composio") {
     const provider = composioProvider(ctx);
     if (!provider) return { error: COMPOSIO_NOT_CONFIGURED };
-    const composioWiring = await buildComposioWiring(
+    const brokeredWiring = await buildComposioWiring(
       provider,
       action,
       { type: "workspace", wsId },
       entry.name,
     );
-    if ("__err" in composioWiring) return { error: composioWiring.__err };
-    return { composioWiring };
+    if ("__err" in brokeredWiring) return { error: brokeredWiring.__err };
+    return { brokeredWiring };
+  }
+  if (action.auth === "smithery") {
+    const provider = smitheryProvider(ctx);
+    if (!provider) return { error: SMITHERY_NOT_CONFIGURED };
+    const brokeredWiring = await buildSmitheryWiring(
+      provider,
+      action,
+      { type: "workspace", wsId },
+      entry.id,
+      entry.name,
+    );
+    if ("__err" in brokeredWiring) return { error: brokeredWiring.__err };
+    return { brokeredWiring };
   }
   if (action.auth === "static") {
     const staticOAuthClient = await loadStaticOAuthClient(ctx, wsId, ws, entry, action);

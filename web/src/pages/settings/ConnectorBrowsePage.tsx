@@ -14,6 +14,7 @@ import { ConnectorIcon } from "../../components/connectors/ConnectorIcon";
 import { OperatorSetupModal } from "../../components/connectors/OperatorSetupModal";
 import { Button } from "../../components/ui/button";
 import { useCanWriteActiveWorkspace } from "../../hooks/useScopedRole";
+import { installCompletesWithoutSignIn } from "../../lib/connector-auth-flow.ts";
 
 /** The remote-OAuth variant of a directory entry's install descriptor. */
 type RemoteOAuthInstall = Extract<DirectoryEntry["install"], { kind: "remote-oauth" }>;
@@ -140,7 +141,13 @@ export function ConnectorBrowsePage() {
     // So there's no auth flow to launch: route to Configure, which renders it
     // `ready`. Launching initiateMcpOAuth here would spin a bogus OAuth flow
     // against a server that has none.
-    if (install.auth === "provider") {
+    //
+    // A smithery-auth source is the same shape for the same reason: the broker
+    // holds the credential, the transport carries a static header, and the
+    // install eager-starts it `running`. Falling through would call
+    // `initiateMcpOAuth`, which throws "already connected" on a running source
+    // and surfaces as a 500 — a red error on an install that actually SUCCEEDED.
+    if (installCompletesWithoutSignIn(install.auth)) {
       navigate(`${configureBasePath}/${serverName}`);
       return;
     }

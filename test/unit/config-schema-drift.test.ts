@@ -4,6 +4,7 @@ import { describe, expect, test } from "bun:test";
 import { resolveFeatures } from "../../src/config/features.ts";
 import {
   COMPOSIO_PROVIDER_CONFIG_KEYS,
+  SMITHERY_PROVIDER_CONFIG_KEYS,
   CONNECTORS_CONFIG_KEYS,
   MANAGED_PROVIDER_KEYS,
 } from "../../src/connectors/providers/config.ts";
@@ -79,5 +80,10 @@ describe("config schema ↔ managed-connector provider config", () => {
     "connectors.providers.composio",
     connectors.properties.providers.properties.composio,
     COMPOSIO_PROVIDER_CONFIG_KEYS,
+  );
+  expectLockstep(
+    "connectors.providers.smithery",
+    connectors.properties.providers.properties.smithery,
+    SMITHERY_PROVIDER_CONFIG_KEYS,
   );
 });

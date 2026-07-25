@@ -58,11 +58,13 @@ Append an entry to the bundled catalog at `src/connectors/curated/example.yaml`.
 
 ### 1. Pick the auth flow
 
-Three shapes are supported:
+The supported shapes:
 
 - **`auth: dcr`** — the vendor's MCP server speaks Dynamic Client Registration ([RFC 7591](https://datatracker.ietf.org/doc/html/rfc7591)). The platform auto-registers a client at OAuth flow time. Operator setup is **zero**. Examples: Granola, Notion, Linear, Stripe.
 - **`auth: static`** — the operator pre-registers an OAuth app in the vendor's developer portal, copies the `client_id` + `client_secret`, and pastes them into the workspace via the Set up modal. Examples: Asana, HubSpot, Zoom.
 - **`auth: composio`** — the vendor's OAuth credentials are held by [Composio](https://composio.dev), an aggregator. Useful when the vendor's API requires app verification you don't yet hold (Google's restricted Gmail scopes, Microsoft's `Mail.*`, etc.). The platform proxies tool calls through Composio's MCP endpoint; per-workspace state is just an opaque `connectedAccountId`. Examples: Gmail, Outlook. See the [Composio operator guide](/deploy/composio/) for end-to-end setup.
+- **`auth: smithery`** — the connection is brokered and hosted by [Smithery](https://smithery.ai). The catalog names a Smithery *registry qualified name* rather than an endpoint; the platform asks Smithery's Connect API for a hosted MCP session at install, and Smithery holds any upstream credential write-only. Useful for servers already published to the Smithery registry.
+- **`auth: provider`** — a platform-managed connector whose credential the runtime mints itself against the fleet authorizer. Not something you author for a third-party service.
 
 If the vendor exposes a `/.well-known/oauth-authorization-server` document with `registration_endpoint` set, prefer DCR. Otherwise use static, or composio when you don't yet hold the necessary vendor verification. The [catalog rot detector](#catalog-rot-detection) verifies DCR claims at PR time.
 
@@ -118,6 +120,29 @@ servers:
 
 The `url` is a fixed placeholder; the actual session URL is minted per install from Composio's session API. `composio.tools` is an allowlist of upstream tool names — without it the connector exposes every tool the toolkit publishes (Outlook ships ~280, enough to blow past Claude's input-token budget on first turn). Curate to a working set.
 
+Brokered entries (`auth: composio`, `auth: smithery`) go in the directory `NB_CURATED_CATALOG_DIR` points at, **not** in `example.yaml` — every entry shipped in-image must install with zero operator setup, and a brokered one needs its provider configured first.
+
+For `auth: smithery`, include a `smithery` block naming the registry qualified name:
+
+```yaml
+servers:
+  - name: ai.bassethound/mcp
+    title: Bassethound
+    description: Company intelligence for AI agents
+    version: "1.0.0"
+    remotes:
+      - type: streamable-http
+        url: https://mcp.bassethound.ai/mcp
+    _meta:
+      ai.nimblebrain/connector:
+        auth: smithery
+        smithery:
+          server: nimblebrain/bassethound
+        tags: [intelligence, research]
+```
+
+The `url` is a placeholder — the install replaces it with the brokered session URL. Unlike `auth: composio`, there is no per-connector env var: a Smithery qualified name is global, so the entry is complete on its own and only the platform-wide `SMITHERY_API_KEY` + `SMITHERY_NAMESPACE` are deployment state. There is no tool allowlist either; the connection exposes the server's own surface.
+
 For `auth: static`, also include `operatorSetup`:
 
 ```yaml
@@ -161,8 +186,8 @@ NimbleBrain-specific fields under `_meta["ai.nimblebrain/connector"]`:
 
 | Field | Required | Description |
 |-------|----------|-------------|
-| `defaultScope` | recommended | `"workspace"` (shared identity) or `"user"` (per-user account). Defaults to `workspace`. `auth: composio` is workspace-scope only. |
-| `auth` | required for `remotes[]` | `"dcr"`, `"static"`, or `"composio"`. Defaults to `dcr`. |
+| `defaultScope` | recommended | `"workspace"` (shared identity) or `"user"` (per-user account). Defaults to `workspace`. `auth: composio` is workspace-scope only, and `auth: smithery` installs into a workspace only. |
+| `auth` | required for `remotes[]` | `"dcr"`, `"static"`, `"composio"`, `"smithery"`, or `"provider"`. Defaults to `dcr`. |
 | `requiredScopes` | no | List of OAuth scope strings. |
 | `additionalAuthorizationParams` | no | Extra authorize-URL params (e.g. Google's `access_type: offline`). Reserved keys (`client_id`, `state`, `redirect_uri`, `response_type`, `code_challenge`, `code_challenge_method`, `scope`, etc.) are rejected. |
 | `operatorSetup` | required when `auth: static` | `{ portalUrl, hint, clientSecretKey }`. |

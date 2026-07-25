@@ -30,6 +30,10 @@ import {
   managedConnectorRegistryOf,
 } from "../../src/connectors/providers/registry.ts";
 import { _resetBouncerModeForTest } from "../../src/oauth/bouncer-config.ts";
+import {
+  _resetSmitheryConfigForTest,
+  validateSmitheryConfig,
+} from "../../src/connectors/providers/smithery/config.ts";
 
 const ENV_KEYS = [
   "COMPOSIO_API_KEY",
@@ -38,6 +42,9 @@ const ENV_KEYS = [
   "NB_TENANT_ID",
   "NB_OAUTH_BOUNCER_CALLBACK_URL",
   "NB_OAUTH_BOUNCER_TENANT_KEY",
+  "SMITHERY_API_KEY",
+  "SMITHERY_NAMESPACE",
+  "SMITHERY_API_BASE_URL",
 ] as const;
 let saved: Record<string, string | undefined>;
 
@@ -48,6 +55,7 @@ beforeEach(() => {
   _resetComposioConfigForTest();
   _resetBouncerModeForTest();
   _resetComposioVendorForTest();
+  _resetSmitheryConfigForTest();
 });
 
 afterEach(() => {
@@ -59,6 +67,7 @@ afterEach(() => {
   _resetComposioConfigForTest();
   _resetBouncerModeForTest();
   _resetComposioVendorForTest();
+  _resetSmitheryConfigForTest();
 });
 
 describe("buildManagedConnectorRegistry — Composio unconfigured", () => {
@@ -159,6 +168,148 @@ describe("buildManagedConnectorRegistry — Composio configured", () => {
     expect(provider?.userId({ type: "workspace", wsId: "ws_01abc" })).toBe("ws_01abc");
     // Constructing the provider and calling the vendor-free `userId` links nothing.
     expect(_composioVendorLoadCountForTest()).toBe(0);
+  });
+});
+
+describe("buildManagedConnectorRegistry — Smithery config gating", () => {
+  it("registers no smithery provider when unconfigured", () => {
+    const registry = buildManagedConnectorRegistry();
+    expect(registry.get("smithery")).toBeUndefined();
+    expect(registry.has("smithery")).toBe(false);
+  });
+
+  it("stays unregistered when the API key is set but the namespace is not", () => {
+    // A Smithery namespace is globally unique and account-owned — there is no
+    // safe default, so a half-configured provider must not register.
+    process.env.SMITHERY_API_KEY = "sk_test";
+    _resetSmitheryConfigForTest();
+
+    expect(buildManagedConnectorRegistry().get("smithery")).toBeUndefined();
+  });
+
+  it("takes the namespace from the declared block, no env needed", () => {
+    process.env.SMITHERY_API_KEY = "sk_test";
+    setConnectorsConfig({ providers: { smithery: { namespace: "declared-ns" } } });
+    _resetSmitheryConfigForTest();
+
+    expect(buildManagedConnectorRegistry().get("smithery")?.id).toBe("smithery");
+  });
+
+  it("declared namespace wins over the legacy env var", () => {
+    process.env.SMITHERY_API_KEY = "sk_test";
+    process.env.SMITHERY_NAMESPACE = "env-ns";
+    setConnectorsConfig({ providers: { smithery: { namespace: "declared-ns" } } });
+    _resetSmitheryConfigForTest();
+
+    expect(validateSmitheryConfig().namespace).toBe("declared-ns");
+  });
+
+  it("falls back per field — a block setting only monitorEnabled keeps the env namespace", () => {
+    process.env.SMITHERY_API_KEY = "sk_test";
+    process.env.SMITHERY_NAMESPACE = "env-ns";
+    setConnectorsConfig({ providers: { smithery: { monitorEnabled: false } } });
+    _resetSmitheryConfigForTest();
+
+    const config = validateSmitheryConfig();
+    expect(config.namespace).toBe("env-ns");
+    expect(config.monitorEnabled).toBe(false);
+  });
+
+  it("treats a BLANK declared value as absent and still reads the env", () => {
+    // A Helm-templated nimblebrain.json renders `"namespace": "{{ .Values… }}"`
+    // to "" when the value is unset. Taking that as a declaration would discard
+    // the operator's SMITHERY_NAMESPACE and leave the provider unregistered
+    // while their env looks correct — the exact loss per-field precedence
+    // exists to prevent. Composio guards the same way.
+    process.env.SMITHERY_API_KEY = "sk_test";
+    process.env.SMITHERY_NAMESPACE = "env-ns";
+    setConnectorsConfig({ providers: { smithery: { namespace: "", baseUrl: "" } } });
+    _resetSmitheryConfigForTest();
+
+    const config = validateSmitheryConfig();
+    expect(config.namespace).toBe("env-ns");
+    expect(config.baseUrl).toBe("https://api.smithery.ai");
+    expect(buildManagedConnectorRegistry().get("smithery")).toBeDefined();
+  });
+
+  it("omits the probe when the monitor is disabled, keeping session brokering", () => {
+    process.env.SMITHERY_API_KEY = "sk_test";
+    setConnectorsConfig({
+      providers: { smithery: { namespace: "declared-ns", monitorEnabled: false } },
+    });
+    _resetSmitheryConfigForTest();
+
+    const provider = buildManagedConnectorRegistry().get("smithery");
+    expect(provider).toBeDefined();
+    expect(provider?.probe).toBeUndefined();
+    expect(typeof provider?.createSession).toBe("function");
+  });
+
+  it("registers a smithery provider when fully configured", () => {
+    process.env.SMITHERY_API_KEY = "sk_test";
+    process.env.SMITHERY_NAMESPACE = "test-ns";
+    _resetSmitheryConfigForTest();
+
+    const provider = buildManagedConnectorRegistry().get("smithery");
+    expect(provider?.id).toBe("smithery");
+    expect(typeof provider?.createSession).toBe("function");
+    expect(provider?.probe).toBeDefined();
+    // Smithery brokers OAuth on its own hosted page, so it owns no callback surface.
+    expect(provider?.routes).toBeUndefined();
+  });
+
+  it("registers both providers independently — neither gates the other", () => {
+    process.env.COMPOSIO_API_KEY = "k_test";
+    process.env.SMITHERY_API_KEY = "sk_test";
+    process.env.SMITHERY_NAMESPACE = "test-ns";
+    _resetComposioConfigForTest();
+    _resetSmitheryConfigForTest();
+
+    const registry = buildManagedConnectorRegistry();
+    expect(
+      registry
+        .list()
+        .map((p) => p.id)
+        .sort(),
+    ).toEqual(["composio", "smithery"]);
+
+    // Registering Smithery must not drag the Composio vendor in.
+    expect(_composioVendorLoadCountForTest()).toBe(0);
+  });
+});
+
+describe("smithery baseUrl validation", () => {
+  it("rejects a non-http(s) baseUrl — it becomes an installed connector's MCP target", () => {
+    process.env.SMITHERY_API_KEY = "sk_test";
+    process.env.SMITHERY_NAMESPACE = "test-ns";
+    process.env.SMITHERY_API_BASE_URL = "file:///etc/passwd";
+    _resetSmitheryConfigForTest();
+
+    expect(() => validateSmitheryConfig()).toThrow(/must be http\(s\)/);
+  });
+
+  it("rejects an unparseable baseUrl", () => {
+    process.env.SMITHERY_API_KEY = "sk_test";
+    process.env.SMITHERY_NAMESPACE = "test-ns";
+    process.env.SMITHERY_API_BASE_URL = "not a url";
+    _resetSmitheryConfigForTest();
+
+    expect(() => validateSmitheryConfig()).toThrow(/not a valid URL/);
+  });
+});
+
+describe("Composio asserts authConfigId at its own boundary", () => {
+  it("throws when the seam omits it — the field the seam made optional", async () => {
+    process.env.COMPOSIO_API_KEY = "k_test";
+    _resetComposioConfigForTest();
+
+    const provider = buildManagedConnectorRegistry().get("composio");
+    // `authConfigId` is optional at the seam because Smithery has no such
+    // concept. Composio requires one, so it must reject the omission itself —
+    // without this the vendor call would bind a toolkit to `undefined`.
+    await expect(
+      provider?.createSession({ userId: "ws_01abc", toolkit: "gmail" }),
+    ).rejects.toThrow(/requires an authConfigId/);
   });
 });
 
