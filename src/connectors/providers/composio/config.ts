@@ -84,8 +84,13 @@ export interface ComposioConfig {
 let _cached: ComposioConfig | undefined;
 
 /**
- * The resolved Composio config. Computed once and cached (production reads it on
- * every SDK call), recomputed only when a new `connectors` block is installed.
+ * The resolved Composio config. Computed once and cached — production reads it on
+ * every SDK call.
+ *
+ * The cache is **install-once**: `setConnectorsConfig` does not invalidate it, so
+ * a second install in one process is not observed. That matches the composition-
+ * root contract (one install in `Runtime.start`, ahead of every reader) and is
+ * why a test that installs a block pairs it with `_resetComposioConfigForTest()`.
  *
  * The name reflects first-call semantics: the first call runs full validation
  * and logs the operator-facing status line; every later call is a cache hit.
