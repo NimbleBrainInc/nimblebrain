@@ -120,6 +120,58 @@ describe("startWorkspaceBundles — unreachable URL bundle at boot", () => {
     }
   }, 30_000);
 
+  test("noTokenBundle_seedsNotAuthenticatedAndIsNotCountedAsAFailure", async () => {
+    // `unstartedUrlBundleEntry` serves two callers — the skip (no tokens yet)
+    // and the failure — and only the failure passes `startError`. Passing one
+    // here instead type-checks and leaves every suite green, but a freshly
+    // installed connector would seed `dead`: the Connectors page would offer
+    // Reconnect where it should offer Connect, and boot would report a failure
+    // for a bundle it never attempted. The skip path needs its own pin.
+    const store = new WorkspaceStore(workDir);
+    const ws = await store.create("Fleet");
+    // No transport auth and no persisted tokens, so boot skips it entirely.
+    await store.update(ws.id, {
+      bundles: [
+        {
+          url: UNREACHABLE,
+          serverName: "no-tokens",
+          transport: { type: "streamable-http" },
+          oauthScope: "workspace",
+        } as unknown as BundleRef,
+      ],
+    });
+
+    const lines: string[] = [];
+    const origInfo = log.info;
+    log.info = (msg: string) => lines.push(msg);
+    let runtime: Runtime;
+    try {
+      runtime = await Runtime.start({
+        model: { provider: "custom", adapter: createEchoModel() },
+        noDefaultBundles: true,
+        logging: { disabled: true },
+        allowInsecureRemotes: true,
+        workDir,
+      });
+    } finally {
+      log.info = origInfo;
+    }
+
+    try {
+      const connection = runtime
+        .getLifecycle()
+        .getInstance("no-tokens", ws.id)
+        ?.connections?.get("_workspace");
+      expect(connection?.state).toBe("not_authenticated");
+      expect(connection?.lastError).toBeFalsy();
+
+      const summary = lines.find((l) => l.includes("bundles in"));
+      expect(summary).not.toContain("failed to start");
+    } finally {
+      await runtime.shutdown();
+    }
+  }, 30_000);
+
   test("startedCount_excludesTheFailedBundleAndNamesIt", async () => {
     // This line is the only boot-time signal that a dependency was unreachable —
     // it is how the staging incident was found. A surviving entry would inflate

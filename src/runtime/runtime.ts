@@ -2478,9 +2478,18 @@ export class Runtime {
    * Get bundle instances visible in a specific workspace.
    *
    * `inst.wsId === wsId` is the authoritative scope — every BundleInstance
-   * carries a required workspace. `visible.has(serverName)` is a
-   * belt-and-suspenders check against orphaned lifecycle records whose
-   * source has been removed from the registry.
+   * carries a required workspace.
+   *
+   * `visible.has(serverName)` is load-bearing, not a redundant guard: an
+   * installed bundle is absent from the registry whenever it is installed but
+   * not running — a boot-start that failed, or a connector torn down by a
+   * disconnect — and this filter is the sole reason those stay out of the
+   * agent's view (`getApps` → `nb__list_apps`). Deleting it surfaces every
+   * such record as a usable app. The management UI deliberately does NOT go
+   * through here for exactly that reason; `handleListInstalled` reads the
+   * lifecycle map directly so it can show a Connect / Reconnect affordance.
+   * That the agent cannot see, or explain, a bundle in this state is the open
+   * gap tracked in #757.
    */
   getBundleInstancesForWorkspace(wsId: string): BundleInstance[] {
     const wsRegistry = this._workspaceRegistries.get(wsId);

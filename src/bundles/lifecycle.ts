@@ -75,7 +75,8 @@ type StaticOAuthClient = {
   tokenEndpointAuthMethod?: "none" | "client_secret_post" | "client_secret_basic";
 };
 
-/** Manifest-derived metadata `seedInstance` accepts for an already-running bundle. */
+/** Manifest-derived metadata `seedInstance` accepts for a bundle it is seeding,
+ *  running or not. */
 type SeedManifestMeta = {
   manifestName?: string;
   version: string;
