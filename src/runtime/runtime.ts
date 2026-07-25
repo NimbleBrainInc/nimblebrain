@@ -123,7 +123,11 @@ import type { Skill } from "../skills/types.ts";
 import { TelemetryManager } from "../telemetry/manager.ts";
 import { PostHogEventSink } from "../telemetry/posthog-sink.ts";
 import type { DelegateContext } from "../tools/delegate.ts";
-import { isIdentitySource, isTaskForbiddenIdentityTool } from "../tools/identity-sources.ts";
+import {
+  isIdentitySource,
+  isTaskForbiddenIdentityTool,
+  personalConnectorWireName,
+} from "../tools/identity-sources.ts";
 import { McpSource } from "../tools/mcp-source.ts";
 import { namespacedToolName } from "../tools/namespace.ts";
 import { SharedSourceRef, type ToolRegistry } from "../tools/registry.ts";
@@ -3081,8 +3085,14 @@ export class Runtime {
       identityId ? this._listGrantedPersonalConnectorTools(identityId, wsId) : Promise.resolve([]),
     ]);
     return [
+      // Workspace tools go out BARE. The session reaches exactly one workspace,
+      // so a `ws_<id>-` prefix could only ever repeat `wsId` — a constant, on
+      // every tool, inside a 64-character provider budget. Dropping it is what
+      // brings the wire name back under that budget; the wall is unaffected,
+      // because the workspace a call lands in comes from the session, never from
+      // the name (see `routeToolCall`).
       ...wsTools.map((t) => ({
-        name: namespacedToolName(wsId, t.name),
+        name: t.name,
         description: t.description,
         inputSchema: t.inputSchema,
         ...(t.annotations !== undefined ? { annotations: t.annotations } : {}),
@@ -3093,7 +3103,16 @@ export class Runtime {
         inputSchema: t.inputSchema,
         ...(t.annotations !== undefined ? { annotations: t.annotations } : {}),
       })),
-      ...personalTools,
+      // Personal connectors carry the reserved marker. With workspace tools now
+      // bare, a workspace `gmail` and the caller's personal `gmail` would other-
+      // wise be the same string — a collision install-time checks cannot prevent,
+      // since the guard only sees the *caller's* connectors and says nothing
+      // about another member's. Marking the rare side keeps both reachable and
+      // tells the model whose credentials it is about to spend.
+      ...personalTools.map((t) => ({
+        ...t,
+        name: personalConnectorWireName(t.name),
+      })),
     ];
   }
 

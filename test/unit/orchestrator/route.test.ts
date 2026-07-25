@@ -178,11 +178,35 @@ describe("routeToolCall — happy path", () => {
   });
 });
 
-describe("routeToolCall — strict invariant (no silent workspace fallback)", () => {
-  // A bare (un-namespaced) name routes to the identity door, NEVER to a
-  // workspace. `crm` is a workspace app, not a kernel identity source, so it's
-  // refused — and no WorkspaceContext is constructed.
-  test("bare workspace-app name → UnknownIdentitySource, no WorkspaceContext", async () => {
+describe("routeToolCall — strict invariant (no ambient workspace)", () => {
+  // A bare workspace-source name routes into the SESSION's workspace. That is
+  // the wire form now: dropping the `ws_<id>-` prefix is what brings tool names
+  // under the providers' 64-character cap.
+  //
+  // The Stage-1 invariant this describe block guards is intact, and it is worth
+  // being precise about what it actually said: never resolve a workspace from
+  // AMBIENT state. The workspace here is the explicit `workspaceId` argument —
+  // the session's one workspace, membership-validated when the session was
+  // established. `routeToolCall` still never reads `requireWorkspaceId()` or
+  // `getCurrentWorkspaceId()`. What changed is only that the wsId arrives as a
+  // parameter instead of being restated in every tool name.
+  test("bare workspace-source name dispatches into the session's workspace", async () => {
+    const runtime = buildHappyRuntime();
+
+    const routed = await routeToolCall({
+      identityId: USER_ID,
+      namespacedName: "crm__search",
+      workspaceId: SHARED_WS,
+      runtime,
+    });
+
+    expect(routed.kind).toBe("workspace");
+    expect(routed.toolName).toBe("crm__search");
+  });
+
+  // The teeth: with NO workspace on the session there is nothing to fall back
+  // to, and a bare workspace-source name must be refused rather than guessed at.
+  test("bare workspace-source name + no session workspace → WorkspaceToolUnavailable", async () => {
     const runtime = buildHappyRuntime();
 
     let thrown: unknown = null;
@@ -190,13 +214,12 @@ describe("routeToolCall — strict invariant (no silent workspace fallback)", ()
       await routeToolCall({
         identityId: USER_ID,
         namespacedName: "crm__search",
-        workspaceId: SHARED_WS,
         runtime,
       });
     } catch (err) {
       thrown = err;
     }
-    expect(thrown).toBeInstanceOf(UnknownIdentitySource);
+    expect(thrown).toBeInstanceOf(WorkspaceToolUnavailable);
     expect(runtime.contextCallCount()).toBe(0);
   });
 
@@ -482,7 +505,7 @@ describe("routeToolCall — personal connectors (identity-door grant gate)", () 
     try {
       await routeToolCall({
         identityId: USER_ID,
-        namespacedName: "granola__read_notes",
+        namespacedName: "my-granola__read_notes",
         workspaceId: PERSONAL_WS, // the caller's own personal workspace
         runtime: runtimeWithPersonalConnector(store),
       });
@@ -498,7 +521,7 @@ describe("routeToolCall — personal connectors (identity-door grant gate)", () 
     await store.grantConnector(USER_ID, "granola", PERSONAL_WS);
     const routed = await routeToolCall({
       identityId: USER_ID,
-      namespacedName: "granola__read_notes",
+      namespacedName: "my-granola__read_notes",
       workspaceId: PERSONAL_WS,
       runtime: runtimeWithPersonalConnector(store),
     });
@@ -515,7 +538,7 @@ describe("routeToolCall — personal connectors (identity-door grant gate)", () 
     try {
       await routeToolCall({
         identityId: USER_ID,
-        namespacedName: "granola__read_notes",
+        namespacedName: "my-granola__read_notes",
         workspaceId: SHARED_WS, // a shared room, not the caller's home
         runtime: runtimeWithPersonalConnector(store),
       });
@@ -533,7 +556,7 @@ describe("routeToolCall — personal connectors (identity-door grant gate)", () 
 
     const routed = await routeToolCall({
       identityId: USER_ID,
-      namespacedName: "granola__read_notes",
+      namespacedName: "my-granola__read_notes",
       workspaceId: SHARED_WS,
       runtime: runtimeWithPersonalConnector(store),
     });
@@ -579,7 +602,7 @@ describe("routeToolCall — personal connectors (identity-door grant gate)", () 
     try {
       await routeToolCall({
         identityId: USER_ID,
-        namespacedName: "granola__read_notes",
+        namespacedName: "my-granola__read_notes",
         // No workspaceId.
         runtime: runtimeWithPersonalConnector(store),
       });
@@ -604,7 +627,7 @@ describe("routeToolCall — personal connectors (identity-door grant gate)", () 
     try {
       await routeToolCall({
         identityId: USER_ID,
-        namespacedName: "granola__read_notes",
+        namespacedName: "my-granola__read_notes",
         workspaceId: SHARED_WS,
         runtime,
       });

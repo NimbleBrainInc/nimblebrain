@@ -30,6 +30,56 @@ export function isIdentitySource(name: string): boolean {
 }
 
 /**
+ * Reserved wire prefix marking a **personal connector** — an MCP connection the
+ * caller installed on their own identity, reached through the identity door.
+ *
+ * Wire tool names are bare `<source>__<tool>`, so a workspace source and a
+ * personal connector of the same name would be indistinguishable to the model
+ * and at dispatch. That collision is real and is NOT catchable at install time:
+ * the install guard only sees the *caller's* own personal connectors, so user A
+ * installing `gmail` into a shared workspace cannot know that member B holds a
+ * personal `gmail` — or will install one tomorrow, or join the workspace next
+ * week. Exactly one of the two doors therefore has to carry a marker.
+ *
+ * We mark the personal side because it is the **rare** one: a session surfaces
+ * every tool of every workspace source, and only the caller's granted personal
+ * connectors. Marking the common side is what the retired `ws_<id>-` prefix did,
+ * and it cost 40 characters of a 64-character budget to disambiguate a case that
+ * is usually empty.
+ *
+ * The marker also makes the credential boundary legible. `gmail__send` (the
+ * workspace's shared account) versus `my-gmail__send` (the caller's own) is a
+ * distinction the model must get right for a send-mail tool, and an opaque
+ * workspace id never communicated it.
+ *
+ * Kebab-cased to match the source segment's alphabet (`slugifyServerName`
+ * emits `[a-z0-9-]` and never `_`, which is what keeps `__` an unambiguous
+ * source/tool separator).
+ */
+export const PERSONAL_CONNECTOR_PREFIX = "my-";
+
+/**
+ * Whether a bare source name addresses a personal connector.
+ *
+ * Reserved: a **workspace** source may not slugify to this prefix, or it would
+ * shadow the identity door. Enforced at install (`assertNotReservedSourceName`)
+ * rather than here, so the read path stays a pure predicate.
+ */
+export function isPersonalConnectorName(sourceName: string): boolean {
+  return sourceName.startsWith(PERSONAL_CONNECTOR_PREFIX);
+}
+
+/** The connector's own `serverName`, with the reserved wire prefix removed. */
+export function personalConnectorServerName(sourceName: string): string {
+  return sourceName.slice(PERSONAL_CONNECTOR_PREFIX.length);
+}
+
+/** The wire form of a personal connector's source name. */
+export function personalConnectorWireName(serverName: string): string {
+  return `${PERSONAL_CONNECTOR_PREFIX}${serverName}`;
+}
+
+/**
  * Automations tools that stay reachable inside an unattended run: read-only
  * introspection plus `cancel`. They surface run health without persisting a new
  * instruction. Everything else in the `automations__*` namespace — the authoring
