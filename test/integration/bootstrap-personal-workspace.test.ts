@@ -62,6 +62,18 @@ async function bootstrapFor(userId: string): Promise<BootstrapResponse> {
   return (await res.json()) as BootstrapResponse;
 }
 
+describe("bootstrap — config payload", () => {
+  test("omits maxOutputTokens", async () => {
+    // Deliberate omission: the ceiling is resolved per model, so a single
+    // number here is either misleading or a value a client can echo back as an
+    // override — which is what arms the derived effort tier. Dropping it from
+    // the web type only catches a consumer, not the server re-emitting it.
+    await ensureUserWorkspace(runtime.getWorkspaceStore(), { id: "user_cfg" });
+    const body = await bootstrapFor("user_cfg");
+    expect("maxOutputTokens" in (body.config as Record<string, unknown>)).toBe(false);
+  });
+});
+
 describe("bootstrap — personal workspace surfaces", () => {
   test("user with a fresh personal workspace gets personalWorkspaceId + isPersonal=true", async () => {
     await ensureUserWorkspace(runtime.getWorkspaceStore(), { id: "user_alice" });

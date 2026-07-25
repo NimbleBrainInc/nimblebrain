@@ -1237,3 +1237,52 @@ describe("nb__read_resource system tool", () => {
 		expect(readResource?.description).toContain("ui://");
 	});
 });
+
+describe("config_status maxOutputTokens labelling", () => {
+	// The line reports a number that is derived unless the operator set one.
+	// The reader is an agent that can also call set_model_config, so an
+	// unlabelled figure invites it to persist a default as a choice — which
+	// arms the effort tier this PR removes. Both branches asserted because a
+	// hardcoded "configured" passed every suite in the repo.
+	function runtimeStub(configured: number | undefined) {
+		return {
+			getModelSlots: () => ({ default: "a", fast: "b", reasoning: "c" }),
+			getDefaultModel: () => "a",
+			getConfiguredProviders: () => ["anthropic"],
+			getMaxIterations: () => 10,
+			getMaxInputTokens: () => 500000,
+			getMaxOutputTokens: () => 128000,
+			getConfiguredMaxOutputTokens: () => configured,
+			getRuntimeConfig: () => ({}),
+		} as unknown as Parameters<typeof createSystemTools>[10];
+	}
+
+	async function statusText(configured: number | undefined): Promise<string> {
+		const registry = await makeRegistry();
+		// runtime is the 11th positional arg (9 reserved slots after getRegistry).
+		const systemTools = await createSystemTools(
+			() => registry,
+			undefined,
+			undefined,
+			undefined,
+			undefined,
+			undefined,
+			undefined,
+			undefined,
+			undefined,
+			undefined,
+			runtimeStub(configured),
+		);
+		const result = await systemTools.execute("status", { scope: "config" });
+		expect(result.isError).toBe(false);
+		return extractText(result.content);
+	}
+
+	it("labels a derived ceiling as the model default", async () => {
+		expect(await statusText(undefined)).toContain("Max output tokens: 128,000 (model default)");
+	});
+
+	it("labels an operator-set ceiling as configured", async () => {
+		expect(await statusText(8000)).toContain("Max output tokens: 128,000 (configured)");
+	});
+});

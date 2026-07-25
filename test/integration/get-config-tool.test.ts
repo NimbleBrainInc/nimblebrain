@@ -1,5 +1,5 @@
 import { describe, expect, it, afterAll } from "bun:test";
-import { mkdirSync, rmSync, existsSync } from "node:fs";
+import { mkdirSync, rmSync, existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { Runtime } from "../../src/runtime/runtime.ts";
@@ -74,6 +74,17 @@ describe("set_model_config maxOutputTokens override", () => {
 
 			const cleared = await source.execute("set_model_config", { clearMaxOutputTokens: true });
 			expect(cleared.isError).toBe(false);
+
+			// The DISK side matters independently: the live runtime and the
+			// override file are written by separate code paths, and only the file
+			// survives a restart. A clear that lands in memory but not on disk
+			// reloads the override on the next boot and re-arms the derived
+			// effort tier permanently — the exact failure this mechanism exists
+			// to prevent.
+			const onDisk = JSON.parse(
+				readFileSync(join(overrideDir, "nimblebrain.overrides.json"), "utf8"),
+			) as Record<string, unknown>;
+			expect("maxOutputTokens" in onDisk).toBe(false);
 			// gone from the live runtime, so resolveThinking stops deriving an
 			// effort tier from it
 			expect(runtime.getConfiguredMaxOutputTokens()).toBeUndefined();

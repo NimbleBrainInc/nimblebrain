@@ -751,8 +751,8 @@ export function createCoreToolDefs(runtime: Runtime): InProcessTool[] {
             description:
               "Extended-thinking mode for reasoning-capable models. " +
               "off: requests no reasoning — not enforceable on adaptive-only Anthropic models " +
-              "(including the default), where the provider drops the flag and the model applies " +
-              "its own default. adaptive: model decides per call. " +
+              "(including the default), where the AI SDK adapter never sends the flag and the model " +
+              "applies its own default. adaptive: model decides per call. " +
               "enabled: always reason (use thinkingBudgetTokens to cap). " +
               "Use clearThinking=true to revert to the platform default.",
           },

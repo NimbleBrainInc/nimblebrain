@@ -68,23 +68,37 @@ export interface RuntimeConfig {
    * Extended-thinking mode. Currently maps to Anthropic's `thinking`
    * provider option; non-Anthropic providers ignore it.
    *
-   *   - `off`        — never request thinking. Cheapest; no reasoning content.
+   *   - `off`        — requests no thinking. NOT enforceable on adaptive-only
+   *                    Anthropic models: `@ai-sdk/anthropic` accepts
+   *                    `thinking: {type: "disabled"}` in its options schema and
+   *                    then never serializes it, so the request omits the field
+   *                    and the model applies its own default — which on Opus 5
+   *                    and Sonnet 5 is to reason. See nimblebrain#738.
    *   - `adaptive`   — model decides per call.
    *   - `enabled`    — always think, with optional `thinkingBudgetTokens` cap.
    *
-   * If unset, the platform defaults to `enabled` (with a budget capped at
-   * roughly half of `maxOutputTokens`) for catalog-flagged reasoning-capable
-   * models and `off` otherwise. The default was changed from `adaptive`
-   * after production showed Opus 4.7 routinely consumed the entire output
-   * budget on internal reasoning, producing empty user-visible turns on
-   * long-context tasks.
+   * If unset, the platform picks per model:
+   *   - Adaptive-only models (see `ADAPTIVE_ONLY_THINKING_MODELS`) with no
+   *     operator `maxOutputTokens` get bare `adaptive`. They cannot carry a
+   *     budget — the engine converts one into an `output_config.effort` tier —
+   *     so deriving a budget from the model's catalog ceiling would request
+   *     maximum reasoning on every call from a number nobody chose. Both
+   *     current slot defaults are in this class.
+   *   - Everything else reasoning-capable gets `enabled` with a budget capped
+   *     to leave `MIN_VISIBLE_OUTPUT_TOKENS` for visible content. That default
+   *     was changed from `adaptive` after production showed Opus 4.7 routinely
+   *     consumed the entire output budget on internal reasoning, producing
+   *     empty user-visible turns on long-context tasks.
+   *   - Non-reasoning models get no thinking parameter at all.
    */
   thinking?: "off" | "adaptive" | "enabled";
 
   /**
    * Token budget when `thinking === "enabled"`. Counts toward
-   * `maxOutputTokens`. Ignored for `off`/`adaptive`. Anthropic requires
-   * a minimum of 1,024 tokens.
+   * `maxOutputTokens`. Ignored for `off`. NOT ignored for `adaptive`: the
+   * budget rides through, and on an adaptive-only model the engine maps it to
+   * an `output_config.effort` tier. Anthropic requires a minimum of 1,024
+   * tokens.
    */
   thinkingBudgetTokens?: number;
 
