@@ -215,7 +215,10 @@ export function deriveConnectorStatus(input: StatusInputs): {
   if (input.state === "starting") {
     return { status: "starting" };
   }
-  // 5. Terminal failures with no clear recovery path.
+  // 5. Failures. Reported with the reason; the web client decides the
+  //    affordance (`resolveAction` in ConnectorStatusHero.tsx — Reconnect,
+  //    usually). `dead` covers a bundle whose boot-start failed, which the
+  //    doors revive on next use.
   if (input.state === "crashed" || input.state === "dead" || input.state === "stopped") {
     return {
       status: "failed",
@@ -983,13 +986,14 @@ async function handleListInstalled(
   // registry (includes local stdio, local URL, Synapse apps, and remote
   // OAuth). The `list_apps` tool surfaces the same registry-installed set.
   //
-  // Read directly from the lifecycle's instance map. The shorthand
-  // `getBundleInstancesForWorkspace` additionally filters by
-  // `wsRegistry.sourceNames()` — appropriate for the agent's app list
-  // (disconnected bundle = unusable for tool calls), wrong for the
-  // management UI. After Disconnect we tear down the McpSource
-  // intentionally; the bundle is still INSTALLED and the user needs to see
-  // it on this page to click Connect again.
+  // Read directly from the lifecycle's instance map, NOT the shorthand
+  // `getBundleInstancesForWorkspace` — see the rationale on that method for why
+  // its registry filter is load-bearing and why this page must bypass it.
+  //
+  // The short version: a bundle can be installed and unregistered (torn down by
+  // Disconnect, or a boot-start that failed), and this page is where the user
+  // clicks Connect / Reconnect to get it back. Filtering it out would hide the
+  // only affordance that recovers it.
   if ((scope === "all" || scope === "workspace") && wsId) {
     const deps: InstalledEntryDeps = {
       ctx,
@@ -1887,7 +1891,7 @@ async function handleInstallRemoteOAuth(
   if (skillsLock.length > 0) ref.skillsLock = skillsLock;
   await ctx.runtime.getWorkspaceStore().update(wsId, { bundles: [...ws.bundles, ref] });
   const wsRegistry = ctx.runtime.getRegistryForWorkspace(wsId);
-  lifecycle.seedInstance(serverName, action.url, ref, undefined, wsId, undefined, wsRegistry);
+  lifecycle.seedInstance(serverName, action.url, ref, undefined, wsId);
   lifecycle.notifyInstalled(serverName, wsId);
 
   // Static-credential URL bundles authenticate without an MCP-side OAuth flow,
@@ -2174,8 +2178,7 @@ function handleDuplicateInstall(
   // alreadyInstalled — the latter would skip seedInstance and fail the next
   // OAuth initiate.
   if (!lifecycle.getInstance(dupServerName, wsId)) {
-    const wsRegistry = ctx.runtime.getRegistryForWorkspace(wsId);
-    lifecycle.seedInstance(dupServerName, action.url, dup, undefined, wsId, undefined, wsRegistry);
+    lifecycle.seedInstance(dupServerName, action.url, dup, undefined, wsId);
     lifecycle.notifyInstalled(dupServerName, wsId);
     return {
       content: textContent(`Reattached "${entry.name}" (recovered orphan entry).`),
@@ -2391,7 +2394,6 @@ async function handleInstallMpak(
     inventoryEntry.meta ?? undefined,
     wsId,
     inventoryEntry.dataDir,
-    registry,
   );
   // Register placements + emit bundle.installed so the web shell's
   // sidebar refreshes without a reboot. seedInstance is intentionally

@@ -76,7 +76,8 @@ type StaticOAuthClient = {
   tokenEndpointAuthMethod?: "none" | "client_secret_post" | "client_secret_basic";
 };
 
-/** Manifest-derived metadata `seedInstance` accepts for an already-running bundle. */
+/** Manifest-derived metadata `seedInstance` accepts for a bundle it is seeding,
+ *  running or not. */
 type SeedManifestMeta = {
   manifestName?: string;
   version: string;
@@ -2510,8 +2511,11 @@ export class BundleLifecycleManager {
   }
 
   /**
-   * Seed instances from the initial bundle startup (called by Runtime.start
-   * after bundles are already running).
+   * Seed instances from the initial bundle startup, and from the install path.
+   *
+   * A seeded bundle is not necessarily a running one: a URL bundle that was
+   * skipped for having no tokens, or that was attempted and failed
+   * (`startError`), is seeded too — the state is derived below, not assumed.
    *
    * Stage 2: every URL bundle binds to its workspace explicitly. The
    * disk-read boundary (`buildProcessInventory`) calls
@@ -2526,12 +2530,11 @@ export class BundleLifecycleManager {
     manifestMeta: SeedManifestMeta | undefined,
     wsId: string,
     dataDir?: string,
-    /** Per-workspace ToolRegistry. Optional for backward compat with
-     *  test callers; production callers should always pass it. */
-    registry?: ToolRegistry,
+    /** Boot-start failure message for an installed-but-not-running URL bundle.
+     *  Set only by the boot seeder; makes the seeded Connection `dead` instead
+     *  of the auth-derived state. */
+    startError?: string,
   ): void {
-    void registry; // registry is no longer used; kept for caller backward compat
-
     // Track A: validate authorize-URL params at the seed boundary.
     // Catches reserved-key collisions (client_id, state, PKCE, scope, etc.)
     // before they break OAuth flows at runtime.
@@ -2544,7 +2547,7 @@ export class BundleLifecycleManager {
 
     // For URL bundles, derive the boot-time Connection state.
     if ("url" in ref) {
-      this.seedUrlConnectionState(serverName, wsId, ref);
+      this.seedUrlConnectionState(serverName, wsId, ref, startError);
     }
   }
 
@@ -2555,16 +2558,35 @@ export class BundleLifecycleManager {
    *      persisted but rejected — the SDK fell back to the interactive branch
    *      and the URL was buffered). Record `reauth_required` with the captured
    *      URL so the UI shows a "Reconnect" affordance instead of "Connect".
-   *   2. No persisted auth on disk → record `not_authenticated`. The bundle is
+   *   2. Boot-start was attempted and threw (`startError`) → record `dead` with
+   *      the message. Reconnecting is not the recovery path here (the
+   *      credential is fine; the endpoint was unreachable), so this must not
+   *      fall through to the auth-derived states below.
+   *   3. No persisted auth on disk → record `not_authenticated`. The bundle is
    *      silently installed; the user discovers it on the Connections page and
    *      clicks Connect to initiate OAuth.
-   *   3. Auth present and source.start() succeeded → record `running`.
+   *   4. Auth present and source.start() succeeded → record `running`.
    */
-  private seedUrlConnectionState(serverName: string, wsId: string, ref: UrlBundleRef): void {
+  private seedUrlConnectionState(
+    serverName: string,
+    wsId: string,
+    ref: UrlBundleRef,
+    startError?: string,
+  ): void {
     const pendingAuthUrl = consumePendingAuth(wsId, serverName);
     if (pendingAuthUrl) {
       this.recordConnectionStateChange(serverName, wsId, "_workspace", "reauth_required", {
         authorizationUrl: pendingAuthUrl,
+      });
+      return;
+    }
+
+    // Boot-start failed. The bundle stays installed and its placements stay
+    // registered, but the connection is `dead` — the state whose recovery path
+    // is "try again", which is what `tryRecoverSource` does on next use.
+    if (startError) {
+      this.recordConnectionStateChange(serverName, wsId, "_workspace", "dead", {
+        lastError: startError,
       });
       return;
     }
@@ -2579,9 +2601,9 @@ export class BundleLifecycleManager {
     // FIRST). Other static-auth sources (provider / bearer / header) carry their
     // own credential and auto-connect — no interactive Connect step — so they
     // must not seed `not_authenticated` (which the UI renders as a "Connect"
-    // button that would spin a bogus OAuth flow). A surviving entry here means
-    // boot-start succeeded (failed starts are filtered before seedInstance
-    // runs), so `running` is accurate.
+    // button that would spin a bogus OAuth flow). Reaching here means boot-start
+    // either succeeded or was never attempted — a failure returned above on
+    // `startError` — so `running` is accurate.
     const hasAuth =
       "composio" in ref && ref.composio
         ? hasPersistedComposioConnection(
@@ -2632,8 +2654,17 @@ function deriveInstallSource(ref: BundleRef): NonNullable<BundleInstance["instal
 }
 
 /**
- * Build the `BundleInstance` `seedInstance` records for an already-running
- * bundle. Derives `entityDataRoot` from `dataDir` + upjack namespace, resolves
+ * Build the `BundleInstance` `seedInstance` records.
+ *
+ * **`state` is hardcoded `"running"` here and corrected afterwards, only for URL
+ * refs** — `seedUrlConnectionState` is what resolves `dead` / `not_authenticated`
+ * / `reauth_required` / `running` and recomputes `instance.state` from the
+ * Connection. A named or path ref never reaches it, so anything this builds for
+ * one stays `running` whether or not it started. That is why the boot loop drops
+ * a failed named bundle instead of keeping it (see `unstartedUrlBundleEntry`):
+ * keeping it would seed a permanently running instance for a dead bundle.
+ *
+ * Derives `entityDataRoot` from `dataDir` + upjack namespace, resolves
  * `oauthScope` for URL bundles (post-Stage-2 the only legal value is
  * `"workspace"`), and the install channel from the ref shape. `dataDir` is
  * already the canonical bundle-data parent (slug = manifest.name) thanks to

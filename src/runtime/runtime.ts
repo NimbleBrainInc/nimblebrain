@@ -866,12 +866,7 @@ export class Runtime {
     lifecycle.setWorkspaceRegistries(workspaceRegistries);
 
     // Seed lifecycle instances for workspace bundles.
-    seedWorkspaceBundleInstances(
-      lifecycle,
-      workspaceRegistries,
-      placementRegistry,
-      workspaceBundleEntries,
-    );
+    seedWorkspaceBundleInstances(lifecycle, placementRegistry, workspaceBundleEntries);
 
     // Reconcile connector-skill overlays to the pinned version. Overlays bind
     // only at connector install, and the pin is deploy-time config — so boot
@@ -2495,9 +2490,18 @@ export class Runtime {
    * Get bundle instances visible in a specific workspace.
    *
    * `inst.wsId === wsId` is the authoritative scope — every BundleInstance
-   * carries a required workspace. `visible.has(serverName)` is a
-   * belt-and-suspenders check against orphaned lifecycle records whose
-   * source has been removed from the registry.
+   * carries a required workspace.
+   *
+   * `visible.has(serverName)` is load-bearing, not a redundant guard: an
+   * installed bundle is absent from the registry whenever it is installed but
+   * not running — a boot-start that failed, or a connector torn down by a
+   * disconnect — and this filter is the sole reason those stay out of the
+   * agent's view (`getApps` → `nb__list_apps`). Deleting it surfaces every
+   * such record as a usable app. The management UI deliberately does NOT go
+   * through here for exactly that reason; `handleListInstalled` reads the
+   * lifecycle map directly so it can show a Connect / Reconnect affordance.
+   * That the agent cannot see, or explain, a bundle in this state is the open
+   * gap tracked in #757.
    */
   getBundleInstancesForWorkspace(wsId: string): BundleInstance[] {
     const wsRegistry = this._workspaceRegistries.get(wsId);
@@ -4407,8 +4411,13 @@ function registerPlatformPlacements(
 }
 
 /**
- * Seed lifecycle instances for boot-started workspace bundles, then re-register
- * any placements they carry.
+ * Seed lifecycle instances for every workspace bundle that survived the boot
+ * loop, then re-register any placements they carry.
+ *
+ * "Survived" is not "started": a URL bundle that was skipped (no tokens) or that
+ * failed to start is seeded too, carrying `startError` so its Connection is
+ * recorded honestly. Seeding it is what keeps the app in the shell and gives
+ * `tryRecoverSource` the persisted ref it needs to revive the source on next use.
  *
  * Operators are expected to have run `bun run migrate:user-creds` before
  * deploying Stage 2 (see the Stage 2 deploy runbook). The runtime no longer
@@ -4418,15 +4427,13 @@ function registerPlatformPlacements(
  */
 function seedWorkspaceBundleInstances(
   lifecycle: BundleLifecycleManager,
-  workspaceRegistries: Map<string, ToolRegistry>,
   placementRegistry: PlacementRegistry,
   entries: ProcessInventoryEntry[],
 ): void {
   for (const entry of entries) {
-    const { serverName: sn, bundle: ref, meta, wsId, dataDir } = entry;
+    const { serverName: sn, bundle: ref, meta, wsId, dataDir, startError } = entry;
     const label = "name" in ref ? ref.name : "url" in ref ? ref.url : ref.path;
-    const wsRegistry = workspaceRegistries.get(wsId);
-    lifecycle.seedInstance(sn, label, ref, meta ?? undefined, wsId, dataDir, wsRegistry);
+    lifecycle.seedInstance(sn, label, ref, meta ?? undefined, wsId, dataDir, startError);
 
     const instance = lifecycle.getInstance(sn, wsId);
     if (instance?.ui?.placements && instance.ui.placements.length > 0) {
