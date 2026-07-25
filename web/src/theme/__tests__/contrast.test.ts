@@ -106,6 +106,35 @@ describe("palette contrast — WCAG 2.2", () => {
     }
   }
 
+  /**
+   * The tinted-badge family: `bg-<hue>/10` (light) or `/20` (dark) behind
+   * `text-<hue>`, declared once in `ui/badge.tsx` and `ui/button.tsx`. Nothing
+   * consumes these variants today, so a failure here is latent — which is
+   * exactly why it needs asserting: the first `<Badge variant="success">` would
+   * otherwise ship below AA against a green suite.
+   */
+  const TINTED: TokenName[] = ["destructive", "success", "warning", "processing", "primary"];
+  // Resting state only: /10 in light, /20 in dark.
+  //
+  // The hover states (/20 light, /30 dark) are NOT asserted, and that is a
+  // scoping decision rather than an oversight. Deepening a tint that shares the
+  // text's own hue always moves the fill toward the text, so hover reduces
+  // contrast by construction: the safe ceiling is /12 for `success` in light,
+  // which is indistinguishable from the /10 resting state. The mechanism is
+  // wrong, not the value, and no component consumes these variants today —
+  // fixing it belongs with the decision about whether they should exist at all.
+  for (const mode of ["light", "dark"] as const) {
+    const pct = mode === "light" ? 10 : 20;
+    for (const hue of TINTED) {
+      for (const ground of ["background", "card"] as TokenName[]) {
+        test(`${mode}: text-${hue} on ${hue}/${pct} over ${ground} clears ${AA_TEXT}:1`, () => {
+          const fill = over(token(hue, mode), token(ground, mode), pct);
+          expect(contrastRatio(token(hue, mode), fill)).toBeGreaterThanOrEqual(AA_TEXT);
+        });
+      }
+    }
+  }
+
   for (const mode of ["light", "dark"] as const) {
     test(`${mode}: the primary hover fill keeps its label above ${AA_TEXT}:1`, () => {
       // `hover:bg-primary/90` composited over the page ground.
@@ -113,6 +142,27 @@ describe("palette contrast — WCAG 2.2", () => {
       expect(contrastRatio(token("primary-foreground", mode), fill)).toBeGreaterThanOrEqual(
         AA_TEXT,
       );
+    });
+  }
+
+  // `palette.ts` states the scope tiers are "deliberately distinct from
+  // `primary` and from every status hue". Round 2 found that violated —
+  // `scope-org` was byte-identical to `primary`, `scope-bundle` to the warning
+  // amber — and the fix changed the values and wrote the rule as prose.
+  // Contrast still passes when they collapse, so only this catches a repeat.
+  const SCOPES: TokenName[] = ["scope-org", "scope-workspace", "scope-user", "scope-bundle"];
+  const RESERVED: TokenName[] = ["primary", "success", "warning", "destructive", "processing"];
+  for (const mode of ["light", "dark"] as const) {
+    for (const scope of SCOPES) {
+      test(`${mode}: ${scope} is distinct from every brand and status hue`, () => {
+        for (const reserved of RESERVED) {
+          expect(token(scope, mode)).not.toBe(token(reserved, mode));
+        }
+      });
+    }
+    test(`${mode}: the four scope tiers are distinct from each other`, () => {
+      const values = SCOPES.map((s) => token(s, mode));
+      expect(new Set(values).size).toBe(SCOPES.length);
     });
   }
 

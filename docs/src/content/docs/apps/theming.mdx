@@ -116,13 +116,13 @@ The platform injects the following tokens into every iframe. Most ext-apps spec 
 | `--font-weight-medium` | Medium weight |
 | `--font-weight-semibold` | Semibold weight |
 | `--font-weight-bold` | Bold weight |
-| `--font-text-xs-size` / `-line-height` | `0.75rem` / `1rem` | Extra-small body text |
-| `--font-text-sm-size` / `-line-height` | `0.875rem` / `1.25rem` | Small body text |
-| `--font-text-base-size` / `-line-height` | `1rem` / `1.5rem` | Base body text |
-| `--font-text-lg-size` / `-line-height` | `1.125rem` / `1.75rem` | Large body text |
-| `--font-heading-sm-size` / `-line-height` | `1.25rem` / `1.75rem` | Small heading |
-| `--font-heading-md-size` / `-line-height` | `1.5rem` / `2rem` | Medium heading |
-| `--font-heading-lg-size` / `-line-height` | `2rem` / `2.5rem` | Large heading |
+| `--font-text-xs-size` / `-line-height` | Extra-small body text |
+| `--font-text-sm-size` / `-line-height` | Small body text |
+| `--font-text-base-size` / `-line-height` | Base body text |
+| `--font-text-lg-size` / `-line-height` | Large body text |
+| `--font-heading-sm-size` / `-line-height` | Small heading |
+| `--font-heading-md-size` / `-line-height` | Medium heading |
+| `--font-heading-lg-size` / `-line-height` | Large heading |
 
 ### Layout (ext-apps spec)
 
@@ -204,8 +204,8 @@ Common issues:
 | Background is not what I expected | Your CSS uses `background: #fff` instead of `var(--color-background-primary, #fff)` | Replace hardcoded colors with `var()` references |
 | Tokens exist but aren't applied | CSS specificity — a more specific selector overrides the token | Check that your selector isn't more specific than the `:root` declaration |
 | Dark mode doesn't toggle | Missing `ui/notifications/host-context-changed` handler | Add the `applyTokens` message listener (see code above) |
-| An `--nb-*` color doesn't flip on toggle | `--nb-*` tokens are injected at load only, not in the live payload | Drive light/dark-sensitive surfaces from the spec `--color-*` tokens |
-| Tokens are stale after restart | `deps/` directory contains an old bundled copy | Delete `deps/<your-package>` during local development (see [Local Development](/apps/local-dev)) |
+| An `--nb-*` color doesn't flip on toggle | Drive light/dark-sensitive surfaces from the spec `--color-*` tokens |
+| Tokens are stale after restart | Delete `deps/<your-package>` during local development (see [Local Development](/apps/local-dev)) |
 
 ## Full example
 
