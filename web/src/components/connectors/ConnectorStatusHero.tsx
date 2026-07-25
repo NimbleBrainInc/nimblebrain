@@ -83,9 +83,14 @@ export function ConnectorStatusHero({
     };
   }, [cat, installed.iconUrl]);
 
-  // A composio API-key connector has no redirect: its auth CTA opens the
-  // key modal and calls `connect_api_key`, which admin-gates once a connected
-  // account exists. Reconnect/failed are exactly that case.
+  // A composio API-key connector has no redirect: its auth CTA opens the key
+  // modal and calls `connect_api_key`, which admin-gates once a connected
+  // account exists. Reconnect/failed are exactly that case. This is the one
+  // auth path the server *does* gate, which is why it is the one gated here.
+  //
+  // Falls to `false` when `catalog` is absent (it is optional on
+  // `InstalledConnector`), leaving the same ungated behaviour as a native
+  // flow — no worse than the gap above, and it resolves with it.
   const authRotatesSharedCredential =
     cat?.auth === "composio" &&
     cat.composio?.authScheme === "API_KEY" &&
@@ -321,6 +326,13 @@ function StatusBlock({
           )}
         </div>
       </div>
+      {/* A suppressed CTA leaves a member with a pulsing dot and no
+       * explanation — worse than the refusal they used to click into. Say
+       * why, matching the "Workspace admin required" copy the browse page
+       * shows in the same situation. */}
+      {action && !canManageAction(action, canManage) && (
+        <span className="shrink-0 text-xs text-muted-foreground">Workspace admin required</span>
+      )}
       {action && canManageAction(action, canManage) && (
         <Button
           type="button"
@@ -381,9 +393,16 @@ function statusLabel(status: InstalledConnector["status"]): string {
 type PrimaryAction =
   | { kind: "open-bundle-modal"; label: string; adminOnly: true }
   | { kind: "open-operator-modal"; label: string; adminOnly: true }
-  // `oauth` is member-actionable for a native flow (the caller authorises
-  // their own account) but admin-only when it rotates a shared credential,
-  // so its gating is conditional rather than fixed by kind.
+  // `oauth` is admin-only when it rotates a shared credential and ungated
+  // otherwise — conditional rather than fixed by kind.
+  //
+  // "Ungated otherwise" tracks the server, not a claim that the flow is
+  // per-caller. It isn't: `/v1/mcp-auth/initiate` hardcodes
+  // `WORKSPACE_PRINCIPAL_ID`, so a native flow binds the *workspace's* shared
+  // credential to whoever ran it. That route carries `requireAuth` +
+  // `requireWorkspace` only — no admin check — so gating it here would hide a
+  // capability the server grants. The gap is server-side and filed; when it
+  // closes, this whole conditional collapses back to `adminOnly: true`.
   | { kind: "oauth"; label: string; adminOnly: boolean }
   | { kind: "cancel"; label: string; adminOnly: true };
 

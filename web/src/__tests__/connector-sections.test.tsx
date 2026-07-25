@@ -18,8 +18,10 @@
 //   3. `canManage=false` hides the affordances the server admin-gates —
 //      Edit, Disconnect, Clear, Cancel — while member-actionable ones
 //      (authorising your *own* account via a native OAuth flow) stay.
-//      The distinction is the point: hiding too much strands a member who
-//      could have acted, showing too much hands them a guaranteed 403.
+//      "Member-actionable" here means the server permits it, not that the
+//      flow is per-caller — native OAuth binds the workspace's shared
+//      credential under `WORKSPACE_PRINCIPAL_ID`. Hiding too much strands a
+//      member who could have acted; showing too much hands them a 403.
 //
 // Same plumbing as ResourceLinkView.test.tsx: bun:test + react-dom/client
 // + happy-dom (via web/test/setup.ts), no @testing-library/react.
@@ -199,6 +201,26 @@ function dcrConnector(over: Partial<InstalledConnector> = {}): InstalledConnecto
       iconUrl: "",
       url: "https://api.granola.test/mcp",
       auth: "dcr",
+    },
+    ...over,
+  };
+}
+
+/** Composio API-key connector — the one auth path the server admin-gates. */
+function composioApiKeyConnector(over: Partial<InstalledConnector> = {}): InstalledConnector {
+  return {
+    ...dcrConnector(),
+    serverName: "posthog",
+    bundleName: "posthog",
+    catalogId: "com.posthog/analytics",
+    catalog: {
+      id: "com.posthog/analytics",
+      name: "PostHog",
+      description: "Analytics",
+      iconUrl: "",
+      url: "https://mcp.posthog.test/mcp",
+      auth: "composio",
+      composio: { toolkit: "posthog", authScheme: "API_KEY" },
     },
     ...over,
   };
@@ -700,6 +722,61 @@ describe("ConnectorStatusHero", () => {
       />,
     );
     expect(findButton(mounted.container, "Cancel")).not.toBeNull();
+  });
+
+  test("composio API-key Reconnect is hidden from a member — rotation is admin-gated", async () => {
+    // `handleConnectApiKey` refuses a non-admin once a connected account
+    // exists, which is exactly reauth_required/failed. Offering Reconnect
+    // there walks a member through the key form to a refusal on submit.
+    mounted = await mount(
+      <ConnectorStatusHero
+        installed={composioApiKeyConnector({ status: "needs_auth", state: "reauth_required" })}
+        canManage={false}
+        onChanged={() => {}}
+      />,
+    );
+    expect(findButton(mounted.container, "Reconnect")).toBeNull();
+    mounted.unmount();
+
+    mounted = await mount(
+      <ConnectorStatusHero
+        installed={composioApiKeyConnector({ status: "needs_auth", state: "reauth_required" })}
+        canManage={true}
+        onChanged={() => {}}
+      />,
+    );
+    expect(findButton(mounted.container, "Reconnect")).not.toBeNull();
+  });
+
+  test("composio API-key first Connect stays open to a member — no account to rotate yet", async () => {
+    // The server only refuses once `prior.connectedAccountId` exists, so the
+    // gate must not swallow the first-time case.
+    mounted = await mount(
+      <ConnectorStatusHero
+        installed={composioApiKeyConnector({ status: "needs_auth", state: "not_authenticated" })}
+        canManage={false}
+        onChanged={() => {}}
+      />,
+    );
+    expect(findButton(mounted.container, "Connect")).not.toBeNull();
+  });
+
+  test("a connector with no catalog entry falls back to the ungated native path", async () => {
+    // `catalog` is optional on InstalledConnector. Without it the composio
+    // predicate can't fire, so this degrades to the same ungated behaviour a
+    // native flow has — documented, and it resolves when that gap does.
+    mounted = await mount(
+      <ConnectorStatusHero
+        installed={composioApiKeyConnector({
+          status: "needs_auth",
+          state: "reauth_required",
+          catalog: undefined,
+        })}
+        canManage={false}
+        onChanged={() => {}}
+      />,
+    );
+    expect(findButton(mounted.container, "Reconnect")).not.toBeNull();
   });
 });
 
