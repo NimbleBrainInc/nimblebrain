@@ -30,18 +30,26 @@
  *   The bypass written out longhand, e.g.
  *   `isOrgAdmin || members.some(m => m.userId === me && m.role === "admin")`.
  *   That is the same bug in a shape no lint recognises without data-flow
- *   analysis, and it is where the fifth instance actually lived. This check
- *   makes one concrete recurring shape unrepresentable; it does not make the
- *   bug class impossible. A write gate that reads `orgRole` at all still
- *   warrants a second look in review.
+ *   analysis, and it is where the fifth instance actually lived. A write gate
+ *   that reads `orgRole` at all still warrants a second look in review.
+ *
+ *   Nor does it flag a non-literal threshold — `roleAtLeast(role, someVar)`
+ *   passes. `SettingsShell.tsx` is exactly that shape
+ *   (`roleAtLeast(role, s.minRole ?? "ws_member")`); no `minRole` declaration
+ *   is `"ws_admin"` today, so there is no live gap, but a future one would
+ *   not be caught here.
+ *
+ *   In short: this makes one concrete recurring shape unrepresentable. It does
+ *   not make the bug class impossible.
  *
  * What it allows:
- *   - `web/src/hooks/useScopedRole.ts` — defines the ordering, and its own
- *     tests exercise the `ws_admin` threshold directly.
  *   - A `// lint-ok:workspace-write-gate` marker on the line immediately
  *     above, for a genuine reach gate that happens to need the ws_admin
  *     threshold (e.g. showing a nav entry only to workspace admins, where
  *     an org admin *should* also see it).
+ *
+ * `useScopedRole.ts` needs no exemption: it *declares* `roleAtLeast` and
+ * names the forbidden call in prose, and the AST visitor matches neither.
  *
  * Scope: `web/src/**\/*.{ts,tsx}`, excluding tests — they deliberately
  * exercise the ordering, and the contrast test in `useScopedRole.test.ts`
@@ -59,17 +67,14 @@ import * as ts from "typescript";
 const ROOT = join(import.meta.dirname ?? __dirname, "..");
 const WEB_SRC = join(ROOT, "web", "src");
 
-/** The module that owns the ordering — exempt by construction. */
-const ALLOWED = new Set(["web/src/hooks/useScopedRole.ts"]);
-
 /** Tests exercise the ordering on purpose; they are not gates. */
-function isTest(relPath: string): boolean {
+export function isTest(relPath: string): boolean {
   return relPath.includes("__tests__/") || /\.test\.tsx?$/.test(relPath);
 }
 
 const ALLOW_MARKER = "lint-ok:workspace-write-gate";
 
-interface Violation {
+export interface Violation {
   file: string;
   line: number;
   text: string;
@@ -93,8 +98,7 @@ function hasMarker(source: ts.SourceFile, pos: number): boolean {
  * in prose, or a differently-formatted call spanning lines, behaves the
  * way a reader would expect.
  */
-function scanFile(absPath: string, relPath: string): Violation[] {
-  const text = readFileSync(absPath, "utf-8");
+export function scanSource(text: string, relPath: string): Violation[] {
   const source = ts.createSourceFile(relPath, text, ts.ScriptTarget.Latest, true);
   const violations: Violation[] = [];
 
@@ -127,6 +131,11 @@ function scanFile(absPath: string, relPath: string): Violation[] {
   return violations;
 }
 
+/** Disk-reading wrapper around `scanSource`. */
+function scanFile(absPath: string, relPath: string): Violation[] {
+  return scanSource(readFileSync(absPath, "utf-8"), relPath);
+}
+
 function main(): void {
   const violations: Violation[] = [];
   let scanned = 0;
@@ -134,7 +143,7 @@ function main(): void {
   for (const rel of new Glob("**/*.{ts,tsx}").scanSync(WEB_SRC)) {
     const abs = join(WEB_SRC, rel);
     const repoRel = relative(ROOT, abs);
-    if (ALLOWED.has(repoRel) || isTest(repoRel)) continue;
+    if (isTest(repoRel)) continue;
     scanned += 1;
     violations.push(...scanFile(abs, repoRel));
   }
@@ -158,4 +167,4 @@ function main(): void {
   console.log(`✓ No ScopedRole-based workspace write gates in ${scanned} web/src/ files`);
 }
 
-main();
+if (import.meta.main) main();

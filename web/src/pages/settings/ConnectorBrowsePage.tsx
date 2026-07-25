@@ -330,7 +330,6 @@ function DirectoryCard({
   onInstall: () => void;
   onSetUp: () => void;
 }) {
-  const isMpak = entry.install.kind === "mpak-bundle";
   const isStaticAuth = entry.install.kind === "remote-oauth" && entry.install.auth === "static";
   const operatorReady = entry.operatorConfigured === true;
 
@@ -352,7 +351,6 @@ function DirectoryCard({
           canManage={canManage}
           isStaticAuth={isStaticAuth}
           operatorReady={operatorReady}
-          isMpakStub={isMpak}
           onInstall={onInstall}
           onSetUp={onSetUp}
         />
@@ -367,7 +365,6 @@ function CardAction({
   canManage,
   isStaticAuth,
   operatorReady,
-  isMpakStub,
   onInstall,
   onSetUp,
 }: {
@@ -376,7 +373,6 @@ function CardAction({
   canManage: boolean;
   isStaticAuth: boolean;
   operatorReady: boolean;
-  isMpakStub: boolean;
   onInstall: () => void;
   onSetUp: () => void;
 }) {
@@ -390,33 +386,26 @@ function CardAction({
   //   - not configured + admin     → Set up
   //   - not configured + non-admin → "Operator setup required"
   //   - configured                 → Install (rotation lives on Configure now)
-  if (isStaticAuth && entry.install.kind === "remote-oauth") {
-    if (!operatorReady) {
-      if (canManage) {
-        return (
-          <Button type="button" variant="outline" size="sm" onClick={onSetUp}>
-            Set up
-          </Button>
-        );
-      }
-      return <span className="text-xs text-muted-foreground">Operator setup required</span>;
-    }
-    return (
-      <Button type="button" variant="outline" size="sm" onClick={onInstall} disabled={busy}>
-        {busy ? "Installing…" : "Install"}
+  if (isStaticAuth && entry.install.kind === "remote-oauth" && !operatorReady) {
+    return canManage ? (
+      <Button type="button" variant="outline" size="sm" onClick={onSetUp}>
+        Set up
       </Button>
+    ) : (
+      <span className="text-xs text-muted-foreground">Operator setup required</span>
     );
   }
-  if (isMpakStub) {
-    return (
-      <Button type="button" variant="outline" size="sm" onClick={onInstall} disabled={busy}>
-        {busy ? "Installing…" : "Install"}
-      </Button>
-    );
-  }
-  return (
+  // Every remaining path is an install, and installing is a workspace-scoped
+  // write — `workspaceInstallAdmission` refuses a non-admin with "Workspace
+  // admin role required to install connectors." An enabled button here just
+  // moves that refusal to after the click, which is the whole defect this
+  // branch removes. The three install branches were byte-identical, so the
+  // gate lives in one place rather than three.
+  return canManage ? (
     <Button type="button" variant="outline" size="sm" onClick={onInstall} disabled={busy}>
       {busy ? "Installing…" : "Install"}
     </Button>
+  ) : (
+    <span className="text-xs text-muted-foreground">Workspace admin required</span>
   );
 }
