@@ -359,7 +359,13 @@ function DirectoryCard({
   );
 }
 
-function CardAction({
+/**
+ * The card's action slot. Exported for test: it owns the install gate, and
+ * gating install was the substantive behaviour change on this page — a
+ * module-private component left it unpinned, so deleting the gate kept the
+ * suite green while every member got an Install button the server refuses.
+ */
+export function CardAction({
   entry,
   busy,
   canManage,

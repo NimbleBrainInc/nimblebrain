@@ -337,7 +337,13 @@ function StatusBlock({
        * why, matching the "Workspace admin required" copy the browse page
        * shows in the same situation. */}
       {action && !canManageAction(action, canManage) && (
-        <span className="shrink-0 text-xs text-muted-foreground">Workspace admin required</span>
+        <span className="shrink-0 text-xs text-muted-foreground">
+          {/* Name the blocker the member can see, not just their role. The
+           * browse page says the same thing for the same situation. */}
+          {action.kind === "open-operator-modal"
+            ? "Operator setup required"
+            : "Workspace admin required"}
+        </span>
       )}
       {action && canManageAction(action, canManage) && (
         <Button
@@ -403,12 +409,20 @@ type PrimaryAction =
   // otherwise — conditional rather than fixed by kind.
   //
   // "Ungated otherwise" tracks the server, not a claim that the flow is
-  // per-caller. It isn't: `/v1/mcp-auth/initiate` hardcodes
-  // `WORKSPACE_PRINCIPAL_ID`, so a native flow binds the *workspace's* shared
-  // credential to whoever ran it. That route carries `requireAuth` +
-  // `requireWorkspace` only — no admin check — so gating it here would hide a
-  // capability the server grants. The gap is server-side and filed; when it
-  // closes, this whole conditional collapses back to `adminOnly: true`.
+  // per-caller. It isn't: the auth CTA binds the *workspace's* shared
+  // credential to whoever ran it, via one of two routes — `runOAuth` dispatches
+  // to `/v1/composio-auth/initiate` for a composio entry and
+  // `/v1/mcp-auth/initiate` otherwise (which hardcodes
+  // `WORKSPACE_PRINCIPAL_ID`). **Both** carry `requireAuth` + `requireWorkspace`
+  // only, with no admin check, so gating here would hide a capability the
+  // server grants.
+  //
+  // The gap is server-side and filed (#755). Note `authScheme` is optional and
+  // defaults to OAUTH2, so a composio connector usually takes the composio
+  // route and is *not* covered by the API_KEY predicate below. Gating only one
+  // route and flipping this to `adminOnly: true` would therefore re-create the
+  // client/server disagreement this file exists to remove — the conditional
+  // collapses when **both** routes are gated, not one.
   | { kind: "oauth"; label: string; adminOnly: boolean }
   | { kind: "cancel"; label: string; adminOnly: true };
 
