@@ -262,7 +262,7 @@ function UserMessage({
   displayContent: string;
 }) {
   return (
-    <div className="pl-4 border-l-2 border-border break-words whitespace-pre-wrap">
+    <div className="break-words whitespace-pre-wrap">
       {contextPrefix && (
         <details className="mb-1">
           <summary className="text-3xs opacity-60 cursor-pointer select-none">App Context</summary>

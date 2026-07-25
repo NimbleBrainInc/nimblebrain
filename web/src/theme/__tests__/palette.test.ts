@@ -5,14 +5,12 @@ import { paletteToExtAppsTokens, paletteToRootCss } from "../projections.ts";
 /**
  * These tests guard the projection, not a snapshot of it.
  *
- * The previous version froze the entire pre-dedup token map and asserted
- * byte-for-byte reproduction plus a list of intended deltas. That guaranteed
- * "nothing changed since the dedup", which stopped being the useful question
- * the moment the brand deliberately changed — and a fifty-value fixture is only
- * an independent check until someone regenerates it from the source it exists
- * to verify.
+ * A frozen copy of the token map would guarantee only "nothing changed", which
+ * is the wrong question for a palette that changes deliberately — and a
+ * fifty-value fixture stops being an independent check the moment someone
+ * regenerates it from the source it exists to verify.
  *
- * What is worth guarding instead:
+ * What is worth guarding:
  *   - STRUCTURE: every key the ext-apps bridge promises is present in both modes.
  *   - BOUNDARY: `getSpecThemeTokens` filters NB extensions off the wire.
  *   - ANCHORS: the handful of load-bearing brand values, asserted literally, so
@@ -41,6 +39,8 @@ const ANCHORS = {
     "--color-text-accent": "#4d90ff",
     "--color-ring-primary": "#4d90ff",
     "--color-border-primary": "#232326",
+    "--font-sans": "'Hanken Grotesk', system-ui, sans-serif",
+    "--nb-font-heading": "'Hanken Grotesk', system-ui, sans-serif",
   },
 } as const;
 
@@ -59,6 +59,17 @@ const REQUIRED_KEYS = [
   "--font-sans",
   "--font-mono",
   "--nb-font-heading",
+  "--font-weight-normal",
+  "--font-weight-medium",
+  "--font-weight-semibold",
+  "--font-weight-bold",
+  "--font-text-xs-size",
+  "--font-text-sm-size",
+  "--font-text-base-size",
+  "--font-text-lg-size",
+  "--font-heading-sm-size",
+  "--font-heading-md-size",
+  "--font-heading-lg-size",
   "--border-radius-xs",
   "--border-radius-sm",
   "--border-radius-md",
@@ -132,7 +143,6 @@ describe("paletteToRootCss — shell :root/.dark match current values", () => {
     for (const decl of [
       "--background: #ffffff;",
       "--primary: #0055FF;",
-      "--primary-light: #eaf0ff;",
       "--processing: #6d3ecf;",
       "--chart-1: #0055FF;",
       "--sidebar-width: 240px;",

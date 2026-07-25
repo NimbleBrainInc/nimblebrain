@@ -72,7 +72,6 @@
     --color-success-foreground: var(--success-foreground);
     --color-warning: var(--warning);
     --color-warning-foreground: var(--warning-foreground);
-    --color-primary-light: var(--primary-light);
     --color-processing: var(--processing);
     --color-processing-foreground: var(--processing-foreground);
     --color-processing-light: var(--processing-light);
@@ -181,7 +180,11 @@
   line-height: var(--font-text-base-line-height);
   font-weight: var(--font-weight-normal);
   color: var(--foreground);
-  background: var(--muted);
+  /* A tint of the ink rather than `--muted`: in this palette `card` and
+     `background` are the same value in light, so `--muted` against the chat
+     ground is 1.099:1 — invisible. Mixing from `--foreground` adapts to
+     whichever surface the bubble lands on and reads in both modes. */
+  background: color-mix(in srgb, var(--foreground) 10%, transparent);
   padding: 0.5rem 0.75rem;
   border-radius: var(--border-radius-md);
   /* Radius decreases toward the speaker's edge — the corner nearest the
@@ -191,9 +194,9 @@
 
 /* Assistant messages. Chat is the one surface in the product where READING
    beats scanning, so agent prose gets a dedicated screen-text serif rather than
-   the UI face. This deliberately does NOT reuse --font-heading: display and UI
-   are one family now, and borrowing the heading face only produced a serif back
-   when that face happened to be one. Streamdown handles markdown rendering. */
+   the UI face. It deliberately does NOT reuse --font-heading, which is the UI
+   family: the reading face has to be named to survive that. Streamdown handles
+   markdown rendering. */
 .presence-assistant-message {
   font-family: var(--font-reading);
   font-size: var(--font-text-lg-size);

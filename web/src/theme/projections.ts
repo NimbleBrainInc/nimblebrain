@@ -26,7 +26,7 @@ import {
  * Build the ext-apps token map for a mode.
  *
  * Spec keys follow the MCP ext-apps contract. Brand-semantic values with no
- * spec equivalent (`--nb-color-primary-light`, `--nb-color-processing{,-light}`,
+ * spec equivalent (`--nb-color-processing{,-light}`,
  * `--nb-color-info-light`, `--nb-font-heading`) ride as `--nb-*` extensions:
  * injected into the iframe's style block, filtered off the protocol boundary by
  * `getSpecThemeTokens`.
@@ -64,7 +64,6 @@ export function paletteToExtAppsTokens(mode: Mode): Record<string, string> {
     "--nb-color-danger": c("destructive"),
     "--nb-color-success": c("success"),
     "--nb-color-warning": c("warning"),
-    "--nb-color-primary-light": c("primary-light"),
     "--nb-color-processing": c("processing"),
     "--nb-color-processing-light": c("processing-light"),
     "--nb-color-info-light": c("info-light"),

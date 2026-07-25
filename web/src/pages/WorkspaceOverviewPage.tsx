@@ -107,7 +107,7 @@ export function WorkspaceOverviewPage() {
             >
               Workspace · {workspace.id}
             </div>
-            <h1 className="mt-1 text-3xl font-serif font-medium text-foreground">
+            <h1 className="mt-1 text-3xl font-heading font-medium text-foreground">
               {workspace.name}
             </h1>
             <p className="mt-2 text-sm text-muted-foreground italic">

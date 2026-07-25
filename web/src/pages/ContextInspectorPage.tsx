@@ -156,7 +156,7 @@ export function ContextInspectorPage() {
           )}
         </div>
         <div className="flex items-baseline justify-between gap-4 flex-wrap">
-          <h1 className="text-2xl font-serif font-medium text-foreground">Assembled context</h1>
+          <h1 className="text-2xl font-heading font-medium text-foreground">Assembled context</h1>
           {digest && digest.runId !== null && (
             <div className="text-xs text-muted-foreground tabular-nums">
               <span className="font-medium text-foreground">

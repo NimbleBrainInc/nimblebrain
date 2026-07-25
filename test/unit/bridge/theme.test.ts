@@ -60,7 +60,6 @@ const EXPECTED_KEYS = [
   "--nb-color-danger",
   "--nb-color-success",
   "--nb-color-warning",
-  "--nb-color-primary-light",
   "--nb-color-processing",
   "--nb-color-processing-light",
   "--nb-color-info-light",

@@ -7,10 +7,10 @@ import { colors, extOnlyColors, type Mode, type Pair, pick } from "../palette.ts
  * derives ratios from the actual values, so it fails on a bad colour even if
  * every fixture in the repo was regenerated from that same bad colour.
  *
- * It earns its place. Run against the palette these values replaced, it failed
- * nine checks — `text-tertiary` was below 4.5:1 on every surface in BOTH modes
- * while carrying tallies, kbd hints, section labels, and row metadata, and the
- * system scope rail sat at 1.73:1 while encoding real information.
+ * It earns its place: ten pairs in this palette's predecessor were below AA and
+ * nothing caught them. `warning` sat at 2.148:1 on card, `text-tertiary` below
+ * 4.5:1 on every surface in both modes (worst 2.397:1), `success` at 3.768:1,
+ * and `muted-foreground` at 4.429:1 on both `muted` and `sidebar`.
  *
  * Thresholds: 4.5:1 for text, because the shell's type tops out at 16px and
  * most of it is 10–14px (the 3:1 large-text allowance needs 18.66px bold or
@@ -68,7 +68,6 @@ const TEXT_PAIRS: [fg: TokenName, bg: TokenName, where: string][] = [
   ["primary", "background", "links, accent text"],
   ["primary", "card", "links inside cards"],
   ["primary-foreground", "primary", "primary button label"],
-  ["primary", "primary-light", "badge text on tint"],
   ["processing", "background", "in-progress accent"],
   ["processing", "processing-light", "badge text on tint"],
   ["success", "card", "status labels"],
@@ -76,15 +75,20 @@ const TEXT_PAIRS: [fg: TokenName, bg: TokenName, where: string][] = [
   ["destructive", "card", "error text"],
 ];
 
-/** Information-bearing non-text. A decorative hairline would not belong here. */
+/**
+ * Information-bearing non-text at the 3:1 bar.
+ *
+ * Deliberately short. A pair whose tokens are also asserted at 4.5:1 in
+ * TEXT_PAIRS cannot fail here on its own — `ring` is `primary`, and `success`
+ * and `destructive` are already tested on `card` — so those are omitted. The
+ * scope tiers earn their place: they have values of their own and appear
+ * nowhere in the text list.
+ */
 const NON_TEXT_PAIRS: [fg: TokenName, bg: TokenName, where: string][] = [
   ["scope-org", "card", "org scope rail"],
   ["scope-workspace", "card", "workspace scope rail"],
   ["scope-user", "card", "user scope rail"],
   ["scope-bundle", "card", "bundle scope rail"],
-  ["ring", "background", "focus ring"],
-  ["success", "card", "status dot"],
-  ["destructive", "card", "error indicator"],
 ];
 
 describe("palette contrast — WCAG 2.2", () => {

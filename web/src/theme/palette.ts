@@ -72,7 +72,6 @@ export const colors = {
   "success-foreground": ["#ffffff", "#000000"],
   warning: ["#8a5f0a", "#e0aa3c"],
   "warning-foreground": ["#ffffff", "#000000"],
-  "primary-light": ["#eaf0ff", "#0b1a33"],
   processing: ["#6d3ecf", "#a68bfa"],
   "processing-foreground": ["#ffffff", "#000000"],
   "processing-light": ["#f0ecfd", "#161234"],
@@ -80,12 +79,14 @@ export const colors = {
   // Skill-scope tones for the Context Ledger — one hue per tier (org /
   // workspace / user / bundle). Shell-only (no ext-apps projection); shape and
   // label carry the distinction too, so color never encodes it alone. Every
-  // one of these clears 3:1 against `card` in both modes (WCAG 1.4.11) —
-  // they carry information, so they are not decorative.
-  "scope-org": ["#0055FF", "#4d90ff"],
-  "scope-workspace": ["#0f7a4f", "#3fbf85"],
-  "scope-user": ["#6d3ecf", "#a68bfa"],
-  "scope-bundle": ["#8a5f0a", "#e0aa3c"],
+  // one clears 3:1 against `card` in both modes (WCAG 1.4.11) — they carry
+  // information, so they are not decorative. They are also deliberately
+  // distinct from `primary` and from every status hue: a tier that renders in
+  // the warning amber or the success green reads as a status, not a scope.
+  "scope-org": ["#1d4ed8", "#7aa2f7"],
+  "scope-workspace": ["#0e7490", "#4dd0e1"],
+  "scope-user": ["#7c3aed", "#b79bfc"],
+  "scope-bundle": ["#a13d0f", "#f0894f"],
   "chart-1": ["#0055FF", "#4d90ff"],
   "chart-2": ["#0f7a4f", "#3fbf85"],
   "chart-3": ["#8a5f0a", "#e0aa3c"],
@@ -109,8 +110,7 @@ export const extOnlyColors = {
   "background-tertiary": ["#f4f4f5", "#161618"],
   // Ext-apps only: `paletteToRootCss` emits `colors`, so the shell never sees
   // these. They reach embedded iframes via `paletteToExtAppsTokens`, which is
-  // the only place they meet — and `contrast.test.ts` checks that pair, which
-  // the first version of this palette did not and which failed at 4.397:1.
+  // the only place they meet, and `contrast.test.ts` checks exactly that pair.
   "text-tertiary": ["#6b6b73", "#82828c"],
 } as const satisfies Record<string, Pair>;
 
