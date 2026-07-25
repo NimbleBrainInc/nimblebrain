@@ -15,8 +15,8 @@ body {
 
 .page { padding: 32px; max-width: 960px; margin: 0 auto; }
 .header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 24px; }
-h1 { font-family: var(--nb-font-heading, Georgia, serif); font-size: 20px; font-weight: 600; }
-h2 { font-family: var(--nb-font-heading, Georgia, serif); font-size: 16px; font-weight: 600; margin-bottom: 12px; }
+h1 { font-family: var(--nb-font-heading, system-ui, sans-serif); font-size: 20px; font-weight: 600; }
+h2 { font-family: var(--nb-font-heading, system-ui, sans-serif); font-size: 16px; font-weight: 600; margin-bottom: 12px; }
 .controls { display: flex; gap: 8px; align-items: center; }
 select {
   padding: 7px 12px;
@@ -74,7 +74,7 @@ th.right, td.right { text-align: right; }
 td {
   padding: 10px 14px;
   font-size: 13px;
-  border-bottom: 1px solid var(--color-background-tertiary, #f8f7f5);
+  border-bottom: 1px solid var(--color-background-tertiary, #f4f4f5);
 }
 tr:last-child td { border-bottom: none; }
 .empty {

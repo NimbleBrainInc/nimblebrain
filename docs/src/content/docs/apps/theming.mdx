@@ -95,22 +95,22 @@ The platform injects the following tokens into every iframe. Most ext-apps spec 
 
 | Token | Light | Dark | Use for |
 |-------|-------|------|---------|
-| `--color-background-primary` | `#faf9f7` | `#0a0a09` | Page background |
-| `--color-background-secondary` | `#ffffff` | `#141413` | Card / panel backgrounds |
-| `--color-background-tertiary` | `#f3f2ef` | `#1c1c1b` | Subtle / nested backgrounds |
-| `--color-text-primary` | `#171717` | `#e5e5e5` | Body text |
-| `--color-text-secondary` | `#737373` | `#a3a3a3` | Captions, metadata, placeholders |
-| `--color-text-tertiary` | `#a3a3a3` | `#737373` | De-emphasized text |
-| `--color-text-accent` | `#0055FF` | `#3b8eff` | Links, primary buttons, AI accents (load-only — does not refresh on toggle) |
-| `--color-border-primary` | `#e5e5e5` | `#262626` | Borders, dividers |
-| `--color-border-secondary` | `#e5e5e5` | `#262626` | Secondary borders |
-| `--color-ring-primary` | `#0055FF` | `#3b8eff` | Focus rings |
+| `--color-background-primary` | `#ffffff` | `#000000` | Page background |
+| `--color-background-secondary` | `#ffffff` | `#0e0e10` | Card / panel backgrounds |
+| `--color-background-tertiary` | `#f4f4f5` | `#161618` | Subtle / nested backgrounds |
+| `--color-text-primary` | `#09090b` | `#fafafa` | Body text |
+| `--color-text-secondary` | `#5c5c66` | `#9b9ba4` | Captions, metadata, placeholders |
+| `--color-text-tertiary` | `#6b6b73` | `#82828c` | De-emphasized text |
+| `--color-text-accent` | `#0055FF` | `#4d90ff` | Links, primary buttons, AI accents (load-only — does not refresh on toggle) |
+| `--color-border-primary` | `#e4e4e7` | `#232326` | Borders, dividers |
+| `--color-border-secondary` | `#e4e4e7` | `#232326` | Secondary borders |
+| `--color-ring-primary` | `#0055FF` | `#4d90ff` | Focus rings |
 
 ### Typography (ext-apps spec)
 
 | Token | Value | Use for |
 |-------|-------|---------|
-| `--font-sans` | `'Satoshi', system-ui, sans-serif` | Body font |
+| `--font-sans` | `'Hanken Grotesk', system-ui, sans-serif` | Body font |
 | `--font-mono` | `'JetBrains Mono Variable', ui-monospace, SFMono-Regular, monospace` | Code / monospace font |
 | `--font-weight-normal` | `400` | Normal weight |
 | `--font-weight-medium` | `500` | Medium weight |
@@ -150,19 +150,17 @@ These have no ext-apps spec equivalent. They are injected into the iframe's `<st
 
 | Token | Light | Dark | Use for |
 |-------|-------|------|---------|
-| `--nb-color-accent-foreground` | `#ffffff` | `#0a0a09` | Text on accent backgrounds |
-| `--nb-color-danger` | `#dc2626` | `#f87171` | Errors, destructive actions |
-| `--nb-color-success` | `#059669` | `#34d399` | Success indicators |
-| `--nb-color-warning` | `#f59e0b` | `#fbbf24` | Warning indicators |
-| `--nb-color-warm` | `#d4620a` | `#f59542` | Warm accent |
-| `--nb-color-warm-light` | `#fef5ee` | `#2a1a08` | Warm accent background |
-| `--nb-color-processing` | `#7c3aed` | `#a78bfa` | In-progress / processing state |
-| `--nb-color-processing-light` | `#f3eeff` | `#1a0f2e` | Processing background |
-| `--nb-color-info-light` | `#eef4ff` | `#0c1a33` | Info background |
-| `--nb-font-heading` | `'Erode', Georgia, serif` | same | Heading font |
+| `--nb-color-accent-foreground` | `#ffffff` | `#000000` | Text on accent backgrounds |
+| `--nb-color-danger` | `#c02a24` | `#f0736a` | Errors, destructive actions |
+| `--nb-color-success` | `#0f7a4f` | `#3fbf85` | Success indicators |
+| `--nb-color-warning` | `#8a5f0a` | `#e0aa3c` | Warning indicators |
+| `--nb-color-processing` | `#6d3ecf` | `#a68bfa` | In-progress / processing state |
+| `--nb-color-processing-light` | `#f0ecfd` | `#161234` | Processing background |
+| `--nb-color-info-light` | `#eaf0ff` | `#0b1a33` | Info background |
+| `--nb-font-heading` | `'Hanken Grotesk', system-ui, sans-serif` | same | Heading font |
 
 <Aside type="note">
-Custom fonts are injected — `--font-sans` resolves to Satoshi and `--nb-font-heading` to Erode, the platform's actual brand typefaces. The fallback stacks (`system-ui`, `Georgia`) only take over when the app runs outside the platform.
+The host injects font *names*, not font *files*. A `srcdoc` iframe is its own document and inherits no `@font-face` from the shell, so unless your app loads the face itself the value resolves to the fallback stack. Design against the fallback and treat the brand face as an enhancement — or load it in your own bundle.
 </Aside>
 
 ## Opt-in, not opt-out
@@ -199,7 +197,7 @@ Common issues:
 
 | Symptom | Cause | Fix |
 |---------|-------|-----|
-| Background is white, not warm paper | Your CSS uses `background: #fff` instead of `var(--color-background-primary, #fff)` | Replace hardcoded colors with `var()` references |
+| Background is not what I expected | Your CSS uses `background: #fff` instead of `var(--color-background-primary, #fff)` | Replace hardcoded colors with `var()` references |
 | Tokens exist but aren't applied | CSS specificity — a more specific selector overrides the token | Check that your selector isn't more specific than the `:root` declaration |
 | Dark mode doesn't toggle | Missing `ui/notifications/host-context-changed` handler | Add the `applyTokens` message listener (see code above) |
 | An `--nb-*` color doesn't flip on toggle | `--nb-*` tokens are injected at load only, not in the live payload | Drive light/dark-sensitive surfaces from the spec `--color-*` tokens |

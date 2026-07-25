@@ -39,7 +39,7 @@ body {
   display: flex; justify-content: space-between; align-items: center;
 }
 .header-title {
-  font-family: var(--nb-font-heading, Georgia, 'Times New Roman', serif);
+  font-family: var(--nb-font-heading, system-ui, sans-serif);
   font-size: 22px;
   font-weight: 500;
   letter-spacing: -0.025em;
@@ -289,7 +289,7 @@ body {
   padding: 20px 20px 0;
 }
 .detail-title {
-  font-family: var(--nb-font-heading, Georgia, 'Times New Roman', serif);
+  font-family: var(--nb-font-heading, system-ui, sans-serif);
   font-size: 18px; font-weight: 500;
   letter-spacing: -0.025em;
   word-break: break-word;
@@ -358,7 +358,7 @@ body {
 .detail-error {
   margin: 0 20px 12px;
   font-size: 12px;
-  color: var(--nb-color-danger, #dc2626);
+  color: var(--nb-color-danger, #c02a24);
 }
 .detail-actions {
   padding: 0 20px 20px;
@@ -384,17 +384,17 @@ body {
 .btn-primary svg { width: 14px; height: 14px; }
 .btn-danger {
   padding: 6px 16px;
-  border: 1px solid color-mix(in srgb, var(--nb-color-danger, #dc2626) 40%, transparent);
+  border: 1px solid color-mix(in srgb, var(--nb-color-danger, #c02a24) 40%, transparent);
   border-radius: 20px;
   background: transparent;
-  color: var(--nb-color-danger, #dc2626);
+  color: var(--nb-color-danger, #c02a24);
   font-size: 12px; font-weight: 500;
   font-family: inherit;
   cursor: pointer;
   transition: background 0.15s ease, color 0.15s ease;
 }
 .btn-danger:hover:not(:disabled) {
-  background: var(--nb-color-danger, #dc2626);
+  background: var(--nb-color-danger, #c02a24);
   color: #fff;
 }
 .btn-danger:disabled { opacity: 0.6; cursor: not-allowed; }
@@ -406,7 +406,7 @@ body {
 }
 .empty-state-icon { margin-bottom: 12px; color: var(--color-text-secondary, #5c5c66); }
 .empty-state-title {
-  font-family: var(--nb-font-heading, Georgia, 'Times New Roman', serif);
+  font-family: var(--nb-font-heading, system-ui, sans-serif);
   font-size: 16px; font-weight: 500;
   letter-spacing: -0.025em;
   margin-bottom: 6px;
@@ -421,9 +421,9 @@ body {
 .skel-card { height: 180px; border-radius: var(--border-radius-sm, 0.5rem); }
 .error-banner {
   padding: 10px 14px; margin: 0 0 12px;
-  background: color-mix(in srgb, var(--nb-color-danger, #dc2626) 10%, transparent);
-  border: 1px solid color-mix(in srgb, var(--nb-color-danger, #dc2626) 25%, transparent);
+  background: color-mix(in srgb, var(--nb-color-danger, #c02a24) 10%, transparent);
+  border: 1px solid color-mix(in srgb, var(--nb-color-danger, #c02a24) 25%, transparent);
   border-radius: var(--border-radius-sm, 0.5rem);
-  color: var(--nb-color-danger, #dc2626);
+  color: var(--nb-color-danger, #c02a24);
   font-size: 13px;
 }
