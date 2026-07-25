@@ -51,7 +51,11 @@ describe("resolveThinking", () => {
 		// tier from it would request maximum reasoning on every call from a
 		// number nobody chose. Emit bare adaptive and let the model decide.
 		expect(
-			resolveThinking({ model: "anthropic:claude-opus-5", maxOutputTokens: 128000 }),
+			resolveThinking({
+				model: "anthropic:claude-opus-5",
+				maxOutputTokens: 128000,
+				maxOutputTokensConfigured: false,
+			}),
 		).toEqual({ mode: "adaptive" });
 	});
 
@@ -65,6 +69,7 @@ describe("resolveThinking", () => {
 				configMode: "enabled",
 				model: "anthropic:claude-opus-5",
 				maxOutputTokens: 128000,
+				maxOutputTokensConfigured: false,
 			}),
 		).toEqual({ mode: "adaptive" });
 	});

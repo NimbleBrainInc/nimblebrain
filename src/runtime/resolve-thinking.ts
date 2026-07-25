@@ -21,10 +21,15 @@ export interface ResolveThinkingInput {
   maxOutputTokens?: number;
   /**
    * Whether `maxOutputTokens` came from operator config rather than the
-   * model's catalog ceiling. Only the platform-default path consults it — see
-   * the adaptive-only carve-out in `resolveThinking`.
+   * model's catalog ceiling.
+   *
+   * **Required on purpose.** Its permissive value is `false`, so an omitted
+   * flag doesn't error — it silently drops the operator's ceiling and hands
+   * the model bare adaptive. Making it required means the compiler, not a
+   * test, enforces every present and future callsite; a test can only cover
+   * the ones that exist today.
    */
-  maxOutputTokensConfigured?: boolean;
+  maxOutputTokensConfigured: boolean;
 }
 
 /**
