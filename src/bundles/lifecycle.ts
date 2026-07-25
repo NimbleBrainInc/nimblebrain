@@ -2574,7 +2574,7 @@ export class BundleLifecycleManager {
     // user-presence signal is `credentials/composio/<connectorId>/connection.json`,
     // not the mcp-oauth tokens.json. Bundles carry the catalog id forward on
     // `ref.composio.connectorId` so this probe is local; we don't need the
-    // catalog to derive the path. Composio bundles carry header auth but STILL
+    // catalog to derive the path. Composio bundles carry static auth but STILL
     // need a per-user connect, so they route to the composio probe (check
     // FIRST). Other static-auth sources (provider / bearer / header) carry their
     // own credential and auto-connect — no interactive Connect step — so they

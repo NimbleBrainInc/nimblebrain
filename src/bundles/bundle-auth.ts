@@ -24,8 +24,9 @@ const STATIC_AUTH_TYPES: readonly string[] = ["bearer", "header", "provider"];
  * (`startup.ts`): the two boot gates (`workspace-runtime.ts` boot-start,
  * `lifecycle.ts` `seedInstance`) consume the same predicate so all three agree.
  *
- * CAUTION: Composio-backed bundles also carry `header` auth (the platform's
- * `x-api-key`), so this returns true for them too — correct for `startup.ts`
+ * CAUTION: Composio-backed bundles also carry static auth (`provider` today,
+ * `header` on refs predating the credential-provider seam), so this returns true
+ * for them too — correct for `startup.ts`
  * (Composio never uses the OAuth provider). But Composio STILL needs a per-user
  * connect, so the two boot gates MUST check the Composio marker FIRST and only
  * fall back to this predicate for non-Composio url bundles. Otherwise an

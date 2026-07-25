@@ -1308,8 +1308,8 @@ async function handleInstallIdentity(
   // Resolve install wiring, owner-generic. DCR carries none (no session, no client
   // secret). Composio creates the upstream session bound to the caller's identity
   // (`{type:"user"}`, not a workspace) and returns the per-install session URL +
-  // `${COMPOSIO_API_KEY}` transport template — the same wiring the workspace path
-  // builds via `resolveInstallWiring`, owner-swapped.
+  // a transport naming the `composio` credential provider — the same wiring the
+  // workspace path builds via `resolveInstallWiring`, owner-swapped.
   let composioWiring: { url: string; transport: RemoteTransportConfig } | undefined;
   if (action.auth === "composio") {
     const composioErr = validateComposioInstall(action, entry.name);
@@ -1585,8 +1585,9 @@ function collectApiKeyFields(
 /** Operator-facing message for a Composio install attempted with no broker credential configured. */
 function composioUnconfiguredMessage(entryName: string): string {
   return (
-    `"${entryName}" requires COMPOSIO_API_KEY in the platform env. ` +
-    "Set the platform-wide Composio broker credential and restart the API."
+    `"${entryName}" requires a platform-wide Composio broker credential. Set ` +
+    "connectors.providers.composio.apiKey in nimblebrain.json (or COMPOSIO_API_KEY " +
+    "in the platform env) and restart the API."
   );
 }
 
@@ -1973,6 +1974,14 @@ async function validateRemoteOAuthInstall(
  * any header carrying it — the `x-api-key` itself, or a copy inlined elsewhere —
  * is dropped rather than persisted. Nothing written to workspace.json references
  * the secret, by value or by name.
+ *
+ * The non-`x-api-key` branch guards a response shape we do not control: the
+ * vendor could return the broker key embedded in some other header, and this
+ * function is the last step before the value is persisted. Dropping is lossier
+ * than the rewrite it replaces — that header is discarded rather than kept with
+ * a resolvable placeholder — but keeping it would mean re-persisting an env
+ * reference, which is what this seam removes. No live impact: Composio returns
+ * only `x-api-key` today.
  */
 function scrubComposioHeaders(
   headers: Record<string, string> | undefined,
@@ -2090,7 +2099,10 @@ function buildRemoteBundleRef(
     // in the bundled catalog today. A `provider`-auth entry also carries its
     // credential class here: provider + config are copied VERBATIM from the
     // (operator-authored) catalog entry — never tenant input — which is what
-    // makes a self-installable platform connector safe.
+    // makes a self-installable platform connector safe. That provenance is
+    // specific to THIS branch: the composio branch above also yields provider
+    // auth, but from a vendor session response, so `provider` auth alone is not
+    // a catalog-provenance signal (see `isMintedFleetSource`).
     transport:
       composioWiring?.transport ??
       (action.auth === "provider" && action.providerAuth

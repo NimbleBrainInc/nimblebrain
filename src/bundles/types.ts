@@ -53,8 +53,11 @@ export interface RemoteTransportConfig {
     /**
      * Non-interactive machine-plane auth produced by a named credential
      * PROVIDER (see `src/tools/credential-provider.ts`). The provider name +
-     * its `config` are opaque to the kernel — for a catalog connector they come
-     * from the operator-published catalog entry, never tenant input. The
+     * its `config` are opaque to the kernel. For the `minted` fleet rail they come
+     * from the operator-published catalog entry; a brokered connector (Composio)
+     * also names a provider, but its URL comes from the vendor's API response, so
+     * provider auth alone does NOT imply catalog provenance — see
+     * `isMintedFleetSource`. The
      * built-in `"minted"` provider mints a short-lived, workspace-scoped service
      * token against the fleet authorizer (config:
      * `{ audience, scope, tokenUrl?, issuer? }`) and re-mints on expiry. The

@@ -77,13 +77,14 @@ The full reference is in [Environment Variables → Composio aggregator](/config
 
 ### Declaring the provider in `nimblebrain.json`
 
-The provider's settings can be declared on the config interface instead of the environment. The API key stays in the environment either way:
+The provider can be declared on the config interface instead of the environment:
 
 ```json
 {
   "connectors": {
     "providers": {
       "composio": {
+        "apiKey": "…",
         "baseUrl": "https://backend.composio.dev",
         "monitorEnabled": true
       }
