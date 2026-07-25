@@ -20,6 +20,8 @@ export const WORKSPACE_PRINCIPAL_ID = "_workspace";
  * Transitions:
  *   (init)              → not_authenticated   (URL bundle installed, no tokens)
  *   (init)              → starting            (URL bundle has persisted tokens; attempting boot)
+ *   (init)              → dead                (URL bundle installed; boot-start attempted and failed)
+ *   (init)              → reauth_required     (boot hit interactive OAuth; the URL was buffered)
  *   not_authenticated   → pending_auth        (user clicked Connect; OAuth flow in progress)
  *   reauth_required     → pending_auth        (user clicked Reconnect after RT failure)
  *   pending_auth        → running             (callback succeeded; tokens stored)

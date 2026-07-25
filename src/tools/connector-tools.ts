@@ -213,7 +213,9 @@ export function deriveConnectorStatus(input: StatusInputs): {
   if (input.state === "starting") {
     return { status: "starting" };
   }
-  // 5. Terminal failures with no clear recovery path.
+  // 5. Failures. Reported with the reason; `resolveAction` below decides what
+  //    the user can do about it (Reconnect, usually). `dead` covers a bundle
+  //    whose boot-start failed, which the doors revive on next use.
   if (input.state === "crashed" || input.state === "dead" || input.state === "stopped") {
     return {
       status: "failed",

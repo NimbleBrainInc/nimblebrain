@@ -74,9 +74,11 @@ describe("startWorkspaceBundles — unreachable URL bundle at boot", () => {
     const entry = entries.find((e) => e.serverName === "unreachable");
     expect(entry).toBeDefined();
     expect(entry?.startError).toBeTruthy();
-    // The placements ride along on the surviving entry — this is what keeps the
-    // app in the sidebar (and its route registered) while the source is down.
-    expect(entry?.meta?.ui?.placements?.[0]?.resourceUri).toBe("ui://unreachable/main");
+    // The ref rides along on the surviving entry, carrying the placements that
+    // keep the app in the shell. `bootToSeededConnection_recordsDeadEndToEnd`
+    // asserts they actually reach the placement registry; this only pins that
+    // the entry still holds the ref they come from.
+    expect(entry?.bundle && "ui" in entry.bundle && entry.bundle.ui?.placements?.[0]).toBeTruthy();
   }, 30_000);
 
   test("bootToSeededConnection_recordsDeadEndToEnd", async () => {
@@ -106,6 +108,13 @@ describe("startWorkspaceBundles — unreachable URL bundle at boot", () => {
         ?.connections?.get("_workspace");
       expect(connection?.state).toBe("dead");
       expect(connection?.lastError).toBeTruthy();
+
+      // The headline user-visible effect: the app stays in the shell. The
+      // placement registry is what the sidebar and the route table read, so it
+      // is the outcome — asserting the entry's `meta.ui` instead would measure a
+      // mirror that `buildSeededInstance` never consults (it reads `ref.ui`).
+      const placements = runtime.getPlacementRegistry().forWorkspace(ws.id);
+      expect(placements.map((p) => p.resourceUri)).toContain("ui://unreachable/main");
     } finally {
       await runtime.shutdown();
     }
