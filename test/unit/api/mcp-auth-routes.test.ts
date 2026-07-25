@@ -1,4 +1,8 @@
 import { createHash, randomBytes } from "node:crypto";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { mcpOAuthDir } from "../../../src/tools/workspace-oauth-provider.ts";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -81,6 +85,8 @@ function makeApp(
   lifecycle: StubLifecycle,
   secureCookies = false,
   workDir = "/tmp/nb-test",
+  members?: Array<{ userId: string; role: "admin" | "member" }>,
+  caller?: { id: string; orgRole?: string },
 ): Hono<AppEnv> {
   const ctx = {
     runtime: {
@@ -94,7 +100,16 @@ function makeApp(
     // identity → requireWorkspace() also passes through without setting
     // workspaceId. We set it ourselves in the wrapping middleware below.
     authOptions: { mode: { type: "dev" }, eventSink: { emit: () => {} } },
-    workspaceStore: {},
+    // The reconnect gate reads the workspace to resolve the caller's
+    // membership role. Default: the test user is an admin, so first-connect
+    // and reconnect both pass and the existing cases are unaffected. Tests
+    // that exercise the gate override `members`.
+    workspaceStore: {
+      get: async (_id: string) => ({
+        id: WS_ID,
+        members: members ?? [{ userId: USER_ID, role: "admin" }],
+      }),
+    },
     secureCookies,
   } as unknown as AppContext;
 
@@ -103,6 +118,10 @@ function makeApp(
   // requireWorkspace middleware (in dev mode) is a no-op.
   app.use("*", async (c, next) => {
     c.set("workspaceId", WS_ID);
+    // Dev-mode `requireAuth` leaves identity unset; the reconnect gate needs
+    // one to resolve a membership role, so tests that exercise it pass a
+    // caller here.
+    if (caller) c.set("identity", caller as never);
     await next();
   });
   app.route("/", mcpAuthRoutes(ctx));
@@ -296,7 +315,16 @@ describe("GET /v1/mcp-auth/callback", () => {
         getAllowInsecureRemotes: () => false,
       },
       authOptions: { mode: { type: "dev" }, eventSink: { emit: () => {} } },
-      workspaceStore: {},
+      // The reconnect gate reads the workspace to resolve the caller's
+    // membership role. Default: the test user is an admin, so first-connect
+    // and reconnect both pass and the existing cases are unaffected. Tests
+    // that exercise the gate override `members`.
+    workspaceStore: {
+      get: async (_id: string) => ({
+        id: WS_ID,
+        members: members ?? [{ userId: USER_ID, role: "admin" }],
+      }),
+    },
       secureCookies: false,
     } as unknown as AppContext;
     const wrapped = new Hono<AppEnv>();
@@ -698,5 +726,98 @@ describe("GET /v1/mcp-auth/callback — owner-aware redirect", () => {
     // Never a workspace-scoped page for a personal connector.
     expect(html).not.toContain("/w/");
     await expect(flowPromise).resolves.toBe("code-1");
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────
+// Reconnect admission (#755)
+//
+// Every auth flow on this route binds the WORKSPACE's shared credential
+// (`WORKSPACE_PRINCIPAL_ID`), so re-running one replaces the identity every
+// member's agent acts as upstream — destructive like `disconnect`, which is
+// admin-gated. A FIRST connect stays member-level: someone has to authorise a
+// connector an admin installed. Same split `handleConnectApiKey` already
+// applies to the composio API-key path.
+// ─────────────────────────────────────────────────────────────────────
+
+describe("POST /v1/mcp-auth/initiate — reconnect admission", () => {
+  let lifecycle: StubLifecycle;
+  let workDir: string;
+
+  const AUTH_URL = "https://granola.test/oauth/authorize?state=s&client_id=c";
+
+  function seedInstalled(): void {
+    lifecycle.instances.set(`granola|${WS_ID}`, { oauthScope: "workspace" });
+    lifecycle.authUrls.set(`granola|${WS_ID}|_workspace`, AUTH_URL);
+  }
+
+  /** Persist tokens.json so the connector reads as already connected. */
+  function seedExistingCredential(): void {
+    const dir = mcpOAuthDir(workDir, { type: "workspace", wsId: WS_ID }, "granola");
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, "tokens.json"), JSON.stringify({ access_token: "t" }));
+  }
+
+  function post(app: Hono<AppEnv>): Promise<Response> {
+    // Setting `identity` makes the route's own `requireWorkspace` enforce
+    // rather than pass through, so these requests carry the header a real
+    // caller sends.
+    return app.request("http://localhost/v1/mcp-auth/initiate", {
+      method: "POST",
+      headers: { "content-type": "application/json", "X-Workspace-Id": WS_ID },
+      body: JSON.stringify({ serverName: "granola" }),
+    });
+  }
+
+  beforeEach(() => {
+    lifecycle = makeStubLifecycle();
+    workDir = mkdtempSync(join(tmpdir(), "nb-reconnect-"));
+    seedInstalled();
+  });
+
+  afterEach(() => {
+    rmSync(workDir, { recursive: true, force: true });
+  });
+
+  test("a member may run the FIRST connect — nothing is being replaced", async () => {
+    const app = makeApp(lifecycle, false, workDir, [{ userId: USER_ID, role: "member" }], {
+      id: USER_ID,
+    });
+    const res = await post(app);
+    expect(res.status).toBe(200);
+  });
+
+  test("a member may NOT re-connect once a credential exists", async () => {
+    seedExistingCredential();
+    const app = makeApp(lifecycle, false, workDir, [{ userId: USER_ID, role: "member" }], {
+      id: USER_ID,
+    });
+    const res = await post(app);
+    expect(res.status).toBe(403);
+    const body = (await res.json()) as { error?: string };
+    expect(body.error).toBe("workspace_admin_required");
+  });
+
+  test("a workspace admin may re-connect", async () => {
+    // The negative above is worthless without this — a route that refused
+    // everyone would satisfy it.
+    seedExistingCredential();
+    const app = makeApp(lifecycle, false, workDir, [{ userId: USER_ID, role: "admin" }], {
+      id: USER_ID,
+    });
+    const res = await post(app);
+    expect(res.status).toBe(200);
+  });
+
+  test("an org admin who is only a member is refused — orgRole grants no bypass", async () => {
+    // `canWriteWorkspaceScoped` never consults orgRole; this pins that the
+    // route agrees, which is the whole subject of #741/#744.
+    seedExistingCredential();
+    const app = makeApp(lifecycle, false, workDir, [{ userId: USER_ID, role: "member" }], {
+      id: USER_ID,
+      orgRole: "admin",
+    });
+    const res = await post(app);
+    expect(res.status).toBe(403);
   });
 });

@@ -2,6 +2,7 @@ import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import { type Context, Hono } from "hono";
 import {
   type ComposioConnection,
+  hasPersistedComposioConnection,
   saveComposioConnection,
 } from "../../bundles/composio-connection.ts";
 import { WORKSPACE_PRINCIPAL_ID } from "../../bundles/connection.ts";
@@ -26,6 +27,7 @@ import { requireAuth } from "../middleware/auth.ts";
 import { requireWorkspace } from "../middleware/workspace.ts";
 import { type AppContext, type AppEnv, apiError } from "../types.ts";
 import { profileConnectorsUrl, workspaceConnectorsUrl } from "./connectors-redirect.ts";
+import { requireAdminForReconnect } from "./reconnect-admission.ts";
 
 /**
  * OAuth integration routes for connectors backed by Composio as a
@@ -135,6 +137,18 @@ export function composioAuthRoutes(ctx: AppContext) {
       const creds = resolveComposioCredentials(entry, connectorId, wsId);
       if (creds instanceof Response) return creds;
       const { apiKey, authConfigId } = creds;
+
+      // First connect is member-level; replacing an existing shared connected
+      // account takes workspace admin. Same split `handleConnectApiKey` applies
+      // to this connector's API-key sibling — see `requireAdminForReconnect`.
+      const refused = await requireAdminForReconnect(ctx, c, wsId, () =>
+        hasPersistedComposioConnection(
+          ctx.runtime.getWorkDir(),
+          { type: "workspace", wsId },
+          connectorId,
+        ),
+      );
+      if (refused) return refused;
 
       return connectComposio(ctx, c, {
         entry,

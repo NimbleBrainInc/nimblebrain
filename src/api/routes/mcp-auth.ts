@@ -13,10 +13,12 @@ import {
 import { mcpAuthCallbackUrl } from "../../oauth/mcp-callback-url.ts";
 import { log } from "../../observability/log.ts";
 import { type FlowOwner, peekFlowOwner, resolveWithCode } from "../../tools/oauth-flow-registry.ts";
+import { hasMcpOAuthTokens } from "../../tools/workspace-oauth-provider.ts";
 import { requireAuth } from "../middleware/auth.ts";
 import { requireWorkspace } from "../middleware/workspace.ts";
 import { type AppContext, type AppEnv, apiError } from "../types.ts";
 import { profileConnectorsUrl, workspaceConnectorsUrl } from "./connectors-redirect.ts";
+import { requireAdminForReconnect } from "./reconnect-admission.ts";
 
 /**
  * Inline CSS for the OAuth success page. Held in a module constant so the
@@ -128,6 +130,18 @@ export function mcpAuthRoutes(ctx: AppContext) {
       // legal value here. `instance.oauthScope` is always `"workspace"`
       // or undefined post-Stage-2.
       const principalId = WORKSPACE_PRINCIPAL_ID;
+
+      // A FIRST connect is member-level: someone has to authorise a connector
+      // an admin installed, and until they do it holds no credential. A
+      // RE-connect replaces the shared credential every member's agent runs
+      // under — destructive like `disconnect`, which is admin-gated — so it
+      // takes workspace admin. Exactly the split `handleConnectApiKey` already
+      // applies to the composio API-key path, whose comment cites "matching the
+      // OAuth connect route"; this is that route catching up.
+      const refused = await requireAdminForReconnect(ctx, c, wsId, () =>
+        hasMcpOAuthTokens(ctx.runtime.getWorkDir(), { type: "workspace", wsId }, serverName),
+      );
+      if (refused) return refused;
 
       const started = await startAuthorization(ctx, serverName, wsId, principalId);
       if (started instanceof Response) return started;
