@@ -9,13 +9,14 @@
  *
  * Two layers, split on what the value *is*:
  *
- *   - **Settings** (`baseUrl`, `monitor.enabled`) are declarable. Precedence is
- *     whole-block: with `connectors.providers.composio` present the block owns
- *     them and the matching `COMPOSIO_*` vars are ignored (one warning names
- *     them); with the block absent the env hydrates them, so an upgrade from the
- *     env-sniffing era breaks nothing.
+ *   - **Settings** (`baseUrl`, `monitorEnabled`) are declarable, and each falls
+ *     back on its own: a field declared in the block wins, a field left out
+ *     reads its `COMPOSIO_*` var. Nothing is ever silently discarded, so an
+ *     upgrade from the env-sniffing era breaks nothing and a block added for one
+ *     setting can't disturb another. Same shape as `providers.*.apiKey` falling
+ *     back to `ANTHROPIC_API_KEY` elsewhere in this schema.
  *   - **The broker credential** comes from `COMPOSIO_API_KEY` only. It is NOT a
- *     declarable field, and it is not superseded by the block.
+ *     declarable field.
  *
  * Why the credential is env-only *today*: a connector installed through Composio
  * persists its transport credential as the secret reference `${COMPOSIO_API_KEY}`
@@ -41,31 +42,10 @@
 
 import { getBouncerMode } from "../../../oauth/bouncer-config.ts";
 import { log } from "../../../observability/log.ts";
-import { type ComposioProviderConfig, declaredProviderConfig } from "../config.ts";
+import { declaredProviderConfig } from "../config.ts";
 
 /** Default Composio API host. Overridable via config `baseUrl` or `COMPOSIO_API_BASE_URL`. */
 export const COMPOSIO_API_BASE = "https://backend.composio.dev";
-
-/**
- * Each declarable setting mapped to the env var(s) a declared block supersedes.
- *
- * Keyed on `ComposioProviderConfig`, so adding a setting is a *compile* error
- * until its fallback is declared — an empty list being the explicit "this one
- * has none". Without that tie the conflict check below is a hand-maintained
- * denylist that goes stale the first time the block grows, and whole-block
- * precedence resumes silently discarding env values for the new field. That is
- * the hole the throw exists to close, so it gets the same treatment as the
- * schema surface.
- *
- * `COMPOSIO_API_KEY` is deliberately absent: it is the credential, not a
- * setting, and persisted transport references still resolve it from the env.
- */
-const SETTING_FALLBACK_ENV: Record<keyof Required<ComposioProviderConfig>, readonly string[]> = {
-  baseUrl: ["COMPOSIO_API_BASE_URL"],
-  monitor: ["COMPOSIO_MONITOR_ENABLED"],
-};
-
-const SUPERSEDED_ENV_KEYS: readonly string[] = Object.values(SETTING_FALLBACK_ENV).flat();
 
 /** Resolved Composio provider config. Every consumer of a `COMPOSIO_*` value reads it from here. */
 export interface ComposioConfig {
@@ -77,8 +57,6 @@ export interface ComposioConfig {
   baseUrl: string;
   /** Run the connection-revalidator probe. False whenever unconfigured. */
   monitorEnabled: boolean;
-  /** Which layer supplied the *settings* — the declared block, or the env fallback. */
-  source: "config" | "env";
 }
 
 let _cached: ComposioConfig | undefined;
@@ -102,43 +80,29 @@ export function validateComposioConfig(): ComposioConfig {
 
 function resolveComposioConfig(): ComposioConfig {
   const declared = declaredProviderConfig("composio");
-  const source = declared ? "config" : "env";
 
   const apiKey = process.env.COMPOSIO_API_KEY?.trim() ?? "";
   if (!apiKey) {
     log.info("[composio] integration: not configured (set COMPOSIO_API_KEY to enable)");
-    return {
-      configured: false,
-      apiKey: "",
-      baseUrl: COMPOSIO_API_BASE,
-      monitorEnabled: false,
-      source,
-    };
+    return { configured: false, apiKey: "", baseUrl: COMPOSIO_API_BASE, monitorEnabled: false };
   }
 
-  const baseUrl = resolveBaseUrl(declared);
+  const baseUrl = resolveBaseUrl(declared?.baseUrl);
   const tid = requireTenantIdInBouncerMode();
 
-  // Only once the provider is actually live — on an unconfigured deploy nothing
-  // is wired, so a settings conflict is inert and shouldn't take down boot.
-  if (declared) assertNoSupersededEnv();
-
-  log.info(
-    `[composio] integration: configured (settings=${source}, base=${baseUrl}${tid ? `, tid=${tid}` : ""})`,
-  );
+  log.info(`[composio] integration: configured (base=${baseUrl}${tid ? `, tid=${tid}` : ""})`);
 
   return {
     configured: true,
     apiKey,
     baseUrl,
-    monitorEnabled: declared ? (declared.monitor?.enabled ?? true) : monitorEnabledFromEnv(),
-    source,
+    monitorEnabled: declared?.monitorEnabled ?? monitorEnabledFromEnv(),
   };
 }
 
-/** Resolve + validate the API base from the declared block, else the env, else the default. */
-function resolveBaseUrl(declared: ComposioProviderConfig | undefined): string {
-  const raw = (declared ? declared.baseUrl : process.env.COMPOSIO_API_BASE_URL)?.trim();
+/** Resolve + validate the API base: the declared value, else the env, else the default. */
+function resolveBaseUrl(declared: string | undefined): string {
+  const raw = (declared ?? process.env.COMPOSIO_API_BASE_URL)?.trim();
   if (!raw) return COMPOSIO_API_BASE;
 
   const label = declared ? "connectors.providers.composio.baseUrl" : "COMPOSIO_API_BASE_URL";
@@ -178,40 +142,12 @@ function requireTenantIdInBouncerMode(): string | undefined {
 }
 
 /**
- * The env arm of the Composio probe's kill switch. Default ON — only an explicit
+ * The env fallback for the probe's kill switch. Default ON — only an explicit
  * `false` (case/whitespace-insensitive) disables, so an unset or malformed value
- * fails safe to enabled. Reached only when no block is declared.
+ * fails safe to enabled. Read only when the block leaves `monitorEnabled` out.
  */
 function monitorEnabledFromEnv(): boolean {
   return (process.env.COMPOSIO_MONITOR_ENABLED ?? "true").trim().toLowerCase() !== "false";
-}
-
-/**
- * Refuse to boot when the block and its fallback env are both set.
- *
- * Whole-block precedence is a *lossy* rule — the env value is discarded. For a
- * plain value that is merely surprising, but `monitor.enabled` is a kill switch:
- * a block added for an unrelated reason (say, a `baseUrl` change) carries no
- * `monitor`, so the default flips a deliberately-disabled probe back on, and the
- * consequence (connectors flipping `running → reauth_required`) surfaces long
- * after any startup log line. A warning is not proportionate to a safety knob
- * silently reverting.
- *
- * So the ambiguous state is made unreachable rather than announced. This can
- * only fire on a deliberate config edit — the block is new, so no upgrade hits
- * it — which is the best moment to make someone choose. Same fail-at-deploy-time
- * posture as the base-URL and tenant-id checks above.
- */
-function assertNoSupersededEnv(): void {
-  const present = SUPERSEDED_ENV_KEYS.filter((k) => (process.env[k] ?? "").trim() !== "");
-  if (present.length === 0) return;
-  throw new Error(
-    `[composio] connectors.providers.composio is declared in nimblebrain.json, but ${present.join(", ")} ` +
-      `${present.length === 1 ? "is" : "are"} also set. The block owns every setting, so these would be ` +
-      "silently discarded — including the monitor kill switch. Move the values into the block, or drop the " +
-      "block and keep using the environment. (COMPOSIO_API_KEY is unaffected: the broker credential is " +
-      "always read from the environment.)",
-  );
 }
 
 /**

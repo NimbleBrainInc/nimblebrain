@@ -95,14 +95,14 @@ describe("buildManagedConnectorRegistry — settings declared in nimblebrain.jso
   });
 
   it("wires the probe when the block enables it", () => {
-    setConnectorsConfig({ providers: { composio: { monitor: { enabled: true } } } });
+    setConnectorsConfig({ providers: { composio: { monitorEnabled: true } } });
     _resetComposioConfigForTest();
 
     expect(buildManagedConnectorRegistry().get("composio")?.probe).toBeDefined();
   });
 
   it("omits the probe under the block's kill switch", () => {
-    setConnectorsConfig({ providers: { composio: { monitor: { enabled: false } } } });
+    setConnectorsConfig({ providers: { composio: { monitorEnabled: false } } });
     _resetComposioConfigForTest();
 
     expect(buildManagedConnectorRegistry().get("composio")?.probe).toBeUndefined();
@@ -111,7 +111,7 @@ describe("buildManagedConnectorRegistry — settings declared in nimblebrain.jso
   it("registers nothing when the credential is absent, however complete the block", () => {
     delete process.env.COMPOSIO_API_KEY;
     setConnectorsConfig({
-      providers: { composio: { baseUrl: "https://composio.internal", monitor: { enabled: true } } },
+      providers: { composio: { baseUrl: "https://composio.internal", monitorEnabled: true } },
     });
     _resetComposioConfigForTest();
 

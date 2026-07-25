@@ -71,7 +71,7 @@ A sibling `nimblebrain.overrides.json` next to the resolved config file is **dee
 
   "connectors": {
     "providers": {
-      "composio": { "monitor": { "enabled": true } }
+      "composio": { "monitorEnabled": true }
     }
   },
 
@@ -312,7 +312,7 @@ A provider is registered — and its callback routes, liveness probe, and vendor
     "providers": {
       "composio": {
         "baseUrl": "https://backend.composio.dev",
-        "monitor": { "enabled": true }
+        "monitorEnabled": true
       }
     }
   }
@@ -324,7 +324,7 @@ A provider is registered — and its callback routes, liveness probe, and vendor
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
 | `baseUrl` | `string` | `https://backend.composio.dev` | Composio API base URL override (self-hosted / staging). Must be `http(s)` — any other scheme is rejected at startup, because it would turn `/v1/composio-auth/proxy` into an open redirect. |
-| `monitor.enabled` | `boolean` | `true` | Run Composio's arm of the connection-revalidator probe, which detects connections whose downstream vendor account lapsed while the platform key stayed valid. |
+| `monitorEnabled` | `boolean` | `true` | Run Composio's arm of the connection-revalidator probe, which detects connections whose downstream vendor account lapsed while the platform key stayed valid. |
 
 The probe's **sweep cadence is not here.** One revalidator serves every provider, so the interval is provider-agnostic and is set with `NB_CONNECTION_REVALIDATE_INTERVAL_SECONDS` ([Environment Variables](/config/environment/#runtime--server)). Only the enable/disable is Composio's.
 
@@ -342,12 +342,14 @@ The fix is for persisted state to name a *credential provider* rather than an en
 
 The `COMPOSIO_*` settings variables ([Environment Variables](/config/environment)) still work, as a **fallback**:
 
-- **Block omitted** — `COMPOSIO_API_BASE_URL` and `COMPOSIO_MONITOR_ENABLED` hydrate the provider's settings. Nothing changes for an existing deployment.
-- **Block present** — the block owns **both** settings, and setting either env var alongside it is **refused at startup** with an error naming them.
+Precedence is **per field**: a setting declared in the block wins, a setting left out reads its env var. So a block that sets only `baseUrl` leaves `monitorEnabled` on `COMPOSIO_MONITOR_ENABLED`, and nothing you configured elsewhere is silently discarded. This is the same shape as `providers.anthropic.apiKey` falling back to `ANTHROPIC_API_KEY`.
 
-Precedence is whole-block, not per-field: a block that sets only `monitor` also takes the default `baseUrl`, rather than inheriting `COMPOSIO_API_BASE_URL`. That makes the rule lossy, which is why the conflict is an error rather than a warning — `monitor.enabled` is a kill switch, and a block added for an unrelated reason would otherwise default a deliberately-disabled probe back on, with the consequence (connectors flipping to `reauth_required`) surfacing long after any log line. Pick one source per setting.
+| Setting | Env fallback |
+|---|---|
+| `baseUrl` | `COMPOSIO_API_BASE_URL` |
+| `monitorEnabled` | `COMPOSIO_MONITOR_ENABLED` |
 
-`COMPOSIO_API_KEY` is unaffected either way — it is the credential, not a setting, and is never superseded.
+`COMPOSIO_API_KEY` is not in this table — it is the credential, not a setting, and is not declarable.
 
 `NB_TENANT_ID` is likewise not part of this block. It is a deployment identity, stays env-only, and is still required when the OAuth bouncer is configured.
 

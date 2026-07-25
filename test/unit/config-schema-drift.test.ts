@@ -3,7 +3,6 @@ import { resolve } from "node:path";
 import { describe, expect, test } from "bun:test";
 import { resolveFeatures } from "../../src/config/features.ts";
 import {
-  COMPOSIO_MONITOR_CONFIG_KEYS,
   COMPOSIO_PROVIDER_CONFIG_KEYS,
   CONNECTORS_CONFIG_KEYS,
   MANAGED_PROVIDER_KEYS,
@@ -35,7 +34,7 @@ const schema = JSON.parse(
     connectors: SchemaObject & {
       properties: {
         providers: SchemaObject & {
-          properties: { composio: SchemaObject & { properties: { monitor: SchemaObject } } };
+          properties: { composio: SchemaObject };
         };
       };
     };
@@ -80,10 +79,5 @@ describe("config schema ↔ managed-connector provider config", () => {
     "connectors.providers.composio",
     connectors.properties.providers.properties.composio,
     COMPOSIO_PROVIDER_CONFIG_KEYS,
-  );
-  expectLockstep(
-    "connectors.providers.composio.monitor",
-    connectors.properties.providers.properties.composio.properties.monitor,
-    COMPOSIO_MONITOR_CONFIG_KEYS,
   );
 });

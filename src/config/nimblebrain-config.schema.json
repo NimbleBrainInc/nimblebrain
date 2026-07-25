@@ -358,28 +358,21 @@
       "type": "object",
       "properties": {
         "providers": {
-          "description": "Declared providers, keyed by the connector auth-kind each owns. A provider is registered — and its routes, liveness probe, and vendor SDK reached — only when its broker credential is present. When a provider's block is omitted, its legacy env vars supply its settings as a fallback; when the block is present, it wins and those env vars are ignored.",
+          "description": "Declared providers, keyed by the connector auth-kind each owns. A provider is registered — and its routes, liveness probe, and vendor SDK reached — only when its broker credential is present. Each setting falls back to its legacy env var when the block leaves it out.",
           "type": "object",
           "properties": {
             "composio": {
-              "description": "Composio (auth broker + hosted MCP sessions) settings. The broker credential is NOT declared here — it is read from COMPOSIO_API_KEY, because an installed connector's persisted transport credential is an env reference into that name. Fallback env for the settings below, when this block is omitted: COMPOSIO_API_BASE_URL, COMPOSIO_MONITOR_ENABLED.",
+              "description": "Composio (auth broker + hosted MCP sessions) settings. The broker credential is NOT declared here — it is read from COMPOSIO_API_KEY, because an installed connector's persisted transport credential is an env reference into that name. Each setting falls back per field to its env var when left out: COMPOSIO_API_BASE_URL, COMPOSIO_MONITOR_ENABLED.",
               "type": "object",
               "properties": {
                 "baseUrl": {
                   "type": "string",
                   "description": "Composio API base URL override (self-hosted / staging). Must be http(s). Default: https://backend.composio.dev"
                 },
-                "monitor": {
-                  "description": "Composio's arm of the connection-revalidator probe: polls Composio for connections whose downstream vendor account lapsed while the platform key stayed valid. The sweep cadence is provider-agnostic and is set via NB_CONNECTION_REVALIDATE_INTERVAL_SECONDS, not here.",
-                  "type": "object",
-                  "properties": {
-                    "enabled": {
-                      "type": "boolean",
-                      "description": "Run the probe. Default: true when the provider is configured.",
-                      "default": true
-                    }
-                  },
-                  "additionalProperties": false
+                "monitorEnabled": {
+                  "type": "boolean",
+                  "description": "Run Composio's arm of the connection-revalidator probe, which polls for connections whose downstream vendor account lapsed while the platform key stayed valid. Default: true when the provider is configured; falls back to COMPOSIO_MONITOR_ENABLED. The sweep cadence is provider-agnostic and is set via NB_CONNECTION_REVALIDATE_INTERVAL_SECONDS, not here.",
+                  "default": true
                 }
               },
               "additionalProperties": false

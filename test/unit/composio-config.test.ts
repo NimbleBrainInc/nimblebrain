@@ -112,7 +112,6 @@ describe("settings — env fallback when no block is declared", () => {
       configured: true,
       baseUrl: "https://composio.example.com",
       monitorEnabled: true,
-      source: "env",
     });
   });
 
@@ -171,14 +170,13 @@ describe("settings — the declared block", () => {
   it("resolves every setting from the block", () => {
     declareComposio({
       baseUrl: "https://composio.internal",
-      monitor: { enabled: true },
+      monitorEnabled: true,
     });
 
     expect(validateComposioConfig()).toMatchObject({
       configured: true,
       baseUrl: "https://composio.internal",
       monitorEnabled: true,
-      source: "config",
     });
   });
 
@@ -190,7 +188,7 @@ describe("settings — the declared block", () => {
   });
 
   it("honors monitor.enabled: false", () => {
-    declareComposio({ monitor: { enabled: false } });
+    declareComposio({ monitorEnabled: false });
     expect(validateComposioConfig().monitorEnabled).toBe(false);
   });
 
@@ -202,46 +200,36 @@ describe("settings — the declared block", () => {
   });
 });
 
-describe("precedence — the block owns the settings, and ambiguity is refused", () => {
+describe("precedence — per field, so nothing is silently discarded", () => {
   beforeEach(() => {
     process.env.COMPOSIO_API_KEY = "k_env";
   });
 
-  it("refuses to boot when a superseded var is also set, naming every one", () => {
-    // Whole-block precedence would discard these. For `monitor.enabled` that
-    // means a kill switch silently reverting, so the state is made unreachable.
+  it("a declared field wins over its env var", () => {
     process.env.COMPOSIO_API_BASE_URL = "https://env.example.com";
-    process.env.COMPOSIO_MONITOR_ENABLED = "false";
     declareComposio({ baseUrl: "https://config.example.com" });
 
-    expect(() => validateComposioConfig()).toThrow(/COMPOSIO_API_BASE_URL/);
-    _resetComposioConfigForTest();
-    expect(() => validateComposioConfig()).toThrow(/COMPOSIO_MONITOR_ENABLED/);
+    expect(validateComposioConfig().baseUrl).toBe("https://config.example.com");
   });
 
-  it("cannot silently revert a deliberately-disabled probe", () => {
+  it("a field the block leaves out still reads its env var", () => {
     // The regression this guards: an operator running with the probe off adds a
-    // block for an unrelated reason; `monitor` is absent, so whole-block
-    // precedence would default it back on and resume flipping connectors.
+    // block for an unrelated reason. Under whole-block precedence `monitorEnabled`
+    // would default back on and the revalidator would resume flipping connectors.
     process.env.COMPOSIO_MONITOR_ENABLED = "false";
     declareComposio({ baseUrl: "https://composio.staging" });
 
-    expect(() => validateComposioConfig()).toThrow(/monitor kill switch/);
+    const cfg = validateComposioConfig();
+    expect(cfg.baseUrl).toBe("https://composio.staging");
+    expect(cfg.monitorEnabled).toBe(false);
   });
 
-  it("accepts the block alongside COMPOSIO_API_KEY — the credential is not superseded", () => {
-    declareComposio({ baseUrl: "https://config.example.com" });
+  it("mixes the two sources in one resolution", () => {
+    process.env.COMPOSIO_API_BASE_URL = "https://env.example.com";
+    declareComposio({ monitorEnabled: false });
 
     const cfg = validateComposioConfig();
-    expect(cfg.apiKey).toBe("k_env");
-    expect(cfg.baseUrl).toBe("https://config.example.com");
-  });
-
-  it("is inert on an unconfigured deploy — a dormant provider shouldn't take down boot", () => {
-    delete process.env.COMPOSIO_API_KEY;
-    process.env.COMPOSIO_API_BASE_URL = "https://env.example.com";
-    declareComposio({ baseUrl: "https://config.example.com" });
-
-    expect(validateComposioConfig().configured).toBe(false);
+    expect(cfg.baseUrl).toBe("https://env.example.com");
+    expect(cfg.monitorEnabled).toBe(false);
   });
 });

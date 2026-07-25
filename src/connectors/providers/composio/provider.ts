@@ -46,14 +46,11 @@ export function createComposioProvider(): ManagedConnectorProvider {
   // When thrown, omit `probe` entirely so the runtime wires no probe for this
   // provider — keeping the revalidator wiring in `server.ts` fully
   // provider-agnostic.
-  const { monitorEnabled, source } = validateComposioConfig();
+  const { monitorEnabled } = validateComposioConfig();
   if (!monitorEnabled) {
     log.info(
-      `[connection-revalidator] composio probe disabled via ${
-        source === "config"
-          ? "connectors.providers.composio.monitor.enabled=false"
-          : "COMPOSIO_MONITOR_ENABLED=false"
-      }`,
+      "[connection-revalidator] composio probe disabled " +
+        "(connectors.providers.composio.monitorEnabled / COMPOSIO_MONITOR_ENABLED)",
     );
   }
 
