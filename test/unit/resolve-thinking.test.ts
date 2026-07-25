@@ -55,6 +55,43 @@ describe("resolveThinking", () => {
 		).toEqual({ mode: "adaptive" });
 	});
 
+	it("sends bare adaptive for explicit thinking=enabled with no ceiling on an adaptive-only model", () => {
+		// The carve-out originally guarded only the no-override path, so an
+		// operator who asked for `enabled` still got a tier derived from the
+		// catalog ceiling — `effort: "max"` on every call. `enabled` means
+		// "always reason", not "reason maximally".
+		expect(
+			resolveThinking({
+				configMode: "enabled",
+				model: "anthropic:claude-opus-5",
+				maxOutputTokens: 128000,
+			}),
+		).toEqual({ mode: "adaptive" });
+	});
+
+	it("derives a budget for thinking=enabled when the operator supplied one", () => {
+		expect(
+			resolveThinking({
+				configMode: "enabled",
+				configBudgetTokens: 8000,
+				model: "anthropic:claude-opus-5",
+				maxOutputTokens: 128000,
+			}),
+		).toEqual({ mode: "enabled", budgetTokens: 8000 });
+	});
+
+	it("keeps the enabled shape on a model that accepts it", () => {
+		// The carve-out is adaptive-only; enabled-capable models still get a
+		// provider-enforced budget, which is the production fix it must not undo.
+		expect(
+			resolveThinking({
+				configMode: "enabled",
+				model: "anthropic:claude-sonnet-4-6",
+				maxOutputTokens: 16384,
+			}),
+		).toEqual({ mode: "enabled", budgetTokens: 16384 - 4096 });
+	});
+
 	it("still derives a budget on an adaptive-only model when the operator set a ceiling", () => {
 		// The one case where the number means something: the operator chose it,
 		// so the effort tier the engine derives from it reflects intent.

@@ -545,6 +545,11 @@ function handleConfigStatus(runtime?: Runtime): ToolResult {
   const maxIterations = runtime.getMaxIterations();
   const maxInputTokens = runtime.getMaxInputTokens();
   const maxOutputTokens = runtime.getMaxOutputTokens();
+  // Label whether this is a choice or a derivation. An agent reading this line
+  // can also call set_model_config; without the distinction it can persist a
+  // catalog-derived number as an operator override. See `resolveThinking`.
+  const maxOutputTokensSource =
+    runtime.getConfiguredMaxOutputTokens() !== undefined ? "configured" : "model default";
 
   const lines = [
     "## Configuration",
@@ -555,7 +560,7 @@ function handleConfigStatus(runtime?: Runtime): ToolResult {
     `Providers: ${configuredProviders.join(", ")}`,
     `Max iterations: ${maxIterations}`,
     `Max input tokens: ${maxInputTokens.toLocaleString()}`,
-    `Max output tokens: ${maxOutputTokens.toLocaleString()}`,
+    `Max output tokens: ${maxOutputTokens.toLocaleString()} (${maxOutputTokensSource})`,
   ];
   return { content: textContent(lines.join("\n")), isError: false };
 }

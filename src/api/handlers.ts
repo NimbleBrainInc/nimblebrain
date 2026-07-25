@@ -1544,7 +1544,8 @@ export async function handleBootstrap(
   const configuredProviders = runtime.getConfiguredProviders();
   const maxIterations = runtime.getMaxIterations();
   const maxInputTokens = runtime.getMaxInputTokens();
-  const maxOutputTokens = runtime.getMaxOutputTokens();
+  const resolvedMaxOutputTokens = runtime.getMaxOutputTokens();
+  const maxOutputTokens = runtime.getConfiguredMaxOutputTokens();
 
   return json({
     user: {
@@ -1576,7 +1577,8 @@ export async function handleBootstrap(
       configuredProviders,
       maxIterations,
       maxInputTokens,
-      maxOutputTokens,
+      resolvedMaxOutputTokens,
+      ...(maxOutputTokens !== undefined ? { maxOutputTokens } : {}),
     },
     version: VERSION,
     buildSha: process.env.NB_BUILD_SHA || null,

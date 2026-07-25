@@ -3797,6 +3797,13 @@ export class Runtime {
    * a model, the default-slot model is used (so the bare call returns the
    * cap that applies to a default chat turn).
    */
+  getMaxOutputTokens(model?: string): number {
+    return resolveMaxOutputTokens({
+      configValue: this.config.maxOutputTokens,
+      model: model ?? this.getDefaultModel(),
+    });
+  }
+
   /**
    * The operator's configured output ceiling, or `undefined` when they set
    * none. Distinct from `getMaxOutputTokens()`, which resolves to the model's
@@ -3806,13 +3813,6 @@ export class Runtime {
    */
   getConfiguredMaxOutputTokens(): number | undefined {
     return this.config.maxOutputTokens;
-  }
-
-  getMaxOutputTokens(model?: string): number {
-    return resolveMaxOutputTokens({
-      configValue: this.config.maxOutputTokens,
-      model: model ?? this.getDefaultModel(),
-    });
   }
 
   /**

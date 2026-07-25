@@ -321,7 +321,10 @@ export interface ConfigInfo {
   configuredProviders: string[];
   maxIterations: number;
   maxInputTokens: number;
-  maxOutputTokens: number;
+  /** Present only when the operator set one; absent means the model's ceiling applies. */
+  maxOutputTokens?: number;
+  /** The ceiling actually in force. Display only — echoing it back persists it. */
+  resolvedMaxOutputTokens: number;
   preferences?: {
     displayName?: string;
     timezone?: string;

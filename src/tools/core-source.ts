@@ -98,8 +98,11 @@ function positiveIntFieldError(
   label: string,
   min: number,
   max?: number,
+  { nullClears = false }: { nullClears?: boolean } = {},
 ): string | null {
   if (value === undefined) return null;
+  // `null` = clear the operator override, same convention as `thinking`.
+  if (value === null && nullClears) return null;
   const n = Number(value);
   if (!Number.isInteger(n) || n < min || (max !== undefined && n > max)) {
     return max !== undefined
@@ -133,7 +136,9 @@ function validateModelConfigLimits(input: Record<string, unknown>): string | nul
   return (
     positiveIntFieldError(input.maxIterations, "maxIterations", 1, 50) ??
     positiveIntFieldError(input.maxInputTokens, "maxInputTokens", 1) ??
-    positiveIntFieldError(input.maxOutputTokens, "maxOutputTokens", 1)
+    positiveIntFieldError(input.maxOutputTokens, "maxOutputTokens", 1, undefined, {
+      nullClears: true,
+    })
   );
 }
 
@@ -193,6 +198,26 @@ function validateModelConfigPatch(input: Record<string, unknown>, runtime: Runti
   );
 }
 
+/**
+ * Apply a numeric override where `null` means "clear this, fall back to the
+ * platform's derived value" — the same convention `thinking` uses. Shared so
+ * the clear path can't exist on one of the two write sites and not the other.
+ */
+function applyNullableNumber(target: Record<string, unknown>, key: string, value: unknown): void {
+  if (value === null) {
+    delete target[key];
+  } else if (value !== undefined) {
+    target[key] = Number(value);
+  }
+}
+
+/** The live-runtime patch entry matching `applyNullableNumber`. */
+function nullableNumberPatch(key: string, value: unknown): Record<string, unknown> {
+  if (value === null) return { [key]: undefined };
+  if (value !== undefined) return { [key]: Number(value) };
+  return {};
+}
+
 /** Merge the validated patch into the on-disk override object (mutates `existing`). */
 function mergeModelConfigOverride(
   existing: Record<string, unknown>,
@@ -208,7 +233,10 @@ function mergeModelConfigOverride(
   if (input.defaultModel !== undefined) existing.defaultModel = String(input.defaultModel);
   if (input.maxIterations !== undefined) existing.maxIterations = Number(input.maxIterations);
   if (input.maxInputTokens !== undefined) existing.maxInputTokens = Number(input.maxInputTokens);
-  if (input.maxOutputTokens !== undefined) existing.maxOutputTokens = Number(input.maxOutputTokens);
+  // null = drop back to the model's catalog ceiling. Without this an operator
+  // who once saved a resolved value can never return to the unset state, and
+  // `resolveThinking` keeps deriving an effort tier from it.
+  applyNullableNumber(existing, "maxOutputTokens", input.maxOutputTokens);
   // null = clear the operator override; undefined = leave alone.
   if (input.thinking === null) {
     delete existing.thinking;
@@ -249,9 +277,7 @@ function buildModelConfigRuntimePatch(input: Record<string, unknown>): Record<st
     ...(input.defaultModel !== undefined ? { defaultModel: String(input.defaultModel) } : {}),
     ...(input.maxIterations !== undefined ? { maxIterations: Number(input.maxIterations) } : {}),
     ...(input.maxInputTokens !== undefined ? { maxInputTokens: Number(input.maxInputTokens) } : {}),
-    ...(input.maxOutputTokens !== undefined
-      ? { maxOutputTokens: Number(input.maxOutputTokens) }
-      : {}),
+    ...nullableNumberPatch("maxOutputTokens", input.maxOutputTokens),
     ...thinkingPatch,
     ...budgetPatch,
   };
@@ -525,12 +551,6 @@ function scheduleBriefingRefresh(
 }
 
 /**
- * Factory that creates core platform management tool definitions.
- * Each tool is a thin wrapper delegating to Runtime methods.
- * Returns raw InProcessTool[] — caller (the `nb` system source factory)
- * passes them to `defineInProcessApp` to build the in-process MCP server.
- */
-/**
  * Config fields `get_config` reports only when the operator explicitly set
  * them. Anything resolved from a default belongs elsewhere in the payload: a
  * client that reads a derived value and saves it back turns a default into a
@@ -550,6 +570,12 @@ function operatorSetFields(runtime: Runtime): Record<string, unknown> {
   };
 }
 
+/**
+ * Factory that creates core platform management tool definitions.
+ * Each tool is a thin wrapper delegating to Runtime methods.
+ * Returns raw InProcessTool[] — caller (the `nb` system source factory)
+ * passes them to `defineInProcessApp` to build the in-process MCP server.
+ */
 export function createCoreToolDefs(runtime: Runtime): InProcessTool[] {
   // Per-workspace briefing caches keyed by workspace ID (or "_global" for dev mode).
   const briefingCaches = new Map<string, BriefingCache>();

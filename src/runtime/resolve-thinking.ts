@@ -64,6 +64,28 @@ function enabledBudget(maxOutputTokens?: number, requestedBudget?: number): numb
   return MIN_THINKING_BUDGET_TOKENS;
 }
 
+/**
+ * True when emitting a thinking budget would invent operator intent.
+ *
+ * Adaptive-only models cannot carry a budget: the engine converts it into an
+ * `output_config.effort` tier instead. When neither a ceiling nor a budget was
+ * configured, the only number available is the model's own catalog maximum —
+ * so the tier derived from it says "reason maximally" on every call, sourced
+ * from a figure nobody chose.
+ *
+ * Both the default path and the explicit `thinking: "enabled"` override run
+ * this. Guarding only one is how the first version of this carve-out shipped:
+ * the override path did the same derivation with no gate.
+ */
+function wouldInventEffort(input: ResolveThinkingInput): boolean {
+  return (
+    !input.maxOutputTokensConfigured &&
+    !(input.configBudgetTokens != null && input.configBudgetTokens > 0) &&
+    input.model != null &&
+    !supportsEnabledThinking(input.model)
+  );
+}
+
 /** Adaptive carries an operator budget only when positive; the Anthropic adapter currently drops it, but a future provider may honor it. */
 function adaptiveThinking(configBudgetTokens?: number): ResolvedThinking {
   if (configBudgetTokens != null && configBudgetTokens > 0) {
@@ -82,6 +104,13 @@ function resolveOverride(
   }
   if (configMode === "adaptive") {
     return adaptiveThinking(input.configBudgetTokens);
+  }
+  // `enabled` means "always reason", not "reason maximally". With nothing
+  // configured to size it, an adaptive-only model gets bare adaptive — still
+  // always reasoning, but at a depth the model picks rather than one derived
+  // from its catalog ceiling.
+  if (wouldInventEffort(input)) {
+    return { mode: "adaptive" };
   }
   return {
     mode: "enabled",
@@ -140,7 +169,7 @@ export function resolveThinking(input: ResolveThinkingInput): ResolvedThinking |
   // adaptive and let the model pick its own depth. An operator who *does*
   // set a ceiling still gets a tier derived from it, which is the one case
   // where the number means something.
-  if (!input.maxOutputTokensConfigured && input.model && !supportsEnabledThinking(input.model)) {
+  if (wouldInventEffort(input)) {
     return { mode: "adaptive" };
   }
 

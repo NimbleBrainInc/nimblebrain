@@ -162,9 +162,10 @@ export function ModelTab() {
         },
         maxIterations,
         maxInputTokens,
-        // Omit when unset — sending the resolved ceiling back would persist a
-        // value the operator never chose.
-        ...(maxOutputTokens != null ? { maxOutputTokens } : {}),
+        // null clears any stored override so the model's catalog ceiling
+        // applies again; omitting it here would silently leave a previously
+        // saved value in place while the field renders empty.
+        maxOutputTokens,
         ...thinkingPatch,
       });
       setFeedback({ type: "success", message: "Model configuration saved." });

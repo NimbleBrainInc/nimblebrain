@@ -198,7 +198,7 @@
       "minimum": 1
     },
     "maxOutputTokens": {
-      "description": "Max output tokens per LLM call. Default: 16384.",
+      "description": "Max output tokens per LLM call. Defaults to the resolved model's catalog limits.output (128000 on Sonnet 5 and Opus 5); 16384 applies only when the model is not in the catalog.",
       "type": "integer",
       "minimum": 1
     },
