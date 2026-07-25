@@ -28,7 +28,17 @@ function errorMessage(err: unknown): string {
  * a Configure page with 10+ tools. A heavy border made the page feel
  * walled off; lighter chrome lets it sit alongside the other sections.
  */
-export function ToolPermissionsTable({ serverName }: { serverName: string }) {
+export function ToolPermissionsTable({
+  serverName,
+  canManage,
+}: {
+  serverName: string;
+  /** Whether the viewer may change policy. Tool policy is workspace-owned —
+   *  it decides what the agent may call for every member — so the server
+   *  admin-gates the write. Read stays open: a member should be able to see
+   *  what their agent is allowed to do. */
+  canManage: boolean;
+}) {
   const [tools, setTools] = useState<ConnectorTool[]>([]);
   const [policies, setPolicies] = useState<Record<string, ToolPolicy>>({});
   const [loading, setLoading] = useState(true);
@@ -100,9 +110,13 @@ export function ToolPermissionsTable({ serverName }: { serverName: string }) {
         <h2 className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">
           Tool permissions
         </h2>
-        <p className="text-xs text-muted-foreground mt-1">Choose which tools the agent can call.</p>
+        <p className="text-xs text-muted-foreground mt-1">
+          {canManage
+            ? "Choose which tools the agent can call."
+            : "Which tools the agent can call. Workspace admins choose."}
+        </p>
       </div>
-      {tools.length > 0 && (
+      {tools.length > 0 && canManage && (
         <div className="flex items-center gap-3 text-xs text-muted-foreground">
           <button
             type="button"
@@ -160,6 +174,7 @@ export function ToolPermissionsTable({ serverName }: { serverName: string }) {
             tool={tool}
             policy={policyFor(tool.name)}
             saving={savingTool === tool.name}
+            canManage={canManage}
             onSetPolicy={updatePolicy}
           />
         ))}
@@ -177,11 +192,13 @@ function ToolPermissionRow({
   tool,
   policy,
   saving,
+  canManage,
   onSetPolicy,
 }: {
   tool: ConnectorTool;
   policy: ToolPolicy;
   saving: boolean;
+  canManage: boolean;
   onSetPolicy: (toolName: string, next: ToolPolicy) => void;
 }) {
   const summary = summarizeToolDescription(tool.description);
@@ -200,6 +217,7 @@ function ToolPermissionRow({
       </div>
       <PolicyToggle
         policy={policy}
+        canManage={canManage}
         onAllow={() => onSetPolicy(tool.name, "allow")}
         onDisallow={() => onSetPolicy(tool.name, "disallow")}
       />
@@ -216,10 +234,12 @@ function ToolPermissionRow({
  */
 function PolicyToggle({
   policy,
+  canManage,
   onAllow,
   onDisallow,
 }: {
   policy: ToolPolicy;
+  canManage: boolean;
   onAllow: () => void;
   onDisallow: () => void;
 }) {
@@ -227,12 +247,14 @@ function PolicyToggle({
     <div className="flex items-center gap-1 shrink-0">
       <PolicyButton
         active={policy === "allow"}
+        disabled={!canManage}
         onClick={onAllow}
         ariaLabel="Allow"
         variant="allow"
       />
       <PolicyButton
         active={policy === "disallow"}
+        disabled={!canManage}
         onClick={onDisallow}
         ariaLabel="Disallow"
         variant="disallow"
@@ -243,11 +265,13 @@ function PolicyToggle({
 
 function PolicyButton({
   active,
+  disabled,
   onClick,
   ariaLabel,
   variant,
 }: {
   active: boolean;
+  disabled: boolean;
   onClick: () => void;
   ariaLabel: string;
   variant: "allow" | "disallow";
@@ -265,12 +289,13 @@ function PolicyButton({
     <button
       type="button"
       onClick={onClick}
-      aria-label={ariaLabel}
+      disabled={disabled}
+      aria-label={disabled ? `${ariaLabel} — workspace admin required` : ariaLabel}
       aria-pressed={active}
-      title={ariaLabel}
+      title={disabled ? "Workspace admin required" : ariaLabel}
       className={`h-7 w-7 flex items-center justify-center rounded border transition-colors ${
         active ? activeCls : inactiveCls
-      }`}
+      } ${disabled ? "cursor-default opacity-70 hover:bg-transparent" : ""}`}
     >
       {variant === "allow" ? <CheckIcon /> : <DenyIcon />}
     </button>
