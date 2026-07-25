@@ -83,7 +83,7 @@ const envResult = loadDotenvIntoProcess(WORKTREE_ROOT);
 // deps it needs to be loaded — that has to happen before it is spawned. Web
 // deps and bundle builds live in `scripts/lib/dev-prepare.ts`, which dev.ts
 // runs, so every launcher gets them and not just this one.
-installIfMissing("root", WORKTREE_ROOT);
+installIfMissing("root", WORKTREE_ROOT, "[dev:worktree]");
 
 console.log("[dev:worktree] Starting");
 console.log(`[dev:worktree]   Worktree: ${WORKTREE_ROOT}`);

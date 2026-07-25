@@ -34,7 +34,6 @@ To build from source instead of pulling (e.g. when developing against local chan
 export ANTHROPIC_API_KEY=sk-ant-...
 
 bun install
-cd web && bun install && cd ..
 bun run dev
 # API on http://localhost:27247 (auto-restarts on file changes)
 # Web on http://localhost:27246 (Vite HMR, proxies /v1/* to :27247)

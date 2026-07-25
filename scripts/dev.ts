@@ -251,6 +251,11 @@ async function runDev(options: DevOptions): Promise<void> {
   const { port, noWeb, config, debug, app: appPath, appPort = 5173 } = options;
   const children: Subprocess[] = [];
 
+  // A fresh clone has no web deps and no bundle dists, and the README quickstart
+  // builds neither. Runs after arg parsing so `--no-web` does not install
+  // dependencies the run will never load.
+  prepareCheckout(join(import.meta.dir, ".."), { web: !noWeb });
+
   // The runtime entry, relative to this script (scripts/ -> ../src/cli/index.ts).
   const cliEntry = join(import.meta.dir, "..", "src", "cli", "index.ts");
 
@@ -298,10 +303,6 @@ async function runDev(options: DevOptions): Promise<void> {
 }
 
 async function main(): Promise<void> {
-  // Before anything spawns: a fresh clone has no web deps and no bundle dists,
-  // and the README quickstart builds neither.
-  prepareCheckout(join(import.meta.dir, ".."));
-
   const rest = process.argv.slice(2);
   const { values } = parseArgs({
     args: rest,
