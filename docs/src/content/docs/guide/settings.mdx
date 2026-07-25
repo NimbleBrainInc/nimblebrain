@@ -88,8 +88,8 @@ Plus runtime limits — **max iterations** and **max input/output tokens** — a
 
 The Extended Thinking modes are:
 
-- **Default** — adaptive for reasoning models, off otherwise.
-- **Off** — never reason.
+- **Default** — the platform chooses per model: a capped thinking budget where the model accepts one, otherwise adaptive so the model sets its own depth. Models without reasoning get none.
+- **Off** — requests no reasoning. Not currently enforceable on adaptive-only Anthropic models, which includes the default: the provider drops the flag, so those models apply their own default ([#738](https://github.com/NimbleBrainInc/nimblebrain/issues/738)).
 - **Adaptive** — the model decides per call.
 - **Enabled** — always reason. Enabling this reveals a **Thinking Budget Tokens** field (minimum 1024), which counts toward Max Output Tokens.
 

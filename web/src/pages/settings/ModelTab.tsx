@@ -268,9 +268,11 @@ export function ModelTab() {
               }
             >
               <option value={THINKING_DEFAULT}>
-                Default (adaptive for reasoning models, off otherwise)
+                Default (the platform picks per model; no reasoning on models without it)
               </option>
-              <option value="off">Off — never reason</option>
+              <option value="off">
+                Off — request no reasoning (not enforceable on all models)
+              </option>
               <option value="adaptive">Adaptive — model decides per call</option>
               <option value="enabled">Enabled — always reason</option>
             </Select>

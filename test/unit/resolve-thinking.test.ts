@@ -17,11 +17,12 @@ describe("resolveThinking", () => {
 	});
 
 	it("defaults to enabled-with-capped-budget for catalog-flagged reasoning models", () => {
-		// Opus 4.7 has capabilities.reasoning = true. The platform default is
+		// Sonnet 4.6 has capabilities.reasoning = true and accepts the
+		// `enabled` shape, so it carries a real budget. The platform default is
 		// `enabled` (not `adaptive`) so we keep direct control over thinking
 		// spend; budget is clamped to leave room for visible output.
 		expect(
-			resolveThinking({ model: "anthropic:claude-opus-4-7", maxOutputTokens: 16384 }),
+			resolveThinking({ model: "anthropic:claude-sonnet-4-6", maxOutputTokens: 16384 }),
 		).toEqual({ mode: "enabled", budgetTokens: 16384 - 4096 });
 	});
 
@@ -29,7 +30,7 @@ describe("resolveThinking", () => {
 		// Even when maxOutputTokens is below the visible-tokens floor, we
 		// emit at least 1024 — the API rejects anything lower.
 		expect(
-			resolveThinking({ model: "anthropic:claude-opus-4-7", maxOutputTokens: 2000 }),
+			resolveThinking({ model: "anthropic:claude-sonnet-4-6", maxOutputTokens: 2000 }),
 		).toEqual({ mode: "enabled", budgetTokens: 1024 });
 	});
 
@@ -37,10 +38,33 @@ describe("resolveThinking", () => {
 		// Caller didn't pass maxOutputTokens (legacy callsite). Fall back to
 		// the safe minimum rather than emitting a budget-less `enabled`,
 		// which the SDK rejects with a warning.
-		expect(resolveThinking({ model: "anthropic:claude-opus-4-7" })).toEqual({
+		expect(resolveThinking({ model: "anthropic:claude-sonnet-4-6" })).toEqual({
 			mode: "enabled",
 			budgetTokens: 1024,
 		});
+	});
+
+	it("sends bare adaptive on an adaptive-only model when no ceiling was configured", () => {
+		// Adaptive-only models can't carry a budget — the engine turns it into
+		// an `output_config.effort` tier. With no operator ceiling,
+		// `maxOutputTokens` is the model's own catalog maximum, so deriving a
+		// tier from it would request maximum reasoning on every call from a
+		// number nobody chose. Emit bare adaptive and let the model decide.
+		expect(
+			resolveThinking({ model: "anthropic:claude-opus-5", maxOutputTokens: 128000 }),
+		).toEqual({ mode: "adaptive" });
+	});
+
+	it("still derives a budget on an adaptive-only model when the operator set a ceiling", () => {
+		// The one case where the number means something: the operator chose it,
+		// so the effort tier the engine derives from it reflects intent.
+		expect(
+			resolveThinking({
+				model: "anthropic:claude-opus-5",
+				maxOutputTokens: 8000,
+				maxOutputTokensConfigured: true,
+			}),
+		).toEqual({ mode: "enabled", budgetTokens: 8000 - 4096 });
 	});
 
 	it("operator off wins over model default", () => {

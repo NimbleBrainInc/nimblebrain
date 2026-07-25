@@ -259,6 +259,7 @@ function buildChildConfig(
     configBudgetTokens: ctx.configThinkingBudgetTokens,
     model: modelString,
     maxOutputTokens: childMaxOutputTokens,
+    maxOutputTokensConfigured: ctx.configMaxOutputTokens != null,
   });
   return {
     model: modelString,

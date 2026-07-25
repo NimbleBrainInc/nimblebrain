@@ -1,5 +1,5 @@
 import type { ResolvedThinking } from "../engine/types.ts";
-import { getModelByString } from "../model/catalog.ts";
+import { getModelByString, supportsEnabledThinking } from "../model/catalog.ts";
 
 export interface ResolveThinkingInput {
   /** Operator/tenant config value. Wins over the model-default. */
@@ -19,6 +19,12 @@ export interface ResolveThinkingInput {
    * compiling.
    */
   maxOutputTokens?: number;
+  /**
+   * Whether `maxOutputTokens` came from operator config rather than the
+   * model's catalog ceiling. Only the platform-default path consults it — see
+   * the adaptive-only carve-out in `resolveThinking`.
+   */
+  maxOutputTokensConfigured?: boolean;
 }
 
 /**
@@ -123,6 +129,19 @@ export function resolveThinking(input: ResolveThinkingInput): ResolvedThinking |
     : false;
 
   if (!supportsReasoning) return undefined;
+
+  // Adaptive-only models can't carry a budget: the engine translates it into
+  // an `output_config.effort` tier instead, and MIN_VISIBLE_OUTPUT_TOKENS is
+  // never enforced at the API for them. When the operator set no ceiling,
+  // `maxOutputTokens` is the model's own catalog maximum — so deriving an
+  // effort tier from it turns a number nobody chose into a directive to
+  // reason maximally, on every call including trivial ones. Send bare
+  // adaptive and let the model pick its own depth. An operator who *does*
+  // set a ceiling still gets a tier derived from it, which is the one case
+  // where the number means something.
+  if (!input.maxOutputTokensConfigured && input.model && !supportsEnabledThinking(input.model)) {
+    return { mode: "adaptive" };
+  }
 
   // Default for reasoning models: enabled with a capped budget so the model
   // can't spend the whole output budget on internal thinking and emit no

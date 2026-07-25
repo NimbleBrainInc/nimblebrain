@@ -189,6 +189,27 @@ import { isToolEligibleForPromotion } from "./tool-eligibility.ts";
 const MODEL_SLOTS = ["default", "fast", "reasoning"] as const;
 type ModelSlot = (typeof MODEL_SLOTS)[number];
 
+/**
+ * Resolve the three model slots from instance config. The single definition of
+ * the fallback chain — `getModelSlots()` and delegate's `alias:` resolution
+ * both route through it, so a delegate call can never resolve a slot to a
+ * different model than the settings UI reports.
+ *
+ * `fast` is deliberately asymmetric: it skips DEFAULT_MODEL. See
+ * `DEFAULT_FAST_MODEL`.
+ */
+function baseModelSlots(
+  models: ModelSlots | undefined,
+  defaultModel: string | undefined,
+): ModelSlots {
+  const fallback = defaultModel ?? DEFAULT_MODEL;
+  return {
+    default: models?.default ?? fallback,
+    fast: models?.fast ?? defaultModel ?? DEFAULT_FAST_MODEL,
+    reasoning: models?.reasoning ?? fallback,
+  };
+}
+
 const ALIAS_PREFIX = "alias:";
 
 /** Check if a string is an alias reference (e.g., "alias:fast"). */
@@ -549,14 +570,7 @@ export class Runtime {
     const resolveSlot = (s: string): string => {
       const slot = parseAliasRef(s);
       if (!slot) return s;
-      const models = config.models;
-      const fallback = config.defaultModel ?? DEFAULT_MODEL;
-      const slots: ModelSlots = {
-        default: models?.default ?? fallback,
-        fast: models?.fast ?? config.defaultModel ?? DEFAULT_FAST_MODEL,
-        reasoning: models?.reasoning ?? fallback,
-      };
-      return slots[slot];
+      return baseModelSlots(config.models, config.defaultModel)[slot];
     };
     const delegateCtx: DelegateContext = {
       resolveModel: resolveModelFn,
@@ -1429,6 +1443,7 @@ export class Runtime {
       configBudgetTokens: this.config.thinkingBudgetTokens,
       model: resolvedModelString,
       maxOutputTokens: resolvedMaxOutputTokens,
+      maxOutputTokensConfigured: this.config.maxOutputTokens != null,
     });
 
     // Compose the per-call message budget from the model's actual context
@@ -1853,6 +1868,7 @@ export class Runtime {
       configBudgetTokens: this.config.thinkingBudgetTokens,
       model: resolvedModelString,
       maxOutputTokens: resolvedMaxOutputTokens,
+      maxOutputTokensConfigured: this.config.maxOutputTokens != null,
     });
     // Per-request override beats config beats default. The UI exposes a
     // per-automation `maxInputTokens` field; honoring it here makes that
@@ -3598,12 +3614,11 @@ export class Runtime {
    *  per-request `request.model` override path (in `chat()`) qualifies
    *  separately because it bypasses this reader. */
   getModelSlots(): ModelSlots {
-    const models = this.config.models;
-    const fallback = this.config.defaultModel ?? DEFAULT_MODEL;
+    const slots = baseModelSlots(this.config.models, this.config.defaultModel);
     const base: ModelSlots = {
-      default: resolveModelString(models?.default ?? fallback),
-      fast: resolveModelString(models?.fast ?? this.config.defaultModel ?? DEFAULT_FAST_MODEL),
-      reasoning: resolveModelString(models?.reasoning ?? fallback),
+      default: resolveModelString(slots.default),
+      fast: resolveModelString(slots.fast),
+      reasoning: resolveModelString(slots.reasoning),
     };
     // Merge workspace model overrides from request context (partial — only overrides specified slots)
     const scope = getRequestContext()?.scope;
