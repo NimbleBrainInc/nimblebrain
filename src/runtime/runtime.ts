@@ -195,6 +195,16 @@ import { resolveMessageBudget } from "./resolve-message-budget.ts";
 import { resolveThinking } from "./resolve-thinking.ts";
 import { isToolEligibleForPromotion } from "./tool-eligibility.ts";
 
+/**
+ * Apply a config patch field where `null` is the explicit "clear my override"
+ * sentinel and `undefined` means "leave alone". Shared by every clearable
+ * field so the disk write and the live-runtime update can't disagree about
+ * what a clear looks like.
+ */
+function applyClearable<T>(value: T | null | undefined, set: (v: T | undefined) => void): void {
+  if (value !== undefined) set(value === null ? undefined : value);
+}
+
 /** Known model slot names. */
 const MODEL_SLOTS = ["default", "fast", "reasoning"] as const;
 type ModelSlot = (typeof MODEL_SLOTS)[number];
@@ -3830,7 +3840,7 @@ export class Runtime {
     models?: Partial<ModelSlots>;
     maxIterations?: number;
     maxInputTokens?: number;
-    maxOutputTokens?: number;
+    maxOutputTokens?: number | null;
     maxToolResultSize?: number;
     thinking?: "off" | "adaptive" | "enabled" | null;
     thinkingBudgetTokens?: number | null;
@@ -3849,18 +3859,20 @@ export class Runtime {
     }
     if (patch.maxIterations !== undefined) this.config.maxIterations = patch.maxIterations;
     if (patch.maxInputTokens !== undefined) this.config.maxInputTokens = patch.maxInputTokens;
-    if (patch.maxOutputTokens !== undefined) this.config.maxOutputTokens = patch.maxOutputTokens;
     if (patch.maxToolResultSize !== undefined)
       this.config.maxToolResultSize = patch.maxToolResultSize;
-    // For `thinking` / `thinkingBudgetTokens`, `null` is the explicit
-    // "clear my override" sentinel — distinct from `undefined` (leave alone).
-    if (patch.thinking !== undefined) {
-      this.config.thinking = patch.thinking === null ? undefined : patch.thinking;
-    }
-    if (patch.thinkingBudgetTokens !== undefined) {
-      this.config.thinkingBudgetTokens =
-        patch.thinkingBudgetTokens === null ? undefined : patch.thinkingBudgetTokens;
-    }
+    // `null` clears; `undefined` leaves alone. Without the clear reaching here,
+    // a cleared override lands on disk while the running process keeps the old
+    // value until restart.
+    applyClearable(patch.maxOutputTokens, (v) => {
+      this.config.maxOutputTokens = v;
+    });
+    applyClearable(patch.thinking, (v) => {
+      this.config.thinking = v;
+    });
+    applyClearable(patch.thinkingBudgetTokens, (v) => {
+      this.config.thinkingBudgetTokens = v;
+    });
   }
 
   /**

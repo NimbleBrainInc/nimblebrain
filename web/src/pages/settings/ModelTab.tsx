@@ -162,10 +162,10 @@ export function ModelTab() {
         },
         maxIterations,
         maxInputTokens,
-        // null clears any stored override so the model's catalog ceiling
-        // applies again; omitting it here would silently leave a previously
-        // saved value in place while the field renders empty.
-        maxOutputTokens,
+        // An emptied field means "drop the override". The wire contract for that
+        // is a clear-flag, not a null — the schema types this field as a
+        // number, so sending null 400s the whole save.
+        ...(maxOutputTokens != null ? { maxOutputTokens } : { clearMaxOutputTokens: true }),
         ...thinkingPatch,
       });
       setFeedback({ type: "success", message: "Model configuration saved." });
@@ -254,7 +254,7 @@ export function ModelTab() {
             <Input
               id="maxOutputTokens"
               type="number"
-              min={0}
+              min={1}
               value={maxOutputTokens ?? ""}
               placeholder={`${resolvedMaxOutputTokens} (model default)`}
               onChange={(e) =>

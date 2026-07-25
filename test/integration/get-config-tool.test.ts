@@ -7,6 +7,7 @@ import { createEchoModel } from "../helpers/echo-model.ts";
 import { createCoreToolDefs } from "../../src/tools/core-source.ts";
 import { makeInProcessSource } from "../helpers/in-process-source.ts";
 import { extractText } from "../../src/engine/content-helpers.ts";
+import { validateToolInput } from "../../src/tools/validate-input.ts";
 
 const testDir = join(tmpdir(), `nimblebrain-get-config-${Date.now()}`);
 
@@ -25,6 +26,84 @@ async function makeRuntime(overrides?: Record<string, unknown>): Promise<Runtime
 		...overrides,
 	});
 }
+
+describe("set_model_config maxOutputTokens override", () => {
+	// The settings UI sends this payload on every save. Validating it against the
+	// tool's own declared schema is the part that matters: a previous revision
+	// cleared the override by sending `maxOutputTokens: null`, which the schema
+	// types as `number` — so every save on an unconfigured install 400'd at the
+	// REST boundary before reaching any of the logic below.
+	function toolSchema(runtime: Runtime): Record<string, unknown> {
+		// Read the declared schema straight off the tool def — this is the
+		// contract the REST boundary compiles with Ajv before the handler runs.
+		const def = createCoreToolDefs(runtime).find((t) => t.name === "set_model_config");
+		if (!def) throw new Error("set_model_config not found");
+		return def.inputSchema as Record<string, unknown>;
+	}
+
+	it("accepts the payloads the settings UI actually sends", async () => {
+		const runtime = await makeRuntime();
+		try {
+			const schema = toolSchema(runtime);
+			// unconfigured install: the field renders empty, so the save clears
+			expect(validateToolInput({ clearMaxOutputTokens: true }, schema).valid).toBe(true);
+			// operator typed a ceiling
+			expect(validateToolInput({ maxOutputTokens: 8000 }, schema).valid).toBe(true);
+			// a bare null is NOT the wire contract — this is the shape that broke
+			// every save on an unconfigured install
+			expect(validateToolInput({ maxOutputTokens: null }, schema).valid).toBe(false);
+		} finally {
+			await runtime.shutdown();
+		}
+	});
+
+	it("round-trips set then clear through the tool", async () => {
+		const overrideDir = join(testDir, `override-${Date.now()}`);
+		mkdirSync(overrideDir, { recursive: true });
+		const runtime = await makeRuntime({
+			configOverridePath: join(overrideDir, "nimblebrain.overrides.json"),
+		});
+		try {
+			const source = await makeInProcessSource("nb", createCoreToolDefs(runtime));
+
+			const set = await source.execute("set_model_config", { maxOutputTokens: 8000 });
+			expect(set.isError).toBe(false);
+			expect(runtime.getConfiguredMaxOutputTokens()).toBe(8000);
+			const afterSet = await source.execute("get_config", {});
+			expect((afterSet.structuredContent as Record<string, unknown>).maxOutputTokens).toBe(8000);
+
+			const cleared = await source.execute("set_model_config", { clearMaxOutputTokens: true });
+			expect(cleared.isError).toBe(false);
+			// gone from the live runtime, so resolveThinking stops deriving an
+			// effort tier from it
+			expect(runtime.getConfiguredMaxOutputTokens()).toBeUndefined();
+			const afterClear = await source.execute("get_config", {});
+			const cfg = afterClear.structuredContent as Record<string, unknown>;
+			expect(cfg.maxOutputTokens).toBeUndefined();
+			expect(typeof cfg.resolvedMaxOutputTokens).toBe("number");
+		} finally {
+			await runtime.shutdown();
+		}
+	});
+
+	it("rejects setting and clearing at once", async () => {
+		const overrideDir = join(testDir, `override-x-${Date.now()}`);
+		mkdirSync(overrideDir, { recursive: true });
+		const runtime = await makeRuntime({
+			configOverridePath: join(overrideDir, "nimblebrain.overrides.json"),
+		});
+		try {
+			const source = await makeInProcessSource("nb", createCoreToolDefs(runtime));
+			const res = await source.execute("set_model_config", {
+				maxOutputTokens: 8000,
+				clearMaxOutputTokens: true,
+			});
+			expect(res.isError).toBe(true);
+		} finally {
+			await runtime.shutdown();
+		}
+	});
+});
 
 describe("get_config tool", () => {
 	it("returns all expected fields", async () => {

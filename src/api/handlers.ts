@@ -1544,8 +1544,6 @@ export async function handleBootstrap(
   const configuredProviders = runtime.getConfiguredProviders();
   const maxIterations = runtime.getMaxIterations();
   const maxInputTokens = runtime.getMaxInputTokens();
-  const resolvedMaxOutputTokens = runtime.getMaxOutputTokens();
-  const maxOutputTokens = runtime.getConfiguredMaxOutputTokens();
 
   return json({
     user: {
@@ -1577,8 +1575,10 @@ export async function handleBootstrap(
       configuredProviders,
       maxIterations,
       maxInputTokens,
-      resolvedMaxOutputTokens,
-      ...(maxOutputTokens !== undefined ? { maxOutputTokens } : {}),
+      // maxOutputTokens is deliberately absent: it is resolved per model, so a
+      // single number here is either misleading or a value a client can echo
+      // back as an override. Read it from `get_config`, which reports the
+      // configured and resolved figures separately.
     },
     version: VERSION,
     buildSha: process.env.NB_BUILD_SHA || null,

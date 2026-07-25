@@ -380,7 +380,6 @@ export interface BootstrapResponse {
     configuredProviders: string[];
     maxIterations: number;
     maxInputTokens: number;
-    maxOutputTokens: number;
   };
   version: string;
   buildSha: string | null;

@@ -83,6 +83,12 @@ function normalizeModelConfigClears(input: Record<string, unknown>): string | nu
     }
     input.thinking = null;
   }
+  if (input.clearMaxOutputTokens === true) {
+    if (input.maxOutputTokens !== undefined && input.maxOutputTokens !== null) {
+      return "Cannot set both `maxOutputTokens` and `clearMaxOutputTokens`. Use one or the other.";
+    }
+    input.maxOutputTokens = null;
+  }
   if (input.clearThinkingBudget === true) {
     if (input.thinkingBudgetTokens !== undefined && input.thinkingBudgetTokens !== null) {
       return "Cannot set both `thinkingBudgetTokens` and `clearThinkingBudget`. Use one or the other.";
@@ -213,7 +219,9 @@ function applyNullableNumber(target: Record<string, unknown>, key: string, value
 
 /** The live-runtime patch entry matching `applyNullableNumber`. */
 function nullableNumberPatch(key: string, value: unknown): Record<string, unknown> {
-  if (value === null) return { [key]: undefined };
+  // null, not undefined — `updateConfig` gates on `!== undefined`, so an
+  // undefined here would never reach the live runtime.
+  if (value === null) return { [key]: null };
   if (value !== undefined) return { [key]: Number(value) };
   return {};
 }
@@ -726,7 +734,16 @@ export function createCoreToolDefs(runtime: Runtime): InProcessTool[] {
           },
           maxOutputTokens: {
             type: "number",
-            description: "Max output tokens per LLM call (must be > 0).",
+            description:
+              "Max output tokens per LLM call (must be > 0). Omit to leave any existing " +
+              "override untouched; use clearMaxOutputTokens=true to drop it and fall back " +
+              "to the model's catalog ceiling.",
+          },
+          clearMaxOutputTokens: {
+            type: "boolean",
+            description:
+              "If true, clears any persisted maxOutputTokens override so the resolved model's " +
+              "catalog ceiling applies again. Mutually exclusive with `maxOutputTokens`.",
           },
           thinking: {
             type: "string",
