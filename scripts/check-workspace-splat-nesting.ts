@@ -23,9 +23,12 @@
  *   - that child renders `WorkspaceNotFoundPage` (the slug-derived settledness
  *     wrapper — the bare `NotFoundPage` would compare against lagging ambient
  *     state and paint a false "not available" mid-switch)
+ *   - a `<Route path="*">` also exists OUTSIDE the workspace element, so a path
+ *     with no workspace at all (`/nonsense`) still lands somewhere
  *
- * It deliberately says nothing about the top-level `path="*"`, which is free to
- * move: only the nested one is order-sensitive.
+ * Position is only asserted for the nested one: the top-level splat is free to
+ * move within the table, but deleting it restores the white screen for every
+ * non-workspace URL, so its existence is checked.
  */
 
 import { readFileSync } from "node:fs";
@@ -115,6 +118,39 @@ if (wrong.length > 0) {
       "  `settled` prop computed from ambient workspace state, which lags a switch by a\n" +
       "  render — reporting settled while both sides still name the previous workspace,\n" +
       '  and painting "not available" for an app that is installed in the one the URL names.',
+  );
+  process.exit(1);
+}
+
+// A splat outside the workspace element — the terminal route for everything
+// else. Position is irrelevant (React Router ranks by specificity), existence is
+// not: without it an unmatched non-workspace path renders `null` into the main
+// area, which is the white screen this whole gate exists to keep closed.
+const wsStart = workspaceRoute.getStart();
+const wsEnd = workspaceRoute.getEnd();
+let hasTopLevelSplat = false;
+(function findSplat(node: ts.Node): void {
+  if (hasTopLevelSplat) return;
+  const opening = openingOf(node);
+  if (
+    opening &&
+    opening.tagName.getText() === "Route" &&
+    stringAttr(opening, "path") === SPLAT &&
+    (node.getStart() < wsStart || node.getEnd() > wsEnd)
+  ) {
+    hasTopLevelSplat = true;
+    return;
+  }
+  ts.forEachChild(node, findSplat);
+})(source);
+
+if (!hasTopLevelSplat) {
+  console.error(
+    `✗ check-workspace-splat-nesting — no <Route path="${SPLAT}"> outside <Route path="${WORKSPACE_PATH}">.\n\n` +
+      "  Workspace-scoped misses are covered by the nested splat, but a path with no\n" +
+      "  workspace at all then matches nothing and <Routes> renders null into the main\n" +
+      "  area — a blank page that reads as a broken app. Keep a terminal splat outside\n" +
+      "  the workspace element.",
   );
   process.exit(1);
 }

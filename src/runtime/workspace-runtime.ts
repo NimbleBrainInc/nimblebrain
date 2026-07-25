@@ -168,8 +168,9 @@ function urlBundleHasBootAuth(
  * off that instance — can never revive it. Keeping it means the app stays
  * visible with an honest connection state and heals on next use.
  *
- * `meta.ui` carries the ref's placements forward so the sidebar entry survives
- * with it.
+ * The placements ride on the ref itself — `buildSeededInstance` reads
+ * `ref.ui` first — so they survive with the entry. `meta.ui` mirrors the same
+ * value only to keep the `LocalBundleMeta` shape whole; it is never the source.
  */
 function unstartedUrlBundleEntry(
   entry: ProcessInventoryEntry,

@@ -19,6 +19,7 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { NoopEventSink } from "../../src/adapters/noop-events.ts";
 import type { BundleRef } from "../../src/bundles/types.ts";
+import { log } from "../../src/observability/log.ts";
 import { startWorkspaceBundles } from "../../src/runtime/workspace-runtime.ts";
 import { WorkspaceStore } from "../../src/workspace/workspace-store.ts";
 
@@ -74,6 +75,32 @@ describe("startWorkspaceBundles — unreachable URL bundle at boot", () => {
     // The placements ride along on the surviving entry — this is what keeps the
     // app in the sidebar (and its route registered) while the source is down.
     expect(entry?.meta?.ui?.placements?.[0]?.resourceUri).toBe("ui://unreachable/main");
+  }, 30_000);
+
+  test("startedCount_excludesTheFailedBundleAndNamesIt", async () => {
+    // This line is the only boot-time signal that a dependency was unreachable —
+    // it is how the staging incident was found. A surviving entry would inflate
+    // it back to "1/1" and hide exactly that. Same log-swap idiom as
+    // mcp-server-endpoint.test.ts.
+    const store = new WorkspaceStore(workDir);
+    const ws = await store.create("Fleet");
+    await store.update(ws.id, { bundles: [unreachableBundle("unreachable")] });
+
+    const lines: string[] = [];
+    const origInfo = log.info;
+    log.info = (msg: string) => lines.push(msg);
+    try {
+      await startWorkspaceBundles(store, [], null, new NoopEventSink(), undefined, {
+        workDir,
+        allowInsecureRemotes: true,
+      });
+    } finally {
+      log.info = origInfo;
+    }
+
+    const summary = lines.find((l) => l.includes("bundles in"));
+    expect(summary).toContain("Started 0/1 bundles");
+    expect(summary).toContain("1 failed to start");
   }, 30_000);
 
   test("failedNamedBundle_isDroppedNotKept", async () => {
