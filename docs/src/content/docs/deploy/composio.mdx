@@ -5,9 +5,11 @@ description: End-to-end operator setup for Composio-backed connectors (Gmail, Ou
 
 import { Aside } from '@astrojs/starlight/components';
 
+Composio is one [managed-connector provider](/config/connector-providers/) — the concept page covers what that means and how it differs from a connector. This guide is the vendor-specific setup.
+
 Composio is an OAuth aggregator. It holds the vendor's tokens; NimbleBrain proxies tool calls through Composio's MCP endpoint and persists only an opaque `connectedAccountId` per workspace per connector.
 
-You only need this if your catalog has any `auth: composio` entries. The bundled catalog ships Gmail and Outlook as Composio-backed because Google and Microsoft require app verification (`gmail.*`, `Mail.*`) that most operators don't hold on day one. Once your own OAuth app is verified, you can migrate the entry from `auth: composio` to `auth: static` or `auth: dcr` without losing the workspace's existing state.
+You only need this if your catalog has any `auth: composio` entries. A production catalog (the directory `NB_CURATED_CATALOG_DIR` points at) typically ships Gmail and Outlook as Composio-backed because Google and Microsoft require app verification (`gmail.*`, `Mail.*`) that most operators don't hold on day one. Once your own OAuth app is verified, you can migrate the entry from `auth: composio` to `auth: static` or `auth: dcr` without losing the workspace's existing state.
 
 <Aside type="note">
   This guide assumes you've already chosen to include a Composio-backed entry in your catalog. The catalog mechanics (YAML shape, `composio` block fields, tool allowlists) live in [Connectors Catalog → auth: composio](/config/connectors-catalog/#2-add-the-yaml-entry).

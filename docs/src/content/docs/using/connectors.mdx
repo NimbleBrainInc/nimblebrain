@@ -32,19 +32,21 @@ Installing or connecting a service requires the **admin** role in the workspace.
 
 On a connector's **Configure** page you can see who you're connected as, **Disconnect**, and review or adjust which of the connector's tools are allowed. For the modes with a sign-in flow (**dcr**, **static**, and OAuth **composio** toolkits) disconnecting is reversible — reconnecting re-runs that flow. **provider** and **smithery** connectors have no interactive sign-in: their credential is held by the platform or the broker, so they reconnect without prompting you.
 
-## The five auth modes
+## The auth kinds
 
-Connectors authenticate in one of five ways. As an end user you rarely need to care which — the **Install / Connect** button does the right thing — but it helps to know what's happening:
+Every connector declares how it authenticates. As a user you rarely need to care — the **Install / Connect** button does the right thing — but it explains what each one asks of you, and who had to set it up first.
 
-| Mode | What it means | What you do |
-|------|---------------|-------------|
-| **dcr** | Dynamic Client Registration. The platform registers an OAuth client with the vendor on the fly. | Click **Install**, sign in. No setup. |
-| **static** | The vendor requires a pre-registered OAuth app. A workspace admin configures the app's client ID and secret once. | An admin clicks **Set up** first; after that, everyone connects with **Install**. |
-| **composio** | The service is brokered through Composio, a managed-connector provider. | Click **Install**. OAuth toolkits send you through the vendor's sign-in; API-key toolkits open a short form where you paste the service's API key (and any region/host it needs). Requires the platform operator to have configured Composio. |
-| **smithery** | The service is brokered through Smithery, a managed-connector provider that also hosts the MCP session. | Click **Install**. Servers that need no account connect immediately. One that needs sign-in or configuration reports it on the install attempt, with a link to a Smithery-hosted setup page to complete first. Requires the platform operator to have configured Smithery. |
-| **provider** | A platform-managed connector whose credential is minted server-side by a named credential provider — no vendor sign-in, no operator OAuth app, no per-user secret. | Click **Install**. The platform produces the credential for you; there is nothing to enter. |
+| Kind | What it means | What you do | Who sets it up |
+|------|---------------|-------------|----------------|
+| **dcr** | Dynamic Client Registration. The platform registers an OAuth client with the vendor on the fly. | Click **Install**, sign in. | None |
+| **static** | The vendor requires a pre-registered OAuth app. | An admin clicks **Set up** once; after that everyone connects with **Install**. | Workspace admin, per workspace |
+| **composio** | Brokered through Composio, a [managed-connector provider](/config/connector-providers/). | Click **Install**. OAuth toolkits send you through the vendor's sign-in; API-key toolkits open a short form for the service's API key. | Operator, platform-wide |
+| **smithery** | Brokered through Smithery, a [managed-connector provider](/config/connector-providers/) that also hosts the MCP session. | Click **Install**. A server needing no account connects immediately; one needing sign-in or configuration reports that on the install attempt, with a link to a Smithery-hosted setup page to complete first. | Operator, platform-wide |
+| **provider** | A platform-managed connector whose credential the runtime mints server-side — no vendor sign-in, no operator OAuth app, no per-user secret. | Click **Install**. There is nothing to enter. | Operator — the catalog entry and fleet-authorizer environment |
 
-For a **static**-auth connector that hasn't been set up yet, non-admins see "Operator setup required" until an admin completes the one-time **Set up** step.
+For a **static** connector that hasn't been set up yet, non-admins see "Operator setup required" until an admin completes the one-time **Set up** step.
+
+The last three rows depend on something configured once for the whole platform rather than anything in this workspace — but on *different* platform machinery: **composio** and **smithery** on a configured [connector provider](/config/connector-providers/), **provider** on the fleet authorizer. None of them is something a workspace admin can turn on.
 
 ## Where your secrets live
 

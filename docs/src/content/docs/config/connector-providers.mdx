@@ -1,0 +1,57 @@
+---
+title: Connector Providers
+description: What a managed-connector provider is, how it differs from a connector, and when to reach for one.
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+Connectors reach outside services in two different ways, and the difference decides who configures what.
+
+- A **connector** is a catalog entry a workspace installs — Notion, Linear, Gmail. Installing is a workspace-admin action, done from Settings → Connectors.
+- A **managed-connector provider** is a third party that brokers auth *and* hosts the MCP session on your tenant's behalf. You configure one **once, platform-wide**, with a credential. That's an operator action, not a workspace one.
+
+They are different layers. A connector *declares which auth kind it uses*, and two of those kinds — `composio` and `smithery` — delegate to a configured provider:
+
+| Layer | What it is | Who sets it up | Where it lives |
+|---|---|---|---|
+| Provider | A broker holding credentials and hosting sessions | Operator, once per platform | [`connectors.providers`](/config/nimblebrain-json/#connectors) |
+| Connector | A catalog entry a workspace installs | Workspace admin, per workspace | The [connectors catalog](/config/connectors-catalog/) |
+
+<Aside type="note">
+**"Operator" here means platform-wide, which the product's own vocabulary predates.** The catalog field is `operatorSetup` and the UI says "Operator setup required" — both for the `auth: static` flow, which this split calls a *workspace-admin* action. Read those two as "someone has to configure this first," not as the platform-wide role.
+</Aside>
+
+<Aside type="note">
+**The auth kind is a deployment choice, not a property of the server.** Gmail is typically catalogued as `auth: composio` because Google requires app verification (`gmail.*`) most operators don't hold on day one — but the same server becomes `auth: static` or `auth: dcr` once you have your own verified OAuth app — see [migrating off the broker](/deploy/composio/#migrating-off-composio-per-toolkit). Nothing about Gmail forces the broker; your verification status does.
+</Aside>
+
+## Why a provider at all
+
+A broker earns its place when the platform can't hold the vendor relationship itself:
+
+- The vendor's API requires app verification you don't hold yet (Google's restricted `gmail.*` scopes, Microsoft's `Mail.*`).
+- You'd otherwise register and maintain an OAuth app per vendor, per environment.
+- The vendor has no MCP server of its own and the broker supplies one.
+
+If none of those apply, prefer a runtime-native kind. `auth: dcr` needs zero operator setup and puts no third party in the trust path.
+
+## Shipped providers
+
+| Provider | Brokers auth | Hosts the session | Setup |
+|---|---|---|---|
+| [Composio](https://composio.dev) | OAuth, API key | Yes | [Composio operator guide](/deploy/composio/) |
+| [Smithery](https://smithery.ai) | OAuth, config — completed on Smithery's own hosted setup page rather than a callback to us | Yes | [`connectors.providers.smithery`](/config/nimblebrain-json/#connectorsproviderssmithery) — no end-to-end guide yet |
+
+Configuration — the block, its fields, the per-field environment fallback, and why the broker credential names a credential provider rather than an env var — is documented once, under [`connectors.providers`](/config/nimblebrain-json/#connectors).
+
+<Aside type="caution">
+Don't confuse this with **`auth: provider`**, which is a different mechanism despite the name. That kind is for platform-managed connectors whose credential the runtime mints itself against the fleet authorizer — it reads no `connectors.providers` block, and it needs an operator-authored catalog entry plus fleet-authorizer environment. The `"type": "provider"` you'll see inside an installed connector's persisted transport is the layer underneath both: the credential-provider seam. An `auth: provider` entry names the platform's `minted` provider there; a brokered connector names its broker. Same mechanism, different credential.
+</Aside>
+
+## Related
+
+- [Connectors](/using/connectors/) — the auth kinds, from a user's point of view
+- [Connectors Catalog](/config/connectors-catalog/) — authoring catalog entries
+- [`nimblebrain.json`](/config/nimblebrain-json/#connectors) — the full `connectors` reference
+- [Composio operator guide](/deploy/composio/) — a shipped provider, end to end
+- `src/connectors/providers/managed-provider.ts` — the interface a new provider implements, for contributors
