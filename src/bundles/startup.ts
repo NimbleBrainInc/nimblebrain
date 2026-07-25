@@ -40,7 +40,13 @@ import {
 } from "./paths.ts";
 import { notifyConnectionRunning } from "./pending-auth-buffer.ts";
 import { resolveLocalBundle } from "./resolve.ts";
-import type { BundleManifest, BundleRef, LocalBundleMeta, StartBundleResult } from "./types.ts";
+import type {
+  BundleManifest,
+  BundleRef,
+  LocalBundleMeta,
+  RemoteTransportConfig,
+  StartBundleResult,
+} from "./types.ts";
 import { validateBundleUrl } from "./url-validator.ts";
 
 /**
@@ -500,6 +506,27 @@ async function finalizeUrlSourceStart(
 /** Start a remote (URL) bundle source: validate, wire OAuth, race `start()`
  *  against an interactive-auth early return, and register on success or
  *  pending-auth. Returns the manifest-less remote `StartBundleResult`. */
+/**
+ * The transport config and SSRF posture a persisted ref resolves to.
+ *
+ * The two decisions travel together deliberately. They were separate reads once,
+ * and drifted: the URL gate saw the raw ref while the transport saw the mapped
+ * one, so a single ref got two trust verdicts. Deriving both here makes that
+ * class of bug unrepresentable, and gives the pair one testable surface.
+ *
+ *   - **transport** — legacy Composio refs map forward to provider auth.
+ *   - **fleetInternal** — the in-cluster plain-HTTP exception, granted only to
+ *     the `minted` fleet rail. Provider auth alone does not earn it: a brokered
+ *     connector names a provider too, but its URL comes from a vendor response.
+ */
+export function resolveRefTransport(ref: Extract<BundleRef, { url: string }>): {
+  transportConfig: RemoteTransportConfig | undefined;
+  fleetInternal: boolean;
+} {
+  const transportConfig = composioTransportConfig(ref.transport);
+  return { transportConfig, fleetInternal: isMintedFleetSource(transportConfig) };
+}
+
 async function startUrlBundleSource(
   ref: Extract<BundleRef, { url: string }>,
   registry: ToolRegistry,
@@ -520,12 +547,12 @@ async function startUrlBundleSource(
   // path. Keyed on the provider NAME, not on `auth.type === "provider"`: a
   // brokered connector also names a credential provider, but its URL comes from
   // the vendor's API response, so it carries no operator provenance.
-  // Map legacy Composio refs forward ONCE, and use the same value for the URL
-  // gate and the transport below — otherwise one ref gets two trust verdicts.
-  const transportConfig = composioTransportConfig(ref.transport);
+  // One derivation feeds both the URL gate and the transport below — see
+  // `resolveRefTransport` for why they must not be read separately.
+  const { transportConfig, fleetInternal } = resolveRefTransport(ref);
   validateBundleUrl(new URL(ref.url), {
     allowInsecure: opts?.allowInsecureRemotes,
-    fleetInternal: isMintedFleetSource(transportConfig),
+    fleetInternal,
   });
   log.info(`[bundles] Starting remote bundle ${ref.url} as ${sourceName}...`);
 

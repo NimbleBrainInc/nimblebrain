@@ -9,9 +9,9 @@
  *     setting declared in the block wins; a setting left out — or left blank —
  *     reads its `COMPOSIO_*` var. Nothing is ever silently discarded, so
  *     declaring one setting cannot disturb another.
- *   - **the broker credential** — always `COMPOSIO_API_KEY`, never declarable,
- *     because an installed connector's persisted transport credential is an env
- *     reference into that name.
+ *   - **the broker credential** — same per-field rule. It became declarable once
+ *     an installed connector's transport named a credential provider rather than
+ *     an env var, so nothing persisted pins it to `COMPOSIO_API_KEY`.
  *
  * Nothing here mocks `@composio/core` — config resolution is vendor-free by
  * construction, so the suite must never trigger a vendor load.
@@ -74,20 +74,20 @@ afterEach(() => {
   _resetBouncerModeForTest();
 });
 
-describe("the broker credential is env-only", () => {
+describe("the broker credential", () => {
   it("reports not configured when COMPOSIO_API_KEY is unset", () => {
     expect(validateComposioConfig().apiKey).toBe("");
   });
 
-  it("stays unconfigured when only a settings block is declared", () => {
-    // The block cannot supply a credential, so declaring one must not make the
-    // provider look configured.
+  it("stays unconfigured when a block declares no credential", () => {
+    // A block that declares only settings supplies no credential, so it must not
+    // make the provider look configured.
     declareComposio({ baseUrl: "https://composio.internal" });
     expect(validateComposioConfig().apiKey).toBe("");
   });
 
-  it("resolves from the env even when a block is declared", () => {
-    // The load-bearing case: the documented posture — settings in the block,
+  it("resolves from the env when the block declares no apiKey", () => {
+    // The documented posture for most deployments: settings in the block,
     // credential in the secret store → env.
     process.env.COMPOSIO_API_KEY = "k_env";
     declareComposio({ baseUrl: "https://composio.internal" });
@@ -205,6 +205,21 @@ describe("precedence — per field, so nothing is silently discarded", () => {
     declareComposio({ baseUrl: "https://config.example.com" });
 
     expect(validateComposioConfig().baseUrl).toBe("https://config.example.com");
+  });
+
+  it("a declared apiKey wins over COMPOSIO_API_KEY", () => {
+    // The direction the CHANGELOG, the schema description and both docs pages
+    // claim, and the one no test covered: every apiKey case set one source or
+    // the other, never both.
+    process.env.COMPOSIO_API_KEY = "k_env";
+    declareComposio({ apiKey: "k_config" });
+    expect(validateComposioConfig().apiKey).toBe("k_config");
+  });
+
+  it("a blank declared apiKey falls back to the env, like its siblings", () => {
+    process.env.COMPOSIO_API_KEY = "k_env";
+    declareComposio({ apiKey: "   " });
+    expect(validateComposioConfig().apiKey).toBe("k_env");
   });
 
   it("a field the block leaves out still reads its env var", () => {

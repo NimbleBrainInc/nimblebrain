@@ -3,7 +3,6 @@ import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { resolveConnectorSkillsConfig } from "../config/connector-skills.ts";
 import { cleanupComposioBundle } from "../connectors/providers/composio/sdk.ts";
-import { composioTransportConfig } from "../connectors/providers/composio/transport-credential.ts";
 import type { EventSink } from "../engine/types.ts";
 import { IdentityConnectorStore } from "../identity/connector-store.ts";
 import { fleetIssuerOption } from "../oauth/fleet-assertion.ts";
@@ -52,6 +51,7 @@ import {
   type BundleMcpDeps,
   buildUrlOAuthProvider,
   composeBundleMcpContext,
+  resolveRefTransport,
   startBundleSource,
 } from "./startup.ts";
 import type {
@@ -1410,7 +1410,7 @@ export class BundleLifecycleManager {
         // builds its OAuth provider unconditionally, so a Composio ref with a
         // legacy env-template auth can reach here (Reconnect / `/v1/mcp-auth/
         // initiate`) and would otherwise resolve an empty `x-api-key`.
-        transportConfig: composioTransportConfig(ref.transport),
+        transportConfig: resolveRefTransport(ref).transportConfig,
         // Honor the per-call flag, same source the OAuth provider above and the
         // startup-time validateBundleUrl use — not the manager default — so the
         // transport's SSRF guard agrees with what this install was authorized for.
