@@ -195,6 +195,16 @@ function buildHarness(opts: { adminId?: string } = {}): Harness {
         _owner: { scope: "workspace" | "user"; wsId?: string; userId?: string },
         _serverName: string,
       ): Promise<void> => {},
+      // Records the write so an admin-path test can assert the handler got
+      // past its gate and actually persisted, rather than only that it
+      // returned ok.
+      setConnector: async (
+        owner: { scope: "workspace" | "user"; wsId?: string; userId?: string },
+        serverName: string,
+        tools: Record<string, "allow" | "disallow">,
+      ): Promise<void> => {
+        permissionWrites.push({ owner, serverName, tools });
+      },
     }),
     getUserStore: () => ({
       get: async (_id: string) => null,
@@ -214,6 +224,13 @@ function buildHarness(opts: { adminId?: string } = {}): Harness {
     runtime,
   };
 }
+
+/** Tool-policy writes the stub permission store received, newest last. */
+const permissionWrites: Array<{
+  owner: { scope: "workspace" | "user"; wsId?: string; userId?: string };
+  serverName: string;
+  tools: Record<string, "allow" | "disallow">;
+}> = [];
 
 async function provisionWorkspace(
   h: Harness,
@@ -1080,6 +1097,7 @@ describe("manage_connectors.set_permissions", () => {
 
   afterEach(() => {
     rmSync(h.workDir, { recursive: true, force: true });
+    permissionWrites.length = 0;
   });
 
   test("rejects unknown serverName — fail-fast on typos", async () => {
@@ -1093,6 +1111,48 @@ describe("manage_connectors.set_permissions", () => {
     expect(result.isError).toBe(true);
     const text = (result.content?.[0] as { text?: string } | undefined)?.text ?? "";
     expect(text).toContain("not installed");
+  });
+
+  // Workspace-scope tool policy decides what the workspace's agent may call for
+  // every member, so it carries the same admin gate its seven siblings in this
+  // file carry. It was the one workspace-scoped write in `connector-tools.ts`
+  // with no gate at all (#748) — reachable through `/mcp` and the agent, not
+  // just the settings UI, which is why the fix is here and not in the client.
+  test("a workspace member cannot set workspace tool policy", async () => {
+    seedStdioBundle(h);
+    const tool = buildTool(h, NON_ADMIN_USER);
+    const result = await tool.handler({
+      action: "set_permissions",
+      serverName: STUB_BUNDLE_SERVER_NAME,
+      scope: "workspace",
+      tools: { read: "disallow" },
+    });
+    expect(result.isError).toBe(true);
+    const text = (result.content?.[0] as { text?: string } | undefined)?.text ?? "";
+    expect(text).toContain("Workspace admin role required");
+    expect((result.structuredContent as { error?: string } | undefined)?.error).toBe(
+      "permission_denied",
+    );
+  });
+
+  test("a workspace admin can", async () => {
+    // The negative above is worthless without this: a handler that refused
+    // everyone would satisfy it.
+    seedStdioBundle(h);
+    const tool = buildTool(h, ADMIN_USER);
+    const result = await tool.handler({
+      action: "set_permissions",
+      serverName: STUB_BUNDLE_SERVER_NAME,
+      scope: "workspace",
+      tools: { read: "disallow" },
+    });
+    expect(result.isError).toBe(false);
+    expect((result.structuredContent as { ok?: boolean } | undefined)?.ok).toBe(true);
+    // ...and the policy actually persisted, so this can't pass on a handler
+    // that returns ok without writing.
+    const last = permissionWrites.at(-1);
+    expect(last?.owner.scope).toBe("workspace");
+    expect(last?.tools).toEqual({ read: "disallow" });
   });
 });
 

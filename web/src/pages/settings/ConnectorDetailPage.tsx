@@ -193,7 +193,7 @@ export function ConnectorDetailPage() {
       <div className="space-y-6">
         <OAuthConnectionSection installed={installed} canManage={canManage} onChanged={refresh} />
         <OperatorOAuthSection installed={installed} canManage={canManage} onChanged={refresh} />
-        <ToolPermissionsTable serverName={installed.serverName} />
+        <ToolPermissionsTable serverName={installed.serverName} canManage={canManage} />
       </div>
 
       {configureModalOpen && (

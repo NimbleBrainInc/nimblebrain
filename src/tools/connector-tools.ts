@@ -2778,6 +2778,43 @@ async function handleGetPermissions(
   };
 }
 
+/**
+ * Admission for a workspace-scope tool-policy write: the connector must be
+ * installed here, and the caller must be a workspace admin. Returns the
+ * refusal, or null to proceed — same shape as `workspaceInstallAdmission`.
+ *
+ * Tool policy decides what the workspace's agent may call, for every member,
+ * so a non-admin must not set it on everyone else's behalf. Personal
+ * workspaces have a single admin (the owner) by invariant, so one gate covers
+ * both shapes. User-scope policy takes no gate: it governs the caller's own
+ * personal connector and widens nobody else's reach — the same reasoning the
+ * grant handlers spell out.
+ */
+async function workspacePolicyAdmission(
+  ctx: ManageConnectorsContext,
+  wsId: string,
+  serverName: string,
+): Promise<ToolResult | null> {
+  // Reject unknown serverName up front. Permission entries for a non-existent
+  // connector would sit unused (the runtime gate keys on installed-source
+  // dispatch); failing fast surfaces typos at write time.
+  if (ctx.runtime.getLifecycle().getInstance(serverName, wsId) == null) {
+    return errResult(`Connector "${serverName}" is not installed in workspace "${wsId}".`);
+  }
+  const identity = ctx.getIdentity();
+  if (!identity) return errResult("Authentication required.");
+  const ws = await ctx.runtime.getWorkspaceStore().get(wsId);
+  if (!ws) return errResult(`Workspace "${wsId}" not found.`);
+  if (!isWorkspaceAdmin(ws, identity)) {
+    return {
+      content: textContent("Workspace admin role required to set tool permissions."),
+      structuredContent: { error: "permission_denied" },
+      isError: true,
+    };
+  }
+  return null;
+}
+
 async function handleSetPermissions(
   ctx: ManageConnectorsContext,
   wsId: string | null,
@@ -2789,15 +2826,12 @@ async function handleSetPermissions(
   const owner = await resolvePermissionOwner(ctx, wsId, callerId, serverName);
   if (!owner) return errResult("Could not resolve permission owner — sign in or pick a workspace.");
 
-  // Reject unknown serverName up front. Permission entries for a non-existent
-  // connector would sit unused (the runtime gate keys on installed-source
-  // dispatch); failing fast surfaces typos at write time. A personal connector's
-  // existence is already confirmed by `resolvePermissionOwner` (it's in the
-  // caller's identity store); a workspace connector needs the workspace check.
+  // A personal connector's existence is already confirmed by
+  // `resolvePermissionOwner` (it's in the caller's identity store); a
+  // workspace connector needs the admission check below.
   if (owner.scope === "workspace") {
-    if (ctx.runtime.getLifecycle().getInstance(serverName, owner.wsId) == null) {
-      return errResult(`Connector "${serverName}" is not installed in workspace "${owner.wsId}".`);
-    }
+    const refused = await workspacePolicyAdmission(ctx, owner.wsId, serverName);
+    if (refused) return refused;
   }
 
   const tools: Record<string, "allow" | "disallow"> = {};
