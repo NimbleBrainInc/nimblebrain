@@ -78,31 +78,36 @@ describe("resolveThinking", () => {
 		).toEqual({ mode: "effort", effort: DEFAULT_THINKING_EFFORT });
 	});
 
-	it("an explicit budget outranks an effort tier", () => {
-		// The budget is the more specific instruction. Providers that can't
-		// meter tokens fall back to the tier in the engine, not here.
+	it("carries the tier alongside an explicit budget", () => {
+		// Not alternatives: the budget meters thinking where a provider counts
+		// tokens, and the tier is what every other provider uses. Dropping the
+		// tier here made the depth control inert on the effort-shaped models it
+		// was added for, because the settings UI sends a budget on every save.
 		expect(
 			resolveThinking({
 				configMode: "enabled",
-				configEffort: "low",
+				configEffort: "max",
 				configBudgetTokens: 8000,
 				model: "anthropic:claude-sonnet-4-6",
 			}),
-		).toEqual({ mode: "enabled", budgetTokens: 8000 });
+		).toEqual({ mode: "enabled", budgetTokens: 8000, effort: "max" });
 	});
 
 	it("honors a budget set without a thinking mode", () => {
 		expect(
 			resolveThinking({ configBudgetTokens: 8000, model: "anthropic:claude-opus-4-7" }),
-		).toEqual({ mode: "enabled", budgetTokens: 8000 });
+		).toEqual({ mode: "enabled", budgetTokens: 8000, effort: DEFAULT_THINKING_EFFORT });
 	});
 
-	it("passes an operator budget through unclamped", () => {
-		// Clamping against the output ceiling now happens in the engine, which
-		// is the only layer that knows whether the provider meters tokens at all.
-		expect(
-			resolveThinking({ configMode: "enabled", configBudgetTokens: 50_000 }),
-		).toEqual({ mode: "enabled", budgetTokens: 50_000 });
+	it("passes an operator budget through verbatim", () => {
+		// The resolver states intent; the engine clamps it against the output
+		// ceiling, because only the engine knows whether the provider meters
+		// tokens at all. See the engine's clamp test for the enforcement.
+		expect(resolveThinking({ configMode: "enabled", configBudgetTokens: 50_000 })).toEqual({
+			mode: "enabled",
+			budgetTokens: 50_000,
+			effort: DEFAULT_THINKING_EFFORT,
+		});
 	});
 
 	it("zero / negative budget tokens are ignored (treated as unset)", () => {

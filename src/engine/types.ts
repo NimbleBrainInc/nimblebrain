@@ -264,9 +264,11 @@ export const DEFAULT_THINKING_EFFORT: ThinkingEffort = "medium";
  *   - `adaptive` — the model decides per call. No depth expressed.
  *   - `effort`   — reason at a named depth. The portable arm, and the one
  *                  the platform default path produces.
- *   - `enabled`  — reason within an explicit token budget. Only meaningful
- *                  on budget-shaped providers, and only when an operator
- *                  actually set the number.
+ *   - `enabled`  — reason within an explicit token budget. The budget is only
+ *                  meaningful on providers that meter thinking in tokens, so
+ *                  this arm carries `effort` too: it is what the effort-shaped
+ *                  providers use, and it keeps a chosen depth from being
+ *                  silently voided by setting a budget alongside it.
  *
  * Resolution priority is handled upstream (see resolveThinking in
  * src/runtime/resolve-thinking.ts); the engine receives an already-
@@ -276,7 +278,7 @@ export type ResolvedThinking =
   | { mode: "off" }
   | { mode: "adaptive" }
   | { mode: "effort"; effort: ThinkingEffort }
-  | { mode: "enabled"; budgetTokens: number };
+  | { mode: "enabled"; budgetTokens: number; effort: ThinkingEffort };
 
 /** Engine configuration per run. */
 export interface EngineConfig {

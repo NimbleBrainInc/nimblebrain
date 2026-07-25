@@ -93,6 +93,32 @@ function ModelSelect({
   );
 }
 
+/**
+ * The thinking half of a `set_model_config` patch.
+ *
+ * Every field is either set or explicitly cleared, never omitted, so a value
+ * the operator removed on this screen can't survive on disk from an earlier
+ * save. Depth and budget are independent: the budget only reaches providers
+ * that meter thinking in tokens, and sending one never voids the chosen depth.
+ */
+function thinkingPatchFor(
+  thinking: ThinkingMode | typeof THINKING_DEFAULT,
+  effort: ThinkingEffort | typeof EFFORT_DEFAULT,
+  budget: number | null,
+): Record<string, unknown> {
+  if (thinking === THINKING_DEFAULT) {
+    return { clearThinking: true, clearThinkingEffort: true, clearThinkingBudget: true };
+  }
+  if (thinking !== "enabled") {
+    return { thinking, clearThinkingEffort: true, clearThinkingBudget: true };
+  }
+  return {
+    thinking,
+    ...(effort === EFFORT_DEFAULT ? { clearThinkingEffort: true } : { thinkingEffort: effort }),
+    ...(budget == null ? { clearThinkingBudget: true } : { thinkingBudgetTokens: budget }),
+  };
+}
+
 export function ModelTab() {
   const [defaultModel, setDefaultModel] = useState("");
   const [fastModel, setFastModel] = useState("");
@@ -109,7 +135,9 @@ export function ModelTab() {
   const [thinkingEffort, setThinkingEffort] = useState<ThinkingEffort | typeof EFFORT_DEFAULT>(
     EFFORT_DEFAULT,
   );
-  const [thinkingBudgetTokens, setThinkingBudgetTokens] = useState(16000);
+  // null = the operator has not set a budget. Seeding a number here and then
+  // sending it on save persists a default nobody chose as a deliberate choice.
+  const [thinkingBudgetTokens, setThinkingBudgetTokens] = useState<number | null>(null);
   const [availableModels, setAvailableModels] = useState<Record<string, ModelEntry[]>>({});
   const [saving, setSaving] = useState(false);
   const [feedback, setFeedback] = useState<Feedback | null>(null);
@@ -145,23 +173,7 @@ export function ModelTab() {
     setSaving(true);
     setFeedback(null);
     try {
-      // clearThinking → revert to platform default policy (drops persisted override + budget)
-      // string mode → set explicit override
-      // budget only sent for "enabled"; "off"/"adaptive" don't need it
-      const thinkingPatch =
-        thinking === THINKING_DEFAULT
-          ? { clearThinking: true, clearThinkingEffort: true, clearThinkingBudget: true }
-          : thinking === "enabled"
-            ? {
-                thinking,
-                // Depth is the portable control; the token budget is opt-in and
-                // only reaches providers that meter thinking in tokens.
-                ...(thinkingEffort === EFFORT_DEFAULT
-                  ? { clearThinkingEffort: true }
-                  : { thinkingEffort }),
-                thinkingBudgetTokens,
-              }
-            : { thinking, clearThinkingEffort: true };
+      const thinkingPatch = thinkingPatchFor(thinking, thinkingEffort, thinkingBudgetTokens);
 
       await callTool("nb", "set_model_config", {
         models: {
@@ -325,12 +337,16 @@ export function ModelTab() {
                 id="thinkingBudgetTokens"
                 type="number"
                 min={1024}
-                value={thinkingBudgetTokens}
-                onChange={(e) => setThinkingBudgetTokens(Number(e.target.value))}
+                placeholder="Not set — Effort applies"
+                value={thinkingBudgetTokens ?? ""}
+                onChange={(e) =>
+                  setThinkingBudgetTokens(e.target.value === "" ? null : Number(e.target.value))
+                }
               />
               <p className="text-xs text-muted-foreground">
-                Min 1024. Counts toward Max Output Tokens. Only honored by providers that meter
-                thinking in tokens (Anthropic up to 4.6, Google); elsewhere Effort applies.
+                Optional. Min 1024, and capped to leave room for the answer. Only honored by
+                providers that meter thinking in tokens (Anthropic up to 4.6, Gemini 2.5); elsewhere
+                Effort applies.
               </p>
             </div>
           )}

@@ -35,7 +35,6 @@ import { toolSchemaForLlm } from "./tool-schema-for-llm.ts";
 import {
   CONNECTOR_SKILL_SYNTHETIC,
   type ConnectorSkillCandidate,
-  DEFAULT_THINKING_EFFORT,
   type EngineConfig,
   type EngineResult,
   type EventSink,
@@ -67,17 +66,29 @@ const EFFORT_BUDGET_SHARE: Record<ThinkingEffort, number> = {
 };
 
 /**
- * Size a token budget for providers that meter thinking in tokens
- * (Anthropic up to 4.6, Google) from the operator's chosen depth.
+ * Hold a thinking budget below the output ceiling, leaving
+ * `MIN_VISIBLE_OUTPUT_TOKENS` for the answer itself.
+ *
+ * Applies to operator-set budgets as much as derived ones. A budget at or above
+ * `max_tokens` is rejected outright by Anthropic, and one just under it leaves
+ * the model no room to answer — the Opus 4.7 production incident that put this
+ * floor here in the first place was an empty visible turn, not an API error.
+ */
+function clampThinkingBudget(budget: number, maxOutputTokens: number): number {
+  return Math.max(
+    MIN_THINKING_BUDGET_TOKENS,
+    Math.min(budget, maxOutputTokens - MIN_VISIBLE_OUTPUT_TOKENS),
+  );
+}
+
+/**
+ * Size a token budget from a chosen depth, for providers that meter thinking
+ * in tokens (Anthropic up to 4.6, Gemini 2.5).
  *
  * This direction is sound where the reverse was not: the operator named a
- * depth, and the model's own output ceiling is the natural scale to express
- * it against. Deriving a *depth* from a ceiling nobody set was the defect —
- * there was no intent in that number to recover.
- *
- * Always leaves `MIN_VISIBLE_OUTPUT_TOKENS` for the answer itself, because
- * a model that spends its whole budget reasoning emits an empty turn (seen
- * in production on Opus 4.7 with a tight `max_tokens`).
+ * depth, and the model's own output ceiling is the natural scale to express it
+ * against. Deriving a *depth* from a ceiling nobody set was the defect — there
+ * was no intent in that number to recover.
  */
 function effortToBudget(effort: ThinkingEffort, maxOutputTokens: number): number {
   const available = maxOutputTokens - MIN_VISIBLE_OUTPUT_TOKENS;
@@ -85,21 +96,36 @@ function effortToBudget(effort: ThinkingEffort, maxOutputTokens: number): number
 }
 
 /**
- * Clamp the platform ladder onto OpenAI's, which tops out at `xhigh`.
- * Nebius-hosted open-weight models (DeepSeek, Kimi, …) route through the
- * OpenAI-compatible adapter and take the same option.
+ * Clamp the platform ladder onto OpenAI's usable range.
+ *
+ * The adapter accepts `xhigh`, but its own documentation restricts that value
+ * to GPT-5.1-Codex-Max and says an unsupported model errors — and the adapter
+ * does no per-model gating, it just forwards the string. `high` is accepted by
+ * every OpenAI reasoning model, so both top tiers land there rather than
+ * turning a depth preference into a failed request.
  */
-function toOpenAIEffort(effort: ThinkingEffort): "low" | "medium" | "high" | "xhigh" {
-  return effort === "max" ? "xhigh" : effort;
+function toOpenAIEffort(effort: ThinkingEffort): "low" | "medium" | "high" {
+  return effort === "xhigh" || effort === "max" ? "high" : effort;
+}
+
+/** Gemini 3 and later take a named thinking level; 2.5 and earlier take a token budget. */
+function googleTakesThinkingLevel(modelId: string): boolean {
+  const major = /^gemini-(\d+)/.exec(modelId);
+  return major ? Number(major[1]) >= 3 : false;
+}
+
+/** Map the platform ladder onto Gemini 3's level enum, which tops out at `high`. */
+function toGoogleThinkingLevel(effort: ThinkingEffort): "low" | "medium" | "high" {
+  return effort === "xhigh" || effort === "max" ? "high" : effort;
 }
 
 /**
  * Build Anthropic's thinking options.
  *
- * Anthropic speaks two dialects and the split is per-model: 4.7, 4.8, and
- * the 5-series reject `thinking.type=enabled` and take
- * `thinking.type=adaptive` plus `output_config.effort`; everything earlier
- * takes `thinking.type=enabled` with a token budget.
+ * Anthropic speaks two dialects and the split is per-model: 4.7, 4.8, and the
+ * 5-series reject `thinking.type=enabled` and take `thinking.type=adaptive`
+ * plus `output_config.effort`; everything earlier takes `thinking.type=enabled`
+ * with a token budget.
  */
 function buildAnthropicThinkingOptions(
   model: string,
@@ -112,8 +138,8 @@ function buildAnthropicThinkingOptions(
     case "off":
       // Effort-shaped models have no "do not reason" state, and the SDK
       // validates `type: "disabled"` then never serializes it — so this is
-      // accepted and silently ignored, and the model reasons anyway. Sent
-      // regardless because it is honored on the budget-shaped models.
+      // accepted and silently ignored there, and the model reasons anyway.
+      // Sent regardless because the budget-shaped models do honor it.
       return { anthropic: { thinking: { type: "disabled" } } };
     case "adaptive":
       return { anthropic: { thinking: { type: "adaptive" } } };
@@ -129,54 +155,77 @@ function buildAnthropicThinkingOptions(
             },
           };
     case "enabled":
-      // An explicit token budget can't be metered on an effort-shaped model.
-      // Fall back to the default tier rather than quantizing the number into
-      // one — a budget carries no depth to recover.
+      // The budget can't be metered on an effort-shaped model, but the depth
+      // the operator chose alongside it can.
       return effortShaped
-        ? {
-            anthropic: {
-              thinking: { type: "adaptive" },
-              effort: DEFAULT_THINKING_EFFORT,
-            },
-          }
+        ? { anthropic: { thinking: { type: "adaptive" }, effort: thinking.effort } }
         : {
             anthropic: {
-              thinking: { type: "enabled", budgetTokens: thinking.budgetTokens },
+              thinking: {
+                type: "enabled",
+                budgetTokens: clampThinkingBudget(thinking.budgetTokens, maxOutputTokens),
+              },
             },
           };
   }
 }
 
-/** Build OpenAI-family options (`openai`, and `nebius` via the compatible adapter). */
-function buildOpenAIThinkingOptions(
-  providerKey: string,
-  thinking: ResolvedThinking,
-): SharedV3ProviderOptions {
+/**
+ * Build OpenAI-family options. Nebius-hosted open-weight models (DeepSeek,
+ * Kimi, …) run through the same adapter and read the same key: the adapter
+ * parses provider options under the literal name `"openai"` regardless of the
+ * `name` the provider instance was created with, so a `nebius` key would be
+ * silently dropped.
+ */
+function buildOpenAIThinkingOptions(thinking: ResolvedThinking): SharedV3ProviderOptions {
   switch (thinking.mode) {
     case "off":
-      return { [providerKey]: { reasoningEffort: "none" } };
+      // `reasoningEffort: "none"` exists but the adapter documents it as
+      // GPT-5.1-only and an error elsewhere. Omitting the option leaves the
+      // model at its own default, which is the closest honest thing — on
+      // o-series models reasoning cannot be turned off at all.
+      return {};
     case "adaptive":
-      // No adaptive equivalent — omitting the option is the closest thing:
-      // the model applies its own per-call default.
+      // No adaptive equivalent; the model applies its own per-call default.
       return {};
     case "effort":
-      return { [providerKey]: { reasoningEffort: toOpenAIEffort(thinking.effort) } };
     case "enabled":
-      // Token budgets aren't expressible here; use the default depth.
-      return { [providerKey]: { reasoningEffort: toOpenAIEffort(DEFAULT_THINKING_EFFORT) } };
+      return { openai: { reasoningEffort: toOpenAIEffort(thinking.effort) } };
   }
 }
 
-/** Build Google Gemini options. Gemini meters thinking in tokens, like Anthropic's older dialect. */
+/**
+ * Build Google Gemini options.
+ *
+ * Gemini 3 introduced `thinkingLevel` and is the line the catalog is now mostly
+ * made of; 2.5 meters thinking in tokens like Anthropic's older dialect. Sending
+ * a budget to a level-taking model is the same class of mistake as sending
+ * `thinking.type=enabled` to an adaptive-only Anthropic model.
+ */
 function buildGoogleThinkingOptions(
+  model: string,
   thinking: ResolvedThinking,
   maxOutputTokens: number,
 ): SharedV3ProviderOptions {
+  const modelId = model.slice(model.indexOf(":") + 1);
+  if (googleTakesThinkingLevel(modelId)) {
+    switch (thinking.mode) {
+      case "off":
+        return { google: { thinkingConfig: { thinkingLevel: "minimal" } } };
+      case "adaptive":
+        return {};
+      case "effort":
+      case "enabled":
+        return {
+          google: { thinkingConfig: { thinkingLevel: toGoogleThinkingLevel(thinking.effort) } },
+        };
+    }
+  }
   switch (thinking.mode) {
     case "off":
       return { google: { thinkingConfig: { thinkingBudget: 0 } } };
     case "adaptive":
-      // Gemini's own "decide per call" signal.
+      // Gemini 2.5's "decide per call" sentinel.
       return { google: { thinkingConfig: { thinkingBudget: -1 } } };
     case "effort":
       return {
@@ -185,7 +234,13 @@ function buildGoogleThinkingOptions(
         },
       };
     case "enabled":
-      return { google: { thinkingConfig: { thinkingBudget: thinking.budgetTokens } } };
+      return {
+        google: {
+          thinkingConfig: {
+            thinkingBudget: clampThinkingBudget(thinking.budgetTokens, maxOutputTokens),
+          },
+        },
+      };
   }
 }
 
@@ -207,11 +262,10 @@ function buildThinkingProviderOptions(
     case "anthropic":
       return buildAnthropicThinkingOptions(model, thinking, maxOutputTokens);
     case "openai":
-      return buildOpenAIThinkingOptions("openai", thinking);
     case "nebius":
-      return buildOpenAIThinkingOptions("nebius", thinking);
+      return buildOpenAIThinkingOptions(thinking);
     case "google":
-      return buildGoogleThinkingOptions(thinking, maxOutputTokens);
+      return buildGoogleThinkingOptions(model, thinking, maxOutputTokens);
     default:
       // Unknown provider: say nothing and let it apply its own default.
       return {};

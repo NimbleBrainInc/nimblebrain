@@ -1759,24 +1759,30 @@ describe("AgentEngine", () => {
         expect(po.openai?.reasoningEffort).toBe("high");
       });
 
-      it("clamps max to xhigh for OpenAI, whose ladder stops there", async () => {
-        const po = await providerOptionsFor("openai:gpt-5.1", { mode: "effort", effort: "max" });
-        expect(po.openai?.reasoningEffort).toBe("xhigh");
+      it("clamps the top two tiers to high for OpenAI", async () => {
+        // The adapter accepts `xhigh` but documents it as GPT-5.1-Codex-Max
+        // only, erroring elsewhere, and does no per-model gating. `high` is
+        // accepted by every OpenAI reasoning model.
+        for (const effort of ["xhigh", "max"] as const) {
+          const po = await providerOptionsFor("openai:gpt-5.1", { mode: "effort", effort });
+          expect(po.openai?.reasoningEffort).toBe("high");
+        }
       });
 
-      it("maps effort onto the nebius key for open-weight models", async () => {
-        // DeepSeek/Kimi et al. route through the OpenAI-compatible adapter,
-        // but the options key is the provider id, not "openai".
+      it("routes Nebius-hosted models through the openai options key", async () => {
+        // The OpenAI adapter parses provider options under the literal name
+        // "openai" no matter what `name` the instance was created with, so a
+        // `nebius` key reaches the wire as nothing at all.
         const po = await providerOptionsFor("nebius:deepseek-ai/DeepSeek-R1", {
           mode: "effort",
           effort: "low",
         });
-        expect(po.nebius?.reasoningEffort).toBe("low");
-        expect(po.openai).toBeUndefined();
+        expect(po.openai?.reasoningEffort).toBe("low");
+        expect(po.nebius).toBeUndefined();
       });
 
-      it("sizes a thinkingBudget from the tier for Google", async () => {
-        const po = await providerOptionsFor("google:gemini-3.6-flash", {
+      it("sizes a thinkingBudget from the tier for Gemini 2.5", async () => {
+        const po = await providerOptionsFor("google:gemini-2.5-pro", {
           mode: "effort",
           effort: "low",
         });
@@ -1785,31 +1791,70 @@ describe("AgentEngine", () => {
         });
       });
 
+      it("sends a thinkingLevel to Gemini 3+, which does not take a budget", async () => {
+        const po = await providerOptionsFor("google:gemini-3.6-flash", {
+          mode: "effort",
+          effort: "high",
+        });
+        expect(po.google?.thinkingConfig).toEqual({ thinkingLevel: "high" });
+      });
+
+      it("clamps Gemini 3's level to high, its ladder's top", async () => {
+        const po = await providerOptionsFor("google:gemini-3-pro-preview", {
+          mode: "effort",
+          effort: "max",
+        });
+        expect(po.google?.thinkingConfig).toEqual({ thinkingLevel: "high" });
+      });
+
       it("expresses off in each provider's own vocabulary", async () => {
+        // OpenAI omits rather than sending reasoningEffort:"none", which the
+        // adapter documents as GPT-5.1-only and an error on anything else.
+        expect(await providerOptionsFor("openai:gpt-5.1", { mode: "off" })).toEqual({});
         expect(
-          (await providerOptionsFor("openai:gpt-5.1", { mode: "off" })).openai?.reasoningEffort,
-        ).toBe("none");
+          (await providerOptionsFor("google:gemini-2.5-pro", { mode: "off" })).google
+            ?.thinkingConfig,
+        ).toEqual({ thinkingBudget: 0 });
         expect(
           (await providerOptionsFor("google:gemini-3.6-flash", { mode: "off" })).google
             ?.thinkingConfig,
-        ).toEqual({ thinkingBudget: 0 });
+        ).toEqual({ thinkingLevel: "minimal" });
       });
 
-      it("uses Google's -1 sentinel for adaptive", async () => {
-        const po = await providerOptionsFor("google:gemini-3.6-flash", { mode: "adaptive" });
+      it("uses Gemini 2.5's -1 sentinel for adaptive", async () => {
+        const po = await providerOptionsFor("google:gemini-2.5-pro", { mode: "adaptive" });
         expect(po.google?.thinkingConfig).toEqual({ thinkingBudget: -1 });
       });
 
-      it("falls back to the default tier when a budget can't be metered", async () => {
-        // An explicit token budget is meaningless on an effort-shaped model.
-        // It resolves to the default tier rather than being quantized into
-        // one — a budget carries no depth to recover.
+      it("keeps the operator's tier when a budget rides along", async () => {
+        // A budget can't be metered on an effort-shaped model, but the depth
+        // chosen alongside it can. Substituting the platform default here made
+        // the effort control inert for anyone who also had a budget set —
+        // which the settings UI sends on every save.
         const po = await providerOptionsFor("anthropic:claude-opus-5", {
           mode: "enabled",
           budgetTokens: 8000,
+          effort: "max",
         });
         expect(po.anthropic?.thinking).toEqual({ type: "adaptive" });
-        expect(po.anthropic?.effort).toBe(DEFAULT_THINKING_EFFORT);
+        expect(po.anthropic?.effort).toBe("max");
+      });
+
+      it("clamps an operator budget below the output ceiling", async () => {
+        // 50000 against a 16384 ceiling is rejected outright by Anthropic, and
+        // a budget just under the ceiling starves the visible answer — the
+        // empty-turn incident MIN_VISIBLE_OUTPUT_TOKENS exists to prevent.
+        for (const model of ["anthropic:claude-sonnet-4-6", "google:gemini-2.5-pro"]) {
+          const po = await providerOptionsFor(model, {
+            mode: "enabled",
+            budgetTokens: 50_000,
+            effort: "medium",
+          });
+          const budget =
+            (po.anthropic?.thinking as { budgetTokens?: number } | undefined)?.budgetTokens ??
+            (po.google?.thinkingConfig as { thinkingBudget?: number } | undefined)?.thinkingBudget;
+          expect(budget).toBe(16384 - 4096);
+        }
       });
 
       it("says nothing to a provider it doesn't know", async () => {

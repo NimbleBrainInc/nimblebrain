@@ -129,10 +129,11 @@ and the runtime translates.
 
 | Provider | What it receives |
 |---|---|
-| Anthropic — Opus 4.7/4.8, Sonnet 5, Opus 5 | `thinking: {type: "adaptive"}` + `output_config.effort` |
+| Anthropic — Opus 4.7/4.8, Sonnet 5, Opus 5 | `thinking: {type: "adaptive"}` + `output_config.effort`, the tier verbatim |
 | Anthropic — up to Sonnet 4.6 | `thinking: {type: "enabled"}` + a `budgetTokens` sized from the tier |
-| OpenAI, and Nebius-hosted open-weight models (DeepSeek, Kimi, …) | `reasoningEffort`. Its ladder stops at `xhigh`, so `max` clamps to it |
-| Google Gemini | `thinkingConfig.thinkingBudget`, sized from the tier |
+| OpenAI, and Nebius-hosted open-weight models (DeepSeek, Kimi, …) | `reasoningEffort`. Its usable range stops at `high`, so `xhigh` and `max` both land there |
+| Google Gemini 3 and later | `thinkingConfig.thinkingLevel`. Also tops out at `high` |
+| Google Gemini 2.5 | `thinkingConfig.thinkingBudget`, sized from the tier |
 
 The translation only runs one way. A depth is converted into a token budget
 where a provider needs one, because the model's output ceiling is a reasonable
@@ -141,10 +142,16 @@ budget carries no depth to recover, and deriving one from a ceiling the
 operator never set would turn a number nobody chose into an instruction to
 reason as hard as possible on every call.
 
-Set a budget with `thinkingBudgetTokens` only when you want a hard token cap on
-a provider that meters tokens. It takes precedence over `thinkingEffort` there;
-on the effort-shaped providers it cannot be expressed and the default tier
-applies.
+`thinkingBudgetTokens` is optional and independent — it does not replace the
+depth. Where a provider meters thinking in tokens, the budget is used and is
+capped to leave room for the answer; everywhere else the depth applies as
+usual. Setting one never voids the other.
+
+`off` is not universally enforceable. Anthropic's adaptive-only models have no
+"do not reason" state; on OpenAI the option is omitted rather than sending
+`reasoningEffort: "none"`, which is documented as GPT-5.1-only and an error
+elsewhere, so those models fall back to their own default. Gemini 2.5 takes a
+zero budget and Gemini 3 takes `minimal`.
 
 ## models
 

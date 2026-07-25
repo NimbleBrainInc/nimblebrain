@@ -54,12 +54,14 @@ export function resolveThinking(input: ResolveThinkingInput): ResolvedThinking |
     if (!supportsReasoning) return undefined;
   }
 
-  // An explicit budget outranks a tier: it is the more specific instruction,
-  // and an operator who set one wants that number metered. Providers that
-  // cannot meter tokens fall back to the tier — see the engine.
+  // Depth is always resolved, even when a budget is set. The two are not
+  // alternatives: a budget meters thinking on the providers that count tokens,
+  // and the tier is what every other provider uses. Dropping the tier here
+  // because a budget exists would make the depth control inert on exactly the
+  // effort-shaped models it was added for.
+  const effort = input.configEffort ?? DEFAULT_THINKING_EFFORT;
   if (input.configBudgetTokens != null && input.configBudgetTokens > 0) {
-    return { mode: "enabled", budgetTokens: input.configBudgetTokens };
+    return { mode: "enabled", budgetTokens: input.configBudgetTokens, effort };
   }
-
-  return { mode: "effort", effort: input.configEffort ?? DEFAULT_THINKING_EFFORT };
+  return { mode: "effort", effort };
 }
