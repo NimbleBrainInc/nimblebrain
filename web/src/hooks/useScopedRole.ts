@@ -21,8 +21,9 @@ import { useWorkspaceContext, type WorkspaceInfo } from "../context/WorkspaceCon
  * admin legitimately reaches every workspace. It does NOT answer "may this user
  * write this workspace": the server's `canWriteWorkspaceScoped`
  * (`src/workspace/authz.ts`) requires membership with `role === "admin"` and
- * never consults `orgRole`. Gate writes with `useCanWriteActiveWorkspace`
- * below; `roleAtLeast(role, "ws_admin")` would offer controls the server
+ * never consults `orgRole`. Gate writes with `canWriteWorkspace` below — read
+ * its doc before picking a form, because which workspace you are asking about
+ * matters; `roleAtLeast(role, "ws_admin")` would offer controls the server
  * refuses.
  */
 export type ScopedRole = "none" | "ws_member" | "ws_admin" | "org_admin" | "org_owner";
@@ -84,8 +85,8 @@ export function useScopedRole(): ScopedRole {
  * Routing it through the role ordering is what lets an org admin past a gate
  * the server refuses (see the `ScopedRole` doc above); taking a role rather
  * than the *active* workspace is what lets a surface addressing a workspace by
- * id — `/org/workspaces/:slug`, where there is no active workspace to speak of
- * — use the same rule instead of writing its own.
+ * id use the same rule instead of writing its own. See
+ * `useCanWriteActiveWorkspace` for when each form applies.
  */
 export function canWriteWorkspace(membershipRole: WorkspaceInfo["userRole"]): boolean {
   return membershipRole === "admin";

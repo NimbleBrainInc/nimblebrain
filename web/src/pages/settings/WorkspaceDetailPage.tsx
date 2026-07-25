@@ -40,6 +40,22 @@ interface Member {
   role: "admin" | "member";
 }
 
+/**
+ * The signed-in user's membership role in the workspace this page is showing,
+ * or `undefined` when they aren't a member of it.
+ *
+ * Exported so the gate's *argument* is testable, not just the rule it feeds.
+ * The rule (`canWriteWorkspace`) is pinned in `useScopedRole.test.ts`; pinning
+ * it doesn't pin this lookup, which is where this page could go wrong.
+ *
+ * The `userId` guard is load-bearing: `currentUserId` is `session?.user?.id`
+ * and can be undefined while the session loads. Without it, `find` would match
+ * any member record whose `userId` were also undefined.
+ */
+export function memberRoleFor(members: Member[], userId: string | undefined) {
+  return userId ? members.find((m) => m.userId === userId)?.role : undefined;
+}
+
 interface UserInfo {
   id: string;
   email: string;
@@ -196,7 +212,7 @@ export function WorkspaceDetailPage() {
   // rather than using the active-workspace hook (which would answer for the
   // viewer's focused workspace — usually their personal one, where they are
   // always admin).
-  const canManageMembers = canWriteWorkspace(members.find((m) => m.userId === currentUserId)?.role);
+  const canManageMembers = canWriteWorkspace(memberRoleFor(members, currentUserId));
 
   // The org-scoped Workspaces list lives at /org/workspaces.
   const backTo = "/org/workspaces";

@@ -49,7 +49,7 @@ This section reflects the workspace you're currently focused on. Switch workspac
 
 ### Members (`/w/<id>/settings/members`)
 
-The list of who belongs to this workspace and their role. Membership for any workspace can also be managed by organization admins from **Organization → Workspaces**.
+The list of who belongs to this workspace and their role. Managing membership requires being an **admin member of that workspace** — an organization admin who is not a member of it cannot add or remove people there, or view its roster.
 
 ### Apps (`/w/<id>/settings/apps`)
 
@@ -101,7 +101,7 @@ Reasoning is billed as output tokens, and the agent's reasoning shows up in chat
 
 ### Workspaces (`/org/workspaces`)
 
-The org-wide workspace roster. Click into any workspace to manage its members, view its bundles, and see its metadata. Workspace creation, deletion, and cross-workspace member management live here.
+The org-wide workspace roster: create and delete workspaces, and see each one's bundles and metadata. Managing a workspace's **members** is not an org-admin power — it requires admin membership of that specific workspace, so the member list here is only available for workspaces you belong to as an admin.
 
 To edit a specific workspace's name or instructions, switch into it via the navigator and use **This Workspace → General**.
 
