@@ -60,7 +60,7 @@ function seedConfigIfMissing(): void {
     // dev:worktree starts in the same shape the rest of the platform's dev
     // environments use.
     models: {
-      default: "anthropic:claude-opus-5",
+      default: "anthropic:claude-sonnet-5",
       fast: "anthropic:claude-haiku-4-5-20251001",
       reasoning: "anthropic:claude-opus-5",
     },

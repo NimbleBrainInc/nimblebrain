@@ -119,9 +119,10 @@ describe("model qualification at runtime boundary", () => {
     }
   });
 
-  it("keeps the fast slot off the default model when nothing is configured", async () => {
-    // `fast` backs short auxiliary calls on small budgets, so it does NOT
-    // inherit DEFAULT_MODEL the way the other slots do.
+  it("gives each slot its own default when nothing is configured", async () => {
+    // `fast` and `reasoning` do NOT inherit DEFAULT_MODEL: one backs short
+    // auxiliary calls on small budgets, the other the work that justifies a
+    // frontier model.
     const workDir = join(testDir, "unconfigured-slots");
     mkdirSync(workDir, { recursive: true });
 
@@ -133,7 +134,7 @@ describe("model qualification at runtime boundary", () => {
     });
     try {
       const slots = runtime.getModelSlots();
-      expect(slots.default).toBe("anthropic:claude-opus-5");
+      expect(slots.default).toBe("anthropic:claude-sonnet-5");
       expect(slots.reasoning).toBe("anthropic:claude-opus-5");
       expect(slots.fast).toBe("anthropic:claude-haiku-4-5-20251001");
     } finally {

@@ -163,7 +163,7 @@ import {
 } from "./workspace-runtime.ts";
 
 const DEFAULT_WORK_DIR = join(homedir(), ".nimblebrain");
-const DEFAULT_MODEL = "claude-opus-5";
+const DEFAULT_MODEL = "claude-sonnet-5";
 /**
  * Fallback for the `fast` slot when nothing configures it. Deliberately NOT
  * `DEFAULT_MODEL`: the slot backs short auxiliary calls (conversation titling,
@@ -178,6 +178,16 @@ const DEFAULT_MODEL = "claude-opus-5";
  * governs every unset slot, so operators who set one see no change.
  */
 const DEFAULT_FAST_MODEL = "claude-haiku-4-5-20251001";
+
+/**
+ * Fallback for the `reasoning` slot. The slot exists for the work that
+ * justifies a frontier model — deep analysis, planning, long-horizon tasks —
+ * so it points one tier above `DEFAULT_MODEL` rather than inheriting it.
+ * Same scoping as `DEFAULT_FAST_MODEL`: an explicit `defaultModel` still
+ * governs, which keeps a single-provider install from resolving the slot to a
+ * model it has no credentials for.
+ */
+const DEFAULT_REASONING_MODEL = "claude-opus-5";
 
 import { DEFAULT_MAX_INPUT_TOKENS, DEFAULT_MAX_ITERATIONS } from "../limits.ts";
 import { resolveMaxOutputTokens } from "./resolve-max-output-tokens.ts";
@@ -195,8 +205,9 @@ type ModelSlot = (typeof MODEL_SLOTS)[number];
  * both route through it, so a delegate call can never resolve a slot to a
  * different model than the settings UI reports.
  *
- * `fast` is deliberately asymmetric: it skips DEFAULT_MODEL. See
- * `DEFAULT_FAST_MODEL`.
+ * `fast` and `reasoning` are deliberately asymmetric — each skips
+ * DEFAULT_MODEL for a model suited to its own workload. See
+ * `DEFAULT_FAST_MODEL` and `DEFAULT_REASONING_MODEL`.
  */
 function baseModelSlots(
   models: ModelSlots | undefined,
@@ -206,7 +217,7 @@ function baseModelSlots(
   return {
     default: models?.default ?? fallback,
     fast: models?.fast ?? defaultModel ?? DEFAULT_FAST_MODEL,
-    reasoning: models?.reasoning ?? fallback,
+    reasoning: models?.reasoning ?? defaultModel ?? DEFAULT_REASONING_MODEL,
   };
 }
 

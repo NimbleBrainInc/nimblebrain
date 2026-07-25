@@ -122,7 +122,7 @@ web/               Vite + React + TypeScript SPA (separate package.json)
 
 | Setting | Value |
 |---------|-------|
-| `models.default` | `anthropic:claude-opus-5` |
+| `models.default` | `anthropic:claude-sonnet-5` |
 | `models.fast` | `anthropic:claude-haiku-4-5-20251001` |
 | `models.reasoning` | `anthropic:claude-opus-5` |
 | Max iterations | 25 (hard cap: 50) |

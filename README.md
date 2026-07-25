@@ -205,7 +205,7 @@ A fully specified example:
   "$schema": "https://schemas.nimblebrain.ai/v1/nimblebrain-config.schema.json",
   "version": "1",
   "models": {
-    "default":   "anthropic:claude-opus-5",
+    "default":   "anthropic:claude-sonnet-5",
     "fast":      "anthropic:claude-haiku-4-5-20251001",
     "reasoning": "anthropic:claude-opus-5"
   },
@@ -699,7 +699,7 @@ These are non-negotiable patterns. Violating them causes production bugs:
 
 | Setting | Value |
 |---------|-------|
-| `models.default` | `anthropic:claude-opus-5` |
+| `models.default` | `anthropic:claude-sonnet-5` |
 | `models.fast` | `anthropic:claude-haiku-4-5-20251001` |
 | `models.reasoning` | `anthropic:claude-opus-5` |
 | Max iterations | 25 (hard cap: 50) |
