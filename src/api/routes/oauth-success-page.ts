@@ -49,23 +49,34 @@ const SUCCESS_PAGE_STYLE_SHA256 = createHash("sha256").update(SUCCESS_PAGE_STYLE
  */
 export const SUCCESS_PAGE_CSP = `default-src 'none'; style-src 'sha256-${SUCCESS_PAGE_STYLE_SHA256}'; frame-ancestors 'none'; base-uri 'none'`;
 
+const escapeHtml = (s: string): string =>
+  s.replace(
+    /[&<>"']/g,
+    (ch) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[ch] ?? ch,
+  );
+
 /**
- * Render the page as a string. Both callers serve the identical document apart from the
- * `<title>`, so the markup lives here with the style it depends on — including
- * the one brand value in it, the wordmark's `fill`.
+ * Render the page as a string. Both callers serve the identical document apart
+ * from the `<title>`, so the markup lives here with the style it depends on —
+ * including the one brand value in it, the wordmark's `fill`.
  *
- * `returnUrl` must already be HTML-escaped: it is interpolated into both an
- * `http-equiv="refresh"` content attribute and an `href`, and the callers hold
- * the escaping helper.
+ * Both interpolations are escaped here rather than by the caller. `returnUrl`
+ * lands in an `http-equiv="refresh"` content attribute and an `href`, and
+ * `title` in an element body; neither is attacker-controlled today (the titles
+ * are literals and the URL is built from an internal route helper), but a
+ * function that renders HTML from its arguments should not depend on remembering
+ * which of them arrive pre-escaped.
  */
-export function successPageHtml(title: string, escapedReturnUrl: string): string {
-  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>${title}</title>
+export function successPageHtml(title: string, returnUrl: string): string {
+  const safeTitle = escapeHtml(title);
+  const safeUrl = escapeHtml(returnUrl);
+  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>${safeTitle}</title>
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<meta http-equiv="refresh" content="1;url=${escapedReturnUrl}">
+<meta http-equiv="refresh" content="1;url=${safeUrl}">
 <style>${SUCCESS_PAGE_STYLE}</style></head>
 <body>
 <h1 class="h">You're in.</h1>
 <div class="wm"><svg viewBox="0 0 12 12" aria-hidden="true"><path d="M6 0L12 6L6 12L0 6Z" fill="#0055FF"/></svg>NimbleBrain</div>
-<p class="fb">not redirecting? <a href="${escapedReturnUrl}">go back &rarr;</a></p>
+<p class="fb">not redirecting? <a href="${safeUrl}">go back &rarr;</a></p>
 </body></html>`;
 }

@@ -210,9 +210,8 @@ export function composioAuthRoutes(ctx: AppContext) {
     c.header("Set-Cookie", buildComposioStateCookie("", 0, ctx.secureCookies));
 
     const returnUrl = connectorsReturnUrl(owner);
-    const safeReturnUrl = escapeHtml(returnUrl);
     c.header("Content-Security-Policy", SUCCESS_PAGE_CSP);
-    return c.html(successPageHtml("Connection complete", safeReturnUrl));
+    return c.html(successPageHtml("Connection complete", returnUrl));
   });
 
   // ── GET /v1/composio-auth/proxy ───────────────────────────────────

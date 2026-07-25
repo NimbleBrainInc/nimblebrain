@@ -78,7 +78,12 @@ function malformedRows(path: string, source: string): BadRow[] {
     }
     if (fenced) continue;
 
-    const isRow = line.trim().startsWith("|");
+    // A row is any non-blank line containing an unescaped pipe. Requiring a
+    // leading `|` would agree with how these docs happen to be written and
+    // disagree with GFM — and with `splitCells` below, which strips the outer
+    // pipes precisely because they are optional. A table written without them
+    // would then be invisible to this guard rather than checked by it.
+    const isRow = /(^|[^\\])\|/.test(line) && line.trim() !== "";
     if (!isRow) {
       want = 0;
       continue;
@@ -104,6 +109,16 @@ describe("docs markdown tables", () => {
 
   test("the docs tree is actually being scanned", () => {
     expect(files.length).toBeGreaterThan(20);
+  });
+
+  test("a table written without outer pipes is checked, not skipped", () => {
+    const source = ["a | b", "--|--", "c | d", "e | f | g", ""].join("\n");
+    expect(malformedRows(join(DOCS, "x.md"), source).map((b) => [b.want, b.got])).toEqual([[2, 3]]);
+  });
+
+  test("a fenced code block containing pipes is ignored", () => {
+    const source = ["```", "| a | b |", "|---|---|", "| c |", "```", ""].join("\n");
+    expect(malformedRows(join(DOCS, "x.md"), source)).toEqual([]);
   });
 
   test("every table row has as many cells as its header", () => {

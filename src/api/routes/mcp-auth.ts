@@ -475,14 +475,13 @@ function renderSuccessPage(
     flowOwner?.kind === "user"
       ? profileConnectorsUrl()
       : workspaceConnectorsUrl(flowOwner?.wsId ?? "");
-  const safeReturnUrl = escapeHtml(returnUrl);
   // Override the platform-default CSP (`default-src 'none'`) for this
   // response only. Without this the page's inline <style> is blocked and
   // it renders unstyled in any deployment that doesn't override
   // NB_CSP — i.e. all of them. The hash pins us to exactly the bytes
   // we serve.
   c.header("Content-Security-Policy", SUCCESS_PAGE_CSP);
-  return c.html(successPageHtml("Authorization complete", safeReturnUrl));
+  return c.html(successPageHtml("Authorization complete", returnUrl));
 }
 
 function sha256Hex(input: string): string {
