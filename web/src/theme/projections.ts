@@ -1,10 +1,13 @@
 /**
- * Build the ext-apps token map for a mode.
+ * Pure projections of the canonical {@link palette} into the two
+ * representations the host needs:
  *
- * Spec keys follow the MCP ext-apps contract. Brand-semantic values with no
- * spec equivalent ride as `--nb-*` extensions: they are injected into the
- * iframe's style block but filtered off the protocol boundary by
- * `getSpecThemeTokens`.
+ *  - {@link paletteToExtAppsTokens} → the MCP ext-apps token map injected into
+ *    embedded-app iframes (consumed by `bridge/theme.ts`).
+ *  - {@link paletteToRootCss} → the `:root`/`.dark` CSS blocks the shell renders
+ *    from (generated into `tokens.generated.css`, imported by `index.css`).
+ *
+ * No DOM, no side effects. Given the palette, return data.
  */
 
 import {
@@ -20,14 +23,13 @@ import {
 } from "./palette.ts";
 
 /**
- * Build the ext-apps token map for a mode. Mirrors the historical
- * `LIGHT_TOKENS`/`DARK_TOKENS` exactly, with two intentional deltas vs. the
- * pre-dedup `theme.ts`:
- *   1. `--font-sans` is Satoshi (was the stale `Inter`).
- *   2. brand-semantic `--nb-color-primary-light` / `--nb-color-processing{,-light}`
- *      / `--nb-color-info-light` are added (no ext-apps spec key exists, so they
- *      ride as `--nb-*` extensions — injected into the iframe, filtered from the
- *      protocol boundary by `getSpecThemeTokens`).
+ * Build the ext-apps token map for a mode.
+ *
+ * Spec keys follow the MCP ext-apps contract. Brand-semantic values with no
+ * spec equivalent (`--nb-color-primary-light`, `--nb-color-processing{,-light}`,
+ * `--nb-color-info-light`, `--nb-font-heading`) ride as `--nb-*` extensions:
+ * injected into the iframe's style block, filtered off the protocol boundary by
+ * `getSpecThemeTokens`.
  */
 export function paletteToExtAppsTokens(mode: Mode): Record<string, string> {
   const c = (name: keyof typeof colors) => pick(colors[name], mode);
