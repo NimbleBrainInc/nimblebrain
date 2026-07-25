@@ -54,14 +54,6 @@ builds any bundle UI missing its `dist/index.html` before starting. It only does
 absent — after *editing* bundle source you still run `bun run build:bundles` yourself,
 because `dev` deliberately does not rebuild bundles on every start.
 
-**`bun run seed:dev`** fills the worktree workdir with conversations and skills across all
-three scope tiers, so the shell renders with content instead of empty states. Everything it
-writes is namespaced (`conv_seed_*`, `seed-*`) and it writes only when the target is absent
-or already identical, so a re-run never replaces a real skill or a thread you have chatted
-in. It targets the worktree workdir; `--force` is required for anything else, and it needs a
-workspace the app has already provisioned. Two seeded skills are `loading-strategy: always`,
-so they enter the always-on context channel on every turn — that is deliberate (it exercises
-the channel), but it is why an unfamiliar instruction may appear in a seeded workdir's prompt.
 
 Each worktree gets its own isolated state, so two worktrees can run side-by-side without colliding. Reset with `rm -rf .nimblebrain-worktree && bun run dev:worktree`. Share state across worktrees with `NB_WORK_DIR=/abs/path bun run dev:worktree`. Suitable for Chrome DevTools-driven E2E tests against `/v1/*` (no login dance).
 
