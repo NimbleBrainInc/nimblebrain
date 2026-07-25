@@ -13,7 +13,7 @@ import { ComposioApiKeyModal } from "../../components/connectors/ComposioApiKeyM
 import { ConnectorIcon } from "../../components/connectors/ConnectorIcon";
 import { OperatorSetupModal } from "../../components/connectors/OperatorSetupModal";
 import { Button } from "../../components/ui/button";
-import { roleAtLeast, useScopedRole } from "../../hooks/useScopedRole";
+import { useCanWriteActiveWorkspace } from "../../hooks/useScopedRole";
 
 /** The remote-OAuth variant of a directory entry's install descriptor. */
 type RemoteOAuthInstall = Extract<DirectoryEntry["install"], { kind: "remote-oauth" }>;
@@ -44,8 +44,10 @@ export function ConnectorBrowsePage() {
     serverName: string;
   } | null>(null);
 
-  const role = useScopedRole();
-  const isWsAdmin = roleAtLeast(role, "ws_admin");
+  // Installing a connector writes workspace-owned state, so this is the
+  // membership gate, not the reach gate — an org admin who is only a member
+  // here is refused by `canWriteWorkspaceScoped` server-side.
+  const isWsAdmin = useCanWriteActiveWorkspace();
   const navigate = useNavigate();
   const { slug } = useParams<{ slug: string }>();
 

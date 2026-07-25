@@ -15,6 +15,15 @@ import { useWorkspaceContext, type WorkspaceInfo } from "../context/WorkspaceCon
  * The hook returns the *highest* role that applies — gates check `>=` against
  * a required minimum, not equality, so org owners pass workspace-admin checks
  * automatically.
+ *
+ * **That escalation is for reach, not for writes.** It answers "may this user
+ * get to this surface" — navigation, route guards, read gates — where an org
+ * admin legitimately reaches every workspace. It does NOT answer "may this user
+ * write this workspace": the server's `canWriteWorkspaceScoped`
+ * (`src/workspace/authz.ts`) requires membership with `role === "admin"` and
+ * never consults `orgRole`. Gate writes with `useCanWriteActiveWorkspace`
+ * below; `roleAtLeast(role, "ws_admin")` would offer controls the server
+ * refuses.
  */
 export type ScopedRole = "none" | "ws_member" | "ws_admin" | "org_admin" | "org_owner";
 
@@ -62,4 +71,37 @@ export function useScopedRole(): ScopedRole {
   const session = useSession();
   const { activeWorkspace } = useWorkspaceContext();
   return useMemo(() => resolveScopedRole(session, activeWorkspace), [session, activeWorkspace]);
+}
+
+/**
+ * Pure resolution of "may this user write this workspace". Exported for unit
+ * testing; the hook below is a trivial reactive wrapper.
+ *
+ * Mirrors the server's `canWriteWorkspaceScoped` term for term — a member whose
+ * membership role is `admin`. `userRole === undefined` means the user isn't a
+ * member of this workspace, which denies for the same reason the server does.
+ *
+ * Deliberately takes the workspace, not a `ScopedRole`: routing this through
+ * the role ordering is what lets an org admin past a gate the server will
+ * refuse (see the `ScopedRole` doc above).
+ */
+export function canWriteWorkspace(activeWorkspace: WorkspaceInfo | null): boolean {
+  return activeWorkspace?.userRole === "admin";
+}
+
+/**
+ * Whether the signed-in user may perform a workspace-scoped **write** in the
+ * active workspace — the single client-side answer, matching the server's.
+ *
+ * Use this for every gate that guards a mutation of workspace-owned state
+ * (connectors, workspace settings, workspace skills). Use `useScopedRole` +
+ * `roleAtLeast` for reach: navigation, route guards, and org-scoped checks.
+ *
+ * A personal workspace needs no special case — the store force-locks its
+ * members to `[{ userId: ownerUserId, role: "admin" }]`, so its owner always
+ * passes here.
+ */
+export function useCanWriteActiveWorkspace(): boolean {
+  const { activeWorkspace } = useWorkspaceContext();
+  return canWriteWorkspace(activeWorkspace);
 }

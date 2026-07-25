@@ -14,7 +14,7 @@ import { describe, expect, test } from "bun:test";
 
 import type { SessionInfo } from "../context/SessionContext";
 import type { WorkspaceInfo } from "../context/WorkspaceContext";
-import { resolveScopedRole, roleAtLeast } from "../hooks/useScopedRole";
+import { canWriteWorkspace, resolveScopedRole, roleAtLeast } from "../hooks/useScopedRole";
 
 function session(orgRole?: string, authenticated = true): SessionInfo {
   return {
@@ -82,5 +82,51 @@ describe("roleAtLeast", () => {
     expect(roleAtLeast("ws_member", "ws_admin")).toBe(false);
     expect(roleAtLeast("ws_admin", "org_admin")).toBe(false);
     expect(roleAtLeast("none", "ws_member")).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// canWriteWorkspace — the write gate, which is NOT the role ordering
+//
+// `resolveScopedRole` escalates org admins to `org_admin`, so they clear a
+// `roleAtLeast(…, "ws_admin")` check for every workspace. That is right for
+// reach (nav, route guards, read gates) and wrong for writes: the server's
+// `canWriteWorkspaceScoped` requires membership with `role === "admin"` and
+// never consults `orgRole`. These pin the difference.
+// ---------------------------------------------------------------------------
+
+describe("canWriteWorkspace", () => {
+  test("a workspace admin may write", () => {
+    expect(canWriteWorkspace(workspace("admin"))).toBe(true);
+  });
+
+  test("a workspace member may not", () => {
+    expect(canWriteWorkspace(workspace("member"))).toBe(false);
+  });
+
+  test("a non-member may not", () => {
+    // `userRole: undefined` is the server's "Not a member" denial.
+    expect(canWriteWorkspace(workspace())).toBe(false);
+    expect(canWriteWorkspace(null)).toBe(false);
+  });
+
+  test("org role grants no bypass — the whole point of this helper", () => {
+    // The regression this exists to prevent: an org admin who is only a
+    // member of the workspace clears the role ordering but must not clear
+    // the write gate, because `canWriteWorkspaceScoped` would refuse them.
+    const orgAdminWhoIsOnlyAMember = session("admin");
+    const ws = workspace("member");
+
+    // Reach says yes...
+    expect(roleAtLeast(resolveScopedRole(orgAdminWhoIsOnlyAMember, ws), "ws_admin")).toBe(true);
+    // ...and write says no. If these ever agree, one of them is wrong.
+    expect(canWriteWorkspace(ws)).toBe(false);
+  });
+
+  test("org owner gets no bypass either", () => {
+    expect(roleAtLeast(resolveScopedRole(session("owner"), workspace("member")), "ws_admin")).toBe(
+      true,
+    );
+    expect(canWriteWorkspace(workspace("member"))).toBe(false);
   });
 });

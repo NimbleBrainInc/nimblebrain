@@ -14,8 +14,7 @@ import { Button } from "../../components/ui/button";
 import { Card, CardContent } from "../../components/ui/card";
 import { Input } from "../../components/ui/input";
 import { Textarea } from "../../components/ui/textarea";
-import { useWorkspaceContext } from "../../context/WorkspaceContext";
-import { roleAtLeast, useScopedRole } from "../../hooks/useScopedRole";
+import { roleAtLeast, useCanWriteActiveWorkspace, useScopedRole } from "../../hooks/useScopedRole";
 import { skillMechanismLabel } from "../../lib/skill-display";
 import { linkSafety } from "../../lib/streamdown-config";
 import { parseToolResponse } from "../../lib/tool-response";
@@ -171,28 +170,19 @@ export function SkillsBrowser(props: SkillsBrowserProps) {
   const { isWorkspaceSurface, lockedScope, fetchScope, createLockedScope } =
     resolveScopeConfig(props);
   const role = useScopedRole();
-  const { activeWorkspace } = useWorkspaceContext();
+  const canWriteActiveWorkspace = useCanWriteActiveWorkspace();
   // /org/skills is org-admin-guarded, so the org tier's "Manage in org settings"
   // deep link would dead-end at the route guard for anyone else. Gate it on the
   // viewer's role (independent of route) so only those who can act see it.
   const canManageOrg = roleAtLeast(role, "org_admin");
   // Workspace-scope writes require workspace admin server-side
   // (`canWriteWorkspaceScoped`), so offering a plain member a live toggle and an
-  // Edit button just defers the refusal to save time. Reflect the role up front
-  // and let the tier render with the same locked treatment context tiers use.
-  //
-  // This reads the *membership* role, not `useScopedRole`. That hook resolves an
-  // org admin to `org_admin` before it ever looks at the workspace, and
-  // `roleAtLeast(…, "ws_admin")` would then pass — but `canWriteWorkspaceScoped`
-  // never consults `orgRole` ("there is no org-admin bypass for workspace-scoped
-  // writes", `src/workspace/authz.ts`). Gating on the escalated role would hand
-  // the affordances to an org admin who is only a *member* here and land them on
-  // the 403 this PR exists to prevent. `userRole === "admin"` is precisely the
-  // server's condition; `undefined` means not a member, which also denies.
+  // Edit button just defers the refusal to save time. Reflect it up front and
+  // let the tier render with the same locked treatment context tiers use.
   //
   // The other two vantages need no gate here: /org/skills is already org-admin
   // route-guarded, and a user may always write their own profile.
-  const canWrite = createLockedScope !== "workspace" || activeWorkspace?.userRole === "admin";
+  const canWrite = createLockedScope !== "workspace" || canWriteActiveWorkspace;
 
   const [skills, setSkills] = useState<ListedSkill[]>([]);
   const [loading, setLoading] = useState(true);

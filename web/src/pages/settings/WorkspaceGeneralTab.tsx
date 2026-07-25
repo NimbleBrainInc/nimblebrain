@@ -1,5 +1,5 @@
 import { useWorkspaceContext } from "../../context/WorkspaceContext";
-import { roleAtLeast, useScopedRole } from "../../hooks/useScopedRole";
+import { useCanWriteActiveWorkspace } from "../../hooks/useScopedRole";
 import {
   CopyableWorkspaceId,
   RequireActiveWorkspace,
@@ -26,8 +26,9 @@ export function WorkspaceGeneralTab() {
 
 function Inner() {
   const { activeWorkspace } = useWorkspaceContext();
-  const role = useScopedRole();
-  const canEdit = roleAtLeast(role, "ws_admin");
+  // Name / about / custom instructions are workspace-owned writes, gated
+  // server-side by `canWriteWorkspaceScoped` — membership admin, no org bypass.
+  const canEdit = useCanWriteActiveWorkspace();
 
   // RequireActiveWorkspace guarantees activeWorkspace is non-null here.
   const ws = activeWorkspace!;
