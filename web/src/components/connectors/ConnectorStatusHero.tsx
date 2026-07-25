@@ -83,7 +83,14 @@ export function ConnectorStatusHero({
     };
   }, [cat, installed.iconUrl]);
 
-  const action = resolveAction(installed, !!directoryEntry);
+  // A composio API-key connector has no redirect: its auth CTA opens the
+  // key modal and calls `connect_api_key`, which admin-gates once a connected
+  // account exists. Reconnect/failed are exactly that case.
+  const authRotatesSharedCredential =
+    cat?.auth === "composio" &&
+    cat.composio?.authScheme === "API_KEY" &&
+    (installed.state === "reauth_required" || installed.status === "failed");
+  const action = resolveAction(installed, !!directoryEntry, authRotatesSharedCredential);
 
   /** Surface an unknown error's message on the hero. */
   const reportError = (err: unknown) => setError(err instanceof Error ? err.message : String(err));
@@ -374,8 +381,11 @@ function statusLabel(status: InstalledConnector["status"]): string {
 type PrimaryAction =
   | { kind: "open-bundle-modal"; label: string; adminOnly: true }
   | { kind: "open-operator-modal"; label: string; adminOnly: true }
-  | { kind: "oauth"; label: string; adminOnly: false }
-  | { kind: "cancel"; label: string; adminOnly: false };
+  // `oauth` is member-actionable for a native flow (the caller authorises
+  // their own account) but admin-only when it rotates a shared credential,
+  // so its gating is conditional rather than fixed by kind.
+  | { kind: "oauth"; label: string; adminOnly: boolean }
+  | { kind: "cancel"; label: string; adminOnly: true };
 
 /**
  * Map the connector's status to the appropriate primary CTA. The
@@ -393,6 +403,10 @@ type PrimaryAction =
 function resolveAction(
   installed: InstalledConnector,
   hasOperatorEntry: boolean,
+  /** True when the auth CTA would rotate a shared credential rather than
+   *  authorise the caller's own account — `handleConnectApiKey` refuses a
+   *  non-admin once a connected account already exists. */
+  authRotatesSharedCredential: boolean,
 ): PrimaryAction | null {
   const isRemote = installed.type === "remote";
 
@@ -408,7 +422,13 @@ function resolveAction(
       // page reads "Connecting…" forever. Cancel disconnects (resets to
       // `not_authenticated`), after which the normal Connect CTA reappears.
       // stdio bundles ("starting") have no OAuth to cancel — wait them out.
-      return isRemote ? { kind: "cancel", label: "Cancel", adminOnly: false } : null;
+      //
+      // Admin-only: cancelling calls `disconnectConnector`, and `handleDisconnect`
+      // refuses a non-admin outright ("Workspace admin role required to disconnect
+      // shared connectors"). The OAuth runs as `WORKSPACE_PRINCIPAL_ID`, so there
+      // is no per-member session for a member to cancel — the server is right to
+      // refuse, and offering the button only wedges them with a red error.
+      return isRemote ? { kind: "cancel", label: "Cancel", adminOnly: true } : null;
 
     case "needs_setup": {
       // Operator OAuth missing comes first: a static-auth catalog
@@ -429,7 +449,7 @@ function resolveAction(
       // First-time auth vs re-auth: same flow, different verb. The
       // user has stronger context if we tell them which.
       const verb = installed.state === "reauth_required" ? "Reconnect" : "Connect";
-      return { kind: "oauth", label: verb, adminOnly: false };
+      return { kind: "oauth", label: verb, adminOnly: authRotatesSharedCredential };
     }
 
     case "failed":
@@ -437,7 +457,9 @@ function resolveAction(
       // upstream rejected, transport blip). Failed local bundle →
       // statusReason is shown but no one-click action; the admin
       // diagnoses via the chat agent or logs.
-      return isRemote ? { kind: "oauth", label: "Reconnect", adminOnly: false } : null;
+      return isRemote
+        ? { kind: "oauth", label: "Reconnect", adminOnly: authRotatesSharedCredential }
+        : null;
   }
 }
 

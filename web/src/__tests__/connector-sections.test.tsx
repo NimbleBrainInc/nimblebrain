@@ -15,9 +15,11 @@
 //      pending_auth / starting → no button). A regression here would
 //      strand the user with no way to recover a broken connection.
 //
-//   3. `canManage=false` hides every mutation affordance. Non-admin
-//      members see status text only — no Edit, Disconnect, Connect, or
-//      Clear buttons.
+//   3. `canManage=false` hides the affordances the server admin-gates —
+//      Edit, Disconnect, Clear, Cancel — while member-actionable ones
+//      (authorising your *own* account via a native OAuth flow) stay.
+//      The distinction is the point: hiding too much strands a member who
+//      could have acted, showing too much hands them a guaranteed 403.
 //
 // Same plumbing as ResourceLinkView.test.tsx: bun:test + react-dom/client
 // + happy-dom (via web/test/setup.ts), no @testing-library/react.
@@ -673,6 +675,31 @@ describe("ConnectorStatusHero", () => {
       />,
     );
     expect(findButton(mounted.container, "Connect")).not.toBeNull();
+  });
+
+  test("Cancel is hidden when canManage=false — disconnect is admin-gated server-side", async () => {
+    // Cancel calls `disconnectConnector`, and `handleDisconnect` refuses a
+    // non-admin outright. Offering it left a member clicking into a red
+    // "Workspace admin role required" with the connector still wedged.
+    mounted = await mount(
+      <ConnectorStatusHero
+        installed={dcrConnector({ status: "connecting", state: "pending_auth" })}
+        canManage={false}
+        onChanged={() => {}}
+      />,
+    );
+    expect(findButton(mounted.container, "Cancel")).toBeNull();
+    mounted.unmount();
+
+    // ...and present for someone who can actually complete it.
+    mounted = await mount(
+      <ConnectorStatusHero
+        installed={dcrConnector({ status: "connecting", state: "pending_auth" })}
+        canManage={true}
+        onChanged={() => {}}
+      />,
+    );
+    expect(findButton(mounted.container, "Cancel")).not.toBeNull();
   });
 });
 
