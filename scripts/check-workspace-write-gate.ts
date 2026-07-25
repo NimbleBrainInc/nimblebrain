@@ -26,6 +26,15 @@
  *   Any `roleAtLeast(<expr>, "ws_admin")` call outside the hook module.
  *   The ordering itself is fine; asking it *this* question is not.
  *
+ * What it does NOT flag — know this before trusting it:
+ *   The bypass written out longhand, e.g.
+ *   `isOrgAdmin || members.some(m => m.userId === me && m.role === "admin")`.
+ *   That is the same bug in a shape no lint recognises without data-flow
+ *   analysis, and it is where the fifth instance actually lived. This check
+ *   makes one concrete recurring shape unrepresentable; it does not make the
+ *   bug class impossible. A write gate that reads `orgRole` at all still
+ *   warrants a second look in review.
+ *
  * What it allows:
  *   - `web/src/hooks/useScopedRole.ts` — defines the ordering, and its own
  *     tests exercise the `ws_admin` threshold directly.
@@ -58,7 +67,7 @@ function isTest(relPath: string): boolean {
   return relPath.includes("__tests__/") || /\.test\.tsx?$/.test(relPath);
 }
 
-const MARKER = "lint-ok:workspace-write-gate";
+const ALLOW_MARKER = "lint-ok:workspace-write-gate";
 
 interface Violation {
   file: string;
@@ -74,7 +83,7 @@ function hasMarker(source: ts.SourceFile, pos: number): boolean {
   const { line } = source.getLineAndCharacterOfPosition(pos);
   if (line === 0) return false;
   const lines = source.getFullText().split("\n");
-  return (lines[line - 1] ?? "").includes(MARKER);
+  return (lines[line - 1] ?? "").includes(ALLOW_MARKER);
 }
 
 /**
@@ -142,7 +151,7 @@ function main(): void {
     console.error("  `canWriteWorkspaceScoped` grants them no bypass — so this offers controls");
     console.error("  the server refuses, surfacing as a 403 on save.\n");
     console.error("  Use `useCanWriteActiveWorkspace()` for write gates.");
-    console.error(`  For a genuine reach gate, add \`// ${MARKER}\` on the line above.`);
+    console.error(`  For a genuine reach gate, add \`// ${ALLOW_MARKER}\` on the line above.`);
     process.exit(1);
   }
 

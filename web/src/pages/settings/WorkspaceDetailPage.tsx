@@ -45,8 +45,6 @@ interface UserInfo {
   orgRole: string;
 }
 
-const ADMIN_ROLES = new Set(["admin", "owner"]);
-
 function formatDate(iso?: string): string {
   if (!iso) return "—";
   try {
@@ -77,7 +75,6 @@ export function WorkspaceDetailPage() {
   const { slug } = useParams<{ slug: string }>();
   const id = resolveWorkspaceId(slug);
   const session = useSession();
-  const isOrgAdmin = ADMIN_ROLES.has(session?.user?.orgRole ?? "");
 
   const [workspace, setWorkspace] = useState<Workspace | null>(null);
   const [members, setMembers] = useState<Member[]>([]);
@@ -186,8 +183,12 @@ export function WorkspaceDetailPage() {
   const memberUserIds = new Set(members.map((m) => m.userId));
   const availableUsers = allUsers.filter((u) => !memberUserIds.has(u.id));
 
-  const isWsAdmin =
-    isOrgAdmin || members.some((m) => m.userId === currentUserId && m.role === "admin");
+  // Member management is a workspace-scoped write: `canManageMembers` routes
+  // through `canWriteWorkspaceScoped`, whose comment says outright that "an org
+  // admin/owner who is not a workspace admin member cannot manage members". An
+  // `isOrgAdmin ||` here rendered an enabled Add member button for exactly that
+  // user, and the add silently no-opped against the server's refusal.
+  const canManageMembers = members.some((m) => m.userId === currentUserId && m.role === "admin");
 
   // The org-scoped Workspaces list lives at /org/workspaces.
   const backTo = "/org/workspaces";
@@ -259,7 +260,7 @@ export function WorkspaceDetailPage() {
         title="Members"
         icon={<Users className="h-4 w-4" />}
         action={
-          isWsAdmin ? (
+          canManageMembers ? (
             <AddMemberButton
               showAdd={showAdd}
               onToggle={() => {
@@ -290,7 +291,7 @@ export function WorkspaceDetailPage() {
             <MembersTable
               members={members}
               userMap={userMap}
-              isWsAdmin={isWsAdmin}
+              canManageMembers={canManageMembers}
               adminCount={adminCount}
               currentUserId={currentUserId}
               removingId={removingId}
@@ -412,7 +413,7 @@ function AddMemberForm({
 function MembersTable({
   members,
   userMap,
-  isWsAdmin,
+  canManageMembers,
   adminCount,
   currentUserId,
   removingId,
@@ -420,7 +421,7 @@ function MembersTable({
 }: {
   members: Member[];
   userMap: Map<string, UserInfo>;
-  isWsAdmin: boolean;
+  canManageMembers: boolean;
   adminCount: number;
   currentUserId: string | undefined;
   removingId: string | null;
@@ -433,7 +434,7 @@ function MembersTable({
           <TableHead>Display Name</TableHead>
           <TableHead>Email</TableHead>
           <TableHead>Role</TableHead>
-          {isWsAdmin && <TableHead className="w-[60px]" />}
+          {canManageMembers && <TableHead className="w-[60px]" />}
         </TableRow>
       </TableHeader>
       <TableBody>
@@ -450,7 +451,7 @@ function MembersTable({
               <TableCell>
                 <RoleBadge role={m.role} />
               </TableCell>
-              {isWsAdmin && (
+              {canManageMembers && (
                 <TableCell>
                   <Button
                     size="sm"

@@ -47,7 +47,7 @@ export function ConnectorBrowsePage() {
   // Installing a connector writes workspace-owned state, so this is the
   // membership gate, not the reach gate — an org admin who is only a member
   // here is refused by `canWriteWorkspaceScoped` server-side.
-  const isWsAdmin = useCanWriteActiveWorkspace();
+  const canManage = useCanWriteActiveWorkspace();
   const navigate = useNavigate();
   const { slug } = useParams<{ slug: string }>();
 
@@ -248,7 +248,7 @@ export function ConnectorBrowsePage() {
               key={`${entry.registryId}::${entry.id}`}
               entry={entry}
               busy={busyId === `${entry.registryId}::${entry.id}`}
-              isWsAdmin={isWsAdmin}
+              canManage={canManage}
               onInstall={() => onInstall(entry)}
               onSetUp={() => setSetupModalEntry(entry)}
             />
@@ -320,13 +320,13 @@ export function ConnectorBrowsePage() {
 function DirectoryCard({
   entry,
   busy,
-  isWsAdmin,
+  canManage,
   onInstall,
   onSetUp,
 }: {
   entry: DirectoryEntry;
   busy: boolean;
-  isWsAdmin: boolean;
+  canManage: boolean;
   onInstall: () => void;
   onSetUp: () => void;
 }) {
@@ -349,7 +349,7 @@ function DirectoryCard({
         <CardAction
           entry={entry}
           busy={busy}
-          isWsAdmin={isWsAdmin}
+          canManage={canManage}
           isStaticAuth={isStaticAuth}
           operatorReady={operatorReady}
           isMpakStub={isMpak}
@@ -364,7 +364,7 @@ function DirectoryCard({
 function CardAction({
   entry,
   busy,
-  isWsAdmin,
+  canManage,
   isStaticAuth,
   operatorReady,
   isMpakStub,
@@ -373,7 +373,7 @@ function CardAction({
 }: {
   entry: DirectoryEntry;
   busy: boolean;
-  isWsAdmin: boolean;
+  canManage: boolean;
   isStaticAuth: boolean;
   operatorReady: boolean;
   isMpakStub: boolean;
@@ -392,7 +392,7 @@ function CardAction({
   //   - configured                 → Install (rotation lives on Configure now)
   if (isStaticAuth && entry.install.kind === "remote-oauth") {
     if (!operatorReady) {
-      if (isWsAdmin) {
+      if (canManage) {
         return (
           <Button type="button" variant="outline" size="sm" onClick={onSetUp}>
             Set up
