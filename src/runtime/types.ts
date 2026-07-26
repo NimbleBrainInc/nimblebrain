@@ -101,8 +101,9 @@ export interface RuntimeConfig {
    * Anthropic requires a minimum of 1,024.
    *
    * Only meaningful on providers that meter thinking in tokens (Anthropic
-   * models up to 4.6, Google). On effort-shaped providers it is ignored in
-   * favor of `thinkingEffort` — a budget cannot be converted into a depth
+   * models up to 4.6, Gemini 2.5). On effort-shaped providers — including
+   * Gemini 3, which takes a level rather than a budget — it is ignored in
+   * favor of `thinkingEffort`: a budget cannot be converted into a depth
    * without inventing precision the number does not carry.
    *
    * Prefer `thinkingEffort` unless you specifically need a token cap.

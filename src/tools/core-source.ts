@@ -710,7 +710,8 @@ export function createCoreToolDefs(runtime: Runtime): InProcessTool[] {
             description:
               "Explicit token budget for thinking, for metering in tokens rather than " +
               "naming a depth. Only honored by providers that meter thinking in tokens " +
-              "(Anthropic up to 4.6, Google); elsewhere thinkingEffort applies. " +
+              "(Anthropic up to 4.6, Gemini 2.5); elsewhere thinkingEffort applies — " +
+              "Gemini 3 takes a level, not a budget. " +
               "Counts toward maxOutputTokens. Anthropic requires a minimum of 1,024.",
           },
           clearThinkingBudget: {
