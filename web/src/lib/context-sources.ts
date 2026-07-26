@@ -18,24 +18,32 @@ export const SOURCE_LABEL: Record<string, string> = {
 };
 
 /**
- * Kinds that occupy disjoint regions of the context window.
+ * Kinds that ANNOTATE another row rather than occupying the window themselves.
  *
- * `skills` is excluded deliberately: composed skill bodies live INSIDE the
- * system prompt, so that row annotates a slice of `system_prompt` rather than
- * adding a fourth region. Summing all four (which is what the recorded
- * `totalTokens` does) counts the skill bodies twice. See the invariant
- * documented on `AssembledContextSource`.
+ * `skills` is one: composed skill bodies live INSIDE the system prompt, so that
+ * row measures a slice of `system_prompt` rather than adding a region. Summing
+ * every row (which is what the recorded `totalTokens` does) counts the skill
+ * bodies twice. See the invariant documented on `AssembledContextSource`.
+ *
+ * Stated as the annotation set, not as an allowlist of regions, so a source
+ * kind added later counts toward the window by default. An allowlist would
+ * silently drop it — reintroducing the under-count this exists to prevent.
  */
-const WINDOW_KINDS = new Set(["system_prompt", "tool_descriptions", "history"]);
+const ANNOTATION_KINDS = new Set(["skills"]);
 
-/** Tokens actually occupying the context window, without the `skills` overlap. */
+/** True when this row measures part of another row rather than adding one. */
+function occupiesWindow(kind: string): boolean {
+  return !ANNOTATION_KINDS.has(kind);
+}
+
+/** Tokens actually occupying the context window, without the annotation rows. */
 export function windowTokens(sources: readonly AssembledContextSource[]): number {
-  return sources.filter((s) => WINDOW_KINDS.has(s.kind)).reduce((sum, s) => sum + s.tokens, 0);
+  return sources.filter((s) => occupiesWindow(s.kind)).reduce((sum, s) => sum + s.tokens, 0);
 }
 
 /** Sources that occupy the window, in canonical display order. */
 export function windowSources<T extends { kind: string }>(sources: readonly T[]): T[] {
-  return orderedSources(sources).filter((s) => WINDOW_KINDS.has(s.kind));
+  return orderedSources(sources).filter((s) => occupiesWindow(s.kind));
 }
 
 /** The `skills` annotation row, when the run recorded one. */

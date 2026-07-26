@@ -3,14 +3,33 @@
  * line and the "In context" popover so both label reasons, provenance, and
  * scope colors identically.
  *
- * Names are NOT derived here. The runtime records each skill's own name on the
- * `skills.loaded` event and both read paths resolve it, so a display surface
- * renders `skill.name` directly. Deriving it from the id is what rendered every
- * connector skill as `SKILL` (a connector skill's id is its
- * `skill://…/SKILL.md` entrypoint).
+ * The runtime records each skill's own name on the `skills.loaded` event and
+ * both read paths resolve it, so a display surface renders `skill.name`
+ * directly rather than picking a name out of the id — doing that is what
+ * rendered every connector skill as `SKILL` (a connector skill's id is its
+ * `skill://…/SKILL.md` entrypoint). `nameFromSkillId` below is the normalizer's
+ * last-resort guard for a frame that arrives without one, NOT a display path.
  */
 
 import type { SkillScope } from "../_generated/platform-schemas/skills";
+
+/**
+ * A name from a skill id, for a stream frame that arrived without one.
+ *
+ * The normalizer in `chat-store` needs *some* string, and the id is a path
+ * ending in `/SKILL.md` for every connector skill — printing it raw would put
+ * the exact output this surface exists to eliminate back on screen. Mirrors
+ * `src/skills/display-name.ts`; the copy exists because the browser can't
+ * import from `src/`.
+ */
+export function nameFromSkillId(id: string): string {
+  const segments = id.split("/").filter(Boolean);
+  const last = segments[segments.length - 1] ?? id;
+  if (/^SKILL\.md$/i.test(last) && segments.length >= 2) {
+    return segments[segments.length - 2] ?? last;
+  }
+  return last.replace(/\.md$/i, "");
+}
 
 /**
  * Strip the leading mechanism word from a load reason for the compact ledger

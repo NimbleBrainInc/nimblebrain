@@ -11,6 +11,7 @@ import {
 } from "../api/conversation-stream";
 import { formatSendError } from "../api/format-error";
 import { appNameFromToolName } from "../lib/namespaced-tool.ts";
+import { nameFromSkillId } from "../lib/skill-display.ts";
 import type {
   AppContext,
   ChatRequest,
@@ -820,15 +821,17 @@ export function createChatStore(): ChatStore {
   /**
    * One untrusted stream entry → a ledger row, every field defaulted.
    *
-   * `name` falling back to the id is a malformed-frame guard, not the legacy
-   * path: the runtime stamps `name` on every entry it emits, and events
-   * recorded before that field existed reach the UI only through replay, where
-   * the conversations bundle resolves a name before this ever sees them.
+   * The `name` fallback is a malformed-frame guard, not the legacy path: the
+   * runtime stamps `name` on every entry it emits, and events recorded before
+   * that field existed reach the UI only through replay, where the
+   * conversations bundle resolves a name before this ever sees them. It still
+   * derives rather than printing the id, because every connector skill's id
+   * ends in `/SKILL.md` — the guard firing must not put that back on screen.
    */
   function toLedgerSkill(s: Record<string, unknown>): LedgerSkill {
     return {
       id: s.id as string,
-      name: typeof s.name === "string" && s.name ? s.name : (s.id as string),
+      name: typeof s.name === "string" && s.name ? s.name : nameFromSkillId(s.id as string),
       ...(typeof s.connector === "string" && s.connector ? { connector: s.connector } : {}),
       scope: (typeof s.scope === "string" ? s.scope : "org") as LedgerSkill["scope"],
       tokens: typeof s.tokens === "number" ? s.tokens : 0,

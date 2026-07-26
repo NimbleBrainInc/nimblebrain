@@ -508,18 +508,22 @@ function toAssembledSkill(s: SkillsLoadedEvent["skills"][number]): AssembledCont
 }
 
 /**
- * Budget kinds that occupy disjoint regions of the context window. `skills` is
- * excluded deliberately: composed skill bodies live INSIDE `system_prompt`, so
- * its row annotates a slice rather than adding a region. See the invariant on
+ * Budget kinds that ANNOTATE another row rather than occupying the window.
+ * `skills` is one: composed skill bodies live INSIDE `system_prompt`, so its
+ * row measures a slice rather than adding a region. See the invariant on
  * `AssembledContextSource`.
+ *
+ * Stated as the annotation set so a source kind added later counts toward the
+ * window by default; an allowlist of regions would silently drop it. Mirrored
+ * in `web/src/lib/context-sources.ts` — the web tier can't import from here,
+ * and `test/unit/tools/platform/context-window-parity.test.ts` pins the two
+ * against each other.
  */
-const CONTEXT_WINDOW_KINDS = new Set(["system_prompt", "tool_descriptions", "history"]);
+const ANNOTATION_KINDS = new Set(["skills"]);
 
-/** Tokens actually occupying the context window, without the `skills` overlap. */
-function contextWindowTokens(sources: AssembledContextSource[]): number {
-  return sources
-    .filter((s) => CONTEXT_WINDOW_KINDS.has(s.kind))
-    .reduce((sum, s) => sum + s.tokens, 0);
+/** Tokens actually occupying the context window, without the annotation rows. Exported for the parity test. */
+export function contextWindowTokens(sources: AssembledContextSource[]): number {
+  return sources.filter((s) => !ANNOTATION_KINDS.has(s.kind)).reduce((sum, s) => sum + s.tokens, 0);
 }
 
 /** Human-readable text summary for the tool's `content` block. */
@@ -535,11 +539,16 @@ function formatAssembledSummary(d: ComposeAssembledContextOutput): string {
     const suffix = detail.length > 0 ? ` (${detail.join(", ")})` : "";
     return `  ${s.kind}: ${s.tokens} tok${suffix}`;
   });
+  const hasSkillsRow = d.sources.some((s) => s.kind === "skills");
   return [
     `Assembled context for run ${d.runId} (${contextWindowTokens(d.sources)} tok in the window):`,
     ...sourceLines,
-    `  (skills is a slice of system_prompt, not a fourth region — the window is`,
-    `   system_prompt + tool_descriptions + history)`,
+    ...(hasSkillsRow
+      ? [
+          `  (skills is a slice of system_prompt, not a fourth region — the window is`,
+          `   system_prompt + tool_descriptions + history)`,
+        ]
+      : []),
     `  layer-3 skills loaded: ${d.skills.length}`,
   ].join("\n");
 }

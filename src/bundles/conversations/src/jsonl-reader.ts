@@ -582,28 +582,59 @@ function skillNameFromId(id: string): string {
   return last.replace(/\.md$/i, "");
 }
 
+/** One recorded entry → a display row, every field defaulted. */
+function projectSkill(s: NonNullable<SkillsLoadedEvent["skills"]>[number] & { id: string }) {
+  return {
+    id: s.id,
+    name: s.name || skillNameFromId(s.id),
+    ...(s.connector ? { connector: s.connector } : {}),
+    scope: s.scope ?? "org",
+    tokens: typeof s.tokens === "number" ? s.tokens : 0,
+    loadedBy: typeof s.loadedBy === "string" ? s.loadedBy : "",
+    reason: typeof s.reason === "string" ? s.reason : "",
+  } satisfies DisplaySkill;
+}
+
+/** Rows with a usable id, projected. Shared by the event and message paths. */
+function projectSkills(raw: SkillsLoadedEvent["skills"]): DisplaySkill[] {
+  return (raw ?? [])
+    .filter((s): s is { id: string } & NonNullable<typeof s> => typeof s?.id === "string")
+    .map(projectSkill);
+}
+
 /**
  * Project a `skills.loaded` event to the display shape. Returns undefined for a
  * zero-skill turn so the ledger line is suppressed (absence is the signal).
  */
 function projectSkillsLoaded(evt: SkillsLoadedEvent): DisplaySkillsContext | undefined {
-  const skills: DisplaySkill[] = (evt.skills ?? [])
-    .filter((s): s is { id: string } & typeof s => typeof s?.id === "string")
-    .map((s) => ({
-      id: s.id,
-      name: s.name || skillNameFromId(s.id),
-      ...(s.connector ? { connector: s.connector } : {}),
-      scope: s.scope ?? "org",
-      tokens: typeof s.tokens === "number" ? s.tokens : 0,
-      loadedBy: typeof s.loadedBy === "string" ? s.loadedBy : "",
-      reason: typeof s.reason === "string" ? s.reason : "",
-    }));
+  const skills = projectSkills(evt.skills);
   if (skills.length === 0) return undefined;
   const totalTokens =
     typeof evt.totalTokens === "number"
       ? evt.totalTokens
       : skills.reduce((sum, s) => sum + s.tokens, 0);
   return { skills, totalTokens };
+}
+
+/**
+ * A ledger stored on a message line, through the same projection as the event
+ * path so both produce identical rows. Returns the wrapper the message spread
+ * expects, or undefined when the line carries nothing usable.
+ */
+function normalizeStoredSkills(raw: unknown): { skillsLoaded: DisplaySkillsContext } | undefined {
+  if (!raw || typeof raw !== "object") return undefined;
+  const stored = raw as { skills?: SkillsLoadedEvent["skills"]; totalTokens?: unknown };
+  const skills = projectSkills(stored.skills);
+  if (skills.length === 0) return undefined;
+  return {
+    skillsLoaded: {
+      skills,
+      totalTokens:
+        typeof stored.totalTokens === "number"
+          ? stored.totalTokens
+          : skills.reduce((sum, s) => sum + s.tokens, 0),
+    },
+  };
 }
 
 /**
@@ -998,9 +1029,10 @@ function legacyLineToDisplay(raw: Record<string, unknown>): DisplayMessage | nul
     ...(typeof raw.userId === "string" ? { userId: raw.userId } : {}),
     ...(hydratedTools.length > 0 ? { toolCalls: hydratedTools } : {}),
     ...(usage ? { usage } : {}),
-    // Fork writes DisplayMessage shape directly; carry the ledger through so a
-    // forked conversation keeps its skills lines.
-    ...(raw.skillsLoaded ? { skillsLoaded: raw.skillsLoaded as DisplaySkillsContext } : {}),
+    // A message line may carry its own ledger rather than deriving it from the
+    // run's events. Normalized, not cast: `DisplaySkill.name` is required, and
+    // a cast would hand the UI an entry without one.
+    ...(normalizeStoredSkills(raw.skillsLoaded) ?? {}),
   };
 }
 
