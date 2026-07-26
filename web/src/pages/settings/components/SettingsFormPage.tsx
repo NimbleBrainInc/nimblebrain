@@ -48,8 +48,6 @@ export interface SettingsFormPageProps extends Omit<SettingsPageHeaderProps, "ac
     label?: string;
     /** When provided, shows a Reset button next to Save that calls this. */
     onReset?: () => void;
-    /** Visual variant: "warm" for human-initiated, default otherwise. */
-    variant?: "default" | "warm";
   };
   /** Persistent banner above the body (e.g. "Loading failed, retry?"). */
   loadError?: string | null;
@@ -115,7 +113,6 @@ function SaveBar({ save }: { save: NonNullable<SettingsFormPageProps["save"]> })
   return (
     <div className="flex gap-2 pt-2">
       <Button
-        variant={save.variant ?? "default"}
         onClick={() => void save.onSave()}
         disabled={save.disabled ?? cleanOrSaving}
         aria-busy={save.saving}

@@ -162,7 +162,7 @@ export function InContextPopover({ conversationId }: { conversationId: string | 
             <div className="px-3.5 py-2 border-t flex items-center justify-end">
               <Link
                 to={inspectorPath}
-                className="text-2xs font-medium text-foreground hover:text-warm"
+                className="text-2xs font-medium text-foreground hover:text-primary"
                 onClick={() => setOpen(false)}
               >
                 Open full view ↗

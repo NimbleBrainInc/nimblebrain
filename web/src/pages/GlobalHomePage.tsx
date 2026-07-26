@@ -36,7 +36,7 @@ export function GlobalHomePage() {
     <div className="h-full overflow-y-auto" data-testid="global-home-page">
       <div className="max-w-5xl mx-auto px-8 py-12">
         <header className="mb-10">
-          <h1 className="text-4xl font-serif font-medium text-foreground">
+          <h1 className="text-4xl font-heading font-medium text-foreground">
             {greeting}
             {name && `, ${name}`}
           </h1>

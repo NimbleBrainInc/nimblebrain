@@ -2,8 +2,8 @@
 @import "tw-animate-css";
 @import "shadcn/tailwind.css";
 
-/* Fonts: Satoshi (body) + Erode (display) via Fontshare */
-/* JetBrains Mono via Fontsource */
+/* Fonts: Hanken Grotesk (display + UI) and Newsreader (agent prose in chat)
+   via Google Fonts, loaded in index.html; JetBrains Mono via Fontsource */
 @import "@fontsource-variable/jetbrains-mono";
 
 /* Brand palette :root/.dark values — generated from src/theme/palette.ts */
@@ -16,6 +16,7 @@
        into :root as --nb-font-* by gen:theme. One source, same value. */
     --font-sans: var(--nb-font-sans);
     --font-heading: var(--nb-font-heading);
+    --font-reading: var(--nb-font-reading);
     --font-mono: var(--nb-font-mono);
 
     /* Type scale — single-sourced from src/theme/palette.ts (typeScale),
@@ -35,25 +36,16 @@
     --text-lg: var(--font-text-lg-size);
     --text-lg--line-height: var(--font-text-lg-line-height);
 
-    --color-sidebar-ring: var(--sidebar-ring);
     --color-sidebar-border: var(--sidebar-border);
-    --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
-    --color-sidebar-accent: var(--sidebar-accent);
-    --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
-    --color-sidebar-primary: var(--sidebar-primary);
     --color-sidebar-foreground: var(--sidebar-foreground);
     --color-sidebar: var(--sidebar);
     --color-sidebar-hover: var(--sidebar-hover);
     --sidebar-width: var(--sidebar-width);
     --sidebar-width-collapsed: var(--sidebar-width-collapsed);
-    --color-chart-5: var(--chart-5);
-    --color-chart-4: var(--chart-4);
-    --color-chart-3: var(--chart-3);
-    --color-chart-2: var(--chart-2);
-    --color-chart-1: var(--chart-1);
     --color-ring: var(--ring);
     --color-input: var(--input);
     --color-border: var(--border);
+    --color-destructive-foreground: var(--destructive-foreground);
     --color-destructive: var(--destructive);
     --color-accent-foreground: var(--accent-foreground);
     --color-accent: var(--accent);
@@ -70,15 +62,8 @@
     --color-foreground: var(--foreground);
     --color-background: var(--background);
     --color-success: var(--success);
-    --color-success-foreground: var(--success-foreground);
     --color-warning: var(--warning);
-    --color-warning-foreground: var(--warning-foreground);
-    --color-warm: var(--warm);
-    --color-warm-hover: var(--warm-hover);
-    --color-warm-foreground: var(--warm-foreground);
-    --color-warm-light: var(--warm-light);
     --color-processing: var(--processing);
-    --color-processing-foreground: var(--processing-foreground);
     --color-processing-light: var(--processing-light);
     --color-info-light: var(--info-light);
     /* Radius scale — single-sourced from src/theme/palette.ts (radiusScale),
@@ -166,28 +151,50 @@
 }
 
 /* ============================================
-   CHAT PRESENCE — Editorial conversation style
-   User: italic sans-serif with left border
-   Assistant: serif (Erode) typography
+   CHAT PRESENCE
+   User: neutral-fill bubble, UI face
+   Assistant: unbounded prose, reading face
    ============================================ */
 
-/* User messages: italic sans-serif */
+/* User messages.
+   A bubble on the SHORT side of an asymmetric conversation. User turns are
+   brief, so a container is cheap and makes the turn boundary unmissable; the
+   assistant turn stays unbounded below, because a container around four
+   paragraphs adds a level and buys nothing.
+   The fill is NEUTRAL, not blue: blue means action everywhere else in the
+   product, and your own message is not an action. */
 .presence-user-message {
+  display: inline-block;
   font-family: var(--font-sans);
-  /* Deliberate editorial size — sits between the type scale's sm (14px) and
-     base (16px) with no exact step; kept bespoke so the most-visible text in
-     the app isn't snapped for the sake of the rule. Assistant body below is
-     18px = the scale's lg, so it's tokenized. */
-  font-size: 15px;
-  font-weight: 500;
-  line-height: 1.5;
+  font-size: var(--font-text-base-size);
+  line-height: var(--font-text-base-line-height);
+  font-weight: var(--font-weight-normal);
   color: var(--foreground);
-  opacity: 0.8;
+  /* A tint of the ink rather than `--muted`: in this palette `card` and
+     `background` are the same value in light, so `--muted` against the chat
+     ground is 1.099:1 — invisible. Mixing from `--foreground` adapts to
+     whichever surface the bubble lands on and reads in both modes.
+
+     It is an alpha token rather than a `color-mix()`, because the minifier
+     downlevels `color-mix()` in a colour property to its first operand — here
+     `var(--foreground)`, the same value as the `color` two lines up, at
+     1.000:1. See `palette.ts`; guarded by
+     `test/unit/docs/css-color-mix.test.ts`. */
+  background: var(--foreground-tint);
+  padding: 0.5rem 0.75rem;
+  border-radius: var(--border-radius-md);
+  /* Radius decreases toward the speaker's edge — the corner nearest the
+     sender is tightened so the bubble points at its origin. */
+  border-bottom-right-radius: var(--border-radius-xs);
 }
 
-/* Assistant messages: serif typography base, Streamdown handles markdown rendering */
+/* Assistant messages. Chat is the one surface in the product where READING
+   beats scanning, so agent prose gets a dedicated screen-text serif rather than
+   the UI face. It deliberately does NOT reuse --font-heading, which is the UI
+   family: the reading face has to be named to survive that. Streamdown handles
+   markdown rendering. */
 .presence-assistant-message {
-  font-family: var(--font-heading);
+  font-family: var(--font-reading);
   font-size: var(--font-text-lg-size);
   font-weight: 400;
   line-height: 1.5;
@@ -400,9 +407,9 @@
   opacity: 0.5;
   display: inline-block;
 }
-.turn-pill__icon--error { color: var(--warm); }
+.turn-pill__icon--error { color: var(--destructive); }
 .turn-pill__icon--running {
-  color: var(--warm);
+  color: var(--primary);
   animation: spin 1s linear infinite;
 }
 /* Active/expanded states give the dot a brand color; at rest it's currentColor
@@ -643,9 +650,11 @@
   word-break: break-word;
 }
 .turn-pill__pre--error {
-  background: var(--warm-light);
-  border-color: var(--warm);
-  color: var(--warm-hover);
+  /* Alpha token, not a `color-mix()` — the minifier's downlevel of one would
+     collapse to `var(--destructive)`, matching the `color` below it. */
+  background: var(--destructive-tint);
+  border-color: var(--destructive);
+  color: var(--destructive);
 }
 
 /* ───────────────────────────────────────────────────────────────────────
@@ -687,7 +696,7 @@
   opacity: 1;
 }
 .ledger-line__head:focus-visible {
-  outline: 2px solid var(--warm);
+  outline: 2px solid var(--primary);
   outline-offset: 2px;
 }
 .ledger-line[data-expanded="true"] > .ledger-line__head {
@@ -851,12 +860,12 @@
   font-size: var(--font-text-xs-size);
 }
 .live-cursor__spinner {
-  color: var(--warm);
+  color: var(--primary);
   animation: spin 1s linear infinite;
   flex-shrink: 0;
 }
 .live-cursor__label {
-  color: var(--warm);
+  color: var(--primary);
   font-weight: 500;
 }
 

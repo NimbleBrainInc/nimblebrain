@@ -21,8 +21,8 @@ function DisabledLabel({ isAutoDisabled }: { isAutoDisabled: boolean }) {
       style={{
         fontSize: 11,
         color: isAutoDisabled
-          ? "var(--nb-color-danger, #dc2626)"
-          : "var(--color-text-secondary, #737373)",
+          ? "var(--nb-color-danger, #c02a24)"
+          : "var(--color-text-secondary, #5c5c66)",
         fontWeight: 400,
       }}
     >
@@ -90,7 +90,7 @@ function CardActions({
           type="button"
           className="btn"
           onClick={onCancel}
-          style={{ color: "var(--nb-color-danger, #dc2626)" }}
+          style={{ color: "var(--nb-color-danger, #c02a24)" }}
         >
           {actionInProgress === "cancelling" ? "Cancelling\u2026" : "Cancel Run"}
         </button>
@@ -162,7 +162,7 @@ export function AutomationCard({
             <div
               style={{
                 fontSize: 11,
-                color: "var(--nb-color-danger, #dc2626)",
+                color: "var(--nb-color-danger, #c02a24)",
                 marginTop: 2,
               }}
             >

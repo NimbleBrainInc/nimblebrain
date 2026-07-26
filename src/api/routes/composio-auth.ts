@@ -26,6 +26,7 @@ import { requireAuth } from "../middleware/auth.ts";
 import { requireWorkspace } from "../middleware/workspace.ts";
 import { type AppContext, type AppEnv, apiError } from "../types.ts";
 import { profileConnectorsUrl, workspaceConnectorsUrl } from "./connectors-redirect.ts";
+import { SUCCESS_PAGE_CSP, successPageHtml } from "./oauth-success-page.ts";
 
 /**
  * OAuth integration routes for connectors backed by Composio as a
@@ -57,25 +58,6 @@ import { profileConnectorsUrl, workspaceConnectorsUrl } from "./connectors-redir
  *   shows our domain throughout the consent dance. Stateless — never
  *   sees tokens; only forwards browser navigation.
  */
-
-/**
- * Inline CSS for the post-callback success page, sha256-pinned in the
- * CSP just like `/v1/mcp-auth/callback`. The page is visible for one
- * second before the meta-refresh fires; brevity is the point.
- */
-const SUCCESS_PAGE_STYLE = `html,body{margin:0;height:100%}
-body{font-family:'Satoshi',system-ui,-apple-system,BlinkMacSystemFont,sans-serif;background:#faf9f7;color:#171717;display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:100vh;padding:1rem;box-sizing:border-box;-webkit-font-smoothing:antialiased}
-.h{font-family:'Erode',Georgia,serif;font-size:clamp(2.5rem,6.5vw,4.25rem);font-weight:500;letter-spacing:-0.02em;margin:0;animation:rise .35s ease-out both}
-.wm{margin-top:1.5rem;font-size:.7rem;letter-spacing:.2em;text-transform:uppercase;color:#737373;font-weight:700;display:flex;align-items:center;gap:.55rem;animation:rise .35s ease-out .08s both}
-.wm svg{width:.65rem;height:.65rem;display:block}
-.fb{position:fixed;bottom:1.25rem;font-size:.75rem;color:#525252;margin:0;font-weight:500}
-.fb a{color:#404040;text-decoration:none;border-bottom:1px dotted #a3a3a3}
-.fb a:hover{color:#d4620a;border-bottom-color:#d4620a}
-@keyframes rise{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:translateY(0)}}
-@media (prefers-color-scheme:dark){body{background:#0a0a09;color:#e5e5e5}.wm{color:#a3a3a3}.fb{color:#a3a3a3}.fb a{color:#d4d4d4;border-bottom-color:#525252}.fb a:hover{color:#f59542;border-bottom-color:#f59542}}
-@media (prefers-reduced-motion:reduce){.h,.wm{animation:none}}`;
-const SUCCESS_PAGE_STYLE_SHA256 = createHash("sha256").update(SUCCESS_PAGE_STYLE).digest("base64");
-const SUCCESS_PAGE_CSP = `default-src 'none'; style-src 'sha256-${SUCCESS_PAGE_STYLE_SHA256}'; frame-ancestors 'none'; base-uri 'none'`;
 
 /**
  * CSP for HTML error responses (auth-failed, session-mismatch). The
@@ -228,19 +210,8 @@ export function composioAuthRoutes(ctx: AppContext) {
     c.header("Set-Cookie", buildComposioStateCookie("", 0, ctx.secureCookies));
 
     const returnUrl = connectorsReturnUrl(owner);
-    const safeReturnUrl = escapeHtml(returnUrl);
     c.header("Content-Security-Policy", SUCCESS_PAGE_CSP);
-    return c.html(
-      `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Connection complete</title>
-<meta name="viewport" content="width=device-width,initial-scale=1">
-<meta http-equiv="refresh" content="1;url=${safeReturnUrl}">
-<style>${SUCCESS_PAGE_STYLE}</style></head>
-<body>
-<h1 class="h">You're in.</h1>
-<div class="wm"><svg viewBox="0 0 12 12" aria-hidden="true"><path d="M6 0L12 6L6 12L0 6Z" fill="#d4620a"/></svg>NimbleBrain</div>
-<p class="fb">not redirecting? <a href="${safeReturnUrl}">go back &rarr;</a></p>
-</body></html>`,
-    );
+    return c.html(successPageHtml("Connection complete", returnUrl));
   });
 
   // ── GET /v1/composio-auth/proxy ───────────────────────────────────

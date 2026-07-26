@@ -585,7 +585,7 @@ Bundles can be installed per-workspace (tracked via `BundleInstance.wsId`). Each
 
 ### Web Client Internals
 
-- **Chat**: editorial conversation style (serif assistant, italic user), streaming via SSE, inline tool call display
+- **Chat**: reading-face agent prose, bubbled user turns, streaming via SSE, inline tool call display
 - **MCP App Bridge**: sandboxed iframes, postMessage proxy for tool calls
 - **Agent-UI sync**: `data.changed` events forwarded to iframes with 100ms debounce
 - **Login**: `"__cookie__"` sentinel token indicates cookie-based auth (suppresses Authorization header)

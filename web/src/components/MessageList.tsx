@@ -251,7 +251,7 @@ function useSmartScroll(messages: ChatMessage[]) {
   return { scrollRef, isAtBottom, scrollToBottom };
 }
 
-/** One user message body: optional app-context disclosure, file chips, and the italic message text. */
+/** One user message body: optional app-context disclosure, file chips, and the message bubble. */
 function UserMessage({
   contextPrefix,
   files,
@@ -262,7 +262,7 @@ function UserMessage({
   displayContent: string;
 }) {
   return (
-    <div className="pl-4 border-l-2 border-border break-words whitespace-pre-wrap">
+    <div className="break-words whitespace-pre-wrap">
       {contextPrefix && (
         <details className="mb-1">
           <summary className="text-3xs opacity-60 cursor-pointer select-none">App Context</summary>
@@ -276,7 +276,7 @@ function UserMessage({
           ))}
         </div>
       )}
-      <span className="presence-user-message italic">{displayContent}</span>
+      <span className="presence-user-message">{displayContent}</span>
     </div>
   );
 }

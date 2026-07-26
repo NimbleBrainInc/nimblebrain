@@ -81,88 +81,94 @@ window.addEventListener('message', (event) => {
 <Aside type="caution">
 **Live-update caveat.** The initial `<style>` block injected at load carries the full token set. But the `ui/notifications/host-context-changed` payload sent on a dark-mode toggle carries **only the tokens in the host's allow-list** — most, but not all, ext-apps spec tokens. These do **not** refresh live on a toggle:
 
-- the `--nb-*` extension tokens (injected at load only), and
-- `--color-text-accent`, `--font-text-base-size`, and `--font-text-base-line-height` — spec tokens the host filters out of the toggle payload.
+The rule, rather than a list you would have to keep checking: **only keys in the ext-apps spec's own variable enum cross the boundary.** Two families of what the host injects are not in it, so neither refreshes:
+
+- the `--nb-*` extension tokens, which have no spec equivalent by definition, and
+- NimbleBrain's additions to spec-shaped families — `--color-text-accent`, and the `3xs`, `2xs` and `base` steps of the type scale (the spec enum carries only `xs`, `sm`, `md` and `lg`).
 
 Drive any surface that must flip between light and dark from the spec tokens that *do* cross: `--color-background-*`, `--color-text-primary` / `-secondary` / `-tertiary`, `--color-border-*`, and `--color-ring-*`. Do **not** key light/dark styling off `--color-text-accent` — it is injected at load but never updates on a toggle.
 </Aside>
 
 ## Token reference
 
-The platform injects the following tokens into every iframe. Most ext-apps spec tokens also cross the protocol boundary and refresh live on theme changes; the `--nb-*` extensions — plus `--color-text-accent`, `--font-text-base-size`, and `--font-text-base-line-height` — are injected at load only and do not refresh on a toggle.
+The platform injects the following tokens into every iframe. Those in the ext-apps spec's variable enum also cross the protocol boundary and refresh live on theme changes; everything else — the `--nb-*` extensions, and NimbleBrain's own additions to spec-shaped families — is injected at load only. See the caveat above.
 
 ### Colors (ext-apps spec)
 
-| Token | Light | Dark | Use for |
-|-------|-------|------|---------|
-| `--color-background-primary` | `#faf9f7` | `#0a0a09` | Page background |
-| `--color-background-secondary` | `#ffffff` | `#141413` | Card / panel backgrounds |
-| `--color-background-tertiary` | `#f3f2ef` | `#1c1c1b` | Subtle / nested backgrounds |
-| `--color-text-primary` | `#171717` | `#e5e5e5` | Body text |
-| `--color-text-secondary` | `#737373` | `#a3a3a3` | Captions, metadata, placeholders |
-| `--color-text-tertiary` | `#a3a3a3` | `#737373` | De-emphasized text |
-| `--color-text-accent` | `#0055FF` | `#3b8eff` | Links, primary buttons, AI accents (load-only — does not refresh on toggle) |
-| `--color-border-primary` | `#e5e5e5` | `#262626` | Borders, dividers |
-| `--color-border-secondary` | `#e5e5e5` | `#262626` | Secondary borders |
-| `--color-ring-primary` | `#0055FF` | `#3b8eff` | Focus rings |
+| Token | Use for |
+|-------|---------|
+| `--color-background-primary` | Page background |
+| `--color-background-secondary` | Card / panel backgrounds |
+| `--color-background-tertiary` | Subtle / nested backgrounds |
+| `--color-text-primary` | Body text |
+| `--color-text-secondary` | Captions, metadata, placeholders |
+| `--color-text-tertiary` | De-emphasized text |
+| `--color-text-accent` | Links, primary buttons, AI accents (load-only — does not refresh on toggle) |
+| `--color-border-primary` | Borders, dividers |
+| `--color-border-secondary` | Secondary borders |
+| `--color-ring-primary` | Focus rings |
 
 ### Typography (ext-apps spec)
 
-| Token | Value | Use for |
-|-------|-------|---------|
-| `--font-sans` | `'Satoshi', system-ui, sans-serif` | Body font |
-| `--font-mono` | `'JetBrains Mono Variable', ui-monospace, SFMono-Regular, monospace` | Code / monospace font |
-| `--font-weight-normal` | `400` | Normal weight |
-| `--font-weight-medium` | `500` | Medium weight |
-| `--font-weight-semibold` | `600` | Semibold weight |
-| `--font-weight-bold` | `700` | Bold weight |
-| `--font-text-xs-size` / `-line-height` | `0.75rem` / `1rem` | Extra-small body text |
-| `--font-text-sm-size` / `-line-height` | `0.875rem` / `1.25rem` | Small body text |
-| `--font-text-base-size` / `-line-height` | `1rem` / `1.5rem` | Base body text |
-| `--font-text-lg-size` / `-line-height` | `1.125rem` / `1.75rem` | Large body text |
-| `--font-heading-sm-size` / `-line-height` | `1.25rem` / `1.75rem` | Small heading |
-| `--font-heading-md-size` / `-line-height` | `1.5rem` / `2rem` | Medium heading |
-| `--font-heading-lg-size` / `-line-height` | `2rem` / `2.5rem` | Large heading |
+| Token | Use for |
+|-------|---------|
+| `--font-sans` | Body font |
+| `--font-mono` | Code / monospace font |
+| `--font-weight-normal` | Normal weight |
+| `--font-weight-medium` | Medium weight |
+| `--font-weight-semibold` | Semibold weight |
+| `--font-weight-bold` | Bold weight |
+| `--font-text-3xs-size` / `-line-height` | Dense metadata, badge text |
+| `--font-text-2xs-size` / `-line-height` | Captions, timestamps |
+| `--font-text-xs-size` / `-line-height` | Extra-small body text |
+| `--font-text-sm-size` / `-line-height` | Small body text |
+| `--font-text-base-size` / `-line-height` | Base body text |
+| `--font-text-lg-size` / `-line-height` | Large body text |
+| `--font-heading-sm-size` / `-line-height` | Small heading |
+| `--font-heading-md-size` / `-line-height` | Medium heading |
+| `--font-heading-lg-size` / `-line-height` | Large heading |
 
 ### Layout (ext-apps spec)
 
-| Token | Value | Use for |
-|-------|-------|---------|
-| `--border-radius-xs` | `0.25rem` | Tight corners |
-| `--border-radius-sm` | `0.5rem` | Small corners |
-| `--border-radius-md` | `0.75rem` | Default corners |
-| `--border-radius-lg` | `1rem` | Large corners |
-| `--border-radius-xl` | `1.5rem` | Extra-large corners |
-| `--border-width-regular` | `1px` | Standard border width |
+| Token | Use for |
+|-------|---------|
+| `--border-radius-xs` | Tight corners |
+| `--border-radius-sm` | Small corners |
+| `--border-radius-md` | Default corners |
+| `--border-radius-lg` | Large corners |
+| `--border-radius-xl` | Extra-large corners |
+| `--border-width-regular` | Standard border width |
 
 ### Effects (ext-apps spec)
 
-| Token | Light | Dark | Use for |
-|-------|-------|------|---------|
-| `--shadow-hairline` | `0 0 0 1px rgba(0,0,0,0.06)` | `0 0 0 1px rgba(255,255,255,0.06)` | Hairline outline |
-| `--shadow-sm` | `0 1px 2px rgba(0,0,0,0.05)` | `0 1px 2px rgba(0,0,0,0.3)` | Small elevation |
-| `--shadow-md` | `0 4px 6px -1px rgba(0,0,0,0.1)` | `0 4px 6px -1px rgba(0,0,0,0.4)` | Medium elevation |
-| `--shadow-lg` | `0 10px 15px -3px rgba(0,0,0,0.1)` | `0 10px 15px -3px rgba(0,0,0,0.4)` | Large elevation |
+| Token | Use for |
+|-------|---------|
+| `--shadow-hairline` | Hairline outline |
+| `--shadow-sm` | Small elevation |
+| `--shadow-md` | Medium elevation |
+| `--shadow-lg` | Large elevation |
+
+<Aside type="tip">
+These tables list the tokens, not their values. The values are whatever the host injects for the active theme and change with it — read them at runtime from the iframe's `:root` rather than hard-coding them, and let the fallback in your own `var()` carry the standalone case.
+</Aside>
 
 ### NimbleBrain extensions (`--nb-*`)
 
 These have no ext-apps spec equivalent. They are injected into the iframe's `<style>` block at load but do **not** cross the protocol boundary, so they will not refresh on a live theme toggle (see the caveat above).
 
-| Token | Light | Dark | Use for |
-|-------|-------|------|---------|
-| `--nb-color-accent-foreground` | `#ffffff` | `#0a0a09` | Text on accent backgrounds |
-| `--nb-color-danger` | `#dc2626` | `#f87171` | Errors, destructive actions |
-| `--nb-color-success` | `#059669` | `#34d399` | Success indicators |
-| `--nb-color-warning` | `#f59e0b` | `#fbbf24` | Warning indicators |
-| `--nb-color-warm` | `#d4620a` | `#f59542` | Warm accent |
-| `--nb-color-warm-light` | `#fef5ee` | `#2a1a08` | Warm accent background |
-| `--nb-color-processing` | `#7c3aed` | `#a78bfa` | In-progress / processing state |
-| `--nb-color-processing-light` | `#f3eeff` | `#1a0f2e` | Processing background |
-| `--nb-color-info-light` | `#eef4ff` | `#0c1a33` | Info background |
-| `--nb-font-heading` | `'Erode', Georgia, serif` | same | Heading font |
+| Token | Use for |
+|-------|---------|
+| `--nb-color-accent-foreground` | Text on accent backgrounds |
+| `--nb-color-danger` | Errors, destructive actions |
+| `--nb-color-success` | Success indicators |
+| `--nb-color-warning` | Warning indicators |
+| `--nb-color-processing` | In-progress / processing state |
+| `--nb-color-processing-light` | Processing background |
+| `--nb-color-info-light` | Info background |
+| `--nb-font-heading` | Heading font |
 
 <Aside type="note">
-Custom fonts are injected — `--font-sans` resolves to Satoshi and `--nb-font-heading` to Erode, the platform's actual brand typefaces. The fallback stacks (`system-ui`, `Georgia`) only take over when the app runs outside the platform.
+The host injects font *names*, not font *files*. A `srcdoc` iframe is its own document and inherits no `@font-face` from the shell, so unless your app loads the face itself the value resolves to the fallback stack. Design against the fallback and treat the brand face as an enhancement — or load it in your own bundle.
 </Aside>
 
 ## Opt-in, not opt-out
@@ -199,7 +205,7 @@ Common issues:
 
 | Symptom | Cause | Fix |
 |---------|-------|-----|
-| Background is white, not warm paper | Your CSS uses `background: #fff` instead of `var(--color-background-primary, #fff)` | Replace hardcoded colors with `var()` references |
+| Background is not what I expected | Your CSS uses `background: #fff` instead of `var(--color-background-primary, #fff)` | Replace hardcoded colors with `var()` references |
 | Tokens exist but aren't applied | CSS specificity — a more specific selector overrides the token | Check that your selector isn't more specific than the `:root` declaration |
 | Dark mode doesn't toggle | Missing `ui/notifications/host-context-changed` handler | Add the `applyTokens` message listener (see code above) |
 | An `--nb-*` color doesn't flip on toggle | `--nb-*` tokens are injected at load only, not in the live payload | Drive light/dark-sensitive surfaces from the spec `--color-*` tokens |

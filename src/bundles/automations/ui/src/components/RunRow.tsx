@@ -36,7 +36,7 @@ export function RunRow({ run, showName }: { run: AutomationRun; showName?: boole
                 style={{
                   fontWeight: 500,
                   marginBottom: 4,
-                  color: "var(--color-text-primary, #171717)",
+                  color: "var(--color-text-primary, #09090b)",
                 }}
               >
                 Result
@@ -56,7 +56,7 @@ export function RunRow({ run, showName }: { run: AutomationRun; showName?: boole
                 style={{
                   fontWeight: 500,
                   marginBottom: 4,
-                  color: "var(--nb-color-danger, #dc2626)",
+                  color: "var(--nb-color-danger, #c02a24)",
                 }}
               >
                 Error
@@ -64,8 +64,8 @@ export function RunRow({ run, showName }: { run: AutomationRun; showName?: boole
               <pre
                 style={{
                   borderColor:
-                    "color-mix(in srgb, var(--nb-color-danger, #dc2626) 25%, transparent)",
-                  color: "var(--nb-color-danger, #dc2626)",
+                    "color-mix(in srgb, var(--nb-color-danger, #c02a24) 25%, transparent)",
+                  color: "var(--nb-color-danger, #c02a24)",
                 }}
               >
                 {run.error}

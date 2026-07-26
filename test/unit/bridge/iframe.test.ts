@@ -40,16 +40,16 @@ describe("injectThemeStyles", () => {
 
   test("light mode contains light token values", () => {
     const result = injectThemeStyles(FULL_HTML, "light");
-    expect(result).toContain("--color-background-primary: #faf9f7;");
+    expect(result).toContain("--color-background-primary: #ffffff;");
     expect(result).toContain("--color-text-accent: #0055FF;");
-    expect(result).toContain("--color-text-primary: #171717;");
+    expect(result).toContain("--color-text-primary: #09090b;");
   });
 
   test("dark mode contains dark token values", () => {
     const result = injectThemeStyles(FULL_HTML, "dark");
-    expect(result).toContain("--color-background-primary: #0a0a09;");
-    expect(result).toContain("--color-text-accent: #3b8eff;");
-    expect(result).toContain("--color-text-primary: #e5e5e5;");
+    expect(result).toContain("--color-background-primary: #000000;");
+    expect(result).toContain("--color-text-accent: #4d90ff;");
+    expect(result).toContain("--color-text-primary: #fafafa;");
   });
 
   test("preserves original HTML content", () => {
