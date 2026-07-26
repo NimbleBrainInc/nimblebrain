@@ -2231,9 +2231,9 @@ export class Runtime {
     // the failure is silent: no tool would be recognised as belonging to the
     // focused app, so the app-aware briefing would quietly describe an app whose
     // tools it thinks are absent.
-    const focusedNamespaced = appContext.serverName;
+    const focusedServerName = appContext.serverName;
 
-    return { focusedApp, focusedAppWsId: appWsId, appState, focusedNamespaced };
+    return { focusedApp, focusedAppWsId: appWsId, appState, focusedNamespaced: focusedServerName };
   }
 
   /** Append the turn's user message (content + optional userId + file metadata) to the store. */
@@ -2963,6 +2963,35 @@ export class Runtime {
    * resolves an MCP-backed personal connector, not a kernel source. Returns
    * `undefined` when the user has no such connector installed.
    */
+  /**
+   * The identity-connector record store, built once.
+   *
+   * It is stateless over `workDir`, so constructing one per call was pure waste
+   * on the dispatch path. Hoisted — but deliberately NOT paired with a memo of
+   * the installed names.
+   *
+   * A process-lifetime memo would fail OPEN on the case this exists to catch: a
+   * user installs a personal `gmail` after the memo warms, the collision check
+   * misses, and the call dispatches to the workspace's account — the precise
+   * silent misroute the check was added to prevent. Correctness on a credential
+   * boundary outranks one small local read, and the read is a few hundred
+   * microseconds against a tool dispatch that is orders of magnitude slower. If
+   * this ever shows up in a profile, scope the memo to a REQUEST (it cannot go
+   * stale inside one) rather than to the process.
+   */
+  private _identityConnectorsStore: IdentityConnectorStore | undefined;
+
+  /**
+   * Lazy, NOT a field initializer: class fields run before the constructor body,
+   * so calling `getWorkDir()` there reads config that is not set yet.
+   */
+  private get _identityConnectors(): IdentityConnectorStore {
+    this._identityConnectorsStore ??= new IdentityConnectorStore({
+      workDir: this.getWorkDir(),
+    });
+    return this._identityConnectorsStore;
+  }
+
   async getIdentityConnectorSource(userId: string, name: string): Promise<ToolSource | undefined> {
     return this.lifecycle.getIdentityConnectorSource(userId, name, this.getWorkDir());
   }
@@ -2977,9 +3006,7 @@ export class Runtime {
    * about to refuse would be both slow and wrong.
    */
   async hasIdentityConnector(userId: string, name: string): Promise<boolean> {
-    return (
-      (await new IdentityConnectorStore({ workDir: this.getWorkDir() }).get(userId, name)) !== null
-    );
+    return (await this._identityConnectors.get(userId, name)) !== null;
   }
 
   /**

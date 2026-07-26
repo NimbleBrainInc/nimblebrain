@@ -123,33 +123,45 @@ export class UnknownToolSource extends Error {
 }
 
 /**
- * Thrown when a BARE workspace-source name is also the name of a personal
- * connector the caller has installed.
+ * Thrown when a BARE name addresses a personal connector the caller has
+ * installed. Personal connectors carry the reserved marker; a bare name does not
+ * reach them.
  *
- * The two are different credential sets. Before the personal marker existed a
- * bare `gmail__send` meant the caller's own connector; it now means the
- * workspace's shared one. A transcript written before the change still holds the
- * old form, and a model resuming that conversation can echo it — so the same
- * string means two things depending on when it was minted, and dispatching
- * either way silently spends the wrong account's credentials.
+ * Covers both shapes of the same mistake, because both come from the same place
+ * — a name minted before the marker existed, replayed from a transcript or a
+ * cached `tools/list`:
  *
- * The runtime refuses rather than picking. That keeps the property the legacy
- * fallback was removed to get ("never choose between two credential sets") while
- * making the failure loud and actionable instead of a silent misroute. The
- * caller re-lists and uses the marked form.
+ *   - **ambiguous** — the workspace ALSO has a source of that name. The two are
+ *     different credential sets, and dispatching either way silently spends the
+ *     wrong account's. The runtime refuses rather than picking, which is the
+ *     property removing the legacy fallback was meant to buy.
+ *   - **renamed** — the workspace has no such source. Not ambiguous, just stale;
+ *     without this it surfaces as `UnknownToolSource` pointing at the workspace,
+ *     which never mentions the connector the caller actually wants.
+ *
+ * Either way the remedy is identical and is in the message: re-list, call the
+ * marked form. Both map to one `data.reason` so a client branches once.
  */
-export class AmbiguousPersonalConnectorName extends Error {
+export class PersonalConnectorRequiresMarker extends Error {
   readonly toolName: string;
   readonly sourceName: string;
+  readonly wireName: string;
+  /** True when a workspace source of the same name also exists. */
+  readonly ambiguous: boolean;
 
-  constructor(toolName: string, sourceName: string, wireName: string) {
+  constructor(toolName: string, sourceName: string, wireName: string, ambiguous: boolean) {
     super(
-      `[orchestrator] "${toolName}" is ambiguous: "${sourceName}" is both a source in this workspace and one of your personal connectors. ` +
-        `Re-list tools — your personal connector is now "${wireName}__…".`,
+      ambiguous
+        ? `[orchestrator] "${toolName}" is ambiguous: "${sourceName}" is both a source in this workspace and one of your personal connectors. ` +
+            `Re-list tools — your personal connector is now "${wireName}__…".`
+        : `[orchestrator] "${toolName}" names one of your personal connectors, which is not reachable by its bare name. ` +
+            `Re-list tools — it is now "${wireName}__…".`,
     );
-    this.name = "AmbiguousPersonalConnectorName";
+    this.name = "PersonalConnectorRequiresMarker";
     this.toolName = toolName;
     this.sourceName = sourceName;
+    this.wireName = wireName;
+    this.ambiguous = ambiguous;
   }
 }
 
@@ -430,7 +442,28 @@ export async function routeToolCall(opts: {
   // Step 5 — resolve the inner tool's `<source>__` prefix to a dispatch handle
   // in the bound workspace's registry (self-healing a transiently absent source
   // once before failing).
-  const source = await resolveWorkspaceSource(wsId, toolName, runtime);
+  let source: ToolSource;
+  try {
+    source = await resolveWorkspaceSource(wsId, toolName, runtime);
+  } catch (err) {
+    // No such source here. If the caller has a personal connector of that name,
+    // the bare form is a stale pre-marker name and `UnknownToolSource` — which
+    // names the WORKSPACE — would send them looking in the wrong place. Raise
+    // the re-list guidance instead. Raise, not route: routing it back to the
+    // connector is the fallback that was deliberately removed.
+    if (
+      err instanceof UnknownToolSource &&
+      (await runtime.hasIdentityConnector?.(identityId, sourceName)) === true
+    ) {
+      throw new PersonalConnectorRequiresMarker(
+        toolName,
+        sourceName,
+        personalConnectorWireName(sourceName),
+        false,
+      );
+    }
+    throw err;
+  }
 
   // The name resolved in this workspace. If it ALSO names one of the caller's
   // personal connectors, the two are different accounts under one string and the
@@ -438,10 +471,11 @@ export async function routeToolCall(opts: {
   // after the workspace lookup succeeds, and against the install record rather
   // than a started source, so the common case costs one small read.
   if ((await runtime.hasIdentityConnector?.(identityId, sourceName)) === true) {
-    throw new AmbiguousPersonalConnectorName(
+    throw new PersonalConnectorRequiresMarker(
       toolName,
       sourceName,
       personalConnectorWireName(sourceName),
+      true,
     );
   }
 

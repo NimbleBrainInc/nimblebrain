@@ -22,7 +22,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import type { ToolResult } from "../../../src/engine/types.ts";
 import { IdentityContext } from "../../../src/identity/context.ts";
 import {
-  AmbiguousPersonalConnectorName,
+  PersonalConnectorRequiresMarker,
   ConnectorGrantDenied,
   type OrchestratorRuntime,
   routeToolCall,
@@ -756,7 +756,7 @@ describe("routeToolCall — a name that means two credential sets is refused", (
         workspaceId: SHARED_WS,
         runtime: runtimeWithBoth(true),
       }),
-    ).rejects.toBeInstanceOf(AmbiguousPersonalConnectorName);
+    ).rejects.toBeInstanceOf(PersonalConnectorRequiresMarker);
   });
 
   test("the refusal names the marked form so the caller can act on it", async () => {

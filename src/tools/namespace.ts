@@ -45,10 +45,11 @@ import { WORKSPACE_ID_RE } from "../workspace/workspace-store.ts";
  *
  * Two doors, distinguished by presence of a workspace prefix:
  *
- *   - **workspace** — `ws_<id>-<toolName>`. A workspace-*replicated* tool:
- *     the same app installed in two workspaces is two distinct tools, each
- *     carrying its workspace. Dispatched against `WorkspaceContext(wsId)`,
- *     authorized by membership.
+ *   - **workspace** — `ws_<id>-<toolName>`. The RETIRED form. It is still parsed,
+ *     so a caller presenting one can be told what happened, but the orchestrator
+ *     rejects it rather than dispatching. It dates from a design where a session
+ *     could reach several workspaces and the name had to say which; a session now
+ *     reaches exactly one, which it takes from the session itself.
  *   - **identity** — bare `<toolName>` (no prefix). A *singleton* of the
  *     authenticated identity: platform system tools (`nb__*`) and the
  *     user's own entity apps (`conversations__*`, later `files__*` /
@@ -277,7 +278,7 @@ export function splitInnerToolName(innerName: string): {
  *
  * A source name has the same `ws_<id>-<rest>` shape as a tool name, but its
  * `<rest>` is a bare source name (`synapse-collateral`) with no `__<tool>`
- * suffix — tool names are namespaced (`ws_<id>-...`) while registry *sources*
+ * suffix — a wire tool name is `<source>__<tool>` while registry *sources*
  * keep their bare name. So a namespaced tool
  * `ws_<id>-synapse-collateral__preview` surfaces an `appName`/`server` of
  * `ws_<id>-synapse-collateral`, which the REST resource/tool endpoints must

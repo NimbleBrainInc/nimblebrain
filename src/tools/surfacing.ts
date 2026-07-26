@@ -180,15 +180,13 @@ function matchToolPattern(toolName: string, pattern: string): boolean {
   // `bareToolName` is best-effort by contract: it returns malformed input
   // unchanged rather than throwing, so an arbitrary pattern string is safe.
   const normalizedPattern = bareToolName(pattern);
-  const inner = bareToolName(toolName);
-  const candidates = inner === toolName ? [toolName] : [toolName, inner];
-  pattern = normalizedPattern;
-  if (!pattern.includes("*")) {
-    return candidates.some((c) => c === pattern);
+  const normalizedName = bareToolName(toolName);
+  if (!normalizedPattern.includes("*")) {
+    return normalizedName === normalizedPattern;
   }
   // Convert glob to regex: "leadgen__*" → /^leadgen__.*$/
   const regex = new RegExp(
-    `^${pattern.replace(/[.+^${}()|[\]\\]/g, "\\$&").replace(/\*/g, ".*")}$`,
+    `^${normalizedPattern.replace(/[.+^${}()|[\]\\]/g, "\\$&").replace(/\*/g, ".*")}$`,
   );
-  return candidates.some((c) => regex.test(c));
+  return regex.test(normalizedName);
 }
