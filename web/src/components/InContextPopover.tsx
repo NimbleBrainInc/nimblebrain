@@ -9,13 +9,7 @@ import type {
 } from "../_generated/platform-schemas/compose";
 import { callTool } from "../api/client";
 import { useWorkspaceContext } from "../context/WorkspaceContext";
-import {
-  SOURCE_LABEL,
-  skillsSlice,
-  sourceDetail,
-  windowSources,
-  windowTokens,
-} from "../lib/context-sources";
+import { SOURCE_LABEL, skillsSlice, sourceDetail, windowSources } from "../lib/context-sources";
 import {
   formatTokenCount,
   groupByMechanism,
@@ -139,7 +133,7 @@ export function InContextPopover({ conversationId }: { conversationId: string | 
             {conversationId && !loading && !error && hasRun && digest && (
               <>
                 <SectionHeader title="Context window" note="this turn" />
-                <BudgetSection sources={digest.sources} />
+                <BudgetSection sources={digest.sources} windowTokens={digest.windowTokens} />
 
                 <SectionHeader title="Skills" note={`${digest.skills.length} this turn`} />
                 {digest.skills.length === 0 ? (
@@ -203,11 +197,16 @@ export function InContextPopover({ conversationId }: { conversationId: string | 
  * all four as peers over a summed total (what this did) both overstated the
  * window and taught that skills sit outside the prompt.
  */
-function BudgetSection({ sources }: { sources: AssembledContextSource[] }) {
+function BudgetSection({
+  sources,
+  windowTokens,
+}: {
+  sources: AssembledContextSource[];
+  windowTokens: number;
+}) {
   const rows = windowSources(sources);
   const skills = skillsSlice(sources);
-  const total = windowTokens(sources);
-  const max = Math.max(total, 1);
+  const max = Math.max(windowTokens, 1);
   const width = (tokens: number) => `${Math.round((tokens / max) * 100)}%`;
   return (
     <div className="px-3.5 py-1.5 space-y-1">
@@ -235,7 +234,9 @@ function BudgetSection({ sources }: { sources: AssembledContextSource[] }) {
       })}
       <div className="flex items-baseline justify-between border-t pt-1 mt-0.5">
         <span className="text-xs font-medium">In the window</span>
-        <span className="text-2xs font-medium tabular-nums">{formatTokenCount(total)} tok</span>
+        <span className="text-2xs font-medium tabular-nums">
+          {formatTokenCount(windowTokens)} tok
+        </span>
       </div>
     </div>
   );

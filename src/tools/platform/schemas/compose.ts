@@ -57,7 +57,16 @@ export type ComposeAssembledContextInput = Static<typeof ComposeAssembledContext
  * annotates how much of `system_prompt` the composed skill bodies account
  * for. The window is `system_prompt + tool_descriptions + history`, which is
  * why `ComposeAssembledContextOutput.totalTokens` (the recorded sum of all
- * four) is larger than what a reader would call the context size.
+ * four) is larger than what a reader would call the context size. Read
+ * `windowTokens` instead of re-deriving it.
+ *
+ * "Inside `system_prompt`" is true of the prompt as measured, which is what
+ * these rows describe: telemetry is built from the assembled prompt, before
+ * `resolveEngineSystem` evicts the volatile head onto the last user message.
+ * So a trigger-matched skill counts here but ships to the model on the message
+ * stream. The arithmetic is unaffected (history tokens are counted pre-evict,
+ * so nothing is billed twice); only the row it is attributed to is coarser
+ * than the wire.
  */
 export interface AssembledContextSource {
   kind: string;
@@ -99,12 +108,19 @@ export interface ComposeAssembledContextOutput {
   sources: AssembledContextSource[];
   excluded: AssembledContextSource[];
   /**
-   * The recorded sum of every row in `sources`, which counts the composed skill
-   * bodies twice (once in `system_prompt`, once in `skills`). It is preserved
-   * as recorded; for the size of the context window, sum the disjoint kinds —
-   * see the invariant on `AssembledContextSource`.
+   * The recorded sum of every row in `sources`, preserved as recorded. It
+   * counts the composed skill bodies twice — once inside `system_prompt`, once
+   * in the `skills` annotation — so it is NOT the size of the context window.
+   * Read `windowTokens` for that.
    */
   totalTokens: number;
+  /**
+   * How much of the context window the turn occupied: the sum of the rows that
+   * name a region, with the annotation rows left out. The number a reader means
+   * by "how big was this turn". Computed here rather than by each caller, so
+   * one answer reaches every consumer of this tool.
+   */
+  windowTokens: number;
   skills: AssembledContextSkill[];
   /** Present only when the run recorded them (not emitted on current runs). */
   modelMaxContext?: number;

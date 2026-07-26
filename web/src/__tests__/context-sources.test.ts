@@ -5,13 +5,14 @@
 // regions: `skills` measures a slice of `system_prompt`. Getting it wrong
 // overstates the context window, which is what both surfaces used to do.
 //
-// The server tier carries its own copy (it can't share code with the browser);
-// `test/unit/tools/platform/context-window-parity.test.ts` pins the two
-// together. This file covers the web side's own behavior.
+// The window *total* is not computed here — it ships as `windowTokens` on the
+// digest, so there is one answer and no cross-tier copy to keep in sync. What
+// remains on this side is layout: which rows render as regions, and in what
+// order.
 // ---------------------------------------------------------------------------
 
 import { describe, expect, test } from "bun:test";
-import { skillsSlice, sourceDetail, windowSources, windowTokens } from "../lib/context-sources";
+import { skillsSlice, sourceDetail, windowSources } from "../lib/context-sources";
 
 const RECORDED = [
   { kind: "system_prompt", tokens: 9600 },
@@ -19,25 +20,6 @@ const RECORDED = [
   { kind: "skills", count: 7, tokens: 6200 },
   { kind: "history", messages: 1, compacted: false, tokens: 1 },
 ];
-
-describe("windowTokens", () => {
-  test("excludes the skills annotation from the window", () => {
-    expect(windowTokens(RECORDED)).toBe(14501);
-    // What the recorded `totalTokens` would be: the skill bodies twice.
-    expect(RECORDED.reduce((sum, s) => sum + s.tokens, 0)).toBe(20701);
-  });
-
-  // Stated as "everything except the annotations", so a region added later
-  // counts without anyone editing this file. An allowlist would drop it and
-  // quietly understate the window again.
-  test("counts a source kind it has never heard of", () => {
-    expect(windowTokens([...RECORDED, { kind: "memory_seed", tokens: 310 }])).toBe(14811);
-  });
-
-  test("is zero for an empty digest", () => {
-    expect(windowTokens([])).toBe(0);
-  });
-});
 
 describe("windowSources", () => {
   test("drops the annotation row and orders the rest canonically", () => {

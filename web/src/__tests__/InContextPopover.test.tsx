@@ -40,6 +40,7 @@ const DIGEST = {
   excluded: [],
   // As recorded: the sum of all four rows, so the 2100 is in here twice.
   totalTokens: 41691,
+  windowTokens: 39591,
   skills: [
     {
       id: "/workspaces/tenant-a/skills/drafting-craft.md",
@@ -68,6 +69,7 @@ const EMPTY_DIGEST = {
   sources: [],
   excluded: [],
   totalTokens: 0,
+  windowTokens: 0,
   skills: [],
 };
 

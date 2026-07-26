@@ -9,7 +9,7 @@ import type {
   TracedLayerView,
 } from "../_generated/platform-schemas/compose";
 import { callTool } from "../api/client";
-import { orderedSources, SOURCE_LABEL, sourceDetail, windowTokens } from "../lib/context-sources";
+import { orderedSources, SOURCE_LABEL, sourceDetail } from "../lib/context-sources";
 import { formatTokenCount, nameFromSkillId } from "../lib/skill-display";
 import { parseToolResponse } from "../lib/tool-response";
 
@@ -160,7 +160,7 @@ export function ContextInspectorPage() {
           {digest && digest.runId !== null && (
             <div className="text-xs text-muted-foreground tabular-nums">
               <span className="font-medium text-foreground">
-                {formatTokenCount(windowTokens(digest.sources))}
+                {formatTokenCount(digest.windowTokens)}
               </span>{" "}
               tokens in the window · latest turn
             </div>
@@ -186,7 +186,12 @@ export function ContextInspectorPage() {
 
       {digest && digest.runId !== null && (
         <div className="flex-1 min-h-0 overflow-y-auto">
-          <BudgetBar sources={digest.sources} active={bucket} onSelect={selectBucket} />
+          <BudgetBar
+            sources={digest.sources}
+            windowTokens={digest.windowTokens}
+            active={bucket}
+            onSelect={selectBucket}
+          />
           <LayerAccordion
             layers={visibleLayers}
             open={open}
@@ -209,10 +214,12 @@ const DRILLABLE = new Set(["system_prompt", "skills"]);
 
 function BudgetBar({
   sources,
+  windowTokens,
   active,
   onSelect,
 }: {
   sources: AssembledContextSource[];
+  windowTokens: number;
   active: string | null;
   onSelect: (bucket: string | null) => void;
 }) {
@@ -220,7 +227,7 @@ function BudgetBar({
   // Bars are proportional to the window, not to the recorded `totalTokens` —
   // that sum counts the skill bodies twice (they are composed into the system
   // prompt), so scaling to it shrank every bar by the size of the overlap.
-  const max = Math.max(windowTokens(sources), 1);
+  const max = Math.max(windowTokens, 1);
   return (
     <div
       className="sticky top-0 z-10 bg-background px-6 py-4 border-b border-border"

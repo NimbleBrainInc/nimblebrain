@@ -37,6 +37,7 @@ const DIGEST = {
   ],
   excluded: [],
   totalTokens: 42960,
+  windowTokens: 39591,
   skills: [
     {
       id: "/workspaces/tenant-a/skills/drafting-craft.md",

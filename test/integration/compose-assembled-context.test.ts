@@ -158,14 +158,14 @@ describe("compose__assembled_context — latest run", () => {
     // totalTokens is the sum of the recorded source tokens — which is NOT the
     // size of the context window: the composed skill bodies are inside
     // `system_prompt`, so the `skills` row overlaps it and the sum counts them
-    // twice. Pinned here because both web surfaces depend on the distinction.
+    // twice. `windowTokens` is the honest figure, and it ships on the typed
+    // payload so every consumer gets it without re-deriving.
     const sum = d.sources.reduce((acc, s) => acc + s.tokens, 0);
     expect(d.totalTokens).toBe(sum);
-    const window = d.sources
-      .filter((s) => s.kind !== "skills")
-      .reduce((acc, s) => acc + s.tokens, 0);
-    expect(d.totalTokens).toBe(window + byKind.get("skills")!.tokens);
-    expect(window).toBeLessThan(d.totalTokens);
+    expect(d.windowTokens).toBe(sum - byKind.get("skills")!.tokens);
+    expect(d.windowTokens).toBeLessThan(d.totalTokens);
+    // The human-readable summary and the typed payload agree.
+    expect(res.text).toContain(`${d.windowTokens} tok in the window`);
 
     // The planted skill shows up with provenance, named by its manifest.
     const skill = d.skills.find((s) => s.id === skillPath);

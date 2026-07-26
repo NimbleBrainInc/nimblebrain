@@ -438,6 +438,7 @@ async function readAssembledContext(
     sources: [],
     excluded: [],
     totalTokens: 0,
+    windowTokens: 0,
     skills: [],
   };
   if (!assembled) return empty;
@@ -445,13 +446,15 @@ async function readAssembledContext(
   // The paired `skills.loaded` shares the run id (both emitted at run start).
   const skillsLoaded = findSkillsLoaded(events, assembled.runId);
 
+  const sources = assembled.sources.map(toAssembledSource);
   return {
     conversationId: convId,
     runId: assembled.runId,
     ts: assembled.ts,
-    sources: assembled.sources.map(toAssembledSource),
+    sources,
     excluded: assembled.excluded.map(toAssembledSource),
     totalTokens: assembled.totalTokens,
+    windowTokens: contextWindowTokens(sources),
     skills: (skillsLoaded?.skills ?? []).map(toAssembledSkill),
     ...(typeof assembled.modelMaxContext === "number"
       ? { modelMaxContext: assembled.modelMaxContext }
@@ -514,15 +517,16 @@ function toAssembledSkill(s: SkillsLoadedEvent["skills"][number]): AssembledCont
  * `AssembledContextSource`.
  *
  * Stated as the annotation set so a source kind added later counts toward the
- * window by default; an allowlist of regions would silently drop it. Mirrored
- * in `web/src/lib/context-sources.ts` — the web tier can't import from here,
- * and `test/unit/tools/platform/context-window-parity.test.ts` pins the two
- * against each other.
+ * window by default; an allowlist of regions would silently drop it.
+ *
+ * This is the only place the arithmetic runs. The answer ships as
+ * `windowTokens` on the response, so no consumer re-derives it — a second copy
+ * on the web tier would be a number that can disagree with the tool's own.
  */
 const ANNOTATION_KINDS = new Set(["skills"]);
 
-/** Tokens actually occupying the context window, without the annotation rows. Exported for the parity test. */
-export function contextWindowTokens(sources: AssembledContextSource[]): number {
+/** Tokens actually occupying the context window, without the annotation rows. */
+function contextWindowTokens(sources: AssembledContextSource[]): number {
   return sources.filter((s) => !ANNOTATION_KINDS.has(s.kind)).reduce((sum, s) => sum + s.tokens, 0);
 }
 
@@ -541,7 +545,7 @@ function formatAssembledSummary(d: ComposeAssembledContextOutput): string {
   });
   const hasSkillsRow = d.sources.some((s) => s.kind === "skills");
   return [
-    `Assembled context for run ${d.runId} (${contextWindowTokens(d.sources)} tok in the window):`,
+    `Assembled context for run ${d.runId} (${d.windowTokens} tok in the window):`,
     ...sourceLines,
     ...(hasSkillsRow
       ? [
