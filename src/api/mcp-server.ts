@@ -983,7 +983,6 @@ export function mapRouteToolError(err: unknown): never {
       toolName: err.toolName,
       sourceName: err.sourceName,
       wireName: err.wireName,
-      ambiguous: err.ambiguous,
     });
   }
   if (err instanceof ConnectorGrantDenied) {

@@ -12,7 +12,7 @@
  *
  *   - `UnknownNamespacedToolName` → `invalid_tool_name`        + `{ name, parseReason }`
  *   - `PersonalConnectorRequiresMarker` → `personal_connector_requires_marker`
- *     + `{ toolName, sourceName, wireName, ambiguous }`
+ *     + `{ toolName, sourceName, wireName }`
  *   - `WorkspaceAccessDenied`     → `workspace_access_denied`  + `{ identityId, wsId }`
  *     (the live base of `WorkspaceToolUnavailable`)
  *   - `UnknownToolSource`         → `unknown_tool_source`      + `{ wsId, sourceName, toolName }`
@@ -118,7 +118,6 @@ export function mapOrchestratorErrorToToolResult(err: unknown, namespacedName: s
         toolName: err.toolName,
         sourceName: err.sourceName,
         wireName: err.wireName,
-        ambiguous: err.ambiguous,
       },
     };
   }

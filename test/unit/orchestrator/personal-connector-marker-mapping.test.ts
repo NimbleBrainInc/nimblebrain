@@ -17,50 +17,39 @@ import { mapRouteToolError } from "../../../src/api/mcp-server.ts";
 import { mapOrchestratorErrorToToolResult } from "../../../src/orchestrator/error-mapping.ts";
 import { PersonalConnectorRequiresMarker } from "../../../src/orchestrator/index.ts";
 
-const ambiguous = () =>
-  new PersonalConnectorRequiresMarker("gmail__send", "gmail", "my_gmail", true);
-const renamed = () =>
-  new PersonalConnectorRequiresMarker("granola__list", "granola", "my_granola", false);
+const stale = () => new PersonalConnectorRequiresMarker("granola__list", "granola", "my_granola");
 
 describe("chat door — mapOrchestratorErrorToToolResult", () => {
   test("returns a recoverable isError result, never rethrows", () => {
     // The rethrow path is what fails the whole run.
-    expect(() => mapOrchestratorErrorToToolResult(ambiguous(), "gmail__send")).not.toThrow();
-    const r = mapOrchestratorErrorToToolResult(ambiguous(), "gmail__send");
+    expect(() => mapOrchestratorErrorToToolResult(stale(), "granola__list")).not.toThrow();
+    const r = mapOrchestratorErrorToToolResult(stale(), "granola__list");
     expect(r.isError).toBe(true);
   });
 
   test("carries the structured discriminator and the marked form", () => {
-    const r = mapOrchestratorErrorToToolResult(ambiguous(), "gmail__send");
+    const r = mapOrchestratorErrorToToolResult(stale(), "granola__list");
     expect(r.structuredContent).toMatchObject({
       reason: "personal_connector_requires_marker",
-      sourceName: "gmail",
-      wireName: "my_gmail",
-      ambiguous: true,
+      sourceName: "granola",
+      wireName: "my_granola",
     });
   });
 
   test("the model-visible text names the form to call instead", () => {
     // The whole point of returning rather than throwing: the model reads this
     // and can re-call correctly inside the same run.
-    const text = JSON.stringify(mapOrchestratorErrorToToolResult(renamed(), "granola__list"));
+    const text = JSON.stringify(mapOrchestratorErrorToToolResult(stale(), "granola__list"));
     expect(text).toContain("my_granola");
   });
 
-  test("the renamed (non-ambiguous) case maps the same way", () => {
-    const r = mapOrchestratorErrorToToolResult(renamed(), "granola__list");
-    expect(r.structuredContent).toMatchObject({
-      reason: "personal_connector_requires_marker",
-      ambiguous: false,
-    });
-  });
 });
 
 describe("/mcp door — mapRouteToolError", () => {
   test("throws a structured McpError, not a raw Error", () => {
     let thrown: unknown = null;
     try {
-      mapRouteToolError(ambiguous());
+      mapRouteToolError(stale());
     } catch (err) {
       thrown = err;
     }
@@ -74,10 +63,10 @@ describe("/mcp door — mapRouteToolError", () => {
 
   test("both doors report the SAME discriminator", () => {
     // AGENTS.md claims chat and /mcp map to identical `data.reason` values.
-    const chat = mapOrchestratorErrorToToolResult(ambiguous(), "gmail__send");
+    const chat = mapOrchestratorErrorToToolResult(stale(), "granola__list");
     let mcpReason: string | undefined;
     try {
-      mapRouteToolError(ambiguous());
+      mapRouteToolError(stale());
     } catch (err) {
       mcpReason = (err as { data?: { reason?: string } }).data?.reason;
     }

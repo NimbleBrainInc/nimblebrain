@@ -8,9 +8,9 @@
  *   2. A bare `<source>__<tool>` — the ONLY wire form, on both doors — routes by
  *      its source segment: a kernel identity source or the reserved personal
  *      marker goes through the IDENTITY door; anything else is the session's own
- *      workspace. A name that is BOTH a workspace source and one of the caller's
- *      personal connectors is refused (`AmbiguousPersonalConnectorName`) rather
- *      than resolved toward either account.
+ *      workspace. A bare name that fails to resolve there but matches one of the
+ *      caller's installed connectors raises `PersonalConnectorRequiresMarker`,
+ *      which names the marked form to call instead.
  *   3. A `ws_<id>-<tool>` is the RETIRED form. It is rejected, not routed — so a
  *      workspace other than the session's cannot be NAMED, and cross-workspace
  *      reach is unexpressible rather than denied after the fact. A session with
@@ -127,41 +127,34 @@ export class UnknownToolSource extends Error {
  * installed. Personal connectors carry the reserved marker; a bare name does not
  * reach them.
  *
- * Covers both shapes of the same mistake, because both come from the same place
- * — a name minted before the marker existed, replayed from a transcript or a
- * cached `tools/list`:
+ * Raised only where the name is UNAMBIGUOUSLY stale: it failed to resolve in the
+ * bound workspace, and the caller has a connector of that name installed. That
+ * combination can only be a pre-marker name replayed from a transcript or a
+ * cached `tools/list`.
  *
- *   - **ambiguous** — the workspace ALSO has a source of that name. The two are
- *     different credential sets, and dispatching either way silently spends the
- *     wrong account's. The runtime refuses rather than picking, which is the
- *     property removing the legacy fallback was meant to buy.
- *   - **renamed** — the workspace has no such source. Not ambiguous, just stale;
- *     without this it surfaces as `UnknownToolSource` pointing at the workspace,
- *     which never mentions the connector the caller actually wants.
+ * It is NOT raised when the name resolves in the workspace. There the bare form
+ * is the workspace source by contract — `listToolsForWorkspace` emits the two
+ * apart — and refusing it would break the freshly-listed name for every caller
+ * who also holds a same-named connector.
  *
- * Either way the remedy is identical and is in the message: re-list, call the
- * marked form. Both map to one `data.reason` so a client branches once.
+ * Without this the stale case surfaces as `UnknownToolSource` naming the
+ * WORKSPACE, which never mentions the connector the caller actually wants. The
+ * remedy is in the message: re-list, call the marked form.
  */
 export class PersonalConnectorRequiresMarker extends Error {
   readonly toolName: string;
   readonly sourceName: string;
   readonly wireName: string;
-  /** True when a workspace source of the same name also exists. */
-  readonly ambiguous: boolean;
 
-  constructor(toolName: string, sourceName: string, wireName: string, ambiguous: boolean) {
+  constructor(toolName: string, sourceName: string, wireName: string) {
     super(
-      ambiguous
-        ? `[orchestrator] "${toolName}" is ambiguous: "${sourceName}" is both a source in this workspace and one of your personal connectors. ` +
-            `Re-list tools — your personal connector is now "${wireName}__…".`
-        : `[orchestrator] "${toolName}" names one of your personal connectors, which is not reachable by its bare name. ` +
-            `Re-list tools — it is now "${wireName}__…".`,
+      `[orchestrator] "${toolName}" names one of your personal connectors, which is not reachable by its bare name. ` +
+        `Re-list tools — it is now "${wireName}__…".`,
     );
     this.name = "PersonalConnectorRequiresMarker";
     this.toolName = toolName;
     this.sourceName = sourceName;
     this.wireName = wireName;
-    this.ambiguous = ambiguous;
   }
 }
 
@@ -459,26 +452,27 @@ export async function routeToolCall(opts: {
         toolName,
         sourceName,
         personalConnectorWireName(sourceName),
-        false,
       );
     }
     throw err;
   }
 
-  // The name resolved in this workspace. If it ALSO names one of the caller's
-  // personal connectors, the two are different accounts under one string and the
-  // runtime must not choose — see `AmbiguousPersonalConnectorName`. Checked only
-  // after the workspace lookup succeeds, and against the install record rather
-  // than a started source, so the common case costs one small read.
-  if ((await runtime.hasIdentityConnector?.(identityId, sourceName)) === true) {
-    throw new PersonalConnectorRequiresMarker(
-      toolName,
-      sourceName,
-      personalConnectorWireName(sourceName),
-      true,
-    );
-  }
-
+  // NO ambiguity check here, deliberately.
+  //
+  // A bare name that resolves in the bound workspace IS the workspace source —
+  // that is the contract the marker establishes, and `listToolsForWorkspace`
+  // already emits the two apart: the workspace source as `gmail__send`, the
+  // caller's connector as `my_gmail__send`. A freshly-listed name is never
+  // ambiguous, so re-checking here refused the very name the tool list had just
+  // handed out, permanently, for anyone holding a same-named personal connector
+  // — the default whenever a service is connected both ways, since both install
+  // paths slugify the same catalog id.
+  //
+  // The stale-transcript case that motivated the check is real but
+  // indistinguishable from a correct fresh call, so guarding it costs an outage
+  // of the common path to catch a rare misroute. It is handled where it IS
+  // distinguishable: a name that FAILS workspace resolution and matches an
+  // installed connector (the catch above) is unambiguously a pre-marker name.
   return { kind: "workspace", context, toolName, source };
 }
 

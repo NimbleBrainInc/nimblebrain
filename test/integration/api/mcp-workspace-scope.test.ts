@@ -140,9 +140,10 @@ async function createMcpClient(
 // ── Tests ───────────────────────────────────────────────────────────
 
 describe("MCP workspace scoping", () => {
-  // Stage 2: every tool name is namespaced as `ws_<id>/<source>__<tool>`.
-  // Per-workspace registry filtering still happens, but the namespacing
-  // is what tells the orchestrator which workspace's registry to consult.
+  // Every tool name is bare `<source>__<tool>`. Per-workspace registry filtering
+  // is what scopes the surface; the workspace itself comes from the request's
+  // validated `X-Workspace-Id`, never from the name — so a name cannot address
+  // any workspace other than the session's own.
   it("ListTools returns only workspace + protected tools (not denied)", async () => {
     const client = await createMcpClient();
     try {

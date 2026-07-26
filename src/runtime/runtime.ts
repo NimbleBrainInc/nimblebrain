@@ -1259,14 +1259,14 @@ export class Runtime {
     // workspace-scoped (same for every member of that workspace).
     const { apps, liveOverlays } = await this.buildWorkspaceBriefing(narratedWsId);
 
-    // Build focusedApp/appState/focusedNamespaced when the request is scoped to a
+    // Build focusedApp/appState/focusedServerName when the request is scoped to a
     // specific app (§7 app-aware chat), resolved in the SAME single workspace the
     // session's tools are bound to (`convWsId`).
     let focusedApp: FocusedAppInfo | undefined;
     let appState: AppStateInfo | undefined;
-    let focusedNamespaced: string | undefined;
+    let focusedServerName: string | undefined;
     if (request.appContext) {
-      ({ focusedApp, appState, focusedNamespaced } = await this.resolveFocusedApp(
+      ({ focusedApp, appState, focusedServerName } = await this.resolveFocusedApp(
         request.appContext,
         convWsId,
       ));
@@ -1309,12 +1309,12 @@ export class Runtime {
           ...(t.annotations !== undefined ? { annotations: t.annotations } : {}),
         })),
     ];
-    // `focusedNamespaced` (the WORKSPACE-PREFIXED source name that
+    // `focusedServerName` (the WORKSPACE-PREFIXED source name that
     // `surfaceTools.focusedServerName` matches) is computed in `resolveFocusedApp`.
     const { direct: tools, proxied } = surfaceTools(
       allTools,
       skill,
-      buildSurfaceOptions(focusedNamespaced, request.allowedTools),
+      buildSurfaceOptions(focusedServerName, request.allowedTools),
     );
 
     // Per-user preferences from the authenticated identity. We already
@@ -2170,7 +2170,7 @@ export class Runtime {
     focusedApp?: FocusedAppInfo;
     focusedAppWsId?: string;
     appState?: AppStateInfo;
-    focusedNamespaced?: string;
+    focusedServerName?: string;
   }> {
     // The app is resolved in the SAME single workspace the session's tools are
     // bound to (`convWsId`), never a scan across the identity's other workspaces.
@@ -2233,7 +2233,7 @@ export class Runtime {
     // tools it thinks are absent.
     const focusedServerName = appContext.serverName;
 
-    return { focusedApp, focusedAppWsId: appWsId, appState, focusedNamespaced: focusedServerName };
+    return { focusedApp, focusedAppWsId: appWsId, appState, focusedServerName };
   }
 
   /** Append the turn's user message (content + optional userId + file metadata) to the store. */

@@ -729,58 +729,81 @@ describe("routeToolCall — bare names are workspace-scoped, with no legacy fall
   });
 });
 
-describe("routeToolCall — a name that means two credential sets is refused", () => {
-  // Before the marker, a personal connector's wire name was a bare
-  // `<connector>__<tool>`. That form is in every transcript written before this
-  // change, and a model resuming one can echo it. Post-change the same string
-  // names the WORKSPACE's source — a different account.
+describe("routeToolCall — a bare name that resolves in the workspace IS the workspace source", () => {
+  // The marker disambiguates at EMISSION: `listToolsForWorkspace` hands out the
+  // workspace source as `gmail__send` and the caller's connector as
+  // `my_gmail__send`. A freshly-listed bare name is therefore never ambiguous,
+  // and dispatch must not second-guess it.
   //
-  // The runtime refuses rather than picking. Removing the legacy fallback got us
-  // "never choose between two credential sets"; without this check the choice was
-  // still being made, just implicitly and always toward the workspace.
-  function runtimeWithBoth(hasConnector: boolean): StubRuntime {
+  // An earlier revision re-checked for a same-named personal connector here and
+  // refused. That made the workspace source permanently unreachable for anyone
+  // who had connected the same service both ways — the default case, since both
+  // install paths slugify the same catalog id — and re-listing returned the same
+  // refused name, so there was no way out.
+  function runtimeWith(hasConnector: boolean, wsSources: string[]): StubRuntime {
     const base = makeStubRuntime({
-      registries: new Map([[SHARED_WS, [makeStubSource("gmail")]]]),
+      registries: new Map([[SHARED_WS, wsSources.map(makeStubSource)]]),
       identityConnectors: new Map([["gmail", makeStubSource("gmail")]]),
-      permissionStore: new PermissionStore({ workDir } as never),
+      permissionStore: new PermissionStore(workDir),
       workDir,
     });
     return { ...base, hasIdentityConnector: async () => hasConnector } as StubRuntime;
   }
 
-  test("a bare name that is BOTH a workspace source and a personal connector is refused", async () => {
-    await expect(
-      routeToolCall({
-        identityId: USER_ID,
-        namespacedName: "gmail__send",
-        workspaceId: SHARED_WS,
-        runtime: runtimeWithBoth(true),
-      }),
-    ).rejects.toBeInstanceOf(PersonalConnectorRequiresMarker);
+  test("dispatches even when the caller holds a same-named personal connector", async () => {
+    const routed = await routeToolCall({
+      identityId: USER_ID,
+      namespacedName: "gmail__send",
+      workspaceId: SHARED_WS,
+      runtime: runtimeWith(true, ["gmail"]),
+    });
+    expect(routed.kind).toBe("workspace");
   });
 
-  test("the refusal names the marked form so the caller can act on it", async () => {
+  test("the marked form still reaches the connector, so both remain callable", async () => {
+    const runtime = runtimeWith(true, ["gmail"]);
+    // Reaching a personal connector inside a workspace requires a grant — the
+    // wall is unchanged by any of this.
+    await runtime.getPermissionStore?.()?.grantConnector(USER_ID, "gmail", SHARED_WS);
+
+    const routed = await routeToolCall({
+      identityId: USER_ID,
+      namespacedName: "my_gmail__send",
+      workspaceId: SHARED_WS,
+      runtime,
+    });
+    expect(routed.kind).toBe("identity");
+    expect(routed.toolName).toBe("gmail__send");
+  });
+
+  test("a workspace MISS with an installed connector raises the re-list guidance", async () => {
+    // The one shape that is unambiguously stale: it did not resolve in the
+    // workspace, and the caller has a connector of that name. Without this it
+    // surfaces as UnknownToolSource naming the workspace, which never mentions
+    // the connector the caller wants.
     let thrown: unknown = null;
     try {
       await routeToolCall({
         identityId: USER_ID,
         namespacedName: "gmail__send",
         workspaceId: SHARED_WS,
-        runtime: runtimeWithBoth(true),
+        runtime: runtimeWith(true, ["crm"]),
       });
     } catch (err) {
       thrown = err;
     }
+    expect(thrown).toBeInstanceOf(PersonalConnectorRequiresMarker);
     expect((thrown as Error).message).toContain("my_gmail");
   });
 
-  test("no personal connector of that name → the workspace source dispatches normally", async () => {
-    const routed = await routeToolCall({
-      identityId: USER_ID,
-      namespacedName: "gmail__send",
-      workspaceId: SHARED_WS,
-      runtime: runtimeWithBoth(false),
-    });
-    expect(routed.kind).toBe("workspace");
+  test("a workspace MISS with no such connector is a plain UnknownToolSource", async () => {
+    await expect(
+      routeToolCall({
+        identityId: USER_ID,
+        namespacedName: "gmail__send",
+        workspaceId: SHARED_WS,
+        runtime: runtimeWith(false, ["crm"]),
+      }),
+    ).rejects.toBeInstanceOf(UnknownToolSource);
   });
 });
