@@ -80,9 +80,12 @@ body {
 .dot {
   display: inline-block; width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0;
 }
-/* Status dots take the injected status tokens. They are not decorative — the
-   dot is the only thing stating a run's outcome in the rail — so each needs 3:1
-   against the ground per WCAG 1.4.11. Dots render on two grounds, the page
+/* Status dots take the injected status tokens. They are not decorative: the
+   rail dots do carry a title naming the status, but a title on a span is
+   unavailable on touch, invisible without hover and unreliable through screen
+   readers, so it does not discharge the requirement — and the detail header's
+   dot has none at all. Each therefore needs 3:1 against the ground per WCAG
+   1.4.11. Dots render on two grounds, the page
    (--color-background-primary) and the card (--color-background-secondary);
    across both, in both modes, the weakest of these tokens is 5.07:1
    (text-tertiary on card, dark). The hand-picked hues they replace cleared 3:1
@@ -97,6 +100,12 @@ body {
    add a hue to the shell palette for one bundle, backoff carries its own
    backoff-badge with the retry count in words, so the states stay
    distinguishable without colour being the thing that separates them.
+   That pairing holds on the card and in the status section, which gate the dot
+   and the badge on the same condition, and the rail never renders backoff at
+   all. It does NOT hold on the detail header, which renders the dot alone —
+   there a backing-off and a timed-out automation now look alike. 1.4.1 is still
+   satisfied on that view because the status section below carries the badge,
+   but the header dot on its own is weaker than it was.
 
    NOTE: this file is a JS template literal, so a backtick here terminates the
    stylesheet. Comments in it cannot use markdown code spans. */
@@ -111,8 +120,11 @@ body {
    2.92:1 dark — under the 3:1 the dot needs, at every frame of the cycle. A
    token that clears the bar does not survive being faded to 60% of it.
    So the peak here is the token itself and the trough is 0.7, whose worst
-   ground is 3.34:1. Same shape as the shell's own live dot in the
-   conversations bundle: full opacity at the extremes, motion in the middle. */
+   ground is 3.34:1, asserted in web/src/theme/__tests__/contrast.test.ts.
+   The conversations bundle's live dot has the same silhouette — full opacity at
+   the extremes, motion in the middle — but it is not precedent for the value:
+   it troughs at 0.4, which is 1.93:1 on the same token. Borrow the shape from
+   it, not the number. */
 @keyframes dot-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.7; transform: scale(0.85); } }
 .dot-running { background: var(--color-text-accent); animation: dot-pulse 1.5s ease-in-out infinite; }
 .dot-skipped { background: var(--color-text-tertiary); }

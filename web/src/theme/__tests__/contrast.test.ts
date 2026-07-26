@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { AA_TEXT, contrastRatio, over } from "../contrast.ts";
 import { colors, extOnlyColors, type Mode, type Pair, pick } from "../palette.ts";
 
 /**
@@ -32,44 +33,6 @@ import { colors, extOnlyColors, type Mode, type Pair, pick } from "../palette.ts
  * to check is a denylist by omission, and this file has been bitten by that
  * twice.
  */
-
-const AA_TEXT = 4.5;
-
-/**
- * Composite an alpha-over-ground colour the way `hover:bg-primary/N` resolves.
- *
- * Tailwind's `/N` becomes `color-mix(… N%, transparent)`, so the rendered fill
- * is the token blended with whatever is behind it. Every pair below is opaque
- * token-on-token, which means alpha states are invisible to this guard unless
- * they are composited here first — and that is where the product's most-clicked
- * control lives.
- */
-function over(fg: string, bg: string, pct: number): string {
-  const ch = (h: string, i: number) => Number.parseInt(h.slice(i, i + 2), 16);
-  const [a, b] = [fg.replace("#", ""), bg.replace("#", "")];
-  const mix = (i: number) => Math.round((ch(a, i) * pct + ch(b, i) * (100 - pct)) / 100);
-  return `#${[0, 2, 4].map((i) => mix(i).toString(16).padStart(2, "0")).join("")}`;
-}
-
-function srgbToLinear(channel: number): number {
-  const s = channel / 255;
-  return s <= 0.04045 ? s / 12.92 : ((s + 0.055) / 1.055) ** 2.4;
-}
-
-function relativeLuminance(hex: string): number {
-  const h = hex.replace("#", "");
-  const r = Number.parseInt(h.slice(0, 2), 16);
-  const g = Number.parseInt(h.slice(2, 4), 16);
-  const b = Number.parseInt(h.slice(4, 6), 16);
-  return 0.2126 * srgbToLinear(r) + 0.7152 * srgbToLinear(g) + 0.0722 * srgbToLinear(b);
-}
-
-function contrastRatio(fg: string, bg: string): number {
-  const a = relativeLuminance(fg);
-  const b = relativeLuminance(bg);
-  const [hi, lo] = a > b ? [a, b] : [b, a];
-  return (hi + 0.05) / (lo + 0.05);
-}
 
 type TokenName = keyof typeof colors | keyof typeof extOnlyColors;
 
