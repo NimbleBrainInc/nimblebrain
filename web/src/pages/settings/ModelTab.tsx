@@ -324,8 +324,8 @@ export function ModelTab() {
                 <option value="max">Max</option>
               </Select>
               <p className="text-xs text-muted-foreground">
-                How hard to think. Carries to every provider — models that meter thinking in tokens
-                get a budget sized from it.
+                How hard to think. Applies to the default policy too, not only to Enabled. Carries
+                to every provider — models that meter thinking in tokens get a budget sized from it.
               </p>
             </div>
           )}

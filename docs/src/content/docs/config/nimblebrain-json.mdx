@@ -132,8 +132,8 @@ and the runtime translates.
 | Anthropic — Opus 4.7/4.8, Sonnet 5, Opus 5 | `thinking: {type: "adaptive"}` + `output_config.effort`, the tier verbatim |
 | Anthropic — up to Sonnet 4.6 | `thinking: {type: "enabled"}` + a `budgetTokens` sized from the tier |
 | OpenAI, and Nebius-hosted open-weight models (DeepSeek, Kimi, …) | `reasoningEffort`. Its usable range stops at `high`, so `xhigh` and `max` both land there |
-| Google Gemini 3 and later | `thinkingConfig.thinkingLevel`. Also tops out at `high` |
-| Google Gemini 2.5 | `thinkingConfig.thinkingBudget`, sized from the tier |
+| Google Gemini 3 | `thinkingConfig.thinkingLevel`, tops out at `high` |
+| Google Gemini 2.5 | `thinkingConfig.thinkingBudget`, sized from the tier and held inside the model's documented range |
 
 The translation only runs one way. A depth is converted into a token budget
 where a provider needs one, because the model's output ceiling is a reasonable
@@ -147,11 +147,25 @@ depth. Where a provider meters thinking in tokens, the budget is used and is
 capped to leave room for the answer; everywhere else the depth applies as
 usual. Setting one never voids the other.
 
-`off` is not universally enforceable. Anthropic's adaptive-only models have no
-"do not reason" state; on OpenAI the option is omitted rather than sending
-`reasoningEffort: "none"`, which is documented as GPT-5.1-only and an error
-elsewhere, so those models fall back to their own default. Gemini 2.5 takes a
-zero budget and Gemini 3 takes `minimal`.
+Google support is **per model, not per generation**, and is read from a
+hand-maintained table — `gemini-3-pro-preview` accepts only `low` and `high`
+where `gemini-3.6-flash` accepts all four, and `gemini-2.5-pro` cannot stop
+thinking where the flash models can. A requested depth a model doesn't offer
+steps down to the nearest one it does. **A Gemini model with no verified entry
+receives no thinking options at all** and runs at its own default, because
+guessing the dialect is how a stock install starts returning 400s.
+
+`off` is not universally enforceable, and where it isn't, nothing is sent
+rather than a flag that would be rejected or ignored:
+
+- **Anthropic** — the AI SDK only serializes `thinking` for `enabled` and
+  `adaptive`, so a `disabled` flag never reaches the wire for any model
+  ([#738](https://github.com/NimbleBrainInc/nimblebrain/issues/738)). `off`
+  works where it works because Anthropic's own default is not to think.
+- **OpenAI** — `reasoningEffort: "none"` is documented as GPT-5.1-only and an
+  error elsewhere. On o-series models reasoning can't be turned off at all.
+- **Gemini** — 2.5 Flash takes a zero budget, Gemini 3 takes `minimal`, and
+  2.5 Pro cannot disable thinking.
 
 ## models
 

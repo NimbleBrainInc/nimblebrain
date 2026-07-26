@@ -245,3 +245,53 @@ export function supportsEnabledThinking(modelString: string): boolean {
   if (provider !== "anthropic") return true;
   return !ADAPTIVE_ONLY_THINKING_MODELS.has(modelId);
 }
+
+/** Gemini 3's thinking-level ladder, ascending. */
+export const GOOGLE_THINKING_LEVELS = ["minimal", "low", "medium", "high"] as const;
+export type GoogleThinkingLevel = (typeof GOOGLE_THINKING_LEVELS)[number];
+
+/**
+ * How a Google model accepts a reasoning instruction. The two dialects do not
+ * overlap: Gemini 3 takes `thinkingConfig.thinkingLevel`, and the 2.5 line
+ * takes `thinkingConfig.thinkingBudget` and rejects a level outright.
+ */
+export type GoogleThinkingSupport =
+  | { dialect: "level"; levels: ReadonlySet<GoogleThinkingLevel> }
+  | { dialect: "budget"; min: number; max: number; canDisable: boolean };
+
+/**
+ * Per-model reasoning support for Google, hand-maintained from Google's
+ * thinking docs. models.dev doesn't carry it, and — unlike Anthropic's split —
+ * it is not even uniform within a generation: `gemini-3-pro-preview` accepts
+ * only `low` and `high`, while `gemini-3.6-flash` accepts all four, and
+ * `gemini-2.5-pro` cannot disable thinking at all where the flash models can.
+ *
+ * Deriving this from the model id was tried and is wrong twice over: a version
+ * prefix can't express a per-model level set, and it silently misses the
+ * `-latest` aliases and the non-`gemini-` reasoning entries (deep-research-*).
+ *
+ * A model absent from this table gets NO thinking options — exactly what every
+ * Google model got before this wiring existed. Guessing a dialect is how a
+ * stock install starts returning 400s.
+ */
+const GOOGLE_THINKING: Record<string, GoogleThinkingSupport> = {
+  "gemini-3.6-flash": { dialect: "level", levels: new Set(GOOGLE_THINKING_LEVELS) },
+  "gemini-3.5-flash": { dialect: "level", levels: new Set(GOOGLE_THINKING_LEVELS) },
+  "gemini-3.5-flash-lite": { dialect: "level", levels: new Set(GOOGLE_THINKING_LEVELS) },
+  "gemini-3-flash-preview": { dialect: "level", levels: new Set(GOOGLE_THINKING_LEVELS) },
+  "gemini-3.1-pro-preview": { dialect: "level", levels: new Set(["low", "medium", "high"]) },
+  "gemini-3-pro-preview": { dialect: "level", levels: new Set(["low", "high"]) },
+  "gemini-3.1-flash-lite-image": { dialect: "level", levels: new Set(["minimal", "high"]) },
+  "gemini-2.5-pro": { dialect: "budget", min: 128, max: 32768, canDisable: false },
+  "gemini-2.5-flash": { dialect: "budget", min: 0, max: 24576, canDisable: true },
+  "gemini-2.5-flash-lite": { dialect: "budget", min: 512, max: 24576, canDisable: true },
+};
+
+/**
+ * How this Google model accepts a reasoning instruction, or `undefined` when we
+ * have no verified answer — in which case the engine sends nothing.
+ */
+export function googleThinkingSupport(modelString: string): GoogleThinkingSupport | undefined {
+  const { modelId } = parseModelString(modelString);
+  return GOOGLE_THINKING[modelId];
+}

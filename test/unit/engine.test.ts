@@ -1708,6 +1708,7 @@ describe("AgentEngine", () => {
       async function providerOptionsFor(
         model: string,
         thinking: EngineConfig["thinking"],
+        maxOutputTokens?: number,
       ): Promise<Record<string, Record<string, unknown>>> {
         const captured: Array<Record<string, unknown>> = [];
         const m: LanguageModelV3 = { ...createEchoModel({ responses: [{ text: "ok" }] }) };
@@ -1721,7 +1722,7 @@ describe("AgentEngine", () => {
           new StaticToolRouter([], () => ({ content: textContent(""), isError: false })),
           new NoopEventSink(),
         ).run(
-          { ...defaultConfig, model, thinking },
+          { ...defaultConfig, model, thinking, ...(maxOutputTokens ? { maxOutputTokens } : {}) },
           "",
           [{ role: "user", content: [{ type: "text", text: "x" }] }],
           [],
@@ -1782,7 +1783,7 @@ describe("AgentEngine", () => {
       });
 
       it("sizes a thinkingBudget from the tier for Gemini 2.5", async () => {
-        const po = await providerOptionsFor("google:gemini-2.5-pro", {
+        const po = await providerOptionsFor("google:gemini-2.5-flash", {
           mode: "effort",
           effort: "low",
         });
@@ -1800,19 +1801,26 @@ describe("AgentEngine", () => {
       });
 
       it("clamps Gemini 3's level to high, its ladder's top", async () => {
-        const po = await providerOptionsFor("google:gemini-3-pro-preview", {
+        const po = await providerOptionsFor("google:gemini-3.6-flash", {
           mode: "effort",
           effort: "max",
         });
         expect(po.google?.thinkingConfig).toEqual({ thinkingLevel: "high" });
       });
 
-      it("expresses off in each provider's own vocabulary", async () => {
-        // OpenAI omits rather than sending reasoningEffort:"none", which the
-        // adapter documents as GPT-5.1-only and an error on anything else.
+      it("expresses off only where the model actually has an off state", async () => {
+        // Anthropic: the adapter never serializes `{type:"disabled"}`, so
+        // emitting it was decoration. OpenAI: `reasoningEffort:"none"` is
+        // documented as GPT-5.1-only and an error elsewhere. Gemini 2.5 Pro
+        // cannot disable thinking at all. In each case saying nothing leaves
+        // the model at its own default, which is the honest outcome.
+        expect(await providerOptionsFor("anthropic:claude-sonnet-4-6", { mode: "off" })).toEqual({});
         expect(await providerOptionsFor("openai:gpt-5.1", { mode: "off" })).toEqual({});
+        expect(await providerOptionsFor("google:gemini-2.5-pro", { mode: "off" })).toEqual({});
+
+        // Where an off state exists, it is used.
         expect(
-          (await providerOptionsFor("google:gemini-2.5-pro", { mode: "off" })).google
+          (await providerOptionsFor("google:gemini-2.5-flash", { mode: "off" })).google
             ?.thinkingConfig,
         ).toEqual({ thinkingBudget: 0 });
         expect(
@@ -1821,8 +1829,43 @@ describe("AgentEngine", () => {
         ).toEqual({ thinkingLevel: "minimal" });
       });
 
+      it("picks a level the specific Gemini 3 model accepts", async () => {
+        // gemini-3-pro-preview supports only low and high — and `medium` is the
+        // platform default, so an ungated mapping 400s on a stock install.
+        expect(
+          (await providerOptionsFor("google:gemini-3-pro-preview", {
+            mode: "effort",
+            effort: "medium",
+          })).google?.thinkingConfig,
+        ).toEqual({ thinkingLevel: "low" });
+        // A model that does offer medium keeps it.
+        expect(
+          (await providerOptionsFor("google:gemini-3.6-flash", { mode: "effort", effort: "medium" }))
+            .google?.thinkingConfig,
+        ).toEqual({ thinkingLevel: "medium" });
+      });
+
+      it("holds a Gemini budget inside the model's own documented range", async () => {
+        // 2.5 Pro caps at 32768. Sized off a 65536 catalog ceiling the derived
+        // budget would be 61440 — accepted by the adapter, rejected by Google.
+        const po = await providerOptionsFor(
+          "google:gemini-2.5-pro",
+          { mode: "enabled", budgetTokens: 60_000, effort: "max" },
+          65_536,
+        );
+        expect(po.google?.thinkingConfig).toEqual({ thinkingBudget: 32_768 });
+      });
+
+      it("sends nothing to a Google model with no verified support entry", async () => {
+        // The `-latest` aliases and the non-gemini- reasoning entries have no
+        // table row; a version-prefix guess routed them to the wrong dialect.
+        expect(
+          await providerOptionsFor("google:gemini-flash-latest", { mode: "effort", effort: "high" }),
+        ).toEqual({});
+      });
+
       it("uses Gemini 2.5's -1 sentinel for adaptive", async () => {
-        const po = await providerOptionsFor("google:gemini-2.5-pro", { mode: "adaptive" });
+        const po = await providerOptionsFor("google:gemini-2.5-flash", { mode: "adaptive" });
         expect(po.google?.thinkingConfig).toEqual({ thinkingBudget: -1 });
       });
 
@@ -1844,7 +1887,7 @@ describe("AgentEngine", () => {
         // 50000 against a 16384 ceiling is rejected outright by Anthropic, and
         // a budget just under the ceiling starves the visible answer — the
         // empty-turn incident MIN_VISIBLE_OUTPUT_TOKENS exists to prevent.
-        for (const model of ["anthropic:claude-sonnet-4-6", "google:gemini-2.5-pro"]) {
+        for (const model of ["anthropic:claude-sonnet-4-6"]) {
           const po = await providerOptionsFor(model, {
             mode: "enabled",
             budgetTokens: 50_000,

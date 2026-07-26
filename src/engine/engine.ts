@@ -10,7 +10,13 @@ import type {
 } from "@ai-sdk/provider";
 import { DEFAULT_MAX_DIRECT_TOOLS, MAX_ITERATIONS, MAX_LENGTH_CONTINUATIONS } from "../limits.ts";
 import { applyCachePolicy } from "../model/cache-policy.ts";
-import { getProviderFromModel, supportsEnabledThinking } from "../model/catalog.ts";
+import {
+  GOOGLE_THINKING_LEVELS,
+  type GoogleThinkingLevel,
+  getProviderFromModel,
+  googleThinkingSupport,
+  supportsEnabledThinking,
+} from "../model/catalog.ts";
 import { normalizeForReplay } from "../model/inbound-fit.ts";
 import { callModel, type StreamResult } from "../model/stream.ts";
 import { log } from "../observability/log.ts";
@@ -105,18 +111,38 @@ function effortToBudget(effort: ThinkingEffort, maxOutputTokens: number): number
  * turning a depth preference into a failed request.
  */
 function toOpenAIEffort(effort: ThinkingEffort): "low" | "medium" | "high" {
+  // Nebius's own API enumerates the wider set, but it shares this adapter and
+  // this key, and `high` is the strongest tier both accept — so both clamp.
   return effort === "xhigh" || effort === "max" ? "high" : effort;
 }
 
-/** Gemini 3 and later take a named thinking level; 2.5 and earlier take a token budget. */
-function googleTakesThinkingLevel(modelId: string): boolean {
-  const major = /^gemini-(\d+)/.exec(modelId);
-  return major ? Number(major[1]) >= 3 : false;
+/** Map the platform ladder onto Google's level names; Google's tops out at `high`. */
+function toGoogleLevel(effort: ThinkingEffort): GoogleThinkingLevel {
+  return effort === "xhigh" || effort === "max" ? "high" : effort;
 }
 
-/** Map the platform ladder onto Gemini 3's level enum, which tops out at `high`. */
-function toGoogleThinkingLevel(effort: ThinkingEffort): "low" | "medium" | "high" {
-  return effort === "xhigh" || effort === "max" ? "high" : effort;
+/**
+ * Pick the closest level a given model actually accepts.
+ *
+ * Support is per-model, not per-generation, so the requested tier may simply
+ * not exist on this model — `gemini-3-pro-preview` has no `medium`, which is
+ * the platform default. Step down first (never silently think harder than
+ * asked), then up if nothing below is offered.
+ */
+function nearestSupportedLevel(
+  wanted: GoogleThinkingLevel,
+  levels: ReadonlySet<GoogleThinkingLevel>,
+): GoogleThinkingLevel | undefined {
+  const i = GOOGLE_THINKING_LEVELS.indexOf(wanted);
+  for (let d = i; d >= 0; d--) {
+    const l = GOOGLE_THINKING_LEVELS[d];
+    if (l && levels.has(l)) return l;
+  }
+  for (let u = i + 1; u < GOOGLE_THINKING_LEVELS.length; u++) {
+    const l = GOOGLE_THINKING_LEVELS[u];
+    if (l && levels.has(l)) return l;
+  }
+  return undefined;
 }
 
 /**
@@ -136,37 +162,27 @@ function buildAnthropicThinkingOptions(
 
   switch (thinking.mode) {
     case "off":
-      // Effort-shaped models have no "do not reason" state, and the SDK
-      // validates `type: "disabled"` then never serializes it — so this is
-      // accepted and silently ignored there, and the model reasons anyway.
-      // Sent regardless because the budget-shaped models do honor it.
-      return { anthropic: { thinking: { type: "disabled" } } };
+      // Nothing to send. The adapter only serializes `thinking` when the type
+      // is `enabled` or `adaptive`, so `{type:"disabled"}` never reaches the
+      // wire for any model — emitting it just looked like enforcement.
+      // Anthropic's own default is not to think, which is what actually makes
+      // `off` work on the models where it works.
+      return {};
     case "adaptive":
       return { anthropic: { thinking: { type: "adaptive" } } };
     case "effort":
-      return effortShaped
-        ? { anthropic: { thinking: { type: "adaptive" }, effort: thinking.effort } }
-        : {
-            anthropic: {
-              thinking: {
-                type: "enabled",
-                budgetTokens: effortToBudget(thinking.effort, maxOutputTokens),
-              },
-            },
-          };
-    case "enabled":
-      // The budget can't be metered on an effort-shaped model, but the depth
-      // the operator chose alongside it can.
-      return effortShaped
-        ? { anthropic: { thinking: { type: "adaptive" }, effort: thinking.effort } }
-        : {
-            anthropic: {
-              thinking: {
-                type: "enabled",
-                budgetTokens: clampThinkingBudget(thinking.budgetTokens, maxOutputTokens),
-              },
-            },
-          };
+    case "enabled": {
+      // Effort-shaped models take the tier either way: a token budget can't be
+      // metered there, but the depth chosen alongside it can.
+      if (effortShaped) {
+        return { anthropic: { thinking: { type: "adaptive" }, effort: thinking.effort } };
+      }
+      const budgetTokens =
+        thinking.mode === "enabled"
+          ? clampThinkingBudget(thinking.budgetTokens, maxOutputTokens)
+          : effortToBudget(thinking.effort, maxOutputTokens);
+      return { anthropic: { thinking: { type: "enabled", budgetTokens } } };
+    }
   }
 }
 
@@ -197,50 +213,46 @@ function buildOpenAIThinkingOptions(thinking: ResolvedThinking): SharedV3Provide
 /**
  * Build Google Gemini options.
  *
- * Gemini 3 introduced `thinkingLevel` and is the line the catalog is now mostly
- * made of; 2.5 meters thinking in tokens like Anthropic's older dialect. Sending
- * a budget to a level-taking model is the same class of mistake as sending
- * `thinking.type=enabled` to an adaptive-only Anthropic model.
+ * Which dialect a model speaks — and which levels or budgets it accepts — is
+ * per-model and comes from `googleThinkingSupport`. A model we have no verified
+ * entry for gets nothing, which is what every Google model got before this
+ * wiring existed; sending a guessed dialect is how a stock install starts
+ * returning 400s.
  */
 function buildGoogleThinkingOptions(
   model: string,
   thinking: ResolvedThinking,
   maxOutputTokens: number,
 ): SharedV3ProviderOptions {
-  const modelId = model.slice(model.indexOf(":") + 1);
-  if (googleTakesThinkingLevel(modelId)) {
-    switch (thinking.mode) {
-      case "off":
-        return { google: { thinkingConfig: { thinkingLevel: "minimal" } } };
-      case "adaptive":
-        return {};
-      case "effort":
-      case "enabled":
-        return {
-          google: { thinkingConfig: { thinkingLevel: toGoogleThinkingLevel(thinking.effort) } },
-        };
-    }
+  const support = googleThinkingSupport(model);
+  if (!support) return {};
+
+  if (support.dialect === "level") {
+    if (thinking.mode === "adaptive") return {};
+    const wanted = thinking.mode === "off" ? "minimal" : toGoogleLevel(thinking.effort);
+    const level = nearestSupportedLevel(wanted, support.levels);
+    return level ? { google: { thinkingConfig: { thinkingLevel: level } } } : {};
   }
+
   switch (thinking.mode) {
     case "off":
-      return { google: { thinkingConfig: { thinkingBudget: 0 } } };
+      // Some models cannot stop thinking (2.5 Pro). Sending a zero budget there
+      // is rejected, so say nothing rather than assert a state it doesn't have.
+      return support.canDisable ? { google: { thinkingConfig: { thinkingBudget: 0 } } } : {};
     case "adaptive":
-      // Gemini 2.5's "decide per call" sentinel.
       return { google: { thinkingConfig: { thinkingBudget: -1 } } };
     case "effort":
-      return {
-        google: {
-          thinkingConfig: { thinkingBudget: effortToBudget(thinking.effort, maxOutputTokens) },
-        },
-      };
-    case "enabled":
-      return {
-        google: {
-          thinkingConfig: {
-            thinkingBudget: clampThinkingBudget(thinking.budgetTokens, maxOutputTokens),
-          },
-        },
-      };
+    case "enabled": {
+      const requested =
+        thinking.mode === "enabled"
+          ? thinking.budgetTokens
+          : effortToBudget(thinking.effort, maxOutputTokens);
+      // Two ceilings apply: the model's own thinking range, and the room left
+      // in this call's output budget for a visible answer.
+      const ceiling = Math.min(support.max, maxOutputTokens - MIN_VISIBLE_OUTPUT_TOKENS);
+      const thinkingBudget = Math.max(support.min, Math.min(requested, ceiling));
+      return { google: { thinkingConfig: { thinkingBudget } } };
+    }
   }
 }
 

@@ -3,7 +3,7 @@ import { readFile, rename, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { artifactResolutionsTotal, recordLlmUsage } from "../api/metrics.ts";
 import { textContent } from "../engine/content-helpers.ts";
-import { INTERNAL_TOOL_ANNOTATION, type ToolResult } from "../engine/types.ts";
+import { INTERNAL_TOOL_ANNOTATION, type ThinkingEffort, type ToolResult } from "../engine/types.ts";
 import {
   type ArtifactListItem,
   type ArtifactListOptions,
@@ -50,7 +50,13 @@ import type { BriefingOutput } from "../services/home-types.ts";
 const MODEL_SLOTS = ["default", "fast", "reasoning"];
 
 /** Valid `thinkingEffort` values, in ascending depth. Mirrors `ThinkingEffort`. */
-const THINKING_EFFORTS: readonly string[] = ["low", "medium", "high", "xhigh", "max"];
+const THINKING_EFFORTS = [
+  "low",
+  "medium",
+  "high",
+  "xhigh",
+  "max",
+] as const satisfies readonly ThinkingEffort[];
 
 /**
  * The three thinking fields, each with its `clear*` flag and on-disk coercion.
@@ -172,7 +178,7 @@ function validateModelConfigThinking(input: Record<string, unknown>): string | n
     }
   }
   if (input.thinkingEffort !== undefined && input.thinkingEffort !== null) {
-    if (!THINKING_EFFORTS.includes(String(input.thinkingEffort))) {
+    if (!(THINKING_EFFORTS as readonly string[]).includes(String(input.thinkingEffort))) {
       return `thinkingEffort must be one of ${THINKING_EFFORTS.join(", ")}, or null (clear override).`;
     }
   }
