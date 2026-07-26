@@ -337,6 +337,10 @@ describe("Google thinking support", () => {
 			if (support?.dialect !== "budget") continue;
 			expect(support.min).toBeGreaterThanOrEqual(0);
 			expect(support.max).toBeGreaterThan(support.min);
+			// googleBudgetOptions floors at max(support.min, 1024), so a row whose
+			// ceiling is below that floor would emit a budget above the model's
+			// own documented maximum.
+			expect(support.max).toBeGreaterThanOrEqual(1024);
 		}
 	});
 });

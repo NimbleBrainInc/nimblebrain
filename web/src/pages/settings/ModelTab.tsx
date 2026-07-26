@@ -6,13 +6,13 @@ import { Label } from "../../components/ui/label";
 import { Select } from "../../components/ui/select";
 import { Section, SettingsFormPage } from "./components";
 import {
-  budgetAppliesTo,
   EFFORT_DEFAULT,
-  effortAppliesTo,
   THINKING_DEFAULT,
+  THINKING_EFFORT_OPTIONS,
   type ThinkingEffort,
   type ThinkingMode,
   thinkingPatchFor,
+  tuningAppliesTo,
 } from "./thinking-patch";
 
 interface ModelEntry {
@@ -290,7 +290,7 @@ export function ModelTab() {
             </Select>
           </div>
 
-          {effortAppliesTo(thinking) && (
+          {tuningAppliesTo(thinking) && (
             <div className="space-y-1.5">
               <Label htmlFor="thinkingEffort">Effort</Label>
               <Select
@@ -301,11 +301,11 @@ export function ModelTab() {
                 }
               >
                 <option value={EFFORT_DEFAULT}>Default (medium)</option>
-                <option value="low">Low</option>
-                <option value="medium">Medium</option>
-                <option value="high">High</option>
-                <option value="xhigh">Extra high</option>
-                <option value="max">Max</option>
+                {THINKING_EFFORT_OPTIONS.map((o) => (
+                  <option key={o.value} value={o.value}>
+                    {o.label}
+                  </option>
+                ))}
               </Select>
               <p className="text-xs text-muted-foreground">
                 How hard to think. Applies to the default policy too, not only to Enabled. Carries
@@ -314,7 +314,7 @@ export function ModelTab() {
             </div>
           )}
 
-          {budgetAppliesTo(thinking) && (
+          {tuningAppliesTo(thinking) && (
             <div className="space-y-1.5">
               <Label htmlFor="thinkingBudgetTokens">Thinking Budget Tokens</Label>
               <Input

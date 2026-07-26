@@ -15,6 +15,20 @@
 export type ThinkingMode = "off" | "adaptive" | "enabled";
 export type ThinkingEffort = "low" | "medium" | "high" | "xhigh" | "max";
 
+/**
+ * The tiers, in ascending depth, with their labels. The panel renders from
+ * this rather than hard-coding a second copy of the list: a tier added to
+ * `ThinkingEffort` above and not here would compile clean and simply never be
+ * offerable.
+ */
+export const THINKING_EFFORT_OPTIONS: ReadonlyArray<{ value: ThinkingEffort; label: string }> = [
+  { value: "low", label: "Low" },
+  { value: "medium", label: "Medium" },
+  { value: "high", label: "High" },
+  { value: "xhigh", label: "Extra high" },
+  { value: "max", label: "Max" },
+];
+
 /** Select value for "no operator override — use the platform default policy". */
 export const THINKING_DEFAULT = "" as const;
 
@@ -22,31 +36,22 @@ export const THINKING_DEFAULT = "" as const;
 export const EFFORT_DEFAULT = "__default__" as const;
 
 /**
- * Whether a chosen depth reaches the resolver in this mode.
+ * Whether the resolver reads depth and budget in this mode.
  *
- * True for the default path (which reads `configEffort` with no mode set) and
- * for `enabled`; false for `off` and `adaptive`, which state no depth by
- * definition and return before the resolver looks at one.
+ * True for the default path — which reads both with no mode set — and for
+ * `enabled`. False for `off` and `adaptive`, which return before looking at
+ * either.
  *
- * The render gate and the save patch both derive from this on purpose. They
- * disagreed once — the control was drawn only for `enabled` while the patch
- * cleared the field everywhere else — which made a depth set through the
- * config file or the admin tool disappear on the next save from this screen.
+ * One predicate for both fields, and it gates the render as well as the patch.
+ * Every arrangement of this that used more than one has produced the same bug:
+ * a field the panel doesn't draw gets cleared on save, silently deleting a
+ * value set through the config file or the admin tool. Depth hit it first
+ * (drawn only for `enabled`), then budget, once a bare budget became
+ * load-bearing in the resolver. The render gate must equal what the resolver
+ * honors, or the panel is destroying config it never showed.
  */
-export function effortAppliesTo(thinking: ThinkingMode | typeof THINKING_DEFAULT): boolean {
+export function tuningAppliesTo(thinking: ThinkingMode | typeof THINKING_DEFAULT): boolean {
   return thinking === THINKING_DEFAULT || thinking === "enabled";
-}
-
-/**
- * Whether an explicit token budget is offered in this mode.
- *
- * Narrower than {@link effortAppliesTo}: the resolver would honor a bare budget
- * on the default path too, but this panel only offers the field alongside an
- * explicit `enabled`, so anywhere else the stored value is stale and gets
- * cleared rather than re-sent.
- */
-export function budgetAppliesTo(thinking: ThinkingMode | typeof THINKING_DEFAULT): boolean {
-  return thinking === "enabled";
 }
 
 /**
@@ -63,14 +68,13 @@ export function thinkingPatchFor(
   effort: ThinkingEffort | typeof EFFORT_DEFAULT,
   budget: number | null,
 ): Record<string, unknown> {
+  const applies = tuningAppliesTo(thinking);
   const effortPatch =
-    !effortAppliesTo(thinking) || effort === EFFORT_DEFAULT
+    !applies || effort === EFFORT_DEFAULT
       ? { clearThinkingEffort: true }
       : { thinkingEffort: effort };
   const budgetPatch =
-    !budgetAppliesTo(thinking) || budget == null
-      ? { clearThinkingBudget: true }
-      : { thinkingBudgetTokens: budget };
+    !applies || budget == null ? { clearThinkingBudget: true } : { thinkingBudgetTokens: budget };
 
   if (thinking === THINKING_DEFAULT) {
     return { clearThinking: true, ...effortPatch, ...budgetPatch };

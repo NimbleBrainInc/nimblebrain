@@ -65,9 +65,6 @@ const THINKING_EFFORTS = [
  * normalize, validate, persist, patch the live runtime. Written out longhand,
  * a new field has to be remembered in each, and a clear that lands on some
  * stages but not others leaves disk and process disagreeing.
- *
- * `thinking` is first on purpose: clearing the mode cascades to the other two,
- * which mean nothing without a mode to qualify them.
  */
 const THINKING_FIELDS = [
   { key: "thinking", clearFlag: "clearThinking", coerce: String },
@@ -224,8 +221,8 @@ function mergeModelConfigOverride(
   if (input.maxIterations !== undefined) existing.maxIterations = Number(input.maxIterations);
   if (input.maxInputTokens !== undefined) existing.maxInputTokens = Number(input.maxInputTokens);
   if (input.maxOutputTokens !== undefined) existing.maxOutputTokens = Number(input.maxOutputTokens);
-  // null = clear the operator override; undefined = leave alone. The cascade
-  // from a cleared mode already happened in normalizeModelConfigClears.
+  // null = clear the operator override; undefined = leave alone. The three are
+  // independent: clearing the mode does not clear the depth or the budget.
   for (const { key, coerce } of THINKING_FIELDS) {
     if (input[key] === null) delete existing[key];
     else if (input[key] !== undefined) existing[key] = coerce(input[key]);

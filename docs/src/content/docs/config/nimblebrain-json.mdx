@@ -164,8 +164,10 @@ rather than a flag that would be rejected or ignored:
   works where it works because Anthropic's own default is not to think.
 - **OpenAI** — `reasoningEffort: "none"` is documented as GPT-5.1-only and an
   error elsewhere. On o-series models reasoning can't be turned off at all.
-- **Gemini** — 2.5 Flash takes a zero budget, Gemini 3 takes `minimal`, and
-  2.5 Pro cannot disable thinking.
+- **Gemini** — 2.5 Flash takes a zero budget; 2.5 Pro cannot disable thinking.
+  On Gemini 3 it depends on the model: those offering a `minimal` level get it,
+  and those that don't (both Pro entries) get nothing rather than the next tier
+  up, which would answer "don't reason" with an instruction to reason.
 
 ## models
 

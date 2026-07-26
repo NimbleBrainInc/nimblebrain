@@ -1,9 +1,9 @@
 import { describe, expect, it } from "bun:test";
 import {
   EFFORT_DEFAULT,
-  effortAppliesTo,
   THINKING_DEFAULT,
   thinkingPatchFor,
+  tuningAppliesTo,
 } from "../pages/settings/thinking-patch";
 
 /**
@@ -50,6 +50,17 @@ describe("thinkingPatchFor", () => {
     });
   });
 
+  it("keeps an operator budget on the default path", () => {
+    // A bare budget is load-bearing in the resolver — it resolves to `enabled`
+    // at that budget. Clearing it here deleted a real setting from disk and
+    // from the live process, with nothing on screen to show it happened.
+    expect(thinkingPatchFor(THINKING_DEFAULT, EFFORT_DEFAULT, 8192)).toEqual({
+      clearThinking: true,
+      clearThinkingEffort: true,
+      thinkingBudgetTokens: 8192,
+    });
+  });
+
   it("drops depth and budget for off and adaptive", () => {
     // Both state no depth by definition, and the resolver returns before
     // reading either.
@@ -81,12 +92,14 @@ describe("thinkingPatchFor", () => {
   });
 
   it("carries the depth in exactly the modes that show the control", () => {
-    // The render gate and the patch are both `effortAppliesTo`. When they
-    // were written separately they drifted, and the drift silently wiped a
-    // depth set elsewhere. This asserts they cannot disagree again.
+    // The render gates and the patch all derive from `tuningAppliesTo`. Every
+    // version of this that used more than one predicate drifted, and the drift
+    // silently deleted config the panel wasn't showing. Both fields are checked
+    // because the budget arm is where it happened the second time.
     for (const mode of [THINKING_DEFAULT, "enabled", "off", "adaptive"] as const) {
-      const carries = "thinkingEffort" in thinkingPatchFor(mode, "high", null);
-      expect(carries).toBe(effortAppliesTo(mode));
+      const patch = thinkingPatchFor(mode, "high", 8192);
+      expect("thinkingEffort" in patch).toBe(tuningAppliesTo(mode));
+      expect("thinkingBudgetTokens" in patch).toBe(tuningAppliesTo(mode));
     }
   });
 });

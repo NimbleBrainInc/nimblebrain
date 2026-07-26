@@ -359,7 +359,7 @@ describe("Core Source", () => {
 			// predicates the panel uses — otherwise the assertion moves with the
 			// bug and proves only that the code agrees with itself.
 			const cases = [
-				{ mode: THINKING_DEFAULT, effort: "high", budget: 8192, wantEffort: "high", wantBudget: undefined },
+				{ mode: THINKING_DEFAULT, effort: "high", budget: 8192, wantEffort: "high", wantBudget: 8192 },
 				{ mode: THINKING_DEFAULT, effort: EFFORT_DEFAULT, budget: null, wantEffort: undefined, wantBudget: undefined },
 				{ mode: "enabled", effort: "high", budget: 8192, wantEffort: "high", wantBudget: 8192 },
 				{ mode: "enabled", effort: "max", budget: null, wantEffort: "max", wantBudget: undefined },

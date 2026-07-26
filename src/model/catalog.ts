@@ -237,8 +237,9 @@ const ADAPTIVE_ONLY_THINKING_MODELS: ReadonlySet<string> = new Set([
  * supported for this model. Use "thinking.type.adaptive" and
  * "output_config.effort" to control thinking behavior.` — the engine
  * translates the platform's `enabled` mode to that shape on the fly when
- * this returns false. Non-Anthropic providers always return true; the
- * engine only emits Anthropic thinking options today.
+ * this returns false. Non-Anthropic providers always return true — the split
+ * is an Anthropic-specific one, and the other providers' dialects are selected
+ * elsewhere in `buildThinkingProviderOptions`.
  */
 export function supportsEnabledThinking(modelString: string): boolean {
   const { provider, modelId } = parseModelString(modelString);
@@ -299,15 +300,15 @@ const GOOGLE_THINKING: Record<string, GoogleThinkingSupport> = {
   "gemini-2.5-flash-lite": { dialect: "budget", min: 512, max: 24576, canDisable: true },
 };
 
-/**
- * How this Google model accepts a reasoning instruction, or `undefined` when we
- * have no verified answer — in which case the engine sends nothing.
- */
 /** The model ids this table classifies. Exposed so tests can check each one is real. */
 export function googleThinkingModelIds(): string[] {
   return Object.keys(GOOGLE_THINKING);
 }
 
+/**
+ * How this Google model accepts a reasoning instruction, or `undefined` when we
+ * have no verified answer — in which case the engine sends nothing.
+ */
 export function googleThinkingSupport(modelString: string): GoogleThinkingSupport | undefined {
   const { modelId } = parseModelString(modelString);
   return GOOGLE_THINKING[modelId];
