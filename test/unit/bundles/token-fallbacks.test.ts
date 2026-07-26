@@ -55,24 +55,33 @@ import { REPO, sourceFiles, themedTrees } from "./themed-trees.ts";
  * wave the fallback through.
  *
  * Not closed: a comment between the name and the comma (`var(--x /* c *\/, red)`).
- * Matching that needs a tokenizer rather than a regex, no such spelling exists
- * in these trees, and the sibling name guard fails on it anyway.
+ * Matching that needs a tokenizer rather than a regex, and no such spelling
+ * exists in these trees. Note the sibling name guard does not cover the gap —
+ * it reads the *name*, which is well-formed here, so a commented fallback on a
+ * valid token would pass both. That is the whole of the remaining boundary.
  */
 const FALLBACK = /var\(\s*--[\w-]+\s*,/g;
 
 /** A bare `var(--x)`, used to prove the matcher discriminates rather than matching everything. */
 const BARE = /var\(\s*--[\w-]+\s*\)/g;
 
+/**
+ * Scans whole file text, not line by line, so a `var(` broken across lines is
+ * seen — `\s*` only spans a newline if a newline is in the input. Line numbers
+ * come from the match offset instead. No such spelling exists in these trees
+ * today, but a guard that reads one line at a time describes a grammar CSS does
+ * not have, and this file's sibling guards have twice shipped a matcher whose
+ * reach was narrower than the rule they stated.
+ */
 function violations(): string[] {
   const found: string[] = [];
   for (const { dir } of themedTrees) {
     for (const file of sourceFiles(dir)) {
-      const lines = readFileSync(file, "utf8").split("\n");
-      lines.forEach((line, i) => {
-        for (const m of line.matchAll(FALLBACK)) {
-          found.push(`${relative(REPO, file)}:${i + 1}  ${m[0]}…)`);
-        }
-      });
+      const source = readFileSync(file, "utf8");
+      for (const m of source.matchAll(FALLBACK)) {
+        const line = source.slice(0, m.index).split("\n").length;
+        found.push(`${relative(REPO, file)}:${line}  ${m[0].replace(/\s+/g, " ")}…)`);
+      }
     }
   }
   return found;
@@ -113,5 +122,10 @@ describe("theme tokens are used without fallbacks", () => {
   test("the matcher counts every occurrence on a line, not just the first", () => {
     const line = "border: 1px solid var(--a, #111); background: var(--b, #222);";
     expect([...line.matchAll(FALLBACK)]).toHaveLength(2);
+  });
+
+  test("a var() broken across lines is still seen", () => {
+    const source = "color: var(\n  --color-text-primary,\n  #fff\n);";
+    expect([...source.matchAll(FALLBACK)]).toHaveLength(1);
   });
 });
