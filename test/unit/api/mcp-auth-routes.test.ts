@@ -81,7 +81,10 @@ function makeStubLifecycle(): StubLifecycle {
 function makeApp(
   lifecycle: StubLifecycle,
   secureCookies = false,
-  workDir = "/tmp/nb-test",
+  // Isolated per app, not a shared /tmp path: the reconnect gate `existsSync`es
+  // beneath this, so a stray tokens.json left by any other run would silently
+  // turn these into 403s.
+  workDir = mkdtempSync(join(tmpdir(), "nb-mcp-auth-")),
   members?: Array<{ userId: string; role: "admin" | "member" }>,
   caller?: { id: string; orgRole?: string },
 ): Hono<AppEnv> {
@@ -97,15 +100,16 @@ function makeApp(
     // identity → requireWorkspace() also passes through without setting
     // workspaceId. We set it ourselves in the wrapping middleware below.
     authOptions: { mode: { type: "dev" }, eventSink: { emit: () => {} } },
-    // The reconnect gate reads the workspace to resolve the caller's
-    // membership role. Default: the test user is an admin, so first-connect
-    // and reconnect both pass and the existing cases are unaffected. Tests
-    // that exercise the gate override `members`.
+    // The reconnect gate resolves the caller's membership role from here.
+    //
+    // Cases that don't pass `members` reach the gate with no `caller`, so
+    // `identity` is unset and the admin branch cannot fire — they pass because
+    // the workDir holds no credential, so the gate falls through to
+    // first-connect. Defaulting `caller` to an admin instead would not work:
+    // setting `identity` makes the route's own `requireWorkspace` start
+    // enforcing, and those cases send no `X-Workspace-Id`.
     workspaceStore: {
-      get: async (_id: string) => ({
-        id: WS_ID,
-        members: members ?? [{ userId: USER_ID, role: "admin" }],
-      }),
+      get: async (_id: string) => (members ? { id: WS_ID, members } : null),
     },
     secureCookies,
   } as unknown as AppContext;
