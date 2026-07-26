@@ -2,7 +2,11 @@ import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import { log } from "../observability/log.ts";
-import { isPersonalConnectorName, PERSONAL_CONNECTOR_PREFIX } from "../tools/identity-sources.ts";
+import {
+  isIdentitySource,
+  isPersonalConnectorName,
+  PERSONAL_CONNECTOR_PREFIX,
+} from "../tools/identity-sources.ts";
 import { WorkspaceContext } from "../workspace/context.ts";
 import { resolveLocalBundle } from "./resolve.ts";
 import type { BundleRef } from "./types.ts";
@@ -32,9 +36,18 @@ const RESERVED_TOOL_PREFIXES = new Set(["nb"]);
  * as first-party system/kernel tools — so the name is refused. Exposed as a
  * predicate for callers that reject gracefully (returning a tool result);
  * `validateServerName` is the throwing form over the same set.
+ *
+ * The kernel identity sources (`conversations` / `files` / `automations`) are
+ * reserved on the same footing. They are peers of `nb`, not children of it, and
+ * they reach the model under the same bare `<source>__<tool>` shape a workspace
+ * source now uses — so a workspace bundle named `conversations` would be
+ * SHADOWED by the identity door, which `routeToolCall` consults first. Before
+ * workspace names went bare the two were distinguishable (`ws_<id>-conversations__x`
+ * vs `conversations__x`) and this could not arise; it is reachable now, so the
+ * names are reserved rather than left to chance.
  */
 export function isReservedServerName(serverName: string): boolean {
-  return RESERVED_TOOL_PREFIXES.has(serverName);
+  return RESERVED_TOOL_PREFIXES.has(serverName) || isIdentitySource(serverName);
 }
 
 /** Throw if a server name would shadow system tool prefixes. */
