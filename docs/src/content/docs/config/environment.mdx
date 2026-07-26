@@ -237,9 +237,10 @@ export ANTHROPIC_API_KEY=sk-ant-api03-...
 export NB_PUBLIC_ORIGIN=https://app.example.com
 export NB_WORK_DIR=/data/nimblebrain
 export NB_TELEMETRY_DISABLED=1
-# Composio connectors (only if the catalog uses auth: composio)
+# Composio connectors (only if the catalog uses auth: composio).
+# Per-toolkit ac_… ids are not env vars — declare them in nimblebrain.json
+# under connectors.providers.composio.authConfigs.
 export COMPOSIO_API_KEY=...
-export COMPOSIO_GMAIL_AUTH_CONFIG_ID=ac_...
 # Observability
 export NB_LOG_FORMAT=json
 export OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector:4318
