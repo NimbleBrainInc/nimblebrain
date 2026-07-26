@@ -77,19 +77,43 @@ describe("wire-name budget", () => {
     expect(bad).toEqual([]);
   });
 
-  test("the source segment never contains an underscore", () => {
-    // This is what keeps `__` an unambiguous source/tool separator, and it is
-    // why the mixed kebab/snake convention is load-bearing rather than untidy.
-    // A source segment containing `__` would mis-split and route to the wrong
-    // source; `slugifyServerName` maps every non-`[a-z0-9-]` character to `-`,
-    // so it cannot happen — assert it so a future edit to that function cannot
-    // quietly break dispatch.
+  test("a source segment round-trips through the first-`__` split", () => {
+    // THE dispatch invariant, stated correctly: splitting `<source>__<tool>` on
+    // the FIRST `__` must recover the source. That requires a source to contain
+    // no `__`. It does NOT require a source to contain no `_`.
+    //
+    // An earlier version of this test asserted the stronger "no underscore at
+    // all" and was simply wrong about the system: `precision_outbound` is a live
+    // source name carrying a single underscore, and
+    // `precision_outbound__create_campaign` splits correctly. The stronger claim
+    // held only for names `slugifyServerName` produces (pinned separately
+    // below); sources registered by other paths are not bound by it.
+    const sources = [
+      ...CANONICAL_SERVER_NAMES.map(shortServerName),
+      "precision_outbound",
+      "ai-bassethound-mcp",
+    ];
+
+    for (const source of sources) {
+      expect(source).not.toInclude("__");
+      for (const tool of TOOL_NAMES) {
+        const wire = `${source}__${tool}`;
+        const sep = wire.indexOf("__");
+        expect(wire.slice(0, sep)).toBe(source);
+        expect(wire.slice(sep + 2)).toBe(tool);
+      }
+    }
+  });
+
+  test("derived names use only the kebab alphabet", () => {
+    // Narrower, and true: names these two functions produce carry no underscore
+    // at all, which is what guarantees the `__` invariant above for every
+    // catalog-installed source. Worth pinning so an edit to either function
+    // cannot quietly introduce one — but it is not the property dispatch rests
+    // on, and it says nothing about sources created by other paths.
     for (const canonical of [...CANONICAL_SERVER_NAMES, "com.acme/my_weird_name", "io.foo/a__b"]) {
-      // Both names matter: `shortServerName` is what reaches the wire, and
-      // `slugifyServerName` remains the storage identity and the legacy wire
-      // form that resumed conversations still present.
-      expect(shortServerName(canonical)).not.toInclude("_");
-      expect(slugifyServerName(canonical)).not.toInclude("_");
+      expect(shortServerName(canonical)).toMatch(/^[a-z0-9-]+$/);
+      expect(slugifyServerName(canonical)).toMatch(/^[a-z0-9-]+$/);
     }
   });
 
