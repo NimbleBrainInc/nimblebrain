@@ -102,23 +102,20 @@ function checkModelConfigAccess(runtime: Runtime): string | null {
  * Normalize the `clear*` boolean sentinels into the canonical `null` the merge
  * logic understands. Mutates `input` in place (each tool call owns its input).
  * Returns an error message if mutually-exclusive fields were combined.
+ *
+ * The three fields are independent. Clearing `thinking` used to cascade onto
+ * the other two on the grounds that a depth or a budget means nothing without
+ * a mode — that stopped being true when the resolver's no-mode path started
+ * reading both: an effort alone selects the tier, and a budget alone resolves
+ * to `enabled` at that budget. Cascading now deletes settings that are still
+ * in force, and rejects the payload the settings UI sends for its own default
+ * mode.
  */
 function normalizeModelConfigClears(input: Record<string, unknown>): string | null {
   for (const { key, clearFlag } of THINKING_FIELDS) {
     if (input[clearFlag] !== true) continue;
     if (input[key] != null) {
       return `Cannot set both \`${key}\` and \`${clearFlag}\`. Use one or the other.`;
-    }
-    input[key] = null;
-  }
-  if (input.thinking !== null) return null;
-  // Clearing the mode cascades to the fields that only mean something with one.
-  for (const { key } of THINKING_FIELDS) {
-    if (input[key] != null) {
-      return (
-        `Cannot set \`${key}\` while clearing \`thinking\` — ` +
-        "clearing the mode clears it too. Drop one or the other."
-      );
     }
     input[key] = null;
   }

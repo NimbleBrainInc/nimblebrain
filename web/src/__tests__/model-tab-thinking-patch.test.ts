@@ -4,7 +4,7 @@ import {
   effortAppliesTo,
   THINKING_DEFAULT,
   thinkingPatchFor,
-} from "../pages/settings/ModelTab";
+} from "../pages/settings/thinking-patch";
 
 /**
  * The Model tab's thinking patch is pure, so it is testable without mounting

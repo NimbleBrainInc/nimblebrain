@@ -202,6 +202,21 @@
       "type": "integer",
       "minimum": 1
     },
+    "thinking": {
+      "description": "Extended-thinking mode. off: do not reason (not enforceable on every model). adaptive: model decides per call. enabled: reason every turn, at thinkingEffort.",
+      "type": "string",
+      "enum": ["off", "adaptive", "enabled"]
+    },
+    "thinkingEffort": {
+      "description": "How hard to think when reasoning is on. The portable control — every reasoning-capable provider can express a depth. Default: medium.",
+      "type": "string",
+      "enum": ["low", "medium", "high", "xhigh", "max"]
+    },
+    "thinkingBudgetTokens": {
+      "description": "Explicit token budget for thinking. Only honored by providers that meter thinking in tokens (Anthropic up to 4.6, Gemini 2.5); elsewhere thinkingEffort applies. Anthropic requires a minimum of 1024.",
+      "type": "integer",
+      "minimum": 1024
+    },
     "maxToolResultSize": {
       "description": "Max chars for a single tool result. Results exceeding this are replaced with an error. 0 disables. Default: 1000000.",
       "type": "integer",

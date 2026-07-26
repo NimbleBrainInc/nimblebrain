@@ -273,6 +273,13 @@ export type GoogleThinkingSupport =
  * A model absent from this table gets NO thinking options — exactly what every
  * Google model got before this wiring existed. Guessing a dialect is how a
  * stock install starts returning 400s.
+ *
+ * Coverage is deliberately partial: this lists the models Google documents
+ * thinking support for. The catalog carries others — the `-latest` aliases,
+ * the image/tts/live variants, `deep-research-*`, `gemini-robotics-*` — whose
+ * support is unpublished or whose target moves under an alias. They run at
+ * their own default until there is something to cite. `catalog.test.ts` keeps
+ * the unclassified set visible so the gap stays a decision, not an oversight.
  */
 const GOOGLE_THINKING: Record<string, GoogleThinkingSupport> = {
   "gemini-3.6-flash": { dialect: "level", levels: new Set(GOOGLE_THINKING_LEVELS) },
