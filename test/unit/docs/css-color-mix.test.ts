@@ -29,18 +29,26 @@
  * Scope is the **hand-authored** rules in `web/src/index.css`, and that is a
  * real limit rather than the whole problem. Tailwind's own `/N` opacity
  * utilities compile to `color-mix()` too, and the built stylesheet carries 84
- * downlevelled blocks because of them — so `text-destructive` on
- * `bg-destructive/10` degrades to 1.000:1 by exactly the same mechanism, at
- * around a dozen live sites. That is a pre-existing condition of the utility
- * layer, not of this file: it cannot be fixed by authoring differently, only by
- * moving those sites onto tokens or by narrowing the build's browser targets so
- * Lightning stops downlevelling at all. Tracked in #781. This guard covers what
- * an author here controls, and no more.
+ * downlevelled blocks because of them. The affected shape is any token painted
+ * as both a text colour and an alpha background — `text-<T>` over `bg-<T>/N` —
+ * which degrades to 1.000:1 by exactly the same mechanism; `sidebar-foreground`
+ * on the sidebar's active rows is as much an instance as `destructive` on an
+ * error notice. No count is quoted, because a count invites the next reader to
+ * re-check the hues someone once listed rather than the rule. That is a
+ * pre-existing condition of the utility layer, not of this file: it cannot be
+ * fixed by authoring differently, only by moving those sites onto tokens or by
+ * narrowing the build's browser targets so Lightning stops downlevelling at
+ * all. Tracked with the inventory in #781. This guard covers what an author
+ * here controls, and no more.
  *
- * Bundle UIs inline their CSS as a template string and are not downlevelled,
- * verified in `automations/ui/dist`. Non-colour properties are left alone — a
- * degraded `border-color` or `box-shadow` shifts an edge; a degraded
- * `background` behind text removes the text.
+ * Bundle UIs are exempt because no bundle runs Tailwind, so Lightning never
+ * processes their CSS — verified in `conversations/ui/dist`, which keeps its
+ * five `color-mix()` declarations verbatim with no `@supports` block. Note this
+ * is a property of the build, not of how the CSS is authored: four of the five
+ * bundles ship a real `index.css`, and only `automations` is a template string.
+ * Non-colour properties are left alone — a degraded `border-color` or
+ * `box-shadow` shifts an edge; a degraded `background` behind text removes the
+ * text.
  */
 
 import { describe, expect, test } from "bun:test";
