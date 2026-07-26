@@ -22,7 +22,6 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import type { ToolResult } from "../../../src/engine/types.ts";
 import { IdentityContext } from "../../../src/identity/context.ts";
 import {
-  PersonalConnectorRequiresMarker,
   ConnectorGrantDenied,
   type OrchestratorRuntime,
   routeToolCall,
@@ -776,34 +775,23 @@ describe("routeToolCall — a bare name that resolves in the workspace IS the wo
     expect(routed.toolName).toBe("gmail__send");
   });
 
-  test("a workspace MISS with an installed connector raises the re-list guidance", async () => {
-    // The one shape that is unambiguously stale: it did not resolve in the
-    // workspace, and the caller has a connector of that name. Without this it
-    // surfaces as UnknownToolSource naming the workspace, which never mentions
-    // the connector the caller wants.
-    let thrown: unknown = null;
-    try {
-      await routeToolCall({
-        identityId: USER_ID,
-        namespacedName: "gmail__send",
-        workspaceId: SHARED_WS,
-        runtime: runtimeWith(true, ["crm"]),
-      });
-    } catch (err) {
-      thrown = err;
+  test("a workspace MISS is a plain UnknownToolSource, connector or not", async () => {
+    // No special-casing for a caller who happens to hold a same-named connector.
+    // `UnknownToolSource` has two live meanings — never installed, and installed
+    // but transiently absent after a failed respawn — and nothing at this point
+    // can tell them apart. Guessing "you meant your personal connector" would
+    // steer a model onto the caller's own credentials during a workspace source
+    // outage, which is worse than the plainer error.
+    for (const hasConnector of [true, false]) {
+      await expect(
+        routeToolCall({
+          identityId: USER_ID,
+          namespacedName: "gmail__send",
+          workspaceId: SHARED_WS,
+          runtime: runtimeWith(hasConnector, ["crm"]),
+        }),
+      ).rejects.toBeInstanceOf(UnknownToolSource);
     }
-    expect(thrown).toBeInstanceOf(PersonalConnectorRequiresMarker);
-    expect((thrown as Error).message).toContain("my_gmail");
   });
 
-  test("a workspace MISS with no such connector is a plain UnknownToolSource", async () => {
-    await expect(
-      routeToolCall({
-        identityId: USER_ID,
-        namespacedName: "gmail__send",
-        workspaceId: SHARED_WS,
-        runtime: runtimeWith(false, ["crm"]),
-      }),
-    ).rejects.toBeInstanceOf(UnknownToolSource);
-  });
 });

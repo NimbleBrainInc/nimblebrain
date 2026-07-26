@@ -33,6 +33,11 @@ const TMP_OUT = join(REPO_ROOT, ".tmp-codegen");
 const WEB_DEST = join(REPO_ROOT, "web/src/_generated/platform-schemas");
 const WORKSPACE_ID_PATTERN_SRC = join(REPO_ROOT, "src/workspace/workspace-id-pattern.ts");
 const WORKSPACE_ID_PATTERN_DEST = join(REPO_ROOT, "web/src/_generated/workspace-id-pattern.ts");
+const IDENTITY_SOURCES_SRC = join(REPO_ROOT, "src/tools/identity-sources.ts");
+const PERSONAL_CONNECTOR_PREFIX_DEST = join(
+  REPO_ROOT,
+  "web/src/_generated/personal-connector-prefix.ts",
+);
 
 /**
  * Per-file header injected at the top of every generated .d.ts.
@@ -88,7 +93,7 @@ function extractStringLiteral(source: string, name: string): string {
   const m = re.exec(source);
   if (!m || typeof m[1] !== "string") {
     throw new Error(
-      `[codegen] could not extract ${name} from ${WORKSPACE_ID_PATTERN_SRC} — the source file format may have changed`,
+      `[codegen] could not extract ${name} — the source file format may have changed`,
     );
   }
   return m[1];
@@ -119,6 +124,33 @@ export const WORKSPACE_ID_FLAGS = ${flagsLiteral};
   mkdirSync(dirname(WORKSPACE_ID_PATTERN_DEST), { recursive: true });
   writeFileSync(WORKSPACE_ID_PATTERN_DEST, body);
   console.log(`[codegen] OK → ${WORKSPACE_ID_PATTERN_DEST.replace(REPO_ROOT, ".")}`);
+}
+
+console.log(
+  "[codegen] personal-connector-prefix → web/src/_generated/personal-connector-prefix.ts",
+);
+
+{
+  // Mirrored for the same reason as the workspace-id pattern, and with more at
+  // stake: this marker is what separates the caller's own connector from a
+  // same-named workspace source. A hand-copied copy that drifts stops the web
+  // tier recognising a marked name, which mounts a workspace app's iframe for a
+  // connector's tool call — the exact collision the marker exists to prevent,
+  // and nothing else would catch it. `check:codegen` turns drift into a build
+  // failure instead of a comment asking for discipline.
+  const src = readFileSync(IDENTITY_SOURCES_SRC, "utf-8");
+  const prefix = extractStringLiteral(src, "PERSONAL_CONNECTOR_PREFIX");
+
+  const body = `${header("src/tools/identity-sources.ts")}
+// Personal-connector wire marker, mirrored from the server-side source.
+// See that file's header for why the marker sits outside slugify's alphabet.
+
+export const PERSONAL_CONNECTOR_PREFIX = ${JSON.stringify(prefix)};
+`;
+
+  mkdirSync(dirname(PERSONAL_CONNECTOR_PREFIX_DEST), { recursive: true });
+  writeFileSync(PERSONAL_CONNECTOR_PREFIX_DEST, body);
+  console.log(`[codegen] OK → ${PERSONAL_CONNECTOR_PREFIX_DEST.replace(REPO_ROOT, ".")}`);
 }
 
 console.log("[codegen] platform-schemas → web/src/_generated/platform-schemas/");

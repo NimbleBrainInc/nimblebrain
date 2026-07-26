@@ -8,9 +8,7 @@
  *   2. A bare `<source>__<tool>` — the ONLY wire form, on both doors — routes by
  *      its source segment: a kernel identity source or the reserved personal
  *      marker goes through the IDENTITY door; anything else is the session's own
- *      workspace. A bare name that fails to resolve there but matches one of the
- *      caller's installed connectors raises `PersonalConnectorRequiresMarker`,
- *      which names the marked form to call instead.
+ *      workspace.
  *   3. A `ws_<id>-<tool>` is the RETIRED form. It is rejected, not routed — so a
  *      workspace other than the session's cannot be NAMED, and cross-workspace
  *      reach is unexpressible rather than denied after the fact. A session with
@@ -43,7 +41,6 @@ import {
   isIdentitySource,
   isPersonalConnectorName,
   personalConnectorServerName,
-  personalConnectorWireName,
 } from "../tools/identity-sources.ts";
 import { parseNamespacedToolName, UnknownNamespacedToolName } from "../tools/namespace.ts";
 import type { ToolSource } from "../tools/types.ts";
@@ -119,42 +116,6 @@ export class UnknownToolSource extends Error {
     this.wsId = wsId;
     this.toolName = toolName;
     this.sourceName = sourceName;
-  }
-}
-
-/**
- * Thrown when a BARE name addresses a personal connector the caller has
- * installed. Personal connectors carry the reserved marker; a bare name does not
- * reach them.
- *
- * Raised only where the name is UNAMBIGUOUSLY stale: it failed to resolve in the
- * bound workspace, and the caller has a connector of that name installed. That
- * combination can only be a pre-marker name replayed from a transcript or a
- * cached `tools/list`.
- *
- * It is NOT raised when the name resolves in the workspace. There the bare form
- * is the workspace source by contract — `listToolsForWorkspace` emits the two
- * apart — and refusing it would break the freshly-listed name for every caller
- * who also holds a same-named connector.
- *
- * Without this the stale case surfaces as `UnknownToolSource` naming the
- * WORKSPACE, which never mentions the connector the caller actually wants. The
- * remedy is in the message: re-list, call the marked form.
- */
-export class PersonalConnectorRequiresMarker extends Error {
-  readonly toolName: string;
-  readonly sourceName: string;
-  readonly wireName: string;
-
-  constructor(toolName: string, sourceName: string, wireName: string) {
-    super(
-      `[orchestrator] "${toolName}" names one of your personal connectors, which is not reachable by its bare name. ` +
-        `Re-list tools — it is now "${wireName}__…".`,
-    );
-    this.name = "PersonalConnectorRequiresMarker";
-    this.toolName = toolName;
-    this.sourceName = sourceName;
-    this.wireName = wireName;
   }
 }
 
@@ -267,15 +228,6 @@ export interface OrchestratorRuntime {
    * in which case a connector name resolves to `UnknownIdentitySource`.
    */
   getIdentityConnectorSource?(userId: string, name: string): Promise<ToolSource | undefined>;
-
-  /**
-   * Whether `userId` has a personal connector INSTALLED under `name`. Reads the
-   * install record only — unlike `getIdentityConnectorSource`, which lazy-starts
-   * a transport and is far too expensive for a per-call collision probe.
-   * Optional so test stubs may omit it; when absent the ambiguity check is
-   * skipped.
-   */
-  hasIdentityConnector?(userId: string, name: string): Promise<boolean>;
 
   /** Fresh `IdentityContext` for the authenticated identity. No workspace. */
   getIdentityContext(identityId: string): IdentityContext;
@@ -435,27 +387,7 @@ export async function routeToolCall(opts: {
   // Step 5 — resolve the inner tool's `<source>__` prefix to a dispatch handle
   // in the bound workspace's registry (self-healing a transiently absent source
   // once before failing).
-  let source: ToolSource;
-  try {
-    source = await resolveWorkspaceSource(wsId, toolName, runtime);
-  } catch (err) {
-    // No such source here. If the caller has a personal connector of that name,
-    // the bare form is a stale pre-marker name and `UnknownToolSource` — which
-    // names the WORKSPACE — would send them looking in the wrong place. Raise
-    // the re-list guidance instead. Raise, not route: routing it back to the
-    // connector is the fallback that was deliberately removed.
-    if (
-      err instanceof UnknownToolSource &&
-      (await runtime.hasIdentityConnector?.(identityId, sourceName)) === true
-    ) {
-      throw new PersonalConnectorRequiresMarker(
-        toolName,
-        sourceName,
-        personalConnectorWireName(sourceName),
-      );
-    }
-    throw err;
-  }
+  const source = await resolveWorkspaceSource(wsId, toolName, runtime);
 
   // NO ambiguity check here, deliberately.
   //

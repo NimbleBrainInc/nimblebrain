@@ -14,8 +14,16 @@ import { DEFAULT_CHILD_ITERATIONS, MAX_CHILD_ITERATIONS } from "../limits.ts";
 import { resolveMaxOutputTokens } from "../runtime/resolve-max-output-tokens.ts";
 import { resolveThinking } from "../runtime/resolve-thinking.ts";
 import type { AgentProfile } from "../runtime/types.ts";
+import { isPersonalConnectorName, PERSONAL_CONNECTOR_PREFIX } from "./identity-sources.ts";
 import type { InProcessTool } from "./in-process-app.ts";
 import { filterTools } from "./surfacing.ts";
+import { toolNameMatchesPattern } from "./tool-pattern.ts";
+
+/** The `<source>` segment of a bare `<source>__<tool>` name. */
+function sourceSegmentOfName(name: string): string {
+  const sep = name.indexOf("__");
+  return sep > 0 ? name.slice(0, sep) : name;
+}
 
 /** Fixed system prompt for delegate calls without a named agent profile. */
 const DELEGATE_PREAMBLE =
@@ -227,13 +235,32 @@ async function selectChildTools(
   // A second corpus because `defaultTools` is the SURFACED subset; a glob may
   // legitimately name a tool that exists in the workspace but is not surfaced by
   // default.
-  // NOT role-filtered, unlike `defaultTools`. `availableTools` is the raw
-  // reachable set, so a non-admin's `nb__*` glob can pull admin-only platform
-  // tools into a child's active set. Not exploitable — those tools gate on
-  // `isAdmin` internally and are `internal`-annotated — but it is defense in
-  // depth this corpus does not have. Fixing it means threading the caller's
+  // MARKER SEMANTICS FOR THIS CORPUS: personal connectors are reachable here
+  // ONLY through a glob that literally carries the marker.
+  //
+  // `availableTools()` is `listToolsForWorkspace(wsId, identityId)`, which
+  // includes the caller's granted personal connectors under their `my_` names —
+  // unlike `defaultTools`, which excludes them on purpose. Matching every glob
+  // against both corpuses would therefore let a bare `*` or `*__send` hand a
+  // delegated child the parent's own credentials, undoing the least-privilege
+  // decision `Runtime.defaultActiveTools` states in as many words. The guard in
+  // `tool-pattern.ts` does not cover this: it constrains the PATTERN (a
+  // normalized `ws_<id>-*`), and the hole here is the CORPUS.
+  //
+  // A marked glob still works, which is the documented opt-in.
+  const reachable = await ctx.tools.availableTools();
+  const markedGlobs = globs.filter((g) => g.startsWith(PERSONAL_CONNECTOR_PREFIX));
+  const fromReachable = filterTools(reachable, globs).filter(
+    (t) =>
+      !isPersonalConnectorName(sourceSegmentOfName(t.name)) ||
+      markedGlobs.some((g) => toolNameMatchesPattern(t.name, g)),
+  );
+
+  // NOT role-filtered, unlike `defaultTools`. A non-admin's `nb__*` glob can pull
+  // admin-only platform tools into a child's active set. Not exploitable — those
+  // tools gate on org role internally and are `internal`-annotated — but it is
+  // defense in depth this corpus lacks. Fixing it means threading the caller's
   // `orgRole` into `DelegateContext`, which is a change of its own.
-  const fromReachable = filterTools(await ctx.tools.availableTools(), globs);
   // Dedupe by name — `filterTools` may return the same
   // entry under both corpuses when a surfaced tool is also in the reachable set.
   const seen = new Set<string>();

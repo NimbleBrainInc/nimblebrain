@@ -31,14 +31,8 @@
 // helper or the platform primitive on the server side.
 // ---------------------------------------------------------------------------
 
+import { PERSONAL_CONNECTOR_PREFIX } from "../_generated/personal-connector-prefix.ts";
 import { WORKSPACE_ID_FLAGS, WORKSPACE_ID_PATTERN } from "../_generated/workspace-id-pattern.ts";
-
-/**
- * Mirrors `PERSONAL_CONNECTOR_PREFIX` in `src/tools/identity-sources.ts`. The
- * web tier cannot import from `src/`, the same arrangement as the workspace-id
- * pattern above. Keep the two in lockstep.
- */
-const PERSONAL_CONNECTOR_PREFIX = "my_";
 
 /**
  * Whether an app/source name is a personal connector's marked wire name.

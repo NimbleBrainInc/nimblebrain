@@ -66,7 +66,6 @@ import { rehydrateUserResources } from "../files/rehydrate.ts";
 import { createFileStore, type FileStore } from "../files/store.ts";
 import { DEFAULT_FILE_CONFIG, type FileConfig } from "../files/types.ts";
 import { FileBackedHostResourcesResolver, TokenBucketRateLimit } from "../host-resources/index.ts";
-import { IdentityConnectorStore } from "../identity/connector-store.ts";
 import { IdentityContext } from "../identity/context.ts";
 import type { InstanceConfig } from "../identity/instance.ts";
 import { loadInstanceConfig } from "../identity/instance.ts";
@@ -2965,20 +2964,6 @@ export class Runtime {
    */
   async getIdentityConnectorSource(userId: string, name: string): Promise<ToolSource | undefined> {
     return this.lifecycle.getIdentityConnectorSource(userId, name, this.getWorkDir());
-  }
-
-  /**
-   * Whether `userId` has a personal connector INSTALLED under `name`.
-   *
-   * Reads the install record and nothing else — deliberately not
-   * `getIdentityConnectorSource`, which lazy-starts a transport. The orchestrator
-   * calls this only after a workspace source lookup has already FAILED, to tell a
-   * stale pre-marker name apart from a genuinely unknown source, so it is off the
-   * dispatch path and the store is built inline like the other call sites.
-   */
-  async hasIdentityConnector(userId: string, name: string): Promise<boolean> {
-    const store = new IdentityConnectorStore({ workDir: this.getWorkDir() });
-    return (await store.get(userId, name)) !== null;
   }
 
   /**

@@ -92,7 +92,6 @@ import type { UserIdentity } from "../identity/provider.ts";
 import { log } from "../observability/log.ts";
 import {
   ConnectorGrantDenied,
-  PersonalConnectorRequiresMarker,
   routeToolCall,
   UnknownIdentitySource,
   UnknownNamespacedToolName,
@@ -983,14 +982,6 @@ export function mapRouteToolError(err: unknown): never {
       `No identity source "${err.sourceName}" for "${err.toolName}"`,
       { reason: "unknown_identity_source", toolName: err.toolName },
     );
-  }
-  if (err instanceof PersonalConnectorRequiresMarker) {
-    throw new McpError(ErrorCode.InvalidParams, err.message, {
-      reason: "personal_connector_requires_marker",
-      toolName: err.toolName,
-      sourceName: err.sourceName,
-      wireName: err.wireName,
-    });
   }
   if (err instanceof ConnectorGrantDenied) {
     throw new McpError(

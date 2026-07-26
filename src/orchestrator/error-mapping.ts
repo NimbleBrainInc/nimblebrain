@@ -11,8 +11,6 @@
  * failure modes without parsing the human message:
  *
  *   - `UnknownNamespacedToolName` → `invalid_tool_name`        + `{ name, parseReason }`
- *   - `PersonalConnectorRequiresMarker` → `personal_connector_requires_marker`
- *     + `{ toolName, sourceName, wireName }`
  *   - `WorkspaceAccessDenied`     → `workspace_access_denied`  + `{ identityId, wsId }`
  *     (the live base of `WorkspaceToolUnavailable`)
  *   - `UnknownToolSource`         → `unknown_tool_source`      + `{ wsId, sourceName, toolName }`
@@ -28,7 +26,6 @@
 import type { ToolResult } from "../engine/types.ts";
 import {
   ConnectorGrantDenied,
-  PersonalConnectorRequiresMarker,
   UnknownIdentitySource,
   UnknownNamespacedToolName,
   UnknownToolSource,
@@ -107,23 +104,6 @@ export function mapOrchestratorErrorToToolResult(err: unknown, namespacedName: s
         error: "orchestrator_error",
         reason: "unknown_identity_source",
         toolName: err.toolName,
-      },
-    };
-  }
-  if (err instanceof PersonalConnectorRequiresMarker) {
-    // Recoverable, and the recovery is the message: it names the marked form, so
-    // the model can re-call correctly inside the same run. Falling through to the
-    // rethrow below would fail the WHOLE run and drop that text on the floor —
-    // the one party that can act on it never sees it.
-    return {
-      content: [{ type: "text", text: err.message }],
-      isError: true,
-      structuredContent: {
-        error: "orchestrator_error",
-        reason: "personal_connector_requires_marker",
-        toolName: err.toolName,
-        sourceName: err.sourceName,
-        wireName: err.wireName,
       },
     };
   }
