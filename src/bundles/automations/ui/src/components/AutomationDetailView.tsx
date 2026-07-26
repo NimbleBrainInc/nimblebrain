@@ -260,9 +260,7 @@ function DetailHeader({ d, onBack }: { d: AutomationDetail; onBack: () => void }
             <span
               style={{
                 fontSize: 13,
-                color: d.disabledReason
-                  ? "var(--nb-color-danger, #c02a24)"
-                  : "var(--color-text-secondary, #5c5c66)",
+                color: d.disabledReason ? "var(--nb-color-danger)" : "var(--color-text-secondary)",
                 fontWeight: 400,
                 marginLeft: 8,
               }}
@@ -277,9 +275,9 @@ function DetailHeader({ d, onBack }: { d: AutomationDetail; onBack: () => void }
         <div
           style={{
             fontSize: 12,
-            color: "var(--nb-color-danger, #c02a24)",
+            color: "var(--nb-color-danger)",
             padding: "8px 16px",
-            background: "color-mix(in srgb, var(--nb-color-danger, #c02a24) 8%, transparent)",
+            background: "color-mix(in srgb, var(--nb-color-danger) 8%, transparent)",
             borderRadius: 6,
             margin: "8px 16px 0",
           }}
@@ -318,7 +316,7 @@ function DetailActions({
           type="button"
           className="btn"
           onClick={onCancel}
-          style={{ color: "var(--nb-color-danger, #c02a24)" }}
+          style={{ color: "var(--nb-color-danger)" }}
           disabled={testRunning}
         >
           {cancelButtonLabel(actionInProgress, testRunning)}
@@ -364,7 +362,7 @@ function ManualRunResult({
         style={{
           padding: 12,
           borderRadius: 6,
-          border: "1px solid var(--color-border-primary, #e4e4e7)",
+          border: "1px solid var(--color-border-primary)",
           fontSize: 13,
         }}
       >
@@ -374,7 +372,7 @@ function ManualRunResult({
           {result.inputTokens != null && (
             <span
               style={{
-                color: "var(--color-text-secondary, #5c5c66)",
+                color: "var(--color-text-secondary)",
                 marginLeft: 12,
                 fontSize: 11,
               }}
@@ -385,7 +383,7 @@ function ManualRunResult({
           {result.startedAt && result.completedAt && (
             <span
               style={{
-                color: "var(--color-text-secondary, #5c5c66)",
+                color: "var(--color-text-secondary)",
                 marginLeft: 12,
                 fontSize: 11,
               }}
@@ -404,9 +402,7 @@ function ManualRunResult({
           />
         )}
         {result.error && (
-          <pre style={{ color: "var(--nb-color-danger, #c02a24)", fontSize: 12 }}>
-            {result.error}
-          </pre>
+          <pre style={{ color: "var(--nb-color-danger)", fontSize: 12 }}>{result.error}</pre>
         )}
       </div>
     </div>

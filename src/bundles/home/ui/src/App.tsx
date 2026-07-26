@@ -62,9 +62,9 @@ function getDateStr(timezone?: string): string {
 }
 
 function dotColor(sentiment: string): string {
-  if (sentiment === "positive") return "var(--nb-color-success, #0f7a4f)";
-  if (sentiment === "warning") return "var(--nb-color-danger, #c02a24)";
-  return "var(--nb-color-warning, #8a5f0a)";
+  if (sentiment === "positive") return "var(--nb-color-success)";
+  if (sentiment === "warning") return "var(--nb-color-danger)";
+  return "var(--nb-color-warning)";
 }
 
 function escapeHtml(s: string): string {

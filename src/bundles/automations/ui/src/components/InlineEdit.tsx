@@ -32,8 +32,8 @@ export function InlineEditTextarea({
           className="btn"
           onClick={() => onSave(draft)}
           style={{
-            borderColor: "var(--color-text-accent, #0055FF)",
-            color: "var(--color-text-accent, #0055FF)",
+            borderColor: "var(--color-text-accent)",
+            color: "var(--color-text-accent)",
           }}
         >
           Save
