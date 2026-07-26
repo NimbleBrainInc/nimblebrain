@@ -172,11 +172,30 @@ function personalWsId(): string {
   return personalWorkspaceIdFor(DEV_IDENTITY.id);
 }
 
+// Wire names are bare: the workspace a call lands in comes from the request's
+// validated `X-Workspace-Id`, not from the name. `strangerToolName` below keeps
+// the legacy `ws_<id>-` form on purpose — it is the one shape that can still
+// NAME another workspace, and the cross-workspace denial has to stay tested.
 function sharedToolName(): string {
-  return `${SHARED_WS_ID}-${SHARED_SOURCE_NAME}__${SHARED_TOOL_BARE}`;
+  return `${SHARED_SOURCE_NAME}__${SHARED_TOOL_BARE}`;
 }
 
 function personalToolName(): string {
+  return `${PERSONAL_SOURCE_NAME}__${PERSONAL_TOOL_BARE}`;
+}
+
+/**
+ * The personal workspace's tool in the legacy `ws_<id>-` form.
+ *
+ * Required for the cross-workspace denial test, and the requirement is the
+ * point: a BARE name cannot express another workspace at all, so there is
+ * nothing to deny — it simply resolves against the session's own registry. The
+ * legacy form is the only shape that can still NAME a second workspace, so it
+ * is the only shape that can exercise `CrossWorkspaceReachDenied`. When the
+ * legacy form is eventually retired, this test retires with it: the reach it
+ * guards will have become unexpressible rather than merely refused.
+ */
+function personalToolNameNamespaced(): string {
   return `${personalWsId()}-${PERSONAL_SOURCE_NAME}__${PERSONAL_TOOL_BARE}`;
 }
 
@@ -250,7 +269,17 @@ describe("/mcp with no X-Workspace-Id (identity tools only)", () => {
     }
   });
 
-  it("a bare workspace-app name rejects with -32602 unknown_identity_source (no silent workspace routing)", async () => {
+  it("a bare workspace-source name rejects with -32602 workspace_access_denied (no silent workspace routing)", async () => {
+    // The property under test is unchanged and is the one that matters: with no
+    // `X-Workspace-Id` there is no workspace to route into, and a workspace
+    // source is REFUSED rather than guessed at.
+    //
+    // Only the discriminator moved. A bare workspace-source name used to be a
+    // malformed identity call (`unknown_identity_source`) because every real
+    // workspace call carried a `ws_<id>-` prefix. Bare is now the normal
+    // workspace form, so the refusal is now `WorkspaceToolUnavailable`, which
+    // subclasses `WorkspaceAccessDenied` and therefore reports the same
+    // `workspace_access_denied` discriminator a cross-workspace reach does.
     const client = await createMcpClient();
     try {
       const { code, reason } = await callExpectingError(
@@ -258,7 +287,7 @@ describe("/mcp with no X-Workspace-Id (identity tools only)", () => {
         `${SHARED_SOURCE_NAME}__${SHARED_TOOL_BARE}`,
       );
       expect(code).toBe(-32602);
-      expect(reason).toBe("unknown_identity_source");
+      expect(reason).toBe("workspace_access_denied");
     } finally {
       await client.close();
     }
@@ -326,7 +355,7 @@ describe("/mcp with a member X-Workspace-Id (walled to that workspace)", () => {
     personalSource.reset();
     const client = await createMcpClient({ workspace: SHARED_WS_ID });
     try {
-      const { code, reason } = await callExpectingError(client, personalToolName());
+      const { code, reason } = await callExpectingError(client, personalToolNameNamespaced());
       expect(code).toBe(-32602);
       expect(reason).toBe("workspace_access_denied");
       // The other workspace's tool never ran.
