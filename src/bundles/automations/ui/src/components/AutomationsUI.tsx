@@ -344,7 +344,7 @@ function RailSection({ label, count }: { label: string; count: number }) {
         <span
           style={{
             fontSize: 11,
-            color: "var(--color-text-secondary, #5c5c66)",
+            color: "var(--color-text-secondary)",
             textTransform: "none",
             letterSpacing: 0,
             fontWeight: 400,

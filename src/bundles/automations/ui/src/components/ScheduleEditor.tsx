@@ -42,7 +42,7 @@ export function ScheduleEditor({
       </div>
       {type === "interval" ? (
         <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-          <span style={{ fontSize: 12, color: "var(--color-text-secondary, #5c5c66)" }}>Every</span>
+          <span style={{ fontSize: 12, color: "var(--color-text-secondary)" }}>Every</span>
           <input
             className="inline-edit-input"
             type="number"
@@ -53,9 +53,7 @@ export function ScheduleEditor({
             // biome-ignore lint/a11y/noAutofocus: intentional focus on edit activation
             autoFocus
           />
-          <span style={{ fontSize: 12, color: "var(--color-text-secondary, #5c5c66)" }}>
-            minutes
-          </span>
+          <span style={{ fontSize: 12, color: "var(--color-text-secondary)" }}>minutes</span>
         </div>
       ) : (
         <div>
@@ -87,8 +85,8 @@ export function ScheduleEditor({
           className="btn"
           onClick={handleSave}
           style={{
-            borderColor: "var(--color-text-accent, #0055FF)",
-            color: "var(--color-text-accent, #0055FF)",
+            borderColor: "var(--color-text-accent)",
+            color: "var(--color-text-accent)",
           }}
         >
           Save

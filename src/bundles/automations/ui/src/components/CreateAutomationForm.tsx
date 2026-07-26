@@ -241,7 +241,7 @@ export function CreateAutomationForm({
                 <div
                   style={{
                     fontSize: 11,
-                    color: "var(--color-text-secondary, #5c5c66)",
+                    color: "var(--color-text-secondary)",
                     marginTop: 6,
                   }}
                 >
@@ -325,7 +325,7 @@ export function CreateAutomationForm({
                       flexWrap: "wrap",
                     }}
                   >
-                    <span style={{ fontSize: 12, color: "var(--color-text-secondary, #5c5c66)" }}>
+                    <span style={{ fontSize: 12, color: "var(--color-text-secondary)" }}>
                       Max input tokens/day:
                     </span>
                     <input
@@ -337,7 +337,7 @@ export function CreateAutomationForm({
                       onChange={(e) => setBudgetMaxInput(Number(e.target.value))}
                       style={{ width: 100 }}
                     />
-                    <span style={{ fontSize: 11, color: "var(--color-text-secondary, #5c5c66)" }}>
+                    <span style={{ fontSize: 11, color: "var(--color-text-secondary)" }}>
                       ({formatTokens(budgetMaxInput)})
                     </span>
                   </div>
@@ -355,7 +355,7 @@ export function CreateAutomationForm({
               style={{
                 padding: 12,
                 borderRadius: 6,
-                border: "1px solid var(--color-border-primary, #e4e4e7)",
+                border: "1px solid var(--color-border-primary)",
                 fontSize: 13,
               }}
             >
@@ -365,7 +365,7 @@ export function CreateAutomationForm({
                 {testResult.inputTokens != null && (
                   <span
                     style={{
-                      color: "var(--color-text-secondary, #5c5c66)",
+                      color: "var(--color-text-secondary)",
                       marginLeft: 12,
                       fontSize: 11,
                     }}
@@ -377,7 +377,7 @@ export function CreateAutomationForm({
                 {testResult.startedAt && testResult.completedAt && (
                   <span
                     style={{
-                      color: "var(--color-text-secondary, #5c5c66)",
+                      color: "var(--color-text-secondary)",
                       marginLeft: 12,
                       fontSize: 11,
                     }}
@@ -395,7 +395,7 @@ export function CreateAutomationForm({
                 </pre>
               )}
               {testResult.error && (
-                <pre style={{ color: "var(--nb-color-danger, #c02a24)", fontSize: 12 }}>
+                <pre style={{ color: "var(--nb-color-danger)", fontSize: 12 }}>
                   {testResult.error as string}
                 </pre>
               )}
@@ -423,8 +423,8 @@ export function CreateAutomationForm({
                   }
                 }}
                 style={{
-                  borderColor: "var(--color-text-accent, #0055FF)",
-                  color: "var(--color-text-accent, #0055FF)",
+                  borderColor: "var(--color-text-accent)",
+                  color: "var(--color-text-accent)",
                 }}
               >
                 {creating ? "Enabling\u2026" : "Enable Schedule"}
@@ -447,8 +447,8 @@ export function CreateAutomationForm({
             disabled={!canSubmit}
             onClick={handleCreate}
             style={{
-              borderColor: "var(--color-text-accent, #0055FF)",
-              color: "var(--color-text-accent, #0055FF)",
+              borderColor: "var(--color-text-accent)",
+              color: "var(--color-text-accent)",
             }}
           >
             {creating ? "Creating\u2026" : "Create"}
