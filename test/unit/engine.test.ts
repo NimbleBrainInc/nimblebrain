@@ -1918,9 +1918,10 @@ describe("AgentEngine", () => {
       });
 
       it("clamps an operator budget below the output ceiling", async () => {
-        // 50000 against a 16384 ceiling is rejected outright by Anthropic, and
-        // a budget just under the ceiling starves the visible answer — the
-        // empty-turn incident MIN_VISIBLE_OUTPUT_TOKENS exists to prevent.
+        // 50000 against a 16384 ceiling doesn't error — the adapter adds the
+        // budget to max_tokens — it silently triples the request and starves
+        // the visible answer, the empty-turn incident MIN_VISIBLE_OUTPUT_TOKENS
+        // exists to prevent.
         for (const model of ["anthropic:claude-sonnet-4-6", "google:gemini-2.5-flash"]) {
           const po = await providerOptionsFor(model, {
             mode: "enabled",

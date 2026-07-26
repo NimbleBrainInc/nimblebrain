@@ -69,13 +69,6 @@ const THINKING_EFFORTS = [
  * `thinking` is first on purpose: clearing the mode cascades to the other two,
  * which mean nothing without a mode to qualify them.
  */
-const SCALAR_FIELDS = [
-  { key: "defaultModel", coerce: String },
-  { key: "maxIterations", coerce: Number },
-  { key: "maxInputTokens", coerce: Number },
-  { key: "maxOutputTokens", coerce: Number },
-] as const;
-
 const THINKING_FIELDS = [
   { key: "thinking", clearFlag: "clearThinking", coerce: String },
   { key: "thinkingEffort", clearFlag: "clearThinkingEffort", coerce: String },
@@ -211,21 +204,26 @@ function operatorSetThinking(config: Record<string, unknown>): Record<string, un
   return out;
 }
 
+/** Merge only the model slots, key-by-key so an override of one slot leaves the others. */
+function mergeModelSlots(existing: Record<string, unknown>, input: Record<string, unknown>): void {
+  if (input.models === undefined || typeof input.models !== "object") return;
+  if (!existing.models || typeof existing.models !== "object") existing.models = {};
+  const existingModels = existing.models as Record<string, unknown>;
+  for (const [slot, value] of Object.entries(input.models as Record<string, unknown>)) {
+    existingModels[slot] = String(value);
+  }
+}
+
 /** Merge the validated patch into the on-disk override object (mutates `existing`). */
 function mergeModelConfigOverride(
   existing: Record<string, unknown>,
   input: Record<string, unknown>,
 ): void {
-  if (input.models !== undefined && typeof input.models === "object") {
-    if (!existing.models || typeof existing.models !== "object") existing.models = {};
-    const existingModels = existing.models as Record<string, unknown>;
-    for (const [slot, value] of Object.entries(input.models as Record<string, unknown>)) {
-      existingModels[slot] = String(value);
-    }
-  }
-  for (const { key, coerce } of SCALAR_FIELDS) {
-    if (input[key] !== undefined) existing[key] = coerce(input[key]);
-  }
+  mergeModelSlots(existing, input);
+  if (input.defaultModel !== undefined) existing.defaultModel = String(input.defaultModel);
+  if (input.maxIterations !== undefined) existing.maxIterations = Number(input.maxIterations);
+  if (input.maxInputTokens !== undefined) existing.maxInputTokens = Number(input.maxInputTokens);
+  if (input.maxOutputTokens !== undefined) existing.maxOutputTokens = Number(input.maxOutputTokens);
   // null = clear the operator override; undefined = leave alone. The cascade
   // from a cleared mode already happened in normalizeModelConfigClears.
   for (const { key, coerce } of THINKING_FIELDS) {

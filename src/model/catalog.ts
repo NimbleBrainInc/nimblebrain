@@ -274,12 +274,17 @@ export type GoogleThinkingSupport =
  * Google model got before this wiring existed. Guessing a dialect is how a
  * stock install starts returning 400s.
  *
- * Coverage is deliberately partial: this lists the models Google documents
- * thinking support for. The catalog carries others — the `-latest` aliases,
- * the image/tts/live variants, `deep-research-*`, `gemini-robotics-*` — whose
- * support is unpublished or whose target moves under an alias. They run at
- * their own default until there is something to cite. `catalog.test.ts` keeps
- * the unclassified set visible so the gap stays a decision, not an oversight.
+ * Coverage is deliberately partial, and the rule is exactly one thing: an
+ * entry exists when Google's thinking docs publish that model's support. It is
+ * not "text models only" — `gemini-3.1-flash-lite-image` is documented and so
+ * it is here, while the plain `gemini-3.1-flash-lite` is not documented and so
+ * it is not, even though it is the more mainstream of the two. Sibling names
+ * are no guide either way.
+ *
+ * Everything unlisted — the `-latest` aliases, `deep-research-*`,
+ * `gemini-robotics-*`, the tts/live variants, and the undocumented text models
+ * above — runs at its own default until there is something to cite. Adding a
+ * row from a sibling's values would be the guesswork this table replaced.
  */
 const GOOGLE_THINKING: Record<string, GoogleThinkingSupport> = {
   "gemini-3.6-flash": { dialect: "level", levels: new Set(GOOGLE_THINKING_LEVELS) },
@@ -298,6 +303,11 @@ const GOOGLE_THINKING: Record<string, GoogleThinkingSupport> = {
  * How this Google model accepts a reasoning instruction, or `undefined` when we
  * have no verified answer — in which case the engine sends nothing.
  */
+/** The model ids this table classifies. Exposed so tests can check each one is real. */
+export function googleThinkingModelIds(): string[] {
+  return Object.keys(GOOGLE_THINKING);
+}
+
 export function googleThinkingSupport(modelString: string): GoogleThinkingSupport | undefined {
   const { modelId } = parseModelString(modelString);
   return GOOGLE_THINKING[modelId];

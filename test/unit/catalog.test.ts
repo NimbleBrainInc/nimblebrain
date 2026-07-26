@@ -6,6 +6,7 @@ import {
 	getModel,
 	getModelByString,
 	getProviderName,
+	googleThinkingModelIds,
 	googleThinkingSupport,
 	isModelAllowed,
 	listModels,
@@ -309,20 +310,15 @@ describe("estimateCost from catalog", () => {
 
 describe("Google thinking support", () => {
 	it("either classifies a reasoning-capable Google model or leaves it unconfigured", () => {
-		// The table is an allowlist on purpose: support is per-model, varies
-		// within a generation, and models.dev doesn't carry it. What's worth
-		// asserting is that every classified id names a real catalog model — a
-		// typo silently un-classifies the model it meant to cover, and the
-		// omission then looks identical to a deliberate one.
-		const reasoning = listModels("google")
-			.filter((m) => m.capabilities.reasoning)
-			.map((m) => m.id);
-		const classified = reasoning.filter((id) => googleThinkingSupport(id) !== undefined);
-
-		expect(classified.length).toBeGreaterThan(0);
-		for (const id of classified) {
-			expect(getModel("google", id)).toBeDefined();
-		}
+		// Iterate the TABLE's keys, not the catalog's. Going the other way is
+		// vacuous: a typo'd key matches no catalog id, so it never appears in
+		// the derived set and the assertion never sees it — the model it meant
+		// to cover just silently loses its thinking options, which is
+		// indistinguishable from a deliberate omission.
+		const ids = googleThinkingModelIds();
+		expect(ids.length).toBeGreaterThan(0);
+		const unknown = ids.filter((id) => getModel("google", id) === undefined);
+		expect(unknown).toEqual([]);
 	});
 
 	it("never offers a level outside Google's ladder", () => {

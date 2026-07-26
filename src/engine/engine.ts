@@ -75,10 +75,12 @@ const EFFORT_BUDGET_SHARE: Record<ThinkingEffort, number> = {
  * Hold a thinking budget below the output ceiling, leaving
  * `MIN_VISIBLE_OUTPUT_TOKENS` for the answer itself.
  *
- * Applies to operator-set budgets as much as derived ones. A budget at or above
- * `max_tokens` is rejected outright by Anthropic, and one just under it leaves
- * the model no room to answer — the Opus 4.7 production incident that put this
- * floor here in the first place was an empty visible turn, not an API error.
+ * Applies to operator-set budgets as much as derived ones. Not because an
+ * oversized budget errors — the Anthropic adapter adds the thinking budget to
+ * `max_tokens` rather than fitting it inside, so it inflates the request
+ * instead of failing it. The point is that the operator's output ceiling stops
+ * meaning anything if thinking can raise it, and a budget that consumes the
+ * whole visible share produces the empty turn the Opus 4.7 incident was.
  */
 function clampThinkingBudget(budget: number, maxOutputTokens: number): number {
   return Math.max(

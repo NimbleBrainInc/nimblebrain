@@ -8,6 +8,10 @@
  * crossed the boundary between them.
  */
 
+// Mirrors `RuntimeConfig["thinking"]` and `ThinkingEffort` in
+// src/runtime/types.ts and src/engine/types.ts. Re-declared rather than
+// imported because web/ is deliberately isolated from src/ — same convention
+// as web/src/types.ts. A tier added there must be added here too.
 export type ThinkingMode = "off" | "adaptive" | "enabled";
 export type ThinkingEffort = "low" | "medium" | "high" | "xhigh" | "max";
 
