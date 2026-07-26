@@ -68,30 +68,10 @@ export function parseNamespacedToolName(s: string): { scope: ToolScope; toolName
   return { scope: { kind: "identity" }, toolName: s };
 }
 
-/**
- * Build a workspace-scoped tool name `ws_<id>-<toolName>`. Mirrors the
- * platform primitive `src/tools/namespace.ts::namespacedToolName` — same
- * `wsId` validation (via the codegen-shared `WORKSPACE_ID_RE`) and the
- * same single construction site discipline. Throws on invalid input.
- *
- * Used by the iframe bridge to prefix a workspace app's tool names before
- * dispatching `tools/call` against `/mcp`.
- */
-export function namespacedToolName(wsId: string, toolName: string): string {
-  if (typeof wsId !== "string" || wsId.length === 0) {
-    throw new Error(`namespacedToolName: invalid wsId (empty)`);
-  }
-  if (!WORKSPACE_ID_RE.test(wsId)) {
-    throw new Error(`namespacedToolName: invalid wsId "${wsId}" (failed WORKSPACE_ID_RE)`);
-  }
-  if (typeof toolName !== "string" || toolName.length === 0) {
-    throw new Error(`namespacedToolName: invalid toolName (empty) for wsId "${wsId}"`);
-  }
-  return `${wsId}-${toolName}`;
-}
-
-// Identity tools have no builder: an identity tool's wire name IS its bare
-// `<source>__<tool>` form. Absence of a `ws_<id>-` prefix makes it identity-scoped.
+// There is no builder here any more. Wire names are bare on both doors, so
+// nothing in `web/` constructs a `ws_<id>-` name; the bridge stopped prefixing
+// and this file is parse-only. The parser stays because transcripts still
+// replay the legacy form.
 
 /**
  * Extract the **bare source/app name** from a full wire tool name.

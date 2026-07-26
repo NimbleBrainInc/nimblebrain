@@ -45,21 +45,31 @@ const RESERVED_TOOL_PREFIXES = new Set(["nb"]);
  * workspace names went bare the two were distinguishable (`ws_<id>-conversations__x`
  * vs `conversations__x`) and this could not arise; it is reachable now, so the
  * names are reserved rather than left to chance.
+ *
+ * The personal-connector marker is reserved here too, for the same reason and on
+ * the same footing: a workspace source carrying it would shadow the identity
+ * door. Keeping it in the PREDICATE (not only in the throwing form) is the point
+ * — `connector-tools.ts` gates the identity-install boundary on the predicate, so
+ * a rule that lived only in `validateServerName` would not be enforced there.
  */
 export function isReservedServerName(serverName: string): boolean {
-  return RESERVED_TOOL_PREFIXES.has(serverName) || isIdentitySource(serverName);
+  return (
+    RESERVED_TOOL_PREFIXES.has(serverName) ||
+    isIdentitySource(serverName) ||
+    isPersonalConnectorName(serverName)
+  );
 }
 
 /** Throw if a server name would shadow system tool prefixes. */
 export function validateServerName(serverName: string): void {
-  if (isReservedServerName(serverName)) {
-    throw new Error(`Source name '${serverName}' is reserved for system tools`);
-  }
   if (isPersonalConnectorName(serverName)) {
     throw new Error(
       `Source name '${serverName}' is reserved: the '${PERSONAL_CONNECTOR_PREFIX}' prefix marks ` +
         `a personal connector on the identity door, and a workspace source using it would shadow one.`,
     );
+  }
+  if (isReservedServerName(serverName)) {
+    throw new Error(`Source name '${serverName}' is reserved for system tools`);
   }
 }
 

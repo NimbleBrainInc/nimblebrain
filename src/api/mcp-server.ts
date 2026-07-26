@@ -940,7 +940,7 @@ function toCallToolResult(result: ToolResult) {
  */
 function mapRouteToolError(err: unknown): never {
   if (err instanceof UnknownNamespacedToolName) {
-    throw new McpError(ErrorCode.InvalidParams, `Invalid tool name: expected ws_<id>-<tool>`, {
+    throw new McpError(ErrorCode.InvalidParams, `Invalid tool name: expected <source>__<tool>`, {
       reason: "invalid_tool_name",
       input: err.input,
       parse: err.reason,

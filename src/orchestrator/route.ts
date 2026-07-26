@@ -5,8 +5,13 @@
  *
  *   1. Parses the namespace via `parseNamespacedToolName` (the only legal parse
  *      site). Throws `UnknownNamespacedToolName` on malformed input.
- *   2. A bare `<source>__<tool>` routes through the IDENTITY door (no workspace).
- *   3. A `ws_<id>-<tool>` routes through the WORKSPACE door, walled to the
+ *   2. A bare `<source>__<tool>` — the current wire form for BOTH doors — routes
+ *      by its source segment: a kernel identity source or the reserved personal
+ *      marker goes through the IDENTITY door; anything else is the session's own
+ *      workspace. A workspace-source miss falls back to a personal connector
+ *      under its LEGACY bare name (step 6 in the body).
+ *   3. A `ws_<id>-<tool>` is the LEGACY form — no longer emitted, still routed
+ *      for resumed conversations and cached external `tools/list`. Walled to the
  *      session's one workspace (`workspaceId`): a call to ANY OTHER workspace is
  *      `CrossWorkspaceReachDenied`, and a session with no workspace (e.g. an
  *      external `/mcp` client with no `X-Workspace-Id`) is
@@ -32,11 +37,13 @@
 
 import type { ToolSchema } from "../engine/types.ts";
 import type { IdentityContext } from "../identity/context.ts";
+import { log } from "../observability/log.ts";
 import type { PermissionOwner, PermissionStore } from "../permissions/permission-store.ts";
 import {
   isIdentitySource,
   isPersonalConnectorName,
   personalConnectorServerName,
+  personalConnectorWireName,
 } from "../tools/identity-sources.ts";
 import { parseNamespacedToolName, UnknownNamespacedToolName } from "../tools/namespace.ts";
 import type { ToolSource } from "../tools/types.ts";
@@ -90,10 +97,23 @@ export class CrossWorkspaceReachDenied extends WorkspaceAccessDenied {
  * unchanged.
  */
 export class WorkspaceToolUnavailable extends WorkspaceAccessDenied {
-  constructor(identityId: string, wsId: string) {
-    super(identityId, wsId);
+  /**
+   * The source segment of a BARE workspace tool name, when the call named no
+   * workspace at all. Kept separate from `wsId` on purpose: a bare name has no
+   * workspace to report, and stuffing the source into `wsId` would publish
+   * `data.wsId: "people-mcp"` to external `/mcp` clients reading that
+   * discriminator. Exactly one of the two is set.
+   */
+  readonly sourceName: string | undefined;
+
+  constructor(identityId: string, wsId: string | undefined, sourceName?: string) {
+    // `WorkspaceAccessDenied` requires a wsId for its payload; a bare call has
+    // none, so report the empty string rather than a value that reads like one.
+    super(identityId, wsId ?? "");
     this.name = "WorkspaceToolUnavailable";
-    this.message = `[orchestrator] this session is identity-scoped (no workspace); workspace tool "${wsId}" is not available`;
+    this.sourceName = sourceName;
+    const subject = wsId !== undefined ? `workspace tool "${wsId}"` : `source "${sourceName}"`;
+    this.message = `[orchestrator] this session is identity-scoped (no workspace); ${subject} is not available`;
   }
 }
 
@@ -336,7 +356,7 @@ export async function routeToolCall(opts: {
     if (workspaceId === undefined) {
       // Identity-scoped session with no workspace (e.g. `/mcp`). Workspace tools
       // are not reachable — only identity (bare) tools. Deny any workspace call.
-      throw new WorkspaceToolUnavailable(identityId, wsId);
+      throw new WorkspaceToolUnavailable(identityId, wsId, undefined);
     }
     // Walled session: reach is bounded to the one workspace. A call to any other
     // workspace is denied even for a member.
@@ -357,9 +377,11 @@ export async function routeToolCall(opts: {
   //   1. a kernel identity source (`conversations` / `files` / `automations`),
   //      which is excluded from every workspace registry by construction, so it
   //      can never be shadowed by a workspace source of the same name;
-  //   2. the reserved personal-connector prefix (`my-`), which a workspace
-  //      source may not claim (`assertNotReservedSourceName` at install);
-  //   3. otherwise the session's own workspace.
+  //   2. the reserved personal-connector prefix, which a workspace source may
+  //      not claim (`isReservedServerName` / `validateServerName` at install);
+  //   3. otherwise the session's own workspace;
+  //   4. failing that, a personal connector under its LEGACY bare name — see
+  //      the fallback below.
   //
   // Note what is NOT here: a cross-workspace check. It is gone because the
   // caller can no longer NAME another workspace, so there is nothing to compare
@@ -376,7 +398,10 @@ export async function routeToolCall(opts: {
   if (workspaceId === undefined) {
     // Identity-only session (e.g. an external `/mcp` request with no
     // `X-Workspace-Id`, or a non-member one). Workspace sources are unreachable.
-    throw new WorkspaceToolUnavailable(identityId, sourceName);
+    // A bare workspace-source name has no workspace id to report, so this
+    // carries the SOURCE name — see `WorkspaceToolUnavailable`, which keeps it
+    // in a field of its own rather than overloading `wsId`.
+    throw new WorkspaceToolUnavailable(identityId, undefined, sourceName);
   }
   const wsId = workspaceId;
 
@@ -391,9 +416,46 @@ export async function routeToolCall(opts: {
   // Step 5 — resolve the inner tool's `<source>__` prefix to a dispatch
   // handle in the bound workspace's registry (self-healing a transiently
   // absent source once before failing).
-  const source = await resolveWorkspaceSource(wsId, toolName, runtime);
+  try {
+    const source = await resolveWorkspaceSource(wsId, toolName, runtime);
+    return { kind: "workspace", context, toolName, source };
+  } catch (err) {
+    if (!(err instanceof UnknownToolSource)) throw err;
 
-  return { kind: "workspace", context, toolName, source };
+    // Step 6 — LEGACY personal-connector fallback.
+    //
+    // Before the marker existed, a personal connector's wire name was a plain
+    // bare `<connector>__<tool>`. That form still arrives from the same two
+    // carriers this function keeps routing legacy `ws_<id>-` names for: a
+    // resumed conversation's history, and an external client's cached
+    // `tools/list`. Without this, such a call dies as `UnknownToolSource` — the
+    // connector is installed and granted, and the platform says no such tool.
+    //
+    // Deliberately LAST, after the workspace registry has been consulted and
+    // missed. The bare form now means "this workspace's source", and that
+    // reading has to win wherever it resolves, or a legitimate workspace call
+    // would be hijacked by a same-named personal connector.
+    //
+    // The residue is the ambiguous case: when a workspace source AND a personal
+    // connector share a name, the legacy bare call reaches the WORKSPACE one —
+    // the opposite of `resolvePermissionOwner`'s personal-first rule, and a
+    // different set of credentials. It cannot be resolved from the name alone,
+    // because the same string legitimately means both things depending on when
+    // it was minted. It is narrow (the install guard already refuses to give
+    // the caller both) and the fix is on the caller's side: re-list and use the
+    // marked name. Callers who cannot are why this is logged, not silent.
+    const legacy = await routeIdentityCall(identityId, toolName, workspaceId, runtime).catch(
+      () => null,
+    );
+    if (legacy) {
+      log.debug(
+        "mcp",
+        `[orchestrator] "${toolName}" resolved as a LEGACY bare personal connector — no such source in "${wsId}". Re-list tools; the current name is "${personalConnectorWireName(sourceName)}__…".`,
+      );
+      return legacy;
+    }
+    throw err;
+  }
 }
 
 /**
@@ -439,7 +501,7 @@ async function routeIdentityCall(
   // identity door (lazy-started on first use) — never through a workspace
   // registry.
   //
-  // The WIRE name carries the reserved `my-` marker; the connector's own
+  // The WIRE name carries the reserved `my_` marker; the connector's own
   // `serverName` does not. Strip it HERE, at the door, and hand the rest of the
   // runtime the canonical `<serverName>__<tool>`. This is load-bearing, not
   // cosmetic: the dispatch doors re-split `routed.toolName` and feed the source
@@ -448,6 +510,12 @@ async function routeIdentityCall(
   // store's documented default is "not present ⇒ allow" — so it would fail
   // OPEN, silently re-enabling a tool the owner disabled. `data.changed`
   // matching against the iframe's `data-app` has the same requirement.
+  // A marker with nothing after it (`my_granola`, no `__`) is malformed. Left
+  // alone it would strip to `granola`, find the connector, and dispatch a
+  // synthesized `granola__` with an empty tool segment. Reject by name instead.
+  if (isPersonalConnectorName(wireSource) && bareSegmentOf(toolName).length === 0) {
+    throw new UnknownIdentitySource(toolName, wireSource);
+  }
   const sourceName = isPersonalConnectorName(wireSource)
     ? personalConnectorServerName(wireSource)
     : wireSource;
@@ -486,7 +554,6 @@ async function routeIdentityCall(
   throw new UnknownIdentitySource(toolName, wireSource);
 }
 
-/** Resolve a workspace tool name's `<source>__` prefix to its registered `ToolSource`, self-healing a transiently absent source once. */
 /**
  * The `<source>` segment of a bare `<source>__<tool>` name; the whole name when
  * there is no separator (a malformed call the resolvers then reject by name).
@@ -506,6 +573,7 @@ function bareSegmentOf(toolName: string): string {
   return sep > 0 ? toolName.slice(sep + 2) : "";
 }
 
+/** Resolve a workspace tool name's `<source>__` prefix to its registered `ToolSource`, self-healing a transiently absent source once. */
 async function resolveWorkspaceSource(
   wsId: string,
   toolName: string,

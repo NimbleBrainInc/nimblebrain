@@ -48,22 +48,30 @@ export function isIdentitySource(name: string): boolean {
  * is usually empty.
  *
  * The marker also makes the credential boundary legible. `gmail__send` (the
- * workspace's shared account) versus `my-gmail__send` (the caller's own) is a
+ * workspace's shared account) versus `my_gmail__send` (the caller's own) is a
  * distinction the model must get right for a send-mail tool, and an opaque
  * workspace id never communicated it.
  *
- * Kebab-cased to match the source segment's alphabet (`slugifyServerName`
- * emits `[a-z0-9-]` and never `_`, which is what keeps `__` an unambiguous
- * source/tool separator).
+ * **Why `my_` and not `my-`.** The marker has to live OUTSIDE the alphabet a
+ * real source name can be built from, or reserving it starts rejecting
+ * legitimate connectors. `slugifyServerName` emits `[a-z0-9-]` and maps every
+ * other character to `-`, so a kebab marker is squarely inside its image:
+ * `@my/thing` slugs to `my-thing` and `my-notes/mcp` to `my-notes-mcp`, both of
+ * which a `my-` reservation refuses to install. It never emits `_`, so `my_`
+ * cannot be produced by any catalog install and reserving it costs nothing.
+ *
+ * A single `_` inside a source segment is safe — only a DOUBLE underscore would
+ * break the `__` split, and this adds one.
  */
-export const PERSONAL_CONNECTOR_PREFIX = "my-";
+export const PERSONAL_CONNECTOR_PREFIX = "my_";
 
 /**
  * Whether a bare source name addresses a personal connector.
  *
- * Reserved: a **workspace** source may not slugify to this prefix, or it would
- * shadow the identity door. Enforced at install (`assertNotReservedSourceName`)
- * rather than here, so the read path stays a pure predicate.
+ * Reserved: a **workspace** source may not take this prefix, or it would shadow
+ * the identity door. Enforced at install by `isReservedServerName` /
+ * `validateServerName` rather than here, so the read path stays a pure
+ * predicate.
  */
 export function isPersonalConnectorName(sourceName: string): boolean {
   return sourceName.startsWith(PERSONAL_CONNECTOR_PREFIX);

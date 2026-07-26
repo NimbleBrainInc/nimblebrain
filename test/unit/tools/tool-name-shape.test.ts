@@ -2,7 +2,7 @@
  * The shape of a wire tool name.
  *
  * Tool names reach the model as bare `<source>__<tool>`, and personal connectors
- * as `my-<source>__<tool>`. This suite pins the properties dispatch actually
+ * as `my_<source>__<tool>`. This suite pins the properties dispatch actually
  * depends on: that the source segment round-trips through the `__` split, and
  * that a personal connector stays distinguishable from a workspace source of the
  * same name.
@@ -92,7 +92,16 @@ describe("wire tool-name shape", () => {
     // never another workspace member's.
     const workspace = slugifyServerName("com.google/gmail");
     const personal = personalConnectorWireName(workspace);
-    expect(personal).not.toBe(workspace);
-    expect(personal.startsWith(workspace)).toBe(false);
+
+    // The property that matters is that the two SPLIT to different source
+    // segments, so dispatch sends them to different doors. Asserting that the
+    // marked form merely differs from the bare one is trivially true of any
+    // prefix and would pass for a marker that still collided.
+    const seg = (n: string) => n.slice(0, n.indexOf("__") > 0 ? n.indexOf("__") : n.length);
+    expect(seg(`${personal}__send`)).not.toBe(seg(`${workspace}__send`));
+
+    // And the marker must be outside slugify's image, or reserving it would
+    // reject legitimate connectors (`@my/thing` slugs to `my-thing`).
+    expect(slugifyServerName("@my/thing")).not.toStartWith(personal.slice(0, 3));
   });
 });

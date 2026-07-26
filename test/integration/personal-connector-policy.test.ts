@@ -104,7 +104,7 @@ describe("personal-connector per-tool policy — engine door", () => {
       workspaceId: SHARED_WS,
       runtime,
     });
-    const result = await router.execute({ id: "c1", name: "my-granola__read_notes", input: {} });
+    const result = await router.execute({ id: "c1", name: "my_granola__read_notes", input: {} });
     expect(result.isError).toBeFalsy();
   });
 
@@ -114,7 +114,7 @@ describe("personal-connector per-tool policy — engine door", () => {
       workspaceId: SHARED_WS,
       runtime,
     });
-    const result = await router.execute({ id: "c2", name: "my-granola__delete_notes", input: {} });
+    const result = await router.execute({ id: "c2", name: "my_granola__delete_notes", input: {} });
     expect(result.isError).toBe(true);
     expect(result.structuredContent).toMatchObject({
       error: "tool_permission_denied",
@@ -133,7 +133,7 @@ describe("personal-connector reachability — a personal workspace is just a wor
       workspaceId: personalWs,
       runtime,
     });
-    const result = await homeRouter.execute({ id: "h1", name: "my-granola__read_notes", input: {} });
+    const result = await homeRouter.execute({ id: "h1", name: "my_granola__read_notes", input: {} });
     expect(result.isError).toBe(true);
     expect(result.structuredContent).toMatchObject({ reason: "connector_grant_denied" });
   });
@@ -147,7 +147,7 @@ describe("personal-connector reachability — a personal workspace is just a wor
         workspaceId: personalWs,
         runtime,
       });
-      const result = await homeRouter.execute({ id: "h2", name: "my-notion__read", input: {} });
+      const result = await homeRouter.execute({ id: "h2", name: "my_notion__read", input: {} });
       expect(result.isError).toBeFalsy();
     } finally {
       await store.revokeConnector(DEV_IDENTITY.id, "notion", personalWs);
@@ -160,9 +160,9 @@ describe("personal-connector per-tool policy — surfacing (surface = dispatchab
     const names = (await runtime.listToolsForWorkspace(SHARED_WS, DEV_IDENTITY.id)).map(
       (t) => t.name,
     );
-    expect(names).toContain("my-granola__read_notes"); // granted + allowed
-    expect(names).not.toContain("my-granola__delete_notes"); // granted but disallowed
-    expect(names).not.toContain("my-notion__read"); // not granted to Helix
+    expect(names).toContain("my_granola__read_notes"); // granted + allowed
+    expect(names).not.toContain("my_granola__delete_notes"); // granted but disallowed
+    expect(names).not.toContain("my_notion__read"); // not granted to Helix
   });
 });
 
@@ -170,13 +170,13 @@ describe("personal-connector per-tool policy — /mcp door parity", () => {
   it("denies a disallowed tool via /mcp with the same envelope", async () => {
     const client = await mcpClient(SHARED_WS);
     try {
-      const result = await client.callTool({ name: "my-granola__delete_notes", arguments: {} });
+      const result = await client.callTool({ name: "my_granola__delete_notes", arguments: {} });
       expect(result.isError).toBe(true);
       expect((result.structuredContent as { error?: string })?.error).toBe(
         "tool_permission_denied",
       );
       // The safe granted tool still works on the same door.
-      const ok = await client.callTool({ name: "my-granola__read_notes", arguments: {} });
+      const ok = await client.callTool({ name: "my_granola__read_notes", arguments: {} });
       expect(ok.isError).toBeFalsy();
     } finally {
       await client.close();
@@ -187,7 +187,7 @@ describe("personal-connector per-tool policy — /mcp door parity", () => {
     const client = await mcpClient(SHARED_WS);
     try {
       // notion is a personal connector but NOT granted to Helix.
-      await client.callTool({ name: "my-notion__read", arguments: {} });
+      await client.callTool({ name: "my_notion__read", arguments: {} });
       throw new Error("expected a JSON-RPC error");
     } catch (err) {
       const e = err as { data?: { reason?: string } };

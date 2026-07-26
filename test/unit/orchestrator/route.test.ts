@@ -505,7 +505,7 @@ describe("routeToolCall — personal connectors (identity-door grant gate)", () 
     try {
       await routeToolCall({
         identityId: USER_ID,
-        namespacedName: "my-granola__read_notes",
+        namespacedName: "my_granola__read_notes",
         workspaceId: PERSONAL_WS, // the caller's own personal workspace
         runtime: runtimeWithPersonalConnector(store),
       });
@@ -521,7 +521,7 @@ describe("routeToolCall — personal connectors (identity-door grant gate)", () 
     await store.grantConnector(USER_ID, "granola", PERSONAL_WS);
     const routed = await routeToolCall({
       identityId: USER_ID,
-      namespacedName: "my-granola__read_notes",
+      namespacedName: "my_granola__read_notes",
       workspaceId: PERSONAL_WS,
       runtime: runtimeWithPersonalConnector(store),
     });
@@ -538,7 +538,7 @@ describe("routeToolCall — personal connectors (identity-door grant gate)", () 
     try {
       await routeToolCall({
         identityId: USER_ID,
-        namespacedName: "my-granola__read_notes",
+        namespacedName: "my_granola__read_notes",
         workspaceId: SHARED_WS, // a shared room, not the caller's home
         runtime: runtimeWithPersonalConnector(store),
       });
@@ -556,7 +556,7 @@ describe("routeToolCall — personal connectors (identity-door grant gate)", () 
 
     const routed = await routeToolCall({
       identityId: USER_ID,
-      namespacedName: "my-granola__read_notes",
+      namespacedName: "my_granola__read_notes",
       workspaceId: SHARED_WS,
       runtime: runtimeWithPersonalConnector(store),
     });
@@ -602,7 +602,7 @@ describe("routeToolCall — personal connectors (identity-door grant gate)", () 
     try {
       await routeToolCall({
         identityId: USER_ID,
-        namespacedName: "my-granola__read_notes",
+        namespacedName: "my_granola__read_notes",
         // No workspaceId.
         runtime: runtimeWithPersonalConnector(store),
       });
@@ -627,7 +627,7 @@ describe("routeToolCall — personal connectors (identity-door grant gate)", () 
     try {
       await routeToolCall({
         identityId: USER_ID,
-        namespacedName: "my-granola__read_notes",
+        namespacedName: "my_granola__read_notes",
         workspaceId: SHARED_WS,
         runtime,
       });
@@ -655,5 +655,87 @@ describe("routeToolCall — personal connectors (identity-door grant gate)", () 
     });
 
     expect(routed.source).toBe(kernel); // the kernel source, not the personal bundle
+  });
+});
+
+describe("routeToolCall — legacy bare personal-connector names", () => {
+  // Before the marker existed, a personal connector's wire name was a plain bare
+  // `<connector>__<tool>`. That form still arrives from the two carriers this
+  // module keeps routing legacy `ws_<id>-` names for: a resumed conversation's
+  // history, and an external client's cached `tools/list`.
+  function runtimeWith(wsSources: string[], connector: string): StubRuntime {
+    return makeStubRuntime({
+      registries: new Map([[SHARED_WS, wsSources.map(makeStubSource)]]),
+      identityConnectors: new Map([[connector, makeStubSource(connector)]]),
+      permissionStore: new PermissionStore(workDir),
+      workDir,
+    });
+  }
+
+  test("no same-named workspace source → falls back to the connector, with its policy owner", async () => {
+    const runtime = runtimeWith(["crm"], "granola");
+    await runtime
+      .getPermissionStore?.()
+      ?.grantConnector(USER_ID, "granola", SHARED_WS);
+
+    const routed = await routeToolCall({
+      identityId: USER_ID,
+      namespacedName: "granola__read_notes",
+      workspaceId: SHARED_WS,
+      runtime,
+    });
+
+    // Without the fallback this is a hard `UnknownToolSource` — the connector is
+    // installed and granted, and the platform reports no such tool.
+    expect(routed.kind).toBe("identity");
+    expect(routed.policyOwner).toEqual({ scope: "user", userId: USER_ID });
+  });
+
+  test("same-named workspace source WINS — the documented ambiguity", async () => {
+    const runtime = runtimeWith(["gmail"], "gmail");
+    await runtime.getPermissionStore?.()?.grantConnector(USER_ID, "gmail", SHARED_WS);
+
+    const routed = await routeToolCall({
+      identityId: USER_ID,
+      namespacedName: "gmail__send",
+      workspaceId: SHARED_WS,
+      runtime,
+    });
+
+    // Deliberate: bare now MEANS the workspace's source, and that reading has to
+    // win wherever it resolves, or a legitimate workspace call would be hijacked
+    // by a same-named personal connector. The caller's fix is to re-list and use
+    // the marked name — asserted next.
+    expect(routed.kind).toBe("workspace");
+  });
+
+  test("the marked name reaches the connector even when a workspace source shares it", async () => {
+    const runtime = runtimeWith(["gmail"], "gmail");
+    await runtime.getPermissionStore?.()?.grantConnector(USER_ID, "gmail", SHARED_WS);
+
+    const routed = await routeToolCall({
+      identityId: USER_ID,
+      namespacedName: "my_gmail__send",
+      workspaceId: SHARED_WS,
+      runtime,
+    });
+
+    expect(routed.kind).toBe("identity");
+    // The marker is stripped at the door: everything downstream keys on
+    // `serverName`, including `assertToolAllowed`, whose store defaults to allow.
+    expect(routed.toolName).toBe("gmail__send");
+    expect(routed.policyOwner).toEqual({ scope: "user", userId: USER_ID });
+  });
+
+  test("a marker with no tool segment is rejected, not dispatched as `<connector>__`", async () => {
+    const runtime = runtimeWith(["crm"], "granola");
+    await expect(
+      routeToolCall({
+        identityId: USER_ID,
+        namespacedName: "my_granola",
+        workspaceId: SHARED_WS,
+        runtime,
+      }),
+    ).rejects.toBeInstanceOf(UnknownIdentitySource);
   });
 });

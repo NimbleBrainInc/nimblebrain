@@ -30,7 +30,7 @@ The methods correspond to the Streamable HTTP session lifecycle:
 - **GET** — returns `405 Method Not Allowed` with `Allow: POST, DELETE`. NimbleBrain does not offer the optional GET-style server-to-client SSE channel; progress and task updates flow over the POST that started them. Spec-compliant clients fall back to POST-only automatically.
 
 <Aside type="note" title="Per-request workspace">
-A `/mcp` session is identity-bound, but **each request names its workspace** via the `X-Workspace-Id` header — validated against your membership. `tools/list` returns that workspace's tools (`ws_<id>-<source>__<tool>`) plus your identity tools (bare `<source>__<tool>`); a `tools/call` to any **other** workspace is refused with `-32602 workspace_access_denied`. A request with no (or a non-member) `X-Workspace-Id` is identity-only.
+A `/mcp` session is identity-bound, but **each request names its workspace** via the `X-Workspace-Id` header — validated against your membership. `tools/list` returns that workspace's tools (`<source>__<tool>`) plus your identity tools (also `<source>__<tool>`; your personal connectors carry a `my_` marker); a `tools/call` to any **other** workspace is refused with `-32602 workspace_access_denied`. A request with no (or a non-member) `X-Workspace-Id` is identity-only.
 </Aside>
 
 ## Authentication
@@ -125,7 +125,7 @@ NimbleBrain honors `X-Forwarded-Proto` to derive the advertised scheme. Configur
 
 For the request's validated `X-Workspace-Id` workspace, the endpoint exposes:
 
-- **Workspace tools** — namespaced `ws_<id>-<source>__<tool>`, from the bundles installed and running in that workspace.
+- **Workspace tools** — `<source>__<tool>`, from the bundles installed and running in that workspace. The workspace is not in the name: it comes from the `X-Workspace-Id` you sent, so the same call means a different workspace's tool under a different header.
 - **Identity tools** — your conversations, files, and automations (bare `<source>__<tool>`).
 - **Tool execution** — `tools/call` runs a tool in that workspace or an identity tool. A name in a **different** workspace is refused with `-32602 workspace_access_denied`; with no `X-Workspace-Id`, only identity tools are exposed.
 
