@@ -54,7 +54,26 @@ In the Composio dashboard:
 4. Paste the Client ID + Client Secret from step 2
 5. Save — copy the resulting `ac_…` id
 
-You'll wire that id into the pod as `COMPOSIO_<TOOLKIT>_AUTH_CONFIG_ID`. The variable name comes from the catalog entry: each `auth: composio` entry declares its own `composio.authConfigEnv`, so Gmail reads `COMPOSIO_GMAIL_AUTH_CONFIG_ID`, Outlook reads `COMPOSIO_OUTLOOK_AUTH_CONFIG_ID`, etc.
+Declare that id in `nimblebrain.json`, keyed by the toolkit slug the catalog entry names:
+
+```jsonc
+{
+  "connectors": {
+    "providers": {
+      "composio": {
+        "authConfigs": {
+          "gmail": "ac_xxxxxxxx",
+          "outlook": "ac_yyyyyyyy"
+        }
+      }
+    }
+  }
+}
+```
+
+An `ac_…` is an identifier, not a secret — it is inert without the API key — so it belongs in config next to the toolkits it names, not in your secret store. Add a toolkit by adding a line here and a catalog entry; there is no third place to keep in sync.
+
+A toolkit with no entry here falls back to the environment variable named by its catalog entry's legacy `composio.authConfigEnv` (`COMPOSIO_GMAIL_AUTH_CONFIG_ID` and friends). That fallback exists so a running deployment keeps working while its ids move into the block, and will be removed — declare them here.
 
 ### 4. White-label the Composio consent screen (optional)
 
@@ -128,7 +147,7 @@ The full procedure to add (say) Slack to a Composio-backed deployment:
 1. **Vendor side**: register a Slack OAuth app (BYO) — `api.slack.com/apps`. Set redirect URI to `https://backend.composio.dev/api/v3.1/toolkits/auth/callback`. Capture Client ID + Client Secret.
 2. **Composio side**: dashboard → Create Auth Config → Slack → BYO credentials → paste. Capture `ac_…`.
 3. **Secret store**: add `COMPOSIO_SLACK_AUTH_CONFIG_ID=ac_…` to your environment.
-4. **Catalog YAML**: add a `auth: composio` entry with `composio.toolkit: slack` and `composio.authConfigEnv: COMPOSIO_SLACK_AUTH_CONFIG_ID`. Curate `composio.tools` aggressively — Slack publishes 100+ tools, and the agent's first-turn tool search will spend tens of thousands of tokens listing them all if you let it. See [Connectors Catalog → auth: composio](/config/connectors-catalog/#2-add-the-yaml-entry).
+4. **Catalog YAML**: add a `auth: composio` entry with `composio.toolkit: slack`, and the `ac_…` id under `connectors.providers.composio.authConfigs.slack`. Curate `composio.tools` aggressively — Slack publishes 100+ tools, and the agent's first-turn tool search will spend tens of thousands of tokens listing them all if you let it. See [Connectors Catalog → auth: composio](/config/connectors-catalog/#2-add-the-yaml-entry).
 5. **Roll the deployment**: bump the platform image (or restart pods). The new env var and catalog entry are picked up on next start.
 
 ## API-key toolkits (no OAuth)

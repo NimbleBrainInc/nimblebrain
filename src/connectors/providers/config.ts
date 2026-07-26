@@ -29,6 +29,22 @@ export interface ComposioProviderConfig {
    * deployments.
    */
   apiKey?: string;
+  /**
+   * Per-toolkit Composio auth-config ids (`ac_…`), keyed by the **toolkit slug**
+   * the catalog entry already names — `{ "gmail": "ac_xyz" }`.
+   *
+   * Non-secret identifiers (a client_id, not a client_secret — inert without
+   * `apiKey`), and per-deployment, because the id differs per Composio account
+   * while the catalog is shared.
+   *
+   * Keyed by toolkit rather than by env-var name on purpose: the toolkit is
+   * already the entry's own identifier, so declaring an id introduces no string
+   * that has to match anything elsewhere. Keying on a name the catalog also has
+   * to spell puts one string in three places — the catalog, the deploy values,
+   * and whatever guards the spelling — where a typo yields config no connector
+   * reads.
+   */
+  authConfigs?: Record<string, string>;
   /** Composio API base URL override (self-hosted / staging). Must be http(s). */
   baseUrl?: string;
   /**
@@ -88,6 +104,7 @@ const MANAGED_PROVIDER_FIELDS: Record<keyof Required<ManagedProviderConfigs>, tr
 
 const COMPOSIO_PROVIDER_FIELDS: Record<keyof Required<ComposioProviderConfig>, true> = {
   apiKey: true,
+  authConfigs: true,
   baseUrl: true,
   monitorEnabled: true,
 };

@@ -6,7 +6,10 @@ import {
 } from "../../bundles/composio-connection.ts";
 import { WORKSPACE_PRINCIPAL_ID } from "../../bundles/connection.ts";
 import { slugifyServerName } from "../../bundles/paths.ts";
-import { validateComposioConfig } from "../../connectors/providers/composio/config.ts";
+import {
+  composioAuthConfigId,
+  validateComposioConfig,
+} from "../../connectors/providers/composio/config.ts";
 import {
   consumeConnectFlow,
   registerConnectFlow,
@@ -315,17 +318,15 @@ function resolveComposioCredentials(
     return apiError(500, "composio_unconfigured", "Composio integration not configured.");
   }
 
-  // Per-connector Composio `auth_config_id`. Lives in the catalog
-  // entry's `_meta.composio.authConfigEnv` as the name of the env
-  // var holding the value; the actual id (e.g. `ac_xxx`) is
-  // operator-supplied via 1Password → ExternalSecret → pod env.
-  // The indirection keeps the catalog file free of deployment-
-  // specific identifiers.
-  const authConfigEnvName = entry.composio.authConfigEnv;
-  const authConfigId = process.env[authConfigEnvName]?.trim();
+  // Per-connector Composio `auth_config_id` (e.g. `ac_xxx`), operator-supplied
+  // under `connectors.providers.composio.authConfigs`. It stays out of the
+  // catalog because the id differs per Composio account while the catalog is
+  // shared across deployments.
+  const toolkit = entry.composio.toolkit;
+  const authConfigId = composioAuthConfigId(toolkit, entry.composio.authConfigEnv);
   if (!authConfigId) {
     log.warn(
-      `[composio-auth] ${authConfigEnvName} not set; cannot initiate ${connectorId} (${logCtx})`,
+      `[composio-auth] no auth config id for toolkit "${toolkit}"; cannot initiate ${connectorId} (${logCtx})`,
     );
     return apiError(
       500,

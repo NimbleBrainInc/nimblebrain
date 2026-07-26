@@ -312,6 +312,7 @@ A provider is registered — and its callback routes, liveness probe, and vendor
     "providers": {
       "composio": {
         "apiKey": "…",
+        "authConfigs": { "gmail": "ac_xxxxxxxx" },
         "baseUrl": "https://backend.composio.dev",
         "monitorEnabled": true
       },
@@ -329,10 +330,25 @@ A provider is registered — and its callback routes, liveness probe, and vendor
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
 | `apiKey` | `string` | — | Platform-wide Composio API key — the broker credential. See [The broker credential](#the-broker-credential). |
+| `authConfigs` | `Record<string, string>` | `{}` | Per-toolkit auth-config ids (`ac_…`), keyed by the toolkit slug the catalog entry names. See [Per-toolkit auth configs](#per-toolkit-auth-configs). |
 | `baseUrl` | `string` | `https://backend.composio.dev` | Composio API base URL override (self-hosted / staging). Must be `http(s)` — any other scheme is rejected at startup, because it would turn `/v1/composio-auth/proxy` into an open redirect. |
 | `monitorEnabled` | `boolean` | `true` | Run Composio's arm of the connection-revalidator probe, which detects connections whose downstream vendor account lapsed while the platform key stayed valid. |
 
 The probe's **sweep cadence is not here.** One revalidator serves every provider, so the interval is provider-agnostic and is set with `NB_CONNECTION_REVALIDATE_INTERVAL_SECONDS` ([Environment Variables](/config/environment/#runtime--server)). Only the enable/disable is Composio's.
+
+#### Per-toolkit auth configs
+
+Every `auth: composio` connector needs an auth config created in the Composio dashboard ([how](/deploy/composio/#3-create-one-auth-config-per-toolkit-in-composio)). Its `ac_…` id varies per Composio account, so it cannot live in the catalog, which is shared across deployments.
+
+```jsonc
+"authConfigs": { "gmail": "ac_xxxxxxxx", "posthog": "ac_yyyyyyyy" }
+```
+
+The key is the catalog entry's `composio.toolkit` — an identifier that entry already carries, so declaring an id introduces no string that has to match anything elsewhere.
+
+These are identifiers, not secrets: an `ac_…` is inert without `apiKey`, the way a client_id is inert without a client_secret. They live in config next to the toolkits they name rather than in your secret store.
+
+A toolkit with no entry falls back to the environment variable named by its catalog entry's legacy `composio.authConfigEnv`. That fallback carries a running deployment through the move and will be removed with the field.
 
 One instance serves one tenant, so this is a single config layer: there is no per-tenant merge. Intra-tenant isolation is unchanged — the single broker account still serves every workspace and user in the tenant, namespaced by the Composio `user_id`.
 

@@ -362,12 +362,17 @@
           "type": "object",
           "properties": {
             "composio": {
-              "description": "Composio (auth broker + hosted MCP sessions). Each field falls back per field to its env var when left out: COMPOSIO_API_KEY, COMPOSIO_API_BASE_URL, COMPOSIO_MONITOR_ENABLED.",
+              "description": "Composio (auth broker + hosted MCP sessions). Each field falls back per field to its env var when left out: COMPOSIO_API_KEY, COMPOSIO_API_BASE_URL, COMPOSIO_MONITOR_ENABLED. Per-toolkit auth-config ids live in authConfigs.",
               "type": "object",
               "properties": {
                 "apiKey": {
                   "type": "string",
                   "description": "Platform-wide Composio API key — the broker credential, and the gate on registering the provider at all. Falls back to COMPOSIO_API_KEY. A secret in a mounted config file is the operator's call; the env fallback remains the better posture for most deployments."
+                },
+                "authConfigs": {
+                  "type": "object",
+                  "description": "Per-toolkit Composio auth-config ids (`ac_…`), keyed by the toolkit slug the catalog entry already names — {\"gmail\": \"ac_xyz\"}. Non-secret identifiers (inert without apiKey) that vary per Composio account, which is why they are declared per deployment rather than carried in the shared catalog. A toolkit with no entry here falls back to the env var named by its catalog entry's legacy composio.authConfigEnv.",
+                  "additionalProperties": { "type": "string" }
                 },
                 "baseUrl": {
                   "type": "string",

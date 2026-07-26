@@ -164,3 +164,23 @@ function monitorEnabledFromEnv(): boolean {
 export function _resetComposioConfigForTest(): void {
   _cached = undefined;
 }
+
+/**
+ * The auth-config id for one toolkit: the declared `authConfigs` entry, else the
+ * legacy environment variable the catalog entry names.
+ *
+ * The env arm is a **migration fallback**, kept so a deploy that still sets
+ * `COMPOSIO_<TOOLKIT>_AUTH_CONFIG_ID` keeps working across the upgrade. It goes
+ * away with `authConfigEnv` once no deployment relies on it; the declared block
+ * is the destination.
+ *
+ * Reads the declared block directly rather than routing through
+ * `validateComposioConfig`, whose unconfigured early-return would zero this
+ * lookup — reporting a missing auth config for what is really a missing API key.
+ * Callers gate on the credential separately and say so in their own words.
+ */
+export function composioAuthConfigId(toolkit: string, legacyEnvVar?: string): string {
+  const declared = declaredProviderConfig("composio")?.authConfigs?.[toolkit]?.trim();
+  if (declared) return declared;
+  return (legacyEnvVar ? process.env[legacyEnvVar]?.trim() : undefined) ?? "";
+}
