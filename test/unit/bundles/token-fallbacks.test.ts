@@ -38,7 +38,7 @@
 
 import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
-import { relative } from "node:path";
+import { join, relative } from "node:path";
 import { REPO, sourceFiles, themedTrees } from "./themed-trees.ts";
 
 /**
@@ -127,5 +127,85 @@ describe("theme tokens are used without fallbacks", () => {
   test("a var() broken across lines is still seen", () => {
     const source = "color: var(\n  --color-text-primary,\n  #fff\n);";
     expect([...source.matchAll(FALLBACK)]).toHaveLength(1);
+  });
+});
+
+/**
+ * The same rule, applied to the page that teaches it.
+ *
+ * `docs/apps/theming.mdx` is what an app author reads before writing a line of
+ * CSS, so a fallback written there does not stay there — it propagates into
+ * apps this repo never sees, and no guard over `src/` can reach them. Guarding
+ * the trees while the public page taught the opposite is how seven of that
+ * page's nine example fallbacks came to name a palette two brand generations
+ * old.
+ *
+ * The page gets an allowlist rather than the trees' flat zero, because it has
+ * to document the one state the trees do not have: an app rendering where no
+ * host injects tokens at all (Claude Desktop, another MCP host, its own dev
+ * server). A fallback is genuinely load-bearing there. What it may never be is
+ * a copy of *our* palette — that is a value the host owns, and a copy of it is
+ * wrong the moment the brand moves, silently, in the direction of the light
+ * mode it was written from.
+ *
+ * So the test is on the fallback's *value*, not its presence: a generic default
+ * an app can legitimately own passes, and anything else is assumed to be ours.
+ * Deriving the rule the other way — "no value equal to a current token value"
+ * — was tried and rejected: against the page as it stood, equality caught 3 of
+ * the 12 real violations, because the other nine had already drifted past
+ * equality. The drifted copy is exactly the one worth catching, so an
+ * enumerated set of safe values is the only shape that reaches it.
+ */
+const THEMING_DOC = join(REPO, "docs", "src", "content", "docs", "apps", "theming.mdx");
+
+/**
+ * Defaults an app can own outright. Deliberately tiny and mode-independent:
+ * every one renders the same whatever the host's theme is, which is what makes
+ * it an app's own choice rather than a snapshot of someone else's palette.
+ */
+const GENERIC_FALLBACKS = new Set(["white", "black", "transparent", "currentcolor", "inherit"]);
+
+/** Captures the fallback so it can be judged, where {@link FALLBACK} only detects one. */
+const DOC_FALLBACK = /var\(\s*--[\w-]+\s*,([^)]*)\)/g;
+
+function docViolations(): string[] {
+  const source = readFileSync(THEMING_DOC, "utf8");
+  const found: string[] = [];
+  for (const m of source.matchAll(DOC_FALLBACK)) {
+    if (GENERIC_FALLBACKS.has(m[1].trim().toLowerCase())) continue;
+    const line = source.slice(0, m.index).split("\n").length;
+    found.push(`${relative(REPO, THEMING_DOC)}:${line}  ${m[0]}`);
+  }
+  return found;
+}
+
+describe("theming.mdx teaches no fallback that copies a platform value", () => {
+  test("every documented fallback is a generic the app owns", () => {
+    expect(docViolations()).toEqual([]);
+  });
+
+  // Canary, for the same reason as the tree walk above: a renamed or moved page
+  // would otherwise make this guard pass by reading nothing.
+  test("the page is actually being read, and does still teach var()", () => {
+    const source = readFileSync(THEMING_DOC, "utf8");
+    expect(source.length).toBeGreaterThan(0);
+    expect([...source.matchAll(BARE)].length).toBeGreaterThan(0);
+  });
+
+  test.each([
+    ["var(--color-background-primary, white)", false],
+    ["var(--color-text-primary, black)", false],
+    ["var(--color-background-primary, transparent)", false],
+    ["var(--color-background-primary)", false],
+    ["var(--color-text-accent, #0055FF)", true],
+    ["var(--color-text-accent, #2563eb)", true],
+    ["var(--border-radius-md, 0.5rem)", true],
+    ["var(--font-sans, system-ui, sans-serif)", true],
+    ["var(--token, fallback)", true],
+  ])("doc matcher: %s → violation=%p", (source, expected) => {
+    const hit = [...source.matchAll(new RegExp(DOC_FALLBACK.source, "g"))].some(
+      (m) => !GENERIC_FALLBACKS.has(m[1].trim().toLowerCase()),
+    );
+    expect(hit).toBe(expected);
   });
 });
