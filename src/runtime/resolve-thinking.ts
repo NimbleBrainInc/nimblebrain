@@ -32,6 +32,34 @@ function effortSourceFor(input: ResolveThinkingInput): EffortSource {
 }
 
 /**
+ * Whether the operator asked for reasoning that this call is about to drop.
+ *
+ * Derived from {@link effortSourceFor}, not from `configMode` alone: depth and
+ * budget are each an override on their own, and the settings panel's
+ * default-mode payload is a `thinkingEffort` with no mode at all. A gate that
+ * reads only the mode is therefore silent on the most common way to set one.
+ *
+ * `off` is excluded because dropping it costs nothing — no reasoning is exactly
+ * what it asked for. That is where this predicate parts company with the
+ * engine's `operatorAsked`, which does report a dropped `off`: on an unmapped
+ * Google model an off state exists and goes unsent, whereas here the model has
+ * no reasoning parameter at all.
+ */
+function askedForReasoning(input: ResolveThinkingInput): boolean {
+  return input.configMode !== "off" && effortSourceFor(input) !== "platform";
+}
+
+/** The settings being dropped, named so the warning is actionable. */
+function describeOverride(input: ResolveThinkingInput): string {
+  const set = [
+    input.configMode != null ? `thinking="${input.configMode}"` : null,
+    input.configEffort != null ? `thinkingEffort="${input.configEffort}"` : null,
+    (input.configBudgetTokens ?? 0) > 0 ? `thinkingBudgetTokens=${input.configBudgetTokens}` : null,
+  ].filter((s) => s != null);
+  return set.join(" + ");
+}
+
+/**
  * Resolve the effective thinking config for an LLM call.
  *
  * Provider-neutral by construction: this function never looks at which
@@ -74,20 +102,16 @@ export function resolveThinking(input: ResolveThinkingInput): ResolvedThinking |
     ? (getModelByString(input.model)?.capabilities.reasoning ?? false)
     : false;
   if (!supportsReasoning) {
-    // Dropping an explicit `off` is a no-op — no thinking is exactly what it
-    // asked for. Dropping `adaptive` or `enabled` discards an instruction the
-    // operator wrote, so say so. A model absent from the catalog is a
-    // supported configuration (pinned ids, and OpenAI-compatible proxies with
-    // their own model names — see `resolveModelString`), and it lands here
-    // looking identical to a genuinely non-reasoning model.
-    if (
-      input.model &&
-      (input.configMode === "adaptive" || input.configMode === "enabled") &&
-      !warnedUncatalogued.has(input.model)
-    ) {
+    // Dropping an instruction the operator wrote is worth saying out loud. A
+    // model absent from the catalog is a supported configuration (pinned ids,
+    // and OpenAI-compatible proxies with their own model names — see
+    // `resolveModelString`), and it lands here looking identical to a genuinely
+    // non-reasoning model, so the warning naming the model is the whole
+    // diagnosis.
+    if (input.model && askedForReasoning(input) && !warnedUncatalogued.has(input.model)) {
       warnedUncatalogued.add(input.model);
       log.warn(
-        `[thinking] Ignoring thinking="${input.configMode}" for "${input.model}": the model is ` +
+        `[thinking] Ignoring ${describeOverride(input)} for "${input.model}": the model is ` +
           "not in the catalog or is not flagged reasoning-capable, so no reasoning options are " +
           "sent. Add it to the catalog (or correct its `capabilities.reasoning`) to enable " +
           "thinking on it. Logged once per model.",

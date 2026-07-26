@@ -106,6 +106,61 @@ describe("resolveThinking", () => {
 		}
 	});
 
+	it("reports every form an override can take, not just a mode", () => {
+		// Depth and budget are each an override on their own: `thinkingEffort`
+		// with no mode is exactly what the settings panel sends for its default
+		// policy, and a bare budget resolves to `enabled` at that budget. A gate
+		// reading only `configMode` stayed silent on both — so the likeliest way
+		// to lose reasoning on a proxied model was also the one way nothing said
+		// so, while the docs promised a warning. Both now derive from
+		// `effortSourceFor`, which is the same provenance the engine's Google
+		// gate reads.
+		const reported = [
+			{ label: "mode", input: { configMode: "enabled" }, names: 'thinking="enabled"' },
+			{ label: "effort", input: { configEffort: "high" }, names: 'thinkingEffort="high"' },
+			{ label: "budget", input: { configBudgetTokens: 8000 }, names: "thinkingBudgetTokens=8000" },
+			{
+				label: "all three",
+				input: { configMode: "enabled", configEffort: "max", configBudgetTokens: 4096 },
+				names: 'thinking="enabled" + thinkingEffort="max" + thinkingBudgetTokens=4096',
+			},
+		] as const;
+		// Nothing an operator wrote is being discarded, so there is nothing to
+		// say. `off` gets what it asked for even when a stale depth rides along.
+		const silent = [
+			{ label: "off", input: { configMode: "off" } },
+			{ label: "off + stale depth", input: { configMode: "off", configEffort: "max" } },
+			{ label: "zero budget", input: { configBudgetTokens: 0 } },
+			{ label: "nothing configured", input: {} },
+		] as const;
+
+		const warnings: string[] = [];
+		const original = log.warn;
+		(log as { warn: (m: string) => void }).warn = (m: string) => warnings.push(m);
+		try {
+			for (const { label, input, names } of reported) {
+				// A fresh model id per case: the once-per-model registry is
+				// process-wide, so a shared id would swallow every case but the first.
+				const model = `anthropic:proxy-${label.replace(/\s/g, "-")}-${Math.random()}`;
+				warnings.length = 0;
+				expect(`${label}: ${resolveThinking({ ...input, model })}`).toBe(`${label}: undefined`);
+				expect(`${label}: ${warnings.length}`).toBe(`${label}: 1`);
+				expect(warnings[0]).toContain(model);
+				// Naming the model says reasoning is off; naming the setting says
+				// which one to go fix.
+				expect(`${label}: ${warnings[0]?.includes(names)}`).toBe(`${label}: true`);
+			}
+			for (const { label, input } of silent) {
+				const model = `anthropic:proxy-${label.replace(/\s/g, "-")}-${Math.random()}`;
+				warnings.length = 0;
+				expect(resolveThinking({ ...input, model })).toBeUndefined();
+				expect(`${label}: ${warnings.length}`).toBe(`${label}: 0`);
+			}
+		} finally {
+			(log as { warn: (m: string) => void }).warn = original;
+		}
+	});
+
 	it("refuses to enable thinking on a model the catalog says can't", () => {
 		// An override can ask for reasoning; it cannot make the parameter exist.
 		// This gate used to be skipped for explicit `enabled`, which was inert
