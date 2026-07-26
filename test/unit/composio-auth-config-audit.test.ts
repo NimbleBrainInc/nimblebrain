@@ -94,7 +94,10 @@ describe("auditComposioAuthConfigs", () => {
 
     expect(audit.declared).toEqual(["gmail"]);
     expect(audit.fromEnv.map((e) => e.toolkit)).toEqual(["slack"]);
-    expect(audit.unresolved).toEqual(["notion"]);
+    // `notion` has no id anywhere and is deliberately absent from the report:
+    // the catalog is a menu, and a toolkit this deployment chose not to wire is
+    // not a misconfiguration. Install says so when it matters.
+    expect(audit).not.toHaveProperty("unresolved");
   });
 
   it("flags a declared key matching no catalog toolkit", () => {
@@ -138,21 +141,43 @@ describe("auditComposioAuthConfigs", () => {
     expect(audit).toEqual({
       declared: [],
       fromEnv: [],
-      unresolved: [],
       orphanedKeys: [],
     } satisfies ComposioAuthConfigAudit);
   });
 
-  it("counts a toolkit once when two catalog entries share it", () => {
-    // Two entries may legitimately front the same Composio toolkit; the wiring
-    // question is per toolkit, so a duplicate would double-count the report.
+  it("classifies a shared toolkit the same way regardless of catalog order", () => {
+    // Two entries may front the same toolkit, and only one may name the env var
+    // that carries the id. Letting the first entry win would hide a toolkit
+    // still riding the fallback — the exact input #789 turns on — and depend on
+    // which entry the catalog happens to list first.
+    process.env.COMPOSIO_GMAIL_AUTH_CONFIG_ID = "ac_env";
+    declareComposio({});
+
+    const named = entry("com.google/gmail", "composio", {
+      toolkit: "gmail",
+      authConfigEnv: "COMPOSIO_GMAIL_AUTH_CONFIG_ID",
+    });
+    const bare = entry("com.google/gmail-alt", "composio", { toolkit: "gmail" });
+
+    for (const order of [
+      [named, bare],
+      [bare, named],
+    ]) {
+      const audit = auditComposioAuthConfigs(order);
+      expect(audit.fromEnv).toEqual([
+        { toolkit: "gmail", envVar: "COMPOSIO_GMAIL_AUTH_CONFIG_ID" },
+      ]);
+    }
+  });
+
+  it("reports a toolkit with no id anywhere in no arm at all", () => {
+    // A deployment wires the toolkits it wants; the rest are a menu it declined.
     declareComposio({});
     const audit = auditComposioAuthConfigs([
-      entry("com.google/gmail", "composio", { toolkit: "gmail" }),
-      entry("com.google/gmail-alt", "composio", { toolkit: "gmail" }),
+      entry("com.notion/mcp", "composio", { toolkit: "notion" }),
     ]);
 
-    expect(audit.unresolved).toEqual(["gmail"]);
+    expect(audit).toEqual({ declared: [], fromEnv: [], orphanedKeys: [] });
   });
 
   it("treats a blank declared id as absent, matching resolution", () => {

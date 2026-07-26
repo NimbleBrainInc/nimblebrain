@@ -17,11 +17,12 @@
  * construction, so the suite must never trigger a vendor load.
  */
 
-import { afterEach, beforeEach, describe, expect, it, spyOn } from "bun:test";
+import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import {
   _resetComposioConfigForTest,
   COMPOSIO_API_BASE,
   composioAuthConfigId,
+  resolveComposioAuthConfig,
   validateComposioConfig,
 } from "../../src/connectors/providers/composio/config.ts";
 import {
@@ -29,7 +30,6 @@ import {
   type ComposioProviderConfig,
   setConnectorsConfig,
 } from "../../src/connectors/providers/config.ts";
-import { log } from "../../src/observability/log.ts";
 import { _resetBouncerModeForTest } from "../../src/oauth/bouncer-config.ts";
 
 const ENV_KEYS = [
@@ -318,61 +318,48 @@ describe("composioAuthConfigId", () => {
 });
 
 /**
- * The deprecation warning is the readiness signal for removing the env arm
- * (#789): when no deployment emits it, nothing is left on the legacy path. It is
- * load-bearing for that decision, so it is covered like any other behavior.
+ * `source` is what lets the boot audit classify a toolkit without restating this
+ * precedence. If it disagreed with `id`, the audit would report a migration
+ * state that installs don't actually take.
  */
-describe("composioAuthConfigId — legacy deprecation warning", () => {
-  let warnSpy: ReturnType<typeof spyOn<typeof log, "warn">>;
-  let warnings: string[];
-
-  beforeEach(() => {
-    warnings = [];
-    warnSpy = spyOn(log, "warn").mockImplementation((msg?: unknown) => {
-      warnings.push(String(msg));
-    });
-  });
-
-  afterEach(() => warnSpy.mockRestore());
-
-  it("warns when the env var is the value's actual source", () => {
-    process.env.COMPOSIO_GMAIL_AUTH_CONFIG_ID = "ac_env";
-    declareComposio({});
-
-    composioAuthConfigId("gmail", "COMPOSIO_GMAIL_AUTH_CONFIG_ID");
-
-    expect(warnings).toHaveLength(1);
-    expect(warnings[0]).toContain("COMPOSIO_GMAIL_AUTH_CONFIG_ID");
-    expect(warnings[0]).toContain("connectors.providers.composio.authConfigs.gmail");
-    expect(warnings[0]).toContain("#789");
-  });
-
-  it("warns once per toolkit, not once per resolution", () => {
-    // Resolution runs on every install, connect, and revalidator sweep — a warn
-    // per call would bury the signal it exists to give.
-    process.env.COMPOSIO_GMAIL_AUTH_CONFIG_ID = "ac_env";
-    declareComposio({});
-
-    for (let i = 0; i < 5; i++) composioAuthConfigId("gmail", "COMPOSIO_GMAIL_AUTH_CONFIG_ID");
-
-    expect(warnings).toHaveLength(1);
-  });
-
-  it("stays silent when the declared entry supplies the value", () => {
-    // A migrated toolkit must not warn merely because a stale env var lingers
-    // in the pod — that would report a problem the operator already fixed.
+describe("resolveComposioAuthConfig — source", () => {
+  it("reports the declared block as the source", () => {
     process.env.COMPOSIO_GMAIL_AUTH_CONFIG_ID = "ac_env";
     declareComposio({ authConfigs: { gmail: "ac_declared" } });
 
-    expect(composioAuthConfigId("gmail", "COMPOSIO_GMAIL_AUTH_CONFIG_ID")).toBe("ac_declared");
-    expect(warnings).toHaveLength(0);
+    expect(resolveComposioAuthConfig("gmail", "COMPOSIO_GMAIL_AUTH_CONFIG_ID")).toEqual({
+      id: "ac_declared",
+      source: "declared",
+    });
   });
 
-  it("stays silent when nothing resolves at all", () => {
-    // The connector is unconfigured, not deprecated — callers report that in
-    // their own words, and a deprecation warning here would misdirect.
+  it("reports the legacy env var as the source", () => {
+    process.env.COMPOSIO_GMAIL_AUTH_CONFIG_ID = "ac_env";
     declareComposio({});
-    expect(composioAuthConfigId("gmail", "COMPOSIO_GMAIL_AUTH_CONFIG_ID")).toBe("");
-    expect(warnings).toHaveLength(0);
+
+    expect(resolveComposioAuthConfig("gmail", "COMPOSIO_GMAIL_AUTH_CONFIG_ID")).toEqual({
+      id: "ac_env",
+      source: "env",
+    });
+  });
+
+  it("reports none when the toolkit has no id anywhere", () => {
+    declareComposio({});
+    expect(resolveComposioAuthConfig("gmail", "COMPOSIO_GMAIL_AUTH_CONFIG_ID")).toEqual({
+      id: "",
+      source: "none",
+    });
+  });
+
+  it("agrees with composioAuthConfigId on the value it returns", () => {
+    // The two are one function; a divergence would put the audit and installs on
+    // different answers for the same toolkit.
+    process.env.COMPOSIO_GMAIL_AUTH_CONFIG_ID = "ac_env";
+    for (const declared of [{}, { authConfigs: { gmail: "ac_declared" } }]) {
+      declareComposio(declared);
+      expect(composioAuthConfigId("gmail", "COMPOSIO_GMAIL_AUTH_CONFIG_ID")).toBe(
+        resolveComposioAuthConfig("gmail", "COMPOSIO_GMAIL_AUTH_CONFIG_ID").id,
+      );
+    }
   });
 });

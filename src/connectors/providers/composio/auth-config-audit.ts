@@ -1,11 +1,9 @@
 /**
  * Boot-time audit of Composio auth-config wiring.
  *
- * Resolution itself is lazy — `composioAuthConfigId` runs only when a connector
- * is installed, connected, or probed. That makes the per-toolkit deprecation
- * warning it emits a report on the *installed* subset, not on the catalog: a
- * toolkit nobody has installed yet is silent no matter how it is wired. Two
- * decisions need the catalog-wide view instead:
+ * Resolution is lazy — `resolveComposioAuthConfig` runs only when a connector is
+ * installed, connected, or probed, so nothing on that path can describe a
+ * toolkit nobody has installed. Two decisions need the catalog-wide view:
  *
  *   - **When is the legacy env fallback unused?** (#789) Dropping
  *     `composio.authConfigEnv` from the catalog removes the fallback's only
@@ -13,73 +11,85 @@
  *     change, not discovered afterwards by whoever installs one next.
  *   - **Does every declared key name a real toolkit?** `authConfigs` is keyed by
  *     the catalog's `composio.toolkit`, matched exactly across two repos. A
- *     mistyped key resolves to `""` and surfaces at connect time — the same
- *     silent miss that keying on an env-var name produced.
+ *     mistyped key resolves to nothing and surfaces at connect time — the one
+ *     coupling this design narrowed rather than removed.
  *
- * So this walks the catalog once at boot and reports the whole picture. It is a
- * read-only report: nothing here changes resolution, and a failure never breaks
- * boot.
+ * It deliberately does **not** report toolkits with no id. The catalog is a menu,
+ * not a manifest: a deployment wires the toolkits it wants and leaves the rest,
+ * so "no id" is a choice, not a misconfiguration. Install already fails at the
+ * moment it matters, naming the toolkit and the config key. Reporting it here
+ * would mean a permanent boot warning listing most of the catalog — which is how
+ * operators learn to ignore `[composio]` warnings, taking the two actionable
+ * arms down with it.
+ *
+ * Both arms are therefore self-gating: a deployment with no Composio wiring at
+ * all produces no output, matching the revalidator's "dormant unless a provider
+ * contributes a probe".
  */
 
 import { log } from "../../../observability/log.ts";
 import type { ConnectorCatalogEntry } from "../../../registries/projection.ts";
 import { declaredProviderConfig } from "../config.ts";
-import { markAuthConfigEnvReported } from "./config.ts";
+import { resolveComposioAuthConfig } from "./config.ts";
 
 export interface ComposioAuthConfigAudit {
   /** Toolkits whose id comes from the declared block — the destination state. */
   declared: string[];
-  /** Toolkits still resolving from the legacy env var, with the var's name. */
+  /** Toolkits still resolving from the legacy env var, with the var that supplied it. */
   fromEnv: { toolkit: string; envVar: string }[];
-  /** Toolkits with no id anywhere — installs and connects will fail. */
-  unresolved: string[];
   /** Declared keys matching no `auth: composio` catalog toolkit — typos or leftovers. */
   orphanedKeys: string[];
 }
 
-/** The `composio` block of every `auth: composio` entry, in catalog order. */
-function* composioConfigs(
-  entries: ConnectorCatalogEntry[],
-): Generator<NonNullable<ConnectorCatalogEntry["composio"]>> {
+/**
+ * Every `auth: composio` toolkit in the catalog, mapped to the legacy env vars
+ * its entries name.
+ *
+ * Grouped by toolkit rather than walked per entry because two entries may front
+ * the same toolkit, and the wiring question is about the toolkit. Taking the
+ * first entry would make classification depend on catalog order — an entry that
+ * omits `authConfigEnv` could hide a toolkit still riding the fallback, which is
+ * the exact input #789 turns on.
+ */
+function toolkitEnvVars(entries: ConnectorCatalogEntry[]): Map<string, string[]> {
+  const out = new Map<string, string[]>();
   for (const entry of entries) {
-    if (entry.auth === "composio" && entry.composio) yield entry.composio;
+    if (entry.auth !== "composio" || !entry.composio) continue;
+    const { toolkit, authConfigEnv } = entry.composio;
+    const vars = out.get(toolkit) ?? [];
+    if (authConfigEnv && !vars.includes(authConfigEnv)) vars.push(authConfigEnv);
+    out.set(toolkit, vars);
   }
+  return out;
 }
 
 /**
- * Classify every `auth: composio` catalog entry against the declared block.
- * Pure: no logging, no resolution side effects — the reporting is the caller's.
+ * Classify every `auth: composio` catalog toolkit against the declared block.
+ * Pure: no logging, no side effects — the reporting is the caller's.
+ *
+ * Classification runs through `resolveComposioAuthConfig` rather than restating
+ * its precedence, so the audit cannot drift from what installs actually resolve.
  */
 export function auditComposioAuthConfigs(
   entries: ConnectorCatalogEntry[],
 ): ComposioAuthConfigAudit {
-  const declaredBlock = declaredProviderConfig("composio")?.authConfigs ?? {};
-  const audit: ComposioAuthConfigAudit = {
-    declared: [],
-    fromEnv: [],
-    unresolved: [],
-    orphanedKeys: [],
-  };
+  const audit: ComposioAuthConfigAudit = { declared: [], fromEnv: [], orphanedKeys: [] };
+  const byToolkit = toolkitEnvVars(entries);
 
-  const catalogToolkits = new Set<string>();
-  for (const composio of composioConfigs(entries)) {
-    const { toolkit, authConfigEnv } = composio;
-    // One entry per toolkit, not per catalog entry: two entries may legitimately
-    // share a toolkit, and the wiring question is about the toolkit.
-    if (catalogToolkits.has(toolkit)) continue;
-    catalogToolkits.add(toolkit);
-
-    if (declaredBlock[toolkit]?.trim()) {
+  for (const [toolkit, envVars] of byToolkit) {
+    if (resolveComposioAuthConfig(toolkit).source === "declared") {
       audit.declared.push(toolkit);
-    } else if (authConfigEnv && process.env[authConfigEnv]?.trim()) {
-      audit.fromEnv.push({ toolkit, envVar: authConfigEnv });
-    } else {
-      audit.unresolved.push(toolkit);
+      continue;
     }
+    // Any of the toolkit's entries may name the var that carries the value, so
+    // scan them all — taking only the first would make the result depend on
+    // catalog order.
+    const envVar = envVars.find((v) => resolveComposioAuthConfig(toolkit, v).source === "env");
+    if (envVar) audit.fromEnv.push({ toolkit, envVar });
   }
 
-  for (const key of Object.keys(declaredBlock)) {
-    if (!catalogToolkits.has(key)) audit.orphanedKeys.push(key);
+  for (const key of Object.keys(declaredProviderConfig("composio")?.authConfigs ?? {})) {
+    if (!byToolkit.has(key)) audit.orphanedKeys.push(key);
   }
 
   return audit;
@@ -97,23 +107,12 @@ export async function bootAuditComposioAuthConfigs(deps: {
     const audit = auditComposioAuthConfigs(await deps.catalogEntries());
 
     if (audit.fromEnv.length > 0) {
-      // Suppress the lazy per-toolkit warning for everything named here, so the
-      // same deprecation isn't reported twice in two shapes.
-      for (const { toolkit } of audit.fromEnv) markAuthConfigEnvReported(toolkit);
       log.warn(
         `[composio] ${audit.fromEnv.length} toolkit(s) resolve their auth config id from the ` +
           "deprecated environment fallback: " +
           audit.fromEnv.map(({ toolkit, envVar }) => `${toolkit} (${envVar})`).join(", ") +
           ". Move each to connectors.providers.composio.authConfigs in nimblebrain.json; " +
           "this fallback is slated for removal (#789).",
-      );
-    }
-
-    if (audit.unresolved.length > 0) {
-      log.warn(
-        `[composio] ${audit.unresolved.length} catalog toolkit(s) have no auth config id and ` +
-          `cannot be installed: ${audit.unresolved.join(", ")}. Set ` +
-          "connectors.providers.composio.authConfigs.<toolkit> for each.",
       );
     }
 

@@ -163,54 +163,51 @@ function monitorEnabledFromEnv(): boolean {
  */
 export function _resetComposioConfigForTest(): void {
   _cached = undefined;
-  _warnedLegacyToolkits.clear();
+}
+
+/** Where a toolkit's auth-config id came from. */
+export type ComposioAuthConfigSource = "declared" | "env" | "none";
+
+export interface ResolvedComposioAuthConfig {
+  /** The `ac_…` id, or `""` when the toolkit has none. */
+  id: string;
+  source: ComposioAuthConfigSource;
 }
 
 /**
- * The auth-config id for one toolkit: the declared `authConfigs` entry, else the
- * legacy environment variable the catalog entry names.
+ * Resolve one toolkit's auth-config id and report where it came from: the
+ * declared `authConfigs` entry, else the legacy environment variable the catalog
+ * entry names.
  *
  * The env arm is a **migration fallback**, kept so a deploy that still sets
- * `COMPOSIO_<TOOLKIT>_AUTH_CONFIG_ID` keeps working across the upgrade. It warns
- * once per toolkit when it is the value's actual source, so an operator migrates
- * before #789 removes it.
+ * `COMPOSIO_<TOOLKIT>_AUTH_CONFIG_ID` keeps working across the upgrade. It goes
+ * away with `authConfigEnv` once no deployment relies on it (#789); the boot
+ * audit in `auth-config-audit.ts` reports which toolkits still use it, which is
+ * how that call gets made.
  *
- * This warning reports only what is *resolved*, which is the installed subset —
- * `auth-config-audit.ts` walks the whole catalog at boot for the complete
- * picture, and suppresses this one for anything it already named.
+ * `source` exists so the audit classifies through this function rather than
+ * restating the precedence — one place decides, and callers that only need the
+ * value take `composioAuthConfigId`.
  *
  * Reads the declared block directly rather than routing through
  * `validateComposioConfig`, whose unconfigured early-return would zero this
  * lookup — reporting a missing auth config for what is really a missing API key.
  * Callers gate on the credential separately and say so in their own words.
  */
-export function composioAuthConfigId(toolkit: string, legacyEnvVar?: string): string {
+export function resolveComposioAuthConfig(
+  toolkit: string,
+  legacyEnvVar?: string,
+): ResolvedComposioAuthConfig {
   const declared = declaredProviderConfig("composio")?.authConfigs?.[toolkit]?.trim();
-  if (declared) return declared;
+  if (declared) return { id: declared, source: "declared" };
 
-  const legacy = (legacyEnvVar ? process.env[legacyEnvVar]?.trim() : undefined) ?? "";
-  if (legacy) warnLegacyAuthConfigEnv(toolkit, legacyEnvVar as string);
-  return legacy;
+  const legacy = legacyEnvVar ? process.env[legacyEnvVar]?.trim() : undefined;
+  if (legacy) return { id: legacy, source: "env" };
+
+  return { id: "", source: "none" };
 }
 
-/** Toolkits already reported, so a per-install resolution doesn't spam. */
-const _warnedLegacyToolkits = new Set<string>();
-
-/**
- * Mark a toolkit's env-fallback use as already reported. The boot audit calls
- * this for every toolkit in its catalog-wide summary, so the lazy per-toolkit
- * warning below doesn't restate the same deprecation in a second shape.
- */
-export function markAuthConfigEnvReported(toolkit: string): void {
-  _warnedLegacyToolkits.add(toolkit);
-}
-
-function warnLegacyAuthConfigEnv(toolkit: string, envVar: string): void {
-  if (_warnedLegacyToolkits.has(toolkit)) return;
-  _warnedLegacyToolkits.add(toolkit);
-  log.warn(
-    `[composio] ${envVar} supplied the auth config id for "${toolkit}"; this fallback is ` +
-      `deprecated and slated for removal (#789). Set connectors.providers.composio.authConfigs.${toolkit} ` +
-      "in nimblebrain.json instead.",
-  );
+/** The auth-config id for one toolkit, or `""` when it has none. */
+export function composioAuthConfigId(toolkit: string, legacyEnvVar?: string): string {
+  return resolveComposioAuthConfig(toolkit, legacyEnvVar).id;
 }
