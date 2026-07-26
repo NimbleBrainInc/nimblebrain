@@ -158,6 +158,11 @@ export function InContextPopover({ conversationId }: { conversationId: string | 
                             <span className={`ledger-line__scope ${SCOPE_CLASS[s.scope]}`}>
                               {skillProvenanceLabel(s)}
                             </span>
+                            {/* Bare count, no `tok`: the window section above
+                                already establishes the unit, and at this width
+                                the row is carrying a name and a publisher. The
+                                chat ledger's drawer keeps the suffix — it has no
+                                budget above it to set the unit. */}
                             <span className="ledger-line__row-tok">
                               {formatTokenCount(s.tokens)}
                             </span>

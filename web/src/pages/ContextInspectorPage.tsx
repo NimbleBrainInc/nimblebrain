@@ -10,7 +10,7 @@ import type {
 } from "../_generated/platform-schemas/compose";
 import { callTool } from "../api/client";
 import { orderedSources, SOURCE_LABEL, sourceDetail, windowTokens } from "../lib/context-sources";
-import { formatTokenCount } from "../lib/skill-display";
+import { formatTokenCount, nameFromSkillId } from "../lib/skill-display";
 import { parseToolResponse } from "../lib/tool-response";
 
 /**
@@ -328,17 +328,11 @@ function isNamedFile(l: TracedLayerView): boolean {
   return l.id.includes("/");
 }
 
-/** A skill/overlay name from its file id — handles `<name>.md` and `<name>/SKILL.md`. */
-function skillName(id: string): string {
-  const parts = id.split("/").filter(Boolean);
-  let name = parts[parts.length - 1] ?? id;
-  if (/^SKILL\.md$/i.test(name) && parts.length >= 2) name = parts[parts.length - 2];
-  return name.replace(/\.md$/i, "");
-}
-
 /** Primary label: a file-backed layer is named by its skill; a structural one by its kind. */
 function layerTitle(l: TracedLayerView): string {
-  return isNamedFile(l) ? skillName(l.id) : (LAYER_LABEL[l.kind] ?? l.kind);
+  // `TracedLayerView` carries no name, so a file-backed layer is named from its
+  // id — through the shared helper, never a local copy of the rule.
+  return isNamedFile(l) ? nameFromSkillId(l.id) : (LAYER_LABEL[l.kind] ?? l.kind);
 }
 
 /** Muted descriptor under a named skill (its kind); empty for structural layers. */

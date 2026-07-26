@@ -3,12 +3,20 @@
  *
  * `buildSkillsLoadedPayload` stamps `name` on every entry it emits, so this is
  * a pass-through for anything recorded since that field landed. The derivation
- * below exists only for events recorded before it, and is the ONE place that
- * derivation lives — display surfaces read the recorded name.
+ * below exists only for events recorded before it — display surfaces read the
+ * recorded name rather than deriving one.
  *
- * Leaf module: no imports, so both the runtime read path
- * (`compose__assembled_context`) and any independently-deployable consumer can
- * take it.
+ * Leaf module: no imports, so the runtime read path
+ * (`compose__assembled_context`) can take it directly.
+ *
+ * Two mirrors exist, each forced by a boundary that forbids importing this:
+ *   - `src/bundles/conversations/src/jsonl-reader.ts` — deployable independently
+ *     of the runtime (see that file's header).
+ *   - `web/src/lib/skill-display.ts` — the browser can't import from `src/`.
+ *
+ * `test/unit/skills/display-name-parity.test.ts` holds all three to one answer,
+ * so the rule can't be refined here and go stale there. Do not add a fourth
+ * copy: any consumer that CAN import one of these three must.
  */
 
 /**

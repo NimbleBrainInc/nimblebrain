@@ -572,8 +572,11 @@ interface RunScan {
  * because this bundle is deployable independently of the runtime (see the file
  * header). Both id shapes put the name in the last path segment EXCEPT the
  * `skill://…/SKILL.md` entrypoint, where it is the directory holding it.
+ *
+ * Exported so `test/unit/skills/display-name-parity.test.ts` can hold this copy
+ * and the other two to one answer.
  */
-function skillNameFromId(id: string): string {
+export function skillNameFromId(id: string): string {
   const segments = id.split("/").filter(Boolean);
   const last = segments[segments.length - 1] ?? id;
   if (/^SKILL\.md$/i.test(last) && segments.length >= 2) {
