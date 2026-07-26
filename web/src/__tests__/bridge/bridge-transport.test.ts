@@ -257,7 +257,7 @@ describe("tools/call — MCP transport", () => {
     // REST-parity. Mock `getActiveWorkspaceId` returns `ws_test`.
     const [callParams] = mcpCallTool.mock.calls[0] ?? [];
     expect(callParams).toEqual({
-      name: "ws_test-synapse-research__search",
+      name: "synapse-research__search",
       arguments: { q: "mcp" },
     });
   });
@@ -353,7 +353,7 @@ describe("tools/call — INTERNAL_APPS authz", () => {
     // NOT "nb" — the authz rule rejects the cross-call attempt.
     expect(mcpCallTool).toHaveBeenCalledTimes(1);
     const [callParams] = mcpCallTool.mock.calls[0] ?? [];
-    expect((callParams as { name: string }).name).toBe("ws_test-synapse-research__t");
+    expect((callParams as { name: string }).name).toBe("synapse-research__t");
   });
 
   test("internal app with params.server is allowed to cross-call", async () => {
@@ -369,7 +369,7 @@ describe("tools/call — INTERNAL_APPS authz", () => {
 
     expect(mcpCallTool).toHaveBeenCalledTimes(1);
     const [callParams] = mcpCallTool.mock.calls[0] ?? [];
-    expect((callParams as { name: string }).name).toBe("ws_test-home__briefing");
+    expect((callParams as { name: string }).name).toBe("home__briefing");
   });
 });
 
