@@ -314,6 +314,17 @@ describe("Core Source", () => {
 				require("node:fs").readFileSync(deriveOverridePath(configPath), "utf-8"),
 			);
 			expect(cleared.thinkingEffort).toBeUndefined();
+
+			// And it has to survive a restart. Writing to disk and patching the
+			// live process is only two of the three stages — loadConfig maps the
+			// file onto RuntimeConfig with an explicit field list, so a field
+			// missing there is silently dropped on every boot and the setting
+			// reverts. Asserting the first two stages is exactly what hid that.
+			require("node:fs").writeFileSync(
+				deriveOverridePath(configPath),
+				JSON.stringify({ thinking: "enabled", thinkingEffort: "xhigh" }),
+			);
+			expect(loadConfig({ config: configPath }).thinkingEffort).toBe("xhigh");
 		} finally {
 			await runtime.shutdown();
 		}

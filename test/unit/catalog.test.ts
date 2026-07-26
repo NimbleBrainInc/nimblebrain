@@ -1,10 +1,12 @@
 import { describe, expect, it } from "bun:test";
 import {
+	GOOGLE_THINKING_LEVELS,
 	findProviderForModelId,
 	getAvailableModels,
 	getModel,
 	getModelByString,
 	getProviderName,
+	googleThinkingSupport,
 	isModelAllowed,
 	listModels,
 	listProviders,
@@ -302,5 +304,47 @@ describe("estimateCost from catalog", () => {
 			cacheReadTokens: 5000,
 		});
 		expect(withCache).toBeLessThan(withoutCache);
+	});
+});
+
+describe("Google thinking support", () => {
+	it("either classifies a reasoning-capable Google model or leaves it unconfigured", () => {
+		// The table is an allowlist on purpose: support is per-model, varies
+		// within a generation, and models.dev doesn't carry it. This asserts the
+		// documented contract — a model is either classified from Google's docs
+		// or receives no thinking options at all — and prints the unclassified
+		// set so the gap stays visible instead of reading as an oversight.
+		const reasoning = listModels("google")
+			.filter((m) => m.capabilities.reasoning)
+			.map((m) => m.id);
+		const classified = reasoning.filter((id) => googleThinkingSupport(id) !== undefined);
+		const unclassified = reasoning.filter((id) => googleThinkingSupport(id) === undefined);
+
+		expect(classified.length).toBeGreaterThan(0);
+		expect(classified.length + unclassified.length).toBe(reasoning.length);
+		// Every entry names a real catalog model — a typo would silently
+		// un-classify the model it was meant to cover.
+		for (const id of classified) {
+			expect(getModel("google", id)).toBeDefined();
+		}
+	});
+
+	it("never offers a level outside Google's ladder", () => {
+		for (const id of listModels("google").map((m) => m.id)) {
+			const support = googleThinkingSupport(id);
+			if (support?.dialect !== "level") continue;
+			for (const level of support.levels) {
+				expect(GOOGLE_THINKING_LEVELS).toContain(level);
+			}
+		}
+	});
+
+	it("keeps every budget range orderable and non-negative", () => {
+		for (const id of listModels("google").map((m) => m.id)) {
+			const support = googleThinkingSupport(id);
+			if (support?.dialect !== "budget") continue;
+			expect(support.min).toBeGreaterThanOrEqual(0);
+			expect(support.max).toBeGreaterThan(support.min);
+		}
 	});
 });

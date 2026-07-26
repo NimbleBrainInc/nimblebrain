@@ -24,8 +24,9 @@ export interface CliFlags {
  * errors. Warns on unknown keys when `warnUnknownKeys` is true (default).
  *
  * The override file is written by `set_model_config` and contains a known
- * small surface — its valid keys (e.g., `thinking`, `thinkingBudgetTokens`)
- * are not yet in the published JSON schema, so unknown-key warnings would
+ * small surface — its valid keys (`thinking`, `thinkingEffort`,
+ * `thinkingBudgetTokens`, and the model/limit fields) are not yet in the
+ * published JSON schema, so unknown-key warnings would
  * fire on every boot for any tenant that's run `set_model_config`. The
  * structural validation (type errors) still fires; only the key-name
  * warning is suppressed for that file.
@@ -119,8 +120,9 @@ function applyOverride(
       unknown
     >;
     // Suppress unknown-key warnings: the override file's vocabulary (thinking,
-    // thinkingBudgetTokens) is not yet in the published JSON schema, and warning
-    // every boot for every tenant that's run set_model_config is noise.
+    // thinkingEffort, thinkingBudgetTokens) is not yet in the published JSON
+    // schema, and warning every boot for every tenant that's run
+    // set_model_config is noise.
     // Structural errors still throw.
     validateConfig(override, configOverridePath, { warnUnknownKeys: false });
     const overrideKeys = Object.keys(override);
@@ -202,6 +204,7 @@ export function loadConfig(flags: CliFlags = {}): RuntimeConfig {
     maxOutputTokens: fileConfig.maxOutputTokens,
     maxToolResultSize: fileConfig.maxToolResultSize,
     thinking: fileConfig.thinking as RuntimeConfig["thinking"],
+    thinkingEffort: fileConfig.thinkingEffort as RuntimeConfig["thinkingEffort"],
     thinkingBudgetTokens: fileConfig.thinkingBudgetTokens as RuntimeConfig["thinkingBudgetTokens"],
     events: fileConfig.events,
     logging: fileConfig.logging as RuntimeConfig["logging"],

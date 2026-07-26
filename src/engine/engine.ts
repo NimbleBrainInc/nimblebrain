@@ -210,34 +210,34 @@ function buildOpenAIThinkingOptions(thinking: ResolvedThinking): SharedV3Provide
   }
 }
 
-/**
- * Build Google Gemini options.
- *
- * Which dialect a model speaks — and which levels or budgets it accepts — is
- * per-model and comes from `googleThinkingSupport`. A model we have no verified
- * entry for gets nothing, which is what every Google model got before this
- * wiring existed; sending a guessed dialect is how a stock install starts
- * returning 400s.
- */
-function buildGoogleThinkingOptions(
-  model: string,
+/** Gemini 3's dialect: a named level, from the set this specific model accepts. */
+function googleLevelOptions(
   thinking: ResolvedThinking,
+  levels: ReadonlySet<GoogleThinkingLevel>,
+): SharedV3ProviderOptions {
+  if (thinking.mode === "adaptive") return {};
+  if (thinking.mode === "off") {
+    // `minimal` is the only level meaning "barely think", and not every Gemini 3
+    // model offers it. Stepping up to `low` would answer "don't reason" with an
+    // instruction to reason, so say nothing — the same choice made for
+    // Anthropic, OpenAI, and the Gemini 2.5 models that can't disable thinking.
+    return levels.has("minimal")
+      ? { google: { thinkingConfig: { thinkingLevel: "minimal" } } }
+      : {};
+  }
+  const level = nearestSupportedLevel(toGoogleLevel(thinking.effort), levels);
+  return level ? { google: { thinkingConfig: { thinkingLevel: level } } } : {};
+}
+
+/** Gemini 2.5's dialect: a token budget, inside the model's own documented range. */
+function googleBudgetOptions(
+  thinking: ResolvedThinking,
+  support: { min: number; max: number; canDisable: boolean },
   maxOutputTokens: number,
 ): SharedV3ProviderOptions {
-  const support = googleThinkingSupport(model);
-  if (!support) return {};
-
-  if (support.dialect === "level") {
-    if (thinking.mode === "adaptive") return {};
-    const wanted = thinking.mode === "off" ? "minimal" : toGoogleLevel(thinking.effort);
-    const level = nearestSupportedLevel(wanted, support.levels);
-    return level ? { google: { thinkingConfig: { thinkingLevel: level } } } : {};
-  }
-
   switch (thinking.mode) {
     case "off":
-      // Some models cannot stop thinking (2.5 Pro). Sending a zero budget there
-      // is rejected, so say nothing rather than assert a state it doesn't have.
+      // 2.5 Pro cannot stop thinking; a zero budget there is rejected.
       return support.canDisable ? { google: { thinkingConfig: { thinkingBudget: 0 } } } : {};
     case "adaptive":
       return { google: { thinkingConfig: { thinkingBudget: -1 } } };
@@ -250,10 +250,34 @@ function buildGoogleThinkingOptions(
       // Two ceilings apply: the model's own thinking range, and the room left
       // in this call's output budget for a visible answer.
       const ceiling = Math.min(support.max, maxOutputTokens - MIN_VISIBLE_OUTPUT_TOKENS);
-      const thinkingBudget = Math.max(support.min, Math.min(requested, ceiling));
-      return { google: { thinkingConfig: { thinkingBudget } } };
+      return {
+        google: {
+          thinkingConfig: { thinkingBudget: Math.max(support.min, Math.min(requested, ceiling)) },
+        },
+      };
     }
   }
+}
+
+/**
+ * Build Google Gemini options.
+ *
+ * Which dialect a model speaks — and which levels or budgets it accepts — is
+ * per-model and comes from `googleThinkingSupport`. A model with no verified
+ * entry gets nothing, which is what every Google model got before this wiring
+ * existed; sending a guessed dialect is how a stock install starts returning
+ * 400s.
+ */
+function buildGoogleThinkingOptions(
+  model: string,
+  thinking: ResolvedThinking,
+  maxOutputTokens: number,
+): SharedV3ProviderOptions {
+  const support = googleThinkingSupport(model);
+  if (!support) return {};
+  return support.dialect === "level"
+    ? googleLevelOptions(thinking, support.levels)
+    : googleBudgetOptions(thinking, support, maxOutputTokens);
 }
 
 /**

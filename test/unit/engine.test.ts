@@ -1856,6 +1856,17 @@ describe("AgentEngine", () => {
         expect(po.google?.thinkingConfig).toEqual({ thinkingBudget: 32_768 });
       });
 
+      it("stays silent on off when a Gemini 3 model has no minimal level", async () => {
+        // gemini-3-pro-preview offers only low and high. Stepping up to `low`
+        // would answer "don't reason" with an instruction to reason.
+        expect(await providerOptionsFor("google:gemini-3-pro-preview", { mode: "off" })).toEqual({});
+        // A model that does offer minimal still gets it.
+        expect(
+          (await providerOptionsFor("google:gemini-3.6-flash", { mode: "off" })).google
+            ?.thinkingConfig,
+        ).toEqual({ thinkingLevel: "minimal" });
+      });
+
       it("sends nothing to a Google model with no verified support entry", async () => {
         // The `-latest` aliases and the non-gemini- reasoning entries have no
         // table row; a version-prefix guess routed them to the wrong dialect.
@@ -1887,7 +1898,7 @@ describe("AgentEngine", () => {
         // 50000 against a 16384 ceiling is rejected outright by Anthropic, and
         // a budget just under the ceiling starves the visible answer — the
         // empty-turn incident MIN_VISIBLE_OUTPUT_TOKENS exists to prevent.
-        for (const model of ["anthropic:claude-sonnet-4-6"]) {
+        for (const model of ["anthropic:claude-sonnet-4-6", "google:gemini-2.5-flash"]) {
           const po = await providerOptionsFor(model, {
             mode: "enabled",
             budgetTokens: 50_000,

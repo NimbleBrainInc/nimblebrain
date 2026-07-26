@@ -14,10 +14,10 @@ interface ModelEntry {
 
 type ThinkingMode = "off" | "adaptive" | "enabled";
 type ThinkingEffort = "low" | "medium" | "high" | "xhigh" | "max";
-const EFFORT_DEFAULT = "__default__" as const;
+export const EFFORT_DEFAULT = "__default__" as const;
 
 /** Sentinel select value for "no operator override — use platform default policy". */
-const THINKING_DEFAULT = "" as const;
+export const THINKING_DEFAULT = "" as const;
 
 interface ModelConfig {
   models: { default: string; fast: string; reasoning: string };
@@ -101,20 +101,41 @@ function ModelSelect({
  * save. Depth and budget are independent: the budget only reaches providers
  * that meter thinking in tokens, and sending one never voids the chosen depth.
  */
-function thinkingPatchFor(
+/**
+ * Whether a chosen depth reaches the resolver in this mode.
+ *
+ * True for the default path (which reads `configEffort` with no mode set) and
+ * for `enabled`; false for `off` and `adaptive`, which state no depth by
+ * definition and return before the resolver looks.
+ *
+ * The render gate and the save patch both derive from this on purpose. They
+ * disagreed once — the control was drawn only for `enabled` while the patch
+ * cleared the field everywhere else — which made a depth set through the config
+ * file or the admin tool disappear on the next save from this screen.
+ */
+export function effortAppliesTo(thinking: ThinkingMode | typeof THINKING_DEFAULT): boolean {
+  return thinking === THINKING_DEFAULT || thinking === "enabled";
+}
+
+export function thinkingPatchFor(
   thinking: ThinkingMode | typeof THINKING_DEFAULT,
   effort: ThinkingEffort | typeof EFFORT_DEFAULT,
   budget: number | null,
 ): Record<string, unknown> {
+  const effortPatch =
+    !effortAppliesTo(thinking) || effort === EFFORT_DEFAULT
+      ? { clearThinkingEffort: true }
+      : { thinkingEffort: effort };
+
   if (thinking === THINKING_DEFAULT) {
-    return { clearThinking: true, clearThinkingEffort: true, clearThinkingBudget: true };
+    return { clearThinking: true, ...effortPatch, clearThinkingBudget: true };
   }
   if (thinking !== "enabled") {
-    return { thinking, clearThinkingEffort: true, clearThinkingBudget: true };
+    return { thinking, ...effortPatch, clearThinkingBudget: true };
   }
   return {
     thinking,
-    ...(effort === EFFORT_DEFAULT ? { clearThinkingEffort: true } : { thinkingEffort: effort }),
+    ...effortPatch,
     ...(budget == null ? { clearThinkingBudget: true } : { thinkingBudgetTokens: budget }),
   };
 }
@@ -306,7 +327,7 @@ export function ModelTab() {
             </Select>
           </div>
 
-          {thinking === "enabled" && (
+          {effortAppliesTo(thinking) && (
             <div className="space-y-1.5">
               <Label htmlFor="thinkingEffort">Effort</Label>
               <Select
