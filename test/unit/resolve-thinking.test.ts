@@ -24,14 +24,14 @@ describe("resolveThinking", () => {
 		expect(resolveThinking({ model: "anthropic:claude-opus-4-7" })).toEqual({
 			mode: "effort",
 			effort: DEFAULT_THINKING_EFFORT,
-			explicit: false,
+			source: "platform",
 		});
 	});
 
 	it("uses the operator's effort tier on the default path", () => {
 		expect(
 			resolveThinking({ model: "anthropic:claude-opus-4-7", configEffort: "xhigh" }),
-		).toEqual({ mode: "effort", effort: "xhigh", explicit: true });
+		).toEqual({ mode: "effort", effort: "xhigh", source: "operator" });
 	});
 
 	it("never reads an output ceiling", () => {
@@ -42,8 +42,20 @@ describe("resolveThinking", () => {
 		// value at all, so the same input can only produce one answer.
 		const small = resolveThinking({ model: "anthropic:claude-opus-5" });
 		const large = resolveThinking({ model: "anthropic:claude-opus-4-7" });
-		expect(small).toEqual({ mode: "effort", effort: DEFAULT_THINKING_EFFORT, explicit: false });
+		expect(small).toEqual({ mode: "effort", effort: DEFAULT_THINKING_EFFORT, source: "platform" });
 		expect(large).toEqual(small);
+	});
+
+	it("distinguishes an operator tier from a configured mode from nothing at all", () => {
+		// Three states, not two: only a named tier may override a provider's own
+		// default, but a configured mode is still operator intent worth
+		// reporting when it can't be honored. Collapsing them to one boolean
+		// gets one of those two wrong — it did, in both directions at once.
+		const m = "anthropic:claude-sonnet-4-6";
+		expect(resolveThinking({ model: m, configEffort: "high" })?.source).toBe("operator");
+		expect(resolveThinking({ model: m, configMode: "enabled" })?.source).toBe("mode");
+		expect(resolveThinking({ model: m, configBudgetTokens: 8000 })?.source).toBe("mode");
+		expect(resolveThinking({ model: m })?.source).toBe("platform");
 	});
 
 	it("operator off wins over model default", () => {
@@ -123,13 +135,18 @@ describe("resolveThinking", () => {
 				configBudgetTokens: 8000,
 				model: "anthropic:claude-sonnet-4-6",
 			}),
-		).toEqual({ mode: "enabled", budgetTokens: 8000, effort: "max" });
+		).toEqual({ mode: "enabled", budgetTokens: 8000, effort: "max", source: "operator" });
 	});
 
 	it("honors a budget set without a thinking mode", () => {
 		expect(
 			resolveThinking({ configBudgetTokens: 8000, model: "anthropic:claude-opus-4-7" }),
-		).toEqual({ mode: "enabled", budgetTokens: 8000, effort: DEFAULT_THINKING_EFFORT });
+		).toEqual({
+			mode: "enabled",
+			budgetTokens: 8000,
+			effort: DEFAULT_THINKING_EFFORT,
+			source: "mode",
+		});
 	});
 
 	it("passes an operator budget through verbatim", () => {
@@ -144,6 +161,7 @@ describe("resolveThinking", () => {
 			mode: "enabled",
 			budgetTokens: 50_000,
 			effort: DEFAULT_THINKING_EFFORT,
+			source: "mode",
 		});
 	});
 
@@ -155,7 +173,7 @@ describe("resolveThinking", () => {
 		})).toEqual({
 			mode: "effort",
 			effort: DEFAULT_THINKING_EFFORT,
-			explicit: false,
+			source: "mode",
 		});
 	});
 
@@ -165,7 +183,7 @@ describe("resolveThinking", () => {
 		).toEqual({
 			mode: "effort",
 			effort: DEFAULT_THINKING_EFFORT,
-			explicit: false,
+			source: "mode",
 		});
 	});
 });

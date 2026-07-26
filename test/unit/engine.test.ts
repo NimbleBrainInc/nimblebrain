@@ -1735,7 +1735,7 @@ describe("AgentEngine", () => {
         // The tier the operator chose reaches the wire unchanged. Nothing is
         // derived from the output ceiling, so `xhigh` is reachable — under the
         // old budget→effort bands no budget ever produced it.
-        const po = await providerOptionsFor("anthropic:claude-opus-5", { mode: "effort", effort: "xhigh", explicit: true });
+        const po = await providerOptionsFor("anthropic:claude-opus-5", { mode: "effort", effort: "xhigh", source: "operator" });
         expect(po.anthropic?.thinking).toEqual({ type: "adaptive" });
         expect(po.anthropic?.effort).toBe("xhigh");
       });
@@ -1743,7 +1743,7 @@ describe("AgentEngine", () => {
       it("sizes a budget from the tier for budget-shaped Anthropic models", async () => {
         // Sonnet 4.6 takes `enabled` + a token budget. The tier is converted
         // here, not upstream, so the resolver stays provider-neutral.
-        const po = await providerOptionsFor("anthropic:claude-sonnet-4-6", { mode: "effort", effort: "high", explicit: true });
+        const po = await providerOptionsFor("anthropic:claude-sonnet-4-6", { mode: "effort", effort: "high", source: "operator" });
         expect(po.anthropic?.thinking).toEqual({
           type: "enabled",
           budgetTokens: Math.floor((16384 - 4096) * 0.6),
@@ -1769,25 +1769,25 @@ describe("AgentEngine", () => {
         // The OpenAI adapter parses provider options under the literal name
         // "openai" no matter what `name` the instance was created with, so a
         // `nebius` key reaches the wire as nothing at all.
-        const po = await providerOptionsFor("nebius:deepseek-ai/DeepSeek-R1", { mode: "effort", effort: "low", explicit: true });
+        const po = await providerOptionsFor("nebius:deepseek-ai/DeepSeek-R1", { mode: "effort", effort: "low", source: "operator" });
         expect(po.openai?.reasoningEffort).toBe("low");
         expect(po.nebius).toBeUndefined();
       });
 
       it("sizes a thinkingBudget from the tier for Gemini 2.5", async () => {
-        const po = await providerOptionsFor("google:gemini-2.5-flash", { mode: "effort", effort: "low", explicit: true });
+        const po = await providerOptionsFor("google:gemini-2.5-flash", { mode: "effort", effort: "low", source: "operator" });
         expect(po.google?.thinkingConfig).toEqual({
           thinkingBudget: Math.floor((16384 - 4096) * 0.15),
         });
       });
 
       it("sends a thinkingLevel to Gemini 3+, which does not take a budget", async () => {
-        const po = await providerOptionsFor("google:gemini-3.6-flash", { mode: "effort", effort: "high", explicit: true });
+        const po = await providerOptionsFor("google:gemini-3.6-flash", { mode: "effort", effort: "high", source: "operator" });
         expect(po.google?.thinkingConfig).toEqual({ thinkingLevel: "high" });
       });
 
       it("clamps Gemini 3's level to high, its ladder's top", async () => {
-        const po = await providerOptionsFor("google:gemini-3.6-flash", { mode: "effort", effort: "max", explicit: true });
+        const po = await providerOptionsFor("google:gemini-3.6-flash", { mode: "effort", effort: "max", source: "operator" });
         expect(po.google?.thinkingConfig).toEqual({ thinkingLevel: "high" });
       });
 
@@ -1816,7 +1816,7 @@ describe("AgentEngine", () => {
         // gemini-3-pro-preview supports only low and high — and `medium` is the
         // platform default, so an ungated mapping 400s on a stock install.
         expect(
-          (await providerOptionsFor("google:gemini-3-pro-preview", { mode: "effort", effort: "medium", explicit: true })).google?.thinkingConfig,
+          (await providerOptionsFor("google:gemini-3-pro-preview", { mode: "effort", effort: "medium", source: "operator" })).google?.thinkingConfig,
         ).toEqual({ thinkingLevel: "low" });
         // A model that does offer medium keeps it.
         expect(
@@ -1857,7 +1857,7 @@ describe("AgentEngine", () => {
         const dflt = await providerOptionsFor("google:gemini-3-pro-preview", {
           mode: "effort",
           effort: "medium",
-          explicit: false,
+          source: "platform",
         });
         const off = await providerOptionsFor("google:gemini-3-pro-preview", { mode: "off" });
         expect(dflt).toEqual({});
@@ -1868,7 +1868,33 @@ describe("AgentEngine", () => {
         const chosen = await providerOptionsFor("google:gemini-3-pro-preview", {
           mode: "effort",
           effort: "medium",
-          explicit: true,
+          source: "operator",
+        });
+        expect(chosen.google?.thinkingConfig).toEqual({ thinkingLevel: "low" });
+      });
+
+      it("does not let a bare budget pick a Gemini 3 level", async () => {
+        // A token budget says nothing about depth, so the tier riding along
+        // with it is the platform's. Letting it choose a level made
+        // `thinkingBudgetTokens: 8000` downgrade gemini-3-pro-preview to `low`
+        // (Google's default is high), and on flash-lite-image pick `minimal` —
+        // byte-identical to `off`, so setting a thinking budget turned thinking
+        // off. Reachable from the panel: the budget field renders on Default.
+        for (const model of ["google:gemini-3-pro-preview", "google:gemini-3.1-flash-lite-image"]) {
+          const po = await providerOptionsFor(model, {
+            mode: "enabled",
+            budgetTokens: 8000,
+            effort: DEFAULT_THINKING_EFFORT,
+            source: "mode",
+          });
+          expect(`${model}: ${JSON.stringify(po)}`).toBe(`${model}: {}`);
+        }
+        // An operator who names the tier still gets the nearest offered.
+        const chosen = await providerOptionsFor("google:gemini-3-pro-preview", {
+          mode: "enabled",
+          budgetTokens: 8000,
+          effort: "medium",
+          source: "operator",
         });
         expect(chosen.google?.thinkingConfig).toEqual({ thinkingLevel: "low" });
       });
@@ -1881,16 +1907,24 @@ describe("AgentEngine", () => {
           const model = "google:gemini-flash-latest";
           for (let i = 0; i < 2; i++) {
             expect(
-              await providerOptionsFor(model, { mode: "effort", effort: "max", explicit: true }),
+              await providerOptionsFor(model, { mode: "effort", effort: "max", source: "operator" }),
             ).toEqual({});
           }
           expect(warnings.filter((w) => w.includes("gemini-flash-latest"))).toHaveLength(1);
-          // The platform's own fallback isn't an operator instruction, so it
-          // doesn't warrant a warning.
+          // A configured mode with no named depth is still operator intent,
+          // and it reports — the tier is the platform's, the instruction isn't.
+          await providerOptionsFor("google:gemini-robotics-er-1.6-preview", {
+            mode: "effort",
+            effort: DEFAULT_THINKING_EFFORT,
+            source: "mode",
+          });
+          expect(warnings.filter((w) => w.includes("gemini-robotics"))).toHaveLength(1);
+
+          // The platform's own fallback isn't an instruction, so it stays quiet.
           await providerOptionsFor("google:gemini-omni-flash-preview", {
             mode: "effort",
             effort: "medium",
-            explicit: false,
+            source: "platform",
           });
           expect(warnings.filter((w) => w.includes("gemini-omni-flash-preview"))).toHaveLength(0);
         } finally {

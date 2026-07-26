@@ -124,24 +124,23 @@ function toGoogleLevel(effort: ThinkingEffort): GoogleThinkingLevel {
 }
 
 /**
- * Pick the closest level a given model actually accepts.
+ * The deepest level at or below the one requested that this model accepts.
  *
- * Support is per-model, not per-generation, so the requested tier may simply
- * not exist on this model — `gemini-3-pro-preview` has no `medium`, which is
- * the platform default. Step down first (never silently think harder than
- * asked), then up if nothing below is offered.
+ * Support is per-model, not per-generation, so an operator's tier may simply
+ * not exist here — `gemini-3-pro-preview` has no `medium`. Only steps down:
+ * stepping up would think harder than the operator asked for, which is a worse
+ * surprise than not honoring the tier, and no current row would ever reach it
+ * anyway (every level set contains `minimal` or `low`).
+ *
+ * `undefined` when the model offers nothing at or below the request — the
+ * caller then sends no level and the provider's own default stands.
  */
 function nearestSupportedLevel(
   wanted: GoogleThinkingLevel,
   levels: ReadonlySet<GoogleThinkingLevel>,
 ): GoogleThinkingLevel | undefined {
-  const i = GOOGLE_THINKING_LEVELS.indexOf(wanted);
-  for (let d = i; d >= 0; d--) {
+  for (let d = GOOGLE_THINKING_LEVELS.indexOf(wanted); d >= 0; d--) {
     const l = GOOGLE_THINKING_LEVELS[d];
-    if (l && levels.has(l)) return l;
-  }
-  for (let u = i + 1; u < GOOGLE_THINKING_LEVELS.length; u++) {
-    const l = GOOGLE_THINKING_LEVELS[u];
     if (l && levels.has(l)) return l;
   }
   return undefined;
@@ -231,7 +230,7 @@ function googleLevelOptions(
       : {};
   }
   const wanted = toGoogleLevel(thinking.effort);
-  if (!levels.has(wanted) && thinking.mode === "effort" && !thinking.explicit) {
+  if (!levels.has(wanted) && thinking.source !== "operator") {
     // The platform's fallback tier isn't on offer here. Stepping to a
     // neighbour would make a tier nobody chose override the model's own
     // default — and stepping *down* reasons less than `off` does on a model
@@ -300,7 +299,10 @@ function buildGoogleThinkingOptions(
     // the catalog have no row — and an operator who set a depth on one of them
     // otherwise gets nothing at all, right after release notes saying Google
     // is wired. Skip the platform's own fallback tier: nobody asked for it.
-    const operatorAsked = thinking.mode !== "effort" || thinking.explicit;
+    const operatorAsked =
+      thinking.mode === "off" || thinking.mode === "adaptive"
+        ? true
+        : thinking.source !== "platform";
     if (operatorAsked && !warnedUnmappedGoogle.has(model)) {
       warnedUnmappedGoogle.add(model);
       log.warn(

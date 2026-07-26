@@ -246,6 +246,23 @@ export interface EngineHooks {
 export type ThinkingEffort = "low" | "medium" | "high" | "xhigh" | "max";
 
 /**
+ * Where a resolved depth came from. Three states because two consumers ask
+ * different questions of it, and collapsing them to one boolean gets one of
+ * them wrong:
+ *
+ *   - `operator`  — the operator named this tier (`thinkingEffort`). Only this
+ *                   may override a provider's own default, so only this steps
+ *                   to a neighbouring level when the model lacks the tier.
+ *   - `mode`      — the operator configured thinking (`thinking`, or a bare
+ *                   `thinkingBudgetTokens`) but named no depth. Their intent is
+ *                   real and worth reporting when it can't be honored, but the
+ *                   tier attached to it is still the platform's, so it must not
+ *                   displace what the provider would do on its own.
+ *   - `platform`  — nothing was configured. Silent, and never overriding.
+ */
+export type EffortSource = "operator" | "mode" | "platform";
+
+/**
  * Depth used when reasoning is on but the operator named no tier.
  *
  * `medium` rather than the top of the ladder: the default applies to every
@@ -263,11 +280,11 @@ export const DEFAULT_THINKING_EFFORT: ThinkingEffort = "medium";
  *                  engine's Anthropic branch.
  *   - `adaptive` — the model decides per call. No depth expressed.
  *   - `effort`   — reason at a named depth. The portable arm, and the one the
- *                  platform default path produces. `explicit` says whether the
- *                  operator named the tier or it is the platform fallback: a
- *                  fallback must never override a provider's own default, or
- *                  it becomes the same "directive from a number nobody chose"
- *                  this shape exists to remove.
+ *                  platform default path produces. `source` says where the
+ *                  depth came from: a tier the operator didn't name must never
+ *                  override a provider's own default, or it becomes the same
+ *                  "directive from a number nobody chose" this shape exists to
+ *                  remove.
  *   - `enabled`  — reason within an explicit token budget. The budget is only
  *                  meaningful on providers that meter thinking in tokens, so
  *                  this arm carries `effort` too: it is what the effort-shaped
@@ -281,8 +298,8 @@ export const DEFAULT_THINKING_EFFORT: ThinkingEffort = "medium";
 export type ResolvedThinking =
   | { mode: "off" }
   | { mode: "adaptive" }
-  | { mode: "effort"; effort: ThinkingEffort; explicit: boolean }
-  | { mode: "enabled"; budgetTokens: number; effort: ThinkingEffort };
+  | { mode: "effort"; effort: ThinkingEffort; source: EffortSource }
+  | { mode: "enabled"; budgetTokens: number; effort: ThinkingEffort; source: EffortSource };
 
 /** Engine configuration per run. */
 export interface EngineConfig {

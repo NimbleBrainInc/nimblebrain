@@ -1,5 +1,6 @@
 import {
   DEFAULT_THINKING_EFFORT,
+  type EffortSource,
   type ResolvedThinking,
   type ThinkingEffort,
 } from "../engine/types.ts";
@@ -21,6 +22,13 @@ export interface ResolveThinkingInput {
   configBudgetTokens?: number;
   /** Resolved model string (e.g. `"anthropic:claude-opus-5"`). */
   model?: string;
+}
+
+/** Where the resolved depth came from — see {@link EffortSource}. */
+function effortSourceFor(input: ResolveThinkingInput): EffortSource {
+  if (input.configEffort != null) return "operator";
+  if (input.configMode != null) return "mode";
+  return (input.configBudgetTokens ?? 0) > 0 ? "mode" : "platform";
 }
 
 /**
@@ -96,9 +104,13 @@ export function resolveThinking(input: ResolveThinkingInput): ResolvedThinking |
   // and the tier is what every other provider uses. Dropping the tier here
   // because a budget exists would make the depth control inert on exactly the
   // effort-shaped models it was added for.
+  // Set once, here, and carried on both arms. Deriving it per call site is how
+  // the budget arm ended up without it while the effort arm had it, and the
+  // two engine carve-outs keyed off a field only one of them saw.
   const effort = input.configEffort ?? DEFAULT_THINKING_EFFORT;
+  const source = effortSourceFor(input);
   if (input.configBudgetTokens != null && input.configBudgetTokens > 0) {
-    return { mode: "enabled", budgetTokens: input.configBudgetTokens, effort };
+    return { mode: "enabled", budgetTokens: input.configBudgetTokens, effort, source };
   }
-  return { mode: "effort", effort, explicit: input.configEffort != null };
+  return { mode: "effort", effort, source };
 }
