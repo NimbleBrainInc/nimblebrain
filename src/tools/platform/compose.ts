@@ -86,10 +86,11 @@ const COMPOSE_DESCRIPTION =
 const ASSEMBLED_CONTEXT_DESCRIPTION =
   "Return the recorded context digest for a conversation's run — the per-source " +
   "token breakdown (system prompt, tool descriptions, layer-3 skills, history) " +
-  "and the layer-3 skills that loaded, with provenance. Note the `skills` row " +
-  "annotates a slice of `system_prompt` (composed skill bodies live inside it), " +
-  "so the context window is system_prompt + tool_descriptions + history and " +
-  "`totalTokens` counts the skills twice. " +
+  "and the layer-3 skills that loaded, with provenance. **Read `windowTokens` " +
+  "for how big the turn was.** `totalTokens` is the recorded sum of every row " +
+  "and counts the composed skill bodies twice: the `skills` row annotates a " +
+  "slice of `system_prompt` (the bodies live inside it) rather than adding a " +
+  "region, so the window is system_prompt + tool_descriptions + history. " +
   "Defaults to the most " +
   "recent run; pass `run_id` for a specific one. A pure read of the run's " +
   "already-emitted `context.assembled` + `skills.loaded` events — no " +
@@ -107,6 +108,15 @@ export interface ComposeResponse {
   mode: "live" | "historical";
   conversationId: string;
   runId?: string;
+  /**
+   * Size of the composed system prompt — this tool's subject, and the same
+   * quantity in both modes so the two are comparable. Live sums the composed
+   * layers; historical reads the run's recorded `system_prompt` row.
+   *
+   * NOT the size of the context window: tool descriptions and history are not
+   * part of the prompt. `compose__assembled_context` answers that, as
+   * `windowTokens`.
+   */
   totalTokens: number;
   text: string;
   layers: TracedLayer[];
@@ -385,20 +395,19 @@ async function composeHistorical(
   const l3 = skillsLoaded ? buildLayer3Layer(skillsLoaded, runId, warnings) : null;
   const layers: TracedLayer[] = l3 ? [l3.layer] : [];
 
-  // Prefer the run's recorded size when present and non-zero; else fall back
-  // to the L3 entry-token sum (0 when no skills loaded). skillsLoaded.totalTokens
-  // is just the L3 sum, so the layer's own `tokens` carries it while the response
-  // total prefers the run-wide count.
+  // The recorded prompt size, so this field answers the same question in both
+  // modes (see `ComposeResponse.totalTokens`). The `system_prompt` row is the
+  // historical analogue of live mode's composed-layer sum — both measure the
+  // assembled prompt. Neither the event's `totalTokens` (which adds tools and
+  // history, and counts the skills twice) nor the window is that quantity;
+  // this tool's subject is the prompt.
   //
-  // That run-wide count is `windowTokens`, NOT the event's recorded
-  // `totalTokens`: the latter sums a `skills` row that annotates part of
-  // `system_prompt`, so it counts the composed skill bodies twice. A caller
-  // budgeting context off this field would over-estimate the turn by the size
-  // of its skills.
-  const recordedWindow = contextAssembled
-    ? contextWindowTokens(contextAssembled.sources.map(toAssembledSource))
-    : 0;
-  const totalTokens = recordedWindow || l3?.entryTokensSum || 0;
+  // Falls back to the L3 entry-token sum (0 when no skills loaded) for a run
+  // with no `context.assembled` event. `skillsLoaded.totalTokens` is just the
+  // L3 sum, so the layer's own `tokens` carries it.
+  const recordedPrompt =
+    contextAssembled?.sources.find((s) => s.kind === "system_prompt")?.tokens ?? 0;
+  const totalTokens = recordedPrompt || l3?.entryTokensSum || 0;
 
   return {
     mode: "historical",
