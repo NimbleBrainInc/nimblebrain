@@ -46,11 +46,15 @@ const RESERVED_TOOL_PREFIXES = new Set(["nb"]);
  * vs `conversations__x`) and this could not arise; it is reachable now, so the
  * names are reserved rather than left to chance.
  *
- * The personal-connector marker is reserved here too, for the same reason and on
- * the same footing: a workspace source carrying it would shadow the identity
- * door. Keeping it in the PREDICATE (not only in the throwing form) is the point
- * — `connector-tools.ts` gates the identity-install boundary on the predicate, so
- * a rule that lived only in `validateServerName` would not be enforced there.
+ * The personal-connector marker is reserved here too, for the same reason: a
+ * workspace source carrying it would shadow the identity door. It is in the
+ * predicate for completeness — a function called `isReservedServerName` must not
+ * answer `false` for a reserved name — but no current caller can reach it. The
+ * two that exist pass either a `slugifyServerName` result (which maps every
+ * non-`[a-z0-9-]` character to `-`, so it can never contain `_`) or go through
+ * `validateServerName`, which tests the marker separately below to raise a more
+ * specific error. The live enforcement path is an operator-set explicit
+ * `ref.serverName`, which only `validateServerName` sees.
  */
 export function isReservedServerName(serverName: string): boolean {
   return (

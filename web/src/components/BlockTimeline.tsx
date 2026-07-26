@@ -40,6 +40,7 @@ import type {
 import { useMinDisplayTime, type VisualStatus } from "../hooks/useMinDisplayTime";
 import { isDocumentArtifact } from "../lib/artifact-kind";
 import { formatDuration, stripServerPrefix } from "../lib/format";
+import { isPersonalConnectorAppName } from "../lib/namespaced-tool";
 import { linkSafety } from "../lib/streamdown-config";
 import {
   aggregateGroup,
@@ -654,7 +655,19 @@ function CopyButton({ content }: { content: string }) {
 // ─────────────────────────────────────────────────────────────────────────────
 
 function ToolWidgets({ calls }: { calls: ReadonlyArray<ToolCallDisplay> }) {
-  const widgets = calls.filter((tc) => tc.resourceUri && tc.status === "done" && tc.appName);
+  // A personal connector mounts no iframe. Its `ui://` read would resolve
+  // through the WORKSPACE registry (`GET /v1/apps/:name/resources/*` tries the
+  // kernel identity sources, then that registry — a connector is in neither), so
+  // a same-named workspace app would answer and its bridge would dispatch on the
+  // workspace's credentials. Excluded here rather than left to 404: the marked
+  // name is unresolvable by construction, so there is nothing to render.
+  const widgets = calls.filter(
+    (tc) =>
+      tc.resourceUri &&
+      tc.status === "done" &&
+      tc.appName &&
+      !isPersonalConnectorAppName(tc.appName),
+  );
   const resourceLinkCalls = calls.filter(
     (tc) => tc.status === "done" && tc.appName && tc.resourceLinks && tc.resourceLinks.length > 0,
   );

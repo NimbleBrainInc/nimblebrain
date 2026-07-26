@@ -40,6 +40,18 @@ import { WORKSPACE_ID_FLAGS, WORKSPACE_ID_PATTERN } from "../_generated/workspac
  */
 const PERSONAL_CONNECTOR_PREFIX = "my_";
 
+/**
+ * Whether an app/source name is a personal connector's marked wire name.
+ *
+ * Mirrors `isPersonalConnectorName` in `src/tools/identity-sources.ts`. Callers
+ * that would RESOLVE the name against an app surface use this to bail: a
+ * personal connector has no such surface, and the same bare name may well
+ * belong to a workspace app that does.
+ */
+export function isPersonalConnectorAppName(name: string): boolean {
+  return name.startsWith(PERSONAL_CONNECTOR_PREFIX);
+}
+
 const WORKSPACE_ID_RE = new RegExp(WORKSPACE_ID_PATTERN, WORKSPACE_ID_FLAGS);
 
 /**
@@ -91,18 +103,22 @@ export function parseNamespacedToolName(s: string): { scope: ToolScope; toolName
  * `registry.hasSource()` with a 403 "not available in this workspace". Parse
  * the namespace via the sanctioned primitive first, then drop the `__<tool>`
  * tail. Returns `undefined` when there's no `__` (not an app-owned call).
+ *
+ * **The personal-connector marker is KEPT.** Every consumer of this value
+ * re-resolves it — `getResources(appName, …)`, `readResource(appName, …)`,
+ * `openArtifact({ appName, … })` — and none renders it as text, so it is an
+ * identity, not a label. De-marking it would hand those callers `gmail` for a
+ * `my_gmail__send` call, and `GET /v1/apps/gmail/resources/*` resolves through
+ * the WORKSPACE registry: a same-named workspace app would serve its UI, mount
+ * in the transcript, and its bridge would then dispatch bare `gmail__*` — the
+ * workspace source, on the workspace's credentials, for a call the user made
+ * against their own account. Strip the marker only where a human reads the
+ * string.
  */
 export function appNameFromToolName(wireName: string): string | undefined {
   const parsed = parseNamespacedToolName(wireName);
   // `toolName` is the post-`ws_<id>-` remainder (or the whole bare name).
   const rest = parsed ? parsed.toolName : wireName;
   const sep = rest.indexOf("__");
-  if (sep <= 0) return undefined;
-  const source = rest.slice(0, sep);
-  // A personal connector's wire name carries the reserved marker; its APP name
-  // does not. Without this the transcript and `iframe.dataset.app` read
-  // `my_gmail` for a connector installed as `gmail`.
-  return source.startsWith(PERSONAL_CONNECTOR_PREFIX)
-    ? source.slice(PERSONAL_CONNECTOR_PREFIX.length)
-    : source;
+  return sep > 0 ? rest.slice(0, sep) : undefined;
 }

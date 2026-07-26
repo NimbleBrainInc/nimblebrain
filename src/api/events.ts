@@ -1,6 +1,6 @@
 import type { EngineEvent, EngineEventType, EventSink } from "../engine/types.ts";
 import { log } from "../observability/log.ts";
-import { PERSONAL_CONNECTOR_PREFIX } from "../tools/identity-sources.ts";
+import { isPersonalConnectorName } from "../tools/identity-sources.ts";
 import { bareToolName } from "../tools/namespace.ts";
 import type { WorkspaceStore } from "../workspace/workspace-store.ts";
 
@@ -155,18 +155,19 @@ export function deriveDataChangedTarget(
   // workspace-id pattern.
   const bare = bareToolName(rawName);
   const sepIndex = bare.indexOf("__");
-  const wireServer = sepIndex !== -1 ? bare.slice(0, sepIndex) : bare;
+  const server = sepIndex !== -1 ? bare.slice(0, sepIndex) : bare;
   const tool = sepIndex !== -1 ? bare.slice(sepIndex + 2) : bare;
 
-  // Drop the personal-connector marker too. The broadcast key has to be the name
-  // the iframe registered under, and the web tier's `appNameFromToolName` strips
-  // it — an iframe for a connector installed as `notes` carries `data-app="notes"`
-  // while the tool call is `my_notes__append`. Without this the two never match
-  // and `useDataSync` misses forever, which is the "click off and back" symptom
-  // the normalization above exists to prevent.
-  const server = wireServer.startsWith(PERSONAL_CONNECTOR_PREFIX)
-    ? wireServer.slice(PERSONAL_CONNECTOR_PREFIX.length)
-    : wireServer;
+  // A personal connector has no listener, so it gets no broadcast — and the
+  // marker is NOT stripped to find one. `server` is matched against an iframe's
+  // `data-app`, and a personal connector cannot mount an iframe: a `ui://` read
+  // resolves through `readIdentityAppResource` (kernel identity sources only) or
+  // `readAppResource` (the workspace registry), and a connector is in neither.
+  // De-marking would therefore never reach the connector's own surface — it
+  // would reach a WORKSPACE app of the same name, refetching an unrelated app on
+  // the caller's private tool call. That same-name collision is the exact thing
+  // the marker exists to prevent, so it must survive to here.
+  if (isPersonalConnectorName(server)) return null;
 
   // System tools (`nb__*`) don't modify app data; broadcasting for them makes
   // iframes re-fetch on every streaming chunk (flicker + tool-call amplification).

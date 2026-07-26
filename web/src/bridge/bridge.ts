@@ -798,14 +798,16 @@ async function callToolViaMcp(
   //      The active-workspace check stays. The server refuses a workspace call
   //      on a session with no workspace anyway (`WorkspaceToolUnavailable`), but
   //      failing here is a clearer error and saves a round trip.
-  // NOTE: `server` is the de-marked app name (`appNameFromToolName` strips the
-  // personal-connector marker), so this dispatches unmarked. That is correct only
-  // because a personal connector cannot mount an iframe: `readIdentityResource`
-  // resolves through the kernel identity sources and the workspace path searches
-  // the workspace registry, and a personal connector is in neither. If connectors
-  // ever serve `ui://` resources, the marker has to round-trip here — stripped for
-  // display and resource lookup, re-applied for dispatch — or an iframe call would
-  // reach a same-named WORKSPACE source and spend the wrong account's credentials.
+  //      A personal connector's marker needs no special handling here, and that
+  //      is a property of the code rather than an assumption. `server` is the
+  //      name the iframe was mounted under, which comes from
+  //      `appNameFromToolName` — and that KEEPS the marker. So if a connector
+  //      ever does mount an iframe, `my_gmail__send` goes out marked and lands on
+  //      the identity door. Today none can: a `ui://` read resolves through
+  //      `readIdentityAppResource` (kernel identity sources) or `readAppResource`
+  //      (the workspace registry) and a connector is in neither, so
+  //      `BlockTimeline` refuses to mount one. Both halves fail safe; neither
+  //      relies on the other.
   const qualifiedName = params.name.includes("__") ? params.name : `${server}__${params.name}`;
   if (!isIdentityApp(server) && !getActiveWorkspaceId()) {
     return {
@@ -817,7 +819,6 @@ async function callToolViaMcp(
       },
     } satisfies UiToolResultError;
   }
-  const wireName = qualifiedName;
 
   return withSessionRetry(async () => {
     const client = await getMcpBridgeClient();
@@ -832,7 +833,7 @@ async function callToolViaMcp(
         {
           method,
           params: {
-            name: wireName,
+            name: qualifiedName,
             arguments: params.arguments ?? {},
             task: params.task,
           },
@@ -844,7 +845,7 @@ async function callToolViaMcp(
 
     const result = await client.callTool(
       {
-        name: wireName,
+        name: qualifiedName,
         arguments: params.arguments ?? {},
       },
       CallToolResultSchema,
