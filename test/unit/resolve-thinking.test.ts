@@ -24,13 +24,14 @@ describe("resolveThinking", () => {
 		expect(resolveThinking({ model: "anthropic:claude-opus-4-7" })).toEqual({
 			mode: "effort",
 			effort: DEFAULT_THINKING_EFFORT,
+			explicit: false,
 		});
 	});
 
 	it("uses the operator's effort tier on the default path", () => {
 		expect(
 			resolveThinking({ model: "anthropic:claude-opus-4-7", configEffort: "xhigh" }),
-		).toEqual({ mode: "effort", effort: "xhigh" });
+		).toEqual({ mode: "effort", effort: "xhigh", explicit: true });
 	});
 
 	it("never reads an output ceiling", () => {
@@ -41,7 +42,7 @@ describe("resolveThinking", () => {
 		// value at all, so the same input can only produce one answer.
 		const small = resolveThinking({ model: "anthropic:claude-opus-5" });
 		const large = resolveThinking({ model: "anthropic:claude-opus-4-7" });
-		expect(small).toEqual({ mode: "effort", effort: DEFAULT_THINKING_EFFORT });
+		expect(small).toEqual({ mode: "effort", effort: DEFAULT_THINKING_EFFORT, explicit: false });
 		expect(large).toEqual(small);
 	});
 
@@ -154,6 +155,7 @@ describe("resolveThinking", () => {
 		})).toEqual({
 			mode: "effort",
 			effort: DEFAULT_THINKING_EFFORT,
+			explicit: false,
 		});
 	});
 
@@ -163,6 +165,7 @@ describe("resolveThinking", () => {
 		).toEqual({
 			mode: "effort",
 			effort: DEFAULT_THINKING_EFFORT,
+			explicit: false,
 		});
 	});
 });

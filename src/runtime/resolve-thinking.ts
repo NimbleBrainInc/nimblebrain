@@ -100,5 +100,5 @@ export function resolveThinking(input: ResolveThinkingInput): ResolvedThinking |
   if (input.configBudgetTokens != null && input.configBudgetTokens > 0) {
     return { mode: "enabled", budgetTokens: input.configBudgetTokens, effort };
   }
-  return { mode: "effort", effort };
+  return { mode: "effort", effort, explicit: input.configEffort != null };
 }

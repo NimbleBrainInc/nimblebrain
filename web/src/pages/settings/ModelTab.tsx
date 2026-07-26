@@ -95,14 +95,6 @@ function ModelSelect({
   );
 }
 
-/**
- * The thinking half of a `set_model_config` patch.
- *
- * Every field is either set or explicitly cleared, never omitted, so a value
- * the operator removed on this screen can't survive on disk from an earlier
- * save. Depth and budget are independent: the budget only reaches providers
- * that meter thinking in tokens, and sending one never voids the chosen depth.
- */
 export function ModelTab() {
   const [defaultModel, setDefaultModel] = useState("");
   const [fastModel, setFastModel] = useState("");

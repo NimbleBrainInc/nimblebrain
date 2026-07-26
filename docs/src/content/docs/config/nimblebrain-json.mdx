@@ -131,7 +131,7 @@ and the runtime translates.
 |---|---|
 | Anthropic — Opus 4.7/4.8, Sonnet 5, Opus 5 | `thinking: {type: "adaptive"}` + `output_config.effort`, the tier verbatim |
 | Anthropic — up to Sonnet 4.6 | `thinking: {type: "enabled"}` + a `budgetTokens` sized from the tier |
-| OpenAI, and Nebius-hosted open-weight models (DeepSeek, Kimi, …) | `reasoningEffort`. Its usable range stops at `high`, so `xhigh` and `max` both land there |
+| OpenAI, and Nebius-hosted open-weight models (DeepSeek, Qwen, gpt-oss) | `reasoningEffort`. Its usable range stops at `high`, so `xhigh` and `max` both land there |
 | Google Gemini 3 | `thinkingConfig.thinkingLevel`, tops out at `high` |
 | Google Gemini 2.5 | `thinkingConfig.thinkingBudget`, sized from the tier and held inside the model's documented range |
 

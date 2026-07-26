@@ -190,7 +190,7 @@ function buildAnthropicThinkingOptions(
 
 /**
  * Build OpenAI-family options. Nebius-hosted open-weight models (DeepSeek,
- * Kimi, …) run through the same adapter and read the same key: the adapter
+ * Qwen, gpt-oss, …) run through the same adapter and read the same key: the adapter
  * parses provider options under the literal name `"openai"` regardless of the
  * `name` the provider instance was created with, so a `nebius` key would be
  * silently dropped.
@@ -212,6 +212,9 @@ function buildOpenAIThinkingOptions(thinking: ResolvedThinking): SharedV3Provide
   }
 }
 
+/** Google models already warned about, so an unmapped one is reported once per process. */
+const warnedUnmappedGoogle = new Set<string>();
+
 /** Gemini 3's dialect: a named level, from the set this specific model accepts. */
 function googleLevelOptions(
   thinking: ResolvedThinking,
@@ -227,7 +230,16 @@ function googleLevelOptions(
       ? { google: { thinkingConfig: { thinkingLevel: "minimal" } } }
       : {};
   }
-  const level = nearestSupportedLevel(toGoogleLevel(thinking.effort), levels);
+  const wanted = toGoogleLevel(thinking.effort);
+  if (!levels.has(wanted) && thinking.mode === "effort" && !thinking.explicit) {
+    // The platform's fallback tier isn't on offer here. Stepping to a
+    // neighbour would make a tier nobody chose override the model's own
+    // default — and stepping *down* reasons less than `off` does on a model
+    // with no `minimal`, which is plainly wrong. Say nothing and let the
+    // provider default stand, which is what shipped before Google was wired.
+    return {};
+  }
+  const level = nearestSupportedLevel(wanted, levels);
   return level ? { google: { thinkingConfig: { thinkingLevel: level } } } : {};
 }
 
@@ -282,7 +294,24 @@ function buildGoogleThinkingOptions(
   maxOutputTokens: number,
 ): SharedV3ProviderOptions {
   const support = googleThinkingSupport(model);
-  if (!support) return {};
+  if (!support) {
+    // Fail closed, but not silently. This is the likelier path than the
+    // resolver's own capability gate — most reasoning-capable Google models in
+    // the catalog have no row — and an operator who set a depth on one of them
+    // otherwise gets nothing at all, right after release notes saying Google
+    // is wired. Skip the platform's own fallback tier: nobody asked for it.
+    const operatorAsked = thinking.mode !== "effort" || thinking.explicit;
+    if (operatorAsked && !warnedUnmappedGoogle.has(model)) {
+      warnedUnmappedGoogle.add(model);
+      log.warn(
+        `[thinking] No published thinking support for "${model}", so no reasoning options are ` +
+          "sent and it runs at Google's default. Add a row to GOOGLE_THINKING in " +
+          "src/model/catalog.ts once its supported levels or budget range are documented. " +
+          "Logged once per model.",
+      );
+    }
+    return {};
+  }
   return support.dialect === "level"
     ? googleLevelOptions(thinking, support.levels)
     : googleBudgetOptions(thinking, support, maxOutputTokens);

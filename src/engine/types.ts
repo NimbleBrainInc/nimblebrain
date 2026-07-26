@@ -262,8 +262,12 @@ export const DEFAULT_THINKING_EFFORT: ThinkingEffort = "medium";
  *   - `off`      — do not reason. Not enforceable on every model; see the
  *                  engine's Anthropic branch.
  *   - `adaptive` — the model decides per call. No depth expressed.
- *   - `effort`   — reason at a named depth. The portable arm, and the one
- *                  the platform default path produces.
+ *   - `effort`   — reason at a named depth. The portable arm, and the one the
+ *                  platform default path produces. `explicit` says whether the
+ *                  operator named the tier or it is the platform fallback: a
+ *                  fallback must never override a provider's own default, or
+ *                  it becomes the same "directive from a number nobody chose"
+ *                  this shape exists to remove.
  *   - `enabled`  — reason within an explicit token budget. The budget is only
  *                  meaningful on providers that meter thinking in tokens, so
  *                  this arm carries `effort` too: it is what the effort-shaped
@@ -277,7 +281,7 @@ export const DEFAULT_THINKING_EFFORT: ThinkingEffort = "medium";
 export type ResolvedThinking =
   | { mode: "off" }
   | { mode: "adaptive" }
-  | { mode: "effort"; effort: ThinkingEffort }
+  | { mode: "effort"; effort: ThinkingEffort; explicit: boolean }
   | { mode: "enabled"; budgetTokens: number; effort: ThinkingEffort };
 
 /** Engine configuration per run. */

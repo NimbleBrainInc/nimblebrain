@@ -276,16 +276,18 @@ export type GoogleThinkingSupport =
  * stock install starts returning 400s.
  *
  * Coverage is deliberately partial, and the rule is exactly one thing: an
- * entry exists when Google's thinking docs publish that model's support. It is
- * not "text models only" — `gemini-3.1-flash-lite-image` is documented and so
- * it is here, while the plain `gemini-3.1-flash-lite` is not documented and so
- * it is not, even though it is the more mainstream of the two. Sibling names
- * are no guide either way.
+ * entry exists when Google publishes that model's support. Note that "Google
+ * publishes it" spans more than one page — the thinking guide and the Gemini 3
+ * guide carry different tables, and a model absent from one can be listed in
+ * the other. Check both before concluding a model is undocumented.
  *
- * Everything unlisted — the `-latest` aliases, `deep-research-*`,
- * `gemini-robotics-*`, the tts/live variants, and the undocumented text models
- * above — runs at its own default until there is something to cite. Adding a
- * row from a sibling's values would be the guesswork this table replaced.
+ * Two categories stay out regardless. The `-latest` aliases (`gemini-flash-
+ * latest`, `gemini-flash-lite-latest`) point at a moving target, so any level
+ * set pinned to them expires silently on Google's schedule rather than ours.
+ * And models with no published support at all — `deep-research-*`,
+ * `gemini-robotics-*`, the tts/live variants — run at their own default until
+ * there is something to cite. Adding a row from a sibling's values would be
+ * the guesswork this table replaced.
  */
 const GOOGLE_THINKING: Record<string, GoogleThinkingSupport> = {
   "gemini-3.6-flash": { dialect: "level", levels: new Set(GOOGLE_THINKING_LEVELS) },
@@ -294,6 +296,7 @@ const GOOGLE_THINKING: Record<string, GoogleThinkingSupport> = {
   "gemini-3-flash-preview": { dialect: "level", levels: new Set(GOOGLE_THINKING_LEVELS) },
   "gemini-3.1-pro-preview": { dialect: "level", levels: new Set(["low", "medium", "high"]) },
   "gemini-3-pro-preview": { dialect: "level", levels: new Set(["low", "high"]) },
+  "gemini-3.1-flash-lite": { dialect: "level", levels: new Set(GOOGLE_THINKING_LEVELS) },
   "gemini-3.1-flash-lite-image": { dialect: "level", levels: new Set(["minimal", "high"]) },
   // The 2.5 rows are budget-shaped on purpose. Google's thinking page now
   // shows these three in the same levels table as Gemini 3, but its 2.5

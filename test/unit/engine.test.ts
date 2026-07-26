@@ -15,6 +15,7 @@ import type {
   ToolSchema,
 } from "../../src/engine/types.ts";
 import { DEFAULT_THINKING_EFFORT } from "../../src/engine/types.ts";
+import { log } from "../../src/observability/log.ts";
 import { textContent } from "../../src/engine/content-helpers.ts";
 import {
   getRequestContext,
@@ -1734,10 +1735,7 @@ describe("AgentEngine", () => {
         // The tier the operator chose reaches the wire unchanged. Nothing is
         // derived from the output ceiling, so `xhigh` is reachable — under the
         // old budget→effort bands no budget ever produced it.
-        const po = await providerOptionsFor("anthropic:claude-opus-5", {
-          mode: "effort",
-          effort: "xhigh",
-        });
+        const po = await providerOptionsFor("anthropic:claude-opus-5", { mode: "effort", effort: "xhigh", explicit: true });
         expect(po.anthropic?.thinking).toEqual({ type: "adaptive" });
         expect(po.anthropic?.effort).toBe("xhigh");
       });
@@ -1745,10 +1743,7 @@ describe("AgentEngine", () => {
       it("sizes a budget from the tier for budget-shaped Anthropic models", async () => {
         // Sonnet 4.6 takes `enabled` + a token budget. The tier is converted
         // here, not upstream, so the resolver stays provider-neutral.
-        const po = await providerOptionsFor("anthropic:claude-sonnet-4-6", {
-          mode: "effort",
-          effort: "high",
-        });
+        const po = await providerOptionsFor("anthropic:claude-sonnet-4-6", { mode: "effort", effort: "high", explicit: true });
         expect(po.anthropic?.thinking).toEqual({
           type: "enabled",
           budgetTokens: Math.floor((16384 - 4096) * 0.6),
@@ -1774,37 +1769,25 @@ describe("AgentEngine", () => {
         // The OpenAI adapter parses provider options under the literal name
         // "openai" no matter what `name` the instance was created with, so a
         // `nebius` key reaches the wire as nothing at all.
-        const po = await providerOptionsFor("nebius:deepseek-ai/DeepSeek-R1", {
-          mode: "effort",
-          effort: "low",
-        });
+        const po = await providerOptionsFor("nebius:deepseek-ai/DeepSeek-R1", { mode: "effort", effort: "low", explicit: true });
         expect(po.openai?.reasoningEffort).toBe("low");
         expect(po.nebius).toBeUndefined();
       });
 
       it("sizes a thinkingBudget from the tier for Gemini 2.5", async () => {
-        const po = await providerOptionsFor("google:gemini-2.5-flash", {
-          mode: "effort",
-          effort: "low",
-        });
+        const po = await providerOptionsFor("google:gemini-2.5-flash", { mode: "effort", effort: "low", explicit: true });
         expect(po.google?.thinkingConfig).toEqual({
           thinkingBudget: Math.floor((16384 - 4096) * 0.15),
         });
       });
 
       it("sends a thinkingLevel to Gemini 3+, which does not take a budget", async () => {
-        const po = await providerOptionsFor("google:gemini-3.6-flash", {
-          mode: "effort",
-          effort: "high",
-        });
+        const po = await providerOptionsFor("google:gemini-3.6-flash", { mode: "effort", effort: "high", explicit: true });
         expect(po.google?.thinkingConfig).toEqual({ thinkingLevel: "high" });
       });
 
       it("clamps Gemini 3's level to high, its ladder's top", async () => {
-        const po = await providerOptionsFor("google:gemini-3.6-flash", {
-          mode: "effort",
-          effort: "max",
-        });
+        const po = await providerOptionsFor("google:gemini-3.6-flash", { mode: "effort", effort: "max", explicit: true });
         expect(po.google?.thinkingConfig).toEqual({ thinkingLevel: "high" });
       });
 
@@ -1833,10 +1816,7 @@ describe("AgentEngine", () => {
         // gemini-3-pro-preview supports only low and high — and `medium` is the
         // platform default, so an ungated mapping 400s on a stock install.
         expect(
-          (await providerOptionsFor("google:gemini-3-pro-preview", {
-            mode: "effort",
-            effort: "medium",
-          })).google?.thinkingConfig,
+          (await providerOptionsFor("google:gemini-3-pro-preview", { mode: "effort", effort: "medium", explicit: true })).google?.thinkingConfig,
         ).toEqual({ thinkingLevel: "low" });
         // A model that does offer medium keeps it.
         expect(
@@ -1865,6 +1845,56 @@ describe("AgentEngine", () => {
           expect(on.google?.thinkingConfig).not.toEqual(off.google?.thinkingConfig);
           // Degrades to thinking a little, matching the Anthropic path's floor.
           expect(on.google?.thinkingConfig).toEqual({ thinkingBudget: 1024 });
+        }
+      });
+
+      it("lets the provider default stand when the fallback tier isn't offered", async () => {
+        // gemini-3-pro-preview offers only {low, high}; the platform fallback
+        // is medium. Stepping down to `low` would make a tier nobody chose
+        // override Google's own default (high) — and it inverted against
+        // `off`, which finds no `minimal`, sends nothing, and gets high. The
+        // default path asking for less reasoning than `off` is plainly wrong.
+        const dflt = await providerOptionsFor("google:gemini-3-pro-preview", {
+          mode: "effort",
+          effort: "medium",
+          explicit: false,
+        });
+        const off = await providerOptionsFor("google:gemini-3-pro-preview", { mode: "off" });
+        expect(dflt).toEqual({});
+        expect(off).toEqual({});
+
+        // An operator who names a tier still gets the nearest one offered —
+        // they asked, so stepping is honoring the request, not inventing it.
+        const chosen = await providerOptionsFor("google:gemini-3-pro-preview", {
+          mode: "effort",
+          effort: "medium",
+          explicit: true,
+        });
+        expect(chosen.google?.thinkingConfig).toEqual({ thinkingLevel: "low" });
+      });
+
+      it("warns once, then stays silent, for an unmapped Google model", async () => {
+        const warnings: string[] = [];
+        const original = log.warn;
+        (log as { warn: (m: string) => void }).warn = (m: string) => warnings.push(m);
+        try {
+          const model = "google:gemini-flash-latest";
+          for (let i = 0; i < 2; i++) {
+            expect(
+              await providerOptionsFor(model, { mode: "effort", effort: "max", explicit: true }),
+            ).toEqual({});
+          }
+          expect(warnings.filter((w) => w.includes("gemini-flash-latest"))).toHaveLength(1);
+          // The platform's own fallback isn't an operator instruction, so it
+          // doesn't warrant a warning.
+          await providerOptionsFor("google:gemini-omni-flash-preview", {
+            mode: "effort",
+            effort: "medium",
+            explicit: false,
+          });
+          expect(warnings.filter((w) => w.includes("gemini-omni-flash-preview"))).toHaveLength(0);
+        } finally {
+          (log as { warn: (m: string) => void }).warn = original;
         }
       });
 

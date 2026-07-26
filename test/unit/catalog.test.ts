@@ -321,6 +321,37 @@ describe("Google thinking support", () => {
 		expect(unknown).toEqual([]);
 	});
 
+	it("classifies the mainstream Gemini models, with the levels Google publishes", () => {
+		// The table's contents were untested, so a missing row looked exactly
+		// like a deliberate omission — gemini-3.1-flash-lite sat unclassified
+		// for several rounds under a comment asserting Google didn't document
+		// it, which turned out to be true of one docs page and false of the
+		// other. These rows are transcribed from Google's tables; changing one
+		// should require changing this list and citing the source.
+		const expected: Record<string, string[]> = {
+			"gemini-3.6-flash": ["minimal", "low", "medium", "high"],
+			"gemini-3.5-flash": ["minimal", "low", "medium", "high"],
+			"gemini-3.5-flash-lite": ["minimal", "low", "medium", "high"],
+			"gemini-3.1-flash-lite": ["minimal", "low", "medium", "high"],
+			"gemini-3.1-pro-preview": ["low", "medium", "high"],
+			"gemini-3-pro-preview": ["low", "high"],
+			"gemini-3.1-flash-lite-image": ["minimal", "high"],
+		};
+		for (const [id, levels] of Object.entries(expected)) {
+			const support = googleThinkingSupport(id);
+			expect(`${id}: ${support?.dialect}`).toBe(`${id}: level`);
+			if (support?.dialect !== "level") continue;
+			expect(`${id}: ${[...support.levels].sort().join(",")}`).toBe(
+				`${id}: ${[...levels].sort().join(",")}`,
+			);
+		}
+		// The 2.5 line is budget-shaped and must stay that way; see the row
+		// comment for the conflicting sources.
+		for (const id of ["gemini-2.5-pro", "gemini-2.5-flash", "gemini-2.5-flash-lite"]) {
+			expect(`${id}: ${googleThinkingSupport(id)?.dialect}`).toBe(`${id}: budget`);
+		}
+	});
+
 	it("never offers a level outside Google's ladder", () => {
 		for (const id of listModels("google").map((m) => m.id)) {
 			const support = googleThinkingSupport(id);
