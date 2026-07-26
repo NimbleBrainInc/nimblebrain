@@ -15,37 +15,55 @@ When your app's HTML loads in an iframe, the platform:
 2. **Sends `ui/initialize`** via postMessage with the same tokens in `params.theme.tokens` (the NimbleBrain legacy notification path).
 3. **Sends `ui/notifications/host-context-changed`** when the user toggles dark mode, with updated token values under `styles.variables`.
 
-Your CSS references these variables with `var(--token, fallback)`. The fallback ensures your app still looks correct when running outside the platform (Claude Desktop, standalone, etc).
+Your CSS references these variables with `var(--token)`. Inside the platform the token always has a value — the `<style>` block lands before your HTML renders, and a `srcdoc` iframe inherits nothing else — so no fallback is needed. If your app also has to render where nothing injects tokens, see **Running outside the platform** below.
 
 ## Using tokens in CSS
 
 ```css
 body {
-  font-family: var(--font-sans, system-ui, sans-serif);
-  background: var(--color-background-primary, #ffffff);
-  color: var(--color-text-primary, #1a1a1a);
+  font-family: var(--font-sans);
+  background: var(--color-background-primary);
+  color: var(--color-text-primary);
 }
 
 button {
-  background: var(--color-text-accent, #2563eb);
-  color: var(--nb-color-accent-foreground, #ffffff);
-  border-radius: var(--border-radius-md, 0.5rem);
+  background: var(--color-text-accent);
+  color: var(--nb-color-accent-foreground);
+  border-radius: var(--border-radius-md);
 }
 
 input {
-  border: 1px solid var(--color-border-primary, #e5e7eb);
-  background: var(--color-background-secondary, #f9fafb);
-  color: var(--color-text-primary, #1a1a1a);
+  border: 1px solid var(--color-border-primary);
+  background: var(--color-background-secondary);
+  color: var(--color-text-primary);
 }
 
 .muted-text {
-  color: var(--color-text-secondary, #6b7280);
+  color: var(--color-text-secondary);
 }
 ```
 
-<Aside type="tip">
-Always include a fallback value after the comma. This is your standalone appearance — what users see when the app runs outside NimbleBrain.
+<Aside type="caution">
+**A fallback is a second copy of a value the host owns**, and a copy goes stale when the palette moves.
+
+The failure is quiet and one-sided. A token name that does not exist falls through to the fallback and renders a plausible colour instead of breaking visibly, so the mistake ships. And because fallbacks get written from the light palette, what ships is a light value that only looks wrong in dark mode.
 </Aside>
+
+### Running outside the platform
+
+If your app also has to render where nothing injects these tokens — Claude Desktop, another MCP host, or your own dev server — give `var()` a fallback that is **your app's own default**, not a copy of the platform's current palette:
+
+```css
+/* Your neutral, chosen by you. */
+body {
+  background: var(--color-background-primary, white);
+  color: var(--color-text-primary, black);
+}
+```
+
+Pick the values you would ship if NimbleBrain did not exist. A fallback copied out of the token reference is wrong the moment the platform's palette moves, and nothing tells you it happened.
+
+An app that only ever runs inside the platform should use the bare form above, so that a missing token fails visibly rather than resolving to a plausible wrong colour.
 
 ## Handling dark mode
 
@@ -149,7 +167,7 @@ The platform injects the following tokens into every iframe. Those in the ext-ap
 | `--shadow-lg` | Large elevation |
 
 <Aside type="tip">
-These tables list the tokens, not their values. The values are whatever the host injects for the active theme and change with it — read them at runtime from the iframe's `:root` rather than hard-coding them, and let the fallback in your own `var()` carry the standalone case.
+These tables list the tokens, not their values. The values are whatever the host injects for the active theme and change with it — read them at runtime from the iframe's `:root` rather than hard-coding them anywhere, a `var()` fallback included.
 </Aside>
 
 ### NimbleBrain extensions (`--nb-*`)
@@ -205,7 +223,7 @@ Common issues:
 
 | Symptom | Cause | Fix |
 |---------|-------|-----|
-| Background is not what I expected | Your CSS uses `background: #fff` instead of `var(--color-background-primary, #fff)` | Replace hardcoded colors with `var()` references |
+| Background is not what I expected | Your CSS uses `background: #fff` instead of `var(--color-background-primary)` | Replace hardcoded colors with `var()` references |
 | Tokens exist but aren't applied | CSS specificity — a more specific selector overrides the token | Check that your selector isn't more specific than the `:root` declaration |
 | Dark mode doesn't toggle | Missing `ui/notifications/host-context-changed` handler | Add the `applyTokens` message listener (see code above) |
 | An `--nb-*` color doesn't flip on toggle | `--nb-*` tokens are injected at load only, not in the live payload | Drive light/dark-sensitive surfaces from the spec `--color-*` tokens |
