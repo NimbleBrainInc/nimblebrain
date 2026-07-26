@@ -82,9 +82,16 @@ export function personalConnectorServerName(sourceName: string): string {
   return sourceName.slice(PERSONAL_CONNECTOR_PREFIX.length);
 }
 
-/** The wire form of a personal connector's source name. */
-export function personalConnectorWireName(serverName: string): string {
-  return `${PERSONAL_CONNECTOR_PREFIX}${serverName}`;
+/**
+ * The wire form of a personal connector's name.
+ *
+ * Takes either a bare source name (`gmail`) or a full tool name
+ * (`gmail__send`) — both call sites exist, and prefixing the whole string
+ * prefixes the source segment either way, which is the only part that decides
+ * the door.
+ */
+export function personalConnectorWireName(name: string): string {
+  return `${PERSONAL_CONNECTOR_PREFIX}${name}`;
 }
 
 /**

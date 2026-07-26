@@ -159,16 +159,30 @@ export function surfaceTools(
 }
 
 function matchToolPattern(toolName: string, pattern: string): boolean {
-  // Namespaced tool names carry a `ws_<id>-` namespace prefix. Patterns
-  // coming from `skill.allowedTools`
-  // / `request.allowedTools` / `focusedServerName` are typically authored
-  // against the BARE form (`source__tool` or `source__*`) — that's the
-  // shape skill manifests and the chat composer use. Match against both
-  // the full namespaced name AND the bare inner form (via the canonical
-  // `bareToolName` parser, not a hand-rolled separator split) so legacy
-  // patterns keep working and namespace-aware patterns also match.
+  // Both sides are normalized to the bare form, and BOTH have to be.
+  //
+  // Tool names are bare now. Patterns are not necessarily: `skill.allowedTools`
+  // and `request.allowedTools` are on-disk user/org/workspace-tier data, and
+  // `ws_<id>-crm__*` was the documented shape until the prefix was removed. It
+  // used to match because the namespaced NAME was in the candidate list;
+  // normalizing only the name leaves such a pattern matching zero tools —
+  // silently, so a skill's `allowedTools` would surface nothing and report
+  // nothing.
+  //
+  // A legacy pattern naming a DIFFERENT workspace normalizes into the session's
+  // own — `ws_<other>-crm__*` becomes `crm__*` and matches the bound
+  // workspace's `crm`. That is a deliberate trade over the alternative (a
+  // scoping directive that silently selects nothing), and it does not widen
+  // reach: the corpus is still the one bound workspace, so the wall is
+  // untouched. The wsId in such a pattern is simply no longer meaningful —
+  // there is only ever one workspace to name.
+  //
+  // `bareToolName` is best-effort by contract: it returns malformed input
+  // unchanged rather than throwing, so an arbitrary pattern string is safe.
+  const normalizedPattern = bareToolName(pattern);
   const inner = bareToolName(toolName);
   const candidates = inner === toolName ? [toolName] : [toolName, inner];
+  pattern = normalizedPattern;
   if (!pattern.includes("*")) {
     return candidates.some((c) => c === pattern);
   }

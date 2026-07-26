@@ -3047,11 +3047,11 @@ export class Runtime {
   /**
    * Tools the model can DISCOVER via a system-tool surface (`nb__search`
    * scope:tools). The corpus is the FOCUSED workspace only — that workspace's
-   * tools (namespaced `ws_<id>-<tool>`) plus the caller's identity tools. A
-   * session reaches exactly one workspace plus the user's identity tools;
-   * there is no cross-workspace discovery. `nb__search` dispatches as
-   * `ws_<focused>-nb__search`, so the per-call request scope here is already
-   * the focused workspace — we read it and list that registry.
+   * tools (bare `<source>__<tool>`) plus the caller's identity tools. A session
+   * reaches exactly one workspace plus the user's identity tools; there is no
+   * cross-workspace discovery. The workspace is not in the name: it comes from
+   * the session, so the per-call request scope here is already the focused
+   * workspace — we read it and list that registry.
    *
    * Falls back to the current workspace's registry when no workspace is in
    * scope (CLI / non-identity-bound dev paths).
@@ -3068,9 +3068,11 @@ export class Runtime {
 
   /**
    * The walled tool surface for a session bounded to `wsId`: that workspace's
-   * tools (namespaced `ws_<id>-<tool>`) plus the caller's identity tools (bare),
-   * plus — when `identityId` is given — the caller's personal connectors granted
-   * to `wsId` (bare; any workspace, including the caller's own personal one, §
+   * tools and the caller's identity tools, both bare `<source>__<tool>`, plus —
+   * when `identityId` is given — the caller's personal connectors granted to
+   * `wsId`, carrying the reserved `my_` marker so they stay distinguishable from
+   * a workspace source of the same name (any workspace, including the caller's
+   * own personal one, §
    * `_listGrantedPersonalConnectorTools`). The engine's reachable universe
    * (`IdentityToolRouter.availableTools`), the `nb__search` corpus
    * (`listDiscoverableTools`), and `/mcp` `tools/list` all read this — a session

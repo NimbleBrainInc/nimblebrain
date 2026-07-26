@@ -15,7 +15,6 @@ import { resolveMaxOutputTokens } from "../runtime/resolve-max-output-tokens.ts"
 import { resolveThinking } from "../runtime/resolve-thinking.ts";
 import type { AgentProfile } from "../runtime/types.ts";
 import type { InProcessTool } from "./in-process-app.ts";
-import { bareToolName } from "./namespace.ts";
 import { filterTools } from "./surfacing.ts";
 
 /** Fixed system prompt for delegate calls without a named agent profile. */
@@ -43,11 +42,22 @@ export interface DelegateContext {
    * `manage_tools.add(...)`), but its initial tool list is the focused
    * workspace's default set so the prompt stays bounded.
    *
-   * Globs in `tools: [...]` widen the initial active set: legacy `ws_<id>-` globs (normalized to bare)
-   * (`ws_<id>-...`) match against `tools.availableTools()` (the bound
-   * workspace); bare globs (`source__*`) match against `defaultActiveTools()`
-   * (focused workspace + identity sources). A legacy `ws_<id>-` globs (normalized to bare) for any other
-   * workspace matches nothing — the wall keeps the reachable set to one workspace.
+   * Globs in `tools: [...]` widen the initial active set. They are matched
+   * against two corpuses — `defaultActiveTools()` (the surfaced default set) and
+   * `tools.availableTools()` (everything reachable in the bound workspace) — and
+   * the results are unioned.
+   *
+   * Tool names are bare, so globs are authored bare (`source__*`). A legacy
+   * `ws_<id>-` glob still works: `matchToolPattern` normalizes the pattern the
+   * same way it normalizes the name.
+   *
+   * **A legacy glob's workspace id is ignored.** `ws_<other>-crm__*` normalizes
+   * to `crm__*` and matches the bound workspace's `crm` — where it previously
+   * matched nothing. This does not widen reach (both corpuses are the one bound
+   * workspace, so the wall is untouched); what it means is that an operator's
+   * workspace-specific scoping directive now applies wherever the profile runs.
+   * The trade is deliberate: the alternative is a scoping directive that
+   * silently selects zero tools.
    */
   tools: ToolRouter;
   /**
@@ -211,21 +221,18 @@ async function selectChildTools(
   defaultTools: ToolSchema[],
 ): Promise<ToolSchema[]> {
   if (!globs || globs.length === 0) return defaultTools;
-  // A `ws_<id>-` glob is LEGACY config. Tool names are bare now, so matching it
-  // against `availableTools()` returns nothing — silently, yielding a sub-agent
-  // with zero tools. Strip the prefix and match the bare corpus instead, so an
-  // agent profile written against the old format keeps working.
-  const normalizedGlobs = globs.map((g) => (g.startsWith("ws_") ? bareToolName(g) : g));
-  const fromBare = filterTools(defaultTools, normalizedGlobs);
-  // Kept as a second corpus because `defaultTools` is the SURFACED subset; a glob
-  // may legitimately name a tool that exists in the workspace but is not surfaced
-  // by default. Both corpuses are bare now, so one normalized glob list serves.
-  const fromNamespaced = filterTools(await ctx.tools.availableTools(), normalizedGlobs);
+  // Legacy `ws_<id>-` globs are normalized inside `matchToolPattern`, the single
+  // site both corpuses match through — no per-caller normalization here.
+  const fromBare = filterTools(defaultTools, globs);
+  // A second corpus because `defaultTools` is the SURFACED subset; a glob may
+  // legitimately name a tool that exists in the workspace but is not surfaced by
+  // default.
+  const fromReachable = filterTools(await ctx.tools.availableTools(), globs);
   // Dedupe by name — `filterTools` may return the same
   // entry under both corpuses when a surfaced tool is also in the reachable set.
   const seen = new Set<string>();
   const childTools: ToolSchema[] = [];
-  for (const t of [...fromBare, ...fromNamespaced]) {
+  for (const t of [...fromBare, ...fromReachable]) {
     if (seen.has(t.name)) continue;
     seen.add(t.name);
     childTools.push(t);
