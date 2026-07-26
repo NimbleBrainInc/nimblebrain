@@ -38,8 +38,8 @@
 
 import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
-import { join, relative } from "node:path";
-import { REPO, sourceFiles, themedTrees } from "./themed-trees.ts";
+import { relative } from "node:path";
+import { REPO, sourceFiles, THEMING_DOC, themedTrees } from "./themed-trees.ts";
 
 /**
  * A `var()` whose argument list has a comma at depth 1 — i.e. a fallback.
@@ -155,33 +155,51 @@ describe("theme tokens are used without fallbacks", () => {
  * the 12 real violations, because the other nine had already drifted past
  * equality. The drifted copy is exactly the one worth catching, so an
  * enumerated set of safe values is the only shape that reaches it.
+ *
+ * The page's path is {@link THEMING_DOC}, declared beside the tree list so both
+ * guards that read the page name it once.
  */
-const THEMING_DOC = join(REPO, "docs", "src", "content", "docs", "apps", "theming.mdx");
 
 /**
- * Defaults an app can own outright. Deliberately tiny and mode-independent:
- * every one renders the same whatever the host's theme is, which is what makes
- * it an app's own choice rather than a snapshot of someone else's palette.
+ * Defaults an app can own outright. Deliberately tiny, and none of them a
+ * colour we choose: `white`/`black`/`transparent` are fixed points of CSS, and
+ * `currentcolor`/`inherit` defer to whatever the app's own cascade already
+ * decided. That is what makes each one the app's own default rather than a
+ * snapshot of someone else's palette.
  */
 const GENERIC_FALLBACKS = new Set(["white", "black", "transparent", "currentcolor", "inherit"]);
 
-/** Captures the fallback so it can be judged, where {@link FALLBACK} only detects one. */
+/**
+ * Captures the fallback so it can be judged, where {@link FALLBACK} only detects one.
+ *
+ * Not closed: a fallback containing parentheses — `var(--a, var(--b, white))`,
+ * `var(--shadow-md, 0 4px 6px rgba(0,0,0,.1))` — because `[^)]*` stops at the
+ * first `)`. Both still fail, and the shadow case fails with the right verdict,
+ * so the gap costs a truncated message rather than a miss. No such spelling is
+ * on the page; naming the boundary here for the reason {@link FALLBACK} names
+ * its own, one paragraph up.
+ */
 const DOC_FALLBACK = /var\(\s*--[\w-]+\s*,([^)]*)\)/g;
 
-function docViolations(): string[] {
-  const source = readFileSync(THEMING_DOC, "utf8");
+/**
+ * Takes the source rather than reading the file, so the cases below can drive
+ * the shipped function instead of a second copy of its predicate. A matcher
+ * asserted through a re-typed `.trim().toLowerCase()` is a normalization no
+ * test covers — and this guard's whole job is to notice what nothing reads.
+ */
+function docViolations(source: string, label = relative(REPO, THEMING_DOC)): string[] {
   const found: string[] = [];
   for (const m of source.matchAll(DOC_FALLBACK)) {
     if (GENERIC_FALLBACKS.has(m[1].trim().toLowerCase())) continue;
     const line = source.slice(0, m.index).split("\n").length;
-    found.push(`${relative(REPO, THEMING_DOC)}:${line}  ${m[0]}`);
+    found.push(`${label}:${line}  ${m[0]}`);
   }
   return found;
 }
 
 describe("theming.mdx teaches no fallback that copies a platform value", () => {
   test("every documented fallback is a generic the app owns", () => {
-    expect(docViolations()).toEqual([]);
+    expect(docViolations(readFileSync(THEMING_DOC, "utf8"))).toEqual([]);
   });
 
   // Canary, for the same reason as the tree walk above: a renamed or moved page
@@ -197,15 +215,26 @@ describe("theming.mdx teaches no fallback that copies a platform value", () => {
     ["var(--color-text-primary, black)", false],
     ["var(--color-background-primary, transparent)", false],
     ["var(--color-background-primary)", false],
+    // Spelling is the author's, not ours — the allowlist is matched case-folded.
+    ["var(--color-background-primary, White)", false],
     ["var(--color-text-accent, #0055FF)", true],
     ["var(--color-text-accent, #2563eb)", true],
     ["var(--border-radius-md, 0.5rem)", true],
     ["var(--font-sans, system-ui, sans-serif)", true],
     ["var(--token, fallback)", true],
   ])("doc matcher: %s → violation=%p", (source, expected) => {
-    const hit = [...source.matchAll(new RegExp(DOC_FALLBACK.source, "g"))].some(
-      (m) => !GENERIC_FALLBACKS.has(m[1].trim().toLowerCase()),
-    );
-    expect(hit).toBe(expected);
+    expect(docViolations(source).length > 0).toBe(expected);
+  });
+
+  // The flagging path, which the assertion above can never reach: it runs
+  // against a page that is now clean, so on its own it proves only that
+  // `docViolations` returns nothing — not that it is able to return anything.
+  // A guard whose positive path is never exercised is the same defect as one
+  // that reads no files, one level in.
+  test("a violation is reported with its line and the offending text", () => {
+    const page = "# Theming\n\nbody {\n  color: var(--color-text-primary, #1a1a1a);\n}";
+    expect(docViolations(page, "theming.mdx")).toEqual([
+      "theming.mdx:4  var(--color-text-primary, #1a1a1a)",
+    ]);
   });
 });
