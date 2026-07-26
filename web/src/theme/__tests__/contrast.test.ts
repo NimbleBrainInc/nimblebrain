@@ -171,13 +171,15 @@ describe("palette contrast — WCAG 2.2", () => {
    * The tinted family: `<hue>` text on a 10% (light) or 20% (dark) tint of
    * itself.
    *
-   * This renders today. `.turn-pill__pre--error` (`index.css`) paints
-   * `--destructive` on a 10% mix of `--destructive`, on every failed tool call
-   * in `BlockTimeline.tsx`. Do not delete these assertions as hypothetical.
+   * Two of the five hues render today, so do not delete these assertions as
+   * hypothetical. `.turn-pill__pre--error` (`index.css`) paints `--destructive`
+   * on a 10% mix of itself on every failed tool call in `BlockTimeline.tsx`,
+   * and `primary` does the same at `RecentConversationsPopover.tsx:129` and
+   * `LinkSafetyModal.tsx:116`.
    *
    * The `cva` variants that declare the same pattern — `Badge` and `Button`'s
    * `destructive`/`success`/`warning`/`processing` — have no call sites yet, so
-   * for those four hues the assertion is the thing standing between a first
+   * for those hues the assertion is the thing standing between a first
    * `<Badge variant="success">` and shipping below AA against a green suite.
    *
    * That last claim holds for the *supported* path only. Tailwind compiles
@@ -188,14 +190,19 @@ describe("palette contrast — WCAG 2.2", () => {
    * is the one the value can actually be chosen for.
    */
   const TINTED: TokenName[] = ["destructive", "success", "warning", "processing", "primary"];
-  // Resting state only: /10 in light, /20 in dark.
+  // Resting states only, and the dark figure is deliberately stricter than what
+  // renders: only `destructive` declares a `dark:bg-destructive/20`, so the
+  // other four stay at /10 in dark. Asserting /20 for all five is safe because
+  // deepening a tint toward its own text colour always lowers contrast — /20 in
+  // dark is below /10 for every hue here (e.g. `primary` on the dark card:
+  // 4.739 vs 5.545), so the guard demands more than any of them renders.
   //
   // The hover states (/20 light, /30 dark) are NOT asserted, and that is a
   // scoping decision rather than an oversight. Deepening a tint that shares the
   // text's own hue always moves the fill toward the text, so hover reduces
   // contrast by construction: the safe ceiling is /12 for `success` in light,
   // which is indistinguishable from the /10 resting state. The mechanism is
-  // wrong, not the value — and the one live consumer has no hover state, so
+  // wrong, not the value — and neither live consumer has a hover state, so
   // fixing it belongs with the decision about whether those variants (#759)
   // should exist at all.
   for (const mode of ["light", "dark"] as const) {
