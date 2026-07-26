@@ -1,6 +1,7 @@
 import { createHash, timingSafeEqual } from "node:crypto";
 import { type Context, Hono } from "hono";
 import { WORKSPACE_PRINCIPAL_ID } from "../../bundles/connection.ts";
+import { connectorHasCredential } from "../../bundles/credential-presence.ts";
 import { ConnectorBusyError } from "../../bundles/lifecycle.ts";
 import { IdentityConnectorStore } from "../../identity/connector-store.ts";
 import { getBouncerMode } from "../../oauth/bouncer-config.ts";
@@ -13,7 +14,6 @@ import {
 import { mcpAuthCallbackUrl } from "../../oauth/mcp-callback-url.ts";
 import { log } from "../../observability/log.ts";
 import { type FlowOwner, peekFlowOwner, resolveWithCode } from "../../tools/oauth-flow-registry.ts";
-import { hasMcpOAuthTokens } from "../../tools/workspace-oauth-provider.ts";
 import { requireAuth } from "../middleware/auth.ts";
 import { requireWorkspace } from "../middleware/workspace.ts";
 import { type AppContext, type AppEnv, apiError } from "../types.ts";
@@ -138,8 +138,18 @@ export function mcpAuthRoutes(ctx: AppContext) {
       // takes workspace admin. Exactly the split `handleConnectApiKey` already
       // applies to the composio API-key path, whose comment cites "matching the
       // OAuth connect route"; this is that route catching up.
+      // Probe by connector, not by route. A brokered (composio) ref can reach
+      // this route — `lifecycle.startAuthInner` documents that path — and its
+      // credential lives under the composio layout, so hardcoding the DCR probe
+      // here would report "no credential" and wave the member straight through
+      // the gate the sibling route would have applied.
       const refused = await requireAdminForReconnect(ctx, c, wsId, () =>
-        hasMcpOAuthTokens(ctx.runtime.getWorkDir(), { type: "workspace", wsId }, serverName),
+        connectorHasCredential(
+          ctx.runtime.getWorkDir(),
+          { type: "workspace", wsId },
+          serverName,
+          instance.ref,
+        ),
       );
       if (refused) return refused;
 

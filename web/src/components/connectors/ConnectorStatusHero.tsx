@@ -422,7 +422,7 @@ function resolveAction(
 ): PrimaryAction | null {
   // Re-connect is admin-gated server-side; a first connect is not. `installed`
   // carries the server's own answer, so this doesn't take it as a parameter.
-  const rotatesSharedCredential = installed.hasCredential === true;
+  const rotatesSharedCredential = installed.hasCredential;
   const isRemote = installed.type === "remote";
 
   switch (installed.status) {

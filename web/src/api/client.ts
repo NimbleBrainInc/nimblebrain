@@ -719,7 +719,7 @@ export interface InstalledConnector {
    * in both directions. Gates the re-connect CTA so the UI agrees with
    * `requireAdminForReconnect`, which reads the same files.
    */
-  hasCredential?: boolean;
+  hasCredential: boolean;
   /** Whether this connector exposes a UI surface (auto-mounts a sidebar entry). */
   interactive: boolean;
   toolCount: number;

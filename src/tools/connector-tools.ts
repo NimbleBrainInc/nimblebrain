@@ -9,6 +9,7 @@ import {
 } from "../bundles/composio-connection.ts";
 import { WORKSPACE_PRINCIPAL_ID } from "../bundles/connection.ts";
 import { brokeredRef } from "../bundles/connection-probe.ts";
+import { connectorHasCredential } from "../bundles/credential-presence.ts";
 import { sanitizePlacements } from "../bundles/defaults.ts";
 import { getMpak } from "../bundles/mpak.ts";
 import {
@@ -896,29 +897,6 @@ async function applyTransportSpecificProbes(
  * (tools() round-trip, manifest probe, credential reads) happens here so the
  * single-connector path skips it for every non-matching instance.
  */
-/**
- * Whether this workspace connector already holds a credential on disk.
- *
- * Existence only, never validity — the same contract `hasMcpOAuthTokens` and
- * `hasPersistedComposioConnection` document, and the same question
- * `requireAdminForReconnect` asks before refusing a member's re-connect. Both
- * sides must read the same files or the UI and the route disagree.
- */
-function connectorHasCredential(
-  workDir: string,
-  wsId: string,
-  serverName: string,
-  cat: ConnectorCatalogEntry | undefined,
-): boolean {
-  const owner = { type: "workspace" as const, wsId };
-  // Composio keeps a connected account, not OAuth tokens, and keys it on the
-  // catalog id rather than the server name — the same split the two initiate
-  // routes make.
-  return cat?.auth === "composio"
-    ? hasPersistedComposioConnection(workDir, owner, cat.id)
-    : hasMcpOAuthTokens(workDir, owner, serverName);
-}
-
 async function buildInstalledEntry(
   deps: InstalledEntryDeps,
   instance: BundleInstance,
@@ -974,9 +952,9 @@ async function buildInstalledEntry(
     // plane, for the same reason.
     hasCredential: connectorHasCredential(
       deps.ctx.runtime.getWorkDir(),
-      deps.wsId,
+      { type: "workspace", wsId: deps.wsId },
       instance.serverName,
-      cat,
+      instance.ref,
     ),
     ...(iconUrl ? { iconUrl } : {}),
   };

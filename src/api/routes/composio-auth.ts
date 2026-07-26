@@ -141,6 +141,10 @@ export function composioAuthRoutes(ctx: AppContext) {
       // First connect is member-level; replacing an existing shared connected
       // account takes workspace admin. Same split `handleConnectApiKey` applies
       // to this connector's API-key sibling — see `requireAdminForReconnect`.
+      // Probed directly rather than through `connectorHasCredential`: this route
+      // only ever serves composio, so the layout isn't in question, and a first
+      // connect has no instance yet — there'd be no ref to key on. The helper
+      // exists for `/v1/mcp-auth/initiate`, which any connector can reach.
       const refused = await requireAdminForReconnect(ctx, c, wsId, () =>
         hasPersistedComposioConnection(
           ctx.runtime.getWorkDir(),
