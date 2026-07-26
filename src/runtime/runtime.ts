@@ -594,13 +594,12 @@ export class Runtime {
           runtime: rtHolder.rt,
         });
       },
-      // Default initial active set: focused-workspace tools (namespaced
-      // so the identity router can route them) + bare kernel identity
-      // tools. Mirrors `_chatInner`'s `allTools` composition so a child
-      // agent starts with the same default tool view the parent has.
-      // Bare-name globs in `tools: [...]` match against THIS set; namespaced
-      // globs match the bound workspace's reachable set — see
-      // `DelegateContext.tools`.
+      // Default initial active set: focused-workspace tools + kernel identity
+      // tools, all bare. Mirrors `_chatInner`'s `allTools` composition so a
+      // child agent starts with the same default tool view the parent has.
+      // Globs in `tools: [...]` match against THIS set and the bound
+      // workspace's reachable set — see `DelegateContext.tools`. A legacy
+      // `ws_<id>-` glob is normalized to its bare form before matching.
       //
       // Deliberately EXCLUDES personal connectors (which `availableTools` does
       // surface). A delegated child runs as the parent's exact identity, so a
@@ -1286,8 +1285,8 @@ export class Runtime {
       this.listIdentitySourceTools(),
     ]);
     const allTools: ToolSchema[] = [
-      // Workspace tools — namespaced to the focused workspace so the
-      // orchestrator routes them; one copy of `nb__*`, not N.
+      // Workspace tools, bare. The orchestrator routes them into the session's
+      // own workspace; one copy of `nb__*`, not N.
       ...focusedTools
         .filter((t) => isToolVisibleToRole(t.name, requestIdentity.orgRole))
         .map((t) => ({

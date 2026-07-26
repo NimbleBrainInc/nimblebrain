@@ -98,20 +98,19 @@ export class CrossWorkspaceReachDenied extends WorkspaceAccessDenied {
  */
 export class WorkspaceToolUnavailable extends WorkspaceAccessDenied {
   /**
-   * The source segment of a BARE workspace tool name, when the call named no
-   * workspace at all. Kept separate from `wsId` on purpose: a bare name has no
-   * workspace to report, and stuffing the source into `wsId` would publish
-   * `data.wsId: "people-mcp"` to external `/mcp` clients reading that
-   * discriminator. Exactly one of the two is set.
+   * `sourceName` is deliberately NOT stored. It names the subject in `message`
+   * and nothing more: neither `error-mapping.ts` nor `mcp-server.ts` emits
+   * anything beyond `{ identityId, wsId }`, so a field would be write-only. What
+   * matters is that it does not go into `wsId` — that would publish
+   * `data.wsId: "people-mcp"` to external `/mcp` clients reading the
+   * discriminator. If the source ever needs to reach a client, add it to both
+   * mappers at the same time.
    */
-  readonly sourceName: string | undefined;
-
   constructor(identityId: string, wsId: string | undefined, sourceName?: string) {
     // `WorkspaceAccessDenied` requires a wsId for its payload; a bare call has
     // none, so report the empty string rather than a value that reads like one.
     super(identityId, wsId ?? "");
     this.name = "WorkspaceToolUnavailable";
-    this.sourceName = sourceName;
     const subject = wsId !== undefined ? `workspace tool "${wsId}"` : `source "${sourceName}"`;
     this.message = `[orchestrator] this session is identity-scoped (no workspace); ${subject} is not available`;
   }
@@ -415,7 +414,25 @@ export async function routeToolCall(opts: {
 
   // Step 5 — resolve the inner tool's `<source>__` prefix to a dispatch
   // handle in the bound workspace's registry (self-healing a transiently
-  // absent source once before failing).
+  // absent source once before failing), falling back to a personal connector
+  // under its legacy bare name.
+  return resolveBareCall(identityId, toolName, wsId, context, runtime);
+}
+
+/**
+ * The bare-name tail of `routeToolCall`: the session's workspace registry first,
+ * then a personal connector under its LEGACY bare name.
+ *
+ * Split out to keep `routeToolCall` under the cognitive-complexity budget; the
+ * ordering it encodes is load-bearing and documented inline.
+ */
+async function resolveBareCall(
+  identityId: string,
+  toolName: string,
+  wsId: string,
+  context: WorkspaceContext,
+  runtime: OrchestratorRuntime,
+): Promise<RoutedToolCall> {
   try {
     const source = await resolveWorkspaceSource(wsId, toolName, runtime);
     return { kind: "workspace", context, toolName, source };
@@ -444,13 +461,21 @@ export async function routeToolCall(opts: {
     // it was minted. It is narrow (the install guard already refuses to give
     // the caller both) and the fix is on the caller's side: re-list and use the
     // marked name. Callers who cannot are why this is logged, not silent.
-    const legacy = await routeIdentityCall(identityId, toolName, workspaceId, runtime).catch(
-      () => null,
-    );
+    // Only an "this is not a personal connector either" answer falls through to
+    // the original `UnknownToolSource`. A grant denial or a connector that failed
+    // to start is a REAL answer about a connector that exists, and re-reporting
+    // it as "no such tool source" would send the caller looking for the wrong
+    // problem.
+    let legacy: RoutedToolCall | null = null;
+    try {
+      legacy = await routeIdentityCall(identityId, toolName, wsId, runtime);
+    } catch (identityErr) {
+      if (!(identityErr instanceof UnknownIdentitySource)) throw identityErr;
+    }
     if (legacy) {
       log.debug(
         "mcp",
-        `[orchestrator] "${toolName}" resolved as a LEGACY bare personal connector — no such source in "${wsId}". Re-list tools; the current name is "${personalConnectorWireName(sourceName)}__…".`,
+        `[orchestrator] "${toolName}" resolved as a LEGACY bare personal connector — no such source in "${wsId}". Re-list tools; the current name is "${personalConnectorWireName(sourceSegmentOf(toolName))}__…".`,
       );
       return legacy;
     }

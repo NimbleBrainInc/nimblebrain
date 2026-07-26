@@ -6,7 +6,7 @@
  * composition of:
  *
  *   1. `runtime.listToolsForWorkspace(workspaceId)` — the bound workspace's
- *      tools (namespaced) plus identity tools; the engine's reachable universe.
+ *      tools (bare) plus identity tools; the engine's reachable universe.
  *   2. `routeToolCall({ identityId, namespacedName, workspaceId, runtime })` —
  *      per-call wall check (the target must be the bound workspace), then
  *      dispatch into a fresh `WorkspaceContext` (or `IdentityContext` for
@@ -166,7 +166,7 @@ export class IdentityToolRouter implements ToolRouter {
 
   /**
    * The session's reachable tool surface, as `ToolSchema[]`: the bound
-   * workspace's tools (namespaced) plus the caller's identity tools. This is
+   * workspace's tools (bare) plus the caller's identity tools. This is
    * the engine's reachable universe — a session reaches exactly one workspace.
    */
   async availableTools(): Promise<ToolSchema[]> {

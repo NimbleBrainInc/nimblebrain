@@ -69,7 +69,16 @@ export function validateServerName(serverName: string): void {
     );
   }
   if (isReservedServerName(serverName)) {
-    throw new Error(`Source name '${serverName}' is reserved for system tools`);
+    // Reached at INSTALL and at every BOOT (`startup.ts` validates each bundle
+    // start), so an already-installed source with one of these names stops
+    // starting after upgrade. That is the honest outcome — `routeToolCall`
+    // consults the identity door first, so such a source is unreachable anyway
+    // — but the operator sees only this line, so it has to say what to do.
+    throw new Error(
+      `Source name '${serverName}' is reserved for platform tools (nb, conversations, files, automations). ` +
+        `Its tools would be shadowed by the identity door and unreachable. Reinstall the bundle under a different ` +
+        `source name, or set an explicit \`serverName\` on its ref.`,
+    );
   }
 }
 

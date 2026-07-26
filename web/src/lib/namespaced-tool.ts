@@ -33,6 +33,13 @@
 
 import { WORKSPACE_ID_FLAGS, WORKSPACE_ID_PATTERN } from "../_generated/workspace-id-pattern.ts";
 
+/**
+ * Mirrors `PERSONAL_CONNECTOR_PREFIX` in `src/tools/identity-sources.ts`. The
+ * web tier cannot import from `src/`, the same arrangement as the workspace-id
+ * pattern above. Keep the two in lockstep.
+ */
+const PERSONAL_CONNECTOR_PREFIX = "my_";
+
 const WORKSPACE_ID_RE = new RegExp(WORKSPACE_ID_PATTERN, WORKSPACE_ID_FLAGS);
 
 /**
@@ -90,5 +97,12 @@ export function appNameFromToolName(wireName: string): string | undefined {
   // `toolName` is the post-`ws_<id>-` remainder (or the whole bare name).
   const rest = parsed ? parsed.toolName : wireName;
   const sep = rest.indexOf("__");
-  return sep > 0 ? rest.slice(0, sep) : undefined;
+  if (sep <= 0) return undefined;
+  const source = rest.slice(0, sep);
+  // A personal connector's wire name carries the reserved marker; its APP name
+  // does not. Without this the transcript and `iframe.dataset.app` read
+  // `my_gmail` for a connector installed as `gmail`.
+  return source.startsWith(PERSONAL_CONNECTOR_PREFIX)
+    ? source.slice(PERSONAL_CONNECTOR_PREFIX.length)
+    : source;
 }

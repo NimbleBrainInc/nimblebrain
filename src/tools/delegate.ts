@@ -15,6 +15,7 @@ import { resolveMaxOutputTokens } from "../runtime/resolve-max-output-tokens.ts"
 import { resolveThinking } from "../runtime/resolve-thinking.ts";
 import type { AgentProfile } from "../runtime/types.ts";
 import type { InProcessTool } from "./in-process-app.ts";
+import { bareToolName } from "./namespace.ts";
 import { filterTools } from "./surfacing.ts";
 
 /** Fixed system prompt for delegate calls without a named agent profile. */
@@ -30,7 +31,7 @@ export interface DelegateContext {
   resolveSlot: (modelString: string) => string;
   /**
    * Tool router used for the child engine's per-call dispatch. Walled to one
-   * workspace: `availableTools()` returns the session workspace's namespaced
+   * workspace: `availableTools()` returns the session workspace's bare
    * tools plus the caller's identity tools — never a cross-workspace union.
    * `execute(call, ...)` routes through the orchestrator, which denies any
    * other workspace.
@@ -42,15 +43,15 @@ export interface DelegateContext {
    * `manage_tools.add(...)`), but its initial tool list is the focused
    * workspace's default set so the prompt stays bounded.
    *
-   * Globs in `tools: [...]` widen the initial active set: namespaced globs
+   * Globs in `tools: [...]` widen the initial active set: legacy `ws_<id>-` globs (normalized to bare)
    * (`ws_<id>-...`) match against `tools.availableTools()` (the bound
    * workspace); bare globs (`source__*`) match against `defaultActiveTools()`
-   * (focused workspace + identity sources). A namespaced glob for any other
+   * (focused workspace + identity sources). A legacy `ws_<id>-` globs (normalized to bare) for any other
    * workspace matches nothing — the wall keeps the reachable set to one workspace.
    */
   tools: ToolRouter;
   /**
-   * The child engine's default INITIAL active set: namespaced focused-
+   * The child engine's default INITIAL active set: bare focused-
    * workspace tools + bare kernel identity tools. Mirrors the composition
    * the chat surface gives its parent engine (see `Runtime._chatInner`,
    * the `allTools` construction). Used when the caller didn't supply
@@ -190,11 +191,11 @@ function capChildIterations(
  * Resolve the child engine's INITIAL active tool set. Two sources, two purposes:
  *
  *   - `defaultActiveTools()` (`defaultTools`) — focused-workspace tools
- *     (namespaced) + bare identity tools. Mirrors the chat surface's initial
+ *     (bare) + bare identity tools. Mirrors the chat surface's initial
  *     active set. Used as the default when no globs are supplied, and as the
  *     match corpus for BARE globs (`source__*`).
  *
- *   - `ctx.tools.availableTools()` — the bound workspace's tools (namespaced)
+ *   - `ctx.tools.availableTools()` — the bound workspace's tools (bare)
  *     plus identity tools. Used as the match corpus for NAMESPACED globs
  *     (`ws_<id>-...`), which can only target the one workspace the session is
  *     walled to; a glob naming another workspace matches nothing here and is
@@ -210,16 +211,18 @@ async function selectChildTools(
   defaultTools: ToolSchema[],
 ): Promise<ToolSchema[]> {
   if (!globs || globs.length === 0) return defaultTools;
-  const namespacedGlobs = globs.filter((g) => g.startsWith("ws_"));
-  const bareGlobs = globs.filter((g) => !g.startsWith("ws_"));
-  const fromBare = bareGlobs.length > 0 ? filterTools(defaultTools, bareGlobs) : [];
-  const fromNamespaced =
-    namespacedGlobs.length > 0
-      ? filterTools(await ctx.tools.availableTools(), namespacedGlobs)
-      : [];
-  // Dedupe by canonical (namespaced) name — `filterTools` may return the same
-  // entry under both corpuses if a focused-workspace tool's namespaced form is
-  // matched by a `ws_<focused>-...` glob.
+  // A `ws_<id>-` glob is LEGACY config. Tool names are bare now, so matching it
+  // against `availableTools()` returns nothing — silently, yielding a sub-agent
+  // with zero tools. Strip the prefix and match the bare corpus instead, so an
+  // agent profile written against the old format keeps working.
+  const normalizedGlobs = globs.map((g) => (g.startsWith("ws_") ? bareToolName(g) : g));
+  const fromBare = filterTools(defaultTools, normalizedGlobs);
+  // Kept as a second corpus because `defaultTools` is the SURFACED subset; a glob
+  // may legitimately name a tool that exists in the workspace but is not surfaced
+  // by default. Both corpuses are bare now, so one normalized glob list serves.
+  const fromNamespaced = filterTools(await ctx.tools.availableTools(), normalizedGlobs);
+  // Dedupe by name — `filterTools` may return the same
+  // entry under both corpuses when a surfaced tool is also in the reachable set.
   const seen = new Set<string>();
   const childTools: ToolSchema[] = [];
   for (const t of [...fromBare, ...fromNamespaced]) {
