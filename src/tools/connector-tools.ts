@@ -3,7 +3,6 @@ import { join } from "node:path";
 import { mcpAuthCallbackUrl } from "../api/routes/mcp-auth.ts";
 import {
   type ComposioConnection,
-  hasPersistedComposioConnection,
   readComposioConnection,
   saveComposioConnection,
 } from "../bundles/composio-connection.ts";
@@ -53,7 +52,6 @@ import { FileCredentialStore } from "./credential-store.ts";
 import type { InProcessTool } from "./in-process-app.ts";
 import { McpSource } from "./mcp-source.ts";
 import type { Tool, ToolSource } from "./types.ts";
-import { hasMcpOAuthTokens } from "./workspace-oauth-provider.ts";
 
 /**
  * `manage_connectors` tool — single surface for the Connectors UI
@@ -3117,9 +3115,7 @@ async function handleListPersonalConnectors(
     // a Connect that then fails (it's already authed). The agent lazy-starts the
     // source from these same credentials, so an authed-but-cold connector is
     // genuinely usable.
-    const authed = composioMarker
-      ? hasPersistedComposioConnection(workDir, owner, composioMarker.connectorId)
-      : hasMcpOAuthTokens(workDir, owner, serverName);
+    const authed = connectorHasCredential(workDir, owner, serverName, ref);
     return {
       serverName,
       displayName: cat?.name ?? serverName,

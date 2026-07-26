@@ -176,6 +176,7 @@ function stdioBundle(over: Partial<InstalledConnector> = {}): InstalledConnector
       },
       populated: { api_key: false },
     },
+    hasCredential: false,
     ...over,
   };
 }
@@ -202,6 +203,7 @@ function dcrConnector(over: Partial<InstalledConnector> = {}): InstalledConnecto
       url: "https://api.granola.test/mcp",
       auth: "dcr",
     },
+    hasCredential: false,
     ...over,
   };
 }
@@ -222,6 +224,7 @@ function composioApiKeyConnector(over: Partial<InstalledConnector> = {}): Instal
       auth: "composio",
       composio: { toolkit: "posthog", authScheme: "API_KEY" },
     },
+    hasCredential: false,
     ...over,
   };
 }
@@ -259,6 +262,7 @@ function staticAuthConnector(over: Partial<InstalledConnector> = {}): InstalledC
       configuredBy: "usr_admin",
       configuredByLabel: "Sarah",
     },
+    hasCredential: false,
     ...over,
   };
 }
