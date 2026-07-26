@@ -425,12 +425,16 @@ The platform ships a network-dependent probe that verifies every `auth: dcr` ent
 bun run scripts/check-catalog-dcr.ts <catalog-file-or-dir>
 ```
 
-The probe runs the same chain the production OAuth provider uses:
+Steps 1–4 are the discovery chain the production OAuth provider uses; steps 5 and 6 then exercise the flow for real against the vendor.
 
 1. **Reachability** — `HEAD <remotes[0].url>`.
 2. **RFC 9728** — `GET <bundle-origin>/.well-known/oauth-protected-resource` to discover the authorization server origin.
 3. **RFC 8414** — `GET <as-origin>/.well-known/oauth-authorization-server` against each candidate AS origin (RFC 9728 advertised, plus bundle origin as fallback).
 4. **RFC 7591** — the AS metadata document must include `registration_endpoint`.
+5. **DCR registration** — POST a synthetic client to the `registration_endpoint` with a representative redirect URI. Catches vendors that advertise DCR but enforce a redirect-URI host allowlist (Intercom, Vercel).
+6. **Authorize** — `GET` the `authorization_endpoint` with that `client_id` and the same redirect URI. Catches vendors that accept the registration but reject the redirect URI one step later (Canva).
+
+An entry passes only if every step succeeds; step 6 is skipped when the AS advertises no `authorization_endpoint`. Steps 5 and 6 are what catch "DCR theater" — a vendor that ships the RFC 7591 endpoints but enforces a parallel host allowlist the spec is meant to make obsolete, which discovery alone reports as healthy.
 
 In this repo it is a **manual CLI** — deliberately, since the catalog it needs to check is deployment config living in the directory `NB_CURATED_CATALOG_DIR` points at, not in the image. The automated gate runs in the deploy repo alongside that real catalog, so a vendor going down or dropping DCR support breaks the catalog's own PR. It is not part of `bun run verify`, which stays offline.
 
