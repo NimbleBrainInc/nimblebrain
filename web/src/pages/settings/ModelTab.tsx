@@ -142,9 +142,7 @@ export function ModelTab() {
         setMaxOutputTokens(config.maxOutputTokens ?? 16384);
         setThinking(config.thinking ?? THINKING_DEFAULT);
         setThinkingEffort(config.thinkingEffort ?? EFFORT_DEFAULT);
-        if (config.thinkingBudgetTokens != null) {
-          setThinkingBudgetTokens(config.thinkingBudgetTokens);
-        }
+        setThinkingBudgetTokens(config.thinkingBudgetTokens ?? null);
         setAvailableModels(config.availableModels ?? {});
       })
       .catch((err) => {

@@ -59,7 +59,12 @@ export function tuningAppliesTo(thinking: ThinkingMode | typeof THINKING_DEFAULT
  *
  * Every field is either set or explicitly cleared, never omitted, so a value
  * the operator removed on this screen can't survive on disk from an earlier
- * save. Depth and budget are independent of each other and of the mode: the
+ * save. The cost is deliberate and worth naming: switching to `off` or
+ * `adaptive` and saving deletes a persisted depth and budget, so an
+ * Enabled → Adaptive → Enabled round trip through this panel does not restore
+ * a depth set in `nimblebrain.json` or via `set_model_config`. Keeping them
+ * would mean the panel preserving values it isn't showing, which is the
+ * failure this rule exists to prevent; both modes genuinely ignore them. Depth and budget are independent of each other and of the mode: the
  * budget only reaches providers that meter thinking in tokens, and sending one
  * never voids the chosen depth.
  */

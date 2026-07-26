@@ -1425,8 +1425,10 @@ export class Runtime {
     // from the header would miss the attachment entirely.
     const fileStore = this.getWorkspaceFileStore(convWsId, ownerId);
 
-    // Resolve maxOutputTokens FIRST — resolveThinking needs it to clamp the
-    // thinking budget so visible-content headroom is always preserved.
+    // Resolved against the request's model so the cap fits that model's own
+    // ceiling. It is not an input to resolveThinking — it reaches the engine on
+    // EngineConfig, which is the only layer that knows whether the provider
+    // meters thinking in tokens at all.
     const resolvedMaxOutputTokens = resolveMaxOutputTokens({
       configValue: this.config.maxOutputTokens,
       model: resolvedModelString,

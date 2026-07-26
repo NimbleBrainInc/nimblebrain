@@ -4,6 +4,13 @@ import {
   type ThinkingEffort,
 } from "../engine/types.ts";
 import { getModelByString } from "../model/catalog.ts";
+import { log } from "../observability/log.ts";
+
+/**
+ * Model strings already warned about, so a dropped override is reported once
+ * per process rather than on every LLM call.
+ */
+const warnedUncatalogued = new Set<string>();
 
 export interface ResolveThinkingInput {
   /** Operator/tenant config value. Wins over the model-default. */
@@ -58,7 +65,28 @@ export function resolveThinking(input: ResolveThinkingInput): ResolvedThinking |
   const supportsReasoning = input.model
     ? (getModelByString(input.model)?.capabilities.reasoning ?? false)
     : false;
-  if (!supportsReasoning) return undefined;
+  if (!supportsReasoning) {
+    // Dropping an explicit `off` is a no-op — no thinking is exactly what it
+    // asked for. Dropping `adaptive` or `enabled` discards an instruction the
+    // operator wrote, so say so. A model absent from the catalog is a
+    // supported configuration (pinned ids, and OpenAI-compatible proxies with
+    // their own model names — see `resolveModelString`), and it lands here
+    // looking identical to a genuinely non-reasoning model.
+    if (
+      input.model &&
+      (input.configMode === "adaptive" || input.configMode === "enabled") &&
+      !warnedUncatalogued.has(input.model)
+    ) {
+      warnedUncatalogued.add(input.model);
+      log.warn(
+        `[thinking] Ignoring thinking="${input.configMode}" for "${input.model}": the model is ` +
+          "not in the catalog or is not flagged reasoning-capable, so no reasoning options are " +
+          "sent. Add it to the catalog (or correct its `capabilities.reasoning`) to enable " +
+          "thinking on it. Logged once per model.",
+      );
+    }
+    return undefined;
+  }
 
   if (input.configMode === "off") return { mode: "off" };
   if (input.configMode === "adaptive") return { mode: "adaptive" };

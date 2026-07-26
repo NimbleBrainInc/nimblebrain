@@ -236,11 +236,10 @@ async function selectChildTools(
 /**
  * Build the child engine's model/token/thinking config for a delegated run.
  *
- * Resolves maxOutputTokens FIRST — resolveThinking needs it to clamp the
- * thinking budget so visible-content headroom is preserved on delegated runs
- * too. Without this, child agents would fall through to the 1024-token
- * MIN_THINKING_BUDGET_TOKENS floor regardless of the model's actual output
- * capacity.
+ * Resolves maxOutputTokens against the CHILD's model, not the parent's, so the
+ * cap fits the model that actually runs. It is not an input to resolveThinking;
+ * it travels on the child's EngineConfig, which is where thinking gets sized
+ * against it.
  *
  * Passes through the toolPromotion factory so the child engine installs ITS
  * OWN promotion controls (saving the parent's, restoring on its run's

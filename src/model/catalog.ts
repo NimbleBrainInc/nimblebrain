@@ -295,6 +295,12 @@ const GOOGLE_THINKING: Record<string, GoogleThinkingSupport> = {
   "gemini-3.1-pro-preview": { dialect: "level", levels: new Set(["low", "medium", "high"]) },
   "gemini-3-pro-preview": { dialect: "level", levels: new Set(["low", "high"]) },
   "gemini-3.1-flash-lite-image": { dialect: "level", levels: new Set(["minimal", "high"]) },
+  // The 2.5 rows are budget-shaped on purpose. Google's thinking page now
+  // shows these three in the same levels table as Gemini 3, but its 2.5
+  // reference states plainly that the 2.5 series does not support
+  // `thinkingLevel` and takes `thinkingBudget` instead — and the budget path
+  // is what the installed adapter and the live API accept. Left as budget
+  // until the two agree; don't "correct" these from the levels table alone.
   "gemini-2.5-pro": { dialect: "budget", min: 128, max: 32768, canDisable: false },
   "gemini-2.5-flash": { dialect: "budget", min: 0, max: 24576, canDisable: true },
   "gemini-2.5-flash-lite": { dialect: "budget", min: 512, max: 24576, canDisable: true },

@@ -1,5 +1,6 @@
 import { describe, expect, it } from "bun:test";
 import { DEFAULT_THINKING_EFFORT } from "../../src/engine/types.ts";
+import { log } from "../../src/observability/log.ts";
 import { resolveThinking } from "../../src/runtime/resolve-thinking.ts";
 
 describe("resolveThinking", () => {
@@ -67,6 +68,29 @@ describe("resolveThinking", () => {
 				model: "anthropic:claude-opus-4-7",
 			}),
 		).toEqual({ mode: "adaptive" });
+	});
+
+	it("warns once when it drops an explicit override for an unknown model", () => {
+		// A model absent from the catalog is a supported configuration — pinned
+		// ids and OpenAI-compatible proxies with their own names both land here
+		// (see resolveModelString). Dropping the operator's instruction silently
+		// leaves no way to tell reasoning is off; the warning names the model,
+		// which is the whole diagnosis.
+		const warnings: string[] = [];
+		const original = log.warn;
+		(log as { warn: (m: string) => void }).warn = (m: string) => warnings.push(m);
+		try {
+			const model = `anthropic:proxy-model-${Math.random()}`;
+			expect(resolveThinking({ configMode: "enabled", model })).toBeUndefined();
+			expect(resolveThinking({ configMode: "enabled", model })).toBeUndefined();
+			expect(warnings).toHaveLength(1);
+			expect(warnings[0]).toContain(model);
+			// `off` asks for no reasoning and gets exactly that — nothing to report.
+			expect(resolveThinking({ configMode: "off", model: `${model}-b` })).toBeUndefined();
+			expect(warnings).toHaveLength(1);
+		} finally {
+			(log as { warn: (m: string) => void }).warn = original;
+		}
 	});
 
 	it("refuses to enable thinking on a model the catalog says can't", () => {
