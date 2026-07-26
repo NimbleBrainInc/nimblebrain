@@ -119,6 +119,11 @@ function documentedTokens(doc: string): Set<string> {
     }
     if (/^\|\s*Token\s*\|/.test(row)) {
       inTokenTable = true;
+      // A `-line-height` suffix binds to the `-size` row above it, so the stem
+      // must not survive into the next table — otherwise a suffix row with no
+      // `-size` row before it would silently attach to a stem from an earlier
+      // table and invent a name that was never published.
+      stem = "";
       continue;
     }
     if (!inTokenTable) continue;

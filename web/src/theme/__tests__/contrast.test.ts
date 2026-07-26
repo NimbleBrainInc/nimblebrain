@@ -179,6 +179,13 @@ describe("palette contrast — WCAG 2.2", () => {
    * `destructive`/`success`/`warning`/`processing` — have no call sites yet, so
    * for those four hues the assertion is the thing standing between a first
    * `<Badge variant="success">` and shipping below AA against a green suite.
+   *
+   * That last claim holds for the *supported* path only. Tailwind compiles
+   * `bg-<hue>/N` to `color-mix()`, and browsers without it get the minifier's
+   * downlevel — the first operand, opaque — so the fill becomes the same value
+   * as the text: 1.000:1, whatever is asserted here. Pre-existing and
+   * repo-wide; tracked in #781. What this guard buys is the modern path, which
+   * is the one the value can actually be chosen for.
    */
   const TINTED: TokenName[] = ["destructive", "success", "warning", "processing", "primary"];
   // Resting state only: /10 in light, /20 in dark.
