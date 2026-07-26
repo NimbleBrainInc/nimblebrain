@@ -37,12 +37,14 @@ export interface ComposioProviderConfig {
    * `apiKey`), and per-deployment, because the id differs per Composio account
    * while the catalog is shared.
    *
-   * Keyed by toolkit rather than by env-var name on purpose: the toolkit is
-   * already the entry's own identifier, so declaring an id introduces no string
-   * that has to match anything elsewhere. Keying on a name the catalog also has
-   * to spell puts one string in three places — the catalog, the deploy values,
-   * and whatever guards the spelling — where a typo yields config no connector
-   * reads.
+   * Keyed by toolkit rather than by env-var name on purpose. The key is still a
+   * string shared with the catalog's `composio.toolkit` and matched exactly, so
+   * a mistyped key resolves to nothing — but it is the entry's own identifier
+   * rather than a third name invented to carry the value, which is what put the
+   * same string in the catalog, the deploy values, and a guard on its spelling.
+   * The boot audit in `composio/auth-config-audit.ts` reports any key matching
+   * no catalog toolkit, so the remaining coupling is checked rather than merely
+   * narrowed.
    */
   authConfigs?: Record<string, string>;
   /** Composio API base URL override (self-hosted / staging). Must be http(s). */

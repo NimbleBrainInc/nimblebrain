@@ -344,7 +344,7 @@ Every `auth: composio` connector needs an auth config created in the Composio da
 "authConfigs": { "gmail": "ac_xxxxxxxx", "posthog": "ac_yyyyyyyy" }
 ```
 
-The key is the catalog entry's `composio.toolkit` — an identifier that entry already carries, so declaring an id introduces no string that has to match anything elsewhere.
+The key is the catalog entry's `composio.toolkit` — an identifier that entry already carries, rather than a third name invented to carry the value. It is still matched exactly, so a mistyped key resolves to nothing; the runtime checks the whole set at boot and logs any key matching no catalog toolkit, along with any toolkit left with no id at all.
 
 These are identifiers, not secrets: an `ac_…` is inert without `apiKey`, the way a client_id is inert without a client_secret. They live in config next to the toolkits they name rather than in your secret store.
 

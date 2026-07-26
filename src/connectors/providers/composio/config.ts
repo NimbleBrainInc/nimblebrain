@@ -173,9 +173,11 @@ export function _resetComposioConfigForTest(): void {
  * The env arm is a **migration fallback**, kept so a deploy that still sets
  * `COMPOSIO_<TOOLKIT>_AUTH_CONFIG_ID` keeps working across the upgrade. It warns
  * once per toolkit when it is the value's actual source, so an operator migrates
- * before #789 removes it — and so the toolkits still on env are visible in logs
- * *before* the catalog stops naming the variable, which is the moment the
- * fallback silently stops firing for anything missed.
+ * before #789 removes it.
+ *
+ * This warning reports only what is *resolved*, which is the installed subset —
+ * `auth-config-audit.ts` walks the whole catalog at boot for the complete
+ * picture, and suppresses this one for anything it already named.
  *
  * Reads the declared block directly rather than routing through
  * `validateComposioConfig`, whose unconfigured early-return would zero this
@@ -191,8 +193,17 @@ export function composioAuthConfigId(toolkit: string, legacyEnvVar?: string): st
   return legacy;
 }
 
-/** Toolkits already warned about, so a per-install resolution doesn't spam. */
+/** Toolkits already reported, so a per-install resolution doesn't spam. */
 const _warnedLegacyToolkits = new Set<string>();
+
+/**
+ * Mark a toolkit's env-fallback use as already reported. The boot audit calls
+ * this for every toolkit in its catalog-wide summary, so the lazy per-toolkit
+ * warning below doesn't restate the same deprecation in a second shape.
+ */
+export function markAuthConfigEnvReported(toolkit: string): void {
+  _warnedLegacyToolkits.add(toolkit);
+}
 
 function warnLegacyAuthConfigEnv(toolkit: string, envVar: string): void {
   if (_warnedLegacyToolkits.has(toolkit)) return;
