@@ -310,20 +310,16 @@ describe("estimateCost from catalog", () => {
 describe("Google thinking support", () => {
 	it("either classifies a reasoning-capable Google model or leaves it unconfigured", () => {
 		// The table is an allowlist on purpose: support is per-model, varies
-		// within a generation, and models.dev doesn't carry it. This asserts the
-		// documented contract — a model is either classified from Google's docs
-		// or receives no thinking options at all — and prints the unclassified
-		// set so the gap stays visible instead of reading as an oversight.
+		// within a generation, and models.dev doesn't carry it. What's worth
+		// asserting is that every classified id names a real catalog model — a
+		// typo silently un-classifies the model it meant to cover, and the
+		// omission then looks identical to a deliberate one.
 		const reasoning = listModels("google")
 			.filter((m) => m.capabilities.reasoning)
 			.map((m) => m.id);
 		const classified = reasoning.filter((id) => googleThinkingSupport(id) !== undefined);
-		const unclassified = reasoning.filter((id) => googleThinkingSupport(id) === undefined);
 
 		expect(classified.length).toBeGreaterThan(0);
-		expect(classified.length + unclassified.length).toBe(reasoning.length);
-		// Every entry names a real catalog model — a typo would silently
-		// un-classify the model it was meant to cover.
 		for (const id of classified) {
 			expect(getModel("google", id)).toBeDefined();
 		}

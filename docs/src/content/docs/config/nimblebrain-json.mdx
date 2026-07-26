@@ -478,7 +478,7 @@ NimbleBrain validates `nimblebrain.json` at startup against the [JSON Schema (dr
 - **Unknown keys** produce a warning on stderr and are ignored.
 - **Structural errors** (wrong types, missing required fields) throw an error and prevent startup.
 - **Workspace-owned and legacy keys** (`bundles`, `skillDirs`, `agents`, `home`, `preferences`, `noDefaultBundles`, and the legacy `skills`) are silently stripped — no warning.
-- The **override file** (`nimblebrain.overrides.json`) is validated structurally, but unknown-key warnings are suppressed for it: its `set_model_config`-written vocabulary (`thinking`, `thinkingEffort`, `thinkingBudgetTokens`) is not yet in the published schema.
+- The **override file** (`nimblebrain.overrides.json`) is validated structurally, but unknown-key warnings are suppressed for it. Every key `set_model_config` writes is in the published schema; the suppression is for version drift, since the file is preserved across deploys and can outlive the schema of whichever image reads it.
 - **Deprecated keys** (`identity`, `contextFile`) produce a warning pointing at context skills.
 
 ```

@@ -25,18 +25,18 @@ export interface ResolveThinkingInput {
  * budget is the engine's job (`buildThinkingProviderOptions`).
  *
  * Resolution priority:
- *   1. Operator override (`configMode`):
+ *   1. Non-reasoning model (or no model) → `undefined`. The engine omits
+ *      thinking from the provider call entirely.
+ *   2. Operator override (`configMode`):
  *      - `off`      → passed through. Not enforceable on every model — see
  *                     `RuntimeConfig.thinking`.
  *      - `adaptive` → passed through bare. Adaptive states no depth, so an
  *                     effort or budget alongside it is deliberately dropped.
  *      - `enabled`  → an explicit budget if the operator set one, otherwise
  *                     their effort tier, otherwise the default tier.
- *   2. No override + reasoning-capable model → the same treatment as
- *      `enabled`, so a stock install reasons at a known depth rather than
- *      at whatever the provider does when told nothing.
- *   3. No override + non-reasoning model → `undefined` (the engine omits
- *      thinking from the provider call entirely — cheapest path).
+ *   3. No override → the same treatment as `enabled`, so a stock install
+ *      reasons at a known depth rather than at whatever the provider does
+ *      when told nothing.
  *
  * Note what is absent: nothing here reads `maxOutputTokens`. An output
  * ceiling caps the response; it says nothing about reasoning depth. Sizing
@@ -44,15 +44,24 @@ export interface ResolveThinkingInput {
  * reason maximally on every call.
  */
 export function resolveThinking(input: ResolveThinkingInput): ResolvedThinking | undefined {
+  // The capability gate runs on every path, including explicit overrides. An
+  // override can ask for reasoning; it cannot make the parameter exist on a
+  // model that has none. Skipping it for `enabled` was inert while Anthropic
+  // was the only wired provider and the engine dropped everything else — with
+  // OpenAI and Google wired it became a live send of a parameter the model
+  // doesn't take, on every call. Google is protected by its per-model table;
+  // this is the same gate for the other two, in the one place all three share.
+  //
+  // It removes the ability to force thinking on a model the catalog marks
+  // non-reasoning. That belongs in the catalog entry, which is the source of
+  // truth this already consults.
+  const supportsReasoning = input.model
+    ? (getModelByString(input.model)?.capabilities.reasoning ?? false)
+    : false;
+  if (!supportsReasoning) return undefined;
+
   if (input.configMode === "off") return { mode: "off" };
   if (input.configMode === "adaptive") return { mode: "adaptive" };
-
-  if (input.configMode !== "enabled") {
-    const supportsReasoning = input.model
-      ? (getModelByString(input.model)?.capabilities.reasoning ?? false)
-      : false;
-    if (!supportsReasoning) return undefined;
-  }
 
   // Depth is always resolved, even when a budget is set. The two are not
   // alternatives: a budget meters thinking on the providers that count tokens,

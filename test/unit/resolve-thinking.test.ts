@@ -69,13 +69,21 @@ describe("resolveThinking", () => {
 		).toEqual({ mode: "adaptive" });
 	});
 
-	it("operator config can enable thinking on a non-reasoning model", () => {
-		expect(
-			resolveThinking({
-				configMode: "enabled",
-				model: "anthropic:claude-3-5-haiku-20241022",
-			}),
-		).toEqual({ mode: "effort", effort: DEFAULT_THINKING_EFFORT });
+	it("refuses to enable thinking on a model the catalog says can't", () => {
+		// An override can ask for reasoning; it cannot make the parameter exist.
+		// This gate used to be skipped for explicit `enabled`, which was inert
+		// while the engine dropped every non-Anthropic provider and became a
+		// live wrong-parameter send once OpenAI and Nebius were wired — Nebius
+		// hosts non-reasoning open-weight models and its adapter forwards
+		// `reasoning_effort` without a gate of its own.
+		for (const model of [
+			"anthropic:claude-3-5-haiku-20241022",
+			"nebius:meta-llama/Llama-3.3-70B-Instruct",
+		]) {
+			expect(resolveThinking({ configMode: "enabled", model })).toBeUndefined();
+			expect(resolveThinking({ configMode: "adaptive", model })).toBeUndefined();
+			expect(resolveThinking({ configMode: "off", model })).toBeUndefined();
+		}
 	});
 
 	it("carries the tier alongside an explicit budget", () => {
@@ -103,7 +111,11 @@ describe("resolveThinking", () => {
 		// The resolver states intent; the engine clamps it against the output
 		// ceiling, because only the engine knows whether the provider meters
 		// tokens at all. See the engine's clamp test for the enforcement.
-		expect(resolveThinking({ configMode: "enabled", configBudgetTokens: 50_000 })).toEqual({
+		expect(resolveThinking({
+			configMode: "enabled",
+			configBudgetTokens: 50_000,
+			model: "anthropic:claude-sonnet-4-6",
+		})).toEqual({
 			mode: "enabled",
 			budgetTokens: 50_000,
 			effort: DEFAULT_THINKING_EFFORT,
@@ -111,14 +123,20 @@ describe("resolveThinking", () => {
 	});
 
 	it("zero / negative budget tokens are ignored (treated as unset)", () => {
-		expect(resolveThinking({ configMode: "enabled", configBudgetTokens: 0 })).toEqual({
+		expect(resolveThinking({
+			configMode: "enabled",
+			configBudgetTokens: 0,
+			model: "anthropic:claude-sonnet-4-6",
+		})).toEqual({
 			mode: "effort",
 			effort: DEFAULT_THINKING_EFFORT,
 		});
 	});
 
 	it("enabled with nothing else falls back to the default tier", () => {
-		expect(resolveThinking({ configMode: "enabled" })).toEqual({
+		expect(
+			resolveThinking({ configMode: "enabled", model: "anthropic:claude-sonnet-4-6" }),
+		).toEqual({
 			mode: "effort",
 			effort: DEFAULT_THINKING_EFFORT,
 		});

@@ -250,9 +250,15 @@ function googleBudgetOptions(
       // Two ceilings apply: the model's own thinking range, and the room left
       // in this call's output budget for a visible answer.
       const ceiling = Math.min(support.max, maxOutputTokens - MIN_VISIBLE_OUTPUT_TOKENS);
+      // Floor above the model's own minimum as well as Anthropic's, because on
+      // a model whose minimum is 0 that value is the *disable* sentinel: a
+      // tight output ceiling would otherwise turn "reason as hard as possible"
+      // into "do not reason", byte-identical to `off`. The Anthropic path
+      // floors the same way and degrades to thinking a little.
+      const floor = Math.max(support.min, MIN_THINKING_BUDGET_TOKENS);
       return {
         google: {
-          thinkingConfig: { thinkingBudget: Math.max(support.min, Math.min(requested, ceiling)) },
+          thinkingConfig: { thinkingBudget: Math.max(floor, Math.min(requested, ceiling)) },
         },
       };
     }

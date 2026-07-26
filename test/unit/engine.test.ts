@@ -1845,6 +1845,29 @@ describe("AgentEngine", () => {
         ).toEqual({ thinkingLevel: "medium" });
       });
 
+      it("never lets a positive tier resolve to Gemini's disable sentinel", async () => {
+        // gemini-2.5-flash's minimum budget is 0, which *is* the disable value.
+        // With a tight output ceiling the clamp produced 0 for effort "max" —
+        // byte-identical to `off`, i.e. a ceiling nobody chose overriding a
+        // depth the operator did, which is the defect this whole PR removes.
+        for (const maxOutputTokens of [3000, 4096]) {
+          const on = await providerOptionsFor(
+            "google:gemini-2.5-flash",
+            { mode: "effort", effort: "max" },
+            maxOutputTokens,
+          );
+          const off = await providerOptionsFor(
+            "google:gemini-2.5-flash",
+            { mode: "off" },
+            maxOutputTokens,
+          );
+          expect(off.google?.thinkingConfig).toEqual({ thinkingBudget: 0 });
+          expect(on.google?.thinkingConfig).not.toEqual(off.google?.thinkingConfig);
+          // Degrades to thinking a little, matching the Anthropic path's floor.
+          expect(on.google?.thinkingConfig).toEqual({ thinkingBudget: 1024 });
+        }
+      });
+
       it("holds a Gemini budget inside the model's own documented range", async () => {
         // 2.5 Pro caps at 32768. Sized off a 65536 catalog ceiling the derived
         // budget would be 61440 — accepted by the adapter, rejected by Google.

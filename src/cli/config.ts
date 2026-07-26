@@ -23,13 +23,13 @@ export interface CliFlags {
  * Validate config file contents using JSON Schema. Throws on structural
  * errors. Warns on unknown keys when `warnUnknownKeys` is true (default).
  *
- * The override file is written by `set_model_config` and contains a known
- * small surface — its valid keys (`thinking`, `thinkingEffort`,
- * `thinkingBudgetTokens`, and the model/limit fields) are not yet in the
- * published JSON schema, so unknown-key warnings would
- * fire on every boot for any tenant that's run `set_model_config`. The
- * structural validation (type errors) still fires; only the key-name
- * warning is suppressed for that file.
+ * The override file is machine-written by `set_model_config` and outlives the
+ * image: it is preserved across deploys while the running build changes under
+ * it. So a rollback, or a tenant pinned to an older image, can read an
+ * override carrying a key that build's schema doesn't know — a warning the
+ * operator can neither act on nor easily edit away. Structural validation
+ * (type errors) still fires; only the key-name warning is suppressed, and only
+ * for this file.
  */
 function validateConfig(
   config: Record<string, unknown>,
@@ -119,11 +119,9 @@ function applyOverride(
       string,
       unknown
     >;
-    // Suppress unknown-key warnings: the override file's vocabulary (thinking,
-    // thinkingEffort, thinkingBudgetTokens) is not yet in the published JSON
-    // schema, and warning every boot for every tenant that's run
-    // set_model_config is noise.
-    // Structural errors still throw.
+    // Unknown-key warnings suppressed: this file survives deploys while the
+    // image changes under it, so it can legitimately carry a key this build's
+    // schema predates. Structural errors still throw.
     validateConfig(override, configOverridePath, { warnUnknownKeys: false });
     const overrideKeys = Object.keys(override);
     if (overrideKeys.length === 0) return fileConfig;
