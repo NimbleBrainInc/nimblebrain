@@ -82,15 +82,20 @@ body {
 }
 /* Status dots take the injected status tokens. They are not decorative — the
    dot is the only thing stating a run's outcome in the rail — so each needs 3:1
-   against the ground per WCAG 1.4.11. Every token here clears 5.2:1 in both
-   modes, where the hand-picked hues these replace cleared 3:1 in neither:
-   timeout sat at 1.92:1 on white, success at 2.28:1.
+   against the ground per WCAG 1.4.11. Dots render on two grounds, the page
+   (--color-background-primary) and the card (--color-background-secondary);
+   across both, in both modes, the weakest of these tokens is 5.07:1
+   (text-tertiary on card, dark). The hand-picked hues they replace cleared 3:1
+   on neither ground: timeout sat at 1.92:1 on white, success at 2.28:1.
+
+   Those figures are the tokens at full opacity. Anything that fades a dot has
+   to hold the bar too — see dot-running below.
 
    timeout and backoff deliberately share one hue. They are warnings on
    different axes — a run that ran too long, and an automation retrying after
    consecutive errors — and the token map has one warning for both. Rather than
    add a hue to the shell palette for one bundle, backoff carries its own
-   its own backoff-badge with the retry count in words, so the states stay
+   backoff-badge with the retry count in words, so the states stay
    distinguishable without colour being the thing that separates them.
 
    NOTE: this file is a JS template literal, so a backtick here terminates the
@@ -100,8 +105,23 @@ body {
 .dot-timeout { background: var(--nb-color-warning); }
 .dot-disabled { background: var(--color-text-tertiary); }
 .dot-backoff { background: var(--nb-color-warning); }
-.dot-running { background: var(--color-text-accent); animation: breathe 1.5s ease-in-out infinite; }
+/* The running dot pulses on its OWN keyframe, not the shared breathe.
+   breathe runs 0.3 -> 0.6 -> 0.3 and never reaches full opacity, which is fine
+   for the skeleton it was written for but would cap this dot at 2.78:1 light /
+   2.92:1 dark — under the 3:1 the dot needs, at every frame of the cycle. A
+   token that clears the bar does not survive being faded to 60% of it.
+   So the peak here is the token itself and the trough is 0.7, whose worst
+   ground is 3.34:1. Same shape as the shell's own live dot in the
+   conversations bundle: full opacity at the extremes, motion in the middle. */
+@keyframes dot-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.7; transform: scale(0.85); } }
+.dot-running { background: var(--color-text-accent); animation: dot-pulse 1.5s ease-in-out infinite; }
 .dot-skipped { background: var(--color-text-tertiary); }
+
+/* Honour a reduced-motion preference for both looping animations in this file.
+   The one-shot fadeIn entrances are not looping and are left alone. */
+@media (prefers-reduced-motion: reduce) {
+  .dot-running, .skel { animation: none; }
+}
 
 /* color-mix() is safe in a bundle stylesheet: no bundle runs Tailwind, so
    Lightning never sees this CSS and never downlevels the mix to its first
