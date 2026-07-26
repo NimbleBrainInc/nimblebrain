@@ -24,44 +24,15 @@
  */
 
 import { describe, expect, test } from "bun:test";
-import { readdirSync, readFileSync, statSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { paletteToExtAppsTokens } from "../../../web/src/theme/projections.ts";
+import { REPO, sourceFiles, themedTrees } from "./themed-trees.ts";
 
-const REPO = join(import.meta.dir, "..", "..", "..");
-const BUNDLES = join(REPO, "src", "bundles");
 const THEMING_DOC = join(REPO, "docs", "src", "content", "docs", "apps", "theming.mdx");
 
 /** The names `buildThemeStyleBlock` writes into every iframe's style block. */
 const INJECTED = new Set(Object.keys(paletteToExtAppsTokens("light")));
-
-function sourceFiles(dir: string): string[] {
-  return readdirSync(dir).flatMap((entry) => {
-    if (entry === "dist" || entry === "node_modules") return [];
-    const path = join(dir, entry);
-    if (statSync(path).isDirectory()) return sourceFiles(path);
-    return /\.(ts|tsx|css)$/.test(entry) ? [path] : [];
-  });
-}
-
-/**
- * Every tree whose CSS is injected with `buildThemeStyleBlock`. That is the
- * contract this file guards, and it is not only the bundle UIs: the `ui://nb/*`
- * resources rendered from `src/tools/core-resources` and `scripts/` go through
- * `iframe.ts::injectThemeStyles` and read the same token names.
- */
-const themedTrees = [
-  ...readdirSync(BUNDLES).map((name) => ({ name, dir: join(BUNDLES, name, "ui", "src") })),
-  { name: "core-resources", dir: join(REPO, "src", "tools", "core-resources") },
-  { name: "scripts", dir: join(REPO, "scripts") },
-]
-  .filter(({ dir }) => {
-    try {
-      return statSync(dir).isDirectory();
-    } catch {
-      return false;
-    }
-  });
 
 describe("themed trees only read tokens the host injects", () => {
   test("the themed trees are actually being scanned", () => {

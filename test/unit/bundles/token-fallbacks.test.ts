@@ -13,6 +13,15 @@
  * one, so the defect only surfaces in dark mode. That is not hypothetical; it
  * is how an input came to sit at 1.044:1 against its own label.
  *
+ * One other state has no host and so did read the fallbacks: a bundle UI run
+ * standalone under its own `vite dev`, which every bundle has. That is a real
+ * cost and it was taken deliberately — the app has no parent bridge there, so
+ * it renders no data whatever its colours are, and unstyled is the honest
+ * signal that you are looking at it outside the platform rather than a
+ * light-mode approximation of it. If a bundle ever needs to be developed
+ * standalone in earnest, the answer is one dev-only stylesheet declaring the
+ * token set, not a fallback re-typed at each of several hundred call sites.
+ *
  * The rule generalises past colour. A font token's value *is* a stack
  * (`'Hanken Grotesk', system-ui, sans-serif`) whose tail is the fallback — and
  * that tail matters, because a `srcdoc` iframe inherits no `@font-face`, so it
@@ -28,37 +37,9 @@
  */
 
 import { describe, expect, test } from "bun:test";
-import { readdirSync, readFileSync, statSync } from "node:fs";
-import { join, relative } from "node:path";
-
-const REPO = join(import.meta.dir, "..", "..", "..");
-const BUNDLES = join(REPO, "src", "bundles");
-
-function sourceFiles(dir: string): string[] {
-  return readdirSync(dir).flatMap((entry) => {
-    if (entry === "dist" || entry === "node_modules") return [];
-    const path = join(dir, entry);
-    if (statSync(path).isDirectory()) return sourceFiles(path);
-    return /\.(ts|tsx|css)$/.test(entry) ? [path] : [];
-  });
-}
-
-/**
- * The same trees {@link ./theme-token-names.test.ts} guards — every tree whose
- * CSS is injected with `buildThemeStyleBlock`. Kept as one list derived the
- * same way rather than two hand-maintained copies that can drift apart.
- */
-const themedTrees = [
-  ...readdirSync(BUNDLES).map((name) => ({ name, dir: join(BUNDLES, name, "ui", "src") })),
-  { name: "core-resources", dir: join(REPO, "src", "tools", "core-resources") },
-  { name: "scripts", dir: join(REPO, "scripts") },
-].filter(({ dir }) => {
-  try {
-    return statSync(dir).isDirectory();
-  } catch {
-    return false;
-  }
-});
+import { readFileSync } from "node:fs";
+import { relative } from "node:path";
+import { REPO, sourceFiles, themedTrees } from "./themed-trees.ts";
 
 /**
  * A `var()` whose argument list has a comma at depth 1 — i.e. a fallback.
@@ -68,12 +49,19 @@ const themedTrees = [
  * font stack, whose commas are all part of one fallback). Whitespace after
  * `var(` and around the name is permitted because CSS permits it, and a matcher
  * that describes a stricter grammar than the language would pass a violation
- * written in the file's own prevailing style.
+ * written in the file's own prevailing style. The name class is `[\w-]` for the
+ * same reason — an underscore is legal in a custom-property ident, so a
+ * narrower class would read `var(--my_token, #fff)` as a bare `var(--my)` and
+ * wave the fallback through.
+ *
+ * Not closed: a comment between the name and the comma (`var(--x /* c *\/, red)`).
+ * Matching that needs a tokenizer rather than a regex, no such spelling exists
+ * in these trees, and the sibling name guard fails on it anyway.
  */
-const FALLBACK = /var\(\s*--[a-zA-Z0-9-]+\s*,/g;
+const FALLBACK = /var\(\s*--[\w-]+\s*,/g;
 
 /** A bare `var(--x)`, used to prove the matcher discriminates rather than matching everything. */
-const BARE = /var\(\s*--[a-zA-Z0-9-]+\s*\)/g;
+const BARE = /var\(\s*--[\w-]+\s*\)/g;
 
 function violations(): string[] {
   const found: string[] = [];
@@ -113,6 +101,7 @@ describe("theme tokens are used without fallbacks", () => {
     ["var(--color-text-primary,#09090b)", true],
     ["var( --color-text-primary , #09090b )", true],
     ["var(--font-sans, system-ui, sans-serif)", true],
+    ["var(--my_token, #fff)", true],
     ["color: var(--x, #fff); background: var(--y, #000)", true],
     ["var(--color-text-primary)", false],
     ["var( --color-text-primary )", false],
