@@ -25,6 +25,16 @@
  * Both arms are therefore self-gating: a deployment with no Composio wiring at
  * all produces no output, matching the revalidator's "dormant unless a provider
  * contributes a probe".
+ *
+ * The orphan arm asserts a *negative* — "this key names no toolkit" — so it is
+ * only sound over a catalog that actually loaded. `catalogEntries()` isolates a
+ * failed source into an `errors` array it then discards, and a static source
+ * with no resolved path is skipped outright, so a mis-set mount is
+ * indistinguishable from a genuinely toolkit-free catalog. It would report every
+ * declared key as a typo at exactly the moment the operator is diagnosing an
+ * empty Browse, and the remedy it names is to edit correct config. The arm
+ * therefore requires at least one catalog toolkit to compare against;
+ * `warnIfCuratedCatalogEmpty` owns the empty-catalog diagnosis.
  */
 
 import { log } from "../../../observability/log.ts";
@@ -37,7 +47,11 @@ export interface ComposioAuthConfigAudit {
   declared: string[];
   /** Toolkits still resolving from the legacy env var, with the var that supplied it. */
   fromEnv: { toolkit: string; envVar: string }[];
-  /** Declared keys matching no `auth: composio` catalog toolkit — typos or leftovers. */
+  /**
+   * Declared keys matching no `auth: composio` catalog toolkit — typos or
+   * leftovers. Always empty when the catalog names no composio toolkit at all,
+   * because a catalog that failed to load matches nothing either.
+   */
   orphanedKeys: string[];
 }
 
@@ -88,8 +102,11 @@ export function auditComposioAuthConfigs(
     if (envVar) audit.fromEnv.push({ toolkit, envVar });
   }
 
-  for (const key of Object.keys(declaredProviderConfig("composio")?.authConfigs ?? {})) {
-    if (!byToolkit.has(key)) audit.orphanedKeys.push(key);
+  // Only meaningful against a catalog that loaded — see the module header.
+  if (byToolkit.size > 0) {
+    for (const key of Object.keys(declaredProviderConfig("composio")?.authConfigs ?? {})) {
+      if (!byToolkit.has(key)) audit.orphanedKeys.push(key);
+    }
   }
 
   return audit;

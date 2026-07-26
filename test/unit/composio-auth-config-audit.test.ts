@@ -2,11 +2,11 @@
  * The catalog-wide Composio auth-config audit.
  *
  * Its reason to exist is that resolution is lazy: `composioAuthConfigId` runs
- * per install / connect / probe, so the deprecation warning it emits describes
- * the *installed* subset. Two decisions need the catalog instead — declaring the
- * legacy env fallback unused (#789), and catching an `authConfigs` key that
- * names no toolkit. Both are silent-until-too-late without this pass, so the
- * classification is covered directly rather than through a boot harness.
+ * per install / connect / probe, so it only ever sees the *installed* subset.
+ * Two decisions need the catalog instead — declaring the legacy env fallback
+ * unused (#789), and catching an `authConfigs` key that names no toolkit. Both
+ * are silent-until-too-late without this pass, so the classification is covered
+ * directly rather than through a boot harness.
  */
 
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
@@ -80,7 +80,7 @@ describe("auditComposioAuthConfigs", () => {
     process.env.COMPOSIO_SLACK_AUTH_CONFIG_ID = "ac_env";
     declareComposio({ gmail: "ac_declared" });
 
-      const audit = auditComposioAuthConfigs([
+    const audit = auditComposioAuthConfigs([
       entry("com.google/gmail", "composio", {
         toolkit: "gmail",
         authConfigEnv: "COMPOSIO_GMAIL_AUTH_CONFIG_ID",
@@ -112,6 +112,28 @@ describe("auditComposioAuthConfigs", () => {
 
     expect(audit.orphanedKeys).toEqual(["gmial"]);
     expect(audit.declared).toEqual(["gmail"]);
+  });
+
+  it("flags no orphans when the catalog names no composio toolkit", () => {
+    // A catalog that failed to load matches nothing, exactly like a set of
+    // mistyped keys does. `catalogEntries()` drops the per-source `errors` it
+    // collects and skips a static source with no resolved path, so a mis-set
+    // mount arrives here as an empty list — and calling every correct key a
+    // typo would send the operator to edit working config while the real
+    // problem (diagnosed by `warnIfCuratedCatalogEmpty`) is the mount.
+    declareComposio({ gmail: "ac_1", outlook: "ac_2", posthog: "ac_3" });
+
+    expect(auditComposioAuthConfigs([])).toEqual({
+      declared: [],
+      fromEnv: [],
+      orphanedKeys: [],
+    } satisfies ComposioAuthConfigAudit);
+
+    // Still silent when the catalog loaded but carries no composio entries —
+    // the same "nothing to compare against" state, reached a different way.
+    expect(
+      auditComposioAuthConfigs([entry("com.linear/mcp", "dcr")]).orphanedKeys,
+    ).toEqual([]);
   });
 
   it("prefers the declared id over a set env var, and reports it as declared", () => {

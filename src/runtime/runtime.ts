@@ -887,9 +887,9 @@ export class Runtime {
     });
 
     // Report Composio auth-config wiring across the whole catalog. Resolution is
-    // lazy and per-connector, so its own deprecation warning only ever covers
-    // the installed subset — which is the wrong set for deciding the legacy env
-    // fallback is unused (#789), or for catching an `authConfigs` key that
+    // lazy and per-connector, so it only ever runs for toolkits someone has
+    // installed, connected, or probed — the wrong set for deciding the legacy
+    // env fallback is unused (#789), or for catching an `authConfigs` key that
     // matches no toolkit. Read-only and best-effort.
     await bootAuditComposioAuthConfigs({
       catalogEntries: () => rt.getConnectorDirectory().catalogEntries(),
