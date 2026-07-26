@@ -28,7 +28,6 @@ import { createEchoModel } from "../helpers/echo-model.ts";
 import { defineInProcessApp, type InProcessTool } from "../../src/tools/in-process-app.ts";
 import { Runtime } from "../../src/runtime/runtime.ts";
 import { getRequestContext } from "../../src/runtime/request-context.ts";
-import { namespacedToolName } from "../../src/tools/namespace.ts";
 import {
   WorkspaceStore,
   personalWorkspaceIdFor,
@@ -103,7 +102,7 @@ describe("Stage 2 T008 — ambient RequestContext.workspaceId matches the routed
     const probe = buildContextProbeSource("probe", "observe");
     await probe.source.start();
 
-    const sharedToolName = namespacedToolName(SHARED_WS_ID, "probe__observe");
+    const sharedToolName = "probe__observe";
 
     // Script the model to issue ONE cross-workspace tool call.
     const model = createEchoModel({

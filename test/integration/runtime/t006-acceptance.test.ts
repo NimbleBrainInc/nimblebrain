@@ -73,11 +73,12 @@ describe("runtime.chat — orchestrator error taxonomy (T006)", () => {
     expect(tc.output).toContain("invalid tool name");
   });
 
-  it("the wall denies a non-focused workspace (even a non-existent one) without leaking unknown_workspace", async () => {
-    // A session is bounded to its one workspace. A call to any other workspace
-    // is denied by the wall BEFORE existence is checked, so a bogus workspace
-    // name yields the same access-denied outcome as any other-workspace call —
-    // no information leak about whether the workspace exists.
+  it("a `ws_<id>-` name is rejected without leaking whether that workspace exists", async () => {
+    // The no-leak property is unchanged and now holds for a stronger reason: the
+    // `ws_<id>-` form is retired, so the name is rejected as a stale wire form
+    // before ANY workspace lookup. A bogus workspace and a real one the caller
+    // cannot reach are indistinguishable in the response, because neither is
+    // ever looked up.
     fixture = await createTwoWorkspaceFixture({
       modelResponses: [
         {
@@ -99,18 +100,19 @@ describe("runtime.chat — orchestrator error taxonomy (T006)", () => {
     expect(tc).toBeDefined();
     if (!tc) return;
     expect(tc.ok).toBe(false);
-    // Walled before existence is checked: the denial names the out-of-reach
-    // workspace, never "unknown workspace" (no existence leak).
-    expect(tc.output).toMatch(/not a member|denied|access/i);
-    expect(tc.output).toContain("ws_does_not_exist");
+    // Rejected before existence is checked: the error names the retired form,
+    // never "unknown workspace" (no existence leak).
+    expect(tc.output).toMatch(/retired/i);
     expect(tc.output).not.toMatch(/unknown workspace/i);
   });
 
-  it("`WorkspaceAccessDenied` → reason='workspace_access_denied'", async () => {
-    // Create a third workspace the identity is NOT a member of, then
-    // emit a tool call into it. The wall refuses any reach outside the
-    // session's workspace with workspace_access_denied (here via
-    // CrossWorkspaceReachDenied — the stranger ws exists, it's just not ours).
+  it("a `ws_<id>-` name naming a real, unreachable workspace is rejected as a retired form", async () => {
+    // Was the `CrossWorkspaceReachDenied → workspace_access_denied` case. That
+    // error no longer exists: naming a second workspace is unexpressible rather
+    // than denied, so a real-but-unreachable workspace and a bogus one now fail
+    // identically, at parse. The `WorkspaceToolUnavailable →
+    // workspace_access_denied` mapping this used to share is covered by the
+    // /mcp no-`X-Workspace-Id` case in `mcp-server-identity-bound.test.ts`.
     fixture = await createTwoWorkspaceFixture();
     const wsStore = fixture.runtime.getWorkspaceStore();
     const stranger = await wsStore.create("Stranger Workspace", "stranger");
@@ -145,7 +147,7 @@ describe("runtime.chat — orchestrator error taxonomy (T006)", () => {
     expect(tc).toBeDefined();
     if (!tc) return;
     expect(tc.ok).toBe(false);
-    expect(tc.output).toMatch(/not a member|access/i);
+    expect(tc.output).toMatch(/retired/i);
   });
 
   it("`UnknownToolSource` → reason='unknown_tool_source'", async () => {
@@ -157,11 +159,11 @@ describe("runtime.chat — orchestrator error taxonomy (T006)", () => {
           toolCalls: [
             {
               toolCallId: "call_unknown_source",
-              // Personal is the session's workspace (the wall lets it
-              // through), but `nonexistent` source is not registered there.
-              // Orchestrator must surface UnknownToolSource — the ws is in
-              // reach, the source name just doesn't resolve.
-              toolName: `${fixture?.personal.id ?? "ws_user_x"}-nonexistent__do_thing`,
+              // Bare, so it resolves against the session's own workspace — where
+              // `nonexistent` is not registered. Orchestrator must surface
+              // UnknownToolSource: the workspace is in reach, the source name
+              // just doesn't resolve.
+              toolName: "nonexistent__do_thing",
               input: "{}",
             },
           ],

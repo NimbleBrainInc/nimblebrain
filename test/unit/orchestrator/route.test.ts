@@ -4,7 +4,7 @@
  * Pins the per-call routing contract under the workspace wall: a session is
  * bounded to ONE workspace (passed as `workspaceId`). A workspace-scoped call
  * to that workspace dispatches; a call to any other workspace is denied
- * (`CrossWorkspaceReachDenied`); a workspace call on a session with no
+ * (rejected as a retired wire form); a workspace call on a session with no
  * workspace (e.g. `/mcp`) is `WorkspaceToolUnavailable`. Identity (bare) calls
  * route to the identity door regardless of workspace.
  *
@@ -23,10 +23,10 @@ import type { ToolResult } from "../../../src/engine/types.ts";
 import { IdentityContext } from "../../../src/identity/context.ts";
 import {
   ConnectorGrantDenied,
-  CrossWorkspaceReachDenied,
   type OrchestratorRuntime,
   routeToolCall,
   UnknownIdentitySource,
+  UnknownNamespacedToolName,
   UnknownToolSource,
   WorkspaceAccessDenied,
   WorkspaceToolUnavailable,
@@ -167,7 +167,7 @@ describe("routeToolCall — happy path", () => {
   test("returns a context whose wsId === parsed wsId and toolName stripped of prefix", async () => {
     const routed = await routeToolCall({
       identityId: USER_ID,
-      namespacedName: `${SHARED_WS}-crm__search`,
+      namespacedName: "crm__search",
       workspaceId: SHARED_WS,
       runtime: buildHappyRuntime(),
     });
@@ -246,11 +246,11 @@ describe("routeToolCall — strict invariant (no ambient workspace)", () => {
   });
 });
 
-describe("routeToolCall — the wall (cross-workspace denial)", () => {
-  // A session bounded to one workspace cannot reach another — even one the
-  // identity is a member of. Denied before existence is checked, so no
-  // WorkspaceContext is constructed.
-  test("a call to a workspace other than the session's throws CrossWorkspaceReachDenied", async () => {
+describe("routeToolCall — the wall (cross-workspace reach is unexpressible)", () => {
+  // A session bounded to one workspace cannot reach another — and no longer
+  // because reach is denied, but because no name can express it. Rejected before
+  // any workspace resolution, so no WorkspaceContext is constructed.
+  test("a `ws_<id>-` name is rejected as a retired wire form, whatever workspace it names", async () => {
     const runtime = makeStubRuntime({
       registries: new Map([[OTHER_WS, [makeStubSource("crm")]]]),
       workDir,
@@ -267,10 +267,15 @@ describe("routeToolCall — the wall (cross-workspace denial)", () => {
     } catch (err) {
       thrown = err;
     }
-    expect(thrown).toBeInstanceOf(CrossWorkspaceReachDenied);
-    // Maps through the existing WorkspaceAccessDenied error surface.
-    expect(thrown).toBeInstanceOf(WorkspaceAccessDenied);
-    expect((thrown as CrossWorkspaceReachDenied).wsId).toBe(OTHER_WS);
+    // Not a cross-workspace DENIAL any more — the form itself is retired, so the
+    // call is refused before any workspace resolution. Reach to another
+    // workspace became unexpressible rather than caught, which is why
+    // `CrossWorkspaceReachDenied` no longer exists.
+    expect(thrown).toBeInstanceOf(UnknownNamespacedToolName);
+    // A parse-level rejection, NOT a WorkspaceAccessDenied. The distinction is
+    // the point: the name is malformed for this platform, not a permitted shape
+    // pointing somewhere the caller may not go.
+    expect(thrown).not.toBeInstanceOf(WorkspaceAccessDenied);
     expect(runtime.contextCallCount()).toBe(0);
   });
 
@@ -286,7 +291,7 @@ describe("routeToolCall — the wall (cross-workspace denial)", () => {
     try {
       await routeToolCall({
         identityId: USER_ID,
-        namespacedName: `${SHARED_WS}-crm__search`,
+        namespacedName: "crm__search",
         // No workspaceId — identity-scoped session.
         runtime,
       });
@@ -306,7 +311,7 @@ describe("routeToolCall — personal workspace", () => {
   test("a call to the bound personal workspace succeeds", async () => {
     const routed = await routeToolCall({
       identityId: USER_ID,
-      namespacedName: `${PERSONAL_WS}-gmail__send`,
+      namespacedName: "gmail__send",
       workspaceId: PERSONAL_WS,
       runtime: buildHappyRuntime(),
     });
@@ -325,13 +330,13 @@ describe("routeToolCall — context isolation", () => {
 
     const first = await routeToolCall({
       identityId: USER_ID,
-      namespacedName: `${SHARED_WS}-crm__search`,
+      namespacedName: "crm__search",
       workspaceId: SHARED_WS,
       runtime,
     });
     const second = await routeToolCall({
       identityId: USER_ID,
-      namespacedName: `${PERSONAL_WS}-gmail__send`,
+      namespacedName: "gmail__send",
       workspaceId: PERSONAL_WS,
       runtime,
     });
@@ -351,7 +356,7 @@ describe("routeToolCall — no ambient state", () => {
   test("routing succeeds with no ambient 'current workspace' state", async () => {
     const routed = await routeToolCall({
       identityId: USER_ID,
-      namespacedName: `${SHARED_WS}-crm__search`,
+      namespacedName: "crm__search",
       workspaceId: SHARED_WS,
       runtime: buildHappyRuntime(),
     });
@@ -372,7 +377,7 @@ describe("routeToolCall — unknown tool source", () => {
     try {
       await routeToolCall({
         identityId: USER_ID,
-        namespacedName: `${SHARED_WS}-crm__search`,
+        namespacedName: "crm__search",
         workspaceId: SHARED_WS,
         runtime,
       });
@@ -401,7 +406,7 @@ describe("routeToolCall — self-heal on a recoverable source miss", () => {
 
     const routed = await routeToolCall({
       identityId: USER_ID,
-      namespacedName: `${SHARED_WS}-crm__search`,
+      namespacedName: "crm__search",
       workspaceId: SHARED_WS,
       runtime,
     });
@@ -424,7 +429,7 @@ describe("routeToolCall — self-heal on a recoverable source miss", () => {
     try {
       await routeToolCall({
         identityId: USER_ID,
-        namespacedName: `${SHARED_WS}-crm__search`,
+        namespacedName: "crm__search",
         workspaceId: SHARED_WS,
         runtime,
       });
@@ -449,7 +454,7 @@ describe("routeToolCall — self-heal on a recoverable source miss", () => {
     try {
       await routeToolCall({
         identityId: USER_ID,
-        namespacedName: `${SHARED_WS}-crm__search`,
+        namespacedName: "crm__search",
         workspaceId: SHARED_WS,
         runtime,
       });
@@ -470,7 +475,7 @@ describe("routeToolCall — self-heal on a recoverable source miss", () => {
 
     const routed = await routeToolCall({
       identityId: USER_ID,
-      namespacedName: `${SHARED_WS}-crm__search`,
+      namespacedName: "crm__search",
       workspaceId: SHARED_WS,
       runtime,
     });
@@ -592,7 +597,11 @@ describe("routeToolCall — personal connectors (identity-door grant gate)", () 
     } catch (err) {
       thrown = err;
     }
-    expect(thrown).toBeInstanceOf(CrossWorkspaceReachDenied);
+    // Not a cross-workspace DENIAL any more — the form itself is retired, so the
+    // call is refused before any workspace resolution. Reach to another
+    // workspace became unexpressible rather than caught, which is why
+    // `CrossWorkspaceReachDenied` no longer exists.
+    expect(thrown).toBeInstanceOf(UnknownNamespacedToolName);
   });
 
   test("identity-only session (no workspace) + personal connector → denied", async () => {
@@ -658,7 +667,7 @@ describe("routeToolCall — personal connectors (identity-door grant gate)", () 
   });
 });
 
-describe("routeToolCall — legacy bare personal-connector names", () => {
+describe("routeToolCall — bare names are workspace-scoped, with no legacy fallback", () => {
   // Before the marker existed, a personal connector's wire name was a plain bare
   // `<connector>__<tool>`. That form still arrives from the two carriers this
   // module keeps routing legacy `ws_<id>-` names for: a resumed conversation's
@@ -672,26 +681,7 @@ describe("routeToolCall — legacy bare personal-connector names", () => {
     });
   }
 
-  test("no same-named workspace source → falls back to the connector, with its policy owner", async () => {
-    const runtime = runtimeWith(["crm"], "granola");
-    await runtime
-      .getPermissionStore?.()
-      ?.grantConnector(USER_ID, "granola", SHARED_WS);
-
-    const routed = await routeToolCall({
-      identityId: USER_ID,
-      namespacedName: "granola__read_notes",
-      workspaceId: SHARED_WS,
-      runtime,
-    });
-
-    // Without the fallback this is a hard `UnknownToolSource` — the connector is
-    // installed and granted, and the platform reports no such tool.
-    expect(routed.kind).toBe("identity");
-    expect(routed.policyOwner).toEqual({ scope: "user", userId: USER_ID });
-  });
-
-  test("same-named workspace source WINS — the documented ambiguity", async () => {
+  test("a legacy bare personal name resolves as a WORKSPACE source — no fallback", async () => {
     const runtime = runtimeWith(["gmail"], "gmail");
     await runtime.getPermissionStore?.()?.grantConnector(USER_ID, "gmail", SHARED_WS);
 
@@ -702,10 +692,10 @@ describe("routeToolCall — legacy bare personal-connector names", () => {
       runtime,
     });
 
-    // Deliberate: bare now MEANS the workspace's source, and that reading has to
-    // win wherever it resolves, or a legitimate workspace call would be hijacked
-    // by a same-named personal connector. The caller's fix is to re-list and use
-    // the marked name — asserted next.
+    // Bare MEANS the workspace's source — there is no legacy fallback and so no
+    // ambiguity to arbitrate. A caller still holding the pre-marker name for
+    // their personal connector re-lists (or reconnects); the runtime does not
+    // guess which of two credential sets they meant.
     expect(routed.kind).toBe("workspace");
   });
 

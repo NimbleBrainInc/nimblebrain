@@ -37,13 +37,11 @@
 
 import type { ToolSchema } from "../engine/types.ts";
 import type { IdentityContext } from "../identity/context.ts";
-import { log } from "../observability/log.ts";
 import type { PermissionOwner, PermissionStore } from "../permissions/permission-store.ts";
 import {
   isIdentitySource,
   isPersonalConnectorName,
   personalConnectorServerName,
-  personalConnectorWireName,
 } from "../tools/identity-sources.ts";
 import { parseNamespacedToolName, UnknownNamespacedToolName } from "../tools/namespace.ts";
 import type { ToolSource } from "../tools/types.ts";
@@ -67,24 +65,6 @@ export class WorkspaceAccessDenied extends Error {
     this.name = "WorkspaceAccessDenied";
     this.identityId = identityId;
     this.wsId = wsId;
-  }
-}
-
-/**
- * Thrown when a walled session tries to reach a workspace other than its own.
- * A session is bounded to exactly one workspace; a `ws_<other>-<tool>` call is
- * denied even though the identity may be a member of that other workspace.
- * Subclasses `WorkspaceAccessDenied` so the existing error mapping (HTTP 403 /
- * `-32602`) applies unchanged; `name` distinguishes "walled" from "not a member"
- * — both map to the same `workspace_access_denied` response (we don't leak
- * whether the other workspace exists). The bounded workspace is named in the
- * message.
- */
-export class CrossWorkspaceReachDenied extends WorkspaceAccessDenied {
-  constructor(identityId: string, wsId: string, focusedWorkspaceId: string) {
-    super(identityId, wsId);
-    this.name = "CrossWorkspaceReachDenied";
-    this.message = `[orchestrator] session is bounded to workspace "${focusedWorkspaceId}"; reach to "${wsId}" is denied`;
   }
 }
 
@@ -346,28 +326,19 @@ export async function routeToolCall(opts: {
   // input. We let it propagate; the HTTP / engine layer maps it.
   const { scope, toolName } = parseNamespacedToolName(namespacedName);
 
-  // Legacy `ws_<id>-<source>__<tool>`. No longer EMITTED — the wire name is bare
-  // (see `listToolsForWorkspace`) — but still ROUTED, because a resumed
-  // conversation's history and an external `/mcp` client's cached `tools/list`
-  // both still carry it. The wall check below is unchanged for this form.
+  // A `ws_<id>-` name is the RETIRED wire form. It is not routed: the platform
+  // emits bare names on both doors, and accepting a second form means carrying a
+  // second set of semantics for the same string forever. A caller presenting one
+  // is working from a stale `tools/list` and needs to re-list, which is what the
+  // error says. Rejecting is also what makes cross-workspace reach
+  // *unexpressible* rather than merely denied — there is no longer any name that
+  // can address a workspace other than the session's own.
   if (scope.kind === "workspace") {
-    const wsId = scope.wsId;
-    if (workspaceId === undefined) {
-      // Identity-scoped session with no workspace (e.g. `/mcp`). Workspace tools
-      // are not reachable — only identity (bare) tools. Deny any workspace call.
-      throw new WorkspaceToolUnavailable(identityId, wsId, undefined);
-    }
-    // Walled session: reach is bounded to the one workspace. A call to any other
-    // workspace is denied even for a member.
-    if (wsId !== workspaceId) {
-      throw new CrossWorkspaceReachDenied(identityId, wsId, workspaceId);
-    }
-    return {
-      kind: "workspace",
-      context: runtime.getWorkspaceContext(wsId),
-      toolName,
-      source: await resolveWorkspaceSource(wsId, toolName, runtime),
-    };
+    throw new UnknownNamespacedToolName(
+      namespacedName,
+      "legacy_namespaced_form",
+      `[orchestrator] "${namespacedName}" uses the retired ws_<id>- tool-name form; re-list tools and call "${toolName}"`,
+    );
   }
 
   // Bare `<source>__<tool>` — the current wire form for BOTH doors. The source
@@ -412,75 +383,11 @@ export async function routeToolCall(opts: {
   // future regression that aliases them).
   const context = runtime.getWorkspaceContext(wsId);
 
-  // Step 5 — resolve the inner tool's `<source>__` prefix to a dispatch
-  // handle in the bound workspace's registry (self-healing a transiently
-  // absent source once before failing), falling back to a personal connector
-  // under its legacy bare name.
-  return resolveBareCall(identityId, toolName, wsId, context, runtime);
-}
-
-/**
- * The bare-name tail of `routeToolCall`: the session's workspace registry first,
- * then a personal connector under its LEGACY bare name.
- *
- * Split out to keep `routeToolCall` under the cognitive-complexity budget; the
- * ordering it encodes is load-bearing and documented inline.
- */
-async function resolveBareCall(
-  identityId: string,
-  toolName: string,
-  wsId: string,
-  context: WorkspaceContext,
-  runtime: OrchestratorRuntime,
-): Promise<RoutedToolCall> {
-  try {
-    const source = await resolveWorkspaceSource(wsId, toolName, runtime);
-    return { kind: "workspace", context, toolName, source };
-  } catch (err) {
-    if (!(err instanceof UnknownToolSource)) throw err;
-
-    // Step 6 — LEGACY personal-connector fallback.
-    //
-    // Before the marker existed, a personal connector's wire name was a plain
-    // bare `<connector>__<tool>`. That form still arrives from the same two
-    // carriers this function keeps routing legacy `ws_<id>-` names for: a
-    // resumed conversation's history, and an external client's cached
-    // `tools/list`. Without this, such a call dies as `UnknownToolSource` — the
-    // connector is installed and granted, and the platform says no such tool.
-    //
-    // Deliberately LAST, after the workspace registry has been consulted and
-    // missed. The bare form now means "this workspace's source", and that
-    // reading has to win wherever it resolves, or a legitimate workspace call
-    // would be hijacked by a same-named personal connector.
-    //
-    // The residue is the ambiguous case: when a workspace source AND a personal
-    // connector share a name, the legacy bare call reaches the WORKSPACE one —
-    // the opposite of `resolvePermissionOwner`'s personal-first rule, and a
-    // different set of credentials. It cannot be resolved from the name alone,
-    // because the same string legitimately means both things depending on when
-    // it was minted. It is narrow (the install guard already refuses to give
-    // the caller both) and the fix is on the caller's side: re-list and use the
-    // marked name. Callers who cannot are why this is logged, not silent.
-    // Only an "this is not a personal connector either" answer falls through to
-    // the original `UnknownToolSource`. A grant denial or a connector that failed
-    // to start is a REAL answer about a connector that exists, and re-reporting
-    // it as "no such tool source" would send the caller looking for the wrong
-    // problem.
-    let legacy: RoutedToolCall | null = null;
-    try {
-      legacy = await routeIdentityCall(identityId, toolName, wsId, runtime);
-    } catch (identityErr) {
-      if (!(identityErr instanceof UnknownIdentitySource)) throw identityErr;
-    }
-    if (legacy) {
-      log.debug(
-        "mcp",
-        `[orchestrator] "${toolName}" resolved as a LEGACY bare personal connector — no such source in "${wsId}". Re-list tools; the current name is "${personalConnectorWireName(sourceSegmentOf(toolName))}__…".`,
-      );
-      return legacy;
-    }
-    throw err;
-  }
+  // Step 5 — resolve the inner tool's `<source>__` prefix to a dispatch handle
+  // in the bound workspace's registry (self-healing a transiently absent source
+  // once before failing).
+  const source = await resolveWorkspaceSource(wsId, toolName, runtime);
+  return { kind: "workspace", context, toolName, source };
 }
 
 /**

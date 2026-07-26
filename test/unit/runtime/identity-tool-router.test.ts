@@ -168,7 +168,7 @@ describe("IdentityToolRouter — availableTools", () => {
   test("returns the bound workspace's tools from listToolsForWorkspace", async () => {
     const surface: ToolSchema[] = [
       {
-        name: `${SHARED_WS}-crm__search`,
+        name: "crm__search",
         description: "search crm",
         inputSchema: { type: "object", properties: {} },
         annotations: { ui: "card" },
@@ -250,7 +250,7 @@ describe("IdentityToolRouter — execute (workspace door)", () => {
     });
     const router = new IdentityToolRouter({ identityId: USER_ID, workspaceId: SHARED_WS, runtime });
 
-    const call: ToolCall = { id: "c1", name: `${SHARED_WS}-crm__search`, input: { q: "acme" } };
+    const call: ToolCall = { id: "c1", name: "crm__search", input: { q: "acme" } };
     const result = await router.execute(call);
 
     expect(result.isError).toBe(false);
@@ -284,7 +284,7 @@ describe("IdentityToolRouter — execute (workspace door)", () => {
         },
       },
       async () => {
-        await router.execute({ id: "c1", name: `${SHARED_WS}-crm__search`, input: {} });
+        await router.execute({ id: "c1", name: "crm__search", input: {} });
       },
     );
 
@@ -314,7 +314,7 @@ describe("IdentityToolRouter — execute (workspace door)", () => {
       onWorkspaceDispatch: hook,
     });
 
-    await router.execute({ id: "c1", name: `${SHARED_WS}-crm__search`, input: {} });
+    await router.execute({ id: "c1", name: "crm__search", input: {} });
 
     expect(hookEvents).toHaveLength(1);
     expect(hookEvents[0]?.callId).toBe("c1");
@@ -323,7 +323,7 @@ describe("IdentityToolRouter — execute (workspace door)", () => {
   });
 });
 
-describe("IdentityToolRouter — the wall (cross-workspace denial)", () => {
+describe("IdentityToolRouter — the wall (cross-workspace reach is unexpressible)", () => {
   // Pins: a session bounded to one workspace cannot reach another, even one
   // the identity is a member of. The call is denied as an `isError` result,
   // surfaced through the same mapping as `WorkspaceAccessDenied`.
@@ -339,14 +339,16 @@ describe("IdentityToolRouter — the wall (cross-workspace denial)", () => {
     });
     const router = new IdentityToolRouter({ identityId: USER_ID, workspaceId: SHARED_WS, runtime });
 
+    // Naming another workspace is no longer DENIED — it is unexpressible. The
+    // `ws_<id>-` form is retired, so this is rejected as a stale wire name
+    // before any workspace resolution happens, and there is no name left that
+    // can address a workspace other than the session's own. That is a stronger
+    // guarantee than the old `CrossWorkspaceReachDenied`, which had to catch the
+    // attempt after the fact.
     const result = await router.execute({ id: "c1", name: `${OTHER_WS}-crm__search`, input: {} });
 
     expect(result.isError).toBe(true);
-    expect(result.structuredContent).toMatchObject({
-      error: "orchestrator_error",
-      reason: "workspace_access_denied",
-      wsId: OTHER_WS,
-    });
+    expect(JSON.stringify(result)).toContain("retired");
     // The other workspace's source must never run.
     expect(crm.calls).toHaveLength(0);
   });

@@ -167,12 +167,12 @@ describe("MCP Server Endpoint (/mcp)", () => {
 	it("tool call with unknown tool returns error", async () => {
 		const client = await createMcpClient();
 		try {
-			// `fake__nonexistent` IS namespaced as a valid workspace + bad
+			// A valid source with a bad tool name — resolves the source, fails the tool.
 			// inner tool, so the source lookup succeeds (source "fake")
 			// but the inner tool is unknown. Source.execute should surface
 			// `isError: true`.
 			const result = await client.callTool({
-				name: `${TEST_WORKSPACE_ID}-fake__nonexistent`,
+				name: "fake__nonexistent",
 				arguments: {},
 			});
 			expect(result.isError).toBe(true);

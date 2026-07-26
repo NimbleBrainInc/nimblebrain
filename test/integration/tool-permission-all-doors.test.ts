@@ -62,8 +62,8 @@ class MockSource implements ToolSource {
 
 /** Namespaced schemas the engine treats as the active reachable set. */
 const ACTIVE_TOOLS: ToolSchema[] = [
-  { name: `${WS_ID}-mock__safe_read`, description: "Safe read.", inputSchema: {} },
-  { name: `${WS_ID}-mock__destructive_write`, description: "Destructive write.", inputSchema: {} },
+  { name: "mock__safe_read", description: "Safe read.", inputSchema: {} },
+  { name: "mock__destructive_write", description: "Destructive write.", inputSchema: {} },
 ];
 
 const ENGINE_CONFIG: EngineConfig = {
@@ -157,7 +157,7 @@ describe("connector permission gate — enforced on the engine door", () => {
       { destructive_write: "disallow" },
     );
 
-    const { captured } = await runTurnCalling(h.router, `${WS_ID}-mock__destructive_write`);
+    const { captured } = await runTurnCalling(h.router, "mock__destructive_write");
 
     expect(captured).not.toBeNull();
     expect(captured!.isError).toBe(true);
@@ -178,7 +178,7 @@ describe("connector permission gate — enforced on the engine door", () => {
       { destructive_write: "disallow" },
     );
 
-    const { captured } = await runTurnCalling(h.router, `${WS_ID}-mock__safe_read`);
+    const { captured } = await runTurnCalling(h.router, "mock__safe_read");
 
     expect(captured).not.toBeNull();
     expect(captured!.isError).toBe(false);
