@@ -33,13 +33,14 @@ const DIGEST = {
     { kind: "system_prompt", tokens: 34685 },
     { kind: "tool_descriptions", count: 32, tokens: 4876 },
     { kind: "skills", count: 1, tokens: 3369 },
-    { kind: "history", turns: 3, compacted: false, tokens: 30 },
+    { kind: "history", messages: 3, compacted: false, tokens: 30 },
   ],
   excluded: [],
   totalTokens: 42960,
   skills: [
     {
       id: "/workspaces/tenant-a/skills/drafting-craft.md",
+      name: "drafting-craft",
       scope: "workspace" as const,
       tokens: 3369,
       loadedBy: "tool_affinity" as const,
@@ -183,11 +184,17 @@ describe("ContextInspectorPage", () => {
     await waitFor(() => expect(container.textContent).toContain("Identity (default)"));
     const text = container.textContent ?? "";
 
-    // Budget breakdown + total.
+    // Budget breakdown + the window total, stated once (in the header).
     expect(text).toContain("System prompt");
     expect(text).toContain("Tools");
     expect(text).toContain("History");
-    expect(text).toContain("43.0k"); // formatTokenCount(42960)
+    expect(text).toContain("3 messages");
+    // The window is the disjoint sum (34685 + 4876 + 30); the recorded 42960
+    // adds the 3369 of skill bodies a second time, having already counted them
+    // inside the system prompt.
+    expect(text).toContain("39.6k");
+    expect(text).not.toContain("43.0k");
+    expect(text.match(/39\.6k/g)).toHaveLength(1);
 
     // Composition layers. File-backed skills are named by their skill (not the
     // generic kind, and not the raw path), with the kind as a muted descriptor.
@@ -312,7 +319,7 @@ describe("ContextInspectorPage", () => {
     );
 
     // A's budget loads.
-    await waitFor(() => expect(container.textContent).toContain("43.0k"));
+    await waitFor(() => expect(container.textContent).toContain("39.6k"));
 
     // Switch to a conversation whose budget read fails. The prior budget must
     // not linger as B's, and the error must surface (both gate on an absent
@@ -322,7 +329,7 @@ describe("ContextInspectorPage", () => {
     fireEvent.click(go);
 
     await waitFor(() => expect(container.textContent).toContain("BUDGET-READ-FAILED-FOR-B"));
-    expect(container.textContent).not.toContain("43.0k");
+    expect(container.textContent).not.toContain("39.6k");
   });
 
   test("ignores a slow read from a conversation the user has navigated away from", async () => {

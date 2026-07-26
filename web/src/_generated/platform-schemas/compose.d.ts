@@ -18,14 +18,21 @@ export type ComposeAssembledContextInput = Static<typeof ComposeAssembledContext
  * One row of a run's assembled context, as recorded in the
  * `context.assembled` event. `kind` is a free-form source discriminator
  * (`system_prompt`, `tool_descriptions`, `skills`, `history`); the other
- * fields are populated per kind (`count` for tools/skills, `turns` /
+ * fields are populated per kind (`count` for tools/skills, `messages` /
  * `compacted` for history).
+ *
+ * The rows are NOT four disjoint regions of the context window: `skills`
+ * annotates how much of `system_prompt` the composed skill bodies account
+ * for. The window is `system_prompt + tool_descriptions + history`, which is
+ * why `ComposeAssembledContextOutput.totalTokens` (the recorded sum of all
+ * four) is larger than what a reader would call the context size.
  */
 export interface AssembledContextSource {
     kind: string;
     tokens: number;
     count?: number;
-    turns?: number;
+    /** `history`: how many messages the windowed history holds. */
+    messages?: number;
     compacted?: boolean;
 }
 /**
@@ -34,6 +41,10 @@ export interface AssembledContextSource {
  */
 export interface AssembledContextSkill {
     id: string;
+    /** The skill's own name — resolved server-side, safe to render directly. */
+    name: string;
+    /** The MCP server that published it; absent for filesystem skills. */
+    connector?: string;
     scope: "org" | "workspace" | "user" | "bundle";
     tokens: number;
     /** The loading mechanism: always-on context, tool-affinity, or trigger match. */
@@ -53,6 +64,12 @@ export interface ComposeAssembledContextOutput {
     ts: string | null;
     sources: AssembledContextSource[];
     excluded: AssembledContextSource[];
+    /**
+     * The recorded sum of every row in `sources`, which counts the composed skill
+     * bodies twice (once in `system_prompt`, once in `skills`). It is preserved
+     * as recorded; for the size of the context window, sum the disjoint kinds —
+     * see the invariant on `AssembledContextSource`.
+     */
     totalTokens: number;
     skills: AssembledContextSkill[];
     /** Present only when the run recorded them (not emitted on current runs). */

@@ -5,6 +5,7 @@ import {
   collectLoadedSkills,
   hashSkillBody,
 } from "../../../src/runtime/skills-loaded-payload.ts";
+import { synthesizeBundleSkill } from "../../../src/skills/bundle-skills.ts";
 import type { Skill } from "../../../src/skills/types.ts";
 import type { LoadedBy, SelectedSkill } from "../../../src/skills/select.ts";
 
@@ -144,6 +145,51 @@ describe("buildSkillsLoadedPayload", () => {
       { skill: makeSkill("t", { strategy: "dynamic" }), loadedBy: "trigger", reason: 'trigger matched "x"' },
     ]);
     expect(payload.skills.map((s) => s.layer)).toEqual([0, 3, 4]);
+  });
+
+  test("carries a filesystem skill's manifest name, with no connector", () => {
+    const payload = buildSkillsLoadedPayload([
+      selected({ manifest: { name: "release-notes" }, sourcePath: "/work/skills/release-notes.md" }),
+    ]);
+    expect(payload.skills[0]!.name).toBe("release-notes");
+    expect(payload.skills[0]!.connector).toBeUndefined();
+  });
+
+  // The identity of a connector skill namespaces its name under the publisher,
+  // so the ledger has to split it back apart. Without this the surfaces fell
+  // back to the id, whose last segment is the literal `SKILL`.
+  test("splits a connector skill's composite identity into name + connector", () => {
+    const skill = synthesizeBundleSkill({
+      serverName: "acme-mcp",
+      skillName: "billing",
+      description: "Billing playbook",
+      body: "Charge carefully.",
+      uri: "skill://acme/billing/SKILL.md",
+    });
+    const payload = buildSkillsLoadedPayload([
+      { skill, loadedBy: "tool_affinity", reason: "tool-affinity matched acme-mcp__*" },
+    ]);
+    expect(payload.skills[0]!.name).toBe("billing");
+    expect(payload.skills[0]!.connector).toBe("acme-mcp");
+    // The id stays the entrypoint URI — the name is carried, never re-derived.
+    expect(payload.skills[0]!.id).toBe("skill://acme/billing/SKILL.md");
+  });
+
+  test("two connectors publishing the same skill name stay distinguishable", () => {
+    const publish = (serverName: string) =>
+      synthesizeBundleSkill({
+        serverName,
+        skillName: "usage",
+        description: "",
+        body: `${serverName} usage`,
+        uri: `skill://${serverName}/usage/SKILL.md`,
+      });
+    const payload = buildSkillsLoadedPayload([
+      { skill: publish("granola"), loadedBy: "tool_affinity", reason: "r" },
+      { skill: publish("linear"), loadedBy: "tool_affinity", reason: "r" },
+    ]);
+    expect(payload.skills.map((s) => s.name)).toEqual(["usage", "usage"]);
+    expect(payload.skills.map((s) => s.connector)).toEqual(["granola", "linear"]);
   });
 });
 

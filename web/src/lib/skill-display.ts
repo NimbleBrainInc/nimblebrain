@@ -1,21 +1,16 @@
 /**
  * Shared display helpers for skill provenance — used by the Context Ledger
- * line and the "In context" popover so both derive names, reasons, and scope
- * colors identically.
+ * line and the "In context" popover so both label reasons, provenance, and
+ * scope colors identically.
+ *
+ * Names are NOT derived here. The runtime records each skill's own name on the
+ * `skills.loaded` event and both read paths resolve it, so a display surface
+ * renders `skill.name` directly. Deriving it from the id is what rendered every
+ * connector skill as `SKILL` (a connector skill's id is its
+ * `skill://…/SKILL.md` entrypoint).
  */
 
 import type { SkillScope } from "../_generated/platform-schemas/skills";
-
-/**
- * Human-facing skill name from an id. Filesystem ids end in `/<name>.md`;
- * URI ids look like `skill://owner/<name>`. Either way the last path segment
- * (minus any `.md`) is the name.
- */
-export function shortSkillName(id: string): string {
-  const slash = id.lastIndexOf("/");
-  const tail = slash >= 0 ? id.slice(slash + 1) : id;
-  return tail.replace(/\.md$/, "");
-}
 
 /**
  * Strip the leading mechanism word from a load reason for the compact ledger
@@ -84,8 +79,80 @@ export const SCOPE_CLASS: Record<SkillScope, string> = {
   org: "ledger-scope--org",
   workspace: "ledger-scope--workspace",
   user: "ledger-scope--user",
-  bundle: "ledger-scope--bundle",
+  bundle: "ledger-scope--connector",
 };
+
+/**
+ * What a reader is shown for a skill's tier.
+ *
+ * The wire value stays `bundle` because it is persisted on every recorded
+ * `skills.loaded` event; "connector" is the term the industry settled on for an
+ * MCP server, and in this telemetry that is exactly what the tier means (the
+ * platform's own vendored skills are excluded from the event upstream, by
+ * `collectLoadedSkills`). Note Settings → Skills reads the SAME enum value with
+ * a different meaning — there it is the built-in authoring guide, labelled
+ * "System" — so this map is per-surface, not a global rename.
+ */
+export const SCOPE_LABEL: Record<SkillScope, string> = {
+  org: "org",
+  workspace: "workspace",
+  user: "user",
+  bundle: "connector",
+};
+
+/** The subset of a ledger skill that identifies where it came from. */
+export interface SkillProvenanceInput {
+  scope: SkillScope;
+  connector?: string;
+}
+
+/**
+ * Where a skill came from, in one word: the publishing connector when there is
+ * one, otherwise its tier. Connector guidance is conventionally named for its
+ * job (`usage`, `workflows`), so several connectors' skills collide by name in
+ * a list — the publisher is what tells them apart.
+ */
+export function skillProvenanceLabel(skill: SkillProvenanceInput): string {
+  return skill.connector ?? SCOPE_LABEL[skill.scope];
+}
+
+/** Heading for a group of skills that loaded by the same mechanism. */
+export const MECHANISM_LABEL: Record<string, string> = {
+  always: "Always on",
+  tool_affinity: "Matched your tools",
+  trigger: "Matched what you said",
+};
+
+/** Mechanisms in the order they are shown: unconditional first, then matched. */
+const MECHANISM_ORDER = ["always", "tool_affinity", "trigger"];
+
+/**
+ * Group skills by why they loaded, so a list answers that once per group rather
+ * than repeating a reason string on every row (or, as before, never). Preserves
+ * input order within a group; unknown mechanisms sort last under their own raw
+ * key, so a future mechanism appears rather than vanishing.
+ */
+export function groupByMechanism<T extends { loadedBy: string }>(
+  skills: readonly T[],
+): Array<{ mechanism: string; label: string; skills: T[] }> {
+  const groups = new Map<string, T[]>();
+  for (const skill of skills) {
+    const existing = groups.get(skill.loadedBy);
+    if (existing) existing.push(skill);
+    else groups.set(skill.loadedBy, [skill]);
+  }
+  const rank = (m: string) => {
+    const i = MECHANISM_ORDER.indexOf(m);
+    return i === -1 ? MECHANISM_ORDER.length : i;
+  };
+  return [...groups.entries()]
+    .sort(([a], [b]) => rank(a) - rank(b))
+    .map(([mechanism, grouped]) => ({
+      mechanism,
+      label: MECHANISM_LABEL[mechanism] ?? mechanism,
+      skills: grouped,
+    }));
+}
 
 /** `1234` → `1.2k`, `610` → `610`. Compact token count for dense rows. */
 export function formatTokenCount(tokens: number): string {

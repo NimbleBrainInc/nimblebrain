@@ -4,8 +4,11 @@
 // The header affordance answers "what's equipping this conversation" from the
 // recorded run digest (`compose.assembled_context` — one read powers both
 // sections). Pins:
-//   1. The Budget section renders the per-source token breakdown + total.
-//   2. The Skills section renders each loaded skill with scope + tokens.
+//   1. The window section renders the three disjoint regions, nests the skills
+//      slice under the system prompt, and totals only the disjoint sum — the
+//      recorded `totalTokens` counts composed skill bodies twice.
+//   2. The Skills section groups by why each skill loaded, and names the
+//      publishing connector rather than the tier.
 //   3. A conversation with no recorded run shows the empty state.
 //
 // @testing-library/react + MemoryRouter (renders a <Link>); callTool mocked.
@@ -29,18 +32,31 @@ const DIGEST = {
   sources: [
     { kind: "system_prompt", tokens: 34685 },
     { kind: "tool_descriptions", count: 32, tokens: 4876 },
-    { kind: "skills", count: 1, tokens: 1200 },
-    { kind: "history", turns: 3, compacted: false, tokens: 30 },
+    // Not a fourth region — this measures how much of `system_prompt` the
+    // composed skill bodies account for.
+    { kind: "skills", count: 2, tokens: 2100 },
+    { kind: "history", messages: 3, compacted: false, tokens: 30 },
   ],
   excluded: [],
-  totalTokens: 40791,
+  // As recorded: the sum of all four rows, so the 2100 is in here twice.
+  totalTokens: 41691,
   skills: [
     {
       id: "/workspaces/tenant-a/skills/drafting-craft.md",
+      name: "drafting-craft",
       scope: "workspace" as const,
       tokens: 1200,
+      loadedBy: "always" as const,
+      reason: "always-on",
+    },
+    {
+      id: "skill://acme/usage/SKILL.md",
+      name: "usage",
+      connector: "acme-mcp",
+      scope: "bundle" as const,
+      tokens: 900,
       loadedBy: "tool_affinity" as const,
-      reason: "matched draft__compose",
+      reason: "tool-affinity matched acme-mcp__*",
     },
   ],
 };
@@ -82,26 +98,58 @@ function open(container: HTMLElement) {
 }
 
 describe("InContextPopover", () => {
-  test("renders the budget breakdown and the loaded skills", async () => {
+  test("renders the window breakdown with skills nested under the system prompt", async () => {
     digest = DIGEST;
     const { container } = renderPopover();
     open(container);
 
-    await waitFor(() => expect(container.textContent).toContain("Budget"));
+    await waitFor(() => expect(container.textContent).toContain("Context window"));
     const text = container.textContent ?? "";
 
-    // Budget — every source + the total.
     expect(text).toContain("System prompt");
+    expect(text).toContain("of which skills");
     expect(text).toContain("Tools");
     expect(text).toContain("32");
     expect(text).toContain("History");
-    expect(text).toContain("3 turns");
-    expect(text).toContain("Total");
-    expect(text).toContain("40.8k"); // formatTokenCount(40791)
+    // The count is messages, which is what the runtime records.
+    expect(text).toContain("3 messages");
+  });
 
-    // Skills — the loaded skill with scope.
+  test("totals the window, not the recorded sum that counts skills twice", async () => {
+    digest = DIGEST;
+    const { container } = renderPopover();
+    open(container);
+
+    await waitFor(() => expect(container.textContent).toContain("Context window"));
+    const text = container.textContent ?? "";
+
+    // 34685 + 4876 + 30 = 39591. The recorded 41691 adds the 2100 of skill
+    // bodies a second time, having already counted them inside system_prompt.
+    expect(text).toContain("39.6k");
+    expect(text).not.toContain("41.7k");
+    expect(text).toContain("In the window");
+  });
+
+  test("groups skills by why they loaded and names the publishing connector", async () => {
+    digest = DIGEST;
+    const { container } = renderPopover();
+    open(container);
+
+    await waitFor(() => expect(container.textContent).toContain("Skills"));
+    const text = container.textContent ?? "";
+
+    expect(text).toContain("Always on");
+    expect(text).toContain("Matched your tools");
+
     expect(text).toContain("drafting-craft");
     expect(text).toContain("workspace");
+
+    // The connector skill renders its own name (its id ends in `/SKILL.md`)
+    // and attributes the publisher instead of showing the wire tier.
+    expect(text).toContain("usage");
+    expect(text).toContain("acme-mcp");
+    expect(text).not.toContain("SKILL.md");
+    expect(text).not.toContain("bundle");
   });
 
   test("shows an empty state when no run has recorded context yet", async () => {

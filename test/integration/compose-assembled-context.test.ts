@@ -151,16 +151,27 @@ describe("compose__assembled_context — latest run", () => {
     expect(byKind.get("tool_descriptions")!.count).toBeGreaterThan(0);
     expect(byKind.has("skills")).toBe(true);
     const history = byKind.get("history")!;
-    expect(typeof history.turns).toBe("number");
+    // The recorded count is messages, which is what it has always been.
+    expect(typeof history.messages).toBe("number");
     expect(history.compacted).toBe(false);
 
-    // totalTokens is the sum of the recorded source tokens.
+    // totalTokens is the sum of the recorded source tokens — which is NOT the
+    // size of the context window: the composed skill bodies are inside
+    // `system_prompt`, so the `skills` row overlaps it and the sum counts them
+    // twice. Pinned here because both web surfaces depend on the distinction.
     const sum = d.sources.reduce((acc, s) => acc + s.tokens, 0);
     expect(d.totalTokens).toBe(sum);
+    const window = d.sources
+      .filter((s) => s.kind !== "skills")
+      .reduce((acc, s) => acc + s.tokens, 0);
+    expect(d.totalTokens).toBe(window + byKind.get("skills")!.tokens);
+    expect(window).toBeLessThan(d.totalTokens);
 
-    // The planted skill shows up with provenance.
+    // The planted skill shows up with provenance, named by its manifest.
     const skill = d.skills.find((s) => s.id === skillPath);
     expect(skill).toBeDefined();
+    expect(skill!.name).toBe("draft-rules");
+    expect(skill!.connector).toBeUndefined();
     expect(skill!.scope).toBe("org");
     expect(skill!.loadedBy).toBe("tool_affinity");
     expect(skill!.reason.length).toBeGreaterThan(0);

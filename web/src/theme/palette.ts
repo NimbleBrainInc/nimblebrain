@@ -89,7 +89,8 @@ export const colors = {
   "processing-light": ["#f0ecfd", "#161234"],
   "info-light": ["#eaf0ff", "#0b1a33"],
   // Skill-scope tones for the Context Ledger — one hue per tier (org /
-  // workspace / user / bundle). Shell-only (no ext-apps projection); shape and
+  // workspace / user / connector; the wire value for the connector tier is
+  // still `bundle`). Shell-only (no ext-apps projection); shape and
   // label carry the distinction too, so color never encodes it alone. Every
   // one clears 3:1 against `card` in both modes (WCAG 1.4.11) — they carry
   // information, so they are not decorative. They are also deliberately
@@ -98,7 +99,7 @@ export const colors = {
   "scope-org": ["#1d4ed8", "#7aa2f7"],
   "scope-workspace": ["#0e7490", "#4dd0e1"],
   "scope-user": ["#7c3aed", "#b79bfc"],
-  "scope-bundle": ["#a13d0f", "#f0894f"],
+  "scope-connector": ["#a13d0f", "#f0894f"],
   sidebar: ["#fafafa", "#08080a"],
   "sidebar-foreground": ["#5c5c66", "#9b9ba4"],
   "sidebar-border": ["#e4e4e7", "#232326"],

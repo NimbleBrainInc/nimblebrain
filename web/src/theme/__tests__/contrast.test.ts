@@ -138,7 +138,7 @@ const TEXT_PAIRS: [fg: TokenName, bg: TokenName, where: string][] = [
   ["scope-org", "card", "org scope label"],
   ["scope-workspace", "card", "workspace scope label"],
   ["scope-user", "card", "user scope label"],
-  ["scope-bundle", "card", "bundle scope label"],
+  ["scope-connector", "card", "connector scope label"],
 ];
 
 describe("palette contrast — derived <x>-foreground on <x>", () => {
@@ -229,10 +229,10 @@ describe("palette contrast — WCAG 2.2", () => {
 
   // `palette.ts` states the scope tiers are "deliberately distinct from
   // `primary` and from every status hue". Round 2 found that violated —
-  // `scope-org` was byte-identical to `primary`, `scope-bundle` to the warning
+  // `scope-org` was byte-identical to `primary`, `scope-connector` to the warning
   // amber — and the fix changed the values and wrote the rule as prose.
   // Contrast still passes when they collapse, so only this catches a repeat.
-  const SCOPES: TokenName[] = ["scope-org", "scope-workspace", "scope-user", "scope-bundle"];
+  const SCOPES: TokenName[] = ["scope-org", "scope-workspace", "scope-user", "scope-connector"];
   const RESERVED: TokenName[] = ["primary", "success", "warning", "destructive", "processing"];
   for (const mode of ["light", "dark"] as const) {
     for (const scope of SCOPES) {

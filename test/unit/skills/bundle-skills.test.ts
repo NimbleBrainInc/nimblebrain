@@ -9,7 +9,9 @@
 
 import { describe, expect, test } from "bun:test";
 import {
+  connectorSkillManifestName,
   isSkillEntrypointUri,
+  parseConnectorSkillName,
   parseSkillMarkdown,
   synthesizeBundleSkill,
 } from "../../../src/skills/bundle-skills.ts";
@@ -75,6 +77,47 @@ describe("parseSkillMarkdown", () => {
     const parsed = parseSkillMarkdown("skill://bad/SKILL.md", raw);
     expect(parsed.loadingStrategy).toBeUndefined();
     expect(parsed.priority).toBeUndefined();
+  });
+});
+
+describe("connector skill identity round-trip", () => {
+  test("parse inverts compose", () => {
+    const name = connectorSkillManifestName("ai-nimblebrain-foo-mcp", "billing");
+    expect(parseConnectorSkillName(name)).toEqual({
+      connector: "ai-nimblebrain-foo-mcp",
+      name: "billing",
+    });
+  });
+
+  test("reads back what synthesizeBundleSkill stamped", () => {
+    const skill = synthesizeBundleSkill({
+      serverName: "com-canva-mcp",
+      skillName: "design",
+      description: "",
+      body: "x",
+      uri: "skill://canva/design/SKILL.md",
+    });
+    expect(parseConnectorSkillName(skill.manifest.name)).toEqual({
+      connector: "com-canva-mcp",
+      name: "design",
+    });
+  });
+
+  // On-disk skill names can't contain a colon (SKILL_NAME_PATTERN), so no
+  // filesystem skill can be mistaken for a connector's.
+  test("returns null for a name this module did not build", () => {
+    expect(parseConnectorSkillName("release-notes")).toBeNull();
+    expect(parseConnectorSkillName("identity-override")).toBeNull();
+    expect(parseConnectorSkillName("bundle:")).toBeNull();
+    expect(parseConnectorSkillName("bundle::name")).toBeNull();
+    expect(parseConnectorSkillName("bundle:connector:")).toBeNull();
+  });
+
+  test("a skill name containing a colon keeps its whole tail", () => {
+    expect(parseConnectorSkillName("bundle:acme:billing:refunds")).toEqual({
+      connector: "acme",
+      name: "billing:refunds",
+    });
   });
 });
 

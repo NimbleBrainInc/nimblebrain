@@ -817,6 +817,28 @@ export function createChatStore(): ChatStore {
     flush(slice);
   }
 
+  /**
+   * One untrusted stream entry → a ledger row, every field defaulted.
+   *
+   * `name` falling back to the id is a malformed-frame guard, not the legacy
+   * path: the runtime stamps `name` on every entry it emits, and events
+   * recorded before that field existed reach the UI only through replay, where
+   * the conversations bundle resolves a name before this ever sees them.
+   */
+  function toLedgerSkill(s: Record<string, unknown>): LedgerSkill {
+    return {
+      id: s.id as string,
+      name: typeof s.name === "string" && s.name ? s.name : (s.id as string),
+      ...(typeof s.connector === "string" && s.connector ? { connector: s.connector } : {}),
+      scope: (typeof s.scope === "string" ? s.scope : "org") as LedgerSkill["scope"],
+      tokens: typeof s.tokens === "number" ? s.tokens : 0,
+      loadedBy: (typeof s.loadedBy === "string"
+        ? s.loadedBy
+        : "tool_affinity") as LedgerSkill["loadedBy"],
+      reason: typeof s.reason === "string" ? s.reason : "",
+    };
+  }
+
   function handleSkillsLoaded(slice: ConversationSlice, data: unknown): void {
     // The stream frame is untrusted `unknown`; normalize each entry the same way
     // the reopen path does (`projectSkillsLoaded` in the conversations bundle) so
@@ -827,15 +849,7 @@ export function createChatStore(): ChatStore {
     const rawEntries = Array.isArray(evt.skills) ? (evt.skills as Record<string, unknown>[]) : [];
     const skills: LedgerSkill[] = rawEntries
       .filter((s) => !!s && typeof s.id === "string")
-      .map((s) => ({
-        id: s.id as string,
-        scope: (typeof s.scope === "string" ? s.scope : "org") as LedgerSkill["scope"],
-        tokens: typeof s.tokens === "number" ? s.tokens : 0,
-        loadedBy: (typeof s.loadedBy === "string"
-          ? s.loadedBy
-          : "tool_affinity") as LedgerSkill["loadedBy"],
-        reason: typeof s.reason === "string" ? s.reason : "",
-      }));
+      .map(toLedgerSkill);
     if (skills.length === 0) return;
     const totalTokens =
       typeof evt.totalTokens === "number"

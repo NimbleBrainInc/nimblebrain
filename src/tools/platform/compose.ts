@@ -52,6 +52,7 @@ import {
 import { getRequestContext } from "../../runtime/request-context.ts";
 import { makeIdentitySkill, type Runtime } from "../../runtime/runtime.ts";
 import { hashSkillBody } from "../../runtime/skills-loaded-payload.ts";
+import { skillDisplayName } from "../../skills/display-name.ts";
 import { parseSkillContent } from "../../skills/loader.ts";
 import { partitionSkillsByRole, selectLayer3Skills } from "../../skills/select.ts";
 import type { InProcessTool } from "../in-process-app.ts";
@@ -85,7 +86,11 @@ const COMPOSE_DESCRIPTION =
 const ASSEMBLED_CONTEXT_DESCRIPTION =
   "Return the recorded context digest for a conversation's run — the per-source " +
   "token breakdown (system prompt, tool descriptions, layer-3 skills, history) " +
-  "and the layer-3 skills that loaded, with provenance. Defaults to the most " +
+  "and the layer-3 skills that loaded, with provenance. Note the `skills` row " +
+  "annotates a slice of `system_prompt` (composed skill bodies live inside it), " +
+  "so the context window is system_prompt + tool_descriptions + history and " +
+  "`totalTokens` counts the skills twice. " +
+  "Defaults to the most " +
   "recent run; pass `run_id` for a specific one. A pure read of the run's " +
   "already-emitted `context.assembled` + `skills.loaded` events — no " +
   "recomposition. Read-only. Use this to answer 'what entered this turn's " +
@@ -468,26 +473,53 @@ function findLatestContextAssembled(
   return undefined;
 }
 
-/** Project a recorded context source onto the wire shape (drops unknown extras). */
+/**
+ * Project a recorded context source onto the wire shape (drops unknown extras).
+ * A history row recorded before the field was renamed carries its message count
+ * as `turns`; normalize it so readers only handle `messages`.
+ */
 function toAssembledSource(s: ContextAssembledEvent["sources"][number]): AssembledContextSource {
+  const messages = typeof s.messages === "number" ? s.messages : s.turns;
   return {
     kind: s.kind,
     tokens: s.tokens,
     ...(typeof s.count === "number" ? { count: s.count } : {}),
-    ...(typeof s.turns === "number" ? { turns: s.turns } : {}),
+    ...(typeof messages === "number" ? { messages } : {}),
     ...(typeof s.compacted === "boolean" ? { compacted: s.compacted } : {}),
   };
 }
 
-/** Project a recorded skill entry onto the wire shape. */
+/**
+ * Project a recorded skill entry onto the wire shape. `name` is resolved here
+ * rather than passed through, so every consumer of this tool — the web
+ * surfaces and any agent reading `structuredContent` — gets a usable name even
+ * for runs recorded before the field existed.
+ */
 function toAssembledSkill(s: SkillsLoadedEvent["skills"][number]): AssembledContextSkill {
   return {
     id: s.id,
+    name: skillDisplayName(s),
+    ...(s.connector ? { connector: s.connector } : {}),
     scope: s.scope,
     tokens: s.tokens,
     loadedBy: s.loadedBy,
     reason: s.reason,
   };
+}
+
+/**
+ * Budget kinds that occupy disjoint regions of the context window. `skills` is
+ * excluded deliberately: composed skill bodies live INSIDE `system_prompt`, so
+ * its row annotates a slice rather than adding a region. See the invariant on
+ * `AssembledContextSource`.
+ */
+const CONTEXT_WINDOW_KINDS = new Set(["system_prompt", "tool_descriptions", "history"]);
+
+/** Tokens actually occupying the context window, without the `skills` overlap. */
+function contextWindowTokens(sources: AssembledContextSource[]): number {
+  return sources
+    .filter((s) => CONTEXT_WINDOW_KINDS.has(s.kind))
+    .reduce((sum, s) => sum + s.tokens, 0);
 }
 
 /** Human-readable text summary for the tool's `content` block. */
@@ -498,14 +530,16 @@ function formatAssembledSummary(d: ComposeAssembledContextOutput): string {
   const sourceLines = d.sources.map((s) => {
     const detail: string[] = [];
     if (typeof s.count === "number") detail.push(`${s.count}`);
-    if (typeof s.turns === "number") detail.push(`${s.turns} turns`);
+    if (typeof s.messages === "number") detail.push(`${s.messages} messages`);
     if (s.compacted) detail.push("compacted");
     const suffix = detail.length > 0 ? ` (${detail.join(", ")})` : "";
     return `  ${s.kind}: ${s.tokens} tok${suffix}`;
   });
   return [
-    `Assembled context for run ${d.runId} (${d.totalTokens} tok total):`,
+    `Assembled context for run ${d.runId} (${contextWindowTokens(d.sources)} tok in the window):`,
     ...sourceLines,
+    `  (skills is a slice of system_prompt, not a fourth region — the window is`,
+    `   system_prompt + tool_descriptions + history)`,
     `  layer-3 skills loaded: ${d.skills.length}`,
   ].join("\n");
 }

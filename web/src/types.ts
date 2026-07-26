@@ -277,9 +277,19 @@ export type LedgerSkillScope = "org" | "workspace" | "user" | "bundle";
  * carries `layer`, `version`, `contentHash`) — the ledger only needs
  * provenance and cost. `loadedBy` is the loading mechanism; the drawer shows
  * the verbatim `reason` instead, so extra future mechanisms need no UI change.
+ *
+ * `name` is required here even though the wire field is optional: every path
+ * that reaches this type resolves it — the live event carries it from
+ * `buildSkillsLoadedPayload`, and both read paths (the `compose` tool and the
+ * conversations bundle's replay projection) fill it in for runs recorded before
+ * the field existed. That is what lets a renderer print `skill.name` instead of
+ * picking a name out of `id`.
  */
 export interface LedgerSkill {
   id: string;
+  name: string;
+  /** The MCP server that published it; absent for filesystem skills. */
+  connector?: string;
   scope: LedgerSkillScope;
   tokens: number;
   loadedBy: "always" | "tool_affinity" | "trigger";
