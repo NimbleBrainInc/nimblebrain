@@ -1,6 +1,10 @@
-# Test fixture — representative Composio-backed catalog entry. Not
-# shipped. Pins the `_meta.composio` block shape and the
-# COMPOSIO_<TOOLKIT>_AUTH_CONFIG_ID env-var naming convention. Split
+# Test fixture — representative Composio-backed catalog entries. Not
+# shipped. Pins the `_meta.composio` block shape in both forms the
+# contract admits: `io.linear/mcp` carries `toolkit` alone, the shape
+# authors write, whose `ac_…` id is deployment config keyed by that
+# slug; `io.asana/mcp` additionally carries the legacy `authConfigEnv`,
+# which is still read as a per-toolkit fallback and must match the
+# COMPOSIO_<TOOLKIT>_AUTH_CONFIG_ID convention while it exists. Split
 # into its own file so tests also exercise StaticSource directory
 # aggregation across multiple catalog files.
 servers:
@@ -28,3 +32,24 @@ servers:
         # personal catalog now admits composio (not DCR-only). Composio's `auth`
         # is unchanged, so the DCR rot-detector still skips this entry.
         personal: true
+  # The shape `deploy/composio.mdx` tells authors to write: no `authConfigEnv`,
+  # the id declared under `connectors.providers.composio.authConfigs.linear`.
+  - name: io.linear/mcp
+    title: Linear
+    description: Issues, projects, and cycles
+    version: "0.1.0"
+    icons:
+      - src: https://static.nimblebrain.ai/icons/linear.png
+        sizes: ["any"]
+    remotes:
+      - type: streamable-http
+        url: https://backend.composio.dev/v3/mcp
+    _meta:
+      ai.nimblebrain/connector:
+        auth: composio
+        composio:
+          toolkit: linear
+          tools:
+            - LINEAR_CREATE_ISSUE
+            - LINEAR_LIST_ISSUES
+        tags: [tasks, projects, composio]

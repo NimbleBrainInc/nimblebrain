@@ -73,7 +73,7 @@ Declare that id in `nimblebrain.json`, keyed by the toolkit slug the catalog ent
 
 An `ac_…` is an identifier, not a secret — it is inert without the API key — so it belongs in config next to the toolkits it names, not in your secret store. Add a toolkit by adding a line here and a catalog entry; there is no third place to keep in sync.
 
-A toolkit with no entry here falls back to the environment variable named by its catalog entry's legacy `composio.authConfigEnv` (`COMPOSIO_GMAIL_AUTH_CONFIG_ID` and friends). That fallback exists so a running deployment keeps working while its ids move into the block, and will be removed — declare them here.
+A toolkit with no entry here falls back to the environment variable named by its catalog entry's legacy `composio.authConfigEnv` (`COMPOSIO_GMAIL_AUTH_CONFIG_ID` and friends). That fallback exists so a running deployment keeps working while its ids move into the block. Whenever it is the value's actual source the runtime logs a deprecation warning naming the toolkit — grep your logs for `[composio]` to see which toolkits are still to migrate. Both the fallback and the field will be removed ([#789](https://github.com/NimbleBrainInc/nimblebrain/issues/789)).
 
 ### 4. White-label the Composio consent screen (optional)
 

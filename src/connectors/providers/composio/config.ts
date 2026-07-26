@@ -163,6 +163,7 @@ function monitorEnabledFromEnv(): boolean {
  */
 export function _resetComposioConfigForTest(): void {
   _cached = undefined;
+  _warnedLegacyToolkits.clear();
 }
 
 /**
@@ -170,9 +171,11 @@ export function _resetComposioConfigForTest(): void {
  * legacy environment variable the catalog entry names.
  *
  * The env arm is a **migration fallback**, kept so a deploy that still sets
- * `COMPOSIO_<TOOLKIT>_AUTH_CONFIG_ID` keeps working across the upgrade. It goes
- * away with `authConfigEnv` once no deployment relies on it; the declared block
- * is the destination.
+ * `COMPOSIO_<TOOLKIT>_AUTH_CONFIG_ID` keeps working across the upgrade. It warns
+ * once per toolkit when it is the value's actual source, so an operator migrates
+ * before #789 removes it — and so the toolkits still on env are visible in logs
+ * *before* the catalog stops naming the variable, which is the moment the
+ * fallback silently stops firing for anything missed.
  *
  * Reads the declared block directly rather than routing through
  * `validateComposioConfig`, whose unconfigured early-return would zero this
@@ -182,5 +185,21 @@ export function _resetComposioConfigForTest(): void {
 export function composioAuthConfigId(toolkit: string, legacyEnvVar?: string): string {
   const declared = declaredProviderConfig("composio")?.authConfigs?.[toolkit]?.trim();
   if (declared) return declared;
-  return (legacyEnvVar ? process.env[legacyEnvVar]?.trim() : undefined) ?? "";
+
+  const legacy = (legacyEnvVar ? process.env[legacyEnvVar]?.trim() : undefined) ?? "";
+  if (legacy) warnLegacyAuthConfigEnv(toolkit, legacyEnvVar as string);
+  return legacy;
+}
+
+/** Toolkits already warned about, so a per-install resolution doesn't spam. */
+const _warnedLegacyToolkits = new Set<string>();
+
+function warnLegacyAuthConfigEnv(toolkit: string, envVar: string): void {
+  if (_warnedLegacyToolkits.has(toolkit)) return;
+  _warnedLegacyToolkits.add(toolkit);
+  log.warn(
+    `[composio] ${envVar} supplied the auth config id for "${toolkit}"; this fallback is ` +
+      `deprecated and slated for removal (#789). Set connectors.providers.composio.authConfigs.${toolkit} ` +
+      "in nimblebrain.json instead.",
+  );
 }
