@@ -113,22 +113,22 @@ describe("personal-connector surfacing", () => {
     const names = await toolNames(SHARED_WS, DEV_IDENTITY.id);
 
     // Granted → bare identity-door form.
-    expect(names).toContain("granola__read_notes");
+    expect(names).toContain("my-granola__read_notes");
     // Ungranted → absent (deny by default).
-    expect(names).not.toContain("notion__read");
+    expect(names).not.toContain("my-notion__read");
     // A personal connector is never surfaced namespaced (that would hit the wall).
     expect(names).not.toContain(`${SHARED_WS}-granola__read_notes`);
     // Additive: the room's own tools and the kernel identity tools remain.
-    expect(names).toContain("ws_helix-crm__search");
+    expect(names).toContain("crm__search");
     expect(names).toContain("conversations__list");
   });
 
   it("surfaces no personal connectors without an identity, even when granted", async () => {
     const names = await toolNames(SHARED_WS);
-    expect(names).not.toContain("granola__read_notes");
-    expect(names).not.toContain("notion__read");
+    expect(names).not.toContain("my-granola__read_notes");
+    expect(names).not.toContain("my-notion__read");
     // Workspace + kernel identity tools are unaffected.
-    expect(names).toContain("ws_helix-crm__search");
+    expect(names).toContain("crm__search");
   });
 
   it("in the owner's own personal workspace: bare + grant-gated, never namespaced (no free-at-home)", async () => {
@@ -137,10 +137,10 @@ describe("personal-connector surfacing", () => {
     try {
       const names = await toolNames(personalWs, DEV_IDENTITY.id);
       // Granted → bare; never namespaced.
-      expect(names).toContain("granola__read_notes");
+      expect(names).toContain("my-granola__read_notes");
       expect(names).not.toContain(`${personalWs}-granola__read_notes`);
       // notion is NOT granted to the personal workspace → absent (no free-at-home).
-      expect(names).not.toContain("notion__read");
+      expect(names).not.toContain("my-notion__read");
     } finally {
       await runtime.getPermissionStore().revokeConnector(DEV_IDENTITY.id, "granola", personalWs);
     }
@@ -157,7 +157,7 @@ describe("personal-connector surfacing", () => {
       runtime,
     });
     const names = (await router.availableTools()).map((t) => t.name);
-    expect(names).toContain("granola__read_notes"); // granted
-    expect(names).not.toContain("notion__read"); // ungranted
+    expect(names).toContain("my-granola__read_notes"); // granted
+    expect(names).not.toContain("my-notion__read"); // ungranted
   });
 });

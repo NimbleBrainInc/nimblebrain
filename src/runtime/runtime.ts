@@ -129,7 +129,6 @@ import {
   personalConnectorWireName,
 } from "../tools/identity-sources.ts";
 import { McpSource } from "../tools/mcp-source.ts";
-import { namespacedToolName } from "../tools/namespace.ts";
 import { SharedSourceRef, type ToolRegistry } from "../tools/registry.ts";
 import { surfaceTools } from "../tools/surfacing.ts";
 import { createSystemTools } from "../tools/system-tools.ts";
@@ -645,7 +644,7 @@ export class Runtime {
           ...focusedTools
             .filter((t) => isToolVisibleToRole(t.name, orgRole))
             .map((t) => ({
-              name: namespacedToolName(wsId, t.name),
+              name: t.name,
               description: t.description,
               inputSchema: t.inputSchema,
               ...(t.annotations !== undefined ? { annotations: t.annotations } : {}),
@@ -1292,7 +1291,7 @@ export class Runtime {
       ...focusedTools
         .filter((t) => isToolVisibleToRole(t.name, requestIdentity.orgRole))
         .map((t) => ({
-          name: namespacedToolName(toolsWsId, t.name),
+          name: t.name,
           description: t.description,
           inputSchema: t.inputSchema,
           ...(t.annotations !== undefined ? { annotations: t.annotations } : {}),
@@ -1735,7 +1734,7 @@ export class Runtime {
       ...focusedTools
         .filter((t) => isToolVisibleToRole(t.name, requestIdentity.orgRole))
         .map((t) => ({
-          name: namespacedToolName(workWsId, t.name),
+          name: t.name,
           description: t.description,
           inputSchema: t.inputSchema,
           ...(t.annotations !== undefined ? { annotations: t.annotations } : {}),
@@ -2222,12 +2221,14 @@ export class Runtime {
         }
       : undefined;
 
-    // The focused-app match key is the WORKSPACE-PREFIXED source name: tools land
-    // in the active list as `ws_<id>-<source>__<tool>`, and
-    // `surfaceTools.focusedServerName` matches with `t.name.startsWith(prefix + "__")`.
-    // Build via the namespace primitive (single legal construction site for
-    // `ws_<id>-<...>` per `check:tool-namespace`).
-    const focusedNamespaced = namespacedToolName(appWsId, appContext.serverName);
+    // The focused-app match key is the BARE source name. Tools land in the active
+    // list as `<source>__<tool>`, and `surfaceTools.focusedServerName` matches with
+    // `t.name.startsWith(prefix + "__")` — so the key has to be exactly what the
+    // emitted names now carry. A `ws_<id>-` prefixed key would match nothing, and
+    // the failure is silent: no tool would be recognised as belonging to the
+    // focused app, so the app-aware briefing would quietly describe an app whose
+    // tools it thinks are absent.
+    const focusedNamespaced = appContext.serverName;
 
     return { focusedApp, focusedAppWsId: appWsId, appState, focusedNamespaced };
   }
