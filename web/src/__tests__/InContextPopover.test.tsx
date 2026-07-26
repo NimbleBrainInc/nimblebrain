@@ -34,7 +34,7 @@ const DIGEST = {
     { kind: "tool_descriptions", count: 32, tokens: 4876 },
     // Not a fourth region — this measures how much of `system_prompt` the
     // composed skill bodies account for.
-    { kind: "skills", count: 2, tokens: 2100 },
+    { kind: "skills", count: 2, tokens: 2100, annotation: true },
     { kind: "history", messages: 3, compacted: false, tokens: 30 },
   ],
   excluded: [],

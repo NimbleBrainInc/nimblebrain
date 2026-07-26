@@ -357,9 +357,9 @@ async function composeHistorical(
   }
 
   const skillsLoaded = findSkillsLoaded(events, runId);
-  // `context.assembled` is read for `totalTokens` only — the run's full
-  // prompt token count is the honest answer for historical mode (vs. just
-  // the L3 sum from skillsLoaded). The event's other fields (per-source
+  // `context.assembled` is read for the run's size only — how much of the
+  // window the turn occupied is the honest answer for historical mode (vs.
+  // just the L3 sum from skillsLoaded). The event's other fields (per-source
   // breakdown, exclusions) are recorded but intentionally not surfaced
   // here; the L3-only view is the design contract for historical mode v1,
   // and surfacing the rest would imply we can reconstruct the layers we
@@ -385,11 +385,20 @@ async function composeHistorical(
   const l3 = skillsLoaded ? buildLayer3Layer(skillsLoaded, runId, warnings) : null;
   const layers: TracedLayer[] = l3 ? [l3.layer] : [];
 
-  // Prefer context.assembled's total (the full run prompt) when present and
-  // non-zero; else fall back to the L3 entry-token sum (0 when no skills
-  // loaded). skillsLoaded.totalTokens is just the L3 sum, so the layer's own
-  // `tokens` carries it while the response total prefers the run-wide count.
-  const totalTokens = contextAssembled?.totalTokens || l3?.entryTokensSum || 0;
+  // Prefer the run's recorded size when present and non-zero; else fall back
+  // to the L3 entry-token sum (0 when no skills loaded). skillsLoaded.totalTokens
+  // is just the L3 sum, so the layer's own `tokens` carries it while the response
+  // total prefers the run-wide count.
+  //
+  // That run-wide count is `windowTokens`, NOT the event's recorded
+  // `totalTokens`: the latter sums a `skills` row that annotates part of
+  // `system_prompt`, so it counts the composed skill bodies twice. A caller
+  // budgeting context off this field would over-estimate the turn by the size
+  // of its skills.
+  const recordedWindow = contextAssembled
+    ? contextWindowTokens(contextAssembled.sources.map(toAssembledSource))
+    : 0;
+  const totalTokens = recordedWindow || l3?.entryTokensSum || 0;
 
   return {
     mode: "historical",
@@ -479,7 +488,9 @@ function findLatestContextAssembled(
 /**
  * Project a recorded context source onto the wire shape (drops unknown extras).
  * A history row recorded before the field was renamed carries its message count
- * as `turns`; normalize it so readers only handle `messages`.
+ * as `turns`; normalize it so readers only handle `messages`. `annotation` is
+ * stamped from the same set `windowTokens` is summed over, so a renderer's row
+ * layout and the total under it can't be derived from different rules.
  */
 function toAssembledSource(s: ContextAssembledEvent["sources"][number]): AssembledContextSource {
   const messages = typeof s.messages === "number" ? s.messages : s.turns;
@@ -489,6 +500,7 @@ function toAssembledSource(s: ContextAssembledEvent["sources"][number]): Assembl
     ...(typeof s.count === "number" ? { count: s.count } : {}),
     ...(typeof messages === "number" ? { messages } : {}),
     ...(typeof s.compacted === "boolean" ? { compacted: s.compacted } : {}),
+    ...(ANNOTATION_KINDS.has(s.kind) ? { annotation: true } : {}),
   };
 }
 
@@ -519,15 +531,18 @@ function toAssembledSkill(s: SkillsLoadedEvent["skills"][number]): AssembledCont
  * Stated as the annotation set so a source kind added later counts toward the
  * window by default; an allowlist of regions would silently drop it.
  *
- * This is the only place the arithmetic runs. The answer ships as
- * `windowTokens` on the response, so no consumer re-derives it — a second copy
- * on the web tier would be a number that can disagree with the tool's own.
+ * This is the only place the rule is written down. `toAssembledSource` stamps
+ * each row's `annotation` from it, and both the window total below and every
+ * renderer's row layout read that stamp — so the number and the rows it sits
+ * under can never come from two different rules. A copy of this set on another
+ * tier could draw a region row whose tokens are missing from the total printed
+ * beneath it.
  */
 const ANNOTATION_KINDS = new Set(["skills"]);
 
 /** Tokens actually occupying the context window, without the annotation rows. */
 function contextWindowTokens(sources: AssembledContextSource[]): number {
-  return sources.filter((s) => !ANNOTATION_KINDS.has(s.kind)).reduce((sum, s) => sum + s.tokens, 0);
+  return sources.filter((s) => !s.annotation).reduce((sum, s) => sum + s.tokens, 0);
 }
 
 /** Human-readable text summary for the tool's `content` block. */

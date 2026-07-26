@@ -298,10 +298,14 @@ function BudgetBar({
           caveat is spelled out because these four cards still read as peers;
           the nesting becomes structural when the bar and the layer list merge
           into one tree. */}
+      {/* The caveat holds whatever is filtered — it explains the cards, and
+          selecting one doesn't stop them reading as four peers. Only the
+          filter hint swaps. */}
       <div className="mt-1.5 text-3xs text-muted-foreground">
+        Skills are composed into the system prompt, not a region beside it ·{" "}
         {active
-          ? `Filtered to ${SOURCE_LABEL[active] ?? active} · click again to clear`
-          : "Skills are composed into the system prompt, not a region beside it · click System prompt or Skills to filter the layers"}
+          ? `filtered to ${SOURCE_LABEL[active] ?? active}, click again to clear`
+          : "click System prompt or Skills to filter the layers"}
       </div>
     </div>
   );

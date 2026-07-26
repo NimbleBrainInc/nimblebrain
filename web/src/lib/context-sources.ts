@@ -18,26 +18,27 @@ export const SOURCE_LABEL: Record<string, string> = {
 };
 
 /**
- * Kinds that ANNOTATE another row rather than occupying the window themselves.
+ * Sources that occupy the window, in canonical display order.
  *
- * `skills` is one: composed skill bodies live INSIDE the system prompt, so that
- * row measures a slice of `system_prompt` rather than adding a region. See the
- * invariant documented on `AssembledContextSource`.
- *
- * Used ONLY to decide which rows lay out as regions. The window *total* is not
- * computed here — it arrives as `windowTokens` on the digest, so the number on
- * screen is the tool's own and can't drift from it. Stated as the annotation
- * set rather than an allowlist of regions so a kind added later renders by
- * default instead of vanishing.
+ * Which rows are regions and which annotate another row is the server's call —
+ * it stamps `annotation` on each row from the same set it sums `windowTokens`
+ * over. Reading the stamp rather than keeping a local list of annotation kinds
+ * is what keeps these rows and the total printed under them in agreement; a
+ * second copy of that list here could render a region whose tokens aren't in
+ * the figure below it.
  */
-const ANNOTATION_KINDS = new Set(["skills"]);
-
-/** Sources that occupy the window, in canonical display order. */
-export function windowSources<T extends { kind: string }>(sources: readonly T[]): T[] {
-  return orderedSources(sources).filter((s) => !ANNOTATION_KINDS.has(s.kind));
+export function windowSources<T extends { kind: string; annotation?: boolean }>(
+  sources: readonly T[],
+): T[] {
+  return orderedSources(sources).filter((s) => !s.annotation);
 }
 
-/** The `skills` annotation row, when the run recorded one. */
+/**
+ * The `skills` annotation row, when the run recorded one. Keyed by kind, not by
+ * the `annotation` stamp: this is the row the popover nests under the system
+ * prompt specifically, which is a fact about skills, not about annotations in
+ * general.
+ */
 export function skillsSlice<T extends { kind: string }>(sources: readonly T[]): T | undefined {
   return sources.find((s) => s.kind === "skills");
 }

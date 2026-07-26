@@ -75,6 +75,16 @@ export interface AssembledContextSource {
   /** `history`: how many messages the windowed history holds. */
   messages?: number;
   compacted?: boolean;
+  /**
+   * True when this row measures part of another row rather than adding a
+   * region of its own — `skills` inside `system_prompt` today.
+   *
+   * Stamped here so a renderer can lay the rows out without carrying its own
+   * copy of which kinds are annotations. Without it, a kind added on one tier
+   * only would draw a region row whose tokens are absent from the
+   * `windowTokens` printed beneath it.
+   */
+  annotation?: boolean;
 }
 
 /**

@@ -17,7 +17,7 @@ import { skillsSlice, sourceDetail, windowSources } from "../lib/context-sources
 const RECORDED = [
   { kind: "system_prompt", tokens: 9600 },
   { kind: "tool_descriptions", count: 32, tokens: 4900 },
-  { kind: "skills", count: 7, tokens: 6200 },
+  { kind: "skills", count: 7, tokens: 6200, annotation: true },
   { kind: "history", messages: 1, compacted: false, tokens: 1 },
 ];
 
@@ -30,11 +30,22 @@ describe("windowSources", () => {
     ]);
   });
 
-  test("keeps an unknown kind, sorted last", () => {
+  // The server stamps `annotation`, so a kind this tier has never heard of
+  // renders as a region by default rather than being dropped by a local list.
+  test("keeps an unknown unstamped kind, sorted last", () => {
     const kinds = windowSources([...RECORDED, { kind: "memory_seed", tokens: 310 }]).map(
       (s) => s.kind,
     );
     expect(kinds).toEqual(["system_prompt", "tool_descriptions", "history", "memory_seed"]);
+  });
+
+  // ...and a future annotation is hidden without this tier knowing its name.
+  test("drops any row the server stamped, whatever its kind", () => {
+    const kinds = windowSources([
+      ...RECORDED,
+      { kind: "memory_seed", tokens: 310, annotation: true },
+    ]).map((s) => s.kind);
+    expect(kinds).toEqual(["system_prompt", "tool_descriptions", "history"]);
   });
 });
 

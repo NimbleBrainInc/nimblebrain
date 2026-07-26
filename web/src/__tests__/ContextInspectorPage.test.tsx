@@ -32,7 +32,7 @@ const DIGEST = {
   sources: [
     { kind: "system_prompt", tokens: 34685 },
     { kind: "tool_descriptions", count: 32, tokens: 4876 },
-    { kind: "skills", count: 1, tokens: 3369 },
+    { kind: "skills", count: 1, tokens: 3369, annotation: true },
     { kind: "history", messages: 3, compacted: false, tokens: 30 },
   ],
   excluded: [],
