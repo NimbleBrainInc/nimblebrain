@@ -125,7 +125,7 @@ const SSE_ROUTES: Partial<Record<EngineEventType, SseRoute>> = {
  * are stored as separate fields). A namespaced `server` never matches, so the
  * iframe would only refresh on remount (the "click off and back" symptom).
  * Stripping the prefix also restores the `nb` system-tool guard:
- * `ws_<id>-nb__x` → `nb__x` → server `nb`, which we skip (system tools don't
+ * a replayed `ws_<id>-nb__x` → `nb__x` → server `nb`, which we skip (system tools don't
  * mutate app data, and broadcasting for them re-fetches every streaming chunk).
  *
  * `data.changed` remains workspace-blind (`scope: "global"`, matched on bare

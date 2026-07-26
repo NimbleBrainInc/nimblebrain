@@ -939,6 +939,10 @@ function toCallToolResult(result: ToolResult) {
  * arrive as `WorkspaceAccessDenied` and share the `workspace_access_denied`
  * reason.)
  */
+// Exported for `test/unit/orchestrator/personal-connector-marker-mapping.test.ts`,
+// which asserts both doors report the same `data.reason`. Testing the mapper
+// directly is the only way to catch an error class that is thrown but unmapped —
+// a route-layer assertion passes while the caller still receives nothing.
 export function mapRouteToolError(err: unknown): never {
   if (err instanceof UnknownNamespacedToolName) {
     throw new McpError(ErrorCode.InvalidParams, `Invalid tool name: expected <source>__<tool>`, {

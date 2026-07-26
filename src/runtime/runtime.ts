@@ -1309,7 +1309,7 @@ export class Runtime {
           ...(t.annotations !== undefined ? { annotations: t.annotations } : {}),
         })),
     ];
-    // `focusedServerName` (the WORKSPACE-PREFIXED source name that
+    // `focusedServerName` (the BARE source name that
     // `surfaceTools.focusedServerName` matches) is computed in `resolveFocusedApp`.
     const { direct: tools, proxied } = surfaceTools(
       allTools,
@@ -2963,35 +2963,6 @@ export class Runtime {
    * resolves an MCP-backed personal connector, not a kernel source. Returns
    * `undefined` when the user has no such connector installed.
    */
-  /**
-   * The identity-connector record store, built once.
-   *
-   * It is stateless over `workDir`, so constructing one per call was pure waste
-   * on the dispatch path. Hoisted — but deliberately NOT paired with a memo of
-   * the installed names.
-   *
-   * A process-lifetime memo would fail OPEN on the case this exists to catch: a
-   * user installs a personal `gmail` after the memo warms, the collision check
-   * misses, and the call dispatches to the workspace's account — the precise
-   * silent misroute the check was added to prevent. Correctness on a credential
-   * boundary outranks one small local read, and the read is a few hundred
-   * microseconds against a tool dispatch that is orders of magnitude slower. If
-   * this ever shows up in a profile, scope the memo to a REQUEST (it cannot go
-   * stale inside one) rather than to the process.
-   */
-  private _identityConnectorsStore: IdentityConnectorStore | undefined;
-
-  /**
-   * Lazy, NOT a field initializer: class fields run before the constructor body,
-   * so calling `getWorkDir()` there reads config that is not set yet.
-   */
-  private get _identityConnectors(): IdentityConnectorStore {
-    this._identityConnectorsStore ??= new IdentityConnectorStore({
-      workDir: this.getWorkDir(),
-    });
-    return this._identityConnectorsStore;
-  }
-
   async getIdentityConnectorSource(userId: string, name: string): Promise<ToolSource | undefined> {
     return this.lifecycle.getIdentityConnectorSource(userId, name, this.getWorkDir());
   }
@@ -3005,8 +2976,18 @@ export class Runtime {
    * workspace source and a personal connector, and starting a connector it is
    * about to refuse would be both slow and wrong.
    */
+  /**
+   * Whether `userId` has a personal connector INSTALLED under `name`.
+   *
+   * Reads the install record and nothing else — deliberately not
+   * `getIdentityConnectorSource`, which lazy-starts a transport. The orchestrator
+   * calls this only after a workspace source lookup has already FAILED, to tell a
+   * stale pre-marker name apart from a genuinely unknown source, so it is off the
+   * dispatch path and the store is built inline like the other call sites.
+   */
   async hasIdentityConnector(userId: string, name: string): Promise<boolean> {
-    return (await this._identityConnectors.get(userId, name)) !== null;
+    const store = new IdentityConnectorStore({ workDir: this.getWorkDir() });
+    return (await store.get(userId, name)) !== null;
   }
 
   /**

@@ -1,7 +1,7 @@
 import { isInternalTool, type ToolSchema } from "../engine/types.ts";
 import { DEFAULT_MAX_DIRECT_TOOLS } from "../limits.ts";
 import type { Skill } from "../skills/types.ts";
-import { isIdentitySource } from "./identity-sources.ts";
+import { isIdentitySource, PERSONAL_CONNECTOR_PREFIX } from "./identity-sources.ts";
 import { bareToolName } from "./namespace.ts";
 
 /**
@@ -42,10 +42,13 @@ import { bareToolName } from "./namespace.ts";
 const SYSTEM_TOOL_PREFIX = "nb__";
 
 /**
- * A tool is a system tool if its BARE name (post-namespace-strip) starts
- * with `nb__`. Workspace tools are namespaced as `ws_<id>-nb__<tool>`, so a
- * raw `name.startsWith("nb__")` check silently classifies zero system tools —
- * which empties the Tier-2 direct list and hands the model no tools at all.
+ * A tool is a system tool if its BARE name starts with `nb__`.
+ *
+ * Wire names are bare, so for anything the platform emits today the strip is a
+ * no-op. It stays because this also reads names replayed from history, which can
+ * still carry the retired `ws_<id>-` prefix — and a raw
+ * `name.startsWith("nb__")` on one of those classifies zero system tools, which
+ * empties the Tier-2 direct list and hands the model no tools at all.
  */
 function isSystemTool(t: ToolSchema): boolean {
   return bareToolName(t.name).startsWith(SYSTEM_TOOL_PREFIX);
@@ -181,6 +184,23 @@ function matchToolPattern(toolName: string, pattern: string): boolean {
   // unchanged rather than throwing, so an arbitrary pattern string is safe.
   const normalizedPattern = bareToolName(pattern);
   const normalizedName = bareToolName(toolName);
+
+  // A NORMALIZED pattern must never reach a personal connector.
+  //
+  // Normalization is a compatibility affordance for patterns authored against
+  // the retired prefix, and such a pattern could not have named a personal
+  // connector when it was written: connectors were bare then, and `ws_<id>-…`
+  // only ever matched namespaced workspace tools. Stripping the prefix without
+  // this would widen it — `ws_<id>-*` collapses to `*`, which matches every
+  // marked name — silently handing a delegated child the parent's own
+  // credentials. That is the boundary `Runtime`'s `defaultActiveTools` calls out
+  // as "a decision, not an accident", and `skill.allowedTools` / automation
+  // `allowedTools` carry exactly these patterns on disk, where they cannot be
+  // migrated. A pattern authored bare is unaffected and reaches marked names
+  // normally.
+  if (normalizedPattern !== pattern && normalizedName.startsWith(PERSONAL_CONNECTOR_PREFIX)) {
+    return false;
+  }
   if (!normalizedPattern.includes("*")) {
     return normalizedName === normalizedPattern;
   }

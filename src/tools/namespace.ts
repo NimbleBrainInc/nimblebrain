@@ -1,10 +1,16 @@
 /**
  * Cross-workspace tool name primitive.
  *
- * **Single construction site for `ws_<id>-<toolName>`.** No other code
- * site in `src/` may build or parse this form by hand — the convention
- * is enforced by the `check:tool-namespace` AST lint
+ * **Single parse site for `ws_<id>-<toolName>`.** No other code site in `src/`
+ * may parse this form by hand — enforced by the `check:tool-namespace` AST lint
  * (`scripts/check-tool-namespace.ts`).
+ *
+ * Nothing CONSTRUCTS the form any more: it is retired, rejected rather than
+ * routed, and `namespacedToolName` has no caller in `src/` or `web/`. The
+ * builder is kept for the test fixtures that must produce a well-formed retired
+ * name in order to assert it is refused — validated construction beats a
+ * hand-spliced string in a fixture. The lint scans `src/` and `web/src/` only,
+ * so those fixtures are unaffected by it.
  *
  * **Separator: `-`.** Workspace ids match
  * `WORKSPACE_ID_PATTERN = ^ws_[a-z0-9_]{1,64}$` (no `-`), so the first

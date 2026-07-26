@@ -89,3 +89,30 @@ describe("the personal marker is NOT normalized away", () => {
     expect(names("my_granola__list_meetings")).toEqual(["my_granola__list_meetings"]);
   });
 });
+
+describe("a normalized legacy pattern cannot reach a personal connector", () => {
+  // Normalization exists to keep patterns authored against the retired prefix
+  // working. Such a pattern could not have named a personal connector when it was
+  // written — connectors were bare, and `ws_<id>-…` only matched namespaced
+  // workspace tools — so normalizing it must not widen it.
+  //
+  // The dangerous case is the bare remainder: `ws_<id>-*` collapses to `*`.
+  test("a legacy wildcard selects workspace tools only, never marked names", () => {
+    expect(names("ws_aaaaaaaaaaaaaaaa-*")).not.toContain("my_granola__list_meetings");
+    expect(names("ws_aaaaaaaaaaaaaaaa-*")).toContain("crm__search");
+  });
+
+  test("a legacy source-scoped wildcard is likewise confined", () => {
+    expect(names("ws_aaaaaaaaaaaaaaaa-granola__*")).toEqual(["granola__list_meetings"]);
+  });
+
+  test("an AUTHORED bare wildcard is unaffected — it still reaches everything", () => {
+    // Deliberate and separately warned about by the skill validator; the point is
+    // that normalization does not silently manufacture this from a legacy glob.
+    expect(names("*")).toContain("my_granola__list_meetings");
+  });
+
+  test("an authored marked glob still reaches the connector", () => {
+    expect(names("my_granola__*")).toEqual(["my_granola__list_meetings"]);
+  });
+});
