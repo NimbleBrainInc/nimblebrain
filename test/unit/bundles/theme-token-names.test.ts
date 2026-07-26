@@ -44,8 +44,17 @@ function sourceFiles(dir: string): string[] {
   });
 }
 
-const bundleUiDirs = readdirSync(BUNDLES)
-  .map((name) => ({ name, dir: join(BUNDLES, name, "ui", "src") }))
+/**
+ * Every tree whose CSS is injected with `buildThemeStyleBlock`. That is the
+ * contract this file guards, and it is not only the bundle UIs: the `ui://nb/*`
+ * resources rendered from `src/tools/core-resources` and `scripts/` go through
+ * `iframe.ts::injectThemeStyles` and read the same token names.
+ */
+const themedTrees = [
+  ...readdirSync(BUNDLES).map((name) => ({ name, dir: join(BUNDLES, name, "ui", "src") })),
+  { name: "core-resources", dir: join(REPO, "src", "tools", "core-resources") },
+  { name: "scripts", dir: join(REPO, "scripts") },
+]
   .filter(({ dir }) => {
     try {
       return statSync(dir).isDirectory();
@@ -54,12 +63,12 @@ const bundleUiDirs = readdirSync(BUNDLES)
     }
   });
 
-describe("bundle UIs only read tokens the host injects", () => {
-  test("the bundle tree is actually being scanned", () => {
-    expect(bundleUiDirs.length).toBeGreaterThan(0);
+describe("themed trees only read tokens the host injects", () => {
+  test("the themed trees are actually being scanned", () => {
+    expect(themedTrees.length).toBeGreaterThan(0);
   });
 
-  for (const { name, dir } of bundleUiDirs) {
+  for (const { name, dir } of themedTrees) {
     test(`${name}: every var(--token) resolves`, () => {
       const declared = new Set<string>();
       const read = new Map<string, string>();
@@ -138,6 +147,9 @@ describe("theming.mdx publishes exactly the injected token set", () => {
   });
 
   test("the reference tables are actually being read", () => {
-    expect(documented.size).toBe(INJECTED.size);
+    // A canary, so a parser that silently matches nothing cannot pass the two
+    // set assertions above vacuously. Comparing the sizes instead would be a
+    // tautology: mutual inclusion already implies equal size.
+    expect(documented.size).toBeGreaterThan(0);
   });
 });

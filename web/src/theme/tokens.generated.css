@@ -18,6 +18,8 @@
   --accent-foreground: #09090b;
   --destructive: #c02a24;
   --destructive-foreground: #ffffff;
+  --foreground-tint: rgba(9, 9, 11, 0.1);
+  --destructive-tint: rgba(192, 42, 36, 0.1);
   --border: #e4e4e7;
   --input: #e4e4e7;
   --ring: #0055FF;
@@ -91,6 +93,8 @@
   --accent-foreground: #fafafa;
   --destructive: #f0736a;
   --destructive-foreground: #000000;
+  --foreground-tint: rgba(250, 250, 250, 0.1);
+  --destructive-tint: rgba(240, 115, 106, 0.1);
   --border: #232326;
   --input: #232326;
   --ring: #4d90ff;

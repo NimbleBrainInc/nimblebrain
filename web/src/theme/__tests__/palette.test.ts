@@ -44,51 +44,14 @@ const ANCHORS = {
   },
 } as const;
 
-/** Every key the bridge contract promises an embedded app. */
-const REQUIRED_KEYS = [
-  "--color-background-primary",
-  "--color-background-secondary",
-  "--color-background-tertiary",
-  "--color-text-primary",
-  "--color-text-secondary",
-  "--color-text-tertiary",
-  "--color-text-accent",
-  "--color-border-primary",
-  "--color-border-secondary",
-  "--color-ring-primary",
-  "--font-sans",
-  "--font-mono",
-  "--nb-font-heading",
-  "--font-weight-normal",
-  "--font-weight-medium",
-  "--font-weight-semibold",
-  "--font-weight-bold",
-  "--font-text-xs-size",
-  "--font-text-sm-size",
-  "--font-text-base-size",
-  "--font-text-lg-size",
-  "--font-heading-sm-size",
-  "--font-heading-md-size",
-  "--font-heading-lg-size",
-  "--border-radius-xs",
-  "--border-radius-sm",
-  "--border-radius-md",
-  "--border-radius-lg",
-  "--border-radius-xl",
-  "--border-width-regular",
-  "--shadow-hairline",
-  "--shadow-sm",
-  "--shadow-md",
-  "--shadow-lg",
-] as const;
-
 describe("paletteToExtAppsTokens — structure and anchors", () => {
   for (const mode of ["light", "dark"] as const) {
-    test(`${mode} map carries every key the bridge promises`, () => {
-      const map = paletteToExtAppsTokens(mode);
-      for (const key of REQUIRED_KEYS) expect(map[key]).toBeTruthy();
-    });
-
+    // What the map must CONTAIN is asserted where it can stay true on its own:
+    // `test/unit/bundles/theme-token-names.test.ts` checks the emitted set in
+    // both directions against the published docs, and against every token the
+    // themed trees actually read. A second hand-written copy of the key list
+    // lived here and went stale at 34 of 52 — the shape this palette work has
+    // already replaced with a rule three times over.
     test(`${mode} map carries the brand anchors`, () => {
       const map = paletteToExtAppsTokens(mode);
       for (const [key, value] of Object.entries(ANCHORS[mode])) {

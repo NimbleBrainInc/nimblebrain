@@ -66,6 +66,20 @@ export const colors = {
   "accent-foreground": ["#09090b", "#fafafa"],
   destructive: ["#c02a24", "#f0736a"],
   "destructive-foreground": ["#ffffff", "#000000"],
+  // Translucent 10% tints of `foreground` and `destructive`, used as the chat
+  // bubble fill and the failed-tool-call ground. They are alpha values rather
+  // than `color-mix(… 10%, transparent)` because Tailwind's minifier downlevels
+  // `color-mix()` in a colour property to its FIRST OPERAND — dropping both the
+  // percentage and the transparency — for browsers that lack it. That fallback
+  // is emitted after any fallback we declare ourselves, so it cannot be
+  // pre-empted, and it resolves to the same value as the text painted on top:
+  // 1.000:1. `rgba()` has no such downlevel, and being translucent it still
+  // composites over whichever surface the element lands on, which is the whole
+  // reason the tint was mixed rather than fixed.
+  //
+  // The channels must track their source token. `contrast.test.ts` asserts that.
+  "foreground-tint": ["rgba(9, 9, 11, 0.1)", "rgba(250, 250, 250, 0.1)"],
+  "destructive-tint": ["rgba(192, 42, 36, 0.1)", "rgba(240, 115, 106, 0.1)"],
   border: ["#e4e4e7", "#232326"],
   input: ["#e4e4e7", "#232326"],
   ring: ["#0055FF", "#4d90ff"],

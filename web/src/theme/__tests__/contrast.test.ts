@@ -239,3 +239,39 @@ describe("palette contrast — WCAG 2.2", () => {
     expect(contrastRatio("#ffffff", "#ffffff")).toBeCloseTo(1, 5);
   });
 });
+/**
+ * The two translucent tints in the palette are 10% alpha over their source
+ * token. Because `rgba()` spells the channels out, they can drift from the hex
+ * they were derived from — silently, since a wrong-but-plausible grey still
+ * looks like a tint. These assert the derivation instead of trusting it, and
+ * then assert the composited result the same way the tinted-badge family is
+ * asserted.
+ *
+ * The pairing is real on both: `.presence-user-message` paints `--foreground`
+ * on `--foreground-tint`, and `.turn-pill__pre--error` paints `--destructive`
+ * on `--destructive-tint` for every failed tool call.
+ */
+describe("translucent tints track their source token", () => {
+  const TINTS: [tint: string, source: TokenName][] = [
+    ["foreground-tint", "foreground"],
+    ["destructive-tint", "destructive"],
+  ];
+
+  for (const mode of ["light", "dark"] as const) {
+    for (const [tint, source] of TINTS) {
+      test(`${mode}: ${tint} is 10% of ${source}`, () => {
+        const value = pick((colors as Record<string, Pair>)[tint] as Pair, mode);
+        const hex = token(source, mode).replace("#", "");
+        const [r, g, b] = [0, 2, 4].map((i) => Number.parseInt(hex.slice(i, i + 2), 16));
+        expect(value.replace(/\s+/g, "")).toBe(`rgba(${r},${g},${b},0.1)`);
+      });
+
+      for (const ground of ["background", "card"] as TokenName[]) {
+        test(`${mode}: ${source} on ${tint} over ${ground} clears ${AA_TEXT}:1`, () => {
+          const fill = over(token(source, mode), token(ground, mode), 10);
+          expect(contrastRatio(token(source, mode), fill)).toBeGreaterThanOrEqual(AA_TEXT);
+        });
+      }
+    }
+  }
+});

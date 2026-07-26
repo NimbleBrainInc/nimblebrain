@@ -173,8 +173,14 @@
   /* A tint of the ink rather than `--muted`: in this palette `card` and
      `background` are the same value in light, so `--muted` against the chat
      ground is 1.099:1 — invisible. Mixing from `--foreground` adapts to
-     whichever surface the bubble lands on and reads in both modes. */
-  background: color-mix(in srgb, var(--foreground) 10%, transparent);
+     whichever surface the bubble lands on and reads in both modes.
+
+     It is an alpha token rather than a `color-mix()`, because the minifier
+     downlevels `color-mix()` in a colour property to its first operand — here
+     `var(--foreground)`, the same value as the `color` two lines up, at
+     1.000:1. See `palette.ts`; guarded by
+     `test/unit/docs/css-color-mix.test.ts`. */
+  background: var(--foreground-tint);
   padding: 0.5rem 0.75rem;
   border-radius: var(--border-radius-md);
   /* Radius decreases toward the speaker's edge — the corner nearest the
@@ -644,7 +650,9 @@
   word-break: break-word;
 }
 .turn-pill__pre--error {
-  background: color-mix(in srgb, var(--destructive) 10%, transparent);
+  /* Alpha token, not a `color-mix()` — the minifier's downlevel of one would
+     collapse to `var(--destructive)`, matching the `color` below it. */
+  background: var(--destructive-tint);
   border-color: var(--destructive);
   color: var(--destructive);
 }
