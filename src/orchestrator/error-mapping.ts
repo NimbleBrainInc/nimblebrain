@@ -37,13 +37,19 @@ import {
 
 export function mapOrchestratorErrorToToolResult(err: unknown, namespacedName: string): ToolResult {
   if (err instanceof UnknownNamespacedToolName) {
+    // The retired-form error already carries its own remedy — "re-list tools and
+    // call <bare name>" — so it is emitted alone. Wrapping it in the generic
+    // advice below would append "use a fully namespaced tool name", the exact
+    // opposite instruction, and a model reading the trailing clause re-emits the
+    // namespaced form and loops. This is the rollout hot path: a conversation
+    // resumed across the upgrade has prefixed names in history and bare names in
+    // its tool list, so it WILL produce legacy names.
+    const text =
+      err.reason === "legacy_namespaced_form"
+        ? err.message
+        : `[orchestrator] invalid tool name "${err.input}": ${err.message} (no fallback to current workspace — use a bare <source>__<tool> name).`;
     return {
-      content: [
-        {
-          type: "text",
-          text: `[orchestrator] invalid tool name "${err.input}": ${err.message} (no fallback to current workspace — use a fully namespaced tool name).`,
-        },
-      ],
+      content: [{ type: "text", text }],
       isError: true,
       structuredContent: {
         error: "orchestrator_error",

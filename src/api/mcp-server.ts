@@ -945,7 +945,10 @@ function toCallToolResult(result: ToolResult) {
 // a route-layer assertion passes while the caller still receives nothing.
 export function mapRouteToolError(err: unknown): never {
   if (err instanceof UnknownNamespacedToolName) {
-    throw new McpError(ErrorCode.InvalidParams, `Invalid tool name: expected <source>__<tool>`, {
+    // Pass the error's own text through: for the retired `ws_<id>-` form it names
+    // the bare tool to call instead, and a fixed string would leave an external
+    // client with no way to recover.
+    throw new McpError(ErrorCode.InvalidParams, err.message, {
       reason: "invalid_tool_name",
       input: err.input,
       parse: err.reason,

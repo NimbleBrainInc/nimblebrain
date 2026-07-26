@@ -1,5 +1,6 @@
 import type { EngineEvent, EngineEventType, EventSink } from "../engine/types.ts";
 import { log } from "../observability/log.ts";
+import { PERSONAL_CONNECTOR_PREFIX } from "../tools/identity-sources.ts";
 import { bareToolName } from "../tools/namespace.ts";
 import type { WorkspaceStore } from "../workspace/workspace-store.ts";
 
@@ -154,8 +155,18 @@ export function deriveDataChangedTarget(
   // workspace-id pattern.
   const bare = bareToolName(rawName);
   const sepIndex = bare.indexOf("__");
-  const server = sepIndex !== -1 ? bare.slice(0, sepIndex) : bare;
+  const wireServer = sepIndex !== -1 ? bare.slice(0, sepIndex) : bare;
   const tool = sepIndex !== -1 ? bare.slice(sepIndex + 2) : bare;
+
+  // Drop the personal-connector marker too. The broadcast key has to be the name
+  // the iframe registered under, and the web tier's `appNameFromToolName` strips
+  // it — an iframe for a connector installed as `notes` carries `data-app="notes"`
+  // while the tool call is `my_notes__append`. Without this the two never match
+  // and `useDataSync` misses forever, which is the "click off and back" symptom
+  // the normalization above exists to prevent.
+  const server = wireServer.startsWith(PERSONAL_CONNECTOR_PREFIX)
+    ? wireServer.slice(PERSONAL_CONNECTOR_PREFIX.length)
+    : wireServer;
 
   // System tools (`nb__*`) don't modify app data; broadcasting for them makes
   // iframes re-fetch on every streaming chunk (flicker + tool-call amplification).

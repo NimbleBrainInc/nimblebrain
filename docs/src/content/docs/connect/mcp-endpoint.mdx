@@ -127,7 +127,7 @@ For the request's validated `X-Workspace-Id` workspace, the endpoint exposes:
 
 - **Workspace tools** — `<source>__<tool>`, from the bundles installed and running in that workspace. The workspace is not in the name: it comes from the `X-Workspace-Id` you sent, so the same call means a different workspace's tool under a different header.
 - **Identity tools** — your conversations, files, and automations (bare `<source>__<tool>`).
-- **Tool execution** — `tools/call` runs a tool in that workspace or an identity tool. A name cannot address a **different** workspace; the retired `ws_<id>-` form is refused with `-32602 invalid_tool_name`. With no `X-Workspace-Id`, only identity tools are exposed and a workspace tool is refused with `-32602 workspace_access_denied`. A bare name that matches one of your personal connectors is refused with `-32602 personal_connector_requires_marker`, naming the `my_`-marked form to call instead.
+- **Tool execution** — `tools/call` runs a tool in that workspace or an identity tool. A name cannot address a **different** workspace; the retired `ws_<id>-` form is refused with `-32602 invalid_tool_name`. With no `X-Workspace-Id`, only identity tools are exposed and a workspace tool is refused with `-32602 workspace_access_denied`. If a bare name does **not** resolve in the workspace but matches one of your personal connectors, it is refused with `-32602 personal_connector_requires_marker`, naming the `my_`-marked form to call instead. A name that *does* resolve in the workspace is the workspace's tool.
 
 Two filters apply to both `tools/list` and `tools/call`:
 

@@ -1,8 +1,9 @@
 import { isInternalTool, type ToolSchema } from "../engine/types.ts";
 import { DEFAULT_MAX_DIRECT_TOOLS } from "../limits.ts";
 import type { Skill } from "../skills/types.ts";
-import { isIdentitySource, PERSONAL_CONNECTOR_PREFIX } from "./identity-sources.ts";
+import { isIdentitySource } from "./identity-sources.ts";
 import { bareToolName } from "./namespace.ts";
+import { toolNameMatchesPattern } from "./tool-pattern.ts";
 
 /**
  * Choosing a tool's surface — the three resting places.
@@ -162,51 +163,5 @@ export function surfaceTools(
 }
 
 function matchToolPattern(toolName: string, pattern: string): boolean {
-  // Both sides are normalized to the bare form, and BOTH have to be.
-  //
-  // Tool names are bare now. Patterns are not necessarily: `skill.allowedTools`
-  // and `request.allowedTools` are on-disk user/org/workspace-tier data, and
-  // `ws_<id>-crm__*` was the documented shape until the prefix was removed. It
-  // used to match because the namespaced NAME was in the candidate list;
-  // normalizing only the name leaves such a pattern matching zero tools —
-  // silently, so a skill's `allowedTools` would surface nothing and report
-  // nothing.
-  //
-  // A legacy pattern naming a DIFFERENT workspace normalizes into the session's
-  // own — `ws_<other>-crm__*` becomes `crm__*` and matches the bound
-  // workspace's `crm`. That is a deliberate trade over the alternative (a
-  // scoping directive that silently selects nothing), and it does not widen
-  // reach: the corpus is still the one bound workspace, so the wall is
-  // untouched. The wsId in such a pattern is simply no longer meaningful —
-  // there is only ever one workspace to name.
-  //
-  // `bareToolName` is best-effort by contract: it returns malformed input
-  // unchanged rather than throwing, so an arbitrary pattern string is safe.
-  const normalizedPattern = bareToolName(pattern);
-  const normalizedName = bareToolName(toolName);
-
-  // A NORMALIZED pattern must never reach a personal connector.
-  //
-  // Normalization is a compatibility affordance for patterns authored against
-  // the retired prefix, and such a pattern could not have named a personal
-  // connector when it was written: connectors were bare then, and `ws_<id>-…`
-  // only ever matched namespaced workspace tools. Stripping the prefix without
-  // this would widen it — `ws_<id>-*` collapses to `*`, which matches every
-  // marked name — silently handing a delegated child the parent's own
-  // credentials. That is the boundary `Runtime`'s `defaultActiveTools` calls out
-  // as "a decision, not an accident", and `skill.allowedTools` / automation
-  // `allowedTools` carry exactly these patterns on disk, where they cannot be
-  // migrated. A pattern authored bare is unaffected and reaches marked names
-  // normally.
-  if (normalizedPattern !== pattern && normalizedName.startsWith(PERSONAL_CONNECTOR_PREFIX)) {
-    return false;
-  }
-  if (!normalizedPattern.includes("*")) {
-    return normalizedName === normalizedPattern;
-  }
-  // Convert glob to regex: "leadgen__*" → /^leadgen__.*$/
-  const regex = new RegExp(
-    `^${normalizedPattern.replace(/[.+^${}()|[\]\\]/g, "\\$&").replace(/\*/g, ".*")}$`,
-  );
-  return regex.test(normalizedName);
+  return toolNameMatchesPattern(toolName, pattern);
 }

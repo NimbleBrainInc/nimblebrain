@@ -9,7 +9,7 @@
  * No filesystem access, no event emission, no global state.
  */
 
-import { bareToolName } from "../tools/namespace.ts";
+import { toolNameMatchesPattern } from "../tools/tool-pattern.ts";
 import type { Skill } from "./types.ts";
 
 /**
@@ -60,27 +60,7 @@ export interface SelectInput {
  * namespace-aware patterns (`ws_<id>-<source>__*`) also match precisely.
  */
 export function toolMatches(toolName: string, pattern: string): boolean {
-  if (pattern === "") return false;
-  if (pattern === "*") return true;
-
-  // Derive the inner form once. If `toolName` is namespaced
-  // (`ws_<id>-<inner>`) we strip the prefix and try both forms; otherwise
-  // we just use the original name. Two candidates keeps the matcher's
-  // logic shape (one pattern, one rule) intact below. Stripping goes
-  // through the canonical `bareToolName` parser so the separator lives in
-  // exactly one place.
-  const inner = bareToolName(toolName);
-  const candidates = inner === toolName ? [toolName] : [toolName, inner];
-
-  if (pattern.endsWith("__*")) {
-    const prefix = pattern.slice(0, -1);
-    return candidates.some((c) => c.startsWith(prefix));
-  }
-  if (pattern.startsWith("*__")) {
-    const suffix = pattern.slice(1);
-    return candidates.some((c) => c.endsWith(suffix));
-  }
-  return candidates.some((c) => c === pattern);
+  return toolNameMatchesPattern(toolName, pattern);
 }
 
 /**

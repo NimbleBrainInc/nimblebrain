@@ -2970,15 +2970,6 @@ export class Runtime {
   /**
    * Whether `userId` has a personal connector INSTALLED under `name`.
    *
-   * Reads the install record and nothing else. Deliberately not
-   * `getIdentityConnectorSource`, which lazy-starts a transport: the orchestrator
-   * calls this on the workspace-dispatch path to detect a name that means both a
-   * workspace source and a personal connector, and starting a connector it is
-   * about to refuse would be both slow and wrong.
-   */
-  /**
-   * Whether `userId` has a personal connector INSTALLED under `name`.
-   *
    * Reads the install record and nothing else — deliberately not
    * `getIdentityConnectorSource`, which lazy-starts a transport. The orchestrator
    * calls this only after a workspace source lookup has already FAILED, to tell a

@@ -227,6 +227,12 @@ async function selectChildTools(
   // A second corpus because `defaultTools` is the SURFACED subset; a glob may
   // legitimately name a tool that exists in the workspace but is not surfaced by
   // default.
+  // NOT role-filtered, unlike `defaultTools`. `availableTools` is the raw
+  // reachable set, so a non-admin's `nb__*` glob can pull admin-only platform
+  // tools into a child's active set. Not exploitable — those tools gate on
+  // `isAdmin` internally and are `internal`-annotated — but it is defense in
+  // depth this corpus does not have. Fixing it means threading the caller's
+  // `orgRole` into `DelegateContext`, which is a change of its own.
   const fromReachable = filterTools(await ctx.tools.availableTools(), globs);
   // Dedupe by name — `filterTools` may return the same
   // entry under both corpuses when a surfaced tool is also in the reachable set.
