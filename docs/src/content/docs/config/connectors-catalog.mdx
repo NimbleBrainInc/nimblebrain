@@ -20,7 +20,7 @@ A registry is a typed source of `ServerDetail` records. Each instance is identif
 
 The platform seeds two registries on first boot:
 
-- **`bundled-static`** (locked, type `static`) — the curated list shipped at `src/connectors/curated/example.yaml`. Cannot be disabled or removed; operators may rename it.
+- **`bundled-static`** (locked, type `static`) — the curated catalog **directory**: `src/connectors/curated/` in-image, or wherever [`NB_CURATED_CATALOG_DIR`](/config/environment/#registries) points. Every `*.yaml`/`*.yml`/`*.json` in it loads into this one registry. Cannot be disabled or removed; operators may rename it.
 - **`mpak`** (type `mpak`, scoped to `["nimblebraininc"]`) — the public mpak registry, narrowed to the `@nimblebraininc/*` scope so first-time installs see only NimbleBrain-curated bundles. Operators can broaden the scope or disable the registry entirely.
 
 Registry config persists at `<workDir>/registries.json`. The shape is:
@@ -54,19 +54,20 @@ The `scopes` field (when present) restricts a registry's entries to one or more 
 
 ## Adding a new OAuth connector
 
-Append an entry to the bundled catalog at `src/connectors/curated/example.yaml`. The file is a list of upstream `ServerDetail` records; platform-specific fields live under the reverse-DNS extension key `_meta["ai.nimblebrain/connector"]`.
+Add the entry to your deployment's catalog directory — the one [`NB_CURATED_CATALOG_DIR`](/config/environment/#registries) points at. (`src/connectors/curated/example.yaml` is the in-image example: DCR-only, handy for local dev, and replaced wholesale in any real deployment.) Either way the file is a list of upstream `ServerDetail` records; platform-specific fields live under the reverse-DNS extension key `_meta["ai.nimblebrain/connector"]`.
 
 ### 1. Pick the auth flow
 
-The supported shapes:
+The kinds and what each asks of a *user* are documented once, in [Connectors → the auth kinds](/using/connectors/#the-auth-kinds). What matters when **authoring** an entry is which to reach for:
 
-- **`auth: dcr`** — the vendor's MCP server speaks Dynamic Client Registration ([RFC 7591](https://datatracker.ietf.org/doc/html/rfc7591)). The platform auto-registers a client at OAuth flow time. Operator setup is **zero**. Examples: Granola, Notion, Linear, Stripe.
-- **`auth: static`** — the operator pre-registers an OAuth app in the vendor's developer portal, copies the `client_id` + `client_secret`, and pastes them into the workspace via the Set up modal. Examples: Asana, HubSpot, Zoom.
-- **`auth: composio`** — the vendor's OAuth credentials are held by [Composio](https://composio.dev), an aggregator. Useful when the vendor's API requires app verification you don't yet hold (Google's restricted Gmail scopes, Microsoft's `Mail.*`, etc.). The platform proxies tool calls through Composio's MCP endpoint; per-workspace state is just an opaque `connectedAccountId`. Examples: Gmail, Outlook. See the [Composio operator guide](/deploy/composio/) for end-to-end setup.
-- **`auth: smithery`** — the connection is brokered and hosted by [Smithery](https://smithery.ai). The catalog names a Smithery *registry qualified name* rather than an endpoint; the platform asks Smithery's Connect API for a hosted MCP session at install, and Smithery holds any upstream credential write-only. Useful for servers already published to the Smithery registry.
-- **`auth: provider`** — a platform-managed connector whose credential the runtime mints itself against the fleet authorizer. Not something you author for a third-party service.
+- **Prefer `dcr`.** If the vendor exposes `/.well-known/oauth-authorization-server` with `registration_endpoint` set, use it — zero operator setup, no third party in the trust path. (Granola, Notion, Linear, Stripe.) Verify the claim before shipping the entry with the [rot detector](#catalog-rot-detection).
+- **Use `static`** when the vendor requires a pre-registered OAuth app. Costs a workspace-admin setup step, per workspace. (Asana, HubSpot, Zoom.)
+- **Use a brokered kind** when the vendor's API needs app verification you don't hold — `composio` for OAuth aggregation (Gmail, Outlook), `smithery` for a server already published to the Smithery registry, which brokers the connection *and* hosts the session. Either costs a platform-wide [provider configuration](/config/connector-providers/).
+- **`provider`** is for platform-managed connectors whose credential the runtime mints itself against the fleet authorizer. Not something you author for a third-party service.
 
-If the vendor exposes a `/.well-known/oauth-authorization-server` document with `registration_endpoint` set, prefer DCR. Otherwise use static, or composio when you don't yet hold the necessary vendor verification. The [catalog rot detector](#catalog-rot-detection) verifies DCR claims at PR time.
+<Aside type="caution">
+  The in-image catalog (`src/connectors/curated/`) ships **DCR entries only** — it exists so a fresh install has a non-empty Browse with nothing to configure. Everything else, including `auth: static` and brokered entries, belongs in the directory `NB_CURATED_CATALOG_DIR` points at.
+</Aside>
 
 ### 2. Add the YAML entry
 
@@ -119,8 +120,6 @@ servers:
 ```
 
 The `url` is a fixed placeholder; the actual session URL is minted per install from Composio's session API. `composio.tools` is an allowlist of upstream tool names — without it the connector exposes every tool the toolkit publishes (Outlook ships ~280, enough to blow past Claude's input-token budget on first turn). Curate to a working set.
-
-Brokered entries (`auth: composio`, `auth: smithery`) go in the directory `NB_CURATED_CATALOG_DIR` points at, **not** in `example.yaml` — every entry shipped in-image must install with zero operator setup, and a brokered one needs its provider configured first.
 
 For `auth: smithery`, include a `smithery` block naming the registry qualified name:
 
@@ -187,7 +186,7 @@ NimbleBrain-specific fields under `_meta["ai.nimblebrain/connector"]`:
 | Field | Required | Description |
 |-------|----------|-------------|
 | `defaultScope` | recommended | `"workspace"` (shared identity) or `"user"` (per-user account). Defaults to `workspace`. `auth: composio` is workspace-scope only, and `auth: smithery` installs into a workspace only. |
-| `auth` | required for `remotes[]` | `"dcr"`, `"static"`, `"composio"`, `"smithery"`, or `"provider"`. Defaults to `dcr`. |
+| `auth` | required for `remotes[]` | `"dcr"`, `"static"`, `"composio"`, `"smithery"`, or `"provider"` — see [auth kinds](/using/connectors/#the-auth-kinds). Defaults to `dcr`. |
 | `requiredScopes` | no | List of OAuth scope strings. |
 | `additionalAuthorizationParams` | no | Extra authorize-URL params (e.g. Google's `access_type: offline`). Reserved keys (`client_id`, `state`, `redirect_uri`, `response_type`, `code_challenge`, `code_challenge_method`, `scope`, etc.) are rejected. |
 | `operatorSetup` | required when `auth: static` | `{ portalUrl, hint, clientSecretKey }`. |
@@ -420,20 +419,24 @@ When the top-level shape is bad (not a list or `{servers: [...]}`, malformed YAM
 
 ## Catalog rot detection
 
-The platform ships a network-dependent probe that verifies every `auth: dcr` entry in the bundled catalog actually serves the OAuth discovery chain it claims:
+The platform ships a network-dependent probe that verifies every `auth: dcr` entry in a catalog actually serves the OAuth discovery chain it claims. Point it at any `ServerDetail` file or directory:
 
 ```bash
-bun run check:catalog
+bun run scripts/check-catalog-dcr.ts <catalog-file-or-dir>
 ```
 
-The probe runs the same chain the production OAuth provider uses:
+Steps 1–4 are the discovery chain the production OAuth provider uses; steps 5 and 6 then exercise the flow for real against the vendor.
 
 1. **Reachability** — `HEAD <remotes[0].url>`.
 2. **RFC 9728** — `GET <bundle-origin>/.well-known/oauth-protected-resource` to discover the authorization server origin.
 3. **RFC 8414** — `GET <as-origin>/.well-known/oauth-authorization-server` against each candidate AS origin (RFC 9728 advertised, plus bundle origin as fallback).
 4. **RFC 7591** — the AS metadata document must include `registration_endpoint`.
+5. **DCR registration** — POST a synthetic client to the `registration_endpoint` with a representative redirect URI. Catches vendors that advertise DCR but enforce a redirect-URI host allowlist (Intercom, Vercel).
+6. **Authorize** — `GET` the `authorization_endpoint` with that `client_id` and the same redirect URI. Catches vendors that accept the registration but reject the redirect URI one step later (Canva).
 
-CI runs this probe automatically on PRs that touch the bundled catalog (`.github/workflows/catalog-check.yml`), so a vendor going down or dropping DCR support breaks the PR before the catalog ships. It's not part of `bun run verify` (which stays offline).
+An entry passes only if every step succeeds; step 6 is skipped when the AS advertises no `authorization_endpoint`. Steps 5 and 6 are what catch "DCR theater" — a vendor that ships the RFC 7591 endpoints but enforces a parallel host allowlist the spec is meant to make obsolete, which discovery alone reports as healthy.
+
+In this repo it is a **manual CLI** — deliberately, since the catalog it needs to check is deployment config living in the directory `NB_CURATED_CATALOG_DIR` points at, not in the image. The automated gate runs in the deploy repo alongside that real catalog, so a vendor going down or dropping DCR support breaks the catalog's own PR. It is not part of `bun run verify`, which stays offline.
 
 ## Where the secrets live
 

@@ -302,7 +302,7 @@ The 8 h default is tuned for a connector left open during a working day. Tighten
 
 ## connectors
 
-Managed-connector providers. A **managed-connector provider** is a third party that brokers a connector's auth (OAuth or API key) *and* hosts the MCP session on your tenant's behalf. Composio and Smithery ship today.
+Managed-connector providers. See [Connector Providers](/config/connector-providers/) for what one is, how it differs from a connector, and which providers ship.
 
 A provider is registered — and its callback routes, liveness probe, and vendor SDK reached — **only when everything it needs to identify itself resolves**: the broker credential for both, plus a namespace for Smithery (see its table below). A deployment without one carries no provider: the `/v1/composio-auth/*` routes are not mounted, no revalidation sweep runs, and the vendor SDK is never loaded.
 

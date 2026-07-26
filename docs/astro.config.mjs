@@ -169,6 +169,7 @@ export default defineConfig({
               { label: 'workspace.json', slug: 'config/workspace-json' },
               { label: 'Bundle Configuration', slug: 'config/bundles' },
               { label: 'Credentials', slug: 'config/credentials' },
+              { label: 'Connector Providers', slug: 'config/connector-providers' },
               { label: 'Connectors Catalog', slug: 'config/connectors-catalog' },
               { label: 'Agent Profiles', slug: 'config/agents' },
               { label: 'Logging', slug: 'config/logging' },
