@@ -343,8 +343,8 @@ describe("IdentityToolRouter — the wall (cross-workspace reach is unexpressibl
     // `ws_<id>-` form is retired, so this is rejected as a stale wire name
     // before any workspace resolution happens, and there is no name left that
     // can address a workspace other than the session's own. That is a stronger
-    // guarantee than the old `CrossWorkspaceReachDenied`, which had to catch the
-    // attempt after the fact.
+    // guarantee than catching the attempt after the fact: there is no attempt to
+    // catch.
     const result = await router.execute({ id: "c1", name: `${OTHER_WS}-crm__search`, input: {} });
 
     expect(result.isError).toBe(true);

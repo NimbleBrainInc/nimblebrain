@@ -66,6 +66,7 @@ import { rehydrateUserResources } from "../files/rehydrate.ts";
 import { createFileStore, type FileStore } from "../files/store.ts";
 import { DEFAULT_FILE_CONFIG, type FileConfig } from "../files/types.ts";
 import { FileBackedHostResourcesResolver, TokenBucketRateLimit } from "../host-resources/index.ts";
+import { IdentityConnectorStore } from "../identity/connector-store.ts";
 import { IdentityContext } from "../identity/context.ts";
 import type { InstanceConfig } from "../identity/instance.ts";
 import { loadInstanceConfig } from "../identity/instance.ts";
@@ -605,7 +606,10 @@ export class Runtime {
       // surface). A delegated child runs as the parent's exact identity, so a
       // granted personal connector IS in the child's reachable set — but it is
       // not in the child's *default* active set: a sub-agent gets one only when
-      // the parent explicitly opts it in via a `granola__*` glob. That is
+      // the parent explicitly opts it in via a `my_granola__*` glob — the MARKED
+      // form, because that is the name the connector surfaces under. A bare
+      // `granola__*` selects the workspace source of that name, if any, and
+      // never the personal connector. That is
       // least-privilege for delegation, and it is a decision, not an accident —
       // do not add personal connectors here to "make the sets consistent."
       defaultActiveTools: async (): Promise<ToolSchema[]> => {
@@ -2961,6 +2965,21 @@ export class Runtime {
    */
   async getIdentityConnectorSource(userId: string, name: string): Promise<ToolSource | undefined> {
     return this.lifecycle.getIdentityConnectorSource(userId, name, this.getWorkDir());
+  }
+
+  /**
+   * Whether `userId` has a personal connector INSTALLED under `name`.
+   *
+   * Reads the install record and nothing else. Deliberately not
+   * `getIdentityConnectorSource`, which lazy-starts a transport: the orchestrator
+   * calls this on the workspace-dispatch path to detect a name that means both a
+   * workspace source and a personal connector, and starting a connector it is
+   * about to refuse would be both slow and wrong.
+   */
+  async hasIdentityConnector(userId: string, name: string): Promise<boolean> {
+    return (
+      (await new IdentityConnectorStore({ workDir: this.getWorkDir() }).get(userId, name)) !== null
+    );
   }
 
   /**

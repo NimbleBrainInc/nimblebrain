@@ -5,19 +5,20 @@
  *
  *   1. Parses the namespace via `parseNamespacedToolName` (the only legal parse
  *      site). Throws `UnknownNamespacedToolName` on malformed input.
- *   2. A bare `<source>__<tool>` — the current wire form for BOTH doors — routes
- *      by its source segment: a kernel identity source or the reserved personal
+ *   2. A bare `<source>__<tool>` — the ONLY wire form, on both doors — routes by
+ *      its source segment: a kernel identity source or the reserved personal
  *      marker goes through the IDENTITY door; anything else is the session's own
- *      workspace. A workspace-source miss falls back to a personal connector
- *      under its LEGACY bare name (step 6 in the body).
- *   3. A `ws_<id>-<tool>` is the LEGACY form — no longer emitted, still routed
- *      for resumed conversations and cached external `tools/list`. Walled to the
- *      session's one workspace (`workspaceId`): a call to ANY OTHER workspace is
- *      `CrossWorkspaceReachDenied`, and a session with no workspace (e.g. an
- *      external `/mcp` client with no `X-Workspace-Id`) is
- *      `WorkspaceToolUnavailable`. **There is no per-call membership scan** — the
- *      session's `workspaceId` was membership-validated when the session was
- *      established, so reaching only it is reaching only a member workspace.
+ *      workspace. A name that is BOTH a workspace source and one of the caller's
+ *      personal connectors is refused (`AmbiguousPersonalConnectorName`) rather
+ *      than resolved toward either account.
+ *   3. A `ws_<id>-<tool>` is the RETIRED form. It is rejected, not routed — so a
+ *      workspace other than the session's cannot be NAMED, and cross-workspace
+ *      reach is unexpressible rather than denied after the fact. A session with
+ *      no workspace (e.g. an external `/mcp` client with no `X-Workspace-Id`)
+ *      refuses workspace sources with `WorkspaceToolUnavailable`. **There is no
+ *      per-call membership scan** — the session's `workspaceId` was
+ *      membership-validated when the session was established, so reaching only it
+ *      is reaching only a member workspace.
  *   4. Constructs a fresh `WorkspaceContext` from the bound `wsId` — NEVER from
  *      `runtime.requireWorkspaceId()` or any ambient session-level state.
  *   5. Resolves the dispatch handle (`ToolSource`) in that workspace's registry.
@@ -42,6 +43,7 @@ import {
   isIdentitySource,
   isPersonalConnectorName,
   personalConnectorServerName,
+  personalConnectorWireName,
 } from "../tools/identity-sources.ts";
 import { parseNamespacedToolName, UnknownNamespacedToolName } from "../tools/namespace.ts";
 import type { ToolSource } from "../tools/types.ts";
@@ -50,9 +52,10 @@ import type { WorkspaceContext } from "../workspace/context.ts";
 // ── Errors ─────────────────────────────────────────────────────────
 
 /**
- * Base class for the wall's denial errors — `CrossWorkspaceReachDenied` (reach
- * to another workspace) and `WorkspaceToolUnavailable` (no workspace on the
- * session). Not thrown directly today; the two subclasses are. The payload
+ * Base class for the wall's denial errors. `WorkspaceToolUnavailable` (no
+ * workspace on the session) is the only subclass now that naming another
+ * workspace is impossible rather than denied. Not thrown directly; the subclass
+ * is. The payload
  * carries `identityId` and `wsId` so the HTTP / `/mcp` layer can emit a
  * structured `workspace_access_denied` response without re-parsing the name.
  */
@@ -114,6 +117,37 @@ export class UnknownToolSource extends Error {
     );
     this.name = "UnknownToolSource";
     this.wsId = wsId;
+    this.toolName = toolName;
+    this.sourceName = sourceName;
+  }
+}
+
+/**
+ * Thrown when a BARE workspace-source name is also the name of a personal
+ * connector the caller has installed.
+ *
+ * The two are different credential sets. Before the personal marker existed a
+ * bare `gmail__send` meant the caller's own connector; it now means the
+ * workspace's shared one. A transcript written before the change still holds the
+ * old form, and a model resuming that conversation can echo it — so the same
+ * string means two things depending on when it was minted, and dispatching
+ * either way silently spends the wrong account's credentials.
+ *
+ * The runtime refuses rather than picking. That keeps the property the legacy
+ * fallback was removed to get ("never choose between two credential sets") while
+ * making the failure loud and actionable instead of a silent misroute. The
+ * caller re-lists and uses the marked form.
+ */
+export class AmbiguousPersonalConnectorName extends Error {
+  readonly toolName: string;
+  readonly sourceName: string;
+
+  constructor(toolName: string, sourceName: string, wireName: string) {
+    super(
+      `[orchestrator] "${toolName}" is ambiguous: "${sourceName}" is both a source in this workspace and one of your personal connectors. ` +
+        `Re-list tools — your personal connector is now "${wireName}__…".`,
+    );
+    this.name = "AmbiguousPersonalConnectorName";
     this.toolName = toolName;
     this.sourceName = sourceName;
   }
@@ -229,6 +263,15 @@ export interface OrchestratorRuntime {
    */
   getIdentityConnectorSource?(userId: string, name: string): Promise<ToolSource | undefined>;
 
+  /**
+   * Whether `userId` has a personal connector INSTALLED under `name`. Reads the
+   * install record only — unlike `getIdentityConnectorSource`, which lazy-starts
+   * a transport and is far too expensive for a per-call collision probe.
+   * Optional so test stubs may omit it; when absent the ambiguity check is
+   * skipped.
+   */
+  hasIdentityConnector?(userId: string, name: string): Promise<boolean>;
+
   /** Fresh `IdentityContext` for the authenticated identity. No workspace. */
   getIdentityContext(identityId: string): IdentityContext;
 
@@ -305,7 +348,8 @@ export async function routeToolCall(opts: {
   namespacedName: string;
   /**
    * The session's single workspace (the wall). When set, a workspace-scoped
-   * call MUST target this workspace; any other is `CrossWorkspaceReachDenied`.
+   * call dispatches here. No other workspace can be named, so there is no
+   * cross-workspace case to deny.
    * Membership + existence were already validated when the session was
    * established, so the per-call store lookup and membership scan are skipped.
    * (Omitted only on the legacy `/mcp` path until its per-request workspace is
@@ -387,6 +431,20 @@ export async function routeToolCall(opts: {
   // in the bound workspace's registry (self-healing a transiently absent source
   // once before failing).
   const source = await resolveWorkspaceSource(wsId, toolName, runtime);
+
+  // The name resolved in this workspace. If it ALSO names one of the caller's
+  // personal connectors, the two are different accounts under one string and the
+  // runtime must not choose — see `AmbiguousPersonalConnectorName`. Checked only
+  // after the workspace lookup succeeds, and against the install record rather
+  // than a started source, so the common case costs one small read.
+  if ((await runtime.hasIdentityConnector?.(identityId, sourceName)) === true) {
+    throw new AmbiguousPersonalConnectorName(
+      toolName,
+      sourceName,
+      personalConnectorWireName(sourceName),
+    );
+  }
+
   return { kind: "workspace", context, toolName, source };
 }
 

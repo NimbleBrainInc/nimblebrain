@@ -11,7 +11,7 @@
  * `mcpRequestWorkspace` (an AsyncLocalStorage) so the tool handlers see it.
  * `tools/list` returns that workspace's tools (namespaced) + the caller's
  * identity tools; `tools/call` is walled to it — a `ws_<other>-…` name is
- * `CrossWorkspaceReachDenied`. A request with no (or a non-member)
+ * `WorkspaceToolUnavailable`. A request with no (or a non-member)
  * `X-Workspace-Id` is identity-only: any `ws_<id>-…` call is refused
  * (`WorkspaceToolUnavailable`).
  *
@@ -700,7 +700,7 @@ export class McpServerHost {
  * (namespaced) plus the caller's identity tools (conversations / files /
  * automations); a request with no / non-member header is identity-only. Every
  * `tools/call` routes through `routeToolCall`, so a `ws_<other>-...` name is
- * refused (`CrossWorkspaceReachDenied`) and any `ws_<id>-...` on a
+ * refused, and any `ws_<id>-...` on a
  * no-workspace request is `WorkspaceToolUnavailable`.
  *
  * When `runtime` is null (legacy unit-test path), tool handlers degrade
@@ -800,7 +800,7 @@ function createServer(
     // (empty, empty tool, bad `ws_` id) surface as `invalid_tool_name`. Either
     // way the client gets a meaningful reason and the call never silently
     // routes. Each orchestrator error class maps to a distinct response shape
-    // (the wall's two denials, `CrossWorkspaceReachDenied` and
+    // (the wall's denial,
     // `WorkspaceToolUnavailable`, share the `workspace_access_denied` reason).
     let routed: Awaited<ReturnType<typeof routeToolCall>>;
     try {
@@ -934,7 +934,7 @@ function toCallToolResult(result: ToolResult) {
  * Map an orchestrator routing error to its MCP JSON-RPC error, re-throwing
  * anything unrecognized. Each error class maps to a distinct response shape;
  * `error.data.reason` carries the precise classification. (The wall's two
- * denials, `CrossWorkspaceReachDenied` and `WorkspaceToolUnavailable`, both
+ * denial, `WorkspaceToolUnavailable`,
  * arrive as `WorkspaceAccessDenied` and share the `workspace_access_denied`
  * reason.)
  */

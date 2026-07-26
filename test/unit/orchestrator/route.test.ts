@@ -22,6 +22,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import type { ToolResult } from "../../../src/engine/types.ts";
 import { IdentityContext } from "../../../src/identity/context.ts";
 import {
+  AmbiguousPersonalConnectorName,
   ConnectorGrantDenied,
   type OrchestratorRuntime,
   routeToolCall,
@@ -267,10 +268,9 @@ describe("routeToolCall — the wall (cross-workspace reach is unexpressible)", 
     } catch (err) {
       thrown = err;
     }
-    // Not a cross-workspace DENIAL any more — the form itself is retired, so the
-    // call is refused before any workspace resolution. Reach to another
-    // workspace became unexpressible rather than caught, which is why
-    // `CrossWorkspaceReachDenied` no longer exists.
+    // Not a cross-workspace denial: the form itself is retired, so the call is
+    // refused before any workspace resolution. Reach to another workspace is
+    // unexpressible rather than caught.
     expect(thrown).toBeInstanceOf(UnknownNamespacedToolName);
     // A parse-level rejection, NOT a WorkspaceAccessDenied. The distinction is
     // the point: the name is malformed for this platform, not a permitted shape
@@ -597,10 +597,9 @@ describe("routeToolCall — personal connectors (identity-door grant gate)", () 
     } catch (err) {
       thrown = err;
     }
-    // Not a cross-workspace DENIAL any more — the form itself is retired, so the
-    // call is refused before any workspace resolution. Reach to another
-    // workspace became unexpressible rather than caught, which is why
-    // `CrossWorkspaceReachDenied` no longer exists.
+    // Not a cross-workspace denial: the form itself is retired, so the call is
+    // refused before any workspace resolution. Reach to another workspace is
+    // unexpressible rather than caught.
     expect(thrown).toBeInstanceOf(UnknownNamespacedToolName);
   });
 
@@ -727,5 +726,61 @@ describe("routeToolCall — bare names are workspace-scoped, with no legacy fall
         runtime,
       }),
     ).rejects.toBeInstanceOf(UnknownIdentitySource);
+  });
+});
+
+describe("routeToolCall — a name that means two credential sets is refused", () => {
+  // Before the marker, a personal connector's wire name was a bare
+  // `<connector>__<tool>`. That form is in every transcript written before this
+  // change, and a model resuming one can echo it. Post-change the same string
+  // names the WORKSPACE's source — a different account.
+  //
+  // The runtime refuses rather than picking. Removing the legacy fallback got us
+  // "never choose between two credential sets"; without this check the choice was
+  // still being made, just implicitly and always toward the workspace.
+  function runtimeWithBoth(hasConnector: boolean): StubRuntime {
+    const base = makeStubRuntime({
+      registries: new Map([[SHARED_WS, [makeStubSource("gmail")]]]),
+      identityConnectors: new Map([["gmail", makeStubSource("gmail")]]),
+      permissionStore: new PermissionStore({ workDir } as never),
+      workDir,
+    });
+    return { ...base, hasIdentityConnector: async () => hasConnector } as StubRuntime;
+  }
+
+  test("a bare name that is BOTH a workspace source and a personal connector is refused", async () => {
+    await expect(
+      routeToolCall({
+        identityId: USER_ID,
+        namespacedName: "gmail__send",
+        workspaceId: SHARED_WS,
+        runtime: runtimeWithBoth(true),
+      }),
+    ).rejects.toBeInstanceOf(AmbiguousPersonalConnectorName);
+  });
+
+  test("the refusal names the marked form so the caller can act on it", async () => {
+    let thrown: unknown = null;
+    try {
+      await routeToolCall({
+        identityId: USER_ID,
+        namespacedName: "gmail__send",
+        workspaceId: SHARED_WS,
+        runtime: runtimeWithBoth(true),
+      });
+    } catch (err) {
+      thrown = err;
+    }
+    expect((thrown as Error).message).toContain("my_gmail");
+  });
+
+  test("no personal connector of that name → the workspace source dispatches normally", async () => {
+    const routed = await routeToolCall({
+      identityId: USER_ID,
+      namespacedName: "gmail__send",
+      workspaceId: SHARED_WS,
+      runtime: runtimeWithBoth(false),
+    });
+    expect(routed.kind).toBe("workspace");
   });
 });

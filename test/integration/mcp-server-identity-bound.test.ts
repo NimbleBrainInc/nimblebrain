@@ -7,7 +7,7 @@
  *   - No header → identity tools only (conversations, files, automations);
  *     a `ws_<id>-...` call is refused (`WorkspaceToolUnavailable`).
  *   - Member header → that workspace's tools (namespaced) + identity tools;
- *     a `ws_<other>-...` call is `CrossWorkspaceReachDenied`.
+ *     a `ws_<other>-...` call is rejected as a retired wire form.
  *   - Non-member / unknown header → fail-closed to identity tools only
  *     (the header is not trusted to grant access it doesn't already imply).
  *
@@ -192,9 +192,8 @@ function personalToolName(): string {
  * point: a BARE name cannot express another workspace at all, so there is
  * nothing to deny — it simply resolves against the session's own registry. The
  * legacy form is the only shape that can still NAME a second workspace, so it
- * is the only shape that can exercise `CrossWorkspaceReachDenied`. When the
- * legacy form is eventually retired, this test retires with it: the reach it
- * guards will have become unexpressible rather than merely refused.
+ * is the shape a stale client still sends, and its REJECTION is the guarantee:
+ * the reach it once guarded is now unexpressible rather than merely refused.
  */
 function personalToolNameNamespaced(): string {
   return `${personalWsId()}-${PERSONAL_SOURCE_NAME}__${PERSONAL_TOOL_BARE}`;
@@ -353,8 +352,7 @@ describe("/mcp with a member X-Workspace-Id (walled to that workspace)", () => {
     // Session header = Helix; the dev IS a member of the personal workspace too.
     // Naming it is now impossible rather than denied: the `ws_<id>-` form is
     // retired, so this is rejected as a stale wire name before any workspace
-    // resolution. The guarantee is stronger than the old
-    // `CrossWorkspaceReachDenied` — there is no name that addresses a second
+    // resolution. The guarantee is structural: no name addresses a second
     // workspace, so there is no attempt left to catch.
     personalSource.reset();
     const client = await createMcpClient({ workspace: SHARED_WS_ID });

@@ -12,7 +12,7 @@
  *
  *   - `UnknownNamespacedToolName` → `invalid_tool_name`        + `{ name, parseReason }`
  *   - `WorkspaceAccessDenied`     → `workspace_access_denied`  + `{ identityId, wsId }`
- *     (the live base of `CrossWorkspaceReachDenied` / `WorkspaceToolUnavailable`)
+ *     (the live base of `WorkspaceToolUnavailable`)
  *   - `UnknownToolSource`         → `unknown_tool_source`      + `{ wsId, sourceName, toolName }`
  *   - `UnknownIdentitySource`     → `unknown_identity_source`  + `{ toolName }`
  *   - `ConnectorGrantDenied`      → `connector_grant_denied`   + `{ connector, wsId }`

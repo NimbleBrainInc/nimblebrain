@@ -107,12 +107,11 @@ describe("runtime.chat — orchestrator error taxonomy (T006)", () => {
   });
 
   it("a `ws_<id>-` name naming a real, unreachable workspace is rejected as a retired form", async () => {
-    // Was the `CrossWorkspaceReachDenied → workspace_access_denied` case. That
-    // error no longer exists: naming a second workspace is unexpressible rather
-    // than denied, so a real-but-unreachable workspace and a bogus one now fail
-    // identically, at parse. The `WorkspaceToolUnavailable →
-    // workspace_access_denied` mapping this used to share is covered by the
-    // /mcp no-`X-Workspace-Id` case in `mcp-server-identity-bound.test.ts`.
+    // Naming a second workspace is unexpressible, so a real-but-unreachable
+    // workspace and a bogus one fail identically, at parse — no lookup, no leak.
+    // The `WorkspaceToolUnavailable → workspace_access_denied` mapping is covered
+    // by the /mcp no-`X-Workspace-Id` case in
+    // `mcp-server-identity-bound.test.ts`.
     fixture = await createTwoWorkspaceFixture();
     const wsStore = fixture.runtime.getWorkspaceStore();
     const stranger = await wsStore.create("Stranger Workspace", "stranger");

@@ -19,6 +19,11 @@ const TOOLS = [
   { name: "crm__search", description: "", inputSchema: {} },
   { name: "crm__create", description: "", inputSchema: {} },
   { name: "conversations__list", description: "", inputSchema: {} },
+  // A granted personal connector, surfaced under the reserved marker.
+  { name: "my_granola__list_meetings", description: "", inputSchema: {} },
+  // …and a WORKSPACE source of the same underlying name, which is the whole
+  // reason the marker exists.
+  { name: "granola__list_meetings", description: "", inputSchema: {} },
 ] as never[];
 
 const names = (pattern: string): string[] =>
@@ -59,5 +64,28 @@ describe("legacy glob normalization", () => {
 
   test("identity tools match bare patterns unchanged", () => {
     expect(names("conversations__*")).toEqual(["conversations__list"]);
+  });
+});
+
+describe("the personal marker is NOT normalized away", () => {
+  // The `ws_<id>-` prefix is normalized on both sides because it identifies
+  // nothing — a session has one workspace. The `my_` marker is the opposite: it
+  // is the ONLY thing distinguishing the caller's own account from the
+  // workspace's shared one. Normalizing it would collapse two credential sets
+  // into one glob, which is exactly what the marker was introduced to prevent.
+  test("a bare glob selects the workspace source, never the personal connector", () => {
+    expect(names("granola__*")).toEqual(["granola__list_meetings"]);
+  });
+
+  test("a marked glob selects the personal connector, never the workspace source", () => {
+    expect(names("my_granola__*")).toEqual(["my_granola__list_meetings"]);
+  });
+
+  test("delegation's documented opt-in path uses the marked form", () => {
+    // `runtime.ts` states a sub-agent receives a granted personal connector only
+    // when the parent opts in by glob. That opt-in has to name the form the
+    // connector actually surfaces under, or it is a documented path that selects
+    // nothing.
+    expect(names("my_granola__list_meetings")).toEqual(["my_granola__list_meetings"]);
   });
 });
