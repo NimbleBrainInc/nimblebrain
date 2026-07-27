@@ -246,8 +246,8 @@ interface RecoveryShape<T> {
   idempotent: boolean;
   /** How to treat an `unknown` (unclassifiable) throw. Tool calls set this so
    *  an unrecognized transport error still recovers (old "restart on any
-   *  throw" robustness); reads leave it false so a malformed result / 429 /
-   *  server code surfaces instead of restart-storming the whole source. */
+   *  throw" robustness); reads leave it false so a malformed result / server
+   *  code surfaces instead of restart-storming the whole source. */
   recoverUnknown: boolean;
   /** Per-call-site backoff schedule. Tool calls pass a single immediate
    *  attempt (`TOOL_CALL_RECOVERY_DELAYS`) to preserve the historical
@@ -1543,20 +1543,31 @@ export class McpSource implements ToolSource {
         recoverUnknown: true,
         delays: TOOL_CALL_RECOVERY_DELAYS,
         surface: (e) =>
-          // A throttle is the one surfaced class where the agent can actually fix
-          // the situation itself, so say what to do instead of only what broke.
-          // Without this the model reads a bare "call failed: {"error":"rate_limited"}"
-          // and its usual repair (retry the same batch) is precisely wrong.
+          // Name the throttle rather than only reporting that something broke —
+          // the model's default repair for a failed batch is to replay it, which
+          // is precisely wrong here.
+          //
+          // The retry ADVICE is gated on idempotency, not just on the class. A
+          // task-augmented call has already spawned server-side state by the time
+          // a mid-stream reopen can be throttled (see the `idempotent:` note
+          // above), so telling the agent to retry would invite the duplicate side
+          // effects `policyFor`'s no-retry rule exists to prevent. It gets the
+          // diagnosis without the instruction.
           classifyConnectionFailure(e) === "rate-limited"
             ? {
                 content: textContent(
-                  `${this.name} is rate limited — too many calls at once, and this call was refused before it ran. ` +
-                    `The connector is healthy. Retry in a few seconds with FEWER calls in parallel (a handful at a time, ` +
-                    `not a whole batch). Underlying error: ${errMessage(e)}`,
+                  isTaskAugmented
+                    ? `Task failed because ${this.name} is rate limited, and cannot be auto-retried — ` +
+                        `it may have already started server-side. Do not re-issue it; check its status first. ` +
+                        `Underlying error: ${errMessage(e)}`
+                    : `${this.name} is rate limited — too many calls at once, and this call was refused before it ran. ` +
+                        `The connector is healthy. Retry in a few seconds with FEWER calls in parallel (a handful at a time, ` +
+                        `not a whole batch). Underlying error: ${errMessage(e)}`,
                 ),
                 isError: true,
+                // `reason` only: `engine.ts` lifts it to `ToolCallRecord.errorReason`.
+                // A sibling `error` field with the same value has no reader.
                 structuredContent: {
-                  error: "rate_limited",
                   reason: "rate_limited",
                   source: this.eventSourceName,
                 },
@@ -1753,8 +1764,8 @@ export class McpSource implements ToolSource {
         {
           idempotent: true,
           // Reads are conservative on unclassifiable errors: a malformed result
-          // (ZodError), a 429, or a server-defined code must NOT restart-storm the
-          // whole source — surface it as a null. Recognized transport failures and
+          // (ZodError) or a server-defined code must NOT restart-storm the whole
+          // source — surface it as a null. Recognized transport failures and
           // session loss still recover across the deploy window.
           recoverUnknown: false,
           delays: SESSION_RECOVERY_DELAYS_MS,
@@ -2601,8 +2612,8 @@ export type ConnectionFailure =
  *   tool failures don't reach here at all — they come back as `isError` *results*.
  * - **unknown** — a throw we can't positively classify. The caller decides: the
  *   tool path treats it as recoverable (old "restart on any throw" robustness,
- *   now capped); the read path surfaces it (a malformed result / 429 / server
- *   code must NOT restart-storm the whole source). This split is why `unknown` is
+ *   now capped); the read path surfaces it (a malformed result / server code
+ *   must NOT restart-storm the whole source). This split is why `unknown` is
  *   distinct from `transport-dead` — see `recover`'s `recoverUnknown`.
  */
 export function classifyConnectionFailure(err: unknown): ConnectionFailure {
@@ -2642,27 +2653,33 @@ export function classifyConnectionFailure(err: unknown): ConnectionFailure {
   }
   // rate-limited — a gateway refused the request for pacing, not because anything
   // is broken. The transport is HEALTHY: the same connection will serve the next
-  // call once the caller slows down. Matched on the HTTP status AND the message,
-  // for the same reason session-lost is: the code does not reliably survive the
-  // trip. A gateway that answers `429 {"error":"rate_limited"}` reaches the client
-  // as a message-only `StreamableHTTPError` ("Error POSTing to endpoint: …") with
-  // no numeric `code` — so a status-only check silently misses the exact case this
-  // class exists for, and the failure falls through to `unknown` →
-  // `transport-dead` → a full stop()/start() of the source.
+  // call once the caller slows down. Without this class the throw falls to
+  // `unknown`, which the tool path maps to `transport-dead` → a full stop()/start().
+  // That is worse than a wasted restart: `stop()` aborts every in-flight stream on
+  // the source, so ONE throttled call in a parallel batch tears the transport out
+  // from under its siblings — including calls the server already committed.
+  // Checked BEFORE the torn-transport regex below, which is broad enough to be a
+  // magnet for anything left unclassified.
   //
-  // That mis-classification is the bug this branch closes, and it is worse than a
-  // wasted restart: `stop()` aborts every in-flight stream on the source, so ONE
-  // throttled call in a parallel batch tears the transport out from under its
-  // siblings — including calls the server already committed. Must be checked
-  // BEFORE the torn-transport regex below, which is broad enough to be a magnet
-  // for anything left unclassified.
-  // A BARE `429` is deliberately not matched: it collides with the port/address
-  // fragments that show up in transport error text (`10.0.2.116:429…`). The status
-  // is matched only where a keyword qualifies it, and `code === 429` covers the
-  // structured case losslessly.
+  // Both signals are load-bearing, for DIFFERENT reasons:
+  //
+  //  - `code` catches the transport's own throws. `StreamableHTTPError` sets
+  //    `code = response.status`, so a refused POST and a refused mid-stream SSE
+  //    reopen both arrive carrying a real numeric 429.
+  //  - the MESSAGE catches the paths where that code is already gone.
+  //    `createTaskViaStream` re-throws a task-creation failure as a bare
+  //    `new Error(firstMsg.error?.message)`, keeping the server's text and
+  //    dropping everything else. Heterogeneous remotes are the second reason —
+  //    the same one that makes session-lost match on text.
+  //
+  // The `rate limit` stem is deliberately left unanchored: `rate_limit_exceeded`
+  // is a common spelling and `_` is a word character, so a trailing `\b` could
+  // never match it. A BARE `429` is still not matched — it collides with the port
+  // fragments in transport error text (`127.0.0.1:429`) — so the status is read
+  // from a message only where a keyword qualifies it.
   if (
     code === 429 ||
-    /\brate[ _-]?limit(ed|ing)?\b|\btoo many requests\b|\b(?:http|status|code)[ :=]*429\b/i.test(
+    /\brate[ _-]?limit|\bthrottl(e|ed|ing)\b|\btoo many requests\b|\b(?:http|status|code)["' :=]*429\b/i.test(
       msg,
     )
   ) {

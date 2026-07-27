@@ -106,11 +106,28 @@ describe("classifyConnectionFailure — op-independent connection classes", () =
     expect(classifyConnectionFailure({ code: 429, message: "Too Many Requests" })).toBe(
       "rate-limited",
     );
-    // The shape a gateway answering `429 {"error":"rate_limited"}` actually
-    // produces: message-only, with NO numeric code. A status-only check would miss
-    // the exact case this class exists for and fall through to `unknown` →
-    // `transport-dead`, restarting a healthy source. This assertion is the
-    // regression guard for that.
+    // The REAL transport shape: `StreamableHTTPError` sets `code = response.status`,
+    // so both signals are present together. Pinned because the two halves are
+    // justified by different paths and a fixture carrying only one hides that.
+    expect(
+      classifyConnectionFailure({
+        code: 429,
+        message: 'Streamable HTTP error: Error POSTing to endpoint: {"error":"rate_limited"}',
+      }),
+    ).toBe("rate-limited");
+    // A refused mid-stream SSE reopen — same class, statusText wording.
+    expect(
+      classifyConnectionFailure({
+        code: 429,
+        message: "Streamable HTTP error: Failed to open SSE stream: Too Many Requests",
+      }),
+    ).toBe("rate-limited");
+    // Message-only, no numeric code — what a caller sees once the code has been
+    // dropped en route. `createTaskViaStream` re-throws a task-creation failure as
+    // a bare `new Error(firstMsg.error?.message)`, keeping the server's text and
+    // nothing else; a heterogeneous remote can present the same way. A code-only
+    // check would send these to `unknown` → `transport-dead` and restart a healthy
+    // source.
     expect(
       classifyConnectionFailure(
         new Error('Streamable HTTP error: Error POSTing to endpoint: {"error":"rate_limited"}'),
@@ -121,6 +138,23 @@ describe("classifyConnectionFailure — op-independent connection classes", () =
       "rate-limited",
     );
     expect(classifyConnectionFailure({ message: "server returned HTTP 429" })).toBe("rate-limited");
+  });
+
+  it("recognizes the throttle spellings servers actually use", () => {
+    // `_` is a word character, so an anchored `rate[ _-]?limit\b` stem can never
+    // match `rate_limit_exceeded` — one of the most common spellings. Each miss
+    // here would fall through to `unknown` -> `transport-dead` and restart a
+    // healthy source, which is the whole failure this class exists to stop.
+    for (const msg of [
+      '{"error":"rate_limit_exceeded"}',
+      '{"error":{"code":429,"message":"slow down"}}',
+      "You have exceeded your rate limits",
+      "RateLimitError: retry later",
+      "Request was throttled.",
+      "upstream is throttling this client",
+    ]) {
+      expect(classifyConnectionFailure(new Error(msg))).toBe("rate-limited");
+    }
   });
 
   it("does NOT read a bare 429 out of address/port text as a throttle", () => {

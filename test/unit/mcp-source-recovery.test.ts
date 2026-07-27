@@ -167,7 +167,53 @@ describe("execute (tools/call) — unified recovery", () => {
       const text = JSON.stringify(result.content);
       expect(text).toContain("rate limited");
       expect(text).toContain("parallel");
-      expect(result.structuredContent).toMatchObject({ error: "rate_limited" });
+      expect(result.structuredContent).toMatchObject({ reason: "rate_limited" });
+    } finally {
+      restart.mockRestore();
+    }
+  });
+
+  it("does NOT tell a throttled TASK-augmented call to retry", async () => {
+    // A task-augmented call has already spawned server-side state (the task, its
+    // entity, its side effects) — which is exactly why `policyFor` surfaces every
+    // failure for it instead of retrying. A throttle can land on a mid-stream
+    // reopen, AFTER creation, so the generic "retry with fewer in parallel"
+    // advice would invite the duplicate side effects that no-retry rule exists to
+    // prevent. The diagnosis is still useful; the instruction is not.
+    const source = remoteSource({});
+    const internal = source as unknown as {
+      cachedTools: unknown[];
+      client: Record<string, unknown>;
+    };
+    // Task-augmentation is read off the cached tool descriptor.
+    internal.cachedTools = [
+      {
+        name: "svc__long_job",
+        inputSchema: { type: "object" },
+        execution: { taskSupport: "required" },
+      },
+    ];
+    // The throttle lands on the task stream, which is the path that can be
+    // refused AFTER the task already exists server-side.
+    internal.client.experimental = {
+      tasks: {
+        callToolStream: () => {
+          throw new Error("Streamable HTTP error: Failed to open SSE stream: Too Many Requests");
+        },
+      },
+    };
+    const restart = spyRestart(source, true);
+    try {
+      const result = await source.execute("long_job", {});
+      expect(result.isError).toBe(true);
+      expect(restart).not.toHaveBeenCalled();
+      const text = JSON.stringify(result.content);
+      // Still names the throttle...
+      expect(text).toContain("rate limited");
+      // ...but must NOT invite a re-issue.
+      expect(text).not.toContain("Retry in a few seconds");
+      expect(text).not.toContain("parallel");
+      expect(text).toContain("cannot be auto-retried");
     } finally {
       restart.mockRestore();
     }
