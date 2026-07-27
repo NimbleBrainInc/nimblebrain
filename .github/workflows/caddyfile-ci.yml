@@ -28,3 +28,59 @@ jobs:
             -v "$PWD/web/Caddyfile:/etc/caddy/Caddyfile:ro" \
             caddy:2-alpine \
             caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile
+
+      # Embedded apps run in an OPAQUE origin (srcdoc iframe without
+      # allow-same-origin), and fonts are always fetched in CORS mode — so their
+      # font requests arrive with `Origin: null` and are blocked unless the file
+      # carries ACAO. Validation can't see that; only a running server can, and
+      # the failure mode is silent (the app falls back to system-ui), so it is
+      # exactly the kind of regression a config lint would miss forever.
+      - name: "Fonts are served with CORS (Origin: null)"
+        run: |
+          set -euo pipefail
+          mkdir -p srv/assets
+          head -c 64 /dev/urandom > srv/assets/probe.woff2
+          echo '<html></html>' > srv/index.html
+          docker run -d --name caddy-cors \
+            -v "$PWD/web/Caddyfile:/etc/caddy/Caddyfile:ro" \
+            -v "$PWD/srv:/srv:ro" \
+            -p 8080:8080 caddy:2-alpine
+          # `|| sleep 1` makes each iteration succeed, so `set -e` cannot see a
+          # loop that never came up — it would fall through and fail below as
+          # "fonts lack ACAO", blaming the Caddyfile for a container that never
+          # started. Fail here, with the logs that explain it.
+          for i in $(seq 1 30); do
+            curl -fsS -o /dev/null "http://localhost:8080/" && break || sleep 1
+          done
+          curl -fsS -o /dev/null "http://localhost:8080/" || {
+            echo "FAIL: caddy never became ready"; docker logs caddy-cors; exit 1; }
+
+          echo "--- font asset ---"
+          hdrs=$(curl -sI -H 'Origin: null' http://localhost:8080/assets/probe.woff2)
+          echo "$hdrs"
+          echo "$hdrs" | grep -iq '^access-control-allow-origin: \*' || {
+            echo "FAIL: fonts lack Access-Control-Allow-Origin — iframe apps will
+            silently render in system-ui"; docker logs caddy-cors; exit 1; }
+
+          echo "--- non-font asset must NOT be opened up ---"
+          if curl -sI -H 'Origin: null' http://localhost:8080/index.html \
+               | grep -iq '^access-control-allow-origin'; then
+            echo "FAIL: ACAO leaked beyond fonts"; exit 1
+          fi
+
+          # A hashed asset either exists or it does not — its name embeds its
+          # content, so no other file is a valid answer. Under a shared SPA
+          # `try_files` a missing one returns `200 text/html`: a stale font URL
+          # then reads as healthy in devtools and in logs while the browser
+          # quietly fails to parse it, which is the same silent failure the ACAO
+          # check above exists to catch. /assets/* must have no SPA fallback.
+          echo "--- a missing hashed asset must 404, not fall back to index.html ---"
+          code=$(curl -s -o /dev/null -w '%{http_code}' \
+                   -H 'Origin: null' http://localhost:8080/assets/nonexistent.woff2)
+          if [ "$code" != "404" ]; then
+            echo "FAIL: missing font returned $code, not 404 — the SPA fallback is"
+            echo "      serving index.html as a font. A stale asset URL will look healthy."
+            docker logs caddy-cors; exit 1
+          fi
+
+          docker rm -f caddy-cors
