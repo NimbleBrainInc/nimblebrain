@@ -1,5 +1,9 @@
 import { describe, expect, it } from "bun:test";
-import { buildNebiusCatalog, type RawNebiusModel } from "../../src/model/sync-nebius.ts";
+import {
+  buildNebiusCatalog,
+  probeModel,
+  type RawNebiusModel,
+} from "../../src/model/sync-nebius.ts";
 
 const curated = [{ id: "org/Model-A", name: "Model A", family: "fam" }];
 
@@ -41,5 +45,66 @@ describe("buildNebiusCatalog", () => {
     const models = buildNebiusCatalog([raw({ id: "org/Different" })], curated);
     expect(models["org/Model-A"]).toBeUndefined();
     expect(Object.keys(models)).toHaveLength(0);
+  });
+});
+
+describe("probeModel", () => {
+  const KEY = "test-key";
+  const okBody = { choices: [{ message: { tool_calls: [{ id: "1", function: { name: "get_weather" } }] } }] };
+
+  function fetchReturning(body: unknown, init: { ok?: boolean; status?: number } = {}) {
+    return (async () =>
+      ({
+        ok: init.ok ?? true,
+        status: init.status ?? 200,
+        statusText: "",
+        json: async () => body,
+      }) as unknown as Response) as unknown as typeof fetch;
+  }
+
+  it("passes a model that returns a real tool call", async () => {
+    expect(await probeModel("org/Good", KEY, fetchReturning(okBody))).toEqual({ ok: true });
+  });
+
+  it("rejects a model that answers in prose instead of calling the tool", async () => {
+    // `supported_features: ["tools"]` is a claim; this is the check.
+    const prose = { choices: [{ message: { content: "It is sunny in Paris." } }] };
+    expect(await probeModel("org/Prose", KEY, fetchReturning(prose))).toEqual({
+      ok: false,
+      reason: "no_tool_calls",
+    });
+  });
+
+  it("rejects a model that never responds — the DeepSeek case", async () => {
+    // Listed, priced, advertising `tools`, and every completion hangs with no
+    // status. This is why the probe exists: without it the model ships and stalls
+    // an agent run indefinitely.
+    const hangs = ((_url: string, init?: { signal?: AbortSignal }) =>
+      new Promise((_resolve, reject) => {
+        init?.signal?.addEventListener("abort", () => {
+          const e = new Error("The operation was aborted.");
+          e.name = "AbortError";
+          reject(e);
+        });
+      })) as unknown as typeof fetch;
+
+    const outcome = await probeModel("org/Hangs", KEY, hangs, 25);
+    expect(outcome.ok).toBe(false);
+    expect((outcome as { reason: string }).reason).toBe("timeout");
+  });
+
+  it("rejects on a non-2xx and carries the status", async () => {
+    const outcome = await probeModel("org/Gone", KEY, fetchReturning({}, { ok: false, status: 404 }));
+    expect(outcome.ok).toBe(false);
+    expect((outcome as { reason: string }).reason).toBe("http_error");
+  });
+
+  it("returns an outcome rather than throwing, so one bad model can't fail the sync", async () => {
+    const boom = (async () => {
+      throw new Error("ECONNRESET");
+    }) as unknown as typeof fetch;
+    const outcome = await probeModel("org/Broken", KEY, boom);
+    expect(outcome.ok).toBe(false);
+    expect((outcome as { detail?: string }).detail).toContain("ECONNRESET");
   });
 });
