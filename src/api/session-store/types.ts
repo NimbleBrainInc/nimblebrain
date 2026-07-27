@@ -26,11 +26,11 @@
  * layer — both of which leak into a clean interface.
  *
  * **Stage 2 (cross-workspace refactor) hard-cut `workspaceId` from this
- * type.** Per Q4, sessions are identity-bound — every `tools/call`
- * carries the workspace inline via `ws_<id>-<tool>` namespacing (parsed
- * and routed by the orchestrator). Putting `workspaceId` on the session
- * pinned a single-workspace assumption into the metadata schema; the cut
- * is permanent. Readers MUST tolerate legacy entries that still carry a
+ * type.** Sessions are identity-bound, and a `tools/call` takes its workspace
+ * from the request's validated `X-Workspace-Id` — not from the session and not
+ * from the tool name, which is bare. Putting `workspaceId` on the session
+ * pinned a single-workspace assumption into the metadata schema; the cut is
+ * permanent. Readers MUST tolerate legacy entries that still carry a
  * `workspaceId` field (pre-Stage-2 Redis hashes survive on-disk) by
  * ignoring the field — the parsing path here drops unknown fields rather
  * than erroring.

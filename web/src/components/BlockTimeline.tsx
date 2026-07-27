@@ -668,8 +668,18 @@ function ToolWidgets({ calls }: { calls: ReadonlyArray<ToolCallDisplay> }) {
       tc.appName &&
       !isPersonalConnectorAppName(tc.appName),
   );
+  // Same marker exclusion as `widgets` above. A personal connector has no app
+  // surface to resolve against — `/v1/apps/<name>/resources/*` searches the
+  // workspace registry, which a `my_`-marked name can never match — so a link
+  // rendered here previews a 404. Fail-closed either way, but a broken tile is
+  // worse than no tile.
   const resourceLinkCalls = calls.filter(
-    (tc) => tc.status === "done" && tc.appName && tc.resourceLinks && tc.resourceLinks.length > 0,
+    (tc) =>
+      tc.status === "done" &&
+      tc.appName &&
+      !isPersonalConnectorAppName(tc.appName) &&
+      tc.resourceLinks &&
+      tc.resourceLinks.length > 0,
   );
   if (widgets.length === 0 && resourceLinkCalls.length === 0) return null;
   return (

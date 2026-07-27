@@ -17,6 +17,7 @@ import {
   removeConnectorSkillsForServer,
 } from "../skills/connector-skill-store.ts";
 import { FileCredentialStore } from "../tools/credential-store.ts";
+import { personalConnectorWireName } from "../tools/identity-sources.ts";
 import { McpSource } from "../tools/mcp-source.ts";
 import { ToolRegistry } from "../tools/registry.ts";
 import type { ToolSource } from "../tools/types.ts";
@@ -2368,6 +2369,15 @@ export class BundleLifecycleManager {
         },
         this.eventSink,
         composeBundleMcpContext(undefined, serverName),
+        // Identity-owned, so it emits its MARKED name. `startBundleSource` does
+        // this from `opts.identityOwner`; this flow hand-rolls its source, so it
+        // has to say so itself. Without it the source registered here — the one
+        // `getIdentityConnectorSource` returns for the rest of the pod's life,
+        // since it never restarts an already-registered source — emits a bare
+        // name, and a `data.changed` broadcast lands on a WORKSPACE app of that
+        // name. Only visible until the pod restarts, which is why it survives
+        // manual testing.
+        personalConnectorWireName(serverName),
       );
       // We hold the start gate and `hasSource` was false at claim time, so this
       // source is OURS to own — add it, start it, and tear it down on failure.

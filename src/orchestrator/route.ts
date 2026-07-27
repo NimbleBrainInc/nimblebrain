@@ -262,11 +262,15 @@ export interface OrchestratorRuntime {
  */
 export type RoutedToolCall =
   | {
-      /** Workspace request: `ws_<id>-<tool>`, authorized by membership. */
+      /**
+       * Workspace request: a bare `<source>__<tool>` whose source segment is
+       * neither a kernel identity source nor `my_`-marked. Authorized by the
+       * membership check the session was established with, not per call.
+       */
       kind: "workspace";
-      /** Fresh `WorkspaceContext` bound to the parsed namespace's wsId. */
+      /** Fresh `WorkspaceContext` bound to the session's own wsId. */
       context: WorkspaceContext;
-      /** Tool name after stripping the `ws_<id>-` prefix — what the source executes. */
+      /** The wire name — what the source executes. */
       toolName: string;
       /** The workspace's `ToolSource` for the inner tool's source prefix. */
       source: ToolSource;

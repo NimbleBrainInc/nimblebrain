@@ -19,6 +19,7 @@
  */
 
 import { mkdirSync, rmSync } from "node:fs";
+import { namespacedToolName } from "./namespaced-tool-name.ts";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -30,7 +31,7 @@ import { Runtime } from "../../src/runtime/runtime.ts";
 import type { ChatRequest } from "../../src/runtime/types.ts";
 import { defineInProcessApp, type InProcessTool } from "../../src/tools/in-process-app.ts";
 import type { McpSource } from "../../src/tools/mcp-source.ts";
-import { namespacedToolName } from "../../src/tools/namespace.ts";
+import {} from "../../src/tools/namespace.ts";
 import { ensureUserWorkspace } from "../../src/workspace/provisioning.ts";
 import {
   personalWorkspaceIdFor,
