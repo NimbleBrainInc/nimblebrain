@@ -1755,6 +1755,49 @@ describe("AgentEngine", () => {
         expect(po.openai?.reasoningEffort).toBe("high");
       });
 
+      it("does not send an effort tier the OpenAI model rejects", async () => {
+        // Restriction is per-model on OpenAI too, and the adapter forwards the
+        // string without checking. gpt-5-pro takes only `high` — and rejects
+        // `medium`, which is the platform fallback, so a slot pointed at it
+        // would 400 on every call with nothing configured.
+        expect(
+          await providerOptionsFor("openai:gpt-5-pro", {
+            mode: "effort",
+            effort: DEFAULT_THINKING_EFFORT,
+            source: "platform",
+          }),
+        ).toEqual({});
+
+        // A named tier steps DOWN to the nearest one offered, never up —
+        // same rule as Gemini 3. gpt-5.2-pro takes {medium, high}, so an
+        // operator asking for `low` gets nothing rather than being quietly
+        // moved to `medium`: declining to steer beats making it think harder
+        // than it was asked to.
+        expect(
+          await providerOptionsFor("openai:gpt-5.2-pro", {
+            mode: "effort",
+            effort: "low",
+            source: "operator",
+          }),
+        ).toEqual({});
+
+        // Where something at or below the request exists, it is used.
+        const stepped = await providerOptionsFor("openai:gpt-5.2-pro", {
+          mode: "effort",
+          effort: "high",
+          source: "operator",
+        });
+        expect(stepped.openai?.reasoningEffort).toBe("high");
+
+        // An unrestricted model is untouched — 21 of 25 take the full ladder.
+        const plain = await providerOptionsFor("openai:gpt-5", {
+          mode: "effort",
+          effort: "low",
+          source: "platform",
+        });
+        expect(plain.openai?.reasoningEffort).toBe("low");
+      });
+
       it("clamps the top two tiers to high for OpenAI", async () => {
         // The adapter accepts `xhigh` but documents it as GPT-5.1-Codex-Max
         // only, erroring elsewhere, and does no per-model gating. `high` is

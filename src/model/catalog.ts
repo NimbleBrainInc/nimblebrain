@@ -322,3 +322,43 @@ export function googleThinkingSupport(modelString: string): GoogleThinkingSuppor
   const { modelId } = parseModelString(modelString);
   return GOOGLE_THINKING[modelId];
 }
+
+/** OpenAI's effort ladder as the platform can express it, ascending. */
+export const OPENAI_EFFORTS = ["low", "medium", "high"] as const;
+export type OpenAIEffort = (typeof OPENAI_EFFORTS)[number];
+
+/**
+ * OpenAI models that accept only part of the ladder, measured against
+ * `POST /v1/responses` rather than taken from docs.
+ *
+ * Restriction is per-model here exactly as it is on Gemini 3, and the adapter
+ * doesn't gate it — it forwards the string and the API rejects it. The `-pro`
+ * line is the whole of it today: every other reasoning model in the catalog
+ * takes low, medium, and high.
+ *
+ * `gpt-5-pro` is the one that bites without any configuration: it rejects
+ * `medium`, which is `DEFAULT_THINKING_EFFORT`, so pointing a slot at it would
+ * 400 on every call.
+ *
+ * A model absent from this map takes the full ladder. That is the safe default
+ * here — unlike Google, where an unknown model gets nothing — because OpenAI
+ * accepts all three on 21 of 25 catalog models and the adapter itself skips
+ * non-reasoning ones.
+ */
+const OPENAI_RESTRICTED_EFFORTS: Record<string, ReadonlySet<OpenAIEffort>> = {
+  "gpt-5-pro": new Set(["high"]),
+  "gpt-5.2-pro": new Set(["medium", "high"]),
+  "gpt-5.4-pro": new Set(["medium", "high"]),
+  "gpt-5.5-pro": new Set(["medium", "high"]),
+};
+
+/** The model ids with a restricted ladder. Exposed so tests can check each is real. */
+export function openaiRestrictedEffortModelIds(): string[] {
+  return Object.keys(OPENAI_RESTRICTED_EFFORTS);
+}
+
+/** Which effort tiers this OpenAI-family model accepts. */
+export function openaiSupportedEfforts(modelString: string): ReadonlySet<OpenAIEffort> {
+  const { modelId } = parseModelString(modelString);
+  return OPENAI_RESTRICTED_EFFORTS[modelId] ?? new Set(OPENAI_EFFORTS);
+}

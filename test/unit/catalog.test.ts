@@ -8,6 +8,8 @@ import {
 	getProviderName,
 	googleThinkingModelIds,
 	googleThinkingSupport,
+	openaiRestrictedEffortModelIds,
+	openaiSupportedEfforts,
 	isModelAllowed,
 	listModels,
 	listProviders,
@@ -351,6 +353,20 @@ describe("Google thinking support", () => {
 		for (const id of ["gemini-2.5-pro", "gemini-2.5-flash", "gemini-2.5-flash-lite"]) {
 			expect(`${id}: ${googleThinkingSupport(id)?.dialect}`).toBe(`${id}: budget`);
 		}
+	});
+
+	it("names real catalog models in the OpenAI restricted-effort map", () => {
+		// Same failure mode as the Google table: a typo'd key silently restores
+		// the full ladder for the model it meant to restrict, and gpt-5-pro
+		// would go back to 400ing on the platform default.
+		const ids = openaiRestrictedEffortModelIds();
+		expect(ids.length).toBeGreaterThan(0);
+		expect(ids.filter((id) => getModel("openai", id) === undefined)).toEqual([]);
+		// Measured against /v1/responses, not taken from docs.
+		expect([...openaiSupportedEfforts("openai:gpt-5-pro")]).toEqual(["high"]);
+		expect([...openaiSupportedEfforts("openai:gpt-5.2-pro")].sort()).toEqual(["high", "medium"]);
+		// Anything unlisted takes the full ladder.
+		expect([...openaiSupportedEfforts("openai:gpt-5")].sort()).toEqual(["high", "low", "medium"]);
 	});
 
 	it("never offers a level outside Google's ladder", () => {

@@ -15,6 +15,8 @@ import {
   type GoogleThinkingLevel,
   getProviderFromModel,
   googleThinkingSupport,
+  OPENAI_EFFORTS,
+  openaiSupportedEfforts,
   supportsEnabledThinking,
 } from "../model/catalog.ts";
 import { normalizeForReplay } from "../model/inbound-fit.ts";
@@ -135,13 +137,14 @@ function toGoogleLevel(effort: ThinkingEffort): GoogleThinkingLevel {
  * `undefined` when the model offers nothing at or below the request — the
  * caller then sends no level and the provider's own default stands.
  */
-function nearestSupportedLevel(
-  wanted: GoogleThinkingLevel,
-  levels: ReadonlySet<GoogleThinkingLevel>,
-): GoogleThinkingLevel | undefined {
-  for (let d = GOOGLE_THINKING_LEVELS.indexOf(wanted); d >= 0; d--) {
-    const l = GOOGLE_THINKING_LEVELS[d];
-    if (l && levels.has(l)) return l;
+function nearestSupported<T extends string>(
+  wanted: T,
+  supported: ReadonlySet<T>,
+  ladder: readonly T[],
+): T | undefined {
+  for (let d = ladder.indexOf(wanted); d >= 0; d--) {
+    const l = ladder[d];
+    if (l && supported.has(l)) return l;
   }
   return undefined;
 }
@@ -194,7 +197,10 @@ function buildAnthropicThinkingOptions(
  * `name` the provider instance was created with, so a `nebius` key would be
  * silently dropped.
  */
-function buildOpenAIThinkingOptions(thinking: ResolvedThinking): SharedV3ProviderOptions {
+function buildOpenAIThinkingOptions(
+  model: string,
+  thinking: ResolvedThinking,
+): SharedV3ProviderOptions {
   switch (thinking.mode) {
     case "off":
       // `reasoningEffort: "none"` exists but the adapter documents it as
@@ -206,8 +212,25 @@ function buildOpenAIThinkingOptions(thinking: ResolvedThinking): SharedV3Provide
       // No adaptive equivalent; the model applies its own per-call default.
       return {};
     case "effort":
-    case "enabled":
-      return { openai: { reasoningEffort: toOpenAIEffort(thinking.effort) } };
+    case "enabled": {
+      const wanted = toOpenAIEffort(thinking.effort);
+      const supported = openaiSupportedEfforts(model);
+      if (supported.has(wanted)) return { openai: { reasoningEffort: wanted } };
+      // Same rule as Gemini 3: a tier the operator named steps to the nearest
+      // one at or below it; the platform's own fallback sends nothing rather
+      // than overriding what the model does on its own. `gpt-5-pro` rejects
+      // `medium` — the fallback — so without the gating above a stock install
+      // 400s on every call to it.
+      //
+      // This particular line is unreachable against the current table and no
+      // test covers it: it only diverges from the step-down below for a model
+      // that supports something under `medium` but not `medium` itself, and
+      // none does. Kept because the rule is the load-bearing one — a row like
+      // {low, high} would otherwise let the fallback quietly pick `low`.
+      if (thinking.mode === "effort" && thinking.source !== "operator") return {};
+      const nearest = nearestSupported(wanted, supported, OPENAI_EFFORTS);
+      return nearest ? { openai: { reasoningEffort: nearest } } : {};
+    }
   }
 }
 
@@ -238,7 +261,7 @@ function googleLevelOptions(
     // provider default stand, which is what shipped before Google was wired.
     return {};
   }
-  const level = nearestSupportedLevel(wanted, levels);
+  const level = nearestSupported(wanted, levels, GOOGLE_THINKING_LEVELS);
   return level ? { google: { thinkingConfig: { thinkingLevel: level } } } : {};
 }
 
@@ -338,7 +361,7 @@ function buildThinkingProviderOptions(
       return buildAnthropicThinkingOptions(model, thinking, maxOutputTokens);
     case "openai":
     case "nebius":
-      return buildOpenAIThinkingOptions(thinking);
+      return buildOpenAIThinkingOptions(model, thinking);
     case "google":
       return buildGoogleThinkingOptions(model, thinking, maxOutputTokens);
     default:
