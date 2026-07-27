@@ -2,6 +2,7 @@ import type { LanguageModelV3, SharedV3ProviderOptions } from "@ai-sdk/provider"
 import {
   getModelByString,
   getProviderFromModel,
+  googleThinkingSupport,
   openaiAcceptsMinimalEffort,
 } from "../model/catalog.ts";
 import { log } from "../observability/log.ts";
@@ -140,8 +141,26 @@ function shortCallProviderOptions(modelString: string | null): SharedV3ProviderO
   switch (provider) {
     case "anthropic":
       return { anthropic: { thinking: { type: "disabled" } } };
-    case "google":
-      return { google: { thinkingConfig: { thinkingBudget: 0 } } };
+    case "google": {
+      // A budget is the Gemini 2.5 dialect, and the two do not overlap: sent to
+      // a Gemini 3 model it is rejected outright (`gemini-3.6-flash` 400s on
+      // "invalid argument", `gemini-3.1-pro-preview` with "Budget 0 is invalid.
+      // This model only works in thinking mode."), and 2.5 models that cannot
+      // disable thinking reject a 0 as well. This runs on every home load, so
+      // the wrong dialect is a briefing that never renders.
+      const support = googleThinkingSupport(modelString);
+      if (!support) return {};
+      if (support.dialect === "level") {
+        // The level equivalent of "as little as possible" — but only where the
+        // model offers it. `gemini-3.1-pro-preview` has no `minimal`, and
+        // there is no lower level to fall back to, so send nothing and let it
+        // think at its own default rather than fail the call.
+        return support.levels.has("minimal")
+          ? { google: { thinkingConfig: { thinkingLevel: "minimal" } } }
+          : {};
+      }
+      return support.canDisable ? { google: { thinkingConfig: { thinkingBudget: 0 } } } : {};
+    }
     case "openai":
       // Almost no model takes `minimal` — 22 of the 25 reachable reasoning
       // models reject it, including every mainline model from gpt-5.1 on and

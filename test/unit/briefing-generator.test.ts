@@ -420,6 +420,34 @@ describe("briefing-generator", () => {
 			});
 		});
 
+		it("uses the level dialect, not a budget, on Gemini 3", async () => {
+			// The dialects do not overlap. A budget sent to a Gemini 3 model is
+			// rejected outright — measured: gemini-3.6-flash 400s on "invalid
+			// argument" — and this path runs on every home load.
+			const { model, calls } = createTrackingModelV3(
+				JSON.stringify({ lede: "Ok.", sections: [] }),
+			);
+			await makeGen(model, "google:gemini-3.6-flash").generate(activeActivity());
+
+			expect(calls[0].providerOptions).toEqual({
+				google: { thinkingConfig: { thinkingLevel: "minimal" } },
+			});
+		});
+
+		it("sends nothing to Gemini models that cannot be quieted", async () => {
+			// gemini-3.1-pro-preview has no `minimal` and no lower level to fall
+			// back to; gemini-2.5-pro cannot disable thinking at all. Both reject
+			// the suppression the briefing wants, so it asks for nothing and lets
+			// them run at their own default.
+			for (const m of ["google:gemini-3.1-pro-preview", "google:gemini-2.5-pro"]) {
+				const { model, calls } = createTrackingModelV3(
+					JSON.stringify({ lede: "Ok.", sections: [] }),
+				);
+				await makeGen(model, m).generate(activeActivity());
+				expect(calls[0].providerOptions ?? {}).toEqual({});
+			}
+		});
+
 		it("sets reasoningEffort=minimal for the OpenAI models that take it", async () => {
 			const llmResponse = JSON.stringify({ lede: "Ok.", sections: [] });
 			const { model, calls } = createTrackingModelV3(llmResponse);
