@@ -36,9 +36,11 @@ describe("buildNebiusCatalog", () => {
     const big = buildNebiusCatalog([raw({ context_length: 1048576 })], curated);
     expect(big["org/Model-A"]!.limits).toEqual({ context: 1048576, output: 16384 });
 
-    // A model whose whole window is below the default output cap must clamp to it.
+    // A window too small to hold one turn is excluded outright, not clamped —
+    // the probe cannot catch this class (an 8K model answers the toy prompt
+    // fine), and `Kimi-K2.7-Code` / `Kimi-K3` are both served at 8000 here.
     const small = buildNebiusCatalog([raw({ context_length: 8000 })], curated);
-    expect(small["org/Model-A"]!.limits).toEqual({ context: 8000, output: 8000 });
+    expect(small["org/Model-A"]).toBeUndefined();
   });
 
   it("skips a curated id the account doesn't serve", () => {
@@ -66,9 +68,36 @@ describe("probeModel", () => {
     expect(await probeModel("org/Good", KEY, fetchReturning(okBody))).toEqual({ ok: true });
   });
 
+  it("sends the auth header, the tool, and a budget big enough for a reasoning trace", async () => {
+    // The fake fetch used to ignore its arguments, so a dropped header, a
+    // malformed tool, or a shrunken budget all stayed green — and the budget is
+    // exactly what produced this file's false negatives.
+    let seen: { url?: string; headers?: Record<string, string>; body?: Record<string, unknown> } = {};
+    const capturing = (async (url: string, init: { headers: Record<string, string>; body: string }) => {
+      seen = { url, headers: init.headers, body: JSON.parse(init.body) };
+      return { ok: true, status: 200, statusText: "", json: async () => okBody } as unknown as Response;
+    }) as unknown as typeof fetch;
+
+    await probeModel("org/Model-A", KEY, capturing);
+    expect(seen.url).toContain("/chat/completions");
+    expect(seen.headers?.Authorization).toBe(`Bearer ${KEY}`);
+    expect(seen.body?.model).toBe("org/Model-A");
+    expect((seen.body?.tools as unknown[])?.length).toBe(1);
+    // A reasoning model spends its trace against this budget before it can call.
+    expect(seen.body?.max_tokens as number).toBeGreaterThanOrEqual(1024);
+  });
+
+  it("reports truncation separately from refusing to call a tool", async () => {
+    // The two are indistinguishable in the payload — no call either way — and
+    // conflating them dropped two working models from the catalog.
+    const truncated = { choices: [{ finish_reason: "length", message: {} }] };
+    const outcome = await probeModel("org/Thinky", KEY, fetchReturning(truncated));
+    expect(outcome).toMatchObject({ ok: false, reason: "truncated" });
+  });
+
   it("rejects a model that answers in prose instead of calling the tool", async () => {
     // `supported_features: ["tools"]` is a claim; this is the check.
-    const prose = { choices: [{ message: { content: "It is sunny in Paris." } }] };
+    const prose = { choices: [{ finish_reason: "stop", message: { content: "It is sunny in Paris." } }] };
     expect(await probeModel("org/Prose", KEY, fetchReturning(prose))).toEqual({
       ok: false,
       reason: "no_tool_calls",

@@ -46,10 +46,32 @@
           "output": ["text"]
         }
       },
+      "Qwen/Qwen3-Next-80B-A3B-Thinking": {
+        "id": "Qwen/Qwen3-Next-80B-A3B-Thinking",
+        "name": "Qwen3 Next 80B A3B Thinking",
+        "family": "qwen",
+        "cost": {
+          "input": 0.15,
+          "output": 1.2
+        },
+        "limits": {
+          "context": 128000,
+          "output": 16384
+        },
+        "capabilities": {
+          "toolCall": true,
+          "reasoning": true,
+          "attachment": false
+        },
+        "modalities": {
+          "input": ["text"],
+          "output": ["text"]
+        }
+      },
       "nvidia/Cosmos3-Super-Reasoner": {
         "id": "nvidia/Cosmos3-Super-Reasoner",
         "name": "Cosmos3 Super Reasoner",
-        "family": "nemotron",
+        "family": "nvidia",
         "cost": {
           "input": 0.1,
           "output": 0.3

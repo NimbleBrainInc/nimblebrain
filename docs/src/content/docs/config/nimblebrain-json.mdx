@@ -131,7 +131,7 @@ and the runtime translates.
 |---|---|
 | Anthropic — Opus 4.7/4.8, Sonnet 5, Opus 5 | `thinking: {type: "adaptive"}` + `output_config.effort`, the tier verbatim |
 | Anthropic — up to Sonnet 4.6 | `thinking: {type: "enabled"}` + a `budgetTokens` sized from the tier |
-| OpenAI, and Nebius-hosted open-weight models (DeepSeek, Qwen, gpt-oss) | `reasoningEffort`. Its usable range stops at `high`, so `xhigh` and `max` both land there. On OpenAI, acceptance is also per model — see below |
+| OpenAI, and Nebius-hosted open-weight models (Qwen, GLM, gpt-oss) | `reasoningEffort`. Its usable range stops at `high`, so `xhigh` and `max` both land there. On OpenAI, acceptance is also per model — see below |
 | Google Gemini 3 | `thinkingConfig.thinkingLevel`, tops out at `high` |
 | Google Gemini 2.5 | `thinkingConfig.thinkingBudget`, sized from the tier and held inside the model's documented range |
 
@@ -232,7 +232,7 @@ Each provider key is optional. If a provider's `apiKey` is omitted, the SDK fall
 
 ### Nebius Token Factory
 
-`nebius` is an OpenAI-compatible gateway for open-weight models (DeepSeek, Qwen, Llama, gpt-oss). Configure it like any other provider and reference models with the `nebius:` prefix:
+`nebius` is an OpenAI-compatible gateway for open-weight models (Qwen, Kimi, GLM, gpt-oss). Configure it like any other provider and reference models with the `nebius:` prefix:
 
 ```json
 {
@@ -242,8 +242,8 @@ Each provider key is optional. If a provider's `apiKey` is omitted, the SDK fall
   },
   "models": {
     "default":   "anthropic:claude-sonnet-4-6",
-    "fast":      "nebius:meta-llama/Llama-3.3-70B-Instruct",
-    "reasoning": "nebius:deepseek-ai/DeepSeek-V4-Pro"
+    "fast":      "nebius:openai/gpt-oss-120b",
+    "reasoning": "nebius:Qwen/Qwen3-Next-80B-A3B-Thinking"
   }
 }
 ```

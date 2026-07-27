@@ -38,6 +38,21 @@ const OUTPUT_PATH = join(dirname(new URL(import.meta.url).pathname), "catalog-ne
 // safely under the smallest served context window.
 const DEFAULT_OUTPUT_LIMIT = 16384;
 
+/**
+ * Smallest context window worth cataloguing.
+ *
+ * `resolveMessageBudget` computes `modelCtx - system - tools - maxOutput -
+ * safety`; when that is <= 0 the run has no room for a single message and the
+ * call fails at the provider. An ordinary run on this platform sends ~22K input
+ * tokens, and `DEFAULT_OUTPUT_LIMIT` alone reserves 16K — so anything under
+ * ~64K cannot hold one real turn.
+ *
+ * This is the one failure class the probe structurally cannot see: a model with
+ * an 8K window answers the probe's toy prompt perfectly. `Kimi-K2.7-Code` and
+ * `Kimi-K3` are both served at 8000 on this account.
+ */
+const MIN_USABLE_CONTEXT = 64_000;
+
 /** Curated selection: which Nebius models we surface, with stable display metadata. */
 interface CuratedModel {
   id: string;
@@ -54,7 +69,8 @@ interface CuratedModel {
 const CURATED: CuratedModel[] = [
   { id: "openai/gpt-oss-120b", name: "GPT-OSS 120B", family: "gpt-oss" },
   { id: "Qwen/Qwen3-235B-A22B-Instruct-2507", name: "Qwen3 235B A22B Instruct", family: "qwen" },
-  { id: "nvidia/Cosmos3-Super-Reasoner", name: "Cosmos3 Super Reasoner", family: "nemotron" },
+  { id: "Qwen/Qwen3-Next-80B-A3B-Thinking", name: "Qwen3 Next 80B A3B Thinking", family: "qwen" },
+  { id: "nvidia/Cosmos3-Super-Reasoner", name: "Cosmos3 Super Reasoner", family: "nvidia" },
   { id: "moonshotai/Kimi-K2.6", name: "Kimi K2.6", family: "kimi" },
   { id: "zai-org/GLM-5.1", name: "GLM 5.1", family: "glm" },
 ];
@@ -81,6 +97,17 @@ function perMillion(perToken: string | undefined): number {
   return Math.round(Number(perToken ?? 0) * 1_000_000 * 10_000) / 10_000;
 }
 
+/**
+ * Output budget for a probe.
+ *
+ * Reasoning tokens count against `max_tokens` on an OpenAI-compatible endpoint,
+ * so a thinking model spends its trace before it can emit a call. At 64 this
+ * probe truncated `Qwen3-Next-80B-A3B-Thinking` and `MiniMax-M2.5` mid-trace and
+ * reported both as refusing to call tools; both call reliably with room. A
+ * budget that small tests the budget, not the model.
+ */
+const PROBE_MAX_TOKENS = 1024;
+
 /** One-shot tool schema for the probe — small, unambiguous, trivially callable. */
 const PROBE_TOOL = {
   type: "function",
@@ -97,10 +124,25 @@ const PROBE_TOOL = {
 
 export type ProbeOutcome =
   | { ok: true }
-  | { ok: false; reason: "timeout" | "http_error" | "no_tool_calls"; detail?: string };
+  | {
+      ok: false;
+      /**
+       * `truncated` is deliberately NOT folded into `no_tool_calls`. They look
+       * identical in the response — no call, no error — and conflating them is
+       * how a working model gets dropped on a diagnosis nobody can check. Both
+       * still exclude (fail-closed), but only one means "this model is broken".
+       */
+      reason: "timeout" | "http_error" | "no_tool_calls" | "truncated";
+      detail?: string;
+    };
 
 /**
  * Ask a model to make one real tool call.
+ *
+ * `tool_choice` is left at the default so this measures what the runtime will
+ * actually see. Forcing `"required"` would test capability rather than
+ * propensity — a stricter question, but not the one that predicts whether the
+ * model drives an agent loop.
  *
  * The assertion is `tool_calls` in the response, not a 200 — a model that
  * answers in prose when handed an unambiguous tool cannot drive this platform,
@@ -122,7 +164,7 @@ export async function probeModel(
       headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
       body: JSON.stringify({
         model: id,
-        max_tokens: 64,
+        max_tokens: PROBE_MAX_TOKENS,
         tools: [PROBE_TOOL],
         messages: [{ role: "user", content: "What is the weather in Paris? Use the tool." }],
       }),
@@ -132,10 +174,19 @@ export async function probeModel(
       return { ok: false, reason: "http_error", detail: `${res.status} ${res.statusText}` };
     }
     const body = (await res.json()) as {
-      choices?: { message?: { tool_calls?: unknown[] } }[];
+      choices?: { finish_reason?: string; message?: { tool_calls?: unknown[] } }[];
     };
-    const calls = body.choices?.[0]?.message?.tool_calls;
-    return calls && calls.length > 0 ? { ok: true } : { ok: false, reason: "no_tool_calls" };
+    const choice = body.choices?.[0];
+    const calls = choice?.message?.tool_calls;
+    if (calls && calls.length > 0) return { ok: true };
+    if (choice?.finish_reason === "length") {
+      return {
+        ok: false,
+        reason: "truncated",
+        detail: `hit the ${PROBE_MAX_TOKENS}-token probe budget before calling a tool`,
+      };
+    }
+    return { ok: false, reason: "no_tool_calls" };
   } catch (err) {
     // An abort is the timeout firing; anything else is a transport failure. Both
     // mean the same thing for cataloguing purposes: it did not serve.
@@ -164,6 +215,13 @@ export function buildNebiusCatalog(
     }
     const feats = new Set(m.supported_features ?? []);
     const context = m.context_length ?? 0;
+    if (context > 0 && context < MIN_USABLE_CONTEXT) {
+      console.warn(
+        `  "${id}" serves only ${context} context (< ${MIN_USABLE_CONTEXT}) — skipping; ` +
+          `it cannot hold one turn on this platform`,
+      );
+      continue;
+    }
     models[id] = {
       id,
       name,
