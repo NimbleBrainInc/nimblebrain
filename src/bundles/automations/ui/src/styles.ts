@@ -120,7 +120,8 @@ body {
    2.92:1 dark — under the 3:1 the dot needs, at every frame of the cycle. A
    token that clears the bar does not survive being faded to 60% of it.
    So the peak here is the token itself and the trough is 0.7, whose worst
-   ground is 3.34:1, asserted in web/src/theme/__tests__/contrast.test.ts.
+   ground is 3.34:1, asserted in test/unit/bundles/animated-dot-contrast.test.ts,
+   which reads this keyframe rather than holding its own copy of the number.
    The conversations bundle's live dot has the same silhouette — full opacity at
    the extremes, motion in the middle — but it is not precedent for the value:
    it troughs at 0.4, which is 1.93:1 on the same token. Borrow the shape from

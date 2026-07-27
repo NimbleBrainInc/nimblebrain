@@ -57,7 +57,7 @@ function blockBody(css: string, from: number, what: string): string {
 }
 
 /** The animation `selector` declares, e.g. `.dot-running` -> `dot-pulse`. */
-export function animationOf(css: string, selector: string): string {
+function animationOf(css: string, selector: string): string {
   const at = css.search(new RegExp(`\\${selector}\\s*\\{`));
   if (at === -1) throw new Error(`no rule for ${selector}`);
   const anim = /animation:\s*([a-zA-Z][\w-]*)/.exec(blockBody(css, at, selector));
@@ -66,7 +66,7 @@ export function animationOf(css: string, selector: string): string {
 }
 
 /** The lowest opacity a keyframe reaches, as a percentage. */
-export function troughPct(css: string, keyframe: string): number {
+function troughPct(css: string, keyframe: string): number {
   const at = css.search(new RegExp(`@keyframes\\s+${keyframe}\\b`));
   if (at === -1) throw new Error(`no @keyframes ${keyframe}`);
   const stops = [...blockBody(css, at, `@keyframes ${keyframe}`).matchAll(/opacity:\s*([\d.]+)/g)];
