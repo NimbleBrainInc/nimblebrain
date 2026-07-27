@@ -7,12 +7,17 @@ import tailwindcss from "@tailwindcss/vite";
 /**
  * Serve fonts with `Access-Control-Allow-Origin` locally.
  *
- * Mirrors the `@fonts` matcher in `web/Caddyfile` — same pattern, so the two
- * cannot drift — and is required for the same reason: fonts are fetched in CORS
- * mode, and an embedded app runs in an opaque origin (`srcdoc` without
- * `allow-same-origin`), so its font requests arrive with `Origin: null` and are
- * blocked without this. Vite's own CORS handling reflects concrete origins and
- * does not cover `null`.
+ * The local counterpart to the `@fonts` matcher in `web/Caddyfile`, required for
+ * the same reason: fonts are fetched in CORS mode, and an embedded app runs in an
+ * opaque origin (`srcdoc` without `allow-same-origin`), so its font requests
+ * arrive with `Origin: null` and are blocked without this. Vite's own CORS
+ * handling reflects concrete origins and does not cover `null`.
+ *
+ * This and the Caddyfile are two implementations of one rule, and only the
+ * Caddyfile has a CI gate — deliberately. That one guards the config the image
+ * actually ships; dev and preview are local-only, so the worst case here is a
+ * developer's own check missing a header, never a user. Keep both hooks below in
+ * step by reading them together, since they are four lines apart.
  *
  * Registered on BOTH dev and preview. `vite preview` is the only local server
  * that serves the built bundle, so it is where you would check this feature

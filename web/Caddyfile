@@ -63,7 +63,14 @@
 		# blocked and the app silently falls back to system-ui, which is the exact
 		# bug the `synapse/fontFaces` channel exists to fix. `*` is correct and
 		# minimal: a font is inert, and `null` cannot be allowlisted by name.
-		@fonts path *.woff2
+		# Existence-scoped for the same reason as the cache header: a header describes
+		# the response it is attached to, and a 404's body is not a font. The browser
+		# reports the same opaque `NetworkError` to `FontFace.load()` either way, so
+		# attaching it to the miss buys nothing.
+		@fonts {
+			path *.woff2
+			file {path}
+		}
 		header @fonts Access-Control-Allow-Origin "*"
 		file_server
 	}
