@@ -35,7 +35,7 @@ jobs:
       # carries ACAO. Validation can't see that; only a running server can, and
       # the failure mode is silent (the app falls back to system-ui), so it is
       # exactly the kind of regression a config lint would miss forever.
-      - name: Fonts are served with CORS (Origin: null)
+      - name: "Fonts are served with CORS (Origin: null)"
         run: |
           set -euo pipefail
           mkdir -p srv/assets
