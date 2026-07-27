@@ -21,6 +21,7 @@
 
 import { writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
+import { DEFAULT_THINKING_EFFORT } from "../engine/types";
 
 const API_URL = "https://api.tokenfactory.nebius.com/v1/models?verbose=true";
 const COMPLETIONS_URL = "https://api.tokenfactory.nebius.com/v1/chat/completions";
@@ -66,6 +67,14 @@ interface CuratedModel {
 // rather than stacking a tier. A curated id that fails the probe is dropped from
 // the output with a warning — the probe is what keeps this list honest, so a
 // stale entry degrades to a build-time warning instead of a hung agent.
+//
+// One probe, no retry, fail-closed: the output therefore depends on the link at
+// sync time. Ids on this account have answered in 1.3s and timed out at 30s
+// within the same hour, so a transient blip silently drops a healthy model. If a
+// sync shrinks the catalog, re-run before trusting the diff — the stderr warning
+// names every exclusion, and a diff that removes a model is a claim to check,
+// not a result. Retrying here would trade this for the opposite failure
+// (a flaky model looking healthy), which is the one that ships a hang.
 const CURATED: CuratedModel[] = [
   { id: "openai/gpt-oss-120b", name: "GPT-OSS 120B", family: "gpt-oss" },
   { id: "Qwen/Qwen3-235B-A22B-Instruct-2507", name: "Qwen3 235B A22B Instruct", family: "qwen" },
@@ -132,7 +141,7 @@ export type ProbeOutcome =
        * how a working model gets dropped on a diagnosis nobody can check. Both
        * still exclude (fail-closed), but only one means "this model is broken".
        */
-      reason: "timeout" | "http_error" | "no_tool_calls" | "truncated";
+      reason: "timeout" | "http_error" | "transport_error" | "no_tool_calls" | "truncated";
       detail?: string;
     };
 
@@ -149,12 +158,23 @@ export type ProbeOutcome =
  * and `supported_features: ["tools"]` has already been observed to overstate.
  * Network and abort failures are outcomes rather than throws so one bad model
  * cannot fail the whole sync.
+ *
+ * `reasoning` makes the probe send the request the runtime sends rather than a
+ * simpler one. For a model this catalog flags reasoning-capable, an unconfigured
+ * install resolves to `{mode: "effort"}` (`resolveThinking` →
+ * `DEFAULT_THINKING_EFFORT`) and `buildOpenAIThinkingOptions` puts
+ * `reasoning_effort` on EVERY call — nebius reads the adapter's `openai` key, so
+ * it is not exempt. Probing without it would verify a shape no run uses, which
+ * is the same mistake as trusting `supported_features`: the tools half was
+ * proven and the reasoning half assumed. A model that rejects the parameter it
+ * claims to support does not serve, and gets excluded like any other failure.
  */
 export async function probeModel(
   id: string,
   key: string,
   fetchImpl: typeof fetch = fetch,
   timeoutMs: number = PROBE_TIMEOUT_MS,
+  reasoning = false,
 ): Promise<ProbeOutcome> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
@@ -167,6 +187,14 @@ export async function probeModel(
         max_tokens: PROBE_MAX_TOKENS,
         tools: [PROBE_TOOL],
         messages: [{ role: "user", content: "What is the weather in Paris? Use the tool." }],
+        // Only when claimed, matching the runtime's own capability gate: a model
+        // the catalog marks non-reasoning is never sent this, so probing it with
+        // the parameter would test a shape that model never receives.
+        //
+        // The default tier reaches the wire unchanged — `toOpenAIEffort` clamps
+        // only `xhigh`/`max` — so this is the literal value an unconfigured
+        // install sends, not an approximation of it.
+        ...(reasoning ? { reasoning_effort: DEFAULT_THINKING_EFFORT } : {}),
       }),
       signal: controller.signal,
     });
@@ -190,7 +218,9 @@ export async function probeModel(
   } catch (err) {
     // An abort is the timeout firing; anything else is a transport failure. Both
     // mean the same thing for cataloguing purposes: it did not serve.
-    const reason = (err as Error)?.name === "AbortError" ? "timeout" : "http_error";
+    // A server that answered 404/429 said something; a socket that died said
+    // nothing. Same exclusion, different diagnosis for whoever reads the log.
+    const reason = (err as Error)?.name === "AbortError" ? "timeout" : "transport_error";
     return { ok: false, reason, detail: (err as Error)?.message };
   } finally {
     clearTimeout(timer);
@@ -215,9 +245,15 @@ export function buildNebiusCatalog(
     }
     const feats = new Set(m.supported_features ?? []);
     const context = m.context_length ?? 0;
-    if (context > 0 && context < MIN_USABLE_CONTEXT) {
+    // No `context > 0` escape hatch: an absent `context_length` is MORE dangerous
+    // than a small one. It would catalogue as `context: 0`, and
+    // `resolveMessageBudget` treats only `null` as a catalog miss — 0 is a
+    // number, so the fallback never fires and every turn resolves to budget 0.
+    // Unknown means excluded here, like everything else in this file.
+    if (context < MIN_USABLE_CONTEXT) {
+      const window = context > 0 ? `only ${context} context` : "no declared context_length";
       console.warn(
-        `  "${id}" serves only ${context} context (< ${MIN_USABLE_CONTEXT}) — skipping; ` +
+        `  "${id}" has ${window} (need >= ${MIN_USABLE_CONTEXT}) — skipping; ` +
           `it cannot hold one turn on this platform`,
       );
       continue;
@@ -227,11 +263,10 @@ export function buildNebiusCatalog(
       name,
       family,
       cost: { input: perMillion(m.pricing?.prompt), output: perMillion(m.pricing?.completion) },
-      limits: {
-        context,
-        // Never exceed the model's own context window (a larger max_tokens 400s).
-        output: context > 0 ? Math.min(DEFAULT_OUTPUT_LIMIT, context) : DEFAULT_OUTPUT_LIMIT,
-      },
+      // The gate above guarantees `context >= MIN_USABLE_CONTEXT`, which is well
+      // clear of the output default, so no clamp is needed to keep `max_tokens`
+      // inside the window.
+      limits: { context, output: DEFAULT_OUTPUT_LIMIT },
       capabilities: {
         toolCall: feats.has("tools"),
         reasoning: feats.has("reasoning"),
@@ -263,7 +298,13 @@ async function main() {
   const rejected: string[] = [];
   for (const [id, entry] of Object.entries(listed)) {
     const started = performance.now();
-    const outcome = await probeModel(id, key);
+    const outcome = await probeModel(
+      id,
+      key,
+      fetch,
+      PROBE_TIMEOUT_MS,
+      entry.capabilities.reasoning,
+    );
     const ms = Math.round(performance.now() - started);
     if (outcome.ok) {
       console.log(`  ✓ ${id} (${ms}ms)`);

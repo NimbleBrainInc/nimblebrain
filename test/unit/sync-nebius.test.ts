@@ -32,9 +32,22 @@ describe("buildNebiusCatalog", () => {
     expect(both["org/Model-A"]!.capabilities).toMatchObject({ toolCall: true, reasoning: true });
   });
 
-  it("uses the real context and caps output at the default, never above context", () => {
+  it("excludes a model that declares no context_length at all", () => {
+    // More dangerous than a small window, not less: it would catalogue as
+    // `context: 0`, and `resolveMessageBudget` treats only `null` as a catalog
+    // miss — so the fallback never fires and every turn resolves to budget 0.
+    const noCtx = buildNebiusCatalog([raw({ context_length: undefined })], curated);
+    expect(noCtx["org/Model-A"]).toBeUndefined();
+  });
+
+  it("uses the real context and pins output to the platform default", () => {
     const big = buildNebiusCatalog([raw({ context_length: 1048576 })], curated);
     expect(big["org/Model-A"]!.limits).toEqual({ context: 1048576, output: 16384 });
+
+    // The gate guarantees context >= MIN_USABLE_CONTEXT, so output never needs
+    // clamping to the window — a model just over the floor still gets the default.
+    const nearFloor = buildNebiusCatalog([raw({ context_length: 64_000 })], curated);
+    expect(nearFloor["org/Model-A"]!.limits).toEqual({ context: 64_000, output: 16384 });
 
     // A window too small to hold one turn is excluded outright, not clamped —
     // the probe cannot catch this class (an 8K model answers the toy prompt
@@ -85,6 +98,30 @@ describe("probeModel", () => {
     expect((seen.body?.tools as unknown[])?.length).toBe(1);
     // A reasoning model spends its trace against this budget before it can call.
     expect(seen.body?.max_tokens as number).toBeGreaterThanOrEqual(1024);
+  });
+
+  it("sends reasoning_effort only for a model that claims reasoning", async () => {
+    // The runtime puts `reasoning_effort` on every call to a reasoning-flagged
+    // nebius model (resolveThinking defaults to effort mode, and the adapter
+    // reads its `openai` key for nebius too). Probing without it would verify a
+    // request shape no run sends — the same gap as proving the tools half of
+    // `supported_features` and assuming the reasoning half.
+    //
+    // Asserted in BOTH directions on purpose: a test that only checks the
+    // parameter is present passes just as happily when it is always present,
+    // which would send it to models the runtime's own gate excludes.
+    const bodyFor = async (reasoning: boolean) => {
+      let sent: Record<string, unknown> = {};
+      const capturing = (async (_url: string, init: { body: string }) => {
+        sent = JSON.parse(init.body);
+        return { ok: true, status: 200, statusText: "", json: async () => okBody } as unknown as Response;
+      }) as unknown as typeof fetch;
+      await probeModel("org/Model-A", KEY, capturing, 30_000, reasoning);
+      return sent;
+    };
+
+    expect((await bodyFor(true)).reasoning_effort).toBe("medium");
+    expect((await bodyFor(false)).reasoning_effort).toBeUndefined();
   });
 
   it("reports truncation separately from refusing to call a tool", async () => {
