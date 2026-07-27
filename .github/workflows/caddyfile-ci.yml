@@ -45,9 +45,15 @@ jobs:
             -v "$PWD/web/Caddyfile:/etc/caddy/Caddyfile:ro" \
             -v "$PWD/srv:/srv:ro" \
             -p 8080:8080 caddy:2-alpine
+          # `|| sleep 1` makes each iteration succeed, so `set -e` cannot see a
+          # loop that never came up — it would fall through and fail below as
+          # "fonts lack ACAO", blaming the Caddyfile for a container that never
+          # started. Fail here, with the logs that explain it.
           for i in $(seq 1 30); do
             curl -fsS -o /dev/null "http://localhost:8080/" && break || sleep 1
           done
+          curl -fsS -o /dev/null "http://localhost:8080/" || {
+            echo "FAIL: caddy never became ready"; docker logs caddy-cors; exit 1; }
 
           echo "--- font asset ---"
           hdrs=$(curl -sI -H 'Origin: null' http://localhost:8080/assets/probe.woff2)

@@ -102,20 +102,19 @@ export function fontOrigin(): string {
 }
 
 /**
- * Absolute same-origin URL for a built asset path.
+ * Absolute same-origin URL for a built asset path, or `""` if there isn't one.
  *
  * `'self'` is meaningless in an opaque-origin frame, so the app has to be given
- * a resolvable absolute URL. Total by construction: this runs inside
+ * a resolvable absolute URL — a relative `/assets/…` would resolve against the
+ * frame's own opaque origin and 404. Total by construction: this runs inside
  * `buildHostExtensions`, which runs during a placement render, so throwing here
  * would take down the whole app mount over typography.
  */
-function absolute(assetPath: string): string {
-  const origin = fontOrigin();
-  if (!origin) return assetPath;
+function absolute(assetPath: string, origin: string): string {
   try {
     return new URL(assetPath, origin).href;
   } catch {
-    return assetPath;
+    return "";
   }
 }
 
@@ -125,15 +124,30 @@ function absolute(assetPath: string): string {
  * `display: swap` paints text in the fallback immediately rather than blocking
  * on the download. A family with no registered URL is skipped, so a partial
  * registration degrades to fewer faces rather than a broken one.
+ *
+ * One rule covers every way this comes up short: **a face we cannot address is
+ * not shipped.** No registered URL and no usable origin both land there — the
+ * descriptor would carry a URL nothing can fetch, so the SDK would add a face,
+ * the browser would attempt a doomed request, and the app would fall back
+ * anyway. Yielding nothing is the supported "host sends no fonts" state; the
+ * key is then omitted from the host context entirely rather than sent empty.
+ *
+ * Stated once, on purpose. An early `if (!fontOrigin()) return []` reads as a
+ * useful guard but is the same rule spelled a second way — `absolute()` already
+ * fails every URL when there is no origin — and two spellings of one rule are
+ * what drift apart later.
  */
 export function getHostFontFaces(): HostFontFace[] {
+  const origin = fontOrigin();
   const faces: HostFontFace[] = [];
   for (const spec of FONT_SPECS) {
     const url = fontUrls[spec.family];
     if (!url) continue;
+    const href = absolute(url, origin);
+    if (!href) continue;
     faces.push({
       family: spec.family,
-      src: `url('${absolute(url)}') format('woff2-variations')`,
+      src: `url('${href}') format('woff2-variations')`,
       weight: spec.weight,
       style: "normal",
       display: "swap",

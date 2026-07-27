@@ -60,7 +60,7 @@
 		# blocked and the app silently falls back to system-ui, which is the exact
 		# bug the `synapse/fontFaces` channel exists to fix. `*` is correct and
 		# minimal: a font is inert, and `null` cannot be allowlisted by name.
-		@fonts path *.woff2 *.woff
+		@fonts path *.woff2
 		header @fonts Access-Control-Allow-Origin "*"
 		try_files {path} /index.html
 		file_server

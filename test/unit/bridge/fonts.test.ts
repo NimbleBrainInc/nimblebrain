@@ -15,7 +15,7 @@
  *     matches nothing.
  */
 
-import { beforeEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { buildCSP } from "../../../web/src/bridge/iframe.ts";
 import {
   FONT_FACES_CONTEXT_KEY,
@@ -27,13 +27,34 @@ import {
 import { buildHostContext, buildHostExtensions } from "../../../web/src/bridge/host-extensions.ts";
 import { paletteToExtAppsTokens } from "../../../web/src/theme/projections.ts";
 
+/** A real host serves the shell over http(s), so the default fixture supplies a
+ *  usable origin. Faces are addressed absolutely against it, and a face with no
+ *  usable address is not shipped at all — so a suite that left `window` absent
+ *  would be asserting the no-fonts path while reading as the happy one. Tests
+ *  that mean to exercise a bad or missing origin override this explicitly. */
+const HOST_ORIGIN = "https://app.example.com";
+let priorWindow: unknown;
+
 /** The browser entry supplies these at runtime; fixtures stand in here so the
  *  mapping is exercised without `web/` dependencies. */
 function registerFixtures(): void {
   registerHostFontUrls(Object.fromEntries(FONT_SPECS.map((s) => [s.family, `/assets/${s.family}.woff2`])));
+  priorWindow = (globalThis as { window?: unknown }).window;
+  (globalThis as { window?: unknown }).window = { location: { origin: HOST_ORIGIN } };
+}
+
+/** Other suites in this run install a DOM, so hand the global back rather than
+ *  deleting it unconditionally. */
+function restoreWindow(): void {
+  if (priorWindow === undefined) {
+    delete (globalThis as { window?: unknown }).window;
+  } else {
+    (globalThis as { window?: unknown }).window = priorWindow;
+  }
 }
 
 beforeEach(registerFixtures);
+afterEach(restoreWindow);
 
 const GENERIC =
   /^(system-ui|ui-sans-serif|ui-monospace|ui-serif|sans-serif|serif|monospace|cursive|fantasy)$/;
@@ -125,51 +146,37 @@ describe("CSP permits the origin the faces are served from", () => {
   test("font-src names the host origin, not just 'self'", () => {
     // `'self'` matches NOTHING in an opaque-origin srcdoc frame, so a policy of
     // `font-src 'self' data:` would block every face while looking permissive.
-    const csp = buildCSP();
-    const fontSrc = csp.split("; ").find((d) => d.startsWith("font-src"));
-    expect(fontSrc).toBeDefined();
-    expect(fontSrc).toContain("data:");
-    const origin = fontOrigin();
-    if (origin) expect(fontSrc).toContain(origin);
+    // Naming the origin is the whole point of the directive change, so assert the
+    // exact directive rather than reading the ambient origin and comparing it to
+    // itself — a self-comparison degrades to a no-op wherever the origin is
+    // empty, and the directive could then be deleted with every suite green.
+    const fontSrc = buildCSP()
+      .split("; ")
+      .find((d) => d.startsWith("font-src"));
+    expect(fontSrc).toBe(`font-src 'self' data: ${HOST_ORIGIN}`);
   });
 
   test("the served URLs are absolute, so an opaque origin can resolve them", () => {
     // A relative `/assets/…` URL resolves against the FRAME's origin, which is
-    // opaque — so it 404s. Absolute is required, not stylistic. Stub the
-    // browser global, since this asserts runtime behaviour and the test env
-    // has no `window`.
-    const prior = (globalThis as { window?: unknown }).window;
-    (globalThis as { window?: unknown }).window = {
-      location: { origin: "https://app.example.com" },
-    };
-    try {
-      for (const face of getHostFontFaces()) {
-        const url = face.src.match(/url\('([^']+)'\)/)?.[1] ?? "";
-        expect(url).toStartWith("https://app.example.com/");
-      }
-      expect(fontOrigin()).toBe("https://app.example.com");
-    } finally {
-      if (prior === undefined) {
-        delete (globalThis as { window?: unknown }).window;
-      } else {
-        (globalThis as { window?: unknown }).window = prior;
-      }
+    // opaque — so it 404s. Absolute is required, not stylistic.
+    const faces = getHostFontFaces();
+    expect(faces.length).toBeGreaterThan(0);
+    for (const face of faces) {
+      const url = face.src.match(/url\('([^']+)'\)/)?.[1] ?? "";
+      expect(url).toStartWith(`${HOST_ORIGIN}/`);
     }
+    expect(fontOrigin()).toBe(HOST_ORIGIN);
   });
 
   test("no window (SSR / prerender) degrades without throwing", () => {
     // The bridge modules get imported in non-browser contexts; building
     // descriptors must not be the thing that breaks that. Remove the global
-    // explicitly — other suites in this run install a DOM, so asserting on
-    // ambient absence would make this order-dependent.
-    const prior = (globalThis as { window?: unknown }).window;
+    // explicitly — the fixture installs one, and other suites in this run
+    // install a DOM, so asserting on ambient absence would be order-dependent.
     delete (globalThis as { window?: unknown }).window;
-    try {
-      expect(() => getHostFontFaces()).not.toThrow();
-      expect(fontOrigin()).toBe("");
-    } finally {
-      if (prior !== undefined) (globalThis as { window?: unknown }).window = prior;
-    }
+    expect(() => getHostFontFaces()).not.toThrow();
+    expect(fontOrigin()).toBe("");
+    expect(getHostFontFaces()).toEqual([]);
   });
 
   test("declared resourceDomains still append", () => {
@@ -205,45 +212,33 @@ describe("building descriptors can never break the host", () => {
   // `buildHostExtensions` runs during a placement render (SlotRenderer), so a
   // throw in here unmounts the app. An earlier draft called `new URL(path,
   // origin)` unguarded and took down five SlotRenderer tests when the test DOM
-  // reported an origin that isn't a URL. Typography must fail soft: at worst
-  // the app gets a face it can't fetch, which is the no-fonts case.
+  // reported an origin that isn't a URL. Typography must fail soft: no fonts
+  // rather than no app.
   const BAD_ORIGINS = ["null", "", "about:blank", "not a url"];
 
   for (const origin of BAD_ORIGINS) {
     test(`origin ${JSON.stringify(origin)} degrades instead of throwing`, () => {
-      const prior = (globalThis as { window?: unknown }).window;
       (globalThis as { window?: unknown }).window = { location: { origin } };
-      try {
-        expect(() => getHostFontFaces()).not.toThrow();
-        expect(() => buildHostExtensions(null)).not.toThrow();
-        expect(() => buildCSP()).not.toThrow();
-        // An unusable origin must not be smuggled into the policy, and must not
-        // leave a hole where it would have gone.
-        expect(fontOrigin()).toBe("");
-        expect(buildCSP().split("; ")).toContain("font-src 'self' data:");
-      } finally {
-        if (prior === undefined) {
-          delete (globalThis as { window?: unknown }).window;
-        } else {
-          (globalThis as { window?: unknown }).window = prior;
-        }
-      }
+      expect(() => getHostFontFaces()).not.toThrow();
+      expect(() => buildHostExtensions(null)).not.toThrow();
+      expect(() => buildCSP()).not.toThrow();
+      // An unusable origin must not be smuggled into the policy, and must not
+      // leave a hole where it would have gone.
+      expect(fontOrigin()).toBe("");
+      expect(buildCSP().split("; ")).toContain("font-src 'self' data:");
+      // URLs ARE registered here (see the fixture) — the origin is what's
+      // unusable. Every face would carry an address nothing can fetch, so ship
+      // none and omit the key, rather than descriptors that are doomed to fail.
+      expect(getHostFontFaces()).toEqual([]);
+      expect(FONT_FACES_CONTEXT_KEY in buildHostExtensions(null)).toBe(false);
     });
   }
 
   test("a window with no location at all is survivable", () => {
-    const prior = (globalThis as { window?: unknown }).window;
     (globalThis as { window?: unknown }).window = {};
-    try {
-      expect(() => getHostFontFaces()).not.toThrow();
-      expect(fontOrigin()).toBe("");
-    } finally {
-      if (prior === undefined) {
-        delete (globalThis as { window?: unknown }).window;
-      } else {
-        (globalThis as { window?: unknown }).window = prior;
-      }
-    }
+    expect(() => getHostFontFaces()).not.toThrow();
+    expect(fontOrigin()).toBe("");
+    expect(getHostFontFaces()).toEqual([]);
   });
 });
 
