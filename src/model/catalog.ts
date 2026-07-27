@@ -348,7 +348,8 @@ export type OpenAIWireEffort = OpenAIEffort | "minimal";
  * that bites with no configuration at all: it rejects `medium`, which is
  * `DEFAULT_THINKING_EFFORT`, so a slot pointed at it 400s on every call.
  * `gpt-5.2-chat-latest` is the one that breaks the shape the rest suggest —
- * bounded from above as well as below, and not a `-pro` model.
+ * bounded from above as well as below, and not a `-pro` model — so don't read
+ * the restrictions as a `-pro` rule and skip measuring the rest.
  */
 const FULL_LADDER: ReadonlySet<OpenAIWireEffort> = new Set(OPENAI_EFFORTS);
 /** The three models that also take the sub-`low` `minimal` tier. */
@@ -360,6 +361,9 @@ const OPENAI_EFFORT_SUPPORT: Record<string, ReadonlySet<OpenAIWireEffort>> = {
   "gpt-5.2-pro": new Set(["medium", "high"]),
   "gpt-5.4-pro": new Set(["medium", "high"]),
   "gpt-5.5-pro": new Set(["medium", "high"]),
+  // Deprecated, and hidden from the picker — but a pinned `providers.openai.models`
+  // entry still resolves it, and it still rejects `low` and `high` on the wire.
+  // Drop this row once models.dev stops carrying the model (OpenAI shutdown 2026-08-10).
   "gpt-5.2-chat-latest": new Set(["medium"]),
 
   // Measured and unrestricted — 20 of the 25 reachable models.
