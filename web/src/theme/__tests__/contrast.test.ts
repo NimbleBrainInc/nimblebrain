@@ -182,6 +182,29 @@ describe("palette contrast — WCAG 2.2", () => {
     }
   }
 
+  describe("sidebar tints — text on a tint of itself", () => {
+    // The sidebar's own tint family. `bg-sidebar-foreground/N` over `bg-sidebar`
+    // is what carries hover and the active row throughout the shell, and it is a
+    // tint of the text colour itself — the same mechanism as TINTED above, so it
+    // moves the same way when the palette does. The `kbd` in SidebarSearch is the
+    // floor: a /10 chip inside the trigger's own /5 fill, two tints deep.
+    for (const mode of ["light", "dark"] as const) {
+      const ground = token("sidebar", mode);
+      const text = token("sidebar-foreground", mode);
+      const hover = over(text, ground, 5);
+
+      for (const [label, fill] of [
+        ["hover, sidebar-foreground/5", hover],
+        ["active, sidebar-foreground/10", over(text, ground, 10)],
+        ["the search kbd, /10 over the trigger's /5", over(text, hover, 10)],
+      ] as const) {
+        test(`${mode}: sidebar text on ${label} clears ${AA_TEXT}:1`, () => {
+          expect(contrastRatio(text, fill)).toBeGreaterThanOrEqual(AA_TEXT);
+        });
+      }
+    }
+  });
+
   for (const mode of ["light", "dark"] as const) {
     test(`${mode}: the primary hover fill keeps its label above ${AA_TEXT}:1`, () => {
       // `hover:bg-primary/90` composited over the page ground.
@@ -268,12 +291,19 @@ describe("translucent tints track their source token", () => {
  *
  * They are gone now, not exempted. The sidebar's hierarchy came entirely from
  * this ramp, because `sidebar-foreground` and `muted-foreground` are the same
- * value — one text colour, four opacities. On a near-white ground there is no
- * room to rebuild that in colour: the step below `sidebar-foreground` (6.331)
- * that still clears 4.5:1 is about one increment wide, which is a rounding
- * error rather than a hierarchy. So the ramp is retired and size, weight and
- * case carry the levels, which is what `palette.ts` already requires of the
- * scope tiers — colour never encodes a distinction alone.
+ * value — one text colour, four opacities. Rebuilding four levels in colour
+ * needs room below `sidebar-foreground` (6.331) and there is none: the step
+ * that still clears 4.5:1 is about one increment wide, a rounding error rather
+ * than a hierarchy. So the ramp is retired and size, weight and case carry the
+ * levels, which is what `palette.ts` already requires of the scope tiers —
+ * colour never encodes a distinction alone.
+ *
+ * Upward, room does exist. `foreground` on `sidebar` is 19.061 light / 19.172
+ * dark, and it would give the active nav row a colour channel — but one step
+ * buys the active/inactive pair, not the four levels the ramp encoded, and it
+ * spends the shell's loudest text on chrome. The active row carries a weight
+ * step and a tint instead. That is a design call, not an absence of options,
+ * and anyone revisiting it should start from the fact that the step is there.
  *
  * The guard is a scanner plus a table rather than a table alone, because a
  * hand-listed set of things to check is a denylist by omission — the failure
@@ -322,16 +352,20 @@ describe("foreground alpha — text-<token>/N", () => {
     // subtracts only what the compiler already ignores.
     const root = join(import.meta.dir, "..", "..", "..");
     const UNSCANNED = new Set(["node_modules", "dist", "coverage", "test", "__tests__"]);
+    // Files the compiler cannot read a class out of. Everything else is
+    // scanned, including `.js` and `.html`: `public/config.js` ships, and a
+    // class string is a class string whatever holds it. Listing what to scan
+    // instead would make a new file type default to invisible — the same
+    // denylist-by-omission this guard exists to end.
+    const NOT_SOURCE =
+      /\.(png|jpe?g|gif|webp|avif|ico|woff2?|ttf|otf|eot|mp[34]|webm|pdf|zip|map)$/i;
     const walk = (dir: string): string[] =>
       readdirSync(dir).flatMap((e) => {
         const p = join(dir, e);
-        // `.ts` as well as `.tsx`: a class string in a plain module is the same
-        // class string, and the extension is not what makes it reachable.
-        // `.html` for the same reason. Tests are skipped — including this one,
-        // which names the arbitrary form in prose — because nothing in them
-        // renders.
+        // Tests are skipped — including this one, which names the arbitrary
+        // form in prose — because nothing in them renders.
         if (statSync(p).isDirectory()) return UNSCANNED.has(e) ? [] : walk(p);
-        return /\.(tsx?|html)$/.test(e) && !/\.test\.tsx?$/.test(e) ? [p] : [];
+        return NOT_SOURCE.test(e) || /\.test\.tsx?$/.test(e) ? [] : [p];
       });
 
     const undeclared = new Set<string>();
