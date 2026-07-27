@@ -328,6 +328,14 @@ export const OPENAI_EFFORTS = ["low", "medium", "high"] as const;
 export type OpenAIEffort = (typeof OPENAI_EFFORTS)[number];
 
 /**
+ * Every tier OpenAI accepts on the wire. `minimal` sits below the ladder and is
+ * deliberately not in OPENAI_EFFORTS: it is reachable only by a caller that
+ * asks for it by name (the home briefing), never by stepping down from a
+ * requested depth.
+ */
+export type OpenAIWireEffort = OpenAIEffort | "minimal";
+
+/**
  * Effort ladder per OpenAI model, measured against `POST /v1/responses` rather
  * than taken from docs. Every reachable catalog reasoning model is listed,
  * restricted or not — presence means "someone measured this", which is what
@@ -342,9 +350,11 @@ export type OpenAIEffort = (typeof OPENAI_EFFORTS)[number];
  * `gpt-5.2-chat-latest` is the one that breaks the shape the rest suggest —
  * bounded from above as well as below, and not a `-pro` model.
  */
-const FULL_LADDER: ReadonlySet<OpenAIEffort> = new Set(OPENAI_EFFORTS);
+const FULL_LADDER: ReadonlySet<OpenAIWireEffort> = new Set(OPENAI_EFFORTS);
+/** The three models that also take the sub-`low` `minimal` tier. */
+const FULL_PLUS_MINIMAL: ReadonlySet<OpenAIWireEffort> = new Set([...OPENAI_EFFORTS, "minimal"]);
 
-const OPENAI_EFFORT_SUPPORT: Record<string, ReadonlySet<OpenAIEffort>> = {
+const OPENAI_EFFORT_SUPPORT: Record<string, ReadonlySet<OpenAIWireEffort>> = {
   // Restricted — measured rejections.
   "gpt-5-pro": new Set(["high"]),
   "gpt-5.2-pro": new Set(["medium", "high"]),
@@ -353,9 +363,9 @@ const OPENAI_EFFORT_SUPPORT: Record<string, ReadonlySet<OpenAIEffort>> = {
   "gpt-5.2-chat-latest": new Set(["medium"]),
 
   // Measured and unrestricted — 20 of the 25 reachable models.
-  "gpt-5": FULL_LADDER,
-  "gpt-5-mini": FULL_LADDER,
-  "gpt-5-nano": FULL_LADDER,
+  "gpt-5": FULL_PLUS_MINIMAL,
+  "gpt-5-mini": FULL_PLUS_MINIMAL,
+  "gpt-5-nano": FULL_PLUS_MINIMAL,
   "gpt-5.1": FULL_LADDER,
   "gpt-5.2": FULL_LADDER,
   "gpt-5.3-codex": FULL_LADDER,
@@ -376,21 +386,14 @@ const OPENAI_EFFORT_SUPPORT: Record<string, ReadonlySet<OpenAIEffort>> = {
 };
 
 /**
- * Models accepting `minimal`, the tier below `low` used for short internal
- * calls. Almost nothing takes it: 22 of the 25 reachable reasoning models
- * reject it, including every mainline model from `gpt-5.1` on and the whole
- * o-series. `gpt-5.1`+ replaced it with `none`, which the platform never sends.
- */
-const OPENAI_MINIMAL_EFFORT: ReadonlySet<string> = new Set(["gpt-5", "gpt-5-mini", "gpt-5-nano"]);
-
-/**
  * Reasoning models the API will not serve for this account — both return
  * "model does not exist" at every tier, so their ladder cannot be measured.
  *
  * This does NOT make them restricted: they are absent from the support map, so
  * a lookup still returns the full ladder. Its only effect is to exempt them
  * from the coverage guard below, which would otherwise fail CI forever over
- * models nobody can reach. Revisit if the account gains access.
+ * models nobody can reach. Both are still offered in the picker and still fall
+ * through to the full ladder, so this is a known gap, not a safe one — #813.
  */
 const OPENAI_UNAVAILABLE: ReadonlySet<string> = new Set([
   "gpt-5.3-codex-spark",
@@ -399,7 +402,7 @@ const OPENAI_UNAVAILABLE: ReadonlySet<string> = new Set([
 
 /** Whether this model accepts the sub-`low` `minimal` tier. */
 export function openaiAcceptsMinimalEffort(modelString: string): boolean {
-  return OPENAI_MINIMAL_EFFORT.has(parseModelString(modelString).modelId);
+  return openaiSupportedEfforts(modelString).has("minimal");
 }
 
 /**
@@ -421,7 +424,7 @@ export function openaiUnmeasuredReasoningModels(): string[] {
 /** The model ids with a restricted ladder. Exposed so tests can check each is real. */
 export function openaiRestrictedEffortModelIds(): string[] {
   return Object.entries(OPENAI_EFFORT_SUPPORT)
-    .filter(([, tiers]) => tiers.size < OPENAI_EFFORTS.length)
+    .filter(([, tiers]) => OPENAI_EFFORTS.some((e) => !tiers.has(e)))
     .map(([id]) => id);
 }
 
@@ -434,7 +437,7 @@ export function openaiRestrictedEffortModelIds(): string[] {
  * model therefore always falls through to the full ladder, which matches
  * measurement — Nebius accepts all three on every catalog model.
  */
-export function openaiSupportedEfforts(modelString: string): ReadonlySet<OpenAIEffort> {
+export function openaiSupportedEfforts(modelString: string): ReadonlySet<OpenAIWireEffort> {
   const { modelId } = parseModelString(modelString);
   return OPENAI_EFFORT_SUPPORT[modelId] ?? FULL_LADDER;
 }

@@ -43,6 +43,7 @@ import { toolSchemaForLlm } from "./tool-schema-for-llm.ts";
 import {
   CONNECTOR_SKILL_SYNTHETIC,
   type ConnectorSkillCandidate,
+  type EffortSource,
   type EngineConfig,
   type EngineResult,
   type EventSink,
@@ -139,7 +140,7 @@ function toGoogleLevel(effort: ThinkingEffort): GoogleThinkingLevel {
  */
 function nearestSupported<T extends string>(
   wanted: T,
-  supported: ReadonlySet<T>,
+  supported: ReadonlySet<string>,
   ladder: readonly T[],
 ): T | undefined {
   for (let d = ladder.indexOf(wanted); d >= 0; d--) {
@@ -147,6 +148,34 @@ function nearestSupported<T extends string>(
     if (l && supported.has(l)) return l;
   }
   return undefined;
+}
+
+/**
+ * Which tier to actually send, for any dialect carrying a per-model tier set.
+ * Both Google's levels and OpenAI's efforts obey the same three-part rule:
+ *
+ *   - the model offers what was asked for → send it
+ *   - it doesn't, and the tier is the platform's own fallback rather than
+ *     something an operator wrote → send nothing, and let the model's default
+ *     stand. A tier nobody chose must not override the provider's own
+ *     judgement, and on Google stepping *down* can reason less than `off` does
+ *     on a model with no `minimal`.
+ *   - it doesn't, and an operator did choose it → step to the nearest tier at
+ *     or below. Never up: reasoning harder than asked is a worse surprise than
+ *     not honoring the tier.
+ *
+ * `undefined` means send no tier at all. Note the operator's choice can end up
+ * silently unapplied where nothing at or below it exists — see #809.
+ */
+function pickTier<T extends string>(
+  wanted: T,
+  supported: ReadonlySet<string>,
+  ladder: readonly T[],
+  source: EffortSource,
+): T | undefined {
+  if (supported.has(wanted)) return wanted;
+  if (source !== "operator") return undefined;
+  return nearestSupported(wanted, supported, ladder);
 }
 
 /**
@@ -213,26 +242,15 @@ function buildOpenAIThinkingOptions(
       return {};
     case "effort":
     case "enabled": {
-      const wanted = toOpenAIEffort(thinking.effort);
-      const supported = openaiSupportedEfforts(model);
-      if (supported.has(wanted)) return { openai: { reasoningEffort: wanted } };
-      // Same rule as Gemini 3: a tier the operator named steps to the nearest
-      // one at or below it; the platform's own fallback sends nothing rather
-      // than overriding what the model does on its own. `gpt-5-pro` rejects
-      // `medium` — the fallback — so without the gating above a stock install
-      // 400s on every call to it.
-      //
-      // Unreachable against the current table — it only diverges from the
-      // step-down below for a model supporting something under `medium` but
-      // not `medium`, and none does — so no test covers it. Kept because the
-      // rule is the load-bearing one: a {low, high} row would otherwise let
-      // the fallback quietly pick `low`. Condition matches Google's exactly;
-      // narrowing it to `mode === "effort"` would exempt `mode: "enabled"`,
-      // which carries `source: "mode"` and would then fall through to the
-      // step-down — the very outcome this prevents.
-      if (thinking.source !== "operator") return {};
-      const nearest = nearestSupported(wanted, supported, OPENAI_EFFORTS);
-      return nearest ? { openai: { reasoningEffort: nearest } } : {};
+      // `gpt-5-pro` rejects `medium` — the platform fallback — so without
+      // this a stock install 400s on every call to it.
+      const tier = pickTier(
+        toOpenAIEffort(thinking.effort),
+        openaiSupportedEfforts(model),
+        OPENAI_EFFORTS,
+        thinking.source,
+      );
+      return tier ? { openai: { reasoningEffort: tier } } : {};
     }
   }
 }
@@ -255,16 +273,12 @@ function googleLevelOptions(
       ? { google: { thinkingConfig: { thinkingLevel: "minimal" } } }
       : {};
   }
-  const wanted = toGoogleLevel(thinking.effort);
-  if (!levels.has(wanted) && thinking.source !== "operator") {
-    // The platform's fallback tier isn't on offer here. Stepping to a
-    // neighbour would make a tier nobody chose override the model's own
-    // default — and stepping *down* reasons less than `off` does on a model
-    // with no `minimal`, which is plainly wrong. Say nothing and let the
-    // provider default stand, which is what shipped before Google was wired.
-    return {};
-  }
-  const level = nearestSupported(wanted, levels, GOOGLE_THINKING_LEVELS);
+  const level = pickTier(
+    toGoogleLevel(thinking.effort),
+    levels,
+    GOOGLE_THINKING_LEVELS,
+    thinking.source,
+  );
   return level ? { google: { thinkingConfig: { thinkingLevel: level } } } : {};
 }
 

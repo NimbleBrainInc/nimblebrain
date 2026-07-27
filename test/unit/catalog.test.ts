@@ -11,6 +11,7 @@ import {
 	isModelAllowed,
 	listModels,
 	listProviders,
+	openaiAcceptsMinimalEffort,
 	openaiRestrictedEffortModelIds,
 	openaiSupportedEfforts,
 	openaiUnmeasuredReasoningModels,
@@ -394,8 +395,23 @@ describe("OpenAI effort support", () => {
 		// property and not always a floor.
 		expect([...openaiSupportedEfforts("openai:gpt-5.2-chat-latest")]).toEqual(["medium"]);
 		expect([...openaiSupportedEfforts("openai:gpt-5.2-pro")].sort()).toEqual(["high", "medium"]);
-		// Anything unlisted takes the full ladder.
-		expect([...openaiSupportedEfforts("openai:gpt-5")].sort()).toEqual(["high", "low", "medium"]);
+		// `minimal` rides in the same table rather than a parallel set, so it
+		// inherits the typo and coverage guards. It is not in OPENAI_EFFORTS, so
+		// step-down can never land on it.
+		expect([...openaiSupportedEfforts("openai:gpt-5")].sort()).toEqual([
+			"high",
+			"low",
+			"medium",
+			"minimal",
+		]);
+		expect(openaiAcceptsMinimalEffort("openai:gpt-5")).toBe(true);
+		expect(openaiAcceptsMinimalEffort("openai:gpt-5.1")).toBe(false);
+		// Anything unlisted takes the full ladder, and never minimal.
+		expect([...openaiSupportedEfforts("openai:not-a-model")].sort()).toEqual([
+			"high",
+			"low",
+			"medium",
+		]);
 	});
 
 	it("has measured every catalog reasoning model", () => {

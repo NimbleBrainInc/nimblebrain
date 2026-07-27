@@ -156,7 +156,8 @@ where the flash models can. **A Gemini model with no verified entry receives no
 thinking options at all** and runs at its own default, because guessing the
 dialect is how a stock install starts returning 400s.
 
-On OpenAI, most models take all three tiers, but the `-pro` line does not:
+On OpenAI, most models take all three tiers, but the GPT-5 `-pro` models do not
+(`o1-pro` and `o3-pro` take all three):
 `gpt-5-pro` accepts only `high`, and `gpt-5.2-pro`, `gpt-5.4-pro` and
 `gpt-5.5-pro` reject `low`. `gpt-5.2-chat-latest` accepts only `medium` —
 bounded from above as well as below. An OpenAI model with no entry is assumed
