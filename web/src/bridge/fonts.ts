@@ -40,6 +40,14 @@
  *    codepoint. Shipping just `latin` means a glyph the font lacks falls through
  *    to the next family in the stack — correct behaviour, and the reason every
  *    `--font-*` token keeps a web-safe tail.
+ *  - **`format('woff2')`, not `format('woff2-variations')`.** The keyword states
+ *    the container format; variability comes from the file's `fvar` table and the
+ *    `weight` range on the descriptor, not from the keyword. `woff2-variations` is
+ *    a dropped CSS Fonts 4 draft spelling — both load identically today (verified
+ *    in Chrome 148 and Firefox 153, same live weight axis), but an unrecognised
+ *    keyword makes the whole `src` unparseable, and the SDK wraps `new FontFace`
+ *    in `try/catch`, so the cost of being wrong here is a silently missing
+ *    typeface. The current spelling has no such exposure.
  */
 
 /** One `@font-face` for an app iframe. Mirrors `FontFaceDescriptor` in
@@ -147,7 +155,7 @@ export function getHostFontFaces(): HostFontFace[] {
     if (!href) continue;
     faces.push({
       family: spec.family,
-      src: `url('${href}') format('woff2-variations')`,
+      src: `url('${href}') format('woff2')`,
       weight: spec.weight,
       style: "normal",
       display: "swap",

@@ -1,31 +1,42 @@
 import path from "path";
+import type { Connect, Plugin } from "vite";
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
 
 /**
- * Serve fonts with `Access-Control-Allow-Origin` in dev.
+ * Serve fonts with `Access-Control-Allow-Origin` locally.
  *
- * Mirrors the `@fonts` matcher in `web/Caddyfile`, and is required for the same
- * reason: fonts are fetched in CORS mode, and an embedded app runs in an opaque
- * origin (`srcdoc` without `allow-same-origin`), so its font requests arrive
- * with `Origin: null` and are blocked without this. Vite's own CORS handling
- * reflects concrete origins and does not cover `null`.
+ * Mirrors the `@fonts` matcher in `web/Caddyfile` — same pattern, so the two
+ * cannot drift — and is required for the same reason: fonts are fetched in CORS
+ * mode, and an embedded app runs in an opaque origin (`srcdoc` without
+ * `allow-same-origin`), so its font requests arrive with `Origin: null` and are
+ * blocked without this. Vite's own CORS handling reflects concrete origins and
+ * does not cover `null`.
  *
- * Scoped to font files deliberately — this is not a blanket dev-server CORS
- * opening.
+ * Registered on BOTH dev and preview. `vite preview` is the only local server
+ * that serves the built bundle, so it is where you would check this feature
+ * before shipping — and a dev-only hook would leave that one check failing in
+ * the exact silent mode the feature exists to remove.
+ *
+ * Scoped to font files deliberately — this is not a blanket CORS opening.
  */
-const fontCors = {
+const FONT_PATH = /\.woff2(\?|$)/;
+
+const fontCors: Plugin = {
   name: "nb-font-cors",
-  configureServer(server: { middlewares: { use: (fn: (req: { url?: string }, res: { setHeader: (k: string, v: string) => void }, next: () => void) => void) => void } }) {
-    server.middlewares.use((req, res, next) => {
-      if (req.url && /\.woff2?(\?|$)/.test(req.url)) {
-        res.setHeader("Access-Control-Allow-Origin", "*");
-      }
-      next();
-    });
-  },
+  configureServer: (server) => attachFontCors(server.middlewares),
+  configurePreviewServer: (server) => attachFontCors(server.middlewares),
 };
+
+function attachFontCors(middlewares: Connect.Server): void {
+  middlewares.use((req, res, next) => {
+    if (req.url && FONT_PATH.test(req.url)) {
+      res.setHeader("Access-Control-Allow-Origin", "*");
+    }
+    next();
+  });
+}
 
 export default defineConfig({
   plugins: [react(), tailwindcss(), fontCors],

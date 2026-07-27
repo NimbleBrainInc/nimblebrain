@@ -68,4 +68,19 @@ jobs:
             echo "FAIL: ACAO leaked beyond fonts"; exit 1
           fi
 
+          # A hashed asset either exists or it does not — its name embeds its
+          # content, so no other file is a valid answer. Under a shared SPA
+          # `try_files` a missing one returns `200 text/html`: a stale font URL
+          # then reads as healthy in devtools and in logs while the browser
+          # quietly fails to parse it, which is the same silent failure the ACAO
+          # check above exists to catch. /assets/* must have no SPA fallback.
+          echo "--- a missing hashed asset must 404, not fall back to index.html ---"
+          code=$(curl -s -o /dev/null -w '%{http_code}' \
+                   -H 'Origin: null' http://localhost:8080/assets/nonexistent.woff2)
+          if [ "$code" != "404" ]; then
+            echo "FAIL: missing font returned $code, not 404 — the SPA fallback is"
+            echo "      serving index.html as a font. A stale asset URL will look healthy."
+            docker logs caddy-cors; exit 1
+          fi
+
           docker rm -f caddy-cors

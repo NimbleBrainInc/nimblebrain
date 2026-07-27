@@ -38,21 +38,24 @@
 		header Cache-Control "no-store"
 		respond `window.__NB_CONFIG__ = {"tenantId":"{$NB_TENANT_ID:}","environment":"{$NB_SENTRY_ENV:}","release":"{$NB_VERSION:}","sentry":{"dsn":"{$NB_SENTRY_DSN:}","enabled":"{$NB_SENTRY_ENABLED:false}","tracesSampleRate":"{$NB_SENTRY_TRACES_SAMPLE_RATE:0}"},"posthog":{"key":"{$NB_POSTHOG_KEY:}","enabled":"{$NB_POSTHOG_ENABLED:false}"}};` 200
 	}
-	# Static SPA assets. Compression + immutable caching are scoped to THIS handler
-	# only — deliberately not applied to the reverse-proxied /v1 and /mcp routes,
-	# whose SSE/streamable-HTTP responses must not be buffered by an encoder.
-	handle {
+	# Content-hashed build output, served WITHOUT the SPA fallback.
+	#
+	# A hashed asset either exists or it does not: its name embeds its content, so
+	# no other file is a valid answer. Under a shared `try_files … /index.html` a
+	# missing one returns `200 text/html` — the app's own index page, with the
+	# font/script CORS headers attached — which reads as healthy in devtools and in
+	# logs while the browser quietly fails to parse it. A stale font URL then looks
+	# exactly like the bug this channel exists to fix, and `stale-chunk-recovery.ts`
+	# is written against the 404 that never arrives. Own handler, no fallback, 404.
+	handle /assets/* {
 		encode zstd gzip
 		root * /srv
-		# Content-hashed build output (index-<hash>.js/.css) is immutable — cache forever.
-		@immutable path /assets/*
-		header @immutable Cache-Control "public, max-age=31536000, immutable"
-		# The HTML entry (and any non-hashed file) must revalidate every load: a deploy
-		# rewrites index.html to point at the new hashed chunks, so it has to be re-fetched
-		# to be picked up — no-cache forces an ETag revalidation instead of leaving it to
-		# heuristic cache freshness, which could otherwise serve a stale app after a deploy.
-		@html not path /assets/*
-		header @html Cache-Control "no-cache"
+		# Immutable: the hash changes when the bytes do, so nothing needs revalidating.
+		# Scoped to files that exist, because `header` applies to a 404 too — and a
+		# year-long `immutable` 404 would strand a browser that asked mid-deploy, before
+		# the pod serving the new asset was up, long after the asset arrived.
+		@exists file {path}
+		header @exists Cache-Control "public, max-age=31536000, immutable"
 		# Fonts are fetched in CORS mode by every browser, and an embedded app runs
 		# in an OPAQUE origin (its iframe is `srcdoc` without `allow-same-origin`),
 		# so its font requests arrive here cross-origin with `Origin: null` — even
@@ -62,6 +65,20 @@
 		# minimal: a font is inert, and `null` cannot be allowlisted by name.
 		@fonts path *.woff2
 		header @fonts Access-Control-Allow-Origin "*"
+		file_server
+	}
+	# Everything else: the SPA entry and any non-hashed file. Compression is scoped
+	# to the static handlers only — deliberately not applied to the reverse-proxied
+	# /v1 and /mcp routes, whose SSE/streamable-HTTP responses must not be buffered
+	# by an encoder.
+	handle {
+		encode zstd gzip
+		root * /srv
+		# Must revalidate every load: a deploy rewrites index.html to point at the new
+		# hashed chunks, so it has to be re-fetched to be picked up — no-cache forces
+		# an ETag revalidation instead of leaving it to heuristic cache freshness,
+		# which could otherwise serve a stale app after a deploy.
+		header Cache-Control "no-cache"
 		try_files {path} /index.html
 		file_server
 	}

@@ -43,9 +43,13 @@ function registerFixtures(): void {
   (globalThis as { window?: unknown }).window = { location: { origin: HOST_ORIGIN } };
 }
 
-/** Other suites in this run install a DOM, so hand the global back rather than
- *  deleting it unconditionally. */
-function restoreWindow(): void {
+/** Hand back both globals this suite borrows. `fontUrls` is module state, so a
+ *  registration made here would otherwise persist into every later test file in
+ *  the same bun process — nothing asserts the exact shape of the extensions
+ *  object today, so it fails silently rather than loudly. And other suites in
+ *  this run install a DOM, so hand `window` back rather than deleting it. */
+function restoreGlobals(): void {
+  registerHostFontUrls({});
   if (priorWindow === undefined) {
     delete (globalThis as { window?: unknown }).window;
   } else {
@@ -54,7 +58,7 @@ function restoreWindow(): void {
 }
 
 beforeEach(registerFixtures);
-afterEach(restoreWindow);
+afterEach(restoreGlobals);
 
 const GENERIC =
   /^(system-ui|ui-sans-serif|ui-monospace|ui-serif|sans-serif|serif|monospace|cursive|fantasy)$/;
