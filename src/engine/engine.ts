@@ -28,6 +28,7 @@ import { bareToolName } from "../tools/namespace.ts";
 import { validateToolInput } from "../tools/validate-input.ts";
 import type { TokenUsage } from "../usage/types.ts";
 import { addUsage, emptyUsage, tokenUsageFromV3 } from "../usage/types.ts";
+import { mapWithConcurrency } from "../util/concurrency.ts";
 import {
   boundToolResultForModel,
   estimateContentSize,
@@ -58,6 +59,26 @@ import {
   type ToolRouter,
   type ToolSchema,
 } from "./types.ts";
+
+/**
+ * Most calls the engine dispatches to any ONE source at a time.
+ *
+ * The cap is per source (see `executeToolCallsBounded`), so a turn touching
+ * several connectors still fans out across them; only depth against a single
+ * server is bounded. 6 keeps a batch meaningfully parallel while staying under
+ * the burst allowance a modest server or its gateway is likely to have.
+ *
+ * `NB_MAX_PARALLEL_TOOL_CALLS_PER_SOURCE` overrides it — an escape hatch for a
+ * deployment whose servers are known to be fast and local, or one that needs to
+ * throttle harder for a fragile upstream. A non-numeric or <1 value falls back
+ * to the default rather than disabling the bound.
+ */
+const MAX_PARALLEL_TOOL_CALLS_PER_SOURCE = resolveMaxParallelToolCallsPerSource();
+
+function resolveMaxParallelToolCallsPerSource(): number {
+  const raw = Number(process.env.NB_MAX_PARALLEL_TOOL_CALLS_PER_SOURCE);
+  return Number.isFinite(raw) && raw >= 1 ? Math.floor(raw) : 6;
+}
 
 /** Tokens reserved for visible content so thinking can't consume the whole reply. */
 const MIN_VISIBLE_OUTPUT_TOKENS = 4096;
@@ -1242,9 +1263,7 @@ export class AgentEngine {
           bumpUseCounter,
           supervisor,
         };
-        const toolResults = await Promise.all(
-          toolCalls.map((toolCall) => this.executeToolCall(toolCall, toolExecContext)),
-        );
+        const toolResults = await this.executeToolCallsBounded(toolCalls, toolExecContext);
 
         // Build result arrays from parallel results. `modelOutput` is the
         // already-bounded text the model sees (computed once, during execution,
@@ -1602,6 +1621,60 @@ export class AgentEngine {
    * loop needs to build history and telemetry. Called concurrently (one per tool
    * call) inside the iteration's `Promise.all`.
    */
+  /**
+   * Execute one iteration's tool calls, bounded PER SOURCE.
+   *
+   * The model decides how many calls to emit in a turn, and it will happily emit
+   * a whole batch — 25 writes against one connector is a normal thing for it to
+   * try. Dispatching those simultaneously makes the runtime the loudest possible
+   * client of every server it talks to, and a server's defence is a gateway 429
+   * or a connection reset, neither of which is a good way to learn about pacing:
+   * a source is SHARED by every call in the batch, so one rejection that trips
+   * transport recovery tears down the calls that were already succeeding.
+   *
+   * Bounding is per source, not global, because capacity is a property of the
+   * server being called. Calls to different sources are independent and still go
+   * out together, so a batch that touches three connectors is not serialized
+   * behind the slowest one — only the depth against any single connector is
+   * capped. Order is preserved by index, so `buildToolResults` is unaffected.
+   *
+   * The grouping key is the registry's own routing prefix (everything before the
+   * first `__`), which already distinguishes the same bundle in two workspaces
+   * (`ws_a-people` vs `ws_b-people`) — those are different processes and deserve
+   * independent budgets.
+   */
+  private async executeToolCallsBounded(
+    toolCalls: LanguageModelV3ToolCall[],
+    ctx: ToolExecContext,
+  ): Promise<ToolExecResult[]> {
+    const results = new Array<ToolExecResult>(toolCalls.length);
+    const bySource = new Map<string, number[]>();
+    for (let i = 0; i < toolCalls.length; i++) {
+      const name = (toolCalls[i] as LanguageModelV3ToolCall).toolName;
+      const sep = name.indexOf("__");
+      const key = sep === -1 ? name : name.slice(0, sep);
+      const group = bySource.get(key);
+      if (group) group.push(i);
+      else bySource.set(key, [i]);
+    }
+
+    await Promise.all(
+      [...bySource.values()].map((indices) =>
+        mapWithConcurrency(indices, MAX_PARALLEL_TOOL_CALLS_PER_SOURCE, async (callIndex) => {
+          // `executeToolCall` already contains its own failures (it returns an
+          // error result rather than throwing for tool-level problems), so no
+          // per-item try/catch is needed to keep siblings running.
+          results[callIndex] = await this.executeToolCall(
+            toolCalls[callIndex] as LanguageModelV3ToolCall,
+            ctx,
+          );
+        }),
+      ),
+    );
+
+    return results;
+  }
+
   private async executeToolCall(
     toolCall: LanguageModelV3ToolCall,
     ctx: ToolExecContext,

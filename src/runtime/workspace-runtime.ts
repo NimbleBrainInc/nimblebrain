@@ -20,6 +20,7 @@ import type { EventSink } from "../engine/types.ts";
 import { log } from "../observability/log.ts";
 import { ToolRegistry } from "../tools/registry.ts";
 import type { ToolSource } from "../tools/types.ts";
+import { mapWithConcurrency } from "../util/concurrency.ts";
 import type { Workspace } from "../workspace/types.ts";
 import type { WorkspaceStore } from "../workspace/workspace-store.ts";
 
@@ -398,34 +399,4 @@ export function resolveBundleStartConcurrency(): number {
   if (raw === undefined || raw === "") return 4;
   const n = Number.parseInt(raw, 10);
   return Number.isFinite(n) && n >= 1 ? n : 4;
-}
-
-/**
- * Run `worker` over `items` with at most `concurrency` in flight. Preserves
- * per-item index so callers can write results into a pre-sized array without
- * worrying about completion order. Errors thrown by `worker` propagate — this
- * helper does not swallow them; the caller is responsible for per-item
- * try/catch when continue-on-failure is desired.
- *
- * Exported so it can be tested directly. Scope intentionally narrow — this is
- * not a general-purpose `p-limit` replacement; it's shaped for bounded fan-out
- * over a fixed list.
- */
-export async function mapWithConcurrency<T>(
-  items: T[],
-  concurrency: number,
-  worker: (item: T, index: number) => Promise<void>,
-): Promise<void> {
-  if (items.length === 0) return;
-  const limit = Math.max(1, Math.min(concurrency, items.length));
-  let cursor = 0;
-  const runners = Array.from({ length: limit }, async () => {
-    while (true) {
-      const idx = cursor++;
-      if (idx >= items.length) return;
-      const item = items[idx] as T;
-      await worker(item, idx);
-    }
-  });
-  await Promise.all(runners);
 }
