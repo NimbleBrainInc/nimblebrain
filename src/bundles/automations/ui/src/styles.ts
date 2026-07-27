@@ -202,7 +202,6 @@ body {
   animation: breathe 3s ease-in-out infinite;
 }
 .skel-card { height: 72px; }
-
 .skel-row { height: 36px; }
 .loading-list { display: flex; flex-direction: column; gap: 8px; }
 

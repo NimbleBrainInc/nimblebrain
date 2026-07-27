@@ -42,6 +42,14 @@ const escape = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
  * faded; only a looping animation can. That distinction is what keeps
  * `.confirm-panel` and `.detail-panel` out of this set, rather than a judgement
  * call about them.
+ *
+ * BOUNDARY, so the prose does not overstate the sweep: this matches a single
+ * class or id, or a comma list of them. A descendant (`.rail .dot`), attribute
+ * (`.dot[data-running]`) or pseudo-element (`.dot::after`) selector escapes it
+ * silently. Nothing in any themed tree is written that way today — verified by
+ * re-running the sweep with an unrestricted selector alphabet, which finds the
+ * same eight — so widening now would add a regex that has never once fired.
+ * Widen it when a bundle first needs one of those shapes, not before.
  */
 const LOOPING_TOKEN_RULE =
   /([.#][\w-]+(?:\s*,\s*[.#][\w-]+)*)\s*\{([^}]*animation:[^;]*\binfinite\b[^}]*)\}/g;
@@ -53,7 +61,7 @@ function derivedCandidates(): { file: string; selector: string }[] {
     for (const file of sourceFiles(dir)) {
       const css = readFileSync(file, "utf8");
       for (const m of css.matchAll(LOOPING_TOKEN_RULE)) {
-        if (!/background:\s*var\(--/.test(m[2] as string)) continue;
+        if (!/background(-color)?:\s*var\(--/.test(m[2] as string)) continue;
         for (const sel of (m[1] as string).split(",").map((s) => s.trim())) {
           found.push({ file, selector: sel });
         }
@@ -93,11 +101,22 @@ const GUARDED = [
  * only says "still loading" — a fact the surrounding layout already makes
  * obvious — is out of scope in a way a run's outcome is not.
  */
-const EXEMPT: Record<string, string> = {
-  ".skel": "loading skeleton — conveys 'not yet loaded', which the layout already shows",
-  ".file-thumb-shimmer": "thumbnail placeholder — decorative, replaced by the image",
-  ".detail-shimmer": "detail-pane placeholder — decorative, replaced by content",
-};
+const EXEMPT: Record<string, string> = Object.fromEntries(
+  [
+    ["automations", ".skel", "loading skeleton — 'not yet loaded', which the layout already shows"],
+    ["conversations", ".skel", "loading skeleton — as above"],
+    ["files", ".skel", "loading skeleton — as above"],
+    ["home", ".skel", "loading skeleton — as above"],
+    ["files", ".file-thumb-shimmer", "thumbnail placeholder — replaced by the image"],
+    ["files", ".detail-shimmer", "detail-pane placeholder — replaced by content"],
+  ].map(([bundle, sel, why]) => [`${bundle}::${sel}`, why]),
+);
+
+/** Key an exemption the way GUARDED is keyed: per bundle, not per name. */
+function exemptKey(file: string, selector: string): string {
+  const bundle = relative(REPO, file).split("/")[2] ?? relative(REPO, file);
+  return `${bundle}::${selector}`;
+}
 
 /**
  * Read a stylesheet the way the app does.
@@ -192,7 +211,7 @@ describe("every looping indicator is classified", () => {
   test("no looping token-painted rule is silently unguarded", () => {
     const guarded = new Set(GUARDED.map((g) => `${g.file}::${g.selector}`));
     const unclassified = derivedCandidates()
-      .filter((c) => !guarded.has(`${c.file}::${c.selector}`) && !(c.selector in EXEMPT))
+      .filter((c) => !guarded.has(`${c.file}::${c.selector}`) && !(exemptKey(c.file, c.selector) in EXEMPT))
       .map((c) => `${c.selector} — ${relative(REPO, c.file)}`);
 
     expect(unclassified).toEqual([]);
@@ -207,8 +226,8 @@ describe("every looping indicator is classified", () => {
   });
 
   test("every exemption is still used, so the list cannot rot", () => {
-    const seen = new Set(derivedCandidates().map((c) => c.selector));
-    expect(Object.keys(EXEMPT).filter((s) => !seen.has(s))).toEqual([]);
+    const seen = new Set(derivedCandidates().map((c) => exemptKey(c.file, c.selector)));
+    expect(Object.keys(EXEMPT).filter((k) => !seen.has(k))).toEqual([]);
   });
 });
 
