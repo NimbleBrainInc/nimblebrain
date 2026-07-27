@@ -102,11 +102,43 @@ describe("classifyConnectionFailure — op-independent connection classes", () =
     expect(classifyConnectionFailure(new Error("read ECONNRESET"))).toBe("transport-dead");
   });
 
+  it("classifies a throttle as 'rate-limited', by code AND by message", () => {
+    expect(classifyConnectionFailure({ code: 429, message: "Too Many Requests" })).toBe(
+      "rate-limited",
+    );
+    // The shape a gateway answering `429 {"error":"rate_limited"}` actually
+    // produces: message-only, with NO numeric code. A status-only check would miss
+    // the exact case this class exists for and fall through to `unknown` →
+    // `transport-dead`, restarting a healthy source. This assertion is the
+    // regression guard for that.
+    expect(
+      classifyConnectionFailure(
+        new Error('Streamable HTTP error: Error POSTing to endpoint: {"error":"rate_limited"}'),
+      ),
+    ).toBe("rate-limited");
+    expect(classifyConnectionFailure(new Error("Too Many Requests"))).toBe("rate-limited");
+    expect(classifyConnectionFailure(new Error("upstream rate-limit exceeded"))).toBe(
+      "rate-limited",
+    );
+    expect(classifyConnectionFailure({ message: "server returned HTTP 429" })).toBe("rate-limited");
+  });
+
+  it("does NOT read a bare 429 out of address/port text as a throttle", () => {
+    // `\b429\b` alone collides with the host:port fragments that appear in real
+    // transport errors — misclassifying a torn transport as a throttle would
+    // suppress the restart that actually heals it.
+    expect(classifyConnectionFailure(new Error("connect ECONNREFUSED 10.0.2.116:4290"))).toBe(
+      "transport-dead",
+    );
+    expect(classifyConnectionFailure(new Error("fetch failed 127.0.0.1:429"))).toBe(
+      "transport-dead",
+    );
+  });
+
   it("classifies an unclassifiable throw as 'unknown' (caller decides recover vs surface)", () => {
     // Not a standard protocol error, not a recognized transport shape — e.g. a
-    // 429, a server-defined code, or a malformed-result parse error. The tool
-    // path recovers these; reads surface them. See recover()'s recoverUnknown.
-    expect(classifyConnectionFailure({ code: 429, message: "Too Many Requests" })).toBe("unknown");
+    // server-defined code or a malformed-result parse error. The tool path
+    // recovers these; reads surface them. See recover()'s recoverUnknown.
     expect(classifyConnectionFailure(new McpError(-32050, "custom server error"))).toBe("unknown");
     expect(classifyConnectionFailure(new Error("Unexpected token < in JSON"))).toBe("unknown");
   });
