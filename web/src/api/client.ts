@@ -645,7 +645,6 @@ export interface ComposioField {
 /** Composio connector config carried on catalog + directory entries. */
 export interface ComposioConfig {
   toolkit: string;
-  authConfigEnv: string;
   tools?: string[];
   /** Defaults to OAUTH2 (the redirect flow). API_KEY connectors collect `fields`. */
   authScheme?: "OAUTH2" | "API_KEY";

@@ -21,6 +21,7 @@ import type { AppInfo, BundleInstance, PlacementDeclaration } from "../bundles/t
 import { isToolVisibleToRole, type ResolvedFeatures, resolveFeatures } from "../config/features.ts";
 import { deriveOverridePath } from "../config/overrides.ts";
 import { createPrivilegeHook, NoopConfirmationGate } from "../config/privilege.ts";
+import { bootAuditComposioAuthConfigs } from "../connectors/providers/composio/auth-config-audit.ts";
 import { registerComposioCredentialProvider } from "../connectors/providers/composio/transport-credential.ts";
 import { setConnectorsConfig } from "../connectors/providers/config.ts";
 import {
@@ -896,6 +897,15 @@ export class Runtime {
         lifecycle.syncBoundSkills(identity, serverName, wsId, wd),
       catalogByIdMap: () => rt.getConnectorDirectory().catalogByIdMap(),
       catalogByUrl: () => rt.getConnectorDirectory().catalogByUrl(),
+    });
+
+    // Report Composio auth-config wiring across the whole catalog. Resolution is
+    // lazy and per-connector, so it only ever runs for toolkits someone has
+    // installed, connected, or probed — the wrong set for deciding the legacy
+    // env fallback is unused (#789), or for catching an `authConfigs` key that
+    // matches no toolkit. Read-only and best-effort.
+    await bootAuditComposioAuthConfigs({
+      catalogEntries: () => rt.getConnectorDirectory().catalogEntries(),
     });
 
     // Boot-time visibility: the locked curated registry is the platform's

@@ -23,7 +23,7 @@ import type {
 import type { BundleRef } from "../../../bundles/types.ts";
 import { log } from "../../../observability/log.ts";
 import type { ConnectorDirectory } from "../../../registries/directory.ts";
-import { validateComposioConfig } from "./config.ts";
+import { composioAuthConfigId, validateComposioConfig } from "./config.ts";
 import { composioUserId, findActiveComposioConnection } from "./sdk.ts";
 
 function composioConnectorId(ref: BundleRef): string | undefined {
@@ -50,8 +50,9 @@ export class ComposioConnectionProbe implements ConnectionHealthProbe {
     let authConfigId = "";
     try {
       const entry = await this.directory.catalogById(connectorId);
-      const env = entry?.composio?.authConfigEnv;
-      authConfigId = env ? (process.env[env] ?? "").trim() : "";
+      authConfigId = entry?.composio
+        ? composioAuthConfigId(entry.composio.toolkit, entry.composio.authConfigEnv)
+        : "";
     } catch (err) {
       log.debug(
         "mcp",

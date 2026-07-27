@@ -361,6 +361,7 @@ A provider is registered — and its callback routes, liveness probe, and vendor
     "providers": {
       "composio": {
         "apiKey": "…",
+        "authConfigs": { "gmail": "ac_xxxxxxxx" },
         "baseUrl": "https://backend.composio.dev",
         "monitorEnabled": true
       },
@@ -378,10 +379,27 @@ A provider is registered — and its callback routes, liveness probe, and vendor
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
 | `apiKey` | `string` | — | Platform-wide Composio API key — the broker credential. See [The broker credential](#the-broker-credential). |
+| `authConfigs` | `Record<string, string>` | `{}` | Per-toolkit auth-config ids (`ac_…`), keyed by the toolkit slug the catalog entry names. See [Per-toolkit auth configs](#per-toolkit-auth-configs). |
 | `baseUrl` | `string` | `https://backend.composio.dev` | Composio API base URL override (self-hosted / staging). Must be `http(s)` — any other scheme is rejected at startup, because it would turn `/v1/composio-auth/proxy` into an open redirect. |
 | `monitorEnabled` | `boolean` | `true` | Run Composio's arm of the connection-revalidator probe, which detects connections whose downstream vendor account lapsed while the platform key stayed valid. |
 
 The probe's **sweep cadence is not here.** One revalidator serves every provider, so the interval is provider-agnostic and is set with `NB_CONNECTION_REVALIDATE_INTERVAL_SECONDS` ([Environment Variables](/config/environment/#runtime--server)). Only the enable/disable is Composio's.
+
+#### Per-toolkit auth configs
+
+Every `auth: composio` connector needs an auth config created in the Composio dashboard ([how](/deploy/composio/#3-create-one-auth-config-per-toolkit-in-composio)). Its `ac_…` id varies per Composio account, so it cannot live in the catalog, which is shared across deployments.
+
+```jsonc
+"authConfigs": { "gmail": "ac_xxxxxxxx", "posthog": "ac_yyyyyyyy" }
+```
+
+The key is the catalog entry's `composio.toolkit` — an identifier that entry already carries, rather than a third name invented to carry the value. It is still matched exactly, so a mistyped key resolves to nothing; the runtime checks the whole set at boot and logs any key matching no catalog toolkit.
+
+A toolkit you leave out is not reported — wiring a subset of the catalog is the normal case, so a standing boot warning listing the rest would only teach operators to ignore `[composio]`. Installing a connector whose toolkit has no id fails at that moment, naming the toolkit and the config key to set.
+
+These are identifiers, not secrets: an `ac_…` is inert without `apiKey`, the way a client_id is inert without a client_secret. They live in config next to the toolkits they name rather than in your secret store.
+
+A toolkit with no entry falls back to the environment variable named by its catalog entry's legacy `composio.authConfigEnv` — the one field here whose fallback is per-key rather than per-field. The runtime logs a deprecation warning naming the toolkit whenever that fallback is the value's actual source, so the toolkits still to migrate are visible in your logs. Both the fallback and the field will be removed ([#789](https://github.com/NimbleBrainInc/nimblebrain/issues/789)).
 
 One instance serves one tenant, so this is a single config layer: there is no per-tenant merge. Intra-tenant isolation is unchanged — the single broker account still serves every workspace and user in the tenant, namespaced by the Composio `user_id`.
 
@@ -420,6 +438,7 @@ Precedence is **per field**: a setting declared in the block wins, a setting lef
 | Field | Env fallback |
 |---|---|
 | `apiKey` | `COMPOSIO_API_KEY` |
+| `authConfigs` | per-toolkit — see [Per-toolkit auth configs](#per-toolkit-auth-configs) |
 | `baseUrl` | `COMPOSIO_API_BASE_URL` |
 | `monitorEnabled` | `COMPOSIO_MONITOR_ENABLED` |
 
