@@ -28,3 +28,38 @@ jobs:
             -v "$PWD/web/Caddyfile:/etc/caddy/Caddyfile:ro" \
             caddy:2-alpine \
             caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile
+
+      # Embedded apps run in an OPAQUE origin (srcdoc iframe without
+      # allow-same-origin), and fonts are always fetched in CORS mode — so their
+      # font requests arrive with `Origin: null` and are blocked unless the file
+      # carries ACAO. Validation can't see that; only a running server can, and
+      # the failure mode is silent (the app falls back to system-ui), so it is
+      # exactly the kind of regression a config lint would miss forever.
+      - name: Fonts are served with CORS (Origin: null)
+        run: |
+          set -euo pipefail
+          mkdir -p srv/assets
+          head -c 64 /dev/urandom > srv/assets/probe.woff2
+          echo '<html></html>' > srv/index.html
+          docker run -d --name caddy-cors \
+            -v "$PWD/web/Caddyfile:/etc/caddy/Caddyfile:ro" \
+            -v "$PWD/srv:/srv:ro" \
+            -p 8080:8080 caddy:2-alpine
+          for i in $(seq 1 30); do
+            curl -fsS -o /dev/null "http://localhost:8080/" && break || sleep 1
+          done
+
+          echo "--- font asset ---"
+          hdrs=$(curl -sI -H 'Origin: null' http://localhost:8080/assets/probe.woff2)
+          echo "$hdrs"
+          echo "$hdrs" | grep -iq '^access-control-allow-origin: \*' || {
+            echo "FAIL: fonts lack Access-Control-Allow-Origin — iframe apps will
+            silently render in system-ui"; docker logs caddy-cors; exit 1; }
+
+          echo "--- non-font asset must NOT be opened up ---"
+          if curl -sI -H 'Origin: null' http://localhost:8080/index.html \
+               | grep -iq '^access-control-allow-origin'; then
+            echo "FAIL: ACAO leaked beyond fonts"; exit 1
+          fi
+
+          docker rm -f caddy-cors

@@ -8,8 +8,14 @@
  *
  * This module closes that half: the descriptors ride the host context as the
  * `synapse/fontFaces` extension, and `@nimblebrain/synapse` (>= 0.13.0) loads
- * them into the app document via the CSS Font Loading API. Apps import nothing
- * and opt into nothing — typography arrives with the rest of the theme.
+ * them into the app document via the CSS Font Loading API. Apps import nothing;
+ * typography arrives with the rest of the theme.
+ *
+ * The faces are *declared*, not force-loaded — the SDK calls `document.fonts
+ * .add()` and never `.load()` — so a browser fetches the bytes only if the
+ * app's own CSS actually matches the family. An app that never references
+ * `var(--font-sans)` pays nothing, which is the opt-out: use of the token, not
+ * an import.
  *
  * **Why the URLs are injected rather than imported here.** This module is
  * reachable from the shared bridge protocol, which the ROOT unit suite
@@ -70,11 +76,6 @@ let fontUrls: Readonly<Record<string, string>> = {};
  */
 export function registerHostFontUrls(urls: Readonly<Record<string, string>>): void {
   fontUrls = urls;
-}
-
-/** Test seam — drop registered URLs so a suite can assert the unregistered path. */
-export function resetHostFontUrls(): void {
-  fontUrls = {};
 }
 
 /**

@@ -53,6 +53,15 @@
 		# heuristic cache freshness, which could otherwise serve a stale app after a deploy.
 		@html not path /assets/*
 		header @html Cache-Control "no-cache"
+		# Fonts are fetched in CORS mode by every browser, and an embedded app runs
+		# in an OPAQUE origin (its iframe is `srcdoc` without `allow-same-origin`),
+		# so its font requests arrive here cross-origin with `Origin: null` — even
+		# though we are the origin that served the app. Without this the face is
+		# blocked and the app silently falls back to system-ui, which is the exact
+		# bug the `synapse/fontFaces` channel exists to fix. `*` is correct and
+		# minimal: a font is inert, and `null` cannot be allowlisted by name.
+		@fonts path *.woff2 *.woff
+		header @fonts Access-Control-Allow-Origin "*"
 		try_files {path} /index.html
 		file_server
 	}

@@ -23,7 +23,6 @@ import {
   fontOrigin,
   getHostFontFaces,
   registerHostFontUrls,
-  resetHostFontUrls,
 } from "../../../web/src/bridge/fonts.ts";
 import { buildHostContext, buildHostExtensions } from "../../../web/src/bridge/host-extensions.ts";
 import { paletteToExtAppsTokens } from "../../../web/src/theme/projections.ts";
@@ -36,19 +35,28 @@ function registerFixtures(): void {
 
 beforeEach(registerFixtures);
 
-/** Families named by the font tokens the host injects into an iframe. */
+const GENERIC =
+  /^(system-ui|ui-sans-serif|ui-monospace|ui-serif|sans-serif|serif|monospace|cursive|fantasy)$/;
+
+/**
+ * Families named by ANY font token the host injects into an iframe.
+ *
+ * Derived from the emitted token map rather than a hardcoded key list: naming
+ * the keys would reopen the same silent-orphan gap one level up, since adding a
+ * fourth font token to `projections.ts` would simply not be guarded. A value is
+ * a font stack if it names a generic family or quotes a family name.
+ */
 function familiesNamedByTokens(): string[] {
-  const tokens = paletteToExtAppsTokens("light");
   const named = new Set<string>();
-  for (const key of ["--font-sans", "--font-mono", "--nb-font-heading"]) {
-    const stack = tokens[key];
-    if (!stack) continue;
-    // First entry of the stack is the intended face; the rest is the web-safe tail.
-    const first = stack.split(",")[0].trim().replace(/^['"]|['"]$/g, "");
-    // A bare generic (system-ui) is a fallback, not a face we must ship.
-    if (!/^(system-ui|ui-monospace|ui-sans-serif|serif|sans-serif|monospace)$/.test(first)) {
-      named.add(first);
-    }
+  for (const value of Object.values(paletteToExtAppsTokens("light"))) {
+    const parts = value.split(",").map((p) => p.trim());
+    const looksLikeFontStack =
+      parts.some((p) => GENERIC.test(p)) || /^['"]/.test(parts[0] ?? "");
+    if (!looksLikeFontStack) continue;
+    // First entry is the intended face; the rest is the web-safe tail.
+    const first = (parts[0] ?? "").replace(/^['"]|['"]$/g, "");
+    // A bare generic is a fallback, not a face we must ship.
+    if (first && !GENERIC.test(first)) named.add(first);
   }
   return [...named];
 }
@@ -240,13 +248,13 @@ describe("unregistered URLs mean no fonts, not a broken host", () => {
     // root unit suite exercises without `web/` deps. It must therefore never
     // import the font packages — the browser entry injects the URLs. Absent
     // that call, no faces, which the SDK reads as "host sends no fonts".
-    resetHostFontUrls();
+    registerHostFontUrls({});
     expect(getHostFontFaces()).toEqual([]);
     expect(() => buildHostExtensions(null)).not.toThrow();
   });
 
   test("a partial registration degrades to fewer faces, not a malformed one", () => {
-    resetHostFontUrls();
+    registerHostFontUrls({});
     registerHostFontUrls({ [FONT_SPECS[0].family]: "/assets/one.woff2" });
     const faces = getHostFontFaces();
     expect(faces).toHaveLength(1);
