@@ -1,9 +1,32 @@
 import { describe, expect, it } from "bun:test";
+import { DEFAULT_THINKING_EFFORT } from "../../src/engine/types.ts";
 import {
   buildNebiusCatalog,
+  DEFAULT_OUTPUT_LIMIT,
+  MIN_USABLE_CONTEXT,
   probeModel,
   type RawNebiusModel,
 } from "../../src/model/sync-nebius.ts";
+
+describe("sync-nebius invariants", () => {
+  it("keeps the context floor clear of the output default", () => {
+    // Dropping the output clamp (`Math.min(DEFAULT_OUTPUT_LIMIT, context)`) was
+    // only safe because nothing past the gate can have a context smaller than
+    // the output we hand it. That guarantee used to be mechanical and is now
+    // structural, so it needs a tripwire: lower the floor under the output
+    // default and every catalogued model gets a max_tokens above its window.
+    expect(MIN_USABLE_CONTEXT).toBeGreaterThan(DEFAULT_OUTPUT_LIMIT);
+  });
+
+  it("keeps the default thinking tier one the wire takes unchanged", () => {
+    // The probe sends DEFAULT_THINKING_EFFORT directly, while the runtime sends
+    // it through `toOpenAIEffort`, which clamps `xhigh`/`max` to `high`. Equal
+    // today. If the default ever moves into the clamped range the probe would
+    // send a tier no run sends — fail-closed (a warned false exclusion), but
+    // still the probe measuring something other than the runtime.
+    expect(["low", "medium", "high"]).toContain(DEFAULT_THINKING_EFFORT);
+  });
+});
 
 const curated = [{ id: "org/Model-A", name: "Model A", family: "fam" }];
 

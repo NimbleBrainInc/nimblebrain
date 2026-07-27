@@ -41,7 +41,7 @@ const OUTPUT_PATH = join(dirname(new URL(import.meta.url).pathname), "catalog-ne
 // Nebius publishes no per-model max-output cap; the only hard limit is
 // `max_tokens <= context_length`. Cap output at the platform default, which is
 // safely under the smallest served context window.
-const DEFAULT_OUTPUT_LIMIT = 16384;
+export const DEFAULT_OUTPUT_LIMIT = 16384;
 
 /**
  * Smallest context window worth cataloguing.
@@ -56,7 +56,7 @@ const DEFAULT_OUTPUT_LIMIT = 16384;
  * an 8K window answers the probe's toy prompt perfectly. `Kimi-K2.7-Code` and
  * `Kimi-K3` are both served at 8000 on this account.
  */
-const MIN_USABLE_CONTEXT = 64_000;
+export const MIN_USABLE_CONTEXT = 64_000;
 
 /** Curated selection: which Nebius models we surface, with stable display metadata. */
 interface CuratedModel {
@@ -163,15 +163,24 @@ export type ProbeOutcome =
  * Network and abort failures are outcomes rather than throws so one bad model
  * cannot fail the whole sync.
  *
- * `reasoning` makes the probe send the request the runtime sends rather than a
- * simpler one. For a model this catalog flags reasoning-capable, an unconfigured
- * install resolves to `{mode: "effort"}` (`resolveThinking` →
+ * `reasoning` aligns the probe's PROVIDER OPTIONS with the runtime's — not the
+ * whole request. For a model this catalog flags reasoning-capable, an
+ * unconfigured install resolves to `{mode: "effort"}` (`resolveThinking` →
  * `DEFAULT_THINKING_EFFORT`) and `buildOpenAIThinkingOptions` puts
  * `reasoning_effort` on EVERY call — nebius reads the adapter's `openai` key, so
- * it is not exempt. Probing without it would verify a shape no run uses, which
- * is the same mistake as trusting `supported_features`: the tools half was
- * proven and the reasoning half assumed. A model that rejects the parameter it
- * claims to support does not serve, and gets excluded like any other failure.
+ * it is not exempt. Probing without it would verify options no run uses, which
+ * is the same mistake as trusting `supported_features`: the tools half proven
+ * and the reasoning half assumed. A model that rejects the parameter it claims
+ * to support does not serve, and is excluded like any other failure.
+ *
+ * Two axes stay unverified, deliberately. This posts a BUFFERED completion while
+ * the runtime calls `doStream`, so a model that answers a whole response but
+ * stalls mid-SSE still passes — the observed failure was a completion that never
+ * returned at all, which this does catch, and the stream watchdog covers the
+ * rest at runtime. And accepting `reasoning_effort` is not evidence a model
+ * reasons: the tools half is proven end-to-end, the reasoning half only
+ * negatively (it does not 400). Asserting on `reasoning_content` would vary by
+ * model and trade a real false-exclusion risk for a claim nothing depends on.
  */
 export async function probeModel(
   id: string,
