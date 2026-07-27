@@ -66,8 +66,8 @@ function stopReasonMessage(stopReason: string): string {
     case "length":
       // The two common causes of `length` are (a) writing a long response
       // and running out of room and (b) extended thinking burning the
-      // output budget before any visible content lands. The platform now
-      // caps thinking to leave headroom (see resolveThinking), but breaking
+      // output budget before any visible content lands. The engine caps
+      // thinking to leave headroom (see clampThinkingBudget), but breaking
       // the task up still helps when the response itself is large.
       return "I ran out of room mid-response (hit the output-token limit). Send another message to continue, or try splitting the task into smaller pieces.";
     case "content_filter":

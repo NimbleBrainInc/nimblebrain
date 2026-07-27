@@ -102,8 +102,9 @@ A sibling `nimblebrain.overrides.json` next to the resolved config file is **dee
 | `maxInputTokens` | `integer` | `500000` | Max input tokens per request. Engine stops when this budget is exceeded. |
 | `maxOutputTokens` | `integer` | `16384` | Max output tokens per LLM call. |
 | `maxToolResultSize` | `integer` | `1000000` | Max characters for a single tool result. `0` disables the cap. |
-| `thinking` | `"off" \| "adaptive" \| "enabled"` | — | Extended-thinking mode for reasoning-capable models. `off`: never reason. `adaptive`: model decides per call. `enabled`: always reason (cap with `thinkingBudgetTokens`). Typically set via the admin `set_model_config` tool, which writes it to `nimblebrain.overrides.json`. |
-| `thinkingBudgetTokens` | `integer` | — | Token budget when `thinking: "enabled"`. Counts toward `maxOutputTokens`. Anthropic requires a minimum of 1,024. |
+| `thinking` | `"off" \| "adaptive" \| "enabled"` | `enabled` on reasoning models | Extended-thinking mode, applied to every provider that supports reasoning. `off`: do not reason — **not enforceable on Anthropic's adaptive-only models** (Opus 4.7/4.8, Sonnet 5, Opus 5), which have no such state: the AI SDK validates `thinking.type=disabled` and then never sends it, so the model applies its own default ([#738](https://github.com/NimbleBrainInc/nimblebrain/issues/738)). `adaptive`: model decides per call, at no stated depth. `enabled`: reason every turn, at `thinkingEffort`. **Applies only to models the catalog carries and flags reasoning-capable** — an override can ask for reasoning but cannot make the parameter exist. A pinned model id, or one served by an OpenAI-compatible proxy under its own name, isn't in the catalog and so gets no reasoning options; the runtime logs a warning naming the model when it drops an override this way. Typically set via the admin `set_model_config` tool, which writes it to `nimblebrain.overrides.json`. |
+| `thinkingEffort` | `"low" \| "medium" \| "high" \| "xhigh" \| "max"` | `medium` | How hard to think when reasoning is on. **The portable control** — see [reasoning depth](#reasoning-depth) for how it reaches each provider. Ignored for `off` and `adaptive`. |
+| `thinkingBudgetTokens` | `integer` | — | Explicit token budget, for metering thinking in tokens instead of naming a depth. Only honored by providers that meter it that way (Anthropic up to 4.6, Gemini 2.5); elsewhere `thinkingEffort` applies — Gemini 3 takes a level, not a budget. Counts toward `maxOutputTokens`. Anthropic requires a minimum of 1,024. Prefer `thinkingEffort` unless you need a hard token cap. |
 | `sessionStore` | `object` | `{ "type": "memory", "ttlSeconds": 28800 }` | MCP session metadata store for `/mcp`. See [sessionStore](#sessionstore). |
 | `logging` | `object` | — | Structured logging config. See [logging](#logging). |
 | `http` | `object` | `{ "port": 27247, "host": "127.0.0.1" }` | HTTP server config. Omit for programmatic-only use. |
@@ -119,6 +120,54 @@ A sibling `nimblebrain.overrides.json` next to the resolved config file is **dee
 
   **Deprecated fields** — `identity` and `contextFile` are ignored with a warning. Use a skill with `type: "context"` instead.
 </Aside>
+
+## Reasoning depth
+
+Providers disagree about how to ask a model to think harder. Two take a named
+effort tier; two meter it in tokens. NimbleBrain's config is the effort tier,
+and the runtime translates.
+
+| Provider | What it receives |
+|---|---|
+| Anthropic — Opus 4.7/4.8, Sonnet 5, Opus 5 | `thinking: {type: "adaptive"}` + `output_config.effort`, the tier verbatim |
+| Anthropic — up to Sonnet 4.6 | `thinking: {type: "enabled"}` + a `budgetTokens` sized from the tier |
+| OpenAI, and Nebius-hosted open-weight models (DeepSeek, Qwen, gpt-oss) | `reasoningEffort`. Its usable range stops at `high`, so `xhigh` and `max` both land there |
+| Google Gemini 3 | `thinkingConfig.thinkingLevel`, tops out at `high` |
+| Google Gemini 2.5 | `thinkingConfig.thinkingBudget`, sized from the tier and held inside the model's documented range |
+
+The translation only runs one way. A depth is converted into a token budget
+where a provider needs one, because the model's output ceiling is a reasonable
+scale to express a chosen depth against. The reverse is not done: a token
+budget carries no depth to recover, and deriving one from a ceiling the
+operator never set would turn a number nobody chose into an instruction to
+reason as hard as possible on every call.
+
+`thinkingBudgetTokens` is optional and independent — it does not replace the
+depth. Where a provider meters thinking in tokens, the budget is used and is
+capped to leave room for the answer; everywhere else the depth applies as
+usual. Setting one never voids the other.
+
+Google support is **per model, not per generation**, and is read from a
+hand-maintained table — `gemini-3-pro-preview` accepts only `low` and `high`
+where `gemini-3.6-flash` accepts all four, and `gemini-2.5-pro` cannot stop
+thinking where the flash models can. A requested depth a model doesn't offer
+steps down to the nearest one it does. **A Gemini model with no verified entry
+receives no thinking options at all** and runs at its own default, because
+guessing the dialect is how a stock install starts returning 400s.
+
+`off` is not universally enforceable, and where it isn't, nothing is sent
+rather than a flag that would be rejected or ignored:
+
+- **Anthropic** — the AI SDK only serializes `thinking` for `enabled` and
+  `adaptive`, so a `disabled` flag never reaches the wire for any model
+  ([#738](https://github.com/NimbleBrainInc/nimblebrain/issues/738)). `off`
+  works where it works because Anthropic's own default is not to think.
+- **OpenAI** — `reasoningEffort: "none"` is documented as GPT-5.1-only and an
+  error elsewhere. On o-series models reasoning can't be turned off at all.
+- **Gemini** — 2.5 Flash takes a zero budget; 2.5 Pro cannot disable thinking.
+  On Gemini 3 it depends on the model: those offering a `minimal` level get it,
+  and those that don't (both Pro entries) get nothing rather than the next tier
+  up, which would answer "don't reason" with an instruction to reason.
 
 ## models
 
@@ -431,7 +480,7 @@ NimbleBrain validates `nimblebrain.json` at startup against the [JSON Schema (dr
 - **Unknown keys** produce a warning on stderr and are ignored.
 - **Structural errors** (wrong types, missing required fields) throw an error and prevent startup.
 - **Workspace-owned and legacy keys** (`bundles`, `skillDirs`, `agents`, `home`, `preferences`, `noDefaultBundles`, and the legacy `skills`) are silently stripped — no warning.
-- The **override file** (`nimblebrain.overrides.json`) is validated structurally, but unknown-key warnings are suppressed for it: its `set_model_config`-written vocabulary (`thinking`, `thinkingBudgetTokens`) is not yet in the published schema.
+- The **override file** (`nimblebrain.overrides.json`) is validated structurally, but unknown-key warnings are suppressed for it. Every key `set_model_config` writes is in the published schema; the suppression is for version drift, since the file is preserved across deploys and can outlive the schema of whichever image reads it.
 - **Deprecated keys** (`identity`, `contextFile`) produce a warning pointing at context skills.
 
 ```

@@ -1,4 +1,6 @@
 import { describe, expect, it } from "bun:test";
+import { DEFAULT_THINKING_EFFORT } from "../../src/engine/types.ts";
+import { log } from "../../src/observability/log.ts";
 import { resolveThinking } from "../../src/runtime/resolve-thinking.ts";
 
 describe("resolveThinking", () => {
@@ -16,113 +18,227 @@ describe("resolveThinking", () => {
 		expect(resolveThinking({ model: "anthropic:claude-3-5-haiku-20241022" })).toBeUndefined();
 	});
 
-	it("defaults to enabled-with-capped-budget for catalog-flagged reasoning models", () => {
-		// Opus 4.7 has capabilities.reasoning = true. The platform default is
-		// `enabled` (not `adaptive`) so we keep direct control over thinking
-		// spend; budget is clamped to leave room for visible output.
-		expect(
-			resolveThinking({ model: "anthropic:claude-opus-4-7", maxOutputTokens: 16384 }),
-		).toEqual({ mode: "enabled", budgetTokens: 16384 - 4096 });
-	});
-
-	it("default budget floors at 1024 (Anthropic minimum) when maxOutputTokens is tiny", () => {
-		// Even when maxOutputTokens is below the visible-tokens floor, we
-		// emit at least 1024 — the API rejects anything lower.
-		expect(
-			resolveThinking({ model: "anthropic:claude-opus-4-7", maxOutputTokens: 2000 }),
-		).toEqual({ mode: "enabled", budgetTokens: 1024 });
-	});
-
-	it("default budget falls back to 1024 when maxOutputTokens is omitted", () => {
-		// Caller didn't pass maxOutputTokens (legacy callsite). Fall back to
-		// the safe minimum rather than emitting a budget-less `enabled`,
-		// which the SDK rejects with a warning.
+	it("defaults reasoning models to the default effort tier", () => {
+		// The platform default states a depth rather than a token budget, so it
+		// carries the same meaning to every provider.
 		expect(resolveThinking({ model: "anthropic:claude-opus-4-7" })).toEqual({
-			mode: "enabled",
-			budgetTokens: 1024,
+			mode: "effort",
+			effort: DEFAULT_THINKING_EFFORT,
+			source: "platform",
 		});
 	});
 
-	it("operator off wins over model default", () => {
+	it("uses the operator's effort tier on the default path", () => {
 		expect(
-			resolveThinking({
-				configMode: "off",
-				model: "anthropic:claude-opus-4-7",
-				maxOutputTokens: 16384,
-			}),
-		).toEqual({ mode: "off" });
+			resolveThinking({ model: "anthropic:claude-opus-4-7", configEffort: "xhigh" }),
+		).toEqual({ mode: "effort", effort: "xhigh", source: "operator" });
 	});
 
-	it("operator adaptive is passed through (provider picks budget)", () => {
+	it("never reads an output ceiling", () => {
+		// The regression this whole shape exists to prevent: with no operator
+		// ceiling, `maxOutputTokens` is the model's own catalog maximum, and
+		// sizing thinking from it turned a number nobody chose into a directive
+		// to reason maximally on every call. The resolver no longer accepts the
+		// value at all, so the same input can only produce one answer.
+		const small = resolveThinking({ model: "anthropic:claude-opus-5" });
+		const large = resolveThinking({ model: "anthropic:claude-opus-4-7" });
+		expect(small).toEqual({ mode: "effort", effort: DEFAULT_THINKING_EFFORT, source: "platform" });
+		expect(large).toEqual(small);
+	});
+
+	it("distinguishes an operator tier from a configured mode from nothing at all", () => {
+		// Three states, not two: only a named tier may override a provider's own
+		// default, but a configured mode is still operator intent worth
+		// reporting when it can't be honored. Collapsing them to one boolean
+		// gets one of those two wrong — it did, in both directions at once.
+		const m = "anthropic:claude-sonnet-4-6";
+		expect(resolveThinking({ model: m, configEffort: "high" })?.source).toBe("operator");
+		expect(resolveThinking({ model: m, configMode: "enabled" })?.source).toBe("mode");
+		expect(resolveThinking({ model: m, configBudgetTokens: 8000 })?.source).toBe("mode");
+		expect(resolveThinking({ model: m })?.source).toBe("platform");
+	});
+
+	it("operator off wins over model default", () => {
+		expect(resolveThinking({ configMode: "off", model: "anthropic:claude-opus-4-7" })).toEqual({
+			mode: "off",
+		});
+	});
+
+	it("operator adaptive is passed through bare", () => {
+		expect(
+			resolveThinking({ configMode: "adaptive", model: "anthropic:claude-opus-4-7" }),
+		).toEqual({ mode: "adaptive" });
+	});
+
+	it("drops effort and budget on adaptive", () => {
+		// Adaptive means "you decide". Attaching a depth or a cap to it states
+		// two contradictory things, so the mode wins and the rest is dropped.
 		expect(
 			resolveThinking({
 				configMode: "adaptive",
+				configEffort: "max",
+				configBudgetTokens: 8000,
 				model: "anthropic:claude-opus-4-7",
-				maxOutputTokens: 16384,
 			}),
 		).toEqual({ mode: "adaptive" });
 	});
 
-	it("operator adaptive with budget is passed through verbatim", () => {
-		// The Anthropic SDK currently drops the budget on adaptive, but we
-		// pass it through so a future SDK that honors it gets the value.
+	it("warns once when it drops an explicit override for an unknown model", () => {
+		// A model absent from the catalog is a supported configuration — pinned
+		// ids and OpenAI-compatible proxies with their own names both land here
+		// (see resolveModelString). Dropping the operator's instruction silently
+		// leaves no way to tell reasoning is off; the warning names the model,
+		// which is the whole diagnosis.
+		const warnings: string[] = [];
+		const original = log.warn;
+		(log as { warn: (m: string) => void }).warn = (m: string) => warnings.push(m);
+		try {
+			const model = `anthropic:proxy-model-${Math.random()}`;
+			expect(resolveThinking({ configMode: "enabled", model })).toBeUndefined();
+			expect(resolveThinking({ configMode: "enabled", model })).toBeUndefined();
+			expect(warnings).toHaveLength(1);
+			expect(warnings[0]).toContain(model);
+			// `off` asks for no reasoning and gets exactly that — nothing to report.
+			expect(resolveThinking({ configMode: "off", model: `${model}-b` })).toBeUndefined();
+			expect(warnings).toHaveLength(1);
+		} finally {
+			(log as { warn: (m: string) => void }).warn = original;
+		}
+	});
+
+	it("reports every form an override can take, not just a mode", () => {
+		// Depth and budget are each an override on their own: `thinkingEffort`
+		// with no mode is exactly what the settings panel sends for its default
+		// policy, and a bare budget resolves to `enabled` at that budget. A gate
+		// reading only `configMode` stayed silent on both — so the likeliest way
+		// to lose reasoning on a proxied model was also the one way nothing said
+		// so, while the docs promised a warning. Both now derive from
+		// `effortSourceFor`, which is the same provenance the engine's Google
+		// gate reads.
+		const reported = [
+			{ label: "mode", input: { configMode: "enabled" }, names: 'thinking="enabled"' },
+			{ label: "effort", input: { configEffort: "high" }, names: 'thinkingEffort="high"' },
+			{ label: "budget", input: { configBudgetTokens: 8000 }, names: "thinkingBudgetTokens=8000" },
+			{
+				label: "all three",
+				input: { configMode: "enabled", configEffort: "max", configBudgetTokens: 4096 },
+				names: 'thinking="enabled" + thinkingEffort="max" + thinkingBudgetTokens=4096',
+			},
+		] as const;
+		// Nothing an operator wrote is being discarded, so there is nothing to
+		// say. `off` gets what it asked for even when a stale depth rides along.
+		const silent = [
+			{ label: "off", input: { configMode: "off" } },
+			{ label: "off + stale depth", input: { configMode: "off", configEffort: "max" } },
+			{ label: "zero budget", input: { configBudgetTokens: 0 } },
+			{ label: "nothing configured", input: {} },
+		] as const;
+
+		const warnings: string[] = [];
+		const original = log.warn;
+		(log as { warn: (m: string) => void }).warn = (m: string) => warnings.push(m);
+		try {
+			for (const { label, input, names } of reported) {
+				// A fresh model id per case: the once-per-model registry is
+				// process-wide, so a shared id would swallow every case but the first.
+				const model = `anthropic:proxy-${label.replace(/\s/g, "-")}-${Math.random()}`;
+				warnings.length = 0;
+				expect(`${label}: ${resolveThinking({ ...input, model })}`).toBe(`${label}: undefined`);
+				expect(`${label}: ${warnings.length}`).toBe(`${label}: 1`);
+				expect(warnings[0]).toContain(model);
+				// Naming the model says reasoning is off; naming the setting says
+				// which one to go fix.
+				expect(`${label}: ${warnings[0]?.includes(names)}`).toBe(`${label}: true`);
+			}
+			for (const { label, input } of silent) {
+				const model = `anthropic:proxy-${label.replace(/\s/g, "-")}-${Math.random()}`;
+				warnings.length = 0;
+				expect(resolveThinking({ ...input, model })).toBeUndefined();
+				expect(`${label}: ${warnings.length}`).toBe(`${label}: 0`);
+			}
+		} finally {
+			(log as { warn: (m: string) => void }).warn = original;
+		}
+	});
+
+	it("refuses to enable thinking on a model the catalog says can't", () => {
+		// An override can ask for reasoning; it cannot make the parameter exist.
+		// This gate used to be skipped for explicit `enabled`, which was inert
+		// while the engine dropped every non-Anthropic provider and became a
+		// live wrong-parameter send once OpenAI and Nebius were wired — Nebius
+		// hosts non-reasoning open-weight models and its adapter forwards
+		// `reasoning_effort` without a gate of its own.
+		for (const model of [
+			"anthropic:claude-3-5-haiku-20241022",
+			"nebius:meta-llama/Llama-3.3-70B-Instruct",
+		]) {
+			expect(resolveThinking({ configMode: "enabled", model })).toBeUndefined();
+			expect(resolveThinking({ configMode: "adaptive", model })).toBeUndefined();
+			expect(resolveThinking({ configMode: "off", model })).toBeUndefined();
+		}
+	});
+
+	it("carries the tier alongside an explicit budget", () => {
+		// Not alternatives: the budget meters thinking where a provider counts
+		// tokens, and the tier is what every other provider uses. Dropping the
+		// tier here made the depth control inert on the effort-shaped models it
+		// was added for, because the settings UI sends a budget on every save.
 		expect(
 			resolveThinking({
-				configMode: "adaptive",
+				configMode: "enabled",
+				configEffort: "max",
 				configBudgetTokens: 8000,
-				model: "anthropic:claude-opus-4-7",
-				maxOutputTokens: 16384,
+				model: "anthropic:claude-sonnet-4-6",
 			}),
-		).toEqual({ mode: "adaptive", budgetTokens: 8000 });
+		).toEqual({ mode: "enabled", budgetTokens: 8000, effort: "max", source: "operator" });
 	});
 
-	it("operator config can enable thinking on a non-reasoning model", () => {
+	it("honors a budget set without a thinking mode", () => {
 		expect(
-			resolveThinking({
-				configMode: "enabled",
-				model: "anthropic:claude-3-5-haiku-20241022",
-				configBudgetTokens: 4000,
-				maxOutputTokens: 16384,
-			}),
-		).toEqual({ mode: "enabled", budgetTokens: 4000 });
+			resolveThinking({ configBudgetTokens: 8000, model: "anthropic:claude-opus-4-7" }),
+		).toEqual({
+			mode: "enabled",
+			budgetTokens: 8000,
+			effort: DEFAULT_THINKING_EFFORT,
+			source: "mode",
+		});
 	});
 
-	it("operator-set budget on enabled is clamped to leave visible-output room", () => {
-		// Operator says "give me 50K of thinking" but maxOutputTokens is 16K.
-		// We clamp down so visible content gets at least MIN_VISIBLE_OUTPUT_TOKENS.
-		expect(
-			resolveThinking({
-				configMode: "enabled",
-				configBudgetTokens: 50_000,
-				maxOutputTokens: 16384,
-			}),
-		).toEqual({ mode: "enabled", budgetTokens: 16384 - 4096 });
-	});
-
-	it("operator-set lower budget is preserved (not raised)", () => {
-		// Clamping is one-directional: we lower a too-large budget, never
-		// raise a deliberately small one.
-		expect(
-			resolveThinking({
-				configMode: "enabled",
-				configBudgetTokens: 2000,
-				maxOutputTokens: 16384,
-			}),
-		).toEqual({ mode: "enabled", budgetTokens: 2000 });
+	it("passes an operator budget through verbatim", () => {
+		// The resolver states intent; the engine clamps it against the output
+		// ceiling, because only the engine knows whether the provider meters
+		// tokens at all. See the engine's clamp test for the enforcement.
+		expect(resolveThinking({
+			configMode: "enabled",
+			configBudgetTokens: 50_000,
+			model: "anthropic:claude-sonnet-4-6",
+		})).toEqual({
+			mode: "enabled",
+			budgetTokens: 50_000,
+			effort: DEFAULT_THINKING_EFFORT,
+			source: "mode",
+		});
 	});
 
 	it("zero / negative budget tokens are ignored (treated as unset)", () => {
-		expect(
-			resolveThinking({ configMode: "enabled", configBudgetTokens: 0, maxOutputTokens: 16384 }),
-		).toEqual({ mode: "enabled", budgetTokens: 16384 - 4096 });
+		expect(resolveThinking({
+			configMode: "enabled",
+			configBudgetTokens: 0,
+			model: "anthropic:claude-sonnet-4-6",
+		})).toEqual({
+			mode: "effort",
+			effort: DEFAULT_THINKING_EFFORT,
+			source: "mode",
+		});
 	});
 
-	it("enabled without maxOutputTokens or budget falls back to 1024", () => {
-		// Legacy callsite path. Always emit a budget — the SDK rejects
-		// `enabled` without one (warning + default of 1024 anyway).
-		expect(resolveThinking({ configMode: "enabled" })).toEqual({
-			mode: "enabled",
-			budgetTokens: 1024,
+	it("enabled with nothing else falls back to the default tier", () => {
+		expect(
+			resolveThinking({ configMode: "enabled", model: "anthropic:claude-sonnet-4-6" }),
+		).toEqual({
+			mode: "effort",
+			effort: DEFAULT_THINKING_EFFORT,
+			source: "mode",
 		});
 	});
 });

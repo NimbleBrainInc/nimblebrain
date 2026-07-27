@@ -11,6 +11,11 @@ import { makeInProcessSource } from "../helpers/in-process-source.ts";
 import { extractText } from "../../src/engine/content-helpers.ts";
 import { loadConfig } from "../../src/cli/config.ts";
 import { deriveOverridePath } from "../../src/config/overrides.ts";
+import {
+	EFFORT_DEFAULT,
+	THINKING_DEFAULT,
+	thinkingPatchFor,
+} from "../../web/src/pages/settings/thinking-patch.ts";
 import { TEST_WORKSPACE_ID, provisionTestWorkspace } from "../helpers/test-workspace.ts";
 
 /** Model adapter that throws on doGenerate, counting invocations. Used
@@ -249,8 +254,13 @@ describe("Core Source", () => {
 		}
 	});
 
-	it("nb__set_model_config rejects thinking='enabled' without a budget", async () => {
-		const workDir = join(testDir, `work-thinking-noburget-${Date.now()}`);
+	it("nb__set_model_config accepts thinking='enabled' without a budget", async () => {
+		// A budget used to be mandatory here, because `enabled` with nothing to
+		// size it fell through to the SDK's 1,024-token floor. It now resolves
+		// to the default effort tier, which is well-defined on every provider —
+		// so requiring a token count would be demanding a number the operator
+		// has no reason to have.
+		const workDir = join(testDir, `work-thinking-nobudget-${Date.now()}`);
 		mkdirSync(workDir, { recursive: true });
 		const configPath = join(workDir, "nimblebrain.json");
 		writeFileSync(configPath, JSON.stringify({ version: "1" }));
@@ -267,8 +277,140 @@ describe("Core Source", () => {
 			const result = await source.execute("set_model_config", {
 				thinking: "enabled",
 			});
+			expect(result.isError).toBe(false);
+			expect(runtime.getRuntimeConfig().thinking).toBe("enabled");
+			expect(runtime.getRuntimeConfig().thinkingBudgetTokens).toBeUndefined();
+		} finally {
+			await runtime.shutdown();
+		}
+	});
+
+	it("nb__set_model_config round-trips thinkingEffort to disk and the live runtime", async () => {
+		const workDir = join(testDir, `work-thinking-effort-${Date.now()}`);
+		mkdirSync(workDir, { recursive: true });
+		const configPath = join(workDir, "nimblebrain.json");
+		writeFileSync(configPath, JSON.stringify({ version: "1" }));
+
+		const runtime = await Runtime.start({
+			model: { provider: "custom", adapter: createEchoModel() },
+			noDefaultBundles: true,
+			workDir,
+			configPath,
+			logging: { disabled: true },
+		});
+		try {
+			const source = await makeInProcessSource("nb", createCoreToolDefs(runtime));
+			expect(
+				(await source.execute("set_model_config", { thinkingEffort: "xhigh" })).isError,
+			).toBe(false);
+			expect(runtime.getRuntimeConfig().thinkingEffort).toBe("xhigh");
+			const raw = JSON.parse(
+				require("node:fs").readFileSync(deriveOverridePath(configPath), "utf-8"),
+			);
+			expect(raw.thinkingEffort).toBe("xhigh");
+
+			// Clearing has to land on both disk and the live process. Reaching
+			// only one leaves them disagreeing until restart.
+			expect(
+				(await source.execute("set_model_config", { clearThinkingEffort: true })).isError,
+			).toBe(false);
+			expect(runtime.getRuntimeConfig().thinkingEffort).toBeUndefined();
+			const cleared = JSON.parse(
+				require("node:fs").readFileSync(deriveOverridePath(configPath), "utf-8"),
+			);
+			expect(cleared.thinkingEffort).toBeUndefined();
+
+			// And it has to survive a restart. Writing to disk and patching the
+			// live process is only two of the three stages — loadConfig maps the
+			// file onto RuntimeConfig with an explicit field list, so a field
+			// missing there is silently dropped on every boot and the setting
+			// reverts. Asserting the first two stages is exactly what hid that.
+			require("node:fs").writeFileSync(
+				deriveOverridePath(configPath),
+				JSON.stringify({ thinking: "enabled", thinkingEffort: "xhigh" }),
+			);
+			expect(loadConfig({ config: configPath }).thinkingEffort).toBe("xhigh");
+		} finally {
+			await runtime.shutdown();
+		}
+	});
+
+	it("accepts every payload the Settings → Model panel can produce", async () => {
+		// The boundary this crosses is the one that kept breaking: the web tests
+		// assert the patch shape, the tool tests assert hand-written inputs, and
+		// nothing fed one to the other. A depth control shipped inert three times
+		// in that gap — most recently because the panel's own default-mode payload
+		// was rejected outright, which failed the whole save including model slots.
+		const workDir = join(testDir, `work-ui-payloads-${Date.now()}`);
+		mkdirSync(workDir, { recursive: true });
+		const configPath = join(workDir, "nimblebrain.json");
+		writeFileSync(configPath, JSON.stringify({ version: "1" }));
+
+		const runtime = await Runtime.start({
+			model: { provider: "custom", adapter: createEchoModel() },
+			noDefaultBundles: true,
+			workDir,
+			configPath,
+			logging: { disabled: true },
+		});
+		try {
+			const source = await makeInProcessSource("nb", createCoreToolDefs(runtime));
+			// Expectations are spelled out rather than derived from the same
+			// predicates the panel uses — otherwise the assertion moves with the
+			// bug and proves only that the code agrees with itself.
+			const cases = [
+				{ mode: THINKING_DEFAULT, effort: "high", budget: 8192, wantEffort: "high", wantBudget: 8192 },
+				{ mode: THINKING_DEFAULT, effort: EFFORT_DEFAULT, budget: null, wantEffort: undefined, wantBudget: undefined },
+				{ mode: "enabled", effort: "high", budget: 8192, wantEffort: "high", wantBudget: 8192 },
+				{ mode: "enabled", effort: "max", budget: null, wantEffort: "max", wantBudget: undefined },
+				{ mode: "enabled", effort: EFFORT_DEFAULT, budget: 4096, wantEffort: undefined, wantBudget: 4096 },
+				{ mode: "off", effort: "high", budget: 8192, wantEffort: undefined, wantBudget: undefined },
+				{ mode: "adaptive", effort: "high", budget: 8192, wantEffort: undefined, wantBudget: undefined },
+			] as const;
+
+			for (const c of cases) {
+				const patch = thinkingPatchFor(c.mode, c.effort, c.budget);
+				// Sent alongside the rest of the panel's payload, because a
+				// rejection here also drops the model slots and limits.
+				const result = await source.execute("set_model_config", {
+					...patch,
+					maxIterations: 12,
+				});
+				const label = `${JSON.stringify(c.mode)}/${c.effort}/${c.budget}`;
+				expect(`${label}: ${result.isError}`).toBe(`${label}: false`);
+				// The save landed in full, not just the thinking half.
+				expect(runtime.getRuntimeConfig().maxIterations).toBe(12);
+
+				const cfg = runtime.getRuntimeConfig();
+				expect(`${label}: ${cfg.thinkingEffort}`).toBe(`${label}: ${c.wantEffort}`);
+				expect(`${label}: ${cfg.thinkingBudgetTokens}`).toBe(`${label}: ${c.wantBudget}`);
+			}
+		} finally {
+			await runtime.shutdown();
+		}
+	});
+
+	it("nb__set_model_config rejects an unknown thinkingEffort", async () => {
+		const workDir = join(testDir, `work-thinking-effort-bad-${Date.now()}`);
+		mkdirSync(workDir, { recursive: true });
+		const configPath = join(workDir, "nimblebrain.json");
+		writeFileSync(configPath, JSON.stringify({ version: "1" }));
+
+		const runtime = await Runtime.start({
+			model: { provider: "custom", adapter: createEchoModel() },
+			noDefaultBundles: true,
+			workDir,
+			configPath,
+			logging: { disabled: true },
+		});
+		try {
+			const source = await makeInProcessSource("nb", createCoreToolDefs(runtime));
+			const result = await source.execute("set_model_config", { thinkingEffort: "extreme" });
 			expect(result.isError).toBe(true);
-			expect(extractText(result.content)).toContain("requires thinkingBudgetTokens");
+			// The schema enum rejects it at the tool boundary, before the
+			// hand-written validator runs — same belt-and-braces `thinking` has.
+			expect(extractText(result.content)).toContain("thinkingEffort");
+			expect(runtime.getRuntimeConfig().thinkingEffort).toBeUndefined();
 		} finally {
 			await runtime.shutdown();
 		}
@@ -304,10 +446,12 @@ describe("Core Source", () => {
 		}
 	});
 
-	it("nb__set_model_config rejects thinking='enabled' + clearThinkingBudget=true even with an existing budget", async () => {
-		// The existing budget would survive validation if the validator
-		// only checked disk state, but the merge then deletes it — leaving
-		// thinking=enabled with no budget, the silent-downgrade trap.
+	it("nb__set_model_config allows dropping a budget while keeping thinking='enabled'", async () => {
+		// This combination used to be rejected: clearing the budget left
+		// enabled with nothing to size it, and the SDK silently downgraded to
+		// its 1,024-token floor. Now it falls back to the default effort tier,
+		// which is the honest way to say "reason, at a normal depth" — so
+		// dropping a token cap is a legitimate operation rather than a trap.
 		const workDir = join(testDir, `work-thinking-clearbudget-${Date.now()}`);
 		mkdirSync(workDir, { recursive: true });
 		const configPath = join(workDir, "nimblebrain.json");
@@ -332,12 +476,12 @@ describe("Core Source", () => {
 				thinking: "enabled",
 				clearThinkingBudget: true,
 			});
-			expect(result.isError).toBe(true);
-			expect(extractText(result.content)).toContain("requires thinkingBudgetTokens");
-			// Override file untouched on validation failure.
+			expect(result.isError).toBe(false);
 			const raw = JSON.parse(require("node:fs").readFileSync(overridePath, "utf-8"));
 			expect(raw.thinking).toBe("enabled");
-			expect(raw.thinkingBudgetTokens).toBe(8192);
+			expect(raw.thinkingBudgetTokens).toBeUndefined();
+			// And the live process agrees with disk, not just the file.
+			expect(runtime.getRuntimeConfig().thinkingBudgetTokens).toBeUndefined();
 		} finally {
 			await runtime.shutdown();
 		}
@@ -373,8 +517,12 @@ describe("Core Source", () => {
 			expect(result.isError).toBe(false);
 			const raw = JSON.parse(require("node:fs").readFileSync(overridePath, "utf-8"));
 			expect(raw.thinking).toBeUndefined();
-			// Budget is cleared together — a budget without a mode is meaningless.
-			expect(raw.thinkingBudgetTokens).toBeUndefined();
+			// The budget survives on purpose. It used to be deleted alongside the
+			// mode on the grounds that it meant nothing without one; the resolver's
+			// no-mode path now honors a bare budget, so cascading the delete would
+			// silently discard a setting that is still in force. Clearing it is a
+			// separate instruction (`clearThinkingBudget`).
+			expect(raw.thinkingBudgetTokens).toBe(8192);
 		} finally {
 			await runtime.shutdown();
 		}
@@ -413,7 +561,7 @@ describe("Core Source", () => {
 		}
 	});
 
-	it("nb__set_model_config rejects clearThinking=true + thinkingBudgetTokens together (would orphan the budget on disk)", async () => {
+	it("nb__set_model_config accepts clearThinking=true alongside a budget", async () => {
 		// Without this guard, the disk-side merge:
 		//   - L430: input.thinking === null → delete existing.thinking + budget
 		//   - L441: input.thinkingBudgetTokens !== undefined/null → re-set budget
@@ -437,16 +585,23 @@ describe("Core Source", () => {
 		});
 		try {
 			const source = await makeInProcessSource("nb", createCoreToolDefs(runtime));
+			// Previously rejected as orphaning the budget. It no longer orphans
+			// anything: with no mode set the resolver reads the budget and resolves
+			// to `enabled` at it, so this is a coherent request — drop the mode
+			// override, keep metering thinking at 4096.
 			const result = await source.execute("set_model_config", {
 				clearThinking: true,
 				thinkingBudgetTokens: 4096,
 			});
-			expect(result.isError).toBe(true);
-			expect(extractText(result.content)).toContain(
+			expect(result.isError).toBe(false);
+			expect(runtime.getRuntimeConfig().thinkingBudgetTokens).toBe(4096);
+			expect(extractText(result.content)).not.toContain(
 				"Cannot set `thinkingBudgetTokens` while clearing `thinking`",
 			);
-			// Override file untouched on validation failure.
-			expect(existsSync(overridePath)).toBe(false);
+			// And it landed on disk in that shape: budget present, mode absent.
+			const raw = JSON.parse(require("node:fs").readFileSync(overridePath, "utf-8"));
+			expect(raw.thinkingBudgetTokens).toBe(4096);
+			expect(raw.thinking).toBeUndefined();
 		} finally {
 			await runtime.shutdown();
 		}
