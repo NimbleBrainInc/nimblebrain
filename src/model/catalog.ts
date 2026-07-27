@@ -328,80 +328,69 @@ export const OPENAI_EFFORTS = ["low", "medium", "high"] as const;
 export type OpenAIEffort = (typeof OPENAI_EFFORTS)[number];
 
 /**
- * OpenAI models that accept only part of the ladder, measured against
- * `POST /v1/responses` rather than taken from docs.
+ * Effort ladder per OpenAI model, measured against `POST /v1/responses` rather
+ * than taken from docs. Every reachable catalog reasoning model is listed,
+ * restricted or not — presence means "someone measured this", which is what
+ * `openaiUnmeasuredReasoningModels` below checks. Absent means unmeasured, and
+ * the lookup falls back to the full ladder, so a model `sync-models` adds is
+ * permissive by default until the coverage test forces a measurement.
  *
- * Restriction is per-model here exactly as it is on Gemini 3, and the adapter
- * doesn't gate it — it forwards the string and the API rejects it. The `-pro`
- * line is the whole of it today: every other reasoning model in the catalog
- * takes low, medium, and high.
- *
- * `gpt-5-pro` is the one that bites without any configuration: it rejects
- * `medium`, which is `DEFAULT_THINKING_EFFORT`, so pointing a slot at it would
- * 400 on every call.
- *
- * A model absent from this map takes the full ladder. That is the safe default
- * here — unlike Google, where an unknown model gets nothing — because OpenAI
- * accepts all three on 21 of 25 catalog models and the adapter itself skips
- * non-reasoning ones.
+ * Restriction is per-model exactly as on Gemini 3, and the adapter doesn't gate
+ * it — it forwards the string and the API rejects it. `gpt-5-pro` is the one
+ * that bites with no configuration at all: it rejects `medium`, which is
+ * `DEFAULT_THINKING_EFFORT`, so a slot pointed at it 400s on every call.
+ * `gpt-5.2-chat-latest` is the one that breaks the shape the rest suggest —
+ * bounded from above as well as below, and not a `-pro` model.
  */
-const OPENAI_RESTRICTED_EFFORTS: Record<string, ReadonlySet<OpenAIEffort>> = {
+const FULL_LADDER: ReadonlySet<OpenAIEffort> = new Set(OPENAI_EFFORTS);
+
+const OPENAI_EFFORT_SUPPORT: Record<string, ReadonlySet<OpenAIEffort>> = {
+  // Restricted — measured rejections.
   "gpt-5-pro": new Set(["high"]),
   "gpt-5.2-pro": new Set(["medium", "high"]),
   "gpt-5.4-pro": new Set(["medium", "high"]),
   "gpt-5.5-pro": new Set(["medium", "high"]),
-  // Restriction is not a `-pro` property: this one rejects `high` as well as
-  // `low`, the only model measured that is bounded from above.
   "gpt-5.2-chat-latest": new Set(["medium"]),
+
+  // Measured and unrestricted — 20 of the 25 reachable models.
+  "gpt-5": FULL_LADDER,
+  "gpt-5-mini": FULL_LADDER,
+  "gpt-5-nano": FULL_LADDER,
+  "gpt-5.1": FULL_LADDER,
+  "gpt-5.2": FULL_LADDER,
+  "gpt-5.3-codex": FULL_LADDER,
+  "gpt-5.4": FULL_LADDER,
+  "gpt-5.4-mini": FULL_LADDER,
+  "gpt-5.4-nano": FULL_LADDER,
+  "gpt-5.5": FULL_LADDER,
+  "gpt-5.6": FULL_LADDER,
+  "gpt-5.6-luna": FULL_LADDER,
+  "gpt-5.6-sol": FULL_LADDER,
+  "gpt-5.6-terra": FULL_LADDER,
+  o1: FULL_LADDER,
+  "o1-pro": FULL_LADDER,
+  o3: FULL_LADDER,
+  "o3-mini": FULL_LADDER,
+  "o3-pro": FULL_LADDER,
+  "o4-mini": FULL_LADDER,
 };
 
 /**
  * Models accepting `minimal`, the tier below `low` used for short internal
- * calls. Almost nothing takes it: 23 of the 26 reachable reasoning models
- * reject it, including every current mainline model from `gpt-5.1` on and the
- * whole o-series. `gpt-5.1`+ replaced it with `none`, which the platform does
- * not send.
+ * calls. Almost nothing takes it: 22 of the 25 reachable reasoning models
+ * reject it, including every mainline model from `gpt-5.1` on and the whole
+ * o-series. `gpt-5.1`+ replaced it with `none`, which the platform never sends.
  */
 const OPENAI_MINIMAL_EFFORT: ReadonlySet<string> = new Set(["gpt-5", "gpt-5-mini", "gpt-5-nano"]);
 
 /**
- * Every reasoning model whose ladder was measured against `/v1/responses`,
- * whether or not it turned out restricted. A model here and absent from
- * OPENAI_RESTRICTED_EFFORTS was checked and takes the full ladder — that is
- * different from never having been looked at, which is what the coverage test
- * below catches.
- */
-const OPENAI_MEASURED_EFFORTS: ReadonlySet<string> = new Set([
-  "gpt-5",
-  "gpt-5-mini",
-  "gpt-5-nano",
-  "gpt-5-pro",
-  "gpt-5.1",
-  "gpt-5.2",
-  "gpt-5.2-chat-latest",
-  "gpt-5.2-pro",
-  "gpt-5.3-codex",
-  "gpt-5.4",
-  "gpt-5.4-mini",
-  "gpt-5.4-nano",
-  "gpt-5.4-pro",
-  "gpt-5.5",
-  "gpt-5.5-pro",
-  "gpt-5.6",
-  "gpt-5.6-luna",
-  "gpt-5.6-sol",
-  "gpt-5.6-terra",
-  "o1",
-  "o1-pro",
-  "o3",
-  "o3-mini",
-  "o3-pro",
-  "o4-mini",
-]);
-
-/**
- * Reasoning models the API would not serve, so their ladder is unknown rather
- * than full. Both return "model does not exist" for this account at any tier.
+ * Reasoning models the API will not serve for this account — both return
+ * "model does not exist" at every tier, so their ladder cannot be measured.
+ *
+ * This does NOT make them restricted: they are absent from the support map, so
+ * a lookup still returns the full ladder. Its only effect is to exempt them
+ * from the coverage guard below, which would otherwise fail CI forever over
+ * models nobody can reach. Revisit if the account gains access.
  */
 const OPENAI_UNAVAILABLE: ReadonlySet<string> = new Set([
   "gpt-5.3-codex-spark",
@@ -423,7 +412,7 @@ export function openaiUnmeasuredReasoningModels(): string[] {
   return Object.entries(models)
     .filter(
       ([id, m]) =>
-        m.capabilities.reasoning && !OPENAI_MEASURED_EFFORTS.has(id) && !OPENAI_UNAVAILABLE.has(id),
+        m.capabilities.reasoning && !(id in OPENAI_EFFORT_SUPPORT) && !OPENAI_UNAVAILABLE.has(id),
     )
     .map(([id]) => id)
     .sort();
@@ -431,7 +420,9 @@ export function openaiUnmeasuredReasoningModels(): string[] {
 
 /** The model ids with a restricted ladder. Exposed so tests can check each is real. */
 export function openaiRestrictedEffortModelIds(): string[] {
-  return Object.keys(OPENAI_RESTRICTED_EFFORTS);
+  return Object.entries(OPENAI_EFFORT_SUPPORT)
+    .filter(([, tiers]) => tiers.size < OPENAI_EFFORTS.length)
+    .map(([id]) => id);
 }
 
 /**
@@ -445,5 +436,5 @@ export function openaiRestrictedEffortModelIds(): string[] {
  */
 export function openaiSupportedEfforts(modelString: string): ReadonlySet<OpenAIEffort> {
   const { modelId } = parseModelString(modelString);
-  return OPENAI_RESTRICTED_EFFORTS[modelId] ?? new Set(OPENAI_EFFORTS);
+  return OPENAI_EFFORT_SUPPORT[modelId] ?? FULL_LADDER;
 }

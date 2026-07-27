@@ -143,7 +143,7 @@ function shortCallProviderOptions(modelString: string | null): SharedV3ProviderO
     case "google":
       return { google: { thinkingConfig: { thinkingBudget: 0 } } };
     case "openai":
-      // Almost no model takes `minimal` — 23 of the 26 reachable reasoning
+      // Almost no model takes `minimal` — 22 of the 25 reachable reasoning
       // models reject it, including every mainline model from gpt-5.1 on and
       // the whole o-series, which 400s the call outright. Send nothing rather
       // than pick a substitute: a short call thinking at the model's own

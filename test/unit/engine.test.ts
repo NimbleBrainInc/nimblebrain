@@ -1789,7 +1789,7 @@ describe("AgentEngine", () => {
         });
         expect(stepped.openai?.reasoningEffort).toBe("high");
 
-        // An unrestricted model is untouched — 21 of 25 take the full ladder.
+        // An unrestricted model is untouched — 20 of 25 take the full ladder.
         const plain = await providerOptionsFor("openai:gpt-5", {
           mode: "effort",
           effort: "low",

@@ -432,7 +432,7 @@ describe("briefing-generator", () => {
 		});
 
 		it("sends no effort to OpenAI models that reject minimal", async () => {
-			// `minimal` is the exception, not the rule: 23 of the 26 reachable
+			// `minimal` is the exception, not the rule: 22 of the 25 reachable
 			// reasoning models reject it outright, including every mainline
 			// model from gpt-5.1 on and the whole o-series. Sending it 400s the
 			// briefing — and this runs on every home load.
