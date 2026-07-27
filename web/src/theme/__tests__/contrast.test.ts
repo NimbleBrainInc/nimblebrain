@@ -314,17 +314,24 @@ describe("foreground alpha — text-<token>/N", () => {
     "g",
   );
 
-  test("every text-<token>/N in web/src is declared above", () => {
-    const root = join(import.meta.dir, "..", "..");
+  test("every text-<token>/N the compiler can see is declared above", () => {
+    // The root is `web/`, not `web/src`. `index.css` has no `@source` pin, so
+    // Tailwind v4 auto-detects across the whole app directory — a class in
+    // `index.html` compiles to a live rule. A guard whose entire claim is
+    // totality has to walk what the compiler walks, so it walks from there and
+    // subtracts only what the compiler already ignores.
+    const root = join(import.meta.dir, "..", "..", "..");
+    const UNSCANNED = new Set(["node_modules", "dist", "coverage", "test", "__tests__"]);
     const walk = (dir: string): string[] =>
       readdirSync(dir).flatMap((e) => {
         const p = join(dir, e);
         // `.ts` as well as `.tsx`: a class string in a plain module is the same
-        // class string, and the extension is not what makes it reachable. Tests
-        // are skipped — including this one, which names the arbitrary form in
-        // prose — because nothing in them renders.
-        if (statSync(p).isDirectory()) return e === "__tests__" ? [] : walk(p);
-        return /\.tsx?$/.test(e) && !/\.test\.tsx?$/.test(e) ? [p] : [];
+        // class string, and the extension is not what makes it reachable.
+        // `.html` for the same reason. Tests are skipped — including this one,
+        // which names the arbitrary form in prose — because nothing in them
+        // renders.
+        if (statSync(p).isDirectory()) return UNSCANNED.has(e) ? [] : walk(p);
+        return /\.(tsx?|html)$/.test(e) && !/\.test\.tsx?$/.test(e) ? [p] : [];
       });
 
     const undeclared = new Set<string>();

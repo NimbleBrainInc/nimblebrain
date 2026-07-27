@@ -273,7 +273,7 @@ const SidebarEdgeToggle = memo(function SidebarEdgeToggle({
         "absolute top-1/2 -translate-y-1/2 -right-3 z-30 w-6 h-6 rounded-full",
         "flex items-center justify-center",
         "bg-sidebar border border-sidebar-border shadow-sm",
-        "text-sidebar-foreground hover:bg-sidebar-foreground/10",
+        "hover:bg-sidebar-foreground/10",
         "transition-colors",
       )}
     >
@@ -302,8 +302,8 @@ function MobileNavItem({
       className={({ isActive }) =>
         `flex items-center gap-3 px-3 py-2.5 mx-2 rounded-sm text-sm transition-colors ${
           isActive
-            ? "bg-sidebar-foreground/10 font-medium text-sidebar-foreground"
-            : "font-normal text-sidebar-foreground hover:bg-sidebar-foreground/5"
+            ? "bg-sidebar-foreground/10 font-medium"
+            : "font-normal hover:bg-sidebar-foreground/5"
         }`
       }
     >
