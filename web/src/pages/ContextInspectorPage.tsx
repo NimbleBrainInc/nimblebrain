@@ -384,7 +384,7 @@ function LayerAccordion({
     <div>
       <div className="px-6 pt-3 pb-2 text-3xs font-semibold uppercase tracking-wider text-muted-foreground">
         Composition
-        <span className="font-normal normal-case tracking-normal text-2xs text-muted-foreground">
+        <span className="font-normal normal-case tracking-normal text-2xs">
           {" "}
           · what would load now
         </span>

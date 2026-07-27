@@ -234,7 +234,7 @@ function WorkspaceHeaderRow({
         "group flex items-center gap-1.5 text-sm transition-colors text-left rounded-sm mx-2 my-px px-1.5 py-1.5",
         focused
           ? "bg-sidebar-foreground/10 font-medium text-sidebar-foreground"
-          : "text-sidebar-foreground hover:bg-sidebar-foreground/5",
+          : "font-normal text-sidebar-foreground hover:bg-sidebar-foreground/5",
       )}
     >
       <ChevronRight
@@ -426,8 +426,8 @@ function NestedNavLink({
         cn(
           "flex items-center gap-2 text-sm transition-colors rounded-sm px-2 py-1",
           isActive
-            ? "bg-sidebar-foreground/10 text-sidebar-foreground"
-            : "text-sidebar-foreground hover:bg-sidebar-foreground/5",
+            ? "bg-sidebar-foreground/10 font-medium text-sidebar-foreground"
+            : "font-normal text-sidebar-foreground hover:bg-sidebar-foreground/5",
         )
       }
     >
@@ -461,11 +461,12 @@ function NestedAppLink({
       data-testid="sidebar-workspace-app"
       data-app-route={serverName}
       data-is-active={isActive ? "true" : "false"}
+      aria-current={isActive ? "page" : undefined}
       className={cn(
         "flex items-center gap-2 text-sm transition-colors rounded-sm px-2 py-1",
         isActive
-          ? "bg-sidebar-foreground/10 text-sidebar-foreground"
-          : "text-sidebar-foreground hover:bg-sidebar-foreground/5",
+          ? "bg-sidebar-foreground/10 font-medium text-sidebar-foreground"
+          : "font-normal text-sidebar-foreground hover:bg-sidebar-foreground/5",
       )}
     >
       <ConnectorIcon name={label} iconUrl={iconUrl} className="size-[18px] rounded-xs text-3xs" />

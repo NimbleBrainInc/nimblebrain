@@ -972,14 +972,7 @@ function AdvancedSection({
         onClick={onToggle}
         className="text-sm text-muted-foreground hover:text-foreground inline-flex items-center gap-2"
       >
-        <span
-          className={cn(
-            "inline-block text-muted-foreground transition-transform",
-            open && "rotate-90",
-          )}
-        >
-          ▸
-        </span>
+        <span className={cn("inline-block transition-transform", open && "rotate-90")}>▸</span>
         Advanced
       </button>
       {open && (

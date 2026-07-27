@@ -292,17 +292,44 @@ describe("foreground alpha — text-<token>/N", () => {
 
   const declared = new Set(ALPHA_TEXT.map(([t, p]) => `text-${t}/${p}`));
 
+  /**
+   * Matches an alpha modifier on a *palette colour*, in either of the two forms
+   * Tailwind accepts.
+   *
+   * Anchored on the palette's own key names rather than `[a-z][\w-]*`, longest
+   * first, so `text-sm/6` — the font-size/line-height shorthand, which is not a
+   * colour at all — cannot be reported as a contrast violation.
+   *
+   * The arbitrary form (`text-foreground/[0.4]`) is matched too, and can never
+   * be declared, because a bracketed fraction is not a percentage this file can
+   * composite. That is the intended outcome: the guard says don't write them.
+   * It is not hypothetical syntax here — `bg-foreground/[0.02]` is already in
+   * use at three sites, and a text alpha reached for the same way would
+   * otherwise walk straight past a guard whose whole claim is totality.
+   */
+  const ALPHA_CLASS = new RegExp(
+    `text-(?:${[...Object.keys(colors), ...Object.keys(extOnlyColors)]
+      .sort((a, b) => b.length - a.length)
+      .join("|")})/(?:\\d{1,3}|\\[[^\\]]+\\])`,
+    "g",
+  );
+
   test("every text-<token>/N in web/src is declared above", () => {
     const root = join(import.meta.dir, "..", "..");
     const walk = (dir: string): string[] =>
       readdirSync(dir).flatMap((e) => {
         const p = join(dir, e);
-        return statSync(p).isDirectory() ? walk(p) : /\.tsx$/.test(e) ? [p] : [];
+        // `.ts` as well as `.tsx`: a class string in a plain module is the same
+        // class string, and the extension is not what makes it reachable. Tests
+        // are skipped — including this one, which names the arbitrary form in
+        // prose — because nothing in them renders.
+        if (statSync(p).isDirectory()) return e === "__tests__" ? [] : walk(p);
+        return /\.tsx?$/.test(e) && !/\.test\.tsx?$/.test(e) ? [p] : [];
       });
 
     const undeclared = new Set<string>();
     for (const file of walk(root)) {
-      for (const [cls] of readFileSync(file, "utf8").matchAll(/text-[a-z][\w-]*\/\d{1,3}/g)) {
+      for (const [cls] of readFileSync(file, "utf8").matchAll(ALPHA_CLASS)) {
         if (!declared.has(cls)) undeclared.add(`${cls} — ${file.slice(root.length + 1)}`);
       }
     }
