@@ -39,6 +39,7 @@
 import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { relative } from "node:path";
+import { paletteToExtAppsTokens } from "../../../web/src/theme/projections.ts";
 import { REPO, sourceFiles, THEMING_DOC, themedTrees } from "./themed-trees.ts";
 
 /**
@@ -161,13 +162,48 @@ describe("theme tokens are used without fallbacks", () => {
  */
 
 /**
- * Defaults an app can own outright. Deliberately tiny, and none of them a
- * colour we choose: `white`/`black`/`transparent` are fixed points of CSS, and
- * `currentcolor`/`inherit` defer to whatever the app's own cascade already
- * decided. That is what makes each one the app's own default rather than a
- * snapshot of someone else's palette.
+ * Defaults an app can own outright: CSS's own keywords, never a value we pick.
+ *
+ * Three kinds, and the rule admits exactly these three. Fixed points of the
+ * language (`white`, `black`, `transparent`, `none`, `0`) mean the same thing in
+ * every document. Cascade keywords (`currentcolor`, `inherit`, `initial`,
+ * `unset`, `revert`) defer to whatever the app's own stylesheet already decided.
+ * Generic families (`sans-serif`, `serif`, `monospace`, `system-ui`) and the
+ * system colours (`canvas`, `canvastext`) resolve against the *user's* platform
+ * rather than ours — and that pair of colours follows the OS light/dark
+ * preference, which makes them the only entries here that cannot ship the
+ * light-mode-only failure this file exists to prevent.
+ *
+ * The set has to span every token family, not just colour, because the rule
+ * does: a page documenting the standalone case for `--font-sans` or
+ * `--shadow-md` needs a generic to reach for, and an allowlist that only knows
+ * colours would reject the legitimate example and teach nothing in its place.
+ *
+ * It stays closed against the thing it guards. Every value the host injects is
+ * a hex, a font stack, a shadow tuple or a rem length, so no keyword in this set
+ * is reachable as a copy of ours — asserted below rather than asserted here.
+ * `var(--border-radius-md, 0.5rem)` is still a violation because `0.5rem` is a
+ * real injected value, and `var(--font-sans, system-ui, sans-serif)` still is
+ * because the whole fallback is matched, not its parts.
  */
-const GENERIC_FALLBACKS = new Set(["white", "black", "transparent", "currentcolor", "inherit"]);
+const GENERIC_FALLBACKS = new Set([
+  "white",
+  "black",
+  "transparent",
+  "none",
+  "0",
+  "currentcolor",
+  "inherit",
+  "initial",
+  "unset",
+  "revert",
+  "sans-serif",
+  "serif",
+  "monospace",
+  "system-ui",
+  "canvas",
+  "canvastext",
+]);
 
 /**
  * Captures the fallback so it can be judged, where {@link FALLBACK} only detects one.
@@ -217,13 +253,38 @@ describe("theming.mdx teaches no fallback that copies a platform value", () => {
     ["var(--color-background-primary)", false],
     // Spelling is the author's, not ours — the allowlist is matched case-folded.
     ["var(--color-background-primary, White)", false],
+    // Every family the rule covers, not just colour.
+    ["var(--font-sans, sans-serif)", false],
+    ["var(--font-mono, monospace)", false],
+    ["var(--shadow-md, none)", false],
+    ["var(--border-radius-md, 0)", false],
+    // Follows the OS light/dark preference, so it is the standalone case done right.
+    ["var(--color-text-primary, CanvasText)", false],
     ["var(--color-text-accent, #0055FF)", true],
     ["var(--color-text-accent, #2563eb)", true],
     ["var(--border-radius-md, 0.5rem)", true],
+    // A generic is safe alone and not as the tail of our stack: the whole
+    // fallback is matched, so the stale copy stays caught by the same set that
+    // waves `sans-serif` through.
     ["var(--font-sans, system-ui, sans-serif)", true],
     ["var(--token, fallback)", true],
   ])("doc matcher: %s → violation=%p", (source, expected) => {
     expect(docViolations(source).length > 0).toBe(expected);
+  });
+
+  // The allowlist's load-bearing claim, derived rather than re-typed: a keyword
+  // that is also a value we inject would be a hole you could copy our palette
+  // through and pass. Nothing in the set collides today because every injected
+  // value is a hex, a font stack, a shadow tuple or a rem length — but that is a
+  // property of the palette, which moves, not of the set, which is why it is
+  // asserted against the palette rather than asserted in a comment.
+  test("no allowlisted generic is also a value the host injects", () => {
+    const injected = new Set(
+      (["light", "dark"] as const).flatMap((mode) =>
+        Object.values(paletteToExtAppsTokens(mode)).map((v) => String(v).trim().toLowerCase()),
+      ),
+    );
+    expect([...GENERIC_FALLBACKS].filter((g) => injected.has(g)).sort()).toEqual([]);
   });
 
   // The flagging path, which the assertion above can never reach: it runs
