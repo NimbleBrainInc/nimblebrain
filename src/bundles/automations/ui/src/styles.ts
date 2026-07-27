@@ -203,16 +203,6 @@ body {
 }
 .skel-card { height: 72px; }
 
-/* Honour a reduced-motion preference for both looping animations in this file.
-   The one-shot fadeIn entrances are not looping and are left alone.
-
-   This block sits BELOW both rules it overrides on purpose. A media query adds
-   no specificity, so `.skel` here and `.skel` above are both (0,1,0) and the
-   later one wins on order alone — placed higher up, this silently stopped
-   overriding the skeleton while still appearing to. */
-@media (prefers-reduced-motion: reduce) {
-  .dot-running, .skel { animation: none; }
-}
 .skel-row { height: 36px; }
 .loading-list { display: flex; flex-direction: column; gap: 8px; }
 
@@ -654,5 +644,17 @@ body {
   /* Advanced config grid → single column. Side-by-side is unreadable
      in ~167px cells. */
   .detail-config-grid { grid-template-columns: 1fr; }
+}
+
+/* Honour a reduced-motion preference for both looping animations in this file.
+   The one-shot fadeIn entrances are not looping and are left alone.
+
+   Placement is load-bearing: a media query adds no specificity, so this block
+   and the rules it overrides are all (0,1,0) and the later in source order
+   wins. An override above the rule it targets is inert while looking exactly
+   like a working one. Last in the file satisfies that unconditionally, and
+   test/unit/bundles/animated-dot-contrast.test.ts enforces it. */
+@media (prefers-reduced-motion: reduce) {
+  .dot-running, .skel { animation: none; }
 }
 `;

@@ -224,7 +224,7 @@ body {
   50% { opacity: 0.7; transform: scale(0.7); }
 }
 @media (prefers-reduced-motion: reduce) {
-  .conv-streaming-dot { animation: none; }
+  .conv-streaming-dot, .skel { animation: none; }
 }
 .conv-preview {
   margin-top: 4px; font-size: 13px;
