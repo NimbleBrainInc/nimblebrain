@@ -129,12 +129,6 @@ body {
 .dot-running { background: var(--color-text-accent); animation: dot-pulse 1.5s ease-in-out infinite; }
 .dot-skipped { background: var(--color-text-tertiary); }
 
-/* Honour a reduced-motion preference for both looping animations in this file.
-   The one-shot fadeIn entrances are not looping and are left alone. */
-@media (prefers-reduced-motion: reduce) {
-  .dot-running, .skel { animation: none; }
-}
-
 /* color-mix() is safe in a bundle stylesheet: no bundle runs Tailwind, so
    Lightning never sees this CSS and never downlevels the mix to its first
    operand. That downlevel is why the shell uses explicit alpha tokens instead. */
@@ -208,6 +202,17 @@ body {
   animation: breathe 3s ease-in-out infinite;
 }
 .skel-card { height: 72px; }
+
+/* Honour a reduced-motion preference for both looping animations in this file.
+   The one-shot fadeIn entrances are not looping and are left alone.
+
+   This block sits BELOW both rules it overrides on purpose. A media query adds
+   no specificity, so `.skel` here and `.skel` above are both (0,1,0) and the
+   later one wins on order alone — placed higher up, this silently stopped
+   overriding the skeleton while still appearing to. */
+@media (prefers-reduced-motion: reduce) {
+  .dot-running, .skel { animation: none; }
+}
 .skel-row { height: 36px; }
 .loading-list { display: flex; flex-direction: column; gap: 8px; }
 

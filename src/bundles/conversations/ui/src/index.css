@@ -201,7 +201,14 @@ body {
   color: var(--color-text-secondary);
   flex-shrink: 0;
 }
-/* Live indicator: a conversation with an in-flight assistant turn. */
+/* Live indicator: a conversation with an in-flight assistant turn.
+
+   Not decorative — it is `role="img"` with an accessible name and no adjacent
+   text says "responding" — so it needs 3:1 against the ground at every frame
+   per WCAG 1.4.11, the faded ones included. The trough is what decides that:
+   the token is comfortable at rest, and this dot spent a long time troughing
+   at 0.4, which renders 1.93:1. Scale carries the motion instead. Guarded by
+   test/unit/bundles/animated-dot-contrast.test.ts, which reads this keyframe. */
 .conv-streaming-dot {
   display: inline-block;
   width: 7px;
@@ -214,7 +221,7 @@ body {
 }
 @keyframes conv-streaming-pulse {
   0%, 100% { opacity: 1; transform: scale(1); }
-  50% { opacity: 0.4; transform: scale(0.7); }
+  50% { opacity: 0.7; transform: scale(0.7); }
 }
 @media (prefers-reduced-motion: reduce) {
   .conv-streaming-dot { animation: none; }

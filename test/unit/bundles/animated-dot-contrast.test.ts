@@ -33,7 +33,33 @@ import { AA_NON_TEXT, contrastRatio, over } from "../../../web/src/theme/contras
 import { paletteToExtAppsTokens } from "../../../web/src/theme/projections.ts";
 import { REPO } from "./themed-trees.ts";
 
-const STYLES = join(REPO, "src", "bundles", "automations", "ui", "src", "styles.ts");
+/**
+ * Every animated status indicator in a themed tree.
+ *
+ * A list, not a constant, because the first version of this guard hardcoded one
+ * file and one selector — and the sibling instance it excluded was a live
+ * failure at 1.93:1, already measured and written into a comment two files
+ * away. A guard whose scope is narrower than its rule is the shape
+ * {@link ./themed-trees.ts} exists to argue against.
+ *
+ * Add an entry when a bundle animates something that carries state. The bar
+ * applies to anything not decorative: `.conv-streaming-dot` is `role="img"`
+ * with an accessible name, `.dot-running` is the only outcome marker in its
+ * row. The skeleton loaders in home/files/conversations are genuinely
+ * decorative and are correctly absent.
+ */
+const ANIMATED_INDICATORS = [
+  {
+    what: "automations running dot",
+    file: join(REPO, "src", "bundles", "automations", "ui", "src", "styles.ts"),
+    selector: ".dot-running",
+  },
+  {
+    what: "conversations live dot",
+    file: join(REPO, "src", "bundles", "conversations", "ui", "src", "index.css"),
+    selector: ".conv-streaming-dot",
+  },
+];
 
 /**
  * The body of the brace-delimited block that starts at or after `from`.
@@ -84,9 +110,10 @@ function troughPct(css: string, keyframe: string): number {
   return Math.min(...stops.map((m) => Number.parseFloat(m[1] as string))) * 100;
 }
 
-describe("the automations running dot holds 1.4.11 at its faded frame", () => {
-  const css = readFileSync(STYLES, "utf8");
-  const keyframe = animationOf(css, ".dot-running");
+for (const { what, file, selector } of ANIMATED_INDICATORS) {
+  describe(`${what} holds 1.4.11 at its faded frame`, () => {
+  const css = readFileSync(file, "utf8");
+  const keyframe = animationOf(css, selector);
   // No animation means no faded frame: the dot sits at the token's full value,
   // which the palette guards already cover.
   const trough = keyframe === null ? 100 : troughPct(css, keyframe);
@@ -122,7 +149,7 @@ describe("the automations running dot holds 1.4.11 at its faded frame", () => {
 
   // `.dot-running` paints this token; read it rather than hardcoding, so
   // repointing the dot at a dimmer token is caught here too.
-  const painted = /\.dot-running\s*\{[^}]*background:\s*var\((--[\w-]+)\)/.exec(css)?.[1];
+  const painted = new RegExp(`${escape(selector)}\\s*\\{[^}]*background:\\s*var\\((--[\\w-]+)\\)`).exec(css)?.[1];
 
   test("the dot paints a token the host injects", () => {
     expect(painted).toBeTruthy();
@@ -132,38 +159,66 @@ describe("the automations running dot holds 1.4.11 at its faded frame", () => {
   /**
    * Every ground a dot renders on, derived rather than listed.
    *
-   * The page and the card are the obvious two. The third is the row hover fill
-   * — `.rail-auto-item:hover`, `.rail-run-item:hover` and `.run-row:hover` all
-   * paint a 30% mix of the border token over whichever of those they sit on,
-   * and every dot in the rail and the run list renders inside one of those rows
-   * (`RailItem.tsx:40`, `:72`, `RunRow.tsx:26`). It is the TIGHTEST of the
-   * three, so a guard that checks only the first two reports more headroom than
-   * the dot actually has, and darkening the border token or raising that 30%
-   * would drop the real worst case under the bar with the guard still green.
+   * The page and the card are the obvious two. The third, where a bundle has
+   * one, is the row hover fill: `automations` paints a 30% mix of the border
+   * token in `.run-row:hover` and `.rail-auto-item:hover`, and every dot in
+   * that rail and run list renders inside one of those rows
+   * (`ui/src/components/RailItem.tsx:40`, `:72`, `ui/src/components/RunRow.tsx:26`).
+   * It is the TIGHTEST of the three, so a guard checking only the first two
+   * reports more headroom than the dot has, and darkening the border token or
+   * raising that percentage drops the real worst case under the bar while the
+   * guard stays green. `conversations` has no such fill — `.conv-item:hover`
+   * only transforms — so it correctly yields two grounds, not four.
    *
    * The mix percentage is read from the stylesheet for the same reason the
    * trough is: a copy of it here would drift the moment someone tunes the hover.
    */
-  const HOVER = /:hover\s*\{[^}]*background:\s*color-mix\(in srgb,\s*var\((--[\w-]+)\)\s*(\d+)%/;
+  const HOVER = /:hover\s*\{[^}]*background:\s*color-mix\(in srgb,\s*var\((--[\w-]+)\)\s*(\d+)%/g;
 
   function groundsFor(mode: "light" | "dark"): [string, string][] {
     const tokens = paletteToExtAppsTokens(mode);
     const bases = ["--color-background-primary", "--color-background-secondary"];
-    const out: [string, string][] = bases.map((b) => [b, tokens[b] as string]);
-    const hover = HOVER.exec(css);
-    if (hover) {
-      const tint = tokens[hover[1] as string] as string;
-      const pct = Number.parseInt(hover[2] as string, 10);
+    const out: [string, string][] = [];
+    // Deduped by resulting COLOUR, not by name, throughout. Two things collapse
+    // here and both are real: in light mode the page and the card are the same
+    // white, and this stylesheet declares the identical hover mix twice
+    // (`.run-row:hover` and `.rail-auto-item:hover`). Asserting the same pair
+    // twice under two names would read as broader coverage than it is.
+    const seen = new Set<string>();
+    const add = (name: string, colour: string) => {
+      if (seen.has(colour)) return;
+      seen.add(colour);
+      out.push([name, colour]);
+    };
+
+    for (const b of bases) add(b, tokens[b] as string);
+    // EVERY hover fill in the file, not the first: a single exec() reads one of
+    // the two declarations while every rail dot renders inside the other.
+    for (const m of css.matchAll(HOVER)) {
+      const tint = tokens[m[1] as string] as string;
+      const pct = Number.parseInt(m[2] as string, 10);
       for (const b of bases) {
-        out.push([`${hover[1]} ${pct}% over ${b}`, over(tint, tokens[b] as string, pct)]);
+        add(`${m[1]} ${pct}% over ${b}`, over(tint, tokens[b] as string, pct));
       }
     }
     return out;
   }
 
-  test("the hover fill is found, so the tightest ground is actually covered", () => {
-    expect(HOVER.test(css)).toBe(true);
-    expect(groundsFor("light")).toHaveLength(4);
+  test("every ground the indicator renders on is enumerated, and none twice", () => {
+    for (const mode of ["light", "dark"] as const) {
+      const grounds = groundsFor(mode);
+      expect(grounds.length).toBeGreaterThan(0);
+      // Distinct colours only. Light mode legitimately collapses the page and
+      // the card (both white), which is why this dedupes by value, not name —
+      // the same pair asserted under two names reads as broader coverage.
+      expect(new Set(grounds.map(([, c]) => c)).size).toBe(grounds.length);
+      // If the stylesheet declares a hover fill, it MUST have contributed a
+      // ground. This is what catches the guard silently reverting to reading
+      // only the base surfaces, which is how the tightest ground went unmeasured.
+      if (/:hover\s*\{[^}]*color-mix/.test(css)) {
+        expect(grounds.length).toBeGreaterThan(new Set(["--color-background-primary", "--color-background-secondary"].map((b) => paletteToExtAppsTokens(mode)[b])).size);
+      }
+    }
   });
 
   for (const mode of ["light", "dark"] as const) {
@@ -176,5 +231,49 @@ describe("the automations running dot holds 1.4.11 at its faded frame", () => {
         },
       );
     }
+  }
+});
+}
+
+/**
+ * A `prefers-reduced-motion` override has to win, and placement is the only
+ * thing that decides whether it does.
+ *
+ * A media query contributes no specificity, so `.skel { animation: none }`
+ * inside one and `.skel { animation: breathe … }` outside it are both (0,1,0)
+ * and the later in source order wins. An override written ABOVE the rule it
+ * means to override is therefore dead while looking exactly like a working one
+ * — which is how this file shipped a block claiming to cover two animations and
+ * covering one.
+ */
+describe("reduced-motion overrides are placed where they win", () => {
+  const MEDIA = /@media\s*\([^)]*prefers-reduced-motion[^)]*\)\s*\{/g;
+
+  for (const { what, file } of ANIMATED_INDICATORS) {
+    test(`${what}: every overridden selector is declared before its override`, () => {
+      const css = readFileSync(file, "utf8");
+      const dead: string[] = [];
+
+      for (const media of css.matchAll(MEDIA)) {
+        const start = media.index as number;
+        const body = blockBody(css, start, "reduced-motion block");
+        for (const rule of body.matchAll(/([^{}]+)\{([^}]*)\}/g)) {
+          if (!/animation:\s*none/.test(rule[2] as string)) continue;
+          for (const sel of (rule[1] as string).split(",").map((s) => s.trim())) {
+            if (!sel) continue;
+            // The last place this selector sets an animation outside the block.
+            // `(?!none)` matters: without it this matches the override's own
+            // `animation: none` inside the media block and reports every
+            // correctly-placed override as dead.
+            const decl = new RegExp(`${escape(sel)}\\s*\\{[^}]*animation:\\s*(?!none\\b)[a-zA-Z]`, "g");
+            for (const d of css.matchAll(decl)) {
+              if ((d.index as number) > start) dead.push(`${sel} (declared after its override)`);
+            }
+          }
+        }
+      }
+
+      expect(dead).toEqual([]);
+    });
   }
 });
