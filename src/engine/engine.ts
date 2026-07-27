@@ -222,12 +222,15 @@ function buildOpenAIThinkingOptions(
       // `medium` — the fallback — so without the gating above a stock install
       // 400s on every call to it.
       //
-      // This particular line is unreachable against the current table and no
-      // test covers it: it only diverges from the step-down below for a model
-      // that supports something under `medium` but not `medium` itself, and
-      // none does. Kept because the rule is the load-bearing one — a row like
-      // {low, high} would otherwise let the fallback quietly pick `low`.
-      if (thinking.mode === "effort" && thinking.source !== "operator") return {};
+      // Unreachable against the current table — it only diverges from the
+      // step-down below for a model supporting something under `medium` but
+      // not `medium`, and none does — so no test covers it. Kept because the
+      // rule is the load-bearing one: a {low, high} row would otherwise let
+      // the fallback quietly pick `low`. Condition matches Google's exactly;
+      // narrowing it to `mode === "effort"` would exempt `mode: "enabled"`,
+      // which carries `source: "mode"` and would then fall through to the
+      // step-down — the very outcome this prevents.
+      if (thinking.source !== "operator") return {};
       const nearest = nearestSupported(wanted, supported, OPENAI_EFFORTS);
       return nearest ? { openai: { reasoningEffort: nearest } } : {};
     }

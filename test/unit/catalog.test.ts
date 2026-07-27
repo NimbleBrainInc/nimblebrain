@@ -8,9 +8,10 @@ import {
 	getProviderName,
 	googleThinkingModelIds,
 	googleThinkingSupport,
+	isModelAllowed,
 	openaiRestrictedEffortModelIds,
 	openaiSupportedEfforts,
-	isModelAllowed,
+	openaiUnmeasuredReasoningModels,
 	listModels,
 	listProviders,
 	supportsEnabledThinking,
@@ -355,20 +356,6 @@ describe("Google thinking support", () => {
 		}
 	});
 
-	it("names real catalog models in the OpenAI restricted-effort map", () => {
-		// Same failure mode as the Google table: a typo'd key silently restores
-		// the full ladder for the model it meant to restrict, and gpt-5-pro
-		// would go back to 400ing on the platform default.
-		const ids = openaiRestrictedEffortModelIds();
-		expect(ids.length).toBeGreaterThan(0);
-		expect(ids.filter((id) => getModel("openai", id) === undefined)).toEqual([]);
-		// Measured against /v1/responses, not taken from docs.
-		expect([...openaiSupportedEfforts("openai:gpt-5-pro")]).toEqual(["high"]);
-		expect([...openaiSupportedEfforts("openai:gpt-5.2-pro")].sort()).toEqual(["high", "medium"]);
-		// Anything unlisted takes the full ladder.
-		expect([...openaiSupportedEfforts("openai:gpt-5")].sort()).toEqual(["high", "low", "medium"]);
-	});
-
 	it("never offers a level outside Google's ladder", () => {
 		for (const id of listModels("google").map((m) => m.id)) {
 			const support = googleThinkingSupport(id);
@@ -390,5 +377,33 @@ describe("Google thinking support", () => {
 			// own documented maximum.
 			expect(support.max).toBeGreaterThanOrEqual(1024);
 		}
+	});
+});
+
+describe("OpenAI effort support", () => {
+	it("names real catalog models in the OpenAI restricted-effort map", () => {
+		// Same failure mode as the Google table: a typo'd key silently restores
+		// the full ladder for the model it meant to restrict, and gpt-5-pro
+		// would go back to 400ing on the platform default.
+		const ids = openaiRestrictedEffortModelIds();
+		expect(ids.length).toBeGreaterThan(0);
+		expect(ids.filter((id) => getModel("openai", id) === undefined)).toEqual([]);
+		// Measured against /v1/responses, not taken from docs.
+		expect([...openaiSupportedEfforts("openai:gpt-5-pro")]).toEqual(["high"]);
+		// Bounded from ABOVE as well as below — restriction is not a `-pro`
+		// property and not always a floor.
+		expect([...openaiSupportedEfforts("openai:gpt-5.2-chat-latest")]).toEqual(["medium"]);
+		expect([...openaiSupportedEfforts("openai:gpt-5.2-pro")].sort()).toEqual(["high", "medium"]);
+		// Anything unlisted takes the full ladder.
+		expect([...openaiSupportedEfforts("openai:gpt-5")].sort()).toEqual(["high", "low", "medium"]);
+	});
+
+	it("has measured every catalog reasoning model", () => {
+		// The map's default is the opposite of Google's — absent means the FULL
+		// ladder — so a model `sync-models` adds tomorrow silently gets all three
+		// tiers and 400s in production if it is actually restricted. This fails
+		// CI instead. Note the guard cannot be "every -pro id has a row":
+		// o3-pro is -pro, was measured, and correctly takes the full ladder.
+		expect(openaiUnmeasuredReasoningModels()).toEqual([]);
 	});
 });

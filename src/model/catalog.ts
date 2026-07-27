@@ -350,14 +350,99 @@ const OPENAI_RESTRICTED_EFFORTS: Record<string, ReadonlySet<OpenAIEffort>> = {
   "gpt-5.2-pro": new Set(["medium", "high"]),
   "gpt-5.4-pro": new Set(["medium", "high"]),
   "gpt-5.5-pro": new Set(["medium", "high"]),
+  // Restriction is not a `-pro` property: this one rejects `high` as well as
+  // `low`, the only model measured that is bounded from above.
+  "gpt-5.2-chat-latest": new Set(["medium"]),
 };
+
+/**
+ * Models accepting `minimal`, the tier below `low` used for short internal
+ * calls. Almost nothing takes it: 23 of the 26 reachable reasoning models
+ * reject it, including every current mainline model from `gpt-5.1` on and the
+ * whole o-series. `gpt-5.1`+ replaced it with `none`, which the platform does
+ * not send.
+ */
+const OPENAI_MINIMAL_EFFORT: ReadonlySet<string> = new Set(["gpt-5", "gpt-5-mini", "gpt-5-nano"]);
+
+/**
+ * Every reasoning model whose ladder was measured against `/v1/responses`,
+ * whether or not it turned out restricted. A model here and absent from
+ * OPENAI_RESTRICTED_EFFORTS was checked and takes the full ladder — that is
+ * different from never having been looked at, which is what the coverage test
+ * below catches.
+ */
+const OPENAI_MEASURED_EFFORTS: ReadonlySet<string> = new Set([
+  "gpt-5",
+  "gpt-5-mini",
+  "gpt-5-nano",
+  "gpt-5-pro",
+  "gpt-5.1",
+  "gpt-5.2",
+  "gpt-5.2-chat-latest",
+  "gpt-5.2-pro",
+  "gpt-5.3-codex",
+  "gpt-5.4",
+  "gpt-5.4-mini",
+  "gpt-5.4-nano",
+  "gpt-5.4-pro",
+  "gpt-5.5",
+  "gpt-5.5-pro",
+  "gpt-5.6",
+  "gpt-5.6-luna",
+  "gpt-5.6-sol",
+  "gpt-5.6-terra",
+  "o1",
+  "o1-pro",
+  "o3",
+  "o3-mini",
+  "o3-pro",
+  "o4-mini",
+]);
+
+/**
+ * Reasoning models the API would not serve, so their ladder is unknown rather
+ * than full. Both return "model does not exist" for this account at any tier.
+ */
+const OPENAI_UNAVAILABLE: ReadonlySet<string> = new Set([
+  "gpt-5.3-codex-spark",
+  "gpt-realtime-2.1",
+]);
+
+/** Whether this model accepts the sub-`low` `minimal` tier. */
+export function openaiAcceptsMinimalEffort(modelString: string): boolean {
+  return OPENAI_MINIMAL_EFFORT.has(parseModelString(modelString).modelId);
+}
+
+/**
+ * Catalog reasoning models nobody has measured. Non-empty means `sync-models`
+ * added one and its ladder is a guess — the map's "absent means full ladder"
+ * default would silently hand it all three tiers.
+ */
+export function openaiUnmeasuredReasoningModels(): string[] {
+  const models = data.openai?.models ?? {};
+  return Object.entries(models)
+    .filter(
+      ([id, m]) =>
+        m.capabilities.reasoning && !OPENAI_MEASURED_EFFORTS.has(id) && !OPENAI_UNAVAILABLE.has(id),
+    )
+    .map(([id]) => id)
+    .sort();
+}
 
 /** The model ids with a restricted ladder. Exposed so tests can check each is real. */
 export function openaiRestrictedEffortModelIds(): string[] {
   return Object.keys(OPENAI_RESTRICTED_EFFORTS);
 }
 
-/** Which effort tiers this OpenAI-family model accepts. */
+/**
+ * Which effort tiers this OpenAI-family model accepts.
+ *
+ * Keyed on the bare model id, and reached for Nebius too — both providers run
+ * through the OpenAI adapter. Safe because every Nebius id is org-qualified
+ * (`Qwen/Qwen3-32B`) and so cannot collide with a bare OpenAI id; a Nebius
+ * model therefore always falls through to the full ladder, which matches
+ * measurement — Nebius accepts all three on every catalog model.
+ */
 export function openaiSupportedEfforts(modelString: string): ReadonlySet<OpenAIEffort> {
   const { modelId } = parseModelString(modelString);
   return OPENAI_RESTRICTED_EFFORTS[modelId] ?? new Set(OPENAI_EFFORTS);
