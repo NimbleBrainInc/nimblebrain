@@ -56,13 +56,23 @@ function blockBody(css: string, from: number, what: string): string {
   throw new Error(`${what} block is unterminated`);
 }
 
-/** The animation `selector` declares, e.g. `.dot-running` -> `dot-pulse`. */
-function animationOf(css: string, selector: string): string {
-  const at = css.search(new RegExp(`\\${selector}\\s*\\{`));
+const escape = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+/**
+ * The animation `selector` declares, e.g. `.dot-running` -> `dot-pulse`, or
+ * null if the rule exists but sets no animation.
+ *
+ * Null rather than throwing, because a dot that does not pulse is the SAFE
+ * state — it renders at the token's full value, which the palette guards
+ * already cover. Throwing would turn "we decided this should not animate" into
+ * a CI break, which teaches the wrong lesson about a rule that only exists to
+ * catch fading. A missing *rule* still throws: that means the selector was
+ * renamed and this guard is now watching nothing.
+ */
+function animationOf(css: string, selector: string): string | null {
+  const at = css.search(new RegExp(`${escape(selector)}\\s*\\{`));
   if (at === -1) throw new Error(`no rule for ${selector}`);
-  const anim = /animation:\s*([a-zA-Z][\w-]*)/.exec(blockBody(css, at, selector));
-  if (!anim) throw new Error(`${selector} declares no animation`);
-  return anim[1] as string;
+  return /animation:\s*([a-zA-Z][\w-]*)/.exec(blockBody(css, at, selector))?.[1] ?? null;
 }
 
 /** The lowest opacity a keyframe reaches, as a percentage. */
@@ -77,10 +87,11 @@ function troughPct(css: string, keyframe: string): number {
 describe("the automations running dot holds 1.4.11 at its faded frame", () => {
   const css = readFileSync(STYLES, "utf8");
   const keyframe = animationOf(css, ".dot-running");
-  const trough = troughPct(css, keyframe);
+  // No animation means no faded frame: the dot sits at the token's full value,
+  // which the palette guards already cover.
+  const trough = keyframe === null ? 100 : troughPct(css, keyframe);
 
   test("the stylesheet is parsed, not assumed", () => {
-    expect(keyframe).toBeTruthy();
     expect(trough).toBeGreaterThan(0);
     expect(trough).toBeLessThanOrEqual(100);
   });
@@ -99,7 +110,14 @@ describe("the automations running dot holds 1.4.11 at its faded frame", () => {
   });
 
   test("the animation name comes from the rule, not a guess", () => {
-    expect(animationOf(".dot-running { background: red; animation: foo 1s linear; }", ".dot-running")).toBe("foo");
+    const rule = ".dot-running { background: red; animation: foo 1s linear; }";
+    expect(animationOf(rule, ".dot-running")).toBe("foo");
+    // A rule with no animation is the safe state, reported rather than thrown.
+    expect(animationOf(".dot-running { background: red; }", ".dot-running")).toBeNull();
+    // A missing rule is not: it means this guard is watching nothing.
+    expect(() => animationOf(".other { color: red; }", ".dot-running")).toThrow();
+    // The selector is escaped, so a metacharacter past the first is literal.
+    expect(() => animationOf(".a.b { animation: x 1s; }", ".a.b")).not.toThrow();
   });
 
   // `.dot-running` paints this token; read it rather than hardcoding, so
@@ -111,15 +129,52 @@ describe("the automations running dot holds 1.4.11 at its faded frame", () => {
     expect(Object.keys(paletteToExtAppsTokens("light"))).toContain(painted);
   });
 
+  /**
+   * Every ground a dot renders on, derived rather than listed.
+   *
+   * The page and the card are the obvious two. The third is the row hover fill
+   * — `.rail-auto-item:hover`, `.rail-run-item:hover` and `.run-row:hover` all
+   * paint a 30% mix of the border token over whichever of those they sit on,
+   * and every dot in the rail and the run list renders inside one of those rows
+   * (`RailItem.tsx:40`, `:72`, `RunRow.tsx:26`). It is the TIGHTEST of the
+   * three, so a guard that checks only the first two reports more headroom than
+   * the dot actually has, and darkening the border token or raising that 30%
+   * would drop the real worst case under the bar with the guard still green.
+   *
+   * The mix percentage is read from the stylesheet for the same reason the
+   * trough is: a copy of it here would drift the moment someone tunes the hover.
+   */
+  const HOVER = /:hover\s*\{[^}]*background:\s*color-mix\(in srgb,\s*var\((--[\w-]+)\)\s*(\d+)%/;
+
+  function groundsFor(mode: "light" | "dark"): [string, string][] {
+    const tokens = paletteToExtAppsTokens(mode);
+    const bases = ["--color-background-primary", "--color-background-secondary"];
+    const out: [string, string][] = bases.map((b) => [b, tokens[b] as string]);
+    const hover = HOVER.exec(css);
+    if (hover) {
+      const tint = tokens[hover[1] as string] as string;
+      const pct = Number.parseInt(hover[2] as string, 10);
+      for (const b of bases) {
+        out.push([`${hover[1]} ${pct}% over ${b}`, over(tint, tokens[b] as string, pct)]);
+      }
+    }
+    return out;
+  }
+
+  test("the hover fill is found, so the tightest ground is actually covered", () => {
+    expect(HOVER.test(css)).toBe(true);
+    expect(groundsFor("light")).toHaveLength(4);
+  });
+
   for (const mode of ["light", "dark"] as const) {
-    // The dot renders on the page and on the automation card.
-    for (const ground of ["--color-background-primary", "--color-background-secondary"]) {
-      test(`${mode}: ${painted} at ${trough}% over ${ground} clears ${AA_NON_TEXT}:1`, () => {
-        const tokens = paletteToExtAppsTokens(mode);
-        const dot = tokens[painted as string] as string;
-        const bg = tokens[ground] as string;
-        expect(contrastRatio(over(dot, bg, trough), bg)).toBeGreaterThanOrEqual(AA_NON_TEXT);
-      });
+    for (const [name, bg] of groundsFor(mode)) {
+      test.skipIf(keyframe === null)(
+        `${mode}: ${painted} at ${trough}% over ${name} clears ${AA_NON_TEXT}:1`,
+        () => {
+          const dot = paletteToExtAppsTokens(mode)[painted as string] as string;
+          expect(contrastRatio(over(dot, bg, trough), bg)).toBeGreaterThanOrEqual(AA_NON_TEXT);
+        },
+      );
     }
   }
 });

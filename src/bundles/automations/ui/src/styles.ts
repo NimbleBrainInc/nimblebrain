@@ -85,14 +85,12 @@ body {
    unavailable on touch, invisible without hover and unreliable through screen
    readers, so it does not discharge the requirement — and the detail header's
    dot has none at all. Each therefore needs 3:1 against the ground per WCAG
-   1.4.11. Dots render on two grounds, the page
-   (--color-background-primary) and the card (--color-background-secondary);
-   across both, in both modes, the weakest of these tokens is 5.07:1
-   (text-tertiary on card, dark). The hand-picked hues they replace cleared 3:1
-   on neither ground: timeout sat at 1.92:1 on white, success at 2.28:1.
+   1.4.11. Dots render on three grounds: the page, the card, and the hover fill
+   the rail and run rows paint over either of those. The hover fill is the
+   tightest of the three and the one worth remembering when picking a value.
 
-   Those figures are the tokens at full opacity. Anything that fades a dot has
-   to hold the bar too — see dot-running below.
+   That is the tokens at full opacity. Anything that fades a dot has to hold the
+   bar on all three too — see dot-running below.
 
    timeout and backoff deliberately share one hue. They are warnings on
    different axes — a run that ran too long, and an automation retrying after
@@ -119,9 +117,10 @@ body {
    for the skeleton it was written for but would cap this dot at 2.78:1 light /
    2.92:1 dark — under the 3:1 the dot needs, at every frame of the cycle. A
    token that clears the bar does not survive being faded to 60% of it.
-   So the peak here is the token itself and the trough is 0.7, whose worst
-   ground is 3.34:1, asserted in test/unit/bundles/animated-dot-contrast.test.ts,
-   which reads this keyframe rather than holding its own copy of the number.
+   So the peak here is the token itself, and the trough is set high enough that
+   the faded frame still clears the bar on every ground. The margin is thin, so
+   do not lower it by eye: test/unit/bundles/animated-dot-contrast.test.ts reads
+   this keyframe and reports the real number on each ground when it fails.
    The conversations bundle's live dot has the same silhouette — full opacity at
    the extremes, motion in the middle — but it is not precedent for the value:
    it troughs at 0.4, which is 1.93:1 on the same token. Borrow the shape from
