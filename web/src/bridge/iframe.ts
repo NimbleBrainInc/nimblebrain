@@ -124,7 +124,7 @@ export function buildCSP(options?: CreateIframeOptions): string {
     // explicitly is what lets the app load the `synapse/fontFaces` files the
     // host serves. Fonts are inert resources and the host already authors this
     // document, so this grants no reach the frame didn't already have.
-    `font-src 'self' data: ${fontOrigin()}${resourceExtras}`.trim(),
+    ["font-src 'self' data:", fontOrigin(), resourceExtras.trim()].filter(Boolean).join(" "),
     `connect-src ${connectSrc}`,
     `frame-src ${frameSrc}`,
     "object-src 'none'",

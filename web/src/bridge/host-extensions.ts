@@ -57,7 +57,12 @@ export function buildHostExtensions(
   // A token names a font family; it cannot load one, and the iframe inherits no
   // `@font-face` from the shell. Ship the faces alongside so `--font-sans` and
   // `--font-mono` resolve to the real thing instead of falling through.
-  ext[FONT_FACES_CONTEXT_KEY] = getHostFontFaces();
+  //
+  // Omitted rather than sent empty when there are none: the SDK reads an absent
+  // key as "unchanged" and an explicit `[]` as "clear every managed face", so a
+  // host with no registered URLs must say nothing rather than send a reset.
+  const fontFaces = getHostFontFaces();
+  if (fontFaces.length > 0) ext[FONT_FACES_CONTEXT_KEY] = fontFaces;
   if (forceRefresh) ext.forceRefresh = true;
   // Conversations with an in-flight assistant turn in this browser tab. Apps
   // (e.g. the conversations list) render a live "streaming" affordance per

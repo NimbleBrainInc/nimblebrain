@@ -176,6 +176,10 @@ describe("CSP permits the origin the faces are served from", () => {
     const csp = buildCSP({ resourceDomains: ["https://cdn.example.com"] });
     const fontSrc = csp.split("; ").find((d) => d.startsWith("font-src"));
     expect(fontSrc).toContain("https://cdn.example.com");
+    // Sources are space-delimited, so a gap where an unusable origin would have
+    // gone parses fine — but it reads as a missing source to anyone auditing the
+    // header. The directive is assembled from present parts only.
+    expect(fontSrc).not.toContain("  ");
   });
 
   test("no directive injection via the added origin", () => {
@@ -213,9 +217,10 @@ describe("building descriptors can never break the host", () => {
         expect(() => getHostFontFaces()).not.toThrow();
         expect(() => buildHostExtensions(null)).not.toThrow();
         expect(() => buildCSP()).not.toThrow();
-        // An unusable origin must not be smuggled into the policy.
+        // An unusable origin must not be smuggled into the policy, and must not
+        // leave a hole where it would have gone.
         expect(fontOrigin()).toBe("");
-        expect(buildCSP()).not.toContain(origin === "" ? "font-src 'self' data:  " : origin);
+        expect(buildCSP().split("; ")).toContain("font-src 'self' data:");
       } finally {
         if (prior === undefined) {
           delete (globalThis as { window?: unknown }).window;
@@ -243,14 +248,20 @@ describe("building descriptors can never break the host", () => {
 });
 
 describe("unregistered URLs mean no fonts, not a broken host", () => {
-  test("backend and root-unit importers get an empty face list", () => {
+  test("backend and root-unit importers get no faces, and the key is omitted", () => {
     // `bridge/fonts.ts` is reachable from the shared bridge protocol, which the
     // root unit suite exercises without `web/` deps. It must therefore never
     // import the font packages — the browser entry injects the URLs. Absent
     // that call, no faces, which the SDK reads as "host sends no fonts".
+    //
+    // Omitted, NOT sent as `[]`: the SDK reads an absent key as "unchanged" and
+    // an explicit empty list as "clear every managed face", so sending `[]` here
+    // would be an active reset dressed up as absence.
     registerHostFontUrls({});
     expect(getHostFontFaces()).toEqual([]);
-    expect(() => buildHostExtensions(null)).not.toThrow();
+    const ext = buildHostExtensions(null);
+    expect(FONT_FACES_CONTEXT_KEY in ext).toBe(false);
+    expect(FONT_FACES_CONTEXT_KEY in buildHostContext("dark", null)).toBe(false);
   });
 
   test("a partial registration degrades to fewer faces, not a malformed one", () => {
