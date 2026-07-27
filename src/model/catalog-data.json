@@ -822,7 +822,8 @@
           "output": ["text"]
         },
         "knowledgeCutoff": "2025-08-31",
-        "releaseDate": "2025-12-11"
+        "releaseDate": "2025-12-11",
+        "deprecated": true
       },
       "gpt-5.2-pro": {
         "id": "gpt-5.2-pro",
@@ -871,7 +872,8 @@
           "output": ["text"]
         },
         "knowledgeCutoff": "2025-08-31",
-        "releaseDate": "2026-03-03"
+        "releaseDate": "2026-03-03",
+        "deprecated": true
       },
       "gpt-5.3-codex": {
         "id": "gpt-5.3-codex",

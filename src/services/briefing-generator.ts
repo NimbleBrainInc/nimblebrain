@@ -1,5 +1,9 @@
 import type { LanguageModelV3, SharedV3ProviderOptions } from "@ai-sdk/provider";
-import { getModelByString, getProviderFromModel } from "../model/catalog.ts";
+import {
+  getModelByString,
+  getProviderFromModel,
+  openaiAcceptsMinimalEffort,
+} from "../model/catalog.ts";
 import { log } from "../observability/log.ts";
 import { type TokenUsage, tokenUsageFromV3 } from "../usage/types.ts";
 import type { BriefingContext } from "./briefing-collector.ts";
@@ -139,15 +143,23 @@ function shortCallProviderOptions(modelString: string | null): SharedV3ProviderO
     case "google":
       return { google: { thinkingConfig: { thinkingBudget: 0 } } };
     case "openai":
-      return { openai: { reasoningEffort: "minimal" } };
+      // Almost no model takes `minimal` — 22 of the 25 reachable reasoning
+      // models reject it, including every mainline model from gpt-5.1 on and
+      // the whole o-series, which 400s the call outright. Send nothing rather
+      // than pick a substitute: a short call thinking at the model's own
+      // default is a cost the caller can absorb, a 400 is not.
+      return openaiAcceptsMinimalEffort(modelString)
+        ? { openai: { reasoningEffort: "minimal" } }
+        : {};
     case "nebius":
-      // Deliberately no suppression, and NOT a silent fallthrough. Nebius rejects
-      // `reasoning_effort` (HTTP 400) on its DeepSeek/Qwen/gpt-oss reasoning
-      // models, and there's no shared alternative knob. It isn't needed anyway:
-      // under the briefing's json_schema structured-output path these models
-      // return clean JSON within the 1500-token budget (finish=stop, no reasoning
-      // dump) — verified against a live account. Do not add a `reasoning_effort`
-      // case here; it breaks the briefing rather than fixing it.
+      // Deliberately no suppression, and NOT a silent fallthrough. Nebius has
+      // no knob that suppresses reasoning: `reasoning_effort` is accepted on
+      // every catalog model — measured, including together with the briefing's
+      // json_schema structured output — but its floor is `low`, so there is no
+      // value that means "don't". Sending one would buy nothing and cost a
+      // tier. It isn't needed anyway: under json_schema these models return
+      // clean JSON within the 1500-token budget (finish=stop, no reasoning
+      // dump).
       return {};
     default:
       return {};

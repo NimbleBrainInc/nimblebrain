@@ -420,7 +420,7 @@ describe("briefing-generator", () => {
 			});
 		});
 
-		it("sets reasoningEffort=minimal for OpenAI reasoning models", async () => {
+		it("sets reasoningEffort=minimal for the OpenAI models that take it", async () => {
 			const llmResponse = JSON.stringify({ lede: "Ok.", sections: [] });
 			const { model, calls } = createTrackingModelV3(llmResponse);
 			const gen = makeGen(model, "openai:gpt-5");
@@ -429,6 +429,20 @@ describe("briefing-generator", () => {
 			expect(calls[0].providerOptions).toEqual({
 				openai: { reasoningEffort: "minimal" },
 			});
+		});
+
+		it("sends no effort to OpenAI models that reject minimal", async () => {
+			// `minimal` is the exception, not the rule: 22 of the 25 reachable
+			// reasoning models reject it outright, including every mainline
+			// model from gpt-5.1 on and the whole o-series. Sending it 400s the
+			// briefing — and this runs on every home load.
+			for (const m of ["openai:gpt-5.1", "openai:o3", "openai:gpt-5-pro"]) {
+				const { model, calls } = createTrackingModelV3(
+					JSON.stringify({ lede: "Ok.", sections: [] }),
+				);
+				await makeGen(model, m).generate(activeActivity());
+				expect(calls[0].providerOptions ?? {}).toEqual({});
+			}
 		});
 
 		it("omits providerOptions for non-reasoning models", async () => {
