@@ -19,6 +19,7 @@ import { mcpAuthCallbackUrl } from "../oauth/mcp-callback-url.ts";
 import { isMintedFleetSource } from "../oauth/minted-credential-provider.ts";
 import { log } from "../observability/log.ts";
 import { FileCredentialStore } from "../tools/credential-store.ts";
+import { personalConnectorWireName } from "../tools/identity-sources.ts";
 import { type BundleMcpContext, McpSource } from "../tools/mcp-source.ts";
 import type { ToolRegistry } from "../tools/registry.ts";
 import {
@@ -601,6 +602,12 @@ async function startUrlBundleSource(
     },
     eventSink,
     composeBundleMcpContext(opts?.bundleMcp, sourceName),
+    // An identity-owned start is a personal connector, whose wire name carries
+    // the marker. Its EVENTS must say so: a consumer that only sees the bare
+    // name cannot tell this source apart from a workspace source installed under
+    // the same name, and `data.changed` would refetch that unrelated app.
+    // Registry lookups keep using the bare `sourceName`.
+    opts?.identityOwner ? personalConnectorWireName(sourceName) : undefined,
   );
 
   // Kick off start() and finalize on completion. The promise's value

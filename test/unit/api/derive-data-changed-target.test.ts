@@ -123,6 +123,12 @@ describe("deriveDataChangedTarget", () => {
 		test("a marked source arriving as separate source/tool fields is also refused", () => {
 			// `tool.progress` composes `${source}__${tool}` before the split, so the
 			// guard has to sit after that composition, not only on the `name` shape.
+			//
+			// This shape is only reachable because `McpSource` emits its WIRE name.
+			// It is constructed with the bare `serverName` (the registry key), so
+			// before that it emitted `gmail` for a personal connector — identical to
+			// the workspace source it collides with, and the guard never fired on
+			// this path at all. `mcp-source-wire-name.test.ts` pins the emitter end.
 			const event: EngineEvent = {
 				type: "tool.progress",
 				data: { source: "my_notes", tool: "append" },
