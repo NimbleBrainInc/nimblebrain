@@ -393,7 +393,7 @@ const OPENAI_EFFORT_SUPPORT: Record<string, ReadonlySet<OpenAIWireEffort>> = {
  * a lookup still returns the full ladder. Its only effect is to exempt them
  * from the coverage guard below, which would otherwise fail CI forever over
  * models nobody can reach. Both are still offered in the picker and still fall
- * through to the full ladder, so this is a known gap, not a safe one — #813.
+ * through to the full ladder, so this is a known gap, not a safe one — #811.
  */
 const OPENAI_UNAVAILABLE: ReadonlySet<string> = new Set([
   "gpt-5.3-codex-spark",
