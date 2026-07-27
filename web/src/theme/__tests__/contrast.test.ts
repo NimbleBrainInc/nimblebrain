@@ -1,4 +1,6 @@
 import { describe, expect, test } from "bun:test";
+import { readdirSync, readFileSync, statSync } from "node:fs";
+import { join } from "node:path";
 import { AA_TEXT, contrastRatio, over } from "../contrast.ts";
 import { colors, extOnlyColors, type Mode, type Pair, pick } from "../palette.ts";
 
@@ -71,6 +73,7 @@ const TEXT_PAIRS: [fg: TokenName, bg: TokenName, where: string][] = [
   ["muted-foreground", "background", "lead paragraphs"],
   ["muted-foreground", "card", "row sub-lines"],
   ["muted-foreground", "sidebar", "sidebar nav rows"],
+  ["foreground", "sidebar", "the active sidebar nav row"],
   // `text-tertiary` and `background-tertiary` are ext-apps-only: the shell's
   // `:root` never emits them, so the only surface they meet is an embedded
   // iframe, where both are injected together.
@@ -180,6 +183,29 @@ describe("palette contrast — WCAG 2.2", () => {
     }
   }
 
+  describe("sidebar tints — text on a tint of itself", () => {
+    // The sidebar's own tint family. `bg-sidebar-foreground/N` over `bg-sidebar`
+    // is what carries hover and the active row throughout the shell, and it is a
+    // tint of the text colour itself — the same mechanism as TINTED above, so it
+    // moves the same way when the palette does. The `kbd` in SidebarSearch is the
+    // floor: a /10 chip inside the trigger's own /5 fill, two tints deep.
+    for (const mode of ["light", "dark"] as const) {
+      const ground = token("sidebar", mode);
+      const text = token("sidebar-foreground", mode);
+      const hover = over(text, ground, 5);
+
+      for (const [label, fill] of [
+        ["hover, sidebar-foreground/5", hover],
+        ["active, sidebar-foreground/10", over(text, ground, 10)],
+        ["the search kbd, /10 over the trigger's /5", over(text, hover, 10)],
+      ] as const) {
+        test(`${mode}: sidebar text on ${label} clears ${AA_TEXT}:1`, () => {
+          expect(contrastRatio(text, fill)).toBeGreaterThanOrEqual(AA_TEXT);
+        });
+      }
+    }
+  });
+
   for (const mode of ["light", "dark"] as const) {
     test(`${mode}: the primary hover fill keeps its label above ${AA_TEXT}:1`, () => {
       // `hover:bg-primary/90` composited over the page ground.
@@ -247,6 +273,126 @@ describe("translucent tints track their source token", () => {
         test(`${mode}: ${source} on ${tint} over ${ground} clears ${AA_TEXT}:1`, () => {
           const fill = over(token(source, mode), token(ground, mode), 10);
           expect(contrastRatio(token(source, mode), fill)).toBeGreaterThanOrEqual(AA_TEXT);
+        });
+      }
+    }
+  }
+});
+
+/**
+ * Foreground alpha — `text-<token>/N` — computed rather than assumed.
+ *
+ * Tailwind resolves `/N` on a text colour the same way it does on a background:
+ * the token is composited toward whatever is behind it. So the rendered ratio is
+ * not the token's, and no assertion over token values can see it. This is the
+ * third alpha family, after the tinted backgrounds and `primary/90`, and it was
+ * the largest: 35 sites across seven combinations, of which every one but
+ * `text-foreground/N` sat below AA — the worst a 10px uppercase section label at
+ * `sidebar-foreground/40`, **1.833:1**, in the resting state, in both modes.
+ *
+ * They are gone now, not exempted. The sidebar's hierarchy came entirely from
+ * this ramp, because `sidebar-foreground` and `muted-foreground` are the same
+ * value — one text colour, four opacities. Rebuilding four levels in colour
+ * needs room below `sidebar-foreground` (6.331) and there is none: the step
+ * that still clears 4.5:1 is about one increment wide, a rounding error rather
+ * than a hierarchy. So the ramp is retired and size, weight and case carry the
+ * levels, which is what `palette.ts` already requires of the scope tiers —
+ * colour never encodes a distinction alone.
+ *
+ * Upward, room does exist, and selection takes it. `foreground` on `sidebar` is
+ * 19.061 light / 19.172 dark, against 6.331 / 7.259 for the inactive rows —
+ * which is what `SettingsShell` already does for the same interaction, a
+ * vertical nav list with one selected item (`bg-accent text-accent-foreground`
+ * against `text-muted-foreground`, and those two tokens are byte-identical to
+ * these). Selection is the highest-value thing a nav says, so it gets the
+ * strongest channel rather than the weakest.
+ *
+ * The weight step stays alongside it. 1.4.1 wants a channel that is not colour,
+ * and the background tint is 1.152:1 — below any bar — so weight is what
+ * carries the state when colour cannot. Hierarchy (size, case, `font-bold` on
+ * the section labels) is a separate axis from selection, and only selection
+ * gets the colour.
+ *
+ * The guard is a scanner plus a table rather than a table alone, because a
+ * hand-listed set of things to check is a denylist by omission — the failure
+ * this file has been bitten by more than once. The scanner makes the set total:
+ * a new `text-<token>/N` anywhere in `web/src` fails until someone records the
+ * ground it renders on, and recording it computes the ratio.
+ */
+describe("foreground alpha — text-<token>/N", () => {
+  /** Every combination in the shell, with the ground(s) it is painted on. */
+  const ALPHA_TEXT: [token: TokenName, pct: number, grounds: TokenName[]][] = [
+    // `BriefingView` list items and the `SkillsTab` description, both on the
+    // page ground. The one surviving combination, and it clears AA by a wide
+    // margin — kept because it passes, not grandfathered.
+    ["foreground", 80, ["background", "card"]],
+  ];
+
+  const declared = new Set(ALPHA_TEXT.map(([t, p]) => `text-${t}/${p}`));
+
+  /**
+   * Matches an alpha modifier on a *palette colour*, in either of the two forms
+   * Tailwind accepts.
+   *
+   * Anchored on the palette's own key names rather than `[a-z][\w-]*`, longest
+   * first, so `text-sm/6` — the font-size/line-height shorthand, which is not a
+   * colour at all — cannot be reported as a contrast violation.
+   *
+   * The arbitrary form (`text-foreground/[0.4]`) is matched too, and can never
+   * be declared, because a bracketed fraction is not a percentage this file can
+   * composite. That is the intended outcome: the guard says don't write them.
+   * It is not hypothetical syntax here — `bg-foreground/[0.02]` is already in
+   * use at three sites, and a text alpha reached for the same way would
+   * otherwise walk straight past a guard whose whole claim is totality.
+   */
+  const ALPHA_CLASS = new RegExp(
+    `text-(?:${[...Object.keys(colors), ...Object.keys(extOnlyColors)]
+      .sort((a, b) => b.length - a.length)
+      .join("|")})/(?:\\d{1,3}|\\[[^\\]]+\\])`,
+    "g",
+  );
+
+  test("every text-<token>/N the compiler can see is declared above", () => {
+    // The root is `web/`, not `web/src`. `index.css` has no `@source` pin, so
+    // Tailwind v4 auto-detects across the whole app directory — a class in
+    // `index.html` compiles to a live rule. A guard whose entire claim is
+    // totality has to walk what the compiler walks, so it walks from there and
+    // subtracts only what the compiler already ignores.
+    const root = join(import.meta.dir, "..", "..", "..");
+    const UNSCANNED = new Set(["node_modules", "dist", "coverage", "test", "__tests__"]);
+    // Files the compiler cannot read a class out of. Everything else is
+    // scanned, including `.js` and `.html`: `public/config.js` ships, and a
+    // class string is a class string whatever holds it. Listing what to scan
+    // instead would make a new file type default to invisible — the same
+    // denylist-by-omission this guard exists to end.
+    const NOT_SOURCE =
+      /\.(png|jpe?g|gif|webp|avif|ico|woff2?|ttf|otf|eot|mp[34]|webm|pdf|zip|map)$/i;
+    const walk = (dir: string): string[] =>
+      readdirSync(dir).flatMap((e) => {
+        const p = join(dir, e);
+        // Tests are skipped — including this one, which names the arbitrary
+        // form in prose — because nothing in them renders.
+        if (statSync(p).isDirectory()) return UNSCANNED.has(e) ? [] : walk(p);
+        return NOT_SOURCE.test(e) || /\.test\.tsx?$/.test(e) ? [] : [p];
+      });
+
+    const undeclared = new Set<string>();
+    for (const file of walk(root)) {
+      for (const [cls] of readFileSync(file, "utf8").matchAll(ALPHA_CLASS)) {
+        if (!declared.has(cls)) undeclared.add(`${cls} — ${file.slice(root.length + 1)}`);
+      }
+    }
+    expect([...undeclared].sort().join("\n")).toBe("");
+  });
+
+  for (const mode of ["light", "dark"] as const) {
+    for (const [tokenName, pct, grounds] of ALPHA_TEXT) {
+      for (const ground of grounds) {
+        test(`${mode}: text-${tokenName}/${pct} on ${ground} clears ${AA_TEXT}:1`, () => {
+          const g = token(ground, mode);
+          expect(contrastRatio(over(token(tokenName, mode), g, pct), g)).toBeGreaterThanOrEqual(
+            AA_TEXT,
+          );
         });
       }
     }

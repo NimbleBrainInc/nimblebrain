@@ -328,6 +328,26 @@ describe("WorkspaceNav — app quick-list", () => {
     expect(viewAll[0]?.getAttribute("href")).toBe("/w/helix/");
   });
 
+  test("the open app is the only one marked aria-current=page", async () => {
+    mounted = await mount({
+      workspaces: [HELIX],
+      activeId: "ws_helix",
+      initialPath: "/w/helix/app/salesforce",
+      placements: [appPlacement("collateral"), appPlacement("salesforce"), appPlacement("apollo")],
+    });
+
+    // The only channel that tells assistive technology which app is open. The
+    // active row is otherwise a background tint and a weight step, and neither
+    // is exposed.
+    const apps = byTestId(mounted.container, "sidebar-workspace-app");
+    expect(apps).toHaveLength(3);
+
+    const current = apps.filter((a) => a.getAttribute("aria-current") === "page");
+    expect(current).toHaveLength(1);
+    expect(current[0]?.getAttribute("data-app-route")).toBe("salesforce");
+    expect(apps.filter((a) => a.hasAttribute("aria-current"))).toHaveLength(1);
+  });
+
   test("no overflow link when apps fit within the cap", async () => {
     mounted = await mount({
       workspaces: [HELIX],

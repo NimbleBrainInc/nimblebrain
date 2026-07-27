@@ -95,14 +95,14 @@ function TriggerDetails({
   return (
     <>
       <div className="flex-1 min-w-0 text-left">
-        <div className="truncate font-medium text-sidebar-foreground leading-tight">{label}</div>
+        <div className="truncate font-medium leading-tight">{label}</div>
         {displayName && email && displayName !== email && (
-          <div className="truncate text-2xs text-sidebar-foreground/50 leading-tight">{email}</div>
+          <div className="truncate text-2xs leading-tight">{email}</div>
         )}
       </div>
       <ChevronUp
         className={cn(
-          "shrink-0 w-4 h-4 text-sidebar-foreground/50 transition-transform duration-200",
+          "shrink-0 w-4 h-4 transition-transform duration-200",
           open ? "rotate-0" : "rotate-180",
         )}
       />
@@ -125,10 +125,8 @@ function dropdownPositionClass(collapsed: boolean, dropdownDirection: "up" | "do
 function DropdownIdentityHeader({ label, email }: { label: string; email: string }) {
   return (
     <div className="px-3 py-2.5 border-b border-sidebar-border">
-      <div className="truncate text-sm font-medium text-sidebar-foreground">{label}</div>
-      {email && email !== label && (
-        <div className="truncate text-2xs text-sidebar-foreground/50">{email}</div>
-      )}
+      <div className="truncate text-sm font-medium">{label}</div>
+      {email && email !== label && <div className="truncate text-2xs">{email}</div>}
     </div>
   );
 }
@@ -150,27 +148,27 @@ function DropdownActions({
       <button
         type="button"
         onClick={onProfile}
-        className="flex items-center gap-2.5 w-full rounded-sm px-2 py-2 text-sm text-left transition-all duration-150 text-sidebar-foreground hover:bg-sidebar-foreground/5"
+        className="flex items-center gap-2.5 w-full rounded-sm px-2 py-2 text-sm text-left transition-all duration-150 hover:bg-sidebar-foreground/5"
       >
-        <UserCog className="w-4 h-4 text-sidebar-foreground/60" />
+        <UserCog className="w-4 h-4" />
         <span>Profile settings</span>
       </button>
       {isOrgAdmin && (
         <button
           type="button"
           onClick={onOrgSettings}
-          className="flex items-center gap-2.5 w-full rounded-sm px-2 py-2 text-sm text-left transition-all duration-150 text-sidebar-foreground hover:bg-sidebar-foreground/5"
+          className="flex items-center gap-2.5 w-full rounded-sm px-2 py-2 text-sm text-left transition-all duration-150 hover:bg-sidebar-foreground/5"
         >
-          <Building2 className="w-4 h-4 text-sidebar-foreground/60" />
+          <Building2 className="w-4 h-4" />
           <span>Organization</span>
         </button>
       )}
       <button
         type="button"
         onClick={onSignOut}
-        className="flex items-center gap-2.5 w-full rounded-sm px-2 py-2 text-sm text-left transition-all duration-150 text-sidebar-foreground hover:bg-sidebar-foreground/5"
+        className="flex items-center gap-2.5 w-full rounded-sm px-2 py-2 text-sm text-left transition-all duration-150 hover:bg-sidebar-foreground/5"
       >
-        <LogOut className="w-4 h-4 text-sidebar-foreground/60" />
+        <LogOut className="w-4 h-4" />
         <span>Sign out</span>
       </button>
     </div>
@@ -291,7 +289,7 @@ export const UserMenu = memo(function UserMenu({
         aria-expanded={open}
         className={cn(
           "flex items-center w-full rounded-sm transition-all duration-150 text-sm",
-          "text-sidebar-foreground hover:bg-sidebar-foreground/5",
+          "hover:bg-sidebar-foreground/5",
           open && "bg-sidebar-foreground/5",
           collapsed ? "justify-center p-1.5" : "gap-2.5 px-2 py-2",
         )}
