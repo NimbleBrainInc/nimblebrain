@@ -2,7 +2,7 @@ import type { LanguageModelV3 } from "@ai-sdk/provider";
 import type { FeatureFlags } from "../config/features.ts";
 import type { ConfirmationGate } from "../config/privilege.ts";
 import type { ConnectorsConfig } from "../connectors/providers/config.ts";
-import type { EventSink } from "../engine/types.ts";
+import type { EventSink, ThinkingEffort } from "../engine/types.ts";
 import type { ContentPart, FileReference } from "../files/types.ts";
 import type { UserIdentity } from "../identity/provider.ts";
 import type { ProvidersConfig } from "../model/registry.ts";
@@ -66,26 +66,47 @@ export interface RuntimeConfig {
   maxOutputTokens?: number;
 
   /**
-   * Extended-thinking mode. Currently maps to Anthropic's `thinking`
-   * provider option; non-Anthropic providers ignore it.
+   * Extended-thinking mode, applied across every provider that supports
+   * reasoning (Anthropic, OpenAI, Nebius-hosted open-weight models, Google).
    *
-   *   - `off`        — never request thinking. Cheapest; no reasoning content.
-   *   - `adaptive`   — model decides per call.
-   *   - `enabled`    — always think, with optional `thinkingBudgetTokens` cap.
+   *   - `off`        — do not reason. Cheapest; no reasoning content.
+   *   - `adaptive`   — model decides per call, at no stated depth.
+   *   - `enabled`    — reason on every turn, at `thinkingEffort`.
    *
-   * If unset, the platform defaults to `enabled` (with a budget capped at
-   * roughly half of `maxOutputTokens`) for catalog-flagged reasoning-capable
-   * models and `off` otherwise. The default was changed from `adaptive`
-   * after production showed Opus 4.7 routinely consumed the entire output
-   * budget on internal reasoning, producing empty user-visible turns on
-   * long-context tasks.
+   * If unset, reasoning-capable models default to `enabled` at
+   * `DEFAULT_THINKING_EFFORT` and everything else to no thinking at all.
+   *
+   * `off` is not enforceable everywhere. Anthropic's adaptive-only models
+   * (Opus 4.7/4.8, Sonnet 5, Opus 5) have no "do not reason" state, and the
+   * AI SDK validates `thinking.type=disabled` and then never sends it — so
+   * the model applies its own default, which for the 5-series is to reason.
+   * See the config reference.
    */
   thinking?: "off" | "adaptive" | "enabled";
 
   /**
-   * Token budget when `thinking === "enabled"`. Counts toward
-   * `maxOutputTokens`. Ignored for `off`/`adaptive`. Anthropic requires
-   * a minimum of 1,024 tokens.
+   * How hard to think when reasoning is on. The portable knob: every
+   * reasoning-capable provider can express a depth, whereas a token budget
+   * is specific to the two that meter thinking in tokens.
+   *
+   * Applies to `thinking: "enabled"` and to the platform default path.
+   * Ignored for `off` and `adaptive` (adaptive states no depth by
+   * definition). Defaults to `DEFAULT_THINKING_EFFORT`.
+   */
+  thinkingEffort?: ThinkingEffort;
+
+  /**
+   * Explicit token budget for thinking, for operators who want to meter it
+   * in tokens rather than name a depth. Counts toward `maxOutputTokens`;
+   * Anthropic requires a minimum of 1,024.
+   *
+   * Only meaningful on providers that meter thinking in tokens (Anthropic
+   * models up to 4.6, Gemini 2.5). On effort-shaped providers — including
+   * Gemini 3, which takes a level rather than a budget — it is ignored in
+   * favor of `thinkingEffort`: a budget cannot be converted into a depth
+   * without inventing precision the number does not carry.
+   *
+   * Prefer `thinkingEffort` unless you specifically need a token cap.
    */
   thinkingBudgetTokens?: number;
 

@@ -22,6 +22,10 @@ import {
   SkillUpdatedPayload,
   ToolPromotionChangedPayload,
 } from "../../src/engine/schemas/events.ts";
+import { buildContextAssembledPayload } from "../../src/runtime/runtime.ts";
+import { buildSkillsLoadedPayload } from "../../src/runtime/skills-loaded-payload.ts";
+import { synthesizeBundleSkill } from "../../src/skills/bundle-skills.ts";
+import type { Skill, SkillScope } from "../../src/skills/types.ts";
 
 describe("event schemas — accept representative payloads", () => {
   test("skills.loaded — full payload with runId", () => {
@@ -173,5 +177,72 @@ describe("event schemas — reject malformed payloads", () => {
         type: "skill",
       }),
     ).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Drift: the schemas vs. what the emitters actually produce.
+//
+// The fixtures above are hand-written, and `Type.Object` accepts unknown
+// properties, so a payload the schema fails to describe still passes them —
+// the schema can go stale on a field and nothing here notices. These run the
+// real builders and check their output, so the declaration cannot silently
+// fall behind the emitter.
+// ---------------------------------------------------------------------------
+
+describe("event schemas — accept what the emitters produce", () => {
+  const skill = (
+    name: string,
+    over: Partial<{ scope: SkillScope; sourcePath: string }> = {},
+  ): Skill => ({
+    manifest: {
+      name,
+      description: `${name} desc`,
+      loadingStrategy: "always",
+      priority: 50,
+      status: "active",
+      scope: over.scope ?? "org",
+    },
+    body: `body of ${name}`,
+    sourcePath: over.sourcePath ?? "",
+  });
+
+  test("skills.loaded — every loading mechanism, including a connector skill", () => {
+    const published = synthesizeBundleSkill({
+      serverName: "acme-mcp",
+      skillName: "billing",
+      description: "",
+      body: "Charge carefully.",
+      uri: "skill://acme/billing/SKILL.md",
+    });
+    const payload = buildSkillsLoadedPayload([
+      { skill: skill("always-on"), loadedBy: "always", reason: "always-on" },
+      { skill: published, loadedBy: "tool_affinity", reason: "tool-affinity matched acme-mcp__*" },
+      { skill: skill("triggered"), loadedBy: "trigger", reason: 'trigger matched "deploy"' },
+    ]);
+
+    // Guard the guard: these are the values that must reach the checker, and
+    // they are exactly what the schema used to be too narrow to admit.
+    expect(payload.skills.map((s) => s.layer).sort()).toEqual([0, 3, 4]);
+    expect(payload.skills[1]!.connector).toBe("acme-mcp");
+    expect(Value.Check(SkillsLoadedPayload, payload)).toBe(true);
+    expect([...Value.Errors(SkillsLoadedPayload, payload)]).toHaveLength(0);
+  });
+
+  test("context.assembled — the recorded source rows", () => {
+    const payload = buildContextAssembledPayload({
+      systemPrompt: "You are helpful.",
+      activeTools: [
+        { name: "nb__search", description: "Search", inputSchema: { type: "object" } },
+      ],
+      messages: [{ role: "user", content: [{ type: "text", text: "hi" }] }],
+      skillsLoaded: buildSkillsLoadedPayload([
+        { skill: skill("always-on"), loadedBy: "always", reason: "always-on" },
+      ]),
+    });
+
+    expect(payload.sources.find((s) => s.kind === "history")?.messages).toBeGreaterThan(0);
+    expect(Value.Check(ContextAssembledPayload, payload)).toBe(true);
+    expect([...Value.Errors(ContextAssembledPayload, payload)]).toHaveLength(0);
   });
 });

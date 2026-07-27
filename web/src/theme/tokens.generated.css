@@ -31,7 +31,7 @@
   --scope-org: #1d4ed8;
   --scope-workspace: #0e7490;
   --scope-user: #7c3aed;
-  --scope-bundle: #a13d0f;
+  --scope-connector: #a13d0f;
   --sidebar: #fafafa;
   --sidebar-foreground: #5c5c66;
   --sidebar-border: #e4e4e7;
@@ -106,7 +106,7 @@
   --scope-org: #7aa2f7;
   --scope-workspace: #4dd0e1;
   --scope-user: #b79bfc;
-  --scope-bundle: #f0894f;
+  --scope-connector: #f0894f;
   --sidebar: #08080a;
   --sidebar-foreground: #9b9ba4;
   --sidebar-border: #232326;

@@ -5,17 +5,21 @@ import { Input } from "../../components/ui/input";
 import { Label } from "../../components/ui/label";
 import { Select } from "../../components/ui/select";
 import { Section, SettingsFormPage } from "./components";
+import {
+  EFFORT_DEFAULT,
+  THINKING_DEFAULT,
+  THINKING_EFFORT_OPTIONS,
+  type ThinkingEffort,
+  type ThinkingMode,
+  thinkingPatchFor,
+  tuningAppliesTo,
+} from "./thinking-patch";
 
 interface ModelEntry {
   id: string;
   cost: { input: string; output: string };
   limits: { context: number };
 }
-
-type ThinkingMode = "off" | "adaptive" | "enabled";
-
-/** Sentinel select value for "no operator override — use platform default policy". */
-const THINKING_DEFAULT = "" as const;
 
 interface ModelConfig {
   models: { default: string; fast: string; reasoning: string };
@@ -25,6 +29,7 @@ interface ModelConfig {
   maxInputTokens: number;
   maxOutputTokens: number;
   thinking?: ThinkingMode;
+  thinkingEffort?: ThinkingEffort;
   thinkingBudgetTokens?: number;
 }
 
@@ -103,7 +108,12 @@ export function ModelTab() {
   const [thinking, setThinking] = useState<ThinkingMode | typeof THINKING_DEFAULT>(
     THINKING_DEFAULT,
   );
-  const [thinkingBudgetTokens, setThinkingBudgetTokens] = useState(16000);
+  const [thinkingEffort, setThinkingEffort] = useState<ThinkingEffort | typeof EFFORT_DEFAULT>(
+    EFFORT_DEFAULT,
+  );
+  // null = the operator has not set a budget. Seeding a number here and then
+  // sending it on save persists a default nobody chose as a deliberate choice.
+  const [thinkingBudgetTokens, setThinkingBudgetTokens] = useState<number | null>(null);
   const [availableModels, setAvailableModels] = useState<Record<string, ModelEntry[]>>({});
   const [saving, setSaving] = useState(false);
   const [feedback, setFeedback] = useState<Feedback | null>(null);
@@ -123,9 +133,8 @@ export function ModelTab() {
         setMaxInputTokens(config.maxInputTokens ?? 500000);
         setMaxOutputTokens(config.maxOutputTokens ?? 16384);
         setThinking(config.thinking ?? THINKING_DEFAULT);
-        if (config.thinkingBudgetTokens != null) {
-          setThinkingBudgetTokens(config.thinkingBudgetTokens);
-        }
+        setThinkingEffort(config.thinkingEffort ?? EFFORT_DEFAULT);
+        setThinkingBudgetTokens(config.thinkingBudgetTokens ?? null);
         setAvailableModels(config.availableModels ?? {});
       })
       .catch((err) => {
@@ -138,15 +147,7 @@ export function ModelTab() {
     setSaving(true);
     setFeedback(null);
     try {
-      // clearThinking → revert to platform default policy (drops persisted override + budget)
-      // string mode → set explicit override
-      // budget only sent for "enabled"; "off"/"adaptive" don't need it
-      const thinkingPatch =
-        thinking === THINKING_DEFAULT
-          ? { clearThinking: true, clearThinkingBudget: true }
-          : thinking === "enabled"
-            ? { thinking, thinkingBudgetTokens }
-            : { thinking };
+      const thinkingPatch = thinkingPatchFor(thinking, thinkingEffort, thinkingBudgetTokens);
 
       await callTool("nb", "set_model_config", {
         models: {
@@ -174,6 +175,7 @@ export function ModelTab() {
     maxInputTokens,
     maxOutputTokens,
     thinking,
+    thinkingEffort,
     thinkingBudgetTokens,
   ]);
 
@@ -255,7 +257,7 @@ export function ModelTab() {
 
       <Section
         title="Extended Thinking"
-        description="Anthropic-only today. Reasoning is billed as output tokens; adaptive only engages when the model judges it useful."
+        description="Applies to every provider that supports reasoning. Billed as output tokens; adaptive only engages when the model judges it useful."
       >
         <div className="space-y-4">
           <div className="space-y-1.5">
@@ -268,26 +270,57 @@ export function ModelTab() {
               }
             >
               <option value={THINKING_DEFAULT}>
-                Default (adaptive for reasoning models, off otherwise)
+                Default (reasoning models think at medium effort, others not at all)
               </option>
-              <option value="off">Off — never reason</option>
+              <option value="off">
+                Off — not enforceable on Opus 4.7/4.8, Sonnet 5, or Opus 5
+              </option>
               <option value="adaptive">Adaptive — model decides per call</option>
               <option value="enabled">Enabled — always reason</option>
             </Select>
           </div>
 
-          {thinking === "enabled" && (
+          {tuningAppliesTo(thinking) && (
+            <div className="space-y-1.5">
+              <Label htmlFor="thinkingEffort">Effort</Label>
+              <Select
+                id="thinkingEffort"
+                value={thinkingEffort}
+                onChange={(e) =>
+                  setThinkingEffort(e.target.value as ThinkingEffort | typeof EFFORT_DEFAULT)
+                }
+              >
+                <option value={EFFORT_DEFAULT}>Default (medium)</option>
+                {THINKING_EFFORT_OPTIONS.map((o) => (
+                  <option key={o.value} value={o.value}>
+                    {o.label}
+                  </option>
+                ))}
+              </Select>
+              <p className="text-xs text-muted-foreground">
+                How hard to think. Applies to the default policy too, not only to Enabled. Carries
+                to every provider — models that meter thinking in tokens get a budget sized from it.
+              </p>
+            </div>
+          )}
+
+          {tuningAppliesTo(thinking) && (
             <div className="space-y-1.5">
               <Label htmlFor="thinkingBudgetTokens">Thinking Budget Tokens</Label>
               <Input
                 id="thinkingBudgetTokens"
                 type="number"
                 min={1024}
-                value={thinkingBudgetTokens}
-                onChange={(e) => setThinkingBudgetTokens(Number(e.target.value))}
+                placeholder="Not set — Effort applies"
+                value={thinkingBudgetTokens ?? ""}
+                onChange={(e) =>
+                  setThinkingBudgetTokens(e.target.value === "" ? null : Number(e.target.value))
+                }
               />
               <p className="text-xs text-muted-foreground">
-                Min 1024. Counts toward Max Output Tokens.
+                Optional. Min 1024, and capped to leave room for the answer. Only honored by
+                providers that meter thinking in tokens (Anthropic up to 4.6, Gemini 2.5); elsewhere
+                Effort applies.
               </p>
             </div>
           )}

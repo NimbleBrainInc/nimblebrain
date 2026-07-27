@@ -47,16 +47,26 @@ describe("curated catalog contract", () => {
     // the NimbleBrain composio block — a missing toolkit or a typo'd
     // authConfigEnv would otherwise pass validation and only surface at
     // install time (handleInstallRemoteOAuth reads process.env[authConfigEnv]).
-    // This pins the block's presence and the env-var naming convention the
-    // ClusterExternalSecret wires (COMPOSIO_<TOOLKIT>_AUTH_CONFIG_ID).
+    // `toolkit` is the whole requirement: it identifies the upstream *and* is
+    // the key the deployment's `connectors.providers.composio.authConfigs`
+    // is looked up under, so an entry needs nothing else to be resolvable.
+    //
+    // `authConfigEnv` is optional — the legacy per-toolkit fallback. It must
+    // still match the convention wherever it appears, because the value only
+    // arrives if the env var is spelled the way the deployment sets it.
     let composioSeen = 0;
+    let declaredShapeSeen = 0;
     for (const s of readStaticServers(CONNECTOR_FIXTURE_DIR)) {
       const meta = getNimbleBrainConnectorMeta(s);
       if (meta?.auth !== "composio") continue;
       composioSeen++;
       expect(meta.composio).toBeDefined();
       expect(meta.composio?.toolkit.length).toBeGreaterThan(0);
-      expect(meta.composio?.authConfigEnv).toMatch(/^COMPOSIO_[A-Z0-9_]+_AUTH_CONFIG_ID$/);
+      if (meta.composio?.authConfigEnv === undefined) {
+        declaredShapeSeen++;
+      } else {
+        expect(meta.composio.authConfigEnv).toMatch(/^COMPOSIO_[A-Z0-9_]+_AUTH_CONFIG_ID$/);
+      }
       // A `tools` allowlist, when present, must be non-empty — an empty
       // array would mint a Composio session that exposes zero tools.
       if (meta.composio?.tools) {
@@ -64,6 +74,10 @@ describe("curated catalog contract", () => {
       }
     }
     expect(composioSeen).toBeGreaterThan(0); // fixture covers the composio shape
+    // Guards the reason this assertion is conditional: without an entry that
+    // omits `authConfigEnv`, the shape authors are told to write would be
+    // permitted but never exercised, and could rot unnoticed.
+    expect(declaredShapeSeen).toBeGreaterThan(0);
   });
 
   test("every entry carries an icon (Browse renders <img src>)", () => {

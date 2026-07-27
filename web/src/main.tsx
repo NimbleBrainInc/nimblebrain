@@ -2,9 +2,17 @@ import * as Sentry from "@sentry/react";
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import { App } from "./App";
+import { registerHostFontUrls } from "./bridge/fonts";
 import { ErrorBoundary } from "./components/ErrorBoundary";
+import { FONT_URLS } from "./font-urls";
 import { registerStaleChunkRecovery } from "./lib/stale-chunk-recovery";
 import { initSentry } from "./sentry";
+
+// Hand the built font URLs to the bridge. The `?url` imports live in font-urls.ts
+// rather than in bridge/fonts.ts, which is reachable from the shared bridge
+// protocol that the root unit suite exercises without web/ deps. Same seam as
+// initSentry below. Unregistered, apps simply get no faces.
+registerHostFontUrls(FONT_URLS);
 
 // Initialize crash tracking before anything else so it wraps the whole app.
 // No-op unless configured at runtime (see sentry.ts / config.ts). The browser

@@ -3,7 +3,7 @@ import { readFile, rename, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { artifactResolutionsTotal, recordLlmUsage } from "../api/metrics.ts";
 import { textContent } from "../engine/content-helpers.ts";
-import { INTERNAL_TOOL_ANNOTATION, type ToolResult } from "../engine/types.ts";
+import { INTERNAL_TOOL_ANNOTATION, type ThinkingEffort, type ToolResult } from "../engine/types.ts";
 import {
   type ArtifactListItem,
   type ArtifactListOptions,
@@ -49,6 +49,29 @@ import type { BriefingOutput } from "../services/home-types.ts";
 
 const MODEL_SLOTS = ["default", "fast", "reasoning"];
 
+/** Valid `thinkingEffort` values, in ascending depth. Mirrors `ThinkingEffort`. */
+const THINKING_EFFORTS = [
+  "low",
+  "medium",
+  "high",
+  "xhigh",
+  "max",
+] as const satisfies readonly ThinkingEffort[];
+
+/**
+ * The three thinking fields, each with its `clear*` flag and on-disk coercion.
+ *
+ * Driven from a table because all three move together through four stages —
+ * normalize, validate, persist, patch the live runtime. Written out longhand,
+ * a new field has to be remembered in each, and a clear that lands on some
+ * stages but not others leaves disk and process disagreeing.
+ */
+const THINKING_FIELDS = [
+  { key: "thinking", clearFlag: "clearThinking", coerce: String },
+  { key: "thinkingEffort", clearFlag: "clearThinkingEffort", coerce: String },
+  { key: "thinkingBudgetTokens", clearFlag: "clearThinkingBudget", coerce: Number },
+] as const;
+
 /** Org-admin gate. Dev mode (no identity provider) bypasses. */
 function checkModelConfigAccess(runtime: Runtime): string | null {
   if (runtime.getIdentityProvider() === null) return null;
@@ -69,25 +92,22 @@ function checkModelConfigAccess(runtime: Runtime): string | null {
  * Normalize the `clear*` boolean sentinels into the canonical `null` the merge
  * logic understands. Mutates `input` in place (each tool call owns its input).
  * Returns an error message if mutually-exclusive fields were combined.
+ *
+ * The three fields are independent. Clearing `thinking` used to cascade onto
+ * the other two on the grounds that a depth or a budget means nothing without
+ * a mode — that stopped being true when the resolver's no-mode path started
+ * reading both: an effort alone selects the tier, and a budget alone resolves
+ * to `enabled` at that budget. Cascading now deletes settings that are still
+ * in force, and rejects the payload the settings UI sends for its own default
+ * mode.
  */
 function normalizeModelConfigClears(input: Record<string, unknown>): string | null {
-  if (input.clearThinking === true) {
-    if (input.thinking !== undefined && input.thinking !== null) {
-      return "Cannot set both `thinking` and `clearThinking`. Use one or the other.";
+  for (const { key, clearFlag } of THINKING_FIELDS) {
+    if (input[clearFlag] !== true) continue;
+    if (input[key] != null) {
+      return `Cannot set both \`${key}\` and \`${clearFlag}\`. Use one or the other.`;
     }
-    if (input.thinkingBudgetTokens !== undefined && input.thinkingBudgetTokens !== null) {
-      return (
-        "Cannot set `thinkingBudgetTokens` while clearing `thinking` — " +
-        "clearing the mode also clears the budget. Drop one or the other."
-      );
-    }
-    input.thinking = null;
-  }
-  if (input.clearThinkingBudget === true) {
-    if (input.thinkingBudgetTokens !== undefined && input.thinkingBudgetTokens !== null) {
-      return "Cannot set both `thinkingBudgetTokens` and `clearThinkingBudget`. Use one or the other.";
-    }
-    input.thinkingBudgetTokens = null;
+    input[key] = null;
   }
   return null;
 }
@@ -137,42 +157,16 @@ function validateModelConfigLimits(input: Record<string, unknown>): string | nul
   );
 }
 
-/**
- * Cross-field rule: thinking="enabled" needs a budget, from this patch or the
- * effective (seed+override) config — otherwise the Anthropic SDK silently
- * downgrades to its 1,024-token minimum. A patch that clears the budget forces
- * the effective read to null so the check mirrors the post-merge state.
- */
-function validateThinkingEnabledBudget(
-  input: Record<string, unknown>,
-  runtime: Runtime,
-): string | null {
-  if (input.thinking !== "enabled") return null;
-  const clearingBudget = input.thinkingBudgetTokens === null;
-  const patchBudget =
-    !clearingBudget && input.thinkingBudgetTokens !== undefined
-      ? Number(input.thinkingBudgetTokens)
-      : undefined;
-  const effectiveBudget = clearingBudget
-    ? undefined
-    : runtime.getRuntimeConfig().thinkingBudgetTokens;
-  if (patchBudget == null && effectiveBudget == null) {
-    return (
-      'thinking="enabled" requires thinkingBudgetTokens (≥ 1024). ' +
-      "Provide a budget alongside enabled, or use adaptive instead."
-    );
-  }
-  return null;
-}
-
-function validateModelConfigThinking(
-  input: Record<string, unknown>,
-  runtime: Runtime,
-): string | null {
+function validateModelConfigThinking(input: Record<string, unknown>): string | null {
   if (input.thinking !== undefined && input.thinking !== null) {
     const v = String(input.thinking);
     if (v !== "off" && v !== "adaptive" && v !== "enabled") {
       return 'thinking must be "off", "adaptive", "enabled", or null (clear override).';
+    }
+  }
+  if (input.thinkingEffort !== undefined && input.thinkingEffort !== null) {
+    if (!(THINKING_EFFORTS as readonly string[]).includes(String(input.thinkingEffort))) {
+      return `thinkingEffort must be one of ${THINKING_EFFORTS.join(", ")}, or null (clear override).`;
     }
   }
   if (input.thinkingBudgetTokens !== undefined && input.thinkingBudgetTokens !== null) {
@@ -181,7 +175,7 @@ function validateModelConfigThinking(
       return "thinkingBudgetTokens must be a positive integer ≥ 1024 (Anthropic minimum).";
     }
   }
-  return validateThinkingEnabledBudget(input, runtime);
+  return null;
 }
 
 /** All of set_model_config's input validation, in order. */
@@ -189,8 +183,32 @@ function validateModelConfigPatch(input: Record<string, unknown>, runtime: Runti
   return (
     validateModelSlots(input, runtime) ??
     validateModelConfigLimits(input) ??
-    validateModelConfigThinking(input, runtime)
+    validateModelConfigThinking(input)
   );
+}
+
+/**
+ * The thinking fields the operator actually set, omitting the rest.
+ *
+ * Only operator-set values belong in the payload: a client that reads a
+ * derived default and saves it back turns that default into a choice.
+ */
+function operatorSetThinking(config: Record<string, unknown>): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  for (const { key } of THINKING_FIELDS) {
+    if (config[key] !== undefined) out[key] = config[key];
+  }
+  return out;
+}
+
+/** Merge only the model slots, key-by-key so an override of one slot leaves the others. */
+function mergeModelSlots(existing: Record<string, unknown>, input: Record<string, unknown>): void {
+  if (input.models === undefined || typeof input.models !== "object") return;
+  if (!existing.models || typeof existing.models !== "object") existing.models = {};
+  const existingModels = existing.models as Record<string, unknown>;
+  for (const [slot, value] of Object.entries(input.models as Record<string, unknown>)) {
+    existingModels[slot] = String(value);
+  }
 }
 
 /** Merge the validated patch into the on-disk override object (mutates `existing`). */
@@ -198,29 +216,16 @@ function mergeModelConfigOverride(
   existing: Record<string, unknown>,
   input: Record<string, unknown>,
 ): void {
-  if (input.models !== undefined && typeof input.models === "object") {
-    if (!existing.models || typeof existing.models !== "object") existing.models = {};
-    const existingModels = existing.models as Record<string, unknown>;
-    for (const [slot, value] of Object.entries(input.models as Record<string, unknown>)) {
-      existingModels[slot] = String(value);
-    }
-  }
+  mergeModelSlots(existing, input);
   if (input.defaultModel !== undefined) existing.defaultModel = String(input.defaultModel);
   if (input.maxIterations !== undefined) existing.maxIterations = Number(input.maxIterations);
   if (input.maxInputTokens !== undefined) existing.maxInputTokens = Number(input.maxInputTokens);
   if (input.maxOutputTokens !== undefined) existing.maxOutputTokens = Number(input.maxOutputTokens);
-  // null = clear the operator override; undefined = leave alone.
-  if (input.thinking === null) {
-    delete existing.thinking;
-    // Clearing the mode also clears the budget — a budget without a mode is meaningless.
-    delete existing.thinkingBudgetTokens;
-  } else if (input.thinking !== undefined) {
-    existing.thinking = String(input.thinking);
-  }
-  if (input.thinkingBudgetTokens === null) {
-    delete existing.thinkingBudgetTokens;
-  } else if (input.thinkingBudgetTokens !== undefined) {
-    existing.thinkingBudgetTokens = Number(input.thinkingBudgetTokens);
+  // null = clear the operator override; undefined = leave alone. The three are
+  // independent: clearing the mode does not clear the depth or the budget.
+  for (const { key, coerce } of THINKING_FIELDS) {
+    if (input[key] === null) delete existing[key];
+    else if (input[key] !== undefined) existing[key] = coerce(input[key]);
   }
 }
 
@@ -232,18 +237,14 @@ function buildModelConfigRuntimePatch(input: Record<string, unknown>): Record<st
           Object.entries(input.models as Record<string, unknown>).map(([k, v]) => [k, String(v)]),
         )
       : undefined;
-  const thinkingPatch =
-    input.thinking === undefined
-      ? {}
-      : input.thinking === null
-        ? { thinking: null, thinkingBudgetTokens: null }
-        : { thinking: String(input.thinking) as "off" | "adaptive" | "enabled" };
-  const budgetPatch =
-    input.thinkingBudgetTokens === undefined || input.thinking === null
-      ? {}
-      : input.thinkingBudgetTokens === null
-        ? { thinkingBudgetTokens: null }
-        : { thinkingBudgetTokens: Number(input.thinkingBudgetTokens) };
+  // `null` reaches updateConfig verbatim: it gates on `!== undefined`, so a
+  // clear expressed as `undefined` would write to disk and never reach the
+  // live process.
+  const thinkingPatch: Record<string, unknown> = {};
+  for (const { key, coerce } of THINKING_FIELDS) {
+    if (input[key] === null) thinkingPatch[key] = null;
+    else if (input[key] !== undefined) thinkingPatch[key] = coerce(input[key]);
+  }
   return {
     ...(modelsPatch ? { models: modelsPatch } : {}),
     ...(input.defaultModel !== undefined ? { defaultModel: String(input.defaultModel) } : {}),
@@ -253,7 +254,6 @@ function buildModelConfigRuntimePatch(input: Record<string, unknown>): Record<st
       ? { maxOutputTokens: Number(input.maxOutputTokens) }
       : {}),
     ...thinkingPatch,
-    ...budgetPatch,
   };
 }
 
@@ -592,10 +592,7 @@ export function createCoreToolDefs(runtime: Runtime): InProcessTool[] {
               maxIterations,
               maxInputTokens,
               maxOutputTokens,
-              ...(runtimeConfig.thinking !== undefined ? { thinking: runtimeConfig.thinking } : {}),
-              ...(runtimeConfig.thinkingBudgetTokens !== undefined
-                ? { thinkingBudgetTokens: runtimeConfig.thinkingBudgetTokens }
-                : {}),
+              ...operatorSetThinking(runtimeConfig),
               preferences: {
                 displayName: identity?.displayName ?? "",
                 timezone: preferences.timezone ?? "",
@@ -686,7 +683,7 @@ export function createCoreToolDefs(runtime: Runtime): InProcessTool[] {
             description:
               "Extended-thinking mode for reasoning-capable models. " +
               "off: never reason. adaptive: model decides per call. " +
-              "enabled: always reason (use thinkingBudgetTokens to cap). " +
+              "enabled: always reason, at thinkingEffort. " +
               "Use clearThinking=true to revert to the platform default.",
           },
           clearThinking: {
@@ -695,11 +692,27 @@ export function createCoreToolDefs(runtime: Runtime): InProcessTool[] {
               "If true, clears any persisted thinking override and reverts to the platform default. " +
               "Mutually exclusive with `thinking`.",
           },
+          thinkingEffort: {
+            type: "string",
+            enum: [...THINKING_EFFORTS],
+            description:
+              "How hard to think when reasoning is on. The portable control — every " +
+              "reasoning-capable provider can express a depth. Applies to thinking=enabled " +
+              "and to the platform default. Use clearThinkingEffort=true to revert.",
+          },
+          clearThinkingEffort: {
+            type: "boolean",
+            description:
+              "If true, clears any persisted thinking effort. Mutually exclusive with `thinkingEffort`.",
+          },
           thinkingBudgetTokens: {
             type: "number",
             description:
-              "Token budget when thinking=enabled. Counts toward maxOutputTokens. " +
-              "Anthropic requires a minimum of 1,024.",
+              "Explicit token budget for thinking, for metering in tokens rather than " +
+              "naming a depth. Only honored by providers that meter thinking in tokens " +
+              "(Anthropic up to 4.6, Gemini 2.5); elsewhere thinkingEffort applies — " +
+              "Gemini 3 takes a level, not a budget. " +
+              "Counts toward maxOutputTokens. Anthropic requires a minimum of 1,024.",
           },
           clearThinkingBudget: {
             type: "boolean",

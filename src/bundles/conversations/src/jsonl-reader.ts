@@ -74,6 +74,10 @@ export interface DisplayMessage {
 /** One skill in a turn's `skills.loaded` telemetry, projected for display. */
 export interface DisplaySkill {
   id: string;
+  /** The skill's own name — resolved here, safe to render directly. */
+  name: string;
+  /** The MCP server that published it; absent for filesystem skills. */
+  connector?: string;
   scope: "org" | "workspace" | "user" | "bundle";
   tokens: number;
   loadedBy: string;
@@ -259,6 +263,8 @@ interface SkillsLoadedEvent {
   runId: string;
   skills?: Array<{
     id?: string;
+    name?: string;
+    connector?: string;
     scope?: "org" | "workspace" | "user" | "bundle";
     tokens?: number;
     loadedBy?: string;
@@ -561,19 +567,45 @@ interface RunScan {
 }
 
 /**
+ * The skill's name from its id, for entries recorded before `name` was on the
+ * event. Mirrors `src/skills/display-name.ts`; duplicated rather than imported
+ * because this bundle is deployable independently of the runtime (see the file
+ * header). Both id shapes put the name in the last path segment EXCEPT the
+ * `skill://…/SKILL.md` entrypoint, where it is the directory holding it.
+ *
+ * Exported so `test/unit/skills/display-name-parity.test.ts` can hold this copy
+ * and the other two to one answer.
+ */
+export function skillNameFromId(id: string): string {
+  const segments = id.split("/").filter(Boolean);
+  const last = segments[segments.length - 1] ?? id;
+  if (/^SKILL\.md$/i.test(last) && segments.length >= 2) {
+    return segments[segments.length - 2] ?? last;
+  }
+  return last.replace(/\.md$/i, "");
+}
+
+/** One recorded entry → a display row, every field defaulted. */
+function projectSkill(s: NonNullable<SkillsLoadedEvent["skills"]>[number] & { id: string }) {
+  return {
+    id: s.id,
+    name: s.name || skillNameFromId(s.id),
+    ...(s.connector ? { connector: s.connector } : {}),
+    scope: s.scope ?? "org",
+    tokens: typeof s.tokens === "number" ? s.tokens : 0,
+    loadedBy: typeof s.loadedBy === "string" ? s.loadedBy : "",
+    reason: typeof s.reason === "string" ? s.reason : "",
+  } satisfies DisplaySkill;
+}
+
+/**
  * Project a `skills.loaded` event to the display shape. Returns undefined for a
  * zero-skill turn so the ledger line is suppressed (absence is the signal).
  */
 function projectSkillsLoaded(evt: SkillsLoadedEvent): DisplaySkillsContext | undefined {
   const skills: DisplaySkill[] = (evt.skills ?? [])
-    .filter((s): s is { id: string } & typeof s => typeof s?.id === "string")
-    .map((s) => ({
-      id: s.id,
-      scope: s.scope ?? "org",
-      tokens: typeof s.tokens === "number" ? s.tokens : 0,
-      loadedBy: typeof s.loadedBy === "string" ? s.loadedBy : "",
-      reason: typeof s.reason === "string" ? s.reason : "",
-    }));
+    .filter((s): s is { id: string } & NonNullable<typeof s> => typeof s?.id === "string")
+    .map(projectSkill);
   if (skills.length === 0) return undefined;
   const totalTokens =
     typeof evt.totalTokens === "number"
@@ -974,9 +1006,6 @@ function legacyLineToDisplay(raw: Record<string, unknown>): DisplayMessage | nul
     ...(typeof raw.userId === "string" ? { userId: raw.userId } : {}),
     ...(hydratedTools.length > 0 ? { toolCalls: hydratedTools } : {}),
     ...(usage ? { usage } : {}),
-    // Fork writes DisplayMessage shape directly; carry the ledger through so a
-    // forked conversation keeps its skills lines.
-    ...(raw.skillsLoaded ? { skillsLoaded: raw.skillsLoaded as DisplaySkillsContext } : {}),
   };
 }
 

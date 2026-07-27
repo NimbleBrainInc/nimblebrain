@@ -179,7 +179,7 @@ describe("readConversation (event format)", () => {
 				type: "skills.loaded",
 				runId,
 				skills: [
-					{ id: "skills/mpak-guide.md", layer: 3, scope: "workspace", version: "v1", tokens: 1200, contentHash: "abc123", loadedBy: "tool_affinity", reason: "tool-affinity matched mpak__*" },
+					{ id: "skills/mpak-guide.md", name: "mpak-guide", layer: 3, scope: "workspace", version: "v1", tokens: 1200, contentHash: "abc123", loadedBy: "tool_affinity", reason: "tool-affinity matched mpak__*" },
 				],
 				totalTokens: 1200,
 			}),
@@ -194,15 +194,70 @@ describe("readConversation (event format)", () => {
 		expect(assistant.role).toBe("assistant");
 		expect(assistant.skillsLoaded).toBeDefined();
 		expect(assistant.skillsLoaded!.skills).toHaveLength(1);
-		// Projected to the display subset — id/scope/tokens/loadedBy/reason only.
+		// Projected to the display subset — layer/version/contentHash are dropped.
 		expect(assistant.skillsLoaded!.skills[0]).toEqual({
 			id: "skills/mpak-guide.md",
+			name: "mpak-guide",
 			scope: "workspace",
 			tokens: 1200,
 			loadedBy: "tool_affinity",
 			reason: "tool-affinity matched mpak__*",
 		});
 		expect(assistant.skillsLoaded!.totalTokens).toBe(1200);
+	});
+
+	test("carries the connector that published a skill", async () => {
+		const runId = "run_conn";
+		const lines = [
+			JSON.stringify(eventMeta("conv_conn")),
+			JSON.stringify({ ts: "2025-06-01T00:00:00.000Z", type: "user.message", content: [{ type: "text", text: "hi" }] }),
+			JSON.stringify({ ts: "2025-06-01T00:00:01.000Z", type: "run.start", runId }),
+			JSON.stringify({
+				ts: "2025-06-01T00:00:01.500Z",
+				type: "skills.loaded",
+				runId,
+				skills: [
+					{ id: "skill://acme/billing/SKILL.md", name: "billing", connector: "acme-mcp", layer: 3, scope: "bundle", version: "", tokens: 900, contentHash: "d1", loadedBy: "tool_affinity", reason: "tool-affinity matched acme-mcp__*" },
+				],
+				totalTokens: 900,
+			}),
+			JSON.stringify({ ts: "2025-06-01T00:00:02.000Z", type: "llm.response", runId, model: "m1", content: [{ type: "text", text: "answer" }], usage: { inputTokens: 10, outputTokens: 5 }, llmMs: 100 }),
+			JSON.stringify({ ts: "2025-06-01T00:00:03.000Z", type: "run.done", runId, stopReason: "complete" }),
+		];
+		const result = await readConversation(writeTmpFile("conv_conn.jsonl", lines));
+		expect(result!.messages[1]!.skillsLoaded!.skills[0]).toMatchObject({
+			name: "billing",
+			connector: "acme-mcp",
+			scope: "bundle",
+		});
+	});
+
+	// Every connector skill's id is its `skill://…/SKILL.md` entrypoint, so a
+	// reader taking the last path segment names them all `SKILL`. Runs recorded
+	// before `name` was on the event still have to render.
+	test("derives a name for entries recorded before the field existed", async () => {
+		const runId = "run_legacy";
+		const lines = [
+			JSON.stringify(eventMeta("conv_legacy")),
+			JSON.stringify({ ts: "2025-06-01T00:00:00.000Z", type: "user.message", content: [{ type: "text", text: "hi" }] }),
+			JSON.stringify({ ts: "2025-06-01T00:00:01.000Z", type: "run.start", runId }),
+			JSON.stringify({
+				ts: "2025-06-01T00:00:01.500Z",
+				type: "skills.loaded",
+				runId,
+				skills: [
+					{ id: "skill://acme/billing/refunds/SKILL.md", layer: 3, scope: "bundle", version: "", tokens: 900, contentHash: "d1", loadedBy: "tool_affinity", reason: "tool-affinity matched acme__*" },
+					{ id: "/work/skills/release-notes.md", layer: 0, scope: "org", version: "v1", tokens: 300, contentHash: "d2", loadedBy: "always", reason: "always-on" },
+				],
+				totalTokens: 1200,
+			}),
+			JSON.stringify({ ts: "2025-06-01T00:00:02.000Z", type: "llm.response", runId, model: "m1", content: [{ type: "text", text: "answer" }], usage: { inputTokens: 10, outputTokens: 5 }, llmMs: 100 }),
+			JSON.stringify({ ts: "2025-06-01T00:00:03.000Z", type: "run.done", runId, stopReason: "complete" }),
+		];
+		const result = await readConversation(writeTmpFile("conv_legacy.jsonl", lines));
+		const skills = result!.messages[1]!.skillsLoaded!.skills;
+		expect(skills.map((s) => s.name)).toEqual(["refunds", "release-notes"]);
+		expect(skills.every((s) => s.connector === undefined)).toBe(true);
 	});
 
 	test("a zero-skill turn yields no ledger metadata (old-shape events still parse)", async () => {

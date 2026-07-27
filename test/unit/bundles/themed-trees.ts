@@ -17,6 +17,19 @@ export const REPO = join(import.meta.dir, "..", "..", "..");
 const BUNDLES = join(REPO, "src", "bundles");
 
 /**
+ * The public page that teaches app authors to read these tokens.
+ *
+ * Here, beside {@link themedTrees}, for the reason that list is here: the same
+ * two guards read it — {@link ./theme-token-names.test.ts} that every name it
+ * publishes resolves, {@link ./token-fallbacks.test.ts} that no fallback it
+ * shows copies a platform value — and a surface named twice is a surface that
+ * gets extended once. A second page teaching theming would otherwise be
+ * registered with whichever guard its author happened to open first, leaving
+ * the other silently not reading it.
+ */
+export const THEMING_DOC = join(REPO, "docs", "src", "content", "docs", "apps", "theming.mdx");
+
+/**
  * Every `.ts`/`.tsx`/`.css` file under a tree. All three extensions matter:
  * `automations` keeps its whole stylesheet in a `styles.ts` template string and
  * its components carry inline `style` props, so a `*.css` glob reads none of it

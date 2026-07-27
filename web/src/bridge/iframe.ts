@@ -13,6 +13,7 @@
 // ---------------------------------------------------------------------------
 
 import type { McpUiResourcePermissions } from "@modelcontextprotocol/ext-apps";
+import { fontOrigin } from "./fonts.ts";
 import type { ThemeMode } from "./theme.ts";
 import { buildThemeStyleBlock, getHostThemeMode } from "./theme.ts";
 
@@ -118,7 +119,12 @@ export function buildCSP(options?: CreateIframeOptions): string {
     `script-src 'self' 'unsafe-inline'${resourceExtras}`,
     `style-src 'self' 'unsafe-inline'${resourceExtras}`,
     `img-src 'self' data: blob: https:${resourceExtras}`,
-    `font-src 'self' data:${resourceExtras}`,
+    // `'self'` matches NOTHING here: the frame is `srcdoc` without
+    // `allow-same-origin`, so it has an opaque origin. Naming the host origin
+    // explicitly is what lets the app load the `synapse/fontFaces` files the
+    // host serves. Fonts are inert resources and the host already authors this
+    // document, so this grants no reach the frame didn't already have.
+    ["font-src 'self' data:", fontOrigin(), resourceExtras.trim()].filter(Boolean).join(" "),
     `connect-src ${connectSrc}`,
     `frame-src ${frameSrc}`,
     "object-src 'none'",

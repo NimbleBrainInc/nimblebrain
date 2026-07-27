@@ -25,11 +25,8 @@
 
 import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
-import { join } from "node:path";
 import { paletteToExtAppsTokens } from "../../../web/src/theme/projections.ts";
-import { REPO, sourceFiles, themedTrees } from "./themed-trees.ts";
-
-const THEMING_DOC = join(REPO, "docs", "src", "content", "docs", "apps", "theming.mdx");
+import { REPO, sourceFiles, THEMING_DOC, themedTrees } from "./themed-trees.ts";
 
 /** The names `buildThemeStyleBlock` writes into every iframe's style block. */
 const INJECTED = new Set(Object.keys(paletteToExtAppsTokens("light")));

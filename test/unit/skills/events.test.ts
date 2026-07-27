@@ -88,7 +88,7 @@ function makeConfigWithMetadata(): EngineConfig {
           { kind: "system_prompt", tokens: 1100 },
           { kind: "tool_descriptions", count: 4, tokens: 420 },
           { kind: "skills", count: 2, tokens: 1130 },
-          { kind: "history", turns: 0, compacted: false, tokens: 0 },
+          { kind: "history", messages: 0, compacted: false, tokens: 0 },
         ],
         excluded: [],
         totalTokens: 2650,

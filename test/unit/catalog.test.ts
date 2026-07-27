@@ -1,10 +1,13 @@
 import { describe, expect, it } from "bun:test";
 import {
+	GOOGLE_THINKING_LEVELS,
 	findProviderForModelId,
 	getAvailableModels,
 	getModel,
 	getModelByString,
 	getProviderName,
+	googleThinkingModelIds,
+	googleThinkingSupport,
 	isModelAllowed,
 	listModels,
 	listProviders,
@@ -302,5 +305,74 @@ describe("estimateCost from catalog", () => {
 			cacheReadTokens: 5000,
 		});
 		expect(withCache).toBeLessThan(withoutCache);
+	});
+});
+
+describe("Google thinking support", () => {
+	it("either classifies a reasoning-capable Google model or leaves it unconfigured", () => {
+		// Iterate the TABLE's keys, not the catalog's. Going the other way is
+		// vacuous: a typo'd key matches no catalog id, so it never appears in
+		// the derived set and the assertion never sees it — the model it meant
+		// to cover just silently loses its thinking options, which is
+		// indistinguishable from a deliberate omission.
+		const ids = googleThinkingModelIds();
+		expect(ids.length).toBeGreaterThan(0);
+		const unknown = ids.filter((id) => getModel("google", id) === undefined);
+		expect(unknown).toEqual([]);
+	});
+
+	it("classifies the mainstream Gemini models, with the levels Google publishes", () => {
+		// The table's contents were untested, so a missing row looked exactly
+		// like a deliberate omission — gemini-3.1-flash-lite sat unclassified
+		// for several rounds under a comment asserting Google didn't document
+		// it, which turned out to be true of one docs page and false of the
+		// other. These rows are transcribed from Google's tables; changing one
+		// should require changing this list and citing the source.
+		const expected: Record<string, string[]> = {
+			"gemini-3.6-flash": ["minimal", "low", "medium", "high"],
+			"gemini-3.5-flash": ["minimal", "low", "medium", "high"],
+			"gemini-3.5-flash-lite": ["minimal", "low", "medium", "high"],
+			"gemini-3-flash-preview": ["minimal", "low", "medium", "high"],
+			"gemini-3.1-flash-lite": ["minimal", "low", "medium", "high"],
+			"gemini-3.1-pro-preview": ["low", "medium", "high"],
+			"gemini-3-pro-preview": ["low", "high"],
+			"gemini-3.1-flash-lite-image": ["minimal", "high"],
+		};
+		for (const [id, levels] of Object.entries(expected)) {
+			const support = googleThinkingSupport(id);
+			expect(`${id}: ${support?.dialect}`).toBe(`${id}: level`);
+			if (support?.dialect !== "level") continue;
+			expect(`${id}: ${[...support.levels].sort().join(",")}`).toBe(
+				`${id}: ${[...levels].sort().join(",")}`,
+			);
+		}
+		// The 2.5 line is budget-shaped and must stay that way; see the row
+		// comment for the conflicting sources.
+		for (const id of ["gemini-2.5-pro", "gemini-2.5-flash", "gemini-2.5-flash-lite"]) {
+			expect(`${id}: ${googleThinkingSupport(id)?.dialect}`).toBe(`${id}: budget`);
+		}
+	});
+
+	it("never offers a level outside Google's ladder", () => {
+		for (const id of listModels("google").map((m) => m.id)) {
+			const support = googleThinkingSupport(id);
+			if (support?.dialect !== "level") continue;
+			for (const level of support.levels) {
+				expect(GOOGLE_THINKING_LEVELS).toContain(level);
+			}
+		}
+	});
+
+	it("keeps every budget range orderable and non-negative", () => {
+		for (const id of listModels("google").map((m) => m.id)) {
+			const support = googleThinkingSupport(id);
+			if (support?.dialect !== "budget") continue;
+			expect(support.min).toBeGreaterThanOrEqual(0);
+			expect(support.max).toBeGreaterThan(support.min);
+			// googleBudgetOptions floors at max(support.min, 1024), so a row whose
+			// ceiling is below that floor would emit a budget above the model's
+			// own documented maximum.
+			expect(support.max).toBeGreaterThanOrEqual(1024);
+		}
 	});
 });

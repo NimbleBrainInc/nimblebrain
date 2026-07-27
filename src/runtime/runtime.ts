@@ -21,6 +21,7 @@ import type { AppInfo, BundleInstance, PlacementDeclaration } from "../bundles/t
 import { isToolVisibleToRole, type ResolvedFeatures, resolveFeatures } from "../config/features.ts";
 import { deriveOverridePath } from "../config/overrides.ts";
 import { createPrivilegeHook, NoopConfirmationGate } from "../config/privilege.ts";
+import { bootAuditComposioAuthConfigs } from "../connectors/providers/composio/auth-config-audit.ts";
 import { registerComposioCredentialProvider } from "../connectors/providers/composio/transport-credential.ts";
 import { setConnectorsConfig } from "../connectors/providers/config.ts";
 import {
@@ -55,6 +56,7 @@ import type {
   EngineResult,
   EventSink,
   SkillsLoadedPayload,
+  ThinkingEffort,
   ToolPromotionResult,
   ToolRouter,
   ToolSchema,
@@ -176,6 +178,17 @@ import { resolveMaxOutputTokens } from "./resolve-max-output-tokens.ts";
 import { resolveMessageBudget } from "./resolve-message-budget.ts";
 import { resolveThinking } from "./resolve-thinking.ts";
 import { isToolEligibleForPromotion } from "./tool-eligibility.ts";
+
+/**
+ * Apply one clearable config field: `undefined` leaves it alone, `null` clears
+ * it back to the platform default, anything else sets it.
+ *
+ * Shared by the three thinking fields so a clear can't be honored on one and
+ * dropped on another.
+ */
+function applyClearable<T>(current: T | undefined, patched: T | null | undefined): T | undefined {
+  return patched === undefined ? current : (patched ?? undefined);
+}
 
 /** Known model slot names. */
 const MODEL_SLOTS = ["default", "fast", "reasoning"] as const;
@@ -682,6 +695,7 @@ export class Runtime {
       // the child's model rather than the parent's.
       configMaxOutputTokens: config.maxOutputTokens,
       configThinking: config.thinking,
+      configThinkingEffort: config.thinkingEffort,
       configThinkingBudgetTokens: config.thinkingBudgetTokens,
       // Per-engine isolation for tool promotion: child engines get their
       // own controls installed in reqCtx (with save/restore) instead of
@@ -888,6 +902,15 @@ export class Runtime {
         lifecycle.syncBoundSkills(identity, serverName, wsId, wd),
       catalogByIdMap: () => rt.getConnectorDirectory().catalogByIdMap(),
       catalogByUrl: () => rt.getConnectorDirectory().catalogByUrl(),
+    });
+
+    // Report Composio auth-config wiring across the whole catalog. Resolution is
+    // lazy and per-connector, so it only ever runs for toolkits someone has
+    // installed, connected, or probed — the wrong set for deciding the legacy
+    // env fallback is unused (#789), or for catching an `authConfigs` key that
+    // matches no toolkit. Read-only and best-effort.
+    await bootAuditComposioAuthConfigs({
+      catalogEntries: () => rt.getConnectorDirectory().catalogEntries(),
     });
 
     // Boot-time visibility: the locked curated registry is the platform's
@@ -1417,8 +1440,10 @@ export class Runtime {
     // from the header would miss the attachment entirely.
     const fileStore = this.getWorkspaceFileStore(convWsId, ownerId);
 
-    // Resolve maxOutputTokens FIRST — resolveThinking needs it to clamp the
-    // thinking budget so visible-content headroom is always preserved.
+    // Resolved against the request's model so the cap fits that model's own
+    // ceiling. It is not an input to resolveThinking — it reaches the engine on
+    // EngineConfig, which is the only layer that knows whether the provider
+    // meters thinking in tokens at all.
     const resolvedMaxOutputTokens = resolveMaxOutputTokens({
       configValue: this.config.maxOutputTokens,
       model: resolvedModelString,
@@ -1426,9 +1451,9 @@ export class Runtime {
 
     const resolvedThinking = resolveThinking({
       configMode: this.config.thinking,
+      configEffort: this.config.thinkingEffort,
       configBudgetTokens: this.config.thinkingBudgetTokens,
       model: resolvedModelString,
-      maxOutputTokens: resolvedMaxOutputTokens,
     });
 
     // Compose the per-call message budget from the model's actual context
@@ -1850,9 +1875,9 @@ export class Runtime {
     });
     const resolvedThinking = resolveThinking({
       configMode: this.config.thinking,
+      configEffort: this.config.thinkingEffort,
       configBudgetTokens: this.config.thinkingBudgetTokens,
       model: resolvedModelString,
-      maxOutputTokens: resolvedMaxOutputTokens,
     });
     // Per-request override beats config beats default. The UI exposes a
     // per-automation `maxInputTokens` field; honoring it here makes that
@@ -3813,11 +3838,17 @@ export class Runtime {
    * Update live runtime config (in-memory). Called by set_config tool
    * after disk write.
    *
-   * For `thinking` and `thinkingBudgetTokens`, `null` is the explicit
-   * "clear my override" sentinel — distinct from `undefined` (leave the
-   * field alone). After clearing, the resolver falls back to the
-   * platform default policy (adaptive for catalog-flagged reasoning
-   * models, off otherwise).
+   * Every field typed `| null` (`thinking`, `thinkingEffort`,
+   * `thinkingBudgetTokens`) treats `null` as the explicit "clear my
+   * override" sentinel, distinct from `undefined` ("leave it alone").
+   * The distinction is load-bearing: this method gates on `!== undefined`,
+   * so a clear expressed as `undefined` writes to disk but never reaches
+   * the live process.
+   *
+   * The three are independent — clearing one does not clear the others.
+   * After a clear the resolver applies its own default; see
+   * `resolveThinking`, which owns that policy rather than restating it
+   * here.
    */
   updateConfig(patch: {
     defaultModel?: string;
@@ -3827,6 +3858,7 @@ export class Runtime {
     maxOutputTokens?: number;
     maxToolResultSize?: number;
     thinking?: "off" | "adaptive" | "enabled" | null;
+    thinkingEffort?: ThinkingEffort | null;
     thinkingBudgetTokens?: number | null;
     preferences?: Record<string, string>;
   }) {
@@ -3846,15 +3878,17 @@ export class Runtime {
     if (patch.maxOutputTokens !== undefined) this.config.maxOutputTokens = patch.maxOutputTokens;
     if (patch.maxToolResultSize !== undefined)
       this.config.maxToolResultSize = patch.maxToolResultSize;
-    // For `thinking` / `thinkingBudgetTokens`, `null` is the explicit
-    // "clear my override" sentinel — distinct from `undefined` (leave alone).
-    if (patch.thinking !== undefined) {
-      this.config.thinking = patch.thinking === null ? undefined : patch.thinking;
-    }
-    if (patch.thinkingBudgetTokens !== undefined) {
-      this.config.thinkingBudgetTokens =
-        patch.thinkingBudgetTokens === null ? undefined : patch.thinkingBudgetTokens;
-    }
+    // Every field typed `| null` treats `null` as the explicit "clear my
+    // override" sentinel, distinct from `undefined` ("leave it alone"). The
+    // distinction is load-bearing: this method gates on `!== undefined`, so a
+    // clear expressed as `undefined` writes to disk but never reaches the
+    // live process.
+    this.config.thinking = applyClearable(this.config.thinking, patch.thinking);
+    this.config.thinkingEffort = applyClearable(this.config.thinkingEffort, patch.thinkingEffort);
+    this.config.thinkingBudgetTokens = applyClearable(
+      this.config.thinkingBudgetTokens,
+      patch.thinkingBudgetTokens,
+    );
   }
 
   /**
@@ -4200,6 +4234,8 @@ export class Runtime {
     maxOutputTokens: number;
     /** Operator-pinned thinking mode if set; absent when relying on model-default policy. */
     thinking?: "off" | "adaptive" | "enabled";
+    /** Operator-pinned reasoning depth if set; absent when relying on DEFAULT_THINKING_EFFORT. */
+    thinkingEffort?: ThinkingEffort;
     thinkingBudgetTokens?: number;
   } {
     return {
@@ -4212,6 +4248,9 @@ export class Runtime {
         model: this.getDefaultModel(),
       }),
       ...(this.config.thinking !== undefined ? { thinking: this.config.thinking } : {}),
+      ...(this.config.thinkingEffort !== undefined
+        ? { thinkingEffort: this.config.thinkingEffort }
+        : {}),
       ...(this.config.thinkingBudgetTokens !== undefined
         ? { thinkingBudgetTokens: this.config.thinkingBudgetTokens }
         : {}),
@@ -4826,7 +4865,7 @@ export function buildContextAssembledPayload(input: {
       count: input.skillsLoaded.skills.length,
       tokens: input.skillsLoaded.totalTokens,
     },
-    { kind: "history", turns: input.messages.length, compacted: false, tokens: historyTokens },
+    { kind: "history", messages: input.messages.length, compacted: false, tokens: historyTokens },
   ];
   const totalTokens = sources.reduce((sum, s) => sum + s.tokens, 0);
   return { sources, excluded: [], totalTokens };

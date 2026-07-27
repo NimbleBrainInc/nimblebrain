@@ -231,22 +231,75 @@ export interface EngineHooks {
 }
 
 /**
- * Provider-neutral extended-thinking config. The engine translates this
- * to per-provider options at call time:
- *   - Anthropic — `providerOptions.anthropic.thinking.{type,budgetTokens?}`
- *   - OpenAI o-series — `providerOptions.openai.reasoningEffort` (TODO)
- *   - Google Gemini 2.5 — `providerOptions.google.thinkingConfig` (TODO)
- *   - Any other provider — ignored
+ * Provider-neutral reasoning depth — how hard the model should think,
+ * expressed independently of how any one provider spells it.
+ *
+ * This is the platform's canonical currency for thinking. Providers that
+ * take an effort tier natively receive it directly; providers that take a
+ * token budget have one sized from it. The reverse (deriving a tier from a
+ * budget) is not done, because a budget the operator never set has no
+ * intent in it to recover.
+ *
+ * The ladder is Anthropic's, which is the widest of the providers in use.
+ * `max` has no OpenAI equivalent and clamps to `xhigh` there.
+ */
+export type ThinkingEffort = "low" | "medium" | "high" | "xhigh" | "max";
+
+/**
+ * Where a resolved depth came from. Three states because two consumers ask
+ * different questions of it, and collapsing them to one boolean gets one of
+ * them wrong:
+ *
+ *   - `operator`  — the operator named this tier (`thinkingEffort`). Only this
+ *                   may override a provider's own default, so only this steps
+ *                   to a neighbouring level when the model lacks the tier.
+ *   - `mode`      — the operator configured thinking (`thinking`, or a bare
+ *                   `thinkingBudgetTokens`) but named no depth. Their intent is
+ *                   real and worth reporting when it can't be honored, but the
+ *                   tier attached to it is still the platform's, so it must not
+ *                   displace what the provider would do on its own.
+ *   - `platform`  — nothing was configured. Silent, and never overriding.
+ */
+export type EffortSource = "operator" | "mode" | "platform";
+
+/**
+ * Depth used when reasoning is on but the operator named no tier.
+ *
+ * `medium` rather than the top of the ladder: the default applies to every
+ * turn on a reasoning model, including trivial ones, and the deepest tiers
+ * cost real latency and tokens. An operator who wants more says so.
+ */
+export const DEFAULT_THINKING_EFFORT: ThinkingEffort = "medium";
+
+/**
+ * Provider-neutral extended-thinking config. The engine translates this to
+ * per-provider options at call time in `buildThinkingProviderOptions`.
+ *
+ * Four arms, because providers genuinely differ in what they accept:
+ *   - `off`      — do not reason. Not enforceable on every model; see the
+ *                  engine's Anthropic branch.
+ *   - `adaptive` — the model decides per call. No depth expressed.
+ *   - `effort`   — reason at a named depth. The portable arm, and the one the
+ *                  platform default path produces. `source` says where the
+ *                  depth came from: a tier the operator didn't name must never
+ *                  override a provider's own default, or it becomes the same
+ *                  "directive from a number nobody chose" this shape exists to
+ *                  remove.
+ *   - `enabled`  — reason within an explicit token budget. The budget is only
+ *                  meaningful on providers that meter thinking in tokens, so
+ *                  this arm carries `effort` too: it is what the effort-shaped
+ *                  providers use, and it keeps a chosen depth from being
+ *                  silently voided by setting a budget alongside it.
  *
  * Resolution priority is handled upstream (see resolveThinking in
  * src/runtime/resolve-thinking.ts); the engine receives an already-
  * resolved value or `undefined` for "let the provider default decide".
  */
-export interface ResolvedThinking {
-  mode: "off" | "adaptive" | "enabled";
-  /** Token budget for `enabled`. Ignored for `off`/`adaptive`. */
-  budgetTokens?: number;
-}
+export type ResolvedThinking =
+  | { mode: "off" }
+  | { mode: "adaptive" }
+  | { mode: "effort"; effort: ThinkingEffort; source: EffortSource }
+  | { mode: "enabled"; budgetTokens: number; effort: ThinkingEffort; source: EffortSource };
 
 /** Engine configuration per run. */
 export interface EngineConfig {
@@ -386,6 +439,22 @@ export interface ContextAssembledPayload {
 export interface SkillsLoadedEntry {
   id: string;
   /**
+   * The skill's own name, for display. Always set by
+   * `buildSkillsLoadedPayload`; optional because events recorded before the
+   * field existed are read back through this same type — read it through
+   * `skillDisplayName` (`src/skills/display-name.ts`), never bare.
+   *
+   * Carried on the event so no consumer derives a name from `id`: a connector
+   * skill's id is its `skill://…/SKILL.md` entrypoint, whose last path segment
+   * is the literal `SKILL`.
+   */
+  name?: string;
+  /**
+   * The MCP server that published this skill, when it came from one. Absent for
+   * filesystem skills (org / workspace / user tiers), which have no publisher.
+   */
+  connector?: string;
+  /**
    * The loading mechanism's layer: `0` = always-on context, `3` = tool-affinity
    * (the conditional channel), `4` = trigger match. Historical events only ever
    * carried `3`; the read path treats this additively so they still parse.
@@ -402,7 +471,7 @@ export interface SkillsLoadedEntry {
 
 /**
  * One entry in `context.assembled.sources` / `excluded`. Required `tokens`
- * + free-form discriminators (`count`, `version`, `turns`, etc.) per source
+ * + free-form discriminators (`count`, `messages`, etc.) per source
  * kind. Tightening the engine payload to this shape (vs `Record<string,
  * unknown>`) prevents emitters from accidentally shipping rows without a
  * token count.
@@ -414,6 +483,13 @@ export interface ContextAssembledSource {
   toolSetHash?: string;
   version?: string | number;
   userId?: string;
+  /** `history`: how many messages the windowed history holds. */
+  messages?: number;
+  /**
+   * `history`, as recorded before `messages` existed. Carried the same message
+   * count under a name that read as conversational turns; kept so historical
+   * events still render. Emitters set `messages`.
+   */
   turns?: number;
   compacted?: boolean;
 }

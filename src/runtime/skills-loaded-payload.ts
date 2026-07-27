@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import type { SkillsLoadedPayload } from "../engine/types.ts";
+import { parseConnectorSkillName } from "../skills/bundle-skills.ts";
 import { readSkillMtime } from "../skills/loader.ts";
 import type { SkillMatch } from "../skills/matcher.ts";
 import type { LoadedBy, SelectedSkill } from "../skills/select.ts";
@@ -82,6 +83,9 @@ export function collectLoadedSkills(input: {
  * Each entry carries:
  *   - `id` — sourcePath, or an in-memory sentinel for skills synthesized at
  *     runtime (workspace identity overrides, etc.)
+ *   - `name` / `connector` — the skill's own name and, for connector-published
+ *     guidance, who published it. Split out of the manifest name so no display
+ *     surface has to reverse-engineer either from `id`.
  *   - `scope` — defaults to `org` when the manifest doesn't pin one
  *   - `version` — file mtime as a stable change marker, "" for in-memory
  *   - `tokens` — approximate, summed into the payload total
@@ -98,8 +102,11 @@ export function buildSkillsLoadedPayload(selected: SelectedSkill[]): SkillsLoade
     const body = s.skill.body;
     const tokens = approxTokens(body);
     const sourcePath = s.skill.sourcePath || "";
+    const published = parseConnectorSkillName(s.skill.manifest.name);
     return {
       id: sourcePath || `skill-in-memory:${s.skill.manifest.name}`,
+      name: published?.name ?? s.skill.manifest.name,
+      ...(published ? { connector: published.connector } : {}),
       layer: layerForMechanism(s.loadedBy),
       scope: (s.skill.manifest.scope ?? "org") as "org" | "workspace" | "user" | "bundle",
       version: sourcePath ? readSkillMtime(sourcePath) : "",

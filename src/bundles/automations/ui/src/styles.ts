@@ -80,19 +80,63 @@ body {
 .dot {
   display: inline-block; width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0;
 }
-.dot-success { background: #22c55e; }
-.dot-failure { background: #ef4444; }
-.dot-timeout { background: #eab308; }
-.dot-disabled { background: #a3a3a3; }
-.dot-backoff { background: #f97316; }
-.dot-running { background: #3b82f6; animation: breathe 1.5s ease-in-out infinite; }
-.dot-skipped { background: #a3a3a3; }
+/* Status dots take the injected status tokens. They are not decorative: the
+   rail dots do carry a title naming the status, but a title on a span is
+   unavailable on touch, invisible without hover and unreliable through screen
+   readers, so it does not discharge the requirement — and the detail header's
+   dot has none at all. Each therefore needs 3:1 against the ground per WCAG
+   1.4.11. Dots render on three grounds: the page, the card, and the hover fill
+   the rail and run rows paint over either of those. The hover fill is the
+   tightest of the three and the one worth remembering when picking a value.
 
+   That is the tokens at full opacity. Anything that fades a dot has to hold the
+   bar on all three too — see dot-running below.
+
+   timeout and backoff deliberately share one hue. They are warnings on
+   different axes — a run that ran too long, and an automation retrying after
+   consecutive errors — and the token map has one warning for both. Rather than
+   add a hue to the shell palette for one bundle, backoff carries its own
+   backoff-badge with the retry count in words, so the states stay
+   distinguishable without colour being the thing that separates them.
+   That pairing holds on the card and in the status section, which gate the dot
+   and the badge on the same condition, and the rail never renders backoff at
+   all. It does NOT hold on the detail header, which renders the dot alone —
+   there a backing-off and a timed-out automation now look alike. 1.4.1 is still
+   satisfied on that view because the status section below carries the badge,
+   but the header dot on its own is weaker than it was.
+
+   NOTE: this file is a JS template literal, so a backtick here terminates the
+   stylesheet. Comments in it cannot use markdown code spans. */
+.dot-success { background: var(--nb-color-success); }
+.dot-failure { background: var(--nb-color-danger); }
+.dot-timeout { background: var(--nb-color-warning); }
+.dot-disabled { background: var(--color-text-tertiary); }
+.dot-backoff { background: var(--nb-color-warning); }
+/* The running dot pulses on its OWN keyframe, not the shared breathe.
+   breathe runs 0.3 -> 0.6 -> 0.3 and never reaches full opacity, which is fine
+   for the skeleton it was written for but would cap this dot at 2.78:1 light /
+   2.92:1 dark — under the 3:1 the dot needs, at every frame of the cycle. A
+   token that clears the bar does not survive being faded to 60% of it.
+   So the peak here is the token itself, and the trough is set high enough that
+   the faded frame still clears the bar on every ground. The margin is thin, so
+   do not lower it by eye: test/unit/bundles/animated-dot-contrast.test.ts reads
+   this keyframe and reports the real number on each ground when it fails.
+   The conversations bundle's live dot has the same silhouette — full opacity at
+   the extremes, motion in the middle — but it is not precedent for the value:
+   it troughs at 0.4, which is 1.93:1 on the same token. Borrow the shape from
+   it, not the number. */
+@keyframes dot-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.7; transform: scale(0.85); } }
+.dot-running { background: var(--color-text-accent); animation: dot-pulse 1.5s ease-in-out infinite; }
+.dot-skipped { background: var(--color-text-tertiary); }
+
+/* color-mix() is safe in a bundle stylesheet: no bundle runs Tailwind, so
+   Lightning never sees this CSS and never downlevels the mix to its first
+   operand. That downlevel is why the shell uses explicit alpha tokens instead. */
 .backoff-badge {
   display: inline-flex; align-items: center; gap: 4px;
-  font-size: 11px; font-weight: 500; color: #f97316;
-  background: color-mix(in srgb, #f97316 10%, transparent);
-  border: 1px solid color-mix(in srgb, #f97316 25%, transparent);
+  font-size: 11px; font-weight: 500; color: var(--nb-color-warning);
+  background: color-mix(in srgb, var(--nb-color-warning) 10%, transparent);
+  border: 1px solid color-mix(in srgb, var(--nb-color-warning) 25%, transparent);
   border-radius: 12px; padding: 2px 8px;
 }
 
@@ -599,5 +643,17 @@ body {
   /* Advanced config grid → single column. Side-by-side is unreadable
      in ~167px cells. */
   .detail-config-grid { grid-template-columns: 1fr; }
+}
+
+/* Honour a reduced-motion preference for both looping animations in this file.
+   The one-shot fadeIn entrances are not looping and are left alone.
+
+   Placement is load-bearing: a media query adds no specificity, so this block
+   and the rules it overrides are all (0,1,0) and the later in source order
+   wins. An override above the rule it targets is inert while looking exactly
+   like a working one. Last in the file satisfies that unconditionally, and
+   test/unit/bundles/animated-dot-contrast.test.ts enforces it. */
+@media (prefers-reduced-motion: reduce) {
+  .dot-running, .skel { animation: none; }
 }
 `;

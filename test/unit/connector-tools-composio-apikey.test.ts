@@ -571,7 +571,7 @@ describe("manage_connectors.connect_api_key — lifecycle tail", () => {
     expect(apiKeyCalls.initiateArgs.length).toBe(0);
   });
 
-  test("auth-config env unset → operator-config error (after field validation)", async () => {
+  test("no auth-config id → operator-config error (after field validation)", async () => {
     process.env.COMPOSIO_API_KEY = "k_test";
     delete process.env.COMPOSIO_POSTHOG_AUTH_CONFIG_ID;
     _resetComposioConfigForTest();
@@ -584,7 +584,7 @@ describe("manage_connectors.connect_api_key — lifecycle tail", () => {
     });
 
     expect(r.isError).toBe(true);
-    expect(JSON.stringify(r)).toContain("COMPOSIO_POSTHOG_AUTH_CONFIG_ID");
+    expect(JSON.stringify(r)).toContain("connectors.providers.composio.authConfigs.posthog");
     expect(apiKeyCalls.initiateArgs.length).toBe(0);
   });
 

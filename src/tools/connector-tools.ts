@@ -26,14 +26,20 @@ import type {
 } from "../bundles/types.ts";
 import { installBundleInWorkspace } from "../bundles/workspace-ops.ts";
 import type { UserConfigFieldDef } from "../config/workspace-credentials.ts";
-import { validateComposioConfig } from "../connectors/providers/composio/config.ts";
+import {
+  composioAuthConfigId,
+  validateComposioConfig,
+} from "../connectors/providers/composio/config.ts";
 import { COMPOSIO_CREDENTIAL_PROVIDER } from "../connectors/providers/composio/transport-credential.ts";
 import type {
   ManagedConnectorProvider,
   ManagedSession,
 } from "../connectors/providers/managed-provider.ts";
 import { SMITHERY_CREDENTIAL_PROVIDER } from "../connectors/providers/smithery/transport-credential.ts";
-import { connectorSkillIdentityFrom } from "../connectors/server-detail.ts";
+import {
+  type ComposioConnectorConfig,
+  connectorSkillIdentityFrom,
+} from "../connectors/server-detail.ts";
 import { textContent } from "../engine/content-helpers.ts";
 import { INTERNAL_TOOL_ANNOTATION, type ToolResult } from "../engine/types.ts";
 import type { ConnectorOwner } from "../identity/connector-owner.ts";
@@ -1461,7 +1467,7 @@ async function handleConnectApiKey(
 
   // Config gate: resolves the per-connector auth-config id and asserts the
   // platform broker key is present (the "not configured" surface callers see).
-  const gate = resolveComposioApiKeyCredentials(entry.name, composio.authConfigEnv);
+  const gate = resolveComposioApiKeyCredentials(entry.name, composio);
   if ("error" in gate) return errResult(gate.error);
   const { authConfigId } = gate;
 
@@ -1620,27 +1626,34 @@ function composioUnconfiguredMessage(entryName: string): string {
 
 /**
  * Resolve the platform Composio credentials for an API-key connect: the broker
- * credential from the provider config, the connector's auth-config id from the
- * env var its catalog entry names. Missing values are a deploy-time error;
- * surface a clear (non-secret) message.
+ * credential and the connector's auth-config id, both from the provider config.
+ * Missing values are a deploy-time error; surface a clear (non-secret) message.
  */
 function resolveComposioApiKeyCredentials(
   entryName: string,
-  authConfigEnv: string,
+  composio: ComposioConnectorConfig,
 ): { apiKey: string; authConfigId: string } | { error: string } {
   const { apiKey } = validateComposioConfig();
   if (!apiKey) {
     return { error: composioUnconfiguredMessage(entryName) };
   }
-  const authConfigId = process.env[authConfigEnv]?.trim();
+  const authConfigId = composioAuthConfigId(composio.toolkit, composio.authConfigEnv);
   if (!authConfigId) {
-    return {
-      error:
-        `"${entryName}" requires ${authConfigEnv} in the platform env. ` +
-        "Create the API_KEY auth config in the Composio dashboard and set the env var.",
-    };
+    return { error: composioAuthConfigMessage(entryName, composio.toolkit) };
   }
   return { apiKey, authConfigId };
+}
+
+/**
+ * The operator-facing message for a toolkit with no auth-config id. Names the
+ * config path to set, not the internals of how it is resolved.
+ */
+function composioAuthConfigMessage(entryName: string, toolkit: string): string {
+  return (
+    `"${entryName}" requires an auth config id for the "${toolkit}" toolkit. ` +
+    "Create the auth config in the Composio dashboard, then set " +
+    `connectors.providers.composio.authConfigs.${toolkit} in nimblebrain.json.`
+  );
 }
 
 /**
@@ -1971,11 +1984,8 @@ function validateComposioInstall(action: RemoteOAuthInstall, entryName: string):
   if (!validateComposioConfig().apiKey) {
     return composioUnconfiguredMessage(entryName);
   }
-  if (!process.env[action.composio.authConfigEnv]?.trim()) {
-    return (
-      `"${entryName}" requires ${action.composio.authConfigEnv} in the platform env. ` +
-      "Create the auth config in the Composio dashboard and set the env var."
-    );
+  if (!composioAuthConfigId(action.composio.toolkit, action.composio.authConfigEnv)) {
+    return composioAuthConfigMessage(entryName, action.composio.toolkit);
   }
   return null;
 }
@@ -2083,7 +2093,7 @@ async function buildComposioWiring(
     sessionMcp = await provider.createSession({
       userId,
       toolkit: action.composio.toolkit,
-      authConfigId: (process.env[action.composio.authConfigEnv] ?? "").trim(),
+      authConfigId: composioAuthConfigId(action.composio.toolkit, action.composio.authConfigEnv),
       ...(action.composio.tools && action.composio.tools.length > 0
         ? { tools: action.composio.tools }
         : {}),

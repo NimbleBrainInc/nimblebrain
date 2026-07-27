@@ -100,6 +100,10 @@ import {
 import { ToolRegistry } from "../../src/tools/registry.ts";
 import { personalWorkspaceIdFor, WorkspaceStore } from "../../src/workspace/workspace-store.ts";
 import { _resetComposioConfigForTest } from "../../src/connectors/providers/composio/config.ts";
+import {
+  _resetConnectorsConfigForTest,
+  setConnectorsConfig,
+} from "../../src/connectors/providers/config.ts";
 import { buildManagedConnectorRegistry } from "../../src/connectors/providers/registry.ts";
 import {
   composioConnectorDir,
@@ -226,6 +230,7 @@ let h: Harness;
 beforeEach(async () => {
   for (const k of TRACKED_ENV) SAVED_ENV[k] = process.env[k];
   for (const k of TRACKED_ENV) delete process.env[k];
+  _resetConnectorsConfigForTest();
   _resetComposioConfigForTest();
   composioCalls.createConfig = undefined;
   composioCalls.createImpl = async () => ({
@@ -275,6 +280,33 @@ describe("manage_connectors.install (composio-auth)", () => {
     const installed = await installAndReadPersistedRef();
     expect(installed).toBeDefined();
     expect(installed?.composio?.connectorId).toBe(GMAIL_ID);
+  });
+
+  test("(a-2) the declared authConfigs entry reaches Composio, with no env var set", async () => {
+    // The path the migration moves onto: the id comes from the config block,
+    // keyed by the toolkit the catalog entry already names.
+    process.env.COMPOSIO_API_KEY = "k_test";
+    setConnectorsConfig({ providers: { composio: { authConfigs: { gmail: "ac_declared" } } } });
+    _resetComposioConfigForTest();
+
+    await installAndReadPersistedRef();
+    expect(
+      (composioCalls.createConfig as { authConfigs?: Record<string, string> }).authConfigs?.gmail,
+    ).toBe("ac_declared");
+  });
+
+  test("(a-3) a declared id wins over the legacy env var end-to-end", async () => {
+    // Precedence at the call site, not just in the resolver: a stale env var
+    // left in the pod after the values move cannot resurrect the old id.
+    process.env.COMPOSIO_API_KEY = "k_test";
+    process.env.COMPOSIO_GMAIL_AUTH_CONFIG_ID = "ac_stale_env";
+    setConnectorsConfig({ providers: { composio: { authConfigs: { gmail: "ac_declared" } } } });
+    _resetComposioConfigForTest();
+
+    await installAndReadPersistedRef();
+    expect(
+      (composioCalls.createConfig as { authConfigs?: Record<string, string> }).authConfigs?.gmail,
+    ).toBe("ac_declared");
   });
 
   test("(b) transport.auth names the credential provider — neither the key nor an env reference to it lands on disk", async () => {
@@ -392,16 +424,19 @@ describe("manage_connectors.install (composio-auth)", () => {
     expect(ws?.bundles ?? []).toHaveLength(0);
   });
 
-  test("(e-2) errResult when per-toolkit auth-config env is unset", async () => {
+  test("(e-2) errResult when the toolkit has no auth-config id", async () => {
     process.env.COMPOSIO_API_KEY = "k_test";
-    // COMPOSIO_GMAIL_AUTH_CONFIG_ID intentionally missing.
+    // Neither a declared authConfigs entry nor the legacy env var.
 
     const tool = buildTool(h);
     const result = await tool.handler({ action: "install", entry: gmailEntry(), wsId: h.wsId });
 
     expect(result.isError).toBe(true);
     const text = (result.content?.[0] as { text?: string } | undefined)?.text ?? "";
-    expect(text).toContain("COMPOSIO_GMAIL_AUTH_CONFIG_ID");
+    // Names the toolkit and the config path to set — the operator's next action,
+    // not the internals of how the id is resolved.
+    expect(text).toContain("gmail");
+    expect(text).toContain("connectors.providers.composio.authConfigs.gmail");
 
     const ws = await h.workspaceStore.get(h.wsId);
     expect(ws?.bundles ?? []).toHaveLength(0);

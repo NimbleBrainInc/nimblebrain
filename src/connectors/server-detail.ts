@@ -129,9 +129,13 @@ export interface ComposioConnectField {
  * - `toolkit`: Composio's slug for the upstream (`gmail`, `posthog`, …).
  *   Passed as the `authConfigs` key to `composio.create(...)` at install and
  *   used as the directory name for the per-workspace `connection.json`.
- * - `authConfigEnv`: name of the env var holding Composio's `auth_config_id`
- *   (e.g. `ac_…`). The catalog is OSS and shared across deployments; the
- *   actual id varies per Composio account, hence the indirection.
+ * - `authConfigEnv`: **legacy**. Names an env var holding this toolkit's
+ *   Composio `auth_config_id`. Superseded by
+ *   `connectors.providers.composio.authConfigs`, keyed by `toolkit` — which is
+ *   already this entry's identifier, so nothing has to stay in sync. Read only
+ *   as a fallback when the toolkit has no declared entry; omit it in new
+ *   catalogs, and drop it from existing ones once every deployment reading the
+ *   catalog declares its auth configs.
  * - `tools`: optional allowlist of Composio tool slugs to expose. Required in
  *   practice for any toolkit with more than ~20 tools (the agent's tool-search
  *   dumps every match's full description into context otherwise).
@@ -145,7 +149,7 @@ export interface ComposioConnectField {
  */
 export interface ComposioConnectorConfig {
   toolkit: string;
-  authConfigEnv: string;
+  authConfigEnv?: string;
   tools?: string[];
   authScheme?: "OAUTH2" | "API_KEY";
   fields?: ComposioConnectField[];
@@ -204,7 +208,7 @@ export interface NimbleBrainConnectorMeta {
   };
   /**
    * Required for `auth: "composio"`. See {@link ComposioConnectorConfig}
-   * for the full shape (toolkit, authConfigEnv, tools, authScheme, fields).
+   * for the full shape (toolkit, tools, authScheme, fields).
    *
    * The MCP URL and headers are obtained from Composio's session API at
    * install time — operators do not pre-create an MCP server config or
