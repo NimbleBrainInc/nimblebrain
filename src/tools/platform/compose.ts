@@ -52,6 +52,7 @@ import {
 import { getRequestContext } from "../../runtime/request-context.ts";
 import { makeIdentitySkill, type Runtime } from "../../runtime/runtime.ts";
 import { hashSkillBody } from "../../runtime/skills-loaded-payload.ts";
+import { skillDisplayName } from "../../skills/display-name.ts";
 import { parseSkillContent } from "../../skills/loader.ts";
 import { partitionSkillsByRole, selectLayer3Skills } from "../../skills/select.ts";
 import type { InProcessTool } from "../in-process-app.ts";
@@ -80,12 +81,20 @@ const COMPOSE_DESCRIPTION =
   "Pass `bundle` to filter the response to one bundle's contributions (apps " +
   "section + layer-3 skills under the bundle's affined directory). Read-only. " +
   "Use this to answer 'what's in the agent's prompt right now' or 'what was " +
-  "in the prompt for run X'.";
+  "in the prompt for run X'. " +
+  "`totalTokens` is the size of the composed system prompt, in both modes — " +
+  "NOT the size of the context window, which also holds tool descriptions and " +
+  "history. Call `compose__assembled_context` and read `windowTokens` for that.";
 
 const ASSEMBLED_CONTEXT_DESCRIPTION =
   "Return the recorded context digest for a conversation's run — the per-source " +
   "token breakdown (system prompt, tool descriptions, layer-3 skills, history) " +
-  "and the layer-3 skills that loaded, with provenance. Defaults to the most " +
+  "and the layer-3 skills that loaded, with provenance. **Read `windowTokens` " +
+  "for how big the turn was.** `totalTokens` is the recorded sum of every row " +
+  "and counts the composed skill bodies twice: the `skills` row annotates a " +
+  "slice of `system_prompt` (the bodies live inside it) rather than adding a " +
+  "region, so the window is system_prompt + tool_descriptions + history. " +
+  "Defaults to the most " +
   "recent run; pass `run_id` for a specific one. A pure read of the run's " +
   "already-emitted `context.assembled` + `skills.loaded` events — no " +
   "recomposition. Read-only. Use this to answer 'what entered this turn's " +
@@ -102,6 +111,15 @@ export interface ComposeResponse {
   mode: "live" | "historical";
   conversationId: string;
   runId?: string;
+  /**
+   * Size of the composed system prompt — this tool's subject, and the same
+   * quantity in both modes so the two are comparable. Live sums the composed
+   * layers; historical reads the run's recorded `system_prompt` row.
+   *
+   * NOT the size of the context window: tool descriptions and history are not
+   * part of the prompt. `compose__assembled_context` answers that, as
+   * `windowTokens`.
+   */
   totalTokens: number;
   text: string;
   layers: TracedLayer[];
@@ -352,9 +370,9 @@ async function composeHistorical(
   }
 
   const skillsLoaded = findSkillsLoaded(events, runId);
-  // `context.assembled` is read for `totalTokens` only — the run's full
-  // prompt token count is the honest answer for historical mode (vs. just
-  // the L3 sum from skillsLoaded). The event's other fields (per-source
+  // `context.assembled` is read for the run's size only — how much of the
+  // window the turn occupied is the honest answer for historical mode (vs.
+  // just the L3 sum from skillsLoaded). The event's other fields (per-source
   // breakdown, exclusions) are recorded but intentionally not surfaced
   // here; the L3-only view is the design contract for historical mode v1,
   // and surfacing the rest would imply we can reconstruct the layers we
@@ -380,11 +398,19 @@ async function composeHistorical(
   const l3 = skillsLoaded ? buildLayer3Layer(skillsLoaded, runId, warnings) : null;
   const layers: TracedLayer[] = l3 ? [l3.layer] : [];
 
-  // Prefer context.assembled's total (the full run prompt) when present and
-  // non-zero; else fall back to the L3 entry-token sum (0 when no skills
-  // loaded). skillsLoaded.totalTokens is just the L3 sum, so the layer's own
-  // `tokens` carries it while the response total prefers the run-wide count.
-  const totalTokens = contextAssembled?.totalTokens || l3?.entryTokensSum || 0;
+  // The recorded prompt size, so this field answers the same question in both
+  // modes (see `ComposeResponse.totalTokens`). The `system_prompt` row is the
+  // historical analogue of live mode's composed-layer sum — both measure the
+  // assembled prompt. Neither the event's `totalTokens` (which adds tools and
+  // history, and counts the skills twice) nor the window is that quantity;
+  // this tool's subject is the prompt.
+  //
+  // Falls back to the L3 entry-token sum (0 when no skills loaded) for a run
+  // with no `context.assembled` event. `skillsLoaded.totalTokens` is just the
+  // L3 sum, so the layer's own `tokens` carries it.
+  const recordedPrompt =
+    contextAssembled?.sources.find((s) => s.kind === "system_prompt")?.tokens ?? 0;
+  const totalTokens = recordedPrompt || l3?.entryTokensSum || 0;
 
   return {
     mode: "historical",
@@ -433,6 +459,7 @@ async function readAssembledContext(
     sources: [],
     excluded: [],
     totalTokens: 0,
+    windowTokens: 0,
     skills: [],
   };
   if (!assembled) return empty;
@@ -440,13 +467,15 @@ async function readAssembledContext(
   // The paired `skills.loaded` shares the run id (both emitted at run start).
   const skillsLoaded = findSkillsLoaded(events, assembled.runId);
 
+  const sources = assembled.sources.map(toAssembledSource);
   return {
     conversationId: convId,
     runId: assembled.runId,
     ts: assembled.ts,
-    sources: assembled.sources.map(toAssembledSource),
+    sources,
     excluded: assembled.excluded.map(toAssembledSource),
     totalTokens: assembled.totalTokens,
+    windowTokens: contextWindowTokens(sources),
     skills: (skillsLoaded?.skills ?? []).map(toAssembledSkill),
     ...(typeof assembled.modelMaxContext === "number"
       ? { modelMaxContext: assembled.modelMaxContext }
@@ -468,26 +497,64 @@ function findLatestContextAssembled(
   return undefined;
 }
 
-/** Project a recorded context source onto the wire shape (drops unknown extras). */
+/**
+ * Project a recorded context source onto the wire shape (drops unknown extras).
+ * A history row recorded before the field was renamed carries its message count
+ * as `turns`; normalize it so readers only handle `messages`. `annotation` is
+ * stamped from the same set `windowTokens` is summed over, so a renderer's row
+ * layout and the total under it can't be derived from different rules.
+ */
 function toAssembledSource(s: ContextAssembledEvent["sources"][number]): AssembledContextSource {
+  const messages = typeof s.messages === "number" ? s.messages : s.turns;
   return {
     kind: s.kind,
     tokens: s.tokens,
     ...(typeof s.count === "number" ? { count: s.count } : {}),
-    ...(typeof s.turns === "number" ? { turns: s.turns } : {}),
+    ...(typeof messages === "number" ? { messages } : {}),
     ...(typeof s.compacted === "boolean" ? { compacted: s.compacted } : {}),
+    ...(ANNOTATION_KINDS.has(s.kind) ? { annotation: true } : {}),
   };
 }
 
-/** Project a recorded skill entry onto the wire shape. */
+/**
+ * Project a recorded skill entry onto the wire shape. `name` is resolved here
+ * rather than passed through, so every consumer of this tool — the web
+ * surfaces and any agent reading `structuredContent` — gets a usable name even
+ * for runs recorded before the field existed.
+ */
 function toAssembledSkill(s: SkillsLoadedEvent["skills"][number]): AssembledContextSkill {
   return {
     id: s.id,
+    name: skillDisplayName(s),
+    ...(s.connector ? { connector: s.connector } : {}),
     scope: s.scope,
     tokens: s.tokens,
     loadedBy: s.loadedBy,
     reason: s.reason,
   };
+}
+
+/**
+ * Budget kinds that ANNOTATE another row rather than occupying the window.
+ * `skills` is one: composed skill bodies live INSIDE `system_prompt`, so its
+ * row measures a slice rather than adding a region. See the invariant on
+ * `AssembledContextSource`.
+ *
+ * Stated as the annotation set so a source kind added later counts toward the
+ * window by default; an allowlist of regions would silently drop it.
+ *
+ * This is the only place the rule is written down. `toAssembledSource` stamps
+ * each row's `annotation` from it, and both the window total below and every
+ * renderer's row layout read that stamp — so the number and the rows it sits
+ * under can never come from two different rules. A copy of this set on another
+ * tier could draw a region row whose tokens are missing from the total printed
+ * beneath it.
+ */
+const ANNOTATION_KINDS = new Set(["skills"]);
+
+/** Tokens actually occupying the context window, without the annotation rows. */
+function contextWindowTokens(sources: AssembledContextSource[]): number {
+  return sources.filter((s) => !s.annotation).reduce((sum, s) => sum + s.tokens, 0);
 }
 
 /** Human-readable text summary for the tool's `content` block. */
@@ -498,14 +565,21 @@ function formatAssembledSummary(d: ComposeAssembledContextOutput): string {
   const sourceLines = d.sources.map((s) => {
     const detail: string[] = [];
     if (typeof s.count === "number") detail.push(`${s.count}`);
-    if (typeof s.turns === "number") detail.push(`${s.turns} turns`);
+    if (typeof s.messages === "number") detail.push(`${s.messages} messages`);
     if (s.compacted) detail.push("compacted");
     const suffix = detail.length > 0 ? ` (${detail.join(", ")})` : "";
     return `  ${s.kind}: ${s.tokens} tok${suffix}`;
   });
+  const hasSkillsRow = d.sources.some((s) => s.kind === "skills");
   return [
-    `Assembled context for run ${d.runId} (${d.totalTokens} tok total):`,
+    `Assembled context for run ${d.runId} (${d.windowTokens} tok in the window):`,
     ...sourceLines,
+    ...(hasSkillsRow
+      ? [
+          `  (skills is a slice of system_prompt, not a fourth region — the window is`,
+          `   system_prompt + tool_descriptions + history)`,
+        ]
+      : []),
     `  layer-3 skills loaded: ${d.skills.length}`,
   ].join("\n");
 }
@@ -859,8 +933,8 @@ function errorMessage(err: unknown): string {
 function formatTextSummary(response: ComposeResponse): string {
   const head =
     response.mode === "live"
-      ? `Composed (live) for ${response.conversationId}: ${response.layers.length} layers, ${response.totalTokens} tokens`
-      : `Composed (historical, run ${response.runId}) for ${response.conversationId}: ${response.layers.length} layer(s) reconstructed, ${response.totalTokens} tokens recorded`;
+      ? `Composed (live) for ${response.conversationId}: ${response.layers.length} layers, ${response.totalTokens} prompt tokens`
+      : `Composed (historical, run ${response.runId}) for ${response.conversationId}: ${response.layers.length} layer(s) reconstructed, ${response.totalTokens} prompt tokens recorded`;
   if (response.warnings.length === 0) return head;
   return `${head}\n\nWarnings:\n${response.warnings.map((w) => `- ${w}`).join("\n")}`;
 }

@@ -439,6 +439,22 @@ export interface ContextAssembledPayload {
 export interface SkillsLoadedEntry {
   id: string;
   /**
+   * The skill's own name, for display. Always set by
+   * `buildSkillsLoadedPayload`; optional because events recorded before the
+   * field existed are read back through this same type — read it through
+   * `skillDisplayName` (`src/skills/display-name.ts`), never bare.
+   *
+   * Carried on the event so no consumer derives a name from `id`: a connector
+   * skill's id is its `skill://…/SKILL.md` entrypoint, whose last path segment
+   * is the literal `SKILL`.
+   */
+  name?: string;
+  /**
+   * The MCP server that published this skill, when it came from one. Absent for
+   * filesystem skills (org / workspace / user tiers), which have no publisher.
+   */
+  connector?: string;
+  /**
    * The loading mechanism's layer: `0` = always-on context, `3` = tool-affinity
    * (the conditional channel), `4` = trigger match. Historical events only ever
    * carried `3`; the read path treats this additively so they still parse.
@@ -455,7 +471,7 @@ export interface SkillsLoadedEntry {
 
 /**
  * One entry in `context.assembled.sources` / `excluded`. Required `tokens`
- * + free-form discriminators (`count`, `version`, `turns`, etc.) per source
+ * + free-form discriminators (`count`, `messages`, etc.) per source
  * kind. Tightening the engine payload to this shape (vs `Record<string,
  * unknown>`) prevents emitters from accidentally shipping rows without a
  * token count.
@@ -467,6 +483,13 @@ export interface ContextAssembledSource {
   toolSetHash?: string;
   version?: string | number;
   userId?: string;
+  /** `history`: how many messages the windowed history holds. */
+  messages?: number;
+  /**
+   * `history`, as recorded before `messages` existed. Carried the same message
+   * count under a name that read as conversational turns; kept so historical
+   * events still render. Emitters set `messages`.
+   */
   turns?: number;
   compacted?: boolean;
 }

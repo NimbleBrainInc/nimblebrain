@@ -9,23 +9,30 @@ import type {
 } from "../_generated/platform-schemas/compose";
 import { callTool } from "../api/client";
 import { useWorkspaceContext } from "../context/WorkspaceContext";
-import { orderedSources, SOURCE_LABEL, sourceDetail } from "../lib/context-sources";
-import { formatTokenCount, SCOPE_CLASS, shortSkillName } from "../lib/skill-display";
+import { SOURCE_LABEL, skillsSlice, sourceDetail, windowSources } from "../lib/context-sources";
+import {
+  formatTokenCount,
+  groupByMechanism,
+  SCOPE_CLASS,
+  skillProvenanceLabel,
+} from "../lib/skill-display";
 import { parseToolResponse } from "../lib/tool-response";
 import { toSlug } from "../lib/workspace-slug";
 
 /**
  * Header affordance — the aggregated projection of the Context Ledger. Answers
  * "what is equipping this conversation, and where did the tokens go" in one
- * place: the per-source budget for the latest turn (system prompt, tools,
- * skills, history), the skills loaded, and (once the memory seed channel ships)
- * the records seeded at session start.
+ * place: what occupies the context window this turn (system prompt, tools,
+ * history) and which skills the runtime composed, grouped by why they loaded.
  *
  * Reads `compose.assembled_context` on every open (cheap; one tool call against
  * the recorded run telemetry) so the panel reflects the latest turn without
- * subscribing to events. One read powers both the budget and the skills
- * section — same run, one source of truth. The Memory section is dormant until
- * the memory seed channel ships.
+ * subscribing to events. One read powers both sections — same run, one source
+ * of truth.
+ *
+ * A Memory section belongs here once the seed channel ships; it is absent
+ * rather than empty until then, because a permanent "Nothing seeded" is chrome
+ * that never resolves.
  */
 export function InContextPopover({ conversationId }: { conversationId: string | null }) {
   const [open, setOpen] = useState(false);
@@ -42,10 +49,6 @@ export function InContextPopover({ conversationId }: { conversationId: string | 
     activeWorkspace && conversationId
       ? `/w/${toSlug(activeWorkspace.id)}/context/${conversationId}`
       : null;
-
-  // Memory placeholder — always empty until the seed channel ships. Kept as an
-  // array so the section populates data-only when memory wiring lands.
-  const memory: never[] = [];
 
   const refresh = useCallback(async () => {
     if (!conversationId) {
@@ -129,31 +132,40 @@ export function InContextPopover({ conversationId }: { conversationId: string | 
 
             {conversationId && !loading && !error && hasRun && digest && (
               <>
-                <SectionHeader title="Budget" note="this turn" />
-                <BudgetSection sources={digest.sources} totalTokens={digest.totalTokens} />
+                <SectionHeader title="Context window" note="this turn" />
+                <BudgetSection sources={digest.sources} windowTokens={digest.windowTokens} />
 
-                <SectionHeader title="Skills" note="this turn" />
+                <SectionHeader title="Skills" note={`${digest.skills.length} this turn`} />
                 {digest.skills.length === 0 ? (
                   <Empty>No skills loaded for this turn.</Empty>
                 ) : (
-                  <ul>
-                    {digest.skills.map((s) => (
-                      <li key={s.id} className="ledger-line__row">
-                        <span className="ledger-line__dot" aria-hidden />
-                        <span className="ledger-line__row-name">{shortSkillName(s.id)}</span>
-                        <span className={`ledger-line__scope ${SCOPE_CLASS[s.scope]}`}>
-                          {s.scope}
-                        </span>
-                        <span className="ledger-line__row-tok">
-                          {formatTokenCount(s.tokens)} tok
-                        </span>
-                      </li>
-                    ))}
-                  </ul>
+                  groupByMechanism(digest.skills).map((group) => (
+                    <div key={group.mechanism}>
+                      <p className="px-3.5 pt-1.5 pb-0.5 m-0 text-2xs text-muted-foreground">
+                        {group.label}
+                      </p>
+                      <ul>
+                        {group.skills.map((s) => (
+                          <li key={s.id} className="ledger-line__row" title={s.reason}>
+                            <span className="ledger-line__dot" aria-hidden />
+                            <span className="ledger-line__row-name">{s.name}</span>
+                            <span className={`ledger-line__scope ${SCOPE_CLASS[s.scope]}`}>
+                              {skillProvenanceLabel(s)}
+                            </span>
+                            {/* Bare count, no `tok`: the window section above
+                                already establishes the unit, and at this width
+                                the row is carrying a name and a publisher. The
+                                chat ledger's drawer keeps the suffix — it has no
+                                budget above it to set the unit. */}
+                            <span className="ledger-line__row-tok">
+                              {formatTokenCount(s.tokens)}
+                            </span>
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  ))
                 )}
-
-                <SectionHeader title="Memory" note="since start" />
-                {memory.length === 0 && <Empty>Nothing seeded</Empty>}
               </>
             )}
           </div>
@@ -175,44 +187,92 @@ export function InContextPopover({ conversationId }: { conversationId: string | 
   );
 }
 
-/** Per-source token breakdown for the latest turn, with proportional bars. */
+/**
+ * What occupies the context window this turn, with proportional bars.
+ *
+ * Three rows, because the window has three disjoint regions. The recorded
+ * `skills` row is not a fourth — it measures how much of the system prompt the
+ * composed skill bodies account for — so it renders indented beneath system
+ * prompt as an "of which", and the total below is the disjoint sum. Rendering
+ * all four as peers over a summed total (what this did) both overstated the
+ * window and taught that skills sit outside the prompt.
+ */
 function BudgetSection({
   sources,
-  totalTokens,
+  windowTokens,
 }: {
   sources: AssembledContextSource[];
-  totalTokens: number;
+  windowTokens: number;
 }) {
-  const ordered = orderedSources(sources);
-  const max = Math.max(totalTokens, 1);
+  const rows = windowSources(sources);
+  const skills = skillsSlice(sources);
+  const max = Math.max(windowTokens, 1);
+  const width = (tokens: number) => `${Math.round((tokens / max) * 100)}%`;
   return (
     <div className="px-3.5 py-1.5 space-y-1">
-      {ordered.map((s) => {
+      {rows.map((s) => {
         const detail = sourceDetail(s);
         return (
-          <div key={s.kind} className="flex items-center gap-2">
-            <span className="text-xs flex-1 min-w-0 truncate">
-              {SOURCE_LABEL[s.kind] ?? s.kind}
-              {detail && <span className="text-3xs text-muted-foreground"> {detail}</span>}
-            </span>
-            <span className="h-1 w-14 rounded-full bg-muted overflow-hidden shrink-0">
-              <span
-                className="block h-full rounded-full bg-muted-foreground/45"
-                style={{ width: `${Math.round((s.tokens / max) * 100)}%` }}
+          <div key={s.kind}>
+            <BudgetRow
+              label={SOURCE_LABEL[s.kind] ?? s.kind}
+              detail={detail}
+              tokens={s.tokens}
+              width={width(s.tokens)}
+            />
+            {s.kind === "system_prompt" && skills && (
+              <BudgetRow
+                nested
+                label="of which skills"
+                detail={sourceDetail(skills)}
+                tokens={skills.tokens}
+                width={width(skills.tokens)}
               />
-            </span>
-            <span className="text-3xs text-muted-foreground tabular-nums w-10 text-right shrink-0">
-              {formatTokenCount(s.tokens)}
-            </span>
+            )}
           </div>
         );
       })}
       <div className="flex items-baseline justify-between border-t pt-1 mt-0.5">
-        <span className="text-xs font-medium">Total</span>
+        <span className="text-xs font-medium">In the window</span>
         <span className="text-2xs font-medium tabular-nums">
-          {formatTokenCount(totalTokens)} tok
+          {formatTokenCount(windowTokens)} tok
         </span>
       </div>
+    </div>
+  );
+}
+
+/** One budget line: label, proportional bar, token count. */
+function BudgetRow({
+  label,
+  detail,
+  tokens,
+  width,
+  nested = false,
+}: {
+  label: string;
+  detail: string;
+  tokens: number;
+  width: string;
+  nested?: boolean;
+}) {
+  return (
+    <div className={`flex items-center gap-2${nested ? " pl-3" : ""}`}>
+      <span
+        className={`flex-1 min-w-0 truncate ${nested ? "text-2xs text-muted-foreground" : "text-xs"}`}
+      >
+        {label}
+        {detail && <span className="text-3xs text-muted-foreground"> {detail}</span>}
+      </span>
+      <span className="h-1 w-14 rounded-full bg-muted overflow-hidden shrink-0">
+        <span
+          className={`block h-full rounded-full ${nested ? "bg-muted-foreground/25" : "bg-muted-foreground/45"}`}
+          style={{ width }}
+        />
+      </span>
+      <span className="text-3xs text-muted-foreground tabular-nums w-10 text-right shrink-0">
+        {formatTokenCount(tokens)}
+      </span>
     </div>
   );
 }

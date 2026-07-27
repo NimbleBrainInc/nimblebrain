@@ -2,7 +2,12 @@ import { useState } from "react";
 import { Link } from "react-router-dom";
 import { useWorkspaceContext } from "../context/WorkspaceContext";
 import type { SkillsLoadedContext } from "../hooks/useChat";
-import { conciseReason, formatTokenCount, SCOPE_CLASS, shortSkillName } from "../lib/skill-display";
+import {
+  conciseReason,
+  formatTokenCount,
+  SCOPE_CLASS,
+  skillProvenanceLabel,
+} from "../lib/skill-display";
 import { toSlug } from "../lib/workspace-slug";
 
 /**
@@ -27,8 +32,7 @@ export function LedgerLine({ skills }: { skills: SkillsLoadedContext | undefined
   // Skills are workspace-scoped; "Manage" targets the focused workspace.
   const skillsPath = activeWorkspace ? `/w/${toSlug(activeWorkspace.id)}/settings/skills` : "/";
 
-  const verb =
-    count === 1 ? `Following ${shortSkillName(entries[0]!.id)}` : `Following ${count} skills`;
+  const verb = count === 1 ? `Following ${entries[0]!.name}` : `Following ${count} skills`;
   // One skill → its (stripped) reason; many → the aggregate token cost.
   const meta =
     count === 1
@@ -55,8 +59,10 @@ export function LedgerLine({ skills }: { skills: SkillsLoadedContext | undefined
           </div>
           {entries.map((s) => (
             <div key={s.id} className="ledger-line__row">
-              <span className="ledger-line__row-name">{shortSkillName(s.id)}</span>
-              <span className={`ledger-line__scope ${SCOPE_CLASS[s.scope]}`}>{s.scope}</span>
+              <span className="ledger-line__row-name">{s.name}</span>
+              <span className={`ledger-line__scope ${SCOPE_CLASS[s.scope]}`}>
+                {skillProvenanceLabel(s)}
+              </span>
               <span className="ledger-line__row-detail ledger-line__mono" title={s.reason}>
                 {s.reason}
               </span>

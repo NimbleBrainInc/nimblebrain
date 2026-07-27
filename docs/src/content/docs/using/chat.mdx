@@ -79,7 +79,7 @@ Skills are prompt guidance the agent composes into its instructions for a turn (
 - **Following `<skill>` · matched `<tool>`** when one skill loaded, or
 - **Following N skills · ~N tokens** when several did.
 
-The line is text-only and muted at rest, the same treatment as the activity chips. Click it to expand a drawer that lists each skill with its scope (org, workspace, user, or bundle), why it loaded, and how many tokens it added to the prompt.
+The line is text-only and muted at rest, the same treatment as the activity chips. Click it to expand a drawer that lists each skill with where it came from, why it loaded, and how many tokens it added to the prompt. A skill you or your org wrote shows its tier (org, workspace, or user); a skill published by a connector shows the connector's name, since connector guidance is usually named for its job (`usage`, `workflows`) and the publisher is what tells two of them apart.
 
 The "why" covers every way a skill loads:
 
@@ -89,9 +89,13 @@ The "why" covers every way a skill loads:
 
 The platform's own built-in core skills are not listed — only the skills you, your workspace, or your org configured. A turn that loaded none of those shows no line.
 
-For an at-a-glance view of everything equipping the conversation, open the **In context** panel from the chat header. It shows a **budget** for the latest turn — how the context window splits across the system prompt, tool descriptions, skills, and history — followed by the skills loaded, each with its scope and token cost.
+For an at-a-glance view of everything equipping the conversation, open the **In context** panel from the chat header. It shows what occupies the **context window** on the latest turn, split across its three regions — the system prompt, tool descriptions, and history — followed by the skills loaded, grouped by why each one loaded.
+
+Skills appear indented under the system prompt rather than beside it, because that is where they are: a skill body is composed *into* the system prompt, so its token count measures a slice of that region, not a fourth one. Adding all four numbers would count the skills twice.
 
 For the full picture, click **Open full view** in that panel. The context inspector opens in the main window beside the chat: the budget across the top, then the composition broken out layer by layer (identity, always-on skills, workspace and overlays, apps, and the skills matched for the turn). Click any layer to expand its exact composed text in place — the verbatim bytes that entered the window, including each skill's provenance line and containment wrapper. Click a budget segment to filter the layers to just that part of the window, or **Manage skills** to jump to your skill settings.
+
+The inspector's budget shows skills as a card of their own rather than nested, so its four cards add up to more than the figure in the header. The header is the one to read: skills are counted inside the system prompt, so adding the cards counts them twice.
 
 The ledger reflects what actually loaded, and it persists — reopening a past conversation shows the same lines.
 

@@ -829,8 +829,8 @@
 .ledger-scope--user {
   color: var(--scope-user);
 }
-.ledger-scope--bundle {
-  color: var(--scope-bundle);
+.ledger-scope--connector {
+  color: var(--scope-connector);
 }
 
 @media (prefers-reduced-motion: no-preference) {

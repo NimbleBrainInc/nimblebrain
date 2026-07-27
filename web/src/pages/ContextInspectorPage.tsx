@@ -10,7 +10,7 @@ import type {
 } from "../_generated/platform-schemas/compose";
 import { callTool } from "../api/client";
 import { orderedSources, SOURCE_LABEL, sourceDetail } from "../lib/context-sources";
-import { formatTokenCount } from "../lib/skill-display";
+import { formatTokenCount, nameFromSkillId } from "../lib/skill-display";
 import { parseToolResponse } from "../lib/tool-response";
 
 /**
@@ -160,9 +160,9 @@ export function ContextInspectorPage() {
           {digest && digest.runId !== null && (
             <div className="text-xs text-muted-foreground tabular-nums">
               <span className="font-medium text-foreground">
-                {formatTokenCount(digest.totalTokens)}
+                {formatTokenCount(digest.windowTokens)}
               </span>{" "}
-              tokens · latest turn
+              tokens in the window · latest turn
             </div>
           )}
         </div>
@@ -188,7 +188,7 @@ export function ContextInspectorPage() {
         <div className="flex-1 min-h-0 overflow-y-auto">
           <BudgetBar
             sources={digest.sources}
-            totalTokens={digest.totalTokens}
+            windowTokens={digest.windowTokens}
             active={bucket}
             onSelect={selectBucket}
           />
@@ -214,17 +214,20 @@ const DRILLABLE = new Set(["system_prompt", "skills"]);
 
 function BudgetBar({
   sources,
-  totalTokens,
+  windowTokens,
   active,
   onSelect,
 }: {
   sources: AssembledContextSource[];
-  totalTokens: number;
+  windowTokens: number;
   active: string | null;
   onSelect: (bucket: string | null) => void;
 }) {
   const ordered = orderedSources(sources);
-  const max = Math.max(totalTokens, 1);
+  // Bars are proportional to the window, not to the recorded `totalTokens` —
+  // that sum counts the skill bodies twice (they are composed into the system
+  // prompt), so scaling to it shrank every bar by the size of the overlap.
+  const max = Math.max(windowTokens, 1);
   return (
     <div
       className="sticky top-0 z-10 bg-background px-6 py-4 border-b border-border"
@@ -290,16 +293,19 @@ function BudgetBar({
           );
         })}
       </div>
-      <div className="mt-1.5 flex items-center justify-between text-3xs text-muted-foreground">
-        <span>
-          {active
-            ? `Filtered to ${SOURCE_LABEL[active] ?? active} · click again to clear`
-            : "Click System prompt or Skills to filter the layers"}
-        </span>
-        <span className="tabular-nums">
-          Total <span className="font-medium text-foreground">{formatTokenCount(totalTokens)}</span>{" "}
-          tok
-        </span>
+      {/* No total here — the header states it once, and states the window (the
+          disjoint sum) rather than the recorded `totalTokens`. The skills
+          caveat is spelled out because these four cards still read as peers;
+          the nesting becomes structural when the bar and the layer list merge
+          into one tree. */}
+      {/* The caveat holds whatever is filtered — it explains the cards, and
+          selecting one doesn't stop them reading as four peers. Only the
+          filter hint swaps. */}
+      <div className="mt-1.5 text-3xs text-muted-foreground">
+        Skills are composed into the system prompt, not a region beside it ·{" "}
+        {active
+          ? `filtered to ${SOURCE_LABEL[active] ?? active}, click again to clear`
+          : "click System prompt or Skills to filter the layers"}
       </div>
     </div>
   );
@@ -333,17 +339,11 @@ function isNamedFile(l: TracedLayerView): boolean {
   return l.id.includes("/");
 }
 
-/** A skill/overlay name from its file id — handles `<name>.md` and `<name>/SKILL.md`. */
-function skillName(id: string): string {
-  const parts = id.split("/").filter(Boolean);
-  let name = parts[parts.length - 1] ?? id;
-  if (/^SKILL\.md$/i.test(name) && parts.length >= 2) name = parts[parts.length - 2];
-  return name.replace(/\.md$/i, "");
-}
-
 /** Primary label: a file-backed layer is named by its skill; a structural one by its kind. */
 function layerTitle(l: TracedLayerView): string {
-  return isNamedFile(l) ? skillName(l.id) : (LAYER_LABEL[l.kind] ?? l.kind);
+  // `TracedLayerView` carries no name, so a file-backed layer is named from its
+  // id — through the shared helper, never a local copy of the rule.
+  return isNamedFile(l) ? nameFromSkillId(l.id) : (LAYER_LABEL[l.kind] ?? l.kind);
 }
 
 /** Muted descriptor under a named skill (its kind); empty for structural layers. */

@@ -43,14 +43,30 @@ const WritableSkillScope = Type.Union([
 
 export const SkillsLoadedEntry = Type.Object({
   id: Type.String(),
-  layer: Type.Literal(3),
+  name: Type.Optional(
+    Type.String({
+      description:
+        "The skill's own name. Optional because events recorded before the " +
+        "field existed are read back through this shape.",
+    }),
+  ),
+  connector: Type.Optional(
+    Type.String({ description: "MCP server that published the skill, when one did." }),
+  ),
+  layer: Type.Union([Type.Literal(0), Type.Literal(3), Type.Literal(4)], {
+    description: "Loading mechanism's layer: 0 = always-on, 3 = tool-affinity, 4 = trigger.",
+  }),
   scope: SkillScope,
   version: Type.String(),
   tokens: Type.Number(),
   contentHash: Type.String({
     description: "SHA-256 hex of the skill body composed into the prompt.",
   }),
-  loadedBy: Type.Union([Type.Literal("always"), Type.Literal("tool_affinity")]),
+  loadedBy: Type.Union([
+    Type.Literal("always"),
+    Type.Literal("tool_affinity"),
+    Type.Literal("trigger"),
+  ]),
   reason: Type.String(),
 });
 export type SkillsLoadedEntry = Static<typeof SkillsLoadedEntry>;
@@ -73,7 +89,16 @@ export const ContextAssembledSource = Type.Object({
   toolSetHash: Type.Optional(Type.String()),
   version: Type.Optional(Type.Union([Type.String(), Type.Number()])),
   userId: Type.Optional(Type.String()),
-  turns: Type.Optional(Type.Number()),
+  messages: Type.Optional(
+    Type.Number({ description: "`history`: how many messages the windowed history holds." }),
+  ),
+  turns: Type.Optional(
+    Type.Number({
+      description:
+        "`history`, as recorded before `messages` existed — the same message " +
+        "count under a name that read as conversational turns.",
+    }),
+  ),
   compacted: Type.Optional(Type.Boolean()),
 });
 export type ContextAssembledSource = Static<typeof ContextAssembledSource>;

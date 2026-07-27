@@ -7,7 +7,8 @@
 //   2. A zero-skill (or absent) turn renders NOTHING — absence is the signal.
 //   3. Expanded: trust banner, per-skill rows with scope class + verbatim
 //      reason (in `title`) + token count, and the "Manage skills" footer link.
-//   4. Name derivation strips `.md` / the `skill://owner/` prefix.
+//   4. Rows render the recorded `name` and, for connector-published guidance,
+//      name the publishing connector rather than the tier.
 //
 // Rendering goes through react-dom/client directly (matching ResourceLinkView's
 // test), wrapped in the real WorkspaceProvider (bootstrap mode, so no API call)
@@ -86,6 +87,7 @@ const ONE: SkillsLoadedContext = {
   skills: [
     {
       id: "skills/mpak-guide.md",
+      name: "mpak-guide",
       scope: "workspace",
       tokens: 1200,
       loadedBy: "tool_affinity",
@@ -99,7 +101,11 @@ const TWO: SkillsLoadedContext = {
   skills: [
     ONE.skills[0]!,
     {
-      id: "skill://acme/release-notes",
+      // A connector skill's id is its SEP-2640 entrypoint, so every one of them
+      // ends in `/SKILL.md` — the row has to read `name`, not the id.
+      id: "skill://acme/release-notes/SKILL.md",
+      name: "release-notes",
+      connector: "acme-mcp",
       scope: "bundle",
       tokens: 610,
       loadedBy: "tool_affinity",
@@ -150,17 +156,20 @@ describe("LedgerLine", () => {
     const rows = byClass(container, "ledger-line__row");
     expect(rows).toHaveLength(2);
 
-    // Row 1: workspace scope, name derived, verbatim reason preserved in title.
+    // Row 1: a filesystem skill names its tier, verbatim reason kept in title.
     expect(first(rows[0]!, "ledger-line__row-name")?.textContent).toBe("mpak-guide");
-    expect(first(rows[0]!, "ledger-scope--workspace")).toBeDefined();
+    expect(first(rows[0]!, "ledger-scope--workspace")?.textContent).toBe("workspace");
     expect(first(rows[0]!, "ledger-line__row-detail")?.getAttribute("title")).toBe(
       "tool-affinity matched mpak__*",
     );
     expect(first(rows[0]!, "ledger-line__row-tok")?.textContent).toBe("1.2k tok");
 
-    // Row 2: bundle scope, name derived from a `skill://owner/name` id.
+    // Row 2: connector guidance names its publisher, never the word "bundle" —
+    // connector skills are conventionally named for their job, so the publisher
+    // is what tells two of them apart in a list.
     expect(first(rows[1]!, "ledger-line__row-name")?.textContent).toBe("release-notes");
-    expect(first(rows[1]!, "ledger-scope--bundle")).toBeDefined();
+    expect(first(rows[1]!, "ledger-scope--connector")?.textContent).toBe("acme-mcp");
+    expect(container.textContent).not.toContain("bundle");
 
     const link = container.getElementsByTagName("a")[0];
     expect(link?.textContent).toContain("Manage skills");

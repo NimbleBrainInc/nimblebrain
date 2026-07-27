@@ -135,6 +135,44 @@ async function callCompose(
   };
 }
 
+/**
+ * The sibling digest tool, for asserting that `totalTokens` here and the budget
+ * rows there describe the same run consistently.
+ */
+async function callAssembled(
+  runtime: Runtime,
+  args: Record<string, unknown>,
+  ctxConvId?: string,
+): Promise<{
+  structured: {
+    sources: Array<{ kind: string; tokens: number }>;
+    totalTokens: number;
+    windowTokens: number;
+  } | null;
+}> {
+  const registry = runtime.getRegistryForWorkspace(TEST_WORKSPACE_ID);
+  const result = await runWithRequestContext(
+    {
+      identity: DEV_IDENTITY,
+      scope: {
+        kind: "workspace",
+        workspaceId: TEST_WORKSPACE_ID,
+        workspaceAgents: null,
+        workspaceModelOverride: null,
+      },
+      ...(ctxConvId ? { conversationId: ctxConvId } : {}),
+    },
+    () =>
+      registry.execute({
+        id: `test-assembled-${Date.now()}`,
+        name: "compose__assembled_context",
+        input: args,
+      }),
+  );
+  const sc = (result as { structuredContent?: unknown }).structuredContent;
+  return { structured: sc ? (sc as never) : null };
+}
+
 describe("compose_effective_context — live mode", () => {
   it("returns traced layers with paths for every operator-authored skill", async () => {
     const workDir = join(testDir, "live-basic");
@@ -323,6 +361,18 @@ describe("compose_effective_context — historical mode", () => {
     expect((sub!.metadata as { recordedHash: string }).recordedHash).toBe(
       hashSkillBody(skillBody),
     );
+
+    // `totalTokens` answers the same question in both modes — the size of the
+    // composed system prompt — so the two are comparable for one conversation.
+    // Historical reads the recorded `system_prompt` row; the run-wide sum would
+    // add tool descriptions and history (and count the skills twice), making
+    // the prompt look like it grew between the two calls.
+    const digest = await callAssembled(runtime, { run_id: runId }, convId);
+    const recorded = digest.structured!;
+    const promptRow = recorded.sources.find((s) => s.kind === "system_prompt")!;
+    expect(r.totalTokens).toBe(promptRow.tokens);
+    expect(r.totalTokens).toBeLessThan(recorded.windowTokens);
+    expect(r.totalTokens).toBeLessThan(recorded.totalTokens);
 
     await runtime.shutdown();
   });

@@ -71,6 +71,40 @@ const BUNDLE_SKILL_PRIORITY = 60;
 const DEFAULT_BUNDLE_LOADING_STRATEGY: SkillLoadingStrategy = "dynamic";
 
 /**
+ * Prefix on a connector skill's manifest name. The manifest name is the skill's
+ * de-duplication identity, so it namespaces the connector's own skill name —
+ * two connectors both publishing `usage` have to stay distinct. On-disk skill
+ * names match `SKILL_NAME_PATTERN` (lowercase alphanumerics and hyphens, no
+ * colons), so a name carrying this prefix can only have been built here.
+ */
+const CONNECTOR_SKILL_NAME_PREFIX = "bundle:";
+
+/** Manifest name (identity) for a skill published by `connector`. */
+export function connectorSkillManifestName(connector: string, skillName: string): string {
+  return `${CONNECTOR_SKILL_NAME_PREFIX}${connector}:${skillName}`;
+}
+
+/**
+ * Split a manifest name back into the connector that published the skill and
+ * the skill's own name, or `null` for a name this module didn't build.
+ *
+ * Format and parse live together so a display surface reads provenance from the
+ * identity the runtime assigned, rather than re-deriving it from the skill's
+ * `skill://…/SKILL.md` id (whose last segment is the literal `SKILL`) or from
+ * its `<connector>__*` tool glob.
+ */
+export function parseConnectorSkillName(
+  manifestName: string,
+): { connector: string; name: string } | null {
+  if (!manifestName.startsWith(CONNECTOR_SKILL_NAME_PREFIX)) return null;
+  const rest = manifestName.slice(CONNECTOR_SKILL_NAME_PREFIX.length);
+  const sep = rest.indexOf(":");
+  // Both halves must be non-empty for the split to name anything.
+  if (sep <= 0 || sep === rest.length - 1) return null;
+  return { connector: rest.slice(0, sep), name: rest.slice(sep + 1) };
+}
+
+/**
  * SEP-2640 skill entrypoint: `skill://<skill-path>/SKILL.md`. A skill is a
  * `skill://` resource whose URI ends in `/SKILL.md`; supporting files
  * (`skill://…/scripts/x.py`) share the prefix but are not entrypoints.
@@ -212,13 +246,15 @@ export interface BundleSkillInput {
  * `selectLayer3Skills`, `buildSkillsLoadedPayload` emits it on the
  * `skills.loaded` event with `id = <uri>`, `scope = "bundle"`,
  * `loadedBy = "tool_affinity"` — byte-identical in payload structure to any
- * filesystem-sourced Layer 3 skill with the same scope / strategy.
+ * filesystem-sourced Layer 3 skill with the same scope / strategy, plus
+ * `name` / `connector` split out of the manifest name so a reader gets the
+ * skill's own name and who published it.
  */
 export function synthesizeBundleSkill(input: BundleSkillInput): Skill {
   const { serverName, skillName, description, body, uri, loadingStrategy, priority } = input;
   return {
     manifest: {
-      name: `bundle:${serverName}:${skillName}`,
+      name: connectorSkillManifestName(serverName, skillName),
       description: description || `Workflow guidance from the ${serverName} server`,
       priority: priority ?? BUNDLE_SKILL_PRIORITY,
       scope: BUNDLE_SKILL_SCOPE,

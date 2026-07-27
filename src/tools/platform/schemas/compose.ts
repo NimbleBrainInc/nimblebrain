@@ -50,15 +50,41 @@ export type ComposeAssembledContextInput = Static<typeof ComposeAssembledContext
  * One row of a run's assembled context, as recorded in the
  * `context.assembled` event. `kind` is a free-form source discriminator
  * (`system_prompt`, `tool_descriptions`, `skills`, `history`); the other
- * fields are populated per kind (`count` for tools/skills, `turns` /
+ * fields are populated per kind (`count` for tools/skills, `messages` /
  * `compacted` for history).
+ *
+ * The rows are NOT four disjoint regions of the context window: `skills`
+ * annotates how much of `system_prompt` the composed skill bodies account
+ * for. The window is `system_prompt + tool_descriptions + history`, which is
+ * why `ComposeAssembledContextOutput.totalTokens` (the recorded sum of all
+ * four) is larger than what a reader would call the context size. Read
+ * `windowTokens` instead of re-deriving it.
+ *
+ * "Inside `system_prompt`" is true of the prompt as measured, which is what
+ * these rows describe: telemetry is built from the assembled prompt, before
+ * `resolveEngineSystem` evicts the volatile head onto the last user message.
+ * So a trigger-matched skill counts here but ships to the model on the message
+ * stream. The arithmetic is unaffected (history tokens are counted pre-evict,
+ * so nothing is billed twice); only the row it is attributed to is coarser
+ * than the wire.
  */
 export interface AssembledContextSource {
   kind: string;
   tokens: number;
   count?: number;
-  turns?: number;
+  /** `history`: how many messages the windowed history holds. */
+  messages?: number;
   compacted?: boolean;
+  /**
+   * True when this row measures part of another row rather than adding a
+   * region of its own — `skills` inside `system_prompt` today.
+   *
+   * Stamped here so a renderer can lay the rows out without carrying its own
+   * copy of which kinds are annotations. Without it, a kind added on one tier
+   * only would draw a region row whose tokens are absent from the
+   * `windowTokens` printed beneath it.
+   */
+  annotation?: boolean;
 }
 
 /**
@@ -67,6 +93,10 @@ export interface AssembledContextSource {
  */
 export interface AssembledContextSkill {
   id: string;
+  /** The skill's own name — resolved server-side, safe to render directly. */
+  name: string;
+  /** The MCP server that published it; absent for filesystem skills. */
+  connector?: string;
   scope: "org" | "workspace" | "user" | "bundle";
   tokens: number;
   /** The loading mechanism: always-on context, tool-affinity, or trigger match. */
@@ -87,7 +117,20 @@ export interface ComposeAssembledContextOutput {
   ts: string | null;
   sources: AssembledContextSource[];
   excluded: AssembledContextSource[];
+  /**
+   * The recorded sum of every row in `sources`, preserved as recorded. It
+   * counts the composed skill bodies twice — once inside `system_prompt`, once
+   * in the `skills` annotation — so it is NOT the size of the context window.
+   * Read `windowTokens` for that.
+   */
   totalTokens: number;
+  /**
+   * How much of the context window the turn occupied: the sum of the rows that
+   * name a region, with the annotation rows left out. The number a reader means
+   * by "how big was this turn". Computed here rather than by each caller, so
+   * one answer reaches every consumer of this tool.
+   */
+  windowTokens: number;
   skills: AssembledContextSkill[];
   /** Present only when the run recorded them (not emitted on current runs). */
   modelMaxContext?: number;

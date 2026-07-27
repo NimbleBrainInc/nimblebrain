@@ -4841,7 +4841,7 @@ export function buildContextAssembledPayload(input: {
       count: input.skillsLoaded.skills.length,
       tokens: input.skillsLoaded.totalTokens,
     },
-    { kind: "history", turns: input.messages.length, compacted: false, tokens: historyTokens },
+    { kind: "history", messages: input.messages.length, compacted: false, tokens: historyTokens },
   ];
   const totalTokens = sources.reduce((sum, s) => sum + s.tokens, 0);
   return { sources, excluded: [], totalTokens };
