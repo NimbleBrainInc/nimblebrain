@@ -27,9 +27,23 @@
  * Deliberately reads the inline style attribute, not `getComputedStyle` — the
  * question is what the SDK *wrote*, not how a full cascade resolves it, so the
  * assertion needs no CSS-cascade support from the test DOM.
+ *
+ * **What this does NOT cover.** Channel 2 is derived as `getThemeTokens` minus
+ * `getSpecThemeTokens`, so it only sees keys the host actually defines. An SDK
+ * default for a var the host defines *nowhere* cannot appear in that set, and the
+ * app silently gets the SDK's value — today exactly `--nb-color-warm` and
+ * `--nb-color-warm-light`, which no bundle UI or core resource reads. Widening to
+ * the SDK's whole default map would need that map exported (it isn't) or restated
+ * here, and a restated copy is the drift this guard exists to catch.
+ *
+ * The SDK import resolves from the ROOT `node_modules`, not `web/`'s — `web/` has
+ * no `@nimblebrain/synapse` pin, and shouldn't get one: the version under test
+ * must be the version the bundle UIs and root install, and a second manifest is a
+ * second thing to keep in sync. CI installs root before `web/` (`ci.yml`), so the
+ * hoisted copy is always present.
  */
 
-import { describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, test } from "bun:test";
 import { applyHostTheme } from "@nimblebrain/synapse/host";
 import { getSpecThemeTokens, getThemeTokens } from "../bridge/theme";
 
@@ -38,6 +52,15 @@ function styleBlockOnlyKeys(mode: "light" | "dark"): string[] {
   const onWire = new Set(Object.keys(getSpecThemeTokens(mode)));
   return Object.keys(getThemeTokens(mode)).filter((k) => !onWire.has(k));
 }
+
+// `web/test/setup.ts` builds ONE happy-dom Window and installs its document as a
+// process global, so `bun test` shares it across every file in this suite. Applying
+// a theme here writes the SDK's whole default map inline on `documentElement`;
+// leaving it behind would hand the next file a pre-styled root. Nothing reads
+// `documentElement.style` today, which is exactly why it would be missed.
+afterEach(() => {
+  document.documentElement.removeAttribute("style");
+});
 
 describe("the SDK must not override host tokens it cannot receive", () => {
   for (const mode of ["light", "dark"] as const) {
