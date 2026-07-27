@@ -35,12 +35,10 @@ import {
 export function mapOrchestratorErrorToToolResult(err: unknown, namespacedName: string): ToolResult {
   if (err instanceof UnknownNamespacedToolName) {
     // The retired-form error already carries its own remedy — "re-list tools and
-    // call <bare name>" — so it is emitted alone. Wrapping it in the generic
-    // advice below would append "use a fully namespaced tool name", the exact
-    // opposite instruction, and a model reading the trailing clause re-emits the
-    // namespaced form and loops. This is the rollout hot path: a conversation
-    // resumed across the upgrade has prefixed names in history and bare names in
-    // its tool list, so it WILL produce legacy names.
+    // call <bare name>". Emit it alone rather than nesting it inside the generic
+    // wrapper, which would restate the same advice in different words. Keyed on
+    // `reason` rather than message-sniffing; the sentinel is documented on
+    // `UnknownNamespacedToolName.reason`.
     const text =
       err.reason === "legacy_namespaced_form"
         ? err.message

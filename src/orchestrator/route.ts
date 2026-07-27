@@ -402,9 +402,11 @@ export async function routeToolCall(opts: {
   //
   // The stale-transcript case that motivated the check is real but
   // indistinguishable from a correct fresh call, so guarding it costs an outage
-  // of the common path to catch a rare misroute. It is handled where it IS
-  // distinguishable: a name that FAILS workspace resolution and matches an
-  // installed connector (the catch above) is unambiguously a pre-marker name.
+  // of the common path to catch a rare misroute. A stale pre-marker name is
+  // therefore a plain `UnknownToolSource`, which is the honest error: that class
+  // also means "installed but transiently absent", and nothing here can tell the
+  // two apart without steering a model onto the caller's own credentials during a
+  // workspace-source outage.
   return { kind: "workspace", context, toolName, source };
 }
 

@@ -739,14 +739,14 @@ describe("routeToolCall — a bare name that resolves in the workspace IS the wo
   // who had connected the same service both ways — the default case, since both
   // install paths slugify the same catalog id — and re-listing returned the same
   // refused name, so there was no way out.
-  function runtimeWith(hasConnector: boolean, wsSources: string[]): StubRuntime {
+  function runtimeWith(_hasConnector: boolean, wsSources: string[]): StubRuntime {
     const base = makeStubRuntime({
       registries: new Map([[SHARED_WS, wsSources.map(makeStubSource)]]),
       identityConnectors: new Map([["gmail", makeStubSource("gmail")]]),
       permissionStore: new PermissionStore(workDir),
       workDir,
     });
-    return { ...base, hasIdentityConnector: async () => hasConnector } as StubRuntime;
+    return base;
   }
 
   test("dispatches even when the caller holds a same-named personal connector", async () => {

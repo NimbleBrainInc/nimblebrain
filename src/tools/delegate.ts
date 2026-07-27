@@ -223,7 +223,7 @@ function capChildIterations(
  * name. Mixed glob lists work — each glob expands against the same bounded
  * corpus and the results union.
  */
-async function selectChildTools(
+export async function selectChildTools(
   ctx: DelegateContext,
   globs: string[] | undefined,
   defaultTools: ToolSchema[],

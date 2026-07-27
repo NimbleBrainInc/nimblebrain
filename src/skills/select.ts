@@ -41,23 +41,13 @@ export interface SelectInput {
 }
 
 /**
- * Match a tool name against a `tool-affinity` glob pattern.
+ * Glob-match a tool name against a skill's `toolAffinity` pattern.
  *
- * Supported patterns:
- *  - `*` — matches anything
- *  - `<prefix>__*` — starts-with check
- *  - `*__<suffix>` — ends-with check
- *  - exact equality otherwise
- *
- * Empty pattern returns false. More complex patterns (e.g. `*__patch_*`) are
- * out of scope for Phase 2 — they fall through to exact-match, so they only
- * match the literal pattern string.
- *
- * Namespaced tool names carry a `ws_<id>-` prefix. Patterns in skill manifests
- * and `appContext`-driven affinity rules are typically authored against the BARE form
- * (`<source>__*`). Match against both the full namespaced name AND the
- * bare inner form so legacy patterns keep working unchanged and
- * namespace-aware patterns (`ws_<id>-<source>__*`) also match precisely.
+ * A thin alias for `toolNameMatchesPattern`, the single matcher shared with
+ * `surfacing.ts`. Kept as a named export because `toolAffinity` is its own
+ * concept at this layer; see that function for the pattern grammar and for why
+ * the retired `ws_<id>-` prefix is normalized on both sides while the `my_`
+ * personal-connector marker is normalized on neither.
  */
 export function toolMatches(toolName: string, pattern: string): boolean {
   return toolNameMatchesPattern(toolName, pattern);

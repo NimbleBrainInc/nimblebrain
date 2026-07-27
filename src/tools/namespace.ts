@@ -86,6 +86,15 @@ export class UnknownNamespacedToolName extends Error {
   /** The exact input string that failed to parse. */
   readonly input: string;
   /** Short machine-readable reason (`"missing_separator"`, `"invalid_wsid"`, `"empty_tool_name"`, `"empty_workspace_id"`). */
+  /**
+   * Why the parse failed. Consumers key on this — `error-mapping.ts` renders
+   * `legacy_namespaced_form` without the generic wrapper — so a new value is a
+   * cross-module contract, not a local string.
+   *
+   * Values: `empty_input`, `empty_tool_name`, `invalid_wsid`, and
+   * `legacy_namespaced_form` (raised by the orchestrator for the retired
+   * `ws_<id>-` wire form, which parses fine but is no longer routed).
+   */
   readonly reason: string;
 
   constructor(input: string, reason: string, message: string) {
