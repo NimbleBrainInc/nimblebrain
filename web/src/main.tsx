@@ -1,10 +1,23 @@
+import hankenGroteskUrl from "@fontsource-variable/hanken-grotesk/files/hanken-grotesk-latin-wght-normal.woff2?url";
+import jetbrainsMonoUrl from "@fontsource-variable/jetbrains-mono/files/jetbrains-mono-latin-wght-normal.woff2?url";
 import * as Sentry from "@sentry/react";
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import { App } from "./App";
+import { registerHostFontUrls } from "./bridge/fonts";
 import { ErrorBoundary } from "./components/ErrorBoundary";
 import { registerStaleChunkRecovery } from "./lib/stale-chunk-recovery";
 import { initSentry } from "./sentry";
+
+// Hand the built font URLs to the bridge. This is the only place the font
+// packages are imported as values: bridge/fonts.ts is reachable from the shared
+// bridge protocol, which the root unit suite exercises without web/ deps, so a
+// `?url` import there would break `Unit Tests (root deps only)`. Same seam as
+// initSentry below. Unregistered, apps simply get no faces.
+registerHostFontUrls({
+  "Hanken Grotesk": hankenGroteskUrl,
+  "JetBrains Mono Variable": jetbrainsMonoUrl,
+});
 
 // Initialize crash tracking before anything else so it wraps the whole app.
 // No-op unless configured at runtime (see sentry.ts / config.ts). The browser

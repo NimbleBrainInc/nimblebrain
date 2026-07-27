@@ -11,31 +11,30 @@
  * them into the app document via the CSS Font Loading API. Apps import nothing
  * and opt into nothing — typography arrives with the rest of the theme.
  *
- * Three constraints shape what's here:
+ * **Why the URLs are injected rather than imported here.** This module is
+ * reachable from the shared bridge protocol, which the ROOT unit suite
+ * exercises without `web/` dependencies installed. Importing the font packages
+ * here would put a web-only value in that graph and break `Unit Tests (root
+ * deps only)` — the same seam `sentry.ts` documents. The specs below (family,
+ * weight) are plain data and stay here where the palette guard can check them;
+ * the browser entry supplies the hashed asset URLs via
+ * {@link registerHostFontUrls}. Unregistered, this yields no faces, which is
+ * the supported "host sends no fonts" configuration rather than an error.
  *
- *  1. **Family names must match the token values**, not the upstream package's.
- *     Fontsource ships these as `'Hanken Grotesk Variable'` / `'JetBrains Mono
- *     Variable'`; `palette.ts` names `'Hanken Grotesk'` and `'JetBrains Mono
- *     Variable'`. A descriptor's family is whatever we declare, so we declare
- *     the token's name and point it at the file. `fonts.test.ts` pins the pair
- *     together so a palette rename can't silently orphan the face.
+ * Two further constraints shape what's here:
  *
- *  2. **The URL must satisfy the iframe's CSP**, and `'self'` does not help
- *     there: the frame is `srcdoc` without `allow-same-origin`, so it runs in
- *     an opaque origin where `'self'` matches nothing. These are absolute
- *     same-origin URLs, and `buildCSP` adds that origin to `font-src`.
- *
- *  3. **Latin subset only.** Fontsource splits by unicode range, but the
- *     ext-apps font descriptor has no `unicodeRange` field, so a face here
- *     claims every codepoint. Shipping just `latin` means a glyph the font
- *     lacks falls through to the next family in the stack — correct behaviour,
- *     and the reason every `--font-*` token keeps a web-safe tail.
+ *  - **Family names must match the token values**, not the upstream package's.
+ *    Fontsource ships these as `'Hanken Grotesk Variable'` / `'JetBrains Mono
+ *    Variable'`; `palette.ts` names `'Hanken Grotesk'` and `'JetBrains Mono
+ *    Variable'`. A descriptor's family is whatever we declare, so we declare the
+ *    token's name and point it at the file. `fonts.test.ts` pins the pair so a
+ *    palette rename can't silently orphan a face.
+ *  - **Latin subset only.** Fontsource splits by unicode range, but the ext-apps
+ *    font descriptor has no `unicodeRange` field, so a face here claims every
+ *    codepoint. Shipping just `latin` means a glyph the font lacks falls through
+ *    to the next family in the stack — correct behaviour, and the reason every
+ *    `--font-*` token keeps a web-safe tail.
  */
-
-// `?url` yields the hashed, content-addressed asset path Vite emits, so the
-// bytes are immutably cacheable and shared across every iframe on the page.
-import hankenLatin from "@fontsource-variable/hanken-grotesk/files/hanken-grotesk-latin-wght-normal.woff2?url";
-import jetbrainsLatin from "@fontsource-variable/jetbrains-mono/files/jetbrains-mono-latin-wght-normal.woff2?url";
 
 /** One `@font-face` for an app iframe. Mirrors `FontFaceDescriptor` in
  *  `@nimblebrain/synapse`; kept structural so the bridge takes no SDK import. */
@@ -52,12 +51,40 @@ export type HostFontFace = {
 export const FONT_FACES_CONTEXT_KEY = "synapse/fontFaces";
 
 /**
+ * The families the iframe token set names, and the weight range each variable
+ * file covers. Data only — no asset imports — so the root unit suite can check
+ * these against the palette without `web/` dependencies installed.
+ */
+export const FONT_SPECS = [
+  { family: "Hanken Grotesk", weight: "100 900" },
+  { family: "JetBrains Mono Variable", weight: "100 800" },
+] as const satisfies readonly { family: string; weight: string }[];
+
+/** family → hashed asset URL, supplied by the browser entry. */
+let fontUrls: Readonly<Record<string, string>> = {};
+
+/**
+ * Register the built asset URL for each family. Called once from the browser
+ * entry (`main.tsx`), which is the only place the font packages are imported as
+ * values. Backend and root-unit importers never call this and get no faces.
+ */
+export function registerHostFontUrls(urls: Readonly<Record<string, string>>): void {
+  fontUrls = urls;
+}
+
+/** Test seam — drop registered URLs so a suite can assert the unregistered path. */
+export function resetHostFontUrls(): void {
+  fontUrls = {};
+}
+
+/**
  * The host's own origin, or `""` where there isn't a usable one.
  *
  * Derived rather than configured so dev, preview and prod agree without a knob.
- * A document can report an origin that is not a URL — `"null"` for an opaque
- * origin, `""` in some test DOMs — so this validates rather than trusting it,
- * and every caller must handle the empty case.
+ * A document can report an origin that is not a usable URL — `"null"` for an
+ * opaque origin, `""` in some test DOMs, `about:blank` whose parsed origin is
+ * the literal string `"null"` — so this validates rather than trusting it, and
+ * every caller must handle the empty case.
  */
 export function fontOrigin(): string {
   if (typeof window === "undefined") return "";
@@ -65,9 +92,7 @@ export function fontOrigin(): string {
   if (!origin || origin === "null") return "";
   try {
     const parsed = new URL(origin);
-    // `about:blank` parses but its `.origin` is the literal string "null", and
-    // a non-http scheme is not something `font-src` can act on. Only an http(s)
-    // origin is usable, so anything else is treated as "no origin".
+    // A non-http scheme is not something `font-src` can act on.
     if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return "";
     return parsed.origin;
   } catch {
@@ -76,14 +101,12 @@ export function fontOrigin(): string {
 }
 
 /**
- * Absolute same-origin URL for a Vite asset path.
+ * Absolute same-origin URL for a built asset path.
  *
  * `'self'` is meaningless in an opaque-origin frame, so the app has to be given
  * a resolvable absolute URL. Total by construction: this runs inside
  * `buildHostExtensions`, which runs during a placement render, so throwing here
- * would take down the whole app mount over typography. Falls back to the raw
- * path, which at worst yields a face the app can't fetch — the same outcome as
- * sending no fonts at all.
+ * would take down the whole app mount over typography.
  */
 function absolute(assetPath: string): string {
   const origin = fontOrigin();
@@ -96,27 +119,24 @@ function absolute(assetPath: string): string {
 }
 
 /**
- * Descriptors for the two families the iframe token set names.
+ * Descriptors for every family whose asset URL has been registered.
  *
- * Both are variable fonts covering `100 900`, so one file serves every weight
- * the type scale uses. `display: swap` paints text in the fallback immediately
- * rather than blocking on the download.
+ * `display: swap` paints text in the fallback immediately rather than blocking
+ * on the download. A family with no registered URL is skipped, so a partial
+ * registration degrades to fewer faces rather than a broken one.
  */
 export function getHostFontFaces(): HostFontFace[] {
-  return [
-    {
-      family: "Hanken Grotesk",
-      src: `url('${absolute(hankenLatin)}') format('woff2-variations')`,
-      weight: "100 900",
+  const faces: HostFontFace[] = [];
+  for (const spec of FONT_SPECS) {
+    const url = fontUrls[spec.family];
+    if (!url) continue;
+    faces.push({
+      family: spec.family,
+      src: `url('${absolute(url)}') format('woff2-variations')`,
+      weight: spec.weight,
       style: "normal",
       display: "swap",
-    },
-    {
-      family: "JetBrains Mono Variable",
-      src: `url('${absolute(jetbrainsLatin)}') format('woff2-variations')`,
-      weight: "100 800",
-      style: "normal",
-      display: "swap",
-    },
-  ];
+    });
+  }
+  return faces;
 }

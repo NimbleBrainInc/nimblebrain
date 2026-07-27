@@ -15,11 +15,26 @@
  *     matches nothing.
  */
 
-import { describe, expect, test } from "bun:test";
+import { beforeEach, describe, expect, test } from "bun:test";
 import { buildCSP } from "../../../web/src/bridge/iframe.ts";
-import { FONT_FACES_CONTEXT_KEY, fontOrigin, getHostFontFaces } from "../../../web/src/bridge/fonts.ts";
+import {
+  FONT_FACES_CONTEXT_KEY,
+  FONT_SPECS,
+  fontOrigin,
+  getHostFontFaces,
+  registerHostFontUrls,
+  resetHostFontUrls,
+} from "../../../web/src/bridge/fonts.ts";
 import { buildHostContext, buildHostExtensions } from "../../../web/src/bridge/host-extensions.ts";
 import { paletteToExtAppsTokens } from "../../../web/src/theme/projections.ts";
+
+/** The browser entry supplies these at runtime; fixtures stand in here so the
+ *  mapping is exercised without `web/` dependencies. */
+function registerFixtures(): void {
+  registerHostFontUrls(Object.fromEntries(FONT_SPECS.map((s) => [s.family, `/assets/${s.family}.woff2`])));
+}
+
+beforeEach(registerFixtures);
 
 /** Families named by the font tokens the host injects into an iframe. */
 function familiesNamedByTokens(): string[] {
@@ -43,9 +58,9 @@ describe("host font faces cover what the tokens name", () => {
     // The silent-failure guard. Rename a family in `palette.ts` without
     // updating `fonts.ts` and nothing throws — the iframe just renders in
     // `system-ui` and looks plausible. This is what catches that.
-    const shipped = new Set(getHostFontFaces().map((f) => f.family));
+    const shipped = new Set(FONT_SPECS.map((f) => f.family));
     for (const family of familiesNamedByTokens()) {
-      expect(shipped.has(family), `no @font-face shipped for token family "${family}"`).toBe(true);
+      expect(shipped.has(family), `no font spec for token family "${family}"`).toBe(true);
     }
   });
 
@@ -64,9 +79,9 @@ describe("host font faces cover what the tokens name", () => {
   test("faces are variable and cover the type scale's weight range", () => {
     // One variable file per family serves every weight, so the type scale
     // can't outrun what's loaded.
-    for (const face of getHostFontFaces()) {
+    for (const face of FONT_SPECS) {
       expect(face.weight).toMatch(/^\d+ \d+$/);
-      const [lo, hi] = (face.weight ?? "").split(" ").map(Number);
+      const [lo, hi] = face.weight.split(" ").map(Number);
       expect(lo).toBeLessThanOrEqual(400);
       expect(hi).toBeGreaterThanOrEqual(700);
     }
@@ -216,5 +231,25 @@ describe("building descriptors can never break the host", () => {
         (globalThis as { window?: unknown }).window = prior;
       }
     }
+  });
+});
+
+describe("unregistered URLs mean no fonts, not a broken host", () => {
+  test("backend and root-unit importers get an empty face list", () => {
+    // `bridge/fonts.ts` is reachable from the shared bridge protocol, which the
+    // root unit suite exercises without `web/` deps. It must therefore never
+    // import the font packages — the browser entry injects the URLs. Absent
+    // that call, no faces, which the SDK reads as "host sends no fonts".
+    resetHostFontUrls();
+    expect(getHostFontFaces()).toEqual([]);
+    expect(() => buildHostExtensions(null)).not.toThrow();
+  });
+
+  test("a partial registration degrades to fewer faces, not a malformed one", () => {
+    resetHostFontUrls();
+    registerHostFontUrls({ [FONT_SPECS[0].family]: "/assets/one.woff2" });
+    const faces = getHostFontFaces();
+    expect(faces).toHaveLength(1);
+    expect(faces[0].family).toBe(FONT_SPECS[0].family);
   });
 });
