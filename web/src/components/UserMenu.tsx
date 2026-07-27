@@ -97,12 +97,12 @@ function TriggerDetails({
       <div className="flex-1 min-w-0 text-left">
         <div className="truncate font-medium text-sidebar-foreground leading-tight">{label}</div>
         {displayName && email && displayName !== email && (
-          <div className="truncate text-2xs text-sidebar-foreground/50 leading-tight">{email}</div>
+          <div className="truncate text-2xs text-sidebar-foreground leading-tight">{email}</div>
         )}
       </div>
       <ChevronUp
         className={cn(
-          "shrink-0 w-4 h-4 text-sidebar-foreground/50 transition-transform duration-200",
+          "shrink-0 w-4 h-4 text-sidebar-foreground transition-transform duration-200",
           open ? "rotate-0" : "rotate-180",
         )}
       />
@@ -127,7 +127,7 @@ function DropdownIdentityHeader({ label, email }: { label: string; email: string
     <div className="px-3 py-2.5 border-b border-sidebar-border">
       <div className="truncate text-sm font-medium text-sidebar-foreground">{label}</div>
       {email && email !== label && (
-        <div className="truncate text-2xs text-sidebar-foreground/50">{email}</div>
+        <div className="truncate text-2xs text-sidebar-foreground">{email}</div>
       )}
     </div>
   );
@@ -152,7 +152,7 @@ function DropdownActions({
         onClick={onProfile}
         className="flex items-center gap-2.5 w-full rounded-sm px-2 py-2 text-sm text-left transition-all duration-150 text-sidebar-foreground hover:bg-sidebar-foreground/5"
       >
-        <UserCog className="w-4 h-4 text-sidebar-foreground/60" />
+        <UserCog className="w-4 h-4 text-sidebar-foreground" />
         <span>Profile settings</span>
       </button>
       {isOrgAdmin && (
@@ -161,7 +161,7 @@ function DropdownActions({
           onClick={onOrgSettings}
           className="flex items-center gap-2.5 w-full rounded-sm px-2 py-2 text-sm text-left transition-all duration-150 text-sidebar-foreground hover:bg-sidebar-foreground/5"
         >
-          <Building2 className="w-4 h-4 text-sidebar-foreground/60" />
+          <Building2 className="w-4 h-4 text-sidebar-foreground" />
           <span>Organization</span>
         </button>
       )}
@@ -170,7 +170,7 @@ function DropdownActions({
         onClick={onSignOut}
         className="flex items-center gap-2.5 w-full rounded-sm px-2 py-2 text-sm text-left transition-all duration-150 text-sidebar-foreground hover:bg-sidebar-foreground/5"
       >
-        <LogOut className="w-4 h-4 text-sidebar-foreground/60" />
+        <LogOut className="w-4 h-4 text-sidebar-foreground" />
         <span>Sign out</span>
       </button>
     </div>

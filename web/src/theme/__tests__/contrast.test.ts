@@ -1,4 +1,6 @@
 import { describe, expect, test } from "bun:test";
+import { readdirSync, readFileSync, statSync } from "node:fs";
+import { join } from "node:path";
 import { AA_TEXT, contrastRatio, over } from "../contrast.ts";
 import { colors, extOnlyColors, type Mode, type Pair, pick } from "../palette.ts";
 
@@ -247,6 +249,74 @@ describe("translucent tints track their source token", () => {
         test(`${mode}: ${source} on ${tint} over ${ground} clears ${AA_TEXT}:1`, () => {
           const fill = over(token(source, mode), token(ground, mode), 10);
           expect(contrastRatio(token(source, mode), fill)).toBeGreaterThanOrEqual(AA_TEXT);
+        });
+      }
+    }
+  }
+});
+
+/**
+ * Foreground alpha — `text-<token>/N` — computed rather than assumed.
+ *
+ * Tailwind resolves `/N` on a text colour the same way it does on a background:
+ * the token is composited toward whatever is behind it. So the rendered ratio is
+ * not the token's, and no assertion over token values can see it. This is the
+ * third alpha family, after the tinted backgrounds and `primary/90`, and it was
+ * the largest: 35 sites across seven combinations, of which every one but
+ * `text-foreground/N` sat below AA — the worst a 10px uppercase section label at
+ * `sidebar-foreground/40`, **1.833:1**, in the resting state, in both modes.
+ *
+ * They are gone now, not exempted. The sidebar's hierarchy came entirely from
+ * this ramp, because `sidebar-foreground` and `muted-foreground` are the same
+ * value — one text colour, four opacities. On a near-white ground there is no
+ * room to rebuild that in colour: the step below `sidebar-foreground` (6.331)
+ * that still clears 4.5:1 is about one increment wide, which is a rounding
+ * error rather than a hierarchy. So the ramp is retired and size, weight and
+ * case carry the levels, which is what `palette.ts` already requires of the
+ * scope tiers — colour never encodes a distinction alone.
+ *
+ * The guard is a scanner plus a table rather than a table alone, because a
+ * hand-listed set of things to check is a denylist by omission — the failure
+ * this file has been bitten by more than once. The scanner makes the set total:
+ * a new `text-<token>/N` anywhere in `web/src` fails until someone records the
+ * ground it renders on, and recording it computes the ratio.
+ */
+describe("foreground alpha — text-<token>/N", () => {
+  /** Every combination in the shell, with the ground(s) it is painted on. */
+  const ALPHA_TEXT: [token: TokenName, pct: number, grounds: TokenName[]][] = [
+    // `BriefingView` list items and the `SkillsTab` description, both on the
+    // page ground. The one surviving combination, and it clears AA by a wide
+    // margin — kept because it passes, not grandfathered.
+    ["foreground", 80, ["background", "card"]],
+  ];
+
+  const declared = new Set(ALPHA_TEXT.map(([t, p]) => `text-${t}/${p}`));
+
+  test("every text-<token>/N in web/src is declared above", () => {
+    const root = join(import.meta.dir, "..", "..");
+    const walk = (dir: string): string[] =>
+      readdirSync(dir).flatMap((e) => {
+        const p = join(dir, e);
+        return statSync(p).isDirectory() ? walk(p) : /\.tsx$/.test(e) ? [p] : [];
+      });
+
+    const undeclared = new Set<string>();
+    for (const file of walk(root)) {
+      for (const [cls] of readFileSync(file, "utf8").matchAll(/text-[a-z][\w-]*\/\d{1,3}/g)) {
+        if (!declared.has(cls)) undeclared.add(`${cls} — ${file.slice(root.length + 1)}`);
+      }
+    }
+    expect([...undeclared].sort().join("\n")).toBe("");
+  });
+
+  for (const mode of ["light", "dark"] as const) {
+    for (const [tokenName, pct, grounds] of ALPHA_TEXT) {
+      for (const ground of grounds) {
+        test(`${mode}: text-${tokenName}/${pct} on ${ground} clears ${AA_TEXT}:1`, () => {
+          const g = token(ground, mode);
+          expect(contrastRatio(over(token(tokenName, mode), g, pct), g)).toBeGreaterThanOrEqual(
+            AA_TEXT,
+          );
         });
       }
     }

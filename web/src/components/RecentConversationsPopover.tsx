@@ -183,7 +183,7 @@ export function RecentConversationsPopover({
                           </span>
                         </div>
                         {c.preview.trim() && c.preview.trim() !== title && (
-                          <div className="text-3xs text-muted-foreground/80 truncate">
+                          <div className="text-3xs text-muted-foreground truncate">
                             {c.preview.trim()}
                           </div>
                         )}

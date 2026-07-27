@@ -71,7 +71,7 @@ export function WorkspaceNav({ collapsed = false }: WorkspaceNavProps) {
     return (
       <div
         className={cn(
-          "text-xs text-sidebar-foreground/50",
+          "text-xs text-sidebar-foreground",
           collapsed ? "px-2 py-2 text-center" : "px-4 py-2",
         )}
         data-testid="sidebar-workspace-nav-loading"
@@ -109,7 +109,7 @@ export function WorkspaceNav({ collapsed = false }: WorkspaceNavProps) {
       data-collapsed="false"
     >
       <div className="flex items-center justify-between px-4 pt-1 pb-1">
-        <div className="text-2xs font-bold tracking-[0.08em] text-sidebar-foreground/60 uppercase">
+        <div className="text-2xs font-bold tracking-[0.08em] text-sidebar-foreground uppercase">
           Workspaces
         </div>
         <button
@@ -118,7 +118,7 @@ export function WorkspaceNav({ collapsed = false }: WorkspaceNavProps) {
           aria-label="Add workspace"
           title="Add workspace"
           data-testid="sidebar-workspace-add"
-          className="p-1 rounded-sm text-sidebar-foreground/60 hover:text-sidebar-foreground hover:bg-sidebar-foreground/10 transition-colors"
+          className="p-1 rounded-sm text-sidebar-foreground hover:bg-sidebar-foreground/10 transition-colors"
         >
           <Plus className="size-3.5" />
         </button>
@@ -126,7 +126,7 @@ export function WorkspaceNav({ collapsed = false }: WorkspaceNavProps) {
 
       {ordered.length === 0 ? (
         <div
-          className="px-4 py-2 text-xs text-sidebar-foreground/50 italic"
+          className="px-4 py-2 text-xs text-sidebar-foreground italic"
           data-testid="sidebar-workspace-nav-empty"
         >
           No workspaces
@@ -146,7 +146,7 @@ export function WorkspaceNav({ collapsed = false }: WorkspaceNavProps) {
         type="button"
         onClick={handleAdd}
         data-testid="sidebar-workspace-new"
-        className="flex items-center gap-2 mx-2 my-px px-3 py-1.5 rounded-sm text-sm text-sidebar-foreground/60 hover:text-sidebar-foreground hover:bg-sidebar-foreground/5 transition-colors"
+        className="flex items-center gap-2 mx-2 my-px px-3 py-1.5 rounded-sm text-sm text-sidebar-foreground hover:bg-sidebar-foreground/5 transition-colors"
       >
         <Plus className="size-[18px] shrink-0" />
         <span className="flex-1 truncate text-left">New workspace</span>
@@ -240,7 +240,7 @@ function WorkspaceHeaderRow({
       <ChevronRight
         aria-hidden="true"
         className={cn(
-          "size-3.5 shrink-0 text-sidebar-foreground/40 transition-transform",
+          "size-3.5 shrink-0 text-sidebar-foreground transition-transform",
           focused && "rotate-90",
         )}
       />
@@ -257,7 +257,7 @@ function WorkspaceGlyph({ workspace, personal }: { workspace: WorkspaceInfo; per
     return (
       <span
         aria-hidden="true"
-        className="size-[18px] shrink-0 flex items-center justify-center rounded-sm bg-sidebar-foreground/10 text-sidebar-foreground/80"
+        className="size-[18px] shrink-0 flex items-center justify-center rounded-sm bg-sidebar-foreground/10 text-sidebar-foreground"
       >
         <Home className="size-3" />
       </span>
@@ -367,7 +367,7 @@ function WorkspaceContents({ workspace, focused }: { workspace: WorkspaceInfo; f
             <Link
               to={`/w/${slug}/`}
               data-testid="sidebar-workspace-view-all"
-              className="flex items-center gap-1.5 px-2 py-1 text-xs text-sidebar-foreground/50 hover:text-sidebar-foreground transition-colors"
+              className="flex items-center gap-1.5 px-2 py-1 text-xs text-sidebar-foreground transition-colors"
             >
               <ArrowRight className="size-3 shrink-0" />
               <span className="truncate">View all {apps.length} apps</span>
@@ -394,7 +394,7 @@ function WorkspaceContents({ workspace, focused }: { workspace: WorkspaceInfo; f
 
 function SubLabel({ children }: { children: React.ReactNode }) {
   return (
-    <div className="px-2 pt-2 pb-0.5 text-2xs font-bold tracking-[0.08em] text-sidebar-foreground/40 uppercase">
+    <div className="px-2 pt-2 pb-0.5 text-2xs font-bold tracking-[0.08em] text-sidebar-foreground uppercase">
       {children}
     </div>
   );
@@ -427,7 +427,7 @@ function NestedNavLink({
           "flex items-center gap-2 text-sm transition-colors rounded-sm px-2 py-1",
           isActive
             ? "bg-sidebar-foreground/10 text-sidebar-foreground"
-            : "text-sidebar-foreground/80 hover:bg-sidebar-foreground/5 hover:text-sidebar-foreground",
+            : "text-sidebar-foreground hover:bg-sidebar-foreground/5",
         )
       }
     >
@@ -465,7 +465,7 @@ function NestedAppLink({
         "flex items-center gap-2 text-sm transition-colors rounded-sm px-2 py-1",
         isActive
           ? "bg-sidebar-foreground/10 text-sidebar-foreground"
-          : "text-sidebar-foreground/80 hover:bg-sidebar-foreground/5 hover:text-sidebar-foreground",
+          : "text-sidebar-foreground hover:bg-sidebar-foreground/5",
       )}
     >
       <ConnectorIcon name={label} iconUrl={iconUrl} className="size-[18px] rounded-xs text-3xs" />
@@ -481,7 +481,7 @@ function CountBadge({ count }: { count?: number }) {
   return (
     <span
       data-testid="sidebar-workspace-count"
-      className="shrink-0 text-2xs tabular-nums text-sidebar-foreground/40"
+      className="shrink-0 text-2xs tabular-nums text-sidebar-foreground"
     >
       {count}
     </span>

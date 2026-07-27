@@ -146,7 +146,7 @@ export function ContextInspectorPage() {
             <button type="button" onClick={goBack} className="hover:text-foreground">
               ← Back
             </button>
-            <span className="mx-1.5 text-muted-foreground/60">·</span>
+            <span className="mx-1.5 text-muted-foreground">·</span>
             <span className="font-mono">{convId}</span>
           </span>
           {slug && (
@@ -384,7 +384,7 @@ function LayerAccordion({
     <div>
       <div className="px-6 pt-3 pb-2 text-3xs font-semibold uppercase tracking-wider text-muted-foreground">
         Composition
-        <span className="font-normal normal-case tracking-normal text-2xs text-muted-foreground/60">
+        <span className="font-normal normal-case tracking-normal text-2xs text-muted-foreground">
           {" "}
           · what would load now
         </span>
@@ -453,7 +453,7 @@ function AccordionRow({
           <span className="text-sm font-medium flex-1 min-w-0 truncate" title={layer.source}>
             {layerTitle(layer)}
             {layer.segment === "volatile" && (
-              <span className="text-3xs text-muted-foreground/60"> · per-turn</span>
+              <span className="text-3xs text-muted-foreground"> · per-turn</span>
             )}
           </span>
           <span className="text-3xs text-muted-foreground tabular-nums shrink-0">
@@ -468,7 +468,7 @@ function AccordionRow({
             />
           </span>
           {layerDescriptor(layer) && (
-            <span className="text-3xs text-muted-foreground/80 shrink-0">
+            <span className="text-3xs text-muted-foreground shrink-0">
               {layerDescriptor(layer)}
             </span>
           )}

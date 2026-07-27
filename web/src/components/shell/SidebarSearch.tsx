@@ -24,11 +24,11 @@ export function SidebarSearch() {
       >
         <Search
           aria-hidden="true"
-          className="text-sidebar-foreground/50 shrink-0"
+          className="text-sidebar-foreground shrink-0"
           style={{ width: 14, height: 14 }}
         />
-        <span className="flex-1 truncate text-sidebar-foreground/50">Search or run a command</span>
-        <kbd className="shrink-0 inline-flex items-center px-1.5 py-0.5 rounded text-3xs font-medium bg-sidebar-foreground/10 text-sidebar-foreground/60 border border-sidebar-border">
+        <span className="flex-1 truncate text-sidebar-foreground">Search or run a command</span>
+        <kbd className="shrink-0 inline-flex items-center px-1.5 py-0.5 rounded text-3xs font-medium bg-sidebar-foreground/10 text-sidebar-foreground border border-sidebar-border">
           ⌘P
         </kbd>
       </button>

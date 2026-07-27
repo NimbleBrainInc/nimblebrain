@@ -291,7 +291,7 @@ function IdentityRow({ installed, name }: { installed: InstalledConnector; name:
           <p className="text-xs text-muted-foreground font-mono mt-0.5">
             {vlabel(shownVersion)}
             {versionDrift && (
-              <span className="ml-2 text-muted-foreground/60">catalog {vlabel(versionDrift)}</span>
+              <span className="ml-2 text-muted-foreground">catalog {vlabel(versionDrift)}</span>
             )}
           </p>
         )}
