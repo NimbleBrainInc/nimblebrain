@@ -11,7 +11,11 @@
  * **Every candidate is probed before it ships.** Being listed in `/v1/models`
  * is not evidence that a model serves: `deepseek-ai/DeepSeek-V4-Pro` was listed,
  * priced, and advertised `tools` while every completion hung with no response
- * and no status — which stalls an agent run indefinitely rather than failing.
+ * and no status. The stream watchdog does bound that (90s to first content,
+ * then `withRetry`'s 4 attempts), so it fails rather than hanging forever — but
+ * it costs ~6 minutes per call to arrive at "this model does not work", which is
+ * indistinguishable from a hang to whoever is waiting. The watchdog is the
+ * backstop; keeping the model out of the catalog is the fix.
  * `supported_features` is a claim too, so the probe sends a real tool and
  * requires a real `tool_calls` back. A model that cannot do that is useless on
  * an agent platform, so it does not belong in the catalog.
