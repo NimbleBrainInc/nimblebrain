@@ -2,6 +2,11 @@ import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import { log } from "../observability/log.ts";
+import {
+  isIdentitySource,
+  isPersonalConnectorName,
+  PERSONAL_CONNECTOR_PREFIX,
+} from "../tools/identity-sources.ts";
 import { WorkspaceContext } from "../workspace/context.ts";
 import { resolveLocalBundle } from "./resolve.ts";
 import type { BundleRef } from "./types.ts";
@@ -31,15 +36,53 @@ const RESERVED_TOOL_PREFIXES = new Set(["nb"]);
  * as first-party system/kernel tools — so the name is refused. Exposed as a
  * predicate for callers that reject gracefully (returning a tool result);
  * `validateServerName` is the throwing form over the same set.
+ *
+ * The kernel identity sources (`conversations` / `files` / `automations`) are
+ * reserved on the same footing. They are peers of `nb`, not children of it, and
+ * they reach the model under the same bare `<source>__<tool>` shape a workspace
+ * source now uses — so a workspace bundle named `conversations` would be
+ * SHADOWED by the identity door, which `routeToolCall` consults first. Before
+ * workspace names went bare the two were distinguishable (`ws_<id>-conversations__x`
+ * vs `conversations__x`) and this could not arise; it is reachable now, so the
+ * names are reserved rather than left to chance.
+ *
+ * The personal-connector marker is reserved here too, for the same reason: a
+ * workspace source carrying it would shadow the identity door. It is in the
+ * predicate for completeness — a function called `isReservedServerName` must not
+ * answer `false` for a reserved name — but no current caller can reach it. The
+ * two that exist pass either a `slugifyServerName` result (which maps every
+ * non-`[a-z0-9-]` character to `-`, so it can never contain `_`) or go through
+ * `validateServerName`, which tests the marker separately below to raise a more
+ * specific error. The live enforcement path is an operator-set explicit
+ * `ref.serverName`, which only `validateServerName` sees.
  */
 export function isReservedServerName(serverName: string): boolean {
-  return RESERVED_TOOL_PREFIXES.has(serverName);
+  return (
+    RESERVED_TOOL_PREFIXES.has(serverName) ||
+    isIdentitySource(serverName) ||
+    isPersonalConnectorName(serverName)
+  );
 }
 
 /** Throw if a server name would shadow system tool prefixes. */
 export function validateServerName(serverName: string): void {
+  if (isPersonalConnectorName(serverName)) {
+    throw new Error(
+      `Source name '${serverName}' is reserved: the '${PERSONAL_CONNECTOR_PREFIX}' prefix marks ` +
+        `a personal connector on the identity door, and a workspace source using it would shadow one.`,
+    );
+  }
   if (isReservedServerName(serverName)) {
-    throw new Error(`Source name '${serverName}' is reserved for system tools`);
+    // Reached at INSTALL and at every BOOT (`startup.ts` validates each bundle
+    // start), so an already-installed source with one of these names stops
+    // starting after upgrade. That is the honest outcome — `routeToolCall`
+    // consults the identity door first, so such a source is unreachable anyway
+    // — but the operator sees only this line, so it has to say what to do.
+    throw new Error(
+      `Source name '${serverName}' is reserved for platform tools (nb, conversations, files, automations). ` +
+        `Its tools would be shadowed by the identity door and unreachable. Reinstall the bundle under a different ` +
+        `source name, or set an explicit \`serverName\` on its ref.`,
+    );
   }
 }
 

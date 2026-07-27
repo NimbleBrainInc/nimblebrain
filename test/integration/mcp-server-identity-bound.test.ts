@@ -7,7 +7,7 @@
  *   - No header → identity tools only (conversations, files, automations);
  *     a `ws_<id>-...` call is refused (`WorkspaceToolUnavailable`).
  *   - Member header → that workspace's tools (namespaced) + identity tools;
- *     a `ws_<other>-...` call is `CrossWorkspaceReachDenied`.
+ *     a `ws_<other>-...` call is rejected as a retired wire form.
  *   - Non-member / unknown header → fail-closed to identity tools only
  *     (the header is not trusted to grant access it doesn't already imply).
  *
@@ -172,16 +172,35 @@ function personalWsId(): string {
   return personalWorkspaceIdFor(DEV_IDENTITY.id);
 }
 
+// Wire names are bare: the workspace a call lands in comes from the request's
+// validated `X-Workspace-Id`, not from the name. `personalToolNameNamespaced`
+// below keeps the retired `ws_<id>-` form on purpose — it is the shape a stale
+// client still sends, and its REJECTION is what makes cross-workspace reach
+// unexpressible rather than merely denied.
 function sharedToolName(): string {
-  return `${SHARED_WS_ID}-${SHARED_SOURCE_NAME}__${SHARED_TOOL_BARE}`;
+  return `${SHARED_SOURCE_NAME}__${SHARED_TOOL_BARE}`;
 }
 
 function personalToolName(): string {
+  return `${PERSONAL_SOURCE_NAME}__${PERSONAL_TOOL_BARE}`;
+}
+
+/**
+ * The personal workspace's tool in the legacy `ws_<id>-` form.
+ *
+ * Required for the cross-workspace denial test, and the requirement is the
+ * point: a BARE name cannot express another workspace at all, so there is
+ * nothing to deny — it simply resolves against the session's own registry. The
+ * legacy form is the only shape that can still NAME a second workspace, so it
+ * is the shape a stale client still sends, and its REJECTION is the guarantee:
+ * the reach it once guarded is now unexpressible rather than merely refused.
+ */
+function personalToolNameNamespaced(): string {
   return `${personalWsId()}-${PERSONAL_SOURCE_NAME}__${PERSONAL_TOOL_BARE}`;
 }
 
-function strangerToolName(): string {
-  return `${STRANGER_WS_ID}-${STRANGER_SOURCE_NAME}__${STRANGER_TOOL_BARE}`;
+function strangerToolNameBare(): string {
+  return `${STRANGER_SOURCE_NAME}__${STRANGER_TOOL_BARE}`;
 }
 
 async function createMcpClient(
@@ -250,7 +269,17 @@ describe("/mcp with no X-Workspace-Id (identity tools only)", () => {
     }
   });
 
-  it("a bare workspace-app name rejects with -32602 unknown_identity_source (no silent workspace routing)", async () => {
+  it("a bare workspace-source name rejects with -32602 workspace_access_denied (no silent workspace routing)", async () => {
+    // The property under test is unchanged and is the one that matters: with no
+    // `X-Workspace-Id` there is no workspace to route into, and a workspace
+    // source is REFUSED rather than guessed at.
+    //
+    // Only the discriminator moved. A bare workspace-source name used to be a
+    // malformed identity call (`unknown_identity_source`) because every real
+    // workspace call carried a `ws_<id>-` prefix. Bare is now the normal
+    // workspace form, so the refusal is now `WorkspaceToolUnavailable`, which
+    // subclasses `WorkspaceAccessDenied` and therefore reports the same
+    // `workspace_access_denied` discriminator a cross-workspace reach does.
     const client = await createMcpClient();
     try {
       const { code, reason } = await callExpectingError(
@@ -258,7 +287,7 @@ describe("/mcp with no X-Workspace-Id (identity tools only)", () => {
         `${SHARED_SOURCE_NAME}__${SHARED_TOOL_BARE}`,
       );
       expect(code).toBe(-32602);
-      expect(reason).toBe("unknown_identity_source");
+      expect(reason).toBe("workspace_access_denied");
     } finally {
       await client.close();
     }
@@ -319,16 +348,17 @@ describe("/mcp with a member X-Workspace-Id (walled to that workspace)", () => {
     }
   });
 
-  it("SECURITY: a tool call to another member workspace is denied (CrossWorkspaceReachDenied)", async () => {
-    // Session header = Helix; the dev IS a member of the personal workspace
-    // too, but the wall bounds each request to its one named workspace — a
-    // reach to any other is denied, membership notwithstanding.
+  it("SECURITY: another member workspace cannot be NAMED, so it cannot be reached", async () => {
+    // Session header = Helix; the dev IS a member of the personal workspace too.
+    // Naming it is now impossible rather than denied: the `ws_<id>-` form is
+    // retired, so this is rejected as a stale wire name before any workspace
+    // resolution. The guarantee is structural: no name addresses a second
+    // workspace, so there is no attempt left to catch.
     personalSource.reset();
     const client = await createMcpClient({ workspace: SHARED_WS_ID });
     try {
-      const { code, reason } = await callExpectingError(client, personalToolName());
+      const { code } = await callExpectingError(client, personalToolNameNamespaced());
       expect(code).toBe(-32602);
-      expect(reason).toBe("workspace_access_denied");
       // The other workspace's tool never ran.
       expect(personalSource.callCount()).toBe(0);
     } finally {
@@ -347,7 +377,7 @@ describe("/mcp fail-closed on a non-member X-Workspace-Id", () => {
       // Identity tools only — the stranger workspace exists and has tools, but
       // the dev is not a member, so the header buys nothing.
       expect(names).toContain("conversations__list");
-      expect(names).not.toContain(strangerToolName());
+      expect(names).not.toContain(strangerToolNameBare());
       expect(names.every((n) => !n.startsWith("ws_"))).toBe(true);
     } finally {
       await client.close();
@@ -358,7 +388,9 @@ describe("/mcp fail-closed on a non-member X-Workspace-Id", () => {
     strangerSource.reset();
     const client = await createMcpClient({ workspace: STRANGER_WS_ID });
     try {
-      const { code, reason } = await callExpectingError(client, strangerToolName());
+      // Bare name → the session has no workspace (the header names one the caller
+      // is not a member of, so it is dropped), and a workspace source is refused.
+      const { code, reason } = await callExpectingError(client, strangerToolNameBare());
       expect(code).toBe(-32602);
       expect(reason).toBe("workspace_access_denied");
       expect(strangerSource.callCount()).toBe(0);

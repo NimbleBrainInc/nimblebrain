@@ -31,7 +31,20 @@
 // helper or the platform primitive on the server side.
 // ---------------------------------------------------------------------------
 
+import { PERSONAL_CONNECTOR_PREFIX } from "../_generated/personal-connector-prefix.ts";
 import { WORKSPACE_ID_FLAGS, WORKSPACE_ID_PATTERN } from "../_generated/workspace-id-pattern.ts";
+
+/**
+ * Whether an app/source name is a personal connector's marked wire name.
+ *
+ * Mirrors `isPersonalConnectorName` in `src/tools/identity-sources.ts`. Callers
+ * that would RESOLVE the name against an app surface use this to bail: a
+ * personal connector has no such surface, and the same bare name may well
+ * belong to a workspace app that does.
+ */
+export function isPersonalConnectorAppName(name: string): boolean {
+  return name.startsWith(PERSONAL_CONNECTOR_PREFIX);
+}
 
 const WORKSPACE_ID_RE = new RegExp(WORKSPACE_ID_PATTERN, WORKSPACE_ID_FLAGS);
 
@@ -68,30 +81,10 @@ export function parseNamespacedToolName(s: string): { scope: ToolScope; toolName
   return { scope: { kind: "identity" }, toolName: s };
 }
 
-/**
- * Build a workspace-scoped tool name `ws_<id>-<toolName>`. Mirrors the
- * platform primitive `src/tools/namespace.ts::namespacedToolName` — same
- * `wsId` validation (via the codegen-shared `WORKSPACE_ID_RE`) and the
- * same single construction site discipline. Throws on invalid input.
- *
- * Used by the iframe bridge to prefix a workspace app's tool names before
- * dispatching `tools/call` against `/mcp`.
- */
-export function namespacedToolName(wsId: string, toolName: string): string {
-  if (typeof wsId !== "string" || wsId.length === 0) {
-    throw new Error(`namespacedToolName: invalid wsId (empty)`);
-  }
-  if (!WORKSPACE_ID_RE.test(wsId)) {
-    throw new Error(`namespacedToolName: invalid wsId "${wsId}" (failed WORKSPACE_ID_RE)`);
-  }
-  if (typeof toolName !== "string" || toolName.length === 0) {
-    throw new Error(`namespacedToolName: invalid toolName (empty) for wsId "${wsId}"`);
-  }
-  return `${wsId}-${toolName}`;
-}
-
-// Identity tools have no builder: an identity tool's wire name IS its bare
-// `<source>__<tool>` form. Absence of a `ws_<id>-` prefix makes it identity-scoped.
+// There is no builder here any more. Wire names are bare on both doors, so
+// nothing in `web/` constructs a `ws_<id>-` name; the bridge stopped prefixing
+// and this file is parse-only. The parser stays because transcripts still
+// replay the legacy form.
 
 /**
  * Extract the **bare source/app name** from a full wire tool name.
@@ -104,6 +97,17 @@ export function namespacedToolName(wsId: string, toolName: string): string {
  * `registry.hasSource()` with a 403 "not available in this workspace". Parse
  * the namespace via the sanctioned primitive first, then drop the `__<tool>`
  * tail. Returns `undefined` when there's no `__` (not an app-owned call).
+ *
+ * **The personal-connector marker is KEPT.** Every consumer of this value
+ * re-resolves it — `getResources(appName, …)`, `readResource(appName, …)`,
+ * `openArtifact({ appName, … })` — and none renders it as text, so it is an
+ * identity, not a label. De-marking it would hand those callers `gmail` for a
+ * `my_gmail__send` call, and `GET /v1/apps/gmail/resources/*` resolves through
+ * the WORKSPACE registry: a same-named workspace app would serve its UI, mount
+ * in the transcript, and its bridge would then dispatch bare `gmail__*` — the
+ * workspace source, on the workspace's credentials, for a call the user made
+ * against their own account. Strip the marker only where a human reads the
+ * string.
  */
 export function appNameFromToolName(wireName: string): string | undefined {
   const parsed = parseNamespacedToolName(wireName);

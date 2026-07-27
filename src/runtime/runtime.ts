@@ -125,9 +125,12 @@ import type { Skill } from "../skills/types.ts";
 import { TelemetryManager } from "../telemetry/manager.ts";
 import { PostHogEventSink } from "../telemetry/posthog-sink.ts";
 import type { DelegateContext } from "../tools/delegate.ts";
-import { isIdentitySource, isTaskForbiddenIdentityTool } from "../tools/identity-sources.ts";
+import {
+  isIdentitySource,
+  isTaskForbiddenIdentityTool,
+  personalConnectorWireName,
+} from "../tools/identity-sources.ts";
 import { McpSource } from "../tools/mcp-source.ts";
-import { namespacedToolName } from "../tools/namespace.ts";
 import { SharedSourceRef, type ToolRegistry } from "../tools/registry.ts";
 import { surfaceTools } from "../tools/surfacing.ts";
 import { createSystemTools } from "../tools/system-tools.ts";
@@ -604,19 +607,21 @@ export class Runtime {
           runtime: rtHolder.rt,
         });
       },
-      // Default initial active set: focused-workspace tools (namespaced
-      // so the identity router can route them) + bare kernel identity
-      // tools. Mirrors `_chatInner`'s `allTools` composition so a child
-      // agent starts with the same default tool view the parent has.
-      // Bare-name globs in `tools: [...]` match against THIS set; namespaced
-      // globs match the bound workspace's reachable set — see
-      // `DelegateContext.tools`.
+      // Default initial active set: focused-workspace tools + kernel identity
+      // tools, all bare. Mirrors `_chatInner`'s `allTools` composition so a
+      // child agent starts with the same default tool view the parent has.
+      // Globs in `tools: [...]` match against THIS set and the bound
+      // workspace's reachable set — see `DelegateContext.tools`. A legacy
+      // `ws_<id>-` glob is normalized to its bare form before matching.
       //
       // Deliberately EXCLUDES personal connectors (which `availableTools` does
       // surface). A delegated child runs as the parent's exact identity, so a
       // granted personal connector IS in the child's reachable set — but it is
       // not in the child's *default* active set: a sub-agent gets one only when
-      // the parent explicitly opts it in via a `granola__*` glob. That is
+      // the parent explicitly opts it in via a `my_granola__*` glob — the MARKED
+      // form, because that is the name the connector surfaces under. A bare
+      // `granola__*` selects the workspace source of that name, if any, and
+      // never the personal connector. That is
       // least-privilege for delegation, and it is a decision, not an accident —
       // do not add personal connectors here to "make the sets consistent."
       defaultActiveTools: async (): Promise<ToolSchema[]> => {
@@ -654,7 +659,7 @@ export class Runtime {
           ...focusedTools
             .filter((t) => isToolVisibleToRole(t.name, orgRole))
             .map((t) => ({
-              name: namespacedToolName(wsId, t.name),
+              name: t.name,
               description: t.description,
               inputSchema: t.inputSchema,
               ...(t.annotations !== undefined ? { annotations: t.annotations } : {}),
@@ -1276,14 +1281,14 @@ export class Runtime {
     // workspace-scoped (same for every member of that workspace).
     const { apps, liveOverlays } = await this.buildWorkspaceBriefing(narratedWsId);
 
-    // Build focusedApp/appState/focusedNamespaced when the request is scoped to a
+    // Build focusedApp/appState/focusedServerName when the request is scoped to a
     // specific app (§7 app-aware chat), resolved in the SAME single workspace the
     // session's tools are bound to (`convWsId`).
     let focusedApp: FocusedAppInfo | undefined;
     let appState: AppStateInfo | undefined;
-    let focusedNamespaced: string | undefined;
+    let focusedServerName: string | undefined;
     if (request.appContext) {
-      ({ focusedApp, appState, focusedNamespaced } = await this.resolveFocusedApp(
+      ({ focusedApp, appState, focusedServerName } = await this.resolveFocusedApp(
         request.appContext,
         convWsId,
       ));
@@ -1306,12 +1311,12 @@ export class Runtime {
       this.listIdentitySourceTools(),
     ]);
     const allTools: ToolSchema[] = [
-      // Workspace tools — namespaced to the focused workspace so the
-      // orchestrator routes them; one copy of `nb__*`, not N.
+      // Workspace tools, bare. The orchestrator routes them into the session's
+      // own workspace; one copy of `nb__*`, not N.
       ...focusedTools
         .filter((t) => isToolVisibleToRole(t.name, requestIdentity.orgRole))
         .map((t) => ({
-          name: namespacedToolName(toolsWsId, t.name),
+          name: t.name,
           description: t.description,
           inputSchema: t.inputSchema,
           ...(t.annotations !== undefined ? { annotations: t.annotations } : {}),
@@ -1326,12 +1331,12 @@ export class Runtime {
           ...(t.annotations !== undefined ? { annotations: t.annotations } : {}),
         })),
     ];
-    // `focusedNamespaced` (the WORKSPACE-PREFIXED source name that
+    // `focusedServerName` (the BARE source name that
     // `surfaceTools.focusedServerName` matches) is computed in `resolveFocusedApp`.
     const { direct: tools, proxied } = surfaceTools(
       allTools,
       skill,
-      buildSurfaceOptions(focusedNamespaced, request.allowedTools),
+      buildSurfaceOptions(focusedServerName, request.allowedTools),
     );
 
     // Per-user preferences from the authenticated identity. We already
@@ -1756,7 +1761,7 @@ export class Runtime {
       ...focusedTools
         .filter((t) => isToolVisibleToRole(t.name, requestIdentity.orgRole))
         .map((t) => ({
-          name: namespacedToolName(workWsId, t.name),
+          name: t.name,
           description: t.description,
           inputSchema: t.inputSchema,
           ...(t.annotations !== undefined ? { annotations: t.annotations } : {}),
@@ -2189,7 +2194,7 @@ export class Runtime {
     focusedApp?: FocusedAppInfo;
     focusedAppWsId?: string;
     appState?: AppStateInfo;
-    focusedNamespaced?: string;
+    focusedServerName?: string;
   }> {
     // The app is resolved in the SAME single workspace the session's tools are
     // bound to (`convWsId`), never a scan across the identity's other workspaces.
@@ -2243,14 +2248,16 @@ export class Runtime {
         }
       : undefined;
 
-    // The focused-app match key is the WORKSPACE-PREFIXED source name: tools land
-    // in the active list as `ws_<id>-<source>__<tool>`, and
-    // `surfaceTools.focusedServerName` matches with `t.name.startsWith(prefix + "__")`.
-    // Build via the namespace primitive (single legal construction site for
-    // `ws_<id>-<...>` per `check:tool-namespace`).
-    const focusedNamespaced = namespacedToolName(appWsId, appContext.serverName);
+    // The focused-app match key is the BARE source name. Tools land in the active
+    // list as `<source>__<tool>`, and `surfaceTools.focusedServerName` matches with
+    // `t.name.startsWith(prefix + "__")` — so the key has to be exactly what the
+    // emitted names now carry. A `ws_<id>-` prefixed key would match nothing, and
+    // the failure is silent: no tool would be recognised as belonging to the
+    // focused app, so the app-aware briefing would quietly describe an app whose
+    // tools it thinks are absent.
+    const focusedServerName = appContext.serverName;
 
-    return { focusedApp, focusedAppWsId: appWsId, appState, focusedNamespaced };
+    return { focusedApp, focusedAppWsId: appWsId, appState, focusedServerName };
   }
 
   /** Append the turn's user message (content + optional userId + file metadata) to the store. */
@@ -3068,11 +3075,11 @@ export class Runtime {
   /**
    * Tools the model can DISCOVER via a system-tool surface (`nb__search`
    * scope:tools). The corpus is the FOCUSED workspace only — that workspace's
-   * tools (namespaced `ws_<id>-<tool>`) plus the caller's identity tools. A
-   * session reaches exactly one workspace plus the user's identity tools;
-   * there is no cross-workspace discovery. `nb__search` dispatches as
-   * `ws_<focused>-nb__search`, so the per-call request scope here is already
-   * the focused workspace — we read it and list that registry.
+   * tools (bare `<source>__<tool>`) plus the caller's identity tools. A session
+   * reaches exactly one workspace plus the user's identity tools; there is no
+   * cross-workspace discovery. The workspace is not in the name: it comes from
+   * the session, so the per-call request scope here is already the focused
+   * workspace — we read it and list that registry.
    *
    * Falls back to the current workspace's registry when no workspace is in
    * scope (CLI / non-identity-bound dev paths).
@@ -3089,9 +3096,11 @@ export class Runtime {
 
   /**
    * The walled tool surface for a session bounded to `wsId`: that workspace's
-   * tools (namespaced `ws_<id>-<tool>`) plus the caller's identity tools (bare),
-   * plus — when `identityId` is given — the caller's personal connectors granted
-   * to `wsId` (bare; any workspace, including the caller's own personal one, §
+   * tools and the caller's identity tools, both bare `<source>__<tool>`, plus —
+   * when `identityId` is given — the caller's personal connectors granted to
+   * `wsId`, carrying the reserved `my_` marker so they stay distinguishable from
+   * a workspace source of the same name (any workspace, including the caller's
+   * own personal one, §
    * `_listGrantedPersonalConnectorTools`). The engine's reachable universe
    * (`IdentityToolRouter.availableTools`), the `nb__search` corpus
    * (`listDiscoverableTools`), and `/mcp` `tools/list` all read this — a session
@@ -3106,8 +3115,14 @@ export class Runtime {
       identityId ? this._listGrantedPersonalConnectorTools(identityId, wsId) : Promise.resolve([]),
     ]);
     return [
+      // Workspace tools go out BARE. The session reaches exactly one workspace,
+      // so a `ws_<id>-` prefix could only ever repeat `wsId` — a constant, on
+      // every tool, inside a 64-character provider budget. Dropping it is what
+      // brings the wire name back under that budget; the wall is unaffected,
+      // because the workspace a call lands in comes from the session, never from
+      // the name (see `routeToolCall`).
       ...wsTools.map((t) => ({
-        name: namespacedToolName(wsId, t.name),
+        name: t.name,
         description: t.description,
         inputSchema: t.inputSchema,
         ...(t.annotations !== undefined ? { annotations: t.annotations } : {}),
@@ -3118,7 +3133,16 @@ export class Runtime {
         inputSchema: t.inputSchema,
         ...(t.annotations !== undefined ? { annotations: t.annotations } : {}),
       })),
-      ...personalTools,
+      // Personal connectors carry the reserved marker. With workspace tools now
+      // bare, a workspace `gmail` and the caller's personal `gmail` would other-
+      // wise be the same string — a collision install-time checks cannot prevent,
+      // since the guard only sees the *caller's* connectors and says nothing
+      // about another member's. Marking the rare side keeps both reachable and
+      // tells the model whose credentials it is about to spend.
+      ...personalTools.map((t) => ({
+        ...t,
+        name: personalConnectorWireName(t.name),
+      })),
     ];
   }
 

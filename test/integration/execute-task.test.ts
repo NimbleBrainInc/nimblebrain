@@ -35,7 +35,6 @@ import { textContent } from "../../src/engine/content-helpers.ts";
 import type { EngineEvent, EventSink } from "../../src/engine/types.ts";
 import { Runtime } from "../../src/runtime/runtime.ts";
 import { defineInProcessApp, type InProcessTool } from "../../src/tools/in-process-app.ts";
-import { namespacedToolName } from "../../src/tools/namespace.ts";
 import { personalWorkspaceIdFor } from "../../src/workspace/workspace-store.ts";
 import { createEchoModel } from "../helpers/echo-model.ts";
 
@@ -157,7 +156,7 @@ describe("runtime.executeTask", () => {
 
     // Script the model to call probe__ping (namespaced to the focused
     // workspace) once, then conclude.
-    const namespacedPing = namespacedToolName(SHARED_WS_ID, "probe__ping");
+    const namespacedPing = "probe__ping";
     runtime = await bootRuntime({
       responses: [
         {
@@ -193,12 +192,12 @@ describe("runtime.executeTask", () => {
     await probe.source.start();
 
     // The wall for the task path: an unscoped task is bounded to the session
-    // (personal) workspace. A call namespaced to ANOTHER workspace is denied
-    // even though the identity is a member of it — a task reaches exactly one
-    // workspace plus identity tools, never a cross-workspace union. The echo
-    // model is scripted to emit the namespaced cross-workspace call directly;
-    // the test pins that the wall refuses it.
-    const namespacedPing = namespacedToolName(SHARED_WS_ID, "probe__ping");
+    // (personal) workspace, and a name addressing ANOTHER workspace does not
+    // resolve — not because reach is denied, but because the `ws_<id>-` form is
+    // retired and rejected at parse. A task reaches exactly one workspace plus
+    // identity tools, and there is no longer a name that can say otherwise. The
+    // echo model is scripted to emit the retired cross-workspace form directly.
+    const namespacedPing = `${SHARED_WS_ID}-probe__ping`;
     runtime = await bootRuntime({
       responses: [
         {
@@ -225,9 +224,9 @@ describe("runtime.executeTask", () => {
 
     expect(result.toolCalls.length).toBeGreaterThan(0);
     expect(result.toolCalls[0]?.name).toBe(namespacedPing);
-    // Walled: a task bounded to its session workspace cannot reach another.
+    // Rejected: a task bounded to its session workspace cannot NAME another.
     expect(result.toolCalls[0]?.ok).toBe(false);
-    expect(result.toolCalls[0]?.output).toMatch(/not a member|denied|access|bounded/i);
+    expect(result.toolCalls[0]?.output).toMatch(/retired/i);
   });
 
   it("returns partial usage + runId tagged 'aborted' when the run is aborted mid-flight", async () => {
@@ -242,7 +241,7 @@ describe("runtime.executeTask", () => {
     const probe = buildProbeSource();
     await probe.source.start();
 
-    const namespacedPing = namespacedToolName(SHARED_WS_ID, "probe__ping");
+    const namespacedPing = "probe__ping";
     runtime = await bootRuntime({
       responses: [
         // Turn 1: text (so the echo model reports nonzero usage) + a tool
@@ -348,7 +347,7 @@ describe("runtime.executeTask", () => {
     // child's authoring call is refused too. Proven by the real security outcome:
     // the child runs and attempts the create, yet nothing is persisted.
     const personalWsId = personalWorkspaceIdFor(TEST_USER_ID);
-    const delegateTool = namespacedToolName(personalWsId, "nb__delegate");
+    const delegateTool = "nb__delegate";
     runtime = await bootRuntime({
       responses: [
         // Parent (task engine): delegate a subtask.

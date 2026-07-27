@@ -6,7 +6,7 @@
  * composition of:
  *
  *   1. `runtime.listToolsForWorkspace(workspaceId)` — the bound workspace's
- *      tools (namespaced) plus identity tools; the engine's reachable universe.
+ *      tools (bare) plus identity tools; the engine's reachable universe.
  *   2. `routeToolCall({ identityId, namespacedName, workspaceId, runtime })` —
  *      per-call wall check (the target must be the bound workspace), then
  *      dispatch into a fresh `WorkspaceContext` (or `IdentityContext` for
@@ -166,7 +166,7 @@ export class IdentityToolRouter implements ToolRouter {
 
   /**
    * The session's reachable tool surface, as `ToolSchema[]`: the bound
-   * workspace's tools (namespaced) plus the caller's identity tools. This is
+   * workspace's tools (bare) plus the caller's identity tools. This is
    * the engine's reachable universe — a session reaches exactly one workspace.
    */
   async availableTools(): Promise<ToolSchema[]> {
@@ -176,10 +176,11 @@ export class IdentityToolRouter implements ToolRouter {
   /**
    * Route + dispatch a tool call.
    *
-   * Workspace requests (`ws_<id>-<source>__<tool>`) route through
-   * `routeToolCall`, which enforces membership; identity requests
-   * (bare `<source>__<tool>`) route to the kernel identity source the
-   * call names. Both arms restamp the AsyncLocalStorage `RequestContext`
+   * Every name is bare `<source>__<tool>`; the source segment picks the door.
+   * A kernel identity source or the `my_` personal-connector marker routes to
+   * the identity source named; anything else routes through `routeToolCall`
+   * into the session's own workspace, which was membership-validated when the
+   * session was established. Both arms restamp the AsyncLocalStorage `RequestContext`
    * with the ROUTED scope before `source.execute(...)` so the dispatched
    * handler sees the right `WorkspaceContext` regardless of what the
    * ambient (session-level) scope is.

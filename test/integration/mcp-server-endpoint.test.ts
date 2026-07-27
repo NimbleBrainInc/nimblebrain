@@ -139,7 +139,7 @@ describe("MCP Server Endpoint (/mcp)", () => {
 			expect(result.tools.length).toBeGreaterThan(0);
 
 			// Stage 2: tool names are namespaced as `ws_<id>/<source>__<tool>`.
-			const expectedName = `${TEST_WORKSPACE_ID}-fake__echo`;
+			const expectedName = "fake__echo";
 			const echoTool = result.tools.find((t) => t.name === expectedName);
 			expect(echoTool).toBeDefined();
 			expect(echoTool!.description).toBe("Echoes input back");
@@ -152,7 +152,7 @@ describe("MCP Server Endpoint (/mcp)", () => {
 		const client = await createMcpClient();
 		try {
 			const result = await client.callTool({
-				name: `${TEST_WORKSPACE_ID}-fake__echo`,
+				name: "fake__echo",
 				arguments: { text: "hello world" },
 			});
 			expect(result.isError).toBeFalsy();
@@ -167,12 +167,12 @@ describe("MCP Server Endpoint (/mcp)", () => {
 	it("tool call with unknown tool returns error", async () => {
 		const client = await createMcpClient();
 		try {
-			// `fake__nonexistent` IS namespaced as a valid workspace + bad
+			// A valid source with a bad tool name — resolves the source, fails the tool.
 			// inner tool, so the source lookup succeeds (source "fake")
 			// but the inner tool is unknown. Source.execute should surface
 			// `isError: true`.
 			const result = await client.callTool({
-				name: `${TEST_WORKSPACE_ID}-fake__nonexistent`,
+				name: "fake__nonexistent",
 				arguments: {},
 			});
 			expect(result.isError).toBe(true);

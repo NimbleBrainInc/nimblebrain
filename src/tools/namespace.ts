@@ -1,10 +1,16 @@
 /**
  * Cross-workspace tool name primitive.
  *
- * **Single construction site for `ws_<id>-<toolName>`.** No other code
- * site in `src/` may build or parse this form by hand — the convention
- * is enforced by the `check:tool-namespace` AST lint
+ * **Single parse site for `ws_<id>-<toolName>`.** No other code site in `src/`
+ * may parse this form by hand — enforced by the `check:tool-namespace` AST lint
  * (`scripts/check-tool-namespace.ts`).
+ *
+ * Nothing CONSTRUCTS the form any more: it is retired, rejected rather than
+ * routed, and `namespacedToolName` has no caller in `src/` or `web/`. The
+ * builder is kept for the test fixtures that must produce a well-formed retired
+ * name in order to assert it is refused — validated construction beats a
+ * hand-spliced string in a fixture. The lint scans `src/` and `web/src/` only,
+ * so those fixtures are unaffected by it.
  *
  * **Separator: `-`.** Workspace ids match
  * `WORKSPACE_ID_PATTERN = ^ws_[a-z0-9_]{1,64}$` (no `-`), so the first
@@ -45,10 +51,11 @@ import { WORKSPACE_ID_RE } from "../workspace/workspace-store.ts";
  *
  * Two doors, distinguished by presence of a workspace prefix:
  *
- *   - **workspace** — `ws_<id>-<toolName>`. A workspace-*replicated* tool:
- *     the same app installed in two workspaces is two distinct tools, each
- *     carrying its workspace. Dispatched against `WorkspaceContext(wsId)`,
- *     authorized by membership.
+ *   - **workspace** — `ws_<id>-<toolName>`. The RETIRED form. It is still parsed,
+ *     so a caller presenting one can be told what happened, but the orchestrator
+ *     rejects it rather than dispatching. It dates from a design where a session
+ *     could reach several workspaces and the name had to say which; a session now
+ *     reaches exactly one, which it takes from the session itself.
  *   - **identity** — bare `<toolName>` (no prefix). A *singleton* of the
  *     authenticated identity: platform system tools (`nb__*`) and the
  *     user's own entity apps (`conversations__*`, later `files__*` /
@@ -79,6 +86,15 @@ export class UnknownNamespacedToolName extends Error {
   /** The exact input string that failed to parse. */
   readonly input: string;
   /** Short machine-readable reason (`"missing_separator"`, `"invalid_wsid"`, `"empty_tool_name"`, `"empty_workspace_id"`). */
+  /**
+   * Why the parse failed. Consumers key on this — `error-mapping.ts` renders
+   * `legacy_namespaced_form` without the generic wrapper — so a new value is a
+   * cross-module contract, not a local string.
+   *
+   * Values: `empty_input`, `empty_tool_name`, `invalid_wsid`, and
+   * `legacy_namespaced_form` (raised by the orchestrator for the retired
+   * `ws_<id>-` wire form, which parses fine but is no longer routed).
+   */
   readonly reason: string;
 
   constructor(input: string, reason: string, message: string) {
@@ -89,68 +105,7 @@ export class UnknownNamespacedToolName extends Error {
   }
 }
 
-/**
- * Thrown by `namespacedToolName` when either operand is invalid. Separate
- * class so callers can distinguish a malformed input string (parse-side)
- * from a malformed construction request (build-side); both are
- * programmer errors but they originate in different layers.
- */
-export class InvalidNamespacedToolNameInput extends Error {
-  readonly wsId: string;
-  readonly toolName: string;
-  readonly reason: string;
-
-  constructor(wsId: string, toolName: string, reason: string, message: string) {
-    super(message);
-    this.name = "InvalidNamespacedToolNameInput";
-    this.wsId = wsId;
-    this.toolName = toolName;
-    this.reason = reason;
-  }
-}
-
 // ── Construction ──────────────────────────────────────────────────
-
-/**
- * Build a namespaced tool name from a workspace id and a tool name.
- *
- * Returns `ws_<id>-<name>`. Throws `InvalidNamespacedToolNameInput`
- * on any invalid input:
- *   - `wsId` missing, empty, non-string, or failing `WORKSPACE_ID_RE`
- *     (path-traversal, whitespace, wrong prefix all rejected here).
- *   - `name` missing, empty, or non-string.
- *
- * No `??`/`||` defaulting; every invalid shape is fail-loud. The
- * orchestrator must surface the error rather than fall back to a
- * "current workspace."
- */
-export function namespacedToolName(wsId: string, name: string): string {
-  if (typeof wsId !== "string" || wsId.length === 0) {
-    throw new InvalidNamespacedToolNameInput(
-      String(wsId),
-      String(name),
-      "empty_workspace_id",
-      "[tools/namespace] namespacedToolName: wsId is required (non-empty string)",
-    );
-  }
-  if (!WORKSPACE_ID_RE.test(wsId)) {
-    throw new InvalidNamespacedToolNameInput(
-      wsId,
-      String(name),
-      "invalid_wsid",
-      `[tools/namespace] namespacedToolName: invalid wsId "${wsId}" (must match WORKSPACE_ID_RE)`,
-    );
-  }
-  if (typeof name !== "string" || name.length === 0) {
-    throw new InvalidNamespacedToolNameInput(
-      wsId,
-      String(name),
-      "empty_tool_name",
-      "[tools/namespace] namespacedToolName: tool name is required (non-empty string)",
-    );
-  }
-  return `${wsId}-${name}`;
-}
 
 // Identity tools have NO builder: an identity tool name IS its bare
 // `<source>__<tool>` form (e.g. `nb__search`, `conversations__search`).
@@ -277,7 +232,7 @@ export function splitInnerToolName(innerName: string): {
  *
  * A source name has the same `ws_<id>-<rest>` shape as a tool name, but its
  * `<rest>` is a bare source name (`synapse-collateral`) with no `__<tool>`
- * suffix — tool names are namespaced (`ws_<id>-...`) while registry *sources*
+ * suffix — a wire tool name is `<source>__<tool>` while registry *sources*
  * keep their bare name. So a namespaced tool
  * `ws_<id>-synapse-collateral__preview` surfaces an `appName`/`server` of
  * `ws_<id>-synapse-collateral`, which the REST resource/tool endpoints must

@@ -1,5 +1,6 @@
 import type { EngineEvent, EngineEventType, EventSink } from "../engine/types.ts";
 import { log } from "../observability/log.ts";
+import { isPersonalConnectorName } from "../tools/identity-sources.ts";
 import { bareToolName } from "../tools/namespace.ts";
 import type { WorkspaceStore } from "../workspace/workspace-store.ts";
 
@@ -113,8 +114,8 @@ const SSE_ROUTES: Partial<Record<EngineEventType, SseRoute>> = {
  *
  * Two event shapes feed this, and they carry the source name differently:
  *   - `tool.done` (ok) → a single qualified `name`. This is the name the
- *     MODEL called, which post-Stage-2 is workspace-namespaced
- *     (`ws_<id>-<source>__<tool>`).
+ *     MODEL called: bare `<source>__<tool>`, or `my_<source>__<tool>` for a
+ *     personal connector.
  *   - `tool.progress` → separate `source` + `tool`; `McpSource` emits the
  *     bare source name there.
  *
@@ -125,7 +126,7 @@ const SSE_ROUTES: Partial<Record<EngineEventType, SseRoute>> = {
  * are stored as separate fields). A namespaced `server` never matches, so the
  * iframe would only refresh on remount (the "click off and back" symptom).
  * Stripping the prefix also restores the `nb` system-tool guard:
- * `ws_<id>-nb__x` → `nb__x` → server `nb`, which we skip (system tools don't
+ * a replayed `ws_<id>-nb__x` → `nb__x` → server `nb`, which we skip (system tools don't
  * mutate app data, and broadcasting for them re-fetches every streaming chunk).
  *
  * `data.changed` remains workspace-blind (`scope: "global"`, matched on bare
@@ -156,6 +157,17 @@ export function deriveDataChangedTarget(
   const sepIndex = bare.indexOf("__");
   const server = sepIndex !== -1 ? bare.slice(0, sepIndex) : bare;
   const tool = sepIndex !== -1 ? bare.slice(sepIndex + 2) : bare;
+
+  // A personal connector has no listener, so it gets no broadcast — and the
+  // marker is NOT stripped to find one. `server` is matched against an iframe's
+  // `data-app`, and a personal connector cannot mount an iframe: a `ui://` read
+  // resolves through `readIdentityAppResource` (kernel identity sources only) or
+  // `readAppResource` (the workspace registry), and a connector is in neither.
+  // De-marking would therefore never reach the connector's own surface — it
+  // would reach a WORKSPACE app of the same name, refetching an unrelated app on
+  // the caller's private tool call. That same-name collision is the exact thing
+  // the marker exists to prevent, so it must survive to here.
+  if (isPersonalConnectorName(server)) return null;
 
   // System tools (`nb__*`) don't modify app data; broadcasting for them makes
   // iframes re-fetch on every streaming chunk (flicker + tool-call amplification).

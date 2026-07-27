@@ -1,11 +1,12 @@
 import { describe, expect, it } from "bun:test";
+import { namespacedToolName } from "../../helpers/namespaced-tool-name.ts";
 import { DEFAULT_MAX_DIRECT_TOOLS } from "../../../src/limits.ts";
 import { surfaceTools } from "../../../src/tools/surfacing.ts";
 import { composeSystemPrompt } from "../../../src/prompt/compose.ts";
 import type { PromptAppInfo } from "../../../src/prompt/compose.ts";
 import type { ToolSchema } from "../../../src/engine/types.ts";
 import type { Skill } from "../../../src/skills/types.ts";
-import { namespacedToolName } from "../../../src/tools/namespace.ts";
+import {} from "../../../src/tools/namespace.ts";
 
 // --- Helpers ---
 

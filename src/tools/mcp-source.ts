@@ -449,8 +449,31 @@ export class McpSource implements ToolSource {
     private mode: McpTransportMode,
     private eventSink: EventSink,
     private readonly bundleContext?: BundleMcpContext,
+    /**
+     * The name this source appears under ON THE WIRE, when it differs from
+     * `name`. Set for a personal connector, whose wire form carries the reserved
+     * marker while its registry key stays bare.
+     *
+     * Only events use it. `name` remains the lookup key everywhere else
+     * (`registry.getSource`, placements, tool-policy records), so marking it
+     * directly would break dispatch.
+     */
+    private readonly wireName?: string,
   ) {
     log.debug("mcp", `McpSource('${name}') constructed`);
+  }
+
+  /**
+   * The source name to put on an emitted event.
+   *
+   * Consumers of `tool.progress` / `run.error` match this against a wire name —
+   * `deriveDataChangedTarget` decides from it whether a `data.changed` broadcast
+   * would hit a WORKSPACE app of the same name. A personal connector emitting its
+   * bare name there is indistinguishable from the workspace source it collides
+   * with, which is the exact ambiguity the marker exists to remove.
+   */
+  private get eventSourceName(): string {
+    return this.wireName ?? this.name;
   }
 
   /** Whether this source connects to a remote MCP server (HTTP/SSE). */
@@ -796,7 +819,7 @@ export class McpSource implements ToolSource {
     this.eventSink.emit({
       type: "run.error",
       data: {
-        source: this.name,
+        source: this.eventSourceName,
         event: "source.crashed",
         error,
         stderrTail: this.stderrTail.join("\n"),
@@ -1496,7 +1519,7 @@ export class McpSource implements ToolSource {
         this.eventSink.emit({
           type: "tool.progress",
           data: {
-            source: this.name,
+            source: this.eventSourceName,
             tool: toolName,
             status: "cancelled",
             message: "Cancelled by client",
@@ -1535,7 +1558,7 @@ export class McpSource implements ToolSource {
           structuredContent: {
             error: "auth_required",
             reason: "reauth_required",
-            source: this.name,
+            source: this.eventSourceName,
           },
         }),
       },

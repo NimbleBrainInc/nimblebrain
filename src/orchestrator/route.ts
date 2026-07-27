@@ -5,14 +5,18 @@
  *
  *   1. Parses the namespace via `parseNamespacedToolName` (the only legal parse
  *      site). Throws `UnknownNamespacedToolName` on malformed input.
- *   2. A bare `<source>__<tool>` routes through the IDENTITY door (no workspace).
- *   3. A `ws_<id>-<tool>` routes through the WORKSPACE door, walled to the
- *      session's one workspace (`workspaceId`): a call to ANY OTHER workspace is
- *      `CrossWorkspaceReachDenied`, and a session with no workspace (e.g. an
- *      external `/mcp` client with no `X-Workspace-Id`) is
- *      `WorkspaceToolUnavailable`. **There is no per-call membership scan** — the
- *      session's `workspaceId` was membership-validated when the session was
- *      established, so reaching only it is reaching only a member workspace.
+ *   2. A bare `<source>__<tool>` — the ONLY wire form, on both doors — routes by
+ *      its source segment: a kernel identity source or the reserved personal
+ *      marker goes through the IDENTITY door; anything else is the session's own
+ *      workspace.
+ *   3. A `ws_<id>-<tool>` is the RETIRED form. It is rejected, not routed — so a
+ *      workspace other than the session's cannot be NAMED, and cross-workspace
+ *      reach is unexpressible rather than denied after the fact. A session with
+ *      no workspace (e.g. an external `/mcp` client with no `X-Workspace-Id`)
+ *      refuses workspace sources with `WorkspaceToolUnavailable`. **There is no
+ *      per-call membership scan** — the session's `workspaceId` was
+ *      membership-validated when the session was established, so reaching only it
+ *      is reaching only a member workspace.
  *   4. Constructs a fresh `WorkspaceContext` from the bound `wsId` — NEVER from
  *      `runtime.requireWorkspaceId()` or any ambient session-level state.
  *   5. Resolves the dispatch handle (`ToolSource`) in that workspace's registry.
@@ -33,6 +37,11 @@
 import type { ToolSchema } from "../engine/types.ts";
 import type { IdentityContext } from "../identity/context.ts";
 import type { PermissionOwner, PermissionStore } from "../permissions/permission-store.ts";
+import {
+  isIdentitySource,
+  isPersonalConnectorName,
+  personalConnectorServerName,
+} from "../tools/identity-sources.ts";
 import { parseNamespacedToolName, UnknownNamespacedToolName } from "../tools/namespace.ts";
 import type { ToolSource } from "../tools/types.ts";
 import type { WorkspaceContext } from "../workspace/context.ts";
@@ -40,9 +49,10 @@ import type { WorkspaceContext } from "../workspace/context.ts";
 // ── Errors ─────────────────────────────────────────────────────────
 
 /**
- * Base class for the wall's denial errors — `CrossWorkspaceReachDenied` (reach
- * to another workspace) and `WorkspaceToolUnavailable` (no workspace on the
- * session). Not thrown directly today; the two subclasses are. The payload
+ * Base class for the wall's denial errors. `WorkspaceToolUnavailable` (no
+ * workspace on the session) is the only subclass now that naming another
+ * workspace is impossible rather than denied. Not thrown directly; the subclass
+ * is. The payload
  * carries `identityId` and `wsId` so the HTTP / `/mcp` layer can emit a
  * structured `workspace_access_denied` response without re-parsing the name.
  */
@@ -59,24 +69,6 @@ export class WorkspaceAccessDenied extends Error {
 }
 
 /**
- * Thrown when a walled session tries to reach a workspace other than its own.
- * A session is bounded to exactly one workspace; a `ws_<other>-<tool>` call is
- * denied even though the identity may be a member of that other workspace.
- * Subclasses `WorkspaceAccessDenied` so the existing error mapping (HTTP 403 /
- * `-32602`) applies unchanged; `name` distinguishes "walled" from "not a member"
- * — both map to the same `workspace_access_denied` response (we don't leak
- * whether the other workspace exists). The bounded workspace is named in the
- * message.
- */
-export class CrossWorkspaceReachDenied extends WorkspaceAccessDenied {
-  constructor(identityId: string, wsId: string, focusedWorkspaceId: string) {
-    super(identityId, wsId);
-    this.name = "CrossWorkspaceReachDenied";
-    this.message = `[orchestrator] session is bounded to workspace "${focusedWorkspaceId}"; reach to "${wsId}" is denied`;
-  }
-}
-
-/**
  * Thrown when an identity-scoped session with NO workspace (e.g. a `/mcp`
  * session, which is identity-bound and carries no workspace) attempts a
  * workspace-scoped tool call. Workspace tools are unreachable on such a session
@@ -85,10 +77,21 @@ export class CrossWorkspaceReachDenied extends WorkspaceAccessDenied {
  * unchanged.
  */
 export class WorkspaceToolUnavailable extends WorkspaceAccessDenied {
-  constructor(identityId: string, wsId: string) {
-    super(identityId, wsId);
+  /**
+   * `sourceName` is deliberately NOT stored. It names the subject in `message`
+   * and nothing more: neither `error-mapping.ts` nor `mcp-server.ts` emits
+   * anything beyond `{ identityId, wsId }`, so a field would be write-only. What
+   * matters is that it does not go into `wsId` — that would publish
+   * `data.wsId: "people-mcp"` to external `/mcp` clients reading the
+   * discriminator. If the source ever needs to reach a client, add it to both
+   * mappers at the same time.
+   */
+  constructor(identityId: string, sourceName: string) {
+    // `WorkspaceAccessDenied` carries a wsId; a session with no workspace has
+    // none to report, so it is empty rather than a value that reads like one.
+    super(identityId, "");
     this.name = "WorkspaceToolUnavailable";
-    this.message = `[orchestrator] this session is identity-scoped (no workspace); workspace tool "${wsId}" is not available`;
+    this.message = `[orchestrator] this session is identity-scoped (no workspace); source "${sourceName}" is not available`;
   }
 }
 
@@ -240,10 +243,11 @@ export interface OrchestratorRuntime {
 
   /**
    * The walled tool surface for a session bounded to `wsId`: that workspace's
-   * tools (namespaced `ws_<id>-<tool>`) plus the caller's identity tools
-   * (bare), plus — when `identityId` is given — the caller's personal connectors
-   * granted to `wsId` (bare; any workspace, including the caller's own personal
-   * one). The engine's reachable universe — there is no cross-workspace union.
+   * tools and the caller's identity tools, both bare `<source>__<tool>`, plus —
+   * when `identityId` is given — the caller's personal connectors granted to
+   * `wsId`, carrying the reserved `my_` marker so they stay distinguishable from
+   * a workspace source of the same name. The engine's reachable universe — there
+   * is no cross-workspace union.
    */
   listToolsForWorkspace(wsId: string, identityId?: string): Promise<ToolSchema[]>;
 }
@@ -258,11 +262,15 @@ export interface OrchestratorRuntime {
  */
 export type RoutedToolCall =
   | {
-      /** Workspace request: `ws_<id>-<tool>`, authorized by membership. */
+      /**
+       * Workspace request: a bare `<source>__<tool>` whose source segment is
+       * neither a kernel identity source nor `my_`-marked. Authorized by the
+       * membership check the session was established with, not per call.
+       */
       kind: "workspace";
-      /** Fresh `WorkspaceContext` bound to the parsed namespace's wsId. */
+      /** Fresh `WorkspaceContext` bound to the session's own wsId. */
       context: WorkspaceContext;
-      /** Tool name after stripping the `ws_<id>-` prefix — what the source executes. */
+      /** The wire name — what the source executes. */
       toolName: string;
       /** The workspace's `ToolSource` for the inner tool's source prefix. */
       source: ToolSource;
@@ -301,7 +309,8 @@ export async function routeToolCall(opts: {
   namespacedName: string;
   /**
    * The session's single workspace (the wall). When set, a workspace-scoped
-   * call MUST target this workspace; any other is `CrossWorkspaceReachDenied`.
+   * call dispatches here. No other workspace can be named, so there is no
+   * cross-workspace case to deny.
    * Membership + existence were already validated when the session was
    * established, so the per-call store lookup and membership scan are skipped.
    * (Omitted only on the legacy `/mcp` path until its per-request workspace is
@@ -322,27 +331,52 @@ export async function routeToolCall(opts: {
   // input. We let it propagate; the HTTP / engine layer maps it.
   const { scope, toolName } = parseNamespacedToolName(namespacedName);
 
-  // Identity request (a bare `<source>__<tool>`): dispatched against the
-  // caller's `IdentityContext` — no workspace. The source must be one of
-  // the kernel identity sources; the handler gates entity reads by
-  // `canAccess` (owner ∪ shares). See ACCESS_MODEL.
-  if (scope.kind === "identity") {
+  // A `ws_<id>-` name is the RETIRED wire form. It is not routed: the platform
+  // emits bare names on both doors, and accepting a second form means carrying a
+  // second set of semantics for the same string forever. A caller presenting one
+  // is working from a stale `tools/list` and needs to re-list, which is what the
+  // error says. Rejecting is also what makes cross-workspace reach
+  // *unexpressible* rather than merely denied — there is no longer any name that
+  // can address a workspace other than the session's own.
+  if (scope.kind === "workspace") {
+    throw new UnknownNamespacedToolName(
+      namespacedName,
+      "legacy_namespaced_form",
+      `[orchestrator] "${namespacedName}" uses the retired ws_<id>- tool-name form; re-list tools and call "${toolName}"`,
+    );
+  }
+
+  // Bare `<source>__<tool>` — the current wire form for BOTH doors. The source
+  // segment decides which, in priority order:
+  //
+  //   1. a kernel identity source (`conversations` / `files` / `automations`),
+  //      which is excluded from every workspace registry by construction, so it
+  //      can never be shadowed by a workspace source of the same name;
+  //   2. the reserved personal-connector prefix, which a workspace source may
+  //      not claim (`isReservedServerName` / `validateServerName` at install);
+  //   3. otherwise the session's own workspace.
+  //
+  // Note what is NOT here: a cross-workspace check. It is gone because the
+  // caller can no longer NAME another workspace, so there is nothing to compare
+  // and nothing to deny. The old `ws_<id>-` tripwire only ever fired on a
+  // fabricated name — the tool list and the session's `workspaceId` derive from
+  // the same value, so it could never detect a mis-bound session. Removing the
+  // field makes fabrication unexpressible, which is strictly stronger than
+  // catching it after the fact.
+  const sourceName = sourceSegmentOf(toolName);
+  if (isIdentitySource(sourceName) || isPersonalConnectorName(sourceName)) {
     return routeIdentityCall(identityId, toolName, workspaceId, runtime);
   }
-  const wsId = scope.wsId;
 
   if (workspaceId === undefined) {
-    // Identity-scoped session with no workspace (e.g. `/mcp`). Workspace tools
-    // are not reachable — only identity (bare) tools. Deny any workspace call.
-    throw new WorkspaceToolUnavailable(identityId, wsId);
+    // Identity-only session (e.g. an external `/mcp` request with no
+    // `X-Workspace-Id`, or a non-member one). Workspace sources are unreachable.
+    // A bare workspace-source name has no workspace id to report, so this
+    // carries the SOURCE name — see `WorkspaceToolUnavailable`, which keeps it
+    // in a field of its own rather than overloading `wsId`.
+    throw new WorkspaceToolUnavailable(identityId, sourceName);
   }
-  // Walled session: reach is bounded to the one workspace. A call to any other
-  // workspace is denied even for a member. Membership + existence were validated
-  // when the session / `X-Workspace-Id` was established, so there is no per-call
-  // store lookup or membership scan.
-  if (wsId !== workspaceId) {
-    throw new CrossWorkspaceReachDenied(identityId, wsId, workspaceId);
-  }
+  const wsId = workspaceId;
 
   // Step 4 — fresh context. Derived ONLY from the parsed wsId; we
   // never reach for any ambient "current workspace" pointer.
@@ -352,11 +386,29 @@ export async function routeToolCall(opts: {
   // future regression that aliases them).
   const context = runtime.getWorkspaceContext(wsId);
 
-  // Step 5 — resolve the inner tool's `<source>__` prefix to a dispatch
-  // handle in the bound workspace's registry (self-healing a transiently
-  // absent source once before failing).
+  // Step 5 — resolve the inner tool's `<source>__` prefix to a dispatch handle
+  // in the bound workspace's registry (self-healing a transiently absent source
+  // once before failing).
   const source = await resolveWorkspaceSource(wsId, toolName, runtime);
 
+  // NO ambiguity check here, deliberately.
+  //
+  // A bare name that resolves in the bound workspace IS the workspace source —
+  // that is the contract the marker establishes, and `listToolsForWorkspace`
+  // already emits the two apart: the workspace source as `gmail__send`, the
+  // caller's connector as `my_gmail__send`. A freshly-listed name is never
+  // ambiguous, so re-checking here refused the very name the tool list had just
+  // handed out, permanently, for anyone holding a same-named personal connector
+  // — the default whenever a service is connected both ways, since both install
+  // paths slugify the same catalog id.
+  //
+  // The stale-transcript case that motivated the check is real but
+  // indistinguishable from a correct fresh call, so guarding it costs an outage
+  // of the common path to catch a rare misroute. A stale pre-marker name is
+  // therefore a plain `UnknownToolSource`, which is the honest error: that class
+  // also means "installed but transiently absent", and nothing here can tell the
+  // two apart without steering a model onto the caller's own credentials during a
+  // workspace-source outage.
   return { kind: "workspace", context, toolName, source };
 }
 
@@ -387,10 +439,9 @@ async function routeIdentityCall(
   workspaceId: string | undefined,
   runtime: OrchestratorRuntime,
 ): Promise<RoutedToolCall> {
-  const sep = toolName.indexOf("__");
-  const sourceName = sep > 0 ? toolName.slice(0, sep) : toolName;
+  const wireSource = sourceSegmentOf(toolName);
 
-  const kernelSource = runtime.getIdentitySource(sourceName);
+  const kernelSource = runtime.getIdentitySource(wireSource);
   if (kernelSource) {
     return {
       kind: "identity",
@@ -403,6 +454,28 @@ async function routeIdentityCall(
   // A personal connector is an identity-owned source, resolved by userId on the
   // identity door (lazy-started on first use) — never through a workspace
   // registry.
+  //
+  // The WIRE name carries the reserved `my_` marker; the connector's own
+  // `serverName` does not. Strip it HERE, at the door, and hand the rest of the
+  // runtime the canonical `<serverName>__<tool>`. This is load-bearing, not
+  // cosmetic: the dispatch doors re-split `routed.toolName` and feed the source
+  // segment to `assertToolAllowed`, whose records are persisted under
+  // `serverName`. A wire-form name would miss every stored policy, and the
+  // store's documented default is "not present ⇒ allow" — so it would fail
+  // OPEN, silently re-enabling a tool the owner disabled. `data.changed`
+  // matching against the iframe's `data-app` has the same requirement.
+  // A marker with nothing after it (`my_granola`, no `__`) is malformed. Left
+  // alone it would strip to `granola`, find the connector, and dispatch a
+  // synthesized `granola__` with an empty tool segment. Reject by name instead.
+  if (isPersonalConnectorName(wireSource) && bareSegmentOf(toolName).length === 0) {
+    throw new UnknownIdentitySource(toolName, wireSource);
+  }
+  const sourceName = isPersonalConnectorName(wireSource)
+    ? personalConnectorServerName(wireSource)
+    : wireSource;
+  const canonicalToolName =
+    sourceName === wireSource ? toolName : `${sourceName}__${bareSegmentOf(toolName)}`;
+
   const connector = await runtime.getIdentityConnectorSource?.(identityId, sourceName);
   if (connector) {
     // A personal connector is the user's own; reaching it inside a workspace
@@ -421,7 +494,7 @@ async function routeIdentityCall(
     return {
       kind: "identity",
       context: runtime.getIdentityContext(identityId),
-      toolName,
+      toolName: canonicalToolName,
       source: connector,
       // The dispatch doors apply the owner's per-tool `disallow` from here — the
       // owner's identity-scoped `{scope:"user"}` policy.
@@ -429,7 +502,29 @@ async function routeIdentityCall(
     };
   }
 
-  throw new UnknownIdentitySource(toolName, sourceName);
+  // Report the WIRE form the caller actually used (marker included) — the
+  // de-marked `sourceName` is an internal detail and naming it in the error
+  // would send the caller looking for a tool they never asked for.
+  throw new UnknownIdentitySource(toolName, wireSource);
+}
+
+/**
+ * The `<source>` segment of a bare `<source>__<tool>` name; the whole name when
+ * there is no separator (a malformed call the resolvers then reject by name).
+ *
+ * Split on the FIRST `__`, mirroring `ToolRegistry.execute` and
+ * `splitInnerToolName`. Safe because `slugifyServerName` emits `[a-z0-9-]` and
+ * never `_`, so a source segment cannot itself contain `__`.
+ */
+function sourceSegmentOf(toolName: string): string {
+  const sep = toolName.indexOf("__");
+  return sep > 0 ? toolName.slice(0, sep) : toolName;
+}
+
+/** The `<tool>` segment of a bare `<source>__<tool>` name; `""` when absent. */
+function bareSegmentOf(toolName: string): string {
+  const sep = toolName.indexOf("__");
+  return sep > 0 ? toolName.slice(sep + 2) : "";
 }
 
 /** Resolve a workspace tool name's `<source>__` prefix to its registered `ToolSource`, self-healing a transiently absent source once. */

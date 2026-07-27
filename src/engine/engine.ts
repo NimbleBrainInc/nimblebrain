@@ -896,9 +896,11 @@ export class AgentEngine {
         };
       },
       removeTool: (toolName: string) => {
-        // Match the BARE name: Stage 2 surfaces system tools as
-        // `ws_<id>-nb__<tool>`, so a raw `startsWith("nb__")` would let a
-        // namespaced system tool be released.
+        // Match the BARE name. Wire names are bare, so the strip is a no-op for
+        // anything emitted today; it stays because a name replayed from history
+        // can carry the retired `ws_<id>-` prefix, and a raw
+        // `startsWith("nb__")` on one of those would let a system tool be
+        // released.
         if (bareToolName(toolName).startsWith("nb__")) {
           return {
             ok: false,

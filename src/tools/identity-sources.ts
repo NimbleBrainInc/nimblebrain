@@ -30,6 +30,71 @@ export function isIdentitySource(name: string): boolean {
 }
 
 /**
+ * Reserved wire prefix marking a **personal connector** — an MCP connection the
+ * caller installed on their own identity, reached through the identity door.
+ *
+ * Wire tool names are bare `<source>__<tool>`, so a workspace source and a
+ * personal connector of the same name would be indistinguishable to the model
+ * and at dispatch. That collision is real and is NOT catchable at install time:
+ * the install guard only sees the *caller's* own personal connectors, so user A
+ * installing `gmail` into a shared workspace cannot know that member B holds a
+ * personal `gmail` — or will install one tomorrow, or join the workspace next
+ * week. Exactly one of the two doors therefore has to carry a marker.
+ *
+ * We mark the personal side because it is the **rare** one: a session surfaces
+ * every tool of every workspace source, and only the caller's granted personal
+ * connectors. Marking the common side is what the retired `ws_<id>-` prefix did,
+ * and it cost 40 characters of a 64-character budget to disambiguate a case that
+ * is usually empty.
+ *
+ * The marker also makes the credential boundary legible. `gmail__send` (the
+ * workspace's shared account) versus `my_gmail__send` (the caller's own) is a
+ * distinction the model must get right for a send-mail tool, and an opaque
+ * workspace id never communicated it.
+ *
+ * **Why `my_` and not `my-`.** The marker has to live OUTSIDE the alphabet a
+ * real source name can be built from, or reserving it starts rejecting
+ * legitimate connectors. `slugifyServerName` emits `[a-z0-9-]` and maps every
+ * other character to `-`, so a kebab marker is squarely inside its image:
+ * `@my/thing` slugs to `my-thing` and `my-notes/mcp` to `my-notes-mcp`, both of
+ * which a `my-` reservation refuses to install. It never emits `_`, so `my_`
+ * cannot be produced by any catalog install and reserving it costs nothing.
+ *
+ * A single `_` inside a source segment is safe — only a DOUBLE underscore would
+ * break the `__` split, and this adds one.
+ */
+export const PERSONAL_CONNECTOR_PREFIX = "my_";
+
+/**
+ * Whether a bare source name addresses a personal connector.
+ *
+ * Reserved: a **workspace** source may not take this prefix, or it would shadow
+ * the identity door. Enforced at install by `isReservedServerName` /
+ * `validateServerName` rather than here, so the read path stays a pure
+ * predicate.
+ */
+export function isPersonalConnectorName(sourceName: string): boolean {
+  return sourceName.startsWith(PERSONAL_CONNECTOR_PREFIX);
+}
+
+/** The connector's own `serverName`, with the reserved wire prefix removed. */
+export function personalConnectorServerName(sourceName: string): string {
+  return sourceName.slice(PERSONAL_CONNECTOR_PREFIX.length);
+}
+
+/**
+ * The wire form of a personal connector's name.
+ *
+ * Takes either a bare source name (`gmail`) or a full tool name
+ * (`gmail__send`) — both call sites exist, and prefixing the whole string
+ * prefixes the source segment either way, which is the only part that decides
+ * the door.
+ */
+export function personalConnectorWireName(name: string): string {
+  return `${PERSONAL_CONNECTOR_PREFIX}${name}`;
+}
+
+/**
  * Automations tools that stay reachable inside an unattended run: read-only
  * introspection plus `cancel`. They surface run health without persisting a new
  * instruction. Everything else in the `automations__*` namespace — the authoring

@@ -22,6 +22,8 @@ import { describe, expect, test } from "bun:test";
 import {
   InvalidNamespacedToolNameInput,
   namespacedToolName,
+} from "../../helpers/namespaced-tool-name.ts";
+import {
   parseNamespacedSourceName,
   parseNamespacedToolName,
   UnknownNamespacedToolName,

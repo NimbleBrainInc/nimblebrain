@@ -150,13 +150,17 @@ describe("cross-workspace resume scopes the session's workspace to the conversat
     expect(prompt).not.toContain("not in any single workspace");
     expect(prompt).not.toContain(PERSONAL);
 
-    // Direct tool-surface assertion: the workspace-namespaced tools the model can
-    // call are workspace A's (`ws_workspace_a-…`), never the unfocused request's
-    // personal workspace (`ws_user_…-…`). Independent of the narration block.
-    const wsTools = (turn?.tools ?? []).filter((t) => t.startsWith("ws_"));
-    expect(wsTools.length).toBeGreaterThan(0);
-    expect(wsTools.some((t) => t.startsWith(`${WORKSPACE_A}-`))).toBe(true);
-    expect(wsTools.some((t) => t.startsWith(`${PERSONAL}-`))).toBe(false);
+    // The tool-surface assertion that used to sit here is gone, deliberately.
+    // It filtered the captured list for names starting with `ws_` and checked the
+    // prefix. Wire names are bare now, so no name carries a workspace, and the
+    // model's list is in any case a SURFACED SUBSET (progressive disclosure), not
+    // the workspace's registry — a marker source added to A does not appear in it,
+    // so neither presence nor absence proves anything about the wall.
+    //
+    // The binding is still asserted, by the prompt block above: workspace A is
+    // named and the other workspace is not. Reverting the seal fails there.
+    // Registry-level scoping is covered in the /mcp wall tests, where tools/list
+    // returns the full per-workspace surface.
 
     await runtime.shutdown();
   });
@@ -197,14 +201,17 @@ describe("cross-workspace resume scopes the session's workspace to the conversat
     expect(prompt).not.toContain(WORKSPACE_B);
     expect(prompt).not.toContain(WORKSPACE_B_NAME);
 
-    // Direct tool-surface assertion: the namespaced tools are workspace A's, and
-    // the focused workspace B's tools (`ws_workspace_b-…`) are NOT reachable —
-    // the wall follows the conversation, not the request. Reverting the seal
-    // surfaces `ws_workspace_b-…` here and fails.
-    const wsTools = (turn?.tools ?? []).filter((t) => t.startsWith("ws_"));
-    expect(wsTools.length).toBeGreaterThan(0);
-    expect(wsTools.some((t) => t.startsWith(`${WORKSPACE_A}-`))).toBe(true);
-    expect(wsTools.some((t) => t.startsWith(`${WORKSPACE_B}-`))).toBe(false);
+    // The tool-surface assertion that used to sit here is gone, deliberately.
+    // It filtered the captured list for names starting with `ws_` and checked the
+    // prefix. Wire names are bare now, so no name carries a workspace, and the
+    // model's list is in any case a SURFACED SUBSET (progressive disclosure), not
+    // the workspace's registry — a marker source added to A does not appear in it,
+    // so neither presence nor absence proves anything about the wall.
+    //
+    // The binding is still asserted, by the prompt block above: workspace A is
+    // named and the other workspace is not. Reverting the seal fails there.
+    // Registry-level scoping is covered in the /mcp wall tests, where tools/list
+    // returns the full per-workspace surface.
 
     await runtime.shutdown();
   });

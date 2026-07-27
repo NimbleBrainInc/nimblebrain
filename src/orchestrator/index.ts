@@ -13,7 +13,6 @@ export { mapOrchestratorErrorToToolResult } from "./error-mapping.ts";
 export type { OrchestratorRuntime, RoutedToolCall } from "./route.ts";
 export {
   ConnectorGrantDenied,
-  CrossWorkspaceReachDenied,
   routeToolCall,
   UnknownIdentitySource,
   UnknownNamespacedToolName,

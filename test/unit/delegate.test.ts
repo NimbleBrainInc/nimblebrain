@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it } from "bun:test";
 import { AgentEngine } from "../../src/engine/engine.ts";
 import { createEchoModel } from "../helpers/echo-model.ts";
 import { createMockModel } from "../helpers/mock-model.ts";
+import { selectChildTools } from "../../src/tools/delegate.ts";
 import { StaticToolRouter } from "../../src/adapters/static-router.ts";
 import { NoopEventSink } from "../../src/adapters/noop-events.ts";
 import { ToolRegistry } from "../../src/tools/registry.ts";
@@ -904,5 +905,59 @@ describe("nb__delegate", () => {
 		);
 		expect(childRunStart).toBeDefined();
 		expect(childRunStart!.data["maxIterations"]).toBe(1);
+	});
+});
+
+describe("selectChildTools — personal connectors are opt-in only", () => {
+	// A privilege boundary that was breached twice in one branch: `availableTools()`
+	// includes the caller's granted personal connectors under their `my_` names,
+	// while `defaultActiveTools()` deliberately excludes them, so matching every
+	// glob against both corpuses handed a delegated child the parent's own
+	// credentials.
+	//
+	// This calls `selectChildTools` itself. An earlier version of this coverage
+	// re-implemented the rule in the test, which stayed green if you deleted the
+	// guard — a guard verified by a copy of itself.
+	const MARKED = "my_gmail__send";
+
+	function ctxWith(reachable: string[]): Parameters<typeof selectChildTools>[0] {
+		return {
+			tools: {
+				availableTools: async () =>
+					reachable.map((name) => ({ name, description: "", inputSchema: {} })),
+			},
+		} as unknown as Parameters<typeof selectChildTools>[0];
+	}
+
+	const DEFAULTS = [
+		{ name: "crm__search", description: "", inputSchema: {} },
+		{ name: "conversations__list", description: "", inputSchema: {} },
+	] as Parameters<typeof selectChildTools>[2];
+
+	it("a bare wildcard does not hand the child the parent's connectors", async () => {
+		const picked = await selectChildTools(
+			ctxWith(["crm__search", "conversations__list", MARKED]),
+			["*"],
+			DEFAULTS,
+		);
+		expect(picked.map((t) => t.name)).not.toContain(MARKED);
+	});
+
+	it("a bare suffix glob does not reach them either", async () => {
+		const picked = await selectChildTools(
+			ctxWith(["crm__search", MARKED]),
+			["*__send"],
+			DEFAULTS,
+		);
+		expect(picked.map((t) => t.name)).toEqual([]);
+	});
+
+	it("a marked glob DOES — the documented opt-in path", async () => {
+		const picked = await selectChildTools(
+			ctxWith(["crm__search", MARKED]),
+			["my_gmail__*"],
+			DEFAULTS,
+		);
+		expect(picked.map((t) => t.name)).toEqual([MARKED]);
 	});
 });

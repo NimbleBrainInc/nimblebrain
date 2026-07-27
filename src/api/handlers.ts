@@ -833,10 +833,14 @@ export function buildResourceEnvelopeEntry(
  *
  *   - **Qualified** `ws_<id>-<source>` — the shell names a source in a
  *     specific workspace directly (e.g. reading back a preview / citation link
- *     minted in another workspace). The NAME is authoritative: resolve the
- *     owning workspace from it and authorize by MEMBERSHIP — exactly as the
- *     engine's `routeToolCall` does ("derived ONLY from the parsed wsId; we
- *     never reach for any ambient current-workspace pointer"). The ambient
+ *     minted in another workspace). The NAME is authoritative here: resolve the
+ *     owning workspace from it and authorize by MEMBERSHIP. This is the REST
+ *     shell's own rule, not one borrowed from the engine — `routeToolCall`
+ *     takes the opposite approach and refuses a qualified name outright, since
+ *     the agent must never reach a workspace the session is not bound to. This
+ *     surface is first-party, membership-gated, and never carries an
+ *     agent-authored name, so a qualified reference is safe here and is the
+ *     only remaining path where a name selects a workspace. The ambient
  *     `X-Workspace-Id` is irrelevant here — a preview link minted in one
  *     workspace must read back from a conversation focused on another. This is
  *     the same principle that already lets identity sources (`files`,

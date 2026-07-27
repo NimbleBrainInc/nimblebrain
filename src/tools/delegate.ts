@@ -15,8 +15,16 @@ import { DEFAULT_CHILD_ITERATIONS, MAX_CHILD_ITERATIONS } from "../limits.ts";
 import { resolveMaxOutputTokens } from "../runtime/resolve-max-output-tokens.ts";
 import { resolveThinking } from "../runtime/resolve-thinking.ts";
 import type { AgentProfile } from "../runtime/types.ts";
+import { isPersonalConnectorName, PERSONAL_CONNECTOR_PREFIX } from "./identity-sources.ts";
 import type { InProcessTool } from "./in-process-app.ts";
 import { filterTools } from "./surfacing.ts";
+import { toolNameMatchesPattern } from "./tool-pattern.ts";
+
+/** The `<source>` segment of a bare `<source>__<tool>` name. */
+function sourceSegmentOfName(name: string): string {
+  const sep = name.indexOf("__");
+  return sep > 0 ? name.slice(0, sep) : name;
+}
 
 /** Fixed system prompt for delegate calls without a named agent profile. */
 const DELEGATE_PREAMBLE =
@@ -31,7 +39,7 @@ export interface DelegateContext {
   resolveSlot: (modelString: string) => string;
   /**
    * Tool router used for the child engine's per-call dispatch. Walled to one
-   * workspace: `availableTools()` returns the session workspace's namespaced
+   * workspace: `availableTools()` returns the session workspace's bare
    * tools plus the caller's identity tools — never a cross-workspace union.
    * `execute(call, ...)` routes through the orchestrator, which denies any
    * other workspace.
@@ -43,15 +51,26 @@ export interface DelegateContext {
    * `manage_tools.add(...)`), but its initial tool list is the focused
    * workspace's default set so the prompt stays bounded.
    *
-   * Globs in `tools: [...]` widen the initial active set: namespaced globs
-   * (`ws_<id>-...`) match against `tools.availableTools()` (the bound
-   * workspace); bare globs (`source__*`) match against `defaultActiveTools()`
-   * (focused workspace + identity sources). A namespaced glob for any other
-   * workspace matches nothing — the wall keeps the reachable set to one workspace.
+   * Globs in `tools: [...]` widen the initial active set. They are matched
+   * against two corpuses — `defaultActiveTools()` (the surfaced default set) and
+   * `tools.availableTools()` (everything reachable in the bound workspace) — and
+   * the results are unioned.
+   *
+   * Tool names are bare, so globs are authored bare (`source__*`). A legacy
+   * `ws_<id>-` glob still works: `matchToolPattern` normalizes the pattern the
+   * same way it normalizes the name.
+   *
+   * **A legacy glob's workspace id is ignored.** `ws_<other>-crm__*` normalizes
+   * to `crm__*` and matches the bound workspace's `crm` — where it previously
+   * matched nothing. This does not widen reach (both corpuses are the one bound
+   * workspace, so the wall is untouched); what it means is that an operator's
+   * workspace-specific scoping directive now applies wherever the profile runs.
+   * The trade is deliberate: the alternative is a scoping directive that
+   * silently selects zero tools.
    */
   tools: ToolRouter;
   /**
-   * The child engine's default INITIAL active set: namespaced focused-
+   * The child engine's default INITIAL active set: bare focused-
    * workspace tools + bare kernel identity tools. Mirrors the composition
    * the chat surface gives its parent engine (see `Runtime._chatInner`,
    * the `allTools` construction). Used when the caller didn't supply
@@ -193,39 +212,69 @@ function capChildIterations(
  * Resolve the child engine's INITIAL active tool set. Two sources, two purposes:
  *
  *   - `defaultActiveTools()` (`defaultTools`) — focused-workspace tools
- *     (namespaced) + bare identity tools. Mirrors the chat surface's initial
+ *     (bare) + bare identity tools. Mirrors the chat surface's initial
  *     active set. Used as the default when no globs are supplied, and as the
  *     match corpus for BARE globs (`source__*`).
  *
- *   - `ctx.tools.availableTools()` — the bound workspace's tools (namespaced)
- *     plus identity tools. Used as the match corpus for NAMESPACED globs
- *     (`ws_<id>-...`), which can only target the one workspace the session is
- *     walled to; a glob naming another workspace matches nothing here and is
- *     denied at dispatch.
+ *   - `ctx.tools.availableTools()` — the bound workspace's tools plus identity
+ *     tools, AND the caller's granted personal connectors under their `my_`
+ *     names.
+ *
+ * EVERY glob is matched against BOTH corpuses and the results unioned. The one
+ * asymmetry is the marker: a personal connector is reachable only through a glob
+ * that literally carries it, so a bare `*` cannot hand a delegated child the
+ * parent's own credentials. That is the least-privilege boundary
+ * `Runtime.defaultActiveTools` states and `test/unit/delegate.test.ts` pins.
  *
  * Bare globs (`["crm__*"]`) match the bound workspace's CRM by its bare inner
  * name. Mixed glob lists work — each glob expands against the same bounded
  * corpus and the results union.
  */
-async function selectChildTools(
+export async function selectChildTools(
   ctx: DelegateContext,
   globs: string[] | undefined,
   defaultTools: ToolSchema[],
 ): Promise<ToolSchema[]> {
   if (!globs || globs.length === 0) return defaultTools;
-  const namespacedGlobs = globs.filter((g) => g.startsWith("ws_"));
-  const bareGlobs = globs.filter((g) => !g.startsWith("ws_"));
-  const fromBare = bareGlobs.length > 0 ? filterTools(defaultTools, bareGlobs) : [];
-  const fromNamespaced =
-    namespacedGlobs.length > 0
-      ? filterTools(await ctx.tools.availableTools(), namespacedGlobs)
-      : [];
-  // Dedupe by canonical (namespaced) name — `filterTools` may return the same
-  // entry under both corpuses if a focused-workspace tool's namespaced form is
-  // matched by a `ws_<focused>-...` glob.
+  // Legacy `ws_<id>-` globs are normalized inside `matchToolPattern`, the single
+  // site both corpuses match through — no per-caller normalization here.
+  const fromBare = filterTools(defaultTools, globs);
+  // A second corpus because `defaultTools` is the SURFACED subset; a glob may
+  // legitimately name a tool that exists in the workspace but is not surfaced by
+  // default.
+  // MARKER SEMANTICS FOR THIS CORPUS: personal connectors are reachable here
+  // ONLY through a glob that literally carries the marker.
+  //
+  // `availableTools()` is `listToolsForWorkspace(wsId, identityId)`, which
+  // includes the caller's granted personal connectors under their `my_` names —
+  // unlike `defaultTools`, which excludes them on purpose. Matching every glob
+  // against both corpuses would therefore let a bare `*` or `*__send` hand a
+  // delegated child the parent's own credentials, undoing the least-privilege
+  // decision `Runtime.defaultActiveTools` states in as many words. The guard in
+  // `tool-pattern.ts` does not cover this: it constrains the PATTERN (a
+  // normalized `ws_<id>-*`), and the hole here is the CORPUS.
+  //
+  // A marked glob still works, which is the documented opt-in.
+  const reachable = await ctx.tools.availableTools();
+  const markedGlobs = globs.filter((g) => g.startsWith(PERSONAL_CONNECTOR_PREFIX));
+  const fromReachable = filterTools(reachable, globs).filter(
+    (t) =>
+      !isPersonalConnectorName(sourceSegmentOfName(t.name)) ||
+      markedGlobs.some((g) => toolNameMatchesPattern(t.name, g)),
+  );
+
+  // NOT role-filtered, unlike `defaultTools` — and NEWLY so: before this change a
+  // bare glob matched only `defaultTools`, so this corpus was reachable solely by
+  // a `ws_<id>-` glob. A non-admin's `nb__*` glob can now pull
+  // admin-only platform tools into a child's active set. Not exploitable — those
+  // tools gate on org role internally and are `internal`-annotated — but it is
+  // defense in depth this corpus lacks. Fixing it means threading the caller's
+  // `orgRole` into `DelegateContext`, which is a change of its own.
+  // Dedupe by name — `filterTools` may return the same
+  // entry under both corpuses when a surfaced tool is also in the reachable set.
   const seen = new Set<string>();
   const childTools: ToolSchema[] = [];
-  for (const t of [...fromBare, ...fromNamespaced]) {
+  for (const t of [...fromBare, ...fromReachable]) {
     if (seen.has(t.name)) continue;
     seen.add(t.name);
     childTools.push(t);

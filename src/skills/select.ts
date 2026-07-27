@@ -9,7 +9,7 @@
  * No filesystem access, no event emission, no global state.
  */
 
-import { bareToolName } from "../tools/namespace.ts";
+import { toolNameMatchesPattern } from "../tools/tool-pattern.ts";
 import type { Skill } from "./types.ts";
 
 /**
@@ -41,46 +41,16 @@ export interface SelectInput {
 }
 
 /**
- * Match a tool name against a `tool-affinity` glob pattern.
+ * Glob-match a tool name against a skill's `toolAffinity` pattern.
  *
- * Supported patterns:
- *  - `*` — matches anything
- *  - `<prefix>__*` — starts-with check
- *  - `*__<suffix>` — ends-with check
- *  - exact equality otherwise
- *
- * Empty pattern returns false. More complex patterns (e.g. `*__patch_*`) are
- * out of scope for Phase 2 — they fall through to exact-match, so they only
- * match the literal pattern string.
- *
- * Namespaced tool names carry a `ws_<id>-` prefix. Patterns in skill manifests
- * and `appContext`-driven affinity rules are typically authored against the BARE form
- * (`<source>__*`). Match against both the full namespaced name AND the
- * bare inner form so legacy patterns keep working unchanged and
- * namespace-aware patterns (`ws_<id>-<source>__*`) also match precisely.
+ * A thin alias for `toolNameMatchesPattern`, the single matcher shared with
+ * `surfacing.ts`. Kept as a named export because `toolAffinity` is its own
+ * concept at this layer; see that function for the pattern grammar and for why
+ * the retired `ws_<id>-` prefix is normalized on both sides while the `my_`
+ * personal-connector marker is normalized on neither.
  */
 export function toolMatches(toolName: string, pattern: string): boolean {
-  if (pattern === "") return false;
-  if (pattern === "*") return true;
-
-  // Derive the inner form once. If `toolName` is namespaced
-  // (`ws_<id>-<inner>`) we strip the prefix and try both forms; otherwise
-  // we just use the original name. Two candidates keeps the matcher's
-  // logic shape (one pattern, one rule) intact below. Stripping goes
-  // through the canonical `bareToolName` parser so the separator lives in
-  // exactly one place.
-  const inner = bareToolName(toolName);
-  const candidates = inner === toolName ? [toolName] : [toolName, inner];
-
-  if (pattern.endsWith("__*")) {
-    const prefix = pattern.slice(0, -1);
-    return candidates.some((c) => c.startsWith(prefix));
-  }
-  if (pattern.startsWith("*__")) {
-    const suffix = pattern.slice(1);
-    return candidates.some((c) => c.endsWith(suffix));
-  }
-  return candidates.some((c) => c === pattern);
+  return toolNameMatchesPattern(toolName, pattern);
 }
 
 /**

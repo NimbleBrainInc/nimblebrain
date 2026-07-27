@@ -140,9 +140,10 @@ async function createMcpClient(
 // ── Tests ───────────────────────────────────────────────────────────
 
 describe("MCP workspace scoping", () => {
-  // Stage 2: every tool name is namespaced as `ws_<id>/<source>__<tool>`.
-  // Per-workspace registry filtering still happens, but the namespacing
-  // is what tells the orchestrator which workspace's registry to consult.
+  // Every tool name is bare `<source>__<tool>`. Per-workspace registry filtering
+  // is what scopes the surface; the workspace itself comes from the request's
+  // validated `X-Workspace-Id`, never from the name — so a name cannot address
+  // any workspace other than the session's own.
   it("ListTools returns only workspace + protected tools (not denied)", async () => {
     const client = await createMcpClient();
     try {
@@ -150,11 +151,11 @@ describe("MCP workspace scoping", () => {
       const names = result.tools.map((t) => t.name);
 
       // Should include allowed and protected tools
-      expect(names).toContain(`${TEST_WORKSPACE_ID}-${ALLOWED_SOURCE}__greet`);
-      expect(names).toContain(`${TEST_WORKSPACE_ID}-${PROTECTED_SOURCE}__admin`);
+      expect(names).toContain(`${ALLOWED_SOURCE}__greet`);
+      expect(names).toContain(`${PROTECTED_SOURCE}__admin`);
 
       // Should NOT include denied bundle's tools
-      expect(names).not.toContain(`${TEST_WORKSPACE_ID}-${DENIED_SOURCE}__secret`);
+      expect(names).not.toContain(`${DENIED_SOURCE}__secret`);
     } finally {
       await client.close();
     }
@@ -164,7 +165,7 @@ describe("MCP workspace scoping", () => {
     const client = await createMcpClient();
     try {
       const result = await client.callTool({
-        name: `${TEST_WORKSPACE_ID}-${ALLOWED_SOURCE}__greet`,
+        name: `${ALLOWED_SOURCE}__greet`,
         arguments: { name: "world" },
       });
       expect(result.isError).toBeFalsy();
@@ -180,7 +181,7 @@ describe("MCP workspace scoping", () => {
     const client = await createMcpClient();
     try {
       const result = await client.callTool({
-        name: `${TEST_WORKSPACE_ID}-${PROTECTED_SOURCE}__admin`,
+        name: `${PROTECTED_SOURCE}__admin`,
         arguments: {},
       });
       expect(result.isError).toBeFalsy();
@@ -199,7 +200,7 @@ describe("MCP workspace scoping", () => {
       let dataReason: string | undefined;
       try {
         await client.callTool({
-          name: `${TEST_WORKSPACE_ID}-${DENIED_SOURCE}__secret`,
+          name: `${DENIED_SOURCE}__secret`,
           arguments: {},
         });
       } catch (err) {

@@ -27,7 +27,6 @@ import { NoopEventSink } from "../../src/adapters/noop-events.ts";
 import { reconstructMessages } from "../../src/conversation/event-reconstructor.ts";
 import { Runtime } from "../../src/runtime/runtime.ts";
 import { McpSource } from "../../src/tools/mcp-source.ts";
-import { namespacedToolName } from "../../src/tools/namespace.ts";
 import { createEchoModel } from "../helpers/echo-model.ts";
 import { TEST_WORKSPACE_ID, provisionTestWorkspace } from "../helpers/test-workspace.ts";
 
@@ -308,8 +307,8 @@ let promoSource: McpSource;
 
 // The fixture tool is not in the turn-start active set (behind progressive
 // disclosure); the model promotes it by its workspace-namespaced name.
-const PROMOTED_TOOL = namespacedToolName(TEST_WORKSPACE_ID, "ai-nimblebrain-test-mcp__doit");
-const MANAGE_TOOLS = namespacedToolName(TEST_WORKSPACE_ID, "nb__manage_tools");
+const PROMOTED_TOOL = "ai-nimblebrain-test-mcp__doit";
+const MANAGE_TOOLS = "nb__manage_tools";
 
 describe("bundle-skill adapter — mid-turn tool promotion", () => {
   beforeAll(async () => {

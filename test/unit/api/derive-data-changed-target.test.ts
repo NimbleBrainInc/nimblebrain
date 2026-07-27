@@ -80,4 +80,60 @@ describe("deriveDataChangedTarget", () => {
 	test("a malformed event missing both name and source/tool does not broadcast", () => {
 		expect(deriveDataChangedTarget({ type: "tool.done", data: { ok: true } })).toBeNull();
 	});
+
+	describe("personal connectors", () => {
+		test("a marked source does not broadcast at all", () => {
+			// Nothing can be listening: a personal connector mounts no iframe, so no
+			// `data-app` carries its name.
+			const event: EngineEvent = {
+				type: "tool.done",
+				data: { name: "my_notes__append", ok: true },
+			};
+			expect(deriveDataChangedTarget(event)).toBeNull();
+		});
+
+		test("the marker is not stripped to find a listener", () => {
+			// The load-bearing case. De-marking `my_notes` to `notes` would match the
+			// WORKSPACE app of that name and refetch it on the caller's private tool
+			// call — the same-name collision the marker exists to prevent, reached
+			// through the back door. Assert the workspace app is NOT the target.
+			const event: EngineEvent = {
+				type: "tool.done",
+				data: { name: "my_notes__append", ok: true },
+			};
+			expect(deriveDataChangedTarget(event)).not.toEqual({
+				server: "notes",
+				tool: "append",
+			});
+		});
+
+		test("the same-named WORKSPACE source still broadcasts normally", () => {
+			// The marker is what separates them; an unmarked `notes` is the
+			// workspace's own app and is unaffected by the guard above.
+			const event: EngineEvent = {
+				type: "tool.done",
+				data: { name: "notes__append", ok: true },
+			};
+			expect(deriveDataChangedTarget(event)).toEqual({
+				server: "notes",
+				tool: "append",
+			});
+		});
+
+		test("a marked source arriving as separate source/tool fields is also refused", () => {
+			// `tool.progress` composes `${source}__${tool}` before the split, so the
+			// guard has to sit after that composition, not only on the `name` shape.
+			//
+			// This shape is only reachable because `McpSource` emits its WIRE name.
+			// It is constructed with the bare `serverName` (the registry key), so
+			// before that it emitted `gmail` for a personal connector — identical to
+			// the workspace source it collides with, and the guard never fired on
+			// this path at all. `mcp-source-wire-name.test.ts` pins the emitter end.
+			const event: EngineEvent = {
+				type: "tool.progress",
+				data: { source: "my_notes", tool: "append" },
+			};
+			expect(deriveDataChangedTarget(event)).toBeNull();
+		});
+	});
 });

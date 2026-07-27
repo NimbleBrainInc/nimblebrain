@@ -34,7 +34,6 @@ import {
 } from "@modelcontextprotocol/sdk/types.js";
 import { getActiveWorkspaceId, uploadResource } from "../api/client";
 import { isIdentityApp } from "../lib/identity-apps";
-import { namespacedToolName } from "../lib/namespaced-tool";
 import { getMcpBridgeClient, withSessionRetry } from "../mcp-bridge-client";
 import { getHostThemeMode, getSpecThemeTokens, getThemeTokens } from "./theme";
 import type {
@@ -789,33 +788,36 @@ async function callToolViaMcp(
   //   1. Qualified: iframes pass either `<tool>` (bare) or
   //      `<source>__<tool>` (already qualified). Normalize to the qualified
   //      form using the post-INTERNAL_APPS-authz `server`.
-  //   2. Scoped: how the name is scoped depends on the app's door:
-  //      - Identity apps (conversations, …) are owned by the user and live
-  //        OUTSIDE any workspace, so they dispatch BARE — the orchestrator
-  //        routes a bare `<source>__<tool>` through the identity door. No
-  //        active workspace is required (there is none).
-  //      - Workspace apps prefix `ws_<active>-`. The iframe is mounted under
-  //        the current URL's workspace (`/w/<slug>/app/<bundle>`), so the
-  //        active workspace == the iframe's host workspace. (Side-by-side
-  //        iframes from different workspaces would need the host captured at
-  //        bridge construction instead.)
+  //   2. Scoped: BOTH doors dispatch the same bare `<source>__<tool>` form.
+  //      Identity apps (conversations, …) always did. Workspace apps used to
+  //      prefix `ws_<active>-`; they no longer do, because the workspace a call
+  //      lands in comes from the request's validated `X-Workspace-Id`, not from
+  //      the name. Restating it in the name only gave the model 39 opaque
+  //      characters to echo — and drop.
+  //
+  //      The active-workspace check stays. The server refuses a workspace call
+  //      on a session with no workspace anyway (`WorkspaceToolUnavailable`), but
+  //      failing here is a clearer error and saves a round trip.
+  //      A personal connector's marker needs no special handling here, and that
+  //      is a property of the code rather than an assumption. `server` is the
+  //      name the iframe was mounted under, which comes from
+  //      `appNameFromToolName` — and that KEEPS the marker. So if a connector
+  //      ever does mount an iframe, `my_gmail__send` goes out marked and lands on
+  //      the identity door. Today none can: a `ui://` read resolves through
+  //      `readIdentityAppResource` (kernel identity sources) or `readAppResource`
+  //      (the workspace registry) and a connector is in neither, so
+  //      `BlockTimeline` refuses to mount one. Both halves fail safe; neither
+  //      relies on the other.
   const qualifiedName = params.name.includes("__") ? params.name : `${server}__${params.name}`;
-  let wireName: string;
-  if (isIdentityApp(server)) {
-    wireName = qualifiedName;
-  } else {
-    const activeWsId = getActiveWorkspaceId();
-    if (!activeWsId) {
-      return {
-        jsonrpc: "2.0",
-        id,
-        error: {
-          code: -32000,
-          message: "No active workspace; cannot dispatch tool call.",
-        },
-      } satisfies UiToolResultError;
-    }
-    wireName = namespacedToolName(activeWsId, qualifiedName);
+  if (!isIdentityApp(server) && !getActiveWorkspaceId()) {
+    return {
+      jsonrpc: "2.0",
+      id,
+      error: {
+        code: -32000,
+        message: "No active workspace; cannot dispatch tool call.",
+      },
+    } satisfies UiToolResultError;
   }
 
   return withSessionRetry(async () => {
@@ -831,7 +833,7 @@ async function callToolViaMcp(
         {
           method,
           params: {
-            name: wireName,
+            name: qualifiedName,
             arguments: params.arguments ?? {},
             task: params.task,
           },
@@ -843,7 +845,7 @@ async function callToolViaMcp(
 
     const result = await client.callTool(
       {
-        name: wireName,
+        name: qualifiedName,
         arguments: params.arguments ?? {},
       },
       CallToolResultSchema,
