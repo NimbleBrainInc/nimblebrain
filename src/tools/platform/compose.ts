@@ -81,7 +81,10 @@ const COMPOSE_DESCRIPTION =
   "Pass `bundle` to filter the response to one bundle's contributions (apps " +
   "section + layer-3 skills under the bundle's affined directory). Read-only. " +
   "Use this to answer 'what's in the agent's prompt right now' or 'what was " +
-  "in the prompt for run X'.";
+  "in the prompt for run X'. " +
+  "`totalTokens` is the size of the composed system prompt, in both modes — " +
+  "NOT the size of the context window, which also holds tool descriptions and " +
+  "history. Call `compose__assembled_context` and read `windowTokens` for that.";
 
 const ASSEMBLED_CONTEXT_DESCRIPTION =
   "Return the recorded context digest for a conversation's run — the per-source " +
@@ -930,8 +933,8 @@ function errorMessage(err: unknown): string {
 function formatTextSummary(response: ComposeResponse): string {
   const head =
     response.mode === "live"
-      ? `Composed (live) for ${response.conversationId}: ${response.layers.length} layers, ${response.totalTokens} tokens`
-      : `Composed (historical, run ${response.runId}) for ${response.conversationId}: ${response.layers.length} layer(s) reconstructed, ${response.totalTokens} tokens recorded`;
+      ? `Composed (live) for ${response.conversationId}: ${response.layers.length} layers, ${response.totalTokens} prompt tokens`
+      : `Composed (historical, run ${response.runId}) for ${response.conversationId}: ${response.layers.length} layer(s) reconstructed, ${response.totalTokens} prompt tokens recorded`;
   if (response.warnings.length === 0) return head;
   return `${head}\n\nWarnings:\n${response.warnings.map((w) => `- ${w}`).join("\n")}`;
 }
