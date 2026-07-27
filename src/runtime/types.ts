@@ -234,7 +234,7 @@ export interface ChatRequest {
    * workspace, identical for every member (no per-user generation).
    *
    * It is ALSO the tool scope: a session is walled to this one workspace —
-   * its tools (namespaced) plus the caller's identity tools, via
+   * its tools plus the caller's identity tools, all bare, via
    * `listToolsForWorkspace(workspaceId)`. There is no cross-workspace union.
    * Absent → the chat isn't focused on a workspace (e.g. the home control
    * panel); it falls back to the personal workspace, which is then the workspace.
@@ -305,11 +305,11 @@ export interface ChatResult {
   conversationId: string;
   skillName: string | null;
   /**
-   * Tool calls executed during this run. `name` is the canonical
-   * namespaced form `ws_<id>-<source>__<tool>` — Q2 of
-   * `STAGE_2_DESIGN_DECISIONS.md`: store the raw namespaced form;
-   * render display-name + friendly name on the fly. Per-turn workspace
-   * attribution lives here on each call's name, NOT on a top-level
+   * Tool calls executed during this run. `name` is the wire form the model
+   * called: bare `<source>__<tool>`, with the caller's personal connectors
+   * carrying the reserved `my_` marker. Stored raw; display name and friendly
+   * name are rendered on the fly. The workspace is NOT in the name — it is the
+   * session's, resolved from the conversation. There is no top-level
    * `ChatResult.workspaceId` field (removed by T006 — different tool
    * calls in the same turn can land in different workspaces, so a
    * single result-level workspaceId would be misleading).

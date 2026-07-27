@@ -9,10 +9,11 @@
  * the `X-Workspace-Id` header (the web iframe bridge sends it on every call).
  * The host validates the caller's membership and threads the workspace through
  * `mcpRequestWorkspace` (an AsyncLocalStorage) so the tool handlers see it.
- * `tools/list` returns that workspace's tools (namespaced) + the caller's
- * identity tools; `tools/call` is walled to it — a `ws_<other>-…` name is
- * `WorkspaceToolUnavailable`. A request with no (or a non-member)
- * `X-Workspace-Id` is identity-only: any `ws_<id>-…` call is refused
+ * `tools/list` returns that workspace's tools + the caller's identity tools,
+ * all bare; `tools/call` is walled to it — a `ws_<other>-…` name cannot address
+ * another workspace at all, because that form is retired and refused as
+ * `invalid_tool_name`. A request with no (or a non-member) `X-Workspace-Id` is
+ * identity-only: a workspace source is then refused
  * (`WorkspaceToolUnavailable`).
  *
  * Two-layer state architecture:
@@ -218,7 +219,7 @@ export interface McpServerHostOptions {
 /**
  * Session context captured at session creation time. Stage 2 (Q4 hard
  * cut): identity-bound, not workspace-bound. Every `tools/call` parses
- * its target workspace from the namespaced tool name; the session has no
+ * its target workspace from the validated header; the session has no
  * workspace pointer to fall back to.
  */
 export interface McpSessionContext {
@@ -599,7 +600,7 @@ export class McpServerHost {
 
         // Stage 2: sessions are identity-bound. No workspace pointer
         // exists at session level — every `tools/call` parses the target
-        // workspace from the namespaced tool name on each call. Unlike
+        // workspace from the validated header on each call. Unlike
         // pre-Stage-2 we do NOT fail-close on missing workspace context.
         this.transports.set(sid, { transport, identityId, lastAccessedAt: now });
         // Fire-and-forget the registry write. The session is already live
@@ -697,7 +698,7 @@ export class McpServerHost {
  * A `/mcp` session has no fixed workspace — it is walled per request to the
  * workspace named by a membership-validated `X-Workspace-Id` (threaded in via
  * `mcpRequestWorkspace`). `tools/list` serves that workspace's tools
- * (namespaced) plus the caller's identity tools (conversations / files /
+ * (bare) plus the caller's identity tools (conversations / files /
  * automations); a request with no / non-member header is identity-only. Every
  * `tools/call` routes through `routeToolCall`, so a `ws_<other>-...` name is
  * refused, and any `ws_<id>-...` on a
@@ -748,7 +749,7 @@ function createServer(
       return { tools: [] };
     }
     // Walled to the request's workspace (validated `X-Workspace-Id`): that
-    // workspace's tools (namespaced) + the caller's identity tools. No workspace
+    // workspace's tools + the caller's identity tools, all bare. No workspace
     // in scope (e.g. an external client that sent no header) → identity tools
     // only; a `tools/call` on any `ws_<id>-...` name is then refused
     // (`WorkspaceToolUnavailable`).
@@ -800,8 +801,8 @@ function createServer(
     // (empty, empty tool, bad `ws_` id) surface as `invalid_tool_name`. Either
     // way the client gets a meaningful reason and the call never silently
     // routes. Each orchestrator error class maps to a distinct response shape
-    // (the wall's denial,
-    // `WorkspaceToolUnavailable`, share the `workspace_access_denied` reason).
+    // (the wall's denial, `WorkspaceToolUnavailable`, carries the
+    // `workspace_access_denied` reason).
     let routed: Awaited<ReturnType<typeof routeToolCall>>;
     try {
       routed = await routeToolCall({
@@ -933,12 +934,11 @@ function toCallToolResult(result: ToolResult) {
 /**
  * Map an orchestrator routing error to its MCP JSON-RPC error, re-throwing
  * anything unrecognized. Each error class maps to a distinct response shape;
- * `error.data.reason` carries the precise classification. (The wall's two
- * denial, `WorkspaceToolUnavailable`,
- * arrive as `WorkspaceAccessDenied` and share the `workspace_access_denied`
- * reason.)
+ * `error.data.reason` carries the precise classification. (The wall's denial,
+ * `WorkspaceToolUnavailable`, arrives as `WorkspaceAccessDenied` and carries the
+ * `workspace_access_denied` reason.)
  */
-// Exported for `test/unit/orchestrator/personal-connector-marker-mapping.test.ts`,
+// Exported for `test/unit/orchestrator/route-error-mapping.test.ts`,
 // which asserts both doors report the same `data.reason`. Testing the mapper
 // directly is the only way to catch an error class that is thrown but unmapped —
 // a route-layer assertion passes while the caller still receives nothing.

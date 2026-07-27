@@ -86,13 +86,12 @@ export class WorkspaceToolUnavailable extends WorkspaceAccessDenied {
    * discriminator. If the source ever needs to reach a client, add it to both
    * mappers at the same time.
    */
-  constructor(identityId: string, wsId: string | undefined, sourceName?: string) {
-    // `WorkspaceAccessDenied` requires a wsId for its payload; a bare call has
-    // none, so report the empty string rather than a value that reads like one.
-    super(identityId, wsId ?? "");
+  constructor(identityId: string, sourceName: string) {
+    // `WorkspaceAccessDenied` carries a wsId; a session with no workspace has
+    // none to report, so it is empty rather than a value that reads like one.
+    super(identityId, "");
     this.name = "WorkspaceToolUnavailable";
-    const subject = wsId !== undefined ? `workspace tool "${wsId}"` : `source "${sourceName}"`;
-    this.message = `[orchestrator] this session is identity-scoped (no workspace); ${subject} is not available`;
+    this.message = `[orchestrator] this session is identity-scoped (no workspace); source "${sourceName}" is not available`;
   }
 }
 
@@ -244,10 +243,11 @@ export interface OrchestratorRuntime {
 
   /**
    * The walled tool surface for a session bounded to `wsId`: that workspace's
-   * tools (namespaced `ws_<id>-<tool>`) plus the caller's identity tools
-   * (bare), plus — when `identityId` is given — the caller's personal connectors
-   * granted to `wsId` (bare; any workspace, including the caller's own personal
-   * one). The engine's reachable universe — there is no cross-workspace union.
+   * tools and the caller's identity tools, both bare `<source>__<tool>`, plus —
+   * when `identityId` is given — the caller's personal connectors granted to
+   * `wsId`, carrying the reserved `my_` marker so they stay distinguishable from
+   * a workspace source of the same name. The engine's reachable universe — there
+   * is no cross-workspace union.
    */
   listToolsForWorkspace(wsId: string, identityId?: string): Promise<ToolSchema[]>;
 }
@@ -350,9 +350,7 @@ export async function routeToolCall(opts: {
   //      can never be shadowed by a workspace source of the same name;
   //   2. the reserved personal-connector prefix, which a workspace source may
   //      not claim (`isReservedServerName` / `validateServerName` at install);
-  //   3. otherwise the session's own workspace;
-  //   4. failing that, a personal connector under its LEGACY bare name — see
-  //      the fallback below.
+  //   3. otherwise the session's own workspace.
   //
   // Note what is NOT here: a cross-workspace check. It is gone because the
   // caller can no longer NAME another workspace, so there is nothing to compare
@@ -372,7 +370,7 @@ export async function routeToolCall(opts: {
     // A bare workspace-source name has no workspace id to report, so this
     // carries the SOURCE name — see `WorkspaceToolUnavailable`, which keeps it
     // in a field of its own rather than overloading `wsId`.
-    throw new WorkspaceToolUnavailable(identityId, undefined, sourceName);
+    throw new WorkspaceToolUnavailable(identityId, sourceName);
   }
   const wsId = workspaceId;
 

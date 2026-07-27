@@ -213,11 +213,15 @@ function capChildIterations(
  *     active set. Used as the default when no globs are supplied, and as the
  *     match corpus for BARE globs (`source__*`).
  *
- *   - `ctx.tools.availableTools()` — the bound workspace's tools (bare)
- *     plus identity tools. Used as the match corpus for NAMESPACED globs
- *     (`ws_<id>-...`), which can only target the one workspace the session is
- *     walled to; a glob naming another workspace matches nothing here and is
- *     denied at dispatch.
+ *   - `ctx.tools.availableTools()` — the bound workspace's tools plus identity
+ *     tools, AND the caller's granted personal connectors under their `my_`
+ *     names.
+ *
+ * EVERY glob is matched against BOTH corpuses and the results unioned. The one
+ * asymmetry is the marker: a personal connector is reachable only through a glob
+ * that literally carries it, so a bare `*` cannot hand a delegated child the
+ * parent's own credentials. That is the least-privilege boundary
+ * `Runtime.defaultActiveTools` states and `test/unit/delegate.test.ts` pins.
  *
  * Bare globs (`["crm__*"]`) match the bound workspace's CRM by its bare inner
  * name. Mixed glob lists work — each glob expands against the same bounded
@@ -256,7 +260,9 @@ export async function selectChildTools(
       markedGlobs.some((g) => toolNameMatchesPattern(t.name, g)),
   );
 
-  // NOT role-filtered, unlike `defaultTools`. A non-admin's `nb__*` glob can pull
+  // NOT role-filtered, unlike `defaultTools` — and NEWLY so: before this change a
+  // bare glob matched only `defaultTools`, so this corpus was reachable solely by
+  // a `ws_<id>-` glob. A non-admin's `nb__*` glob can now pull
   // admin-only platform tools into a child's active set. Not exploitable — those
   // tools gate on org role internally and are `internal`-annotated — but it is
   // defense in depth this corpus lacks. Fixing it means threading the caller's

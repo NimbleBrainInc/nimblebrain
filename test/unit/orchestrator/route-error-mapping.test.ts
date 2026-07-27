@@ -13,7 +13,12 @@
 import { describe, expect, test } from "bun:test";
 import { mapRouteToolError } from "../../../src/api/mcp-server.ts";
 import { mapOrchestratorErrorToToolResult } from "../../../src/orchestrator/error-mapping.ts";
-import { UnknownIdentitySource, UnknownToolSource } from "../../../src/orchestrator/index.ts";
+import {
+  ConnectorGrantDenied,
+  UnknownIdentitySource,
+  UnknownToolSource,
+  WorkspaceToolUnavailable,
+} from "../../../src/orchestrator/index.ts";
 import { UnknownNamespacedToolName } from "../../../src/tools/namespace.ts";
 
 const legacy = () =>
@@ -58,6 +63,14 @@ describe("every live routing class reaches the caller on both doors", () => {
     ["UnknownNamespacedToolName", legacy(), "invalid_tool_name"],
     ["UnknownToolSource", new UnknownToolSource("ws_helix", "crm__search", "crm"), "unknown_tool_source"],
     ["UnknownIdentitySource", new UnknownIdentitySource("nope__x", "nope"), "unknown_identity_source"],
+    // The wall's only remaining denial, and the one class whose payload this
+    // branch changed in a way the PR body flags as potentially breaking.
+    ["WorkspaceToolUnavailable", new WorkspaceToolUnavailable("u1", "crm"), "workspace_access_denied"],
+    [
+      "ConnectorGrantDenied",
+      new ConnectorGrantDenied("u1", "gmail", "ws_helix"),
+      "connector_grant_denied",
+    ],
   ];
 
   for (const [name, err, reason] of cases) {
@@ -70,4 +83,13 @@ describe("every live routing class reaches the caller on both doors", () => {
       expect(mcpError(err).data?.reason).toBe(reason);
     });
   }
+
+  test("WorkspaceToolUnavailable reports an EMPTY wsId on the bare-source path", () => {
+    // Documented consequence, pinned so it is a decision rather than a surprise:
+    // a session with no workspace has none to name, and the source name is
+    // deliberately not smuggled into a field typed as a workspace id.
+    const e = new WorkspaceToolUnavailable("u1", "crm");
+    expect(e.wsId).toBe("");
+    expect(e.message).toContain("crm");
+  });
 });

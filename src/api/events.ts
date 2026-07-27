@@ -114,8 +114,8 @@ const SSE_ROUTES: Partial<Record<EngineEventType, SseRoute>> = {
  *
  * Two event shapes feed this, and they carry the source name differently:
  *   - `tool.done` (ok) → a single qualified `name`. This is the name the
- *     MODEL called, which post-Stage-2 is workspace-namespaced
- *     (`ws_<id>-<source>__<tool>`).
+ *     MODEL called: bare `<source>__<tool>`, or `my_<source>__<tool>` for a
+ *     personal connector.
  *   - `tool.progress` → separate `source` + `tool`; `McpSource` emits the
  *     bare source name there.
  *
