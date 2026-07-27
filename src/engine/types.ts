@@ -85,6 +85,31 @@ export interface ToolResult {
 export const NON_ADVANCING_META_KEY = "ai.nimblebrain/non-advancing";
 
 /**
+ * Reverse-DNS `_meta` key marking an error result as an INFRASTRUCTURE failure —
+ * the call never reached the tool's logic, or its answer never made it back.
+ * Transport loss, a gateway throttle, a session that rolled.
+ *
+ * The loop supervisor excludes these from its strike count. Its whole premise is
+ * that a repeated identical error means the tool is deterministically refusing
+ * the work, so calling it again is futile — true for a schema rejection or a
+ * permanent 4xx, and false for every failure in this class. An infrastructure
+ * error carries no information about whether the tool would do the work; it says
+ * the request didn't arrive. Retrying is the correct response, and the
+ * supervisor's response (disable the tool for the rest of the run) is the one
+ * thing that guarantees the work cannot finish.
+ *
+ * It matters most in exactly the case that trips the guard fastest: the ERROR
+ * fingerprint deliberately ignores input, so N calls with N distinct arguments
+ * that all fail the same infrastructural way collapse to one fingerprint and
+ * trip after three.
+ *
+ * Set by the layer that can actually tell — `McpSource`, from its connection
+ * classifier. A tool's own error results never carry it: a tool cannot know that
+ * its transport is the problem.
+ */
+export const INFRA_ERROR_META_KEY = "ai.nimblebrain/infra-error";
+
+/**
  * Annotation marking a tool as a UI-driven affordance, not an agent capability.
  * An internal tool is stripped from every LLM tool listing — chat
  * (`surfaceTools`) and `/mcp` (`tools/list`) alike — and refused for promotion,

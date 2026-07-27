@@ -3,6 +3,7 @@ import { McpError } from "@modelcontextprotocol/sdk/types.js";
 import { describe, expect, it, mock, spyOn } from "bun:test";
 import { NoopEventSink } from "../../src/adapters/noop-events.ts";
 import type { EngineEvent, EventSink } from "../../src/engine/types.ts";
+import { INFRA_ERROR_META_KEY } from "../../src/engine/types.ts";
 import { McpSource, type McpTransportMode, policyFor } from "../../src/tools/mcp-source.ts";
 import type { WorkspaceOAuthProvider } from "../../src/tools/workspace-oauth-provider.ts";
 
@@ -116,6 +117,41 @@ describe("execute (tools/call) — unified recovery", () => {
       const result = await source.execute("do_thing", {});
       expect(result.isError).toBe(true);
       expect(restart).not.toHaveBeenCalled(); // -32601 is "none" → surface, never restart
+    } finally {
+      restart.mockRestore();
+    }
+  });
+
+  it("marks a surfaced connection failure as an infrastructure error", async () => {
+    // The supervisor excludes these from its strike count. Without the marker a
+    // batch of calls with distinct arguments that all fail on the transport
+    // collapses to one ERROR fingerprint (input is deliberately ignored there)
+    // and disables the tool after three — precisely when retrying is correct.
+    const source = remoteSource({
+      callTool: () => Promise.reject(new McpError(-32001, "Request timed out")),
+    });
+    const restart = spyRestart(source, true);
+    try {
+      const result = await source.execute("write", {});
+      expect(result.isError).toBe(true);
+      expect(result._meta?.[INFRA_ERROR_META_KEY]).toBe(true);
+    } finally {
+      restart.mockRestore();
+    }
+  });
+
+  it("does NOT mark a protocol error the server answered with", async () => {
+    // `none` — a -32601/-32602 is deterministic and repeatable, which is exactly
+    // what the loop guard exists to catch. Marking it infrastructure would blunt
+    // the guard rather than correct it.
+    const source = remoteSource({
+      callTool: () => Promise.reject(new McpError(-32601, "Method not found")),
+    });
+    const restart = spyRestart(source, true);
+    try {
+      const result = await source.execute("write", {});
+      expect(result.isError).toBe(true);
+      expect(result._meta?.[INFRA_ERROR_META_KEY]).toBeUndefined();
     } finally {
       restart.mockRestore();
     }

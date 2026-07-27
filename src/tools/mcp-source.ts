@@ -13,7 +13,12 @@ import {
 import { z } from "zod";
 import type { PlacementDeclaration, RemoteTransportConfig } from "../bundles/types.ts";
 import { textContent } from "../engine/content-helpers.ts";
-import type { ContentBlock, EventSink, ToolResult } from "../engine/types.ts";
+import {
+  type ContentBlock,
+  type EventSink,
+  INFRA_ERROR_META_KEY,
+  type ToolResult,
+} from "../engine/types.ts";
 import {
   HOST_RESOURCES_LIST_METHOD,
   HOST_RESOURCES_READ_METHOD,
@@ -1437,7 +1442,15 @@ export class McpSource implements ToolSource {
     // (null) client errors, and only after an on-demand reconnect fails — healing
     // the window between an idle-close and the next HealthMonitor tick.
     if (!this.client && !(await this.reconnectOnDemand())) {
-      return { content: textContent(`McpSource "${this.name}" not started`), isError: true };
+      return {
+        content: textContent(`McpSource "${this.name}" not started`),
+        isError: true,
+        // Definitionally infrastructure: there is no client, so nothing about
+        // the tool was ever exercised. Left uncounted by the loop supervisor,
+        // which would otherwise disable a perfectly good tool three calls into
+        // a reconnect window.
+        ...infraErrorMeta(),
+      };
     }
 
     // Dispatch on whether the target tool supports task augmentation. Tools
@@ -1549,6 +1562,14 @@ export class McpSource implements ToolSource {
               : `${this.name} call failed: ${errMessage(e)}`,
           ),
           isError: true,
+          // Mark everything except a standard JSON-RPC protocol error as
+          // infrastructure. `none` is the class the server ANSWERED with
+          // (-32601 method-not-found, -32602 invalid-params) — deterministic,
+          // repeatable, and exactly what the loop supervisor should trip on.
+          // Every other class here is a connection failure, and an app-level
+          // tool failure never reaches this path at all: those come back as
+          // `isError` RESULTS and are never thrown.
+          ...(classifyConnectionFailure(e) === "none" ? {} : infraErrorMeta()),
         }),
         reauth: () => ({
           content: textContent(
@@ -1560,6 +1581,10 @@ export class McpSource implements ToolSource {
             reason: "reauth_required",
             source: this.eventSourceName,
           },
+          // A lapsed credential says nothing about whether the tool would do the
+          // work, and the remedy is a human clicking Reconnect — not the agent
+          // giving up on the tool for the rest of the run.
+          ...infraErrorMeta(),
         }),
       },
     );
@@ -2728,6 +2753,18 @@ const TOOL_CALL_RECOVERY_DELAYS = [0] as const;
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/**
+ * `_meta` marking a result as an infrastructure failure — the call never reached
+ * the tool's logic, or its answer never came back. The loop supervisor excludes
+ * these from its strike count; see `INFRA_ERROR_META_KEY` for why.
+ *
+ * A fresh object per call: `_meta` is spread into caller-owned results, and a
+ * shared literal would let one consumer's mutation leak into every other result.
+ */
+function infraErrorMeta(): { _meta: Record<string, unknown> } {
+  return { _meta: { [INFRA_ERROR_META_KEY]: true } };
 }
 
 /** Extract a human-readable message from an unknown throw. */
