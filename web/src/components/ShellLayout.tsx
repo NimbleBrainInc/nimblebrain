@@ -302,7 +302,7 @@ function MobileNavItem({
       className={({ isActive }) =>
         `flex items-center gap-3 px-3 py-2.5 mx-2 rounded-sm text-sm transition-colors ${
           isActive
-            ? "bg-sidebar-foreground/10 font-medium"
+            ? "bg-sidebar-foreground/10 font-medium text-foreground"
             : "font-normal hover:bg-sidebar-foreground/5"
         }`
       }

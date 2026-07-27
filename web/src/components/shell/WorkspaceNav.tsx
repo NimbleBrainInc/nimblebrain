@@ -225,7 +225,7 @@ function WorkspaceHeaderRow({
       className={cn(
         "group flex items-center gap-1.5 text-sm transition-colors text-left rounded-sm mx-2 my-px px-1.5 py-1.5",
         focused
-          ? "bg-sidebar-foreground/10 font-medium"
+          ? "bg-sidebar-foreground/10 font-medium text-foreground"
           : "font-normal hover:bg-sidebar-foreground/5",
       )}
     >
@@ -415,7 +415,7 @@ function NestedNavLink({
         cn(
           "flex items-center gap-2 text-sm transition-colors rounded-sm px-2 py-1",
           isActive
-            ? "bg-sidebar-foreground/10 font-medium"
+            ? "bg-sidebar-foreground/10 font-medium text-foreground"
             : "font-normal hover:bg-sidebar-foreground/5",
         )
       }
@@ -454,7 +454,7 @@ function NestedAppLink({
       className={cn(
         "flex items-center gap-2 text-sm transition-colors rounded-sm px-2 py-1",
         isActive
-          ? "bg-sidebar-foreground/10 font-medium"
+          ? "bg-sidebar-foreground/10 font-medium text-foreground"
           : "font-normal hover:bg-sidebar-foreground/5",
       )}
     >

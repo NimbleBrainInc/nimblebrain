@@ -73,6 +73,7 @@ const TEXT_PAIRS: [fg: TokenName, bg: TokenName, where: string][] = [
   ["muted-foreground", "background", "lead paragraphs"],
   ["muted-foreground", "card", "row sub-lines"],
   ["muted-foreground", "sidebar", "sidebar nav rows"],
+  ["foreground", "sidebar", "the active sidebar nav row"],
   // `text-tertiary` and `background-tertiary` are ext-apps-only: the shell's
   // `:root` never emits them, so the only surface they meet is an embedded
   // iframe, where both are injected together.
@@ -298,12 +299,19 @@ describe("translucent tints track their source token", () => {
  * levels, which is what `palette.ts` already requires of the scope tiers —
  * colour never encodes a distinction alone.
  *
- * Upward, room does exist. `foreground` on `sidebar` is 19.061 light / 19.172
- * dark, and it would give the active nav row a colour channel — but one step
- * buys the active/inactive pair, not the four levels the ramp encoded, and it
- * spends the shell's loudest text on chrome. The active row carries a weight
- * step and a tint instead. That is a design call, not an absence of options,
- * and anyone revisiting it should start from the fact that the step is there.
+ * Upward, room does exist, and selection takes it. `foreground` on `sidebar` is
+ * 19.061 light / 19.172 dark, against 6.331 / 7.259 for the inactive rows —
+ * which is what `SettingsShell` already does for the same interaction, a
+ * vertical nav list with one selected item (`bg-accent text-accent-foreground`
+ * against `text-muted-foreground`, and those two tokens are byte-identical to
+ * these). Selection is the highest-value thing a nav says, so it gets the
+ * strongest channel rather than the weakest.
+ *
+ * The weight step stays alongside it. 1.4.1 wants a channel that is not colour,
+ * and the background tint is 1.152:1 — below any bar — so weight is what
+ * carries the state when colour cannot. Hierarchy (size, case, `font-bold` on
+ * the section labels) is a separate axis from selection, and only selection
+ * gets the colour.
  *
  * The guard is a scanner plus a table rather than a table alone, because a
  * hand-listed set of things to check is a denylist by omission — the failure
