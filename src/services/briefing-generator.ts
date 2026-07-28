@@ -1,5 +1,6 @@
 import type { LanguageModelV3, SharedV3ProviderOptions } from "@ai-sdk/provider";
 import {
+  GOOGLE_THINKING_LEVELS,
   getModelByString,
   getProviderFromModel,
   googleThinkingSupport,
@@ -151,13 +152,17 @@ function shortCallProviderOptions(modelString: string | null): SharedV3ProviderO
       const support = googleThinkingSupport(modelString);
       if (!support) return {};
       if (support.dialect === "level") {
-        // The level equivalent of "as little as possible" — but only where the
-        // model offers it. `gemini-3.1-pro-preview` has no `minimal`, and
-        // there is no lower level to fall back to, so send nothing and let it
-        // think at its own default rather than fail the call.
-        return support.levels.has("minimal")
-          ? { google: { thinkingConfig: { thinkingLevel: "minimal" } } }
-          : {};
+        // The lowest level the model offers, which is NOT the same rule the
+        // engine applies for `thinking: "off"`. There, stepping up from
+        // `minimal` to `low` would answer "don't reason" with an instruction
+        // to reason, so it sends nothing. Here the caller is asking for as
+        // little as possible on a call that runs on every home load, and on a
+        // model without `minimal` — `gemini-3.1-pro-preview` offers only
+        // {low, medium, high} — sending nothing is the *most* expensive
+        // option, not the cheapest: the model falls back to its own default.
+        // `low` is the honest answer to "as little as possible" there.
+        const lowest = GOOGLE_THINKING_LEVELS.find((l) => support.levels.has(l));
+        return lowest ? { google: { thinkingConfig: { thinkingLevel: lowest } } } : {};
       }
       return support.canDisable ? { google: { thinkingConfig: { thinkingBudget: 0 } } } : {};
     }

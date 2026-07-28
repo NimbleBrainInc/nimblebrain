@@ -434,18 +434,29 @@ describe("briefing-generator", () => {
 			});
 		});
 
-		it("sends nothing to Gemini models that cannot be quieted", async () => {
-			// gemini-3.1-pro-preview has no `minimal` and no lower level to fall
-			// back to; gemini-2.5-pro cannot disable thinking at all. Both reject
-			// the suppression the briefing wants, so it asks for nothing and lets
-			// them run at their own default.
-			for (const m of ["google:gemini-3.1-pro-preview", "google:gemini-2.5-pro"]) {
-				const { model, calls } = createTrackingModelV3(
-					JSON.stringify({ lede: "Ok.", sections: [] }),
-				);
-				await makeGen(model, m).generate(activeActivity());
-				expect(calls[0].providerOptions ?? {}).toEqual({});
-			}
+		it("drops to the lowest level a Gemini 3 model offers", async () => {
+			// gemini-3.1-pro-preview has no `minimal` — {low, medium, high}. The
+			// engine sends nothing here for `thinking: "off"`, but this caller
+			// wants the cheapest call, and sending nothing means the model's own
+			// default, which is the expensive branch.
+			const { model, calls } = createTrackingModelV3(
+				JSON.stringify({ lede: "Ok.", sections: [] }),
+			);
+			await makeGen(model, "google:gemini-3.1-pro-preview").generate(activeActivity());
+
+			expect(calls[0].providerOptions).toEqual({
+				google: { thinkingConfig: { thinkingLevel: "low" } },
+			});
+		});
+
+		it("sends nothing to a Gemini 2.5 model that cannot disable thinking", async () => {
+			// gemini-2.5-pro has no level dialect and no zero budget available,
+			// so there is nothing to ask for.
+			const { model, calls } = createTrackingModelV3(
+				JSON.stringify({ lede: "Ok.", sections: [] }),
+			);
+			await makeGen(model, "google:gemini-2.5-pro").generate(activeActivity());
+			expect(calls[0].providerOptions ?? {}).toEqual({});
 		});
 
 		it("sets reasoningEffort=minimal for the OpenAI models that take it", async () => {
