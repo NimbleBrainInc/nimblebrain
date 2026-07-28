@@ -69,7 +69,7 @@ body {
 }
 .upload-btn:hover:not(:disabled) {
   background: var(--color-text-accent);
-  color: #fff;
+  color: var(--nb-color-accent-foreground);
 }
 .upload-btn:disabled { opacity: 0.6; cursor: not-allowed; }
 .upload-btn svg { width: 14px; height: 14px; }
@@ -378,7 +378,7 @@ body {
 }
 .btn-primary:hover:not(:disabled) {
   background: var(--color-text-accent);
-  color: #fff;
+  color: var(--nb-color-accent-foreground);
 }
 .btn-primary:disabled { opacity: 0.6; cursor: not-allowed; }
 .btn-primary svg { width: 14px; height: 14px; }
@@ -395,7 +395,7 @@ body {
 }
 .btn-danger:hover:not(:disabled) {
   background: var(--nb-color-danger);
-  color: #fff;
+  color: var(--nb-color-danger-foreground);
 }
 .btn-danger:disabled { opacity: 0.6; cursor: not-allowed; }
 
