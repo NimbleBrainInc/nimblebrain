@@ -2,50 +2,6 @@
   "nebius": {
     "name": "Nebius Token Factory",
     "models": {
-      "deepseek-ai/DeepSeek-V4-Pro": {
-        "id": "deepseek-ai/DeepSeek-V4-Pro",
-        "name": "DeepSeek V4 Pro",
-        "family": "deepseek",
-        "cost": {
-          "input": 1.75,
-          "output": 3.5
-        },
-        "limits": {
-          "context": 1048576,
-          "output": 16384
-        },
-        "capabilities": {
-          "toolCall": true,
-          "reasoning": true,
-          "attachment": false
-        },
-        "modalities": {
-          "input": ["text"],
-          "output": ["text"]
-        }
-      },
-      "meta-llama/Llama-3.3-70B-Instruct": {
-        "id": "meta-llama/Llama-3.3-70B-Instruct",
-        "name": "Llama 3.3 70B Instruct",
-        "family": "llama",
-        "cost": {
-          "input": 0.13,
-          "output": 0.4
-        },
-        "limits": {
-          "context": 131072,
-          "output": 16384
-        },
-        "capabilities": {
-          "toolCall": true,
-          "reasoning": false,
-          "attachment": false
-        },
-        "modalities": {
-          "input": ["text"],
-          "output": ["text"]
-        }
-      },
       "openai/gpt-oss-120b": {
         "id": "openai/gpt-oss-120b",
         "name": "GPT-OSS 120B",
@@ -90,16 +46,16 @@
           "output": ["text"]
         }
       },
-      "Qwen/Qwen3-32B": {
-        "id": "Qwen/Qwen3-32B",
-        "name": "Qwen3 32B",
+      "Qwen/Qwen3-Next-80B-A3B-Thinking": {
+        "id": "Qwen/Qwen3-Next-80B-A3B-Thinking",
+        "name": "Qwen3 Next 80B A3B Thinking",
         "family": "qwen",
         "cost": {
-          "input": 0.1,
-          "output": 0.3
+          "input": 0.15,
+          "output": 1.2
         },
         "limits": {
-          "context": 40960,
+          "context": 128000,
           "output": 16384
         },
         "capabilities": {
@@ -112,16 +68,60 @@
           "output": ["text"]
         }
       },
-      "Qwen/Qwen3-Next-80B-A3B-Thinking": {
-        "id": "Qwen/Qwen3-Next-80B-A3B-Thinking",
-        "name": "Qwen3 Next 80B A3B Thinking",
-        "family": "qwen",
+      "nvidia/Cosmos3-Super-Reasoner": {
+        "id": "nvidia/Cosmos3-Super-Reasoner",
+        "name": "Cosmos3 Super Reasoner",
+        "family": "nvidia",
         "cost": {
-          "input": 0.15,
-          "output": 1.2
+          "input": 0.1,
+          "output": 0.3
         },
         "limits": {
-          "context": 128000,
+          "context": 262144,
+          "output": 16384
+        },
+        "capabilities": {
+          "toolCall": true,
+          "reasoning": true,
+          "attachment": false
+        },
+        "modalities": {
+          "input": ["text"],
+          "output": ["text"]
+        }
+      },
+      "moonshotai/Kimi-K2.6": {
+        "id": "moonshotai/Kimi-K2.6",
+        "name": "Kimi K2.6",
+        "family": "kimi",
+        "cost": {
+          "input": 0.95,
+          "output": 4
+        },
+        "limits": {
+          "context": 262144,
+          "output": 16384
+        },
+        "capabilities": {
+          "toolCall": true,
+          "reasoning": true,
+          "attachment": false
+        },
+        "modalities": {
+          "input": ["text"],
+          "output": ["text"]
+        }
+      },
+      "zai-org/GLM-5.1": {
+        "id": "zai-org/GLM-5.1",
+        "name": "GLM 5.1",
+        "family": "glm",
+        "cost": {
+          "input": 1.4,
+          "output": 4.4
+        },
+        "limits": {
+          "context": 202752,
           "output": 16384
         },
         "capabilities": {

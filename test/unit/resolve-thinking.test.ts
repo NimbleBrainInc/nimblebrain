@@ -1,5 +1,6 @@
 import { describe, expect, it } from "bun:test";
 import { DEFAULT_THINKING_EFFORT } from "../../src/engine/types.ts";
+import { getModelByString } from "../../src/model/catalog.ts";
 import { log } from "../../src/observability/log.ts";
 import { resolveThinking } from "../../src/runtime/resolve-thinking.ts";
 
@@ -168,10 +169,21 @@ describe("resolveThinking", () => {
 		// live wrong-parameter send once OpenAI and Nebius were wired — Nebius
 		// hosts non-reasoning open-weight models and its adapter forwards
 		// `reasoning_effort` without a gate of its own.
+		//
+		// Every id here must be one the catalog CARRIES and flags
+		// `reasoning: false`, which the first assertion enforces. An uncatalogued
+		// id short-circuits on the `?.` in
+		// `getModelByString(...)?.capabilities.reasoning ?? false` and proves the
+		// catalog-MISS path instead — a real path, but one already covered by
+		// "returns undefined when the model is unknown", and not the one this
+		// test is named for. Both ids this list used to carry were misses, so it
+		// asserted nothing about the flag on either arm.
 		for (const model of [
-			"anthropic:claude-3-5-haiku-20241022",
-			"nebius:meta-llama/Llama-3.3-70B-Instruct",
+			"openai:gpt-4o",
+			"google:gemini-2.0-flash",
+			"nebius:Qwen/Qwen3-235B-A22B-Instruct-2507",
 		]) {
+			expect(getModelByString(model)?.capabilities.reasoning).toBe(false);
 			expect(resolveThinking({ configMode: "enabled", model })).toBeUndefined();
 			expect(resolveThinking({ configMode: "adaptive", model })).toBeUndefined();
 			expect(resolveThinking({ configMode: "off", model })).toBeUndefined();
