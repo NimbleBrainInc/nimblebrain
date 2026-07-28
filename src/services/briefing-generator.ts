@@ -128,17 +128,23 @@ const BRIEFING_RESPONSE_SCHEMA = {
 
 /**
  * Provider-aware options for the short structured briefing call: asks each
- * provider for the least thinking it will accept, gated on the catalog's
+ * provider for as little thinking as it will accept, gated on the catalog's
  * `capabilities.reasoning` so a model without the knob gets an empty object.
+ * What "as little as it will accept" means is per-provider, and the branches
+ * do not agree: OpenAI sends nothing rather than substitute a tier above
+ * `minimal`, while the Google level branch steps down to the lowest level the
+ * model offers. Each branch states its own reasoning.
  *
- * Not always suppression. On a Gemini 3 model that has no `minimal`, this
+ * So not always suppression. On a Gemini 3 model that has no `minimal`, this
  * sends an explicit `low` — an instruction to reason, but the cheapest one the
  * model offers and cheaper than the default it would otherwise fall back to.
  * That is deliberately not the rule the engine applies for `thinking: "off"`;
  * see the Google branch.
  *
- * Inlined rather than shared with the engine: the two want different rules,
- * not the same rule in two places.
+ * Inlined rather than shared with the engine because of that level branch: it
+ * is a different rule, not the same rule in two places. The budget branch below
+ * IS the engine's rule, kept here so one provider isn't split across two files
+ * for three lines.
  */
 function shortCallProviderOptions(modelString: string | null): SharedV3ProviderOptions {
   if (!modelString) return {};
