@@ -188,6 +188,18 @@ const refreshInterceptor = createFetchWithRefresh({
 
 const fetchWithRefresh = refreshInterceptor;
 
+/**
+ * The shared silent-refresh interceptor, for non-REST callers on the same session.
+ *
+ * Exported for the `/mcp` bridge client, which is the only other surface that
+ * makes authenticated same-origin requests. It MUST reuse this instance rather
+ * than build its own: `createFetchWithRefresh` dedupes concurrent refreshes
+ * through a single in-flight promise, and two instances would race two
+ * `POST /v1/auth/refresh` calls against a rotating refresh token — one
+ * invalidating the other.
+ */
+export const fetchWithSessionRefresh = refreshInterceptor;
+
 // ---------------------------------------------------------------------------
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {

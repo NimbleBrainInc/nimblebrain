@@ -450,6 +450,49 @@ describe("per-request header generation", () => {
     expect(calls[1]?.headers["x-workspace-id"]).toBe("ws-rotated");
   });
 
+  test("a 401 on /mcp silently refreshes the session and retries (idle-expiry bug)", async () => {
+    // Reading the token per-request only picks up a refresh SOMEBODY ELSE did.
+    // A user parked on a rendered app produces nothing but bridge traffic, so
+    // before this the session just expired underneath them: every /mcp call
+    // 401'd until a page reload re-bootstrapped auth. The bridge must drive the
+    // refresh itself, through the REST client's shared interceptor.
+    setAuthToken("__cookie__"); // deployed posture: session rides the cookie
+    await getMcpBridgeClient();
+    const customFetch = lastTransportOptions?.fetch;
+    expect(customFetch).toBeDefined();
+    if (!customFetch) return;
+
+    const calls: string[] = [];
+    let mcpCalls = 0;
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (input: string | URL | Request) => {
+      const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+      calls.push(url);
+      if (url.includes("/v1/auth/refresh")) {
+        return new Response("{}", { status: 200 });
+      }
+      // First /mcp call is the expired session; the post-refresh retry succeeds.
+      mcpCalls += 1;
+      return new Response("{}", {
+        status: mcpCalls === 1 ? 401 : 200,
+        headers: { "content-type": "application/json" },
+      });
+    }) as typeof fetch;
+
+    let res: Response;
+    try {
+      res = await customFetch("https://example.test/mcp", { method: "POST" });
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+
+    expect(res.status).toBe(200);
+    expect(calls).toHaveLength(3);
+    expect(calls[0]).toContain("/mcp");
+    expect(calls[1]).toContain("/v1/auth/refresh");
+    expect(calls[2]).toContain("/mcp");
+  });
+
   test("cookie-mode token ('__cookie__') omits Authorization header but still sends X-Workspace-Id", async () => {
     setAuthToken("__cookie__");
     setActiveWorkspaceId("ws-cookie");
