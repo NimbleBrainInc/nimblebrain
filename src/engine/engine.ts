@@ -80,7 +80,8 @@ const DEFAULT_MAX_PARALLEL_TOOL_CALLS = 6;
  * on the registry, shared by every door, which buys head-of-line blocking across
  * conversations — one user's single call queued behind another's batch. That is
  * a bad trade for an interactive runtime. This removes the single-turn burst
- * that broke production; it does not make a source globally rate-safe.
+ * (an observed 25-wide batch against one connector); it does not make a source
+ * globally rate-safe.
  *
  * 6 keeps a batch meaningfully parallel while staying under the burst allowance a
  * modest server or its gateway is likely to have.
@@ -1646,10 +1647,21 @@ export class AgentEngine {
    * The model decides how many calls to emit in a turn, and it will happily emit
    * a whole batch — 25 writes against one connector is a normal thing for it to
    * try. Dispatching those simultaneously makes the runtime the loudest possible
-   * client of every server it talks to, and a server's defence is a gateway 429
-   * or a connection reset, neither of which is a good way to learn about pacing:
-   * a source is SHARED by every call in the batch, so one rejection that trips
-   * transport recovery tears down the calls that were already succeeding.
+   * client of every server it talks to, and a server's only defences are a
+   * gateway 429 or a connection reset.
+   *
+   * A 429 is no longer catastrophic: `classifyConnectionFailure` gives it its own
+   * class and `policyFor` surfaces it, so a throttled call neither restarts the
+   * source nor aborts its in-flight siblings. It is still expensive. Every
+   * refused call is a wasted round trip and a wasted slice of the upstream's
+   * budget, and the turn ends with N of its writes simply not done — the model
+   * is told to retry with fewer in parallel, which costs another turn. That
+   * instruction is the point: the runtime is the layer that KNOWS it is issuing a
+   * batch, so it should pace itself rather than ask the model to.
+   *
+   * A connection reset still is catastrophic, and that arm is unchanged: a source
+   * is SHARED by every call in the batch, so one reset that trips transport
+   * recovery tears down the calls that were already succeeding.
    *
    * Grouping by source rather than bounding globally, because capacity is a
    * property of the server being called. Calls to different sources are
@@ -1666,9 +1678,9 @@ export class AgentEngine {
    * site, or the engine's grouping silently desyncs from the registry's routing.
    * The correspondence is the whole justification: one group is exactly one
    * `ToolSource`, so the thing being bounded is the thing that owns the
-   * connection. (There is no workspace
-   * in the key because there is none in the name — the `ws_<id>-` form is retired
-   * and rejected at the door, and a session reaches exactly one workspace.)
+   * connection. (There is no workspace in the key because there is none in the
+   * name — the `ws_<id>-` form is retired and rejected at the door, and a
+   * session reaches exactly one workspace.)
    *
    * IN-PROCESS sources are bounded too, though they front no server and cannot be
    * throttled. Left deliberately — the alternative is asking the router whether a

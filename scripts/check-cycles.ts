@@ -6,6 +6,10 @@
  *
  * Also verifies that no file in src/config/ imports from src/runtime/ or src/tools/,
  * and that no file in src/engine/ imports from src/runtime/.
+ *
+ * The `(?:\.\.\/)+` in each pattern is load-bearing: `listTsFiles` recurses, so a
+ * file in a SUBDIRECTORY reaches a sibling layer as `../../<layer>/`. Anchoring to a
+ * single `../` silently exempts every nested file — `src/engine/schemas/` today.
  */
 
 import { readdirSync, readFileSync } from "node:fs";
@@ -69,7 +73,12 @@ function checkDir(
 // Exceptions: runtime.ts (composition root) and workspace-runtime.ts
 checkDir(
   join(SRC, "runtime"),
-  [{ pattern: /from\s+["']\.\.\/tools\//, description: "runtime/ must not import from tools/" }],
+  [
+    {
+      pattern: /from\s+["'](?:\.\.\/)+tools\//,
+      description: "runtime/ must not import from tools/",
+    },
+  ],
   new Set(["runtime/runtime.ts", "runtime/workspace-runtime.ts"]),
 );
 
@@ -77,8 +86,14 @@ checkDir(
 checkDir(
   join(SRC, "config"),
   [
-    { pattern: /from\s+["']\.\.\/runtime\//, description: "config/ must not import from runtime/" },
-    { pattern: /from\s+["']\.\.\/tools\//, description: "config/ must not import from tools/" },
+    {
+      pattern: /from\s+["'](?:\.\.\/)+runtime\//,
+      description: "config/ must not import from runtime/",
+    },
+    {
+      pattern: /from\s+["'](?:\.\.\/)+tools\//,
+      description: "config/ must not import from tools/",
+    },
   ],
   new Set(),
 );
@@ -91,7 +106,12 @@ checkDir(
 // loop both need bounded fan-out).
 checkDir(
   join(SRC, "engine"),
-  [{ pattern: /from\s+["']\.\.\/runtime\//, description: "engine/ must not import from runtime/" }],
+  [
+    {
+      pattern: /from\s+["'](?:\.\.\/)+runtime\//,
+      description: "engine/ must not import from runtime/",
+    },
+  ],
   new Set(),
 );
 
