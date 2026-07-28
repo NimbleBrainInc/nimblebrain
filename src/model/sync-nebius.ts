@@ -44,13 +44,23 @@ const OUTPUT_PATH = join(dirname(new URL(import.meta.url).pathname), "catalog-ne
 export const DEFAULT_OUTPUT_LIMIT = 16384;
 
 /**
- * Smallest context window worth cataloguing.
+ * Smallest context window worth cataloguing. Chosen conservative, not derived —
+ * the arithmetic below sets a lower bound, and this sits well above it.
  *
  * `resolveMessageBudget` computes `modelCtx - system - tools - maxOutput -
- * safety`; when that is <= 0 the run has no room for a single message and the
- * call fails at the provider. An ordinary run on this platform sends ~22K input
- * tokens, and `DEFAULT_OUTPUT_LIMIT` alone reserves 16K — so anything under
- * ~64K cannot hold one real turn.
+ * safety` (`DEFAULT_OUTPUT_LIMIT` 16K + `DEFAULT_BUDGET_SAFETY_MARGIN_TOKENS`
+ * 8K, plus a few K of system and tools). Two thresholds fall out of it:
+ *
+ *   - **~30K** — below this the headroom is <= 0, the budget resolves to 0, and
+ *     every turn fails. This is the hard floor.
+ *   - **~50K** — below this an ordinary ~22K-token run does not fit in the
+ *     headroom, so history is trimmed hard on every turn. It degrades; it does
+ *     not fail.
+ *
+ * 64K clears both with margin. A model between 50K and 64K would technically
+ * serve, and is excluded anyway — the cost of that is a warned exclusion an
+ * operator can override by pinning the id as free text, which is the cheaper
+ * mistake to make in a file whose thesis is fail-closed.
  *
  * This is the one failure class the probe structurally cannot see: a model with
  * an 8K window answers the probe's toy prompt perfectly. `Kimi-K2.7-Code` and
@@ -321,7 +331,14 @@ async function main() {
     const ms = Math.round(performance.now() - started);
     if (outcome.ok) {
       console.log(`  ✓ ${id} (${ms}ms)`);
-      models[id] = entry;
+      // The probe just got a real `tool_calls` array back from this id, which
+      // outranks `supported_features` — the whole point of running it. Writing
+      // `feats.has("tools")` here instead would keep the untrusted source as the
+      // output of record for the one fact the probe proves, and could only ever
+      // be wrong in one direction: a model that calls tools while omitting
+      // "tools" from its listing would ship flagged false, having just passed
+      // the check that disproves the flag. Every id reaching this line passed.
+      models[id] = { ...entry, capabilities: { ...entry.capabilities, toolCall: true } };
     } else {
       const detail = outcome.detail ? ` — ${outcome.detail}` : "";
       console.warn(`  ✗ ${id}: ${outcome.reason}${detail} (${ms}ms) — excluded`);
@@ -332,15 +349,33 @@ async function main() {
   if (Object.keys(models).length === 0) {
     // Writing an empty catalog would silently strip every Nebius model from the
     // picker; a total failure is far more likely to be a bad key or an outage.
-    throw new Error("every curated model failed its probe — refusing to write an empty catalog");
+    //
+    // Name which stage emptied it. "Failed its probe" is wrong when nothing was
+    // probed — if every id was dropped for not being listed, the account or the
+    // ids changed, which is a different fix from a dead endpoint.
+    const cause =
+      Object.keys(listed).length === 0
+        ? "no curated id survived listing and the context gate — the probe never ran"
+        : "every probed model failed";
+    throw new Error(`${cause} — refusing to write an empty catalog`);
   }
 
   const catalog = { nebius: { name: "Nebius Token Factory", models } };
   writeFileSync(OUTPUT_PATH, `${JSON.stringify(catalog, null, 2)}\n`);
   console.log(`Wrote ${OUTPUT_PATH} (${Object.keys(models).length} models)`);
-  if (rejected.length > 0) {
+  // Count every way an id can be dropped, not just the probe. Ids the listing
+  // omits and ids the context gate rejects each warn as they happen inside
+  // `buildNebiusCatalog`, but a summary that tallies only probe failures reads
+  // as "everything else made it" — which is how a shrunken catalog gets
+  // committed without anyone re-reading the scrollback.
+  const preProbeDrops = CURATED.filter(({ id }) => !(id in listed)).map(({ id }) => id);
+  const dropped = [...preProbeDrops, ...rejected];
+  if (dropped.length > 0) {
+    const detail = preProbeDrops.length
+      ? ` (${preProbeDrops.length} before the probe: not listed, or under the context floor)`
+      : "";
     console.warn(
-      `${rejected.length} curated id(s) excluded: ${rejected.join(", ")}. ` +
+      `${dropped.length} curated id(s) excluded${detail}: ${dropped.join(", ")}. ` +
         `Remove them from CURATED, or leave them if the outage is expected to lift.`,
     );
   }
