@@ -3,7 +3,10 @@ import { describe, expect, it } from "bun:test";
 import { NoopEventSink } from "../../src/adapters/noop-events.ts";
 import { StaticToolRouter } from "../../src/adapters/static-router.ts";
 import { textContent } from "../../src/engine/content-helpers.ts";
-import { AgentEngine } from "../../src/engine/engine.ts";
+import {
+  AgentEngine,
+  resolveMaxParallelToolCallsPerSource,
+} from "../../src/engine/engine.ts";
 import type { EngineConfig, ToolCall, ToolResult, ToolSchema } from "../../src/engine/types.ts";
 import { createMockModel } from "../helpers/mock-model.ts";
 
@@ -65,16 +68,16 @@ describe("engine tool-call fan-out is bounded per source", () => {
     // single connector. Unbounded, all 25 hit that one server at once — and
     // because the source is shared, one rejection that trips transport recovery
     // takes the in-flight siblings down with it.
-    const tools = [schema("ws_a-people__log_interaction")];
+    const tools = [schema("people__log_interaction")];
     const { router, peak } = trackingRouter(tools);
     const calls = Array.from({ length: 25 }, (_, i) =>
-      toolCall(`c${i}`, "ws_a-people__log_interaction"),
+      toolCall(`c${i}`, "people__log_interaction"),
     );
 
     const engine = new AgentEngine(twoTurnModel(calls), router, new NoopEventSink());
     await engine.run(config, "system", USER, tools);
 
-    const observed = peak.get("ws_a-people") ?? 0;
+    const observed = peak.get("people") ?? 0;
     expect(observed).toBeLessThanOrEqual(6);
     // Still parallel — the bound is a cap, not a queue of one.
     expect(observed).toBeGreaterThan(1);
@@ -84,24 +87,20 @@ describe("engine tool-call fan-out is bounded per source", () => {
     // Capacity belongs to the server being called, so sources are budgeted
     // independently: a batch touching three connectors must not serialize the
     // small groups behind the large one.
-    const tools = [
-      schema("ws_a-people__write"),
-      schema("ws_a-memory__note"),
-      schema("web__fetch"),
-    ];
+    const tools = [schema("people__write"), schema("memory__note"), schema("web__fetch")];
     const { router, peak } = trackingRouter(tools);
     const calls = [
-      ...Array.from({ length: 20 }, (_, i) => toolCall(`p${i}`, "ws_a-people__write")),
-      ...Array.from({ length: 3 }, (_, i) => toolCall(`m${i}`, "ws_a-memory__note")),
+      ...Array.from({ length: 20 }, (_, i) => toolCall(`p${i}`, "people__write")),
+      ...Array.from({ length: 3 }, (_, i) => toolCall(`m${i}`, "memory__note")),
       ...Array.from({ length: 2 }, (_, i) => toolCall(`w${i}`, "web__fetch")),
     ];
 
     const engine = new AgentEngine(twoTurnModel(calls), router, new NoopEventSink());
     await engine.run(config, "system", USER, tools);
 
-    expect(peak.get("ws_a-people") ?? 0).toBeLessThanOrEqual(6);
+    expect(peak.get("people") ?? 0).toBeLessThanOrEqual(6);
     // The small groups run at full width concurrently with the big one.
-    expect(peak.get("ws_a-memory")).toBe(3);
+    expect(peak.get("memory")).toBe(3);
     expect(peak.get("web")).toBe(2);
   });
 
@@ -113,7 +112,7 @@ describe("engine tool-call fan-out is bounded per source", () => {
       await new Promise((resolve) => setTimeout(resolve, (5 - n) * 4));
       return { content: textContent("ok"), isError: false };
     };
-    const numbered = Array.from({ length: 5 }, (_, i) => schema(`ws_a-people__write${i}`));
+    const numbered = Array.from({ length: 5 }, (_, i) => schema(`people__write${i}`));
     const router = new StaticToolRouter(numbered, execute);
     const calls = numbered.map((s, i) => toolCall(`c${i}`, s.name));
 
@@ -121,5 +120,44 @@ describe("engine tool-call fan-out is bounded per source", () => {
     const result = await engine.run(config, "system", USER, numbered);
 
     expect(result.toolCalls.map((c) => c.name)).toEqual(numbered.map((s) => s.name));
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The operator knob
+// ---------------------------------------------------------------------------
+
+describe("resolveMaxParallelToolCallsPerSource", () => {
+  // Takes an env record so the fallback semantics are observable: the module
+  // resolves its constant once at load, so nothing else in this file can reach
+  // this branch.
+  const KEY = "NB_MAX_PARALLEL_TOOL_CALLS_PER_SOURCE";
+
+  it("defaults to 6 when unset", () => {
+    expect(resolveMaxParallelToolCallsPerSource({})).toBe(6);
+  });
+
+  it("defaults to 6 for an empty string", () => {
+    expect(resolveMaxParallelToolCallsPerSource({ [KEY]: "" })).toBe(6);
+  });
+
+  it("honors a valid positive integer", () => {
+    expect(resolveMaxParallelToolCallsPerSource({ [KEY]: "12" })).toBe(12);
+  });
+
+  it("accepts 1 (fully serial against any one source)", () => {
+    expect(resolveMaxParallelToolCallsPerSource({ [KEY]: "1" })).toBe(1);
+  });
+
+  it("truncates a fractional value rather than rounding up", () => {
+    expect(resolveMaxParallelToolCallsPerSource({ [KEY]: "6.9" })).toBe(6);
+  });
+
+  it("falls back to the default on zero, negatives, and garbage", () => {
+    // Never 0 or Infinity: removing the bound is not a sane reading of a typo,
+    // and it is the exact failure this whole change exists to prevent.
+    for (const bad of ["0", "-2", "abc", "NaN", "Infinity", "1e400"]) {
+      expect(resolveMaxParallelToolCallsPerSource({ [KEY]: bad })).toBe(6);
+    }
   });
 });

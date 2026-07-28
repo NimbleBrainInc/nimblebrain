@@ -24,7 +24,7 @@ import { callModel, type StreamResult } from "../model/stream.ts";
 import { log } from "../observability/log.ts";
 import { toolMatches } from "../skills/select.ts";
 import { coerceInputForSchema } from "../tools/coerce-input.ts";
-import { bareToolName } from "../tools/namespace.ts";
+import { bareToolName, splitInnerToolName } from "../tools/namespace.ts";
 import { validateToolInput } from "../tools/validate-input.ts";
 import type { TokenUsage } from "../usage/types.ts";
 import { addUsage, emptyUsage, tokenUsageFromV3 } from "../usage/types.ts";
@@ -60,24 +60,50 @@ import {
   type ToolSchema,
 } from "./types.ts";
 
+/** Default when the env knob is unset or unusable. */
+const DEFAULT_MAX_PARALLEL_TOOL_CALLS = 6;
+
 /**
- * Most calls the engine dispatches to any ONE source at a time.
+ * Most calls one engine run dispatches to any ONE source at a time.
  *
- * The cap is per source (see `executeToolCallsBounded`), so a turn touching
- * several connectors still fans out across them; only depth against a single
- * server is bounded. 6 keeps a batch meaningfully parallel while staying under
- * the burst allowance a modest server or its gateway is likely to have.
+ * Scoped PER SOURCE PER RUN, and the second half is a real limit, not a
+ * technicality. An `McpSource` is long-lived and shared — a workspace's
+ * registries are built once and every conversation in that workspace routes
+ * through them — while this bound lives in a single `AgentEngine` iteration. So
+ * concurrent runs against one workspace each get their own budget, and
+ * `nb__delegate` hands every sub-agent a fresh engine over the PARENT's router,
+ * so a parent fanning out 6 sub-agents that each batch against one connector can
+ * still put ~36 calls in flight against it.
+ *
+ * That is a genuine ceiling on what this can promise: enforcing a true per-source
+ * bound needs a limiter on the registry, shared by every door, which buys
+ * head-of-line blocking across conversations (one user's single call queueing
+ * behind another's batch) — a bad trade for an interactive runtime, and a much
+ * larger change. This bound removes the single-turn burst that actually broke
+ * production; it does not make the source globally rate-safe.
+ *
+ * 6 keeps a batch meaningfully parallel while staying under the burst allowance a
+ * modest server or its gateway is likely to have.
  *
  * `NB_MAX_PARALLEL_TOOL_CALLS_PER_SOURCE` overrides it — an escape hatch for a
  * deployment whose servers are known to be fast and local, or one that needs to
- * throttle harder for a fragile upstream. A non-numeric or <1 value falls back
- * to the default rather than disabling the bound.
+ * throttle harder for a fragile upstream.
  */
-const MAX_PARALLEL_TOOL_CALLS_PER_SOURCE = resolveMaxParallelToolCallsPerSource();
+const MAX_PARALLEL_TOOL_CALLS_PER_SOURCE_PER_RUN = resolveMaxParallelToolCallsPerSource();
 
-function resolveMaxParallelToolCallsPerSource(): number {
-  const raw = Number(process.env.NB_MAX_PARALLEL_TOOL_CALLS_PER_SOURCE);
-  return Number.isFinite(raw) && raw >= 1 ? Math.floor(raw) : 6;
+/**
+ * Read the per-source-per-run cap from the environment.
+ *
+ * Exported for tests: the value above is resolved once at module load, so the
+ * fallback semantics are otherwise unobservable. A non-numeric, non-finite, or
+ * `< 1` value falls back to the default rather than disabling the bound —
+ * removing backpressure is never the right reading of a typo.
+ */
+export function resolveMaxParallelToolCallsPerSource(
+  env: Record<string, string | undefined> = process.env as Record<string, string | undefined>,
+): number {
+  const raw = Number(env.NB_MAX_PARALLEL_TOOL_CALLS_PER_SOURCE);
+  return Number.isFinite(raw) && raw >= 1 ? Math.floor(raw) : DEFAULT_MAX_PARALLEL_TOOL_CALLS;
 }
 
 /** Tokens reserved for visible content so thinking can't consume the whole reply. */
@@ -1616,13 +1642,9 @@ export class AgentEngine {
   }
 
   /**
-   * Run one tool call end-to-end: gate (beforeToolCall) → coerce/validate →
-   * execute → bound → afterToolCall → supervisor → emit. Returns the record the
-   * loop needs to build history and telemetry. Called concurrently (one per tool
-   * call) inside the iteration's `Promise.all`.
-   */
-  /**
-   * Execute one iteration's tool calls, bounded PER SOURCE.
+   * Execute one iteration's tool calls, grouped by source and bounded within
+   * each group. See {@link MAX_PARALLEL_TOOL_CALLS_PER_SOURCE_PER_RUN} for the
+   * scope this does and does not enforce.
    *
    * The model decides how many calls to emit in a turn, and it will happily emit
    * a whole batch — 25 writes against one connector is a normal thing for it to
@@ -1632,16 +1654,26 @@ export class AgentEngine {
    * a source is SHARED by every call in the batch, so one rejection that trips
    * transport recovery tears down the calls that were already succeeding.
    *
-   * Bounding is per source, not global, because capacity is a property of the
-   * server being called. Calls to different sources are independent and still go
-   * out together, so a batch that touches three connectors is not serialized
-   * behind the slowest one — only the depth against any single connector is
-   * capped. Order is preserved by index, so `buildToolResults` is unaffected.
+   * Grouping by source rather than bounding globally, because capacity is a
+   * property of the server being called. Calls to different sources are
+   * independent and still go out together, so a batch that touches three
+   * connectors is not serialized behind the slowest one — only the depth against
+   * any single connector is capped. Order is preserved by index, so
+   * `buildToolResults` is unaffected.
    *
-   * The grouping key is the registry's own routing prefix (everything before the
-   * first `__`), which already distinguishes the same bundle in two workspaces
-   * (`ws_a-people` vs `ws_b-people`) — those are different processes and deserve
-   * independent budgets.
+   * The key is the source prefix `ToolRegistry.execute` itself routes on, via the
+   * same `splitInnerToolName` every dispatch door uses. That correspondence is
+   * the whole justification: one group is exactly one `ToolSource`, so the thing
+   * being bounded is the thing that owns the connection. (There is no workspace
+   * in the key because there is none in the name — the `ws_<id>-` form is retired
+   * and rejected at the door, and a session reaches exactly one workspace.)
+   *
+   * IN-PROCESS sources are bounded too, though they front no server and cannot be
+   * throttled. Left deliberately: the alternative is asking the router whether a
+   * source is local, which coupling the engine does not otherwise need, and the
+   * one case where it bites is worth having anyway — every `nb__*` tool shares
+   * the `nb` key, so this also caps `nb__delegate` fan-out at 6 concurrent
+   * sub-agents, which is a bound worth keeping on its own merits.
    */
   private async executeToolCallsBounded(
     toolCalls: LanguageModelV3ToolCall[],
@@ -1650,31 +1682,41 @@ export class AgentEngine {
     const results = new Array<ToolExecResult>(toolCalls.length);
     const bySource = new Map<string, number[]>();
     for (let i = 0; i < toolCalls.length; i++) {
-      const name = (toolCalls[i] as LanguageModelV3ToolCall).toolName;
-      const sep = name.indexOf("__");
-      const key = sep === -1 ? name : name.slice(0, sep);
-      const group = bySource.get(key);
+      const { sourcePrefix } = splitInnerToolName(
+        (toolCalls[i] as LanguageModelV3ToolCall).toolName,
+      );
+      const group = bySource.get(sourcePrefix);
       if (group) group.push(i);
-      else bySource.set(key, [i]);
+      else bySource.set(sourcePrefix, [i]);
     }
 
     await Promise.all(
       [...bySource.values()].map((indices) =>
-        mapWithConcurrency(indices, MAX_PARALLEL_TOOL_CALLS_PER_SOURCE, async (callIndex) => {
-          // `executeToolCall` already contains its own failures (it returns an
-          // error result rather than throwing for tool-level problems), so no
-          // per-item try/catch is needed to keep siblings running.
-          results[callIndex] = await this.executeToolCall(
-            toolCalls[callIndex] as LanguageModelV3ToolCall,
-            ctx,
-          );
-        }),
+        mapWithConcurrency(
+          indices,
+          MAX_PARALLEL_TOOL_CALLS_PER_SOURCE_PER_RUN,
+          async (callIndex) => {
+            // `executeToolCall` already contains its own failures (it returns an
+            // error result rather than throwing for tool-level problems), so no
+            // per-item try/catch is needed to keep siblings running.
+            results[callIndex] = await this.executeToolCall(
+              toolCalls[callIndex] as LanguageModelV3ToolCall,
+              ctx,
+            );
+          },
+        ),
       ),
     );
 
     return results;
   }
 
+  /**
+   * Run one tool call end-to-end: gate (beforeToolCall) → coerce/validate →
+   * execute → bound → afterToolCall → supervisor → emit. Returns the record the
+   * loop needs to build history and telemetry. Called concurrently (up to the
+   * per-source cap) from the iteration's bounded dispatch above.
+   */
   private async executeToolCall(
     toolCall: LanguageModelV3ToolCall,
     ctx: ToolExecContext,
