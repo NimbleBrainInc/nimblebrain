@@ -186,7 +186,23 @@ const refreshInterceptor = createFetchWithRefresh({
   onLogout: captureLogout,
 });
 
-const fetchWithRefresh = refreshInterceptor;
+/**
+ * The shared silent-refresh interceptor: fetch with automatic 401 → refresh →
+ * retry. Every REST helper below goes through it, as does the `/mcp` bridge
+ * client (`mcp-bridge-client.ts`).
+ *
+ * Any caller on this session MUST reuse this instance rather than build its
+ * own: `createFetchWithRefresh` dedupes concurrent refreshes through a single
+ * in-flight promise, and two instances would race two `POST /v1/auth/refresh`
+ * calls against a rotating refresh token — one invalidating the other.
+ *
+ * The SSE streams (`sse.ts`, `conversation-stream.ts`) authenticate against the
+ * same session but cannot use this wrapper: a streaming GET is not
+ * transparently replayable, so they drive `refreshSession` (this same
+ * instance's `tryRefresh`) and reconnect instead. One coalescer, two recovery
+ * shapes.
+ */
+export const fetchWithRefresh = refreshInterceptor;
 
 // ---------------------------------------------------------------------------
 
