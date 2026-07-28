@@ -127,12 +127,18 @@ const BRIEFING_RESPONSE_SCHEMA = {
 };
 
 /**
- * Provider-aware options for the short structured briefing call. Suppresses
- * reasoning/thinking on every provider that exposes a knob (gated on the
- * catalog's `capabilities.reasoning` so older models that don't expose
- * the option get an empty options object). Inlined here rather than
- * abstracted into a slot-profile because briefing is the only caller
- * today; if a second caller appears, lift this into a shared helper.
+ * Provider-aware options for the short structured briefing call: asks each
+ * provider for the least thinking it will accept, gated on the catalog's
+ * `capabilities.reasoning` so a model without the knob gets an empty object.
+ *
+ * Not always suppression. On a Gemini 3 model that has no `minimal`, this
+ * sends an explicit `low` — an instruction to reason, but the cheapest one the
+ * model offers and cheaper than the default it would otherwise fall back to.
+ * That is deliberately not the rule the engine applies for `thinking: "off"`;
+ * see the Google branch.
+ *
+ * Inlined rather than shared with the engine: the two want different rules,
+ * not the same rule in two places.
  */
 function shortCallProviderOptions(modelString: string | null): SharedV3ProviderOptions {
   if (!modelString) return {};

@@ -449,6 +449,19 @@ describe("briefing-generator", () => {
 			});
 		});
 
+		it("sends nothing to a Google model with no verified table entry", async () => {
+			// The widest branch here: 16 of the 27 Google reasoning models have
+			// no GOOGLE_THINKING row — the `-latest` aliases, the image models,
+			// deep-research-*. All of them used to get thinkingBudget: 0. An
+			// absent row means no verified answer, so guessing a dialect is how
+			// the briefing starts 400ing, which is the defect this PR fixes.
+			const { model, calls } = createTrackingModelV3(
+				JSON.stringify({ lede: "Ok.", sections: [] }),
+			);
+			await makeGen(model, "google:gemini-flash-latest").generate(activeActivity());
+			expect(calls[0].providerOptions ?? {}).toEqual({});
+		});
+
 		it("sends nothing to a Gemini 2.5 model that cannot disable thinking", async () => {
 			// gemini-2.5-pro has no level dialect and no zero budget available,
 			// so there is nothing to ask for.
