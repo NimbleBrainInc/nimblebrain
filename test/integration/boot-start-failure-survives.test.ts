@@ -18,6 +18,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { NoopEventSink } from "../../src/adapters/noop-events.ts";
+import { startBundleSource } from "../../src/bundles/startup.ts";
+import type { ToolRegistry } from "../../src/tools/registry.ts";
 import type { BundleRef } from "../../src/bundles/types.ts";
 import { log } from "../../src/observability/log.ts";
 import { Runtime } from "../../src/runtime/runtime.ts";
@@ -247,7 +249,49 @@ describe("startWorkspaceBundles — unreachable URL bundle at boot", () => {
     const registry = registries.get(ws.id);
     // Present — that is the whole point of the change.
     expect(registry?.hasSource("unreachable")).toBe(true);
-    // But not live, so nothing treats it as usable and no self-heal is skipped.
+    // But not live, and never established, so nothing treats it as usable and
+    // no self-heal is skipped.
     expect(registry?.hasLiveSource("unreachable")).toBe(false);
+    expect(registry?.hasEstablishedSource("unreachable")).toBe(false);
+  }, 30_000);
+
+  test("failedRecoveryAttempt_leavesTheRetainedSourceIntact", async () => {
+    // A recovery attempt made while the endpoint is STILL down must be a no-op,
+    // not a downgrade. Evicting first would `stop()` the retained source — the
+    // durable marker HealthMonitor reads as terminal — so one app-open during an
+    // outage would have undone the retention permanently and put the bundle back
+    // in the pre-change trap with no path out.
+    const store = new WorkspaceStore(workDir);
+    const ws = await store.create("Fleet");
+    await store.update(ws.id, { bundles: [unreachableBundle("still-down")] });
+
+    const { registries } = await startWorkspaceBundles(
+      store,
+      [],
+      null,
+      new NoopEventSink(),
+      undefined,
+      { workDir, allowInsecureRemotes: true },
+    );
+    const registry = registries.get(ws.id);
+    const retained = registry?.getSource("still-down");
+    expect(retained).toBeDefined();
+
+    // What recovery does: re-run the start against the same registry, with the
+    // retention flag set. The endpoint is still unreachable, so it fails.
+    await Promise.allSettled([
+      startBundleSource(
+        { url: "http://127.0.0.1:1/mcp", serverName: "still-down" },
+        registry as ToolRegistry,
+        new NoopEventSink(),
+        undefined,
+        { allowInsecureRemotes: true, wsId: ws.id, workDir, keepRegisteredOnStartFailure: true },
+      ),
+    ]);
+
+    // Same object, still registered, still not deliberately stopped.
+    expect(registry?.getSource("still-down")).toBe(retained);
+    expect(registry?.hasSource("still-down")).toBe(true);
+    expect((retained as unknown as { isStopped: () => boolean }).isStopped()).toBe(false);
   }, 30_000);
 });

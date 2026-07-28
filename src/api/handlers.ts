@@ -645,7 +645,7 @@ async function workspaceSourceAvailable(
 ): Promise<boolean> {
   // Liveness, not membership: a registered-but-down source (e.g. a boot start
   // that failed) is not available, and saying it is would skip the recovery.
-  if (registry.hasLiveSource(sourceName)) return true;
+  if (registry.hasEstablishedSource(sourceName)) return true;
   return runtime.recoverWorkspaceSource(wsId, sourceName);
 }
 

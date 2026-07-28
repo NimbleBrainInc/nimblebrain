@@ -66,7 +66,7 @@ export async function installBundleInWorkspace(
   // boot-start failure) is installed, not running, and rejecting the install
   // with "already running" would be both false and unactionable. Let it through
   // — `startBundleSource` adopts over the dead entry.
-  if (registry.hasLiveSource(serverName)) {
+  if (registry.hasEstablishedSource(serverName)) {
     throw new Error(`Bundle "${serverName}" is already running in workspace "${wsId}"`);
   }
 

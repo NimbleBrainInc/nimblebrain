@@ -265,6 +265,41 @@ export class ToolRegistry implements ToolRouter {
   }
 
   /**
+   * Registered and ESTABLISHED — it has connected at least once, even if its
+   * transport is down right now.
+   *
+   * The distinction `hasLiveSource` cannot make. `isAlive()` is false for two
+   * states that want opposite handling:
+   *
+   *   - **never connected** — a boot start that failed. There is nothing to
+   *     reconnect to; the source needs a full re-spawn, and until it gets one it
+   *     is not usable and should not be offered.
+   *   - **connected, transport since dropped** — an idle close, a network blip,
+   *     a server rolling. The codebase treats this as routine (see
+   *     `HealthMonitor.resetBackoffIfRecovered`): `reconnectOnDemand` and the
+   *     next sweep heal it IN PLACE. Tearing it down and re-spawning instead is
+   *     destructive — it `stop()`s a working source and the replacement object
+   *     is absent from HealthMonitor's boot snapshot, so the bundle silently
+   *     loses monitoring for the life of the process.
+   *
+   * `uptime()` separates them: `startedAt` is set only on a successful connect
+   * and never reset, so `uptime() === null` is exactly "never connected".
+   *
+   * Use this for "is this source real / should I recover it"; use
+   * `hasLiveSource` only where the question is genuinely "can it serve a request
+   * this instant". A source with no liveness concept is in-process and always
+   * established.
+   */
+  hasEstablishedSource(name: string): boolean {
+    const source = this.sources.get(name);
+    if (!source) return false;
+    const s = source as Partial<McpSource>;
+    if (typeof s.isAlive !== "function") return true;
+    if (s.isAlive()) return true;
+    return typeof s.uptime === "function" ? s.uptime() !== null : true;
+  }
+
+  /**
    * Register a freshly-built source under its name, evicting a DEAD entry that
    * squats it. Returns true when `source` ends up registered.
    *

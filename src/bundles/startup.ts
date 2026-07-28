@@ -513,7 +513,15 @@ async function finalizeUrlSourceStart(
   const tools = await source.tools();
   // Evict a dead squatter rather than skipping: a retained boot-failed source
   // under this name would otherwise keep routing while this live one is dropped.
-  await registry.adoptSource(source);
+  // A `false` return means a LIVE source already holds the name — a concurrent
+  // start won the race. This one connected and is now unreachable by name, so
+  // stop it rather than leaking its transport.
+  if (!(await registry.adoptSource(source))) {
+    log.warn(
+      `[bundles] ${sourceName} lost a registration race to a live source; stopping the duplicate`,
+    );
+    await source.stop();
+  }
   // Notify lifecycle that this Connection finished its OAuth
   // dance and is now running. For URL bundles that went through
   // pending_auth → running (background path after the user

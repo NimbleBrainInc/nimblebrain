@@ -68,3 +68,59 @@ describe("ToolRegistry.adoptSource", () => {
     expect(live.stopped).toBe(false);
   });
 });
+
+describe("ToolRegistry.hasEstablishedSource", () => {
+  /** A source that is down, distinguished by whether it ever connected. */
+  function downSource(name: string, everConnected: boolean): ToolSource {
+    return {
+      name,
+      isAlive: () => false,
+      // `startedAt` is set only on a successful connect and never reset, so
+      // `uptime() === null` is exactly "never connected".
+      uptime: () => (everConnected ? 5_000 : null),
+      tools: async (): Promise<Tool[]> => [],
+      execute: async () => ({ content: [], isError: false }),
+      stop: async () => {},
+    } as unknown as ToolSource;
+  }
+
+  it("is false for a source that never connected (a boot start that failed)", () => {
+    // Nothing to reconnect to — it needs a full re-spawn, and until it gets one
+    // it must not be offered as usable.
+    const registry = new ToolRegistry();
+    registry.addSource(downSource("people", false));
+    expect(registry.hasEstablishedSource("people")).toBe(false);
+    expect(registry.hasLiveSource("people")).toBe(false);
+  });
+
+  it("is TRUE for a source whose transport merely dropped", () => {
+    // The regression this exists to prevent. An idle close / network blip sets
+    // `dead`, so `isAlive()` reads exactly like a boot failure — but this one
+    // heals in place via reconnectOnDemand and the next sweep. Treating it as
+    // absent runs a destructive re-spawn: it stop()s a working source, and the
+    // replacement object is missing from HealthMonitor's boot snapshot, so the
+    // bundle loses monitoring for the life of the process.
+    const registry = new ToolRegistry();
+    registry.addSource(downSource("people", true));
+    expect(registry.hasEstablishedSource("people")).toBe(true);
+    // Liveness alone cannot tell the two apart — that is the whole point.
+    expect(registry.hasLiveSource("people")).toBe(false);
+  });
+
+  it("is true for a live source and for an in-process source", () => {
+    const registry = new ToolRegistry();
+    registry.addSource(fakeSource("live", true));
+    registry.addSource({
+      name: "inprocess",
+      tools: async (): Promise<Tool[]> => [],
+      execute: async () => ({ content: [], isError: false }),
+      stop: async () => {},
+    } as unknown as ToolSource);
+    expect(registry.hasEstablishedSource("live")).toBe(true);
+    expect(registry.hasEstablishedSource("inprocess")).toBe(true);
+  });
+
+  it("is false for an absent source", () => {
+    expect(new ToolRegistry().hasEstablishedSource("nope")).toBe(false);
+  });
+});

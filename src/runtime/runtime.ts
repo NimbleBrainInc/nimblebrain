@@ -2547,7 +2547,9 @@ export class Runtime {
   getBundleInstancesForWorkspace(wsId: string): BundleInstance[] {
     const wsRegistry = this._workspaceRegistries.get(wsId);
     if (!wsRegistry) return [];
-    const visible = new Set(wsRegistry.sourceNames().filter((n) => wsRegistry.hasLiveSource(n)));
+    const visible = new Set(
+      wsRegistry.sourceNames().filter((n) => wsRegistry.hasEstablishedSource(n)),
+    );
     return this.lifecycle
       .getInstances()
       .filter((inst) => inst.wsId === wsId && visible.has(inst.serverName));
