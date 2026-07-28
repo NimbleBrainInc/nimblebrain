@@ -23,6 +23,18 @@ env:
 # inline individual check steps here — package.json is the source of truth
 # for what "verify" means. If a job needs a new check, add it to the matching
 # verify subscript in package.json so local `bun run verify` stays in parity.
+
+# Every job restores bun's download cache (`~/.bun/install/cache`) before its
+# first `bun install`. Uncached, all four jobs cold-fetch the whole dependency
+# set on every run, and the largest tarball (`xlsx`, 7 MB) intermittently fails
+# to extract mid-download — a red build with no code cause. `restore-keys`
+# makes a lockfile change a partial hit rather than a cold start, so the
+# fetch-and-extract surface stays small even when the key misses.
+#
+# It caches downloaded tarballs, NOT `node_modules`: `bun install` still links
+# only what the target package.json declares. That is why sharing one cache
+# across jobs is safe for `test-unit-bare-deps`, whose isolation is about which
+# packages get linked, not where their tarballs came from.
 jobs:
   lint-and-check:
     name: Lint & Typecheck
@@ -32,6 +44,12 @@ jobs:
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: ${{ env.BUN_VERSION }}
+      - name: Cache bun dependencies
+        uses: actions/cache@v6
+        with:
+          path: ~/.bun/install/cache
+          key: ${{ runner.os }}-bun-${{ hashFiles('**/bun.lock') }}
+          restore-keys: ${{ runner.os }}-bun-
       - name: Install dependencies
         run: bun install
       - name: Install web dependencies
@@ -47,6 +65,12 @@ jobs:
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: ${{ env.BUN_VERSION }}
+      - name: Cache bun dependencies
+        uses: actions/cache@v6
+        with:
+          path: ~/.bun/install/cache
+          key: ${{ runner.os }}-bun-${{ hashFiles('**/bun.lock') }}
+          restore-keys: ${{ runner.os }}-bun-
       - name: Install dependencies
         run: bun install
       - name: Install web dependencies
@@ -78,6 +102,12 @@ jobs:
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: ${{ env.BUN_VERSION }}
+      - name: Cache bun dependencies
+        uses: actions/cache@v6
+        with:
+          path: ~/.bun/install/cache
+          key: ${{ runner.os }}-bun-${{ hashFiles('**/bun.lock') }}
+          restore-keys: ${{ runner.os }}-bun-
       - name: Install root dependencies only
         run: bun install
       - name: Unit tests must pass on root deps alone
@@ -91,6 +121,12 @@ jobs:
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: ${{ env.BUN_VERSION }}
+      - name: Cache bun dependencies
+        uses: actions/cache@v6
+        with:
+          path: ~/.bun/install/cache
+          key: ${{ runner.os }}-bun-${{ hashFiles('**/bun.lock') }}
+          restore-keys: ${{ runner.os }}-bun-
       - name: Install dependencies
         run: bun install
       - name: Integration tests
