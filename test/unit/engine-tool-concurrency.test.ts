@@ -80,11 +80,16 @@ describe("engine tool-call fan-out is bounded per source", () => {
     const engine = new AgentEngine(twoTurnModel(calls), router, new NoopEventSink());
     await engine.run(config, "system", USER, tools);
 
-    const cap = resolveMaxParallelToolCallsPerSource({});
-    const observed = peak.get("people") ?? 0;
-    expect(observed).toBeLessThanOrEqual(cap);
-    // Still parallel — the bound is a cap, not a queue of one.
-    expect(observed).toBeGreaterThan(1);
+    // Read the SAME source the engine reads (process.env), not the hardcoded
+    // default — otherwise this goes red on correct code in any shell that
+    // exports the knob, which is precisely what this PR invites operators to do.
+    // Clamped to the group size, since that is the real ceiling on in-flight.
+    // Exact, not a range: with 25 calls queued behind it the pool starts `cap`
+    // workers immediately, so peak IS the cap. Stronger than `<= cap` (which a
+    // serial implementation would also satisfy) and correct at every knob value,
+    // including `cap = 1` where "still parallel" would be false by definition.
+    const cap = Math.min(resolveMaxParallelToolCallsPerSource(), 25);
+    expect(peak.get("people") ?? 0).toBe(cap);
   });
 
   it("does not let one source's depth throttle a different source", async () => {
@@ -102,8 +107,14 @@ describe("engine tool-call fan-out is bounded per source", () => {
     const engine = new AgentEngine(twoTurnModel(calls), router, new NoopEventSink());
     await engine.run(config, "system", USER, tools);
 
-    const cap = resolveMaxParallelToolCallsPerSource({});
-    expect(peak.get("people") ?? 0).toBeLessThanOrEqual(cap);
+    // Every expectation is derived from the live cap, so this stays meaningful
+    // whether an operator has raised the knob or lowered it. A group smaller
+    // than the cap runs at full width; a group larger than it runs at the cap.
+    const cap = resolveMaxParallelToolCallsPerSource();
+    const peopleWidth = Math.min(cap, 20);
+    const memoryWidth = Math.min(cap, 3);
+    const webWidth = Math.min(cap, 2);
+    expect(peak.get("people") ?? 0).toBeLessThanOrEqual(peopleWidth);
 
     // THE per-source assertion. Peak-within-a-group cannot see this: under a
     // single global cap the small groups are simply delayed behind the 20-call
@@ -114,14 +125,14 @@ describe("engine tool-call fan-out is bounded per source", () => {
     // from `people` plus ALL of `memory` and `web`, because their groups are
     // smaller than the cap and hold their own budgets. A global bound puts `cap`
     // people calls there and nothing else.
-    const firstWave = order.slice(0, cap + 3 + 2);
-    expect(firstWave.filter((s) => s === "memory")).toHaveLength(3);
-    expect(firstWave.filter((s) => s === "web")).toHaveLength(2);
-    expect(firstWave.filter((s) => s === "people")).toHaveLength(cap);
+    const firstWave = order.slice(0, peopleWidth + memoryWidth + webWidth);
+    expect(firstWave.filter((s) => s === "memory")).toHaveLength(memoryWidth);
+    expect(firstWave.filter((s) => s === "web")).toHaveLength(webWidth);
+    expect(firstWave.filter((s) => s === "people")).toHaveLength(peopleWidth);
 
-    // Kept as a secondary check: the small groups do run at full width.
-    expect(peak.get("memory")).toBe(3);
-    expect(peak.get("web")).toBe(2);
+    // Kept as a secondary check: the small groups do run at their full width.
+    expect(peak.get("memory")).toBe(memoryWidth);
+    expect(peak.get("web")).toBe(webWidth);
   });
 
   it("returns results in call order regardless of completion order", async () => {

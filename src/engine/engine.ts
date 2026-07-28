@@ -1658,19 +1658,27 @@ export class AgentEngine {
    * any single connector is capped. Order is preserved by index, so
    * `buildToolResults` is unaffected.
    *
-   * The key is the source prefix `ToolRegistry.execute` itself routes on, via the
-   * same `splitInnerToolName` every dispatch door uses. That correspondence is
-   * the whole justification: one group is exactly one `ToolSource`, so the thing
-   * being bounded is the thing that owns the connection. (There is no workspace
+   * The key is the source prefix `ToolRegistry.execute` itself routes on — the
+   * same first-`__` split every dispatch door performs (`registry.ts`,
+   * `orchestrator/route.ts`, `runtime/identity-tool-router.ts`), though each
+   * hand-rolls it rather than sharing one function, so that correspondence is
+   * CONVENTION, not enforcement. Changing the decomposition means changing every
+   * site, or the engine's grouping silently desyncs from the registry's routing.
+   * The correspondence is the whole justification: one group is exactly one
+   * `ToolSource`, so the thing being bounded is the thing that owns the
+   * connection. (There is no workspace
    * in the key because there is none in the name — the `ws_<id>-` form is retired
    * and rejected at the door, and a session reaches exactly one workspace.)
    *
    * IN-PROCESS sources are bounded too, though they front no server and cannot be
-   * throttled. Left deliberately: the alternative is asking the router whether a
-   * source is local, which coupling the engine does not otherwise need, and the
-   * one case where it bites is worth having anyway — every `nb__*` tool shares
-   * the `nb` key, so this also caps `nb__delegate` fan-out at 6 concurrent
-   * sub-agents, which is a bound worth keeping on its own merits.
+   * throttled. Left deliberately — the alternative is asking the router whether a
+   * source is local, a coupling the engine does not otherwise need — but it is a
+   * trade, not free. Every `nb__*` tool shares the `nb` key, so the cap covers 6
+   * concurrent `nb__*` calls of ANY kind, not 6 delegates: a turn emitting more
+   * than 6 that includes a `nb__delegate` can queue cheap kernel calls behind a
+   * sub-agent run lasting minutes. Accepted because the same sharing bounds
+   * delegate fan-out, which is worth having on its own merits, and because a
+   * turn mixing that many system calls with a delegate is rare.
    */
   private async executeToolCallsBounded(
     toolCalls: LanguageModelV3ToolCall[],
@@ -1679,6 +1687,9 @@ export class AgentEngine {
     const results = new Array<ToolExecResult>(toolCalls.length);
     const bySource = new Map<string, number[]>();
     for (let i = 0; i < toolCalls.length; i++) {
+      // Passing the raw wire name: `splitInnerToolName` documents its input as
+      // already stripped of any `ws_<id>-` prefix, which holds here because that
+      // form is rejected at the door before a call reaches the engine.
       const { sourcePrefix } = splitInnerToolName(
         (toolCalls[i] as LanguageModelV3ToolCall).toolName,
       );
