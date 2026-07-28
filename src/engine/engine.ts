@@ -64,28 +64,17 @@ import {
 const DEFAULT_MAX_PARALLEL_TOOL_CALLS = 6;
 
 /**
- * Most calls one engine run dispatches to any ONE source at a time. The
- * mechanism and its rationale live on `executeToolCallsBounded`; what this block
- * records is the SCOPE, which is narrower than the name suggests.
+ * Most calls one engine run dispatches to any ONE source at a time.
  *
- * "Per source" is true of the grouping, not of the enforcement. The bound lives
- * in a single `AgentEngine` iteration, while an `McpSource` is long-lived and
- * shared — a workspace's registries are built once and every conversation routes
- * through them, and `nb__delegate` hands each sub-agent a fresh engine over the
- * PARENT's router. So concurrent runs each get their own budget, and a parent
- * fanning out 6 sub-agents that each batch against one connector can still put
- * ~36 calls in flight against it.
+ * "Per source" describes the grouping, not the enforcement, and the difference
+ * is the part the name gets wrong. The bound lives in one `AgentEngine`
+ * iteration, while an `McpSource` is long-lived and shared across every
+ * conversation in its workspace — and `nb__delegate` gives each sub-agent a
+ * fresh engine over the PARENT's router. Concurrent runs and sub-agents
+ * therefore each get their own budget; this is not a global rate limit on the
+ * source. Sizing guidance is in `docs/config/environment.mdx`.
  *
- * That ceiling is deliberate. Enforcing a true per-source bound needs a limiter
- * on the registry, shared by every door, which buys head-of-line blocking across
- * conversations — one user's single call queued behind another's batch. That is
- * a bad trade for an interactive runtime. This removes the single-turn burst
- * (an observed 25-wide batch against one connector); it does not make a source
- * globally rate-safe.
- *
- * 6 keeps a batch meaningfully parallel while staying under the burst allowance a
- * modest server or its gateway is likely to have.
- * `NB_MAX_PARALLEL_TOOL_CALLS_PER_SOURCE` overrides it.
+ * `NB_MAX_PARALLEL_TOOL_CALLS_PER_SOURCE` overrides the default.
  */
 const MAX_PARALLEL_TOOL_CALLS_PER_SOURCE_PER_RUN = resolveMaxParallelToolCallsPerSource();
 
@@ -1644,53 +1633,21 @@ export class AgentEngine {
    * each group. See {@link MAX_PARALLEL_TOOL_CALLS_PER_SOURCE_PER_RUN} for the
    * scope this does and does not enforce.
    *
-   * The model decides how many calls to emit in a turn, and it will happily emit
-   * a whole batch — 25 writes against one connector is a normal thing for it to
-   * try. Dispatching those simultaneously makes the runtime the loudest possible
-   * client of every server it talks to, and a server's only defences are a
-   * gateway 429 or a connection reset.
+   * The grouping key is the source prefix `ToolRegistry.execute` routes on — the
+   * same first-`__` split every dispatch door performs, though each hand-rolls
+   * it rather than sharing one function, so the correspondence is CONVENTION,
+   * not enforcement: changing the decomposition means changing every site, or
+   * this grouping silently desyncs from the registry's routing. The
+   * correspondence is what makes the bound meaningful — one group is exactly one
+   * `ToolSource`, so the thing bounded is the thing that owns the connection.
    *
-   * A 429 is no longer catastrophic: `classifyConnectionFailure` gives it its own
-   * class and `policyFor` surfaces it, so a throttled call neither restarts the
-   * source nor aborts its in-flight siblings. It is still expensive. Every
-   * refused call is a wasted round trip and a wasted slice of the upstream's
-   * budget, and the turn ends with N of its writes simply not done — the model
-   * is told to retry with fewer in parallel, which costs another turn. That
-   * instruction is the point: the runtime is the layer that KNOWS it is issuing a
-   * batch, so it should pace itself rather than ask the model to.
+   * Calls to different sources still go out together; only depth against any one
+   * source is capped. Results are written by index, so `buildToolResults`, which
+   * pairs positionally, is unaffected.
    *
-   * A connection reset still is catastrophic, and that arm is unchanged: a source
-   * is SHARED by every call in the batch, so one reset that trips transport
-   * recovery tears down the calls that were already succeeding.
-   *
-   * Grouping by source rather than bounding globally, because capacity is a
-   * property of the server being called. Calls to different sources are
-   * independent and still go out together, so a batch that touches three
-   * connectors is not serialized behind the slowest one — only the depth against
-   * any single connector is capped. Order is preserved by index, so
-   * `buildToolResults` is unaffected.
-   *
-   * The key is the source prefix `ToolRegistry.execute` itself routes on — the
-   * same first-`__` split every dispatch door performs (`registry.ts`,
-   * `orchestrator/route.ts`, `runtime/identity-tool-router.ts`), though each
-   * hand-rolls it rather than sharing one function, so that correspondence is
-   * CONVENTION, not enforcement. Changing the decomposition means changing every
-   * site, or the engine's grouping silently desyncs from the registry's routing.
-   * The correspondence is the whole justification: one group is exactly one
-   * `ToolSource`, so the thing being bounded is the thing that owns the
-   * connection. (There is no workspace in the key because there is none in the
-   * name — the `ws_<id>-` form is retired and rejected at the door, and a
-   * session reaches exactly one workspace.)
-   *
-   * IN-PROCESS sources are bounded too, though they front no server and cannot be
-   * throttled. Left deliberately — the alternative is asking the router whether a
-   * source is local, a coupling the engine does not otherwise need — but it is a
-   * trade, not free. Every `nb__*` tool shares the `nb` key, so the cap covers 6
-   * concurrent `nb__*` calls of ANY kind, not 6 delegates: a turn emitting more
-   * than 6 that includes a `nb__delegate` can queue cheap kernel calls behind a
-   * sub-agent run lasting minutes. Accepted because the same sharing bounds
-   * delegate fan-out, which is worth having on its own merits, and because a
-   * turn mixing that many system calls with a delegate is rare.
+   * In-process sources are bounded too. Every `nb__*` tool shares the `nb` key,
+   * so the cap covers 6 concurrent `nb__*` calls of any kind — including, but not
+   * limited to, `nb__delegate`.
    */
   private async executeToolCallsBounded(
     toolCalls: LanguageModelV3ToolCall[],
