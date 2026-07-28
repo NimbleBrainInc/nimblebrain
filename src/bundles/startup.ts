@@ -203,6 +203,16 @@ interface StartBundleOpts {
    * teardown is not. Removing the source is what made it terminal, since
    * `removeSource` calls `stop()`. This mirrors the pending-auth branch below,
    * which already registers an unstarted source for the same reason.
+   *
+   * Applies to EVERY boot failure mode, not only an unreachable endpoint — a
+   * rejected credential is retained too. That is deliberate but worth stating,
+   * because it drops a brake: the old `removeSource` set `stopped`, which is what
+   * made `HealthMonitor` treat the source as terminal. Retained sources instead
+   * get its exponential-backoff bursts followed by the slow re-probe cooldown,
+   * which is what bounds the cost of a source that will not come back on its own.
+   * Classifying the failure here to keep only "retryable" ones was tried and
+   * removed: a 401 arrives as a `ServerError`, not `UnauthorizedError`, so the
+   * gate missed the common shape while implying a protection it did not provide.
    */
   keepRegisteredOnStartFailure?: boolean;
   /**
