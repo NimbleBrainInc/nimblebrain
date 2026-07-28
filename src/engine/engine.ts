@@ -64,30 +64,27 @@ import {
 const DEFAULT_MAX_PARALLEL_TOOL_CALLS = 6;
 
 /**
- * Most calls one engine run dispatches to any ONE source at a time.
+ * Most calls one engine run dispatches to any ONE source at a time. The
+ * mechanism and its rationale live on `executeToolCallsBounded`; what this block
+ * records is the SCOPE, which is narrower than the name suggests.
  *
- * Scoped PER SOURCE PER RUN, and the second half is a real limit, not a
- * technicality. An `McpSource` is long-lived and shared — a workspace's
- * registries are built once and every conversation in that workspace routes
- * through them — while this bound lives in a single `AgentEngine` iteration. So
- * concurrent runs against one workspace each get their own budget, and
- * `nb__delegate` hands every sub-agent a fresh engine over the PARENT's router,
- * so a parent fanning out 6 sub-agents that each batch against one connector can
- * still put ~36 calls in flight against it.
+ * "Per source" is true of the grouping, not of the enforcement. The bound lives
+ * in a single `AgentEngine` iteration, while an `McpSource` is long-lived and
+ * shared — a workspace's registries are built once and every conversation routes
+ * through them, and `nb__delegate` hands each sub-agent a fresh engine over the
+ * PARENT's router. So concurrent runs each get their own budget, and a parent
+ * fanning out 6 sub-agents that each batch against one connector can still put
+ * ~36 calls in flight against it.
  *
- * That is a genuine ceiling on what this can promise: enforcing a true per-source
- * bound needs a limiter on the registry, shared by every door, which buys
- * head-of-line blocking across conversations (one user's single call queueing
- * behind another's batch) — a bad trade for an interactive runtime, and a much
- * larger change. This bound removes the single-turn burst that actually broke
- * production; it does not make the source globally rate-safe.
+ * That ceiling is deliberate. Enforcing a true per-source bound needs a limiter
+ * on the registry, shared by every door, which buys head-of-line blocking across
+ * conversations — one user's single call queued behind another's batch. That is
+ * a bad trade for an interactive runtime. This removes the single-turn burst
+ * that broke production; it does not make a source globally rate-safe.
  *
  * 6 keeps a batch meaningfully parallel while staying under the burst allowance a
  * modest server or its gateway is likely to have.
- *
- * `NB_MAX_PARALLEL_TOOL_CALLS_PER_SOURCE` overrides it — an escape hatch for a
- * deployment whose servers are known to be fast and local, or one that needs to
- * throttle harder for a fragile upstream.
+ * `NB_MAX_PARALLEL_TOOL_CALLS_PER_SOURCE` overrides it.
  */
 const MAX_PARALLEL_TOOL_CALLS_PER_SOURCE_PER_RUN = resolveMaxParallelToolCallsPerSource();
 

@@ -36,10 +36,13 @@ function toolCall(id: string, toolName: string): LanguageModelV3ToolCall {
 function trackingRouter(tools: ToolSchema[]) {
   const inFlight = new Map<string, number>();
   const peak = new Map<string, number>();
+  /** Source of each call, in dispatch order — see the first-wave assertion. */
+  const order: string[] = [];
 
   const execute = async (call: ToolCall): Promise<ToolResult> => {
     const sep = call.name.indexOf("__");
     const source = sep === -1 ? call.name : call.name.slice(0, sep);
+    order.push(source);
     const now = (inFlight.get(source) ?? 0) + 1;
     inFlight.set(source, now);
     peak.set(source, Math.max(peak.get(source) ?? 0, now));
@@ -49,7 +52,7 @@ function trackingRouter(tools: ToolSchema[]) {
   };
 
   const router = new StaticToolRouter(tools, execute);
-  return { router, peak };
+  return { router, peak, order };
 }
 
 /** One assistant turn emitting `calls`, then a plain text answer. */
@@ -77,8 +80,9 @@ describe("engine tool-call fan-out is bounded per source", () => {
     const engine = new AgentEngine(twoTurnModel(calls), router, new NoopEventSink());
     await engine.run(config, "system", USER, tools);
 
+    const cap = resolveMaxParallelToolCallsPerSource({});
     const observed = peak.get("people") ?? 0;
-    expect(observed).toBeLessThanOrEqual(6);
+    expect(observed).toBeLessThanOrEqual(cap);
     // Still parallel — the bound is a cap, not a queue of one.
     expect(observed).toBeGreaterThan(1);
   });
@@ -88,7 +92,7 @@ describe("engine tool-call fan-out is bounded per source", () => {
     // independently: a batch touching three connectors must not serialize the
     // small groups behind the large one.
     const tools = [schema("people__write"), schema("memory__note"), schema("web__fetch")];
-    const { router, peak } = trackingRouter(tools);
+    const { router, peak, order } = trackingRouter(tools);
     const calls = [
       ...Array.from({ length: 20 }, (_, i) => toolCall(`p${i}`, "people__write")),
       ...Array.from({ length: 3 }, (_, i) => toolCall(`m${i}`, "memory__note")),
@@ -98,8 +102,24 @@ describe("engine tool-call fan-out is bounded per source", () => {
     const engine = new AgentEngine(twoTurnModel(calls), router, new NoopEventSink());
     await engine.run(config, "system", USER, tools);
 
-    expect(peak.get("people") ?? 0).toBeLessThanOrEqual(6);
-    // The small groups run at full width concurrently with the big one.
+    const cap = resolveMaxParallelToolCallsPerSource({});
+    expect(peak.get("people") ?? 0).toBeLessThanOrEqual(cap);
+
+    // THE per-source assertion. Peak-within-a-group cannot see this: under a
+    // single global cap the small groups are simply delayed behind the 20-call
+    // one, and their peaks still reach 3 and 2 once slots free. Dispatch ORDER
+    // can see it — and unlike wall-clock it needs no timing assumptions.
+    //
+    // The first wave is every call dispatched before anything completes: `cap`
+    // from `people` plus ALL of `memory` and `web`, because their groups are
+    // smaller than the cap and hold their own budgets. A global bound puts `cap`
+    // people calls there and nothing else.
+    const firstWave = order.slice(0, cap + 3 + 2);
+    expect(firstWave.filter((s) => s === "memory")).toHaveLength(3);
+    expect(firstWave.filter((s) => s === "web")).toHaveLength(2);
+    expect(firstWave.filter((s) => s === "people")).toHaveLength(cap);
+
+    // Kept as a secondary check: the small groups do run at full width.
     expect(peak.get("memory")).toBe(3);
     expect(peak.get("web")).toBe(2);
   });
