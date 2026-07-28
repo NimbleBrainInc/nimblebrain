@@ -16,7 +16,7 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import {
   addAuthLifecycleHandler,
-  fetchWithSessionRefresh,
+  fetchWithRefresh,
   getActiveWorkspaceId,
   getAuthToken,
 } from "./api/client";
@@ -235,7 +235,7 @@ async function createClient(): Promise<Entry> {
  * Cookie-mode (`authToken === "__cookie__"`) falls through to
  * `credentials: "include"` — the browser sends the session cookie.
  *
- * Goes through the SHARED `fetchWithSessionRefresh`, not `globalThis.fetch`.
+ * Goes through the SHARED `fetchWithRefresh`, not `globalThis.fetch`.
  * Reading the token per-request only picks up a refresh somebody else already
  * performed; it never causes one. A user parked on a rendered app generates
  * nothing but bridge traffic, so with a bare `fetch` the session simply expires
@@ -261,7 +261,7 @@ async function mcpFetch(input: string | URL, init?: RequestInit): Promise<Respon
     headers.set("X-Workspace-Id", workspaceId);
   }
 
-  return fetchWithSessionRefresh(typeof input === "string" ? input : input.toString(), {
+  return fetchWithRefresh(typeof input === "string" ? input : input.toString(), {
     ...init,
     headers,
     // Always include credentials so cookie-mode auth works and same-origin
