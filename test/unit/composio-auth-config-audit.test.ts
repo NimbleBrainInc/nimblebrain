@@ -105,6 +105,20 @@ describe("auditComposioAuthConfigs", () => {
     expect(audit.orphanedKeys).toEqual([]);
   });
 
+  it("flags a key naming no toolkit even when its value is blank", () => {
+    // Orphanhood is a property of the key. Gating the check on a non-blank
+    // value would hide the half-finished edit — a key typed, its id not yet
+    // pasted — which is exactly when naming the typo is most useful.
+    declareComposio({ gmial: "" });
+
+    const audit = auditComposioAuthConfigs([
+      entry("com.google/gmail", "composio", { toolkit: "gmail" }),
+    ]);
+
+    expect(audit.orphanedKeys).toEqual(["gmial"]);
+    expect(audit.declared).toEqual([]);
+  });
+
   it("treats a blank declared id as absent, matching resolution", () => {
     declareComposio({ gmail: "   " });
 

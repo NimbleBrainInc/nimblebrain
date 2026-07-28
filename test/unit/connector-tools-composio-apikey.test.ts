@@ -218,8 +218,6 @@ function buildTool(h: Harness) {
 
 const TRACKED_ENV = [
   "COMPOSIO_API_KEY",
-  "COMPOSIO_POSTHOG_AUTH_CONFIG_ID",
-  "COMPOSIO_GMAIL_AUTH_CONFIG_ID",
   "NB_TENANT_ID",
 ];
 const SAVED_ENV: Record<string, string | undefined> = {};

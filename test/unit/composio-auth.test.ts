@@ -528,7 +528,6 @@ describe("POST /v1/composio-auth/initiate", () => {
   const TRACKED = [
     "COMPOSIO_API_KEY",
     "COMPOSIO_API_BASE_URL",
-    "COMPOSIO_GMAIL_AUTH_CONFIG_ID",
     "NB_TENANT_ID",
     "NB_API_URL",
     "NB_WEB_URL",
@@ -748,7 +747,6 @@ describe("POST /v1/composio-auth/initiate", () => {
   test("(d) returns 500 when the toolkit has no auth-config id", async () => {
     process.env.COMPOSIO_API_KEY = "k_test";
     setConnectorsConfig({ providers: { composio: { authConfigs: {} } } });
-    // COMPOSIO_GMAIL_AUTH_CONFIG_ID intentionally unset.
 
     const { app } = makeApp(composioEntry("com.google/gmail"));
     const res = await app.request("http://nb.test/v1/composio-auth/initiate", {
@@ -857,7 +855,6 @@ describe("POST /v1/composio-auth/initiate-identity", () => {
   const TRACKED = [
     "COMPOSIO_API_KEY",
     "COMPOSIO_API_BASE_URL",
-    "COMPOSIO_GMAIL_AUTH_CONFIG_ID",
     "NB_TENANT_ID",
     "NB_API_URL",
     "NB_WEB_URL",

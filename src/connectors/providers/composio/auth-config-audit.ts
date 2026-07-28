@@ -74,10 +74,14 @@ export function auditComposioAuthConfigs(
   for (const [key, value] of Object.entries(
     declaredProviderConfig("composio")?.authConfigs ?? {},
   )) {
-    // A blank id is not a declaration — matching what resolution does with one.
-    if (!value?.trim()) continue;
-    if (known.has(key)) audit.declared.push(key);
-    else audit.orphanedKeys.push(key);
+    // Orphanhood is a property of the key, not its value — a key naming no
+    // toolkit is a typo whether or not someone filled it in.
+    if (!known.has(key)) {
+      audit.orphanedKeys.push(key);
+      continue;
+    }
+    // A blank id is not a declaration, matching what resolution does with one.
+    if (value?.trim()) audit.declared.push(key);
   }
 
   return audit;

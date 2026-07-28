@@ -44,7 +44,9 @@ describe("curated catalog contract", () => {
 
   test("composio entries all have a composio block with a toolkit", () => {
     // validateServerDetail only checks the upstream ServerDetail shape, not
-    // the NimbleBrain composio block — a missing toolkit or a typo'd
+    // the NimbleBrain composio block, so a missing toolkit would otherwise pass
+    // validation and only surface at install time.
+    //
     // `toolkit` is the whole requirement: it identifies the upstream *and* is
     // the key the deployment's `connectors.providers.composio.authConfigs`
     // is looked up under, so an entry needs nothing else to be resolvable.
