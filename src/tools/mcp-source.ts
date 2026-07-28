@@ -246,8 +246,8 @@ interface RecoveryShape<T> {
   idempotent: boolean;
   /** How to treat an `unknown` (unclassifiable) throw. Tool calls set this so
    *  an unrecognized transport error still recovers (old "restart on any
-   *  throw" robustness); reads leave it false so a malformed result / 429 /
-   *  server code surfaces instead of restart-storming the whole source. */
+   *  throw" robustness); reads leave it false so a malformed result / server
+   *  code surfaces instead of restart-storming the whole source. */
   recoverUnknown: boolean;
   /** Per-call-site backoff schedule. Tool calls pass a single immediate
    *  attempt (`TOOL_CALL_RECOVERY_DELAYS`) to preserve the historical
@@ -1542,14 +1542,44 @@ export class McpSource implements ToolSource {
         // TOOL_CALL_RECOVERY_DELAYS — so a mutating call isn't replayed N times.
         recoverUnknown: true,
         delays: TOOL_CALL_RECOVERY_DELAYS,
-        surface: (e) => ({
-          content: textContent(
-            isTaskAugmented
-              ? `Task failed and cannot be auto-retried: ${errMessage(e)}`
-              : `${this.name} call failed: ${errMessage(e)}`,
-          ),
-          isError: true,
-        }),
+        surface: (e) =>
+          // Name the throttle rather than only reporting that something broke —
+          // the model's default repair for a failed batch is to replay it, which
+          // is precisely wrong here.
+          //
+          // The retry ADVICE is gated on idempotency, not just on the class. A
+          // task-augmented call has already spawned server-side state by the time
+          // a mid-stream reopen can be throttled (see the `idempotent:` note
+          // above), so telling the agent to retry would invite the duplicate side
+          // effects `policyFor`'s no-retry rule exists to prevent. It gets the
+          // diagnosis without the instruction.
+          classifyConnectionFailure(e) === "rate-limited"
+            ? {
+                content: textContent(
+                  isTaskAugmented
+                    ? `Task failed because ${this.name} is rate limited, and cannot be auto-retried — ` +
+                        `it may have already started server-side. Do not re-issue it; check its status first. ` +
+                        `Underlying error: ${errMessage(e)}`
+                    : `${this.name} is rate limited — too many calls at once, and this call was refused before it ran. ` +
+                        `The connector is healthy. Retry in a few seconds with FEWER calls in parallel (a handful at a time, ` +
+                        `not a whole batch). Underlying error: ${errMessage(e)}`,
+                ),
+                isError: true,
+                // `reason` only: `engine.ts` lifts it to `ToolCallRecord.errorReason`.
+                // A sibling `error` field with the same value has no reader.
+                structuredContent: {
+                  reason: "rate_limited",
+                  source: this.eventSourceName,
+                },
+              }
+            : {
+                content: textContent(
+                  isTaskAugmented
+                    ? `Task failed and cannot be auto-retried: ${errMessage(e)}`
+                    : `${this.name} call failed: ${errMessage(e)}`,
+                ),
+                isError: true,
+              },
         reauth: () => ({
           content: textContent(
             `${this.name} needs to be reconnected — its authorization has expired. Open the connector and click Reconnect.`,
@@ -1630,9 +1660,10 @@ export class McpSource implements ToolSource {
    *  - **surface** — give up. Mark the source crashed ONLY for a genuine
    *    connection-down class we won't retry (session-lost / transient /
    *    transport-dead), so HealthMonitor heals it for later calls. A `timeout`
-   *    (slow tool, healthy transport) and `auth-lost` (a credential problem) are
-   *    NOT the transport crashing — restarting for them would tear the source
-   *    down for its other tools (the #581 cascade), so they surface without it.
+   *    (slow tool, healthy transport), `auth-lost` (a credential problem), and
+   *    `rate-limited` (a healthy transport being paced) are NOT the transport
+   *    crashing — restarting for them would tear the source down for its other
+   *    tools (the #581 cascade), so they surface without it.
    */
   private recoveryOutcome<T>(
     err: unknown,
@@ -1733,8 +1764,8 @@ export class McpSource implements ToolSource {
         {
           idempotent: true,
           // Reads are conservative on unclassifiable errors: a malformed result
-          // (ZodError), a 429, or a server-defined code must NOT restart-storm the
-          // whole source — surface it as a null. Recognized transport failures and
+          // (ZodError) or a server-defined code must NOT restart-storm the whole
+          // source — surface it as a null. Recognized transport failures and
           // session loss still recover across the deploy window.
           recoverUnknown: false,
           delays: SESSION_RECOVERY_DELAYS_MS,
@@ -2543,6 +2574,7 @@ export type ConnectionFailure =
   | "transient"
   | "transport-dead"
   | "auth-lost"
+  | "rate-limited"
   | "timeout"
   | "unknown"
   | "none";
@@ -2550,8 +2582,8 @@ export type ConnectionFailure =
 /**
  * Classify a thrown error into a connection-failure class. Order matters:
  * `session-lost` (by message) is checked first, then the `-32001` `timeout`, then
- * `transient`, `auth-lost`, the standard protocol codes, and recognized
- * torn-transport shapes, with `unknown` as the residue.
+ * `rate-limited`, `transient`, `auth-lost`, the standard protocol codes, and
+ * recognized torn-transport shapes, with `unknown` as the residue.
  *
  * - **session-lost** — the server forgot our Streamable-HTTP session (it rolled).
  *   Matched on the "session not found" MESSAGE, NOT the HTTP status or code: the
@@ -2564,6 +2596,10 @@ export type ConnectionFailure =
  *   restarts — restarting strands the source's other tools without speeding the
  *   slow one (#581). Checked after the session message so a `-32001` carrying
  *   session text still classifies session-lost.
+ * - **rate-limited** — a gateway refused the request for PACING (429 /
+ *   `rate_limited`). The transport is healthy and the same connection serves the
+ *   next call; only the caller's rate is wrong. Surfaces, never restarts — see the
+ *   branch comment for why restarting here is actively harmful.
  * - **transient** — a mid-roll gateway blip (502/503/504, `bad_gateway`). Back off.
  * - **auth-lost** — a rejected credential. Detectable only as `UnauthorizedError`;
  *   note its recovery *policy* is config-dependent — a static-auth remote can't
@@ -2576,8 +2612,8 @@ export type ConnectionFailure =
  *   tool failures don't reach here at all — they come back as `isError` *results*.
  * - **unknown** — a throw we can't positively classify. The caller decides: the
  *   tool path treats it as recoverable (old "restart on any throw" robustness,
- *   now capped); the read path surfaces it (a malformed result / 429 / server
- *   code must NOT restart-storm the whole source). This split is why `unknown` is
+ *   now capped); the read path surfaces it (a malformed result / server code
+ *   must NOT restart-storm the whole source). This split is why `unknown` is
  *   distinct from `transport-dead` — see `recover`'s `recoverUnknown`.
  */
 export function classifyConnectionFailure(err: unknown): ConnectionFailure {
@@ -2614,6 +2650,40 @@ export function classifyConnectionFailure(err: unknown): ConnectionFailure {
   // session-lost. (See #581 — a tool timeout was cascading bundle restarts in prod.)
   if (code === -32001) {
     return "timeout";
+  }
+  // rate-limited — a gateway refused the request for pacing, not because anything
+  // is broken. The transport is HEALTHY: the same connection will serve the next
+  // call once the caller slows down. Without this class the throw falls to
+  // `unknown`, which the tool path maps to `transport-dead` → a full stop()/start().
+  // That is worse than a wasted restart: `stop()` aborts every in-flight stream on
+  // the source, so ONE throttled call in a parallel batch tears the transport out
+  // from under its siblings — including calls the server already committed.
+  // Checked BEFORE the torn-transport regex below, which is broad enough to be a
+  // magnet for anything left unclassified.
+  //
+  // Both signals are load-bearing, for DIFFERENT reasons:
+  //
+  //  - `code` catches the transport's own throws. `StreamableHTTPError` sets
+  //    `code = response.status`, so a refused POST and a refused mid-stream SSE
+  //    reopen both arrive carrying a real numeric 429.
+  //  - the MESSAGE catches the paths where that code is already gone.
+  //    `startToolAsTask` re-throws a task-creation failure as a bare
+  //    `new Error(firstMsg.error?.message)`, keeping the server's text and
+  //    dropping everything else. Heterogeneous remotes are the second reason —
+  //    the same one that makes session-lost match on text.
+  //
+  // The `rate limit` stem is deliberately left unanchored: `rate_limit_exceeded`
+  // is a common spelling and `_` is a word character, so a trailing `\b` could
+  // never match it. A BARE `429` is still not matched — it collides with the port
+  // fragments in transport error text (`127.0.0.1:429`) — so the status is read
+  // from a message only where a keyword qualifies it.
+  if (
+    code === 429 ||
+    /\brate[ _-]?limit|\bthrottl(e|ed|ing)\b|\btoo many requests\b|\b(?:http|status(?:Code)?|code)["' :=]*429\b/i.test(
+      msg,
+    )
+  ) {
+    return "rate-limited";
   }
   // transient — a mid-roll gateway blip (502/503/504, `bad_gateway`). Back off.
   if (
@@ -2653,8 +2723,11 @@ export function classifyConnectionFailure(err: unknown): ConnectionFailure {
 /**
  * The connection-down classes `recover` marks crashed before surfacing (so
  * HealthMonitor heals the source for later calls). `timeout` (slow tool, healthy
- * transport) and `auth-lost` (a credential problem) are excluded — restarting
- * for them would tear the source down for its other tools (the #581 cascade).
+ * transport), `auth-lost` (a credential problem), and `rate-limited` (a healthy
+ * transport being paced) are excluded — restarting for them would tear the source
+ * down for its other tools (the #581 cascade). Marking a throttled source crashed
+ * is the same mistake one layer down: HealthMonitor would answer the throttle with
+ * a burst of five reconnects into the gateway that just asked for less traffic.
  */
 function isConnectionDownClass(kind: ConnectionFailure): boolean {
   return kind === "session-lost" || kind === "transient" || kind === "transport-dead";
@@ -2693,6 +2766,12 @@ export function policyFor(
   // restarting would tear the source down for its other tools). Surface it so the
   // agent can decide — retry a smaller batch, or the tool should be task-augmented.
   if (kind === "timeout") return "surface";
+  // A rate limit never restarts either, and for a strictly stronger reason than
+  // timeout: re-establishing spends MORE of the very budget that was just refused
+  // (a fresh `initialize` + `tools/list` on top of the retry), so the restart both
+  // fails to help and deepens the throttle. Surface it and let the caller pace
+  // itself — the transport was never the problem.
+  if (kind === "rate-limited") return "surface";
   // session-lost / transient / transport-dead: re-establishable iff the op is safe to repeat.
   return ctx.idempotent ? "recover" : "surface";
 }

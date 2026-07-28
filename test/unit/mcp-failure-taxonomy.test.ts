@@ -102,11 +102,80 @@ describe("classifyConnectionFailure — op-independent connection classes", () =
     expect(classifyConnectionFailure(new Error("read ECONNRESET"))).toBe("transport-dead");
   });
 
+  it("classifies a throttle as 'rate-limited', by code AND by message", () => {
+    expect(classifyConnectionFailure({ code: 429, message: "Too Many Requests" })).toBe(
+      "rate-limited",
+    );
+    // The REAL transport shape: `StreamableHTTPError` sets `code = response.status`,
+    // so both signals are present together. Pinned because the two halves are
+    // justified by different paths and a fixture carrying only one hides that.
+    expect(
+      classifyConnectionFailure({
+        code: 429,
+        message: 'Streamable HTTP error: Error POSTing to endpoint: {"error":"rate_limited"}',
+      }),
+    ).toBe("rate-limited");
+    // A refused mid-stream SSE reopen — same class, statusText wording.
+    expect(
+      classifyConnectionFailure({
+        code: 429,
+        message: "Streamable HTTP error: Failed to open SSE stream: Too Many Requests",
+      }),
+    ).toBe("rate-limited");
+    // Message-only, no numeric code — what a caller sees once the code has been
+    // dropped en route. `startToolAsTask` re-throws a task-creation failure as
+    // a bare `new Error(firstMsg.error?.message)`, keeping the server's text and
+    // nothing else; a heterogeneous remote can present the same way. A code-only
+    // check would send these to `unknown` → `transport-dead` and restart a healthy
+    // source.
+    expect(
+      classifyConnectionFailure(
+        new Error('Streamable HTTP error: Error POSTing to endpoint: {"error":"rate_limited"}'),
+      ),
+    ).toBe("rate-limited");
+    expect(classifyConnectionFailure(new Error("Too Many Requests"))).toBe("rate-limited");
+    expect(classifyConnectionFailure(new Error("upstream rate-limit exceeded"))).toBe(
+      "rate-limited",
+    );
+    expect(classifyConnectionFailure({ message: "server returned HTTP 429" })).toBe("rate-limited");
+  });
+
+  it("recognizes the throttle spellings servers actually use", () => {
+    // `_` is a word character, so an anchored `rate[ _-]?limit\b` stem can never
+    // match `rate_limit_exceeded` — one of the most common spellings. Each miss
+    // here would fall through to `unknown` -> `transport-dead` and restart a
+    // healthy source, which is the whole failure this class exists to stop.
+    for (const msg of [
+      '{"error":"rate_limit_exceeded"}',
+      '{"error":{"code":429,"message":"slow down"}}',
+      // `statusCode` needs its own alternative: there is no word boundary mid-token,
+      // so `\b(?:…|status|…)` cannot reach the `Code` half.
+      '{"statusCode":429,"body":"nope"}',
+      "You have exceeded your rate limits",
+      "RateLimitError: retry later",
+      "Request was throttled.",
+      "upstream is throttling this client",
+    ]) {
+      expect(classifyConnectionFailure(new Error(msg))).toBe("rate-limited");
+    }
+  });
+
+  it("does NOT read a bare 429 out of address/port text as a throttle", () => {
+    // `\b429\b` alone collides with the host:port fragments that appear in real
+    // transport errors — misclassifying a torn transport as a throttle would
+    // suppress the restart that actually heals it.
+    expect(classifyConnectionFailure(new Error("connect ECONNREFUSED 10.0.2.116:4290"))).toBe(
+      "transport-dead",
+    );
+    expect(classifyConnectionFailure(new Error("fetch failed 127.0.0.1:429"))).toBe(
+      "transport-dead",
+    );
+  });
+
   it("classifies an unclassifiable throw as 'unknown' (caller decides recover vs surface)", () => {
     // Not a standard protocol error, not a recognized transport shape — e.g. a
-    // 429, a server-defined code, or a malformed-result parse error. The tool
-    // path recovers these; reads surface them. See recover()'s recoverUnknown.
-    expect(classifyConnectionFailure({ code: 429, message: "Too Many Requests" })).toBe("unknown");
+    // server-defined code or a malformed-result parse error. The tool path
+    // recovers these; reads surface them. See recover()'s recoverUnknown.
     expect(classifyConnectionFailure(new McpError(-32050, "custom server error"))).toBe("unknown");
     expect(classifyConnectionFailure(new Error("Unexpected token < in JSON"))).toBe("unknown");
   });
