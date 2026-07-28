@@ -58,6 +58,15 @@ afterEach(() => {
   rmSync(workDir, { recursive: true, force: true });
 });
 
+/**
+ * `hasLiveSource` is private — reached deliberately to document the contrast that
+ * justifies `hasEstablishedSource`. `tsconfig` does not cover `test/`, so a bare
+ * call would compile by omission rather than by intent.
+ */
+function liveness(registry: ToolRegistry, name: string): boolean {
+  return (registry as unknown as { hasLiveSource: (n: string) => boolean }).hasLiveSource(name);
+}
+
 describe("startWorkspaceBundles — unreachable URL bundle at boot", () => {
   test("failedUrlBundle_keepsInventoryEntryCarryingStartError", async () => {
     const store = new WorkspaceStore(workDir);
@@ -251,7 +260,7 @@ describe("startWorkspaceBundles — unreachable URL bundle at boot", () => {
     expect(registry?.hasSource("unreachable")).toBe(true);
     // But not live, and never established, so nothing treats it as usable and
     // no self-heal is skipped.
-    expect(registry?.hasLiveSource("unreachable")).toBe(false);
+    expect(liveness(registry as ToolRegistry, "unreachable")).toBe(false);
     expect(registry?.hasEstablishedSource("unreachable")).toBe(false);
   }, 30_000);
 

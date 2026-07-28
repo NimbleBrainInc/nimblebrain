@@ -45,10 +45,6 @@ function makeStubRuntime(opts: StubOptions = {}): Runtime {
   const recoverable = new Set(opts.recoverable ?? []);
   const registry = {
     hasSource: (name: string) => sources.has(name),
-    // This double's sources are all notionally established; the real gate is
-    // `hasEstablishedSource`, which separates "never connected" (needs a
-    // re-spawn) from "connected, transport dropped" (heals in place).
-    hasLiveSource: (name: string) => sources.has(name),
     hasEstablishedSource: (name: string) => sources.has(name),
   };
   return {

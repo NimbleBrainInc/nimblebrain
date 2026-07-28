@@ -1451,11 +1451,20 @@ export class BundleLifecycleManager {
     // this name, so the name is free and the eviction half of `adoptSource` is
     // not what this call is for. What it IS for is the return value: `false`
     // means a concurrent start (a `tryRecoverSource` landing in the window since
-    // the teardown) registered a live source first. Binding this unregistered
-    // one into the connection record anyway is the failure this whole change
-    // exists to prevent — OAuth would complete against a source the registry
-    // never holds, the connection would flip `running`, and the bundle would
-    // read healthy while serving nothing. Stop the loser and fail loudly.
+    // the teardown) registered a LIVE source first.
+    //
+    // That winner routes and serves normally — routing is `sources.get(name)`,
+    // and `adoptSource` declines only to a live incumbent. So the cost of
+    // ignoring the `false` is narrower than "the bundle is broken": this source
+    // would leak its transport and provider, and the connection record would
+    // bind an object nothing routes to. Stopping it is the fix.
+    //
+    // The throw is the blunt part and is tracked separately (#822): a user whose
+    // bundle was just healed by the concurrent recovery is told to retry, and
+    // the retry then hits "already connected". The right shape is the one
+    // `finalizeUrlSourceStart` uses — stop the loser, don't bind it, don't fail
+    // the caller — which needs `adoptSource` to own the behaviour rather than
+    // three call sites hand-rolling it.
     if (registry && !(await registry.adoptSource(source))) {
       await source.stop();
       throw new Error(
