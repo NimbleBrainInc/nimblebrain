@@ -254,10 +254,16 @@ export class ToolRegistry implements ToolRouter {
    * as available lets a dead source suppress the recovery that would fix it.
    *
    * Probed by shape rather than `instanceof`, matching `isTaskAwareSource`
-   * above, so `SharedSourceRef` wrappers and test doubles behave. A source with
-   * no liveness concept is in-process and always live.
+   * above, so test doubles behave without importing the class. A source that
+   * exposes no liveness at all is in-process and always live — note that means a
+   * wrapper which does not forward `isAlive` reads live regardless of what it
+   * wraps, which is the pre-existing answer `hasSource` gave and not a new claim.
+   *
+   * Private: the only caller is `adoptSource`. Callers outside want
+   * {@link hasEstablishedSource} — "is this source real", not "can it serve this
+   * instant" — and offering both publicly is how the wrong one gets picked.
    */
-  hasLiveSource(name: string): boolean {
+  private hasLiveSource(name: string): boolean {
     const source = this.sources.get(name);
     if (!source) return false;
     const isAlive = (source as Partial<McpSource>).isAlive;

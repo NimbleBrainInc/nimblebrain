@@ -1447,13 +1447,22 @@ export class BundleLifecycleManager {
     // any tool call during the flow finds it (and gets a "starting" /
     // "pending_auth" structured error instead of "no source").
     const registry = this.registriesByWs.get(wsId);
-    // `adoptSource`, not `if (!hasSource) addSource`. A boot-failed source is
-    // RETAINED in the registry now, so the bare membership guard would skip
-    // registering this fresh one and leave the dead source routing every call —
-    // while OAuth completes and the connection flips to `running`, so the bundle
-    // reads healthy and serves nothing. Evicting also stops HealthMonitor from
-    // reviving the orphan with its stale provider mid-flow.
-    if (registry) await registry.adoptSource(source);
+    // `teardownConnectionSource` above already dropped any prior source under
+    // this name, so the name is free and the eviction half of `adoptSource` is
+    // not what this call is for. What it IS for is the return value: `false`
+    // means a concurrent start (a `tryRecoverSource` landing in the window since
+    // the teardown) registered a live source first. Binding this unregistered
+    // one into the connection record anyway is the failure this whole change
+    // exists to prevent — OAuth would complete against a source the registry
+    // never holds, the connection would flip `running`, and the bundle would
+    // read healthy while serving nothing. Stop the loser and fail loudly.
+    if (registry && !(await registry.adoptSource(source))) {
+      await source.stop();
+      throw new Error(
+        `[lifecycle] startAuth: "${serverName}" in ${wsId} was registered by a concurrent start; ` +
+          "retry the connection",
+      );
+    }
     this.recordConnectionStateChange(serverName, wsId, principalId, "starting", {
       source,
     });

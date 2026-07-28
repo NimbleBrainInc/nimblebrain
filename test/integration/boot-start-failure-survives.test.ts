@@ -231,7 +231,7 @@ describe("startWorkspaceBundles — unreachable URL bundle at boot", () => {
     // The boot loop keeps the source REGISTERED so the bundle stays visible to
     // every registry-enumerating surface and HealthMonitor can heal it. What
     // used to make that unsafe was the self-heal gating on membership; those
-    // gates now test LIVENESS (`hasLiveSource`), so a retained-but-down source
+    // gates now test whether a source was ever ESTABLISHED, so a retained-but-down source
     // still reads "unavailable" to callers and still gets recovered.
     const store = new WorkspaceStore(workDir);
     const ws = await store.create("Fleet");

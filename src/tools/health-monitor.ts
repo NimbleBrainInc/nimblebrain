@@ -72,9 +72,11 @@ export class HealthMonitor {
       source,
       // Seed from the source, not an optimistic constant. A source can be
       // registered and already down before the monitor ever sees it — a boot
-      // start that failed, or one still waiting on interactive auth. Assuming
-      // `healthy` made those read healthy, and kept them out of
-      // `nb_bundle_unhealthy`, until the first sweep a full interval later.
+      // start that failed. Assuming `healthy` made those read healthy, and kept
+      // them out of `nb_bundle_unhealthy`, until the first sweep a full interval
+      // later. (A source awaiting interactive auth is NOT such a case: it parks
+      // with transport and client set, so `isAlive()` is true and it seeds
+      // healthy either way.)
       state: (source.isAlive() ? "healthy" : "restarting") as ProcessLiveness,
       restartCount: 0,
       cooldownUntil: null,

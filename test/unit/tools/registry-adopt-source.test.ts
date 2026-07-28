@@ -69,6 +69,15 @@ describe("ToolRegistry.adoptSource", () => {
   });
 });
 
+/**
+ * `hasLiveSource` is private — its only caller is `adoptSource`, and exposing two
+ * similar predicates is how the wrong one gets picked. Reached deliberately here
+ * to document the CONTRAST that justifies `hasEstablishedSource` existing at all.
+ */
+function liveness(registry: ToolRegistry, name: string): boolean {
+  return (registry as unknown as { hasLiveSource: (n: string) => boolean }).hasLiveSource(name);
+}
+
 describe("ToolRegistry.hasEstablishedSource", () => {
   /** A source that is down, distinguished by whether it ever connected. */
   function downSource(name: string, everConnected: boolean): ToolSource {
@@ -90,7 +99,7 @@ describe("ToolRegistry.hasEstablishedSource", () => {
     const registry = new ToolRegistry();
     registry.addSource(downSource("people", false));
     expect(registry.hasEstablishedSource("people")).toBe(false);
-    expect(registry.hasLiveSource("people")).toBe(false);
+    expect(liveness(registry, "people")).toBe(false);
   });
 
   it("is TRUE for a source whose transport merely dropped", () => {
@@ -104,7 +113,7 @@ describe("ToolRegistry.hasEstablishedSource", () => {
     registry.addSource(downSource("people", true));
     expect(registry.hasEstablishedSource("people")).toBe(true);
     // Liveness alone cannot tell the two apart — that is the whole point.
-    expect(registry.hasLiveSource("people")).toBe(false);
+    expect(liveness(registry, "people")).toBe(false);
   });
 
   it("is true for a live source and for an in-process source", () => {
