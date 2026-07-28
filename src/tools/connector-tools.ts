@@ -1637,7 +1637,7 @@ function resolveComposioApiKeyCredentials(
   if (!apiKey) {
     return { error: composioUnconfiguredMessage(entryName) };
   }
-  const authConfigId = composioAuthConfigId(composio.toolkit, composio.authConfigEnv);
+  const authConfigId = composioAuthConfigId(composio.toolkit);
   if (!authConfigId) {
     return { error: composioAuthConfigMessage(entryName, composio.toolkit) };
   }
@@ -1984,7 +1984,7 @@ function validateComposioInstall(action: RemoteOAuthInstall, entryName: string):
   if (!validateComposioConfig().apiKey) {
     return composioUnconfiguredMessage(entryName);
   }
-  if (!composioAuthConfigId(action.composio.toolkit, action.composio.authConfigEnv)) {
+  if (!composioAuthConfigId(action.composio.toolkit)) {
     return composioAuthConfigMessage(entryName, action.composio.toolkit);
   }
   return null;
@@ -2093,7 +2093,7 @@ async function buildComposioWiring(
     sessionMcp = await provider.createSession({
       userId,
       toolkit: action.composio.toolkit,
-      authConfigId: composioAuthConfigId(action.composio.toolkit, action.composio.authConfigEnv),
+      authConfigId: composioAuthConfigId(action.composio.toolkit),
       ...(action.composio.tools && action.composio.tools.length > 0
         ? { tools: action.composio.tools }
         : {}),

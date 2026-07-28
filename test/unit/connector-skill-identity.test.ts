@@ -13,7 +13,7 @@ describe("connectorSkillIdentity", () => {
     const d = detail({
       name: "Gmail (Composio)",
       _meta: {
-        "ai.nimblebrain/connector": { auth: "composio", composio: { toolkit: "gmail", authConfigEnv: "AC" } },
+        "ai.nimblebrain/connector": { auth: "composio", composio: { toolkit: "gmail" } },
       },
     });
     expect(connectorSkillIdentity(d)).toBe("gmail");
@@ -28,7 +28,7 @@ describe("connectorSkillIdentity", () => {
     const d = detail({
       name: "weird",
       _meta: {
-        "ai.nimblebrain/connector": { auth: "composio", composio: { toolkit: "   ", authConfigEnv: "AC" } },
+        "ai.nimblebrain/connector": { auth: "composio", composio: { toolkit: "   " } },
       },
     });
     expect(connectorSkillIdentity(d)).toBe("weird");

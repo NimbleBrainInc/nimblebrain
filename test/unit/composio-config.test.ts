@@ -22,7 +22,6 @@ import {
   _resetComposioConfigForTest,
   COMPOSIO_API_BASE,
   composioAuthConfigId,
-  resolveComposioAuthConfig,
   validateComposioConfig,
 } from "../../src/connectors/providers/composio/config.ts";
 import {
@@ -34,7 +33,6 @@ import { _resetBouncerModeForTest } from "../../src/oauth/bouncer-config.ts";
 
 const ENV_KEYS = [
   "COMPOSIO_API_KEY",
-  "COMPOSIO_GMAIL_AUTH_CONFIG_ID",
   "COMPOSIO_API_BASE_URL",
   "COMPOSIO_MONITOR_ENABLED",
   "NB_TENANT_ID",
@@ -259,13 +257,9 @@ describe("precedence — per field, so nothing is silently discarded", () => {
 });
 
 /**
- * Per-toolkit auth-config ids. Keyed by toolkit slug — the identifier the
- * catalog entry already carries — so declaring one adds no string that has to
- * match anything elsewhere.
- *
- * The legacy env arm exists only so a deployment mid-upgrade keeps resolving
- * while its values move into the block. It reads the var the catalog entry's
- * `authConfigEnv` names, and goes away with that field.
+ * Per-toolkit auth-config ids. Keyed by the toolkit slug the catalog entry
+ * already carries, so declaring one adds no string that has to match anything
+ * beyond the catalog itself — the coupling `auth-config-audit.ts` checks at boot.
  */
 describe("composioAuthConfigId", () => {
   it("reads the declared id for the toolkit", () => {
@@ -273,93 +267,25 @@ describe("composioAuthConfigId", () => {
     expect(composioAuthConfigId("gmail")).toBe("ac_declared");
   });
 
-  it("returns empty for a toolkit with no id anywhere", () => {
+  it("returns empty for a toolkit with no declared id", () => {
     declareComposio({ authConfigs: { gmail: "ac_declared" } });
     expect(composioAuthConfigId("notion")).toBe("");
   });
 
-  it("falls back to the env var the catalog entry names", () => {
-    // A deployment that has not yet moved its ids into the block. Without this
-    // arm the upgrade is a hard cutover: every composio connector stops
-    // resolving the moment the runtime rolls, before any values have moved.
-    process.env.COMPOSIO_GMAIL_AUTH_CONFIG_ID = "ac_env";
-    declareComposio({});
-    expect(composioAuthConfigId("gmail", "COMPOSIO_GMAIL_AUTH_CONFIG_ID")).toBe("ac_env");
-  });
-
-  it("prefers the declared id over the legacy env var", () => {
-    // The direction that makes the migration one-way: once a toolkit is declared,
-    // a stale env var left behind in the pod cannot resurrect the old id.
-    process.env.COMPOSIO_GMAIL_AUTH_CONFIG_ID = "ac_env";
-    declareComposio({ authConfigs: { gmail: "ac_declared" } });
-    expect(composioAuthConfigId("gmail", "COMPOSIO_GMAIL_AUTH_CONFIG_ID")).toBe("ac_declared");
-  });
-
-  it("treats a blank declared id as absent, so the env fallback still applies", () => {
-    // Matches the sibling settings: a templated deploy rendering "" must not
-    // discard the operator's env value.
-    process.env.COMPOSIO_GMAIL_AUTH_CONFIG_ID = "ac_env";
-    for (const blank of ["", "   "]) {
-      declareComposio({ authConfigs: { gmail: blank } });
-      expect(composioAuthConfigId("gmail", "COMPOSIO_GMAIL_AUTH_CONFIG_ID")).toBe("ac_env");
-    }
-  });
-
-  it("returns empty when the entry names no env var and nothing is declared", () => {
-    // The shape of a new catalog entry, which omits `authConfigEnv` entirely.
+  it("returns empty when no block is declared at all", () => {
     declareComposio({});
     expect(composioAuthConfigId("gmail")).toBe("");
+  });
+
+  it("treats a blank declared id as absent", () => {
+    for (const blank of ["", "   "]) {
+      declareComposio({ authConfigs: { gmail: blank } });
+      expect(composioAuthConfigId("gmail")).toBe("");
+    }
   });
 
   it("trims a declared id", () => {
     declareComposio({ authConfigs: { gmail: "  ac_declared  " } });
     expect(composioAuthConfigId("gmail")).toBe("ac_declared");
-  });
-});
-
-/**
- * `source` is what lets the boot audit classify a toolkit without restating this
- * precedence. If it disagreed with `id`, the audit would report a migration
- * state that installs don't actually take.
- */
-describe("resolveComposioAuthConfig — source", () => {
-  it("reports the declared block as the source", () => {
-    process.env.COMPOSIO_GMAIL_AUTH_CONFIG_ID = "ac_env";
-    declareComposio({ authConfigs: { gmail: "ac_declared" } });
-
-    expect(resolveComposioAuthConfig("gmail", "COMPOSIO_GMAIL_AUTH_CONFIG_ID")).toEqual({
-      id: "ac_declared",
-      source: "declared",
-    });
-  });
-
-  it("reports the legacy env var as the source", () => {
-    process.env.COMPOSIO_GMAIL_AUTH_CONFIG_ID = "ac_env";
-    declareComposio({});
-
-    expect(resolveComposioAuthConfig("gmail", "COMPOSIO_GMAIL_AUTH_CONFIG_ID")).toEqual({
-      id: "ac_env",
-      source: "env",
-    });
-  });
-
-  it("reports none when the toolkit has no id anywhere", () => {
-    declareComposio({});
-    expect(resolveComposioAuthConfig("gmail", "COMPOSIO_GMAIL_AUTH_CONFIG_ID")).toEqual({
-      id: "",
-      source: "none",
-    });
-  });
-
-  it("agrees with composioAuthConfigId on the value it returns", () => {
-    // The two are one function; a divergence would put the audit and installs on
-    // different answers for the same toolkit.
-    process.env.COMPOSIO_GMAIL_AUTH_CONFIG_ID = "ac_env";
-    for (const declared of [{}, { authConfigs: { gmail: "ac_declared" } }]) {
-      declareComposio(declared);
-      expect(composioAuthConfigId("gmail", "COMPOSIO_GMAIL_AUTH_CONFIG_ID")).toBe(
-        resolveComposioAuthConfig("gmail", "COMPOSIO_GMAIL_AUTH_CONFIG_ID").id,
-      );
-    }
   });
 });

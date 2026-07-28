@@ -1,12 +1,9 @@
 # Test fixture — representative Composio-backed catalog entries. Not
-# shipped. Pins the `_meta.composio` block shape in both forms the
-# contract admits: `io.linear/mcp` carries `toolkit` alone, the shape
-# authors write, whose `ac_…` id is deployment config keyed by that
-# slug; `io.asana/mcp` additionally carries the legacy `authConfigEnv`,
-# which is still read as a per-toolkit fallback and must match the
-# COMPOSIO_<TOOLKIT>_AUTH_CONFIG_ID convention while it exists. Split
-# into its own file so tests also exercise StaticSource directory
-# aggregation across multiple catalog files.
+# shipped. Pins the `_meta.composio` block shape: `toolkit` identifies
+# the upstream and is the key its `ac_…` id is declared under in
+# `connectors.providers.composio.authConfigs`. Split into its own file
+# so tests also exercise StaticSource directory aggregation across
+# multiple catalog files.
 servers:
   - name: io.asana/mcp
     title: Asana
@@ -23,7 +20,6 @@ servers:
         auth: composio
         composio:
           toolkit: asana
-          authConfigEnv: COMPOSIO_ASANA_AUTH_CONFIG_ID
           tools:
             - ASANA_CREATE_A_TASK
             - ASANA_GET_A_TASK
@@ -32,8 +28,6 @@ servers:
         # personal catalog now admits composio (not DCR-only). Composio's `auth`
         # is unchanged, so the DCR rot-detector still skips this entry.
         personal: true
-  # The shape `deploy/composio.mdx` tells authors to write: no `authConfigEnv`,
-  # the id declared under `connectors.providers.composio.authConfigs.linear`.
   - name: io.linear/mcp
     title: Linear
     description: Issues, projects, and cycles

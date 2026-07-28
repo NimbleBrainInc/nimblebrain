@@ -77,7 +77,7 @@ The key must match the catalog entry's `composio.toolkit` exactly. At boot the r
 
 A toolkit you leave out is **not** reported. The catalog is a menu, and wiring the toolkits you want is the normal case; installing a connector whose toolkit has no id fails at that moment, naming the toolkit and the config key to set.
 
-A toolkit with no entry here falls back to the environment variable named by its catalog entry's legacy `composio.authConfigEnv` (`COMPOSIO_GMAIL_AUTH_CONFIG_ID` and friends). That fallback exists so a running deployment keeps working while its ids move into the block. Whenever it is the value's actual source the runtime logs a deprecation warning naming the toolkit — grep your logs for `[composio]` to see which toolkits are still to migrate. Both the fallback and the field will be removed ([#789](https://github.com/NimbleBrainInc/nimblebrain/issues/789)).
+The key must match the catalog entry's `composio.toolkit` exactly. At boot the runtime reports any key naming no catalog toolkit, so check your startup logs after editing this block.
 
 ### 4. White-label the Composio consent screen (optional)
 

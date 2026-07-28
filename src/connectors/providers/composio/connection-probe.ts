@@ -50,9 +50,7 @@ export class ComposioConnectionProbe implements ConnectionHealthProbe {
     let authConfigId = "";
     try {
       const entry = await this.directory.catalogById(connectorId);
-      authConfigId = entry?.composio
-        ? composioAuthConfigId(entry.composio.toolkit, entry.composio.authConfigEnv)
-        : "";
+      authConfigId = entry?.composio ? composioAuthConfigId(entry.composio.toolkit) : "";
     } catch (err) {
       log.debug(
         "mcp",

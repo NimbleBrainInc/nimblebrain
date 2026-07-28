@@ -323,7 +323,7 @@ function resolveComposioCredentials(
   // catalog because the id differs per Composio account while the catalog is
   // shared across deployments.
   const toolkit = entry.composio.toolkit;
-  const authConfigId = composioAuthConfigId(toolkit, entry.composio.authConfigEnv);
+  const authConfigId = composioAuthConfigId(toolkit);
   if (!authConfigId) {
     log.warn(
       `[composio-auth] no auth config id for toolkit "${toolkit}"; cannot initiate ${connectorId} (${logCtx})`,

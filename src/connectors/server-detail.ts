@@ -129,13 +129,6 @@ export interface ComposioConnectField {
  * - `toolkit`: Composio's slug for the upstream (`gmail`, `posthog`, …).
  *   Passed as the `authConfigs` key to `composio.create(...)` at install and
  *   used as the directory name for the per-workspace `connection.json`.
- * - `authConfigEnv`: **legacy**. Names an env var holding this toolkit's
- *   Composio `auth_config_id`. Superseded by
- *   `connectors.providers.composio.authConfigs`, keyed by `toolkit` — which is
- *   already this entry's identifier, so nothing has to stay in sync. Read only
- *   as a fallback when the toolkit has no declared entry; omit it in new
- *   catalogs, and drop it from existing ones once every deployment reading the
- *   catalog declares its auth configs.
  * - `tools`: optional allowlist of Composio tool slugs to expose. Required in
  *   practice for any toolkit with more than ~20 tools (the agent's tool-search
  *   dumps every match's full description into context otherwise).
@@ -149,7 +142,6 @@ export interface ComposioConnectField {
  */
 export interface ComposioConnectorConfig {
   toolkit: string;
-  authConfigEnv?: string;
   tools?: string[];
   authScheme?: "OAUTH2" | "API_KEY";
   fields?: ComposioConnectField[];

@@ -62,6 +62,10 @@ import { slugifyServerName } from "../../src/bundles/paths.ts";
 import { IdentityConnectorStore } from "../../src/identity/connector-store.ts";
 import { _resetComposioConfigForTest } from "../../src/connectors/providers/composio/config.ts";
 import {
+  _resetConnectorsConfigForTest,
+  setConnectorsConfig,
+} from "../../src/connectors/providers/config.ts";
+import {
   composioCallbackUrl,
   composioUserId,
 } from "../../src/connectors/providers/composio/sdk.ts";
@@ -197,7 +201,6 @@ function composioEntry(id: string) {
     auth: "composio" as const,
     composio: {
       toolkit: "gmail",
-      authConfigEnv: "COMPOSIO_GMAIL_AUTH_CONFIG_ID",
     },
   };
 }
@@ -296,6 +299,7 @@ describe("GET /v1/composio-auth/proxy", () => {
 
   test("302s to backend.composio.dev with query params preserved", async () => {
     process.env.COMPOSIO_API_KEY = "k_test";
+    setConnectorsConfig({ providers: { composio: { authConfigs: { gmail: "ac_gmail" } } } });
     delete process.env.COMPOSIO_API_BASE_URL;
     const app = composioAuthRoutes(stubCtx("/tmp/work", null));
     const res = await app.request(
@@ -313,6 +317,7 @@ describe("GET /v1/composio-auth/proxy", () => {
 
   test("honors COMPOSIO_API_BASE_URL override (e.g. for self-hosted shim)", async () => {
     process.env.COMPOSIO_API_KEY = "k_test";
+    setConnectorsConfig({ providers: { composio: { authConfigs: { gmail: "ac_gmail" } } } });
     process.env.COMPOSIO_API_BASE_URL = "https://composio.example.com";
     const app = composioAuthRoutes(stubCtx("/tmp/work", null));
     const res = await app.request("http://nb.test/v1/composio-auth/proxy?code=abc");
@@ -324,6 +329,7 @@ describe("GET /v1/composio-auth/proxy", () => {
 
   test("does not cache the redirect response", async () => {
     process.env.COMPOSIO_API_KEY = "k_test";
+    setConnectorsConfig({ providers: { composio: { authConfigs: { gmail: "ac_gmail" } } } });
     const app = composioAuthRoutes(stubCtx("/tmp/work", null));
     const res = await app.request("http://nb.test/v1/composio-auth/proxy?code=abc");
     expect(res.headers.get("cache-control")).toBe("no-store");
@@ -578,7 +584,7 @@ describe("POST /v1/composio-auth/initiate", () => {
 
   test("(a) happy path: fresh flow returns redirect URL + binds nonce cookie", async () => {
     process.env.COMPOSIO_API_KEY = "k_test";
-    process.env.COMPOSIO_GMAIL_AUTH_CONFIG_ID = "ac_gmail_test";
+    setConnectorsConfig({ providers: { composio: { authConfigs: { gmail: "ac_gmail" } } } });
     sdkCalls.listImpl = async () => ({ items: [] }); // no existing connection
     sdkCalls.initiateImpl = async () => ({
       redirectUrl: "https://connect.composio.dev/link/lk_42",
@@ -612,7 +618,7 @@ describe("POST /v1/composio-auth/initiate", () => {
 
   test("(b) adopt-existing: short-circuits OAuth, writes connection.json, no nonce cookie", async () => {
     process.env.COMPOSIO_API_KEY = "k_test";
-    process.env.COMPOSIO_GMAIL_AUTH_CONFIG_ID = "ac_gmail_test";
+    setConnectorsConfig({ providers: { composio: { authConfigs: { gmail: "ac_gmail" } } } });
     // Existing ACTIVE account at Composio (e.g. from the chat-side
     // prompt flow or a prior install). Adopt path takes over.
     sdkCalls.listImpl = async () => ({
@@ -671,7 +677,7 @@ describe("POST /v1/composio-auth/initiate", () => {
 
   test("(b2) adopt-existing: source-register failure returns 502 and leaves connection.json absent", async () => {
     process.env.COMPOSIO_API_KEY = "k_test";
-    process.env.COMPOSIO_GMAIL_AUTH_CONFIG_ID = "ac_gmail_test";
+    setConnectorsConfig({ providers: { composio: { authConfigs: { gmail: "ac_gmail" } } } });
     sdkCalls.listImpl = async () => ({
       items: [{ id: "ca_already_active", status: "ACTIVE" }],
     });
@@ -726,7 +732,6 @@ describe("POST /v1/composio-auth/initiate", () => {
   test("(c) returns 500 when COMPOSIO_API_KEY is unset", async () => {
     // No COMPOSIO_API_KEY in env. Per-toolkit env is set so we know
     // the failure is API-key-specific, not env-config-specific.
-    process.env.COMPOSIO_GMAIL_AUTH_CONFIG_ID = "ac_gmail_test";
 
     const { app } = makeApp(composioEntry("com.google/gmail"));
     const res = await app.request("http://nb.test/v1/composio-auth/initiate", {
@@ -740,8 +745,9 @@ describe("POST /v1/composio-auth/initiate", () => {
     expect(body.error).toBe("composio_unconfigured");
   });
 
-  test("(d) returns 500 when per-toolkit auth-config env is unset", async () => {
+  test("(d) returns 500 when the toolkit has no auth-config id", async () => {
     process.env.COMPOSIO_API_KEY = "k_test";
+    setConnectorsConfig({ providers: { composio: { authConfigs: {} } } });
     // COMPOSIO_GMAIL_AUTH_CONFIG_ID intentionally unset.
 
     const { app } = makeApp(composioEntry("com.google/gmail"));
@@ -758,7 +764,7 @@ describe("POST /v1/composio-auth/initiate", () => {
 
   test("(e) returns 400 wrong_auth_kind when catalog entry isn't composio-backed", async () => {
     process.env.COMPOSIO_API_KEY = "k_test";
-    process.env.COMPOSIO_GMAIL_AUTH_CONFIG_ID = "ac_gmail_test";
+    setConnectorsConfig({ providers: { composio: { authConfigs: { gmail: "ac_gmail" } } } });
     // Catalog entry exists but its auth kind is `dcr` — the request
     // is well-formed but the connector is the wrong type for this
     // endpoint. /v1/mcp-auth/initiate is the right destination.
@@ -784,7 +790,7 @@ describe("POST /v1/composio-auth/initiate", () => {
 
   test("(f) returns 400 bad_request when connectorId is malformed", async () => {
     process.env.COMPOSIO_API_KEY = "k_test";
-    process.env.COMPOSIO_GMAIL_AUTH_CONFIG_ID = "ac_gmail_test";
+    setConnectorsConfig({ providers: { composio: { authConfigs: { gmail: "ac_gmail" } } } });
 
     const { app } = makeApp(composioEntry("com.google/gmail"));
     // `..` substring rejected by isValidConnectorId — defense-in-depth
@@ -803,7 +809,7 @@ describe("POST /v1/composio-auth/initiate", () => {
 
   test("returns 404 connector_not_found when catalog has no entry", async () => {
     process.env.COMPOSIO_API_KEY = "k_test";
-    process.env.COMPOSIO_GMAIL_AUTH_CONFIG_ID = "ac_gmail_test";
+    setConnectorsConfig({ providers: { composio: { authConfigs: { gmail: "ac_gmail" } } } });
 
     const { app } = makeApp(null); // empty catalog
     const res = await app.request("http://nb.test/v1/composio-auth/initiate", {
@@ -819,6 +825,7 @@ describe("POST /v1/composio-auth/initiate", () => {
 
   test("returns 400 bad_request on non-JSON body", async () => {
     process.env.COMPOSIO_API_KEY = "k_test";
+    setConnectorsConfig({ providers: { composio: { authConfigs: { gmail: "ac_gmail" } } } });
 
     const { app } = makeApp(composioEntry("com.google/gmail"));
     const res = await app.request("http://nb.test/v1/composio-auth/initiate", {
@@ -903,7 +910,7 @@ describe("POST /v1/composio-auth/initiate-identity", () => {
 
   test("(a) fresh flow: drives Composio with the user identity, carries only the nonce, binds the cookie", async () => {
     process.env.COMPOSIO_API_KEY = "k_test";
-    process.env.COMPOSIO_GMAIL_AUTH_CONFIG_ID = "ac_gmail_test";
+    setConnectorsConfig({ providers: { composio: { authConfigs: { gmail: "ac_gmail" } } } });
     sdkCalls.listImpl = async () => ({ items: [] }); // no existing connection
     let initiateArgs: unknown[] = [];
     sdkCalls.initiateImpl = async (...args: unknown[]) => {
@@ -949,7 +956,7 @@ describe("POST /v1/composio-auth/initiate-identity", () => {
 
   test("(b) adopt-existing: writes connection.json under the user root, no workspace state transition", async () => {
     process.env.COMPOSIO_API_KEY = "k_test";
-    process.env.COMPOSIO_GMAIL_AUTH_CONFIG_ID = "ac_gmail_test";
+    setConnectorsConfig({ providers: { composio: { authConfigs: { gmail: "ac_gmail" } } } });
     sdkCalls.listImpl = async () => ({ items: [{ id: "ca_user_active", status: "ACTIVE" }] });
     sdkCalls.initiateImpl = async () => {
       throw new Error("adopt-existing path should not call connectedAccounts.initiate");
@@ -993,7 +1000,7 @@ describe("POST /v1/composio-auth/initiate-identity", () => {
 
   test("(c) 404 connector_not_found when the connector isn't installed on the identity", async () => {
     process.env.COMPOSIO_API_KEY = "k_test";
-    process.env.COMPOSIO_GMAIL_AUTH_CONFIG_ID = "ac_gmail_test";
+    setConnectorsConfig({ providers: { composio: { authConfigs: { gmail: "ac_gmail" } } } });
     const dir = mkdtempSync(join(tmpdir(), "nb-identity-not-installed-"));
     try {
       // Valid catalog entry, but NO install ref seeded → the precheck rejects,

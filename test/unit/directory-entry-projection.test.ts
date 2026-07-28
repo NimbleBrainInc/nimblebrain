@@ -370,7 +370,7 @@ describe("directory and catalog projections agree on shared meta auth fields", (
       _meta: {
         "ai.nimblebrain/connector": {
           auth: "composio",
-          composio: { toolkit: "gmail", authConfigEnv: "GMAIL_AC", tools: ["send", "list"] },
+          composio: { toolkit: "gmail", tools: ["send", "list"] },
         },
       },
     });
@@ -386,7 +386,6 @@ describe("directory and catalog projections agree on shared meta auth fields", (
     expect(cat.auth).toBe("composio");
     expect(cat.composio).toEqual({
       toolkit: "gmail",
-      authConfigEnv: "GMAIL_AC",
       tools: ["send", "list"],
     });
   });

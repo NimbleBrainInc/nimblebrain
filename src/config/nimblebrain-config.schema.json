@@ -386,7 +386,7 @@
                 },
                 "authConfigs": {
                   "type": "object",
-                  "description": "Per-toolkit Composio auth-config ids (`ac_…`), keyed by the toolkit slug the catalog entry already names — {\"gmail\": \"ac_xyz\"}. Non-secret identifiers (inert without apiKey) that vary per Composio account, which is why they are declared per deployment rather than carried in the shared catalog. A toolkit with no entry here falls back to the env var named by its catalog entry's legacy composio.authConfigEnv.",
+                  "description": "Per-toolkit Composio auth-config ids (`ac_…`), keyed by the toolkit slug the catalog entry already names — {\"gmail\": \"ac_xyz\"}. Non-secret identifiers (inert without apiKey) that vary per Composio account, which is why they are declared per deployment rather than carried in the shared catalog.",
                   "additionalProperties": { "type": "string" }
                 },
                 "baseUrl": {
