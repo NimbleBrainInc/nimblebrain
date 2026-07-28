@@ -1447,9 +1447,13 @@ export class BundleLifecycleManager {
     // any tool call during the flow finds it (and gets a "starting" /
     // "pending_auth" structured error instead of "no source").
     const registry = this.registriesByWs.get(wsId);
-    if (registry && !registry.hasSource(serverName)) {
-      registry.addSource(source);
-    }
+    // `adoptSource`, not `if (!hasSource) addSource`. A boot-failed source is
+    // RETAINED in the registry now, so the bare membership guard would skip
+    // registering this fresh one and leave the dead source routing every call —
+    // while OAuth completes and the connection flips to `running`, so the bundle
+    // reads healthy and serves nothing. Evicting also stops HealthMonitor from
+    // reviving the orphan with its stale provider mid-flow.
+    if (registry) await registry.adoptSource(source);
     this.recordConnectionStateChange(serverName, wsId, principalId, "starting", {
       source,
     });
@@ -2524,7 +2528,7 @@ export class BundleLifecycleManager {
       return false;
     }
 
-    const recovered = wsRegistry.hasSource(serverName);
+    const recovered = wsRegistry.hasLiveSource(serverName);
     if (recovered) {
       this.recoveryAttempts.delete(key);
       log.info(`[lifecycle] tryRecoverSource: re-registered "${serverName}" in ${wsId}`);

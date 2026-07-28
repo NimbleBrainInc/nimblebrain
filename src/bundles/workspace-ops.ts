@@ -62,8 +62,11 @@ export async function installBundleInWorkspace(
   // launch-path data dir agrees with the seedInstance / briefing reader path.
   const dataDir = resolveBundleDataDirForRef(workDir, wsId, bundleRef, configDir);
 
-  // Check for existing registration
-  if (registry.hasSource(serverName)) {
+  // Liveness, not membership: a registered-but-dead source (a retained
+  // boot-start failure) is installed, not running, and rejecting the install
+  // with "already running" would be both false and unactionable. Let it through
+  // — `startBundleSource` adopts over the dead entry.
+  if (registry.hasLiveSource(serverName)) {
     throw new Error(`Bundle "${serverName}" is already running in workspace "${wsId}"`);
   }
 

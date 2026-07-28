@@ -2537,8 +2537,9 @@ export class Runtime {
    * The set is built from LIVE sources, not merely registered ones. A
    * boot-failed source now stays registered (so it remains visible to
    * HealthMonitor and the unhealthy gauge), which means membership alone would
-   * have quietly promoted exactly that class into the prompt. The management UI deliberately does NOT go
-   * through here for exactly that reason; `handleListInstalled` reads the
+   * have quietly promoted exactly that class into the prompt. The management UI
+   * deliberately does NOT go through here for exactly that reason;
+   * `handleListInstalled` reads the
    * lifecycle map directly so it can show a Connect / Reconnect affordance.
    * That the agent cannot see, or explain, a bundle in this state is the open
    * gap tracked in #757.

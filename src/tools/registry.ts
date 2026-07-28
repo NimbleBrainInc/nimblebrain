@@ -264,6 +264,31 @@ export class ToolRegistry implements ToolRouter {
     return typeof isAlive === "function" ? isAlive.call(source) : true;
   }
 
+  /**
+   * Register a freshly-built source under its name, evicting a DEAD entry that
+   * squats it. Returns true when `source` ends up registered.
+   *
+   * The canonical form for every "I built a new source, put it in" path, and it
+   * exists because a source can now be registered *and* dead: the boot loop
+   * retains a failed URL bundle so it stays visible and healable. The obvious
+   * `if (!hasSource(n)) addSource(s)` silently drops the fresh source in exactly
+   * that case and leaves the corpse routing every call — the bundle then reads
+   * healthy (its connection record says running) and serves nothing.
+   *
+   * A LIVE entry wins: concurrent starts must not tear down a working source.
+   * Evicting via `removeSource` rather than swapping the map entry is
+   * deliberate — it calls `stop()`, which sets the durable `stopped` marker, and
+   * that is what makes `HealthMonitor` treat the orphan as terminal instead of
+   * reviving it with a stale provider (whose failed refresh would delete the
+   * on-disk credentials the fresh flow shares).
+   */
+  async adoptSource(source: ToolSource): Promise<boolean> {
+    if (this.hasLiveSource(source.name)) return this.sources.get(source.name) === source;
+    if (this.sources.has(source.name)) await this.removeSource(source.name);
+    this.addSource(source);
+    return true;
+  }
+
   /** Look up a single source by name. Returns undefined when absent. */
   getSource(name: string): ToolSource | undefined {
     return this.sources.get(name);

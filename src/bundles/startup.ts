@@ -511,9 +511,9 @@ async function finalizeUrlSourceStart(
   ref: Extract<BundleRef, { url: string }>,
 ): Promise<StartBundleResult> {
   const tools = await source.tools();
-  if (!registry.hasSource(sourceName)) {
-    registry.addSource(source);
-  }
+  // Evict a dead squatter rather than skipping: a retained boot-failed source
+  // under this name would otherwise keep routing while this live one is dropped.
+  await registry.adoptSource(source);
   // Notify lifecycle that this Connection finished its OAuth
   // dance and is now running. For URL bundles that went through
   // pending_auth → running (background path after the user
@@ -705,9 +705,7 @@ async function startUrlBundleSource(
     // Register the source so the registry reflects the bundle exists.
     // Tool calls against the unstarted source throw cleanly until
     // start() succeeds (which happens after the user completes auth).
-    if (!registry.hasSource(sourceName)) {
-      registry.addSource(source);
-    }
+    await registry.adoptSource(source);
     // Don't await startPromise — it'll resolve when the user finishes
     // auth (could be minutes). Background-protect against unhandled
     // rejection if start ultimately fails.
