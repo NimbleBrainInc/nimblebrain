@@ -2667,7 +2667,7 @@ export function classifyConnectionFailure(err: unknown): ConnectionFailure {
   //    `code = response.status`, so a refused POST and a refused mid-stream SSE
   //    reopen both arrive carrying a real numeric 429.
   //  - the MESSAGE catches the paths where that code is already gone.
-  //    `createTaskViaStream` re-throws a task-creation failure as a bare
+  //    `startToolAsTask` re-throws a task-creation failure as a bare
   //    `new Error(firstMsg.error?.message)`, keeping the server's text and
   //    dropping everything else. Heterogeneous remotes are the second reason —
   //    the same one that makes session-lost match on text.
@@ -2679,7 +2679,7 @@ export function classifyConnectionFailure(err: unknown): ConnectionFailure {
   // from a message only where a keyword qualifies it.
   if (
     code === 429 ||
-    /\brate[ _-]?limit|\bthrottl(e|ed|ing)\b|\btoo many requests\b|\b(?:http|status|code)["' :=]*429\b/i.test(
+    /\brate[ _-]?limit|\bthrottl(e|ed|ing)\b|\btoo many requests\b|\b(?:http|status(?:Code)?|code)["' :=]*429\b/i.test(
       msg,
     )
   ) {

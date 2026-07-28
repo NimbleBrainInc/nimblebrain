@@ -123,7 +123,7 @@ describe("classifyConnectionFailure — op-independent connection classes", () =
       }),
     ).toBe("rate-limited");
     // Message-only, no numeric code — what a caller sees once the code has been
-    // dropped en route. `createTaskViaStream` re-throws a task-creation failure as
+    // dropped en route. `startToolAsTask` re-throws a task-creation failure as
     // a bare `new Error(firstMsg.error?.message)`, keeping the server's text and
     // nothing else; a heterogeneous remote can present the same way. A code-only
     // check would send these to `unknown` → `transport-dead` and restart a healthy
@@ -148,6 +148,9 @@ describe("classifyConnectionFailure — op-independent connection classes", () =
     for (const msg of [
       '{"error":"rate_limit_exceeded"}',
       '{"error":{"code":429,"message":"slow down"}}',
+      // `statusCode` needs its own alternative: there is no word boundary mid-token,
+      // so `\b(?:…|status|…)` cannot reach the `Code` half.
+      '{"statusCode":429,"body":"nope"}',
       "You have exceeded your rate limits",
       "RateLimitError: retry later",
       "Request was throttled.",
