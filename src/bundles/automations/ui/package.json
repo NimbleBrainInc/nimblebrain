@@ -9,7 +9,7 @@
     "test": "bun test"
   },
   "dependencies": {
-    "@nimblebrain/synapse": "^0.8.0",
+    "@nimblebrain/synapse": "0.15.0",
     "dompurify": "^3.2.4",
     "marked": "^15.0.0",
     "react": "^19.0.0",
