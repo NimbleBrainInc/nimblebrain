@@ -669,7 +669,18 @@ async function startUrlBundleSource(
         // that calls `stop()`, which sets the durable `stopped` marker and makes
         // the source terminal to HealthMonitor, so removing it is what would
         // strand a bundle whose endpoint is merely down right now.
-        if (!registry.hasSource(sourceName)) registry.addSource(source);
+        //
+        // `isStopped()` guards the race where a teardown (Connect / Disconnect /
+        // uninstall) lands while this start is still in flight. Re-adding a
+        // deliberately stopped instance would be worse than dropping it: the
+        // fresh source's own registration guard skips a taken name, so the
+        // stopped orphan would hold the name until the pod restarts. The old
+        // `removeSource` converged to absent; `addSource` can diverge, so the
+        // PR's own invariant has to be checked rather than assumed —
+        // stopped is terminal, stopping is retryable.
+        if (!source.isStopped() && !registry.hasSource(sourceName)) {
+          registry.addSource(source);
+        }
       } else {
         // Make sure the source isn't left in the registry if start
         // ultimately failed (background pending-auth path could have

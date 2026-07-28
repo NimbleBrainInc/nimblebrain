@@ -244,6 +244,26 @@ export class ToolRegistry implements ToolRouter {
     return this.sources.has(name);
   }
 
+  /**
+   * Registered AND able to serve.
+   *
+   * The distinction matters wherever presence is used to decide "do we need to
+   * recover this?". A source can be registered and down — a boot start that
+   * failed keeps its entry so the bundle stays visible and HealthMonitor can
+   * heal it — and for those, presence is exactly the wrong answer: treating it
+   * as available lets a dead source suppress the recovery that would fix it.
+   *
+   * Probed by shape rather than `instanceof`, matching `isTaskAwareSource`
+   * above, so `SharedSourceRef` wrappers and test doubles behave. A source with
+   * no liveness concept is in-process and always live.
+   */
+  hasLiveSource(name: string): boolean {
+    const source = this.sources.get(name);
+    if (!source) return false;
+    const isAlive = (source as Partial<McpSource>).isAlive;
+    return typeof isAlive === "function" ? isAlive.call(source) : true;
+  }
+
   /** Look up a single source by name. Returns undefined when absent. */
   getSource(name: string): ToolSource | undefined {
     return this.sources.get(name);

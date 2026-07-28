@@ -116,7 +116,7 @@ describe("BundleLifecycleManager.syncBoundSkills (P4)", () => {
 
     // Real uninstall path (no instance/config/registry source needed — step 4d
     // runs regardless and uses the wired workDir).
-    const registry = { hasSource: () => false } as unknown as ToolRegistry;
+    const registry = { hasSource: () => false, hasLiveSource: () => false } as unknown as ToolRegistry;
     await m.uninstall("gmail", registry, WS_ID);
 
     expect(existsSync(join(connectorSkillsDir(wd), "gmail"))).toBe(false);

@@ -35,6 +35,9 @@ function makeToolCallRuntime(opts: ToolCallStub = {}): { runtime: Runtime; execu
   const present = new Set(opts.recoverable ? [] : [sourceName]);
   const registry = {
     hasSource: (n: string) => present.has(n),
+    // Present == live for this double; the handler gates on liveness so a
+    // registered-but-down source can't suppress its own recovery.
+    hasLiveSource: (n: string) => present.has(n),
     getSources: () => [source],
     execute: async (call: { name: string }) => {
       executed.push(call.name);
@@ -178,7 +181,7 @@ function makeProxyRuntime(opts: {
   const present = new Set(opts.recoverable ? [] : [sourceName]);
   const calls: Array<{ server: string; uri: string; wsId: string }> = [];
   const recoverCalls: Array<{ wsId: string; name: string }> = [];
-  const registry = { hasSource: (n: string) => present.has(n) };
+  const registry = { hasSource: (n: string) => present.has(n), hasLiveSource: (n: string) => present.has(n) };
   const runtime = {
     getIdentitySource: () => undefined,
     getWorkspaceStore: () => ({

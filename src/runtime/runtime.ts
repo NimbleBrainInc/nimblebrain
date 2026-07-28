@@ -2527,11 +2527,17 @@ export class Runtime {
    * carries a required workspace.
    *
    * `visible.has(serverName)` is load-bearing, not a redundant guard: an
-   * installed bundle is absent from the registry whenever it is installed but
-   * not running — a boot-start that failed, or a connector torn down by a
-   * disconnect — and this filter is the sole reason those stay out of the
-   * agent's view (`getApps` → `nb__list_apps`). Deleting it surfaces every
-   * such record as a usable app. The management UI deliberately does NOT go
+   * installed bundle that is not RUNNING — a boot-start that failed, or a
+   * connector torn down by a disconnect — must stay out of the agent's view
+   * (`getApps` → `nb__list_apps`), because `buildAppInfo` carries no liveness
+   * into the prompt: a down bundle would read as an ordinary usable app whose
+   * tools are inexplicably missing. Deleting this filter surfaces every such
+   * record as a usable app.
+   *
+   * The set is built from LIVE sources, not merely registered ones. A
+   * boot-failed source now stays registered (so it remains visible to
+   * HealthMonitor and the unhealthy gauge), which means membership alone would
+   * have quietly promoted exactly that class into the prompt. The management UI deliberately does NOT go
    * through here for exactly that reason; `handleListInstalled` reads the
    * lifecycle map directly so it can show a Connect / Reconnect affordance.
    * That the agent cannot see, or explain, a bundle in this state is the open
@@ -2540,7 +2546,7 @@ export class Runtime {
   getBundleInstancesForWorkspace(wsId: string): BundleInstance[] {
     const wsRegistry = this._workspaceRegistries.get(wsId);
     if (!wsRegistry) return [];
-    const visible = new Set(wsRegistry.sourceNames());
+    const visible = new Set(wsRegistry.sourceNames().filter((n) => wsRegistry.hasLiveSource(n)));
     return this.lifecycle
       .getInstances()
       .filter((inst) => inst.wsId === wsId && visible.has(inst.serverName));

@@ -2061,7 +2061,11 @@ export class BundleLifecycleManager {
     if (!wsRegistry) {
       throw new Error(`[lifecycle] no registry for workspace "${wsId}"`);
     }
-    if (wsRegistry.hasSource(serverName)) return;
+    if (wsRegistry.hasLiveSource(serverName)) return;
+    // A registered-but-dead entry must not block the re-spawn, and cannot simply
+    // be left in place — `startBundleSource` would find the name taken. Dropping
+    // it here is safe precisely because we are about to replace it.
+    if (wsRegistry.hasSource(serverName)) await wsRegistry.removeSource(serverName);
 
     const instance = this.instances.get(`${serverName}|${wsId}`);
     const ref = instance?.ref;
@@ -2479,7 +2483,11 @@ export class BundleLifecycleManager {
   async tryRecoverSource(serverName: string, wsId: string, workDir: string): Promise<boolean> {
     const wsRegistry = this.registriesByWs.get(wsId);
     if (!wsRegistry) return false;
-    if (wsRegistry.hasSource(serverName)) return true;
+    // Liveness, not membership. A boot-failed source stays REGISTERED so it
+    // remains visible and HealthMonitor can heal it — so `hasSource` would say
+    // "already fine" for exactly the sources that need this path most, and the
+    // app-open recovery that used to re-spawn them would never fire.
+    if (wsRegistry.hasLiveSource(serverName)) return true;
 
     const key = `${serverName}|${wsId}`;
 

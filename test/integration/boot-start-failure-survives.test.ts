@@ -225,10 +225,12 @@ describe("startWorkspaceBundles — unreachable URL bundle at boot", () => {
     expect(entries.find((e) => e.serverName.includes("does-not-exist"))).toBeUndefined();
   }, 30_000);
 
-  test("failedUrlBundle_isNotRegisteredAsASource", async () => {
-    // Surviving the inventory is not the same as being usable: the source must
-    // still be absent from the registry so callers get a clean "unavailable"
-    // (and the self-heal a chance to run) rather than a half-started source.
+  test("failedUrlBundle_isRegisteredButNotLive", async () => {
+    // The boot loop keeps the source REGISTERED so the bundle stays visible to
+    // every registry-enumerating surface and HealthMonitor can heal it. What
+    // used to make that unsafe was the self-heal gating on membership; those
+    // gates now test LIVENESS (`hasLiveSource`), so a retained-but-down source
+    // still reads "unavailable" to callers and still gets recovered.
     const store = new WorkspaceStore(workDir);
     const ws = await store.create("Fleet");
     await store.update(ws.id, { bundles: [unreachableBundle("unreachable")] });
@@ -242,6 +244,10 @@ describe("startWorkspaceBundles — unreachable URL bundle at boot", () => {
       { workDir, allowInsecureRemotes: true },
     );
 
-    expect(registries.get(ws.id)?.hasSource("unreachable")).toBe(false);
+    const registry = registries.get(ws.id);
+    // Present — that is the whole point of the change.
+    expect(registry?.hasSource("unreachable")).toBe(true);
+    // But not live, so nothing treats it as usable and no self-heal is skipped.
+    expect(registry?.hasLiveSource("unreachable")).toBe(false);
   }, 30_000);
 });
