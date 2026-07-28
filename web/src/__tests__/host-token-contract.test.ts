@@ -31,10 +31,11 @@
  * **What this does NOT cover.** Channel 2 is derived as `getThemeTokens` minus
  * `getSpecThemeTokens`, so it only sees keys the host actually defines. An SDK
  * default for a var the host defines *nowhere* cannot appear in that set, and the
- * app silently gets the SDK's value — today exactly `--nb-color-warm` and
- * `--nb-color-warm-light`, which no bundle UI or core resource reads. Widening to
- * the SDK's whole default map would need that map exported (it isn't) or restated
- * here, and a restated copy is the drift this guard exists to catch.
+ * app would silently get the SDK's value. That set is currently empty — the host
+ * projects all 17 keys the SDK backs — so nothing falls through today, but the
+ * blind spot reopens the moment the SDK backs a var this host does not send.
+ * Closing it properly would need the SDK's default map exported (it isn't) or
+ * restated here, and a restated copy is the drift this guard exists to catch.
  *
  * The SDK import resolves from the ROOT `node_modules`, not `web/`'s — `web/` has
  * no `@nimblebrain/synapse` pin, and shouldn't get one: the version under test
