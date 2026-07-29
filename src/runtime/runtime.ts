@@ -2500,14 +2500,32 @@ export class Runtime {
     return [...names];
   }
 
-  /** Get MCP sources across all workspace registries (for health monitoring). */
+  /**
+   * Every distinct `McpSource` across all workspace registries, for health
+   * monitoring.
+   *
+   * De-duplicated by OBJECT IDENTITY, not by name. The de-dup exists because
+   * `createWorkspaceRegistry` adds the same platform source *objects* to every
+   * workspace registry, so without it each would be monitored once per
+   * workspace. Identity handles that case exactly — they are literally the same
+   * object — while keeping the sources a name-keyed set would wrongly collapse.
+   *
+   * A URL bundle's source name comes from the bundle (`ref.serverName ??
+   * deriveServerName(ref.url)`) and carries no workspace, so the same fleet
+   * bundle installed in N workspaces yields N SEPARATE `McpSource` instances —
+   * separate transports, separate sessions — sharing one name.
+   *
+   * The N returned instances are real work, not amplification: each owns its own
+   * connection and has to be reconnected on its own. How that lands in metrics is
+   * `src/api/metrics.ts`'s to state, not this comment's.
+   */
   mcpSources(): McpSource[] {
     const sources: McpSource[] = [];
-    const seen = new Set<string>();
+    const seen = new Set<McpSource>();
     for (const reg of this._workspaceRegistries.values()) {
       for (const s of reg.getSources()) {
-        if (s instanceof McpSource && !seen.has(s.name)) {
-          seen.add(s.name);
+        if (s instanceof McpSource && !seen.has(s)) {
+          seen.add(s);
           sources.push(s);
         }
       }

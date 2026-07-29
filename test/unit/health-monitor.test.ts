@@ -391,3 +391,37 @@ describe("HealthMonitor — initial state reflects the source, not an assumption
     expect(status.find((s) => s.name === "up-at-boot")?.state).toBe("healthy");
   });
 });
+
+describe("HealthMonitor — same-named sources are distinct records", () => {
+  it("monitors and restarts each instance independently", async () => {
+    // Pins the invariant `Runtime.mcpSources()`'s identity de-dup depends on, and
+    // which lives in this file rather than that one: `records` is an ARRAY built
+    // by `sources.map(...)`, not a name-keyed map.
+    //
+    // A URL bundle's source name carries no workspace, so the same bundle in N
+    // workspaces yields N distinct McpSource objects under one name. If `records`
+    // ever became `Map<string, BundleRecord>`, the seed would collapse them again
+    // and the sources this monitor exists to heal would go unmonitored — with the
+    // rest of the suite green, because every other fixture here uses a distinct
+    // name.
+    const healthy = makeMockSource("people");
+    const down = makeMockSource("people");
+    down.alive = false;
+    down.restartResult = false;
+
+    const monitor = new HealthMonitor([healthy, down], makeEventCollector(), {
+      checkIntervalMs: 60_000,
+      baseDelayMs: 1,
+    });
+    try {
+      await monitor.check();
+
+      expect(monitor.getStatus()).toHaveLength(2);
+      // Each instance is judged on its own liveness, not on its name's.
+      expect(down.restartCalls).toBe(1);
+      expect(healthy.restartCalls).toBe(0);
+    } finally {
+      monitor.stop();
+    }
+  });
+});
