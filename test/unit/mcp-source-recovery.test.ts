@@ -104,6 +104,15 @@ describe("policyFor — recovery policy", () => {
     expect(policyFor("timeout", task)).toBe("surface");
     expect(policyFor("timeout", reauthable)).toBe("surface");
   });
+
+  it("rate-limited always surfaces (never restarts), regardless of idempotency", () => {
+    // Re-establishing spends MORE of the budget that was just refused (a fresh
+    // initialize + tools/list on top of the retry), so a restart deepens the very
+    // throttle it is reacting to.
+    expect(policyFor("rate-limited", idem)).toBe("surface");
+    expect(policyFor("rate-limited", task)).toBe("surface");
+    expect(policyFor("rate-limited", reauthable)).toBe("surface");
+  });
 });
 
 describe("execute (tools/call) — unified recovery", () => {
@@ -116,6 +125,95 @@ describe("execute (tools/call) — unified recovery", () => {
       const result = await source.execute("do_thing", {});
       expect(result.isError).toBe(true);
       expect(restart).not.toHaveBeenCalled(); // -32601 is "none" → surface, never restart
+    } finally {
+      restart.mockRestore();
+    }
+  });
+
+  it("surfaces a 429 WITHOUT restarting, and tells the agent to fan out less", async () => {
+    // The failure this closes: a gateway answers `429 {"error":"rate_limited"}` to
+    // a parallel batch of tool calls. That arrives message-only (no numeric code),
+    // so it used to classify as `unknown` → `transport-dead` → stop()/start().
+    // Because `stop()` aborts every in-flight stream on the source, ONE throttled
+    // call tears the transport out from under every admitted sibling in the batch —
+    // including writes the server has already committed. The restart must not
+    // happen, and the source must not be marked crashed (that would hand it to
+    // HealthMonitor's reconnect burst, aimed at a gateway asking for less traffic).
+    const events: EngineEvent[] = [];
+    const sink: EventSink = { emit: (e) => events.push(e) };
+    const source = remoteSource({
+      callTool: () =>
+        Promise.reject(
+          new Error('Streamable HTTP error: Error POSTing to endpoint: {"error":"rate_limited"}'),
+        ),
+      sink,
+    });
+    const restart = spyRestart(source, true);
+    try {
+      const result = await source.execute("log_interaction", { contact_id: "ct_1" });
+      expect(result.isError).toBe(true);
+      expect(restart).not.toHaveBeenCalled();
+      expect(
+        events.filter((e) => (e.data as { event?: string }).event === "source.crashed"),
+      ).toHaveLength(0);
+      // The `dead` flag is what would hand this source to HealthMonitor's restart
+      // burst. (`isAlive()` also reads `transport`, which this harness never wires,
+      // so it can't distinguish the thing under test here.)
+      expect(
+        (source as unknown as { _isDeadForTesting: () => boolean })._isDeadForTesting(),
+      ).toBe(false);
+      // The agent's default repair for a failed batch is to retry the batch, which
+      // is exactly wrong here — the surfaced text has to redirect it.
+      const text = JSON.stringify(result.content);
+      expect(text).toContain("rate limited");
+      expect(text).toContain("parallel");
+      expect(result.structuredContent).toMatchObject({ reason: "rate_limited" });
+    } finally {
+      restart.mockRestore();
+    }
+  });
+
+  it("does NOT tell a throttled TASK-augmented call to retry", async () => {
+    // A task-augmented call has already spawned server-side state (the task, its
+    // entity, its side effects) — which is exactly why `policyFor` surfaces every
+    // failure for it instead of retrying. A throttle can land on a mid-stream
+    // reopen, AFTER creation, so the generic "retry with fewer in parallel"
+    // advice would invite the duplicate side effects that no-retry rule exists to
+    // prevent. The diagnosis is still useful; the instruction is not.
+    const source = remoteSource({});
+    const internal = source as unknown as {
+      cachedTools: unknown[];
+      client: Record<string, unknown>;
+    };
+    // Task-augmentation is read off the cached tool descriptor.
+    internal.cachedTools = [
+      {
+        name: "svc__long_job",
+        inputSchema: { type: "object" },
+        execution: { taskSupport: "required" },
+      },
+    ];
+    // The throttle lands on the task stream, which is the path that can be
+    // refused AFTER the task already exists server-side.
+    internal.client.experimental = {
+      tasks: {
+        callToolStream: () => {
+          throw new Error("Streamable HTTP error: Failed to open SSE stream: Too Many Requests");
+        },
+      },
+    };
+    const restart = spyRestart(source, true);
+    try {
+      const result = await source.execute("long_job", {});
+      expect(result.isError).toBe(true);
+      expect(restart).not.toHaveBeenCalled();
+      const text = JSON.stringify(result.content);
+      // Still names the throttle...
+      expect(text).toContain("rate limited");
+      // ...but must NOT invite a re-issue.
+      expect(text).not.toContain("Retry in a few seconds");
+      expect(text).not.toContain("parallel");
+      expect(text).toContain("cannot be auto-retried");
     } finally {
       restart.mockRestore();
     }

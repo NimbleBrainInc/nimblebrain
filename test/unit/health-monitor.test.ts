@@ -372,6 +372,26 @@ describe("HealthMonitor", () => {
   });
 });
 
+describe("HealthMonitor — initial state reflects the source, not an assumption", () => {
+  const sink: EventSink = { emit: () => {} };
+
+  it("seeds an already-down source as not-healthy, before the first sweep", () => {
+    // A source can be registered and already down when the monitor is
+    // constructed — a boot start that failed, or one waiting on interactive
+    // auth. Seeding a constant `healthy` made those read healthy, and kept them
+    // out of `nb_bundle_unhealthy`, for a whole check interval.
+    const down = makeMockSource("down-at-boot");
+    down.alive = false;
+    const up = makeMockSource("up-at-boot");
+
+    const monitor = new HealthMonitor([down, up], sink);
+    const status = monitor.getStatus();
+
+    expect(status.find((s) => s.name === "down-at-boot")?.state).not.toBe("healthy");
+    expect(status.find((s) => s.name === "up-at-boot")?.state).toBe("healthy");
+  });
+});
+
 describe("HealthMonitor — same-named sources are distinct records", () => {
   it("monitors and restarts each instance independently", async () => {
     // Pins the invariant `Runtime.mcpSources()`'s identity de-dup depends on, and
