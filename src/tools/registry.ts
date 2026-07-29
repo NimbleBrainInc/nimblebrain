@@ -244,6 +244,93 @@ export class ToolRegistry implements ToolRouter {
     return this.sources.has(name);
   }
 
+  /**
+   * Registered AND able to serve.
+   *
+   * The distinction matters wherever presence is used to decide "do we need to
+   * recover this?". A source can be registered and down — a boot start that
+   * failed keeps its entry so the bundle stays visible and HealthMonitor can
+   * heal it — and for those, presence is exactly the wrong answer: treating it
+   * as available lets a dead source suppress the recovery that would fix it.
+   *
+   * Probed by shape rather than `instanceof`, matching `isTaskAwareSource`
+   * above, so test doubles behave without importing the class. A source that
+   * exposes no liveness at all is in-process and always live — note that means a
+   * wrapper which does not forward `isAlive` reads live regardless of what it
+   * wraps, which is the pre-existing answer `hasSource` gave and not a new claim.
+   *
+   * Private: the only caller is `adoptSource`. Callers outside want
+   * {@link hasEstablishedSource} — "is this source real", not "can it serve this
+   * instant" — and offering both publicly is how the wrong one gets picked.
+   */
+  private hasLiveSource(name: string): boolean {
+    const source = this.sources.get(name);
+    if (!source) return false;
+    const isAlive = (source as Partial<McpSource>).isAlive;
+    return typeof isAlive === "function" ? isAlive.call(source) : true;
+  }
+
+  /**
+   * Registered and ESTABLISHED — it has connected at least once, even if its
+   * transport is down right now.
+   *
+   * The distinction `hasLiveSource` cannot make. `isAlive()` is false for two
+   * states that want opposite handling:
+   *
+   *   - **never connected** — a boot start that failed. There is nothing to
+   *     reconnect to; the source needs a full re-spawn, and until it gets one it
+   *     is not usable and should not be offered.
+   *   - **connected, transport since dropped** — an idle close, a network blip,
+   *     a server rolling. The codebase treats this as routine (see
+   *     `HealthMonitor.resetBackoffIfRecovered`): `reconnectOnDemand` and the
+   *     next sweep heal it IN PLACE. Tearing it down and re-spawning instead is
+   *     destructive — it `stop()`s a working source and the replacement object
+   *     is absent from HealthMonitor's boot snapshot, so the bundle silently
+   *     loses monitoring for the life of the process.
+   *
+   * `uptime()` separates them: `startedAt` is set only on a successful connect
+   * and never reset, so `uptime() === null` is exactly "never connected".
+   *
+   * This is the question callers have: "is this source real / should I recover
+   * it". The narrower "can it serve a request this instant" is `hasLiveSource`,
+   * which is private precisely so that choice does not have to be made at every
+   * call site. A source with no liveness concept is in-process and always
+   * established.
+   */
+  hasEstablishedSource(name: string): boolean {
+    const source = this.sources.get(name);
+    if (!source) return false;
+    const s = source as Partial<McpSource>;
+    if (typeof s.isAlive !== "function") return true;
+    if (s.isAlive()) return true;
+    return typeof s.uptime === "function" ? s.uptime() !== null : true;
+  }
+
+  /**
+   * Register a freshly-built source under its name, evicting a DEAD entry that
+   * squats it. Returns true when `source` ends up registered.
+   *
+   * The canonical form for every "I built a new source, put it in" path, and it
+   * exists because a source can now be registered *and* dead: the boot loop
+   * retains a failed URL bundle so it stays visible and healable. The obvious
+   * `if (!hasSource(n)) addSource(s)` silently drops the fresh source in exactly
+   * that case and leaves the corpse routing every call — the bundle then reads
+   * healthy (its connection record says running) and serves nothing.
+   *
+   * A LIVE entry wins: concurrent starts must not tear down a working source.
+   * Evicting via `removeSource` rather than swapping the map entry is
+   * deliberate — it calls `stop()`, which sets the durable `stopped` marker, and
+   * that is what makes `HealthMonitor` treat the orphan as terminal instead of
+   * reviving it with a stale provider (whose failed refresh would delete the
+   * on-disk credentials the fresh flow shares).
+   */
+  async adoptSource(source: ToolSource): Promise<boolean> {
+    if (this.hasLiveSource(source.name)) return this.sources.get(source.name) === source;
+    if (this.sources.has(source.name)) await this.removeSource(source.name);
+    this.addSource(source);
+    return true;
+  }
+
   /** Look up a single source by name. Returns undefined when absent. */
   getSource(name: string): ToolSource | undefined {
     return this.sources.get(name);

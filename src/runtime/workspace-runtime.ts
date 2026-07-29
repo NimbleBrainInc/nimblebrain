@@ -339,6 +339,13 @@ export async function startWorkspaceBundles(
         // installed with host-resources support don't silently lose the
         // capability across platform restarts.
         bundleMcp: opts?.getBundleMcpDeps?.(entry.wsId),
+        // Boot is the one caller that wants a failed URL start to stay in the
+        // registry. Nobody is watching this start, the dependency being
+        // unreachable for the few seconds the loop runs says nothing about
+        // whether the bundle works, and an unregistered source is invisible to
+        // HealthMonitor — so dropping it converts a transient outage into a
+        // connector that stays gone until the next restart.
+        keepRegisteredOnStartFailure: true,
       });
       // Use the actual source name from the registry (may differ from path-derived name)
       resultEntries[idx] = { ...entry, serverName: result.sourceName, meta: result.meta };
@@ -349,9 +356,14 @@ export async function startWorkspaceBundles(
       );
       // A URL bundle that failed to start is still installed, and the failure is
       // often transient — a dependency that was mid-roll when this loop ran, and
-      // is reachable seconds later. Keep the entry so it stays visible and
-      // recoverable (see `unstartedUrlBundleEntry`); the seeder reads
-      // `startError` and records `dead`, not `running`.
+      // is reachable seconds later. Two things keep it recoverable, and it needs
+      // BOTH: the inventory entry survives (see `unstartedUrlBundleEntry`) so the
+      // lifecycle instance and its placements live on, and
+      // `keepRegisteredOnStartFailure` above leaves the source itself in the
+      // registry so `HealthMonitor` reconnects it without anyone asking. The
+      // seeder still reads `startError` and records the connection `dead`, not
+      // `running` — the bundle is registered, but its connection is honestly down
+      // until a reconnect succeeds.
       //
       // Named/path bundles stay dropped, for two reasons. The decisive one:
       // only a URL ref reaches `seedUrlConnectionState`, and
