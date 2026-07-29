@@ -259,6 +259,60 @@ describe("execute (tools/call) — unified recovery", () => {
     }
   });
 
+  it("marks a reauth surface as an infrastructure error", async () => {
+    // A lapsed credential says nothing about whether the tool would do the work,
+    // and the remedy is a human clicking Reconnect — not the agent giving up on
+    // the tool for the rest of the run.
+    const source = remoteSource({
+      callTool: () => Promise.reject(new UnauthorizedError("token rejected")),
+      notifyAuthLost: () => {},
+    });
+    const restart = spyRestart(source, true);
+    try {
+      const result = await source.execute("write", {});
+      expect(result.isError).toBe(true);
+      expect(result.structuredContent).toMatchObject({ reason: "reauth_required" });
+      expect(result._meta?.[INFRA_ERROR_META_KEY]).toBe(true);
+    } finally {
+      restart.mockRestore();
+    }
+  });
+
+  it("does NOT mark an UNCLASSIFIABLE throw", async () => {
+    // `unknown` is the classifier's "could not positively classify this" residue.
+    // A server answering a deterministic tool rejection with its own
+    // implementation-defined code (JSON-RPC reserves -32000..-32099) lands here,
+    // so marking it would exempt a real loop from the guard. The marker is an
+    // allowlist of classes that mean "never reached the tool", and this isn't one.
+    const source = remoteSource({
+      callTool: () => Promise.reject(new McpError(-32050, "server-defined rejection")),
+    });
+    const restart = spyRestart(source, true);
+    try {
+      const result = await source.execute("write", {});
+      expect(result.isError).toBe(true);
+      expect(result._meta?.[INFRA_ERROR_META_KEY]).toBeUndefined();
+    } finally {
+      restart.mockRestore();
+    }
+  });
+
+  it("does NOT mark a source that failed to reconnect on demand", async () => {
+    // Reached only after `reconnectOnDemand()` has already failed, and a failed
+    // reconnect is floored behind a cooldown — so every later call returns here
+    // instantly. Exempting it would remove the run's only brake on a source that
+    // is not coming back.
+    const source = remoteSource({});
+    const internal = source as unknown as { client: unknown; lastReconnectFailedAt: number };
+    internal.client = null;
+    internal.lastReconnectFailedAt = Date.now();
+
+    const result = await source.execute("write", {});
+    expect(result.isError).toBe(true);
+    expect(JSON.stringify(result.content)).toContain("not started");
+    expect(result._meta?.[INFRA_ERROR_META_KEY]).toBeUndefined();
+  });
+
   it("does NOT mark a protocol error the server answered with", async () => {
     // `none` — a -32601/-32602 is deterministic and repeatable, which is exactly
     // what the loop guard exists to catch. Marking it infrastructure would blunt

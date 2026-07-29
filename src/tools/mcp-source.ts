@@ -1442,14 +1442,18 @@ export class McpSource implements ToolSource {
     // (null) client errors, and only after an on-demand reconnect fails — healing
     // the window between an idle-close and the next HealthMonitor tick.
     if (!this.client && !(await this.reconnectOnDemand())) {
+      // Deliberately NOT marked infrastructure. This branch is reached only
+      // after `reconnectOnDemand()` has already failed, and a failed reconnect
+      // is floored behind RECONNECT_COOLDOWN_MS — so every later call returns
+      // here instantly and for free. Exempting it from the strike count would
+      // remove the run's only brake on a source that is not coming back, and
+      // let the model re-issue the same dead call every iteration. Tripping at
+      // three is the correct outcome here; the sibling spelling of the same
+      // condition (a source absent from the registry, via
+      // `mapOrchestratorErrorToToolResult`) is unmarked for the same reason.
       return {
         content: textContent(`McpSource "${this.name}" not started`),
         isError: true,
-        // Definitionally infrastructure: there is no client, so nothing about
-        // the tool was ever exercised. Left uncounted by the loop supervisor,
-        // which would otherwise disable a perfectly good tool three calls into
-        // a reconnect window.
-        ...infraErrorMeta(),
       };
     }
 
@@ -1556,25 +1560,29 @@ export class McpSource implements ToolSource {
         recoverUnknown: true,
         delays: TOOL_CALL_RECOVERY_DELAYS,
         surface: (e) => {
-          // Both changes meet here. From the throttle work: name the throttle
-          // rather than only reporting that something broke, and gate the retry
-          // ADVICE on idempotency — a task-augmented call has already spawned
-          // server-side state by the time a mid-stream reopen can be throttled,
-          // so telling the agent to retry would invite the duplicate side effects
-          // `policyFor`'s no-retry rule exists to prevent.
+          // Two things happen here.
           //
-          // From the supervisor work: mark everything except a standard JSON-RPC
-          // protocol error as infrastructure. `none` is the class the server
-          // ANSWERED with (-32601, -32602) — deterministic, repeatable, and
-          // exactly what the loop supervisor should trip on. An app-level tool
-          // failure never reaches this path at all: those come back as `isError`
-          // RESULTS and are never thrown.
+          // The throttle arm names the throttle rather than only reporting that
+          // something broke, and gates the retry ADVICE on idempotency — a
+          // task-augmented call has already spawned server-side state by the time
+          // a mid-stream reopen can be throttled, so telling the agent to retry
+          // would invite the duplicate side effects `policyFor`'s no-retry rule
+          // exists to prevent.
           //
-          // A throttle is a connection class, so it carries the marker too: being
-          // refused for pacing says nothing about whether the tool works, which
-          // is precisely what the strike count must not conclude.
+          // The infrastructure marker tells the loop supervisor not to count this
+          // toward its strike budget. It is an ALLOWLIST of the classes that mean
+          // "the call never reached the tool's logic", not a denylist of the one
+          // that doesn't. Polarity matters: `unknown` is the classifier's explicit
+          // "could not positively classify this" residue, so marking it would
+          // assert precisely what the classifier declines to. A server that
+          // answers a deterministic tool rejection with its own implementation-
+          // defined code (JSON-RPC reserves -32000..-32099) classifies `unknown`,
+          // and exempting that from the guard would let a real loop run free.
+          // An unmarked class simply trips at three, which is the pre-existing
+          // behaviour — so the allowlist is the strictly safer default, and a new
+          // member of `ConnectionFailure` is not silently exempt.
           const kind = classifyConnectionFailure(e);
-          const infra = kind === "none" ? {} : infraErrorMeta();
+          const infra = INFRA_FAILURE_CLASSES.has(kind) ? infraErrorMeta() : {};
           if (kind === "rate-limited") {
             return {
               content: textContent(
@@ -2847,6 +2855,25 @@ function sleep(ms: number): Promise<void> {
  * A fresh object per call: `_meta` is spread into caller-owned results, and a
  * shared literal would let one consumer's mutation leak into every other result.
  */
+/**
+ * The connection classes that mean the call never reached the tool's logic, so a
+ * repeat of it says nothing about whether the tool works. Only these carry the
+ * infrastructure marker.
+ *
+ * Deliberately an allowlist. `none` (the server answered) and `unknown` (the
+ * classifier could not tell) both stay countable — the guard's default must be
+ * to count, so an unclassifiable throw and any future class added to
+ * `ConnectionFailure` trip at three rather than being silently exempt.
+ */
+const INFRA_FAILURE_CLASSES: ReadonlySet<ConnectionFailure> = new Set([
+  "session-lost",
+  "transient",
+  "transport-dead",
+  "auth-lost",
+  "rate-limited",
+  "timeout",
+]);
+
 function infraErrorMeta(): { _meta: Record<string, unknown> } {
   return { _meta: { [INFRA_ERROR_META_KEY]: true } };
 }
