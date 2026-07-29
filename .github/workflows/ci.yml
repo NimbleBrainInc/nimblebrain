@@ -24,17 +24,28 @@ env:
 # for what "verify" means. If a job needs a new check, add it to the matching
 # verify subscript in package.json so local `bun run verify` stays in parity.
 
-# Every job restores bun's download cache (`~/.bun/install/cache`) before its
-# first `bun install`. Uncached, all four jobs cold-fetch the whole dependency
-# set on every run, and the largest tarball (`xlsx`, 7 MB) intermittently fails
-# to extract mid-download — a red build with no code cause. `restore-keys`
-# makes a lockfile change a partial hit rather than a cold start, so the
-# fetch-and-extract surface stays small even when the key misses.
+# Every job restores bun's package cache (`~/.bun/install/cache`) before its
+# first `bun install`. Uncached, each job fetches and extracts its whole
+# dependency set on every run, and an extract that fails mid-download reddens
+# the build with no code cause. `restore-keys` makes a lockfile change a
+# partial hit rather than a cold start, so the fetch-and-extract surface stays
+# small even when the key misses.
 #
-# It caches downloaded tarballs, NOT `node_modules`: `bun install` still links
-# only what the target package.json declares. That is why sharing one cache
-# across jobs is safe for `test-unit-bare-deps`, whose isolation is about which
-# packages get linked, not where their tarballs came from.
+# The key carries `github.job` because the jobs install DIFFERENT sets — root
+# only, root + `web/`, or root + `web/` + the bundle UIs — and `actions/cache`
+# skips its save entirely when the primary key already exists. Sharing one key
+# across all four would therefore freeze the entry at whichever job saved
+# first, and the jobs installing more than that could never contribute: they
+# would cold-fetch the remainder forever while the run still logged a cache
+# hit. One key per job keeps each job's entry a faithful record of its own set.
+#
+# The cache holds EXTRACTED packages keyed by name@version, not tarballs and
+# not a `node_modules` tree. Nothing in it is on the module resolution path:
+# `bun install` links into `node_modules/` only what the target lockfile
+# resolves, so packages a job did not ask for sit inert in the cache. That is
+# why a `restore-keys` fallback onto another job's larger entry is safe for
+# `test-unit-bare-deps` — its isolation is about which packages get LINKED, and
+# widening `path:` to cover a `node_modules` tree would be what breaks it.
 jobs:
   lint-and-check:
     name: Lint & Typecheck
@@ -48,8 +59,10 @@ jobs:
         uses: actions/cache@v6
         with:
           path: ~/.bun/install/cache
-          key: ${{ runner.os }}-bun-${{ hashFiles('**/bun.lock') }}
-          restore-keys: ${{ runner.os }}-bun-
+          key: ${{ runner.os }}-bun-${{ github.job }}-${{ hashFiles('bun.lock', 'web/bun.lock', 'src/bundles/*/ui/bun.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-bun-${{ github.job }}-
+            ${{ runner.os }}-bun-
       - name: Install dependencies
         run: bun install
       - name: Install web dependencies
@@ -69,8 +82,10 @@ jobs:
         uses: actions/cache@v6
         with:
           path: ~/.bun/install/cache
-          key: ${{ runner.os }}-bun-${{ hashFiles('**/bun.lock') }}
-          restore-keys: ${{ runner.os }}-bun-
+          key: ${{ runner.os }}-bun-${{ github.job }}-${{ hashFiles('bun.lock', 'web/bun.lock', 'src/bundles/*/ui/bun.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-bun-${{ github.job }}-
+            ${{ runner.os }}-bun-
       - name: Install dependencies
         run: bun install
       - name: Install web dependencies
@@ -106,8 +121,10 @@ jobs:
         uses: actions/cache@v6
         with:
           path: ~/.bun/install/cache
-          key: ${{ runner.os }}-bun-${{ hashFiles('**/bun.lock') }}
-          restore-keys: ${{ runner.os }}-bun-
+          key: ${{ runner.os }}-bun-${{ github.job }}-${{ hashFiles('bun.lock', 'web/bun.lock', 'src/bundles/*/ui/bun.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-bun-${{ github.job }}-
+            ${{ runner.os }}-bun-
       - name: Install root dependencies only
         run: bun install
       - name: Unit tests must pass on root deps alone
@@ -125,8 +142,10 @@ jobs:
         uses: actions/cache@v6
         with:
           path: ~/.bun/install/cache
-          key: ${{ runner.os }}-bun-${{ hashFiles('**/bun.lock') }}
-          restore-keys: ${{ runner.os }}-bun-
+          key: ${{ runner.os }}-bun-${{ github.job }}-${{ hashFiles('bun.lock', 'web/bun.lock', 'src/bundles/*/ui/bun.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-bun-${{ github.job }}-
+            ${{ runner.os }}-bun-
       - name: Install dependencies
         run: bun install
       - name: Integration tests
