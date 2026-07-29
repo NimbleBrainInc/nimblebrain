@@ -6,81 +6,19 @@ import {
   buildThemeStyleBlock,
 } from "../../../web/src/bridge/theme.ts";
 
-const EXPECTED_KEYS = [
-  // ext-apps spec: Colors
-  "--color-background-primary",
-  "--color-background-secondary",
-  "--color-background-tertiary",
-  "--color-text-primary",
-  "--color-text-secondary",
-  "--color-text-tertiary",
-  "--color-text-accent",
-  "--color-border-primary",
-  "--color-border-secondary",
-  "--color-ring-primary",
-  // ext-apps spec: Typography
-  "--font-sans",
-  "--font-mono",
-  "--font-weight-normal",
-  "--font-weight-medium",
-  "--font-weight-semibold",
-  "--font-weight-bold",
-  "--font-text-3xs-size",
-  "--font-text-3xs-line-height",
-  "--font-text-2xs-size",
-  "--font-text-2xs-line-height",
-  "--font-text-xs-size",
-  "--font-text-xs-line-height",
-  "--font-text-sm-size",
-  "--font-text-sm-line-height",
-  "--font-text-base-size",
-  "--font-text-base-line-height",
-  "--font-text-lg-size",
-  "--font-text-lg-line-height",
-  "--font-heading-sm-size",
-  "--font-heading-sm-line-height",
-  "--font-heading-md-size",
-  "--font-heading-md-line-height",
-  "--font-heading-lg-size",
-  "--font-heading-lg-line-height",
-  // ext-apps spec: Layout
-  "--border-radius-xs",
-  "--border-radius-sm",
-  "--border-radius-md",
-  "--border-radius-lg",
-  "--border-radius-xl",
-  "--border-width-regular",
-  // ext-apps spec: Effects
-  "--shadow-hairline",
-  "--shadow-sm",
-  "--shadow-md",
-  "--shadow-lg",
-  // NimbleBrain extensions
-  "--nb-color-accent-foreground",
-  "--nb-color-danger",
-  "--nb-color-success",
-  "--nb-color-warning",
-  "--nb-color-processing",
-  "--nb-color-processing-light",
-  "--nb-color-info-light",
-  "--nb-font-heading",
-];
+/**
+ * What the injected map must CONTAIN is asserted where it can stay true on its
+ * own: `test/unit/bundles/theme-token-names.test.ts` checks the emitted set
+ * against the published docs in both directions, and against every token the
+ * themed trees read. A hand-written copy of the key list lived here and had to
+ * be edited by hand whenever the projection grew — the fourth instance of that
+ * shape in this area, after `theming.mdx`, this module's own docblock,
+ * `projections.ts`, and `palette.test.ts`'s `REQUIRED_KEYS`. This file keeps
+ * what only it can say: the two modes agree, the prefixes are legal, and the
+ * style block is well-formed.
+ */
 
 describe("theme token map", () => {
-  test("getThemeTokens('light') has all expected token keys", () => {
-    const tokens = getThemeTokens("light");
-    for (const key of EXPECTED_KEYS) {
-      expect(tokens).toHaveProperty(key);
-    }
-  });
-
-  test("getThemeTokens('dark') has all expected token keys", () => {
-    const tokens = getThemeTokens("dark");
-    for (const key of EXPECTED_KEYS) {
-      expect(tokens).toHaveProperty(key);
-    }
-  });
-
   test("light and dark token maps have identical key sets", () => {
     const lightKeys = Object.keys(LIGHT_TOKENS).sort();
     const darkKeys = Object.keys(DARK_TOKENS).sort();
@@ -106,12 +44,6 @@ describe("theme token map", () => {
     }
   });
 
-  test("no extra keys beyond the expected set", () => {
-    const lightKeys = Object.keys(LIGHT_TOKENS);
-    expect(lightKeys.length).toBe(EXPECTED_KEYS.length);
-    const darkKeys = Object.keys(DARK_TOKENS);
-    expect(darkKeys.length).toBe(EXPECTED_KEYS.length);
-  });
 });
 
 describe("buildThemeStyleBlock", () => {

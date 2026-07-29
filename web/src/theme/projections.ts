@@ -64,6 +64,7 @@ export function paletteToExtAppsTokens(mode: Mode): Record<string, string> {
     // ── NimbleBrain extensions (no ext-apps spec equivalent) ──
     "--nb-color-accent-foreground": c("primary-foreground"),
     "--nb-color-danger": c("destructive"),
+    "--nb-color-danger-foreground": c("destructive-foreground"),
     "--nb-color-success": c("success"),
     "--nb-color-warning": c("warning"),
     "--nb-color-processing": c("processing"),

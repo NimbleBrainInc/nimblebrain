@@ -39,7 +39,7 @@ body {
   font-size: 12px; font-weight: 500; font-family: inherit; cursor: pointer;
   transition: background 0.15s, color 0.15s; white-space: nowrap;
 }
-.create-btn:hover { background: var(--color-text-accent); color: #fff; }
+.create-btn:hover { background: var(--color-text-accent); color: var(--nb-color-accent-foreground); }
 .create-btn svg { width: 14px; height: 14px; }
 
 .content { flex: 1; overflow-y: auto; padding: 0 20px 20px; }
@@ -154,7 +154,7 @@ body {
   border-color: color-mix(in srgb, var(--nb-color-danger) 40%, transparent);
   color: var(--nb-color-danger);
 }
-.btn-danger:hover { background: var(--nb-color-danger); color: #fff; border-color: var(--nb-color-danger); }
+.btn-danger:hover { background: var(--nb-color-danger); color: var(--nb-color-danger-foreground); border-color: var(--nb-color-danger); }
 
 .run-list { display: flex; flex-direction: column; gap: 4px; animation: fadeIn 0.2s ease; }
 .run-row {
