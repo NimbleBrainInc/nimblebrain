@@ -91,25 +91,22 @@ function resolveComposioConfig(): ComposioConfig {
   return {
     apiKey,
     baseUrl,
-    monitorEnabled: declared?.monitorEnabled ?? monitorEnabledFromEnv(),
+    monitorEnabled: declared?.monitorEnabled ?? true,
   };
 }
 
 /**
  * Resolve + validate the API base: the declared value, else the env, else the default.
  *
- * A blank declared value counts as *absent*, so the env fallback still applies. A
- * templated deploy renders `"baseUrl": "{{ .Values… }}"` to `""` when the value is
- * unset, and treating that as a declaration would discard the operator's
- * `COMPOSIO_API_BASE_URL` and silently point a self-hosted platform at the public
- * backend — the exact loss per-field precedence exists to prevent.
+ * A blank declared value counts as *absent* and takes the default — a templated
+ * deploy renders `"baseUrl": "{{ .Values… }}"` to `""` when unset, which is not a
+ * declaration.
  */
 function resolveBaseUrl(declaredRaw: string | undefined): string {
-  const declared = declaredRaw?.trim() || undefined;
-  const raw = declared ?? process.env.COMPOSIO_API_BASE_URL?.trim();
+  const raw = declaredRaw?.trim() || undefined;
   if (!raw) return COMPOSIO_API_BASE;
 
-  const label = declared ? "connectors.providers.composio.baseUrl" : "COMPOSIO_API_BASE_URL";
+  const label = "connectors.providers.composio.baseUrl";
   let parsed: URL;
   try {
     parsed = new URL(raw);
@@ -143,15 +140,6 @@ function requireTenantIdInBouncerMode(): string | undefined {
     );
   }
   return tid;
-}
-
-/**
- * The env fallback for the probe's kill switch. Default ON — only an explicit
- * `false` (case/whitespace-insensitive) disables, so an unset or malformed value
- * fails safe to enabled. Read only when the block leaves `monitorEnabled` out.
- */
-function monitorEnabledFromEnv(): boolean {
-  return (process.env.COMPOSIO_MONITOR_ENABLED ?? "true").trim().toLowerCase() !== "false";
 }
 
 /**

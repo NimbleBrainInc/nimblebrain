@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
+import { setConnectorsConfig } from "../../src/connectors/providers/config.ts";
 
 // ── @composio/core mock ─────────────────────────────────────────────
 //
@@ -435,7 +436,7 @@ describe("composioClient", () => {
 
   test("threads COMPOSIO_API_BASE_URL through to the SDK client", async () => {
     process.env.COMPOSIO_API_KEY = "k_test";
-    process.env.COMPOSIO_API_BASE_URL = "https://composio.example.com";
+    setConnectorsConfig({ providers: { composio: { baseUrl: "https://composio.example.com" } } });
     sdkCalls.listImpl = async () => ({ items: [] });
     await findActiveComposioConnection({
       apiKey: "k_test",

@@ -12,7 +12,10 @@
  */
 
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
-import { _resetConnectorsConfigForTest } from "../../src/connectors/providers/config.ts";
+import {
+  _resetConnectorsConfigForTest,
+  setConnectorsConfig,
+} from "../../src/connectors/providers/config.ts";
 import {
   _resetSmitheryConfigForTest,
   validateSmitheryConfig,
@@ -26,7 +29,7 @@ import type { BundleRef } from "../../src/bundles/types.ts";
 import { ToolRegistry } from "../../src/tools/registry.ts";
 import { cleanupSmitheryBundle } from "../../src/connectors/providers/smithery/provider.ts";
 
-const ENV_KEYS = ["SMITHERY_API_KEY", "SMITHERY_NAMESPACE", "SMITHERY_API_BASE_URL"] as const;
+const ENV_KEYS = ["SMITHERY_API_KEY"] as const;
 const saved: Record<string, string | undefined> = {};
 const realFetch = globalThis.fetch;
 
@@ -59,7 +62,7 @@ afterEach(() => {
 
 function configure(namespace = "current-ns"): void {
   process.env.SMITHERY_API_KEY = "sk_test";
-  process.env.SMITHERY_NAMESPACE = namespace;
+  setConnectorsConfig({ providers: { smithery: { namespace } } });
   _resetSmitheryConfigForTest();
 }
 
@@ -85,8 +88,7 @@ describe("cleanupSmitheryBundle", () => {
 
   it("deletes at the host recorded on the ref, not a repointed one", async () => {
     process.env.SMITHERY_API_KEY = "sk_test";
-    process.env.SMITHERY_NAMESPACE = "current-ns";
-    process.env.SMITHERY_API_BASE_URL = "https://repointed.example";
+    setConnectorsConfig({ providers: { smithery: { namespace: "current-ns", baseUrl: "https://repointed.example" } } });
     _resetSmitheryConfigForTest();
     const { calls } = stubDelete(204);
 

@@ -87,9 +87,7 @@ The provider's **settings** are declarable in `nimblebrain.json` under [`connect
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
 | `COMPOSIO_API_KEY` | When the catalog has `auth: composio` entries | — | *(fallback for `…composio.apiKey`)* Platform-wide Composio API key — the broker credential, and the gate on registering the provider at all. Read once at startup. Without it, the Composio integration reports "not configured" and installs of `auth: composio` entries fail. |
-| `COMPOSIO_API_BASE_URL` | No | `https://backend.composio.dev` | *(fallback for `…composio.baseUrl`)* Override the Composio SDK base URL (self-hosted, staging). Must be `http(s)`. |
 | `NB_TENANT_ID` | When multi-tenant pods share a Composio account | — | Per-pod tenant identifier prepended to the wsId so two tenants never collide in Composio's namespace. **Required** in bouncer (multi-tenant) mode — startup fails without it. Single-tenant deployments can omit it. |
-| `COMPOSIO_MONITOR_ENABLED` | No | `true` when the provider is configured | *(fallback for `…composio.monitorEnabled`)* Kill switch for the connection-revalidation monitor. Set to `false` (case/whitespace-insensitive) to disable. Read once at startup. |
 | `COMPOSIO_MONITOR_INTERVAL_SECONDS` | No | `300` | **Deprecated alias** for [`NB_CONNECTION_REVALIDATE_INTERVAL_SECONDS`](#runtime--server) (the sweep cadence is provider-agnostic). Still honored; slated for removal ([#727](https://github.com/NimbleBrainInc/nimblebrain/issues/727)). |
 
 ### Smithery broker
@@ -103,9 +101,6 @@ Every variable below is a per-field fallback for [`connectors.providers.smithery
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
 | `SMITHERY_API_KEY` | When the catalog has `auth: smithery` entries | — | Platform-wide Smithery API key, from [smithery.ai/account/api-keys](https://smithery.ai/account/api-keys). Read once at startup. Fallback for `connectors.providers.smithery.apiKey`. |
-| `SMITHERY_NAMESPACE` | With `SMITHERY_API_KEY` | — | The Smithery namespace brokered connections are created under. Connections are named per (workspace, server) inside it. Fallback for `connectors.providers.smithery.namespace`. |
-| `SMITHERY_MONITOR_ENABLED` | No | `true` when configured | Kill switch for Smithery's arm of the connection-revalidator probe. Fallback for `connectors.providers.smithery.monitorEnabled`. |
-| `SMITHERY_API_BASE_URL` | No | `https://api.smithery.ai` | Override the Connect API base URL. Must be `http(s)` — the session URL derived from it becomes a bundle's remote MCP target. Fallback for `connectors.providers.smithery.baseUrl`. |
 | `NB_TENANT_ID` | When multi-tenant pods share a Smithery account | — | Prepended to the workspace id so two tenants never collide in the namespace. Same variable as the Composio prefix above. |
 
 ### Observability (OpenTelemetry + logs)

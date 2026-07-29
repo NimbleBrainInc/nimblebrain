@@ -19,6 +19,7 @@ import type { ManagedConnectorProvider } from "../../src/connectors/providers/ma
 import { smitheryConnectionId, smitheryMcpUrl } from "../../src/connectors/providers/smithery/client.ts";
 import { _resetSmitheryConfigForTest } from "../../src/connectors/providers/smithery/config.ts";
 import { createSmitheryProvider, smitheryUserId } from "../../src/connectors/providers/smithery/provider.ts";
+import { setConnectorsConfig } from "../../src/connectors/providers/config.ts";
 
 const ENV_KEYS = [
   "SMITHERY_API_KEY",
@@ -46,7 +47,7 @@ afterEach(() => {
 
 function configure(): void {
   process.env.SMITHERY_API_KEY = "sk_test";
-  process.env.SMITHERY_NAMESPACE = "test-ns";
+  setConnectorsConfig({ providers: { smithery: { namespace: "test-ns" } } });
   _resetSmitheryConfigForTest();
 }
 

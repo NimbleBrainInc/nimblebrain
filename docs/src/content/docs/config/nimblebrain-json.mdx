@@ -446,13 +446,7 @@ It is declarable because nothing persisted points at where it lives. A connector
 
 The `COMPOSIO_*` and `SMITHERY_*` variables ([Environment Variables](/config/environment)) still work, as a **fallback**:
 
-Precedence is **per field**: a setting declared in the block wins, a setting left out reads its env var. So a block that sets only `baseUrl` leaves `monitorEnabled` on `COMPOSIO_MONITOR_ENABLED`, and nothing you configured elsewhere is silently discarded. This is the same shape as `providers.anthropic.apiKey` falling back to `ANTHROPIC_API_KEY`.
-
-| Field | Env fallback |
-|---|---|
-| `apiKey` | `COMPOSIO_API_KEY` |
-| `baseUrl` | `COMPOSIO_API_BASE_URL` |
-| `monitorEnabled` | `COMPOSIO_MONITOR_ENABLED` |
+Settings resolve from this block only — there is no environment fallback for them. The **broker credential** is the exception: `apiKey` also reads `COMPOSIO_API_KEY` / `SMITHERY_API_KEY`, because a secret has a legitimate home in the environment. One value, one source, with that single documented exception.
 
 `NB_TENANT_ID` is likewise not part of this block. It is a deployment identity, stays env-only, and is still required when the OAuth bouncer is configured.
 

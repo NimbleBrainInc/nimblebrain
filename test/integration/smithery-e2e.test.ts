@@ -44,7 +44,7 @@ import {
 } from "../../src/connectors/providers/smithery/provider.ts";
 
 const HAVE_CREDS = Boolean(
-  process.env.SMITHERY_API_KEY?.trim() && process.env.SMITHERY_NAMESPACE?.trim(),
+  process.env.SMITHERY_API_KEY?.trim() && process.env.SMITHERY_E2E_NAMESPACE?.trim(),
 );
 const SERVER = "nimblebrain/bassethound";
 const OWNER = { type: "workspace", wsId: "ws_seamcheck" } as const;

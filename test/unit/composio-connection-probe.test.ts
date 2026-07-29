@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, mock } from "bun:test";
 import type { ProbeTarget } from "../../src/bundles/connection-probe.ts";
 import type { ConnectorDirectory } from "../../src/registries/directory.ts";
+import { setConnectorsConfig } from "../../src/connectors/providers/config.ts";
 // Drive the probe through the `@composio/core` vendor seam — the same seam the
 // sibling composio suites mock — never the internal `sdk.ts`. `mock.module` is
 // process-global and is never torn down at file boundaries; mocking `sdk.ts`

@@ -36,7 +36,7 @@
 import { log } from "../../../observability/log.ts";
 import { declaredProviderConfig } from "../config.ts";
 
-/** Default Smithery Connect API host. Overridable via config `baseUrl` or `SMITHERY_API_BASE_URL`. */
+/** Default Smithery Connect API host. Overridable via config `baseUrl`. */
 export const SMITHERY_API_BASE = "https://api.smithery.ai";
 
 /** Max time a single Smithery Connect API call may run before we abort. */
@@ -106,13 +106,10 @@ function resolveBaseUrl(raw: string): string {
 function resolveSmitheryConfig(): SmitheryConfig {
   const declared = declaredProviderConfig("smithery");
   const apiKey = declared?.apiKey?.trim() || (process.env.SMITHERY_API_KEY?.trim() ?? "");
-  // A blank declared value counts as *absent*, so the env fallback still
-  // applies. A templated deploy renders `"namespace": "{{ .Values… }}"` to `""`
-  // when the value is unset; treating that as a declaration would discard the
-  // operator's `SMITHERY_NAMESPACE` and silently leave the provider
-  // unregistered — the exact loss per-field precedence exists to prevent.
-  const namespace = declared?.namespace?.trim() || (process.env.SMITHERY_NAMESPACE?.trim() ?? "");
-  const rawBaseUrl = declared?.baseUrl?.trim() || (process.env.SMITHERY_API_BASE_URL?.trim() ?? "");
+  // A blank declared value counts as *absent* — a templated deploy renders
+  // `"namespace": "{{ .Values… }}"` to `""` when unset, which is not a declaration.
+  const namespace = declared?.namespace?.trim() ?? "";
+  const rawBaseUrl = declared?.baseUrl?.trim() ?? "";
 
   if (!apiKey) {
     log.info(
@@ -123,17 +120,15 @@ function resolveSmitheryConfig(): SmitheryConfig {
   }
   if (!namespace) {
     log.warn(
-      "[smithery] SMITHERY_API_KEY is set but no namespace resolved — integration disabled. " +
-        "Declare connectors.providers.smithery.namespace or set SMITHERY_NAMESPACE.",
+      "[smithery] a broker credential is set but no namespace is declared — integration " +
+        "disabled. Set connectors.providers.smithery.namespace in nimblebrain.json.",
     );
     return UNCONFIGURED;
   }
 
   const baseUrl = resolveBaseUrl(rawBaseUrl);
 
-  const monitorEnabled =
-    declared?.monitorEnabled ??
-    process.env.SMITHERY_MONITOR_ENABLED?.trim().toLowerCase() !== "false";
+  const monitorEnabled = declared?.monitorEnabled ?? true;
   if (!monitorEnabled) {
     log.info("[smithery] connection revalidation disabled by config");
   }
