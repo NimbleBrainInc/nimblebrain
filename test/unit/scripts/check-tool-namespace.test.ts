@@ -162,7 +162,7 @@ describe("check-tool-namespace — script self-invocation", () => {
     // actual codebase. The "exit 1 on violation" half is covered by
     // the predicate unit tests above.
     const proc = Bun.spawn({
-      cmd: ["bun", "run", "scripts/check-tool-namespace.ts"],
+      cmd: ["bun", "run", "--no-env-file", "scripts/check-tool-namespace.ts"],
       stdout: "pipe",
       stderr: "pipe",
     });

@@ -200,7 +200,7 @@ describe("check-credential-paths — script self-invocation", () => {
     // the predicate unit tests above — each is a single fixture
     // snippet that the predicate either flags or doesn't.
     const proc = Bun.spawn({
-      cmd: ["bun", "run", "scripts/check-credential-paths.ts"],
+      cmd: ["bun", "run", "--no-env-file", "scripts/check-credential-paths.ts"],
       stdout: "pipe",
       stderr: "pipe",
     });

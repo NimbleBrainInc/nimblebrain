@@ -34,6 +34,7 @@ describe("serve entry", () => {
       [
         "bun",
         "run",
+        "--no-env-file",
         CLI,
         "serve",
         "--port",
@@ -57,7 +58,10 @@ describe("serve entry", () => {
   }, 30_000);
 
   it("rejects an unrecognized positional as a usage error (exit 2)", () => {
-    const result = spawnSync(["bun", "run", CLI, "fakecmd"], { stdout: "pipe", stderr: "pipe" });
+    const result = spawnSync(["bun", "run", "--no-env-file", CLI, "fakecmd"], {
+      stdout: "pipe",
+      stderr: "pipe",
+    });
     expect(result.exitCode).toBe(2);
   });
 });
