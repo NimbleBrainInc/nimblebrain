@@ -179,7 +179,10 @@ function makeProxyRuntime(opts: {
   const present = new Set(opts.recoverable ? [] : [sourceName]);
   const calls: Array<{ server: string; uri: string; wsId: string }> = [];
   const recoverCalls: Array<{ wsId: string; name: string }> = [];
-  const registry = { hasSource: (n: string) => present.has(n), hasEstablishedSource: (n: string) => present.has(n) };
+  const registry = {
+    hasSource: (n: string) => present.has(n),
+    hasEstablishedSource: (n: string) => present.has(n),
+  };
   const runtime = {
     getIdentitySource: () => undefined,
     getWorkspaceStore: () => ({

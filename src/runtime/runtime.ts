@@ -2534,13 +2534,17 @@ export class Runtime {
    * tools are inexplicably missing. Deleting this filter surfaces every such
    * record as a usable app.
    *
-   * The set is built from LIVE sources, not merely registered ones. A
-   * boot-failed source now stays registered (so it remains visible to
-   * HealthMonitor and the unhealthy gauge), which means membership alone would
-   * have quietly promoted exactly that class into the prompt. The management UI
-   * deliberately does NOT go through here for exactly that reason;
-   * `handleListInstalled` reads the
-   * lifecycle map directly so it can show a Connect / Reconnect affordance.
+   * The set is built from ESTABLISHED sources — ones that have connected at
+   * least once — not merely registered ones. A boot-failed source now stays
+   * registered (so it remains visible to HealthMonitor and the unhealthy gauge),
+   * which means membership alone would have quietly promoted exactly that class
+   * into the prompt. The management UI deliberately does NOT go through here for
+   * exactly that reason; `handleListInstalled` reads the lifecycle map directly
+   * so it can show a Connect / Reconnect affordance.
+   *
+   * "Established" deliberately still includes a source whose transport has since
+   * dropped: that bundle works and heals in place, so hiding it would be the
+   * regression, not the fix.
    * That the agent cannot see, or explain, a bundle in this state is the open
    * gap tracked in #757.
    */

@@ -291,9 +291,10 @@ export class ToolRegistry implements ToolRouter {
    * `uptime()` separates them: `startedAt` is set only on a successful connect
    * and never reset, so `uptime() === null` is exactly "never connected".
    *
-   * Use this for "is this source real / should I recover it"; use
-   * `hasLiveSource` only where the question is genuinely "can it serve a request
-   * this instant". A source with no liveness concept is in-process and always
+   * This is the question callers have: "is this source real / should I recover
+   * it". The narrower "can it serve a request this instant" is `hasLiveSource`,
+   * which is private precisely so that choice does not have to be made at every
+   * call site. A source with no liveness concept is in-process and always
    * established.
    */
   hasEstablishedSource(name: string): boolean {

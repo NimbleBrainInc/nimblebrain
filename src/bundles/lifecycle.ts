@@ -1459,7 +1459,7 @@ export class BundleLifecycleManager {
     // would leak its transport and provider, and the connection record would
     // bind an object nothing routes to. Stopping it is the fix.
     //
-    // The throw is the blunt part and is tracked separately (#822): a user whose
+    // The throw is the blunt part and is tracked separately (#825): a user whose
     // bundle was just healed by the concurrent recovery is told to retry, and
     // the retry then hits "already connected". The right shape is the one
     // `finalizeUrlSourceStart` uses — stop the loser, don't bind it, don't fail
