@@ -55,6 +55,8 @@ jobs:
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: ${{ env.BUN_VERSION }}
+      # Why the key is per-job, and why `path:` must never grow to cover a
+      # node_modules tree: see the cache note above `jobs:`.
       - name: Cache bun dependencies
         uses: actions/cache@v6
         with:
@@ -78,6 +80,8 @@ jobs:
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: ${{ env.BUN_VERSION }}
+      # Why the key is per-job, and why `path:` must never grow to cover a
+      # node_modules tree: see the cache note above `jobs:`.
       - name: Cache bun dependencies
         uses: actions/cache@v6
         with:
@@ -117,6 +121,8 @@ jobs:
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: ${{ env.BUN_VERSION }}
+      # Why the key is per-job, and why `path:` must never grow to cover a
+      # node_modules tree: see the cache note above `jobs:`.
       - name: Cache bun dependencies
         uses: actions/cache@v6
         with:
@@ -138,6 +144,8 @@ jobs:
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: ${{ env.BUN_VERSION }}
+      # Why the key is per-job, and why `path:` must never grow to cover a
+      # node_modules tree: see the cache note above `jobs:`.
       - name: Cache bun dependencies
         uses: actions/cache@v6
         with:
