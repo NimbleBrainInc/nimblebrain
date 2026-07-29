@@ -1972,9 +1972,9 @@ interface BrokeredWiring {
 
 /**
  * Composio-auth install prerequisites: the catalog entry's composio block, the
- * platform broker credential, and the per-connector auth-config env var the
- * entry names. Returns an error string, or null when the install isn't
- * composio-auth or every prerequisite is present.
+ * platform broker credential, and the toolkit's declared auth-config id.
+ * Returns an error string, or null when the install isn't composio-auth or
+ * every prerequisite is present.
  */
 function validateComposioInstall(action: RemoteOAuthInstall, entryName: string): string | null {
   if (action.auth !== "composio") return null;
@@ -2024,8 +2024,8 @@ async function validateRemoteOAuthInstall(
   // operator-published catalog, never from the caller. Otherwise a workspace
   // admin forges an entry naming any registry server and gets a
   // pre-authenticated, eager-started MCP source charged to the operator's
-  // account. Unlike Composio there is no incidental bound (no per-connector
-  // auth-config env var to be missing), so this check IS the bound.
+  // account. Unlike Composio there is no incidental bound (no per-toolkit
+  // auth-config id that must be declared first), so this check IS the bound.
   if (action.auth === "smithery") {
     const trusted = await ctx.runtime.getConnectorDirectory().catalogById(entry.id);
     if (!trusted || trusted.auth !== "smithery" || !trusted.smithery?.server?.trim()) {

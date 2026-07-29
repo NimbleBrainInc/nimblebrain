@@ -125,20 +125,9 @@ describe("ComposioConnectionProbe — auth-config id resolution", () => {
     activeResult = { id: "ca_1", status: "ACTIVE" };
   });
 
-  it("resolves the declared authConfigs id with no env var set", async () => {
-    // The state a deployment lands in after the ids move into config, and the
-    // the only unwired state a catalog entry can now be in.
-    delete process.env.AUTH_CFG_X;
-    setConnectorsConfig({ providers: { composio: { authConfigs: { [TOOLKIT]: "ac_declared" } } } });
-
-    const p = new ComposioConnectionProbe(fakeDirectory());
-    expect(await p.probe(target("com.x"), live)).toBe("live");
-    expect(listArgs?.authConfigIds).toEqual(["ac_declared"]);
-  });
-
-  it("prefers the declared id over the legacy env var", async () => {
-    // Precedence at this call site, not just in the resolver: a stale var left
-    // in the pod after the values move must not probe the old auth config.
+  it("resolves the declared authConfigs id and probes against it", async () => {
+    // The only wired state a catalog entry can be in: the id comes from the
+    // declared block, keyed by the toolkit the entry names.
     setConnectorsConfig({ providers: { composio: { authConfigs: { [TOOLKIT]: "ac_declared" } } } });
 
     const p = new ComposioConnectionProbe(fakeDirectory());

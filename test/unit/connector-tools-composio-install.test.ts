@@ -282,22 +282,9 @@ describe("manage_connectors.install (composio-auth)", () => {
     expect(installed?.composio?.connectorId).toBe(GMAIL_ID);
   });
 
-  test("(a-2) the declared authConfigs entry reaches Composio, with no env var set", async () => {
+  test("(a-2) the declared authConfigs entry reaches Composio", async () => {
     // The path the migration moves onto: the id comes from the config block,
     // keyed by the toolkit the catalog entry already names.
-    process.env.COMPOSIO_API_KEY = "k_test";
-    setConnectorsConfig({ providers: { composio: { authConfigs: { gmail: "ac_declared" } } } });
-    _resetComposioConfigForTest();
-
-    await installAndReadPersistedRef();
-    expect(
-      (composioCalls.createConfig as { authConfigs?: Record<string, string> }).authConfigs?.gmail,
-    ).toBe("ac_declared");
-  });
-
-  test("(a-3) a declared id wins over the legacy env var end-to-end", async () => {
-    // Precedence at the call site, not just in the resolver: a stale env var
-    // left in the pod after the values move cannot resurrect the old id.
     process.env.COMPOSIO_API_KEY = "k_test";
     setConnectorsConfig({ providers: { composio: { authConfigs: { gmail: "ac_declared" } } } });
     _resetComposioConfigForTest();
@@ -403,8 +390,8 @@ describe("manage_connectors.install (composio-auth)", () => {
   });
 
   test("(e-1) errResult when COMPOSIO_API_KEY is unset", async () => {
-    // COMPOSIO_API_KEY intentionally missing. Per-toolkit env IS set
-    // so we can assert the failure is API-key-specific.
+    // COMPOSIO_API_KEY intentionally missing. The harness declares gmail's
+    // auth-config id, so the failure is provably API-key-specific.
 
     const tool = buildTool(h);
     const result = await tool.handler({ action: "install", entry: gmailEntry(), wsId: h.wsId });
@@ -685,7 +672,8 @@ describe("manage_connectors.install scope:identity (composio personal connector)
   });
 
   test("(k) errResult when COMPOSIO_API_KEY is unset — the gate admits composio, the prerequisite rejects it, nothing persisted", async () => {
-    // Per-toolkit env set so the failure is provably API-key-specific.
+    // The harness declares gmail's auth-config id, so the failure is provably
+    // API-key-specific.
 
     const tool = buildTool(h);
     const result = await tool.handler({ action: "install", entry: gmailEntry(), scope: "identity" });

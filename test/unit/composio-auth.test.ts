@@ -729,8 +729,10 @@ describe("POST /v1/composio-auth/initiate", () => {
   });
 
   test("(c) returns 500 when COMPOSIO_API_KEY is unset", async () => {
-    // No COMPOSIO_API_KEY in env. Per-toolkit env is set so we know
-    // the failure is API-key-specific, not env-config-specific.
+    // No COMPOSIO_API_KEY, and no declared auth config either. Both causes
+    // return the same `composio_unconfigured` code, so the code alone proves
+    // nothing about which one fired — assert the message, which is the only
+    // thing that separates them.
 
     const { app } = makeApp(composioEntry("com.google/gmail"));
     const res = await app.request("http://nb.test/v1/composio-auth/initiate", {
@@ -740,8 +742,9 @@ describe("POST /v1/composio-auth/initiate", () => {
     });
 
     expect(res.status).toBe(500);
-    const body = (await res.json()) as { error: string };
+    const body = (await res.json()) as { error: string; message: string };
     expect(body.error).toBe("composio_unconfigured");
+    expect(body.message).toBe("Composio integration not configured.");
   });
 
   test("(d) returns 500 when the toolkit has no auth-config id", async () => {
@@ -756,8 +759,10 @@ describe("POST /v1/composio-auth/initiate", () => {
     });
 
     expect(res.status).toBe(500);
-    const body = (await res.json()) as { error: string };
+    const body = (await res.json()) as { error: string; message: string };
     expect(body.error).toBe("composio_unconfigured");
+    // Distinguishes this from (c): same code, different cause.
+    expect(body.message).toContain("auth config");
   });
 
   test("(e) returns 400 wrong_auth_kind when catalog entry isn't composio-backed", async () => {
