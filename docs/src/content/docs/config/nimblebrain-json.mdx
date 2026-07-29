@@ -414,8 +414,6 @@ A toolkit you leave out is not reported — wiring a subset of the catalog is th
 
 These are identifiers, not secrets: an `ac_…` is inert without `apiKey`, the way a client_id is inert without a client_secret. They live in config next to the toolkits they name rather than in your secret store.
 
-A toolkit with no entry here simply has no auth config: installing it fails with a message naming the toolkit and this config path. That is a deliberate non-error — the catalog is a menu, and a deployment wires the toolkits it wants.
-
 One instance serves one tenant, so this is a single config layer: there is no per-tenant merge. Intra-tenant isolation is unchanged — the single broker account still serves every workspace and user in the tenant, namespaced by the Composio `user_id`.
 
 ### connectors.providers.smithery

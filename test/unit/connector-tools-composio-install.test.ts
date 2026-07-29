@@ -253,6 +253,9 @@ afterEach(() => {
   }
   _resetComposioConfigForTest();
   rmSync(h.workDir, { recursive: true, force: true });
+  // The declared block is a module singleton — leaving one installed leaks
+  // this file's connector config into whatever runs next in the process.
+  _resetConnectorsConfigForTest();
 });
 
 // ── Tests ───────────────────────────────────────────────────────────

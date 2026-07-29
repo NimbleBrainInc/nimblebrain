@@ -550,6 +550,11 @@ describe("POST /v1/composio-auth/initiate", () => {
       else process.env[k] = savedEnv[k];
     }
     _resetComposioConfigForTest();
+    // The declared block lives in a different module cache from the one above,
+    // so resetting only that one leaves a previous test's `authConfigs` live —
+    // silently satisfying the auth-config check in tests written to exercise
+    // its absence, and leaking this file's config into the rest of the run.
+    _resetConnectorsConfigForTest();
   });
 
   /**

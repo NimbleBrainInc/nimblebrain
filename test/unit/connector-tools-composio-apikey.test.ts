@@ -241,6 +241,9 @@ afterEach(() => {
     else process.env[k] = SAVED_ENV[k];
   }
   _resetComposioConfigForTest();
+  // The declared block is a module singleton — leaving one installed leaks
+  // this file's connector config into whatever runs next in the process.
+  _resetConnectorsConfigForTest();
 });
 
 // ── connectComposioApiKey (SDK) ─────────────────────────────────────
