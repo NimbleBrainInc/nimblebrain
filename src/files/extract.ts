@@ -1,6 +1,6 @@
 import mammoth from "mammoth";
+import { type CellValue, readSheet } from "read-excel-file/node";
 import { extractText as extractPdfText, getDocumentProxy } from "unpdf";
-import * as XLSX from "xlsx";
 import { log } from "../observability/log.ts";
 import { isTextMime } from "./mime.ts";
 
@@ -70,7 +70,7 @@ export async function extractText(
     }
 
     if (bare === "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet") {
-      return extractXlsx(data, maxSize, options);
+      return await extractXlsx(data, maxSize, options);
     }
 
     // Images and everything else: not extractable
@@ -196,22 +196,37 @@ async function extractDocx(
   }
 }
 
-function extractXlsx(
+/**
+ * Render one parsed cell as a CSV field.
+ *
+ * The parser hands back real JS values (`string | number | boolean | Date |
+ * null`) rather than Excel's display text, so the rendering is ours to choose.
+ * Dates become ISO-8601 calendar dates because the consumer is a model with no
+ * locale to disambiguate Excel's `1/14/26` — the parser reads the sheet's
+ * timezone-naive serial as UTC, so the UTC components are the sheet's own date
+ * on any runner.
+ */
+function toCsvCell(value: CellValue | null): string {
+  if (value === null || value === undefined) return "";
+  const text = value instanceof Date ? value.toISOString().slice(0, 10) : String(value);
+  return /[",\n\r]/.test(text) ? `"${text.replaceAll('"', '""')}"` : text;
+}
+
+async function extractXlsx(
   data: Buffer,
   maxSize: number,
   options: { truncatedSuffix?: (kb: number) => string } = {},
-): { text: string; truncated: boolean } | null {
+): Promise<{ text: string; truncated: boolean } | null> {
   try {
     // Validate XLSX magic bytes (PK zip signature)
     if (data.length < 4 || data[0] !== 0x50 || data[1] !== 0x4b) {
       return null;
     }
-    const workbook = XLSX.read(data, { type: "buffer" });
-    const firstSheetName = workbook.SheetNames[0];
-    if (!firstSheetName) return null;
-    const sheet = workbook.Sheets[firstSheetName];
-    if (!sheet) return null;
-    const csv = XLSX.utils.sheet_to_csv(sheet);
+    // Only the first sheet is extracted, and `readSheet` parses only that one
+    // rather than materialising every sheet in the workbook to discard the rest.
+    const rows = await readSheet(data, 1);
+    if (rows.length === 0) return null;
+    const csv = rows.map((row) => row.map(toCsvCell).join(",")).join("\n");
     return truncate(csv, maxSize, options);
   } catch (err) {
     log.error("[files/extract] XLSX extraction failed", {

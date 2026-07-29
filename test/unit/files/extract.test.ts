@@ -1,5 +1,16 @@
 import { describe, test, expect } from "bun:test";
+import { readFileSync } from "node:fs";
 import { extractText } from "../../../src/files/extract.ts";
+
+const XLSX_MIME = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
+
+// A 5x5 sheet committed at test/fixtures/files/spreadsheet-sample.xlsx, holding
+// exactly the values the assertions below name. It is deliberately awkward: a
+// cell containing the CSV delimiter, one containing quotes, one with an
+// embedded newline, a non-ASCII string, an empty cell, a float, booleans, and
+// real date-typed cells.
+const spreadsheetFixture = () =>
+  readFileSync(new URL("../../fixtures/files/spreadsheet-sample.xlsx", import.meta.url));
 
 describe("extractText", () => {
   test("text/plain returns file content", async () => {
@@ -118,11 +129,56 @@ describe("extractText", () => {
   });
 
   test("corrupted XLSX returns null without throwing", async () => {
-    const result = await extractText(
-      Buffer.from("not a real xlsx"),
-      "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-    );
+    const result = await extractText(Buffer.from("not a real xlsx"), XLSX_MIME);
     expect(result).toBeNull();
+  });
+
+  // A PK-signature buffer that is not a readable workbook gets past the magic
+  // byte guard and into the parser, so this is the case that proves the parser
+  // itself is caught rather than throwing into the file-ingest path.
+  test("XLSX with valid zip signature but unreadable body returns null", async () => {
+    const result = await extractText(Buffer.from("PK still not a workbook"), XLSX_MIME);
+    expect(result).toBeNull();
+  });
+
+  // Asserted as one string rather than per line: the "Multi" row holds a cell
+  // with an embedded newline, so a line-split would tear that record in two and
+  // an assertion built on it would encode the wrong shape.
+  test("XLSX extracts the first sheet as CSV", async () => {
+    const result = await extractText(spreadsheetFixture(), XLSX_MIME);
+    expect(result).not.toBeNull();
+    expect(result?.truncated).toBe(false);
+    expect(result?.text).toBe(
+      [
+        "Region,Units,Note,Opened,Active",
+        'West,12,"red, small",2026-01-15,true',
+        'East,7,"has ""quotes""",2026-06-01,false',
+        "Ünicode ✓,0,,2025-12-31,true",
+        'Multi,3.5,"line\nbreak",2026-07-04,false',
+      ].join("\n"),
+    );
+  });
+
+  test("XLSX quotes only the fields that need it", async () => {
+    const text = (await extractText(spreadsheetFixture(), XLSX_MIME))?.text ?? "";
+    // Delimiter, embedded quote, and newline force quoting; plain values must not.
+    expect(text).toContain('"red, small"');
+    expect(text).toContain('"has ""quotes"""');
+    expect(text).toContain("West,12,");
+    expect(text).not.toContain('"West"');
+  });
+
+  test("XLSX renders dates as unambiguous ISO-8601, not locale-formatted", async () => {
+    const text = (await extractText(spreadsheetFixture(), XLSX_MIME))?.text ?? "";
+    expect(text).toContain("2026-01-15");
+    // Excel's own display form for that cell — ambiguous without a locale.
+    expect(text).not.toContain("1/15/26");
+  });
+
+  test("XLSX respects maxSize and marks the result truncated", async () => {
+    const result = await extractText(spreadsheetFixture(), XLSX_MIME, 20);
+    expect(result?.truncated).toBe(true);
+    expect(result?.text.startsWith("Region,Units")).toBe(true);
   });
 
   test("empty buffer for text type returns empty string", async () => {
