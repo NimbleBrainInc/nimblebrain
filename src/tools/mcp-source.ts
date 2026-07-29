@@ -1574,16 +1574,24 @@ export class McpSource implements ToolSource {
           // toward its strike budget — see `INFRA_ERROR_META_KEY` for why that
           // matters and why the marker is host-owned.
           //
-          // It requires BOTH an allowlisted class and a TRANSPORT-LEVEL throw.
-          // The second condition is the load-bearing one: three of the allowlisted
-          // classes are decided by regex over the server's own error text, so a
-          // bundle answering `McpError(-32603, "Rate limit exceeded")` — FastMCP's
-          // default for an unhandled exception — would otherwise exempt itself
-          // from the guard permanently, and a bundle relaying a persistent
-          // upstream 429 would be exempted exactly when the guard should trip.
-          // An `McpError` IS the server answering; only a throw the transport
-          // itself constructed (an HTTP status, a socket failure) is a signal the
-          // bundle cannot author.
+          // It requires an allowlisted class AND that the throw is not an
+          // `McpError`. That second condition is stated as what it is — a
+          // denylist of one type, not a proof of transport origin.
+          //
+          // It is load-bearing because three of the allowlisted classes are
+          // decided by regex over the server's own error text: a bundle answering
+          // `McpError(-32603, "Rate limit exceeded")` — FastMCP's default for an
+          // unhandled exception — would otherwise exempt itself from the guard
+          // permanently, and a bundle relaying a persistent upstream 429 would be
+          // exempted exactly when the guard should trip. An `McpError` IS the
+          // server answering, so it never earns the marker.
+          //
+          // Residual, deliberately accepted: a bare `Error` is not proof of
+          // transport origin. `startToolAsTask` re-throws a task-creation failure
+          // as `new Error(serverMessage)`, which this admits (#838). An allowlist
+          // over throw TYPES would be worse, not better — `fetch failed` arrives
+          // as a plain TypeError and a reset socket as a generic Error, so it
+          // would drop exactly the cases this exists to mark.
           const kind = classifyConnectionFailure(e);
           const infra =
             INFRA_FAILURE_CLASSES.has(kind) && !(e instanceof McpError) ? infraErrorMeta() : {};

@@ -289,6 +289,83 @@ describe("execute (tools/call) — unified recovery", () => {
     });
   }
 
+  it("strips the infrastructure marker a bundle set on its own result", async () => {
+    // The supervisor trusts this marker unconditionally, and a trip is the only
+    // thing that drops a tool from the model's toolset mid-run. A bundle able to
+    // set it on a deterministic rejection would exempt itself from the guard for
+    // the whole run — so it is host-owned and stripped at the wire boundary.
+    const source = remoteSource({
+      callTool: async () => ({
+        content: [{ type: "text", text: "Invalid params: missing 'id'" }],
+        isError: true,
+        _meta: { [INFRA_ERROR_META_KEY]: true, "bundle.own/hint": "keep me" },
+      }),
+    });
+
+    const result = await source.execute("write", {});
+    expect(result.isError).toBe(true);
+    expect(result._meta?.[INFRA_ERROR_META_KEY]).toBeUndefined();
+    // Targeted strip, not a decision to stop forwarding `_meta`.
+    expect(result._meta?.["bundle.own/hint"]).toBe("keep me");
+  });
+
+  it("strips the infrastructure marker on the TASK path too", async () => {
+    // The strip has two projections and the inline one is covered above. Without
+    // this, deleting the task-path call leaves the suite green — verified.
+    const source = remoteSource({});
+    const internal = source as unknown as {
+      cachedTools: unknown[];
+      client: Record<string, unknown>;
+    };
+    internal.cachedTools = [
+      {
+        name: "svc__long_job",
+        inputSchema: { type: "object" },
+        execution: { taskSupport: "required" },
+      },
+    ];
+    internal.client.experimental = {
+      tasks: {
+        callToolStream: async function* () {
+          yield { type: "taskCreated", task: { taskId: "t1", status: "working" } };
+          yield {
+            type: "result",
+            result: {
+              content: [{ type: "text", text: "Invalid params" }],
+              isError: true,
+              _meta: { [INFRA_ERROR_META_KEY]: true, "bundle.own/hint": "keep me" },
+            },
+          };
+        },
+      },
+    };
+
+    const result = await source.execute("long_job", {});
+    expect(result._meta?.[INFRA_ERROR_META_KEY]).toBeUndefined();
+    expect(result._meta?.["bundle.own/hint"]).toBe("keep me");
+  });
+
+  it("does NOT mark a reauth surface", async () => {
+    // One rule across `not started`, the absent `auth-lost` allowlist entry, and
+    // this: a failure with no IN-RUN remedy still counts. `onAuthLost` only
+    // records `reauth_required` — it does not stop the source — so every later
+    // call returns this same result, and exempting it would hold the tool in the
+    // toolset for the rest of the run with nothing able to fix it.
+    const source = remoteSource({
+      callTool: () => Promise.reject(new UnauthorizedError("token rejected")),
+      notifyAuthLost: () => {},
+    });
+    const restart = spyRestart(source, true);
+    try {
+      const result = await source.execute("write", {});
+      expect(result.isError).toBe(true);
+      expect(result.structuredContent).toMatchObject({ reason: "reauth_required" });
+      expect(result._meta?.[INFRA_ERROR_META_KEY]).toBeUndefined();
+    } finally {
+      restart.mockRestore();
+    }
+  });
+
   it("does NOT mark an UNCLASSIFIABLE throw", async () => {
     // `unknown` is the classifier's "could not positively classify this" residue.
     // A server answering a deterministic tool rejection with its own
@@ -296,7 +373,10 @@ describe("execute (tools/call) — unified recovery", () => {
     // so marking it would exempt a real loop from the guard. The marker is an
     // allowlist of classes that mean "never reached the tool", and this isn't one.
     const source = remoteSource({
-      callTool: () => Promise.reject(new McpError(-32050, "server-defined rejection")),
+      // A NON-McpError unclassifiable throw, so this differentiates the class
+      // allowlist rather than the type denylist — an `McpError` fixture would be
+      // blocked by the type condition whether or not `unknown` is in the set.
+      callTool: () => Promise.reject(new Error("Unexpected token < in JSON")),
     });
     const restart = spyRestart(source, true);
     try {
