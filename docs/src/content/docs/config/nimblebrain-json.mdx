@@ -442,9 +442,7 @@ It is declarable because nothing persisted points at where it lives. A connector
   The field exists so the choice is yours; before the transport credential named a provider rather than an environment variable, only the first option was possible at all.
 </Aside>
 
-### Environment fallback and precedence
-
-The `COMPOSIO_*` and `SMITHERY_*` variables ([Environment Variables](/config/environment)) still work, as a **fallback**:
+### The broker credential is the only env fallback
 
 Settings resolve from this block only — there is no environment fallback for them. The **broker credential** is the exception: `apiKey` also reads `COMPOSIO_API_KEY` / `SMITHERY_API_KEY`, because a secret has a legitimate home in the environment. One value, one source, with that single documented exception.
 

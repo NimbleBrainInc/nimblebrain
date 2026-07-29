@@ -323,8 +323,11 @@ describe("GET /v1/composio-auth/proxy", () => {
 
   test("honors COMPOSIO_API_BASE_URL override (e.g. for self-hosted shim)", async () => {
     process.env.COMPOSIO_API_KEY = "k_test";
-    setConnectorsConfig({ providers: { composio: { authConfigs: { gmail: "ac_gmail" } } } });
-    setConnectorsConfig({ providers: { composio: { baseUrl: "https://composio.example.com" } } });
+    setConnectorsConfig({
+      providers: {
+        composio: { authConfigs: { gmail: "ac_gmail" }, baseUrl: "https://composio.example.com" },
+      },
+    });
     const app = composioAuthRoutes(stubCtx("/tmp/work", null));
     const res = await app.request("http://nb.test/v1/composio-auth/proxy?code=abc");
     expect(res.status).toBe(302);

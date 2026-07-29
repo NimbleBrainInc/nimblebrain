@@ -195,15 +195,6 @@ describe("buildManagedConnectorRegistry — Smithery config gating", () => {
     expect(buildManagedConnectorRegistry().get("smithery")?.id).toBe("smithery");
   });
 
-  it("declared namespace wins over the legacy env var", () => {
-    process.env.SMITHERY_API_KEY = "sk_test";
-    setConnectorsConfig({ providers: { smithery: { namespace: "env-ns" } } });
-    setConnectorsConfig({ providers: { smithery: { namespace: "declared-ns" } } });
-    _resetSmitheryConfigForTest();
-
-    expect(validateSmitheryConfig().namespace).toBe("declared-ns");
-  });
-
   it("resolves every setting from the one block", () => {
     process.env.SMITHERY_API_KEY = "sk_test";
     setConnectorsConfig({

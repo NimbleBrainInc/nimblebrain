@@ -115,7 +115,7 @@ The provider can be declared on the config interface instead of the environment:
 }
 ```
 
-The broker credential is the only value with two sources: a declared `apiKey` wins, and one left out reads its env var (`COMPOSIO_API_KEY`, `COMPOSIO_API_BASE_URL`, `COMPOSIO_MONITOR_ENABLED`). The revalidator's sweep cadence is provider-agnostic and stays on `NB_CONNECTION_REVALIDATE_INTERVAL_SECONDS`. `apiKey` is declarable too, though a secret store → pod environment remains the better posture — see [the broker credential](/config/nimblebrain-json/#the-broker-credential). See [`connectors`](/config/nimblebrain-json/#connectors) for the full surface.
+The broker credential is the only value with two sources: a declared `apiKey` wins, and one left out reads `COMPOSIO_API_KEY`. Every other setting resolves from the block alone. The revalidator's sweep cadence is provider-agnostic and stays on `NB_CONNECTION_REVALIDATE_INTERVAL_SECONDS`. `apiKey` is declarable too, though a secret store → pod environment remains the better posture — see [the broker credential](/config/nimblebrain-json/#the-broker-credential). See [`connectors`](/config/nimblebrain-json/#connectors) for the full surface.
 
 ### Verify integration is live
 

@@ -35,7 +35,7 @@ import { getBouncerMode } from "../../../oauth/bouncer-config.ts";
 import { log } from "../../../observability/log.ts";
 import { declaredProviderConfig } from "../config.ts";
 
-/** Default Composio API host. Overridable via config `baseUrl` or `COMPOSIO_API_BASE_URL`. */
+/** Default Composio API host. Overridable via config `baseUrl`. */
 export const COMPOSIO_API_BASE = "https://backend.composio.dev";
 
 /** Resolved Composio provider config. Every consumer of a `COMPOSIO_*` value reads it from here. */
