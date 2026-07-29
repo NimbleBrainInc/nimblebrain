@@ -1447,8 +1447,30 @@ export class BundleLifecycleManager {
     // any tool call during the flow finds it (and gets a "starting" /
     // "pending_auth" structured error instead of "no source").
     const registry = this.registriesByWs.get(wsId);
-    if (registry && !registry.hasSource(serverName)) {
-      registry.addSource(source);
+    // `teardownConnectionSource` above already dropped any prior source under
+    // this name, so the name is free and the eviction half of `adoptSource` is
+    // not what this call is for. What it IS for is the return value: `false`
+    // means a concurrent start (a `tryRecoverSource` landing in the window since
+    // the teardown) registered a LIVE source first.
+    //
+    // That winner routes and serves normally — routing is `sources.get(name)`,
+    // and `adoptSource` declines only to a live incumbent. So the cost of
+    // ignoring the `false` is narrower than "the bundle is broken": this source
+    // would leak its transport and provider, and the connection record would
+    // bind an object nothing routes to. Stopping it is the fix.
+    //
+    // The throw is the blunt part and is tracked separately (#825): a user whose
+    // bundle was just healed by the concurrent recovery is told to retry, and
+    // the retry then hits "already connected". The right shape is the one
+    // `finalizeUrlSourceStart` uses — stop the loser, don't bind it, don't fail
+    // the caller — which needs `adoptSource` to own the behaviour rather than
+    // three call sites hand-rolling it.
+    if (registry && !(await registry.adoptSource(source))) {
+      await source.stop();
+      throw new Error(
+        `[lifecycle] startAuth: "${serverName}" in ${wsId} was registered by a concurrent start; ` +
+          "retry the connection",
+      );
     }
     this.recordConnectionStateChange(serverName, wsId, principalId, "starting", {
       source,
@@ -2061,8 +2083,14 @@ export class BundleLifecycleManager {
     if (!wsRegistry) {
       throw new Error(`[lifecycle] no registry for workspace "${wsId}"`);
     }
-    if (wsRegistry.hasSource(serverName)) return;
-
+    if (wsRegistry.hasEstablishedSource(serverName)) return;
+    // Deliberately NO pre-remove of a dead entry. `removeSource` calls `stop()`,
+    // which sets the durable `stopped` marker — so a recovery attempt made while
+    // the endpoint is still down would evict the retained source AND make it
+    // terminal to HealthMonitor, leaving the bundle worse off than before it was
+    // retained and with no path back. The success path evicts instead:
+    // `finalizeUrlSourceStart` calls `adoptSource`, which replaces a dead entry
+    // with the fresh one.
     const instance = this.instances.get(`${serverName}|${wsId}`);
     const ref = instance?.ref;
     if (!ref || !("url" in ref)) {
@@ -2073,6 +2101,11 @@ export class BundleLifecycleManager {
 
     await startBundleSource(ref, wsRegistry, this.eventSink, undefined, {
       allowInsecureRemotes: this.allowInsecureRemotes,
+      // A recovery that fails must not be destructive. With this set, the catch
+      // sees the retained entry still holding the name and leaves it alone, so a
+      // failed attempt is a no-op rather than a downgrade — the source stays
+      // registered and unstopped, and HealthMonitor keeps working on it.
+      keepRegisteredOnStartFailure: true,
       wsId,
       workDir,
       // Re-thread on reconnect so a Composio OAuth callback doesn't
@@ -2479,7 +2512,11 @@ export class BundleLifecycleManager {
   async tryRecoverSource(serverName: string, wsId: string, workDir: string): Promise<boolean> {
     const wsRegistry = this.registriesByWs.get(wsId);
     if (!wsRegistry) return false;
-    if (wsRegistry.hasSource(serverName)) return true;
+    // Liveness, not membership. A boot-failed source stays REGISTERED so it
+    // remains visible and HealthMonitor can heal it — so `hasSource` would say
+    // "already fine" for exactly the sources that need this path most, and the
+    // app-open recovery that used to re-spawn them would never fire.
+    if (wsRegistry.hasEstablishedSource(serverName)) return true;
 
     const key = `${serverName}|${wsId}`;
 
@@ -2516,7 +2553,7 @@ export class BundleLifecycleManager {
       return false;
     }
 
-    const recovered = wsRegistry.hasSource(serverName);
+    const recovered = wsRegistry.hasEstablishedSource(serverName);
     if (recovered) {
       this.recoveryAttempts.delete(key);
       log.info(`[lifecycle] tryRecoverSource: re-registered "${serverName}" in ${wsId}`);

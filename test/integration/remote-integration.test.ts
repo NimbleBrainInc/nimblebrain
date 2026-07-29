@@ -26,6 +26,7 @@ import { deriveServerName } from "../../src/bundles/paths.ts";
 import { NoopEventSink } from "../../src/adapters/noop-events.ts";
 import { startBundleSource } from "../../src/bundles/startup.ts";
 import { ToolRegistry } from "../../src/tools/registry.ts";
+import { McpSource } from "../../src/tools/mcp-source.ts";
 import type { BundleRef } from "../../src/bundles/types.ts";
 
 // ---------------------------------------------------------------------------
@@ -205,6 +206,39 @@ describe("Remote integration: config → validate → load → tools", () => {
 		const results = await Promise.allSettled([startBundleSource(ref, registry, new NoopEventSink(), undefined, { allowInsecureRemotes: true, wsId: "ws_test" })]);
 		expect(results[0]!.status).toBe("rejected");
 		expect(registry.hasSource("dead-remote")).toBe(false);
+	}, 20_000);
+
+	it("keepRegisteredOnStartFailure leaves an unreachable url bundle registered and retryable", async () => {
+		// The boot-loop contract. An installed bundle whose endpoint is unreachable
+		// during startup must stay in the registry: an absent source is invisible to
+		// the agent's tool list, `nb__status`, HealthMonitor, and the unhealthy
+		// gauge — and the only path that revives it needs a tool call the model
+		// cannot make against a tool it was never shown.
+		const registry = new ToolRegistry();
+		const ref: BundleRef = { url: "http://127.0.0.1:1/mcp", serverName: "boot-down-remote" };
+
+		const results = await Promise.allSettled([
+			startBundleSource(ref, registry, new NoopEventSink(), undefined, {
+				allowInsecureRemotes: true,
+				wsId: "ws_test",
+				keepRegisteredOnStartFailure: true,
+			}),
+		]);
+
+		// The caller still learns the start failed — this changes registry
+		// retention, not the reported outcome.
+		expect(results[0]!.status).toBe("rejected");
+		expect(registry.hasSource("boot-down-remote")).toBe(true);
+
+		const source = registry.getSource("boot-down-remote") as McpSource;
+		// Down, but NOT deliberately stopped. `isStopped()` is what HealthMonitor
+		// reads to mark a source terminal, and `removeSource` would have set it via
+		// stop() — so this assertion is the one that proves the source will actually
+		// be reconnected rather than merely being visible.
+		expect(source.isAlive()).toBe(false);
+		expect(source.isStopped()).toBe(false);
+
+		await registry.removeSource("boot-down-remote");
 	}, 20_000);
 });
 

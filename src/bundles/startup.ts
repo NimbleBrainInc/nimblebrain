@@ -182,6 +182,40 @@ function resolveWorkspaceContext(
 interface StartBundleOpts {
   allowInsecureRemotes?: boolean;
   /**
+   * Keep a URL source REGISTERED (unstarted, `down`) when `start()` fails,
+   * instead of leaving the registry without it. Off by default: a deliberate
+   * reconnect / install flow wants `hasSource()` to answer "no" after a failed
+   * start, because the caller is about to report that failure to a user who is
+   * watching.
+   *
+   * The boot loop is the opposite case and opts in. An installed bundle whose
+   * endpoint merely happened to be unreachable during startup is not gone, and
+   * an absent source is invisible to every surface that enumerates the registry
+   * — the agent's tool list, `nb__status`, `HealthMonitor`, and the
+   * `nb_bundle_unhealthy` gauge. That combination is a trap: the one path that
+   * revives it (`tryRecoverSource`) is reached from a tool-call source-miss, and
+   * the model cannot call a tool that was never listed. Registered-and-down is
+   * strictly better — the connector is visible, reports honestly, alerts, and
+   * HealthMonitor reconnects it on its own schedule.
+   *
+   * Safe because a failed `start()` runs `cleanupOnStartFailure`, which sets
+   * `stopping` but deliberately NOT `stopped` — a failed start is retryable, a
+   * teardown is not. Removing the source is what made it terminal, since
+   * `removeSource` calls `stop()`. This mirrors the pending-auth branch below,
+   * which already registers an unstarted source for the same reason.
+   *
+   * Applies to EVERY boot failure mode, not only an unreachable endpoint — a
+   * rejected credential is retained too. That is deliberate but worth stating,
+   * because it drops a brake: the old `removeSource` set `stopped`, which is what
+   * made `HealthMonitor` treat the source as terminal. Retained sources instead
+   * get its exponential-backoff bursts followed by the slow re-probe cooldown,
+   * which is what bounds the cost of a source that will not come back on its own.
+   * Classifying the failure here to keep only "retryable" ones was tried and
+   * removed: a 401 arrives as a `ServerError`, not `UnauthorizedError`, so the
+   * gate missed the common shape while implying a protection it did not provide.
+   */
+  keepRegisteredOnStartFailure?: boolean;
+  /**
    * AbortSignal threaded into the OAuth provider's outbound fetches (the
    * redirect-probe / discovery / DCR chain). A give-up path — a `startAuth`
    * timeout — aborts it so the background start fails fast instead of lingering
@@ -477,8 +511,16 @@ async function finalizeUrlSourceStart(
   ref: Extract<BundleRef, { url: string }>,
 ): Promise<StartBundleResult> {
   const tools = await source.tools();
-  if (!registry.hasSource(sourceName)) {
-    registry.addSource(source);
+  // Evict a dead squatter rather than skipping: a retained boot-failed source
+  // under this name would otherwise keep routing while this live one is dropped.
+  // A `false` return means a LIVE source already holds the name — a concurrent
+  // start won the race. This one connected and is now unreachable by name, so
+  // stop it rather than leaking its transport.
+  if (!(await registry.adoptSource(source))) {
+    log.warn(
+      `[bundles] ${sourceName} lost a registration race to a live source; stopping the duplicate`,
+    );
+    await source.stop();
   }
   // Notify lifecycle that this Connection finished its OAuth
   // dance and is now running. For URL bundles that went through
@@ -615,8 +657,11 @@ async function startUrlBundleSource(
   // logs and rethrows so the lifecycle can record the connection as
   // dead. We register the source with the registry from inside the
   // success branch; on failure (transport error, auth never completes)
-  // the source is never registered so callers asserting
-  // `registry.hasSource()` after a failed startup see the right shape.
+  // the source is dropped from the registry so callers asserting
+  // `registry.hasSource()` after a failed startup see the right shape —
+  // unless the caller opted into `keepRegisteredOnStartFailure` (the
+  // boot loop; see that option's doc for why the two want opposite
+  // answers).
   //
   // Pending-auth registration happens later (below): if the early-
   // return signal fires, we register the source so the registry
@@ -627,10 +672,29 @@ async function startUrlBundleSource(
     .then(() => finalizeUrlSourceStart(source, registry, sourceName, wsContext, ref))
     .catch((err) => {
       log.error(`[bundles] ${sourceName} start failed: ${err}`);
-      // Make sure the source isn't left in the registry if start
-      // ultimately failed (background pending-auth path could have
-      // added it). Best-effort — removeSource is idempotent.
-      void registry.removeSource(sourceName).catch(() => {});
+      if (opts?.keepRegisteredOnStartFailure) {
+        // Leave it visible and self-healing. Deliberately NOT `removeSource` —
+        // that calls `stop()`, which sets the durable `stopped` marker and makes
+        // the source terminal to HealthMonitor, so removing it is what would
+        // strand a bundle whose endpoint is merely down right now.
+        //
+        // `isStopped()` guards the race where a teardown (Connect / Disconnect /
+        // uninstall) lands while this start is still in flight. Re-adding a
+        // deliberately stopped instance would be worse than dropping it: the
+        // fresh source's own registration guard skips a taken name, so the
+        // stopped orphan would hold the name until the pod restarts. The old
+        // `removeSource` converged to absent; `addSource` can diverge, so the
+        // PR's own invariant has to be checked rather than assumed —
+        // stopped is terminal, stopping is retryable.
+        if (!source.isStopped() && !registry.hasSource(sourceName)) {
+          registry.addSource(source);
+        }
+      } else {
+        // Make sure the source isn't left in the registry if start
+        // ultimately failed (background pending-auth path could have
+        // added it). Best-effort — removeSource is idempotent.
+        void registry.removeSource(sourceName).catch(() => {});
+      }
       throw err;
     });
 
@@ -649,9 +713,7 @@ async function startUrlBundleSource(
     // Register the source so the registry reflects the bundle exists.
     // Tool calls against the unstarted source throw cleanly until
     // start() succeeds (which happens after the user completes auth).
-    if (!registry.hasSource(sourceName)) {
-      registry.addSource(source);
-    }
+    await registry.adoptSource(source);
     // Don't await startPromise — it'll resolve when the user finishes
     // auth (could be minutes). Background-protect against unhandled
     // rejection if start ultimately fails.
