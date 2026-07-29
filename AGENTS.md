@@ -87,10 +87,11 @@ Tests are organized into three tiers:
 | Integration | `test/integration/` | `bun run test:integration` | `Runtime.start()`, HTTP servers, real crypto, subprocesses |
 | Eval | `test/eval/` | `bun run eval` | LLM evals, require `ANTHROPIC_API_KEY` |
 
-Running a single file, pass the flag the scripts pass —
-`bun test --env-file=test/.env.test <file>`. A bare `bun test <file>` auto-loads
-your `.env`, which hands the test a live `COMPOSIO_API_KEY` (see
-`test/.env.test`).
+`--env-file` binds to one bun process, so every bun process in the test path
+passes it — including a single file you run by hand
+(`bun test --env-file=test/.env.test <file>`) and anything a test spawns. A bare
+invocation auto-loads your `.env` and hands the test a live `COMPOSIO_API_KEY`
+(see `test/.env.test`).
 
 Shared test helpers live in `test/helpers/` (imported by both unit and integration).
 
