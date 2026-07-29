@@ -1,6 +1,6 @@
+import * as XLSX from "@e965/xlsx";
 import mammoth from "mammoth";
 import { extractText as extractPdfText, getDocumentProxy } from "unpdf";
-import * as XLSX from "xlsx";
 import { log } from "../observability/log.ts";
 import { isTextMime } from "./mime.ts";
 
@@ -196,6 +196,25 @@ async function extractDocx(
   }
 }
 
+/**
+ * Extract the first sheet as CSV.
+ *
+ * `sheet_to_csv` renders each cell through the number format the workbook
+ * stores, so what comes out is what Excel shows: a percent keeps its `%`, a
+ * currency keeps its symbol, an elapsed `[h]:mm:ss` cell keeps hours past 24,
+ * and `#N/A` stays `#N/A`. Nothing here reconstructs a cell's meaning.
+ *
+ * SECURITY — this dependency has no advisory coverage, so watch it by hand.
+ * `@e965/xlsx` is SheetJS republished under a different name, and advisories are
+ * keyed to the name: GitHub lists five against `xlsx` and none against this one.
+ * A clean `bun audit` therefore says nothing about whether this code is
+ * vulnerable — a republish of a version carrying a known SheetJS CVE audits
+ * clean too. Nothing automated will flag the next one. Watch sheetjs.com /
+ * git.sheetjs.com for releases and bump deliberately; the version is pinned
+ * exact so an incidental `bun update` cannot move it. Renaming back to `xlsx`
+ * is not an escape: npm's `xlsx` stopped at 0.18.5 and is itself unpatched,
+ * and a `cdn.sheetjs.com` tarball dependency is invisible to `bun audit` too.
+ */
 function extractXlsx(
   data: Buffer,
   maxSize: number,
@@ -211,8 +230,7 @@ function extractXlsx(
     if (!firstSheetName) return null;
     const sheet = workbook.Sheets[firstSheetName];
     if (!sheet) return null;
-    const csv = XLSX.utils.sheet_to_csv(sheet);
-    return truncate(csv, maxSize, options);
+    return truncate(XLSX.utils.sheet_to_csv(sheet), maxSize, options);
   } catch (err) {
     log.error("[files/extract] XLSX extraction failed", {
       error: err instanceof Error ? err.message : String(err),
