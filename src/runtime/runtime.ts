@@ -2513,9 +2513,7 @@ export class Runtime {
    * A URL bundle's source name comes from the bundle (`ref.serverName ??
    * deriveServerName(ref.url)`) and carries no workspace, so the same fleet
    * bundle installed in N workspaces yields N SEPARATE `McpSource` instances —
-   * separate transports, separate sessions — sharing one name. Keying on the
-   * name kept the first and silently dropped the other N-1, so a source that
-   * crashed in any workspace but the first was never monitored and never healed.
+   * separate transports, separate sessions — sharing one name.
    *
    * The N returned instances are real work, not amplification: each owns its own
    * connection and has to be reconnected on its own. `nb_bundle_unhealthy` is
