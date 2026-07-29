@@ -196,19 +196,48 @@ async function extractDocx(
   }
 }
 
+/** Excel serial 0. A time-only cell has a serial below 1, so it lands here. */
+const EXCEL_EPOCH_DATE = "1899-12-30";
+
+/**
+ * Render a date-family cell.
+ *
+ * The parser returns a `Date` for every date-family number format — date-only,
+ * datetime, time-of-day and elapsed-time alike — so the format cannot be read
+ * back off the value and the shape has to be inferred from the instant itself:
+ *
+ * - a time-only cell carries a serial below 1, so its date part is the Excel
+ *   epoch and only the clock time is real
+ * - a whole-day serial lands exactly on midnight, so only the date is real
+ * - anything else is a genuine datetime and both halves are real
+ *
+ * Emitting the full ISO instant for all three would put a fabricated
+ * `1899-12-30` in front of every timesheet entry; slicing to the date alone
+ * would silently drop the time from every datetime.
+ *
+ * The serial→ms conversion floors, so a 14:30 cell arrives as 14:29:59.999 and
+ * has to be rounded to the second before anything is read off it.
+ */
+function renderDate(value: Date): string {
+  const iso = new Date(Math.round(value.getTime() / 1000) * 1000).toISOString();
+  const [date, time] = [iso.slice(0, 10), iso.slice(11, 19)];
+  if (date === EXCEL_EPOCH_DATE) return time;
+  return time === "00:00:00" ? date : `${date} ${time}`;
+}
+
 /**
  * Render one parsed cell as a CSV field.
  *
  * The parser hands back real JS values (`string | number | boolean | Date |
  * null`) rather than Excel's display text, so the rendering is ours to choose.
- * Dates become ISO-8601 calendar dates because the consumer is a model with no
- * locale to disambiguate Excel's `1/14/26` — the parser reads the sheet's
- * timezone-naive serial as UTC, so the UTC components are the sheet's own date
- * on any runner.
+ * Dates become ISO-8601 because the consumer is a model with no locale to
+ * disambiguate Excel's `1/14/26`, and the parser reads a sheet's
+ * timezone-naive serial as an absolute UTC instant, so the UTC components are
+ * the sheet's own wall-clock values on any runner.
  */
 function toCsvCell(value: CellValue | null): string {
   if (value === null || value === undefined) return "";
-  const text = value instanceof Date ? value.toISOString().slice(0, 10) : String(value);
+  const text = value instanceof Date ? renderDate(value) : String(value);
   return /[",\n\r]/.test(text) ? `"${text.replaceAll('"', '""')}"` : text;
 }
 
@@ -222,8 +251,9 @@ async function extractXlsx(
     if (data.length < 4 || data[0] !== 0x50 || data[1] !== 0x4b) {
       return null;
     }
-    // Only the first sheet is extracted, and `readSheet` parses only that one
-    // rather than materialising every sheet in the workbook to discard the rest.
+    // Only the first sheet is extracted. `readSheet` still unzips the archive
+    // and parses the workbook's shared strings and styles — it narrows only the
+    // sheet-data XML parse, not the whole read.
     const rows = await readSheet(data, 1);
     if (rows.length === 0) return null;
     const csv = rows.map((row) => row.map(toCsvCell).join(",")).join("\n");
