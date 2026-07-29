@@ -85,6 +85,47 @@ export interface ToolResult {
 export const NON_ADVANCING_META_KEY = "ai.nimblebrain/non-advancing";
 
 /**
+ * Reverse-DNS `_meta` key marking an error result as an INFRASTRUCTURE failure —
+ * the call never reached the tool's logic, or its answer never made it back.
+ * Transport loss, a gateway throttle, a session that rolled.
+ *
+ * The loop supervisor excludes these from its strike count. Its whole premise is
+ * that a repeated identical error means the tool is deterministically refusing
+ * the work, so calling it again is futile — true for a schema rejection or a
+ * permanent 4xx, and false for every failure in this class. An infrastructure
+ * error carries no information about whether the tool would do the work; it says
+ * the request didn't arrive. Retrying is the correct response, and the
+ * supervisor's response (disable the tool for the rest of the run) is the one
+ * thing that guarantees the work cannot finish.
+ *
+ * It matters most in exactly the case that trips the guard fastest: the ERROR
+ * fingerprint deliberately ignores input, so N calls with N distinct arguments
+ * that all fail the same infrastructural way collapse to one fingerprint and
+ * trip after three.
+ *
+ * Host-owned, because the supervisor trusts it unconditionally: a bundle able to
+ * set it could exempt itself from the guard permanently. That is the asymmetry
+ * with `NON_ADVANCING_META_KEY` above, which IS safe to accept from a bundle —
+ * setting that one makes the guard stricter; this one makes it weaker.
+ *
+ * `McpSource` owns it on two channels, and both need closing because a bundle
+ * controls both:
+ *
+ *   - the `_meta` key, stripped from anything arriving over the wire;
+ *   - the DECISION, which additionally refuses any `McpError` — three of the
+ *     allowlisted classes are matched by regex over the server's own error text,
+ *     so a JSON-RPC error the server authored never earns the marker however its
+ *     message is spelled.
+ *
+ * That second condition is a denylist of one type, not a proof of transport
+ * origin. Residual, deliberately accepted: a bare `Error` carrying server text
+ * still qualifies — `startToolAsTask` re-throws a task-creation failure that way
+ * (#838). An allowlist over throw types would drop `fetch failed` and reset
+ * sockets, which is a worse trade.
+ */
+export const INFRA_ERROR_META_KEY = "ai.nimblebrain/infra-error";
+
+/**
  * Annotation marking a tool as a UI-driven affordance, not an agent capability.
  * An internal tool is stripped from every LLM tool listing — chat
  * (`surfaceTools`) and `/mcp` (`tools/list`) alike — and refused for promotion,

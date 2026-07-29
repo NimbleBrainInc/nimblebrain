@@ -1,6 +1,11 @@
 import { createHash } from "node:crypto";
 import { extractTextForModel, textContent } from "./content-helpers.ts";
-import { NON_ADVANCING_META_KEY, type ToolCall, type ToolResult } from "./types.ts";
+import {
+  INFRA_ERROR_META_KEY,
+  NON_ADVANCING_META_KEY,
+  type ToolCall,
+  type ToolResult,
+} from "./types.ts";
 
 /**
  * Per-run loop supervisor.
@@ -216,6 +221,9 @@ export function createRunSupervisor(config: SupervisorConfig = {}): RunSuperviso
       // the synthetic directive. In practice the engine drops tripped tools
       // from modelTools so the model can't call again — this branch is a
       // belt-and-suspenders fallback if a caller invokes the tool anyway.
+      // Checked BEFORE the infrastructure skip below: a tool that already
+      // tripped stays disabled for the run, and must not be quietly re-enabled
+      // by a later call that happens to fail on the transport.
       const originalText = extractTextForModel(result.content).trim();
       return {
         type: "synth",
@@ -223,6 +231,23 @@ export function createRunSupervisor(config: SupervisorConfig = {}): RunSuperviso
         trippedTool: call.name,
         consecutiveRepeats: state.consecutiveRepeats,
       };
+    }
+
+    // An infrastructure failure is not evidence about the tool. The guard's
+    // premise is that a repeated identical error means the tool is
+    // deterministically refusing the work — true for a schema rejection, false
+    // for a throttle or a dropped transport, where the call never reached the
+    // tool's logic at all. Counting these disables the tool precisely when
+    // retrying is the correct response, and it trips fast: the ERROR fingerprint
+    // ignores input, so a batch of calls with distinct arguments that all fail
+    // the same infrastructural way collapses to one fingerprint.
+    //
+    // Deliberately does NOT reset `consecutiveRepeats`. A genuine loop
+    // interrupted by a transient blip is still a loop, and letting an
+    // infrastructure error clear the counter would hand a flailing tool an easy
+    // way to never trip. The observation is skipped, not treated as progress.
+    if (result._meta?.[INFRA_ERROR_META_KEY] === true) {
+      return { type: "pass" };
     }
 
     const fp = fingerprint(call, result);

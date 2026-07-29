@@ -1,6 +1,7 @@
 import { describe, expect, it } from "bun:test";
 import { createRunSupervisor } from "../../../src/engine/supervisor.ts";
 import {
+  INFRA_ERROR_META_KEY,
   NON_ADVANCING_META_KEY,
   type ToolCall,
   type ToolResult,
@@ -351,5 +352,76 @@ describe("supervisor — non-advancing results", () => {
       sup.observe(call("patch_source", { edits: [{ find: "e", replace: "f" }] }), ok()).type,
     ).toBe("pass");
     expect(sup.snapshot().trippedTools).toEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Infrastructure errors are not evidence about the tool
+// ---------------------------------------------------------------------------
+
+const infraError = (text: string): ToolResult => ({
+  content: [{ type: "text", text }],
+  isError: true,
+  _meta: { [INFRA_ERROR_META_KEY]: true },
+});
+
+describe("supervisor — infrastructure errors are excluded from the strike count", () => {
+  it("never trips on repeated infrastructure failures, however many", () => {
+    // The production shape: a batch of writes with DISTINCT arguments, all
+    // refused by a gateway throttle. The ERROR fingerprint ignores input, so
+    // these collapse to one fingerprint and used to trip on the 3rd — disabling
+    // the tool for the rest of the run at exactly the moment the correct
+    // response was to retry more slowly.
+    const sup = createRunSupervisor();
+    for (let i = 0; i < 25; i++) {
+      const verdict = sup.observe(
+        call("people__log_interaction", { contact_id: `ct_${i}` }),
+        infraError('people call failed: {"error":"rate_limited"}'),
+      );
+      expect(verdict.type).toBe("pass");
+    }
+    expect(sup.snapshot().trippedTools).toEqual([]);
+  });
+
+  it("still counts the calls it skips", () => {
+    // Excluded from the STRIKE count, not from telemetry — an operator looking
+    // at a run needs to see the traffic that actually happened.
+    const sup = createRunSupervisor();
+    for (let i = 0; i < 4; i++) {
+      sup.observe(call("svc__write"), infraError("connection closed"));
+    }
+    expect(sup.snapshot().callCounts["svc__write"]).toBe(4);
+  });
+
+  it("does not let an infrastructure error launder a genuine loop", () => {
+    // A real deterministic rejection interrupted by a transport blip is still a
+    // loop. The skip must not reset `consecutiveRepeats`, or a flailing tool
+    // gets a free way to never trip.
+    const sup = createRunSupervisor();
+    expect(sup.observe(call("svc__op"), textResult("Invalid params", true)).type).toBe("pass");
+    expect(sup.observe(call("svc__op"), textResult("Invalid params", true)).type).toBe("pass");
+    // A blip in the middle — skipped, and NOT progress.
+    expect(sup.observe(call("svc__op"), infraError("connection closed")).type).toBe("pass");
+    // The third real rejection still trips.
+    expect(sup.observe(call("svc__op"), textResult("Invalid params", true)).type).toBe("synth");
+  });
+
+  it("keeps a tool disabled once tripped, even if a later call fails on the transport", () => {
+    // The already-tripped branch is checked BEFORE the infrastructure skip. A
+    // tool that earned its disable must not be quietly re-enabled by a
+    // subsequent infrastructural failure.
+    const sup = createRunSupervisor();
+    for (let i = 0; i < 3; i++) sup.observe(call("svc__op"), textResult("Method not found", true));
+    expect(sup.snapshot().trippedTools).toEqual(["svc__op"]);
+    expect(sup.observe(call("svc__op"), infraError("connection closed")).type).toBe("synth");
+  });
+
+  it("a plain error result with no marker still trips normally", () => {
+    // The guard's actual job is untouched: a deterministic rejection the server
+    // answered with is exactly what it should catch.
+    const sup = createRunSupervisor();
+    expect(sup.observe(call("svc__op"), textResult("Invalid params", true)).type).toBe("pass");
+    expect(sup.observe(call("svc__op"), textResult("Invalid params", true)).type).toBe("pass");
+    expect(sup.observe(call("svc__op"), textResult("Invalid params", true)).type).toBe("synth");
   });
 });

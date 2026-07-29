@@ -3,6 +3,7 @@ import { McpError } from "@modelcontextprotocol/sdk/types.js";
 import { describe, expect, it, mock, spyOn } from "bun:test";
 import { NoopEventSink } from "../../src/adapters/noop-events.ts";
 import type { EngineEvent, EventSink } from "../../src/engine/types.ts";
+import { INFRA_ERROR_META_KEY } from "../../src/engine/types.ts";
 import { McpSource, type McpTransportMode, policyFor } from "../../src/tools/mcp-source.ts";
 import type { WorkspaceOAuthProvider } from "../../src/tools/workspace-oauth-provider.ts";
 
@@ -214,6 +215,207 @@ describe("execute (tools/call) — unified recovery", () => {
       expect(text).not.toContain("Retry in a few seconds");
       expect(text).not.toContain("parallel");
       expect(text).toContain("cannot be auto-retried");
+    } finally {
+      restart.mockRestore();
+    }
+  });
+
+  // Transport-shaped fixtures, deliberately. A plain `new Error("Session not
+  // found")` or an `McpError` would be server-authored text, which must NOT earn
+  // the marker — see the negative table below. Each of these is a throw the
+  // transport itself builds: an HTTP status, or a socket failure.
+  const INFRA_CLASSES: ReadonlyArray<[string, () => unknown]> = [
+    [
+      "session-lost",
+      () =>
+        Object.assign(
+          new Error("Streamable HTTP error: Error POSTing to endpoint: Session not found"),
+          { code: 404 },
+        ),
+    ],
+    ["transient", () => Object.assign(new Error("Bad Gateway"), { code: 502 })],
+    ["transport-dead", () => new Error("fetch failed")],
+    [
+      "rate-limited",
+      () =>
+        Object.assign(
+          new Error('Streamable HTTP error: Error POSTing to endpoint: {"error":"rate_limited"}'),
+          { code: 429 },
+        ),
+    ],
+  ];
+
+  for (const [label, make] of INFRA_CLASSES) {
+    it(`marks a surfaced ${label} as infrastructure`, async () => {
+      const source = remoteSource({ callTool: () => Promise.reject(make()) });
+      const restart = spyRestart(source, false);
+      try {
+        const result = await source.execute("write", {});
+        expect(result.isError).toBe(true);
+        expect(result._meta?.[INFRA_ERROR_META_KEY]).toBe(true);
+      } finally {
+        restart.mockRestore();
+      }
+    });
+  }
+
+  // The other half of the trust boundary. `_meta` is stripped at the wire, but
+  // the marker DECISION reads the classifier, and three of its classes match on
+  // the server's own error text. An `McpError` is the server answering, so it can
+  // never earn the marker however its message is spelled — otherwise a bundle
+  // raising `Exception("Rate limit exceeded")` (FastMCP's default for an
+  // unhandled exception) would exempt itself from the loop guard for the whole
+  // run, and a bundle relaying a persistent upstream 429 would be exempted
+  // exactly when the guard should trip.
+  const BUNDLE_AUTHORED: ReadonlyArray<[string, number, string]> = [
+    ["rate-limit wording", -32603, "Rate limit exceeded for this account"],
+    ["throttled wording", -32603, "Upstream API throttled the request"],
+    ["invalid-params claiming a throttle", -32602, "parameter 'window' throttled to 100/day"],
+    ["transient wording", -32603, "Service Unavailable from upstream vendor"],
+    ["session wording", -32603, "session not found in my application db"],
+  ];
+
+  for (const [label, code, message] of BUNDLE_AUTHORED) {
+    it(`does NOT mark a bundle-authored error: ${label}`, async () => {
+      const source = remoteSource({ callTool: () => Promise.reject(new McpError(code, message)) });
+      const restart = spyRestart(source, false);
+      try {
+        const result = await source.execute("write", {});
+        expect(result.isError).toBe(true);
+        expect(result._meta?.[INFRA_ERROR_META_KEY]).toBeUndefined();
+      } finally {
+        restart.mockRestore();
+      }
+    });
+  }
+
+  it("strips the infrastructure marker a bundle set on its own result", async () => {
+    // The supervisor trusts this marker unconditionally, and a trip is the only
+    // thing that drops a tool from the model's toolset mid-run. A bundle able to
+    // set it on a deterministic rejection would exempt itself from the guard for
+    // the whole run — so it is host-owned and stripped at the wire boundary.
+    const source = remoteSource({
+      callTool: async () => ({
+        content: [{ type: "text", text: "Invalid params: missing 'id'" }],
+        isError: true,
+        _meta: { [INFRA_ERROR_META_KEY]: true, "bundle.own/hint": "keep me" },
+      }),
+    });
+
+    const result = await source.execute("write", {});
+    expect(result.isError).toBe(true);
+    expect(result._meta?.[INFRA_ERROR_META_KEY]).toBeUndefined();
+    // Targeted strip, not a decision to stop forwarding `_meta`.
+    expect(result._meta?.["bundle.own/hint"]).toBe("keep me");
+  });
+
+  it("strips the infrastructure marker on the TASK path too", async () => {
+    // The strip has two projections and the inline one is covered above. Without
+    // this, deleting the task-path call leaves the suite green — verified.
+    const source = remoteSource({});
+    const internal = source as unknown as {
+      cachedTools: unknown[];
+      client: Record<string, unknown>;
+    };
+    internal.cachedTools = [
+      {
+        name: "svc__long_job",
+        inputSchema: { type: "object" },
+        execution: { taskSupport: "required" },
+      },
+    ];
+    internal.client.experimental = {
+      tasks: {
+        callToolStream: async function* () {
+          yield { type: "taskCreated", task: { taskId: "t1", status: "working" } };
+          yield {
+            type: "result",
+            result: {
+              content: [{ type: "text", text: "Invalid params" }],
+              isError: true,
+              _meta: { [INFRA_ERROR_META_KEY]: true, "bundle.own/hint": "keep me" },
+            },
+          };
+        },
+      },
+    };
+
+    const result = await source.execute("long_job", {});
+    expect(result._meta?.[INFRA_ERROR_META_KEY]).toBeUndefined();
+    expect(result._meta?.["bundle.own/hint"]).toBe("keep me");
+  });
+
+  it("does NOT mark a reauth surface", async () => {
+    // One rule across `not started`, the absent `auth-lost` allowlist entry, and
+    // this: a failure with no IN-RUN remedy still counts. `onAuthLost` only
+    // records `reauth_required` — it does not stop the source — so every later
+    // call returns this same result, and exempting it would hold the tool in the
+    // toolset for the rest of the run with nothing able to fix it.
+    const source = remoteSource({
+      callTool: () => Promise.reject(new UnauthorizedError("token rejected")),
+      notifyAuthLost: () => {},
+    });
+    const restart = spyRestart(source, true);
+    try {
+      const result = await source.execute("write", {});
+      expect(result.isError).toBe(true);
+      expect(result.structuredContent).toMatchObject({ reason: "reauth_required" });
+      expect(result._meta?.[INFRA_ERROR_META_KEY]).toBeUndefined();
+    } finally {
+      restart.mockRestore();
+    }
+  });
+
+  it("does NOT mark an UNCLASSIFIABLE throw", async () => {
+    // `unknown` is the classifier's "could not positively classify this" residue.
+    // A server answering a deterministic tool rejection with its own
+    // implementation-defined code (JSON-RPC reserves -32000..-32099) lands here,
+    // so marking it would exempt a real loop from the guard. The marker is an
+    // allowlist of classes that mean "never reached the tool", and this isn't one.
+    const source = remoteSource({
+      // A NON-McpError unclassifiable throw, so this differentiates the class
+      // allowlist rather than the type denylist — an `McpError` fixture would be
+      // blocked by the type condition whether or not `unknown` is in the set.
+      callTool: () => Promise.reject(new Error("Unexpected token < in JSON")),
+    });
+    const restart = spyRestart(source, true);
+    try {
+      const result = await source.execute("write", {});
+      expect(result.isError).toBe(true);
+      expect(result._meta?.[INFRA_ERROR_META_KEY]).toBeUndefined();
+    } finally {
+      restart.mockRestore();
+    }
+  });
+
+  it("does NOT mark a source that failed to reconnect on demand", async () => {
+    // Reached only after `reconnectOnDemand()` has already failed, and a failed
+    // reconnect is floored behind a cooldown — so every later call returns here
+    // instantly. Exempting it would remove the run's only brake on a source that
+    // is not coming back.
+    const source = remoteSource({});
+    const internal = source as unknown as { client: unknown; lastReconnectFailedAt: number };
+    internal.client = null;
+    internal.lastReconnectFailedAt = Date.now();
+
+    const result = await source.execute("write", {});
+    expect(result.isError).toBe(true);
+    expect(JSON.stringify(result.content)).toContain("not started");
+    expect(result._meta?.[INFRA_ERROR_META_KEY]).toBeUndefined();
+  });
+
+  it("does NOT mark a protocol error the server answered with", async () => {
+    // `none` — a -32601/-32602 is deterministic and repeatable, which is exactly
+    // what the loop guard exists to catch. Marking it infrastructure would blunt
+    // the guard rather than correct it.
+    const source = remoteSource({
+      callTool: () => Promise.reject(new McpError(-32601, "Method not found")),
+    });
+    const restart = spyRestart(source, true);
+    try {
+      const result = await source.execute("write", {});
+      expect(result.isError).toBe(true);
+      expect(result._meta?.[INFRA_ERROR_META_KEY]).toBeUndefined();
     } finally {
       restart.mockRestore();
     }

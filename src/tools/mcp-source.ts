@@ -7,13 +7,19 @@ import type { CallToolResult, CreateTaskResult, Task } from "@modelcontextprotoc
 import {
   CallToolResultSchema,
   ListResourcesRequestSchema,
+  McpError,
   ReadResourceRequestSchema,
   ToolListChangedNotificationSchema,
 } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
 import type { PlacementDeclaration, RemoteTransportConfig } from "../bundles/types.ts";
 import { textContent } from "../engine/content-helpers.ts";
-import type { ContentBlock, EventSink, ToolResult } from "../engine/types.ts";
+import {
+  type ContentBlock,
+  type EventSink,
+  INFRA_ERROR_META_KEY,
+  type ToolResult,
+} from "../engine/types.ts";
 import {
   HOST_RESOURCES_LIST_METHOD,
   HOST_RESOURCES_READ_METHOD,
@@ -1437,7 +1443,19 @@ export class McpSource implements ToolSource {
     // (null) client errors, and only after an on-demand reconnect fails — healing
     // the window between an idle-close and the next HealthMonitor tick.
     if (!this.client && !(await this.reconnectOnDemand())) {
-      return { content: textContent(`McpSource "${this.name}" not started`), isError: true };
+      // Deliberately NOT marked infrastructure. This branch is reached only
+      // after `reconnectOnDemand()` has already failed, and a failed reconnect
+      // is floored behind RECONNECT_COOLDOWN_MS — so every later call returns
+      // here instantly and for free. Exempting it from the strike count would
+      // remove the run's only brake on a source that is not coming back, and
+      // let the model re-issue the same dead call every iteration. Tripping at
+      // three is the correct outcome here; the sibling spelling of the same
+      // condition (a source absent from the registry, via
+      // `mapOrchestratorErrorToToolResult`) is unmarked for the same reason.
+      return {
+        content: textContent(`McpSource "${this.name}" not started`),
+        isError: true,
+      };
     }
 
     // Dispatch on whether the target tool supports task augmentation. Tools
@@ -1542,44 +1560,72 @@ export class McpSource implements ToolSource {
         // TOOL_CALL_RECOVERY_DELAYS — so a mutating call isn't replayed N times.
         recoverUnknown: true,
         delays: TOOL_CALL_RECOVERY_DELAYS,
-        surface: (e) =>
-          // Name the throttle rather than only reporting that something broke —
-          // the model's default repair for a failed batch is to replay it, which
-          // is precisely wrong here.
+        surface: (e) => {
+          // Two things happen here.
           //
-          // The retry ADVICE is gated on idempotency, not just on the class. A
+          // The throttle arm names the throttle rather than only reporting that
+          // something broke, and gates the retry ADVICE on idempotency — a
           // task-augmented call has already spawned server-side state by the time
-          // a mid-stream reopen can be throttled (see the `idempotent:` note
-          // above), so telling the agent to retry would invite the duplicate side
-          // effects `policyFor`'s no-retry rule exists to prevent. It gets the
-          // diagnosis without the instruction.
-          classifyConnectionFailure(e) === "rate-limited"
-            ? {
-                content: textContent(
-                  isTaskAugmented
-                    ? `Task failed because ${this.name} is rate limited, and cannot be auto-retried — ` +
-                        `it may have already started server-side. Do not re-issue it; check its status first. ` +
-                        `Underlying error: ${errMessage(e)}`
-                    : `${this.name} is rate limited — too many calls at once, and this call was refused before it ran. ` +
-                        `The connector is healthy. Retry in a few seconds with FEWER calls in parallel (a handful at a time, ` +
-                        `not a whole batch). Underlying error: ${errMessage(e)}`,
-                ),
-                isError: true,
-                // `reason` only: `engine.ts` lifts it to `ToolCallRecord.errorReason`.
-                // A sibling `error` field with the same value has no reader.
-                structuredContent: {
-                  reason: "rate_limited",
-                  source: this.eventSourceName,
-                },
-              }
-            : {
-                content: textContent(
-                  isTaskAugmented
-                    ? `Task failed and cannot be auto-retried: ${errMessage(e)}`
-                    : `${this.name} call failed: ${errMessage(e)}`,
-                ),
-                isError: true,
+          // a mid-stream reopen can be throttled, so telling the agent to retry
+          // would invite the duplicate side effects `policyFor`'s no-retry rule
+          // exists to prevent.
+          //
+          // The infrastructure marker tells the loop supervisor not to count this
+          // toward its strike budget — see `INFRA_ERROR_META_KEY` for why that
+          // matters and why the marker is host-owned.
+          //
+          // It requires an allowlisted class AND that the throw is not an
+          // `McpError`. That second condition is stated as what it is — a
+          // denylist of one type, not a proof of transport origin.
+          //
+          // It is load-bearing because three of the allowlisted classes are
+          // decided by regex over the server's own error text: a bundle answering
+          // `McpError(-32603, "Rate limit exceeded")` — FastMCP's default for an
+          // unhandled exception — would otherwise exempt itself from the guard
+          // permanently, and a bundle relaying a persistent upstream 429 would be
+          // exempted exactly when the guard should trip. An `McpError` IS the
+          // server answering, so it never earns the marker.
+          //
+          // Residual, deliberately accepted: a bare `Error` is not proof of
+          // transport origin. `startToolAsTask` re-throws a task-creation failure
+          // as `new Error(serverMessage)`, which this admits (#838). An allowlist
+          // over throw TYPES would be worse, not better — `fetch failed` arrives
+          // as a plain TypeError and a reset socket as a generic Error, so it
+          // would drop exactly the cases this exists to mark.
+          const kind = classifyConnectionFailure(e);
+          const infra =
+            INFRA_FAILURE_CLASSES.has(kind) && !(e instanceof McpError) ? infraErrorMeta() : {};
+          if (kind === "rate-limited") {
+            return {
+              content: textContent(
+                isTaskAugmented
+                  ? `Task failed because ${this.name} is rate limited, and cannot be auto-retried — ` +
+                      `it may have already started server-side. Do not re-issue it; check its status first. ` +
+                      `Underlying error: ${errMessage(e)}`
+                  : `${this.name} is rate limited — too many calls at once, and this call was refused before it ran. ` +
+                      `The connector is healthy. Retry in a few seconds with FEWER calls in parallel (a handful at a time, ` +
+                      `not a whole batch). Underlying error: ${errMessage(e)}`,
+              ),
+              isError: true,
+              // `reason` only: `engine.ts` lifts it to `ToolCallRecord.errorReason`.
+              // A sibling `error` field with the same value has no reader.
+              structuredContent: {
+                reason: "rate_limited",
+                source: this.eventSourceName,
               },
+              ...infra,
+            };
+          }
+          return {
+            content: textContent(
+              isTaskAugmented
+                ? `Task failed and cannot be auto-retried: ${errMessage(e)}`
+                : `${this.name} call failed: ${errMessage(e)}`,
+            ),
+            isError: true,
+            ...infra,
+          };
+        },
         reauth: () => ({
           content: textContent(
             `${this.name} needs to be reconnected — its authorization has expired. Open the connector and click Reconnect.`,
@@ -1590,6 +1636,13 @@ export class McpSource implements ToolSource {
             reason: "reauth_required",
             source: this.eventSourceName,
           },
+          // Deliberately NOT marked infrastructure, matching `not started` and the
+          // absence of `auth-lost` from INFRA_FAILURE_CLASSES. One rule across all
+          // three: a failure with no IN-RUN remedy still counts. `onAuthLost` only
+          // records `reauth_required` — it does not stop the source or drop the
+          // client — so every later call returns this same result, and exempting
+          // it would leave the tool in the model's toolset for the rest of the run
+          // with nothing able to fix it until a human clicks Reconnect.
         }),
       },
     );
@@ -1882,7 +1935,7 @@ export class McpSource implements ToolSource {
       // Surface result-level `_meta` (loose object on the wire) so out-of-band
       // hints from the bundle — e.g. the supervisor's non-advancing marker —
       // reach the engine instead of being dropped at this projection.
-      _meta: (result as { _meta?: Record<string, unknown> })._meta,
+      _meta: hostOwnedMetaStripped((result as { _meta?: Record<string, unknown> })._meta),
     };
     const promoted = promoteHiddenErrors(toolResult);
     if (promoted !== toolResult) {
@@ -1935,7 +1988,7 @@ export class McpSource implements ToolSource {
       isError: Boolean(callToolResult.isError),
       // Surface result-level `_meta` (loose object on the wire) so out-of-band
       // hints from the bundle reach the engine — same as the inline path.
-      _meta: (callToolResult as { _meta?: Record<string, unknown> })._meta,
+      _meta: hostOwnedMetaStripped((callToolResult as { _meta?: Record<string, unknown> })._meta),
     };
     const promoted = promoteHiddenErrors(toolResult);
     if (promoted !== toolResult) {
@@ -2807,6 +2860,58 @@ const TOOL_CALL_RECOVERY_DELAYS = [0] as const;
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/**
+ * Classes that mean the call never reached the tool's logic, so repeating it says
+ * nothing about whether the tool works. Necessary but NOT sufficient for the
+ * infrastructure marker — the throw must also be transport-level; see the call
+ * site and {@link INFRA_ERROR_META_KEY}.
+ *
+ * An allowlist, so `unknown` and `none` count and a new `ConnectionFailure`
+ * member is not silently exempt. `timeout` and `auth-lost` are absent: both
+ * arrive as `McpError`, and both describe a failure with no in-run remedy, which
+ * still counts.
+ */
+const INFRA_FAILURE_CLASSES: ReadonlySet<ConnectionFailure> = new Set([
+  "session-lost",
+  "transient",
+  "transport-dead",
+  "rate-limited",
+]);
+
+/**
+ * `_meta` marking a result as an infrastructure failure — the call never reached
+ * the tool's logic, or its answer never came back. The loop supervisor excludes
+ * these from its strike count; see `INFRA_ERROR_META_KEY` for why.
+ *
+ * A fresh object per call: `_meta` is spread into caller-owned results, and a
+ * shared literal would let one consumer's mutation leak into every other result.
+ */
+function infraErrorMeta(): { _meta: Record<string, unknown> } {
+  return { _meta: { [INFRA_ERROR_META_KEY]: true } };
+}
+
+/**
+ * Drop host-owned keys from `_meta` that arrived over the wire.
+ *
+ * `_meta` is otherwise forwarded verbatim so a bundle's own out-of-band hints
+ * reach the engine. The infrastructure marker cannot be among them: the
+ * supervisor trusts it unconditionally, so a bundle setting it on its own error
+ * results would exempt itself from the loop guard permanently — and that guard
+ * is the only thing that removes a tool from the model's toolset mid-run.
+ *
+ * Note the asymmetry with `NON_ADVANCING_META_KEY`, which is safe to accept from
+ * the wire: a bundle setting that one makes the guard STRICTER. This one makes
+ * it weaker, so it is host-owned and stripped here rather than documented as a
+ * convention callers are trusted to honour.
+ */
+function hostOwnedMetaStripped(
+  meta: Record<string, unknown> | undefined,
+): Record<string, unknown> | undefined {
+  if (!meta || !(INFRA_ERROR_META_KEY in meta)) return meta;
+  const { [INFRA_ERROR_META_KEY]: _dropped, ...rest } = meta;
+  return rest;
 }
 
 /** Extract a human-readable message from an unknown throw. */
