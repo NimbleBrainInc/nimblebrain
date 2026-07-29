@@ -259,6 +259,51 @@ describe("execute (tools/call) — unified recovery", () => {
     }
   });
 
+  // Every allowlist member, so a redundant or wrong entry cannot hide behind the
+  // two that happened to be covered. Recovery is forced to fail so each throw
+  // reaches the surface arm where the marker decision is made.
+  const INFRA_CLASSES: ReadonlyArray<[string, () => unknown]> = [
+    ["session-lost", () => new Error("Session not found")],
+    ["transient", () => ({ code: 502, message: "Bad Gateway" })],
+    ["transport-dead", () => new McpError(-32000, "Connection closed")],
+    ["rate-limited", () => new Error('{"error":"rate_limited"}')],
+    ["timeout", () => new McpError(-32001, "Request timed out")],
+  ];
+
+  for (const [label, make] of INFRA_CLASSES) {
+    it(`marks a surfaced ${label} as infrastructure`, async () => {
+      const source = remoteSource({ callTool: () => Promise.reject(make()) });
+      const restart = spyRestart(source, false);
+      try {
+        const result = await source.execute("write", {});
+        expect(result.isError).toBe(true);
+        expect(result._meta?.[INFRA_ERROR_META_KEY]).toBe(true);
+      } finally {
+        restart.mockRestore();
+      }
+    });
+  }
+
+  it("strips the infrastructure marker a bundle set on its own result", async () => {
+    // The supervisor trusts this marker unconditionally, and a trip is the only
+    // thing that drops a tool from the model's toolset mid-run. A bundle able to
+    // set it on a deterministic rejection would exempt itself from the guard for
+    // the whole run — so it is host-owned and stripped at the wire boundary.
+    const source = remoteSource({
+      callTool: async () => ({
+        content: [{ type: "text", text: "Invalid params: missing 'id'" }],
+        isError: true,
+        _meta: { [INFRA_ERROR_META_KEY]: true, "bundle.own/hint": "keep me" },
+      }),
+    });
+
+    const result = await source.execute("write", {});
+    expect(result.isError).toBe(true);
+    expect(result._meta?.[INFRA_ERROR_META_KEY]).toBeUndefined();
+    // Targeted strip, not a decision to stop forwarding `_meta`.
+    expect(result._meta?.["bundle.own/hint"]).toBe("keep me");
+  });
+
   it("marks a reauth surface as an infrastructure error", async () => {
     // A lapsed credential says nothing about whether the tool would do the work,
     // and the remedy is a human clicking Reconnect — not the agent giving up on

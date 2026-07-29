@@ -104,8 +104,15 @@ export const NON_ADVANCING_META_KEY = "ai.nimblebrain/non-advancing";
  * trip after three.
  *
  * Set by the layer that can actually tell — `McpSource`, from its connection
- * classifier. A tool's own error results never carry it: a tool cannot know that
- * its transport is the problem.
+ * classifier. A tool cannot know that its transport is the problem, so its own
+ * results never carry it — and that is ENFORCED, not merely expected:
+ * `McpSource` strips this key from any `_meta` arriving over the wire. The
+ * supervisor trusts the marker unconditionally, so a bundle able to set it could
+ * exempt itself from the loop guard permanently.
+ *
+ * That is the asymmetry with `NON_ADVANCING_META_KEY` above, which IS safe to
+ * accept from a bundle: setting it makes the guard stricter. This one makes it
+ * weaker, so it is host-owned.
  */
 export const INFRA_ERROR_META_KEY = "ai.nimblebrain/infra-error";
 

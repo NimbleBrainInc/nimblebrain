@@ -1920,7 +1920,7 @@ export class McpSource implements ToolSource {
       // Surface result-level `_meta` (loose object on the wire) so out-of-band
       // hints from the bundle — e.g. the supervisor's non-advancing marker —
       // reach the engine instead of being dropped at this projection.
-      _meta: (result as { _meta?: Record<string, unknown> })._meta,
+      _meta: hostOwnedMetaStripped((result as { _meta?: Record<string, unknown> })._meta),
     };
     const promoted = promoteHiddenErrors(toolResult);
     if (promoted !== toolResult) {
@@ -1973,7 +1973,7 @@ export class McpSource implements ToolSource {
       isError: Boolean(callToolResult.isError),
       // Surface result-level `_meta` (loose object on the wire) so out-of-band
       // hints from the bundle reach the engine — same as the inline path.
-      _meta: (callToolResult as { _meta?: Record<string, unknown> })._meta,
+      _meta: hostOwnedMetaStripped((callToolResult as { _meta?: Record<string, unknown> })._meta),
     };
     const promoted = promoteHiddenErrors(toolResult);
     if (promoted !== toolResult) {
@@ -2848,14 +2848,6 @@ function sleep(ms: number): Promise<void> {
 }
 
 /**
- * `_meta` marking a result as an infrastructure failure — the call never reached
- * the tool's logic, or its answer never came back. The loop supervisor excludes
- * these from its strike count; see `INFRA_ERROR_META_KEY` for why.
- *
- * A fresh object per call: `_meta` is spread into caller-owned results, and a
- * shared literal would let one consumer's mutation leak into every other result.
- */
-/**
  * The connection classes that mean the call never reached the tool's logic, so a
  * repeat of it says nothing about whether the tool works. Only these carry the
  * infrastructure marker.
@@ -2864,18 +2856,53 @@ function sleep(ms: number): Promise<void> {
  * classifier could not tell) both stay countable — the guard's default must be
  * to count, so an unclassifiable throw and any future class added to
  * `ConnectionFailure` trip at three rather than being silently exempt.
+ *
+ * `auth-lost` is deliberately absent. `policyFor` routes it to the reauth arm
+ * whenever a reauthable provider exists, and the SDK raises `UnauthorizedError`
+ * only on branches gated by that same provider — so it cannot arrive here. Were
+ * it ever to, counting it is the right default: a rejected credential has no
+ * in-run remedy, which is the same reason `isConnectionDownClass` excludes it.
  */
 const INFRA_FAILURE_CLASSES: ReadonlySet<ConnectionFailure> = new Set([
   "session-lost",
   "transient",
   "transport-dead",
-  "auth-lost",
   "rate-limited",
   "timeout",
 ]);
 
+/**
+ * `_meta` marking a result as an infrastructure failure — the call never reached
+ * the tool's logic, or its answer never came back. The loop supervisor excludes
+ * these from its strike count; see `INFRA_ERROR_META_KEY` for why.
+ *
+ * A fresh object per call: `_meta` is spread into caller-owned results, and a
+ * shared literal would let one consumer's mutation leak into every other result.
+ */
 function infraErrorMeta(): { _meta: Record<string, unknown> } {
   return { _meta: { [INFRA_ERROR_META_KEY]: true } };
+}
+
+/**
+ * Drop host-owned keys from `_meta` that arrived over the wire.
+ *
+ * `_meta` is otherwise forwarded verbatim so a bundle's own out-of-band hints
+ * reach the engine. The infrastructure marker cannot be among them: the
+ * supervisor trusts it unconditionally, so a bundle setting it on its own error
+ * results would exempt itself from the loop guard permanently — and that guard
+ * is the only thing that removes a tool from the model's toolset mid-run.
+ *
+ * Note the asymmetry with `NON_ADVANCING_META_KEY`, which is safe to accept from
+ * the wire: a bundle setting that one makes the guard STRICTER. This one makes
+ * it weaker, so it is host-owned and stripped here rather than documented as a
+ * convention callers are trusted to honour.
+ */
+function hostOwnedMetaStripped(
+  meta: Record<string, unknown> | undefined,
+): Record<string, unknown> | undefined {
+  if (!meta || !(INFRA_ERROR_META_KEY in meta)) return meta;
+  const { [INFRA_ERROR_META_KEY]: _dropped, ...rest } = meta;
+  return rest;
 }
 
 /** Extract a human-readable message from an unknown throw. */
