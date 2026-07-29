@@ -63,11 +63,11 @@ export interface UseChatReturn {
  * filling its origin slice.
  *
  * `focusWorkspaceId` is the workspace the chat is FOCUSED on (the `/w/:slug`
- * the user is viewing). Currently unused on this path — the chat-store
- * dispatches via `startChatTurn`, which picks up the global active
- * workspace from `headers()`. Accepted as a param for API compatibility
- * with the ChatProvider; route-derived focus override is tracked as a
- * follow-up.
+ * the user is viewing). `useChat` does not consume it — the cross-workspace
+ * re-scope lives entirely in `ChatProvider` (`ChatContext.tsx`), which derives
+ * the focus and clears the panel when the open conversation belongs to a
+ * different workspace. Accepted here only for API compatibility with that
+ * provider's call.
  */
 export function useChat(
   initialConversationId?: string,
