@@ -146,7 +146,7 @@ describe("check-conversation-paths — script self-invocation", () => {
     // emit the workspace-owned guidance. The exhaustive match/no-match contract
     // is covered by the predicate unit tests above.
     const proc = Bun.spawn({
-      cmd: ["bun", "run", "scripts/check-conversation-paths.ts"],
+      cmd: ["bun", "run", "--no-env-file", "scripts/check-conversation-paths.ts"],
       stdout: "pipe",
       stderr: "pipe",
     });

@@ -104,7 +104,7 @@ describe("check-personal-workspace-id — isPrefixTemplate", () => {
 describe("check-personal-workspace-id — script self-invocation", () => {
   test("clean tree: running the script produces a passing message and exits 0", async () => {
     const proc = Bun.spawn({
-      cmd: ["bun", "run", "scripts/check-personal-workspace-id.ts"],
+      cmd: ["bun", "run", "--no-env-file", "scripts/check-personal-workspace-id.ts"],
       stdout: "pipe",
       stderr: "pipe",
     });

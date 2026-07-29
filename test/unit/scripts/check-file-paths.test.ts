@@ -138,7 +138,7 @@ describe("check-file-paths — script self-invocation", () => {
     // emit the workspace-owned guidance. The exhaustive contract is covered by the
     // predicate unit tests above.
     const proc = Bun.spawn({
-      cmd: ["bun", "run", "scripts/check-file-paths.ts"],
+      cmd: ["bun", "run", "--no-env-file", "scripts/check-file-paths.ts"],
       stdout: "pipe",
       stderr: "pipe",
     });

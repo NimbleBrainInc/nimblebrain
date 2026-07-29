@@ -110,7 +110,7 @@ describe("check-automation-paths — isUsersScopedAutomationsJoin", () => {
 describe("check-automation-paths — script self-invocation", () => {
   test("runs end-to-end against src/ and speaks the workspace-owned contract", async () => {
     const proc = Bun.spawn({
-      cmd: ["bun", "run", "scripts/check-automation-paths.ts"],
+      cmd: ["bun", "run", "--no-env-file", "scripts/check-automation-paths.ts"],
       stdout: "pipe",
       stderr: "pipe",
     });

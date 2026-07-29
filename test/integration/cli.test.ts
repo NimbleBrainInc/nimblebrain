@@ -34,10 +34,7 @@ describe("serve entry", () => {
       [
         "bun",
         "run",
-        // Bun re-runs its dotenv auto-load in the child, so the parent's
-        // `--env-file` does not carry. Without this the boot below resolves a
-        // developer's live COMPOSIO_API_KEY and configures the provider.
-        "--env-file=test/.env.test",
+        "--no-env-file",
         CLI,
         "serve",
         "--port",
@@ -61,7 +58,7 @@ describe("serve entry", () => {
   }, 30_000);
 
   it("rejects an unrecognized positional as a usage error (exit 2)", () => {
-    const result = spawnSync(["bun", "run", "--env-file=test/.env.test", CLI, "fakecmd"], {
+    const result = spawnSync(["bun", "run", "--no-env-file", CLI, "fakecmd"], {
       stdout: "pipe",
       stderr: "pipe",
     });

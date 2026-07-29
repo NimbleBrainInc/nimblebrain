@@ -87,11 +87,26 @@ Tests are organized into three tiers:
 | Integration | `test/integration/` | `bun run test:integration` | `Runtime.start()`, HTTP servers, real crypto, subprocesses |
 | Eval | `test/eval/` | `bun run eval` | LLM evals, require `ANTHROPIC_API_KEY` |
 
-`--env-file` binds to one bun process, so every bun process in the test path
-passes it — including a single file you run by hand
-(`bun test --env-file=test/.env.test <file>`) and anything a test spawns. A bare
-invocation auto-loads your `.env` and hands the test a live `COMPOSIO_API_KEY`
-(see `test/.env.test`).
+**Every bun process in the test path passes `--no-env-file`.** Bun auto-loads
+`.env`, so without it a developer's real `COMPOSIO_API_KEY` reaches the test
+process — failing the tests that assert the unconfigured path, and letting test
+code make live API calls. CI has no `.env`, so it stays green and the failure
+looks local-only.
+
+The flag binds to one process and does not propagate: a child re-runs the
+auto-load itself. So it goes on the `test:*` scripts, on every `bun` a test
+spawns (`cli.test.ts` boots the full runtime; the `scripts/check-*` suites spawn
+the checkers), and on any single file you run by hand —
+`bun test --no-env-file <file>`.
+
+It disables dotenv, not the environment: a value exported in your shell outranks
+`.env` and survives regardless. `test:web` and `test:bundles` run in their own
+directories without the flag — neither reads a credential today.
+
+A repo-wide `env = false` in `bunfig.toml` would make this deny-by-default and
+delete every flag site. It also cuts `.env` from `bun run dev`, `start`, and
+`eval` unless each carries `--env-file=.env`, which is a separate change with
+its own blast radius — tracked in #839.
 
 Shared test helpers live in `test/helpers/` (imported by both unit and integration).
 
