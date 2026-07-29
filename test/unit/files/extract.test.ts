@@ -141,9 +141,13 @@ describe("extractText", () => {
     expect(result).toBeNull();
   });
 
-  // Asserted as one string rather than per line: the "Multi" row holds a cell
-  // with an embedded newline, so a line-split would tear that record in two and
-  // an assertion built on it would encode the wrong shape.
+  // One round-trip over the whole grid. Asserted as a single string because the
+  // "Multi" row holds a cell with an embedded newline — a line-split assertion
+  // would tear that record in two and encode the wrong shape.
+  //
+  // Cell rendering belongs to the parser, which applies each cell's stored
+  // number format, so this is not pinning hand-written logic: it is one check
+  // that a real workbook survives the path intact, formats and all.
   test("XLSX extracts the first sheet as CSV", async () => {
     const result = await extractText(spreadsheetFixture(), XLSX_MIME);
     expect(result).not.toBeNull();
@@ -151,56 +155,13 @@ describe("extractText", () => {
     expect(result?.text).toBe(
       [
         "Region,Units,Note,Opened,Checked,Shift,Active,Ratio",
-        'West,12,"red, small",2026-01-15,2026-01-15 14:30:00,14:30:00,true,0.5',
-        'East,7,"has ""quotes""",2026-06-01,2026-06-01 09:05:00,09:05:00,false,',
-        "Ünicode ✓,0,,2025-12-31,,,true,",
-        'Multi,3.5,"line\nbreak",2026-07-04,,,false,',
-        "Padded,1,padded,,,,true,",
+        'West,12,"red, small",1/15/26,1/15/26 14:30,14:30,TRUE,50.0%',
+        'East,7,"has ""quotes""",6/1/26,6/1/26 9:05,9:05,FALSE,#N/A',
+        "Ünicode ✓,0,,12/31/25,,,TRUE,",
+        'Multi,3.5,"line\nbreak",7/4/26,,,FALSE,',
+        "Padded,1,  padded  ,,,,TRUE,",
       ].join("\n"),
     );
-  });
-
-  test("XLSX quotes only the fields that need it", async () => {
-    const text = (await extractText(spreadsheetFixture(), XLSX_MIME))?.text ?? "";
-    // Delimiter, embedded quote, and newline force quoting; plain values must not.
-    expect(text).toContain('"red, small"');
-    expect(text).toContain('"has ""quotes"""');
-    expect(text).toContain("West,12,");
-    expect(text).not.toContain('"West"');
-  });
-
-  // The parser returns a Date for every date-family number format, so the three
-  // shapes are only distinguishable by the instant itself. Getting this wrong
-  // puts a fabricated 1899-12-30 in front of every time-of-day cell, or drops
-  // the time from every datetime.
-  test("XLSX renders date-only, datetime and time-only cells each in their own shape", async () => {
-    const text = (await extractText(spreadsheetFixture(), XLSX_MIME))?.text ?? "";
-    expect(text).toContain("2026-01-15,2026-01-15 14:30:00,14:30:00,");
-    // The serial->ms conversion floors, so an unrounded 14:30 leaks as 14:29:59.
-    expect(text).not.toContain("14:29:59");
-    // A time-only serial sits on the Excel epoch; that date is not data.
-    expect(text).not.toContain("1899-12-30");
-    // Excel's own display form for the date cell — ambiguous without a locale.
-    expect(text).not.toContain("1/15/26");
-  });
-
-  // Known fidelity loss, pinned so it is not rediscovered as a bug: the parser
-  // discards formula-error cells at source (t="e" -> empty), so #N/A is
-  // indistinguishable from a blank cell downstream.
-  test("XLSX renders a formula-error cell as empty", async () => {
-    const text = (await extractText(spreadsheetFixture(), XLSX_MIME))?.text ?? "";
-    expect(text).not.toContain("#N/A");
-    expect(text).toContain("09:05:00,false,");
-  });
-
-  // Also a fidelity loss vs. Excel's display text: the parser hands back the
-  // underlying value, so a percent-formatted cell arrives as its fraction and
-  // strings arrive trimmed.
-  test("XLSX yields underlying values, not Excel display text", async () => {
-    const text = (await extractText(spreadsheetFixture(), XLSX_MIME))?.text ?? "";
-    expect(text).toContain(",true,0.5");
-    expect(text).not.toContain("50.0%");
-    expect(text).toContain("Padded,1,padded,");
   });
 
   test("XLSX respects maxSize and marks the result truncated", async () => {

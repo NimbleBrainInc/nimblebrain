@@ -3,23 +3,20 @@
 
     uvx --with openpyxl python test/fixtures/files/generate-spreadsheet-sample.py
 
-Python because the runtime has no XLSX *writer*: read-excel-file only reads, and
-dropping the one library that could write was the point of removing `xlsx`.
-Adding a writer back as a devDependency to build a 9 KB fixture would undo that,
-so the generator lives outside the JS dependency tree.
+Python because openpyxl can write the awkward cells this grid needs — a
+formula-error cell in particular — and because a devDependency whose only job is
+building a 5 KB fixture is not worth carrying in the JS tree.
 
-The grid is deliberately awkward. Every column pins a case the extractor has to
-get right, and the assertions in test/unit/files/extract.test.ts name the exact
-values produced here:
+The grid is deliberately awkward. Every column carries a cell whose meaning
+lives in its *number format* rather than its value, which is the class of thing
+the extraction path has to preserve; the single round-trip assertion in
+test/unit/files/extract.test.ts names the exact text produced here:
 
   Note     a comma, embedded quotes, a newline, non-ASCII, and a padded string
-           (the parser trims, so "  padded  " is expected to arrive bare)
-  Opened   date-only, stored as a whole-day serial -> renders as a date
-  Checked  datetime -> renders date + time, and catches the serial->ms floor
-           that lands 14:30 on 14:29:59.999
-  Shift    time-only, a serial below 1 -> renders the clock time with no date
-  Ratio    a percent-formatted number, and one formula-error cell; the parser
-           discards error cells, so #N/A is expected to arrive empty
+  Opened   date-only, stored as a whole-day serial
+  Checked  datetime
+  Shift    time-only, a serial below 1
+  Ratio    a percent-formatted number, and one formula-error cell (#N/A)
 """
 
 import datetime
