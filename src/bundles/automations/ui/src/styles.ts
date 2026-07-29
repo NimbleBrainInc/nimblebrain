@@ -130,8 +130,8 @@ body {
 .dot-skipped { background: var(--color-text-tertiary); }
 
 /* color-mix() is safe in a bundle stylesheet: no bundle runs Tailwind, so
-   Lightning never sees this CSS and never downlevels the mix to its first
-   operand. That downlevel is why the shell uses explicit alpha tokens instead. */
+   nothing rewrites this CSS into a first-operand fallback. That fallback is why
+   the shell uses explicit alpha tokens instead. */
 .backoff-badge {
   display: inline-flex; align-items: center; gap: 4px;
   font-size: 11px; font-weight: 500; color: var(--nb-color-warning);

@@ -1,11 +1,12 @@
 /**
  * No `color-mix()` in a colour-valued property in the shell's stylesheet.
  *
- * Lightning CSS (via Tailwind v4) downlevels `color-mix()` for browsers that
- * lack it — Chrome/Edge <111, Firefox <113, Safari <16.2 — by emitting an
- * unguarded declaration and gating the real one behind `@supports`. Its
- * unguarded version keeps only the **first operand**, dropping the percentage
- * and the transparency. So
+ * Tailwind v4 emits `color-mix()` as a pair: an unguarded declaration keeping
+ * only the **first operand** — percentage and transparency dropped — and the
+ * real value behind `@supports (color: color-mix(in lab, red, red))`. The
+ * pair is emitted unconditionally, not keyed to any target: which half a
+ * browser applies is decided by the `@supports` test at runtime, so the
+ * fallback is what Chrome/Edge <111, Firefox <113 and Safari <16.2 get. So
  *
  *     background: color-mix(in srgb, var(--foreground) 10%, transparent);
  *
@@ -14,35 +15,42 @@
  * turn in the transcript, and on every failed tool call.
  *
  * The rule is a ban rather than "declare your own fallback" because the
- * fallback cannot be pre-empted: the downlevelled declaration is emitted
- * *after* an author-written one, so it wins. Verified against the built
+ * fallback cannot be pre-empted: Tailwind's declaration is emitted *after* an
+ * author-written one, so it wins. Verified against the built
  * artifact, not assumed — `background: transparent` immediately above the
  * `color-mix()` still produced `background:0 0;background:var(--foreground)`.
  * Moving the mix into a custom property relocates the problem without fixing
  * it, which was also checked.
  *
  * Use a translucent token from `palette.ts` instead (`--foreground-tint`,
- * `--destructive-tint`). `rgba()` has no downlevel, and being translucent it
+ * `--destructive-tint`). `rgba()` needs no fallback pair, and being translucent it
  * still composites over whichever surface the element lands on — which is the
  * only reason a mix was reached for.
  *
  * Scope is the **hand-authored** rules in `web/src/index.css`, and that is a
  * real limit rather than the whole problem. Tailwind's own `/N` opacity
- * utilities compile to `color-mix()` too, and the built stylesheet carries 84
- * downlevelled blocks because of them. The affected shape is any token painted
- * as both a text colour and an alpha background — `text-<T>` over `bg-<T>/N` —
+ * utilities compile to `color-mix()` too, and most of the built stylesheet's
+ * `@supports` blocks are theirs. The affected shape is any token painted as
+ * both a text colour and an alpha background — `text-<T>` over `bg-<T>/N` —
  * which degrades to 1.000:1 by exactly the same mechanism; `sidebar-foreground`
  * on the sidebar's active rows is as much an instance as `destructive` on an
  * error notice. No count is quoted, because a count invites the next reader to
  * re-check the hues someone once listed rather than the rule. That is a
  * pre-existing condition of the utility layer, not of this file: it cannot be
- * fixed by authoring differently, only by moving those sites onto tokens or by
- * narrowing the build's browser targets so Lightning stops downlevelling at
- * all. Tracked with the inventory in #781. This guard covers what an author
+ * fixed by authoring differently, and it cannot be configured away either.
+ * Tailwind writes the pair itself — `tailwindcss/dist/lib.js` splices in the
+ * fallback and the `@supports` wrapper — so it is not a post-processing step
+ * anything downstream owns. Nor is it reachable by configuration: Tailwind v4
+ * ships no browserslist reader, and the Lightning targets it does pass
+ * (`safari 16.4, ios_saf 16.4, firefox 128, chrome 111`) already sit at or
+ * above `color-mix()` support, so there is no target to raise. Both are
+ * checkable in the installed package. The only available fix is moving those
+ * sites onto tokens, whose cost is measured in #781 — which is also why that
+ * issue is `wontfix` rather than open work. This guard covers what an author
  * here controls, and no more.
  *
- * Bundle UIs are exempt because no bundle runs Tailwind, so Lightning never
- * processes their CSS — verified in `conversations/ui/dist`, which keeps its
+ * Bundle UIs are exempt because no bundle runs Tailwind, so nothing rewrites
+ * their CSS — verified in `conversations/ui/dist`, which keeps its
  * five `color-mix()` declarations verbatim with no `@supports` block. Note this
  * is a property of the build, not of how the CSS is authored: four of the five
  * bundles ship a real `index.css`, and only `automations` is a template string.
@@ -57,7 +65,7 @@ import { join } from "node:path";
 
 const CSS = join(import.meta.dir, "..", "..", "..", "web", "src", "index.css");
 
-/** Properties whose downlevelled `color-mix()` can hide content, not just shift it. */
+/** Properties whose fallback `color-mix()` can hide content, not just shift it. */
 const COLOUR_PROPERTIES = ["background", "background-color", "color"];
 
 type Offence = { line: number; text: string };
@@ -101,7 +109,7 @@ describe("colourMixes", () => {
     expect(colourMixes(css).map((f) => f.line)).toEqual([2]);
   });
 
-  test("an author-written fallback does not excuse it — the minifier's own wins", () => {
+  test("an author-written fallback does not excuse it — Tailwind's own wins", () => {
     const css = ".x {\n  background: transparent;\n  background: color-mix(in srgb, var(--a) 10%, transparent);\n}";
     expect(colourMixes(css).map((f) => f.line)).toEqual([3]);
   });

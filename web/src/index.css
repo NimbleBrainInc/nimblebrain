@@ -175,8 +175,8 @@
      ground is 1.099:1 — invisible. Mixing from `--foreground` adapts to
      whichever surface the bubble lands on and reads in both modes.
 
-     It is an alpha token rather than a `color-mix()`, because the minifier
-     downlevels `color-mix()` in a colour property to its first operand — here
+     It is an alpha token rather than a `color-mix()`, because Tailwind emits
+     one in a colour property with an unguarded first-operand fallback — here
      `var(--foreground)`, the same value as the `color` two lines up, at
      1.000:1. See `palette.ts`; guarded by
      `test/unit/docs/css-color-mix.test.ts`. */
@@ -650,8 +650,8 @@
   word-break: break-word;
 }
 .turn-pill__pre--error {
-  /* Alpha token, not a `color-mix()` — the minifier's downlevel of one would
-     collapse to `var(--destructive)`, matching the `color` below it. */
+  /* Alpha token, not a `color-mix()` — Tailwind's unguarded fallback for one
+     would collapse to `var(--destructive)`, matching the `color` below it. */
   background: var(--destructive-tint);
   border-color: var(--destructive);
   color: var(--destructive);

@@ -68,12 +68,13 @@ export const colors = {
   "destructive-foreground": ["#ffffff", "#000000"],
   // Translucent 10% tints of `foreground` and `destructive`, used as the chat
   // bubble fill and the failed-tool-call ground. They are alpha values rather
-  // than `color-mix(… 10%, transparent)` because Tailwind's minifier downlevels
-  // `color-mix()` in a colour property to its FIRST OPERAND — dropping both the
-  // percentage and the transparency — for browsers that lack it. That fallback
-  // is emitted after any fallback we declare ourselves, so it cannot be
+  // than `color-mix(… 10%, transparent)` because Tailwind emits every
+  // `color-mix()` in a colour property as a pair: the real value behind an
+  // `@supports` test, and an unguarded FIRST OPERAND for browsers that fail it
+  // — dropping both the percentage and the transparency. That fallback is
+  // emitted after any fallback we declare ourselves, so it cannot be
   // pre-empted, and it resolves to the same value as the text painted on top:
-  // 1.000:1. `rgba()` has no such downlevel, and being translucent it still
+  // 1.000:1. `rgba()` gets no such pair, and being translucent it still
   // composites over whichever surface the element lands on, which is the whole
   // reason the tint was mixed rather than fixed.
   //
