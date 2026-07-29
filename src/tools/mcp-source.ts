@@ -1576,11 +1576,16 @@ export class McpSource implements ToolSource {
           // "could not positively classify this" residue, so marking it would
           // assert precisely what the classifier declines to. A server that
           // answers a deterministic tool rejection with its own implementation-
-          // defined code (JSON-RPC reserves -32000..-32099) classifies `unknown`,
+          // defined code (-32001..-32099) classifies `unknown`,
           // and exempting that from the guard would let a real loop run free.
           // An unmarked class simply trips at three, which is the pre-existing
           // behaviour — so the allowlist is the strictly safer default, and a new
           // member of `ConnectionFailure` is not silently exempt.
+          //
+          // One residual: -32000 is claimed by `transport-dead`, which IS on the
+          // allowlist, so a bundle answering with that exact code is exempt. It is
+          // indistinguishable here from the SDK's own connection-closed code, so
+          // the ambiguity is accepted rather than resolved.
           const kind = classifyConnectionFailure(e);
           const infra = INFRA_FAILURE_CLASSES.has(kind) ? infraErrorMeta() : {};
           if (kind === "rate-limited") {
@@ -1624,10 +1629,13 @@ export class McpSource implements ToolSource {
             reason: "reauth_required",
             source: this.eventSourceName,
           },
-          // A lapsed credential says nothing about whether the tool would do the
-          // work, and the remedy is a human clicking Reconnect — not the agent
-          // giving up on the tool for the rest of the run.
-          ...infraErrorMeta(),
+          // Deliberately NOT marked infrastructure, matching `not started` and the
+          // absence of `auth-lost` from INFRA_FAILURE_CLASSES. One rule across all
+          // three: a failure with no IN-RUN remedy still counts. `onAuthLost` only
+          // records `reauth_required` — it does not stop the source or drop the
+          // client — so every later call returns this same result, and exempting
+          // it would leave the tool in the model's toolset for the rest of the run
+          // with nothing able to fix it until a human clicks Reconnect.
         }),
       },
     );
