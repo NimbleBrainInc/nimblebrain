@@ -149,8 +149,8 @@ describe("palette contrast — WCAG 2.2", () => {
    * `<Badge variant="success">` and shipping below AA against a green suite.
    *
    * That last claim holds for the *supported* path only. Tailwind compiles
-   * `bg-<hue>/N` to `color-mix()`, and browsers without it get the minifier's
-   * downlevel — the first operand, opaque — so the fill becomes the same value
+   * `bg-<hue>/N` to `color-mix()`, and browsers failing its `@supports` test
+   * get the unguarded fallback — the first operand, opaque — so the fill is
    * as the text: 1.000:1, whatever is asserted here. Pre-existing and
    * repo-wide; tracked in #781. What this guard buys is the modern path, which
    * is the one the value can actually be chosen for.

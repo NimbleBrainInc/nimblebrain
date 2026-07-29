@@ -4,8 +4,9 @@
  * Tailwind v4 emits `color-mix()` as a pair: an unguarded declaration keeping
  * only the **first operand** — percentage and transparency dropped — and the
  * real value behind `@supports (color: color-mix(in lab, red, red))`. The
- * fallback serves browsers below its floor, which for `color-mix()` means
- * Chrome/Edge <111, Firefox <113 and Safari <16.2. So
+ * pair is emitted unconditionally, not keyed to any target: which half a
+ * browser applies is decided by the `@supports` test at runtime, so the
+ * fallback is what Chrome/Edge <111, Firefox <113 and Safari <16.2 get. So
  *
  *     background: color-mix(in srgb, var(--foreground) 10%, transparent);
  *
@@ -28,9 +29,9 @@
  *
  * Scope is the **hand-authored** rules in `web/src/index.css`, and that is a
  * real limit rather than the whole problem. Tailwind's own `/N` opacity
- * utilities compile to `color-mix()` too, and the built stylesheet carries 84
- * such guarded blocks because of them. The affected shape is any token painted
- * as both a text colour and an alpha background — `text-<T>` over `bg-<T>/N` —
+ * utilities compile to `color-mix()` too, and most of the built stylesheet's
+ * `@supports` blocks are theirs. The affected shape is any token painted as
+ * both a text colour and an alpha background — `text-<T>` over `bg-<T>/N` —
  * which degrades to 1.000:1 by exactly the same mechanism; `sidebar-foreground`
  * on the sidebar's active rows is as much an instance as `destructive` on an
  * error notice. No count is quoted, because a count invites the next reader to
@@ -39,15 +40,14 @@
  * fixed by authoring differently, and it cannot be configured away either.
  * Tailwind writes the pair itself — `tailwindcss/dist/lib.js` splices in the
  * fallback and the `@supports` wrapper — so it is not a post-processing step
- * anything downstream owns. Measured against the built artifact rather than
- * assumed: a `browserslist` in `web/package.json` leaves the output
- * byte-identical (Tailwind v4 reads none), Vite's `build.cssTarget` changes
- * bytes without touching a single guarded block, and raising Tailwind's own
- * internal Lightning targets to Safari 18 / Chrome 130 / Firefox 130 is again
- * byte-identical. The only available fix is moving those sites onto tokens,
- * whose cost is measured in #781 — which is also why that issue is `wontfix`
- * rather than open work. This guard covers what an author here controls, and
- * no more.
+ * anything downstream owns. Nor is it reachable by configuration: Tailwind v4
+ * ships no browserslist reader, and the Lightning targets it does pass
+ * (`safari 16.4, ios_saf 16.4, firefox 128, chrome 111`) already sit at or
+ * above `color-mix()` support, so there is no target to raise. Both are
+ * checkable in the installed package. The only available fix is moving those
+ * sites onto tokens, whose cost is measured in #781 — which is also why that
+ * issue is `wontfix` rather than open work. This guard covers what an author
+ * here controls, and no more.
  *
  * Bundle UIs are exempt because no bundle runs Tailwind, so nothing rewrites
  * their CSS — verified in `conversations/ui/dist`, which keeps its
@@ -109,7 +109,7 @@ describe("colourMixes", () => {
     expect(colourMixes(css).map((f) => f.line)).toEqual([2]);
   });
 
-  test("an author-written fallback does not excuse it — the minifier's own wins", () => {
+  test("an author-written fallback does not excuse it — Tailwind's own wins", () => {
     const css = ".x {\n  background: transparent;\n  background: color-mix(in srgb, var(--a) 10%, transparent);\n}";
     expect(colourMixes(css).map((f) => f.line)).toEqual([3]);
   });
