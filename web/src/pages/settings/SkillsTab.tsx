@@ -869,7 +869,7 @@ function Toggle({
       }
       className={cn(
         "inline-flex shrink-0 items-center gap-1.5 px-2 py-1 rounded-sm text-xs font-medium select-none",
-        disabled ? "text-muted-foreground/70 cursor-default" : "text-foreground hover:bg-muted",
+        disabled ? "text-muted-foreground cursor-default" : "text-foreground hover:bg-muted",
       )}
     >
       {disabled && <Lock className="h-3 w-3" aria-hidden />}
@@ -972,14 +972,7 @@ function AdvancedSection({
         onClick={onToggle}
         className="text-sm text-muted-foreground hover:text-foreground inline-flex items-center gap-2"
       >
-        <span
-          className={cn(
-            "inline-block text-muted-foreground/60 transition-transform",
-            open && "rotate-90",
-          )}
-        >
-          ▸
-        </span>
+        <span className={cn("inline-block transition-transform", open && "rotate-90")}>▸</span>
         Advanced
       </button>
       {open && (

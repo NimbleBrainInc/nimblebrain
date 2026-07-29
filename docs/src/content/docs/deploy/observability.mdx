@@ -128,7 +128,8 @@ curl http://platform:27247/v1/health
   "version": "1.2.3",
   "buildSha": "abc1234",
   "bundles": [
-    { "name": "@nimblebraininc/ipinfo", "state": "running" }
+    { "name": "@nimblebraininc/ipinfo", "state": "healthy" },
+    { "name": "@nimblebraininc/ipinfo", "state": "restarting" }
   ]
 }
 ```
@@ -138,7 +139,7 @@ curl http://platform:27247/v1/health
 | `status` | `"ok"` once the server is serving |
 | `version` | The platform version |
 | `buildSha` | The build commit SHA (`null` if not stamped) |
-| `bundles` | Each installed bundle and its lifecycle state |
+| `bundles` | One entry per running bundle **instance** and its lifecycle state. Entries are **not unique by name**: a bundle installed in several workspaces is monitored separately in each, so it appears once per workspace. Don't build a `name → state` map from this — later entries would silently overwrite earlier ones. |
 
 The Docker image already wires this into its `HEALTHCHECK` (`curl -f http://localhost:27247/v1/health`), and Compose gates the `web` service on it via `depends_on: condition: service_healthy`. In Kubernetes, use the same path for both `livenessProbe` and `readinessProbe`.
 

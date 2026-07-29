@@ -420,7 +420,59 @@ describe("briefing-generator", () => {
 			});
 		});
 
-		it("sets reasoningEffort=minimal for OpenAI reasoning models", async () => {
+		it("uses the level dialect, not a budget, on Gemini 3", async () => {
+			// The dialects do not overlap. A budget sent to a Gemini 3 model is
+			// rejected outright — measured: gemini-3.6-flash 400s on "invalid
+			// argument" — and this path runs on every home load.
+			const { model, calls } = createTrackingModelV3(
+				JSON.stringify({ lede: "Ok.", sections: [] }),
+			);
+			await makeGen(model, "google:gemini-3.6-flash").generate(activeActivity());
+
+			expect(calls[0].providerOptions).toEqual({
+				google: { thinkingConfig: { thinkingLevel: "minimal" } },
+			});
+		});
+
+		it("drops to the lowest level a Gemini 3 model offers", async () => {
+			// gemini-3.1-pro-preview has no `minimal` — {low, medium, high}. The
+			// engine sends nothing here for `thinking: "off"`, but this caller
+			// wants the cheapest call, and sending nothing means the model's own
+			// default, which is the expensive branch.
+			const { model, calls } = createTrackingModelV3(
+				JSON.stringify({ lede: "Ok.", sections: [] }),
+			);
+			await makeGen(model, "google:gemini-3.1-pro-preview").generate(activeActivity());
+
+			expect(calls[0].providerOptions).toEqual({
+				google: { thinkingConfig: { thinkingLevel: "low" } },
+			});
+		});
+
+		it("sends nothing to a Google model with no verified table entry", async () => {
+			// The widest branch here: 16 of the 27 Google reasoning models have
+			// no GOOGLE_THINKING row — the `-latest` aliases, the image models,
+			// deep-research-*. All of them used to get thinkingBudget: 0. An
+			// absent row means no verified answer, so guessing a dialect is how
+			// the briefing starts 400ing, which is the defect this PR fixes.
+			const { model, calls } = createTrackingModelV3(
+				JSON.stringify({ lede: "Ok.", sections: [] }),
+			);
+			await makeGen(model, "google:gemini-flash-latest").generate(activeActivity());
+			expect(calls[0].providerOptions ?? {}).toEqual({});
+		});
+
+		it("sends nothing to a Gemini 2.5 model that cannot disable thinking", async () => {
+			// gemini-2.5-pro has no level dialect and no zero budget available,
+			// so there is nothing to ask for.
+			const { model, calls } = createTrackingModelV3(
+				JSON.stringify({ lede: "Ok.", sections: [] }),
+			);
+			await makeGen(model, "google:gemini-2.5-pro").generate(activeActivity());
+			expect(calls[0].providerOptions ?? {}).toEqual({});
+		});
+
+		it("sets reasoningEffort=minimal for the OpenAI models that take it", async () => {
 			const llmResponse = JSON.stringify({ lede: "Ok.", sections: [] });
 			const { model, calls } = createTrackingModelV3(llmResponse);
 			const gen = makeGen(model, "openai:gpt-5");
@@ -429,6 +481,20 @@ describe("briefing-generator", () => {
 			expect(calls[0].providerOptions).toEqual({
 				openai: { reasoningEffort: "minimal" },
 			});
+		});
+
+		it("sends no effort to OpenAI models that reject minimal", async () => {
+			// `minimal` is the exception, not the rule: 22 of the 25 reachable
+			// reasoning models reject it outright, including every mainline
+			// model from gpt-5.1 on and the whole o-series. Sending it 400s the
+			// briefing — and this runs on every home load.
+			for (const m of ["openai:gpt-5.1", "openai:o3", "openai:gpt-5-pro"]) {
+				const { model, calls } = createTrackingModelV3(
+					JSON.stringify({ lede: "Ok.", sections: [] }),
+				);
+				await makeGen(model, m).generate(activeActivity());
+				expect(calls[0].providerOptions ?? {}).toEqual({});
+			}
 		});
 
 		it("omits providerOptions for non-reasoning models", async () => {

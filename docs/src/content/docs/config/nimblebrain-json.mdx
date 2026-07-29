@@ -131,7 +131,7 @@ and the runtime translates.
 |---|---|
 | Anthropic — Opus 4.7/4.8, Sonnet 5, Opus 5 | `thinking: {type: "adaptive"}` + `output_config.effort`, the tier verbatim |
 | Anthropic — up to Sonnet 4.6 | `thinking: {type: "enabled"}` + a `budgetTokens` sized from the tier |
-| OpenAI, and Nebius-hosted open-weight models (DeepSeek, Qwen, gpt-oss) | `reasoningEffort`. Its usable range stops at `high`, so `xhigh` and `max` both land there |
+| OpenAI, and Nebius-hosted open-weight models (Qwen, Kimi, GLM, gpt-oss, Cosmos3) | `reasoningEffort`. Its usable range stops at `high`, so `xhigh` and `max` both land there. On OpenAI, acceptance is also per model — see below |
 | Google Gemini 3 | `thinkingConfig.thinkingLevel`, tops out at `high` |
 | Google Gemini 2.5 | `thinkingConfig.thinkingBudget`, sized from the tier and held inside the model's documented range |
 
@@ -147,13 +147,28 @@ depth. Where a provider meters thinking in tokens, the budget is used and is
 capped to leave room for the answer; everywhere else the depth applies as
 usual. Setting one never voids the other.
 
-Google support is **per model, not per generation**, and is read from a
-hand-maintained table — `gemini-3-pro-preview` accepts only `low` and `high`
-where `gemini-3.6-flash` accepts all four, and `gemini-2.5-pro` cannot stop
-thinking where the flash models can. A requested depth a model doesn't offer
-steps down to the nearest one it does. **A Gemini model with no verified entry
-receives no thinking options at all** and runs at its own default, because
-guessing the dialect is how a stock install starts returning 400s.
+Google and OpenAI support is **per model, not per generation**, and is read
+from hand-maintained tables measured against the live APIs.
+
+On Google, `gemini-3-pro-preview` accepts only `low` and `high` where
+`gemini-3.6-flash` accepts all four, and `gemini-2.5-pro` cannot stop thinking
+where the flash models can. **A Gemini model with no verified entry receives no
+thinking options at all** and runs at its own default, because guessing the
+dialect is how a stock install starts returning 400s.
+
+On OpenAI, most models take all three tiers, but the GPT-5 `-pro` models do not
+(`o1-pro` and `o3-pro` take all three):
+`gpt-5-pro` accepts only `high` — and rejects `medium`, the default depth, so
+it is the one to know about. `gpt-5.2-pro`, `gpt-5.4-pro` and `gpt-5.5-pro`
+reject `low`. An OpenAI model with no entry is assumed to take all three, the
+opposite of the Google default, because nearly every model does and the
+adapter already skips non-reasoning ones.
+
+In both cases a requested depth a model doesn't offer steps **down** to the
+nearest one it does, never up. Where nothing at or below the request is
+offered, no depth is sent and the model runs at its own default — so an
+explicitly set `thinkingEffort` can end up not applied on a model that doesn't
+accept it, rather than the call failing.
 
 `off` is not universally enforceable, and where it isn't, nothing is sent
 rather than a flag that would be rejected or ignored:
@@ -217,7 +232,7 @@ Each provider key is optional. If a provider's `apiKey` is omitted, the SDK fall
 
 ### Nebius Token Factory
 
-`nebius` is an OpenAI-compatible gateway for open-weight models (DeepSeek, Qwen, Llama, gpt-oss). Configure it like any other provider and reference models with the `nebius:` prefix:
+`nebius` is an OpenAI-compatible gateway for open-weight models (Qwen, Kimi, GLM, gpt-oss). Configure it like any other provider and reference models with the `nebius:` prefix:
 
 ```json
 {
@@ -227,8 +242,8 @@ Each provider key is optional. If a provider's `apiKey` is omitted, the SDK fall
   },
   "models": {
     "default":   "anthropic:claude-sonnet-4-6",
-    "fast":      "nebius:meta-llama/Llama-3.3-70B-Instruct",
-    "reasoning": "nebius:deepseek-ai/DeepSeek-V4-Pro"
+    "fast":      "nebius:openai/gpt-oss-120b",
+    "reasoning": "nebius:Qwen/Qwen3-Next-80B-A3B-Thinking"
   }
 }
 ```

@@ -94,7 +94,7 @@ function SectionGroup({
   if (items.length === 0) return null;
   return (
     <div className="mt-4 first:mt-3">
-      <div className="text-2xs font-semibold tracking-[0.06em] uppercase text-muted-foreground/60">
+      <div className="text-2xs font-semibold tracking-[0.06em] uppercase text-muted-foreground">
         {label}
       </div>
       <ul className="mt-1.5 space-y-1.5">

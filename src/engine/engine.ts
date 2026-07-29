@@ -15,6 +15,8 @@ import {
   type GoogleThinkingLevel,
   getProviderFromModel,
   googleThinkingSupport,
+  OPENAI_EFFORTS,
+  openaiSupportedEfforts,
   supportsEnabledThinking,
 } from "../model/catalog.ts";
 import { normalizeForReplay } from "../model/inbound-fit.ts";
@@ -22,10 +24,11 @@ import { callModel, type StreamResult } from "../model/stream.ts";
 import { log } from "../observability/log.ts";
 import { toolMatches } from "../skills/select.ts";
 import { coerceInputForSchema } from "../tools/coerce-input.ts";
-import { bareToolName } from "../tools/namespace.ts";
+import { bareToolName, splitInnerToolName } from "../tools/namespace.ts";
 import { validateToolInput } from "../tools/validate-input.ts";
 import type { TokenUsage } from "../usage/types.ts";
 import { addUsage, emptyUsage, tokenUsageFromV3 } from "../usage/types.ts";
+import { mapWithConcurrency } from "../util/concurrency.ts";
 import {
   boundToolResultForModel,
   estimateContentSize,
@@ -41,6 +44,7 @@ import { toolSchemaForLlm } from "./tool-schema-for-llm.ts";
 import {
   CONNECTOR_SKILL_SYNTHETIC,
   type ConnectorSkillCandidate,
+  type EffortSource,
   type EngineConfig,
   type EngineResult,
   type EventSink,
@@ -55,6 +59,39 @@ import {
   type ToolRouter,
   type ToolSchema,
 } from "./types.ts";
+
+/** Default when the env knob is unset or unusable. */
+const DEFAULT_MAX_PARALLEL_TOOL_CALLS = 6;
+
+/**
+ * Most calls one engine run dispatches to any ONE source at a time.
+ *
+ * "Per source" describes the grouping, not the enforcement, and the difference
+ * is the part the name gets wrong. The bound lives in one `AgentEngine`
+ * iteration, while an `McpSource` is long-lived and shared across every
+ * conversation in its workspace — and `nb__delegate` gives each sub-agent a
+ * fresh engine over the PARENT's router. Concurrent runs and sub-agents
+ * therefore each get their own budget; this is not a global rate limit on the
+ * source. Sizing guidance is in `docs/config/environment.mdx`.
+ *
+ * `NB_MAX_PARALLEL_TOOL_CALLS_PER_SOURCE` overrides the default.
+ */
+const MAX_PARALLEL_TOOL_CALLS_PER_SOURCE_PER_RUN = resolveMaxParallelToolCallsPerSource();
+
+/**
+ * Read the per-source-per-run cap from the environment.
+ *
+ * Exported for tests: the value above is resolved once at module load, so the
+ * fallback semantics are otherwise unobservable. A non-numeric, non-finite, or
+ * `< 1` value falls back to the default rather than disabling the bound —
+ * removing backpressure is never the right reading of a typo.
+ */
+export function resolveMaxParallelToolCallsPerSource(
+  env: Record<string, string | undefined> = process.env as Record<string, string | undefined>,
+): number {
+  const raw = Number(env.NB_MAX_PARALLEL_TOOL_CALLS_PER_SOURCE);
+  return Number.isFinite(raw) && raw >= 1 ? Math.floor(raw) : DEFAULT_MAX_PARALLEL_TOOL_CALLS;
+}
 
 /** Tokens reserved for visible content so thinking can't consume the whole reply. */
 const MIN_VISIBLE_OUTPUT_TOKENS = 4096;
@@ -135,15 +172,44 @@ function toGoogleLevel(effort: ThinkingEffort): GoogleThinkingLevel {
  * `undefined` when the model offers nothing at or below the request — the
  * caller then sends no level and the provider's own default stands.
  */
-function nearestSupportedLevel(
-  wanted: GoogleThinkingLevel,
-  levels: ReadonlySet<GoogleThinkingLevel>,
-): GoogleThinkingLevel | undefined {
-  for (let d = GOOGLE_THINKING_LEVELS.indexOf(wanted); d >= 0; d--) {
-    const l = GOOGLE_THINKING_LEVELS[d];
-    if (l && levels.has(l)) return l;
+function nearestSupported<T extends string>(
+  wanted: T,
+  supported: ReadonlySet<string>,
+  ladder: readonly T[],
+): T | undefined {
+  for (let d = ladder.indexOf(wanted); d >= 0; d--) {
+    const l = ladder[d];
+    if (l && supported.has(l)) return l;
   }
   return undefined;
+}
+
+/**
+ * Which tier to actually send, for any dialect carrying a per-model tier set.
+ * Both Google's levels and OpenAI's efforts obey the same three-part rule:
+ *
+ *   - the model offers what was asked for → send it
+ *   - it doesn't, and the tier is the platform's own fallback rather than
+ *     something an operator wrote → send nothing, and let the model's default
+ *     stand. A tier nobody chose must not override the provider's own
+ *     judgement, and on Google stepping *down* can reason less than `off` does
+ *     on a model with no `minimal`.
+ *   - it doesn't, and an operator did choose it → step to the nearest tier at
+ *     or below. Never up: reasoning harder than asked is a worse surprise than
+ *     not honoring the tier.
+ *
+ * `undefined` means send no tier at all. Note the operator's choice can end up
+ * silently unapplied where nothing at or below it exists — see #809.
+ */
+function pickTier<T extends string>(
+  wanted: T,
+  supported: ReadonlySet<string>,
+  ladder: readonly T[],
+  source: EffortSource,
+): T | undefined {
+  if (supported.has(wanted)) return wanted;
+  if (source !== "operator") return undefined;
+  return nearestSupported(wanted, supported, ladder);
 }
 
 /**
@@ -194,7 +260,10 @@ function buildAnthropicThinkingOptions(
  * `name` the provider instance was created with, so a `nebius` key would be
  * silently dropped.
  */
-function buildOpenAIThinkingOptions(thinking: ResolvedThinking): SharedV3ProviderOptions {
+function buildOpenAIThinkingOptions(
+  model: string,
+  thinking: ResolvedThinking,
+): SharedV3ProviderOptions {
   switch (thinking.mode) {
     case "off":
       // `reasoningEffort: "none"` exists but the adapter documents it as
@@ -206,8 +275,17 @@ function buildOpenAIThinkingOptions(thinking: ResolvedThinking): SharedV3Provide
       // No adaptive equivalent; the model applies its own per-call default.
       return {};
     case "effort":
-    case "enabled":
-      return { openai: { reasoningEffort: toOpenAIEffort(thinking.effort) } };
+    case "enabled": {
+      // `gpt-5-pro` rejects `medium` — the platform fallback — so without
+      // this a stock install 400s on every call to it.
+      const tier = pickTier(
+        toOpenAIEffort(thinking.effort),
+        openaiSupportedEfforts(model),
+        OPENAI_EFFORTS,
+        thinking.source,
+      );
+      return tier ? { openai: { reasoningEffort: tier } } : {};
+    }
   }
 }
 
@@ -229,16 +307,12 @@ function googleLevelOptions(
       ? { google: { thinkingConfig: { thinkingLevel: "minimal" } } }
       : {};
   }
-  const wanted = toGoogleLevel(thinking.effort);
-  if (!levels.has(wanted) && thinking.source !== "operator") {
-    // The platform's fallback tier isn't on offer here. Stepping to a
-    // neighbour would make a tier nobody chose override the model's own
-    // default — and stepping *down* reasons less than `off` does on a model
-    // with no `minimal`, which is plainly wrong. Say nothing and let the
-    // provider default stand, which is what shipped before Google was wired.
-    return {};
-  }
-  const level = nearestSupportedLevel(wanted, levels);
+  const level = pickTier(
+    toGoogleLevel(thinking.effort),
+    levels,
+    GOOGLE_THINKING_LEVELS,
+    thinking.source,
+  );
   return level ? { google: { thinkingConfig: { thinkingLevel: level } } } : {};
 }
 
@@ -338,7 +412,7 @@ function buildThinkingProviderOptions(
       return buildAnthropicThinkingOptions(model, thinking, maxOutputTokens);
     case "openai":
     case "nebius":
-      return buildOpenAIThinkingOptions(thinking);
+      return buildOpenAIThinkingOptions(model, thinking);
     case "google":
       return buildGoogleThinkingOptions(model, thinking, maxOutputTokens);
     default:
@@ -1202,9 +1276,7 @@ export class AgentEngine {
           bumpUseCounter,
           supervisor,
         };
-        const toolResults = await Promise.all(
-          toolCalls.map((toolCall) => this.executeToolCall(toolCall, toolExecContext)),
-        );
+        const toolResults = await this.executeToolCallsBounded(toolCalls, toolExecContext);
 
         // Build result arrays from parallel results. `modelOutput` is the
         // already-bounded text the model sees (computed once, during execution,
@@ -1557,10 +1629,70 @@ export class AgentEngine {
   }
 
   /**
+   * Execute one iteration's tool calls, grouped by source and bounded within
+   * each group. See {@link MAX_PARALLEL_TOOL_CALLS_PER_SOURCE_PER_RUN} for the
+   * scope this does and does not enforce.
+   *
+   * The grouping key is the source prefix `ToolRegistry.execute` routes on — the
+   * same first-`__` split every dispatch door performs, though each hand-rolls
+   * it rather than sharing one function, so the correspondence is CONVENTION,
+   * not enforcement: changing the decomposition means changing every site, or
+   * this grouping silently desyncs from the registry's routing. The
+   * correspondence is what makes the bound meaningful — one group is exactly one
+   * `ToolSource`, so the thing bounded is the thing that owns the connection.
+   *
+   * Calls to different sources still go out together; only depth against any one
+   * source is capped. Results are written by index, so `buildToolResults`, which
+   * pairs positionally, is unaffected.
+   *
+   * In-process sources are bounded too. Every `nb__*` tool shares the `nb` key,
+   * so the cap covers 6 concurrent `nb__*` calls of any kind — including, but not
+   * limited to, `nb__delegate`.
+   */
+  private async executeToolCallsBounded(
+    toolCalls: LanguageModelV3ToolCall[],
+    ctx: ToolExecContext,
+  ): Promise<ToolExecResult[]> {
+    const results = new Array<ToolExecResult>(toolCalls.length);
+    const bySource = new Map<string, number[]>();
+    for (let i = 0; i < toolCalls.length; i++) {
+      // Passing the raw wire name: `splitInnerToolName` documents its input as
+      // already stripped of any `ws_<id>-` prefix, which holds here because that
+      // form is rejected at the door before a call reaches the engine.
+      const { sourcePrefix } = splitInnerToolName(
+        (toolCalls[i] as LanguageModelV3ToolCall).toolName,
+      );
+      const group = bySource.get(sourcePrefix);
+      if (group) group.push(i);
+      else bySource.set(sourcePrefix, [i]);
+    }
+
+    await Promise.all(
+      [...bySource.values()].map((indices) =>
+        mapWithConcurrency(
+          indices,
+          MAX_PARALLEL_TOOL_CALLS_PER_SOURCE_PER_RUN,
+          async (callIndex) => {
+            // `executeToolCall` already contains its own failures (it returns an
+            // error result rather than throwing for tool-level problems), so no
+            // per-item try/catch is needed to keep siblings running.
+            results[callIndex] = await this.executeToolCall(
+              toolCalls[callIndex] as LanguageModelV3ToolCall,
+              ctx,
+            );
+          },
+        ),
+      ),
+    );
+
+    return results;
+  }
+
+  /**
    * Run one tool call end-to-end: gate (beforeToolCall) → coerce/validate →
    * execute → bound → afterToolCall → supervisor → emit. Returns the record the
-   * loop needs to build history and telemetry. Called concurrently (one per tool
-   * call) inside the iteration's `Promise.all`.
+   * loop needs to build history and telemetry. Called concurrently (up to the
+   * per-source cap) from the iteration's bounded dispatch above.
    */
   private async executeToolCall(
     toolCall: LanguageModelV3ToolCall,

@@ -2500,14 +2500,32 @@ export class Runtime {
     return [...names];
   }
 
-  /** Get MCP sources across all workspace registries (for health monitoring). */
+  /**
+   * Every distinct `McpSource` across all workspace registries, for health
+   * monitoring.
+   *
+   * De-duplicated by OBJECT IDENTITY, not by name. The de-dup exists because
+   * `createWorkspaceRegistry` adds the same platform source *objects* to every
+   * workspace registry, so without it each would be monitored once per
+   * workspace. Identity handles that case exactly — they are literally the same
+   * object — while keeping the sources a name-keyed set would wrongly collapse.
+   *
+   * A URL bundle's source name comes from the bundle (`ref.serverName ??
+   * deriveServerName(ref.url)`) and carries no workspace, so the same fleet
+   * bundle installed in N workspaces yields N SEPARATE `McpSource` instances —
+   * separate transports, separate sessions — sharing one name.
+   *
+   * The N returned instances are real work, not amplification: each owns its own
+   * connection and has to be reconnected on its own. How that lands in metrics is
+   * `src/api/metrics.ts`'s to state, not this comment's.
+   */
   mcpSources(): McpSource[] {
     const sources: McpSource[] = [];
-    const seen = new Set<string>();
+    const seen = new Set<McpSource>();
     for (const reg of this._workspaceRegistries.values()) {
       for (const s of reg.getSources()) {
-        if (s instanceof McpSource && !seen.has(s.name)) {
-          seen.add(s.name);
+        if (s instanceof McpSource && !seen.has(s)) {
+          seen.add(s);
           sources.push(s);
         }
       }
@@ -2527,20 +2545,33 @@ export class Runtime {
    * carries a required workspace.
    *
    * `visible.has(serverName)` is load-bearing, not a redundant guard: an
-   * installed bundle is absent from the registry whenever it is installed but
-   * not running — a boot-start that failed, or a connector torn down by a
-   * disconnect — and this filter is the sole reason those stay out of the
-   * agent's view (`getApps` → `nb__list_apps`). Deleting it surfaces every
-   * such record as a usable app. The management UI deliberately does NOT go
-   * through here for exactly that reason; `handleListInstalled` reads the
-   * lifecycle map directly so it can show a Connect / Reconnect affordance.
+   * installed bundle that is not RUNNING — a boot-start that failed, or a
+   * connector torn down by a disconnect — must stay out of the agent's view
+   * (`getApps` → `nb__list_apps`), because `buildAppInfo` carries no liveness
+   * into the prompt: a down bundle would read as an ordinary usable app whose
+   * tools are inexplicably missing. Deleting this filter surfaces every such
+   * record as a usable app.
+   *
+   * The set is built from ESTABLISHED sources — ones that have connected at
+   * least once — not merely registered ones. A boot-failed source now stays
+   * registered (so it remains visible to HealthMonitor and the unhealthy gauge),
+   * which means membership alone would have quietly promoted exactly that class
+   * into the prompt. The management UI deliberately does NOT go through here for
+   * exactly that reason; `handleListInstalled` reads the lifecycle map directly
+   * so it can show a Connect / Reconnect affordance.
+   *
+   * "Established" deliberately still includes a source whose transport has since
+   * dropped: that bundle works and heals in place, so hiding it would be the
+   * regression, not the fix.
    * That the agent cannot see, or explain, a bundle in this state is the open
    * gap tracked in #757.
    */
   getBundleInstancesForWorkspace(wsId: string): BundleInstance[] {
     const wsRegistry = this._workspaceRegistries.get(wsId);
     if (!wsRegistry) return [];
-    const visible = new Set(wsRegistry.sourceNames());
+    const visible = new Set(
+      wsRegistry.sourceNames().filter((n) => wsRegistry.hasEstablishedSource(n)),
+    );
     return this.lifecycle
       .getInstances()
       .filter((inst) => inst.wsId === wsId && visible.has(inst.serverName));

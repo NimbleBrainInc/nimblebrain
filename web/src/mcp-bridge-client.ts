@@ -14,7 +14,12 @@
 
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
-import { addAuthLifecycleHandler, getActiveWorkspaceId, getAuthToken } from "./api/client";
+import {
+  addAuthLifecycleHandler,
+  fetchWithRefresh,
+  getActiveWorkspaceId,
+  getAuthToken,
+} from "./api/client";
 
 // ---------------------------------------------------------------------------
 // Module-level singleton
@@ -229,6 +234,18 @@ async function createClient(): Promise<Entry> {
  *
  * Cookie-mode (`authToken === "__cookie__"`) falls through to
  * `credentials: "include"` — the browser sends the session cookie.
+ *
+ * Goes through the SHARED `fetchWithRefresh`, not `globalThis.fetch`.
+ * Reading the token per-request only picks up a refresh somebody else already
+ * performed; it never causes one. A user parked on a rendered app generates
+ * nothing but bridge traffic, so with a bare `fetch` the session simply expires
+ * underneath them and every `/mcp` call 401s until a page reload re-bootstraps
+ * auth — the reported "unauthorized after a while, fixed by refresh" bug.
+ *
+ * Reusing the REST client's instance (rather than constructing another) is
+ * deliberate: its single in-flight promise coalesces concurrent refreshes, so
+ * bridge and REST traffic hitting 401 together perform ONE refresh instead of
+ * racing two against a rotating refresh token.
  */
 async function mcpFetch(input: string | URL, init?: RequestInit): Promise<Response> {
   const headers = new Headers(init?.headers);
@@ -244,11 +261,13 @@ async function mcpFetch(input: string | URL, init?: RequestInit): Promise<Respon
     headers.set("X-Workspace-Id", workspaceId);
   }
 
-  return fetch(input, {
+  return fetchWithRefresh(typeof input === "string" ? input : input.toString(), {
     ...init,
     headers,
     // Always include credentials so cookie-mode auth works and same-origin
-    // requests forward session cookies.
+    // requests forward session cookies. This is also what makes the
+    // interceptor's post-refresh retry correct here: the refreshed session
+    // rides the cookie, so replaying the original init picks it up.
     credentials: init?.credentials ?? "include",
   });
 }

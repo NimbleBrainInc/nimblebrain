@@ -11,6 +11,10 @@ import {
 	isModelAllowed,
 	listModels,
 	listProviders,
+	openaiAcceptsMinimalEffort,
+	openaiRestrictedEffortModelIds,
+	openaiSupportedEfforts,
+	openaiUnmeasuredReasoningModels,
 	supportsEnabledThinking,
 } from "../../src/model/catalog.ts";
 import { estimateCost } from "../../src/usage/cost.ts";
@@ -374,5 +378,48 @@ describe("Google thinking support", () => {
 			// own documented maximum.
 			expect(support.max).toBeGreaterThanOrEqual(1024);
 		}
+	});
+});
+
+describe("OpenAI effort support", () => {
+	it("names real catalog models in the OpenAI restricted-effort map", () => {
+		// Same failure mode as the Google table: a typo'd key silently restores
+		// the full ladder for the model it meant to restrict, and gpt-5-pro
+		// would go back to 400ing on the platform default.
+		const ids = openaiRestrictedEffortModelIds();
+		expect(ids.length).toBeGreaterThan(0);
+		expect(ids.filter((id) => getModel("openai", id) === undefined)).toEqual([]);
+		// Measured against /v1/responses, not taken from docs.
+		expect([...openaiSupportedEfforts("openai:gpt-5-pro")]).toEqual(["high"]);
+		// Bounded from ABOVE as well as below — restriction is not a `-pro`
+		// property and not always a floor.
+		expect([...openaiSupportedEfforts("openai:gpt-5.2-chat-latest")]).toEqual(["medium"]);
+		expect([...openaiSupportedEfforts("openai:gpt-5.2-pro")].sort()).toEqual(["high", "medium"]);
+		// `minimal` rides in the same table rather than a parallel set, so it
+		// inherits the typo and coverage guards. It is not in OPENAI_EFFORTS, so
+		// step-down can never land on it.
+		expect([...openaiSupportedEfforts("openai:gpt-5")].sort()).toEqual([
+			"high",
+			"low",
+			"medium",
+			"minimal",
+		]);
+		expect(openaiAcceptsMinimalEffort("openai:gpt-5")).toBe(true);
+		expect(openaiAcceptsMinimalEffort("openai:gpt-5.1")).toBe(false);
+		// Anything unlisted takes the full ladder, and never minimal.
+		expect([...openaiSupportedEfforts("openai:not-a-model")].sort()).toEqual([
+			"high",
+			"low",
+			"medium",
+		]);
+	});
+
+	it("has measured every catalog reasoning model", () => {
+		// The map's default is the opposite of Google's — absent means the FULL
+		// ladder — so a model `sync-models` adds tomorrow silently gets all three
+		// tiers and 400s in production if it is actually restricted. This fails
+		// CI instead. Note the guard cannot be "every -pro id has a row":
+		// o3-pro is -pro, was measured, and correctly takes the full ladder.
+		expect(openaiUnmeasuredReasoningModels()).toEqual([]);
 	});
 });

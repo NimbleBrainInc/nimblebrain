@@ -45,6 +45,7 @@ function makeStubRuntime(opts: StubOptions = {}): Runtime {
   const recoverable = new Set(opts.recoverable ?? []);
   const registry = {
     hasSource: (name: string) => sources.has(name),
+    hasEstablishedSource: (name: string) => sources.has(name),
   };
   return {
     getIdentitySource: (name: string) => (identitySources.has(name) ? { name } : undefined),
