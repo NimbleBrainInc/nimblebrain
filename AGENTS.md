@@ -15,7 +15,7 @@ bun run verify             # Full CI parity — runs every subscript below
 bun run verify:static      # format:check + lint + check + check:cycles
 bun run verify:test-unit   # test:unit + test:web + test:bundles
 
-bun run test               # Unit + integration tests (all)
+bun run test               # Unit then integration (stops at the first failing suite)
 bun run test:unit          # Unit tests only (fast, ~10s)
 bun run test:integration   # Integration tests only
 bun run lint               # Biome linter
@@ -86,6 +86,11 @@ Tests are organized into three tiers:
 | Unit | `test/unit/` | `bun run test:unit` | Pure logic, mocked deps, no I/O or servers |
 | Integration | `test/integration/` | `bun run test:integration` | `Runtime.start()`, HTTP servers, real crypto, subprocesses |
 | Eval | `test/eval/` | `bun run eval` | LLM evals, require `ANTHROPIC_API_KEY` |
+
+Running a single file, pass the flag the scripts pass —
+`bun test --env-file=test/.env.test <file>`. A bare `bun test <file>` auto-loads
+your `.env`, which hands the test a live `COMPOSIO_API_KEY` (see
+`test/.env.test`).
 
 Shared test helpers live in `test/helpers/` (imported by both unit and integration).
 

@@ -334,7 +334,7 @@ passed, production stayed broken. Match the production type strictly.
    handler calls — not the full MCP roundtrip — for speed. For
    discriminated-union outputs, narrow via `"key" in result` rather than
    `as { … }`.
-6. **Run the lint.** `bun test test/unit/tools/platform/schema-shape.test.ts`
+6. **Run the lint.** `bun test --env-file=test/.env.test test/unit/tools/platform/schema-shape.test.ts`
    should still pass. New sources need to be registered in the lint's
    `SOURCES` array; new tools on existing sources are auto-detected via
    `tools/list`.
