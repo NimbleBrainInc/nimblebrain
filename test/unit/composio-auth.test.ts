@@ -210,6 +210,12 @@ function freshDir(): { dir: string; cleanup: () => void } {
   return { dir, cleanup: () => rmSync(dir, { recursive: true, force: true }) };
 }
 
+// Every describe below installs a declared connector block, and it is a module
+// singleton in a different cache from the composio config each describe resets
+// on its own. File-level rather than per-describe: a per-describe hook covers
+// the describe that has it and silently misses the next one added.
+afterEach(_resetConnectorsConfigForTest);
+
 describe("composioUserId", () => {
   const origTid = process.env.NB_TENANT_ID;
   afterEach(() => {
@@ -550,11 +556,6 @@ describe("POST /v1/composio-auth/initiate", () => {
       else process.env[k] = savedEnv[k];
     }
     _resetComposioConfigForTest();
-    // The declared block lives in a different module cache from the one above,
-    // so resetting only that one leaves a previous test's `authConfigs` live —
-    // silently satisfying the auth-config check in tests written to exercise
-    // its absence, and leaking this file's config into the rest of the run.
-    _resetConnectorsConfigForTest();
   });
 
   /**
