@@ -7,6 +7,7 @@ import type { CallToolResult, CreateTaskResult, Task } from "@modelcontextprotoc
 import {
   CallToolResultSchema,
   ListResourcesRequestSchema,
+  McpError,
   ReadResourceRequestSchema,
   ToolListChangedNotificationSchema,
 } from "@modelcontextprotocol/sdk/types.js";
@@ -1570,24 +1571,22 @@ export class McpSource implements ToolSource {
           // exists to prevent.
           //
           // The infrastructure marker tells the loop supervisor not to count this
-          // toward its strike budget. It is an ALLOWLIST of the classes that mean
-          // "the call never reached the tool's logic", not a denylist of the one
-          // that doesn't. Polarity matters: `unknown` is the classifier's explicit
-          // "could not positively classify this" residue, so marking it would
-          // assert precisely what the classifier declines to. A server that
-          // answers a deterministic tool rejection with its own implementation-
-          // defined code (-32001..-32099) classifies `unknown`,
-          // and exempting that from the guard would let a real loop run free.
-          // An unmarked class simply trips at three, which is the pre-existing
-          // behaviour — so the allowlist is the strictly safer default, and a new
-          // member of `ConnectionFailure` is not silently exempt.
+          // toward its strike budget — see `INFRA_ERROR_META_KEY` for why that
+          // matters and why the marker is host-owned.
           //
-          // One residual: -32000 is claimed by `transport-dead`, which IS on the
-          // allowlist, so a bundle answering with that exact code is exempt. It is
-          // indistinguishable here from the SDK's own connection-closed code, so
-          // the ambiguity is accepted rather than resolved.
+          // It requires BOTH an allowlisted class and a TRANSPORT-LEVEL throw.
+          // The second condition is the load-bearing one: three of the allowlisted
+          // classes are decided by regex over the server's own error text, so a
+          // bundle answering `McpError(-32603, "Rate limit exceeded")` — FastMCP's
+          // default for an unhandled exception — would otherwise exempt itself
+          // from the guard permanently, and a bundle relaying a persistent
+          // upstream 429 would be exempted exactly when the guard should trip.
+          // An `McpError` IS the server answering; only a throw the transport
+          // itself constructed (an HTTP status, a socket failure) is a signal the
+          // bundle cannot author.
           const kind = classifyConnectionFailure(e);
-          const infra = INFRA_FAILURE_CLASSES.has(kind) ? infraErrorMeta() : {};
+          const infra =
+            INFRA_FAILURE_CLASSES.has(kind) && !(e instanceof McpError) ? infraErrorMeta() : {};
           if (kind === "rate-limited") {
             return {
               content: textContent(
@@ -2856,27 +2855,21 @@ function sleep(ms: number): Promise<void> {
 }
 
 /**
- * The connection classes that mean the call never reached the tool's logic, so a
- * repeat of it says nothing about whether the tool works. Only these carry the
- * infrastructure marker.
+ * Classes that mean the call never reached the tool's logic, so repeating it says
+ * nothing about whether the tool works. Necessary but NOT sufficient for the
+ * infrastructure marker — the throw must also be transport-level; see the call
+ * site and {@link INFRA_ERROR_META_KEY}.
  *
- * Deliberately an allowlist. `none` (the server answered) and `unknown` (the
- * classifier could not tell) both stay countable — the guard's default must be
- * to count, so an unclassifiable throw and any future class added to
- * `ConnectionFailure` trip at three rather than being silently exempt.
- *
- * `auth-lost` is deliberately absent. `policyFor` routes it to the reauth arm
- * whenever a reauthable provider exists, and the SDK raises `UnauthorizedError`
- * only on branches gated by that same provider — so it cannot arrive here. Were
- * it ever to, counting it is the right default: a rejected credential has no
- * in-run remedy, which is the same reason `isConnectionDownClass` excludes it.
+ * An allowlist, so `unknown` and `none` count and a new `ConnectionFailure`
+ * member is not silently exempt. `timeout` and `auth-lost` are absent: both
+ * arrive as `McpError`, and both describe a failure with no in-run remedy, which
+ * still counts.
  */
 const INFRA_FAILURE_CLASSES: ReadonlySet<ConnectionFailure> = new Set([
   "session-lost",
   "transient",
   "transport-dead",
   "rate-limited",
-  "timeout",
 ]);
 
 /**

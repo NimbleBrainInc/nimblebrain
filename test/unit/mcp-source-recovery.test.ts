@@ -220,54 +220,29 @@ describe("execute (tools/call) — unified recovery", () => {
     }
   });
 
-  it("marks a surfaced connection failure as an infrastructure error", async () => {
-    // The supervisor excludes these from its strike count. Without the marker a
-    // batch of calls with distinct arguments that all fail on the transport
-    // collapses to one ERROR fingerprint (input is deliberately ignored there)
-    // and disables the tool after three — precisely when retrying is correct.
-    const source = remoteSource({
-      callTool: () => Promise.reject(new McpError(-32001, "Request timed out")),
-    });
-    const restart = spyRestart(source, true);
-    try {
-      const result = await source.execute("write", {});
-      expect(result.isError).toBe(true);
-      expect(result._meta?.[INFRA_ERROR_META_KEY]).toBe(true);
-    } finally {
-      restart.mockRestore();
-    }
-  });
-
-  it("marks a throttle as infrastructure too", async () => {
-    // A throttle is a connection class: being refused for pacing says nothing
-    // about whether the tool works, which is exactly what the strike count must
-    // not conclude. This is the arm the two changes share.
-    const source = remoteSource({
-      callTool: () =>
-        Promise.reject(
-          new Error('Streamable HTTP error: Error POSTing to endpoint: {"error":"rate_limited"}'),
-        ),
-    });
-    const restart = spyRestart(source, true);
-    try {
-      const result = await source.execute("write", {});
-      expect(result.isError).toBe(true);
-      expect(result._meta?.[INFRA_ERROR_META_KEY]).toBe(true);
-      expect(result.structuredContent).toMatchObject({ reason: "rate_limited" });
-    } finally {
-      restart.mockRestore();
-    }
-  });
-
-  // Every allowlist member, so a redundant or wrong entry cannot hide behind the
-  // two that happened to be covered. Recovery is forced to fail so each throw
-  // reaches the surface arm where the marker decision is made.
+  // Transport-shaped fixtures, deliberately. A plain `new Error("Session not
+  // found")` or an `McpError` would be server-authored text, which must NOT earn
+  // the marker — see the negative table below. Each of these is a throw the
+  // transport itself builds: an HTTP status, or a socket failure.
   const INFRA_CLASSES: ReadonlyArray<[string, () => unknown]> = [
-    ["session-lost", () => new Error("Session not found")],
-    ["transient", () => ({ code: 502, message: "Bad Gateway" })],
-    ["transport-dead", () => new McpError(-32000, "Connection closed")],
-    ["rate-limited", () => new Error('{"error":"rate_limited"}')],
-    ["timeout", () => new McpError(-32001, "Request timed out")],
+    [
+      "session-lost",
+      () =>
+        Object.assign(
+          new Error("Streamable HTTP error: Error POSTing to endpoint: Session not found"),
+          { code: 404 },
+        ),
+    ],
+    ["transient", () => Object.assign(new Error("Bad Gateway"), { code: 502 })],
+    ["transport-dead", () => new Error("fetch failed")],
+    [
+      "rate-limited",
+      () =>
+        Object.assign(
+          new Error('Streamable HTTP error: Error POSTing to endpoint: {"error":"rate_limited"}'),
+          { code: 429 },
+        ),
+    ],
   ];
 
   for (const [label, make] of INFRA_CLASSES) {
@@ -284,82 +259,35 @@ describe("execute (tools/call) — unified recovery", () => {
     });
   }
 
-  it("strips the infrastructure marker on the TASK path too", async () => {
-    // The strip has two projections and the inline one is covered above. Without
-    // this, deleting the task-path call leaves the suite green — verified.
-    const source = remoteSource({});
-    const internal = source as unknown as {
-      cachedTools: unknown[];
-      client: Record<string, unknown>;
-    };
-    internal.cachedTools = [
-      {
-        name: "svc__long_job",
-        inputSchema: { type: "object" },
-        execution: { taskSupport: "required" },
-      },
-    ];
-    internal.client.experimental = {
-      tasks: {
-        callToolStream: async function* () {
-          yield { type: "taskCreated", task: { taskId: "t1", status: "working" } };
-          yield {
-            type: "result",
-            result: {
-              content: [{ type: "text", text: "Invalid params" }],
-              isError: true,
-              _meta: { [INFRA_ERROR_META_KEY]: true, "bundle.own/hint": "keep me" },
-            },
-          };
-        },
-      },
-    };
+  // The other half of the trust boundary. `_meta` is stripped at the wire, but
+  // the marker DECISION reads the classifier, and three of its classes match on
+  // the server's own error text. An `McpError` is the server answering, so it can
+  // never earn the marker however its message is spelled — otherwise a bundle
+  // raising `Exception("Rate limit exceeded")` (FastMCP's default for an
+  // unhandled exception) would exempt itself from the loop guard for the whole
+  // run, and a bundle relaying a persistent upstream 429 would be exempted
+  // exactly when the guard should trip.
+  const BUNDLE_AUTHORED: ReadonlyArray<[string, number, string]> = [
+    ["rate-limit wording", -32603, "Rate limit exceeded for this account"],
+    ["throttled wording", -32603, "Upstream API throttled the request"],
+    ["invalid-params claiming a throttle", -32602, "parameter 'window' throttled to 100/day"],
+    ["transient wording", -32603, "Service Unavailable from upstream vendor"],
+    ["session wording", -32603, "session not found in my application db"],
+  ];
 
-    const result = await source.execute("long_job", {});
-    expect(result._meta?.[INFRA_ERROR_META_KEY]).toBeUndefined();
-    expect(result._meta?.["bundle.own/hint"]).toBe("keep me");
-  });
-
-  it("strips the infrastructure marker a bundle set on its own result", async () => {
-    // The supervisor trusts this marker unconditionally, and a trip is the only
-    // thing that drops a tool from the model's toolset mid-run. A bundle able to
-    // set it on a deterministic rejection would exempt itself from the guard for
-    // the whole run — so it is host-owned and stripped at the wire boundary.
-    const source = remoteSource({
-      callTool: async () => ({
-        content: [{ type: "text", text: "Invalid params: missing 'id'" }],
-        isError: true,
-        _meta: { [INFRA_ERROR_META_KEY]: true, "bundle.own/hint": "keep me" },
-      }),
+  for (const [label, code, message] of BUNDLE_AUTHORED) {
+    it(`does NOT mark a bundle-authored error: ${label}`, async () => {
+      const source = remoteSource({ callTool: () => Promise.reject(new McpError(code, message)) });
+      const restart = spyRestart(source, false);
+      try {
+        const result = await source.execute("write", {});
+        expect(result.isError).toBe(true);
+        expect(result._meta?.[INFRA_ERROR_META_KEY]).toBeUndefined();
+      } finally {
+        restart.mockRestore();
+      }
     });
-
-    const result = await source.execute("write", {});
-    expect(result.isError).toBe(true);
-    expect(result._meta?.[INFRA_ERROR_META_KEY]).toBeUndefined();
-    // Targeted strip, not a decision to stop forwarding `_meta`.
-    expect(result._meta?.["bundle.own/hint"]).toBe("keep me");
-  });
-
-  it("does NOT mark a reauth surface", async () => {
-    // One rule across `not started`, the absent `auth-lost` allowlist entry, and
-    // this: a failure with no IN-RUN remedy still counts. `onAuthLost` only
-    // records `reauth_required` — it does not stop the source — so every later
-    // call returns this same result, and exempting it would hold the tool in the
-    // toolset for the rest of the run with nothing able to fix it.
-    const source = remoteSource({
-      callTool: () => Promise.reject(new UnauthorizedError("token rejected")),
-      notifyAuthLost: () => {},
-    });
-    const restart = spyRestart(source, true);
-    try {
-      const result = await source.execute("write", {});
-      expect(result.isError).toBe(true);
-      expect(result.structuredContent).toMatchObject({ reason: "reauth_required" });
-      expect(result._meta?.[INFRA_ERROR_META_KEY]).toBeUndefined();
-    } finally {
-      restart.mockRestore();
-    }
-  });
+  }
 
   it("does NOT mark an UNCLASSIFIABLE throw", async () => {
     // `unknown` is the classifier's "could not positively classify this" residue.

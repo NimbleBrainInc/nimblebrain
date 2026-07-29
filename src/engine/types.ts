@@ -103,16 +103,23 @@ export const NON_ADVANCING_META_KEY = "ai.nimblebrain/non-advancing";
  * that all fail the same infrastructural way collapse to one fingerprint and
  * trip after three.
  *
- * Set by the layer that can actually tell — `McpSource`, from its connection
- * classifier. A tool cannot know that its transport is the problem, so its own
- * results never carry it — and that is ENFORCED, not merely expected:
- * `McpSource` strips this key from any `_meta` arriving over the wire. The
- * supervisor trusts the marker unconditionally, so a bundle able to set it could
- * exempt itself from the loop guard permanently.
+ * Host-owned, because the supervisor trusts it unconditionally: a bundle able to
+ * set it could exempt itself from the guard permanently. That is the asymmetry
+ * with `NON_ADVANCING_META_KEY` above, which IS safe to accept from a bundle —
+ * setting that one makes the guard stricter; this one makes it weaker.
  *
- * That is the asymmetry with `NON_ADVANCING_META_KEY` above, which IS safe to
- * accept from a bundle: setting it makes the guard stricter. This one makes it
- * weaker, so it is host-owned.
+ * `McpSource` owns it on two channels, and both need closing because a bundle
+ * controls both:
+ *
+ *   - the `_meta` key, stripped from anything arriving over the wire;
+ *   - the DECISION, which requires a transport-level throw and not merely an
+ *     allowlisted class — three of those classes are matched by regex over the
+ *     server's own error text, so an `McpError` never earns the marker however
+ *     its message is spelled.
+ *
+ * Residual, deliberately accepted: a class is still inferred partly from text on
+ * throws the transport builds, and `startToolAsTask` re-throws a task-creation
+ * failure as a bare `Error` carrying the server's message. See #838.
  */
 export const INFRA_ERROR_META_KEY = "ai.nimblebrain/infra-error";
 
