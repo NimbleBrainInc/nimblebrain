@@ -414,8 +414,6 @@ A toolkit you leave out is not reported — wiring a subset of the catalog is th
 
 These are identifiers, not secrets: an `ac_…` is inert without `apiKey`, the way a client_id is inert without a client_secret. They live in config next to the toolkits they name rather than in your secret store.
 
-A toolkit with no entry falls back to the environment variable named by its catalog entry's legacy `composio.authConfigEnv` — the one field here whose fallback is per-key rather than per-field. The runtime logs a deprecation warning naming the toolkit whenever that fallback is the value's actual source, so the toolkits still to migrate are visible in your logs. Both the fallback and the field will be removed ([#789](https://github.com/NimbleBrainInc/nimblebrain/issues/789)).
-
 One instance serves one tenant, so this is a single config layer: there is no per-tenant merge. Intra-tenant isolation is unchanged — the single broker account still serves every workspace and user in the tenant, namespaced by the Composio `user_id`.
 
 ### connectors.providers.smithery
@@ -453,7 +451,6 @@ Precedence is **per field**: a setting declared in the block wins, a setting lef
 | Field | Env fallback |
 |---|---|
 | `apiKey` | `COMPOSIO_API_KEY` |
-| `authConfigs` | per-toolkit — see [Per-toolkit auth configs](#per-toolkit-auth-configs) |
 | `baseUrl` | `COMPOSIO_API_BASE_URL` |
 | `monitorEnabled` | `COMPOSIO_MONITOR_ENABLED` |
 

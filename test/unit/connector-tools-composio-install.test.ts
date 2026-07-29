@@ -114,7 +114,7 @@ import {
 // ── Catalog fixture ─────────────────────────────────────────────────
 //
 // The composio install branch reads the catalog entry shape:
-// auth=composio + composio.{toolkit,authConfigEnv}. Synthesized as
+// auth=composio + composio.toolkit. Synthesized as
 // a `DirectoryEntry` per the install-handler signature.
 
 const GMAIL_ID = "com.google/gmail";
@@ -133,7 +133,6 @@ function gmailEntry(): import("../../src/registries/types.ts").DirectoryEntry {
       auth: "composio",
       composio: {
         toolkit: "gmail",
-        authConfigEnv: "COMPOSIO_GMAIL_AUTH_CONFIG_ID",
       },
     },
   };
@@ -223,14 +222,16 @@ function buildTool(h: Harness) {
 // ── Env handling ────────────────────────────────────────────────────
 
 const SAVED_ENV: Record<string, string | undefined> = {};
-const TRACKED_ENV = ["COMPOSIO_API_KEY", "COMPOSIO_GMAIL_AUTH_CONFIG_ID", "NB_TENANT_ID"];
+const TRACKED_ENV = ["COMPOSIO_API_KEY", "NB_TENANT_ID"];
 
 let h: Harness;
 
 beforeEach(async () => {
   for (const k of TRACKED_ENV) SAVED_ENV[k] = process.env[k];
   for (const k of TRACKED_ENV) delete process.env[k];
-  _resetConnectorsConfigForTest();
+  // The gmail toolkit's auth-config id, declared the way a deployment declares
+  // it. Individual tests override the block when the id itself is under test.
+  setConnectorsConfig({ providers: { composio: { authConfigs: { gmail: "ac_gmail" } } } });
   _resetComposioConfigForTest();
   composioCalls.createConfig = undefined;
   composioCalls.createImpl = async () => ({
@@ -252,6 +253,9 @@ afterEach(() => {
   }
   _resetComposioConfigForTest();
   rmSync(h.workDir, { recursive: true, force: true });
+  // The declared block is a module singleton — leaving one installed leaks
+  // this file's connector config into whatever runs next in the process.
+  _resetConnectorsConfigForTest();
 });
 
 // ── Tests ───────────────────────────────────────────────────────────
@@ -275,14 +279,13 @@ describe("manage_connectors.install (composio-auth)", () => {
 
   test("(a) persists ref.composio.connectorId on the BundleRef", async () => {
     process.env.COMPOSIO_API_KEY = "k_test";
-    process.env.COMPOSIO_GMAIL_AUTH_CONFIG_ID = "ac_gmail";
 
     const installed = await installAndReadPersistedRef();
     expect(installed).toBeDefined();
     expect(installed?.composio?.connectorId).toBe(GMAIL_ID);
   });
 
-  test("(a-2) the declared authConfigs entry reaches Composio, with no env var set", async () => {
+  test("(a-2) the declared authConfigs entry reaches Composio", async () => {
     // The path the migration moves onto: the id comes from the config block,
     // keyed by the toolkit the catalog entry already names.
     process.env.COMPOSIO_API_KEY = "k_test";
@@ -295,23 +298,8 @@ describe("manage_connectors.install (composio-auth)", () => {
     ).toBe("ac_declared");
   });
 
-  test("(a-3) a declared id wins over the legacy env var end-to-end", async () => {
-    // Precedence at the call site, not just in the resolver: a stale env var
-    // left in the pod after the values move cannot resurrect the old id.
-    process.env.COMPOSIO_API_KEY = "k_test";
-    process.env.COMPOSIO_GMAIL_AUTH_CONFIG_ID = "ac_stale_env";
-    setConnectorsConfig({ providers: { composio: { authConfigs: { gmail: "ac_declared" } } } });
-    _resetComposioConfigForTest();
-
-    await installAndReadPersistedRef();
-    expect(
-      (composioCalls.createConfig as { authConfigs?: Record<string, string> }).authConfigs?.gmail,
-    ).toBe("ac_declared");
-  });
-
   test("(b) transport.auth names the credential provider — neither the key nor an env reference to it lands on disk", async () => {
     process.env.COMPOSIO_API_KEY = "secret-api-key-DO-NOT-LEAK";
-    process.env.COMPOSIO_GMAIL_AUTH_CONFIG_ID = "ac_gmail";
 
     const installed = await installAndReadPersistedRef();
     expect(installed?.transport?.auth?.type).toBe("provider");
@@ -330,7 +318,6 @@ describe("manage_connectors.install (composio-auth)", () => {
 
   test("(c) extra headers containing the API key are dropped, not templated", async () => {
     process.env.COMPOSIO_API_KEY = "secret-api-key";
-    process.env.COMPOSIO_GMAIL_AUTH_CONFIG_ID = "ac_gmail";
 
     // Composio's session sometimes returns headers beyond x-api-key.
     // Defensive: if the API key appears anywhere inside one (e.g. a
@@ -371,7 +358,6 @@ describe("manage_connectors.install (composio-auth)", () => {
 
   test("(d) eager startBundleSource failure returns success with a warning, not a hard error", async () => {
     process.env.COMPOSIO_API_KEY = "k_test";
-    process.env.COMPOSIO_GMAIL_AUTH_CONFIG_ID = "ac_gmail";
 
     const tool = buildTool(h);
     const result = await tool.handler({ action: "install", entry: gmailEntry(), wsId: h.wsId });
@@ -407,9 +393,8 @@ describe("manage_connectors.install (composio-auth)", () => {
   });
 
   test("(e-1) errResult when COMPOSIO_API_KEY is unset", async () => {
-    // COMPOSIO_API_KEY intentionally missing. Per-toolkit env IS set
-    // so we can assert the failure is API-key-specific.
-    process.env.COMPOSIO_GMAIL_AUTH_CONFIG_ID = "ac_gmail";
+    // COMPOSIO_API_KEY intentionally missing. The harness declares gmail's
+    // auth-config id, so the failure is provably API-key-specific.
 
     const tool = buildTool(h);
     const result = await tool.handler({ action: "install", entry: gmailEntry(), wsId: h.wsId });
@@ -426,7 +411,8 @@ describe("manage_connectors.install (composio-auth)", () => {
 
   test("(e-2) errResult when the toolkit has no auth-config id", async () => {
     process.env.COMPOSIO_API_KEY = "k_test";
-    // Neither a declared authConfigs entry nor the legacy env var.
+    // Drop the harness declaration — this is the unwired-toolkit path.
+    setConnectorsConfig({ providers: { composio: { authConfigs: {} } } });
 
     const tool = buildTool(h);
     const result = await tool.handler({ action: "install", entry: gmailEntry(), wsId: h.wsId });
@@ -444,7 +430,6 @@ describe("manage_connectors.install (composio-auth)", () => {
 
   test("(e-3) errResult when entry.install lacks the composio config block", async () => {
     process.env.COMPOSIO_API_KEY = "k_test";
-    process.env.COMPOSIO_GMAIL_AUTH_CONFIG_ID = "ac_gmail";
 
     const malformed = gmailEntry();
     // Strip the composio block while keeping auth: composio. This
@@ -464,7 +449,6 @@ describe("manage_connectors.install (composio-auth)", () => {
 
   test("(f) self-heal: orphan composio bundle (workspace.json row but no lifecycle instance) is reattached without re-running createComposioSession or duplicating", async () => {
     process.env.COMPOSIO_API_KEY = "k_test";
-    process.env.COMPOSIO_GMAIL_AUTH_CONFIG_ID = "ac_gmail";
 
     // Pre-seed an orphan: a persisted composio bundle whose `url` is
     // the dynamic per-install Composio session URL (the realistic shape
@@ -525,7 +509,6 @@ describe("manage_connectors.install (composio-auth)", () => {
 
   test("install surfaces createComposioSession failures as errResult", async () => {
     process.env.COMPOSIO_API_KEY = "k_test";
-    process.env.COMPOSIO_GMAIL_AUTH_CONFIG_ID = "ac_gmail";
     composioCalls.createImpl = async () => {
       throw new Error("Composio rejected the session create");
     };
@@ -555,7 +538,6 @@ describe("manage_connectors.install (composio-auth)", () => {
 
   test("(g) composio install into a personal workspace persists the ref (the path the removed guard blocked)", async () => {
     process.env.COMPOSIO_API_KEY = "k_test";
-    process.env.COMPOSIO_GMAIL_AUTH_CONFIG_ID = "ac_gmail";
 
     const personalWsId = personalWorkspaceIdFor(ADMIN.id);
     await h.workspaceStore.create("Admin Personal", `user_${ADMIN.id}`, {
@@ -591,7 +573,6 @@ describe("manage_connectors.install (composio-auth)", () => {
 
   test("(h) disconnect of a personal-workspace composio bundle runs cleanup keyed on that wsId (no isPersonal gate)", async () => {
     process.env.COMPOSIO_API_KEY = "k_test";
-    process.env.COMPOSIO_GMAIL_AUTH_CONFIG_ID = "ac_gmail";
 
     const personalWsId = personalWorkspaceIdFor(ADMIN.id);
     await h.workspaceStore.create("Admin Personal", `user_${ADMIN.id}`, {
@@ -645,7 +626,6 @@ describe("manage_connectors.install (composio-auth)", () => {
 describe("manage_connectors.install scope:identity (composio personal connector)", () => {
   test("(i) persists the composio ref on the identity plane — no oauthScope, no workspace write, no eager-start", async () => {
     process.env.COMPOSIO_API_KEY = "k_test";
-    process.env.COMPOSIO_GMAIL_AUTH_CONFIG_ID = "ac_gmail";
 
     const tool = buildTool(h);
     const result = await tool.handler({ action: "install", entry: gmailEntry(), scope: "identity" });
@@ -679,7 +659,6 @@ describe("manage_connectors.install scope:identity (composio personal connector)
 
   test("(j) list_personal_connectors exposes auth:composio + the connectorId (cid) — the Connect route's key", async () => {
     process.env.COMPOSIO_API_KEY = "k_test";
-    process.env.COMPOSIO_GMAIL_AUTH_CONFIG_ID = "ac_gmail";
 
     const tool = buildTool(h);
     await tool.handler({ action: "install", entry: gmailEntry(), scope: "identity" });
@@ -696,8 +675,8 @@ describe("manage_connectors.install scope:identity (composio personal connector)
   });
 
   test("(k) errResult when COMPOSIO_API_KEY is unset — the gate admits composio, the prerequisite rejects it, nothing persisted", async () => {
-    // Per-toolkit env set so the failure is provably API-key-specific.
-    process.env.COMPOSIO_GMAIL_AUTH_CONFIG_ID = "ac_gmail";
+    // The harness declares gmail's auth-config id, so the failure is provably
+    // API-key-specific.
 
     const tool = buildTool(h);
     const result = await tool.handler({ action: "install", entry: gmailEntry(), scope: "identity" });
@@ -714,7 +693,6 @@ describe("manage_connectors.install scope:identity (composio personal connector)
 
   test("(l) second identity install of the same composio connector is idempotent — no second session, alreadyInstalled:true", async () => {
     process.env.COMPOSIO_API_KEY = "k_test";
-    process.env.COMPOSIO_GMAIL_AUTH_CONFIG_ID = "ac_gmail";
 
     // Count upstream session creates — a re-install must NOT mint a second and
     // orphan the first (the asymmetry the workspace path guards via dedup).
@@ -753,7 +731,6 @@ describe("manage_connectors.install scope:identity (composio personal connector)
 
   test("(m) disconnect scope:identity removes the composio connection dir + the install record", async () => {
     process.env.COMPOSIO_API_KEY = "k_test";
-    process.env.COMPOSIO_GMAIL_AUTH_CONFIG_ID = "ac_gmail";
 
     const tool = buildTool(h);
     await tool.handler({ action: "install", entry: gmailEntry(), scope: "identity" });
@@ -784,7 +761,6 @@ describe("manage_connectors.install scope:identity (composio personal connector)
 
   test("(n) list_personal_connectors reports `running` from a persisted composio connection (cold source)", async () => {
     process.env.COMPOSIO_API_KEY = "k_test";
-    process.env.COMPOSIO_GMAIL_AUTH_CONFIG_ID = "ac_gmail";
 
     const tool = buildTool(h);
     await tool.handler({ action: "install", entry: gmailEntry(), scope: "identity" });

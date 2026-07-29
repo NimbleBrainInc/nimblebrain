@@ -89,6 +89,10 @@ import {
 } from "../../src/tools/connector-tools.ts";
 import { ToolRegistry } from "../../src/tools/registry.ts";
 import { WorkspaceStore } from "../../src/workspace/workspace-store.ts";
+import {
+  _resetConnectorsConfigForTest,
+  setConnectorsConfig,
+} from "../../src/connectors/providers/config.ts";
 
 const POSTHOG_ID = "com.posthog/analytics";
 const GMAIL_ID = "com.google/gmail";
@@ -108,7 +112,6 @@ const CATALOG_YAML = `servers:
         auth: composio
         composio:
           toolkit: posthog
-          authConfigEnv: COMPOSIO_POSTHOG_AUTH_CONFIG_ID
           authScheme: API_KEY
           fields:
             - key: api_key
@@ -131,7 +134,6 @@ const CATALOG_YAML = `servers:
         auth: composio
         composio:
           toolkit: gmail
-          authConfigEnv: COMPOSIO_GMAIL_AUTH_CONFIG_ID
         tags: [email]
 `;
 
@@ -216,8 +218,6 @@ function buildTool(h: Harness) {
 
 const TRACKED_ENV = [
   "COMPOSIO_API_KEY",
-  "COMPOSIO_POSTHOG_AUTH_CONFIG_ID",
-  "COMPOSIO_GMAIL_AUTH_CONFIG_ID",
   "NB_TENANT_ID",
 ];
 const SAVED_ENV: Record<string, string | undefined> = {};
@@ -241,6 +241,9 @@ afterEach(() => {
     else process.env[k] = SAVED_ENV[k];
   }
   _resetComposioConfigForTest();
+  // The declared block is a module singleton — leaving one installed leaks
+  // this file's connector config into whatever runs next in the process.
+  _resetConnectorsConfigForTest();
 });
 
 // ── connectComposioApiKey (SDK) ─────────────────────────────────────
@@ -248,6 +251,7 @@ afterEach(() => {
 describe("connectComposioApiKey", () => {
   test("forwards fields via AuthScheme.APIKey and returns the verified account", async () => {
     process.env.COMPOSIO_API_KEY = "k_test";
+    setConnectorsConfig({ providers: { composio: { authConfigs: { posthog: "ac_posthog" } } } });
     _resetComposioConfigForTest();
     apiKeyCalls.initiateImpl = () => ({
       id: "ca_new",
@@ -277,6 +281,7 @@ describe("connectComposioApiKey", () => {
 
   test("deletes the dangling account and rethrows when verification fails", async () => {
     process.env.COMPOSIO_API_KEY = "k_test";
+    setConnectorsConfig({ providers: { composio: { authConfigs: { posthog: "ac_posthog" } } } });
     _resetComposioConfigForTest();
     apiKeyCalls.initiateImpl = () => ({
       id: "ca_bad",
@@ -300,6 +305,7 @@ describe("connectComposioApiKey", () => {
 
   test("rejects (and cleans up) a non-ACTIVE resolve", async () => {
     process.env.COMPOSIO_API_KEY = "k_test";
+    setConnectorsConfig({ providers: { composio: { authConfigs: { posthog: "ac_posthog" } } } });
     _resetComposioConfigForTest();
     // A defensive guard against an SDK contract change: waitForConnection
     // resolving with a non-ACTIVE status must not be treated as success.
@@ -411,7 +417,6 @@ const POSTHOG_ENTRY = {
   auth: "composio" as const,
   composio: {
     toolkit: "posthog",
-    authConfigEnv: "COMPOSIO_POSTHOG_AUTH_CONFIG_ID",
     authScheme: "API_KEY" as const,
     fields: [
       { key: "api_key", title: "API Key", sensitive: true, required: true },
@@ -484,7 +489,7 @@ describe("manage_connectors.connect_api_key — lifecycle tail", () => {
 
   test("happy path writes connection.json and records running state", async () => {
     process.env.COMPOSIO_API_KEY = "k_test";
-    process.env.COMPOSIO_POSTHOG_AUTH_CONFIG_ID = "ac_posthog";
+    setConnectorsConfig({ providers: { composio: { authConfigs: { posthog: "ac_posthog" } } } });
     _resetComposioConfigForTest();
     apiKeyCalls.initiateImpl = () => ({
       id: "ca_ph",
@@ -521,7 +526,7 @@ describe("manage_connectors.connect_api_key — lifecycle tail", () => {
 
   test("ensureSourceRegistered failure → install-first message, no persistence", async () => {
     process.env.COMPOSIO_API_KEY = "k_test";
-    process.env.COMPOSIO_POSTHOG_AUTH_CONFIG_ID = "ac_posthog";
+    setConnectorsConfig({ providers: { composio: { authConfigs: { posthog: "ac_posthog" } } } });
     _resetComposioConfigForTest();
 
     const ctx = stubCtx({
@@ -548,7 +553,7 @@ describe("manage_connectors.connect_api_key — lifecycle tail", () => {
 
   test("source-start failure on an INSTALLED connector → 'could not start', not 'install first'", async () => {
     process.env.COMPOSIO_API_KEY = "k_test";
-    process.env.COMPOSIO_POSTHOG_AUTH_CONFIG_ID = "ac_posthog";
+    setConnectorsConfig({ providers: { composio: { authConfigs: { posthog: "ac_posthog" } } } });
     _resetComposioConfigForTest();
 
     // The connector IS installed (a ref exists) but the source transiently fails.
@@ -573,7 +578,7 @@ describe("manage_connectors.connect_api_key — lifecycle tail", () => {
 
   test("no auth-config id → operator-config error (after field validation)", async () => {
     process.env.COMPOSIO_API_KEY = "k_test";
-    delete process.env.COMPOSIO_POSTHOG_AUTH_CONFIG_ID;
+    setConnectorsConfig({ providers: { composio: { authConfigs: {} } } });
     _resetComposioConfigForTest();
 
     const ctx = stubCtx({ workDir, wsId: WS, entry: POSTHOG_ENTRY });
@@ -590,7 +595,7 @@ describe("manage_connectors.connect_api_key — lifecycle tail", () => {
 
   test("Composio connect failure → generic message, no persistence, account cleaned up", async () => {
     process.env.COMPOSIO_API_KEY = "k_test";
-    process.env.COMPOSIO_POSTHOG_AUTH_CONFIG_ID = "ac_posthog";
+    setConnectorsConfig({ providers: { composio: { authConfigs: { posthog: "ac_posthog" } } } });
     _resetComposioConfigForTest();
     apiKeyCalls.initiateImpl = () => ({
       id: "ca_bad",
@@ -616,7 +621,7 @@ describe("manage_connectors.connect_api_key — lifecycle tail", () => {
 
   test("re-connect (key rotation) revokes the previously-connected account", async () => {
     process.env.COMPOSIO_API_KEY = "k_test";
-    process.env.COMPOSIO_POSTHOG_AUTH_CONFIG_ID = "ac_posthog";
+    setConnectorsConfig({ providers: { composio: { authConfigs: { posthog: "ac_posthog" } } } });
     _resetComposioConfigForTest();
 
     // Pre-seed a prior, already-connected account.
@@ -653,7 +658,7 @@ describe("manage_connectors.connect_api_key — lifecycle tail", () => {
 
   test("rotation is admin-gated: a non-admin member can't replace the credential", async () => {
     process.env.COMPOSIO_API_KEY = "k_test";
-    process.env.COMPOSIO_POSTHOG_AUTH_CONFIG_ID = "ac_posthog";
+    setConnectorsConfig({ providers: { composio: { authConfigs: { posthog: "ac_posthog" } } } });
     _resetComposioConfigForTest();
 
     // A connector is already connected...

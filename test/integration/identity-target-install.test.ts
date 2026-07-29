@@ -70,7 +70,7 @@ function composioEntry(): DirectoryEntry {
       url: "https://mcp.composio.test/gmail",
       transportType: "streamable-http",
       auth: "composio",
-      composio: { toolkit: "gmail", authConfigEnv: "COMPOSIO_TEST_AUTH" },
+      composio: { toolkit: "gmail" },
     },
   };
 }

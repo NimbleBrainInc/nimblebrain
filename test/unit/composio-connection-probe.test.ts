@@ -44,18 +44,10 @@ const { _resetConnectorsConfigForTest, setConnectorsConfig } = await import(
 /** The toolkit the fake catalog entry fronts — the key `authConfigs` is read under. */
 const TOOLKIT = "teams";
 
-/**
- * A catalog entry for `TOOLKIT`. The probe resolves its auth-config id from
- * `toolkit` — so the entry must carry one, exactly as a real
- * `ConnectorCatalogEntry` does. `authConfigEnv` is the legacy per-toolkit
- * fallback and is optional: omit it for the shape a catalog authored today
- * writes, whose id comes from `connectors.providers.composio.authConfigs`.
- */
-function fakeDirectory(authConfigEnv?: string): ConnectorDirectory {
+/** A catalog entry for TOOLKIT — the only shape entries carry. */
+function fakeDirectory(): ConnectorDirectory {
   return {
-    catalogById: async () => ({
-      composio: { toolkit: TOOLKIT, ...(authConfigEnv ? { authConfigEnv } : {}) },
-    }),
+    catalogById: async () => ({ composio: { toolkit: TOOLKIT } }),
   } as unknown as ConnectorDirectory;
 }
 
@@ -69,7 +61,7 @@ function target(connectorId: string | undefined): ProbeTarget {
 }
 
 const live = new AbortController().signal;
-const ENV_KEYS = ["COMPOSIO_API_KEY", "AUTH_CFG_X"] as const;
+const ENV_KEYS = ["COMPOSIO_API_KEY"] as const;
 let saved: Record<string, string | undefined>;
 
 beforeEach(() => {
@@ -80,7 +72,7 @@ beforeEach(() => {
   // `findActiveComposioConnection` now runs for real (driven by the mocked
   // vendor seam), so reset the process-cached config between tests.
   _resetComposioConfigForTest();
-  _resetConnectorsConfigForTest();
+  setConnectorsConfig({ providers: { composio: { authConfigs: { [TOOLKIT]: "ac_probe" } } } });
 });
 afterEach(() => {
   for (const k of ENV_KEYS) {
@@ -95,35 +87,33 @@ afterEach(() => {
 describe("ComposioConnectionProbe — config gating returns indeterminate (never flips)", () => {
   it("aborted signal → indeterminate", async () => {
     process.env.COMPOSIO_API_KEY = "k";
-    process.env.AUTH_CFG_X = "cfg";
-    const p = new ComposioConnectionProbe(fakeDirectory("AUTH_CFG_X"));
+    const p = new ComposioConnectionProbe(fakeDirectory());
     expect(await p.probe(target("com.x"), AbortSignal.abort())).toBe("indeterminate");
   });
 
   it("missing COMPOSIO_API_KEY → indeterminate", async () => {
     delete process.env.COMPOSIO_API_KEY;
-    process.env.AUTH_CFG_X = "cfg";
-    const p = new ComposioConnectionProbe(fakeDirectory("AUTH_CFG_X"));
+    const p = new ComposioConnectionProbe(fakeDirectory());
     expect(await p.probe(target("com.x"), live)).toBe("indeterminate");
   });
 
   it("ref without composio connectorId → indeterminate", async () => {
     process.env.COMPOSIO_API_KEY = "k";
-    const p = new ComposioConnectionProbe(fakeDirectory("AUTH_CFG_X"));
+    const p = new ComposioConnectionProbe(fakeDirectory());
     expect(await p.probe(target(undefined), live)).toBe("indeterminate");
   });
 
-  it("auth config env var unset → indeterminate", async () => {
+  it("toolkit with no declared auth-config id → indeterminate", async () => {
     process.env.COMPOSIO_API_KEY = "k";
-    delete process.env.AUTH_CFG_X;
-    const p = new ComposioConnectionProbe(fakeDirectory("AUTH_CFG_X"));
+    setConnectorsConfig({ providers: { composio: { authConfigs: {} } } });
+    const p = new ComposioConnectionProbe(fakeDirectory());
     expect(await p.probe(target("com.x"), live)).toBe("indeterminate");
   });
 });
 
 /**
  * The probe is one of the readers that resolve through
- * `composioAuthConfigId(toolkit, authConfigEnv)`, and the only one whose
+ * `composioAuthConfigId(toolkit)`, and the only one whose
  * failure is silent: an unresolved id is `indeterminate` on every sweep, so a
  * connection whose vendor account lapsed never flips to `reauth_required` and
  * nothing is logged. Asserting the id reaches the vendor call — not just that a
@@ -135,10 +125,9 @@ describe("ComposioConnectionProbe — auth-config id resolution", () => {
     activeResult = { id: "ca_1", status: "ACTIVE" };
   });
 
-  it("resolves the declared authConfigs id with no env var set", async () => {
-    // The state a deployment lands in after the ids move into config, and the
-    // only state left once #789 drops `authConfigEnv` from the catalog.
-    delete process.env.AUTH_CFG_X;
+  it("resolves the declared authConfigs id and probes against it", async () => {
+    // The only wired state a catalog entry can be in: the id comes from the
+    // declared block, keyed by the toolkit the entry names.
     setConnectorsConfig({ providers: { composio: { authConfigs: { [TOOLKIT]: "ac_declared" } } } });
 
     const p = new ComposioConnectionProbe(fakeDirectory());
@@ -146,20 +135,10 @@ describe("ComposioConnectionProbe — auth-config id resolution", () => {
     expect(listArgs?.authConfigIds).toEqual(["ac_declared"]);
   });
 
-  it("prefers the declared id over the legacy env var", async () => {
-    // Precedence at this call site, not just in the resolver: a stale var left
-    // in the pod after the values move must not probe the old auth config.
-    process.env.AUTH_CFG_X = "ac_stale_env";
-    setConnectorsConfig({ providers: { composio: { authConfigs: { [TOOLKIT]: "ac_declared" } } } });
-
-    const p = new ComposioConnectionProbe(fakeDirectory("AUTH_CFG_X"));
-    expect(await p.probe(target("com.x"), live)).toBe("live");
-    expect(listArgs?.authConfigIds).toEqual(["ac_declared"]);
-  });
-
-  it("entry naming no env var, nothing declared → indeterminate (never a flip)", async () => {
-    // A toolkit the deployment declined to wire. The catalog is a menu, so this
-    // is a normal state, and it must not be read as a lost credential.
+  it("toolkit the deployment declined to wire → indeterminate (never a flip)", async () => {
+    // The catalog is a menu, so an unwired toolkit is a normal state and must
+    // not be read as a lost credential.
+    setConnectorsConfig({ providers: { composio: { authConfigs: {} } } });
     const p = new ComposioConnectionProbe(fakeDirectory());
     expect(await p.probe(target("com.x"), live)).toBe("indeterminate");
     expect(listArgs).toBeUndefined();
@@ -169,24 +148,23 @@ describe("ComposioConnectionProbe — auth-config id resolution", () => {
 describe("ComposioConnectionProbe — verdict mapping", () => {
   beforeEach(() => {
     process.env.COMPOSIO_API_KEY = "k";
-    process.env.AUTH_CFG_X = "cfg";
   });
 
   it("an ACTIVE connected account → live", async () => {
     activeResult = { id: "ca_1", status: "ACTIVE" };
-    const p = new ComposioConnectionProbe(fakeDirectory("AUTH_CFG_X"));
+    const p = new ComposioConnectionProbe(fakeDirectory());
     expect(await p.probe(target("com.x"), live)).toBe("live");
   });
 
   it("no ACTIVE account (null) → credential_lost", async () => {
     activeResult = null;
-    const p = new ComposioConnectionProbe(fakeDirectory("AUTH_CFG_X"));
+    const p = new ComposioConnectionProbe(fakeDirectory());
     expect(await p.probe(target("com.x"), live)).toBe("credential_lost");
   });
 
   it("API error → indeterminate (never a flip)", async () => {
     activeThrows = true;
-    const p = new ComposioConnectionProbe(fakeDirectory("AUTH_CFG_X"));
+    const p = new ComposioConnectionProbe(fakeDirectory());
     expect(await p.probe(target("com.x"), live)).toBe("indeterminate");
   });
 });

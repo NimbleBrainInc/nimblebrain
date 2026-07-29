@@ -165,49 +165,14 @@ export function _resetComposioConfigForTest(): void {
   _cached = undefined;
 }
 
-/** Where a toolkit's auth-config id came from. */
-export type ComposioAuthConfigSource = "declared" | "env" | "none";
-
-export interface ResolvedComposioAuthConfig {
-  /** The `ac_…` id, or `""` when the toolkit has none. */
-  id: string;
-  source: ComposioAuthConfigSource;
-}
-
 /**
- * Resolve one toolkit's auth-config id and report where it came from: the
- * declared `authConfigs` entry, else the legacy environment variable the catalog
- * entry names.
- *
- * The env arm is a **migration fallback**, kept so a deploy that still sets
- * `COMPOSIO_<TOOLKIT>_AUTH_CONFIG_ID` keeps working across the upgrade. It goes
- * away with `authConfigEnv` once no deployment relies on it (#789); the boot
- * audit in `auth-config-audit.ts` reports which toolkits still use it, which is
- * how that call gets made.
- *
- * `source` exists so the audit classifies through this function rather than
- * restating the precedence — one place decides, and callers that only need the
- * value take `composioAuthConfigId`.
+ * The auth-config id for one toolkit, or `""` when it has none.
  *
  * Reads the declared block directly rather than routing through
  * `validateComposioConfig`, whose unconfigured early-return would zero this
  * lookup — reporting a missing auth config for what is really a missing API key.
  * Callers gate on the credential separately and say so in their own words.
  */
-export function resolveComposioAuthConfig(
-  toolkit: string,
-  legacyEnvVar?: string,
-): ResolvedComposioAuthConfig {
-  const declared = declaredProviderConfig("composio")?.authConfigs?.[toolkit]?.trim();
-  if (declared) return { id: declared, source: "declared" };
-
-  const legacy = legacyEnvVar ? process.env[legacyEnvVar]?.trim() : undefined;
-  if (legacy) return { id: legacy, source: "env" };
-
-  return { id: "", source: "none" };
-}
-
-/** The auth-config id for one toolkit, or `""` when it has none. */
-export function composioAuthConfigId(toolkit: string, legacyEnvVar?: string): string {
-  return resolveComposioAuthConfig(toolkit, legacyEnvVar).id;
+export function composioAuthConfigId(toolkit: string): string {
+  return declaredProviderConfig("composio")?.authConfigs?.[toolkit]?.trim() ?? "";
 }
