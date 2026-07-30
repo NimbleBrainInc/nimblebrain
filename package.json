@@ -80,7 +80,7 @@
     "lint": "bunx @biomejs/biome check src/ instrument/ scripts/ web/src/",
     "format": "bunx @biomejs/biome format --write src/ web/src/ instrument/ scripts/",
     "format:check": "bunx @biomejs/biome format src/ web/src/ instrument/ scripts/",
-    "sync-models": "bun run src/model/sync-models.ts",
+    "sync-models": "bun run src/model/sync-models.ts && bunx @biomejs/biome format --write src/model/catalog-data.json",
     "sync-nebius": "bun run src/model/sync-nebius.ts && bunx @biomejs/biome format --write src/model/catalog-nebius.json",
     "migrate:skill-frontmatter": "bun run scripts/migrate-skill-frontmatter.ts"
   },
@@ -98,6 +98,7 @@
     "@ai-sdk/anthropic": "^3.0.81",
     "@ai-sdk/google": "^3.0.53",
     "@ai-sdk/openai": "^3.0.48",
+    "@ai-sdk/xai": "^3.0.113",
     "@composio/core": "0.9.1",
     "@e965/xlsx": "0.20.3",
     "@modelcontextprotocol/ext-apps": "^1.3.1",

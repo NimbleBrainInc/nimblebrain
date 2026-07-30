@@ -66,8 +66,9 @@ export interface RuntimeConfig {
   maxOutputTokens?: number;
 
   /**
-   * Extended-thinking mode, applied across every provider that supports
-   * reasoning (Anthropic, OpenAI, Nebius-hosted open-weight models, Google).
+   * Extended-thinking mode, honored on any model the catalog flags
+   * reasoning-capable and translated into that provider's own dialect. A model
+   * without the flag is sent nothing, whatever this says.
    *
    *   - `off`        — do not reason. Cheapest; no reasoning content.
    *   - `adaptive`   — model decides per call, at no stated depth.

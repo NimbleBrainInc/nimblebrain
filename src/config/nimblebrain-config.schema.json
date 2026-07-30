@@ -94,6 +94,26 @@
             }
           },
           "additionalProperties": false
+        },
+        "xai": {
+          "type": "object",
+          "description": "xAI (Grok). Reference models as xai:<model-id>, e.g. xai:grok-4.5.",
+          "properties": {
+            "apiKey": {
+              "type": "string",
+              "description": "xAI API key. Falls back to XAI_API_KEY env var."
+            },
+            "baseURL": {
+              "type": "string",
+              "description": "Override the inference endpoint. Default: https://api.x.ai/v1"
+            },
+            "models": {
+              "type": "array",
+              "items": { "type": "string" },
+              "description": "Allowlist of model IDs. Omit to allow all."
+            }
+          },
+          "additionalProperties": false
         }
       },
       "additionalProperties": false
