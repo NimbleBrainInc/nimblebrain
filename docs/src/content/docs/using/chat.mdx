@@ -95,9 +95,9 @@ Skills appear indented under the system prompt rather than beside it, because th
 
 For the full picture, click **Open full view** in that panel. The context inspector opens in the main window beside the chat: the budget across the top, then the composition broken out layer by layer (identity, always-on skills, workspace and overlays, apps, and the skills matched for the turn). Click any layer to expand its exact composed text in place — the verbatim bytes that entered the window, including each skill's provenance line and containment wrapper. Click a budget segment to filter the layers to just that part of the window, or **Manage skills** to jump to your skill settings.
 
-Clicking the **Skills** segment lists what the recorded turn loaded, grouped by why — always on, matched your tools, matched what you said — with each skill's publisher and token cost. That list comes from the turn's own record, so it always accounts for the number on the card. The composition below it is a different thing: a fresh trace of what would compose *now*, so it can hold fewer skills than the turn did (nothing there can reproduce a match against a message you already sent).
+The budget draws the three regions the window is made of, with skills as an **of which** line inside the system prompt card — the same nesting as the panel, and for the same reason: a skill body is part of the system prompt, so it is a slice of that card, not a fourth one. The three cards add up to the figure in the header.
 
-The inspector's budget shows skills as a card of their own rather than nested, so its four cards add up to more than the figure in the header. The header is the one to read: skills are counted inside the system prompt, so adding the cards counts them twice.
+Clicking that skills line lists what the recorded turn loaded, grouped by why — always on, matched your tools, matched what you said — with each skill's publisher and token cost. That list comes from the turn's own record, so it always accounts for the number beside it. The composition below is a different thing: a fresh trace of what would compose *now*, so it can hold fewer skills than the turn did (nothing there can reproduce a match against a message you already sent).
 
 The ledger reflects what actually loaded, and it persists — reopening a past conversation shows the same lines.
 

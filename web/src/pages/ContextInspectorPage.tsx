@@ -10,7 +10,7 @@ import type {
   TracedLayerView,
 } from "../_generated/platform-schemas/compose";
 import { callTool } from "../api/client";
-import { orderedSources, SOURCE_LABEL, sourceDetail } from "../lib/context-sources";
+import { SOURCE_LABEL, skillsSlice, sourceDetail, windowSources } from "../lib/context-sources";
 import {
   formatTokenCount,
   groupByMechanism,
@@ -230,6 +230,22 @@ export function ContextInspectorPage() {
 /** Budget buckets that map onto composed layers (the drill is meaningful). */
 const DRILLABLE = new Set(["system_prompt", "skills"]);
 
+/**
+ * What occupies the context window this turn.
+ *
+ * THREE cards, because the window has three disjoint regions. The recorded
+ * `skills` row is not a fourth: it measures how much of the system prompt the
+ * composed skill bodies account for, so it renders inside the system-prompt
+ * card as an "of which" — the same shape the In-context popover uses, since it
+ * is the same fact. Which rows are regions is the server's call, read off the
+ * `annotation` stamp via `windowSources` / `skillsSlice`, never a second copy
+ * of that list here.
+ *
+ * Four peer cards needed a caption underneath explaining that they don't add up
+ * to the figure in the header. Nesting the annotation says it structurally, so
+ * the caption is gone rather than reworded: a layout that has to apologise for
+ * itself in prose is the thing to fix.
+ */
 function BudgetBar({
   sources,
   windowTokens,
@@ -241,91 +257,155 @@ function BudgetBar({
   active: string | null;
   onSelect: (bucket: string | null) => void;
 }) {
-  const ordered = orderedSources(sources);
+  const regions = windowSources(sources);
+  const skills = skillsSlice(sources);
   // Bars are proportional to the window, not to the recorded `totalTokens` —
   // that sum counts the skill bodies twice (they are composed into the system
   // prompt), so scaling to it shrank every bar by the size of the overlap.
   const max = Math.max(windowTokens, 1);
+  const pct = (tokens: number) => `${Math.round((tokens / max) * 100)}%`;
   return (
     <div
       className="sticky top-0 z-10 bg-background px-6 py-4 border-b border-border"
       data-testid="context-budget"
     >
       {/* Equal-width cards: the token size drives the inner bar, never the card
-          width, so a small bucket (history) stays readable next to a large one
+          width, so a small region (history) stays readable next to a large one
           (tools) at any container width. */}
-      <div className="grid grid-cols-4 gap-2">
-        {ordered.map((s) => {
-          const selectable = DRILLABLE.has(s.kind);
+      <div className="grid grid-cols-3 gap-2 items-start">
+        {regions.map((s) => {
           const isActive = active === s.kind;
-          const pct = Math.round((s.tokens / max) * 100);
-          const content = (
-            <>
-              <div className="flex items-baseline justify-between gap-1.5">
-                <span className="text-2xs font-medium text-foreground truncate">
-                  {SOURCE_LABEL[s.kind] ?? s.kind}
-                </span>
-                {sourceDetail(s) && (
-                  <span className="text-3xs text-muted-foreground tabular-nums shrink-0">
-                    {sourceDetail(s)}
-                  </span>
-                )}
-              </div>
-              <div className="mt-1 text-sm font-semibold text-foreground tabular-nums">
-                {formatTokenCount(s.tokens)}
-              </div>
-              <div className="mt-2 h-1.5 rounded-full bg-muted overflow-hidden">
-                <div
-                  className={`h-full rounded-full ${isActive ? "bg-primary" : "bg-muted-foreground/80"}`}
-                  style={{ width: `${pct}%` }}
-                />
-              </div>
-            </>
-          );
-          const base = "block rounded-md border px-3 py-2.5 text-left min-w-0";
-          if (!selectable) {
-            return (
-              <div
-                key={s.kind}
-                className={`${base} border-border bg-card`}
-                title="Not composed into the prompt — token cost only"
-              >
-                {content}
-              </div>
-            );
-          }
+          const nested = s.kind === "system_prompt" && skills ? skills : null;
+          // The card is the frame; its interactive parts sit inside it, so the
+          // nested skills control is a sibling button rather than a button
+          // inside a button.
+          const framed = isActive || (nested !== null && active === "skills");
           return (
-            <button
+            <div
               key={s.kind}
-              type="button"
-              onClick={() => onSelect(isActive ? null : s.kind)}
-              title="Filter the layers below"
-              className={`${base} cursor-pointer transition-colors ${
-                isActive
-                  ? "border-primary bg-primary/10"
-                  : "border-border bg-card hover:bg-muted/60"
+              className={`rounded-md border min-w-0 transition-colors ${
+                framed ? "border-primary bg-primary/10" : "border-border bg-card"
               }`}
             >
-              {content}
-            </button>
+              <RegionCard
+                source={s}
+                width={pct(s.tokens)}
+                active={isActive}
+                onSelect={DRILLABLE.has(s.kind) ? () => onSelect(isActive ? null : s.kind) : null}
+              />
+              {nested && (
+                <SkillsSliceRow
+                  source={nested}
+                  width={pct(nested.tokens)}
+                  active={active === "skills"}
+                  onSelect={() => onSelect(active === "skills" ? null : "skills")}
+                />
+              )}
+            </div>
           );
         })}
       </div>
-      {/* No total here — the header states it once, and states the window (the
-          disjoint sum) rather than the recorded `totalTokens`. The skills
-          caveat is spelled out because these four cards still read as peers;
-          the nesting becomes structural when the bar and the layer list merge
-          into one tree. */}
-      {/* The caveat holds whatever is filtered — it explains the cards, and
-          selecting one doesn't stop them reading as four peers. Only the
-          filter hint swaps. */}
-      <div className="mt-1.5 text-3xs text-muted-foreground">
-        Skills are composed into the system prompt, not a region beside it ·{" "}
-        {active
-          ? `filtered to ${SOURCE_LABEL[active] ?? active}, click again to clear`
-          : "click System prompt or Skills to filter the layers"}
-      </div>
     </div>
+  );
+}
+
+/** One window region: label, count, tokens, proportional bar. Inert unless drillable. */
+function RegionCard({
+  source,
+  width,
+  active,
+  onSelect,
+}: {
+  source: AssembledContextSource;
+  width: string;
+  active: boolean;
+  /** `null` for a region that composes nothing, so drilling would answer nothing. */
+  onSelect: (() => void) | null;
+}) {
+  const pad = "block w-full text-left px-3 py-2.5 min-w-0";
+  const body = (
+    <>
+      <div className="flex items-baseline justify-between gap-1.5">
+        <span className="text-2xs font-medium text-foreground truncate">
+          {SOURCE_LABEL[source.kind] ?? source.kind}
+        </span>
+        {sourceDetail(source) && (
+          <span className="text-3xs text-muted-foreground tabular-nums shrink-0">
+            {sourceDetail(source)}
+          </span>
+        )}
+      </div>
+      <div className="mt-1 text-sm font-semibold text-foreground tabular-nums">
+        {formatTokenCount(source.tokens)}
+      </div>
+      <div className="mt-2 h-1.5 rounded-full bg-muted overflow-hidden">
+        <div
+          className={`h-full rounded-full ${active ? "bg-primary" : "bg-muted-foreground/80"}`}
+          style={{ width }}
+        />
+      </div>
+    </>
+  );
+  if (!onSelect) {
+    return (
+      <div className={pad} title="Not composed into the prompt — token cost only">
+        {body}
+      </div>
+    );
+  }
+  return (
+    <button
+      type="button"
+      onClick={onSelect}
+      title="Filter the layers below"
+      className={`${pad} rounded-t-md cursor-pointer hover:bg-muted/40`}
+    >
+      {body}
+    </button>
+  );
+}
+
+/**
+ * The `skills` annotation, inside the system-prompt card: a slice of that
+ * region, not a region of its own. Quieter than the card it sits in — smaller
+ * type, thinner bar — because it is a breakdown of that number, not a peer of it.
+ */
+function SkillsSliceRow({
+  source,
+  width,
+  active,
+  onSelect,
+}: {
+  source: AssembledContextSource;
+  width: string;
+  active: boolean;
+  onSelect: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onSelect}
+      title="Show the skills this turn loaded"
+      className={`block w-full text-left px-3 py-1.5 border-t rounded-b-md cursor-pointer transition-colors ${
+        active ? "border-primary/40 bg-primary/15" : "border-border/60 hover:bg-muted/40"
+      }`}
+    >
+      <div className="flex items-baseline justify-between gap-1.5">
+        <span className="text-3xs text-muted-foreground truncate">
+          of which {(SOURCE_LABEL[source.kind] ?? source.kind).toLowerCase()}
+          {sourceDetail(source) && ` · ${sourceDetail(source)}`}
+        </span>
+        <span className="text-2xs font-medium text-foreground tabular-nums shrink-0">
+          {formatTokenCount(source.tokens)}
+        </span>
+      </div>
+      <div className="mt-1 h-1 rounded-full bg-muted overflow-hidden">
+        <div
+          className={`h-full rounded-full ${active ? "bg-primary" : "bg-muted-foreground/35"}`}
+          style={{ width }}
+        />
+      </div>
+    </button>
   );
 }
 

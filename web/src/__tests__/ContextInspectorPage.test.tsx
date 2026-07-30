@@ -230,6 +230,16 @@ function buttons(container: HTMLElement): HTMLButtonElement[] {
   return Array.from(container.getElementsByTagName("button"));
 }
 
+/**
+ * The skills control, which is NOT a fourth budget card — it is the "of which"
+ * slice inside the system-prompt card, because that is where the tokens are.
+ */
+function skillsSlice(container: HTMLElement): HTMLButtonElement {
+  const el = buttons(container).find((b) => b.textContent?.includes("of which skills"));
+  if (!el) throw new Error("skills slice not found");
+  return el;
+}
+
 describe("ContextInspectorPage", () => {
   test("renders the budget and the composition, with the first layer's body", async () => {
     const { container } = renderPage();
@@ -261,6 +271,34 @@ describe("ContextInspectorPage", () => {
 
     // The first layer auto-expands to its composed body.
     expect(text).toContain("You are a helpful assistant powered by NimbleBrain.");
+  });
+
+  test("the budget draws three regions with skills as a slice of the system prompt", async () => {
+    // Skills are composed INSIDE the system prompt, so they render as an "of
+    // which" within that card rather than a fourth peer. Four peers didn't add
+    // up to the window figure in the header, which is why the old layout needed
+    // a caption underneath saying so. The nesting states it, so no caption.
+    const { container } = renderPage();
+    await waitFor(() => expect(container.textContent).toContain("System prompt"));
+
+    // The skills control lives INSIDE the system-prompt card, not beside it —
+    // the two share the card element as their parent. (Walked by hand rather
+    // than `closest`/`querySelector`, which happy-dom can't evaluate here.)
+    const slice = skillsSlice(container);
+    const systemButton = buttons(container).find((b) => b.textContent?.includes("System prompt"));
+    if (!systemButton) throw new Error("system prompt card not found");
+    const systemCard = systemButton.parentElement;
+    expect(slice.parentElement).toBe(systemCard);
+    expect(slice.textContent).toContain("3.4k"); // the annotation's own tokens
+
+    // Three cards in the grid — one per disjoint region, skills not among them.
+    expect(systemCard?.parentElement?.children).toHaveLength(3);
+
+    // The caption the peer layout needed is gone, in both filter states.
+    expect(container.textContent).not.toContain("not a region beside it");
+    expect(container.textContent).not.toContain("click again to clear");
+    fireEvent.click(slice);
+    expect(container.textContent).not.toContain("click again to clear");
   });
 
   test("expands a layer to its composed body, and collapses on a second click", async () => {
@@ -435,12 +473,10 @@ describe("ContextInspectorPage", () => {
     const { container } = renderPage();
     await waitFor(() => expect(container.textContent).toContain("Identity (default)"));
 
-    // The budget "Skills" bucket (its label starts with "Skills"; the layer is
-    // "Layer-3 skills"). Clicking it narrows the list to composed skill layers
-    // and opens the drilled layer rather than landing on a collapsed row.
-    const skillsBucket = buttons(container).find((b) => b.textContent?.trim().startsWith("Skills"));
-    if (!skillsBucket) throw new Error("skills bucket not found");
-    fireEvent.click(skillsBucket);
+    // The skills slice inside the system-prompt card. Clicking it narrows the
+    // composition to the composed skill layers and opens the drilled layer
+    // rather than landing on a collapsed row.
+    fireEvent.click(skillsSlice(container));
 
     await waitFor(() => expect(container.textContent).not.toContain("Identity (default)"));
     expect(container.textContent).toContain("Layer-3 skills");
@@ -461,9 +497,7 @@ describe("ContextInspectorPage", () => {
     );
     await waitFor(() => expect(container.textContent).toContain("Identity (default)"));
 
-    const skillsBucket = buttons(container).find((b) => b.textContent?.trim().startsWith("Skills"));
-    if (!skillsBucket) throw new Error("skills bucket not found");
-    fireEvent.click(skillsBucket);
+    fireEvent.click(skillsSlice(container));
 
     await waitFor(() => expect(container.textContent).toContain("house-style"));
     const text = container.textContent ?? "";
