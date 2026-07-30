@@ -3564,7 +3564,7 @@ export class Runtime {
    * connects) through it. A provider is present IFF configured; a deploy with no
    * configured provider gets an empty registry and links no vendor. The source is the
    * `connectors.providers.*` block installed by `start`, with each provider's
-   * legacy `<VENDOR>_*` env as its fallback.
+   * `<VENDOR>_API_KEY` env as the credential's only fallback.
    */
   getManagedConnectorRegistry(): ManagedConnectorRegistry {
     if (!this._managedConnectorRegistry) {

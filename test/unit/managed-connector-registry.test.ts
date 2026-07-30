@@ -213,6 +213,10 @@ describe("buildManagedConnectorRegistry — Smithery config gating", () => {
     // the provider stays off rather than registering against a nameless account
     // — and the boot warning names the config key to set.
     process.env.SMITHERY_API_KEY = "sk_test";
+    // Set the retired var too: this is the inversion of the deleted
+    // "blank declared value still reads the env" test. If anyone reinstates the
+    // fallback, the provider registers off `env-ns` and this fails.
+    process.env.SMITHERY_NAMESPACE = "env-ns";
     setConnectorsConfig({ providers: { smithery: { namespace: "", baseUrl: "" } } });
     _resetSmitheryConfigForTest();
 

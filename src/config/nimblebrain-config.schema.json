@@ -373,7 +373,7 @@
       "type": "object",
       "properties": {
         "providers": {
-          "description": "Declared providers, keyed by the connector auth-kind each owns. A provider is registered — and its routes, liveness probe, and vendor SDK reached — only when its broker credential is present. Each setting falls back to its legacy env var when the block leaves it out.",
+          "description": "Declared providers, keyed by the connector auth-kind each owns. A provider is registered — and its routes, liveness probe, and vendor SDK reached — only when its broker credential is present. Settings resolve from the block only; the broker credential also reads its <VENDOR>_API_KEY env var.",
           "type": "object",
           "properties": {
             "composio": {

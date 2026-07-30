@@ -291,22 +291,18 @@ describe("GET /v1/composio-auth/proxy", () => {
   // because the integration is dormant. Reset the cache between
   // tests so each case gets a fresh validate pass.
   const origKey = process.env.COMPOSIO_API_KEY;
-  const origBase = process.env.COMPOSIO_API_BASE_URL;
   beforeEach(() => {
     _resetComposioConfigForTest();
   });
   afterEach(() => {
     if (origKey === undefined) delete process.env.COMPOSIO_API_KEY;
     else process.env.COMPOSIO_API_KEY = origKey;
-    if (origBase === undefined) delete process.env.COMPOSIO_API_BASE_URL;
-    else process.env.COMPOSIO_API_BASE_URL = origBase;
     _resetComposioConfigForTest();
   });
 
   test("302s to backend.composio.dev with query params preserved", async () => {
     process.env.COMPOSIO_API_KEY = "k_test";
     setConnectorsConfig({ providers: { composio: { authConfigs: { gmail: "ac_gmail" } } } });
-    delete process.env.COMPOSIO_API_BASE_URL;
     const app = composioAuthRoutes(stubCtx("/tmp/work", null));
     const res = await app.request(
       "http://nb.test/v1/composio-auth/proxy?code=abc&state=xyz&foo=bar",

@@ -129,7 +129,10 @@ function resolveSmitheryConfig(): SmitheryConfig {
 
   const monitorEnabled = declared?.monitorEnabled ?? true;
   if (!monitorEnabled) {
-    log.info("[smithery] connection revalidation disabled by config");
+    log.info(
+      "[smithery] connection revalidation disabled " +
+        "(connectors.providers.smithery.monitorEnabled)",
+    );
   }
 
   log.info(`[smithery] integration: configured (namespace=${namespace}, base=${baseUrl})`);
