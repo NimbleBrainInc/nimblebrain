@@ -1842,10 +1842,11 @@ describe("AgentEngine", () => {
         expect(po.xai).toBeUndefined();
       });
 
-      it("honors thinking:off on xai where `none` is measured, unlike every other non-Anthropic provider", async () => {
+      it("honors thinking:off on xai where `none` is measured, unlike the other effort dialects", async () => {
         // `none` genuinely suppresses on grok-4.3 (reasoning_tokens 0 vs 150 at
         // high), so `off` sends it rather than giving up and paying for the
-        // model's default reasoning.
+        // model's default reasoning. The other effort dialects have no value
+        // meaning "don't"; Google gets there via thinkingBudget: 0 instead.
         const po = await providerOptionsFor("xai:grok-4.3", { mode: "off" });
         expect(po.xai?.reasoningEffort).toBe("none");
       });

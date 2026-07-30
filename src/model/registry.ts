@@ -98,8 +98,10 @@ export function buildRegistry(config: ProvidersConfig): Provider {
     //
     // `.languageModel()` binds Chat Completions on this adapter version
     // (XaiChatLanguageModel, provider "xai.chat"), so no `.chat()` re-wrap is
-    // needed. That default flips to the Responses API in the adapter's next
-    // major — pin the call explicitly if this dependency is ever bumped across it.
+    // needed — the adapter also exposes `.responses()`, which is opt-in. The
+    // registry test pins `provider === "xai.chat"`, so a dependency bump that
+    // moves that default fails there rather than silently changing the API this
+    // talks to.
     providers.xai = createXai({ apiKey, baseURL });
   }
 

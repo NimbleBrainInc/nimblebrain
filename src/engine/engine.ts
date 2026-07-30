@@ -309,8 +309,12 @@ function buildOpenAIThinkingOptions(
  *    own default. The rule is that a provider-options key follows its *adapter*,
  *    not the wire protocol it speaks.
  * 2. **`off` is honorable here.** `reasoning_effort: "none"` measurably
- *    suppresses (`reasoning_tokens: 0`), which no other non-Anthropic provider
- *    offers, so `off` sends something instead of giving up.
+ *    suppresses (`reasoning_tokens: 0`), so `off` sends something instead of
+ *    giving up — the first effort-dialect model where it can. The other
+ *    effort-shaped providers have no value meaning "don't" (OpenAI's floor is
+ *    `minimal`, Nebius's is `low`), so their `off` sends nothing. Google
+ *    suppresses too, but through the budget dialect's `thinkingBudget: 0`
+ *    (`googleBudgetOptions`) rather than a tier.
  *
  * Support is per-model and fail-closed: a model with no measured ladder, or a
  * measured-empty one (reasons but exposes no knob), gets nothing rather than a

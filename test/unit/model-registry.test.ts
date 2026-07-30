@@ -106,9 +106,10 @@ describe("buildRegistry", () => {
     const model = registry.languageModel("xai:grok-4.5");
     expect(model).toBeDefined();
     expect(model.specificationVersion).toBe("v3");
-    // `.languageModel()` binds Chat Completions on this adapter version. The
-    // adapter's next major flips that default to the Responses API, so this
-    // assertion is what catches an unreviewed dependency bump across it.
+    // `.languageModel()` binds Chat Completions on this adapter version; the
+    // Responses API is opt-in via `.responses()`. Pinned so a dependency bump
+    // that moves that default fails here rather than silently changing which
+    // API the runtime talks to.
     expect(model.provider).toBe("xai.chat");
     expect(model.modelId).toBe("grok-4.5");
   });

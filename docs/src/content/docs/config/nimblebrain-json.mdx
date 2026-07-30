@@ -281,7 +281,7 @@ Reasoning support is uneven in a way worth knowing before you point a slot at on
 | `grok-build-0.1` | none — same |
 | `grok-4.20-0309-non-reasoning` | none — does not reason |
 
-Where a model takes no effort parameter, the runtime sends no reasoning options and the model applies its own default; asking for a tier would fail the call outright. `grok-4.3` is the only model on any non-Anthropic provider where `thinking: "off"` is actually honored rather than ignored — `none` genuinely suppresses the reasoning trace.
+Where a model takes no effort parameter, the runtime sends no reasoning options and the model applies its own default; asking for a tier would fail the call outright. `grok-4.3` is the only model in an effort dialect where `thinking: "off"` sends a suppressing value rather than nothing — `none` genuinely zeroes the reasoning trace. (Gemini 2.5 models that can disable thinking also honor `off`, via a zero `thinkingBudget`; that is the budget dialect, not a tier.)
 
 Two other notes. xAI publishes no per-model max-output cap and accepts `max_tokens` up to the full context window, so `grok-4.5` and `grok-build-0.1` are pinned to a 16,384-token output ceiling in the catalog — without it the message budget resolves to zero and every turn fails. And `grok-4.20-multi-agent-0309` is deliberately absent: the Chat Completions endpoint refuses it (`Multi Agent requests are not allowed on chat completions`).
 

@@ -204,12 +204,21 @@ function shortCallProviderOptions(modelString: string | null): SharedV3ProviderO
       // dump).
       return {};
     case "xai":
-      // The one provider here with a true suppressor. `reasoning_effort: "none"`
-      // measurably zeroes the reasoning trace, so on a call that runs on every
-      // home load it is worth sending — unlike OpenAI's `minimal` (still
-      // reasoning, mostly rejected) or Nebius (floor is `low`). Gated on the
-      // measured table because `grok-4.5` rejects `none` specifically while
-      // accepting the tiers above it, and a model with no knob 400s on any value.
+      // The only effort dialect with a true suppressor. `reasoning_effort:
+      // "none"` measurably zeroes the reasoning trace, so on a call that runs on
+      // every home load it is worth sending — unlike OpenAI's `minimal` (still
+      // reasoning, mostly rejected) or Nebius (floor is `low`). Google's arm
+      // above reaches the same end with `thinkingBudget: 0` where the model
+      // allows it; that is the budget dialect, not a tier. Gated on the measured
+      // table because `grok-4.5` rejects `none` specifically while accepting the
+      // tiers above it, and a model with no knob 400s on any value.
+      //
+      // Not stepped down to `low` on the models that reject `none`, which is
+      // what the Google arm does when its suppressor is missing. `low` is
+      // accepted there, so it would work — but its interaction with this call's
+      // json_schema response format is unmeasured, and the Nebius arm above sets
+      // the bar at a measurement rather than an inference. Those models run at
+      // their own default until someone measures it.
       return xaiSupportedEfforts(modelString)?.has("none")
         ? { xai: { reasoningEffort: "none" } }
         : {};

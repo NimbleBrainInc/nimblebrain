@@ -457,8 +457,9 @@ export type XAIEffort = (typeof XAI_EFFORTS)[number];
  *
  * Unlike `minimal`, `none` genuinely suppresses: measured on `grok-4.3`,
  * `reasoning_effort: "none"` returns `reasoning_tokens: 0` against 150 at
- * `high`. It is the one value on a non-Anthropic provider that can honestly
- * implement `thinking: "off"`.
+ * `high`. It is the only *tier* that can implement `thinking: "off"` — the
+ * other effort dialects have no such value and send nothing. Google reaches the
+ * same end through a zero token budget, not a tier.
  */
 export type XAIWireEffort = XAIEffort | "none";
 
