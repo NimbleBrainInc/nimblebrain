@@ -486,6 +486,11 @@ export type XAIWireEffort = XAIEffort | "none";
  * Absent vs. empty behave identically at the engine (send nothing) but differ
  * to `xaiUnmeasuredReasoningModels` below, which is what keeps a newly-synced
  * Grok from silently inheriting a guessed ladder.
+ *
+ * Only reasoning-capable models belong here. A non-reasoning one needs no row:
+ * `resolveThinking` drops the override on `capabilities.reasoning` before the
+ * builder runs, and `xaiUnmeasuredReasoningModels` filters on the same flag, so
+ * a row for one classifies nothing.
  */
 const XAI_EFFORT_SUPPORT: Record<string, ReadonlySet<XAIWireEffort>> = {
   // Full ladder plus suppression.
