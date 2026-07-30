@@ -343,6 +343,18 @@ function buildOpenAIThinkingOptions(
   }
 }
 
+/** GreenPT's OpenAI-compatible adapter reads options under its instance name. */
+function buildGreenptThinkingOptions(thinking: ResolvedThinking): SharedV3ProviderOptions {
+  switch (thinking.mode) {
+    case "off":
+    case "adaptive":
+      return {};
+    case "effort":
+    case "enabled":
+      return { greenpt: { reasoningEffort: toOpenAIEffort(thinking.effort) } };
+  }
+}
+
 /**
  * Build Nebius's options.
  *
@@ -539,6 +551,8 @@ function buildThinkingProviderOptions(
       return buildAnthropicThinkingOptions(model, thinking, maxOutputTokens);
     case "openai":
       return buildOpenAIThinkingOptions(model, thinking);
+    case "greenpt":
+      return buildGreenptThinkingOptions(thinking);
     case "nebius":
       return buildNebiusThinkingOptions(thinking);
     case "xai":

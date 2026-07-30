@@ -1,0 +1,73 @@
+{
+  "greenpt": {
+    "name": "GreenPT",
+    "models": {
+      "glm-5.2": {
+        "id": "glm-5.2",
+        "name": "GLM 5.2",
+        "family": "glm",
+        "cost": {
+          "input": 1.2515,
+          "output": 5.0059
+        },
+        "limits": {
+          "context": 1000000,
+          "output": 131072
+        },
+        "capabilities": {
+          "toolCall": true,
+          "reasoning": true,
+          "attachment": false
+        },
+        "modalities": {
+          "input": ["text"],
+          "output": ["text"]
+        }
+      },
+      "kimi-k2.7-code": {
+        "id": "kimi-k2.7-code",
+        "name": "Kimi K2.7 Code",
+        "family": "kimi",
+        "cost": {
+          "input": 0.9386,
+          "output": 4.3801
+        },
+        "limits": {
+          "context": 262144,
+          "output": 262144
+        },
+        "capabilities": {
+          "toolCall": true,
+          "reasoning": true,
+          "attachment": false
+        },
+        "modalities": {
+          "input": ["text"],
+          "output": ["text"]
+        }
+      },
+      "kimi-k3": {
+        "id": "kimi-k3",
+        "name": "Kimi K3",
+        "family": "kimi",
+        "cost": {
+          "input": 3.7544,
+          "output": 18.7721
+        },
+        "limits": {
+          "context": 1000000,
+          "output": 131072
+        },
+        "capabilities": {
+          "toolCall": true,
+          "reasoning": true,
+          "attachment": true
+        },
+        "modalities": {
+          "input": ["text", "image"],
+          "output": ["text"]
+        }
+      }
+    }
+  }
+}
