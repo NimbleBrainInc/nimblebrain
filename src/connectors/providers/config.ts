@@ -7,10 +7,9 @@
  * composition root (`Runtime.start`) and read synchronously by provider wiring
  * thereafter. There is no cross-tenant scoping and no config-layer merge here.
  *
- * Settings fall back **per field**: a setting declared in the block wins, a
- * setting left out reads its provider's legacy `<VENDOR>_*` var. Nothing is
- * silently discarded, so an upgrade from the env-sniffing era breaks nothing and
- * declaring one setting can't disturb another.
+ * Settings resolve from the block alone — one value, one source. The broker
+ * credential is the exception: `apiKey` also reads `<VENDOR>_API_KEY`, because a
+ * secret has a legitimate home in the environment (#839).
  *
  * Each provider owns its own resolution (Composio's is `providers/composio/config.ts`);
  * this module only holds what was declared.
@@ -51,7 +50,7 @@ export interface ComposioProviderConfig {
   baseUrl?: string;
   /**
    * Run Composio's arm of the connection-revalidator probe. Default: true when
-   * the provider is configured; falls back to `COMPOSIO_MONITOR_ENABLED`. Only
+   * the provider is configured. Only
    * the enable/disable is vendor-specific — the sweep *cadence* is
    * provider-agnostic and belongs to the revalidator.
    */
@@ -65,13 +64,13 @@ export interface ComposioProviderConfig {
 export interface SmitheryProviderConfig {
   /** Platform-wide Smithery API key. Falls back to `SMITHERY_API_KEY`. */
   apiKey?: string;
-  /** Smithery namespace brokered connections are created under. Falls back to `SMITHERY_NAMESPACE`. */
+  /** Smithery namespace brokered connections are created under. No default — account-owned. */
   namespace?: string;
-  /** Connect API base URL override. Must be http(s). Falls back to `SMITHERY_API_BASE_URL`. */
+  /** Connect API base URL override. Must be http(s). */
   baseUrl?: string;
   /**
    * Run Smithery's arm of the connection-revalidator probe. Default: true when
-   * the provider is configured; falls back to `SMITHERY_MONITOR_ENABLED`.
+   * the provider is configured.
    */
   monitorEnabled?: boolean;
 }
@@ -149,7 +148,7 @@ export function declaredProviderConfig<K extends keyof ManagedProviderConfigs>(
   return _declared?.providers?.[id];
 }
 
-/** Test-only. Drop the installed block so a suite starts from the env-fallback path. */
+/** Test-only. Drop the installed block so a suite starts from no declared config. */
 export function _resetConnectorsConfigForTest(): void {
   setConnectorsConfig(undefined);
 }
