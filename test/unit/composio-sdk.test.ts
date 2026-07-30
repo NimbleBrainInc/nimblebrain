@@ -103,9 +103,6 @@ beforeEach(() => {
   for (const k of TRACKED) savedEnv[k] = process.env[k];
   for (const k of TRACKED) delete process.env[k];
   _resetComposioConfigForTest();
-  // The declared block is module-global and outlives the file, so a leaked one
-  // would silently replace whatever the next file installs.
-  _resetConnectorsConfigForTest();
   _resetBouncerModeForTest();
   sdkCalls.ctorArgs.length = 0;
   sdkCalls.lastCreateConfig = undefined;
@@ -124,6 +121,10 @@ afterEach(() => {
     else process.env[k] = savedEnv[k];
   }
   _resetComposioConfigForTest();
+  // The declared block is module-global and outlives the file, so a leaked one
+  // would silently replace whatever the next file installs. Teardown, not setup:
+  // only a teardown hook protects the file that runs after this one.
+  _resetConnectorsConfigForTest();
   _resetBouncerModeForTest();
 });
 

@@ -28,8 +28,11 @@
  * (owner, server) and is torn down by the final test.
  */
 
-import { describe, expect, it } from "bun:test";
-import { setConnectorsConfig } from "../../src/connectors/providers/config.ts";
+import { describe, expect, it, afterAll } from "bun:test";
+import {
+  _resetConnectorsConfigForTest,
+  setConnectorsConfig,
+} from "../../src/connectors/providers/config.ts";
 import {
   getSmitheryConnection,
   type SmitheryClientOptions,
@@ -47,6 +50,10 @@ import {
 const HAVE_CREDS = Boolean(process.env.SMITHERY_API_KEY?.trim());
 /** The namespace the fixture server lives under — settings, so declared, not env. */
 const E2E_NAMESPACE = "nimblebrain";
+// The declared block is module-global and outlives this file. Installed at
+// module scope above, so it is released at module scope too.
+afterAll(_resetConnectorsConfigForTest);
+
 const SERVER = "nimblebrain/bassethound";
 const OWNER = { type: "workspace", wsId: "ws_seamcheck" } as const;
 

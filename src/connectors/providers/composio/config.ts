@@ -1,18 +1,16 @@
 /**
  * Composio provider configuration — the resolution of the declared
- * `connectors.providers.composio` block against the legacy `COMPOSIO_*` env.
+ * `connectors.providers.composio` block.
  *
  * Synchronous and vendor-free by construction: nothing here touches
  * `@composio/core`, so the registry can decide whether Composio is configured
  * (and therefore whether to register a provider at all) without linking the
  * vendor. `sdk.ts` is the vendor adapter; this is its config.
  *
- * Every field — the broker credential included — is declarable, and each falls
- * back on its own: a field declared in the block wins, a field left out (or left
- * blank) reads its `COMPOSIO_*` var. Nothing is ever silently discarded, so an
- * upgrade from the env-sniffing era breaks nothing and a block added for one
- * setting can't disturb another. Same shape as `providers.*.apiKey` falling back
- * to `ANTHROPIC_API_KEY` elsewhere in this schema.
+ * Settings resolve from the block alone — one value, one source. The broker
+ * credential is the exception: `apiKey` declared in the block wins, and one left
+ * out (or left blank) reads `COMPOSIO_API_KEY`, because a secret has a
+ * legitimate home in the environment (#839).
  *
  * The credential is declarable because nothing persisted points at where it
  * lives: an installed connector's transport names the `composio` credential

@@ -1,13 +1,12 @@
 /**
  * Smithery provider configuration — the resolution of the declared
- * `connectors.providers.smithery` block against the legacy `SMITHERY_*` env.
+ * `connectors.providers.smithery` block.
  *
- * Same two-layer split as Composio's, on the same rule — what the value *is*,
- * not which vendor owns it:
+ * Same split as Composio's, on the same rule — what the value *is*, not which
+ * vendor owns it:
  *
- *   - **Settings** (`namespace`, `baseUrl`, `monitorEnabled`) are declarable and
- *     each falls back on its own, so an upgrade from the env-only era breaks
- *     nothing and declaring one setting can't disturb another.
+ *   - **Settings** (`namespace`, `baseUrl`, `monitorEnabled`) resolve from the
+ *     block alone. One value, one source (#839).
  *   - **The broker credential** is declarable too, because persisted state names
  *     the `smithery` credential provider rather than an env var — so where the
  *     value lives is this module's private business. See
@@ -78,8 +77,8 @@ export function validateSmitheryConfig(): SmitheryConfig {
 }
 
 /**
- * Resolve + validate the Connect API base: the declared value, else the env,
- * else the default. Extracted so the resolver stays within the complexity
+ * Resolve + validate the Connect API base: the declared value, else the
+ * default. Extracted so the resolver stays within the complexity
  * ceiling, same split as Composio's.
  *
  * Must be http(s) — the session URL derived from it becomes an installed
