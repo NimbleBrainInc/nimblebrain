@@ -1,6 +1,7 @@
 import { createAnthropic } from "@ai-sdk/anthropic";
 import { createGoogleGenerativeAI } from "@ai-sdk/google";
 import { createOpenAI } from "@ai-sdk/openai";
+import { createOpenAICompatible } from "@ai-sdk/openai-compatible";
 import type { LanguageModelV3, ProviderV3 } from "@ai-sdk/provider";
 import { createXai } from "@ai-sdk/xai";
 import { createProviderRegistry, type Provider } from "ai";
@@ -62,15 +63,16 @@ export function buildRegistry(config: ProvidersConfig): Provider {
   if (providersCfg.nebius) {
     const { apiKey, baseURL } = providersCfg.nebius;
     // Nebius Token Factory is an OpenAI-compatible gateway for open-weight
-    // models. It serves the Chat Completions API but NOT OpenAI's Responses
-    // API, which createOpenAI's default `.languageModel()` binds — so route
-    // through `.chat()`.
+    // models, so it is built through the adapter written for exactly that —
+    // `createOpenAICompatible` — rather than through `createOpenAI` pointed at
+    // a foreign `baseURL`. It binds Chat Completions natively (Nebius serves no
+    // Responses API), so no `.chat()` re-wrap is needed.
     //
-    // Resolve the key explicitly and FAIL CLOSED when it's absent. createOpenAI's
-    // built-in key fallback is OPENAI_API_KEY, so passing an undefined key here
-    // would silently send the operator's *OpenAI* credential to Nebius's
-    // endpoint. A configured-but-unauthenticated provider is a misconfiguration
-    // worth surfacing loudly, never a credential leak.
+    // The key is still resolved explicitly and still FAILS CLOSED when absent,
+    // but the reason is smaller than it was: this adapter has no
+    // `OPENAI_API_KEY` fallback to leak through, so a keyless provider is a
+    // misconfiguration rather than a credential hazard. Throwing at boot beats
+    // an unauthenticated 401 on the first chat turn.
     const nebiusApiKey = apiKey ?? process.env.NEBIUS_API_KEY;
     if (!nebiusApiKey) {
       throw new Error(
@@ -78,12 +80,14 @@ export function buildRegistry(config: ProvidersConfig): Provider {
           "Set providers.nebius.apiKey or the NEBIUS_API_KEY environment variable.",
       );
     }
-    const nebius = createOpenAI({
+    // `name` is not cosmetic: this adapter reads provider options under it, so
+    // the engine must send `providerOptions.nebius` (not `openai`). Renaming it
+    // silently drops every reasoning option — see `buildNebiusThinkingOptions`.
+    providers.nebius = createOpenAICompatible({
+      name: "nebius",
       apiKey: nebiusApiKey,
       baseURL: baseURL ?? NEBIUS_DEFAULT_BASE_URL,
-      name: "nebius",
     });
-    providers.nebius = { ...nebius, languageModel: (modelId: string) => nebius.chat(modelId) };
   }
 
   if (providersCfg.xai) {

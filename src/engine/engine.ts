@@ -262,11 +262,13 @@ function buildAnthropicThinkingOptions(
 }
 
 /**
- * Build OpenAI-family options. Nebius-hosted open-weight models (DeepSeek,
- * Qwen, gpt-oss, …) run through the same adapter and read the same key: the adapter
- * parses provider options under the literal name `"openai"` regardless of the
- * `name` the provider instance was created with, so a `nebius` key would be
- * silently dropped.
+ * Build OpenAI's options. `@ai-sdk/openai` parses provider options under the
+ * literal name `"openai"` regardless of the `name` its instance was created
+ * with, so this key is fixed rather than derived.
+ *
+ * Nebius is NOT routed here even though it speaks the same wire protocol — it
+ * is built through `createOpenAICompatible`, which reads options under its
+ * instance name. See `buildNebiusThinkingOptions`.
  */
 function buildOpenAIThinkingOptions(
   model: string,
@@ -294,6 +296,32 @@ function buildOpenAIThinkingOptions(
       );
       return tier ? { openai: { reasoningEffort: tier } } : {};
     }
+  }
+}
+
+/**
+ * Build Nebius's options.
+ *
+ * Same wire parameter as OpenAI (`reasoning_effort`) under a different options
+ * key: `createOpenAICompatible` reads `providerOptions.<name>`, and the registry
+ * names this instance `nebius`. Sending `openai` here reaches the wire as
+ * nothing at all — no error, every call at the model's own default.
+ *
+ * No per-model table, unlike OpenAI and xAI. Nebius accepts all three tiers on
+ * every catalog model (measured), and the catalog is curated + probe-verified by
+ * `sync-nebius`, so there is no unmeasured id to fail closed against. Its floor
+ * is `low`, so `off` has nothing to send.
+ */
+function buildNebiusThinkingOptions(thinking: ResolvedThinking): SharedV3ProviderOptions {
+  switch (thinking.mode) {
+    case "off":
+    case "adaptive":
+      // Nebius has no value meaning "don't reason" and no adaptive equivalent;
+      // either way the model applies its own default.
+      return {};
+    case "effort":
+    case "enabled":
+      return { nebius: { reasoningEffort: toOpenAIEffort(thinking.effort) } };
   }
 }
 
@@ -465,8 +493,9 @@ function buildThinkingProviderOptions(
     case "anthropic":
       return buildAnthropicThinkingOptions(model, thinking, maxOutputTokens);
     case "openai":
-    case "nebius":
       return buildOpenAIThinkingOptions(model, thinking);
+    case "nebius":
+      return buildNebiusThinkingOptions(thinking);
     case "xai":
       return buildXaiThinkingOptions(model, thinking);
     case "google":

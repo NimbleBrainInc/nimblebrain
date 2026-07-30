@@ -81,16 +81,17 @@ describe("buildRegistry", () => {
     const model = registry.languageModel("nebius:deepseek-ai/DeepSeek-V4-Pro");
     expect(model).toBeDefined();
     expect(model.specificationVersion).toBe("v3");
-    // Must bind `.chat()` (Chat Completions), NOT `.responses()` — Nebius has
-    // no Responses API, which is what the OpenAI provider's default binds.
+    // Chat Completions, which this adapter binds natively — Nebius serves no
+    // Responses API. Pinned so a swap back to a Responses-defaulting adapter
+    // fails here rather than at the first chat turn.
     expect(model.provider).toBe("nebius.chat");
     expect(model.modelId).toBe("deepseek-ai/DeepSeek-V4-Pro");
   });
 
-  it("fails closed when nebius is configured without a key (never leaks OPENAI_API_KEY)", () => {
-    // createOpenAI's own key fallback is OPENAI_API_KEY, so an absent nebius
-    // key must throw here rather than silently authenticate Nebius requests
-    // with the operator's OpenAI credential.
+  it("fails closed when nebius is configured without a key", () => {
+    // Not a leak guard any more — this adapter has no OPENAI_API_KEY fallback
+    // to leak through. Kept because a boot-time throw beats an unauthenticated
+    // 401 on the first chat turn.
     const prev = process.env.NEBIUS_API_KEY;
     process.env.NEBIUS_API_KEY = "";
     try {
