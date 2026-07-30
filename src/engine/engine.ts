@@ -154,8 +154,10 @@ function effortToBudget(effort: ThinkingEffort, maxOutputTokens: number): number
  */
 function toOpenAIEffort(effort: ThinkingEffort): "low" | "medium" | "high" {
   // Shared with Nebius, which reaches its own adapter and its own options key
-  // but sends the same `reasoning_effort` values. `high` is the strongest tier
-  // either accepts, so both clamp to it.
+  // but sends the same `reasoning_effort` values. Both ladders stop at `high`:
+  // Nebius rejects `xhigh` and `max` outright with a `literal_error` validation
+  // failure (measured), so clamping is what keeps a depth preference from
+  // becoming a failed request rather than a courtesy.
   return effort === "xhigh" || effort === "max" ? "high" : effort;
 }
 

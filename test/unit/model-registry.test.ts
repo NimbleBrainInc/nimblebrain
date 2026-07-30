@@ -116,11 +116,11 @@ describe("buildRegistry", () => {
   });
 
   it("does not fail closed when xai has no key, unlike nebius", () => {
-    // The nebius guard exists because createOpenAI falls back to
-    // OPENAI_API_KEY, so a keyless nebius would send the operator's OpenAI
-    // credential to a third-party host. createXai falls back to XAI_API_KEY —
-    // its own variable — so there is nothing to leak and no guard to justify.
-    // Asserted so nobody "unifies" the two branches on symmetry grounds.
+    // createXai falls back to XAI_API_KEY — its own variable — so an absent
+    // config key is the normal, working case and there is nothing to fail on.
+    // Nebius throws because its adapter has no env fallback of its own, so a
+    // missing key there is a misconfiguration with no path forward. Asserted so
+    // nobody "unifies" the two branches on symmetry grounds.
     const prev = process.env.XAI_API_KEY;
     process.env.XAI_API_KEY = "";
     try {
