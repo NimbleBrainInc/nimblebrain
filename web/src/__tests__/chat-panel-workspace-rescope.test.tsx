@@ -110,7 +110,7 @@ async function mountHarness(opts?: {
   activeId?: string;
   convId?: string;
 }): Promise<void> {
-  const route = opts?.route ?? "/w/alpha/overview";
+  const route = opts?.route ?? "/w/a/overview";
   const activeId = opts?.activeId ?? "ws_a";
   const convId = opts?.convId ?? "conv_existing";
   container = document.createElement("div");
@@ -165,8 +165,11 @@ describe("ChatProvider re-scopes the panel on a workspace switch", () => {
     // Mounted in workspace A with a conversation open — not cleared on mount.
     expect(observedConversationId).toBe("conv_existing");
 
-    // Switch the focused workspace A → B.
-    await act(async () => setActiveWorkspace?.(WS_B));
+    // Switch the focused workspace A → B (WorkspaceNav sets focus and navigates).
+    await act(async () => {
+      setActiveWorkspace?.(WS_B);
+      navigate?.("/w/b/overview");
+    });
 
     // The conversation (which belongs to A) is gone; the panel is a fresh draft
     // scoped to B (drafts carry a null conversationId).
@@ -189,12 +192,18 @@ describe("ChatProvider re-scopes the panel on a workspace switch", () => {
     expect(observedConversationId).toBe("conv_existing");
 
     // A → B clears.
-    await act(async () => setActiveWorkspace?.(WS_B));
+    await act(async () => {
+      setActiveWorkspace?.(WS_B);
+      navigate?.("/w/b/overview");
+    });
     expect(observedConversationId).toBeNull();
 
     // B → A re-scopes again to a fresh draft — the prior A conversation is NOT
     // resurrected into the panel (it lives in A's conversation list).
-    await act(async () => setActiveWorkspace?.(WS_A));
+    await act(async () => {
+      setActiveWorkspace?.(WS_A);
+      navigate?.("/w/a/overview");
+    });
     expect(observedConversationId).toBeNull();
   });
 
@@ -209,7 +218,7 @@ describe("ChatProvider re-scopes the panel on a workspace switch", () => {
     expect(observedConversationId).toBe("conv_existing");
 
     // Back to the SAME workspace A — still the same conversation, untouched.
-    await act(async () => navigate?.("/w/alpha/overview"));
+    await act(async () => navigate?.("/w/a/overview"));
     expect(observedConversationId).toBe("conv_existing");
   });
 
@@ -224,7 +233,7 @@ describe("ChatProvider re-scopes the panel on a workspace switch", () => {
     // Arrive at a DIFFERENT workspace B — re-scopes against the held focus (A).
     await act(async () => {
       setActiveWorkspace?.(WS_B);
-      navigate?.("/w/bravo/overview");
+      navigate?.("/w/b/overview");
     });
     expect(observedConversationId).toBeNull();
   });
@@ -241,7 +250,7 @@ describe("ChatProvider reconciles a foreign-workspace conversation after a refre
   test("mounts a workspace-A conversation while focused on B, then re-scopes once A's workspace is known", async () => {
     // Focused on B at mount (as after refreshing on /w/B); the restored
     // conversation belongs to A (mockConversationWorkspaceId default = ws_a).
-    await mountHarness({ route: "/w/bravo/overview", activeId: "ws_b" });
+    await mountHarness({ route: "/w/b/overview", activeId: "ws_b" });
 
     // Desync: the panel holds A's conversation while displaying B, because the
     // conversation's own workspace isn't known yet (no transition fired).
@@ -270,14 +279,14 @@ describe("ChatProvider reconciles a foreign-workspace conversation after a refre
     // Focus resolves to B (≠ the conversation's ws_a) → reconcile now fires.
     await act(async () => {
       setActiveWorkspace?.(WS_B);
-      navigate?.("/w/bravo/overview");
+      navigate?.("/w/b/overview");
     });
     expect(observedConversationId).toBeNull();
   });
 
   test("a matching focus (conversation's own workspace) is NOT reconciled away", async () => {
     // Focused on A, conversation lives in A — the normal in-workspace resume.
-    await mountHarness({ route: "/w/alpha/overview", activeId: "ws_a" });
+    await mountHarness({ route: "/w/a/overview", activeId: "ws_a" });
     expect(observedConversationId).toBe("conv_existing");
 
     await act(async () => {
@@ -293,7 +302,7 @@ describe("ChatProvider reconciles a foreign-workspace conversation after a refre
     // (This is why the fix lives on the client: it fails safe when the workspace
     // is unknown, rather than rejecting a resume the way a server guard would.)
     mockConversationWorkspaceId = null;
-    await mountHarness({ route: "/w/bravo/overview", activeId: "ws_b" });
+    await mountHarness({ route: "/w/b/overview", activeId: "ws_b" });
     expect(observedConversationId).toBe("conv_existing");
 
     await act(async () => {
@@ -307,7 +316,7 @@ describe("ChatProvider reconciles a foreign-workspace conversation after a refre
     // a restored workspace-A conversation, the reconcile re-scopes to a fresh
     // draft, so a send starts a new turn in B rather than resuming A. The
     // reconcile is the single guard — this is the config the app actually builds.
-    await mountHarness({ route: "/w/bravo/overview", activeId: "ws_b" });
+    await mountHarness({ route: "/w/b/overview", activeId: "ws_b" });
     await act(async () => {
       await chatStore.loadConversation("conv_existing");
     });
@@ -319,5 +328,47 @@ describe("ChatProvider reconciles a foreign-workspace conversation after a refre
     // A fresh turn (no conversationId) — the message can't land in ws_a.
     expect(startCalls.length).toBe(1);
     expect(startCalls[0].conversationId).toBeUndefined();
+  });
+});
+
+describe("Focus is route-derived, so bootstrap's default is never a phantom switch", () => {
+  // A cold load sends no `X-Workspace-Id` (the ambient id is null until bootstrap
+  // returns), so the server answers with its default focus — the user's personal
+  // workspace — even when the URL is another workspace. `activeWorkspace` therefore
+  // starts on that default and only reconciles to the route a render later. Focus
+  // must not follow that intermediate value: it is indistinguishable from a real
+  // workspace switch, and clearing on it discards the very conversation the
+  // per-tab restore just reopened.
+
+  test("a restored conversation survives a reload in its own (non-default) workspace", async () => {
+    // Viewing B, restoring B's conversation — the correct one. `activeId` is A,
+    // standing in for bootstrap's personal-workspace default.
+    mockConversationWorkspaceId = "ws_b";
+    await mountHarness({ route: "/w/b/overview", activeId: "ws_a" });
+    expect(observedConversationId).toBe("conv_existing");
+
+    // `WorkspaceRouteGuard` reconciles `activeWorkspace` to the route in its mount
+    // effect. Route-derived focus was already B, so this moves nothing.
+    await act(async () => {
+      setActiveWorkspace?.(WS_B);
+    });
+    expect(observedConversationId).toBe("conv_existing");
+
+    // The conversation's own workspace arrives and matches the focus.
+    await act(async () => {
+      await chatStore.loadConversation("conv_existing");
+    });
+    expect(observedConversationId).toBe("conv_existing");
+  });
+
+  test("a non-member slug holds focus at null rather than inventing one", async () => {
+    // `WorkspaceRouteGuard` bounces this route; until it does, focus must read as
+    // null (held, like home) so neither trigger fires against a phantom id.
+    mockConversationWorkspaceId = "ws_a";
+    await mountHarness({ route: "/w/nope/overview", activeId: "ws_a" });
+    await act(async () => {
+      await chatStore.loadConversation("conv_existing");
+    });
+    expect(observedConversationId).toBe("conv_existing");
   });
 });
