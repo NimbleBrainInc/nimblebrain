@@ -1,3 +1,4 @@
+import { ChevronRight } from "lucide-react";
 import { useState } from "react";
 import { Link } from "react-router-dom";
 import { useWorkspaceContext } from "../context/WorkspaceContext";
@@ -50,7 +51,7 @@ export function LedgerLine({ skills }: { skills: SkillsLoadedContext | undefined
         <span className="ledger-line__dot" aria-hidden />
         <span className="ledger-line__verb">{verb}</span>
         {meta && <span className="ledger-line__meta">· {meta}</span>}
-        <span className="ledger-line__chev" aria-hidden />
+        <ChevronRight className="ledger-line__chev" style={{ width: 14, height: 14 }} aria-hidden />
       </button>
       {expanded && (
         <div className="ledger-line__body">

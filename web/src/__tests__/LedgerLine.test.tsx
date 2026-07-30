@@ -9,6 +9,8 @@
 //      reason (in `title`) + token count, and the "Manage skills" footer link.
 //   4. Rows render the recorded `name` and, for connector-published guidance,
 //      name the publishing connector rather than the tier.
+//   5. The disclosure chevron is an svg glyph — see the test for why the shape
+//      of the element is load-bearing here.
 //
 // Rendering goes through react-dom/client directly (matching ResourceLinkView's
 // test), wrapped in the real WorkspaceProvider (bootstrap mode, so no API call)
@@ -141,6 +143,18 @@ describe("LedgerLine", () => {
     const head = mounted.head();
     expect(head.textContent).toContain("Following 2 skills");
     expect(head.textContent).toContain("~1.8k tokens");
+  });
+
+  test("chevron is an svg glyph, so its ink stays inside its own box", async () => {
+    mounted = await mount(TWO);
+    // The chevron sits flush against the right edge (`margin-left: auto`) of a
+    // head that fills an `overflow-hidden` message wrapper, so anything painted
+    // outside its layout box is shaved off. A chevron built from two borders on
+    // a square turned 45° paints ~1.5px past every side and loses its point; an
+    // svg glyph is drawn within its viewBox and lands on the same right edge as
+    // the activity chip below it.
+    const chev = first(mounted.container, "ledger-line__chev");
+    expect(chev?.tagName.toLowerCase()).toBe("svg");
   });
 
   test("expanded: trust banner, verbatim reason in title, scope class, tokens, manage link", async () => {
