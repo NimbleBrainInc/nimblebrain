@@ -225,11 +225,30 @@ Per-provider API keys. Takes precedence over the legacy `model` object when both
 }
 ```
 
-Each provider key is optional. If a provider's `apiKey` is omitted, the runtime falls back to that provider's standard env var (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `GOOGLE_GENERATIVE_AI_API_KEY`, `NEBIUS_API_KEY`, `XAI_API_KEY`).
+Each provider key is optional. If a provider's `apiKey` is omitted, the runtime falls back to that provider's standard env var (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `GOOGLE_GENERATIVE_AI_API_KEY`, `GREENPT_API_KEY`, `NEBIUS_API_KEY`, `XAI_API_KEY`).
 
 <Aside type="caution">
   Prefer environment variables for API keys in production. Config files end up in version control and backup snapshots by accident.
 </Aside>
+
+### GreenPT
+
+GreenPT is a European AI provider with an OpenAI-compatible API, optimized infrastructure, and data centers powered by 100% renewable energy. Configure it with the `greenpt:` prefix:
+
+```json
+{
+  "providers": {
+    "greenpt": { "apiKey": "..." }
+  },
+  "models": {
+    "default": "greenpt:glm-5.2",
+    "fast": "greenpt:kimi-k2.7-code",
+    "reasoning": "greenpt:kimi-k3"
+  }
+}
+```
+
+The key falls back to `GREENPT_API_KEY`, and `baseURL` overrides the endpoint (default `https://api.greenpt.ai/v1`). The catalog includes the flagship `glm-5.2`, coding-focused `kimi-k2.7-code`, and long-context `kimi-k3`; other chat model IDs still route as free text. Use `GET https://api.greenpt.ai/v1/models` with your API key for the current model list.
 
 ### Nebius Token Factory
 

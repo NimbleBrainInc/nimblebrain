@@ -13,10 +13,14 @@ export interface ProvidersConfig {
     anthropic?: { apiKey?: string; promptCaching?: boolean; models?: string[] };
     openai?: { apiKey?: string; baseURL?: string; organization?: string; models?: string[] };
     google?: { apiKey?: string; models?: string[] };
+    greenpt?: { apiKey?: string; baseURL?: string; models?: string[] };
     nebius?: { apiKey?: string; baseURL?: string; models?: string[] };
     xai?: { apiKey?: string; baseURL?: string; models?: string[] };
   };
 }
+
+/** GreenPT's OpenAI-compatible inference endpoint. */
+const GREENPT_DEFAULT_BASE_URL = "https://api.greenpt.ai/v1";
 
 /** Nebius Token Factory's OpenAI-compatible inference endpoint. */
 const NEBIUS_DEFAULT_BASE_URL = "https://api.tokenfactory.nebius.com/v1";
@@ -57,6 +61,24 @@ export function buildRegistry(config: ProvidersConfig): Provider {
   if (providersCfg.google) {
     const { apiKey } = providersCfg.google;
     providers.google = createGoogleGenerativeAI({ apiKey });
+  }
+
+  if (providersCfg.greenpt) {
+    const { apiKey, baseURL } = providersCfg.greenpt;
+    const greenptApiKey = apiKey ?? process.env.GREENPT_API_KEY;
+    if (!greenptApiKey) {
+      throw new Error(
+        "Provider 'greenpt' is configured but no API key is set. " +
+          "Set providers.greenpt.apiKey or the GREENPT_API_KEY environment variable.",
+      );
+    }
+    providers.greenpt = createOpenAICompatible({
+      name: "greenpt",
+      apiKey: greenptApiKey,
+      baseURL: baseURL ?? GREENPT_DEFAULT_BASE_URL,
+      includeUsage: true,
+      supportsStructuredOutputs: true,
+    });
   }
 
   if (providersCfg.nebius) {

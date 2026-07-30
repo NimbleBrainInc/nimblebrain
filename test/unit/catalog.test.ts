@@ -28,13 +28,22 @@ describe("Model Catalog", () => {
 		expect(providers).toContain("anthropic");
 		expect(providers).toContain("openai");
 		expect(providers).toContain("google");
+		expect(providers).toContain("greenpt");
 	});
 
 	it("getProviderName returns display names", () => {
 		expect(getProviderName("anthropic")).toBe("Anthropic");
 		expect(getProviderName("openai")).toBe("OpenAI");
 		expect(getProviderName("google")).toBe("Google");
+		expect(getProviderName("greenpt")).toBe("GreenPT");
 		expect(getProviderName("unknown")).toBe("unknown");
+	});
+
+	it("includes GreenPT flagship and coding models", () => {
+		const models = listModels("greenpt");
+		expect(models.map((model) => model.id)).toEqual(["glm-5.2", "kimi-k2.7-code", "kimi-k3"]);
+		expect(getModel("greenpt", "glm-5.2")?.limits.context).toBe(1_000_000);
+		expect(getModel("greenpt", "kimi-k3")?.capabilities.attachment).toBe(true);
 	});
 
 	it("getModel returns model metadata", () => {
@@ -101,6 +110,10 @@ describe("findProviderForModelId", () => {
 
 	it("returns the owning provider for a known openai id", () => {
 		expect(findProviderForModelId("gpt-4o")).toBe("openai");
+	});
+
+	it("returns greenpt for a GreenPT flagship model id", () => {
+		expect(findProviderForModelId("glm-5.2")).toBe("greenpt");
 	});
 
 	it("returns null for an unknown model id", () => {

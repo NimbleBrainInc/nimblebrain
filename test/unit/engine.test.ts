@@ -1808,6 +1808,16 @@ describe("AgentEngine", () => {
         }
       });
 
+      it("routes GreenPT reasoning effort through the greenpt options key", async () => {
+        const po = await providerOptionsFor("greenpt:kimi-k3", {
+          mode: "effort",
+          effort: "max",
+          source: "operator",
+        });
+        expect(po.greenpt?.reasoningEffort).toBe("high");
+        expect(po.openai).toBeUndefined();
+      });
+
       it("routes Nebius through the nebius options key, NOT openai", async () => {
         // `createOpenAICompatible` reads `providerOptions.<name>`, and the
         // registry names this instance `nebius`. Same wire parameter as OpenAI,
