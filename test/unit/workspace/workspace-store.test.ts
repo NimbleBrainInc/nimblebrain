@@ -1,6 +1,6 @@
 import { existsSync, statSync } from "node:fs";
 import { namespacedToolName } from "../../helpers/namespaced-tool-name.ts";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
@@ -131,6 +131,24 @@ describe("WorkspaceStore CRUD", () => {
     await store.create("Beta");
     const all = await store.list();
     expect(all).toHaveLength(2);
+  });
+
+  test("list orders workspaces sharing a createdAt by id, not by readdir order", async () => {
+    // `createdAt` is millisecond-precision, so a same-millisecond group is
+    // reachable in production. Stamp the tie rather than race for it.
+    const created = [];
+    for (const name of ["Alpha", "Beta", "Gamma", "Delta", "Epsilon"]) {
+      created.push(await store.create(name));
+    }
+    const tied = "2026-01-01T00:00:00.000Z";
+    for (const ws of created) {
+      const path = join(workDir, "workspaces", ws.id, "workspace.json");
+      const raw = JSON.parse(await readFile(path, "utf8")) as Workspace;
+      await writeFile(path, JSON.stringify({ ...raw, createdAt: tied }, null, 2));
+    }
+
+    const ids = (await store.list()).map((w) => w.id);
+    expect(ids).toEqual([...ids].sort());
   });
 
   test("update patches workspace fields", async () => {
