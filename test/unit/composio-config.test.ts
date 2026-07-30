@@ -29,12 +29,21 @@ import {
   type ComposioProviderConfig,
   setConnectorsConfig,
 } from "../../src/connectors/providers/config.ts";
+import {
+  _resetSmitheryConfigForTest,
+  SMITHERY_API_BASE,
+  validateSmitheryConfig,
+} from "../../src/connectors/providers/smithery/config.ts";
 import { _resetBouncerModeForTest } from "../../src/oauth/bouncer-config.ts";
 
 const ENV_KEYS = [
   "COMPOSIO_API_KEY",
   "COMPOSIO_API_BASE_URL",
   "COMPOSIO_MONITOR_ENABLED",
+  "SMITHERY_API_KEY",
+  "SMITHERY_NAMESPACE",
+  "SMITHERY_API_BASE_URL",
+  "SMITHERY_MONITOR_ENABLED",
   "NB_TENANT_ID",
   "NB_OAUTH_BOUNCER_CALLBACK_URL",
   "NB_OAUTH_BOUNCER_TENANT_KEY",
@@ -242,5 +251,42 @@ describe("composioAuthConfigId", () => {
   it("trims a declared id", () => {
     declareComposio({ authConfigs: { gmail: "  ac_declared  " } });
     expect(composioAuthConfigId("gmail")).toBe("ac_declared");
+  });
+});
+
+/**
+ * The five settings vars are inert — the whole set, in one place.
+ *
+ * Each removal was verified individually when it landed, which is not the same
+ * as verifying the set: four of the five were reinstatable with the suite still
+ * green, because every other file deletes these names in `beforeEach` and a
+ * restored fallback finds nothing to read. Asserting them together, with all
+ * five *set*, is what makes the absence falsifiable.
+ *
+ * Not a substitute for deleting them from the env-key arrays elsewhere — those
+ * exist so a developer's `.env` can't reach the suite (#835), which is a
+ * different job from proving the code ignores them.
+ */
+describe("the five retired settings vars are inert", () => {
+  it("resolves defaults with every retired var set", () => {
+    process.env.COMPOSIO_API_KEY = "k_env";
+    process.env.SMITHERY_API_KEY = "sk_env";
+    process.env.COMPOSIO_API_BASE_URL = "https://composio.retired";
+    process.env.COMPOSIO_MONITOR_ENABLED = "false";
+    process.env.SMITHERY_NAMESPACE = "retired-ns";
+    process.env.SMITHERY_API_BASE_URL = "https://smithery.retired";
+    process.env.SMITHERY_MONITOR_ENABLED = "false";
+    setConnectorsConfig({ providers: { smithery: { namespace: "declared-ns" } } });
+    _resetComposioConfigForTest();
+    _resetSmitheryConfigForTest();
+
+    const composio = validateComposioConfig();
+    expect(composio.baseUrl).toBe(COMPOSIO_API_BASE);
+    expect(composio.monitorEnabled).toBe(true);
+
+    const smithery = validateSmitheryConfig();
+    expect(smithery.namespace).toBe("declared-ns");
+    expect(smithery.baseUrl).toBe(SMITHERY_API_BASE);
+    expect(smithery.monitorEnabled).toBe(true);
   });
 });

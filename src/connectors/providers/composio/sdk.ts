@@ -178,7 +178,7 @@ export function _composioVendorLoadCountForTest(): number {
 
 /**
  * Build an authenticated Composio SDK client. The `baseURL` comes from the
- * resolved provider config (the declared block, with an env fallback for the credential, validated at
+ * resolved provider config (the declared block, validated at
  * startup).
  *
  * Internal + async — awaits the lazy vendor load, then constructs a fresh

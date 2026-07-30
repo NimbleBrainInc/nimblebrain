@@ -285,11 +285,11 @@ describe("composioCallbackUrl", () => {
 
 describe("GET /v1/composio-auth/proxy", () => {
   // Proxy reads from `validateComposioConfig().baseUrl` (validated +
-  // cached at startup). For the override to kick in, both
-  // `COMPOSIO_API_KEY` and `COMPOSIO_API_BASE_URL` must be set —
-  // without the key, validate falls back to the default base URL
-  // because the integration is dormant. Reset the cache between
-  // tests so each case gets a fresh validate pass.
+  // cached at startup). For the override to kick in, `COMPOSIO_API_KEY`
+  // must be set and `baseUrl` declared in the block — without the key,
+  // validate returns the default base URL because the integration is
+  // dormant. Reset the cache between tests so each case gets a fresh
+  // validate pass.
   const origKey = process.env.COMPOSIO_API_KEY;
   beforeEach(() => {
     _resetComposioConfigForTest();

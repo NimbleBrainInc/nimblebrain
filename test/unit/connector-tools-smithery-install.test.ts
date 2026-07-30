@@ -384,7 +384,7 @@ describe("manage_connectors.install (smithery-auth)", () => {
 
   test("(g) a half-configured provider (key, no namespace) refuses rather than guessing", async () => {
     process.env.SMITHERY_API_KEY = "sk_test";
-    // SMITHERY_NAMESPACE deliberately unset.
+    // no namespace declared.
     const result = await buildTool(h).handler({
       action: "install",
       entry: bassethoundEntry(),

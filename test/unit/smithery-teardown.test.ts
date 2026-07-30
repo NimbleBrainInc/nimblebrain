@@ -80,7 +80,7 @@ describe("cleanupSmitheryBundle", () => {
     expect(result.upstreamDeleted).toBe(true);
     expect(calls).toHaveLength(1);
     expect(calls[0]?.method).toBe("DELETE");
-    // Repointing SMITHERY_NAMESPACE must not make teardown delete a DIFFERENT
+    // Repointing the declared namespace must not make teardown delete a DIFFERENT
     // tenant's connection, or miss this one entirely.
     expect(calls[0]?.url).toContain("/connect/install-time-ns/nb-abc");
     expect(calls[0]?.url).not.toContain("current-ns");

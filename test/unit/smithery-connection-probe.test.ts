@@ -148,7 +148,7 @@ describe("SmitheryConnectionProbe — liveness mapping", () => {
   });
 
   it("probes the namespace the connection was CREATED in, not current config", async () => {
-    // A repointed SMITHERY_NAMESPACE must not make the probe look in the new
+    // A repointed declared namespace must not make the probe look in the new
     // namespace: the ref's session URL still targets the old one and works, so
     // a config-read would 404 and false-flip a healthy connector.
     let requested = "";

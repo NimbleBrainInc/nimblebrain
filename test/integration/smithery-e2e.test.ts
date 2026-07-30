@@ -51,7 +51,7 @@ const HAVE_CREDS = Boolean(process.env.SMITHERY_API_KEY?.trim());
 /** The namespace the fixture server lives under — settings, so declared, not env. */
 const E2E_NAMESPACE = "nimblebrain";
 // The declared block is module-global and outlives this file. Installed at
-// module scope above, so it is released at module scope too.
+// module scope below, so it is released at module scope too.
 afterAll(_resetConnectorsConfigForTest);
 
 const SERVER = "nimblebrain/bassethound";
