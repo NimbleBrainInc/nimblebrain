@@ -1,7 +1,6 @@
 /**
- * /v1/bootstrap surfaces the personal workspace identity:
- *   - workspaces[].isPersonal flag per entry
- *   - top-level personalWorkspaceId
+ * /v1/bootstrap surfaces the personal workspace identity via the
+ * `workspaces[].isPersonal` flag on each entry.
  *
  * Runs handleBootstrap directly against a real Runtime — no HTTP server
  * needed since the handler accepts (Request, Runtime, identity) and
@@ -27,7 +26,6 @@ interface BootstrapResponse {
     bundleCount: number;
     isPersonal: boolean;
   }>;
-  personalWorkspaceId: string | null;
   activeWorkspace: string | null;
 }
 
@@ -63,12 +61,11 @@ async function bootstrapFor(userId: string): Promise<BootstrapResponse> {
 }
 
 describe("bootstrap — personal workspace surfaces", () => {
-  test("user with a fresh personal workspace gets personalWorkspaceId + isPersonal=true", async () => {
+  test("a fresh personal workspace reports isPersonal=true", async () => {
     await ensureUserWorkspace(runtime.getWorkspaceStore(), { id: "user_alice" });
 
     const body = await bootstrapFor("user_alice");
 
-    expect(body.personalWorkspaceId).toBe("ws_user_user_alice");
     expect(body.workspaces).toHaveLength(1);
     expect(body.workspaces[0]).toMatchObject({
       id: "ws_user_user_alice",
@@ -77,23 +74,32 @@ describe("bootstrap — personal workspace surfaces", () => {
     });
   });
 
-  test("user with both personal + shared workspaces gets the right personalWorkspaceId", async () => {
+  test("with both personal + shared workspaces, only the personal one is flagged", async () => {
     const store = runtime.getWorkspaceStore();
-    await ensureUserWorkspace(store, { id: "user_alice" });
+    // Shared first, personal second: `list()` sorts ascending by createdAt, so
+    // the personal workspace is NOT `userWorkspaces[0]`. That is what makes the
+    // default-focus fallback observable — with the personal workspace first,
+    // both of its operands alias and no assertion can tell them apart.
     const shared = await store.create("Team Alpha", "team_alpha");
     await store.addMember(shared.id, "user_alice", "member");
+    await ensureUserWorkspace(store, { id: "user_alice" });
 
     const body = await bootstrapFor("user_alice");
 
-    expect(body.personalWorkspaceId).toBe("ws_user_user_alice");
     expect(body.workspaces).toHaveLength(2);
+    // Guards the ordering the assertion below depends on: if these ever tie on
+    // createdAt this fails loudly instead of going quietly vacuous.
+    expect(body.workspaces[0]?.id).toBe(shared.id);
+    // Discriminates the branch — the personal workspace wins over the first
+    // membership. The only assertion in the repo that does.
+    expect(body.activeWorkspace).toBe("ws_user_user_alice");
     const personal = body.workspaces.find((w) => w.id === "ws_user_user_alice")!;
     const sharedEntry = body.workspaces.find((w) => w.id === shared.id)!;
     expect(personal.isPersonal).toBe(true);
     expect(sharedEntry.isPersonal).toBe(false);
   });
 
-  test("user with no personal workspace (pre-migration) returns personalWorkspaceId: null", async () => {
+  test("a pre-migration user with no personal workspace has none flagged", async () => {
     const store = runtime.getWorkspaceStore();
     // Create only a shared workspace; do NOT call ensureUserWorkspace.
     const shared = await store.create("Shared Only", "shared_only");
@@ -101,9 +107,12 @@ describe("bootstrap — personal workspace surfaces", () => {
 
     const body = await bootstrapFor("user_bob");
 
-    expect(body.personalWorkspaceId).toBeNull();
     expect(body.workspaces).toHaveLength(1);
     expect(body.workspaces[0]?.isPersonal).toBe(false);
+    // With no personal candidate the focus falls through to the only membership.
+    // Both operands alias here, so this pins the resolved value rather than which
+    // branch produced it; the personal + shared test above discriminates.
+    expect(body.activeWorkspace).toBe(shared.id);
   });
 
   test("non-personal workspaces report isPersonal: false even when ownerUserId is unset", async () => {
@@ -114,6 +123,5 @@ describe("bootstrap — personal workspace surfaces", () => {
     const body = await bootstrapFor("user_carol");
 
     expect(body.workspaces[0]?.isPersonal).toBe(false);
-    expect(body.personalWorkspaceId).toBeNull();
   });
 });

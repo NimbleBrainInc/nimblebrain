@@ -370,7 +370,11 @@ export class WorkspaceStore {
       if (ws) workspaces.push(ws);
     }
 
-    workspaces.sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+    // `createdAt` is millisecond-precision, so two workspaces created in the
+    // same millisecond compare equal, and the pre-sort order is whatever
+    // `readdir` returned — filesystem-dependent, and not stable across hosts.
+    // Ids are unique, so breaking the tie on id makes the order total.
+    workspaces.sort((a, b) => a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id));
     return workspaces;
   }
 

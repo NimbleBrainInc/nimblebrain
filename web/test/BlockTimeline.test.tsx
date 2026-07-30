@@ -56,12 +56,12 @@ function renderTimeline(opts: {
 	);
 }
 
-/** Find all pill heads in DOM order — avoids `.turn-pill__head` selector
+/** Find all pill heads in DOM order — avoids `.disclosure__head` selector
  *  because happy-dom rejects BEM `__` in querySelectorAll. */
 function pillHeads(container: HTMLElement): HTMLButtonElement[] {
 	const out: HTMLButtonElement[] = [];
 	for (const b of Array.from(container.getElementsByTagName("button"))) {
-		if ((b.getAttribute("class") ?? "").split(/\s+/).includes("turn-pill__head")) {
+		if ((b.getAttribute("class") ?? "").split(/\s+/).includes("disclosure__head")) {
 			out.push(b as HTMLButtonElement);
 		}
 	}
@@ -91,7 +91,7 @@ function timeline(container: HTMLElement): string[] {
 		if (classes.includes("streamdown-container")) {
 			const t = (node.textContent ?? "").trim();
 			if (t) out.push(`text:${t}`);
-		} else if (classes.includes("turn-pill__head")) {
+		} else if (classes.includes("disclosure__head")) {
 			const t = (node.textContent ?? "").trim();
 			if (t) out.push(`chip:${t}`);
 		} else if (classes.includes("live-cursor")) {
