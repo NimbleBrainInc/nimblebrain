@@ -7,10 +7,12 @@
  *      it streamed. No per-turn aggregation, no hoisting.
  *
  *   2. **One chip per phase of work.** A "phase" is a contiguous run of
- *      reasoning + tool blocks with no text between. Reasoning followed by
+ *      reasoning + tool blocks with no prose between. Reasoning followed by
  *      tools (the natural think→act pattern) reads as one collapsible
- *      activity, not two stacked chips. Text always breaks the phase —
+ *      activity, not two stacked chips. Visible prose breaks the phase —
  *      "preamble text → tools → final text" stays three distinct elements.
+ *      A text block carrying no visible prose breaks nothing: the reader
+ *      sees no separation, so neither does the timeline.
  *
  *   3. **Blocks are self-stating.** A chip is muted when its work is
  *      settled and active when something inside it is in flight. There is
@@ -81,10 +83,10 @@ type ActivityRow =
 type TimelineItem = { kind: "text"; text: string } | { kind: "activity"; rows: ActivityRow[] };
 
 /**
- * Walk `blocks[]`, partition at text boundaries, and within each activity
+ * Walk `blocks[]`, partition at prose boundaries, and within each activity
  * segment fold consecutive same-name tool blocks into one tool row.
  *
- * Empty reasoning blocks (zero-length text) and empty tool blocks are
+ * Blank text blocks, empty reasoning blocks, and empty tool blocks are all
  * dropped so the timeline doesn't render placeholders for nothing.
  */
 function foldBlocks(blocks: ReadonlyArray<ContentBlock>): TimelineItem[] {
@@ -99,8 +101,9 @@ function foldBlocks(blocks: ReadonlyArray<ContentBlock>): TimelineItem[] {
 
   for (const block of blocks) {
     if (block.type === "text") {
+      if (isBlankText(block.text)) continue;
       flush();
-      pushText(items, block.text);
+      items.push({ kind: "text", text: block.text });
       continue;
     }
     if (block.type === "reasoning") {
@@ -114,9 +117,18 @@ function foldBlocks(blocks: ReadonlyArray<ContentBlock>): TimelineItem[] {
   return items;
 }
 
-/** Emit a text item for non-empty prose; an empty text block renders nothing. */
-function pushText(items: TimelineItem[], text: string): void {
-  if (text.length > 0) items.push({ kind: "text", text });
+/**
+ * True when a text block carries no visible prose. Providers emit these around
+ * tool calls — a bare newline between two thinking→act rounds is the common
+ * shape. Such a block is invisible once rendered, so treating it as content
+ * would reserve an empty line (`min-h-[1em]`) and split one phase of work into
+ * two chips, both of which read as unexplained gaps in the transcript.
+ *
+ * Whole-block, not per-delta: a real paragraph's first delta can be whitespace,
+ * so only the completed block can be judged blank.
+ */
+function isBlankText(text: string): boolean {
+  return text.trim().length === 0;
 }
 
 /** Append a reasoning row for non-empty thought; an empty block renders nothing. */
