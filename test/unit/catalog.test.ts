@@ -470,15 +470,21 @@ describe("xai effort support", () => {
 		expect(getModel("xai", "grok-4.20-0309-non-reasoning")?.capabilities.reasoning).toBe(false);
 	});
 
-	it("keeps max output under the context window", () => {
+	it("keeps every model's max output under its context window", () => {
 		// xAI publishes no max-output cap and accepts max_tokens up to the full
-		// window, which upstream reports as output == context. Left alone, the
-		// message budget resolves to 0 and every turn fails — see
-		// MANUAL_LIMIT_OVERRIDES in sync-models.ts.
-		for (const id of ["grok-4.5", "grok-build-0.1"]) {
-			const m = getModel("xai", id);
-			expect(m, `${id} missing`).toBeDefined();
-			expect(m!.limits.output).toBeLessThan(m!.limits.context);
+		// window, which upstream reports as output == context. Any such model
+		// resolves a zero message budget and fails every turn, so sync-models
+		// caps the whole provider by rule.
+		//
+		// Asserted over the catalog rather than a list of ids: enumerating the
+		// two models that need it today would pass unchanged on the next Grok
+		// that arrives the same way, which is the case worth catching.
+		const models = listModels("xai");
+		expect(models.length).toBeGreaterThan(0);
+		for (const m of models) {
+			expect(m.limits.output, `${m.id} output must be under its context`).toBeLessThan(
+				m.limits.context,
+			);
 		}
 	});
 

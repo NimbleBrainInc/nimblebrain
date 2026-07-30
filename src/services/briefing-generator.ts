@@ -127,26 +127,7 @@ const BRIEFING_RESPONSE_SCHEMA = {
   additionalProperties: false,
 };
 
-/**
- * Provider-aware options for the short structured briefing call: asks each
- * provider for as little thinking as it will accept, gated on the catalog's
- * `capabilities.reasoning` so a model without the knob gets an empty object.
- * What "as little as it will accept" means is per-provider, and the branches
- * do not agree: OpenAI sends nothing rather than substitute a tier above
- * `minimal`, while the Google level branch steps down to the lowest level the
- * model offers. Each branch states its own reasoning.
- *
- * So not always suppression. On a Gemini 3 model that has no `minimal`, this
- * sends an explicit `low` — an instruction to reason, but the cheapest one the
- * model offers and cheaper than the default it would otherwise fall back to.
- * That is deliberately not the rule the engine applies for `thinking: "off"`;
- * see the Google branch.
- *
- * Inlined rather than shared with the engine because of that level branch: it
- * is a different rule, not the same rule in two places. The budget branch below
- * IS the engine's rule, kept here so one provider isn't split across two files
- * for three lines.
- */
+/** Google's arm of `shortCallProviderOptions`: level dialect or budget dialect, per model. */
 function shortCallGoogleOptions(modelString: string): SharedV3ProviderOptions {
   // A budget is the Gemini 2.5 dialect, and the two do not overlap: sent to
   // a Gemini 3 model it is rejected outright (`gemini-3.6-flash` 400s on
@@ -172,6 +153,27 @@ function shortCallGoogleOptions(modelString: string): SharedV3ProviderOptions {
   return support.canDisable ? { google: { thinkingConfig: { thinkingBudget: 0 } } } : {};
 }
 
+/**
+ * Provider-aware options for the short structured briefing call: asks each
+ * provider for as little thinking as it will accept, gated on the catalog's
+ * `capabilities.reasoning` so a model without the knob gets an empty object.
+ * What "as little as it will accept" means is per-provider, and the branches
+ * do not agree: OpenAI sends nothing rather than substitute a tier above
+ * `minimal`, while the Google level branch steps down to the lowest level the
+ * model offers. Each branch states its own reasoning.
+ *
+ * So not always suppression. On a Gemini 3 model that has no `minimal`, this
+ * sends an explicit `low` — an instruction to reason, but the cheapest one the
+ * model offers and cheaper than the default it would otherwise fall back to.
+ * That is deliberately not the rule the engine applies for `thinking: "off"`;
+ * see `shortCallGoogleOptions`. xAI is the one provider that can be told not to
+ * reason at all, and its branch says so.
+ *
+ * Inlined rather than shared with the engine because of that level branch: it
+ * is a different rule, not the same rule in two places. Google's budget arm IS
+ * the engine's rule, kept here so one provider isn't split across two files for
+ * three lines.
+ */
 function shortCallProviderOptions(modelString: string | null): SharedV3ProviderOptions {
   if (!modelString) return {};
   const provider = getProviderFromModel(modelString);

@@ -40,26 +40,6 @@ const MANUAL_EXCLUSIONS = new Set<string>([
 const MANUAL_LIMIT_OVERRIDES: Record<string, { context?: number; output?: number }> = {
   "anthropic:claude-sonnet-4-5": { context: 200000 },
   "anthropic:claude-sonnet-4-5-20250929": { context: 200000 },
-  // xAI publishes no per-model max-output cap — neither `/v1/models` nor
-  // `/v1/language-models` carries the field, and the endpoint accepts
-  // `max_tokens` all the way up to `context_length` (measured). Upstream
-  // represents that as `output == context`, which is honest but unusable as a
-  // ceiling here: `resolveMaxOutputTokens` returns the catalog `limits.output`
-  // when no operator override is set, and `resolveMessageBudget` then computes
-  // `context - system - tools - maxOutput - safety` — negative, so the budget
-  // resolves to 0 and every turn fails. Pin to the platform default, which is
-  // the same resolution `sync-nebius.ts` reaches for the same reason.
-  //
-  // Only the models upstream reports at `output == context` are listed. The
-  // grok-4.20 line reports a real 30000 cap against a 1M window and is left
-  // alone — the rule is "pin when upstream declares no separate cap", not
-  // "cap every xAI model".
-  //
-  // Note this also caps an operator override, since `resolveMaxOutputTokens`
-  // clamps `configValue` down to the ceiling. That matches every Nebius model
-  // today and is the accepted posture; raising it means raising this number.
-  "xai:grok-4.5": { output: DEFAULT_MAX_OUTPUT_TOKENS },
-  "xai:grok-build-0.1": { output: DEFAULT_MAX_OUTPUT_TOKENS },
 };
 
 // Models the upstream API hasn't flagged yet but we know are scheduled for shutdown.
@@ -205,6 +185,28 @@ export function buildProviderModels(
     // Skip models the platform deliberately does not surface.
     if (MANUAL_EXCLUSIONS.has(`${providerId}:${modelId}`)) continue;
     const model = toCatalogModel(providerId, modelId, raw);
+    // xAI publishes no per-model max-output cap — neither `/v1/models` nor
+    // `/v1/language-models` carries the field, and the endpoint accepts
+    // `max_tokens` all the way up to `context_length` (measured). Upstream
+    // represents that as `output == context`, which is honest but unusable as a
+    // ceiling here: `resolveMaxOutputTokens` returns the catalog `limits.output`
+    // when no operator override is set, and `resolveMessageBudget` then computes
+    // `context - system - tools - maxOutput - safety` — negative, so the budget
+    // resolves to 0 and every turn fails.
+    //
+    // Capped by rule rather than by model id, because "no published cap" is a
+    // property of the provider: any model it adds arrives the same way, and a
+    // list would land the next one at a zero budget until someone noticed.
+    // Models with a real declared cap are untouched — the grok-4.20 line
+    // reports 30000 against a 1M window and keeps it. `sync-nebius.ts` applies
+    // the same platform default for the same reason.
+    //
+    // This also caps an operator override, since `resolveMaxOutputTokens`
+    // clamps `configValue` down to the ceiling. That matches every Nebius model
+    // today and is the accepted posture.
+    if (providerId === "xai" && model.limits.output >= model.limits.context) {
+      model.limits = { ...model.limits, output: DEFAULT_MAX_OUTPUT_TOKENS };
+    }
     const limitOverride = MANUAL_LIMIT_OVERRIDES[`${providerId}:${modelId}`];
     if (limitOverride) model.limits = { ...model.limits, ...limitOverride };
     models[modelId] = model;
