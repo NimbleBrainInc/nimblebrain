@@ -1817,6 +1817,47 @@ describe("AgentEngine", () => {
         expect(po.nebius).toBeUndefined();
       });
 
+      it("routes xai through the xai options key, NOT openai", async () => {
+        // The mirror image of the Nebius case above, and the reason the two
+        // cannot share a builder: @ai-sdk/xai reads `providerOptions.xai`, so an
+        // `openai` key here would be dropped with no error and every call would
+        // run at the model's own default. A provider-options key follows its
+        // adapter, not the wire protocol it speaks.
+        const po = await providerOptionsFor("xai:grok-4.5", { mode: "effort", effort: "low", source: "operator" });
+        expect(po.xai?.reasoningEffort).toBe("low");
+        expect(po.openai).toBeUndefined();
+      });
+
+      it("clamps xai tiers above its ladder to high", async () => {
+        const po = await providerOptionsFor("xai:grok-4.5", { mode: "effort", effort: "max", source: "operator" });
+        expect(po.xai?.reasoningEffort).toBe("high");
+      });
+
+      it("sends nothing to an xai model that reasons but exposes no effort knob", async () => {
+        // grok-4.20-0309-reasoning is reasoning-capable (227 reasoning tokens
+        // with the parameter omitted) yet rejects `reasoningEffort` at EVERY
+        // tier. A permissive default — OpenAI's table shape — would 400 every
+        // call to it, which is why xai's table is fail-closed like Google's.
+        const po = await providerOptionsFor("xai:grok-4.20-0309-reasoning", { mode: "effort", effort: "high", source: "operator" });
+        expect(po.xai).toBeUndefined();
+      });
+
+      it("honors thinking:off on xai where `none` is measured, unlike the other effort dialects", async () => {
+        // `none` genuinely suppresses on grok-4.3 (reasoning_tokens 0 vs 150 at
+        // high), so `off` sends it rather than giving up and paying for the
+        // model's default reasoning. The other effort dialects have no value
+        // meaning "don't"; Google gets there via thinkingBudget: 0 instead.
+        const po = await providerOptionsFor("xai:grok-4.3", { mode: "off" });
+        expect(po.xai?.reasoningEffort).toBe("none");
+      });
+
+      it("sends nothing for thinking:off on an xai model that rejects `none`", async () => {
+        // grok-4.5 takes low/medium/high but rejects `none` specifically, so
+        // suppression is per-model and cannot be assumed from the provider.
+        const po = await providerOptionsFor("xai:grok-4.5", { mode: "off" });
+        expect(po.xai).toBeUndefined();
+      });
+
       it("sizes a thinkingBudget from the tier for Gemini 2.5", async () => {
         const po = await providerOptionsFor("google:gemini-2.5-flash", { mode: "effort", effort: "low", source: "operator" });
         expect(po.google?.thinkingConfig).toEqual({

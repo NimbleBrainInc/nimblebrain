@@ -497,6 +497,35 @@ describe("briefing-generator", () => {
 			}
 		});
 
+		it("suppresses reasoning outright on the xai model where `none` is measured", async () => {
+			// The only true suppressor any provider here offers — `none` zeroes
+			// the trace rather than asking for less of it. Worth sending on a
+			// call that runs on every home load.
+			const { model, calls } = createTrackingModelV3(
+				JSON.stringify({ lede: "Ok.", sections: [] }),
+			);
+			await makeGen(model, "xai:grok-4.3").generate(activeActivity());
+
+			expect(calls[0].providerOptions).toEqual({
+				xai: { reasoningEffort: "none" },
+			});
+		});
+
+		it("sends nothing to an xai model that rejects `none` or takes no effort knob", async () => {
+			// grok-4.5 accepts low/medium/high but rejects `none` specifically;
+			// the other two reasoning-capable models reject every tier. Both
+			// shapes must send nothing rather than 400 the briefing, and the
+			// gate is a per-model set membership test on a hand-maintained
+			// table — so it needs a test per shape, not per provider.
+			for (const m of ["xai:grok-4.5", "xai:grok-4.20-0309-reasoning", "xai:grok-build-0.1"]) {
+				const { model, calls } = createTrackingModelV3(
+					JSON.stringify({ lede: "Ok.", sections: [] }),
+				);
+				await makeGen(model, m).generate(activeActivity());
+				expect(calls[0].providerOptions ?? {}).toEqual({});
+			}
+		});
+
 		it("omits providerOptions for non-reasoning models", async () => {
 			const llmResponse = JSON.stringify({ lede: "Ok.", sections: [] });
 			const { model, calls } = createTrackingModelV3(llmResponse);

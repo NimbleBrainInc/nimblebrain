@@ -132,6 +132,7 @@ and the runtime translates.
 | Anthropic — Opus 4.7/4.8, Sonnet 5, Opus 5 | `thinking: {type: "adaptive"}` + `output_config.effort`, the tier verbatim |
 | Anthropic — up to Sonnet 4.6 | `thinking: {type: "enabled"}` + a `budgetTokens` sized from the tier |
 | OpenAI, and Nebius-hosted open-weight models (Qwen, Kimi, GLM, gpt-oss, Cosmos3) | `reasoningEffort`. Its usable range stops at `high`, so `xhigh` and `max` both land there. On OpenAI, acceptance is also per model — see below |
+| xAI (Grok) | `reasoningEffort`, tops out at `high`. Acceptance is per model and some Grok models take no effort parameter at all — see below |
 | Google Gemini 3 | `thinkingConfig.thinkingLevel`, tops out at `high` |
 | Google Gemini 2.5 | `thinkingConfig.thinkingBudget`, sized from the tier and held inside the model's documented range |
 
@@ -224,7 +225,7 @@ Per-provider API keys. Takes precedence over the legacy `model` object when both
 }
 ```
 
-Each provider key is optional. If a provider's `apiKey` is omitted, the SDK falls back to the provider's standard env var (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `GOOGLE_GENERATIVE_AI_API_KEY`, `NEBIUS_API_KEY`).
+Each provider key is optional. If a provider's `apiKey` is omitted, the SDK falls back to the provider's standard env var (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `GOOGLE_GENERATIVE_AI_API_KEY`, `NEBIUS_API_KEY`, `XAI_API_KEY`).
 
 <Aside type="caution">
   Prefer environment variables for API keys in production. Config files end up in version control and backup snapshots by accident.
@@ -251,6 +252,38 @@ Each provider key is optional. If a provider's `apiKey` is omitted, the SDK fall
 The key falls back to `NEBIUS_API_KEY`. Unlike the other providers, this key is **required when `nebius` is configured** — the runtime fails to start (rather than falling back to another provider's key) if neither `providers.nebius.apiKey` nor `NEBIUS_API_KEY` is set. Override the endpoint with `baseURL` (default `https://api.tokenfactory.nebius.com/v1`). A curated set of flagship models ships in the catalog so they appear in the model picker with pricing; any other Nebius model id still routes as free text (`nebius:<org>/<model>`), just without catalog metadata. Nebius requests use the Chat Completions API and rely on the provider's automatic prefix caching — the Anthropic-style explicit cache breakpoints don't apply.
 
 The exact model lineup is account- and tier-specific and changes over time. The authoritative list for your key is `GET https://api.tokenfactory.nebius.com/v1/models`; use those ids verbatim (they're case-sensitive, e.g. `Qwen/Qwen3-235B-A22B-Instruct-2507`).
+
+### xAI (Grok)
+
+`xai` reaches Grok over the Chat Completions API. Configure it like any other provider and reference models with the `xai:` prefix:
+
+```json
+{
+  "providers": {
+    "anthropic": { "apiKey": "sk-ant-..." },
+    "xai": { "apiKey": "xai-..." }
+  },
+  "models": {
+    "default": "xai:grok-4.5"
+  }
+}
+```
+
+The key falls back to `XAI_API_KEY`, and `baseURL` overrides the endpoint (default `https://api.x.ai/v1`). Five models ship in the catalog: `grok-4.5`, `grok-4.3`, `grok-4.20-0309-reasoning`, `grok-4.20-0309-non-reasoning`, and `grok-build-0.1`. All five support tool calling.
+
+Reasoning support is uneven in a way worth knowing before you point a slot at one:
+
+| Model | Effort tiers accepted |
+|---|---|
+| `grok-4.3` | `low`, `medium`, `high`, plus `none` to suppress reasoning entirely |
+| `grok-4.5` | `low`, `medium`, `high` |
+| `grok-4.20-0309-reasoning` | none — it reasons, but rejects the effort parameter |
+| `grok-build-0.1` | none — same |
+| `grok-4.20-0309-non-reasoning` | none — does not reason |
+
+Where a model takes no effort parameter, the runtime sends no reasoning options and the model applies its own default; asking for a tier would fail the call outright. `grok-4.3` is the only model in an effort dialect where `thinking: "off"` sends a suppressing value rather than nothing — `none` genuinely zeroes the reasoning trace. (Gemini 2.5 models that can disable thinking also honor `off`, via a zero `thinkingBudget`; that is the budget dialect, not a tier.)
+
+Two other notes. xAI publishes no per-model max-output cap and accepts `max_tokens` up to the full context window, so `grok-4.5` and `grok-build-0.1` are pinned to a 16,384-token output ceiling in the catalog — without it the message budget resolves to zero and every turn fails. And `grok-4.20-multi-agent-0309` is deliberately absent: the Chat Completions endpoint refuses it (`Multi Agent requests are not allowed on chat completions`).
 
 ## Conversation storage
 
