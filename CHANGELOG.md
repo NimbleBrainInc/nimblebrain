@@ -206,6 +206,7 @@
 
 ### Removed
 
+- Top-level `personalWorkspaceId` from the `GET /v1/bootstrap` response. A wire-shape change: any out-of-tree client reading the field should switch to `workspaces[].isPersonal`, which carries the same fact per entry and is what in-tree callers already use. No migration; no in-tree consumer read the field.
 - **Removed the one-time workspace-as-wall migration scripts** (`migrate:{conversations,files,automations}-to-workspace`). The migration completed across all environments in v0.10.0; the scripts remain in the v0.10.0 release artifact (tag + image) for any tenant not yet migrated.
 - Standalone stdio automations MCP server (`src/bundles/automations/src/server.ts` `main()` + the HTTP executor `executeHttp`). Superseded by the in-process `automations` platform source; importing the module had been starting a phantom second scheduler and grabbing stdio. The file is now tool handlers only.
 - `InlineSource`, `ResourceReader`, `isResourceReader`. External callers should switch to `defineInProcessApp` (returns an `McpSource`); `InlineToolDef` becomes `InProcessTool` with the same shape.

@@ -1530,10 +1530,10 @@ export async function handleBootstrap(
   //    `isPersonal === true && ownerUserId === identity.id`. If for any
   //    reason there are multiple (data corruption — shouldn't happen),
   //    pick the earliest-created and log a warning so operators notice.
-  //    If there are zero (pre-migration deployment) this stays `null` and the
-  //    active-workspace fallback below uses the first membership instead. Local
-  //    only — clients read `workspaces[].isPersonal`, which carries the same
-  //    fact per entry.
+  //    If there are zero (pre-migration deployment) `personalWorkspaceId` stays
+  //    `null` and the active-workspace fallback below uses the first membership
+  //    instead. Local only — clients read `workspaces[].isPersonal`, which
+  //    carries the same fact per entry.
   const personalCandidates = userWorkspaces.filter(
     (ws) => ws.isPersonal === true && ws.ownerUserId === identity.id,
   );

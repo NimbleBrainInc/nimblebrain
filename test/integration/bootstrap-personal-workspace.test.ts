@@ -99,6 +99,9 @@ describe("bootstrap — personal workspace surfaces", () => {
 
     expect(body.workspaces).toHaveLength(1);
     expect(body.workspaces[0]?.isPersonal).toBe(false);
+    // With no personal candidate, the default focus falls through to the first
+    // membership — the only assertion in the suite that pins that branch.
+    expect(body.activeWorkspace).toBe(shared.id);
   });
 
   test("non-personal workspaces report isPersonal: false even when ownerUserId is unset", async () => {
