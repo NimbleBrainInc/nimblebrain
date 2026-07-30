@@ -110,6 +110,56 @@ const COMPOSITION = {
 // switch surfaces B's error rather than leaving A's budget on screen.
 const CONV_BUDGET_FAIL = "conv_00000000000000ff";
 
+// The production shape this page got wrong: a turn that loaded real skills
+// (recorded, 7.2k) whose LIVE recomposition holds no layer-3 section. Nothing
+// exotic — a trigger match needs the user's message and can't recompose, and
+// always-on skills compose into their own layers, so a live trace legitimately
+// has no layer-3 section while the recorded turn loaded plenty. Filtering the
+// live layers by that section reported "no skills" under a card reading 7.2k.
+const CONV_NO_LIVE_L3 = "conv_00000000000000cc";
+const DIGEST_NO_LIVE_L3 = {
+  ...DIGEST,
+  conversationId: CONV_NO_LIVE_L3,
+  sources: [
+    { kind: "system_prompt", tokens: 34685 },
+    { kind: "tool_descriptions", count: 32, tokens: 4876 },
+    { kind: "skills", count: 3, tokens: 7200, annotation: true },
+    { kind: "history", messages: 3, compacted: false, tokens: 30 },
+  ],
+  skills: [
+    {
+      id: "/workspaces/tenant-a/skills/house-style.md",
+      name: "house-style",
+      scope: "workspace" as const,
+      tokens: 2100,
+      loadedBy: "always" as const,
+      reason: "always-on",
+    },
+    {
+      id: "skill://usage/SKILL.md",
+      name: "usage",
+      connector: "acme-crm",
+      scope: "bundle" as const,
+      tokens: 3900,
+      loadedBy: "tool_affinity" as const,
+      reason: "tool-affinity matched acme-crm__*",
+    },
+    {
+      id: "/workspaces/tenant-a/skills/release-notes.md",
+      name: "release-notes",
+      scope: "workspace" as const,
+      tokens: 1200,
+      loadedBy: "trigger" as const,
+      reason: 'trigger matched "cut a release"',
+    },
+  ],
+};
+const COMPOSITION_NO_LIVE_L3 = {
+  ...COMPOSITION,
+  conversationId: CONV_NO_LIVE_L3,
+  layers: COMPOSITION.layers.filter((l) => l.kind !== "layer3_skills"),
+};
+
 // A conversation whose reads are held open, to prove that a slow read from a
 // conversation the user navigated away from is ignored rather than landing in
 // the new view. Its reads resolve to a distinctive body once released.
@@ -125,6 +175,7 @@ const callTool = mock(async (server: string, tool: string, args?: { conversation
   const cid = args?.conversation_id;
   if (server === "compose" && tool === "assembled_context") {
     if (cid === CONV_BUDGET_FAIL) throw new Error("BUDGET-READ-FAILED-FOR-B");
+    if (cid === CONV_NO_LIVE_L3) return { structuredContent: DIGEST_NO_LIVE_L3 };
     if (cid === CONV_STALE) {
       const p = staleGate.then(() => ({
         structuredContent: { ...DIGEST, conversationId: CONV_STALE },
@@ -135,6 +186,7 @@ const callTool = mock(async (server: string, tool: string, args?: { conversation
     return { structuredContent: DIGEST };
   }
   if (server === "compose" && tool === "effective_context") {
+    if (cid === CONV_NO_LIVE_L3) return { structuredContent: COMPOSITION_NO_LIVE_L3 };
     if (cid === CONV_STALE) {
       const p = staleGate.then(() => ({
         structuredContent: {
@@ -394,5 +446,47 @@ describe("ContextInspectorPage", () => {
     expect(container.textContent).toContain("Layer-3 skills");
     // The drilled layer is expanded — its composed section is on screen.
     expect(container.textContent).toContain("## Skills");
+  });
+
+  test("the skills bucket lists the recorded turn's skills, whatever the live composition holds", async () => {
+    // The card counts a recording, so the drill-down reads the same recording
+    // rather than the live recomposition beside it. Every mechanism the turn
+    // used has to appear — the live trace can only ever hold tool-affinity.
+    const { container } = render(
+      <MemoryRouter initialEntries={[`/w/abc123/context/${CONV_NO_LIVE_L3}`]}>
+        <Routes>
+          <Route path="/w/:slug/context/:convId" element={<ContextInspectorPage />} />
+        </Routes>
+      </MemoryRouter>,
+    );
+    await waitFor(() => expect(container.textContent).toContain("Identity (default)"));
+
+    const skillsBucket = buttons(container).find((b) => b.textContent?.trim().startsWith("Skills"));
+    if (!skillsBucket) throw new Error("skills bucket not found");
+    fireEvent.click(skillsBucket);
+
+    await waitFor(() => expect(container.textContent).toContain("house-style"));
+    const text = container.textContent ?? "";
+
+    // All three mechanisms, under their headings.
+    expect(text).toContain("Always on");
+    expect(text).toContain("Matched your tools");
+    expect(text).toContain("Matched what you said");
+    expect(text).toContain("house-style");
+    expect(text).toContain("usage");
+    expect(text).toContain("release-notes");
+
+    // Provenance: a connector skill is labelled by its publisher, a filesystem
+    // skill by its tier. Per-skill costs sum to the 7.2k on the card.
+    expect(text).toContain("acme-crm");
+    expect(text).toContain("workspace");
+    expect(text).toContain("2.1k");
+    expect(text).toContain("3.9k");
+    expect(text).toContain("1.2k");
+    expect(text).toContain("7.2k");
+
+    // And no "nothing loaded" line under a card that just counted three skills.
+    expect(text).not.toContain("No matched skills");
+    expect(text).not.toContain("Nothing composes");
   });
 });

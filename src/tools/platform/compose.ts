@@ -54,7 +54,7 @@ import { makeIdentitySkill, type Runtime } from "../../runtime/runtime.ts";
 import { hashSkillBody } from "../../runtime/skills-loaded-payload.ts";
 import { skillDisplayName } from "../../skills/display-name.ts";
 import { parseSkillContent } from "../../skills/loader.ts";
-import { partitionSkillsByRole, selectLayer3Skills } from "../../skills/select.ts";
+import { partitionSkillsByRole } from "../../skills/select.ts";
 import type { InProcessTool } from "../in-process-app.ts";
 import { defineInProcessApp } from "../in-process-app.ts";
 import type { McpSource } from "../mcp-source.ts";
@@ -246,8 +246,14 @@ export function createComposeSource(runtime: Runtime, eventSink: EventSink): Mcp
  *     each bundle's `app://instructions` overlay.
  *   - `overlays` = `runtime.readPromptOverlays(wsId)` — org + workspace
  *     instruction overlays.
- *   - `layer3Skills` = `loadConversationSkills` ∩ `selectLayer3Skills`
- *     against the role-filtered active tool set.
+ *   - `layer3Skills` / bundle context skills = `runtime.selectRequestLayer3`
+ *     against the role-filtered active tool set — the SAME entry point
+ *     `runtime.chat()` composes through. Calling `selectLayer3Skills` directly
+ *     here would be a third path onto the skill pool, and it would see only
+ *     filesystem skills: every connector-published `skill://…` skill (both the
+ *     `always` half that composes unconditionally and the `dynamic` half Layer 3
+ *     selects) is discovered inside `selectRequestLayer3`, so the trace would
+ *     omit them from a prompt that really carries them.
  *   - `prefs` = identity preferences.
  *
  * Skipped vs. `runtime.chat()` (request-scoped, no signal in a debug
@@ -279,7 +285,6 @@ async function composeLive(runtime: Runtime, convId: string): Promise<ComposeRes
   const { context: poolContext, capability: poolCapability } = partitionSkillsByRole(
     runtime.loadConversationSkills(wsId, userId),
   );
-  const requestContextSkills = identityOverride ? [...poolContext, identityOverride] : poolContext;
 
   // Gather inputs in parallel where possible.
   const [apps, overlays] = await Promise.all([
@@ -306,10 +311,23 @@ async function composeLive(runtime: Runtime, convId: string): Promise<ComposeRes
   const { direct: directTools, proxied } = surfaceTools(allTools, null, {});
   const activeToolNames = directTools.map((t) => t.name);
 
-  const selectedLayer3 = selectLayer3Skills({
-    skills: poolCapability,
-    activeTools: activeToolNames,
+  // One entry point for the skill pool, shared with `runtime.chat()`: it folds
+  // the workspace's connector-published skills in and routes them by the
+  // strategy they declare — `always` into the context channel below, `dynamic`
+  // into the tool-affinity selection.
+  const { context: bundleContext, layer3: selectedLayer3 } = await runtime.selectRequestLayer3({
+    wsId,
+    userId,
+    activeToolNames,
+    capabilityPool: poolCapability,
   });
+
+  // Always-on context channel, as `runtime.chat()` builds it: the `always`
+  // skills across every tier, then the always-on bundle skills, then the
+  // workspace identity/persona override when the workspace sets one.
+  const contextBase = [...poolContext, ...bundleContext];
+  const requestContextSkills = identityOverride ? [...contextBase, identityOverride] : contextBase;
+
   const layer3Entries: Layer3SkillEntry[] = selectedLayer3.map((s) => ({
     name: s.skill.manifest.name,
     body: s.skill.body,

@@ -3,6 +3,7 @@ import { Link, useNavigate, useParams } from "react-router-dom";
 // Canonical shapes from `src/tools/platform/schemas/compose.ts`; mirrored
 // here via codegen so server + web can't drift.
 import type {
+  AssembledContextSkill,
   AssembledContextSource,
   ComposeAssembledContextOutput,
   ComposeEffectiveContextOutput,
@@ -10,7 +11,13 @@ import type {
 } from "../_generated/platform-schemas/compose";
 import { callTool } from "../api/client";
 import { orderedSources, SOURCE_LABEL, sourceDetail } from "../lib/context-sources";
-import { formatTokenCount, nameFromSkillId } from "../lib/skill-display";
+import {
+  formatTokenCount,
+  groupByMechanism,
+  nameFromSkillId,
+  SCOPE_CLASS,
+  skillProvenanceLabel,
+} from "../lib/skill-display";
 import { parseToolResponse } from "../lib/tool-response";
 
 /**
@@ -192,11 +199,22 @@ export function ContextInspectorPage() {
             active={bucket}
             onSelect={selectBucket}
           />
+          {/* The Skills card counts a recorded turn, so its drill-down reads the
+              same recording. The composition below can't answer for it: it
+              recomposes CURRENT state, which holds no trigger match (that needs
+              the user's message) and no record of what loaded then. */}
+          {bucket === "skills" && <RecordedSkills skills={digest.skills} />}
           <LayerAccordion
             layers={visibleLayers}
             open={open}
             onToggle={toggle}
-            bucket={bucket}
+            emptyMessage={
+              bucket === "skills"
+                ? // Answered above, from the recording. A second "nothing here"
+                  // under it would read as a contradiction of the card's number.
+                  null
+                : "Nothing composes for this conversation right now."
+            }
             loading={loading && !composition}
             error={compositionError}
             warnings={composition?.warnings ?? []}
@@ -311,6 +329,63 @@ function BudgetBar({
   );
 }
 
+// ── recorded skills (the Skills card's drill-down) ──────────────────────────
+
+/**
+ * The skills the recorded turn loaded, grouped by why — the drill-down for the
+ * Skills budget card, projected from the same `skills.loaded` event that
+ * produced its token count. So the list can never disagree with the number
+ * above it.
+ *
+ * This is deliberately NOT the composition below. That is a live recomposition
+ * of current state: it holds only what tool-affinity selects right now, never
+ * the turn's trigger match (which needs the user's message) and never the
+ * always-on skills, which compose into their own layers rather than the
+ * layer-3 section. Filtering it by the layer-3 section left every other
+ * mechanism — most of what a turn typically loads — with nowhere to appear.
+ *
+ * Grouping, scope colors, and provenance come from the shared helpers, so this
+ * reads identically to the In-context popover the page opens from. Bodies live
+ * on the composition's layers, not here: the recording carries token counts and
+ * provenance, not text.
+ */
+function RecordedSkills({ skills }: { skills: AssembledContextSkill[] }) {
+  return (
+    <div className="border-b border-border" data-testid="recorded-skills">
+      <div className="px-6 pt-3 pb-2 text-3xs font-semibold uppercase tracking-wider text-muted-foreground">
+        Loaded
+        <span className="font-normal normal-case tracking-normal text-2xs">
+          {" "}
+          · what the recorded turn composed
+        </span>
+      </div>
+      {skills.length === 0 ? (
+        <div className="px-6 py-3 text-xs text-muted-foreground">
+          No skills loaded for this turn.
+        </div>
+      ) : (
+        groupByMechanism(skills).map((group) => (
+          <div key={group.mechanism} className="px-6 pb-1.5">
+            <p className="pt-1.5 pb-0.5 m-0 text-2xs text-muted-foreground">{group.label}</p>
+            <ul className="m-0 p-0 list-none">
+              {group.skills.map((s) => (
+                <li key={s.id} className="ledger-line__row" title={s.reason}>
+                  <span className="disclosure__dot" aria-hidden />
+                  <span className="ledger-line__row-name">{s.name}</span>
+                  <span className={`ledger-line__scope ${SCOPE_CLASS[s.scope]}`}>
+                    {skillProvenanceLabel(s)}
+                  </span>
+                  <span className="ledger-line__row-tok">{formatTokenCount(s.tokens)}</span>
+                </li>
+              ))}
+            </ul>
+          </div>
+        ))
+      )}
+    </div>
+  );
+}
+
 // ── layers (drill-in-place) ────────────────────────────────────────────────
 
 const LAYER_LABEL: Record<string, string> = {
@@ -355,6 +430,11 @@ function layerDescriptor(l: TracedLayerView): string {
  * A budget bucket selects the layers composed under it. Only `system_prompt`
  * and `skills` are drillable (tools/history aren't composed into the prompt —
  * their segments are disabled), so `bucket` is only ever null or one of those.
+ *
+ * Under `skills` this narrows the live composition to the layer-3 section,
+ * which sits below `RecordedSkills` as the composed *text* of the skills that
+ * still load. The recorded list above it is what answers for the card's number;
+ * this can legitimately be empty while that one isn't.
  */
 function filterLayers(layers: TracedLayerView[], bucket: string | null): TracedLayerView[] {
   if (bucket === "skills") return layers.filter((l) => l.kind === "layer3_skills");
@@ -366,7 +446,7 @@ function LayerAccordion({
   layers,
   open,
   onToggle,
-  bucket,
+  emptyMessage,
   loading,
   error,
   warnings,
@@ -374,7 +454,8 @@ function LayerAccordion({
   layers: TracedLayerView[];
   open: Set<string>;
   onToggle: (key: string) => void;
-  bucket: string | null;
+  /** Shown when nothing composes; `null` when the caller answers that itself. */
+  emptyMessage: string | null;
   loading: boolean;
   error: string | null;
   warnings: string[];
@@ -391,12 +472,8 @@ function LayerAccordion({
       </div>
       {loading && <div className="px-6 py-3 text-xs text-muted-foreground">Composing…</div>}
       {error && <div className="px-6 py-3 text-xs text-destructive">{error}</div>}
-      {!loading && !error && layers.length === 0 && (
-        <div className="px-6 py-3 text-xs text-muted-foreground">
-          {bucket === "skills"
-            ? "No matched skills entered this turn's prompt. The budget above still counts everything that loaded."
-            : "Nothing composes for this conversation right now."}
-        </div>
+      {!loading && !error && layers.length === 0 && emptyMessage !== null && (
+        <div className="px-6 py-3 text-xs text-muted-foreground">{emptyMessage}</div>
       )}
       {layers.map((l) => (
         <AccordionRow

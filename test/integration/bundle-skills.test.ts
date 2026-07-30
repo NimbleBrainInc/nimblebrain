@@ -25,6 +25,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { NoopEventSink } from "../../src/adapters/noop-events.ts";
 import { reconstructMessages } from "../../src/conversation/event-reconstructor.ts";
+import { DEV_IDENTITY } from "../../src/identity/providers/dev.ts";
+import { runWithRequestContext } from "../../src/runtime/request-context.ts";
 import { Runtime } from "../../src/runtime/runtime.ts";
 import { McpSource } from "../../src/tools/mcp-source.ts";
 import { createEchoModel } from "../helpers/echo-model.ts";
@@ -312,6 +314,42 @@ describe("bundle-skill adapter — end-to-end", () => {
     } finally {
       spy.mockRestore();
     }
+  });
+
+  it("traces the bundle skill in live-mode compose__effective_context", async () => {
+    // `compose__effective_context` is the prod-debugging answer to "what is in
+    // the prompt". It has to build its pool through `selectRequestLayer3` like
+    // the chat path does: reaching for `selectLayer3Skills` with only the
+    // filesystem pool is a second path onto the same question, and it sees no
+    // connector-published skill at all — so the trace reports a prompt smaller
+    // and emptier than the one the model receives.
+    const result = await runWithRequestContext(
+      {
+        identity: DEV_IDENTITY,
+        scope: {
+          kind: "workspace",
+          workspaceId: TEST_WORKSPACE_ID,
+          workspaceAgents: null,
+          workspaceModelOverride: null,
+        },
+      },
+      () =>
+        runtime.getRegistryForWorkspace(TEST_WORKSPACE_ID).execute({
+          id: "test-compose-live-bundle",
+          name: "compose__effective_context",
+          input: { conversation_id: "conv_00000000000000aa" },
+        }),
+    );
+
+    const composed = (result as { structuredContent?: unknown }).structuredContent as {
+      layers: Array<{ kind: string; text: string; subItems?: Array<{ id: string }> }>;
+    };
+    const layer3 = composed.layers.find((l) => l.kind === "layer3_skills");
+    expect(layer3).toBeDefined();
+    expect(layer3?.subItems?.some((s) => s.id === "skill://test/SKILL.md")).toBe(true);
+    // The composed body, not just the row: this is the text the trace claims
+    // entered the prompt.
+    expect(layer3?.text).toContain("Always call test__doit before anything else.");
   });
 });
 
