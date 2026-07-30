@@ -445,3 +445,89 @@ export function openaiSupportedEfforts(modelString: string): ReadonlySet<OpenAIW
   const { modelId } = parseModelString(modelString);
   return OPENAI_EFFORT_SUPPORT[modelId] ?? FULL_LADDER;
 }
+
+/** xAI's effort ladder as the platform can express it, ascending. */
+export const XAI_EFFORTS = ["low", "medium", "high"] as const;
+export type XAIEffort = (typeof XAI_EFFORTS)[number];
+
+/**
+ * Every tier xAI accepts on the wire. `none` sits below the ladder and is
+ * deliberately not in XAI_EFFORTS — same split as OpenAI's `minimal`, reachable
+ * only by a caller naming it, never by stepping down from a requested depth.
+ *
+ * Unlike `minimal`, `none` genuinely suppresses: measured on `grok-4.3`,
+ * `reasoning_effort: "none"` returns `reasoning_tokens: 0` against 150 at
+ * `high`. It is the only *tier* that can implement `thinking: "off"` — the
+ * other effort dialects have no such value and send nothing. Google reaches the
+ * same end through a zero token budget, not a tier.
+ */
+export type XAIWireEffort = XAIEffort | "none";
+
+/**
+ * Effort ladder per xAI model, measured against `POST /v1/chat/completions`.
+ *
+ * **Fail-closed, following Google's table rather than OpenAI's.** An id absent
+ * here gets NO reasoning options. The permissive "absent means full ladder"
+ * default that `OPENAI_EFFORT_SUPPORT` uses would be actively wrong on this
+ * provider: `grok-4.20-0309-reasoning` and `grok-build-0.1` are both flagged
+ * reasoning-capable upstream and both reject `reasoning_effort` at *every*
+ * tier — `Model <id> does not support parameter reasoningEffort` — so a
+ * permissive default 400s every call to them, not just the one tier
+ * `gpt-5-pro` refuses.
+ *
+ * An **empty set** is a measured fact, not a gap: the model reasons but exposes
+ * no knob. `grok-4.20-0309-reasoning` returns 227 reasoning tokens with the
+ * parameter omitted. That is why `capabilities.reasoning` stays `true` for it
+ * while its ladder is empty — the flag says whether the model reasons, this
+ * table says whether you can ask it to. Do not "fix" the 400 by flipping the
+ * capability flag; that would misreport reasoning cost to say nothing of being
+ * false.
+ *
+ * Absent vs. empty behave identically at the engine (send nothing) but differ
+ * to `xaiUnmeasuredReasoningModels` below, which is what keeps a newly-synced
+ * Grok from silently inheriting a guessed ladder.
+ *
+ * Only reasoning-capable models belong here. A non-reasoning one needs no row:
+ * `resolveThinking` drops the override on `capabilities.reasoning` before the
+ * builder runs, and `xaiUnmeasuredReasoningModels` filters on the same flag, so
+ * a row for one classifies nothing.
+ */
+const XAI_EFFORT_SUPPORT: Record<string, ReadonlySet<XAIWireEffort>> = {
+  // Full ladder plus suppression.
+  "grok-4.3": new Set([...XAI_EFFORTS, "none"]),
+  // Rejects `none` specifically ("This model does not support `reasoning_effort`
+  // value..."); takes the rest.
+  "grok-4.5": new Set(XAI_EFFORTS),
+  // Reasons, no knob — every tier 400s. See the header.
+  "grok-4.20-0309-reasoning": new Set(),
+  "grok-build-0.1": new Set(),
+};
+
+/**
+ * Catalog xAI reasoning models nobody has measured. Non-empty means
+ * `sync-models` added one and its ladder is unknown — it will get no reasoning
+ * options until measured, which is the safe direction but still a gap worth
+ * failing CI over.
+ */
+export function xaiUnmeasuredReasoningModels(): string[] {
+  const models = data.xai?.models ?? {};
+  return Object.entries(models)
+    .filter(([id, m]) => m.capabilities.reasoning && !(id in XAI_EFFORT_SUPPORT))
+    .map(([id]) => id)
+    .sort();
+}
+
+/** The model ids this table classifies. Exposed so tests can check each one is real. */
+export function xaiEffortModelIds(): string[] {
+  return Object.keys(XAI_EFFORT_SUPPORT);
+}
+
+/**
+ * Which effort tiers this xAI model accepts, or `undefined` when there is no
+ * measured answer — in which case the engine sends nothing. An empty set means
+ * measured-and-none, and the engine treats it the same way.
+ */
+export function xaiSupportedEfforts(modelString: string): ReadonlySet<XAIWireEffort> | undefined {
+  const { modelId } = parseModelString(modelString);
+  return XAI_EFFORT_SUPPORT[modelId];
+}

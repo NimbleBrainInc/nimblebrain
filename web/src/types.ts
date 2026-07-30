@@ -369,13 +369,6 @@ export interface BootstrapResponse {
      */
     isPersonal: boolean;
   }>;
-  /**
-   * The user's personal workspace id (always `isPersonal: true`,
-   * `ownerUserId === user.id`). `null` only when the migration hasn't
-   * run yet on an existing deployment — the UI may fall back to
-   * `activeWorkspace` in that case.
-   */
-  personalWorkspaceId: string | null;
   activeWorkspace: string | null;
   shell: {
     placements: PlacementEntry[];
