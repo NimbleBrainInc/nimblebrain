@@ -46,13 +46,11 @@ export function buildRegistry(config: ProvidersConfig): Provider {
 
   if (providersCfg.openai) {
     const { apiKey, baseURL, organization } = providersCfg.openai;
-    // No fail-closed guard here, unlike nebius below, and the asymmetry is
-    // about whose key it is. `OPENAI_API_KEY` is this provider's own variable,
+    // No fail-closed key guard: createOpenAI reads `OPENAI_API_KEY` on its own,
     // and when `baseURL` points at an OpenAI-compatible proxy
-    // (LiteLLM/Helicone/Azure) that proxy legitimately expects it — so the
-    // fallback is the desired behavior and an absent config key is normal.
-    // Nebius throws instead because a missing key there has no sensible
-    // fallback at all. Don't "unify" the two branches.
+    // (LiteLLM/Helicone/Azure) that proxy legitimately expects that key — so
+    // the fallback is the desired behavior here, not a hazard. See the nebius
+    // branch below for the rule.
     providers.openai = createOpenAI({ apiKey, baseURL, organization });
   }
 
@@ -69,11 +67,13 @@ export function buildRegistry(config: ProvidersConfig): Provider {
     // a foreign `baseURL`. It binds Chat Completions natively (Nebius serves no
     // Responses API), so no `.chat()` re-wrap is needed.
     //
-    // The key is still resolved explicitly and still FAILS CLOSED when absent,
-    // but the reason is smaller than it was: this adapter has no
-    // `OPENAI_API_KEY` fallback to leak through, so a keyless provider is a
-    // misconfiguration rather than a credential hazard. Throwing at boot beats
-    // an unauthenticated 401 on the first chat turn.
+    // The key is resolved explicitly and FAILS CLOSED when absent. This is the
+    // one place the guard rule is stated, because it is the only branch that
+    // needs a guard: an adapter that reads an env variable of its own can be
+    // handed an undefined key and still work, so it gets none, while
+    // `createOpenAICompatible` reads no environment at all — a keyless nebius
+    // has no path forward. Throwing at boot beats an unauthenticated 401 on the
+    // first chat turn. Don't "unify" the branches on symmetry grounds.
     const nebiusApiKey = apiKey ?? process.env.NEBIUS_API_KEY;
     if (!nebiusApiKey) {
       throw new Error(
@@ -106,13 +106,9 @@ export function buildRegistry(config: ProvidersConfig): Provider {
 
   if (providersCfg.xai) {
     const { apiKey, baseURL } = providersCfg.xai;
-    // No fail-closed key guard, unlike nebius above, and the asymmetry is
-    // deliberate: createXai's own env fallback is XAI_API_KEY — its own
-    // variable — so an absent key cannot send another provider's credential to
-    // x.ai. That hazard is specific to reaching a third-party host through
-    // createOpenAI, whose fallback is OPENAI_API_KEY. This follows the
-    // openai/google shape instead: pass what config has and let the adapter
-    // read its own env.
+    // No fail-closed key guard: createXai reads XAI_API_KEY on its own, so an
+    // absent config key is the normal working case. See the nebius branch above
+    // for the rule.
     //
     // `.languageModel()` binds Chat Completions on this adapter version
     // (XaiChatLanguageModel, provider "xai.chat"), so no `.chat()` re-wrap is
