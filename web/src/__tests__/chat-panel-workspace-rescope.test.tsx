@@ -5,12 +5,17 @@
 // changes from one workspace to a DIFFERENT one, the open conversation clears
 // and the panel resets to a fresh draft in the newly-focused workspace. It does
 // NOT clear when the focus is unchanged (e.g. navigating within the same
-// workspace or opening a conversation from its own workspace's list).
+// workspace or opening a conversation from its own workspace's list). A second
+// trigger reconciles on mount, once the open conversation's own workspace is
+// known, for the reload case where no switch ever fires.
 //
 // Focus is driven through the REAL `WorkspaceProvider` + router, exactly as
-// production derives it (`ChatContext`: `pathname.startsWith("/w/") ?
-// activeWorkspace?.id ?? null : null`) — a workspace switch is `setActiveWorkspace`,
-// and "home / no focus" is navigating off `/w/`. This test deliberately does NOT
+// production derives it: from the `/w/:slug` route, gated on membership. So a
+// workspace switch here is a `navigate` (as `WorkspaceNav` does — it moves focus
+// AND the URL), and "home / no focus" is navigating off `/w/`. Moving
+// `setActiveWorkspace` alone is NOT a switch and must not be used to simulate
+// one: focus does not read that state, and a test that drives it alone asserts
+// nothing. This test deliberately does NOT
 // `mock.module("../context/WorkspaceContext", …)`: bun module mocks are
 // process-global, and a partial mock here leaks `workspaces === undefined` into
 // other files that use the real provider (issue #680).
