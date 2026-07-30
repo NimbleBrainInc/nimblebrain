@@ -701,7 +701,7 @@ function SkillRow({
   const labelIsName = label === skill.name;
   // How the skill loads, stated at rest under the name — the discriminator the
   // flat list used to hide until a row was expanded. Same vocabulary as the
-  // in-chat ledger's "Following …" line.
+  // in-chat ledger's "Using …" line.
   const mechanism = skillMechanismLabel(skill);
   const hasExpandedMeta = skill.priority != null || !labelIsName;
 

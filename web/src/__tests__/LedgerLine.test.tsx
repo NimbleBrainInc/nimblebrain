@@ -2,8 +2,8 @@
 // LedgerLine — Context Ledger skills line render contract.
 //
 // Pins:
-//   1. At rest: text-only head, no drawer. One skill → "Following <name> ·
-//      <stripped reason>"; many → "Following N skills · ~Nk tokens".
+//   1. At rest: text-only head, no drawer. One skill → "Using <name> ·
+//      <stripped reason>"; many → "Using N skills · ~Nk tokens".
 //   2. A zero-skill (or absent) turn renders NOTHING — absence is the signal.
 //   3. Expanded: trust banner, per-skill rows with scope class + verbatim
 //      reason (in `title`) + token count, and the "Manage skills" footer link.
@@ -130,7 +130,7 @@ describe("LedgerLine", () => {
     mounted = await mount(ONE);
     const head = mounted.head();
     expect(head.getAttribute("aria-expanded")).toBe("false");
-    expect(head.textContent).toContain("Following mpak-guide");
+    expect(head.textContent).toContain("Using mpak-guide");
     // The `tool-affinity ` mechanism prefix is stripped for the compact head.
     expect(head.textContent).toContain("matched mpak__*");
     expect(head.textContent).not.toContain("tool-affinity matched");
@@ -141,7 +141,7 @@ describe("LedgerLine", () => {
   test("multiple skills: head folds to a count and the aggregate token cost", async () => {
     mounted = await mount(TWO);
     const head = mounted.head();
-    expect(head.textContent).toContain("Following 2 skills");
+    expect(head.textContent).toContain("Using 2 skills");
     expect(head.textContent).toContain("~1.8k tokens");
   });
 

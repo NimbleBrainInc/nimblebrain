@@ -33,7 +33,7 @@ export function LedgerLine({ skills }: { skills: SkillsLoadedContext | undefined
   // Skills are workspace-scoped; "Manage" targets the focused workspace.
   const skillsPath = activeWorkspace ? `/w/${toSlug(activeWorkspace.id)}/settings/skills` : "/";
 
-  const verb = count === 1 ? `Following ${entries[0]!.name}` : `Following ${count} skills`;
+  const verb = count === 1 ? `Using ${entries[0]!.name}` : `Using ${count} skills`;
   // One skill → its (stripped) reason; many → the aggregate token cost.
   const meta =
     count === 1
