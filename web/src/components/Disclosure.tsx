@@ -18,9 +18,8 @@ export type DisclosureTone = "running" | "ok" | "error";
  * label and icon colors, the ledger's expanded dot — through its own class on
  * the wrapper, alongside `.disclosure`.
  *
- * `body` is the single switch for "is there anything to open": absent means no
- * chevron, an inert head, and no drawer. The three used to be independent
- * booleans that could disagree.
+ * Every disclosure has a drawer. A head with nothing to open is a label, and a
+ * label should not be built out of a button.
  */
 export function Disclosure({
   variant,
@@ -40,10 +39,9 @@ export function Disclosure({
   glyph: ReactNode;
   /** Head content between the glyph and the chevron. */
   children: ReactNode;
-  /** Drawer content. Absent ⇒ there is nothing to disclose. */
-  body?: ReactNode;
+  /** Drawer content. */
+  body: ReactNode;
 }) {
-  const hasBody = body !== undefined;
   return (
     <div
       className={`disclosure ${variant}`}
@@ -55,13 +53,12 @@ export function Disclosure({
         className="disclosure__head"
         aria-expanded={expanded}
         onClick={onToggle}
-        disabled={!hasBody}
       >
         {glyph}
         {children}
-        {hasBody && <DisclosureChevron size={14} />}
+        <DisclosureChevron size={14} />
       </button>
-      {expanded && hasBody && <div className="disclosure__body">{body}</div>}
+      {expanded && <div className="disclosure__body">{body}</div>}
     </div>
   );
 }

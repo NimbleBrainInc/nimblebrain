@@ -322,7 +322,6 @@ function ActivityChip({ rows, isReasoningTailStreaming, displayDetail }: Activit
   // see on its own (it knows tools, not reasoning).
   const tone: Tone = group.tone === "running" || isReasoningTailStreaming ? "running" : group.tone;
   const head = chipHead(rows, group, isReasoningTailStreaming);
-  const hasBody = rows.some((r) => r.kind === "reasoning" || r.kind === "tool");
   const isSingleRow = rows.length === 1;
 
   return (
@@ -333,7 +332,7 @@ function ActivityChip({ rows, isReasoningTailStreaming, displayDetail }: Activit
       onToggle={toggle}
       glyph={<HeadIcon tone={tone} />}
       body={
-        !hasBody ? undefined : isSingleRow ? (
+        isSingleRow ? (
           <SingleRowBody row={smoothedRows[0]} />
         ) : (
           smoothedRows.map((row, idx) => (

@@ -383,10 +383,13 @@
   opacity: 1;
 }
 
-/* Disclosure mark. It must be a glyph drawn inside its box, not a rotated
-   border corner — a rotated square's ink overflows its own box on both sides,
-   and the message wrapper (`overflow-hidden`) shaves the point off. Color is
-   inherited, so it follows the head's muted→foreground lift. */
+/* Disclosure mark, shared with the drawer's nested rows. It must be a glyph
+   drawn inside its box, not a rotated border corner — a rotated square's ink
+   overflows its own box on both sides, and the message wrapper
+   (`overflow-hidden`) shaves the point off.
+
+   Color is inherited rather than pinned, so the mark brightens with whatever
+   row it belongs to instead of staying muted while its neighbours lift. */
 .disclosure__chev {
   margin-left: auto;
   flex-shrink: 0;
@@ -422,7 +425,6 @@
  * head glyph, and the nested row/call timeline inside the drawer.
  *
  *   .turn-pill__label      verb phrase ("Researching Mercury")
- *   .turn-pill__count      "· N steps"
  *   .turn-pill__ms         "· 8.3s"
  *   .turn-pill__row        timeline row (tool group OR reasoning)
  *     .turn-pill__row-head
@@ -445,7 +447,6 @@
 .turn-pill[data-tone="running"] .turn-pill__label,
 .turn-pill[data-expanded="true"] .turn-pill__label { color: var(--foreground); }
 
-.turn-pill__count,
 .turn-pill__ms {
   color: var(--muted-foreground);
   opacity: 0.7;

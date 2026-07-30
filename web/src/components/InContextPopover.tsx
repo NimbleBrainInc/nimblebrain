@@ -147,7 +147,7 @@ export function InContextPopover({ conversationId }: { conversationId: string | 
                       <ul>
                         {group.skills.map((s) => (
                           <li key={s.id} className="ledger-line__row" title={s.reason}>
-                            <span className="ledger-line__dot" aria-hidden />
+                            <span className="disclosure__dot" aria-hidden />
                             <span className="ledger-line__row-name">{s.name}</span>
                             <span className={`ledger-line__scope ${SCOPE_CLASS[s.scope]}`}>
                               {skillProvenanceLabel(s)}
