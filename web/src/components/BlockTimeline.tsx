@@ -30,7 +30,7 @@
  * own row. The chip's body lists the rows in stream order.
  */
 
-import { AlertCircle, Check, ChevronRight, Copy, Loader2 } from "lucide-react";
+import { AlertCircle, Check, Copy, Loader2 } from "lucide-react";
 import { type ReactNode, useCallback, useMemo, useState } from "react";
 import { Streamdown } from "streamdown";
 import type {
@@ -54,6 +54,7 @@ import {
 } from "../lib/tool-display";
 import { ArtifactChip } from "./ArtifactChip";
 import { ArtifactView } from "./ArtifactView";
+import { Disclosure, DisclosureChevron } from "./Disclosure";
 import { InlineAppView } from "./InlineAppView";
 import { ResourceLinkView } from "./ResourceLinkView";
 
@@ -325,37 +326,31 @@ function ActivityChip({ rows, isReasoningTailStreaming, displayDetail }: Activit
   const isSingleRow = rows.length === 1;
 
   return (
-    <div className="turn-pill" data-tone={tone} data-expanded={open}>
-      <button
-        type="button"
-        onClick={toggle}
-        className="turn-pill__head"
-        aria-expanded={open}
-        disabled={!hasBody}
-      >
-        <HeadIcon tone={tone} />
-        <span className="turn-pill__label">{head.label}</span>
-        {head.subject && <span className="turn-pill__row-subject">· {head.subject}</span>}
-        {head.countSuffix > 1 && <span className="turn-pill__row-count">×{head.countSuffix}</span>}
-        {tone !== "running" && head.totalMs != null && (
-          <span className="turn-pill__ms">· {formatDuration(head.totalMs)}</span>
-        )}
-        {head.tokenLabel && <span className="turn-pill__ms">· {head.tokenLabel}</span>}
-        {hasBody && <ChevronRight className="turn-pill__chev" style={{ width: 14, height: 14 }} />}
-      </button>
-      {open && hasBody && (
-        <div className="turn-pill__body">
-          {isSingleRow ? (
-            <SingleRowBody row={smoothedRows[0]} />
-          ) : (
-            smoothedRows.map((row, idx) => (
-              // biome-ignore lint/suspicious/noArrayIndexKey: rows within a segment are append-only and don't reorder
-              <ActivityRowView key={`row:${idx}`} row={row} />
-            ))
-          )}
-        </div>
+    <Disclosure
+      variant="turn-pill"
+      tone={tone}
+      expanded={open}
+      onToggle={toggle}
+      glyph={<HeadIcon tone={tone} />}
+      body={
+        !hasBody ? undefined : isSingleRow ? (
+          <SingleRowBody row={smoothedRows[0]} />
+        ) : (
+          smoothedRows.map((row, idx) => (
+            // biome-ignore lint/suspicious/noArrayIndexKey: rows within a segment are append-only and don't reorder
+            <ActivityRowView key={`row:${idx}`} row={row} />
+          ))
+        )
+      }
+    >
+      <span className="turn-pill__label">{head.label}</span>
+      {head.subject && <span className="turn-pill__row-subject">· {head.subject}</span>}
+      {head.countSuffix > 1 && <span className="turn-pill__row-count">×{head.countSuffix}</span>}
+      {tone !== "running" && head.totalMs != null && (
+        <span className="turn-pill__ms">· {formatDuration(head.totalMs)}</span>
       )}
-    </div>
+      {head.tokenLabel && <span className="turn-pill__ms">· {head.tokenLabel}</span>}
+    </Disclosure>
   );
 }
 
@@ -484,7 +479,7 @@ function ReasoningRow({ text }: { text: string }) {
         <RowIcon tone="ok" />
         <span className="turn-pill__row-name">Thought</span>
         {tokenLabel && <span className="turn-pill__row-subject">· {tokenLabel}</span>}
-        <ChevronRight className="turn-pill__chev" style={{ width: 12, height: 12 }} />
+        <DisclosureChevron size={12} />
       </button>
       {open && (
         <div className="turn-pill__row-body">
@@ -513,7 +508,7 @@ function ToolRow({ calls }: { calls: ReadonlyArray<ToolCallDisplay> }) {
         {group.tone !== "running" && group.totalMs != null && (
           <span className="turn-pill__row-ms">· {formatDuration(group.totalMs)}</span>
         )}
-        <ChevronRight className="turn-pill__chev" style={{ width: 12, height: 12 }} />
+        <DisclosureChevron size={12} />
       </button>
       {open && (
         <div className="turn-pill__row-body">
@@ -550,9 +545,7 @@ function ToolCallRow({ item }: { item: ToolDescription }) {
         {item.tone !== "running" && item.durationMs != null && (
           <span className="turn-pill__call-ms">{formatDuration(item.durationMs)}</span>
         )}
-        {hasDetail && (
-          <ChevronRight className="turn-pill__chev" style={{ width: 11, height: 11 }} />
-        )}
+        {hasDetail && <DisclosureChevron size={11} />}
       </button>
       {open && hasDetail && (
         <div className="turn-pill__call-body">
@@ -778,7 +771,7 @@ function HeadIcon({ tone }: { tone: Tone }) {
       />
     );
   }
-  return <span className="turn-pill__icon turn-pill__icon--ok" aria-hidden />;
+  return <span className="disclosure__dot" aria-hidden />;
 }
 
 function RowIcon({ tone }: { tone: Tone }) {

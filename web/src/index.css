@@ -294,39 +294,34 @@
 }
 
 /* ───────────────────────────────────────────────────────────────────────
- * Turn activity pill — single status + tool surface for an assistant turn
+ * Disclosure — the collapsible summary line an assistant turn is built from
+ * (Disclosure.tsx)
  *
- * Replaces the prior per-block tool accordion, the composer status footer,
- * the inline "Calling X…" placeholder, and the standalone reasoning chevron.
+ * Two variants render it and they stack directly on top of each other inside a
+ * message: `.ledger-line` (which skills equipped the turn) above `.turn-pill`
+ * (what the turn did). At rest they must read as one object — same head box,
+ * same hover, same focus ring, same chevron on the same right edge. That
+ * shared physics is here; each variant's own block below carries only what
+ * genuinely differs.
  *
  * Structure:
- *   .turn-pill                 wrapper; data-tone is `running` | `neutral`
- *     .turn-pill__head         clickable L1 head — morphing label
- *       .turn-pill__label      verb phrase ("Researching Mercury")
- *       .turn-pill__count      "· N steps"
- *       .turn-pill__ms         "· 8.3s"
- *     .turn-pill__body         L2 timeline drawer
- *       .turn-pill__row        timeline row (tool group OR reasoning)
- *         .turn-pill__row-head
- *         .turn-pill__row-body per-call list or reasoning text
- *           .turn-pill__call   single call inside a group; data-tone is `running`|`ok`|`error`
- *
- * Tone policy: the head never goes red. Per-call errors render inside L2/L3.
- * Turn-level failures render at the message level (`msg.error` /
- * `msg.stopReason` in MessageList).
+ *   .disclosure.<variant>      wrapper; data-expanded, optional data-tone
+ *     .disclosure__head        clickable head — glyph, content, chevron
+ *       .disclosure__chev      disclosure mark (also used by drawer rows)
+ *     .disclosure__body        drawer
  * ─────────────────────────────────────────────────────────────────────── */
 
-.turn-pill {
+.disclosure {
   width: 100%;
   font-size: var(--font-text-xs-size);
   color: var(--muted-foreground);
 }
 
-/* Head defaults to *text-only chrome*: no box, no background. The pill should
-   fade into the page once the turn is over — visible if you look for it, but
-   not competing with the message body. Box treatment kicks in only when the
-   pill is active (running) or expanded (user reading the timeline). */
-.turn-pill__head {
+/* Head defaults to *text-only chrome*: no box, no background. It should fade
+   into the page once the turn is over — visible if you look for it, but not
+   competing with the message body. Box treatment kicks in only when the head is
+   active (running) or expanded (user reading the drawer). */
+.disclosure__head {
   display: flex;
   align-items: center;
   gap: 8px;
@@ -347,25 +342,97 @@
     background-color 150ms,
     padding 150ms;
 }
-.turn-pill__head:hover { color: var(--foreground); opacity: 1; }
-.turn-pill__head:disabled { cursor: default; }
-.turn-pill__head:disabled:hover { opacity: 0.7; color: var(--muted-foreground); }
+.disclosure__head:hover { color: var(--foreground); opacity: 1; }
+.disclosure__head:disabled { cursor: default; }
+.disclosure__head:disabled:hover { opacity: 0.7; color: var(--muted-foreground); }
+.disclosure__head:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 2px;
+}
 
-/* Expanded → box treatment so the head reads as the top of a real
-   surface. Active (running) state is NOT boxed — it uses the spinner +
-   brand color treatment below, the same as <LiveCursor>. Keeping
-   in-flight chrome consistent across both surfaces means the user sees
-   one "loading" shape regardless of whether work is owned by a chip or
-   by the gap between chips. */
-.turn-pill[data-expanded="true"] > .turn-pill__head {
+/* Expanded → box treatment so the head reads as the top of a real surface.
+   Active (running) state is NOT boxed — it uses the spinner + brand color
+   treatment below, the same as <LiveCursor>. Keeping in-flight chrome
+   consistent across both surfaces means the user sees one "loading" shape
+   regardless of whether work is owned by a chip or by the gap between chips. */
+.disclosure[data-expanded="true"] > .disclosure__head {
   padding: 6px 12px;
   background: var(--card);
   border: 1px solid var(--border);
   opacity: 1;
 }
-.turn-pill[data-expanded="true"] > .turn-pill__head:hover {
+.disclosure[data-expanded="true"] > .disclosure__head:hover {
   border-color: color-mix(in oklch, var(--border), var(--foreground) 20%);
 }
+
+/* Leading mark for a settled head: a small filled dot, brand-colored once
+   expanded. Direct-child scoping so an expanded drawer's own rows keep their
+   resting dots. A variant with a tone axis swaps this glyph out while running
+   or failed; the dot is the at-rest case both variants share. */
+.disclosure__dot {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: currentColor;
+  opacity: 0.5;
+  flex-shrink: 0;
+  display: inline-block;
+}
+.disclosure[data-expanded="true"] > .disclosure__head > .disclosure__dot {
+  background: var(--success);
+  opacity: 1;
+}
+
+/* Disclosure mark. It must be a glyph drawn inside its box, not a rotated
+   border corner — a rotated square's ink overflows its own box on both sides,
+   and the message wrapper (`overflow-hidden`) shaves the point off. Color is
+   inherited, so it follows the head's muted→foreground lift. */
+.disclosure__chev {
+  margin-left: auto;
+  flex-shrink: 0;
+  opacity: 0.6;
+  transition: transform 180ms ease;
+}
+.disclosure[data-expanded="true"] > .disclosure__head .disclosure__chev {
+  transform: rotate(90deg);
+}
+
+/* Drawer. Reveal motion is gated on prefers-reduced-motion. */
+.disclosure__body {
+  margin-top: 6px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--card);
+  overflow: hidden;
+}
+@media (prefers-reduced-motion: no-preference) {
+  .disclosure__body {
+    animation: disclosure-reveal 180ms ease-out;
+  }
+}
+@keyframes disclosure-reveal {
+  from { opacity: 0; transform: translateY(-2px); }
+  to { opacity: 1; transform: none; }
+}
+
+/* ───────────────────────────────────────────────────────────────────────
+ * Turn activity pill — the work variant: status + tools for an assistant turn
+ *
+ * Adds to `.disclosure`: a tone axis (`data-tone`) driving the label and the
+ * head glyph, and the nested row/call timeline inside the drawer.
+ *
+ *   .turn-pill__label      verb phrase ("Researching Mercury")
+ *   .turn-pill__count      "· N steps"
+ *   .turn-pill__ms         "· 8.3s"
+ *   .turn-pill__row        timeline row (tool group OR reasoning)
+ *     .turn-pill__row-head
+ *     .turn-pill__row-body per-call list or reasoning text
+ *       .turn-pill__call   single call inside a group; data-tone is `running`|`ok`|`error`
+ *
+ * Tone policy: the head never goes red. Per-call errors render inside L2/L3.
+ * Turn-level failures render at the message level (`msg.error` /
+ * `msg.stopReason` in MessageList).
+ * ─────────────────────────────────────────────────────────────────────── */
 
 .turn-pill__label {
   font-weight: 500;
@@ -387,50 +454,13 @@
   flex-shrink: 0;
 }
 
-.turn-pill__chev {
-  color: var(--muted-foreground);
-  opacity: 0.6;
-  transition: transform 180ms ease;
-  flex-shrink: 0;
-  margin-left: auto;
-}
-.turn-pill[data-expanded="true"] > .turn-pill__head .turn-pill__chev {
-  transform: rotate(90deg);
-}
-
+/* The settled head's glyph is the shared `.disclosure__dot`. These two are the
+   tone-driven replacements for it, so they carry only their color/motion. */
 .turn-pill__icon { flex-shrink: 0; }
-.turn-pill__icon--ok {
-  width: 5px;
-  height: 5px;
-  border-radius: 50%;
-  background: currentColor;
-  opacity: 0.5;
-  display: inline-block;
-}
 .turn-pill__icon--error { color: var(--destructive); }
 .turn-pill__icon--running {
   color: var(--primary);
   animation: spin 1s linear infinite;
-}
-/* Active/expanded states give the dot a brand color; at rest it's currentColor
-   so it inherits the head's muted tone. */
-.turn-pill[data-expanded="true"] .turn-pill__head > .turn-pill__icon--ok {
-  background: var(--success);
-  opacity: 1;
-}
-
-/* L2 drawer */
-.turn-pill__body {
-  margin-top: 6px;
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  background: var(--card);
-  overflow: hidden;
-  animation: turn-pill-reveal 180ms ease-out;
-}
-@keyframes turn-pill-reveal {
-  from { opacity: 0; transform: translateY(-2px); }
-  to { opacity: 1; transform: none; }
 }
 
 .turn-pill__row + .turn-pill__row {
@@ -480,7 +510,7 @@
   font-variant-numeric: tabular-nums;
   flex-shrink: 0;
 }
-.turn-pill__row[data-open="true"] .turn-pill__chev {
+.turn-pill__row[data-open="true"] .disclosure__chev {
   transform: rotate(90deg);
 }
 
@@ -528,7 +558,7 @@
   font-variant-numeric: tabular-nums;
   flex-shrink: 0;
 }
-.turn-pill__call[data-open="true"] .turn-pill__chev {
+.turn-pill__call[data-open="true"] .disclosure__chev {
   transform: rotate(90deg);
 }
 .turn-pill__call-body {
@@ -658,68 +688,15 @@
 }
 
 /* ───────────────────────────────────────────────────────────────────────
- * Context Ledger line — "what equipped this turn" (LedgerLine.tsx)
+ * Context Ledger line — the skills variant: "what equipped this turn"
+ * (LedgerLine.tsx)
  *
- * A sibling of the turn-pill and a deliberate borrow of its resting physics:
- * text-only and muted at rest (fades into the page), boxing up only when the
- * user expands the "why did this load" drawer. One quiet line per turn, above
- * the first activity chip. Suppressed entirely on a zero-skill turn.
+ * Adds to `.disclosure`: a foreground lift on the expanded head, and the
+ * per-skill table inside the drawer. One quiet line per turn, above the first
+ * activity chip. Suppressed entirely on a zero-skill turn.
  * ─────────────────────────────────────────────────────────────────────── */
-.ledger-line {
-  width: 100%;
-  font-size: var(--font-text-xs-size);
-  color: var(--muted-foreground);
-}
-.ledger-line__head {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  width: 100%;
-  padding: 2px 0;
-  background: none;
-  border: 0;
-  border-radius: 8px;
-  color: inherit;
-  opacity: 0.7;
-  cursor: pointer;
-  font: inherit;
-  text-align: left;
-  transition:
-    opacity 150ms,
-    border-color 150ms,
-    color 150ms,
-    background-color 150ms,
-    padding 150ms;
-}
-.ledger-line__head:hover {
+.ledger-line[data-expanded="true"] > .disclosure__head {
   color: var(--foreground);
-  opacity: 1;
-}
-.ledger-line__head:focus-visible {
-  outline: 2px solid var(--primary);
-  outline-offset: 2px;
-}
-.ledger-line[data-expanded="true"] > .ledger-line__head {
-  padding: 6px 12px;
-  background: var(--card);
-  border: 1px solid var(--border);
-  opacity: 1;
-  color: var(--foreground);
-}
-
-/* Glyph: the turn-pill's filled 5px dot — skills are behavior, the same mark
-   as "work". Brand color once expanded, currentColor (muted) at rest. */
-.ledger-line__dot {
-  width: 5px;
-  height: 5px;
-  border-radius: 50%;
-  background: currentColor;
-  opacity: 0.5;
-  flex-shrink: 0;
-}
-.ledger-line[data-expanded="true"] .ledger-line__dot {
-  background: var(--success);
-  opacity: 1;
 }
 
 .ledger-line__verb {
@@ -733,31 +710,6 @@
   text-overflow: ellipsis;
   white-space: nowrap;
   min-width: 0;
-}
-/* Disclosure mark: the turn-pill's chevron glyph at the turn-pill's head size,
-   so the ledger line and the activity chip directly beneath it land on one right
-   edge. It must be a glyph drawn inside its box, not a rotated-border corner —
-   a rotated square's ink overflows its own box on both sides, and the message
-   wrapper (`overflow-hidden`) shaves the point off. Color is inherited, so the
-   chevron follows the head's muted→foreground lift on expand. */
-.ledger-line__chev {
-  margin-left: auto;
-  flex-shrink: 0;
-  opacity: 0.6;
-  transition: transform 180ms ease;
-}
-.ledger-line[data-expanded="true"] .ledger-line__chev {
-  transform: rotate(90deg);
-}
-
-/* Drawer — the turn-pill__body grammar. Reveal motion is gated on
-   prefers-reduced-motion below. */
-.ledger-line__body {
-  margin-top: 6px;
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  background: var(--card);
-  overflow: hidden;
 }
 .ledger-line__trust {
   padding: 7px 12px;
@@ -832,12 +784,6 @@
 }
 .ledger-scope--connector {
   color: var(--scope-connector);
-}
-
-@media (prefers-reduced-motion: no-preference) {
-  .ledger-line__body {
-    animation: turn-pill-reveal 180ms ease-out;
-  }
 }
 
 /* ───────────────────────────────────────────────────────────────────────

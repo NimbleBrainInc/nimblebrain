@@ -1,4 +1,3 @@
-import { ChevronRight } from "lucide-react";
 import { useState } from "react";
 import { Link } from "react-router-dom";
 import { useWorkspaceContext } from "../context/WorkspaceContext";
@@ -10,14 +9,15 @@ import {
   skillProvenanceLabel,
 } from "../lib/skill-display";
 import { toSlug } from "../lib/workspace-slug";
+import { Disclosure } from "./Disclosure";
 
 /**
  * The skills projection of the Context Ledger — one quiet line at the top of an
  * assistant turn recording which skills the runtime composed into the prompt.
  *
- * A sibling of `.turn-pill`: text-only and muted at rest (fades into the page),
- * boxing up only when expanded into the "why did this load" drawer. Selection
- * happens at compose time, so this truthfully precedes all of the turn's work.
+ * The skills variant of `<Disclosure>`, which it shares with the activity chip
+ * stacked directly beneath it. Selection happens at compose time, so this
+ * truthfully precedes all of the turn's work.
  *
  * Renders nothing when the turn loaded no skills — absence of the line is the
  * signal.
@@ -41,20 +41,13 @@ export function LedgerLine({ skills }: { skills: SkillsLoadedContext | undefined
       : `~${formatTokenCount(skills.totalTokens)} tokens`;
 
   return (
-    <div className="ledger-line" data-expanded={expanded}>
-      <button
-        type="button"
-        className="ledger-line__head"
-        aria-expanded={expanded}
-        onClick={() => setExpanded((v) => !v)}
-      >
-        <span className="ledger-line__dot" aria-hidden />
-        <span className="ledger-line__verb">{verb}</span>
-        {meta && <span className="ledger-line__meta">· {meta}</span>}
-        <ChevronRight className="ledger-line__chev" style={{ width: 14, height: 14 }} aria-hidden />
-      </button>
-      {expanded && (
-        <div className="ledger-line__body">
+    <Disclosure
+      variant="ledger-line"
+      expanded={expanded}
+      onToggle={() => setExpanded((v) => !v)}
+      glyph={<span className="disclosure__dot" aria-hidden />}
+      body={
+        <>
           <div className="ledger-line__trust">
             Behavior guidance composed into the agent's instructions for this turn.
           </div>
@@ -73,8 +66,11 @@ export function LedgerLine({ skills }: { skills: SkillsLoadedContext | undefined
           <div className="ledger-line__foot">
             <Link to={skillsPath}>Manage skills ↗</Link>
           </div>
-        </div>
-      )}
-    </div>
+        </>
+      }
+    >
+      <span className="ledger-line__verb">{verb}</span>
+      {meta && <span className="ledger-line__meta">· {meta}</span>}
+    </Disclosure>
   );
 }
