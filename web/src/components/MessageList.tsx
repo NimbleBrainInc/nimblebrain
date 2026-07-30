@@ -1,7 +1,9 @@
 import { AlertCircle, Check, ChevronDown, Copy, RotateCcw, Zap } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Streamdown } from "streamdown";
+import type { SkillsLoadedContext } from "../hooks/chat-store";
 import type { ChatMessage, PreparingTool, StreamingState } from "../hooks/useChat";
+import { ledgerChanges } from "../lib/ledger-changes";
 import { linkSafety } from "../lib/streamdown-config";
 import type { DisplayDetail } from "../lib/tool-display";
 import { BlockTimeline } from "./BlockTimeline";
@@ -324,6 +326,7 @@ function ErrorNotice({ error, onRetry }: { error: string; onRetry?: () => void }
 /** One assistant message body: block timeline (or legacy Streamdown), file chips, and stop/error notices. */
 function AssistantMessage({
   msg,
+  ledgerSkills,
   displayContent,
   isLast,
   isStreaming,
@@ -333,6 +336,9 @@ function AssistantMessage({
   onRetry,
 }: {
   msg: ChatMessage;
+  /** Equipment to announce, which is NOT simply `msg.skillsLoaded` — a turn
+   *  whose skills match the turn before it stays quiet. See `ledgerChanges`. */
+  ledgerSkills: SkillsLoadedContext | undefined;
   displayContent: string;
   isLast: boolean;
   isStreaming: boolean;
@@ -346,10 +352,10 @@ function AssistantMessage({
   const isCurrent = isStreaming && isLast;
   return (
     <div className="w-full break-words min-w-0 overflow-hidden flex flex-col gap-3">
-      {/* Context Ledger: which skills equipped this turn. Rendered first —
+      {/* Context Ledger: the turn where this equipment came in. Rendered first —
           above the first activity chip — because selection happens at
           compose time, before any block streams. */}
-      <LedgerLine skills={msg.skillsLoaded} />
+      <LedgerLine skills={ledgerSkills} />
       {msg.blocks ? (
         <BlockTimeline
           blocks={msg.blocks}
@@ -423,6 +429,7 @@ function MessageFooter({
 /** One chat row: derives the app-context slice, then renders the role body and hover footer. */
 function MessageItem({
   msg,
+  ledgerSkills,
   isNew,
   isLast,
   isStreaming,
@@ -432,6 +439,8 @@ function MessageItem({
   onRetry,
 }: {
   msg: ChatMessage;
+  /** Equipment to announce on this row, or absent — see `ledgerChanges`. */
+  ledgerSkills: SkillsLoadedContext | undefined;
   isNew: boolean;
   isLast: boolean;
   isStreaming: boolean;
@@ -465,6 +474,7 @@ function MessageItem({
       ) : (
         <AssistantMessage
           msg={msg}
+          ledgerSkills={ledgerSkills}
           displayContent={displayContent}
           isLast={isLast}
           isStreaming={isStreaming}
@@ -522,6 +532,10 @@ export function MessageList({
     );
   }
 
+  // Which turns announce their equipment. A sequence-level decision, so it is
+  // made here where the sequence lives — `LedgerLine` renders what it is given.
+  const ledgerRows = ledgerChanges(messages);
+
   return (
     <div className="relative flex-1 min-h-0">
       <div ref={scrollRef} className="h-full overflow-y-auto">
@@ -531,6 +545,7 @@ export function MessageList({
               // biome-ignore lint/suspicious/noArrayIndexKey: messages lack stable IDs and don't reorder
               key={idx}
               msg={msg}
+              ledgerSkills={ledgerRows[idx]}
               isNew={idx >= initialCountRef.current}
               isLast={idx === messages.length - 1}
               isStreaming={isStreaming}
