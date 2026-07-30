@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.5.0
+
+### Added
+
+- `conversations__get` metadata now includes `workspaceId` — the workspace the
+  conversation is sealed to. Additive and optional; absent on legacy records with
+  no stamped workspace.
+
 ## 0.4.0
 
 ### Changed

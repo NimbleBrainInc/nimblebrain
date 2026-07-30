@@ -92,6 +92,13 @@ export async function handleGet(
     totalOutputTokens: conversation.meta.totalOutputTokens,
     lastModel: conversation.meta.lastModel,
     ...(conversation.meta.ownerId ? { ownerId: conversation.meta.ownerId } : {}),
+    // The workspace the conversation is sealed to. Surfaced so a client that
+    // holds an open conversation can tell which workspace it belongs to — the
+    // web chat panel uses it to avoid resuming a conversation from a workspace
+    // the user is no longer viewing (a fresh draft is started instead). Absent
+    // on legacy records predating the workspace-owned layout (those read as the
+    // owner's personal workspace); absence therefore means "don't reconcile".
+    ...(conversation.meta.workspaceId ? { workspaceId: conversation.meta.workspaceId } : {}),
   };
 
   const expand = input.expand ?? "messages";
