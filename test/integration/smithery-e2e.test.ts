@@ -8,11 +8,11 @@
  * third-party server. That is the whole reason this pair was chosen as provider
  * #2's guinea pig.
  *
- * Skipped unless `SMITHERY_API_KEY` and `SMITHERY_NAMESPACE` are set, so CI and
- * OSS checkouts stay green without credentials. Run it with:
+ * Skipped unless `SMITHERY_API_KEY` is set, so CI and OSS checkouts stay green
+ * without credentials. The namespace is not an env var — it is settings, so the
+ * suite declares it below like a deployment does. Run it with:
  *
- *   SMITHERY_API_KEY=… SMITHERY_NAMESPACE=nimblebrain \
- *     bun test test/integration/smithery-e2e.test.ts
+ *   SMITHERY_API_KEY=… bun test --no-env-file test/integration/smithery-e2e.test.ts
  *
  * **The upstream's auth posture is not ours to control.** Bassethound requires
  * authorization through Smithery, so a fresh connection comes back
@@ -28,7 +28,11 @@
  * (owner, server) and is torn down by the final test.
  */
 
-import { describe, expect, it } from "bun:test";
+import { describe, expect, it, afterAll } from "bun:test";
+import {
+  _resetConnectorsConfigForTest,
+  setConnectorsConfig,
+} from "../../src/connectors/providers/config.ts";
 import {
   getSmitheryConnection,
   type SmitheryClientOptions,
@@ -43,9 +47,13 @@ import {
   createSmitheryProvider,
 } from "../../src/connectors/providers/smithery/provider.ts";
 
-const HAVE_CREDS = Boolean(
-  process.env.SMITHERY_API_KEY?.trim() && process.env.SMITHERY_NAMESPACE?.trim(),
-);
+const HAVE_CREDS = Boolean(process.env.SMITHERY_API_KEY?.trim());
+/** The namespace the fixture server lives under — settings, so declared, not env. */
+const E2E_NAMESPACE = "nimblebrain";
+// The declared block is module-global and outlives this file. Installed at
+// module scope below, so it is released at module scope too.
+afterAll(_resetConnectorsConfigForTest);
+
 const SERVER = "nimblebrain/bassethound";
 const OWNER = { type: "workspace", wsId: "ws_seamcheck" } as const;
 
@@ -59,6 +67,7 @@ let connectionId = "";
 let authHeaders: Record<string, string> = {};
 
 if (HAVE_CREDS) {
+  setConnectorsConfig({ providers: { smithery: { namespace: E2E_NAMESPACE } } });
   _resetSmitheryConfigForTest();
   const config = validateSmitheryConfig();
   options = {

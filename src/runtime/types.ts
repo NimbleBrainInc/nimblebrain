@@ -145,7 +145,7 @@ export interface RuntimeConfig {
   /**
    * Managed-connector providers (Composio and Smithery today). A provider is registered —
    * and its routes, probe, and vendor SDK reached — only when its block is
-   * declared here, or hydrated from its legacy `<VENDOR>_*` env when the block
+   * declared here; only the broker credential also reads `<VENDOR>_API_KEY` when the block
    * is absent. See `src/connectors/providers/config.ts`.
    */
   connectors?: ConnectorsConfig;

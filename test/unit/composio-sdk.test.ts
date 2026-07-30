@@ -1,4 +1,8 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
+import {
+  _resetConnectorsConfigForTest,
+  setConnectorsConfig,
+} from "../../src/connectors/providers/config.ts";
 
 // ── @composio/core mock ─────────────────────────────────────────────
 //
@@ -117,6 +121,10 @@ afterEach(() => {
     else process.env[k] = savedEnv[k];
   }
   _resetComposioConfigForTest();
+  // The declared block is module-global and outlives the file, so a leaked one
+  // would silently replace whatever the next file installs. Teardown, not setup:
+  // only a teardown hook protects the file that runs after this one.
+  _resetConnectorsConfigForTest();
   _resetBouncerModeForTest();
 });
 
@@ -433,9 +441,9 @@ describe("composioClient", () => {
     expect(sdkCalls.ctorArgs[0]?.apiKey).toBe("k_test");
   });
 
-  test("threads COMPOSIO_API_BASE_URL through to the SDK client", async () => {
+  test("threads a declared baseUrl through to the SDK client", async () => {
     process.env.COMPOSIO_API_KEY = "k_test";
-    process.env.COMPOSIO_API_BASE_URL = "https://composio.example.com";
+    setConnectorsConfig({ providers: { composio: { baseUrl: "https://composio.example.com" } } });
     sdkCalls.listImpl = async () => ({ items: [] });
     await findActiveComposioConnection({
       apiKey: "k_test",

@@ -37,7 +37,7 @@ A provider's API key can be supplied here or in `nimblebrain.json` under `provid
 | `NB_MCP_RATE_LIMIT` | No | `300` | `/mcp` JSON-RPC requests per minute per identity. |
 | `NB_TIMEZONE` | No | `Pacific/Honolulu` | Default IANA timezone for time-aware features (e.g. automation schedules) when an identity has no timezone preference. |
 | `NB_MAX_PARALLEL_TOOL_CALLS_PER_SOURCE` | No | `6` | Most tool calls the agent dispatches to any **one** source at a time. A turn touching several connectors still fans out across them — only the depth against a single source is capped — so this bounds how loud the runtime can be toward one server, not overall throughput. Raise it for fast local servers; lower it for a fragile upstream. Zero, negative, fractional-below-1, and unparseable values fall back to the default: removing the bound is never the intended reading. Read once at startup. Scoped per source **per agent run**, which is a ceiling rather than a guarantee: concurrent conversations and delegated sub-agents each get their own budget, so the worst case against one server is roughly `(concurrent runs + sub-agents) x this value`, not this value. Size it with that multiple in mind. |
-| `NB_CONNECTION_REVALIDATE_INTERVAL_SECONDS` | No | `300` | Sweep interval for the connection-revalidation monitor, which re-checks connectors whose upstream credential can lapse without a transport 401 (e.g. Composio). Provider-agnostic. Non-positive / unparseable values fall back to the default; a **blank** value falls through to the legacy `COMPOSIO_MONITOR_INTERVAL_SECONDS` (a set-but-empty var never masks it). Capped at `1789569` (~20.7 days), the largest interval the runtime can schedule; a higher value logs a warning and uses the cap. To stop the sweep entirely set `connectors.providers.composio.monitorEnabled: false` (or its `COMPOSIO_MONITOR_ENABLED=false` fallback) rather than a very large interval. |
+| `NB_CONNECTION_REVALIDATE_INTERVAL_SECONDS` | No | `300` | Sweep interval for the connection-revalidation monitor, which re-checks connectors whose upstream credential can lapse without a transport 401 (e.g. Composio). Provider-agnostic. Non-positive / unparseable values fall back to the default; a **blank** value falls through to the legacy `COMPOSIO_MONITOR_INTERVAL_SECONDS` (a set-but-empty var never masks it). Capped at `1789569` (~20.7 days), the largest interval the runtime can schedule; a higher value logs a warning and uses the cap. To stop the sweep entirely set `connectors.providers.composio.monitorEnabled: false` rather than a very large interval. |
 
 ### Public origin and callbacks
 
@@ -81,16 +81,14 @@ The platform builds every outward-facing URL (OAuth callbacks, post-login landin
 
 Required only when the connectors catalog contains any `auth: composio` entries (Gmail, Outlook, …). See the [Composio operator guide](/deploy/composio/) for end-to-end setup.
 
-The provider's **settings** are declarable in `nimblebrain.json` under [`connectors.providers.composio`](/config/nimblebrain-json/#connectorsproviderscomposio). The three variables marked **fallback** below apply **per field** — each is read only when the block leaves that setting out, so declaring one setting never disturbs another.
+The provider's **settings** live in `nimblebrain.json` under [`connectors.providers.composio`](/config/nimblebrain-json/#connectorsproviderscomposio).
 
-`COMPOSIO_API_KEY` falls back the same way — it is declarable as `connectors.providers.composio.apiKey`, though the environment remains the better posture for a secret ([why](/config/nimblebrain-json/#the-broker-credential)). `NB_TENANT_ID` is env-only.
+`COMPOSIO_API_KEY` is the one value with two sources — it is also declarable as `connectors.providers.composio.apiKey`, though the environment remains the better posture for a secret ([why](/config/nimblebrain-json/#the-broker-credential)). `NB_TENANT_ID` is env-only.
 
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
 | `COMPOSIO_API_KEY` | When the catalog has `auth: composio` entries | — | *(fallback for `…composio.apiKey`)* Platform-wide Composio API key — the broker credential, and the gate on registering the provider at all. Read once at startup. Without it, the Composio integration reports "not configured" and installs of `auth: composio` entries fail. |
-| `COMPOSIO_API_BASE_URL` | No | `https://backend.composio.dev` | *(fallback for `…composio.baseUrl`)* Override the Composio SDK base URL (self-hosted, staging). Must be `http(s)`. |
 | `NB_TENANT_ID` | When multi-tenant pods share a Composio account | — | Per-pod tenant identifier prepended to the wsId so two tenants never collide in Composio's namespace. **Required** in bouncer (multi-tenant) mode — startup fails without it. Single-tenant deployments can omit it. |
-| `COMPOSIO_MONITOR_ENABLED` | No | `true` when the provider is configured | *(fallback for `…composio.monitorEnabled`)* Kill switch for the connection-revalidation monitor. Set to `false` (case/whitespace-insensitive) to disable. Read once at startup. |
 | `COMPOSIO_MONITOR_INTERVAL_SECONDS` | No | `300` | **Deprecated alias** for [`NB_CONNECTION_REVALIDATE_INTERVAL_SECONDS`](#runtime--server) (the sweep cadence is provider-agnostic). Still honored; slated for removal ([#727](https://github.com/NimbleBrainInc/nimblebrain/issues/727)). |
 
 ### Smithery broker
@@ -99,14 +97,11 @@ Required only when the connectors catalog contains any `auth: smithery` entries.
 
 A credential **and** a namespace must both resolve — a Smithery namespace is globally unique and account-owned, so there is no safe default. Setting only the key logs a warning and leaves the integration disabled.
 
-Every variable below is a per-field fallback for [`connectors.providers.smithery`](/config/nimblebrain-json/#connectorsproviderssmithery) — including the API key, because an installed connector's transport names the `smithery` credential provider rather than an env var.
+`SMITHERY_API_KEY` is a fallback for [`connectors.providers.smithery.apiKey`](/config/nimblebrain-json/#connectorsproviderssmithery), because an installed connector's transport names the `smithery` credential provider rather than an env var. Every other Smithery setting lives in that block only.
 
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
 | `SMITHERY_API_KEY` | When the catalog has `auth: smithery` entries | — | Platform-wide Smithery API key, from [smithery.ai/account/api-keys](https://smithery.ai/account/api-keys). Read once at startup. Fallback for `connectors.providers.smithery.apiKey`. |
-| `SMITHERY_NAMESPACE` | With `SMITHERY_API_KEY` | — | The Smithery namespace brokered connections are created under. Connections are named per (workspace, server) inside it. Fallback for `connectors.providers.smithery.namespace`. |
-| `SMITHERY_MONITOR_ENABLED` | No | `true` when configured | Kill switch for Smithery's arm of the connection-revalidator probe. Fallback for `connectors.providers.smithery.monitorEnabled`. |
-| `SMITHERY_API_BASE_URL` | No | `https://api.smithery.ai` | Override the Connect API base URL. Must be `http(s)` — the session URL derived from it becomes a bundle's remote MCP target. Fallback for `connectors.providers.smithery.baseUrl`. |
 | `NB_TENANT_ID` | When multi-tenant pods share a Smithery account | — | Prepended to the workspace id so two tenants never collide in the namespace. Same variable as the Composio prefix above. |
 
 ### Observability (OpenTelemetry + logs)

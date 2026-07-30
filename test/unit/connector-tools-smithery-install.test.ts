@@ -18,7 +18,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { BundleLifecycleManager } from "../../src/bundles/lifecycle.ts";
 import type { BundleRef } from "../../src/bundles/types.ts";
-import { _resetConnectorsConfigForTest } from "../../src/connectors/providers/config.ts";
+import {
+  _resetConnectorsConfigForTest,
+  setConnectorsConfig,
+} from "../../src/connectors/providers/config.ts";
 import { buildManagedConnectorRegistry } from "../../src/connectors/providers/registry.ts";
 import { _resetSmitheryConfigForTest } from "../../src/connectors/providers/smithery/config.ts";
 import { NoopEventSink } from "../../src/adapters/noop-events.ts";
@@ -194,7 +197,7 @@ describe("manage_connectors.install (smithery-auth)", () => {
 
   test("(a) persists the smithery marker: catalog id, connection id, and namespace", async () => {
     process.env.SMITHERY_API_KEY = "sk_test";
-    process.env.SMITHERY_NAMESPACE = "test-ns";
+    setConnectorsConfig({ providers: { smithery: { namespace: "test-ns" } } });
 
     const installed = await installAndReadPersistedRef();
     expect(installed).toBeDefined();
@@ -208,7 +211,7 @@ describe("manage_connectors.install (smithery-auth)", () => {
 
   test("(b) the persisted url is the brokered session, not the catalog endpoint", async () => {
     process.env.SMITHERY_API_KEY = "sk_test";
-    process.env.SMITHERY_NAMESPACE = "test-ns";
+    setConnectorsConfig({ providers: { smithery: { namespace: "test-ns" } } });
 
     const installed = await installAndReadPersistedRef();
     expect(installed?.url).toContain("/connect/test-ns/");
@@ -218,7 +221,7 @@ describe("manage_connectors.install (smithery-auth)", () => {
 
   test("(c) transport.auth names the credential provider, not the env", async () => {
     process.env.SMITHERY_API_KEY = "secret-smithery-key-DO-NOT-LEAK";
-    process.env.SMITHERY_NAMESPACE = "test-ns";
+    setConnectorsConfig({ providers: { smithery: { namespace: "test-ns" } } });
 
     const installed = await installAndReadPersistedRef();
     // Names the credential provider — neither the secret NOR an env var's name
@@ -235,7 +238,7 @@ describe("manage_connectors.install (smithery-auth)", () => {
 
   test("(d) the Authorization header is not duplicated into transport.headers", async () => {
     process.env.SMITHERY_API_KEY = "secret-key";
-    process.env.SMITHERY_NAMESPACE = "test-ns";
+    setConnectorsConfig({ providers: { smithery: { namespace: "test-ns" } } });
 
     const installed = await installAndReadPersistedRef();
     // The bearer is attached by the credential provider transport.auth names.
@@ -247,7 +250,7 @@ describe("manage_connectors.install (smithery-auth)", () => {
 
   test("(e0) a forged server on a KNOWN entry is discarded for the catalog's", async () => {
     process.env.SMITHERY_API_KEY = "sk_test";
-    process.env.SMITHERY_NAMESPACE = "operator-namespace";
+    setConnectorsConfig({ providers: { smithery: { namespace: "operator-namespace" } } });
 
     // Installing spends the PLATFORM's broker credential at the operator's
     // Smithery account, so the target server must come from the operator's
@@ -275,7 +278,7 @@ describe("manage_connectors.install (smithery-auth)", () => {
 
   test("(e1) refuses an entry the trusted catalog doesn't publish at all", async () => {
     process.env.SMITHERY_API_KEY = "sk_test";
-    process.env.SMITHERY_NAMESPACE = "operator-namespace";
+    setConnectorsConfig({ providers: { smithery: { namespace: "operator-namespace" } } });
 
     const forged = bassethoundEntry();
     forged.id = "attacker.example/forged";
@@ -303,7 +306,7 @@ describe("manage_connectors.install (smithery-auth)", () => {
 
   test("(a2) eager-starts the source — there is no Connect step to wait for", async () => {
     process.env.SMITHERY_API_KEY = "sk_test";
-    process.env.SMITHERY_NAMESPACE = "test-ns";
+    setConnectorsConfig({ providers: { smithery: { namespace: "test-ns" } } });
 
     // A smithery source authenticates with the broker credential, so nothing
     // interactive follows the install. Dropping it from the eager-start list
@@ -323,7 +326,7 @@ describe("manage_connectors.install (smithery-auth)", () => {
 
   test("(e2) refuses when the broker returns no session coordinates", async () => {
     process.env.SMITHERY_API_KEY = "sk_test";
-    process.env.SMITHERY_NAMESPACE = "test-ns";
+    setConnectorsConfig({ providers: { smithery: { namespace: "test-ns" } } });
 
     // A session URL the coordinate parse can't satisfy. Persisting an empty
     // connectionId would leave `ref.smithery` truthy — claimed by the
@@ -381,7 +384,7 @@ describe("manage_connectors.install (smithery-auth)", () => {
 
   test("(g) a half-configured provider (key, no namespace) refuses rather than guessing", async () => {
     process.env.SMITHERY_API_KEY = "sk_test";
-    // SMITHERY_NAMESPACE deliberately unset.
+    // no namespace declared.
     const result = await buildTool(h).handler({
       action: "install",
       entry: bassethoundEntry(),
