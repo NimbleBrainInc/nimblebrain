@@ -2,13 +2,15 @@
 // LedgerLine — Context Ledger skills line render contract.
 //
 // Pins:
-//   1. At rest: text-only head, no drawer. One skill → "Following <name> ·
-//      <stripped reason>"; many → "Following N skills · ~Nk tokens".
+//   1. At rest: text-only head, no drawer. One skill → "Using <name> ·
+//      <stripped reason>"; many → "Using N skills · ~Nk tokens".
 //   2. A zero-skill (or absent) turn renders NOTHING — absence is the signal.
 //   3. Expanded: trust banner, per-skill rows with scope class + verbatim
 //      reason (in `title`) + token count, and the "Manage skills" footer link.
 //   4. Rows render the recorded `name` and, for connector-published guidance,
 //      name the publishing connector rather than the tier.
+//   5. The disclosure chevron is an svg glyph — see the test for why the shape
+//      of the element is load-bearing here.
 //
 // Rendering goes through react-dom/client directly (matching ResourceLinkView's
 // test), wrapped in the real WorkspaceProvider (bootstrap mode, so no API call)
@@ -128,7 +130,7 @@ describe("LedgerLine", () => {
     mounted = await mount(ONE);
     const head = mounted.head();
     expect(head.getAttribute("aria-expanded")).toBe("false");
-    expect(head.textContent).toContain("Following mpak-guide");
+    expect(head.textContent).toContain("Using mpak-guide");
     // The `tool-affinity ` mechanism prefix is stripped for the compact head.
     expect(head.textContent).toContain("matched mpak__*");
     expect(head.textContent).not.toContain("tool-affinity matched");
@@ -139,8 +141,20 @@ describe("LedgerLine", () => {
   test("multiple skills: head folds to a count and the aggregate token cost", async () => {
     mounted = await mount(TWO);
     const head = mounted.head();
-    expect(head.textContent).toContain("Following 2 skills");
+    expect(head.textContent).toContain("Using 2 skills");
     expect(head.textContent).toContain("~1.8k tokens");
+  });
+
+  test("chevron is an svg glyph, so its ink stays inside its own box", async () => {
+    mounted = await mount(TWO);
+    // The chevron sits flush against the right edge (`margin-left: auto`) of a
+    // head that fills an `overflow-hidden` message wrapper, so anything painted
+    // outside its layout box is shaved off. A chevron built from two borders on
+    // a square turned 45° paints ~1.5px past every side and loses its point; an
+    // svg glyph is drawn within its viewBox and lands on the same right edge as
+    // the activity chip below it.
+    const chev = first(mounted.container, "ledger-line__chev");
+    expect(chev?.tagName.toLowerCase()).toBe("svg");
   });
 
   test("expanded: trust banner, verbatim reason in title, scope class, tokens, manage link", async () => {
