@@ -153,8 +153,9 @@ function effortToBudget(effort: ThinkingEffort, maxOutputTokens: number): number
  * turning a depth preference into a failed request.
  */
 function toOpenAIEffort(effort: ThinkingEffort): "low" | "medium" | "high" {
-  // Nebius's own API enumerates the wider set, but it shares this adapter and
-  // this key, and `high` is the strongest tier both accept — so both clamp.
+  // Shared with Nebius, which reaches its own adapter and its own options key
+  // but sends the same `reasoning_effort` values. `high` is the strongest tier
+  // either accepts, so both clamp to it.
   return effort === "xhigh" || effort === "max" ? "high" : effort;
 }
 

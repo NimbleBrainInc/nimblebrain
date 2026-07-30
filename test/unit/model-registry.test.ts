@@ -153,3 +153,77 @@ describe("buildModelResolver", () => {
     expect(model.modelId).toContain("claude-sonnet-4-6");
   });
 });
+
+describe("nebius request shape", () => {
+  /**
+   * An adapter swap's blast radius is the request body, so assert the body —
+   * not just which class got constructed. `createOpenAICompatible` is generic:
+   * everything `createOpenAI` did unconditionally has to be asked for by name
+   * here, and each omission fails silently on a different axis (metering,
+   * structured output, options routing).
+   *
+   * Goes through `buildRegistry` rather than the adapter directly, because the
+   * flags under test live at that call site and nothing else would catch their
+   * removal.
+   */
+  async function captureNebiusRequest(
+    call: (model: ReturnType<typeof buildModelResolver>) => Promise<unknown>,
+  ): Promise<Record<string, unknown>> {
+    const realFetch = globalThis.fetch;
+    let body: Record<string, unknown> = {};
+    globalThis.fetch = (async (_url: unknown, init: { body?: string }) => {
+      body = JSON.parse(String(init?.body));
+      return new Response(
+        'data: {"id":"1","object":"chat.completion.chunk","created":0,"model":"m","choices":[{"index":0,"delta":{"content":"ok"},"finish_reason":"stop"}]}\n\ndata: [DONE]\n\n',
+        { status: 200, headers: { "content-type": "text/event-stream" } },
+      );
+    }) as unknown as typeof fetch;
+    try {
+      await call(buildModelResolver({ providers: { nebius: { apiKey: "nb-test-key" } } }));
+    } finally {
+      globalThis.fetch = realFetch;
+    }
+    return body;
+  }
+
+  it("asks for streaming usage, or every turn meters at zero", async () => {
+    // Measured against live Nebius: without `stream_options.include_usage` it
+    // returns `"usage": null` on every chunk, and the engine only ever streams.
+    // The resulting all-zero TokenUsage is indistinguishable from a free turn.
+    const body = await captureNebiusRequest((resolve) =>
+      resolve("nebius:Qwen/Qwen3-32B").doStream({
+        prompt: [{ role: "user", content: [{ type: "text", text: "x" }] }],
+      }),
+    );
+    expect(body.stream_options).toEqual({ include_usage: true });
+  });
+
+  it("sends a schema-bearing response_format as json_schema, not json_object", async () => {
+    // The home briefing sends a schema on every generation. Without
+    // `supportsStructuredOutputs` the adapter drops it to `{type:"json_object"}`
+    // — no schema, no strict decoding.
+    const body = await captureNebiusRequest((resolve) =>
+      resolve("nebius:Qwen/Qwen3-32B").doStream({
+        prompt: [{ role: "user", content: [{ type: "text", text: "x" }] }],
+        responseFormat: {
+          type: "json",
+          name: "briefing",
+          schema: { type: "object", properties: { lede: { type: "string" } } },
+        },
+      }),
+    );
+    expect((body.response_format as { type: string }).type).toBe("json_schema");
+  });
+
+  it("routes reasoning effort from the nebius options key onto the wire", async () => {
+    // The engine-side test proves which key is emitted; this proves it survives
+    // to the request. An `openai` key would vanish here with no error.
+    const body = await captureNebiusRequest((resolve) =>
+      resolve("nebius:Qwen/Qwen3-32B").doStream({
+        prompt: [{ role: "user", content: [{ type: "text", text: "x" }] }],
+        providerOptions: { nebius: { reasoningEffort: "low" } },
+      }),
+    );
+    expect(body.reasoning_effort).toBe("low");
+  });
+});

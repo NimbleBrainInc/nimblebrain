@@ -185,10 +185,10 @@ export type ProbeOutcome =
  * unconfigured install resolves to `{mode: "effort"}` (`resolveThinking` →
  * `DEFAULT_THINKING_EFFORT`) and `buildNebiusThinkingOptions` puts
  * `reasoning_effort` on EVERY call. Probing without it would verify options no
- * run uses, which
- * is the same mistake as trusting `supported_features`: the tools half proven
- * and the reasoning half assumed. A model that rejects the parameter it claims
- * to support does not serve, and is excluded like any other failure.
+ * run uses, which is the same mistake as trusting `supported_features`: the
+ * tools half proven and the reasoning half assumed. A model that rejects the
+ * parameter it claims to support does not serve, and is excluded like any
+ * other failure.
  *
  * Two axes stay unverified, deliberately. This posts a BUFFERED completion while
  * the runtime calls `doStream`, so a model that answers a whole response but

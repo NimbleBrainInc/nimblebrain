@@ -80,13 +80,26 @@ export function buildRegistry(config: ProvidersConfig): Provider {
           "Set providers.nebius.apiKey or the NEBIUS_API_KEY environment variable.",
       );
     }
-    // `name` is not cosmetic: this adapter reads provider options under it, so
-    // the engine must send `providerOptions.nebius` (not `openai`). Renaming it
-    // silently drops every reasoning option — see `buildNebiusThinkingOptions`.
+    // Three of these are load-bearing, and each replaces something
+    // `createOpenAI` did unconditionally. This adapter is generic, so what the
+    // OpenAI adapter assumed must be asked for by name.
+    //
+    // `name` — provider options are read under it, so the engine sends
+    //   `providerOptions.nebius`, not `openai`. See `buildNebiusThinkingOptions`.
+    // `includeUsage` — sets `stream_options.include_usage`. Nebius returns
+    //   `"usage": null` on every chunk without it (measured), so the engine's
+    //   only path (`doStream`) would meter every turn at zero: no cost, no
+    //   ledger tokens, no reasoning tokens.
+    // `supportsStructuredOutputs` — without it a schema-bearing
+    //   `responseFormat` degrades to `{"type":"json_object"}`, dropping the
+    //   schema and strict decoding. The home briefing sends exactly that shape
+    //   on every generation.
     providers.nebius = createOpenAICompatible({
       name: "nebius",
       apiKey: nebiusApiKey,
       baseURL: baseURL ?? NEBIUS_DEFAULT_BASE_URL,
+      includeUsage: true,
+      supportsStructuredOutputs: true,
     });
   }
 
