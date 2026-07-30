@@ -1,4 +1,5 @@
 import { describe, expect, it } from "bun:test";
+import { DEFAULT_MAX_OUTPUT_TOKENS } from "../../src/limits.ts";
 import { buildProviderModels } from "../../src/model/sync-models.ts";
 
 // Minimal raw-model shape with the fields buildProviderModels reads. The map
@@ -48,5 +49,39 @@ describe("buildProviderModels", () => {
 	it("skips models without pricing", () => {
 		const models = buildProviderModels("anthropic", provider({ "embed-x": raw({ cost: {} }) }));
 		expect(models["embed-x"]).toBeUndefined();
+	});
+
+	it("caps an xai model that reports no output ceiling of its own", () => {
+		// xAI publishes no max-output cap, which upstream renders as
+		// `output == context`. Left alone that resolves a zero message budget and
+		// every turn fails, so the whole provider is capped by rule.
+		const models = buildProviderModels(
+			"xai",
+			provider({ "grok-x": raw({ limit: { context: 500_000, output: 500_000 } }) }),
+		);
+		expect(models["grok-x"].limits.output).toBe(DEFAULT_MAX_OUTPUT_TOKENS);
+		expect(models["grok-x"].limits.context).toBe(500_000);
+	});
+
+	it("leaves an xai model with a real declared ceiling alone", () => {
+		// The grok-4.20 line reports 30000 against a 1M window. That is a genuine
+		// upstream cap, not the no-ceiling sentinel, so the rule must not touch it.
+		const models = buildProviderModels(
+			"xai",
+			provider({ "grok-y": raw({ limit: { context: 1_000_000, output: 30_000 } }) }),
+		);
+		expect(models["grok-y"].limits.output).toBe(30_000);
+	});
+
+	it("caps no provider but xai", () => {
+		// The rule is scoped because "no published cap" is an xAI property. Ten
+		// openai/google models report `output >= context` today for unrelated
+		// reasons (image and TTS models); widening the rule would silently
+		// re-limit all of them. See #844.
+		const models = buildProviderModels(
+			"google",
+			provider({ "gemini-image": raw({ limit: { context: 65_536, output: 65_536 } }) }),
+		);
+		expect(models["gemini-image"].limits.output).toBe(65_536);
 	});
 });

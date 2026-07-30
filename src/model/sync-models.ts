@@ -185,21 +185,23 @@ export function buildProviderModels(
     // Skip models the platform deliberately does not surface.
     if (MANUAL_EXCLUSIONS.has(`${providerId}:${modelId}`)) continue;
     const model = toCatalogModel(providerId, modelId, raw);
-    // xAI publishes no per-model max-output cap — neither `/v1/models` nor
-    // `/v1/language-models` carries the field, and the endpoint accepts
-    // `max_tokens` all the way up to `context_length` (measured). Upstream
-    // represents that as `output == context`, which is honest but unusable as a
-    // ceiling here: `resolveMaxOutputTokens` returns the catalog `limits.output`
-    // when no operator override is set, and `resolveMessageBudget` then computes
+    // xAI's own API publishes no per-model max-output cap — neither
+    // `/v1/models` nor `/v1/language-models` carries the field, and the endpoint
+    // accepts `max_completion_tokens` (what the adapter sends) up to
+    // `context_length` (measured). Where models.dev has no vendor figure to
+    // report it mirrors the context window, and `output == context` is the
+    // sentinel that reaches here. It is unusable as a ceiling:
+    // `resolveMaxOutputTokens` returns the catalog `limits.output` when no
+    // operator override is set, and `resolveMessageBudget` then computes
     // `context - system - tools - maxOutput - safety` — negative, so the budget
     // resolves to 0 and every turn fails.
     //
     // Capped by rule rather than by model id, because "no published cap" is a
     // property of the provider: any model it adds arrives the same way, and a
     // list would land the next one at a zero budget until someone noticed.
-    // Models with a real declared cap are untouched — the grok-4.20 line
-    // reports 30000 against a 1M window and keeps it. `sync-nebius.ts` applies
-    // the same platform default for the same reason.
+    // A model models.dev does carry a distinct figure for is untouched — the
+    // grok-4.20 line reports 30000 against a 1M window and keeps it.
+    // `sync-nebius.ts` applies the same platform default for the same reason.
     //
     // This also caps an operator override, since `resolveMaxOutputTokens`
     // clamps `configValue` down to the ceiling. That matches every Nebius model

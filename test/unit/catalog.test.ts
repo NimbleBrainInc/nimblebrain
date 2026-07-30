@@ -438,6 +438,10 @@ describe("xai effort support", () => {
 		// Fail-closed, so an unmeasured model degrades to "no reasoning options"
 		// rather than a 400 — the safe direction, unlike OpenAI's permissive
 		// default. Still a gap: a newly-synced Grok would silently never reason.
+		//
+		// When this fails, the per-model tier table in
+		// docs/src/content/docs/config/nimblebrain-json.mdx needs the same row —
+		// it is the user-facing copy of this table and nothing else points at it.
 		expect(xaiUnmeasuredReasoningModels()).toEqual([]);
 	});
 
@@ -460,14 +464,15 @@ describe("xai effort support", () => {
 		]);
 	});
 
-	it("distinguishes reasons-but-no-knob from does-not-reason", () => {
-		// Both get an empty ladder, but the capability flag differs — the flag
-		// says whether the model reasons, the table says whether you can ask.
-		// Flipping the flag to dodge the 400 would misreport reasoning cost.
+	it("records an empty ladder for a model that reasons without a knob", () => {
+		// The flag says whether the model reasons, the table says whether you can
+		// ask it to. Flipping the flag to dodge the 400 would misreport reasoning
+		// cost. A model that does not reason needs no row at all — `resolveThinking`
+		// drops the override on the capability flag, so the builder never runs.
 		expect(xaiSupportedEfforts("xai:grok-4.20-0309-reasoning")?.size).toBe(0);
 		expect(getModel("xai", "grok-4.20-0309-reasoning")?.capabilities.reasoning).toBe(true);
-		expect(xaiSupportedEfforts("xai:grok-4.20-0309-non-reasoning")?.size).toBe(0);
 		expect(getModel("xai", "grok-4.20-0309-non-reasoning")?.capabilities.reasoning).toBe(false);
+		expect(xaiSupportedEfforts("xai:grok-4.20-0309-non-reasoning")).toBeUndefined();
 	});
 
 	it("keeps every model's max output under its context window", () => {
@@ -479,6 +484,10 @@ describe("xai effort support", () => {
 		// Asserted over the catalog rather than a list of ids: enumerating the
 		// two models that need it today would pass unchanged on the next Grok
 		// that arrives the same way, which is the case worth catching.
+		//
+		// This checks the shipped artifact. The rule that produces it is tested
+		// in sync-models.test.ts — this one stays green if the rule is deleted,
+		// because the committed data is already capped.
 		const models = listModels("xai");
 		expect(models.length).toBeGreaterThan(0);
 		for (const m of models) {

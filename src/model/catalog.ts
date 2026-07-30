@@ -496,8 +496,6 @@ const XAI_EFFORT_SUPPORT: Record<string, ReadonlySet<XAIWireEffort>> = {
   // Reasons, no knob — every tier 400s. See the header.
   "grok-4.20-0309-reasoning": new Set(),
   "grok-build-0.1": new Set(),
-  // Does not reason; rejects the parameter. Listed so it counts as measured.
-  "grok-4.20-0309-non-reasoning": new Set(),
 };
 
 /**
