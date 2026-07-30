@@ -19,7 +19,7 @@
  */
 
 import type { LanguageModelV3, LanguageModelV3CallOptions } from "@ai-sdk/provider";
-import { afterAll, beforeAll, describe, expect, it } from "bun:test";
+import { afterAll, beforeAll, describe, expect, it, spyOn } from "bun:test";
 import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -284,6 +284,34 @@ describe("bundle-skill adapter — end-to-end", () => {
       (s) => s.id === "skill://test/SKILL.md",
     );
     expect(bundleEntry).toBeUndefined();
+  });
+
+  it("discovers the workspace's bundle skills once per turn", async () => {
+    // A turn needs both halves of the bundle-skill partition: the `always` half
+    // for the context channel and the tool-affined half twice over — once for
+    // Layer-3 selection, once as surface-once promotion candidates. Those came
+    // from two independent discoveries, so every turn walked the registry and
+    // re-synthesized every skill a second time to recover a set it had just
+    // computed and dropped.
+    //
+    // Counting MCP round-trips would not catch a regression here: the 5-minute
+    // `skillResourceCache` absorbs the second discovery's `resources/list`, so
+    // the waste is registry-walk and synthesis, invisible on the wire. The call
+    // itself is the only honest probe.
+    const spy = spyOn(
+      runtime as unknown as { loadBundleSkills: (...a: unknown[]) => unknown },
+      "loadBundleSkills",
+    );
+    try {
+      await runtime.chat({
+        workspaceId: TEST_WORKSPACE_ID,
+        message: "one discovery please",
+        allowedTools: ["ai-nimblebrain-test-mcp__doit"],
+      });
+      expect(spy).toHaveBeenCalledTimes(1);
+    } finally {
+      spy.mockRestore();
+    }
   });
 });
 

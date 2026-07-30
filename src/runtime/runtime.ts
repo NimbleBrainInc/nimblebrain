@@ -1364,7 +1364,11 @@ export class Runtime {
     // the rest of personal-workspace reads. Reuse the capability pool computed
     // for the per-request matcher above — same `wsId` and `userId` — so the
     // conversation-skill disk read happens once per turn, not twice.
-    const { context: bundleContext, layer3: selectedLayer3 } = await this.selectRequestLayer3({
+    const {
+      context: bundleContext,
+      capability: bundleCapability,
+      layer3: selectedLayer3,
+    } = await this.selectRequestLayer3({
       wsId: convWsId,
       userId,
       activeToolNames: tools.map((t) => t.name),
@@ -1554,7 +1558,7 @@ export class Runtime {
       // not only at turn-start via <layer3-skill> (which misses mid-turn promotion).
       connectorSkillCandidates: [
         ...this.loadConnectorSkillCandidates(convWsId),
-        ...(await this.loadBundleSkillCandidates(convWsId, request.appContext?.serverName)),
+        ...this.toBundleSkillCandidates(bundleCapability),
       ],
       // From the UN-rehydrated history — this is what makes surface-ONCE hold
       // across turns on the real chat path.
@@ -1813,7 +1817,11 @@ export class Runtime {
     // (the wall — never across the owner's other workspaces). `always` bundle
     // skills land in `bundleContext` (context channel every turn); `dynamic` ones
     // feed tool-affinity Layer 3. Mirrors `_chatInner`.
-    const { context: bundleContext, layer3: selectedLayer3 } = await this.selectRequestLayer3({
+    const {
+      context: bundleContext,
+      capability: bundleCapability,
+      layer3: selectedLayer3,
+    } = await this.selectRequestLayer3({
       wsId: workWsId,
       userId,
       activeToolNames: tools.map((t) => t.name),
@@ -1945,10 +1953,10 @@ export class Runtime {
       // Connector-skill overlays — same focused-workspace scoping as the
       // layer-3 pool; surfaced once into history, never the system prefix.
       // Bundle skills (SEP-2640) join as candidates so a promoted server's skill
-      // surfaces mid-turn, not only at turn-start. Tasks carry no appContext.
+      // surfaces mid-turn, not only at turn-start.
       connectorSkillCandidates: [
         ...this.loadConnectorSkillCandidates(workWsId),
-        ...(await this.loadBundleSkillCandidates(workWsId)),
+        ...this.toBundleSkillCandidates(bundleCapability),
       ],
       // A fresh task has a single user message and no prior history, so no
       // connector skill has been injected yet — the set is empty.
@@ -4038,21 +4046,19 @@ export class Runtime {
 
   /** SEP-2640 bundle skills as surface-once connector-skill candidates, so a server's
    *  skill can be delivered mid-turn when its tools are progressively disclosed (not only
-   *  at turn-start via <layer3-skill>). Mirrors selectRequestLayer3's loadBundleSkills
-   *  exclusion (the entered app's skill rides <app-guide>, not this channel).
+   *  at turn-start via <layer3-skill>).
    *
-   *  Only `dynamic` (tool-affined) skills ride this channel: an `always` bundle
-   *  skill is already composed into the context channel every turn, so surfacing
-   *  it again on tool promotion would double-inject the same guidance. */
-  private async loadBundleSkillCandidates(
-    wsId: string,
-    appContextServerName?: string,
-  ): Promise<ConnectorSkillCandidate[]> {
-    const skills = await this.loadBundleSkills(
-      wsId,
-      appContextServerName ? { appContextServerName } : {},
-    );
-    const { capability } = partitionSkillsByRole(skills);
+   *  Takes the `capability` half of `selectRequestLayer3`'s partition rather than
+   *  discovering again: one discovery per turn, and the entered app's exclusion
+   *  (its skill rides <app-guide>, not this channel) is inherited from that call
+   *  instead of being a second `appContextServerName` argument that has to agree
+   *  with the first.
+   *
+   *  Only `dynamic` (tool-affined) skills ride this channel, which is what the
+   *  `capability` half is: an `always` bundle skill is already composed into the
+   *  context channel every turn, so surfacing it again on tool promotion would
+   *  double-inject the same guidance. */
+  private toBundleSkillCandidates(capability: Skill[]): ConnectorSkillCandidate[] {
     return capability.map((s) => ({
       name: s.manifest.name,
       body: s.body,
@@ -4120,8 +4126,13 @@ export class Runtime {
    * bundle skill feeds `selectLayer3Skills` (tool-affinity, `layer3`) while an
    * `always` bundle skill is returned in `context` for the caller to compose
    * into the always-on channel every turn. Conversation-tier context skills are
-   * NOT returned here — the caller already partitioned those; `context` carries
-   * only the always-on *bundle* skills the caller couldn't see.
+   * NOT returned here — the caller already partitioned those; `context` and
+   * `capability` carry only the *bundle* skills the caller couldn't see.
+   *
+   * Both halves of that partition are returned, not just the one Layer 3 keeps.
+   * A turn also needs the `dynamic` half as surface-once candidates, and
+   * discovery is the expensive part — re-deriving it would mean walking the
+   * registry and re-synthesizing every skill a second time for the same turn.
    */
   async selectRequestLayer3(params: {
     /**
@@ -4145,7 +4156,7 @@ export class Runtime {
      * NOT in this set — they compose into Layer 0/1 by role, never Layer 3.
      */
     capabilityPool?: Skill[];
-  }): Promise<{ context: Skill[]; layer3: SelectedSkill[] }> {
+  }): Promise<{ context: Skill[]; capability: Skill[]; layer3: SelectedSkill[] }> {
     const capabilityPool =
       params.capabilityPool ??
       partitionSkillsByRole(this.loadConversationSkills(params.wsId, params.userId)).capability;
@@ -4163,7 +4174,7 @@ export class Runtime {
       skills: [...capabilityPool, ...bundleCapability],
       activeTools: params.activeToolNames,
     });
-    return { context: bundleContext, layer3 };
+    return { context: bundleContext, capability: bundleCapability, layer3 };
   }
 
   /**
