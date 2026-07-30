@@ -19,8 +19,10 @@ import { Disclosure } from "./Disclosure";
  * stacked directly beneath it. Selection happens at compose time, so this
  * truthfully precedes all of the turn's work.
  *
- * Renders nothing when the turn loaded no skills — absence of the line is the
- * signal.
+ * Renders nothing when given nothing. The caller decides which turns are worth
+ * a line — `ledgerChanges` withholds the payload on a turn whose equipment is
+ * unchanged, so absence reads as "nothing new here", covering both "no skills"
+ * and "the same skills as before".
  */
 export function LedgerLine({ skills }: { skills: SkillsLoadedContext | undefined }) {
   const [expanded, setExpanded] = useState(false);
