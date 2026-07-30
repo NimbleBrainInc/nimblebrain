@@ -13,6 +13,7 @@ import { callTool } from "../api/client";
 import { chatStore } from "../hooks/chat-store";
 import type { UseChatReturn } from "../hooks/useChat";
 import { useChat } from "../hooks/useChat";
+import { toWsId } from "../lib/workspace-slug";
 import type { AppContext, ConfigInfo, ToolCallResult } from "../types";
 import { useWorkspaceContext } from "./WorkspaceContext";
 
@@ -86,11 +87,26 @@ export function ChatProvider({
   // home / identity routes (`/`, `/conversations`) there's no focus, so the
   // chat is identity-level (no "current workspace"). Route-derived, NOT the
   // persisted global active workspace.
+  //
+  // Read straight off the URL, never from the React-state `activeWorkspace`.
+  // The slug is the single source of truth (see `WorkspaceRouteGuard`), so a
+  // route-derived focus is correct on the FIRST frame. `activeWorkspace` is not:
+  // it is seeded from bootstrap's default and only reconciled to the route a
+  // render later, and that intermediate value is indistinguishable from a real
+  // workspace switch — which is what trigger (1) below keys off.
+  //
+  // Membership-gated so an unknown or non-member slug yields `null` (hold, same
+  // as home) rather than a phantom id; `WorkspaceRouteGuard` bounces that route
+  // anyway. While the workspace list is still loading, `workspaces` is empty and
+  // focus holds at `null` — the panel waits rather than guessing.
   const location = useLocation();
-  const { activeWorkspace } = useWorkspaceContext();
-  const focusWorkspaceId = location.pathname.startsWith("/w/")
-    ? (activeWorkspace?.id ?? null)
+  const { workspaces } = useWorkspaceContext();
+  const routeSlug = location.pathname.startsWith("/w/")
+    ? (location.pathname.split("/")[2] ?? null)
     : null;
+  const routeWsId = routeSlug ? toWsId(routeSlug) : null;
+  const focusWorkspaceId =
+    routeWsId && workspaces.some((w) => w.id === routeWsId) ? routeWsId : null;
   const chat = useChat(initialConversationId, currentUserId);
 
   // Drop every cached conversation slice when the signed-in user changes
@@ -138,20 +154,9 @@ export function ChatProvider({
   //      a conversation whose workspace hasn't loaded is left alone, so opening
   //      one from within its own workspace never briefly self-clears.
   //
-  // Ordering note: on a deep-link to `/w/B`, `WorkspaceProvider` seeds
-  // `activeWorkspace` from bootstrap (the personal workspace) before
-  // `WorkspaceRouteGuard` corrects it to B, so `focusWorkspaceId` (derived from
-  // `activeWorkspace`) is transiently a non-null NON-B workspace. Trigger (2) now
-  // runs on mount, so a correctly restored B-conversation could be cleared if its
-  // `conversationMeta` resolved during that window. It doesn't in practice:
-  // `WorkspaceRouteGuard` corrects `activeWorkspace` in a mount effect — one
-  // render later, not synchronously — while the conversation's workspace arrives
-  // over a network round-trip (`loadConversation`), and a render beats a fetch,
-  // so focus settles on B first. (The guard ALSO projects the slug onto the
-  // ambient wire id `activeWorkspaceId` synchronously during render, but that is
-  // the `X-Workspace-Id` header, NOT this route-derived `focusWorkspaceId`.) If
-  // that ordering ever inverts, derive `focusWorkspaceId` from the route slug
-  // (`toWsId`) instead of the resolved `activeWorkspace`.
+  // Both triggers depend on focus being route-derived (above): only a real
+  // navigation moves it, so (1) sees a transition when — and only when — the URL
+  // changes workspace, and (2) never compares against an intermediate value.
   const lastWorkspaceFocusRef = useRef(focusWorkspaceId);
   const { newConversation, conversationId, conversationMeta } = chat;
   const conversationWorkspaceId = conversationMeta?.workspaceId ?? null;
