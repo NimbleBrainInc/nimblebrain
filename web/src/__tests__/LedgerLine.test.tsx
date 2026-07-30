@@ -71,7 +71,7 @@ async function mount(skills: SkillsLoadedContext | undefined): Promise<Mounted> 
   });
   return {
     container,
-    head: () => first(container, "ledger-line__head") as HTMLButtonElement,
+    head: () => first(container, "disclosure__head") as HTMLButtonElement,
     unmount() {
       root.unmount();
       container.remove();
@@ -135,7 +135,7 @@ describe("LedgerLine", () => {
     expect(head.textContent).toContain("matched mpak__*");
     expect(head.textContent).not.toContain("tool-affinity matched");
     // No drawer until expanded.
-    expect(byClass(mounted.container, "ledger-line__body")).toHaveLength(0);
+    expect(byClass(mounted.container, "disclosure__body")).toHaveLength(0);
   });
 
   test("multiple skills: head folds to a count and the aggregate token cost", async () => {
@@ -153,7 +153,7 @@ describe("LedgerLine", () => {
     // a square turned 45° paints ~1.5px past every side and loses its point; an
     // svg glyph is drawn within its viewBox and lands on the same right edge as
     // the activity chip below it.
-    const chev = first(mounted.container, "ledger-line__chev");
+    const chev = first(mounted.container, "disclosure__chev");
     expect(chev?.tagName.toLowerCase()).toBe("svg");
   });
 
