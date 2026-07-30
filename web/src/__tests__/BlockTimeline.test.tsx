@@ -46,11 +46,11 @@ function search(id: string, query: string, ms: number): ContentBlock {
         ms,
       },
     ],
-  } as unknown as ContentBlock;
+  };
 }
 
 function text(t: string): ContentBlock {
-  return { type: "text", text: t } as ContentBlock;
+  return { type: "text", text: t };
 }
 
 interface Rendered {
@@ -140,9 +140,9 @@ describe("BlockTimeline phase segmentation", () => {
   test("reasoning between tool rounds keeps them in one chip", async () => {
     expect(
       await render([
-        { type: "reasoning", text: "narrowing the query" } as ContentBlock,
+        { type: "reasoning", text: "narrowing the query" },
         search("t1", "campaign", 6),
-        { type: "reasoning", text: "still nothing" } as ContentBlock,
+        { type: "reasoning", text: "still nothing" },
         search("t2", "precision", 5),
       ]),
     ).toEqual({ chips: 1, textItems: 0, blankTextItems: 0 });
