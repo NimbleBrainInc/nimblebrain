@@ -96,7 +96,7 @@ function resolveComposioConfig(): ComposioConfig {
 }
 
 /**
- * Resolve + validate the API base: the declared value, else the env, else the default.
+ * Resolve + validate the API base: the declared value, else the default.
  *
  * A blank declared value counts as *absent* and takes the default — a templated
  * deploy renders `"baseUrl": "{{ .Values… }}"` to `""` when unset, which is not a

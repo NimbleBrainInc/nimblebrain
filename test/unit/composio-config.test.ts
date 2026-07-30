@@ -117,7 +117,7 @@ describe("settings — resolved from the declared block", () => {
     expect(validateComposioConfig().baseUrl).toBe(COMPOSIO_API_BASE);
   });
 
-  it("defaults the probe on, and takes an explicit false", () => {
+  it("takes an explicit monitorEnabled: false", () => {
     // A boolean in config, so there is no string parsing to fail safe around —
     // that was the env fallback's problem, not this one's.
     setConnectorsConfig({ providers: { composio: { monitorEnabled: false } } });

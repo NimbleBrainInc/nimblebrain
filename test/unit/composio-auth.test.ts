@@ -321,7 +321,7 @@ describe("GET /v1/composio-auth/proxy", () => {
     expect(loc.includes("foo=bar")).toBe(true);
   });
 
-  test("honors COMPOSIO_API_BASE_URL override (e.g. for self-hosted shim)", async () => {
+  test("honors a declared baseUrl override (e.g. for self-hosted shim)", async () => {
     process.env.COMPOSIO_API_KEY = "k_test";
     setConnectorsConfig({
       providers: {
