@@ -125,8 +125,9 @@ describe("probeModel", () => {
 
   it("sends reasoning_effort only for a model that claims reasoning", async () => {
     // The runtime puts `reasoning_effort` on every call to a reasoning-flagged
-    // nebius model (resolveThinking defaults to effort mode, and the adapter
-    // reads its `openai` key for nebius too). Probing without it would verify a
+    // nebius model (resolveThinking defaults to effort mode, and
+    // `buildNebiusThinkingOptions` emits a tier under the `nebius` options key
+    // the adapter reads). Probing without it would verify a
     // request shape no run sends — the same gap as proving the tools half of
     // `supported_features` and assuming the reasoning half.
     //

@@ -1,6 +1,7 @@
 import { createAnthropic } from "@ai-sdk/anthropic";
 import { createGoogleGenerativeAI } from "@ai-sdk/google";
 import { createOpenAI } from "@ai-sdk/openai";
+import { createOpenAICompatible } from "@ai-sdk/openai-compatible";
 import type { LanguageModelV3, ProviderV3 } from "@ai-sdk/provider";
 import { createXai } from "@ai-sdk/xai";
 import { createProviderRegistry, type Provider } from "ai";
@@ -45,12 +46,11 @@ export function buildRegistry(config: ProvidersConfig): Provider {
 
   if (providersCfg.openai) {
     const { apiKey, baseURL, organization } = providersCfg.openai;
-    // No fail-closed guard here, unlike nebius below: when `baseURL` overrides
-    // the endpoint it typically points at an OpenAI-compatible proxy
-    // (LiteLLM/Helicone/Azure) that legitimately expects the OpenAI key, so
-    // createOpenAI's OPENAI_API_KEY fallback is the desired behavior. Nebius is
-    // a distinct third-party host that must never receive that key — hence the
-    // asymmetry. Don't "unify" the two branches.
+    // No fail-closed key guard: createOpenAI reads `OPENAI_API_KEY` on its own,
+    // and when `baseURL` points at an OpenAI-compatible proxy
+    // (LiteLLM/Helicone/Azure) that proxy legitimately expects that key — so
+    // the fallback is the desired behavior here, not a hazard. See the nebius
+    // branch below for the rule.
     providers.openai = createOpenAI({ apiKey, baseURL, organization });
   }
 
@@ -62,15 +62,18 @@ export function buildRegistry(config: ProvidersConfig): Provider {
   if (providersCfg.nebius) {
     const { apiKey, baseURL } = providersCfg.nebius;
     // Nebius Token Factory is an OpenAI-compatible gateway for open-weight
-    // models. It serves the Chat Completions API but NOT OpenAI's Responses
-    // API, which createOpenAI's default `.languageModel()` binds — so route
-    // through `.chat()`.
+    // models, so it is built through the adapter written for exactly that —
+    // `createOpenAICompatible` — rather than through `createOpenAI` pointed at
+    // a foreign `baseURL`. It binds Chat Completions natively (Nebius serves no
+    // Responses API), so no `.chat()` re-wrap is needed.
     //
-    // Resolve the key explicitly and FAIL CLOSED when it's absent. createOpenAI's
-    // built-in key fallback is OPENAI_API_KEY, so passing an undefined key here
-    // would silently send the operator's *OpenAI* credential to Nebius's
-    // endpoint. A configured-but-unauthenticated provider is a misconfiguration
-    // worth surfacing loudly, never a credential leak.
+    // The key is resolved explicitly and FAILS CLOSED when absent. This is the
+    // one place the guard rule is stated, because it is the only branch that
+    // needs a guard: an adapter that reads an env variable of its own can be
+    // handed an undefined key and still work, so it gets none, while
+    // `createOpenAICompatible` reads no environment at all — a keyless nebius
+    // has no path forward. Throwing at boot beats an unauthenticated 401 on the
+    // first chat turn. Don't "unify" the branches on symmetry grounds.
     const nebiusApiKey = apiKey ?? process.env.NEBIUS_API_KEY;
     if (!nebiusApiKey) {
       throw new Error(
@@ -78,23 +81,34 @@ export function buildRegistry(config: ProvidersConfig): Provider {
           "Set providers.nebius.apiKey or the NEBIUS_API_KEY environment variable.",
       );
     }
-    const nebius = createOpenAI({
+    // Three of these are load-bearing, and each replaces something
+    // `createOpenAI` did unconditionally. This adapter is generic, so what the
+    // OpenAI adapter assumed must be asked for by name.
+    //
+    // `name` — provider options are read under it, so the engine sends
+    //   `providerOptions.nebius`, not `openai`. See `buildNebiusThinkingOptions`.
+    // `includeUsage` — sets `stream_options.include_usage`. Nebius returns
+    //   `"usage": null` on every chunk without it (measured), so the engine's
+    //   only path (`doStream`) would meter every turn at zero: no cost, no
+    //   ledger tokens, no reasoning tokens.
+    // `supportsStructuredOutputs` — without it a schema-bearing
+    //   `responseFormat` degrades to `{"type":"json_object"}`, dropping the
+    //   schema and strict decoding. The home briefing sends exactly that shape
+    //   on every generation.
+    providers.nebius = createOpenAICompatible({
+      name: "nebius",
       apiKey: nebiusApiKey,
       baseURL: baseURL ?? NEBIUS_DEFAULT_BASE_URL,
-      name: "nebius",
+      includeUsage: true,
+      supportsStructuredOutputs: true,
     });
-    providers.nebius = { ...nebius, languageModel: (modelId: string) => nebius.chat(modelId) };
   }
 
   if (providersCfg.xai) {
     const { apiKey, baseURL } = providersCfg.xai;
-    // No fail-closed key guard, unlike nebius above, and the asymmetry is
-    // deliberate: createXai's own env fallback is XAI_API_KEY — its own
-    // variable — so an absent key cannot send another provider's credential to
-    // x.ai. That hazard is specific to reaching a third-party host through
-    // createOpenAI, whose fallback is OPENAI_API_KEY. This follows the
-    // openai/google shape instead: pass what config has and let the adapter
-    // read its own env.
+    // No fail-closed key guard: createXai reads XAI_API_KEY on its own, so an
+    // absent config key is the normal working case. See the nebius branch above
+    // for the rule.
     //
     // `.languageModel()` binds Chat Completions on this adapter version
     // (XaiChatLanguageModel, provider "xai.chat"), so no `.chat()` re-wrap is

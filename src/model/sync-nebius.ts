@@ -2,11 +2,18 @@
 /**
  * Sync the Nebius Token Factory catalog from the account's /v1/models API.
  *
- * models.dev (the `sync-models` source) doesn't list Nebius, so the drift-prone
- * numbers — pricing, context window, and tool/reasoning capability — are pulled
- * from the authoritative account endpoint (`/v1/models?verbose=true`) rather
- * than hand-typed. The *selection* (which models to surface + their stable
- * display names) is curated below; the volatile metadata is synced.
+ * The drift-prone numbers — pricing, context window, and tool/reasoning
+ * capability — are pulled from the authoritative account endpoint
+ * (`/v1/models?verbose=true`) rather than hand-typed. The *selection* (which
+ * models to surface + their stable display names) is curated below; the
+ * volatile metadata is synced.
+ *
+ * models.dev (the `sync-models` source) does carry a `nebius` entry, and it is
+ * deliberately not used. A gateway's lineup is account- and tier-specific, and
+ * that entry is community-maintained: it omits ids this account serves, lists
+ * ids it does not, and carries 8K-context `-fast` variants that
+ * `MIN_USABLE_CONTEXT` below exists to reject. For a provider whose catalog
+ * varies per key, the key's own endpoint is the only source that can be right.
  *
  * **Every candidate is probed before it ships.** Being listed in `/v1/models`
  * is not evidence that a model serves: `deepseek-ai/DeepSeek-V4-Pro` was listed,
@@ -176,12 +183,12 @@ export type ProbeOutcome =
  * `reasoning` aligns the probe's PROVIDER OPTIONS with the runtime's — not the
  * whole request. For a model this catalog flags reasoning-capable, an
  * unconfigured install resolves to `{mode: "effort"}` (`resolveThinking` →
- * `DEFAULT_THINKING_EFFORT`) and `buildOpenAIThinkingOptions` puts
- * `reasoning_effort` on EVERY call — nebius reads the adapter's `openai` key, so
- * it is not exempt. Probing without it would verify options no run uses, which
- * is the same mistake as trusting `supported_features`: the tools half proven
- * and the reasoning half assumed. A model that rejects the parameter it claims
- * to support does not serve, and is excluded like any other failure.
+ * `DEFAULT_THINKING_EFFORT`) and `buildNebiusThinkingOptions` puts
+ * `reasoning_effort` on EVERY call. Probing without it would verify options no
+ * run uses, which is the same mistake as trusting `supported_features`: the
+ * tools half proven and the reasoning half assumed. A model that rejects the
+ * parameter it claims to support does not serve, and is excluded like any
+ * other failure.
  *
  * Two axes stay unverified, deliberately. This posts a BUFFERED completion while
  * the runtime calls `doStream`, so a model that answers a whole response but

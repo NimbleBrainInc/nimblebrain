@@ -81,16 +81,17 @@ describe("buildRegistry", () => {
     const model = registry.languageModel("nebius:deepseek-ai/DeepSeek-V4-Pro");
     expect(model).toBeDefined();
     expect(model.specificationVersion).toBe("v3");
-    // Must bind `.chat()` (Chat Completions), NOT `.responses()` — Nebius has
-    // no Responses API, which is what the OpenAI provider's default binds.
+    // Chat Completions, which this adapter binds natively — Nebius serves no
+    // Responses API. Pinned so a swap back to a Responses-defaulting adapter
+    // fails here rather than at the first chat turn.
     expect(model.provider).toBe("nebius.chat");
     expect(model.modelId).toBe("deepseek-ai/DeepSeek-V4-Pro");
   });
 
-  it("fails closed when nebius is configured without a key (never leaks OPENAI_API_KEY)", () => {
-    // createOpenAI's own key fallback is OPENAI_API_KEY, so an absent nebius
-    // key must throw here rather than silently authenticate Nebius requests
-    // with the operator's OpenAI credential.
+  it("fails closed when nebius is configured without a key", () => {
+    // Not a leak guard any more — this adapter has no OPENAI_API_KEY fallback
+    // to leak through. Kept because a boot-time throw beats an unauthenticated
+    // 401 on the first chat turn.
     const prev = process.env.NEBIUS_API_KEY;
     process.env.NEBIUS_API_KEY = "";
     try {
@@ -115,11 +116,11 @@ describe("buildRegistry", () => {
   });
 
   it("does not fail closed when xai has no key, unlike nebius", () => {
-    // The nebius guard exists because createOpenAI falls back to
-    // OPENAI_API_KEY, so a keyless nebius would send the operator's OpenAI
-    // credential to a third-party host. createXai falls back to XAI_API_KEY —
-    // its own variable — so there is nothing to leak and no guard to justify.
-    // Asserted so nobody "unifies" the two branches on symmetry grounds.
+    // createXai falls back to XAI_API_KEY — its own variable — so an absent
+    // config key is the normal, working case and there is nothing to fail on.
+    // Nebius throws because its adapter has no env fallback of its own, so a
+    // missing key there is a misconfiguration with no path forward. Asserted so
+    // nobody "unifies" the two branches on symmetry grounds.
     const prev = process.env.XAI_API_KEY;
     process.env.XAI_API_KEY = "";
     try {
@@ -150,5 +151,79 @@ describe("buildModelResolver", () => {
     expect(model).toBeDefined();
     expect(model.provider).toContain("anthropic");
     expect(model.modelId).toContain("claude-sonnet-4-6");
+  });
+});
+
+describe("nebius request shape", () => {
+  /**
+   * An adapter swap's blast radius is the request body, so assert the body —
+   * not just which class got constructed. `createOpenAICompatible` is generic:
+   * everything `createOpenAI` did unconditionally has to be asked for by name
+   * here, and each omission fails silently on a different axis (metering,
+   * structured output, options routing).
+   *
+   * Goes through `buildRegistry` rather than the adapter directly, because the
+   * flags under test live at that call site and nothing else would catch their
+   * removal.
+   */
+  async function captureNebiusRequest(
+    call: (model: ReturnType<typeof buildModelResolver>) => Promise<unknown>,
+  ): Promise<Record<string, unknown>> {
+    const realFetch = globalThis.fetch;
+    let body: Record<string, unknown> = {};
+    globalThis.fetch = (async (_url: unknown, init: { body?: string }) => {
+      body = JSON.parse(String(init?.body));
+      return new Response(
+        'data: {"id":"1","object":"chat.completion.chunk","created":0,"model":"m","choices":[{"index":0,"delta":{"content":"ok"},"finish_reason":"stop"}]}\n\ndata: [DONE]\n\n',
+        { status: 200, headers: { "content-type": "text/event-stream" } },
+      );
+    }) as unknown as typeof fetch;
+    try {
+      await call(buildModelResolver({ providers: { nebius: { apiKey: "nb-test-key" } } }));
+    } finally {
+      globalThis.fetch = realFetch;
+    }
+    return body;
+  }
+
+  it("asks for streaming usage, or every turn meters at zero", async () => {
+    // Measured against live Nebius: without `stream_options.include_usage` it
+    // returns `"usage": null` on every chunk, and the engine only ever streams.
+    // The resulting all-zero TokenUsage is indistinguishable from a free turn.
+    const body = await captureNebiusRequest((resolve) =>
+      resolve("nebius:Qwen/Qwen3-32B").doStream({
+        prompt: [{ role: "user", content: [{ type: "text", text: "x" }] }],
+      }),
+    );
+    expect(body.stream_options).toEqual({ include_usage: true });
+  });
+
+  it("sends a schema-bearing response_format as json_schema, not json_object", async () => {
+    // The home briefing sends a schema on every generation. Without
+    // `supportsStructuredOutputs` the adapter drops it to `{type:"json_object"}`
+    // — no schema, no strict decoding.
+    const body = await captureNebiusRequest((resolve) =>
+      resolve("nebius:Qwen/Qwen3-32B").doStream({
+        prompt: [{ role: "user", content: [{ type: "text", text: "x" }] }],
+        responseFormat: {
+          type: "json",
+          name: "briefing",
+          schema: { type: "object", properties: { lede: { type: "string" } } },
+        },
+      }),
+    );
+    expect((body.response_format as { type: string }).type).toBe("json_schema");
+  });
+
+  it("routes reasoning effort from the nebius options key onto the wire", async () => {
+    // The engine-side test proves which key is emitted; this proves it survives
+    // to the request. An `openai` key would vanish here with no error.
+    const body = await captureNebiusRequest((resolve) =>
+      resolve("nebius:Qwen/Qwen3-32B").doStream({
+        prompt: [{ role: "user", content: [{ type: "text", text: "x" }] }],
+        providerOptions: { nebius: { reasoningEffort: "low" } },
+      }),
+    );
+    expect(body.reasoning_effort).toBe("low");
   });
 });

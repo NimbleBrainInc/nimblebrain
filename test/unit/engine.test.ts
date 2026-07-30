@@ -1808,12 +1808,25 @@ describe("AgentEngine", () => {
         }
       });
 
-      it("routes Nebius-hosted models through the openai options key", async () => {
-        // The OpenAI adapter parses provider options under the literal name
-        // "openai" no matter what `name` the instance was created with, so a
-        // `nebius` key reaches the wire as nothing at all.
+      it("routes Nebius through the nebius options key, NOT openai", async () => {
+        // `createOpenAICompatible` reads `providerOptions.<name>`, and the
+        // registry names this instance `nebius`. Same wire parameter as OpenAI,
+        // different options key — an `openai` key here reaches the wire as
+        // nothing at all, with no error.
         const po = await providerOptionsFor("nebius:deepseek-ai/DeepSeek-R1", { mode: "effort", effort: "low", source: "operator" });
-        expect(po.openai?.reasoningEffort).toBe("low");
+        expect(po.nebius?.reasoningEffort).toBe("low");
+        expect(po.openai).toBeUndefined();
+      });
+
+      it("clamps Nebius tiers above its ladder to high", async () => {
+        const po = await providerOptionsFor("nebius:deepseek-ai/DeepSeek-R1", { mode: "effort", effort: "max", source: "operator" });
+        expect(po.nebius?.reasoningEffort).toBe("high");
+      });
+
+      it("sends nothing to Nebius for thinking:off, which has no suppressor", async () => {
+        // Its floor is `low`; there is no value meaning "don't reason", so
+        // sending one would buy nothing and cost a tier.
+        const po = await providerOptionsFor("nebius:deepseek-ai/DeepSeek-R1", { mode: "off" });
         expect(po.nebius).toBeUndefined();
       });
 

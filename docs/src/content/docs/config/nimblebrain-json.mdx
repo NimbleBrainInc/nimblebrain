@@ -225,7 +225,7 @@ Per-provider API keys. Takes precedence over the legacy `model` object when both
 }
 ```
 
-Each provider key is optional. If a provider's `apiKey` is omitted, the SDK falls back to the provider's standard env var (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `GOOGLE_GENERATIVE_AI_API_KEY`, `NEBIUS_API_KEY`, `XAI_API_KEY`).
+Each provider key is optional. If a provider's `apiKey` is omitted, the runtime falls back to that provider's standard env var (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `GOOGLE_GENERATIVE_AI_API_KEY`, `NEBIUS_API_KEY`, `XAI_API_KEY`).
 
 <Aside type="caution">
   Prefer environment variables for API keys in production. Config files end up in version control and backup snapshots by accident.
@@ -249,7 +249,9 @@ Each provider key is optional. If a provider's `apiKey` is omitted, the SDK fall
 }
 ```
 
-The key falls back to `NEBIUS_API_KEY`. Unlike the other providers, this key is **required when `nebius` is configured** — the runtime fails to start (rather than falling back to another provider's key) if neither `providers.nebius.apiKey` nor `NEBIUS_API_KEY` is set. Override the endpoint with `baseURL` (default `https://api.tokenfactory.nebius.com/v1`). A curated set of flagship models ships in the catalog so they appear in the model picker with pricing; any other Nebius model id still routes as free text (`nebius:<org>/<model>`), just without catalog metadata. Nebius requests use the Chat Completions API and rely on the provider's automatic prefix caching — the Anthropic-style explicit cache breakpoints don't apply.
+The key falls back to `NEBIUS_API_KEY`. Unlike the other providers, this key is **required when `nebius` is configured** — the runtime fails to start if neither `providers.nebius.apiKey` nor `NEBIUS_API_KEY` is set, because the Nebius adapter reads no environment variable of its own and a keyless provider has nothing to authenticate with. Override the endpoint with `baseURL` (default `https://api.tokenfactory.nebius.com/v1`). A curated set of flagship models ships in the catalog so they appear in the model picker with pricing; any other Nebius model id still routes as free text (`nebius:<org>/<model>`), just without catalog metadata. Nebius requests use the Chat Completions API and rely on the provider's automatic prefix caching — the Anthropic-style explicit cache breakpoints don't apply.
+
+Reasoning models hosted here stream their thinking back and it is shown in the chat. Those blocks carry no provider signature, so a Nebius turn that hits the output limit mid-answer stops there and reports why, instead of automatically continuing the way an Anthropic turn does.
 
 The exact model lineup is account- and tier-specific and changes over time. The authoritative list for your key is `GET https://api.tokenfactory.nebius.com/v1/models`; use those ids verbatim (they're case-sensitive, e.g. `Qwen/Qwen3-235B-A22B-Instruct-2507`).
 

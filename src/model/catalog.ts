@@ -62,11 +62,16 @@ type CatalogData = Record<
   { name: string; models: Record<string, Omit<CatalogModel, "provider">> }
 >;
 
-// models.dev (the `sync-models` source) doesn't list Nebius Token Factory's
-// open-weight models, so their metadata lives in catalog-nebius.json — synced
-// from the account's own `/v1/models` API by `bun run sync-nebius` — and is
-// merged here. Keeping it out of catalog-data.json means `bun run sync-models`
-// (which rewrites only the models.dev-backed providers) can never clobber it.
+// Nebius metadata comes from the account's own `/v1/models` API via
+// `bun run sync-nebius`, not from models.dev, and lands in catalog-nebius.json
+// to be merged here. models.dev does carry a `nebius` entry, but it is
+// community-maintained and drifts from what a given account actually serves —
+// it omits ids this account serves, lists ids it doesn't, and includes
+// 8K-context `-fast` variants that the sync's own context floor exists to
+// reject. The account API is the source of record for a gateway whose lineup is
+// account- and tier-specific. Keeping this out of catalog-data.json means
+// `bun run sync-models` (which rewrites only the models.dev-backed providers)
+// can never clobber it.
 const data = { ...catalogData, ...nebiusData } as CatalogData;
 
 /**
@@ -433,13 +438,11 @@ export function openaiRestrictedEffortModelIds(): string[] {
 }
 
 /**
- * Which effort tiers this OpenAI-family model accepts.
+ * Which effort tiers this OpenAI model accepts. Keyed on the bare model id.
  *
- * Keyed on the bare model id, and reached for Nebius too — both providers run
- * through the OpenAI adapter. Safe because every Nebius id is org-qualified
- * (`Qwen/Qwen3-32B`) and so cannot collide with a bare OpenAI id; a Nebius
- * model therefore always falls through to the full ladder, which matches
- * measurement — Nebius accepts all three on every catalog model.
+ * OpenAI only — Nebius has its own builder and consults no table, because it
+ * accepts all three tiers on every catalog model (measured) and its catalog is
+ * curated and probe-verified rather than synced wholesale.
  */
 export function openaiSupportedEfforts(modelString: string): ReadonlySet<OpenAIWireEffort> {
   const { modelId } = parseModelString(modelString);
