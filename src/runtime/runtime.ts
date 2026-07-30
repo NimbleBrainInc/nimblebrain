@@ -2515,6 +2515,11 @@ export class Runtime {
    * bundle installed in N workspaces yields N SEPARATE `McpSource` instances —
    * separate transports, separate sessions — sharing one name.
    *
+   * Generally: **a source name identifies a bundle, not an instance.** Any
+   * name-keyed collection over sources has to justify itself, because collapsing
+   * on the name silently drops every workspace but one. This de-dup was that bug;
+   * `discoverServerSkills` has the same shape and is tracked separately.
+   *
    * The N returned instances are real work, not amplification: each owns its own
    * connection and has to be reconnected on its own. How that lands in metrics is
    * `src/api/metrics.ts`'s to state, not this comment's.
