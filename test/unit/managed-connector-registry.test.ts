@@ -158,7 +158,7 @@ describe("buildManagedConnectorRegistry — Composio configured", () => {
   it("wires a probe by default and omits it under the monitor kill switch", () => {
     expect(buildManagedConnectorRegistry().get("composio")?.probe).toBeDefined();
 
-    process.env.COMPOSIO_MONITOR_ENABLED = "false";
+    setConnectorsConfig({ providers: { composio: { monitorEnabled: false } } });
     _resetComposioConfigForTest();
     expect(buildManagedConnectorRegistry().get("composio")?.probe).toBeUndefined();
   });
@@ -195,41 +195,33 @@ describe("buildManagedConnectorRegistry — Smithery config gating", () => {
     expect(buildManagedConnectorRegistry().get("smithery")?.id).toBe("smithery");
   });
 
-  it("declared namespace wins over the legacy env var", () => {
+  it("resolves every setting from the one block", () => {
     process.env.SMITHERY_API_KEY = "sk_test";
-    process.env.SMITHERY_NAMESPACE = "env-ns";
-    setConnectorsConfig({ providers: { smithery: { namespace: "declared-ns" } } });
-    _resetSmitheryConfigForTest();
-
-    expect(validateSmitheryConfig().namespace).toBe("declared-ns");
-  });
-
-  it("falls back per field — a block setting only monitorEnabled keeps the env namespace", () => {
-    process.env.SMITHERY_API_KEY = "sk_test";
-    process.env.SMITHERY_NAMESPACE = "env-ns";
-    setConnectorsConfig({ providers: { smithery: { monitorEnabled: false } } });
+    setConnectorsConfig({
+      providers: { smithery: { namespace: "ops-ns", monitorEnabled: false } },
+    });
     _resetSmitheryConfigForTest();
 
     const config = validateSmitheryConfig();
-    expect(config.namespace).toBe("env-ns");
+    expect(config.namespace).toBe("ops-ns");
     expect(config.monitorEnabled).toBe(false);
   });
 
-  it("treats a BLANK declared value as absent and still reads the env", () => {
+  it("leaves the provider unregistered when a blank namespace is declared", () => {
     // A Helm-templated nimblebrain.json renders `"namespace": "{{ .Values… }}"`
-    // to "" when the value is unset. Taking that as a declaration would discard
-    // the operator's SMITHERY_NAMESPACE and leave the provider unregistered
-    // while their env looks correct — the exact loss per-field precedence
-    // exists to prevent. Composio guards the same way.
+    // to "" when the value is unset. There is no env fallback to rescue it, so
+    // the provider stays off rather than registering against a nameless account
+    // — and the boot warning names the config key to set.
     process.env.SMITHERY_API_KEY = "sk_test";
+    // Set the retired var too: this is the inversion of the deleted
+    // "blank declared value still reads the env" test. If anyone reinstates the
+    // fallback, the provider registers off `env-ns` and this fails.
     process.env.SMITHERY_NAMESPACE = "env-ns";
     setConnectorsConfig({ providers: { smithery: { namespace: "", baseUrl: "" } } });
     _resetSmitheryConfigForTest();
 
-    const config = validateSmitheryConfig();
-    expect(config.namespace).toBe("env-ns");
-    expect(config.baseUrl).toBe("https://api.smithery.ai");
-    expect(buildManagedConnectorRegistry().get("smithery")).toBeDefined();
+    expect(validateSmitheryConfig().namespace).toBe("");
+    expect(buildManagedConnectorRegistry().get("smithery")).toBeUndefined();
   });
 
   it("omits the probe when the monitor is disabled, keeping session brokering", () => {
@@ -247,7 +239,7 @@ describe("buildManagedConnectorRegistry — Smithery config gating", () => {
 
   it("registers a smithery provider when fully configured", () => {
     process.env.SMITHERY_API_KEY = "sk_test";
-    process.env.SMITHERY_NAMESPACE = "test-ns";
+    setConnectorsConfig({ providers: { smithery: { namespace: "test-ns" } } });
     _resetSmitheryConfigForTest();
 
     const provider = buildManagedConnectorRegistry().get("smithery");
@@ -261,7 +253,7 @@ describe("buildManagedConnectorRegistry — Smithery config gating", () => {
   it("registers both providers independently — neither gates the other", () => {
     process.env.COMPOSIO_API_KEY = "k_test";
     process.env.SMITHERY_API_KEY = "sk_test";
-    process.env.SMITHERY_NAMESPACE = "test-ns";
+    setConnectorsConfig({ providers: { smithery: { namespace: "test-ns" } } });
     _resetComposioConfigForTest();
     _resetSmitheryConfigForTest();
 
@@ -281,8 +273,7 @@ describe("buildManagedConnectorRegistry — Smithery config gating", () => {
 describe("smithery baseUrl validation", () => {
   it("rejects a non-http(s) baseUrl — it becomes an installed connector's MCP target", () => {
     process.env.SMITHERY_API_KEY = "sk_test";
-    process.env.SMITHERY_NAMESPACE = "test-ns";
-    process.env.SMITHERY_API_BASE_URL = "file:///etc/passwd";
+    setConnectorsConfig({ providers: { smithery: { namespace: "test-ns", baseUrl: "file:///etc/passwd" } } });
     _resetSmitheryConfigForTest();
 
     expect(() => validateSmitheryConfig()).toThrow(/must be http\(s\)/);
@@ -290,8 +281,7 @@ describe("smithery baseUrl validation", () => {
 
   it("rejects an unparseable baseUrl", () => {
     process.env.SMITHERY_API_KEY = "sk_test";
-    process.env.SMITHERY_NAMESPACE = "test-ns";
-    process.env.SMITHERY_API_BASE_URL = "not a url";
+    setConnectorsConfig({ providers: { smithery: { namespace: "test-ns", baseUrl: "not a url" } } });
     _resetSmitheryConfigForTest();
 
     expect(() => validateSmitheryConfig()).toThrow(/not a valid URL/);

@@ -50,7 +50,7 @@ export function createComposioProvider(): ManagedConnectorProvider {
   if (!monitorEnabled) {
     log.info(
       "[connection-revalidator] composio probe disabled " +
-        "(connectors.providers.composio.monitorEnabled / COMPOSIO_MONITOR_ENABLED)",
+        "(connectors.providers.composio.monitorEnabled)",
     );
   }
 

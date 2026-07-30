@@ -10,8 +10,8 @@
  *
  * The source of truth is the declared `connectors.providers.*` block in
  * `nimblebrain.json` (installed at the composition root, read through
- * `providers/config.ts`); a provider's legacy `<VENDOR>_*` env vars hydrate its
- * block only when the block is absent.
+ * `providers/config.ts`). Only the broker credential also reads a
+ * `<VENDOR>_API_KEY` env var; every other setting comes from the block.
  */
 
 import { validateComposioConfig } from "./composio/config.ts";
@@ -64,7 +64,7 @@ export function managedConnectorRegistryOf(
 /**
  * Build the registry from instance config. Each provider's own resolver decides
  * whether it is configured — it reads its declared `connectors.providers.<kind>`
- * block, falling back to the legacy `<VENDOR>_*` env when the block is absent.
+ * block, plus a `<VENDOR>_API_KEY` env fallback for the credential alone.
  * Constructing a provider links no vendor (clients load lazily inside each
  * impl), so this is safe to call at startup unconditionally; the gate is purely
  * whether a provider is *present*.

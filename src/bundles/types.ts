@@ -209,7 +209,8 @@ export type BundleRef =
        * Composio); `connectionId` is what the liveness probe reads and what
        * teardown deletes at the broker; `namespace` pins the probe and the
        * delete to the namespace the connection was CREATED in, so repointing
-       * `SMITHERY_NAMESPACE` can't make either act on the wrong one. Set at
+       * `connectors.providers.smithery.namespace` can't make either act on the
+       * wrong one. Set at
        * install time by `handleInstallRemoteOAuth`'s smithery branch. Undefined
        * for every other auth kind.
        */

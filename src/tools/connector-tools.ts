@@ -116,7 +116,7 @@ function smitheryProvider(ctx: ManageConnectorsContext): ManagedConnectorProvide
 /** Error surfaced when a Smithery dispatch arm is reached but no Smithery provider is registered. */
 const SMITHERY_NOT_CONFIGURED =
   "Smithery integration is not configured. Set SMITHERY_API_KEY in the platform env, " +
-  "declare connectors.providers.smithery.namespace (or set SMITHERY_NAMESPACE), " +
+  "declare connectors.providers.smithery.namespace, " +
   "and restart the API.";
 
 /** Inputs to {@link deriveConnectorStatus}. Subset of InstalledEntry's

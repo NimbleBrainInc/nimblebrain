@@ -285,28 +285,24 @@ describe("composioCallbackUrl", () => {
 
 describe("GET /v1/composio-auth/proxy", () => {
   // Proxy reads from `validateComposioConfig().baseUrl` (validated +
-  // cached at startup). For the override to kick in, both
-  // `COMPOSIO_API_KEY` and `COMPOSIO_API_BASE_URL` must be set —
-  // without the key, validate falls back to the default base URL
-  // because the integration is dormant. Reset the cache between
-  // tests so each case gets a fresh validate pass.
+  // cached at startup). For the override to kick in, `COMPOSIO_API_KEY`
+  // must be set and `baseUrl` declared in the block — without the key,
+  // validate returns the default base URL because the integration is
+  // dormant. Reset the cache between tests so each case gets a fresh
+  // validate pass.
   const origKey = process.env.COMPOSIO_API_KEY;
-  const origBase = process.env.COMPOSIO_API_BASE_URL;
   beforeEach(() => {
     _resetComposioConfigForTest();
   });
   afterEach(() => {
     if (origKey === undefined) delete process.env.COMPOSIO_API_KEY;
     else process.env.COMPOSIO_API_KEY = origKey;
-    if (origBase === undefined) delete process.env.COMPOSIO_API_BASE_URL;
-    else process.env.COMPOSIO_API_BASE_URL = origBase;
     _resetComposioConfigForTest();
   });
 
   test("302s to backend.composio.dev with query params preserved", async () => {
     process.env.COMPOSIO_API_KEY = "k_test";
     setConnectorsConfig({ providers: { composio: { authConfigs: { gmail: "ac_gmail" } } } });
-    delete process.env.COMPOSIO_API_BASE_URL;
     const app = composioAuthRoutes(stubCtx("/tmp/work", null));
     const res = await app.request(
       "http://nb.test/v1/composio-auth/proxy?code=abc&state=xyz&foo=bar",
@@ -321,10 +317,13 @@ describe("GET /v1/composio-auth/proxy", () => {
     expect(loc.includes("foo=bar")).toBe(true);
   });
 
-  test("honors COMPOSIO_API_BASE_URL override (e.g. for self-hosted shim)", async () => {
+  test("honors a declared baseUrl override (e.g. for self-hosted shim)", async () => {
     process.env.COMPOSIO_API_KEY = "k_test";
-    setConnectorsConfig({ providers: { composio: { authConfigs: { gmail: "ac_gmail" } } } });
-    process.env.COMPOSIO_API_BASE_URL = "https://composio.example.com";
+    setConnectorsConfig({
+      providers: {
+        composio: { authConfigs: { gmail: "ac_gmail" }, baseUrl: "https://composio.example.com" },
+      },
+    });
     const app = composioAuthRoutes(stubCtx("/tmp/work", null));
     const res = await app.request("http://nb.test/v1/composio-auth/proxy?code=abc");
     expect(res.status).toBe(302);
