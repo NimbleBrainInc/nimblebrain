@@ -29,12 +29,21 @@ import {
   type ComposioProviderConfig,
   setConnectorsConfig,
 } from "../../src/connectors/providers/config.ts";
+import {
+  _resetSmitheryConfigForTest,
+  SMITHERY_API_BASE,
+  validateSmitheryConfig,
+} from "../../src/connectors/providers/smithery/config.ts";
 import { _resetBouncerModeForTest } from "../../src/oauth/bouncer-config.ts";
 
 const ENV_KEYS = [
   "COMPOSIO_API_KEY",
   "COMPOSIO_API_BASE_URL",
   "COMPOSIO_MONITOR_ENABLED",
+  "SMITHERY_API_KEY",
+  "SMITHERY_NAMESPACE",
+  "SMITHERY_API_BASE_URL",
+  "SMITHERY_MONITOR_ENABLED",
   "NB_TENANT_ID",
   "NB_OAUTH_BOUNCER_CALLBACK_URL",
   "NB_OAUTH_BOUNCER_TENANT_KEY",
@@ -99,13 +108,13 @@ describe("the broker credential", () => {
   });
 });
 
-describe("settings — env fallback when no block is declared", () => {
+describe("settings — resolved from the declared block", () => {
   beforeEach(() => {
     process.env.COMPOSIO_API_KEY = "k_env";
   });
 
-  it("hydrates every setting from the env", () => {
-    process.env.COMPOSIO_API_BASE_URL = "https://composio.example.com";
+  it("resolves every setting the block declares", () => {
+    setConnectorsConfig({ providers: { composio: { baseUrl: "https://composio.example.com" } } });
 
     expect(validateComposioConfig()).toMatchObject({
       baseUrl: "https://composio.example.com",
@@ -117,30 +126,20 @@ describe("settings — env fallback when no block is declared", () => {
     expect(validateComposioConfig().baseUrl).toBe(COMPOSIO_API_BASE);
   });
 
-  it("honors the monitor kill switch, and only on an explicit false", () => {
-    // Default ON: disabled only by a case/whitespace-insensitive `false`, so a
-    // malformed value fails safe to enabled rather than silently stopping the probe.
-    for (const [value, expected] of [
-      ["false", false],
-      ["FALSE", false],
-      ["  false ", false],
-      ["true", true],
-      ["yes", true],
-      ["", true],
-    ] as const) {
-      process.env.COMPOSIO_MONITOR_ENABLED = value;
-      _resetComposioConfigForTest();
-      expect(validateComposioConfig().monitorEnabled).toBe(expected);
-    }
+  it("takes an explicit monitorEnabled: false", () => {
+    // A boolean in config, so there is no string parsing to fail safe around —
+    // that was the env fallback's problem, not this one's.
+    setConnectorsConfig({ providers: { composio: { monitorEnabled: false } } });
+    expect(validateComposioConfig().monitorEnabled).toBe(false);
   });
 
-  it("rejects a non-http(s) COMPOSIO_API_BASE_URL (open-redirect mitigation)", () => {
-    process.env.COMPOSIO_API_BASE_URL = "javascript:alert(1)";
+  it("rejects a non-http(s) baseUrl (open-redirect mitigation)", () => {
+    setConnectorsConfig({ providers: { composio: { baseUrl: "javascript:alert(1)" } } });
     expect(() => validateComposioConfig()).toThrow(/http\(s\)/);
   });
 
-  it("rejects a malformed COMPOSIO_API_BASE_URL", () => {
-    process.env.COMPOSIO_API_BASE_URL = "not a url";
+  it("rejects a malformed baseUrl", () => {
+    setConnectorsConfig({ providers: { composio: { baseUrl: "not a url" } } });
     expect(() => validateComposioConfig()).toThrow(/valid URL/);
   });
 
@@ -196,71 +195,36 @@ describe("settings — the declared block", () => {
   });
 });
 
-describe("precedence — per field, so nothing is silently discarded", () => {
+describe("the broker credential — the one value with two sources", () => {
+  // Settings resolve from the declared block only. `apiKey` is a secret, so the
+  // environment stays a legitimate home for it and the block may also carry one;
+  // it is the single exception, not the pattern (#839).
   beforeEach(() => {
     process.env.COMPOSIO_API_KEY = "k_env";
   });
 
-  it("a declared field wins over its env var", () => {
-    process.env.COMPOSIO_API_BASE_URL = "https://env.example.com";
-    declareComposio({ baseUrl: "https://config.example.com" });
-
-    expect(validateComposioConfig().baseUrl).toBe("https://config.example.com");
-  });
-
   it("a declared apiKey wins over COMPOSIO_API_KEY", () => {
-    // The direction the CHANGELOG, the schema description and both docs pages
-    // claim, and the one no test covered: every apiKey case set one source or
-    // the other, never both.
-    process.env.COMPOSIO_API_KEY = "k_env";
-    declareComposio({ apiKey: "k_config" });
-    expect(validateComposioConfig().apiKey).toBe("k_config");
+    declareComposio({ apiKey: "k_declared" });
+    expect(validateComposioConfig().apiKey).toBe("k_declared");
   });
 
-  it("a blank declared apiKey falls back to the env, like its siblings", () => {
-    process.env.COMPOSIO_API_KEY = "k_env";
+  it("a blank declared apiKey falls back to the env", () => {
+    // A templated deploy renders an unset value to "". Counting that as a
+    // declaration would discard the operator's key and disable the integration.
     declareComposio({ apiKey: "   " });
     expect(validateComposioConfig().apiKey).toBe("k_env");
   });
 
-  it("a field the block leaves out still reads its env var", () => {
-    // The regression this guards: an operator running with the probe off adds a
-    // block for an unrelated reason. Under whole-block precedence `monitorEnabled`
-    // would default back on and the revalidator would resume flipping connectors.
-    process.env.COMPOSIO_MONITOR_ENABLED = "false";
-    declareComposio({ baseUrl: "https://composio.staging" });
+  it("settings declared alongside it do not disturb the credential", () => {
+    declareComposio({ baseUrl: "https://composio.internal", monitorEnabled: false });
 
     const cfg = validateComposioConfig();
-    expect(cfg.baseUrl).toBe("https://composio.staging");
-    expect(cfg.monitorEnabled).toBe(false);
-  });
-
-  it("treats a blank declared value as absent, so the env fallback still applies", () => {
-    // A templated deploy renders an unset value to "". Counting that as a
-    // declaration would discard the operator's env value — the loss this
-    // precedence model exists to prevent.
-    process.env.COMPOSIO_API_BASE_URL = "https://composio.internal";
-    for (const blank of ["", "   "]) {
-      declareComposio({ baseUrl: blank });
-      expect(validateComposioConfig().baseUrl).toBe("https://composio.internal");
-    }
-  });
-
-  it("mixes the two sources in one resolution", () => {
-    process.env.COMPOSIO_API_BASE_URL = "https://env.example.com";
-    declareComposio({ monitorEnabled: false });
-
-    const cfg = validateComposioConfig();
-    expect(cfg.baseUrl).toBe("https://env.example.com");
+    expect(cfg.apiKey).toBe("k_env");
+    expect(cfg.baseUrl).toBe("https://composio.internal");
     expect(cfg.monitorEnabled).toBe(false);
   });
 });
 
-/**
- * Per-toolkit auth-config ids. Keyed by the toolkit slug the catalog entry
- * already carries, so declaring one adds no string that has to match anything
- * beyond the catalog itself — the coupling `auth-config-audit.ts` checks at boot.
- */
 describe("composioAuthConfigId", () => {
   it("reads the declared id for the toolkit", () => {
     declareComposio({ authConfigs: { gmail: "ac_declared" } });
@@ -287,5 +251,42 @@ describe("composioAuthConfigId", () => {
   it("trims a declared id", () => {
     declareComposio({ authConfigs: { gmail: "  ac_declared  " } });
     expect(composioAuthConfigId("gmail")).toBe("ac_declared");
+  });
+});
+
+/**
+ * The five settings vars are inert — the whole set, in one place.
+ *
+ * Each removal was verified individually when it landed, which is not the same
+ * as verifying the set: four of the five were reinstatable with the suite still
+ * green, because every other file deletes these names in `beforeEach` and a
+ * restored fallback finds nothing to read. Asserting them together, with all
+ * five *set*, is what makes the absence falsifiable.
+ *
+ * Not a substitute for deleting them from the env-key arrays elsewhere — those
+ * exist so a developer's `.env` can't reach the suite (#835), which is a
+ * different job from proving the code ignores them.
+ */
+describe("the five retired settings vars are inert", () => {
+  it("resolves defaults with every retired var set", () => {
+    process.env.COMPOSIO_API_KEY = "k_env";
+    process.env.SMITHERY_API_KEY = "sk_env";
+    process.env.COMPOSIO_API_BASE_URL = "https://composio.retired";
+    process.env.COMPOSIO_MONITOR_ENABLED = "false";
+    process.env.SMITHERY_NAMESPACE = "retired-ns";
+    process.env.SMITHERY_API_BASE_URL = "https://smithery.retired";
+    process.env.SMITHERY_MONITOR_ENABLED = "false";
+    setConnectorsConfig({ providers: { smithery: { namespace: "declared-ns" } } });
+    _resetComposioConfigForTest();
+    _resetSmitheryConfigForTest();
+
+    const composio = validateComposioConfig();
+    expect(composio.baseUrl).toBe(COMPOSIO_API_BASE);
+    expect(composio.monitorEnabled).toBe(true);
+
+    const smithery = validateSmitheryConfig();
+    expect(smithery.namespace).toBe("declared-ns");
+    expect(smithery.baseUrl).toBe(SMITHERY_API_BASE);
+    expect(smithery.monitorEnabled).toBe(true);
   });
 });

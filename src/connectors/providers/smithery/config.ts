@@ -1,13 +1,12 @@
 /**
  * Smithery provider configuration — the resolution of the declared
- * `connectors.providers.smithery` block against the legacy `SMITHERY_*` env.
+ * `connectors.providers.smithery` block.
  *
- * Same two-layer split as Composio's, on the same rule — what the value *is*,
- * not which vendor owns it:
+ * Same split as Composio's, on the same rule — what the value *is*, not which
+ * vendor owns it:
  *
- *   - **Settings** (`namespace`, `baseUrl`, `monitorEnabled`) are declarable and
- *     each falls back on its own, so an upgrade from the env-only era breaks
- *     nothing and declaring one setting can't disturb another.
+ *   - **Settings** (`namespace`, `baseUrl`, `monitorEnabled`) resolve from the
+ *     block alone. One value, one source (#839).
  *   - **The broker credential** is declarable too, because persisted state names
  *     the `smithery` credential provider rather than an env var — so where the
  *     value lives is this module's private business. See
@@ -36,7 +35,7 @@
 import { log } from "../../../observability/log.ts";
 import { declaredProviderConfig } from "../config.ts";
 
-/** Default Smithery Connect API host. Overridable via config `baseUrl` or `SMITHERY_API_BASE_URL`. */
+/** Default Smithery Connect API host. Overridable via config `baseUrl`. */
 export const SMITHERY_API_BASE = "https://api.smithery.ai";
 
 /** Max time a single Smithery Connect API call may run before we abort. */
@@ -78,8 +77,8 @@ export function validateSmitheryConfig(): SmitheryConfig {
 }
 
 /**
- * Resolve + validate the Connect API base: the declared value, else the env,
- * else the default. Extracted so the resolver stays within the complexity
+ * Resolve + validate the Connect API base: the declared value, else the
+ * default. Extracted so the resolver stays within the complexity
  * ceiling, same split as Composio's.
  *
  * Must be http(s) — the session URL derived from it becomes an installed
@@ -106,13 +105,10 @@ function resolveBaseUrl(raw: string): string {
 function resolveSmitheryConfig(): SmitheryConfig {
   const declared = declaredProviderConfig("smithery");
   const apiKey = declared?.apiKey?.trim() || (process.env.SMITHERY_API_KEY?.trim() ?? "");
-  // A blank declared value counts as *absent*, so the env fallback still
-  // applies. A templated deploy renders `"namespace": "{{ .Values… }}"` to `""`
-  // when the value is unset; treating that as a declaration would discard the
-  // operator's `SMITHERY_NAMESPACE` and silently leave the provider
-  // unregistered — the exact loss per-field precedence exists to prevent.
-  const namespace = declared?.namespace?.trim() || (process.env.SMITHERY_NAMESPACE?.trim() ?? "");
-  const rawBaseUrl = declared?.baseUrl?.trim() || (process.env.SMITHERY_API_BASE_URL?.trim() ?? "");
+  // A blank declared value counts as *absent* — a templated deploy renders
+  // `"namespace": "{{ .Values… }}"` to `""` when unset, which is not a declaration.
+  const namespace = declared?.namespace?.trim() ?? "";
+  const rawBaseUrl = declared?.baseUrl?.trim() ?? "";
 
   if (!apiKey) {
     log.info(
@@ -123,19 +119,20 @@ function resolveSmitheryConfig(): SmitheryConfig {
   }
   if (!namespace) {
     log.warn(
-      "[smithery] SMITHERY_API_KEY is set but no namespace resolved — integration disabled. " +
-        "Declare connectors.providers.smithery.namespace or set SMITHERY_NAMESPACE.",
+      "[smithery] a broker credential is set but no namespace is declared — integration " +
+        "disabled. Set connectors.providers.smithery.namespace in nimblebrain.json.",
     );
     return UNCONFIGURED;
   }
 
   const baseUrl = resolveBaseUrl(rawBaseUrl);
 
-  const monitorEnabled =
-    declared?.monitorEnabled ??
-    process.env.SMITHERY_MONITOR_ENABLED?.trim().toLowerCase() !== "false";
+  const monitorEnabled = declared?.monitorEnabled ?? true;
   if (!monitorEnabled) {
-    log.info("[smithery] connection revalidation disabled by config");
+    log.info(
+      "[smithery] connection revalidation disabled " +
+        "(connectors.providers.smithery.monitorEnabled)",
+    );
   }
 
   log.info(`[smithery] integration: configured (namespace=${namespace}, base=${baseUrl})`);

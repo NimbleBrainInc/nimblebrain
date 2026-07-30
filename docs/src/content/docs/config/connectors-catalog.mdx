@@ -139,7 +139,7 @@ servers:
         tags: [intelligence, research]
 ```
 
-The `url` is a placeholder — the install replaces it with the brokered session URL. A Smithery qualified name is global, so the entry is complete on its own and only the platform-wide `SMITHERY_API_KEY` + `SMITHERY_NAMESPACE` are deployment state. There is no tool allowlist either; the connection exposes the server's own surface.
+The `url` is a placeholder — the install replaces it with the brokered session URL. A Smithery qualified name is global, so the entry is complete on its own and only the platform-wide `SMITHERY_API_KEY` and the declared `connectors.providers.smithery.namespace` are deployment state. There is no tool allowlist either; the connection exposes the server's own surface.
 
 For `auth: static`, also include `operatorSetup`:
 

@@ -373,11 +373,11 @@
       "type": "object",
       "properties": {
         "providers": {
-          "description": "Declared providers, keyed by the connector auth-kind each owns. A provider is registered — and its routes, liveness probe, and vendor SDK reached — only when its broker credential is present. Each setting falls back to its legacy env var when the block leaves it out.",
+          "description": "Declared providers, keyed by the connector auth-kind each owns. A provider is registered — and its routes, liveness probe, and vendor SDK reached — only when its broker credential is present. Settings resolve from the block only; the broker credential also reads its <VENDOR>_API_KEY env var.",
           "type": "object",
           "properties": {
             "composio": {
-              "description": "Composio (auth broker + hosted MCP sessions). Each field falls back per field to its env var when left out: COMPOSIO_API_KEY, COMPOSIO_API_BASE_URL, COMPOSIO_MONITOR_ENABLED. Per-toolkit auth-config ids live in authConfigs.",
+              "description": "Composio (auth broker + hosted MCP sessions). Settings resolve from this block only; the broker credential also falls back to COMPOSIO_API_KEY. Per-toolkit auth-config ids live in authConfigs.",
               "type": "object",
               "properties": {
                 "apiKey": {
@@ -395,14 +395,14 @@
                 },
                 "monitorEnabled": {
                   "type": "boolean",
-                  "description": "Run Composio's arm of the connection-revalidator probe, which polls for connections whose downstream vendor account lapsed while the platform key stayed valid. Default: true when the provider is configured; falls back to COMPOSIO_MONITOR_ENABLED. The sweep cadence is provider-agnostic and is set via NB_CONNECTION_REVALIDATE_INTERVAL_SECONDS, not here.",
+                  "description": "Run Composio's arm of the connection-revalidator probe, which polls for connections whose downstream vendor account lapsed while the platform key stayed valid. Default: true when the provider is configured. The sweep cadence is provider-agnostic and is set via NB_CONNECTION_REVALIDATE_INTERVAL_SECONDS, not here.",
                   "default": true
                 }
               },
               "additionalProperties": false
             },
             "smithery": {
-              "description": "Smithery (auth broker + hosted MCP sessions). Each field falls back per field to its env var when left out: SMITHERY_API_KEY, SMITHERY_NAMESPACE, SMITHERY_API_BASE_URL, SMITHERY_MONITOR_ENABLED. The provider registers only when both a credential and a namespace resolve.",
+              "description": "Smithery (auth broker + hosted MCP sessions). Settings resolve from this block only; the broker credential also falls back to SMITHERY_API_KEY. The provider registers only when both a credential and a namespace resolve.",
               "type": "object",
               "properties": {
                 "apiKey": {
@@ -419,7 +419,7 @@
                 },
                 "monitorEnabled": {
                   "type": "boolean",
-                  "description": "Run Smithery's arm of the connection-revalidator probe. It detects a connection deleted at the broker; a lapsed authorization is logged, not flipped, until a verdict can carry a remedy URL. Default: true when the provider is configured; falls back to SMITHERY_MONITOR_ENABLED. The sweep cadence is provider-agnostic and is set via NB_CONNECTION_REVALIDATE_INTERVAL_SECONDS, not here.",
+                  "description": "Run Smithery's arm of the connection-revalidator probe. It detects a connection deleted at the broker; a lapsed authorization is logged, not flipped, until a verdict can carry a remedy URL. Default: true when the provider is configured. The sweep cadence is provider-agnostic and is set via NB_CONNECTION_REVALIDATE_INTERVAL_SECONDS, not here.",
                   "default": true
                 }
               },
