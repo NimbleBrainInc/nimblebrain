@@ -343,8 +343,6 @@
     padding 150ms;
 }
 .disclosure__head:hover { color: var(--foreground); opacity: 1; }
-.disclosure__head:disabled { cursor: default; }
-.disclosure__head:disabled:hover { opacity: 0.7; color: var(--muted-foreground); }
 .disclosure__head:focus-visible {
   outline: 2px solid var(--primary);
   outline-offset: 2px;
