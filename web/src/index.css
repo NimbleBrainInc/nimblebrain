@@ -734,19 +734,20 @@
   white-space: nowrap;
   min-width: 0;
 }
+/* Disclosure mark: the turn-pill's chevron glyph at the turn-pill's head size,
+   so the ledger line and the activity chip directly beneath it land on one right
+   edge. It must be a glyph drawn inside its box, not a rotated-border corner —
+   a rotated square's ink overflows its own box on both sides, and the message
+   wrapper (`overflow-hidden`) shaves the point off. Color is inherited, so the
+   chevron follows the head's muted→foreground lift on expand. */
 .ledger-line__chev {
   margin-left: auto;
   flex-shrink: 0;
-  width: 7px;
-  height: 7px;
-  border-right: 1.5px solid currentColor;
-  border-bottom: 1.5px solid currentColor;
-  transform: rotate(-45deg);
   opacity: 0.6;
   transition: transform 180ms ease;
 }
 .ledger-line[data-expanded="true"] .ledger-line__chev {
-  transform: rotate(45deg);
+  transform: rotate(90deg);
 }
 
 /* Drawer — the turn-pill__body grammar. Reveal motion is gated on

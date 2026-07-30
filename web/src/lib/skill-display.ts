@@ -62,7 +62,7 @@ export interface SkillMechanismInput {
 
 /**
  * Resting mechanism line for a catalog row, in the ledger's vocabulary
- * ("Following …" in chat; "Always on / On tool match / On trigger" here).
+ * ("Using …" in chat; "Always on / On tool match / On trigger" here).
  *
  * `loading` is derived server-side by `resolveLoadingMechanism` and is the
  * only input trusted here — re-deriving it from `loadingStrategy`/affinity/

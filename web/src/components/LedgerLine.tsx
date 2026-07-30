@@ -1,3 +1,4 @@
+import { ChevronRight } from "lucide-react";
 import { useState } from "react";
 import { Link } from "react-router-dom";
 import { useWorkspaceContext } from "../context/WorkspaceContext";
@@ -32,7 +33,7 @@ export function LedgerLine({ skills }: { skills: SkillsLoadedContext | undefined
   // Skills are workspace-scoped; "Manage" targets the focused workspace.
   const skillsPath = activeWorkspace ? `/w/${toSlug(activeWorkspace.id)}/settings/skills` : "/";
 
-  const verb = count === 1 ? `Following ${entries[0]!.name}` : `Following ${count} skills`;
+  const verb = count === 1 ? `Using ${entries[0]!.name}` : `Using ${count} skills`;
   // One skill → its (stripped) reason; many → the aggregate token cost.
   const meta =
     count === 1
@@ -50,7 +51,7 @@ export function LedgerLine({ skills }: { skills: SkillsLoadedContext | undefined
         <span className="ledger-line__dot" aria-hidden />
         <span className="ledger-line__verb">{verb}</span>
         {meta && <span className="ledger-line__meta">· {meta}</span>}
-        <span className="ledger-line__chev" aria-hidden />
+        <ChevronRight className="ledger-line__chev" style={{ width: 14, height: 14 }} aria-hidden />
       </button>
       {expanded && (
         <div className="ledger-line__body">
