@@ -146,10 +146,10 @@ export interface LoadedConversationMeta {
    * The workspace this conversation is sealed to (from the server's
    * `conversations__get` metadata). The panel uses it to avoid resuming a
    * conversation that belongs to a workspace other than the one currently
-   * focused — see `ChatProvider`'s re-scope effect and `useChat.sendMessage`.
-   * Absent on legacy records with no stamped workspace (they read as the
-   * owner's personal workspace); absence means "workspace unknown — don't
-   * reconcile", which preserves the open-in-progress race guard.
+   * focused — see `ChatProvider`'s re-scope effect. Absent on legacy records
+   * with no stamped workspace (they read as the owner's personal workspace);
+   * absence means "workspace unknown — don't reconcile", which preserves the
+   * open-in-progress race guard.
    */
   workspaceId?: string;
 }

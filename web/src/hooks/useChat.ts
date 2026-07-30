@@ -62,18 +62,12 @@ export interface UseChatReturn {
  * back shows the still-arriving response because the background stream kept
  * filling its origin slice.
  *
- * `focusWorkspaceId` is the workspace the chat is FOCUSED on (the `/w/:slug`
- * the user is viewing). `useChat` does not consume it — the cross-workspace
- * re-scope lives entirely in `ChatProvider` (`ChatContext.tsx`), which derives
- * the focus and clears the panel when the open conversation belongs to a
- * different workspace. Accepted here only for API compatibility with that
- * provider's call.
+ * This hook knows nothing about workspaces: the cross-workspace re-scope lives
+ * entirely in `ChatProvider` (`ChatContext.tsx`), which compares the focused
+ * workspace to the open conversation's own and clears the panel when they
+ * differ.
  */
-export function useChat(
-  initialConversationId?: string,
-  currentUserId?: string,
-  _focusWorkspaceId?: string | null,
-): UseChatReturn {
+export function useChat(initialConversationId?: string, currentUserId?: string): UseChatReturn {
   const [activeKey, setActiveKey] = useState(() => {
     const key = initialConversationId ?? freshDraftKey();
     chatStore.ensureSlice(

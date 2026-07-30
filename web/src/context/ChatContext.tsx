@@ -91,7 +91,7 @@ export function ChatProvider({
   const focusWorkspaceId = location.pathname.startsWith("/w/")
     ? (activeWorkspace?.id ?? null)
     : null;
-  const chat = useChat(initialConversationId, currentUserId, focusWorkspaceId);
+  const chat = useChat(initialConversationId, currentUserId);
 
   // Drop every cached conversation slice when the signed-in user changes
   // (logout → login as someone else in the same tab). The store is a module
