@@ -76,13 +76,23 @@ describe("bootstrap — personal workspace surfaces", () => {
 
   test("with both personal + shared workspaces, only the personal one is flagged", async () => {
     const store = runtime.getWorkspaceStore();
-    await ensureUserWorkspace(store, { id: "user_alice" });
+    // Shared first, personal second: `list()` sorts ascending by createdAt, so
+    // the personal workspace is NOT `userWorkspaces[0]`. That is what makes the
+    // default-focus fallback observable — with the personal workspace first,
+    // both of its operands alias and no assertion can tell them apart.
     const shared = await store.create("Team Alpha", "team_alpha");
     await store.addMember(shared.id, "user_alice", "member");
+    await ensureUserWorkspace(store, { id: "user_alice" });
 
     const body = await bootstrapFor("user_alice");
 
     expect(body.workspaces).toHaveLength(2);
+    // Guards the ordering the assertion below depends on: if these ever tie on
+    // createdAt this fails loudly instead of going quietly vacuous.
+    expect(body.workspaces[0]?.id).toBe(shared.id);
+    // Discriminates the branch — the personal workspace wins over the first
+    // membership. The only assertion in the repo that does.
+    expect(body.activeWorkspace).toBe("ws_user_user_alice");
     const personal = body.workspaces.find((w) => w.id === "ws_user_user_alice")!;
     const sharedEntry = body.workspaces.find((w) => w.id === shared.id)!;
     expect(personal.isPersonal).toBe(true);
@@ -99,8 +109,9 @@ describe("bootstrap — personal workspace surfaces", () => {
 
     expect(body.workspaces).toHaveLength(1);
     expect(body.workspaces[0]?.isPersonal).toBe(false);
-    // With no personal candidate, the default focus falls through to the first
-    // membership — the only assertion in the suite that pins that branch.
+    // With no personal candidate the focus falls through to the only membership.
+    // Both operands alias here, so this pins the resolved value rather than which
+    // branch produced it; the personal + shared test above discriminates.
     expect(body.activeWorkspace).toBe(shared.id);
   });
 
