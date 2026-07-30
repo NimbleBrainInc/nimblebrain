@@ -2,6 +2,7 @@ import { createAnthropic } from "@ai-sdk/anthropic";
 import { createGoogleGenerativeAI } from "@ai-sdk/google";
 import { createOpenAI } from "@ai-sdk/openai";
 import type { LanguageModelV3, ProviderV3 } from "@ai-sdk/provider";
+import { createXai } from "@ai-sdk/xai";
 import { createProviderRegistry, type Provider } from "ai";
 import { findProviderForModelId } from "./catalog.ts";
 import { wrapFetchWithLiveness } from "./fetch-liveness.ts";
@@ -12,6 +13,7 @@ export interface ProvidersConfig {
     openai?: { apiKey?: string; baseURL?: string; organization?: string; models?: string[] };
     google?: { apiKey?: string; models?: string[] };
     nebius?: { apiKey?: string; baseURL?: string; models?: string[] };
+    xai?: { apiKey?: string; baseURL?: string; models?: string[] };
   };
 }
 
@@ -82,6 +84,23 @@ export function buildRegistry(config: ProvidersConfig): Provider {
       name: "nebius",
     });
     providers.nebius = { ...nebius, languageModel: (modelId: string) => nebius.chat(modelId) };
+  }
+
+  if (providersCfg.xai) {
+    const { apiKey, baseURL } = providersCfg.xai;
+    // No fail-closed key guard, unlike nebius above, and the asymmetry is
+    // deliberate: createXai's own env fallback is XAI_API_KEY — its own
+    // variable — so an absent key cannot send another provider's credential to
+    // x.ai. That hazard is specific to reaching a third-party host through
+    // createOpenAI, whose fallback is OPENAI_API_KEY. This follows the
+    // openai/google shape instead: pass what config has and let the adapter
+    // read its own env.
+    //
+    // `.languageModel()` binds Chat Completions on this adapter version
+    // (XaiChatLanguageModel, provider "xai.chat"), so no `.chat()` re-wrap is
+    // needed. That default flips to the Responses API in the adapter's next
+    // major — pin the call explicitly if this dependency is ever bumped across it.
+    providers.xai = createXai({ apiKey, baseURL });
   }
 
   return createProviderRegistry(providers);

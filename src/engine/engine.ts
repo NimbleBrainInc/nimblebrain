@@ -18,6 +18,9 @@ import {
   OPENAI_EFFORTS,
   openaiSupportedEfforts,
   supportsEnabledThinking,
+  XAI_EFFORTS,
+  type XAIEffort,
+  xaiSupportedEfforts,
 } from "../model/catalog.ts";
 import { normalizeForReplay } from "../model/inbound-fit.ts";
 import { callModel, type StreamResult } from "../model/stream.ts";
@@ -160,6 +163,11 @@ function toGoogleLevel(effort: ThinkingEffort): GoogleThinkingLevel {
   return effort === "xhigh" || effort === "max" ? "high" : effort;
 }
 
+/** xAI's ladder tops out at `high`, so the two tiers above it clamp. */
+function toXaiEffort(effort: ThinkingEffort): XAIEffort {
+  return effort === "xhigh" || effort === "max" ? "high" : effort;
+}
+
 /**
  * The deepest level at or below the one requested that this model accepts.
  *
@@ -289,6 +297,48 @@ function buildOpenAIThinkingOptions(
   }
 }
 
+/**
+ * Build xAI's options.
+ *
+ * A separate function from the OpenAI one on purpose, for two independent
+ * reasons — do not merge them.
+ *
+ * 1. **The key differs.** `@ai-sdk/xai` reads `providerOptions.xai`, where
+ *    `@ai-sdk/openai` hardcodes `openai` regardless of the instance name. An
+ *    `openai` key here is silently dropped: no error, every call at the model's
+ *    own default. The rule is that a provider-options key follows its *adapter*,
+ *    not the wire protocol it speaks.
+ * 2. **`off` is honorable here.** `reasoning_effort: "none"` measurably
+ *    suppresses (`reasoning_tokens: 0`), which no other non-Anthropic provider
+ *    offers, so `off` sends something instead of giving up.
+ *
+ * Support is per-model and fail-closed: a model with no measured ladder, or a
+ * measured-empty one (reasons but exposes no knob), gets nothing rather than a
+ * guess. Sending a tier to those 400s the call outright.
+ */
+function buildXaiThinkingOptions(
+  model: string,
+  thinking: ResolvedThinking,
+): SharedV3ProviderOptions {
+  const supported = xaiSupportedEfforts(model);
+  if (!supported || supported.size === 0) return {};
+
+  switch (thinking.mode) {
+    case "off":
+      // Only where measured — `grok-4.5` rejects `none` while taking the rest,
+      // so this cannot be assumed from the provider.
+      return supported.has("none") ? { xai: { reasoningEffort: "none" } } : {};
+    case "adaptive":
+      // No adaptive equivalent; the model applies its own per-call default.
+      return {};
+    case "effort":
+    case "enabled": {
+      const tier = pickTier(toXaiEffort(thinking.effort), supported, XAI_EFFORTS, thinking.source);
+      return tier ? { xai: { reasoningEffort: tier } } : {};
+    }
+  }
+}
+
 /** Google models already warned about, so an unmapped one is reported once per process. */
 const warnedUnmappedGoogle = new Set<string>();
 
@@ -413,6 +463,8 @@ function buildThinkingProviderOptions(
     case "openai":
     case "nebius":
       return buildOpenAIThinkingOptions(model, thinking);
+    case "xai":
+      return buildXaiThinkingOptions(model, thinking);
     case "google":
       return buildGoogleThinkingOptions(model, thinking, maxOutputTokens);
     default:

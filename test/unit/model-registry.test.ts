@@ -100,6 +100,34 @@ describe("buildRegistry", () => {
       else process.env.NEBIUS_API_KEY = prev;
     }
   });
+
+  it("resolves xai models through Chat Completions", () => {
+    const registry = buildRegistry({ providers: { xai: { apiKey: "xai-test-key" } } });
+    const model = registry.languageModel("xai:grok-4.5");
+    expect(model).toBeDefined();
+    expect(model.specificationVersion).toBe("v3");
+    // `.languageModel()` binds Chat Completions on this adapter version. The
+    // adapter's next major flips that default to the Responses API, so this
+    // assertion is what catches an unreviewed dependency bump across it.
+    expect(model.provider).toBe("xai.chat");
+    expect(model.modelId).toBe("grok-4.5");
+  });
+
+  it("does not fail closed when xai has no key, unlike nebius", () => {
+    // The nebius guard exists because createOpenAI falls back to
+    // OPENAI_API_KEY, so a keyless nebius would send the operator's OpenAI
+    // credential to a third-party host. createXai falls back to XAI_API_KEY —
+    // its own variable — so there is nothing to leak and no guard to justify.
+    // Asserted so nobody "unifies" the two branches on symmetry grounds.
+    const prev = process.env.XAI_API_KEY;
+    process.env.XAI_API_KEY = "";
+    try {
+      expect(() => buildRegistry({ providers: { xai: {} } })).not.toThrow();
+    } finally {
+      if (prev === undefined) delete process.env.XAI_API_KEY;
+      else process.env.XAI_API_KEY = prev;
+    }
+  });
 });
 
 describe("buildModelResolver", () => {

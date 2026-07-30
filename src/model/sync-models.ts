@@ -2,17 +2,18 @@
 /**
  * Sync model catalog from models.dev.
  *
- * Fetches the full API, filters to supported providers (anthropic, openai, google),
- * normalizes the data, and writes catalog-data.json.
+ * Fetches the full API, filters to supported providers (anthropic, openai,
+ * google, xai), normalizes the data, and writes catalog-data.json.
  *
  * Run: bun run sync-models
  */
 
 import { writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
+import { DEFAULT_MAX_OUTPUT_TOKENS } from "../limits.ts";
 
 const API_URL = "https://models.dev/api.json";
-const SUPPORTED_PROVIDERS = ["anthropic", "openai", "google"];
+const SUPPORTED_PROVIDERS = ["anthropic", "openai", "google", "xai"];
 const OUTPUT_PATH = join(dirname(new URL(import.meta.url).pathname), "catalog-data.json");
 
 // Models present upstream that the platform deliberately does not surface —
@@ -21,6 +22,12 @@ const OUTPUT_PATH = join(dirname(new URL(import.meta.url).pathname), "catalog-da
 const MANUAL_EXCLUSIONS = new Set<string>([
   // Anthropic's premium research tier ($10/$50 per 1M) — not offered on the platform.
   "anthropic:claude-fable-5",
+  // Priced and listed upstream, but the Chat Completions endpoint refuses it
+  // outright: `400 "Multi Agent requests are not allowed on chat completions"`,
+  // returned ahead of even the billing gate. The runtime speaks Chat Completions
+  // to xAI, so this model is unreachable rather than merely limited — upstream's
+  // `tool_call: false` understates it.
+  "xai:grok-4.20-multi-agent-0309",
 ]);
 
 // Upstream reports each model's maximum limits, but some maxima are only
@@ -33,6 +40,26 @@ const MANUAL_EXCLUSIONS = new Set<string>([
 const MANUAL_LIMIT_OVERRIDES: Record<string, { context?: number; output?: number }> = {
   "anthropic:claude-sonnet-4-5": { context: 200000 },
   "anthropic:claude-sonnet-4-5-20250929": { context: 200000 },
+  // xAI publishes no per-model max-output cap — neither `/v1/models` nor
+  // `/v1/language-models` carries the field, and the endpoint accepts
+  // `max_tokens` all the way up to `context_length` (measured). Upstream
+  // represents that as `output == context`, which is honest but unusable as a
+  // ceiling here: `resolveMaxOutputTokens` returns the catalog `limits.output`
+  // when no operator override is set, and `resolveMessageBudget` then computes
+  // `context - system - tools - maxOutput - safety` — negative, so the budget
+  // resolves to 0 and every turn fails. Pin to the platform default, which is
+  // the same resolution `sync-nebius.ts` reaches for the same reason.
+  //
+  // Only the models upstream reports at `output == context` are listed. The
+  // grok-4.20 line reports a real 30000 cap against a 1M window and is left
+  // alone — the rule is "pin when upstream declares no separate cap", not
+  // "cap every xAI model".
+  //
+  // Note this also caps an operator override, since `resolveMaxOutputTokens`
+  // clamps `configValue` down to the ceiling. That matches every Nebius model
+  // today and is the accepted posture; raising it means raising this number.
+  "xai:grok-4.5": { output: DEFAULT_MAX_OUTPUT_TOKENS },
+  "xai:grok-build-0.1": { output: DEFAULT_MAX_OUTPUT_TOKENS },
 };
 
 // Models the upstream API hasn't flagged yet but we know are scheduled for shutdown.

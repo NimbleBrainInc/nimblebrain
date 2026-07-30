@@ -5,6 +5,7 @@ import {
   getProviderFromModel,
   googleThinkingSupport,
   openaiAcceptsMinimalEffort,
+  xaiSupportedEfforts,
 } from "../model/catalog.ts";
 import { log } from "../observability/log.ts";
 import { type TokenUsage, tokenUsageFromV3 } from "../usage/types.ts";
@@ -146,6 +147,31 @@ const BRIEFING_RESPONSE_SCHEMA = {
  * IS the engine's rule, kept here so one provider isn't split across two files
  * for three lines.
  */
+function shortCallGoogleOptions(modelString: string): SharedV3ProviderOptions {
+  // A budget is the Gemini 2.5 dialect, and the two do not overlap: sent to
+  // a Gemini 3 model it is rejected outright (`gemini-3.6-flash` 400s on
+  // "invalid argument", `gemini-3.1-pro-preview` with "Budget 0 is invalid.
+  // This model only works in thinking mode."), and 2.5 models that cannot
+  // disable thinking reject a 0 as well. This runs on every home load, so
+  // the wrong dialect is a briefing that never renders.
+  const support = googleThinkingSupport(modelString);
+  if (!support) return {};
+  if (support.dialect === "level") {
+    // The lowest level the model offers, which is NOT the same rule the
+    // engine applies for `thinking: "off"`. There, stepping up from
+    // `minimal` to `low` would answer "don't reason" with an instruction
+    // to reason, so it sends nothing. Here the caller is asking for as
+    // little as possible on a call that runs on every home load, and on a
+    // model without `minimal` — `gemini-3.1-pro-preview` offers only
+    // {low, medium, high} — sending nothing is the *most* expensive
+    // option, not the cheapest: the model falls back to its own default.
+    // `low` is the honest answer to "as little as possible" there.
+    const lowest = GOOGLE_THINKING_LEVELS.find((l) => support.levels.has(l));
+    return lowest ? { google: { thinkingConfig: { thinkingLevel: lowest } } } : {};
+  }
+  return support.canDisable ? { google: { thinkingConfig: { thinkingBudget: 0 } } } : {};
+}
+
 function shortCallProviderOptions(modelString: string | null): SharedV3ProviderOptions {
   if (!modelString) return {};
   const provider = getProviderFromModel(modelString);
@@ -154,30 +180,8 @@ function shortCallProviderOptions(modelString: string | null): SharedV3ProviderO
   switch (provider) {
     case "anthropic":
       return { anthropic: { thinking: { type: "disabled" } } };
-    case "google": {
-      // A budget is the Gemini 2.5 dialect, and the two do not overlap: sent to
-      // a Gemini 3 model it is rejected outright (`gemini-3.6-flash` 400s on
-      // "invalid argument", `gemini-3.1-pro-preview` with "Budget 0 is invalid.
-      // This model only works in thinking mode."), and 2.5 models that cannot
-      // disable thinking reject a 0 as well. This runs on every home load, so
-      // the wrong dialect is a briefing that never renders.
-      const support = googleThinkingSupport(modelString);
-      if (!support) return {};
-      if (support.dialect === "level") {
-        // The lowest level the model offers, which is NOT the same rule the
-        // engine applies for `thinking: "off"`. There, stepping up from
-        // `minimal` to `low` would answer "don't reason" with an instruction
-        // to reason, so it sends nothing. Here the caller is asking for as
-        // little as possible on a call that runs on every home load, and on a
-        // model without `minimal` — `gemini-3.1-pro-preview` offers only
-        // {low, medium, high} — sending nothing is the *most* expensive
-        // option, not the cheapest: the model falls back to its own default.
-        // `low` is the honest answer to "as little as possible" there.
-        const lowest = GOOGLE_THINKING_LEVELS.find((l) => support.levels.has(l));
-        return lowest ? { google: { thinkingConfig: { thinkingLevel: lowest } } } : {};
-      }
-      return support.canDisable ? { google: { thinkingConfig: { thinkingBudget: 0 } } } : {};
-    }
+    case "google":
+      return shortCallGoogleOptions(modelString);
     case "openai":
       // Almost no model takes `minimal` — 22 of the 25 reachable reasoning
       // models reject it, including every mainline model from gpt-5.1 on and
@@ -197,6 +201,16 @@ function shortCallProviderOptions(modelString: string | null): SharedV3ProviderO
       // clean JSON within the 1500-token budget (finish=stop, no reasoning
       // dump).
       return {};
+    case "xai":
+      // The one provider here with a true suppressor. `reasoning_effort: "none"`
+      // measurably zeroes the reasoning trace, so on a call that runs on every
+      // home load it is worth sending — unlike OpenAI's `minimal` (still
+      // reasoning, mostly rejected) or Nebius (floor is `low`). Gated on the
+      // measured table because `grok-4.5` rejects `none` specifically while
+      // accepting the tiers above it, and a model with no knob 400s on any value.
+      return xaiSupportedEfforts(modelString)?.has("none")
+        ? { xai: { reasoningEffort: "none" } }
+        : {};
     default:
       return {};
   }

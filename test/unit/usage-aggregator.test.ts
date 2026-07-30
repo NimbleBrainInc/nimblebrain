@@ -6,6 +6,7 @@ describe("normalizeModel", () => {
     // The prefix strip is generic so a new provider needs no code change here
     // (or in the sibling copies in the usage UIs). Nebius model ids carry an
     // org/model path that must survive intact.
+    expect(normalizeModel("xai:grok-4.5")).toBe("grok-4.5");
     expect(normalizeModel("nebius:Qwen/Qwen3-32B")).toBe("Qwen/Qwen3-32B");
     expect(normalizeModel("nebius:deepseek-ai/DeepSeek-V4-Pro")).toBe("deepseek-ai/DeepSeek-V4-Pro");
   });

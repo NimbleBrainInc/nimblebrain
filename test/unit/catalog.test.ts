@@ -16,6 +16,9 @@ import {
 	openaiSupportedEfforts,
 	openaiUnmeasuredReasoningModels,
 	supportsEnabledThinking,
+	xaiEffortModelIds,
+	xaiSupportedEfforts,
+	xaiUnmeasuredReasoningModels,
 } from "../../src/model/catalog.ts";
 import { estimateCost } from "../../src/usage/cost.ts";
 
@@ -421,5 +424,65 @@ describe("OpenAI effort support", () => {
 		// CI instead. Note the guard cannot be "every -pro id has a row":
 		// o3-pro is -pro, was measured, and correctly takes the full ladder.
 		expect(openaiUnmeasuredReasoningModels()).toEqual([]);
+	});
+});
+
+describe("xai effort support", () => {
+	it("classifies only real catalog models", () => {
+		for (const id of xaiEffortModelIds()) {
+			expect(getModel("xai", id), `${id} is not in the catalog`).toBeDefined();
+		}
+	});
+
+	it("has measured every catalog reasoning model", () => {
+		// Fail-closed, so an unmeasured model degrades to "no reasoning options"
+		// rather than a 400 — the safe direction, unlike OpenAI's permissive
+		// default. Still a gap: a newly-synced Grok would silently never reason.
+		expect(xaiUnmeasuredReasoningModels()).toEqual([]);
+	});
+
+	it("gives an unlisted model no options at all", () => {
+		// The opposite of `openaiSupportedEfforts`, which hands an unknown id the
+		// full ladder. Two models on this provider reject every tier, so a
+		// permissive default would 400 rather than degrade.
+		expect(xaiSupportedEfforts("xai:not-a-model")).toBeUndefined();
+	});
+
+	it("records `none` only where it is measured to work", () => {
+		// grok-4.3 accepts it and returns reasoning_tokens: 0; grok-4.5 rejects
+		// that specific value while accepting the tiers above it.
+		expect(xaiSupportedEfforts("xai:grok-4.3")?.has("none")).toBe(true);
+		expect(xaiSupportedEfforts("xai:grok-4.5")?.has("none")).toBe(false);
+		expect([...(xaiSupportedEfforts("xai:grok-4.5") ?? [])].sort()).toEqual([
+			"high",
+			"low",
+			"medium",
+		]);
+	});
+
+	it("distinguishes reasons-but-no-knob from does-not-reason", () => {
+		// Both get an empty ladder, but the capability flag differs — the flag
+		// says whether the model reasons, the table says whether you can ask.
+		// Flipping the flag to dodge the 400 would misreport reasoning cost.
+		expect(xaiSupportedEfforts("xai:grok-4.20-0309-reasoning")?.size).toBe(0);
+		expect(getModel("xai", "grok-4.20-0309-reasoning")?.capabilities.reasoning).toBe(true);
+		expect(xaiSupportedEfforts("xai:grok-4.20-0309-non-reasoning")?.size).toBe(0);
+		expect(getModel("xai", "grok-4.20-0309-non-reasoning")?.capabilities.reasoning).toBe(false);
+	});
+
+	it("keeps max output under the context window", () => {
+		// xAI publishes no max-output cap and accepts max_tokens up to the full
+		// window, which upstream reports as output == context. Left alone, the
+		// message budget resolves to 0 and every turn fails — see
+		// MANUAL_LIMIT_OVERRIDES in sync-models.ts.
+		for (const id of ["grok-4.5", "grok-build-0.1"]) {
+			const m = getModel("xai", id);
+			expect(m, `${id} missing`).toBeDefined();
+			expect(m!.limits.output).toBeLessThan(m!.limits.context);
+		}
+	});
+
+	it("excludes the multi-agent model, which chat completions refuses", () => {
+		expect(getModel("xai", "grok-4.20-multi-agent-0309")).toBeUndefined();
 	});
 });
