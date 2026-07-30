@@ -1,7 +1,6 @@
 /**
- * /v1/bootstrap surfaces the personal workspace identity:
- *   - workspaces[].isPersonal flag per entry
- *   - top-level personalWorkspaceId
+ * /v1/bootstrap surfaces the personal workspace identity via the
+ * `workspaces[].isPersonal` flag on each entry.
  *
  * Runs handleBootstrap directly against a real Runtime — no HTTP server
  * needed since the handler accepts (Request, Runtime, identity) and
@@ -27,7 +26,6 @@ interface BootstrapResponse {
     bundleCount: number;
     isPersonal: boolean;
   }>;
-  personalWorkspaceId: string | null;
   activeWorkspace: string | null;
 }
 
@@ -63,12 +61,11 @@ async function bootstrapFor(userId: string): Promise<BootstrapResponse> {
 }
 
 describe("bootstrap — personal workspace surfaces", () => {
-  test("user with a fresh personal workspace gets personalWorkspaceId + isPersonal=true", async () => {
+  test("a fresh personal workspace reports isPersonal=true", async () => {
     await ensureUserWorkspace(runtime.getWorkspaceStore(), { id: "user_alice" });
 
     const body = await bootstrapFor("user_alice");
 
-    expect(body.personalWorkspaceId).toBe("ws_user_user_alice");
     expect(body.workspaces).toHaveLength(1);
     expect(body.workspaces[0]).toMatchObject({
       id: "ws_user_user_alice",
@@ -77,7 +74,7 @@ describe("bootstrap — personal workspace surfaces", () => {
     });
   });
 
-  test("user with both personal + shared workspaces gets the right personalWorkspaceId", async () => {
+  test("with both personal + shared workspaces, only the personal one is flagged", async () => {
     const store = runtime.getWorkspaceStore();
     await ensureUserWorkspace(store, { id: "user_alice" });
     const shared = await store.create("Team Alpha", "team_alpha");
@@ -85,7 +82,6 @@ describe("bootstrap — personal workspace surfaces", () => {
 
     const body = await bootstrapFor("user_alice");
 
-    expect(body.personalWorkspaceId).toBe("ws_user_user_alice");
     expect(body.workspaces).toHaveLength(2);
     const personal = body.workspaces.find((w) => w.id === "ws_user_user_alice")!;
     const sharedEntry = body.workspaces.find((w) => w.id === shared.id)!;
@@ -93,7 +89,7 @@ describe("bootstrap — personal workspace surfaces", () => {
     expect(sharedEntry.isPersonal).toBe(false);
   });
 
-  test("user with no personal workspace (pre-migration) returns personalWorkspaceId: null", async () => {
+  test("a pre-migration user with no personal workspace has none flagged", async () => {
     const store = runtime.getWorkspaceStore();
     // Create only a shared workspace; do NOT call ensureUserWorkspace.
     const shared = await store.create("Shared Only", "shared_only");
@@ -101,7 +97,6 @@ describe("bootstrap — personal workspace surfaces", () => {
 
     const body = await bootstrapFor("user_bob");
 
-    expect(body.personalWorkspaceId).toBeNull();
     expect(body.workspaces).toHaveLength(1);
     expect(body.workspaces[0]?.isPersonal).toBe(false);
   });
@@ -114,6 +109,5 @@ describe("bootstrap — personal workspace surfaces", () => {
     const body = await bootstrapFor("user_carol");
 
     expect(body.workspaces[0]?.isPersonal).toBe(false);
-    expect(body.personalWorkspaceId).toBeNull();
   });
 });
