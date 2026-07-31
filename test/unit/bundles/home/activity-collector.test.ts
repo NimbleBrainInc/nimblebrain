@@ -35,11 +35,12 @@ function writeEventConv(
   id: string,
   ts: string,
   llmResponses: Array<{ inputTokens: number; outputTokens: number }>,
+  userText = "hi",
 ): void {
   const meta = { id, createdAt: ts, updatedAt: ts, title: null, format: "events" };
   const lines = [JSON.stringify(meta)];
   lines.push(
-    JSON.stringify({ ts, type: "user.message", content: [{ type: "text", text: "hi" }] }),
+    JSON.stringify({ ts, type: "user.message", content: [{ type: "text", text: userText }] }),
   );
   for (const r of llmResponses) {
     lines.push(JSON.stringify({ ts, type: "run.start", runId: "r1", model: "m1" }));
@@ -65,9 +66,10 @@ function writeLegacyConv(
   id: string,
   ts: string,
   assistantUsage: { inputTokens: number; outputTokens: number; model: string },
+  userText = "hi",
 ): void {
   const meta = { id, createdAt: ts, updatedAt: ts, title: null };
-  const userMsg = { role: "user", content: "hi", timestamp: ts };
+  const userMsg = { role: "user", content: userText, timestamp: ts };
   const assistantMsg = {
     role: "assistant",
     content: "ok",
@@ -145,5 +147,78 @@ describe("home ActivityCollector — conversation summaries", () => {
     expect(result.totals.conversations).toBe(2);
     expect(result.totals.input_tokens).toBe(300);
     expect(result.totals.output_tokens).toBe(130);
+  });
+});
+
+/**
+ * The preview is a conversation's first user message and activity output is a
+ * tool response, so an uncapped preview spends the agent's context window on
+ * whatever the user happened to paste. Both JSONL extraction paths cap it.
+ *
+ * The assertions pin the cap, not a particular truncated string — where the
+ * word boundary lands is a formatting detail, the bound is the contract.
+ */
+describe("home ActivityCollector — preview is capped", () => {
+  const PREVIEW_MAX_CHARS = 200;
+  // A long pasted document: no short-circuiting on whitespace runs, and long
+  // enough that an uncapped preview is unmistakable.
+  const longMessage = `${"lorem ipsum dolor sit amet ".repeat(80)}TAIL`;
+
+  test("caps the preview extracted from a user.message content array", async () => {
+    const ts = new Date().toISOString();
+    writeEventConv("conv_long_event", ts, [{ inputTokens: 10, outputTokens: 5 }], longMessage);
+
+    const collector = new ActivityCollector({
+      logDir,
+      conversations: { kind: "jsonl", conversationsDir },
+      automationRunsDir: join(workDir, "automations", "runs"),
+    });
+    const result = await collector.collect({ limit: 10 });
+
+    const conv = result.conversations[0]!;
+    expect(conv.id).toBe("conv_long_event");
+    expect(conv.preview.length).toBeLessThanOrEqual(PREVIEW_MAX_CHARS);
+    expect(conv.preview.length).toBeGreaterThan(0);
+    expect(conv.preview).not.toContain("TAIL");
+    // The head survives — the cap shortens the label, it doesn't blank it.
+    expect(conv.preview.startsWith("lorem ipsum")).toBe(true);
+  });
+
+  test("caps the preview extracted from a role-tagged user string", async () => {
+    const ts = new Date().toISOString();
+    writeLegacyConv(
+      "conv_long_legacy",
+      ts,
+      { inputTokens: 10, outputTokens: 5, model: "claude-sonnet-4-5-20250929" },
+      longMessage,
+    );
+
+    const collector = new ActivityCollector({
+      logDir,
+      conversations: { kind: "jsonl", conversationsDir },
+      automationRunsDir: join(workDir, "automations", "runs"),
+    });
+    const result = await collector.collect({ limit: 10 });
+
+    const conv = result.conversations[0]!;
+    expect(conv.id).toBe("conv_long_legacy");
+    expect(conv.preview.length).toBeLessThanOrEqual(PREVIEW_MAX_CHARS);
+    expect(conv.preview.length).toBeGreaterThan(0);
+    expect(conv.preview).not.toContain("TAIL");
+    expect(conv.preview.startsWith("lorem ipsum")).toBe(true);
+  });
+
+  test("leaves a preview shorter than the cap untouched", async () => {
+    const ts = new Date().toISOString();
+    writeEventConv("conv_short", ts, [{ inputTokens: 10, outputTokens: 5 }], "short question");
+
+    const collector = new ActivityCollector({
+      logDir,
+      conversations: { kind: "jsonl", conversationsDir },
+      automationRunsDir: join(workDir, "automations", "runs"),
+    });
+    const result = await collector.collect({ limit: 10 });
+
+    expect(result.conversations[0]!.preview).toBe("short question");
   });
 });
