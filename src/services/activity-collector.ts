@@ -433,7 +433,10 @@ function summarizeJsonlConversation(
     tool_call_count: 0,
     input_tokens: totals.inputTokens,
     output_tokens: totals.outputTokens,
-    preview: totals.preview,
+    // The single wire point for the JSONL source: both entry shapes that can
+    // set a preview funnel through `totals.preview`, so one cap here covers
+    // them and any later extraction path without needing its own.
+    preview: capPreview(totals.preview),
     had_errors: false,
   };
 }
@@ -471,7 +474,7 @@ function applyUserMessageEntry(
     const firstText = (entry.content as Array<{ type?: string; text?: string }>).find(
       (c) => c.type === "text",
     );
-    totals.preview = capPreview(firstText?.text ?? "");
+    totals.preview = firstText?.text ?? "";
   }
 }
 
@@ -482,7 +485,7 @@ function applyRoleTaggedEntry(
 ): void {
   totals.messageCount++;
   if (!totals.preview && entry.role === "user" && typeof entry.content === "string") {
-    totals.preview = capPreview(entry.content);
+    totals.preview = entry.content;
   }
   if (entry.role === "assistant" && entry.metadata?.usage) {
     totals.inputTokens += entry.metadata.usage.inputTokens ?? 0;
