@@ -273,31 +273,32 @@ describe("ContextInspectorPage", () => {
     expect(text).toContain("You are a helpful assistant powered by NimbleBrain.");
   });
 
-  test("the budget draws three regions with skills as a slice of the system prompt", async () => {
-    // Skills are composed INSIDE the system prompt, so they render as an "of
-    // which" within that card rather than a fourth peer. Four peers didn't add
-    // up to the window figure in the header, which is why the old layout needed
-    // a caption underneath saying so. The nesting states it, so no caption.
+  test("only the parts that compose something are controls", async () => {
+    // The budget was a row of identical cards, of which exactly one did
+    // anything on click. A part that can be drilled is a button; a part that
+    // can't (there is no tool-description or history view on this page) is
+    // text. The affordance is the element, so it cannot over-promise.
     const { container } = renderPage();
     await waitFor(() => expect(container.textContent).toContain("System prompt"));
 
-    // The skills control lives INSIDE the system-prompt card, not beside it —
-    // the two share the card element as their parent. (Walked by hand rather
-    // than `closest`/`querySelector`, which happy-dom can't evaluate here.)
-    const slice = skillsSlice(container);
-    const systemButton = buttons(container).find((b) => b.textContent?.includes("System prompt"));
-    if (!systemButton) throw new Error("system prompt card not found");
-    const systemCard = systemButton.parentElement;
-    expect(slice.parentElement).toBe(systemCard);
-    expect(slice.textContent).toContain("3.4k"); // the annotation's own tokens
+    const label = (b: HTMLButtonElement) => b.textContent ?? "";
+    expect(buttons(container).some((b) => label(b).includes("System prompt"))).toBe(true);
+    expect(buttons(container).some((b) => label(b).includes("of which skills"))).toBe(true);
+    expect(buttons(container).some((b) => label(b).includes("Tools"))).toBe(false);
+    expect(buttons(container).some((b) => label(b).includes("History"))).toBe(false);
 
-    // Three cards in the grid — one per disjoint region, skills not among them.
-    expect(systemCard?.parentElement?.children).toHaveLength(3);
+    // Every region is still reported, control or not, with its own numbers.
+    const text = container.textContent ?? "";
+    expect(text).toContain("Tools");
+    expect(text).toContain("4.9k");
+    expect(text).toContain("History");
+    expect(text).toContain("3 messages");
+    expect(skillsSlice(container).textContent).toContain("3.4k");
 
-    // The caption the peer layout needed is gone, in both filter states.
-    expect(container.textContent).not.toContain("not a region beside it");
-    expect(container.textContent).not.toContain("click again to clear");
-    fireEvent.click(slice);
+    // The caption the card row needed is gone, in both filter states.
+    expect(text).not.toContain("not a region beside it");
+    expect(text).not.toContain("click again to clear");
+    fireEvent.click(skillsSlice(container));
     expect(container.textContent).not.toContain("click again to clear");
   });
 
