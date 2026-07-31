@@ -21,13 +21,17 @@ import type { EngineHooks } from "../engine/types.ts";
  * cap, re-deciding every iteration what to leave out, and what it leaves out is
  * gone with no trace the model can see.
  *
- * Folding instead of dropping changes both halves of that. The turn runs at
- * ~`keepRatio`–`triggerRatio` of budget rather than pinned at 1.0 (measured on
- * the loop in `test/unit/mid-turn-compaction.test.ts`: peak per-call input
- * 3,975 → 2,753 tokens against a 4,000 budget), and the span that leaves the
- * context leaves as a summary rather than a hole. It is the same trade
- * `conversation/compaction.ts` makes between turns — a deliberate, infrequent
- * re-anchor instead of per-call windowing — applied within one.
+ * Folding takes that decision away from windowing. Measured on the loop in
+ * `test/unit/mid-turn-compaction.test.ts`: windowing alone drops a group on six
+ * of nine calls, and with the fold it drops on none — the span that leaves the
+ * context leaves once, as a summary, instead of being re-decided every
+ * iteration and leaving no trace. Peak per-call input falls with it (3,975 →
+ * 3,593 against a 4,000 budget), but the size is the smaller half; a request
+ * pinned at its cap is bounded, it is just bounded by forgetting.
+ *
+ * It is the same trade `conversation/compaction.ts` makes between turns — a
+ * deliberate, infrequent re-anchor instead of per-call windowing — applied
+ * within one, and priced for one (see `MID_TURN_TRIGGER_RATIO`).
  *
  * ## Why this is not `planCompaction`
  *
@@ -56,9 +60,9 @@ import type { EngineHooks } from "../engine/types.ts";
  * ## Not thrashing
  *
  * A fold leaves the history at ~`keepRatio` of budget and the next one fires at
- * ~`triggerRatio`, so the rate is bounded by the headroom between them: at most
- * one fold per `triggerRatio - keepRatio` (0.35) of a budget's worth of appended
- * content. Re-checking every iteration is not re-folding every iteration.
+ * the budget, so the rate is bounded by the headroom between them: at most one
+ * fold per 0.65 of a budget's worth of appended content. Re-checking every
+ * iteration is not re-folding every iteration.
  *
  * Two things end the asking rather than rely on that headroom, because both can
  * exhaust it. A fold that FAILS stops the policy for the turn: compaction is
@@ -101,6 +105,24 @@ export interface MidTurnCompactionDeps {
   summarize: (messages: LanguageModelV3Message[], signal?: AbortSignal) => Promise<string>;
 }
 
+/**
+ * Fold when the history reaches the budget — not before.
+ *
+ * `windowMessages` returns its input untouched at or below the budget
+ * (`conversation/window.ts`), and this hook runs before it in the same
+ * iteration, so a trigger of exactly 1.0 means windowing never drops a group:
+ * the fold takes over precisely where dropping would otherwise start, and not a
+ * token earlier. Below the budget the request is append-only and reads back
+ * from cache, so folding there would buy a smaller prompt at the price of a
+ * summarizer call and a full re-write of the prefix — a trade that needs more
+ * iterations to repay than a turn which never reaches its budget has left.
+ *
+ * The 0.7 `conversation/compaction.ts` triggers on is a different economy: that
+ * fold is persisted, so its one re-anchor amortizes over every later turn. This
+ * one is discarded at the end of the turn and has to pay for itself inside it.
+ */
+const MID_TURN_TRIGGER_RATIO = 1;
+
 /** The prompt-sized estimate: what these messages will cost when sent. */
 function estimateTokens(messages: readonly LanguageModelV3Message[]): number {
   let total = 0;
@@ -117,7 +139,7 @@ export function planMidTurnFold(
   messages: readonly LanguageModelV3Message[],
   budget: number,
 ): number | null {
-  if (estimateTokens(messages) <= COMPACTION_DEFAULTS.triggerRatio * budget) return null;
+  if (estimateTokens(messages) <= MID_TURN_TRIGGER_RATIO * budget) return null;
 
   const keepTarget = COMPACTION_DEFAULTS.keepRatio * budget;
   const groups = groupMessages([...messages]);
@@ -169,11 +191,13 @@ export function buildMidTurnCompaction(
     try {
       const summary = await deps.summarize(messages.slice(0, cut), signal);
       const folded = foldedHistory(summary, messages.slice(cut));
-      // `keepTarget` sizes the retained tail; the summary that joins it is sized
-      // by the summarizer. On a small budget a maximal summary can be more than
-      // the whole trigger-to-keep headroom, landing the fold back over the line
-      // it just crossed. Keep the shrink, stop asking — see the module doc.
-      if (estimateTokens(folded) > COMPACTION_DEFAULTS.triggerRatio * deps.budget) stopped = true;
+      // A fold can land back over the line it just crossed, from either side of
+      // what it produces: the summary is sized by the summarizer, not by
+      // `keepTarget`, and the retained tail can exceed the budget on its own
+      // when a single tool-result group does. Keep the shrink, stop asking —
+      // folding again would spend a summarizer call and a cache re-anchor per
+      // iteration to stay over the line. Windowing bounds it from there.
+      if (estimateTokens(folded) > MID_TURN_TRIGGER_RATIO * deps.budget) stopped = true;
       return folded;
     } catch {
       // Best-effort, exactly as between turns: keep the full history and stop

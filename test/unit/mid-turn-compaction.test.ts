@@ -120,8 +120,15 @@ async function runTurn(
   extraHooks?: EngineHooks,
 ) {
   const { model, prompts } = recordingEcho(responses);
+  // Count the calls where windowing had to drop a group. That is the behaviour
+  // this policy exists to displace, so it is what the arms are compared on.
+  let windowDrops = 0;
   const hooks: EngineHooks = {
-    transformContext: (messages) => windowMessages(messages, BUDGET),
+    transformContext: (messages) => {
+      const windowed = windowMessages(messages, BUDGET);
+      if (windowed.length < messages.length) windowDrops++;
+      return windowed;
+    },
     ...extraHooks,
   };
   const result = await engineWith(model, resultChars).run(
@@ -130,7 +137,7 @@ async function runTurn(
     history,
     [TOOL],
   );
-  return { result, prompts };
+  return { result, prompts, windowDrops: () => windowDrops };
 }
 
 /** One loop step: a tool-calling assistant message plus its result. */
@@ -155,46 +162,60 @@ function step(id: string, resultChars: number): LanguageModelV3Message[] {
 }
 
 describe("mid-turn compaction", () => {
-  it("test_folding_beats_windowing_on_both_input_size_and_what_is_dropped", async () => {
-    // Opens at ~1,800 tokens — under the 2,800 trigger, so turn setup would not
-    // have compacted. Each iteration then appends a ~750-token tool result.
+  it("test_folding_displaces_windowings_dropping", async () => {
+    // Opens at ~1,800 tokens and each iteration appends a ~750-token tool
+    // result, so the turn crosses its budget while the loop is still running.
     const opening = () => openingHistory(6, 600);
     const responses = () => toolThenAnswer(8);
 
-    // Control: what production does today. Windowing already bounds the request,
-    // so the defect is not an oversized prompt — it is that the turn runs pinned
-    // at its cap, dropping middle groups to stay there.
+    // Control: what production does today. The request stays bounded — that was
+    // never the defect — and it stays bounded by dropping middle groups,
+    // re-deciding every iteration what to leave out.
     const control = await runTurn(opening(), responses(), 3_000);
     const controlPeak = Math.max(...control.prompts.map(sizeOf));
     expect(controlPeak).toBeLessThanOrEqual(BUDGET);
-    expect(controlPeak).toBeGreaterThan(COMPACTION_DEFAULTS.triggerRatio * BUDGET);
-    // Windowing drops: the request stops growing while the loop keeps appending.
-    const controlCounts = control.prompts.map((p) => p.length);
-    expect(Math.max(...controlCounts) - controlCounts[controlCounts.length - 1]!).toBeGreaterThan(0);
+    expect(control.windowDrops()).toBeGreaterThan(0);
     expect(control.prompts.some(carriesSummary)).toBe(false);
 
     const { summarize, folded } = countingSummarizer();
-    const { prompts } = await runTurn(opening(), responses(), 3_000, {
+    const treatment = await runTurn(opening(), responses(), 3_000, {
       rewriteHistory: buildMidTurnCompaction({ budget: BUDGET, summarize }),
     });
 
-    // Folds more than once in the turn: the whole point — a policy that can only
-    // cut in front of the growth folds the opening history and then watches the
-    // rest of the turn run pinned at the cap.
+    // The point: windowing never has to drop anything, because the fold got
+    // there first and left a summary where the dropped span was.
+    expect(treatment.windowDrops()).toBe(0);
     expect(folded.length).toBeGreaterThan(1);
-    // The turn now runs well under the cap instead of against it.
-    const peak = Math.max(...prompts.map(sizeOf));
-    expect(peak).toBeLessThan(controlPeak);
-    expect(peak).toBeLessThanOrEqual(COMPACTION_DEFAULTS.triggerRatio * BUDGET);
+    // Smaller prompts come with it, though that is the lesser half.
+    expect(Math.max(...treatment.prompts.map(sizeOf))).toBeLessThan(controlPeak);
 
-    const firstFolded = prompts.findIndex(carriesSummary);
+    const firstFolded = treatment.prompts.findIndex(carriesSummary);
     expect(firstFolded).toBeGreaterThan(0);
-    // What left the context left as a summary, and stayed gone-but-summarized
-    // for every later call rather than being re-decided each iteration.
-    expect(prompts.slice(firstFolded).every(carriesSummary)).toBe(true);
+    expect(treatment.prompts.slice(firstFolded).every(carriesSummary)).toBe(true);
     // The seed carries an acknowledgement only when the kept tail opens on a
     // user message; a provider rejects the doubled assistant turn otherwise.
-    expect(prompts.every(alternates)).toBe(true);
+    expect(treatment.prompts.every(alternates)).toBe(true);
+  });
+
+  it("test_no_fold_while_windowing_is_still_dropping_nothing", async () => {
+    // A turn that grows but never reaches its budget: windowing returns the
+    // history untouched every iteration, so there is no dropping to displace.
+    // Folding here would buy a smaller prompt for a summarizer call and a full
+    // cache re-anchor, on a turn with too few iterations left to repay it.
+    const { summarize, folded } = countingSummarizer();
+    const { prompts, windowDrops } = await runTurn(
+      openingHistory(6, 600),
+      toolThenAnswer(5),
+      400,
+      { rewriteHistory: buildMidTurnCompaction({ budget: BUDGET, summarize }) },
+    );
+
+    const peak = Math.max(...prompts.map(sizeOf));
+    expect(peak).toBeLessThan(BUDGET);
+    // Above the between-turns trigger, which is the band this must not fold in.
+    expect(peak).toBeGreaterThan(COMPACTION_DEFAULTS.triggerRatio * BUDGET);
+    expect(windowDrops()).toBe(0);
+    expect(folded).toEqual([]);
   });
 
   it("test_short_turn_does_not_fold", async () => {
@@ -318,15 +339,40 @@ describe("mid-turn compaction", () => {
 
 describe("planMidTurnFold", () => {
   it("test_cut_never_orphans_a_tool_result_from_its_call", () => {
-    const history = [
-      ...openingHistory(2, 400),
-      ...Array.from({ length: 8 }, (_, i) => step(`c${i}`, 3_000)).flat(),
+    // A tool message carrying no tool-result part is one the grouper has
+    // nothing to attach, so it becomes its own group and the walk-back can stop
+    // on it. Cutting there would send a tail opening on a tool message whose
+    // call was folded away, which the provider rejects.
+    const bare: LanguageModelV3Message = {
+      role: "tool",
+      content: [{ type: "text", text: "x".repeat(2_000) }] as never,
+    };
+    const history: LanguageModelV3Message[] = [
+      ...openingHistory(10, 600),
+      bare,
+      ...step("c0", 2_400),
+      ...step("c1", 2_400),
     ];
+
     const cut = planMidTurnFold(history, BUDGET);
     expect(cut).not.toBeNull();
-    // The kept tail opens on a whole group, so no tool result is left behind
-    // without the assistant message that called for it.
+    // The walk-back stopped on the bare tool message; the cut moved past it.
+    expect(history[(cut as number) - 1]).toBe(bare);
     expect(history[cut as number]?.role).not.toBe("tool");
+  });
+
+  it("test_a_history_with_almost_nothing_ahead_of_the_cut_is_not_worth_folding", () => {
+    // Over the trigger, but nearly all of it is the tail that would be kept —
+    // folding would summarize a handful of messages and re-anchor the cache for
+    // it. `minSummarizedMessages` is what declines that.
+    const history: LanguageModelV3Message[] = [
+      { role: "user", content: [{ type: "text", text: "u".repeat(400) }] },
+      ...step("c0", 12_000),
+      ...step("c1", 12_000),
+    ];
+
+    expect(sizeOf(history)).toBeGreaterThan(BUDGET);
+    expect(planMidTurnFold(history, BUDGET)).toBeNull();
   });
 
   it("test_attachment_bytes_do_not_trigger_a_fold", () => {

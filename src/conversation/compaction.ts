@@ -51,7 +51,7 @@ import type { HistoryCompactedEvent, StoredMessage } from "./types.ts";
  * engine holds carries it without them (rehydration strips the extras). Both
  * fold through the same formatter.
  */
-export type SummarizableMessage = Pick<StoredMessage, "role" | "content">;
+type SummarizableMessage = Pick<StoredMessage, "role" | "content">;
 
 export interface CompactionOptions {
   /** Effective message-token budget for the run (from `resolveMessageBudget`). */

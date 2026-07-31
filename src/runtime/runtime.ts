@@ -1513,11 +1513,11 @@ export class Runtime {
     // resolved for THIS call.
     //
     // `rewriteHistory` folds the history the loop itself grows, against the same
-    // budget and the same thresholds the check above used — but in memory, for
-    // this turn only, because the region a turn grows carries no timestamps to
-    // key a persisted fold on. Installed only when compaction is on, so a
-    // deployment with it off doesn't pay the per-iteration estimate. See
-    // `runtime/mid-turn-compaction.ts`.
+    // budget the check above used — but in memory, for this turn only, because
+    // the region a turn grows carries no timestamps to key a persisted fold on.
+    // Installed only when compaction is on: `transformContext` below walks the
+    // history every iteration regardless, so what the gate saves is the second
+    // walk, not the estimate itself. See `runtime/mid-turn-compaction.ts`.
     const perRequestHooks: EngineHooks = {
       ...this.hooks,
       transformContext: buildTransformContext(
