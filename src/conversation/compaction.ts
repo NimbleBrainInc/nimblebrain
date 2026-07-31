@@ -100,8 +100,6 @@ export const COMPACTION_DEFAULTS = {
   minSummarizedMessages: 4,
 } as const;
 
-const DEFAULTS = COMPACTION_DEFAULTS;
-
 export interface CompactionPlan {
   shouldCompact: boolean;
   /** Index into `messages`: everything before it is summarized, the rest is kept. */
@@ -139,9 +137,9 @@ export function planCompaction(
   messages: readonly StoredMessage[],
   opts: CompactionOptions,
 ): CompactionPlan {
-  const triggerRatio = opts.triggerRatio ?? DEFAULTS.triggerRatio;
-  const keepRatio = opts.keepRatio ?? DEFAULTS.keepRatio;
-  const minSummarized = opts.minSummarizedMessages ?? DEFAULTS.minSummarizedMessages;
+  const triggerRatio = opts.triggerRatio ?? COMPACTION_DEFAULTS.triggerRatio;
+  const keepRatio = opts.keepRatio ?? COMPACTION_DEFAULTS.keepRatio;
+  const minSummarized = opts.minSummarizedMessages ?? COMPACTION_DEFAULTS.minSummarizedMessages;
 
   const noop: CompactionPlan = { shouldCompact: false, boundaryIndex: 0, boundaryTs: "" };
   if (messages.length === 0) return noop;

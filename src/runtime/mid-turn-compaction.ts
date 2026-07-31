@@ -10,10 +10,24 @@ import type { EngineHooks } from "../engine/types.ts";
  * ## Why
  *
  * Turn setup compacts once, before the engine runs. The loop then appends an
- * assistant message plus its tool results on every iteration, so a turn that
- * tool-calls its way through many iterations outgrows the very budget it was
- * checked against, and nothing checks again. Per-call latency and spend scale
- * with that growth for the rest of the turn.
+ * assistant message plus its tool results on every iteration, and nothing folds
+ * again — so a turn that tool-calls its way through many iterations ends far
+ * over the budget it was checked against.
+ *
+ * What that costs is not an unbounded prompt. `transformContext` re-windows
+ * every iteration against the same budget (`buildTransformContext` →
+ * `windowMessages`), so the request stays bounded. It stays bounded by DROPPING
+ * middle groups: once the history is over budget the turn runs pinned at its
+ * cap, re-deciding every iteration what to leave out, and what it leaves out is
+ * gone with no trace the model can see.
+ *
+ * Folding instead of dropping changes both halves of that. The turn runs at
+ * ~`keepRatio`–`triggerRatio` of budget rather than pinned at 1.0 (measured on
+ * the loop in `test/unit/mid-turn-compaction.test.ts`: peak per-call input
+ * 3,975 → 2,753 tokens against a 4,000 budget), and the span that leaves the
+ * context leaves as a summary rather than a hole. It is the same trade
+ * `conversation/compaction.ts` makes between turns — a deliberate, infrequent
+ * re-anchor instead of per-call windowing — applied within one.
  *
  * ## Why this is not `planCompaction`
  *
@@ -26,34 +40,49 @@ import type { EngineHooks } from "../engine/types.ts";
  * are not stored messages) and contain no user turn to snap to. A planner that
  * insists on a user boundary can therefore only ever cut in front of the
  * growth, never into it: it folds the opening history once and then reports
- * "nothing to compact" for every remaining iteration while the turn keeps
- * growing.
+ * "nothing to compact" for every remaining iteration.
  *
- * So a mid-turn fold answers a different question and obeys a different
- * constraint. It cuts on a GROUP boundary — `groupMessages` computes the atomic
- * units, a tool-calling assistant message plus its results — because the only
- * thing the model requires is that a tool call keep its results. That boundary
- * needs no timestamp, which is exactly why it can cut where the growth is.
+ * So a mid-turn fold obeys the constraint that does apply inside a turn. It
+ * cuts on a GROUP boundary — `groupMessages` computes the atomic units, a
+ * tool-calling assistant message plus its results — because the only thing the
+ * model requires is that a tool call keep its results. That boundary needs no
+ * timestamp, which is exactly why it can cut where the growth is.
  *
  * The consequence is that a mid-turn fold is **in-memory, for this turn only**:
  * having no timestamp, it cannot be written as a `history.compacted` event. The
  * conversation's record is untouched — the next turn reads the full history from
- * the append-only log and turn setup folds it the persistent, operator-retaining
- * way. What this bounds is what gets SENT, which is what costs money and time.
+ * the append-only log and turn setup folds it the persistent way.
  *
  * ## Not thrashing
  *
  * A fold leaves the history at ~`keepRatio` of budget and the next one fires at
- * ~`triggerRatio`, so the rate is bounded by the headroom between them: **at
- * most one fold per `triggerRatio - keepRatio` (0.35) of a budget's worth of
- * appended content**, however often the policy is asked. Re-checking every
- * iteration is not re-folding every iteration. Each fold costs one summarizer
- * call and one prompt-cache re-anchor, the same trade turn-setup compaction
- * makes.
+ * ~`triggerRatio`, so the rate is bounded by the headroom between them: at most
+ * one fold per `triggerRatio - keepRatio` (0.35) of a budget's worth of appended
+ * content. Re-checking every iteration is not re-folding every iteration.
  *
- * A fold that fails takes the policy out for the rest of the turn: compaction is
- * best-effort, the threshold stays crossed, and retrying would spend one
- * summarizer call per remaining iteration to fail the same way.
+ * Two things end the asking rather than rely on that headroom, because both can
+ * exhaust it. A fold that FAILS stops the policy for the turn: compaction is
+ * best-effort, the threshold stays crossed, and retrying spends a summarizer
+ * call per remaining iteration to fail the same way. A fold that lands still
+ * over the trigger stops it too — the summary's size is the summarizer's to
+ * choose, and on a small budget a maximal one can exceed the whole headroom, so
+ * folding again would buy nothing at the price of a summarizer call and a cache
+ * re-anchor each iteration. In both cases windowing bounds the request from
+ * there, exactly as it did before this existed.
+ *
+ * ## Fidelity, against the fold between turns
+ *
+ * Two things that fold does are not done here, both because this fold is
+ * temporary and the record it would protect is not at risk:
+ *
+ * - Operator turns are not retained verbatim (`selectRetainedOperatorMessages`).
+ *   Retention exists to stop corrections decaying through summary-of-summary
+ *   over a conversation's life; this summary is discarded at the end of the
+ *   turn. Within the turn, an operator turn ahead of the cut survives as summary
+ *   prose — which is still more than windowing left of it.
+ * - An attachment reaches the summarizer as a rehydrated file part and renders
+ *   `[file]`, where a resource link renders `[file: name]`. The summary loses
+ *   the attachment's name; the bytes were never in the transcript either way.
  *
  * Sizing uses the part-aware `estimateMessageTokens`, not chars-over-JSON: an
  * in-flight history is rehydrated, so an attachment is a file part holding raw
@@ -72,6 +101,13 @@ export interface MidTurnCompactionDeps {
   summarize: (messages: LanguageModelV3Message[], signal?: AbortSignal) => Promise<string>;
 }
 
+/** The prompt-sized estimate: what these messages will cost when sent. */
+function estimateTokens(messages: readonly LanguageModelV3Message[]): number {
+  let total = 0;
+  for (const m of messages) total += estimateMessageTokens(m);
+  return total;
+}
+
 /**
  * Where to cut: the start of the oldest group that still fits inside the kept
  * tail, or `null` when the history is under the trigger or has too little in
@@ -81,8 +117,7 @@ export function planMidTurnFold(
   messages: readonly LanguageModelV3Message[],
   budget: number,
 ): number | null {
-  const total = messages.reduce((sum, m) => sum + estimateMessageTokens(m), 0);
-  if (total <= COMPACTION_DEFAULTS.triggerRatio * budget) return null;
+  if (estimateTokens(messages) <= COMPACTION_DEFAULTS.triggerRatio * budget) return null;
 
   const keepTarget = COMPACTION_DEFAULTS.keepRatio * budget;
   const groups = groupMessages([...messages]);
@@ -90,7 +125,7 @@ export function planMidTurnFold(
   let cut = messages.length;
   for (let g = groups.length - 1; g >= 0; g--) {
     const group = groups[g]!;
-    kept += group.reduce((sum, m) => sum + estimateMessageTokens(m), 0);
+    kept += estimateTokens(group);
     cut -= group.length;
     if (kept >= keepTarget) break;
   }
@@ -133,7 +168,13 @@ export function buildMidTurnCompaction(
 
     try {
       const summary = await deps.summarize(messages.slice(0, cut), signal);
-      return foldedHistory(summary, messages.slice(cut));
+      const folded = foldedHistory(summary, messages.slice(cut));
+      // `keepTarget` sizes the retained tail; the summary that joins it is sized
+      // by the summarizer. On a small budget a maximal summary can be more than
+      // the whole trigger-to-keep headroom, landing the fold back over the line
+      // it just crossed. Keep the shrink, stop asking — see the module doc.
+      if (estimateTokens(folded) > COMPACTION_DEFAULTS.triggerRatio * deps.budget) stopped = true;
+      return folded;
     } catch {
       // Best-effort, exactly as between turns: keep the full history and stop
       // asking. The caller logs the failure at the summarizer call site.

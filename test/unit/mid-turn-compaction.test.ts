@@ -2,8 +2,8 @@ import type { LanguageModelV3, LanguageModelV3Message } from "@ai-sdk/provider";
 import { describe, expect, it } from "bun:test";
 import { NoopEventSink } from "../../src/adapters/noop-events.ts";
 import { StaticToolRouter } from "../../src/adapters/static-router.ts";
-import { estimateMessagesTokens } from "../../src/conversation/compaction.ts";
-import type { StoredMessage } from "../../src/conversation/types.ts";
+import { COMPACTION_DEFAULTS } from "../../src/conversation/compaction.ts";
+import { windowMessages } from "../../src/conversation/window.ts";
 import { textContent } from "../../src/engine/content-helpers.ts";
 import { AgentEngine } from "../../src/engine/engine.ts";
 import { estimateMessageTokens } from "../../src/engine/token-estimate.ts";
@@ -107,15 +107,25 @@ const carriesSummary = (prompt: LanguageModelV3Message[]) =>
 const alternates = (prompt: LanguageModelV3Message[]) =>
   prompt.every((m, i) => i === 0 || m.role !== "assistant" || prompt[i - 1]?.role !== "assistant");
 
+/**
+ * Drive a turn with the hooks production installs. `transformContext` is not
+ * optional in real life — every chat turn gets it (`buildTransformContext`) —
+ * so a control arm without it measures a configuration that does not exist, and
+ * would credit this policy with the bounding windowing already does.
+ */
 async function runTurn(
   history: LanguageModelV3Message[],
   responses: EchoModelResponse[],
   resultChars: number,
-  hooks?: EngineHooks,
+  extraHooks?: EngineHooks,
 ) {
   const { model, prompts } = recordingEcho(responses);
+  const hooks: EngineHooks = {
+    transformContext: (messages) => windowMessages(messages, BUDGET),
+    ...extraHooks,
+  };
   const result = await engineWith(model, resultChars).run(
-    { ...config, ...(hooks ? { hooks } : {}) },
+    { ...config, hooks },
     "sys",
     history,
     [TOOL],
@@ -145,32 +155,42 @@ function step(id: string, resultChars: number): LanguageModelV3Message[] {
 }
 
 describe("mid-turn compaction", () => {
-  it("test_long_tool_calling_turn_folds_repeatedly_and_stays_bounded", async () => {
+  it("test_folding_beats_windowing_on_both_input_size_and_what_is_dropped", async () => {
     // Opens at ~1,800 tokens — under the 2,800 trigger, so turn setup would not
     // have compacted. Each iteration then appends a ~750-token tool result.
     const opening = () => openingHistory(6, 600);
     const responses = () => toolThenAnswer(8);
 
-    // Control: the same turn with no policy installed. This is the bug.
+    // Control: what production does today. Windowing already bounds the request,
+    // so the defect is not an oversized prompt — it is that the turn runs pinned
+    // at its cap, dropping middle groups to stay there.
     const control = await runTurn(opening(), responses(), 3_000);
     const controlPeak = Math.max(...control.prompts.map(sizeOf));
-    expect(controlPeak).toBeGreaterThan(BUDGET);
+    expect(controlPeak).toBeLessThanOrEqual(BUDGET);
+    expect(controlPeak).toBeGreaterThan(COMPACTION_DEFAULTS.triggerRatio * BUDGET);
+    // Windowing drops: the request stops growing while the loop keeps appending.
+    const controlCounts = control.prompts.map((p) => p.length);
+    expect(Math.max(...controlCounts) - controlCounts[controlCounts.length - 1]!).toBeGreaterThan(0);
+    expect(control.prompts.some(carriesSummary)).toBe(false);
 
     const { summarize, folded } = countingSummarizer();
     const { prompts } = await runTurn(opening(), responses(), 3_000, {
       rewriteHistory: buildMidTurnCompaction({ budget: BUDGET, summarize }),
     });
 
-    // Folds more than once in the turn: the whole point — a policy that can
-    // only cut in front of the growth folds the opening history and then
-    // watches the rest of the turn grow past it.
+    // Folds more than once in the turn: the whole point — a policy that can only
+    // cut in front of the growth folds the opening history and then watches the
+    // rest of the turn run pinned at the cap.
     expect(folded.length).toBeGreaterThan(1);
-    // And every call stays inside the budget the turn was composed against.
-    expect(Math.max(...prompts.map(sizeOf))).toBeLessThan(BUDGET);
+    // The turn now runs well under the cap instead of against it.
+    const peak = Math.max(...prompts.map(sizeOf));
+    expect(peak).toBeLessThan(controlPeak);
+    expect(peak).toBeLessThanOrEqual(COMPACTION_DEFAULTS.triggerRatio * BUDGET);
 
     const firstFolded = prompts.findIndex(carriesSummary);
     expect(firstFolded).toBeGreaterThan(0);
-    // Every later call runs on a folded history, not just the one that folded.
+    // What left the context left as a summary, and stayed gone-but-summarized
+    // for every later call rather than being re-decided each iteration.
     expect(prompts.slice(firstFolded).every(carriesSummary)).toBe(true);
     // The seed carries an acknowledgement only when the kept tail opens on a
     // user message; a provider rejects the doubled assistant turn otherwise.
@@ -253,6 +273,27 @@ describe("mid-turn compaction", () => {
     expect(alternates(openingOnAssistant as LanguageModelV3Message[])).toBe(true);
   });
 
+  it("test_a_fold_that_lands_over_the_trigger_is_not_repeated", async () => {
+    // The summary's size is the summarizer's to choose, not this policy's. One
+    // bigger than the whole trigger-to-keep headroom lands the fold back over
+    // the line it just crossed — on a small budget a maximal summary does
+    // exactly that. Folding again would spend a summarizer call and a cache
+    // re-anchor every iteration to stay over it.
+    let calls = 0;
+    const summarize = async () => {
+      calls++;
+      return "S".repeat(COMPACTION_DEFAULTS.triggerRatio * BUDGET * 4);
+    };
+
+    const { result, prompts } = await runTurn(openingHistory(6, 600), toolThenAnswer(6), 3_000, {
+      rewriteHistory: buildMidTurnCompaction({ budget: BUDGET, summarize }),
+    });
+
+    expect(result.stopReason).toBe("complete");
+    expect(prompts.length).toBeGreaterThan(3);
+    expect(calls).toBe(1);
+  });
+
   it("test_failed_fold_is_not_retried_for_the_rest_of_the_turn", async () => {
     // Compaction is best-effort: a summarizer failure falls back to the full
     // history. The threshold stays crossed for every remaining iteration, so
@@ -311,12 +352,10 @@ describe("planMidTurnFold", () => {
       ...openingHistory(3, 40),
     ];
 
+    // The image is ~700 KB of bytes and a couple of thousand tokens. Sizing it
+    // by the length of its JSON reads those bytes as a `{"0":..,"1":..}` object
+    // and folds a conversation nowhere near its budget.
     expect(sizeOf(history)).toBeLessThan(BUDGET);
     expect(planMidTurnFold(history, BUDGET)).toBeNull();
-    // Pinned against the estimator this policy must not use: chars-over-JSON
-    // calls the same history hundreds of budgets' worth of tokens.
-    expect(estimateMessagesTokens(history as unknown as StoredMessage[])).toBeGreaterThan(
-      100 * BUDGET,
-    );
   });
 });

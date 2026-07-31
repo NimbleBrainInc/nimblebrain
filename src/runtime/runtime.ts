@@ -1925,7 +1925,11 @@ export class Runtime {
       maxOutputTokens: resolvedMaxOutputTokens,
     });
 
-    // No compaction: a task has a single-message history, never near budget.
+    // No compaction. A task OPENS on a single message, but its loop grows one
+    // the same way a chat turn's does, so the reason is not size — it is that
+    // both folds bill their summarizer call to a conversation, and a task run
+    // isn't persisted as one. Extending mid-turn folding here needs somewhere
+    // to put that cost first.
     const messages = await rehydrateUserResources(taskMessages, fileStore, {
       model: resolvedModelString,
       maxExtractedTextSize: this.getFilesConfig().maxExtractedTextSize,
