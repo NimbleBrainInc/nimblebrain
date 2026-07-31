@@ -18,6 +18,31 @@ type ConversationSource =
 
 type BundleEventSource = { kind: "sse"; eventManager: SseEventManager } | { kind: "none" };
 
+/**
+ * Ceiling on `ActivityConversationSummary.preview`, in characters.
+ *
+ * The preview is a conversation's first user message, and activity output is a
+ * tool response — it lands in the agent's context window and token budget, not
+ * just a UI payload. Uncapped, one conversation opened by pasting a long
+ * document carries that whole document into every `home__activity` call. The
+ * preview is the row's only human-readable label (the summary has no title), so
+ * it is capped rather than dropped: enough to recognize the conversation by.
+ */
+const PREVIEW_MAX_CHARS = 200;
+
+/**
+ * Cap a preview at `PREVIEW_MAX_CHARS`, preferring the last word boundary in
+ * the final quarter so the label doesn't end mid-word. The ellipsis is counted
+ * against the cap, so the result is never longer than the cap.
+ */
+function capPreview(text: string): string {
+  if (text.length <= PREVIEW_MAX_CHARS) return text;
+  const head = text.slice(0, PREVIEW_MAX_CHARS - 1);
+  const lastSpace = head.lastIndexOf(" ");
+  const cut = lastSpace > PREVIEW_MAX_CHARS * 0.75 ? head.slice(0, lastSpace) : head;
+  return `${cut}…`;
+}
+
 export interface ActivityCollectorOptions {
   logDir: string;
   conversations: ConversationSource;
@@ -156,7 +181,10 @@ export class ActivityCollector {
         tool_call_count: 0,
         input_tokens: c.totalInputTokens,
         output_tokens: c.totalOutputTokens,
-        preview: c.preview,
+        // The store's preview is materialized by the conversation index cache,
+        // which serves the conversation-list UIs and caps nothing. Cap here so
+        // both conversation sources put the same bounded field on the wire.
+        preview: capPreview(c.preview),
         had_errors: false,
       });
     }
@@ -443,7 +471,7 @@ function applyUserMessageEntry(
     const firstText = (entry.content as Array<{ type?: string; text?: string }>).find(
       (c) => c.type === "text",
     );
-    totals.preview = firstText?.text ?? "";
+    totals.preview = capPreview(firstText?.text ?? "");
   }
 }
 
@@ -454,7 +482,7 @@ function applyRoleTaggedEntry(
 ): void {
   totals.messageCount++;
   if (!totals.preview && entry.role === "user" && typeof entry.content === "string") {
-    totals.preview = entry.content;
+    totals.preview = capPreview(entry.content);
   }
   if (entry.role === "assistant" && entry.metadata?.usage) {
     totals.inputTokens += entry.metadata.usage.inputTokens ?? 0;
