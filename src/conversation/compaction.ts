@@ -32,7 +32,26 @@ import type { HistoryCompactedEvent, StoredMessage } from "./types.ts";
  *   identically by the runtime (in-memory) and by `reconstructMessages` (on
  *   load), so the compacted view is the same whether it's freshly computed or
  *   rebuilt from events.
+ *
+ * ## Why the boundary is a user turn
+ *
+ * A fold here is PERSISTED, and the event that persists it names its boundary
+ * by timestamp: replay keeps every event at or after `compactedThroughTs`. So
+ * the boundary has to be a point the event log can be replayed from, which
+ * means a message that carries a timestamp and starts a whole turn. That is
+ * what makes this planner unusable inside a turn, where the region that grows
+ * is assistant/tool messages with no timestamps of their own — see
+ * `runtime/mid-turn-compaction.ts`, which folds the same way against a
+ * different constraint.
  */
+
+/**
+ * What a summary transcript needs of a message: role and content. Stored
+ * messages carry that plus the platform extras; the in-flight history the
+ * engine holds carries it without them (rehydration strips the extras). Both
+ * fold through the same formatter.
+ */
+export type SummarizableMessage = Pick<StoredMessage, "role" | "content">;
 
 export interface CompactionOptions {
   /** Effective message-token budget for the run (from `resolveMessageBudget`). */
@@ -69,11 +88,19 @@ export interface CompactionOptions {
   onUsage?: (usage: TokenUsage, llmMs: number) => void;
 }
 
-const DEFAULTS = {
+/**
+ * The thresholds a fold is decided on, shared by every caller that decides one
+ * — so "when is a history too big" has one answer regardless of whether the
+ * question is asked between turns (`planCompaction`, here) or inside one
+ * (`runtime/mid-turn-compaction.ts`).
+ */
+export const COMPACTION_DEFAULTS = {
   triggerRatio: 0.7,
   keepRatio: 0.35,
   minSummarizedMessages: 4,
 } as const;
+
+const DEFAULTS = COMPACTION_DEFAULTS;
 
 export interface CompactionPlan {
   shouldCompact: boolean;
@@ -389,7 +416,7 @@ export function summarizerTranscriptBudgetTokens(contextTokens?: number): number
 }
 
 interface TranscriptBlock {
-  role: StoredMessage["role"];
+  role: SummarizableMessage["role"];
   body: string;
 }
 
@@ -441,7 +468,7 @@ function boundBlocks(
  * transcript is bounded to it (newest-kept, oldest-elided/truncated); otherwise
  * every message is rendered verbatim.
  */
-function formatTranscript(messages: readonly StoredMessage[], budgetTokens?: number): string {
+function formatTranscript(messages: readonly SummarizableMessage[], budgetTokens?: number): string {
   const blocks: TranscriptBlock[] = messages.map((m) => ({
     role: m.role,
     body: escapeClosingTags(
@@ -476,11 +503,17 @@ const SUMMARIZE_SYSTEM =
  */
 export async function summarizeMessages(
   model: LanguageModelV3,
-  messages: readonly StoredMessage[],
+  messages: readonly SummarizableMessage[],
   opts: {
     maxOutputTokens?: number;
     summarizerContextTokens?: number;
     onUsage?: (usage: TokenUsage, llmMs: number) => void;
+    /**
+     * Cancel the summarizer call. Composed with the timeout below, so a fold
+     * running inside a live turn stops when the turn is cancelled instead of
+     * holding it open for the remainder of `SUMMARY_TIMEOUT_MS`.
+     */
+    signal?: AbortSignal;
   } = {},
 ): Promise<string> {
   const transcript = formatTranscript(
@@ -494,7 +527,9 @@ export async function summarizeMessages(
       { role: "user", content: [{ type: "text", text: transcript }] },
     ],
     maxOutputTokens: opts.maxOutputTokens ?? SUMMARY_MAX_OUTPUT_TOKENS,
-    abortSignal: AbortSignal.timeout(SUMMARY_TIMEOUT_MS),
+    abortSignal: opts.signal
+      ? AbortSignal.any([opts.signal, AbortSignal.timeout(SUMMARY_TIMEOUT_MS)])
+      : AbortSignal.timeout(SUMMARY_TIMEOUT_MS),
   });
   // Report usage before the empty-summary guard — the call was billed
   // regardless of whether its output is usable.

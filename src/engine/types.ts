@@ -263,10 +263,14 @@ export interface EngineHooks {
    * sent as-is. And a rewrite changes the cached prefix, so a caller that
    * rewrites every iteration pays a full cache write every iteration; rewrites
    * are expected to be rare and deliberate.
+   *
+   * `opts.signal` is the run's own signal. The engine awaits this hook, so a
+   * hook that makes a network call has to honor it or a cancelled turn waits
+   * for that call to finish.
    */
   rewriteHistory?: (
     messages: LanguageModelV3Message[],
-    opts: { iteration: number },
+    opts: { iteration: number; signal?: AbortSignal },
   ) => Promise<LanguageModelV3Message[] | null>;
 
   /**

@@ -1,113 +1,144 @@
 import type { LanguageModelV3Message } from "@ai-sdk/provider";
-import { planCompaction } from "../conversation/compaction.ts";
-import type { StoredMessage } from "../conversation/types.ts";
+import { COMPACTION_DEFAULTS, compactionSummaryMessages } from "../conversation/compaction.ts";
+import { groupMessages } from "../conversation/window.ts";
+import { estimateMessageTokens } from "../engine/token-estimate.ts";
 import type { EngineHooks } from "../engine/types.ts";
 
 /**
- * Mid-turn history compaction — the turn-setup compaction check, re-applied
- * between the agent loop's iterations.
+ * Mid-turn history compaction — folding the history a single turn grows.
  *
  * ## Why
  *
  * Turn setup compacts once, before the engine runs. The loop then appends an
  * assistant message plus its tool results on every iteration, so a turn that
- * tool-calls its way through many iterations can outgrow the very budget it was
- * checked against — a turn that starts comfortably under the threshold can end
- * far over it, and neither the compaction trigger nor the configured input cap
- * is consulted again. Per-call latency and spend scale with that growth.
+ * tool-calls its way through many iterations outgrows the very budget it was
+ * checked against, and nothing checks again. Per-call latency and spend scale
+ * with that growth for the rest of the turn.
  *
- * ## Shape
+ * ## Why this is not `planCompaction`
  *
- * This is policy, not mechanism: it decides WHEN a mid-turn fold is warranted
- * and hands the actual fold to `compact` — the same runtime path turn setup
- * uses, so a mid-turn compaction persists the same `history.compacted` event,
- * retains operator turns from the same event log, and plans against the same
- * threshold. The engine reaches it through `EngineHooks.rewriteHistory` and
- * stays unaware that compaction exists.
+ * Between turns, a fold is persisted, and the event that persists it names its
+ * boundary by timestamp — so the boundary must be a timestamped message that
+ * starts a whole turn, which in practice means a user turn.
  *
- * Two properties keep it from thrashing:
+ * Inside a turn, neither half of that holds. The region that grows is
+ * assistant/tool messages the loop appended, which carry no timestamps (they
+ * are not stored messages) and contain no user turn to snap to. A planner that
+ * insists on a user boundary can therefore only ever cut in front of the
+ * growth, never into it: it folds the opening history once and then reports
+ * "nothing to compact" for every remaining iteration while the turn keeps
+ * growing.
  *
- * - **A fold leaves the history at ~`keepRatio` of budget**, well under the
- *   ~`triggerRatio` that fires one, so re-firing takes real growth — re-checking
- *   every iteration is not re-compacting every iteration. Each fold costs one
- *   prompt-cache re-anchor, the same trade turn-setup compaction makes.
- * - **A fold that comes back empty stops the loop from asking again.** The plan
- *   here and the plan inside `compact` run the same function over the same
- *   messages, so they agree; an empty result means the fold itself failed
- *   (compaction is best-effort — a summarizer error falls back to the full
- *   history), and retrying it every iteration would spend a summarizer call per
- *   iteration to fail the same way.
+ * So a mid-turn fold answers a different question and obeys a different
+ * constraint. It cuts on a GROUP boundary — `groupMessages` computes the atomic
+ * units, a tool-calling assistant message plus its results — because the only
+ * thing the model requires is that a tool call keep its results. That boundary
+ * needs no timestamp, which is exactly why it can cut where the growth is.
  *
- * One fidelity difference from turn setup, which folds the un-rehydrated
- * history: an in-flight history has been rehydrated, so an attachment reaches
- * the summarizer as a file part and renders `[file]` instead of the
- * `[file: name]` a resource link renders. The summary loses the attachment's
- * name; the bytes were never in the transcript either way.
+ * The consequence is that a mid-turn fold is **in-memory, for this turn only**:
+ * having no timestamp, it cannot be written as a `history.compacted` event. The
+ * conversation's record is untouched — the next turn reads the full history from
+ * the append-only log and turn setup folds it the persistent, operator-retaining
+ * way. What this bounds is what gets SENT, which is what costs money and time.
+ *
+ * ## Not thrashing
+ *
+ * A fold leaves the history at ~`keepRatio` of budget and the next one fires at
+ * ~`triggerRatio`, so the rate is bounded by the headroom between them: **at
+ * most one fold per `triggerRatio - keepRatio` (0.35) of a budget's worth of
+ * appended content**, however often the policy is asked. Re-checking every
+ * iteration is not re-folding every iteration. Each fold costs one summarizer
+ * call and one prompt-cache re-anchor, the same trade turn-setup compaction
+ * makes.
+ *
+ * A fold that fails takes the policy out for the rest of the turn: compaction is
+ * best-effort, the threshold stays crossed, and retrying would spend one
+ * summarizer call per remaining iteration to fail the same way.
+ *
+ * Sizing uses the part-aware `estimateMessageTokens`, not chars-over-JSON: an
+ * in-flight history is rehydrated, so an attachment is a file part holding raw
+ * bytes, and `JSON.stringify` of those bytes reads as ~700× the tokens they
+ * actually cost. Estimating the prompt about to be sent is also the question
+ * this policy is asking.
  */
 
 export interface MidTurnCompactionDeps {
   /** The per-call message budget this turn was composed against. */
   budget: number;
   /**
-   * Timestamps of the turn's opening history, index-aligned with the messages
-   * handed to the engine. The engine's messages have none of their own —
-   * rehydration strips the platform extras — but compaction is ts-keyed: the
-   * boundary it persists, and the operator turns it retains, are both
-   * timestamps. Messages the loop appends have no timestamp and need none: the
-   * boundary always snaps back to a user turn, and only the opening history
-   * holds those.
+   * Summarize the folded-away messages. Throws on failure — the caller treats a
+   * throw as "skip the fold", never as a failed turn.
    */
-  initialTimestamps: readonly (string | undefined)[];
-  /**
-   * Fold an over-budget history, returning the compacted messages or `null`
-   * when nothing changed. This is `Runtime.maybeCompactHistory` bound to the
-   * turn's conversation and budget.
-   */
-  compact: (history: StoredMessage[]) => Promise<StoredMessage[] | null>;
+  summarize: (messages: LanguageModelV3Message[], signal?: AbortSignal) => Promise<string>;
 }
 
-/** Strip the platform extras so the shape is exactly what the engine sends. */
-function toModelMessage(message: StoredMessage): LanguageModelV3Message {
-  const { role, content, providerOptions } = message;
-  return (
-    providerOptions ? { role, content, providerOptions } : { role, content }
-  ) as LanguageModelV3Message;
+/**
+ * Where to cut: the start of the oldest group that still fits inside the kept
+ * tail, or `null` when the history is under the trigger or has too little in
+ * front of the cut to be worth a summarizer call. Pure.
+ */
+export function planMidTurnFold(
+  messages: readonly LanguageModelV3Message[],
+  budget: number,
+): number | null {
+  const total = messages.reduce((sum, m) => sum + estimateMessageTokens(m), 0);
+  if (total <= COMPACTION_DEFAULTS.triggerRatio * budget) return null;
+
+  const keepTarget = COMPACTION_DEFAULTS.keepRatio * budget;
+  const groups = groupMessages([...messages]);
+  let kept = 0;
+  let cut = messages.length;
+  for (let g = groups.length - 1; g >= 0; g--) {
+    const group = groups[g]!;
+    kept += group.reduce((sum, m) => sum + estimateMessageTokens(m), 0);
+    cut -= group.length;
+    if (kept >= keepTarget) break;
+  }
+
+  // A tool result whose call was folded away is rejected by the provider, so
+  // the tail never opens on one. Grouping already pairs them; this holds for a
+  // stray result the grouper had no call to attach.
+  while (cut < messages.length && messages[cut]!.role === "tool") cut++;
+
+  return cut < COMPACTION_DEFAULTS.minSummarizedMessages ? null : cut;
+}
+
+/**
+ * The folded history: the summary seed, then the kept tail. The seed's
+ * acknowledgement exists to keep user→assistant alternation, so it is emitted
+ * only when the tail opens on a user message; a tail opening on an assistant
+ * message already alternates against the summary turn.
+ */
+function foldedHistory(summary: string, tail: LanguageModelV3Message[]): LanguageModelV3Message[] {
+  // Empty timestamp, and the extras are stripped below: this seed lives for the
+  // rest of the turn and is never stored, so it has no timestamp to carry.
+  const seed = compactionSummaryMessages(summary, "");
+  const head = tail[0]?.role === "user" ? seed : seed.slice(0, 1);
+  return [
+    ...head.map(({ role, content }) => ({ role, content }) as LanguageModelV3Message),
+    ...tail,
+  ];
 }
 
 export function buildMidTurnCompaction(
   deps: MidTurnCompactionDeps,
 ): NonNullable<EngineHooks["rewriteHistory"]> {
-  // Rebased on every fold from the compacted array itself, so the alignment
-  // survives a turn that compacts more than once.
-  let timestamps: readonly (string | undefined)[] = deps.initialTimestamps;
   let stopped = false;
 
-  return async (messages) => {
+  return async (messages, { signal }) => {
     if (stopped) return null;
 
-    const stored = messages.map((message, i) => {
-      const ts = timestamps[i];
-      return (ts ? { ...message, timestamp: ts } : message) as StoredMessage;
-    });
+    const cut = planMidTurnFold(messages, deps.budget);
+    if (cut === null) return null;
 
-    const plan = planCompaction(stored, { budget: deps.budget });
-    if (!plan.shouldCompact) return null;
-    // A boundary with no timestamp would persist as a `compactedThroughTs` that
-    // every event sorts at or after, replaying as the summary PLUS the whole
-    // history. Unreachable while the boundary snaps to a user turn, and cheap
-    // to make structurally impossible.
-    if (!plan.boundaryTs) {
+    try {
+      const summary = await deps.summarize(messages.slice(0, cut), signal);
+      return foldedHistory(summary, messages.slice(cut));
+    } catch {
+      // Best-effort, exactly as between turns: keep the full history and stop
+      // asking. The caller logs the failure at the summarizer call site.
       stopped = true;
       return null;
     }
-
-    const compacted = await deps.compact(stored);
-    if (!compacted) {
-      stopped = true;
-      return null;
-    }
-
-    timestamps = compacted.map((message) => message.timestamp);
-    return compacted.map(toModelMessage);
   };
 }

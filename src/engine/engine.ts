@@ -49,7 +49,6 @@ import {
   type ConnectorSkillCandidate,
   type EffortSource,
   type EngineConfig,
-  type EngineHooks,
   type EngineResult,
   type EventSink,
   type FinishReason,
@@ -1167,7 +1166,7 @@ export class AgentEngine {
         // Offer the history this loop has grown back to the caller, which may
         // return a smaller one to run with from here on (the runtime folds an
         // over-budget history into a summary — see `runtime/mid-turn-compaction`).
-        await this.applyHistoryRewrite(history, iteration, config.hooks);
+        await this.applyHistoryRewrite(history, iteration, config);
 
         // Drop any tool the supervisor has tripped this run and build the
         // per-iteration model toolset + schema lookup.
@@ -1507,10 +1506,13 @@ export class AgentEngine {
   private async applyHistoryRewrite(
     history: LanguageModelV3Message[],
     iteration: number,
-    hooks: EngineHooks | undefined,
+    config: EngineConfig,
   ): Promise<void> {
-    if (iteration === 0 || !hooks?.rewriteHistory) return;
-    const rewritten = await hooks.rewriteHistory([...history], { iteration });
+    if (iteration === 0 || !config.hooks?.rewriteHistory) return;
+    const rewritten = await config.hooks.rewriteHistory([...history], {
+      iteration,
+      ...(config.signal ? { signal: config.signal } : {}),
+    });
     if (rewritten) history.splice(0, history.length, ...rewritten);
   }
 

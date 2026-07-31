@@ -37,14 +37,17 @@ function hasToolResult(msg: LanguageModelV3Message): boolean {
 }
 
 /**
- * Group messages into atomic units for windowing.
+ * Group messages into atomic units — the units anything that cuts a history
+ * has to cut between, whether it drops the middle (windowing, below) or folds
+ * the front into a summary (`runtime/mid-turn-compaction.ts`).
+ *
  * An assistant message with tool-call parts + ALL consecutive following tool
  * messages with tool-result parts form an atomic group that must not be split.
  * This handles parallel tool calls where the reconstructor emits one tool
  * message per tool call (e.g., 4 parallel tool calls → 1 assistant + 4 tool messages).
  * Regular messages are groups of size 1.
  */
-function groupMessages(messages: LanguageModelV3Message[]): LanguageModelV3Message[][] {
+export function groupMessages(messages: LanguageModelV3Message[]): LanguageModelV3Message[][] {
   const groups: LanguageModelV3Message[][] = [];
   let i = 0;
   while (i < messages.length) {
