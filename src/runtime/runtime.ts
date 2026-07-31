@@ -30,7 +30,11 @@ import {
 } from "../connectors/providers/registry.ts";
 import { registerSmitheryCredentialProvider } from "../connectors/providers/smithery/transport-credential.ts";
 import { generateTitle } from "../conversation/auto-title.ts";
-import { compactConversationMessages, planCompaction } from "../conversation/compaction.ts";
+import {
+  compactConversationMessages,
+  planCompaction,
+  summarizeMessages,
+} from "../conversation/compaction.ts";
 import { extractOperatorTurns } from "../conversation/event-reconstructor.ts";
 import { EventSourcedConversationStore } from "../conversation/event-sourced-store.ts";
 import { type ConversationLocation, ConversationLocator } from "../conversation/locator.ts";
@@ -135,6 +139,7 @@ import { SharedSourceRef, type ToolRegistry } from "../tools/registry.ts";
 import { surfaceTools } from "../tools/surfacing.ts";
 import { createSystemTools } from "../tools/system-tools.ts";
 import type { ResourceData, Tool, ToolSource } from "../tools/types.ts";
+import type { TokenUsage } from "../usage/types.ts";
 import { WorkspaceContext } from "../workspace/context.ts";
 import { ensureUserWorkspace } from "../workspace/provisioning.ts";
 import type { Workspace } from "../workspace/types.ts";
@@ -174,6 +179,7 @@ const DEFAULT_WORK_DIR = join(homedir(), ".nimblebrain");
 const DEFAULT_MODEL = "claude-sonnet-4-6";
 
 import { DEFAULT_MAX_INPUT_TOKENS, DEFAULT_MAX_ITERATIONS } from "../limits.ts";
+import { buildMidTurnCompaction } from "./mid-turn-compaction.ts";
 import { resolveMaxOutputTokens } from "./resolve-max-output-tokens.ts";
 import { resolveMessageBudget } from "./resolve-message-budget.ts";
 import { resolveThinking } from "./resolve-thinking.ts";
@@ -1505,12 +1511,28 @@ export class Runtime {
     // Per-request hooks: inherit `beforeToolCall` from the runtime-level hooks;
     // compose `transformContext` here so the windowing budget is the one we just
     // resolved for THIS call.
+    //
+    // `rewriteHistory` folds the history the loop itself grows, against the same
+    // budget the check above used — but in memory, for this turn only, because
+    // the region a turn grows carries no timestamps to key a persisted fold on.
+    // Installed only when compaction is on: `transformContext` below walks the
+    // history every iteration regardless, so what the gate saves is the second
+    // walk, not the estimate itself. See `runtime/mid-turn-compaction.ts`.
     const perRequestHooks: EngineHooks = {
       ...this.hooks,
       transformContext: buildTransformContext(
         messageBudget.budget,
         getProviderFromModel(resolvedModelString),
       ),
+      ...(this.config.features?.compaction
+        ? {
+            rewriteHistory: buildMidTurnCompaction({
+              budget: messageBudget.budget,
+              summarize: (folded, signal) =>
+                this.summarizeForMidTurnFold(store, conversation.id, folded, signal),
+            }),
+          }
+        : {}),
     };
 
     // Build pre-emit run telemetry tied to the engine's runId. The engine fires
@@ -1903,7 +1925,11 @@ export class Runtime {
       maxOutputTokens: resolvedMaxOutputTokens,
     });
 
-    // No compaction: a task has a single-message history, never near budget.
+    // No compaction. A task OPENS on a single message, but its loop grows one
+    // the same way a chat turn's does, so the reason is not size — it is that
+    // both folds bill their summarizer call to a conversation, and a task run
+    // isn't persisted as one. Extending mid-turn folding here needs somewhere
+    // to put that cost first.
     const messages = await rehydrateUserResources(taskMessages, fileStore, {
       model: resolvedModelString,
       maxExtractedTextSize: this.getFilesConfig().maxExtractedTextSize,
@@ -3775,23 +3801,66 @@ export class Runtime {
       // The summarizer runs the `fast` slot outside the agentic loop, so it
       // emits no llm.response. Persist its usage as an aux.usage event so the
       // fold's cost isn't invisible to the usage aggregator.
-      onUsage: (usage, llmMs) => {
-        recordLlmUsage("compaction", fastSlot, usage);
-        appendEvent(conversationId, {
-          ts: new Date().toISOString(),
-          type: "aux.usage",
-          source: "compaction",
-          model: fastSlot,
-          usage,
-          llmMs,
-        });
-      },
+      onUsage: (usage, llmMs) =>
+        this.billCompactionUsage(store, conversationId, fastSlot, usage, llmMs),
     });
     // No-op contract: the helper returns the SAME array reference when nothing
     // was compacted (below threshold or best-effort failure). A future helper
     // that returns a copy would defeat this — the wiring integration test pins
     // that a below-threshold turn writes no history.compacted event.
     return compacted === history ? null : compacted;
+  }
+
+  /**
+   * Bill a summarizer call to the conversation. It runs the `fast` slot outside
+   * the agentic loop and emits no `llm.response`, so without this the fold's
+   * cost is invisible to the usage aggregator — true of both the fold between
+   * turns and the one inside a turn, hence one home for it.
+   */
+  private billCompactionUsage(
+    store: EventSourcedConversationStore,
+    conversationId: string,
+    model: string,
+    usage: TokenUsage,
+    llmMs: number,
+  ): void {
+    recordLlmUsage("compaction", model, usage);
+    store.appendEvent(conversationId, {
+      ts: new Date().toISOString(),
+      type: "aux.usage",
+      source: "compaction",
+      model,
+      usage,
+      llmMs,
+    });
+  }
+
+  /**
+   * Summarize the messages a mid-turn fold drops, billed like any other
+   * compaction call. Throws on failure — `buildMidTurnCompaction` treats a
+   * throw as "skip the fold and stop asking", so a summarizer outage costs the
+   * turn nothing but the full history it already had.
+   */
+  private async summarizeForMidTurnFold(
+    store: EventSourcedConversationStore,
+    conversationId: string,
+    messages: LanguageModelV3Message[],
+    signal?: AbortSignal,
+  ): Promise<string> {
+    const fastSlot = this.getModelSlot("fast");
+    try {
+      return await summarizeMessages(this.resolveModelFn(fastSlot), messages, {
+        summarizerContextTokens: getModelByString(fastSlot)?.limits.context,
+        onUsage: (usage, llmMs) =>
+          this.billCompactionUsage(store, conversationId, fastSlot, usage, llmMs),
+        ...(signal ? { signal } : {}),
+      });
+    } catch (err) {
+      log.error("[runtime] mid-turn history compaction failed", {
+        error: err instanceof Error ? err.message : String(err),
+      });
+      throw err;
+    }
   }
 
   /** Get the list of configured provider names (e.g., ["anthropic", "openai"]). */

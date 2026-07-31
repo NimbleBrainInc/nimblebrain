@@ -245,8 +245,34 @@ export interface EngineEvent {
   data: Record<string, unknown>;
 }
 
-/** Hooks for intercepting the engine loop at 4 strategic points. */
+/** Hooks for intercepting the engine loop at 5 strategic points. */
 export interface EngineHooks {
+  /**
+   * Replace the run's accumulated history between iterations. Called with the
+   * messages the engine is about to send; returning `null` leaves the history
+   * untouched, returning an array replaces it for the rest of the run.
+   *
+   * Distinct from `transformContext`, which shapes ONE call and is discarded
+   * afterwards — a rewrite here is durable, so what the caller drops is gone
+   * from every later iteration of this run. The engine is deliberately
+   * incurious about why: it owns the loop, the caller owns context policy (the
+   * runtime folds an over-budget history into a summary through this seam).
+   *
+   * Two properties the engine does rely on. The returned array must be a valid
+   * message sequence — no tool call left without its result — because it is
+   * sent as-is. And a rewrite changes the cached prefix, so a caller that
+   * rewrites every iteration pays a full cache write every iteration; rewrites
+   * are expected to be rare and deliberate.
+   *
+   * `opts.signal` is the run's own signal. The engine awaits this hook, so a
+   * hook that makes a network call has to honor it or a cancelled turn waits
+   * for that call to finish.
+   */
+  rewriteHistory?: (
+    messages: LanguageModelV3Message[],
+    opts: { iteration: number; signal?: AbortSignal },
+  ) => Promise<LanguageModelV3Message[] | null>;
+
   /**
    * Modify messages before LLM call (e.g., windowing, context injection).
    *
