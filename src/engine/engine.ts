@@ -49,6 +49,7 @@ import {
   type ConnectorSkillCandidate,
   type EffortSource,
   type EngineConfig,
+  type EngineHooks,
   type EngineResult,
   type EventSink,
   type FinishReason,
@@ -1163,6 +1164,11 @@ export class AgentEngine {
         // SSE consumers.
         throwIfAborted(config.signal);
 
+        // Offer the history this loop has grown back to the caller, which may
+        // return a smaller one to run with from here on (the runtime folds an
+        // over-budget history into a summary — see `runtime/mid-turn-compaction`).
+        await this.applyHistoryRewrite(history, iteration, config.hooks);
+
         // Drop any tool the supervisor has tripped this run and build the
         // per-iteration model toolset + schema lookup.
         const { modelTools, toolSchemaMap } = this.buildIterationTools(directTools, supervisor);
@@ -1194,10 +1200,13 @@ export class AgentEngine {
           // + tail breakpoints (Anthropic) so the growing prefix is read back,
           // not re-written, each iteration. See model/cache-policy.ts.
           //
-          // Correctness assumes transformContext keeps the prefix append-only:
-          // the rolling anchor must stay byte-identical to the prior call's
-          // tail. If a future compaction hook rewrites pre-anchor messages,
-          // reads silently become misses (degraded, not incorrect).
+          // A cache read assumes the prefix is append-only: the rolling anchor
+          // must stay byte-identical to the prior call's tail, which is why
+          // transformContext windows rather than rewrites. `rewriteHistory`
+          // breaks that on purpose — the iteration it fires reads nothing and
+          // writes the shortened prefix, which then holds until the next
+          // rewrite (degraded for one call, never incorrect). That one-time
+          // cost is what bounds the rewrite rate.
           const { prompt: cachedPrompt, tools: cachedTools } = applyCachePolicy({
             provider: callProvider,
             systemPrompt: callPrompt,
@@ -1485,6 +1494,24 @@ export class AgentEngine {
         },
       });
     }
+  }
+
+  /**
+   * Hand the loop's accumulated history to `rewriteHistory` and adopt whatever
+   * comes back, in place — `history` is the array every later append and
+   * transform reads, so a returned copy has to land in it, not beside it.
+   *
+   * No-op before the first iteration completes: the caller composed the opening
+   * history itself, so only what the loop appended since is new information.
+   */
+  private async applyHistoryRewrite(
+    history: LanguageModelV3Message[],
+    iteration: number,
+    hooks: EngineHooks | undefined,
+  ): Promise<void> {
+    if (iteration === 0 || !hooks?.rewriteHistory) return;
+    const rewritten = await hooks.rewriteHistory([...history], { iteration });
+    if (rewritten) history.splice(0, history.length, ...rewritten);
   }
 
   /**

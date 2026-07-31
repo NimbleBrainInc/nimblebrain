@@ -174,6 +174,7 @@ const DEFAULT_WORK_DIR = join(homedir(), ".nimblebrain");
 const DEFAULT_MODEL = "claude-sonnet-4-6";
 
 import { DEFAULT_MAX_INPUT_TOKENS, DEFAULT_MAX_ITERATIONS } from "../limits.ts";
+import { buildMidTurnCompaction } from "./mid-turn-compaction.ts";
 import { resolveMaxOutputTokens } from "./resolve-max-output-tokens.ts";
 import { resolveMessageBudget } from "./resolve-message-budget.ts";
 import { resolveThinking } from "./resolve-thinking.ts";
@@ -1505,12 +1506,29 @@ export class Runtime {
     // Per-request hooks: inherit `beforeToolCall` from the runtime-level hooks;
     // compose `transformContext` here so the windowing budget is the one we just
     // resolved for THIS call.
+    //
+    // `rewriteHistory` re-applies the compaction check above between the agent
+    // loop's iterations, against the history the loop itself grows — the fold
+    // runs the same path, so it plans on the same threshold and persists the
+    // same event. Installed only when compaction is on, so a deployment with it
+    // off doesn't pay the per-iteration estimate. See
+    // `runtime/mid-turn-compaction.ts` for the policy and its thrash bounds.
     const perRequestHooks: EngineHooks = {
       ...this.hooks,
       transformContext: buildTransformContext(
         messageBudget.budget,
         getProviderFromModel(resolvedModelString),
       ),
+      ...(this.config.features?.compaction
+        ? {
+            rewriteHistory: buildMidTurnCompaction({
+              budget: messageBudget.budget,
+              initialTimestamps: effectiveHistory.map((m) => m.timestamp),
+              compact: (inFlight) =>
+                this.maybeCompactHistory(store, conversation.id, inFlight, messageBudget.budget),
+            }),
+          }
+        : {}),
     };
 
     // Build pre-emit run telemetry tied to the engine's runId. The engine fires
