@@ -37,6 +37,41 @@ export function contrastRatio(fg: string, bg: string): number {
 }
 
 /**
+ * The smallest OKLab distance at which two colours read as different colours.
+ *
+ * Roughly one just-noticeable difference. Below it, two tokens are the same
+ * colour wearing different hexes — which is what a byte comparison cannot see.
+ */
+export const JND_OK = 0.02;
+
+/**
+ * Perceptual distance between two colours, as Euclidean distance in OKLab.
+ *
+ * WCAG contrast answers "can this be read against that ground" and says
+ * nothing about "can these two be told apart", which is the question a palette
+ * asks of any two tokens that must not be confused for each other. Lightness
+ * alone cannot answer it either: two hues can share a luminance exactly and
+ * still be plainly different colours.
+ */
+export function deltaEOk(a: string, b: string): number {
+  const [al, aa, ab] = oklab(a);
+  const [bl, ba, bb] = oklab(b);
+  return Math.hypot(al - bl, aa - ba, ab - bb);
+}
+
+function oklab(hex: string): [number, number, number] {
+  const [r, g, b] = channels(hex).map(srgbToLinear);
+  const l = Math.cbrt(0.4122214708 * r + 0.5363325363 * g + 0.0514459929 * b);
+  const m = Math.cbrt(0.2119034982 * r + 0.6806995451 * g + 0.1073969566 * b);
+  const s = Math.cbrt(0.0883024619 * r + 0.2817188376 * g + 0.6299787005 * b);
+  return [
+    0.2104542553 * l + 0.793617785 * m - 0.0040720468 * s,
+    1.9779984951 * l - 2.428592205 * m + 0.4505937099 * s,
+    0.0259040371 * l + 0.7827717662 * m - 0.808675766 * s,
+  ];
+}
+
+/**
  * Composite `fg` over `bg` at `pct` percent opacity.
  *
  * Covers both things that produce a translucent fill here: Tailwind's `/N`,

@@ -8,7 +8,7 @@
   --card-foreground: #09090b;
   --popover: #ffffff;
   --popover-foreground: #09090b;
-  --primary: #0055FF;
+  --primary: #315EDB;
   --primary-foreground: #ffffff;
   --secondary: #f4f4f5;
   --secondary-foreground: #09090b;
@@ -22,7 +22,7 @@
   --destructive-tint: rgba(192, 42, 36, 0.1);
   --border: #e4e4e7;
   --input: #e4e4e7;
-  --ring: #0055FF;
+  --ring: #315EDB;
   --success: #0f7a4f;
   --warning: #8a5f0a;
   --processing: #6d3ecf;
@@ -83,7 +83,7 @@
   --card-foreground: #fafafa;
   --popover: #0e0e10;
   --popover-foreground: #fafafa;
-  --primary: #4d90ff;
+  --primary: #6a8fe4;
   --primary-foreground: #000000;
   --secondary: #161618;
   --secondary-foreground: #fafafa;
@@ -97,7 +97,7 @@
   --destructive-tint: rgba(240, 115, 106, 0.1);
   --border: #232326;
   --input: #232326;
-  --ring: #4d90ff;
+  --ring: #6a8fe4;
   --success: #3fbf85;
   --warning: #e0aa3c;
   --processing: #a68bfa;
