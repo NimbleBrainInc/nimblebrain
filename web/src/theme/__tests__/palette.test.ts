@@ -27,8 +27,8 @@ const ANCHORS = {
   light: {
     "--color-background-primary": "#ffffff",
     "--color-text-primary": "#09090b",
-    "--color-text-accent": "#0055FF",
-    "--color-ring-primary": "#0055FF",
+    "--color-text-accent": "#315EDB",
+    "--color-ring-primary": "#315EDB",
     "--color-border-primary": "#e4e4e7",
     "--font-sans": "'Hanken Grotesk', system-ui, sans-serif",
     "--nb-font-heading": "'Hanken Grotesk', system-ui, sans-serif",
@@ -36,8 +36,8 @@ const ANCHORS = {
   dark: {
     "--color-background-primary": "#000000",
     "--color-text-primary": "#fafafa",
-    "--color-text-accent": "#4d90ff",
-    "--color-ring-primary": "#4d90ff",
+    "--color-text-accent": "#6a8fe4",
+    "--color-ring-primary": "#6a8fe4",
     "--color-border-primary": "#232326",
     "--font-sans": "'Hanken Grotesk', system-ui, sans-serif",
     "--nb-font-heading": "'Hanken Grotesk', system-ui, sans-serif",
@@ -105,7 +105,7 @@ describe("paletteToRootCss — shell :root/.dark match current values", () => {
   test("light :root carries the current brand values", () => {
     for (const decl of [
       "--background: #ffffff;",
-      "--primary: #0055FF;",
+      "--primary: #315EDB;",
       "--processing: #6d3ecf;",
       "--scope-org: #1d4ed8;",
       "--sidebar-width: 240px;",
@@ -116,7 +116,7 @@ describe("paletteToRootCss — shell :root/.dark match current values", () => {
 
   test("dark block redefines colors but not radius/layout (those cascade)", () => {
     expect(darkBlock).toContain("--background: #000000;");
-    expect(darkBlock).toContain("--primary: #4d90ff;");
+    expect(darkBlock).toContain("--primary: #6a8fe4;");
     expect(darkBlock).toContain("--processing: #a68bfa;");
     expect(darkBlock).not.toContain("--radius:");
     expect(darkBlock).not.toContain("--sidebar-width:");

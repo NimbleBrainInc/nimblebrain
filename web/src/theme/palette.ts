@@ -56,7 +56,7 @@ export const colors = {
   // NimbleBrain Blue. The single accent: every primary action, focus ring, and
   // live state. There is no second accent hue; status colours are the only
   // other hues in the interface.
-  primary: ["#0055FF", "#4d90ff"],
+  primary: ["#315EDB", "#6a8fe4"],
   "primary-foreground": ["#ffffff", "#000000"],
   secondary: ["#f4f4f5", "#161618"],
   "secondary-foreground": ["#09090b", "#fafafa"],
@@ -83,7 +83,7 @@ export const colors = {
   "destructive-tint": ["rgba(192, 42, 36, 0.1)", "rgba(240, 115, 106, 0.1)"],
   border: ["#e4e4e7", "#232326"],
   input: ["#e4e4e7", "#232326"],
-  ring: ["#0055FF", "#4d90ff"],
+  ring: ["#315EDB", "#6a8fe4"],
   success: ["#0f7a4f", "#3fbf85"],
   warning: ["#8a5f0a", "#e0aa3c"],
   processing: ["#6d3ecf", "#a68bfa"],

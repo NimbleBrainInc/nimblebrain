@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
-import { AA_TEXT, contrastRatio, over } from "../contrast.ts";
+import { AA_TEXT, contrastRatio, deltaEOk, JND_OK, over } from "../contrast.ts";
 import { colors, extOnlyColors, type Mode, type Pair, pick } from "../palette.ts";
 
 /**
@@ -221,19 +221,30 @@ describe("palette contrast — WCAG 2.2", () => {
   // `scope-org` was byte-identical to `primary`, `scope-connector` to the warning
   // amber — and the fix changed the values and wrote the rule as prose.
   // Contrast still passes when they collapse, so only this catches a repeat.
+  //
+  // Distinctness is measured perceptually, not by byte inequality: the failure
+  // being guarded against is a tier badge that *looks* like a primary action,
+  // and two hexes a fraction of a just-noticeable difference apart do that
+  // while comparing unequal. `JND_OK` is the floor — one JND, the point below
+  // which the two are the same colour in different clothes.
   const SCOPES: TokenName[] = ["scope-org", "scope-workspace", "scope-user", "scope-connector"];
   const RESERVED: TokenName[] = ["primary", "success", "warning", "destructive", "processing"];
   for (const mode of ["light", "dark"] as const) {
     for (const scope of SCOPES) {
       test(`${mode}: ${scope} is distinct from every brand and status hue`, () => {
         for (const reserved of RESERVED) {
-          expect(token(scope, mode)).not.toBe(token(reserved, mode));
+          const d = deltaEOk(token(scope, mode), token(reserved, mode));
+          expect(d, `${scope} vs ${reserved}: ΔE-OK ${d.toFixed(4)}`).toBeGreaterThan(JND_OK);
         }
       });
     }
     test(`${mode}: the four scope tiers are distinct from each other`, () => {
-      const values = SCOPES.map((s) => token(s, mode));
-      expect(new Set(values).size).toBe(SCOPES.length);
+      for (const [i, scope] of SCOPES.entries()) {
+        for (const other of SCOPES.slice(i + 1)) {
+          const d = deltaEOk(token(scope, mode), token(other, mode));
+          expect(d, `${scope} vs ${other}: ΔE-OK ${d.toFixed(4)}`).toBeGreaterThan(JND_OK);
+        }
+      }
     });
   }
 
