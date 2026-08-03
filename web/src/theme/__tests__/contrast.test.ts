@@ -233,14 +233,16 @@ describe("palette contrast — WCAG 2.2", () => {
     for (const scope of SCOPES) {
       test(`${mode}: ${scope} is distinct from every brand and status hue`, () => {
         for (const reserved of RESERVED) {
-          expect(deltaEOk(token(scope, mode), token(reserved, mode))).toBeGreaterThan(JND_OK);
+          const d = deltaEOk(token(scope, mode), token(reserved, mode));
+          expect(d, `${scope} vs ${reserved}: ΔE-OK ${d.toFixed(4)}`).toBeGreaterThan(JND_OK);
         }
       });
     }
     test(`${mode}: the four scope tiers are distinct from each other`, () => {
       for (const [i, scope] of SCOPES.entries()) {
         for (const other of SCOPES.slice(i + 1)) {
-          expect(deltaEOk(token(scope, mode), token(other, mode))).toBeGreaterThan(JND_OK);
+          const d = deltaEOk(token(scope, mode), token(other, mode));
+          expect(d, `${scope} vs ${other}: ΔE-OK ${d.toFixed(4)}`).toBeGreaterThan(JND_OK);
         }
       }
     });

@@ -41,6 +41,18 @@ export function contrastRatio(fg: string, bg: string): number {
  *
  * Roughly one just-noticeable difference. Below it, two tokens are the same
  * colour wearing different hexes — which is what a byte comparison cannot see.
+ *
+ * Scaled from CIELAB rather than taken from a study of OKLab directly, because
+ * no equivalent threshold is published for it: the long-standing CIE figure is
+ * ΔE*ab ≈ 2.3, and OKLab's axes are the same perceptual quantities on an L
+ * range of 0–1 where CIELAB's is 0–100, so 2.3/100 ≈ 0.023. Rounded down to
+ * 0.02, which is the stricter direction — it fails a pair sooner, and a guard
+ * that trips early is the safe error here.
+ *
+ * This is a floor for *distinguishability*, not a target. A pair sitting just
+ * above it is legible as two colours and is still probably too close to carry
+ * different meanings; the palette should clear it by a wide margin, and this
+ * catches the collapse, not the crowding.
  */
 export const JND_OK = 0.02;
 
