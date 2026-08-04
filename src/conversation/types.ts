@@ -55,14 +55,30 @@ export interface ListOptions {
   cursor?: string;
   search?: string;
   sortBy?: "createdAt" | "updatedAt";
-  /**
-   * Restrict the listing to one workspace. The workspace-scoped conversation view (a
-   * single `workspaces/<wsId>/conversations/` subtree); omit for the owner's
-   * "All workspaces" view across every workspace they belong to. Orthogonal to
-   * `access` — `workspaceId` is the path filter, ownership is the access gate.
-   */
-  workspaceId?: string;
 }
+
+/**
+ * Which workspaces a cross-workspace listing covers.
+ *
+ * A required, explicit choice rather than an optional `workspaceId` — because
+ * the failure mode of the optional form is silent and inverted: forgetting to
+ * pass it widened the read to every workspace the owner belongs to, which is
+ * exactly the wrong default and looks identical to a scoped call at the call
+ * site. Naming `all-workspaces` out loud makes each one greppable and forces a
+ * new caller to decide.
+ *
+ * Orthogonal to `access` — the scope is the path filter, ownership is the
+ * access gate.
+ */
+export type ConversationListScope =
+  /** One workspace's subtree. Every user-facing surface uses this. */
+  | { kind: "workspace"; workspaceId: string }
+  /**
+   * Every workspace the owner belongs to. An INTERNAL PRIMITIVE — never a user
+   * surface. Reserved for owner-wide bookkeeping that is not a conversation
+   * view (skill loading diagnostics, usage aggregation).
+   */
+  | { kind: "all-workspaces" };
 
 /** Paginated conversation list result. */
 export interface ConversationListResult {

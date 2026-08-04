@@ -61,7 +61,7 @@ function findResourceLink(result: ToolResult): {
 
 function makeRuntime(workDir: string): Runtime {
   // Files are workspace-owned: the source resolves its store via
-  // `getWorkspaceFileStore(fileWorkspaceId, resolveRequestUserId(getCurrentIdentity()))`,
+  // `getWorkspaceFileStore(focusedWorkspaceId, resolveRequestUserId(getCurrentIdentity()))`,
   // where the workspace comes from the request context (see `exec`) and the owner
   // from the current identity. The mock roots each store at the matching workspace
   // partition so the on-disk round-trip is exercised faithfully.
@@ -76,12 +76,12 @@ function makeRuntime(workDir: string): Runtime {
 
 /**
  * Run a files tool the way the runtime does during a chat: inside a request
- * context whose `fileWorkspaceId` names the focused workspace. Without it the
+ * context whose `focusedWorkspaceId` names the focused workspace. Without it the
  * workspace-owned store has no workspace in scope and `getStore()` throws.
  */
 function exec(tool: string, args: Record<string, unknown>): Promise<ToolResult> {
   return runWithRequestContext(
-    { identity: null, scope: { kind: "identity" }, fileWorkspaceId: WS_ID },
+    { identity: null, scope: { kind: "identity" }, focusedWorkspaceId: WS_ID },
     () => source.execute(tool, args),
   );
 }

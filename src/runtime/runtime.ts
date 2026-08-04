@@ -43,6 +43,7 @@ import type {
   Conversation,
   ConversationAccessContext,
   ConversationListResult,
+  ConversationListScope,
   CreateConversationOptions,
   ListOptions,
   StoredMessage,
@@ -1652,7 +1653,7 @@ export class Runtime {
       // Files created/read by identity-door `files__*` tools land in the
       // conversation's authoritative workspace — the same partition the
       // rehydration read and the upload write use.
-      fileWorkspaceId: convWsId,
+      focusedWorkspaceId: convWsId,
     };
     engineConfig.toolPromotion = this.buildToolPromotionFactory();
 
@@ -2062,7 +2063,7 @@ export class Runtime {
       // Files created/read by identity-door `files__*` tools land in the run's
       // provenance workspace (`workWsId`) — the same partition the rehydration
       // read uses, not the personal `sessionWsId` scope.
-      fileWorkspaceId: workWsId,
+      focusedWorkspaceId: workWsId,
       // Unattended run: bars the automation-authoring surface. Rides the ALS
       // context (preserved across the per-call restamp), so a delegated sub-agent
       // inherits it and the wall holds at any depth — enforced at the automations
@@ -3484,7 +3485,7 @@ export class Runtime {
 
   /**
    * The workspace a conversation lives in — for code outside the chat path (the
-   * upload handlers, the file-serve route, and the per-turn `fileWorkspaceId`
+   * upload handlers, the file-serve route, and the per-turn `focusedWorkspaceId`
    * that scopes the agent's `files__*` tools) that must resolve the SAME
    * partition `chat()` reads from when it rehydrates. A conversation not yet on
    * disk (a new chat) is born in `fallbackWsId`.
@@ -3501,7 +3502,7 @@ export class Runtime {
    * The single probe-then-locate for "which workspace does this conversation live
    * in" — the one place the partition rule lives, so the read (`resolveChatStore`),
    * the write (`resolveConversationWorkspaceId` → upload handlers / file serve), and
-   * the file-tool scope (`RequestContext.fileWorkspaceId`) cannot drift apart.
+   * the file-tool scope (`RequestContext.focusedWorkspaceId`) cannot drift apart.
    * Hot path: probe the focused/personal workspace directly (O(1) `existsSync`, no
    * tenant scan) — only a cross-workspace deep-link falls back to the locator walk.
    */
@@ -4459,17 +4460,21 @@ export class Runtime {
   }
 
   /**
-   * List conversations across workspaces via the locator. Pass `access` to filter
-   * by ownership; without it the caller asserts trusted enumeration scope
-   * (CLI, admin tools). Pass `options.workspaceId` for the workspace-scoped view (a
-   * single workspace's chats); omit it for the owner's "All workspaces" view. The workspace
-   * filter is the path; ownership is the access gate — orthogonal axes.
+   * List conversations via the locator. `scope` is REQUIRED: conversations are
+   * workspace-owned, so every read names the workspaces it covers and there is
+   * no omitted form that silently spans all of them. `{ kind: "workspace" }` is
+   * the only shape a user-facing surface may use; `{ kind: "all-workspaces" }`
+   * is an internal primitive (see `ConversationListScope`). Pass `access` to
+   * filter by ownership; without it the caller asserts trusted enumeration
+   * scope (CLI, admin tools). The scope is the path filter; ownership is the
+   * access gate — orthogonal axes.
    */
   async listConversations(
+    scope: ConversationListScope,
     options?: ListOptions,
     access?: ConversationAccessContext,
   ): Promise<ConversationListResult> {
-    return this.getConversationLocator().list(options, access);
+    return this.getConversationLocator().list(scope, options, access);
   }
 
   /**

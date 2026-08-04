@@ -48,16 +48,20 @@ export interface RequestContext {
    */
   conversationId?: string;
   /**
-   * The focused workspace for this request — the workspace that owns the files
-   * and automations created or read here. Orthogonal to `scope`, and set on BOTH
-   * doors: identity-door tools (`files__*`, `automations__*`) need it because
-   * `scope.workspaceId` is the personal/session workspace, not the focused
-   * workspace. Absent ⇒ no workspace in scope (e.g. an external `/mcp` request
-   * with no `X-Workspace-Id`): the store denies rather than guessing a workspace.
-   * (Named `fileWorkspaceId` for the original files consumer; a rename to
-   * `focusedWorkspaceId` now that automations share it is a pending cleanup.)
+   * The focused workspace for this request — the workspace that owns the files,
+   * automations, and conversations created or read here. Orthogonal to `scope`,
+   * and set on BOTH doors: every kernel identity source (`files__*`,
+   * `automations__*`, `conversations__*`) needs it, because `scope.workspaceId`
+   * is the personal/session workspace, not the workspace the user is looking
+   * at. Absent ⇒ no workspace in scope (e.g. an external `/mcp` request with no
+   * `X-Workspace-Id`): the store denies rather than guessing a workspace.
+   *
+   * Optional on the type because plenty of contexts genuinely have no focus
+   * (background jobs, resource reads outside a workspace). Absence NARROWS —
+   * every consumer denies — so it is never the widening default that a missing
+   * list-filter would be.
    */
-  fileWorkspaceId?: string;
+  focusedWorkspaceId?: string;
   toolPromotion?: ToolPromotionControls;
   /**
    * True when this context belongs to an unattended run (`executeTask` — an

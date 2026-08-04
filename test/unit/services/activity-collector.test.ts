@@ -50,7 +50,7 @@ function makeCollector(
 ): ActivityCollector {
 	return new ActivityCollector({
 		logDir,
-		conversations: { kind: "store", store },
+		conversations: { kind: "store", list: (o, a) => store.list(o, a) },
 		bundleEvents: { kind: "sse", eventManager },
 	});
 }
@@ -655,7 +655,7 @@ describe("ActivityCollector", () => {
 
 		const collector = new ActivityCollector({
 			logDir,
-			conversations: { kind: "store", store: makeMockStore() },
+			conversations: { kind: "store", list: (() => { const m = makeMockStore(); return (o, a) => m.list(o, a); })() },
 			automationRunsDir,
 		});
 
@@ -695,7 +695,7 @@ describe("ActivityCollector", () => {
 
 		const collector = new ActivityCollector({
 			logDir,
-			conversations: { kind: "store", store: makeMockStore() },
+			conversations: { kind: "store", list: (() => { const m = makeMockStore(); return (o, a) => m.list(o, a); })() },
 			automationRunsDir,
 		});
 

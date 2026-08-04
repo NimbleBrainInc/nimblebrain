@@ -1,7 +1,11 @@
 import { readdir, readFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { SseEventManager } from "../api/events.ts";
-import type { ConversationAccessContext, ConversationStore } from "../conversation/types.ts";
+import type {
+  ConversationAccessContext,
+  ConversationListResult,
+  ListOptions,
+} from "../conversation/types.ts";
 import type {
   ActivityBundleEvent,
   ActivityConversationSummary,
@@ -13,19 +17,25 @@ import type {
 } from "./home-types.ts";
 
 /**
- * Where the conversation rows come from, and — for the store arm — which
- * workspace they are scoped to.
+ * Where the conversation rows come from. Both arms arrive pre-scoped, so the
+ * collector has no way to widen the view it was handed:
  *
- * `workspaceId` lives on the `store` arm rather than beside it as an optional
- * option, so a store-backed collector with no workspace is *unrepresentable*
- * rather than rejected (or worse, silently widened) at runtime. The store's
- * `list` treats a missing workspace as "every workspace the owner has", and
- * activity is a workspace view, so an omission there is a cross-workspace read
- * that looks like a workspace one. The `jsonl` arm needs no workspace: it reads
- * one directory, and that directory IS the scope.
+ * - `store` — an ALREADY-SCOPED lister. The caller binds the workspace when it
+ *   builds the closure (`runtime.listConversations` requires a scope, so an
+ *   unscoped one cannot be written without spelling out `all-workspaces`).
+ * - `jsonl` — one directory, and that directory IS the scope.
+ *
+ * Activity is a workspace view: the log and automation-run inputs beside this
+ * are workspace-scoped paths, so conversation rows spanning workspaces would be
+ * the one part of the output that silently disagreed with the rest.
  */
+type ScopedConversationLister = (
+  options: ListOptions,
+  access?: ConversationAccessContext,
+) => Promise<ConversationListResult>;
+
 type ConversationSource =
-  | { kind: "store"; store: Pick<ConversationStore, "list">; workspaceId: string }
+  | { kind: "store"; list: ScopedConversationLister }
   | { kind: "jsonl"; conversationsDir: string };
 
 type BundleEventSource = { kind: "sse"; eventManager: SseEventManager } | { kind: "none" };
@@ -161,32 +171,19 @@ export class ActivityCollector {
       return this.collectConversationsFromJsonl(source.conversationsDir, since, until, limit);
     }
 
-    return this.collectConversationsFromStore(
-      source.store,
-      source.workspaceId,
-      since,
-      until,
-      limit,
-    );
+    return this.collectConversationsFromStore(source.list, since, until, limit);
   }
 
   private async collectConversationsFromStore(
-    store: Pick<ConversationStore, "list">,
-    workspaceId: string,
+    list: ScopedConversationLister,
     since: string,
     until: string,
     limit: number,
   ): Promise<ActivityConversationSummary[]> {
-    const result = await store.list(
+    const result = await list(
       {
         sortBy: "updatedAt",
         limit,
-        // Conversations are workspace-owned, and activity is a WORKSPACE view —
-        // the log and automation-run sources feeding the same output are already
-        // scoped to this workspace. Unscoped, the conversation rows (and the
-        // totals derived from them) span every workspace the owner belongs to,
-        // so one workspace's briefing counts another's chats.
-        workspaceId,
       },
       // Ownership filter — the top-level store holds every user's
       // conversations; without this every caller would see peer

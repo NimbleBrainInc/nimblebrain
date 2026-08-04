@@ -1009,6 +1009,12 @@ async function listOwnedConversationIds(
   // `list` is in-memory after populate, so paging is cheap. Loop until done.
   while (true) {
     const page = await runtime.listConversations(
+      // The one owner-wide enumeration left, and it is named out loud so it
+      // stays greppable. `skills__loading_log` answers "which skills loaded,
+      // where" across the caller's own conversations and returns ids + skill
+      // names + token counts only — no titles, previews, or message content.
+      // Whether it should narrow to the focused workspace is open (#879).
+      { kind: "all-workspaces" },
       { limit: 200, ...(cursor ? { cursor } : {}) },
       access,
     );

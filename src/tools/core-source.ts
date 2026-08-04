@@ -440,8 +440,9 @@ async function generateBriefing(
     logDir: join(runtime.getWorkspaceScopedDir(wsId), "logs"),
     conversations: {
       kind: "store",
-      store: { list: (o, a) => runtime.listConversations(o, a) },
-      workspaceId: wsId,
+      // Bound to this workspace here, at the boundary — the collector receives
+      // an already-scoped lister and cannot widen it.
+      list: (o, a) => runtime.listConversations({ kind: "workspace", workspaceId: wsId }, o, a),
     },
     access: { userId: identity.id },
   });

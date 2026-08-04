@@ -4,7 +4,7 @@
  * Conversations are workspace-owned, and `conversations__*` dispatches through
  * the IDENTITY door — so `scope.workspaceId` is the personal/session workspace,
  * not the workspace the user is looking at. The focused workspace therefore
- * rides `RequestContext.fileWorkspaceId`, exactly as it does for `files__*` and
+ * rides `RequestContext.focusedWorkspaceId`, exactly as it does for `files__*` and
  * `automations__*` (see `test/unit/bundles/files/source.test.ts`).
  *
  * These tests pin the property that matters: the workspace a read lands in is
@@ -18,6 +18,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { NoopEventSink } from "../../../../src/adapters/noop-events.ts";
+import { ConversationLocator } from "../../../../src/conversation/locator.ts";
 import type { ToolResult } from "../../../../src/engine/types.ts";
 import { runWithRequestContext } from "../../../../src/runtime/request-context.ts";
 import type { Runtime } from "../../../../src/runtime/runtime.ts";
@@ -92,7 +93,7 @@ function exec(
     {
       identity: { id: OWNER_ID } as never,
       scope: { kind: "identity" },
-      ...(wsId ? { fileWorkspaceId: wsId } : {}),
+      ...(wsId ? { focusedWorkspaceId: wsId } : {}),
     },
     () => source.execute(tool, args),
   );
@@ -238,6 +239,63 @@ describe("conversations__stats — ambient workspace scoping", () => {
   test("denies when no workspace is in scope", async () => {
     const result = await exec("stats", { period: "all" }, undefined);
     expect(result.isError).toBe(true);
+  });
+});
+
+describe("the cross-workspace enumeration must be named out loud", () => {
+  // `ConversationLocator.list` used to take an OPTIONAL `workspaceId`, so
+  // forgetting it widened the read to every workspace — silently, and looking
+  // identical to a scoped call. The scope is now a required discriminated
+  // union, which turns the omission into a compile error and leaves the
+  // owner-wide form greppable.
+  test("a workspace scope covers only that workspace", async () => {
+    const locator = new ConversationLocator(join(workDir, "workspaces"));
+    const result = await locator.list(
+      { kind: "workspace", workspaceId: WS_A },
+      { limit: 100 },
+      { userId: OWNER_ID },
+    );
+    expect(result.conversations.map((c) => c.id).sort()).toEqual(["conv_a1", "conv_a2"]);
+  });
+
+  test("all-workspaces is still available to internal callers, explicitly", async () => {
+    const locator = new ConversationLocator(join(workDir, "workspaces"));
+    const result = await locator.list(
+      { kind: "all-workspaces" },
+      { limit: 100 },
+      { userId: OWNER_ID },
+    );
+    expect(result.conversations.map((c) => c.id).sort()).toEqual([
+      "conv_a1",
+      "conv_a2",
+      "conv_b1",
+      "conv_legacy",
+      "conv_p1",
+    ]);
+  });
+
+  test("the owner-wide form is used in exactly one place in src/", async () => {
+    // If this count moves, a new cross-workspace enumeration was added and
+    // wants the same scrutiny `skills__loading_log` got (#879).
+    const proc = Bun.spawnSync([
+      "grep",
+      "-rn",
+      '{ kind: "all-workspaces" }',
+      "src/",
+    ]);
+    const hits = new TextDecoder()
+      .decode(proc.stdout)
+      .split("\n")
+      .filter((l) => l.trim())
+      // Drop the union's own declaration and prose about it — only real call
+      // sites count.
+      .filter((l) => !l.includes("conversation/types.ts"))
+      .filter((l) => {
+        const code = l.slice(l.indexOf(":", l.indexOf(":") + 1) + 1).trim();
+        return !code.startsWith("*") && !code.startsWith("//");
+      });
+    expect(hits).toHaveLength(1);
+    expect(hits[0]).toContain("skills.ts");
   });
 });
 

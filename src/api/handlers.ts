@@ -969,7 +969,8 @@ function mapArtifactReadError(err: unknown, uri: string, workspaceId: string): R
  * Read a resource from a kernel identity source (conversations, files,
  * automations) for POST /v1/resources/read. Files are workspace-owned, so a
  * `files://<id>` read resolves in the request's focused workspace (or the
- * caller's personal workspace when unfocused); conversations/automations ignore it.
+ * caller's personal workspace when unfocused). Every kernel identity source is
+ * workspace-owned now, so all three read the same focused workspace.
  */
 async function readIdentitySourceResource(
   runtime: Runtime,
@@ -981,7 +982,7 @@ async function readIdentitySourceResource(
   const reqCtx: RequestContext = {
     identity: identity ?? null,
     scope: { kind: "identity" },
-    fileWorkspaceId:
+    focusedWorkspaceId:
       options?.workspaceId ?? personalWorkspaceIdFor(runtime.resolveRequestUserId(identity)),
   };
   const resource = await runWithRequestContext(reqCtx, () =>
@@ -1034,7 +1035,8 @@ export async function handleReadResource(
   // decision the orchestrator and `handleToolCall` make. But files are
   // workspace-owned, so a `files://<id>` read resolves in the request's focused
   // workspace (`options.workspaceId`, or the caller's personal workspace when
-  // unfocused), set via `fileWorkspaceId`. conversations/automations ignore it.
+  // unfocused), set via `focusedWorkspaceId` — which conversations and
+  // automations read too: all three are workspace-owned.
   const { identity } = options ?? {};
   if (runtime.getIdentitySource(server)) {
     return readIdentitySourceResource(runtime, server, uri, options);
@@ -1260,10 +1262,12 @@ function buildRestToolCallContext(
   return {
     identity: identity ?? null,
     scope,
-    // Files are workspace-owned: an identity-door `files__*` call lands in the
-    // focused workspace (validated `X-Workspace-Id`) or the caller's personal
-    // workspace when unfocused. Ignored by the other identity tools.
-    fileWorkspaceId: workspaceId ?? personalWorkspaceIdFor(runtime.resolveRequestUserId(identity)),
+    // Every kernel identity source is workspace-owned, so an identity-door
+    // `files__*` / `automations__*` / `conversations__*` call lands in the
+    // focused workspace (validated `X-Workspace-Id`), or the caller's personal
+    // workspace when unfocused.
+    focusedWorkspaceId:
+      workspaceId ?? personalWorkspaceIdFor(runtime.resolveRequestUserId(identity)),
   };
 }
 
