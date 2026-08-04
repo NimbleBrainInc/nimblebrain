@@ -32,6 +32,10 @@ const PENDING_LOADED: ChatMessage[] = [
   { role: "assistant", content: "part", blocks: [{ type: "text", text: "part" }], pending: true },
 ];
 
+// A turn that died before producing any assistant content: the trailing
+// message is the user's own. `hasPendingTail` catches this via `role === "user"`.
+const STRANDED_LOADED: ChatMessage[] = [{ role: "user", content: "loaded-q" }];
+
 // A completed conversation whose assistant turn carries ledger metadata — the
 // reopen path (server jsonl-reader attaches `skillsLoaded` to the turn).
 const LOADED_WITH_SKILLS: ChatMessage[] = [
@@ -120,9 +124,11 @@ mock.module("../src/api/client", () => ({
         messages:
           args?.id === "conv_pending"
             ? PENDING_LOADED
-            : args?.id === "conv_skills"
-              ? LOADED_WITH_SKILLS
-              : LOADED,
+            : args?.id === "conv_stranded"
+              ? STRANDED_LOADED
+              : args?.id === "conv_skills"
+                ? LOADED_WITH_SKILLS
+                : LOADED,
       },
     }),
 }));
@@ -273,6 +279,53 @@ describe("chat-store viewer", () => {
     expect(store.getSnapshot("conv_pending").messages.filter((m) => m.role === "user")).toHaveLength(
       1,
     );
+  });
+
+  it("refetches at most once when a pending tail outlives its run (no unbounded resume loop)", async () => {
+    const store = createChatStore();
+    // conv_pending's disk tail is permanently partial: its trailing assistant
+    // never gets a terminal event, so every refetch returns the same pending
+    // shape. This is the state a turn leaves when it dies without persisting
+    // a terminal frame.
+    await store.loadConversation("conv_pending");
+
+    // The server reports no live turn AND nothing in the grace buffer — the
+    // run is gone, so no replay can ever complete the tail. The server sends a
+    // `subscribed` frame on every connect, so drive one per opened stream.
+    // Bounded so a regression fails the assertion instead of hanging the suite.
+    for (let i = 0; i < 10; i++) {
+      const s = streams[streams.length - 1];
+      if (!s || s.closed) break;
+      s.onSubscribed?.({ isActive: false, activeSeq: 0 });
+      await new Promise((r) => setTimeout(r, 0));
+    }
+
+    // One initial connection + at most one refetch attempt. More means the
+    // refetch is re-entering itself with no termination condition.
+    expect(streams.length).toBeLessThanOrEqual(2);
+    // And the viewer must not be left spinning on a turn that will never land.
+    expect(store.getSnapshot("conv_pending").isStreaming).toBe(false);
+  });
+
+  it("settles a turn stranded before any assistant content instead of refetching forever", async () => {
+    const store = createChatStore();
+    // The turn died before persisting any assistant message, so the trailing
+    // message is the user's own — permanently "pending" by `hasPendingTail`.
+    await store.loadConversation("conv_stranded");
+
+    for (let i = 0; i < 10; i++) {
+      const s = streams[streams.length - 1];
+      if (!s || s.closed) break;
+      s.onSubscribed?.({ isActive: false, activeSeq: 0 });
+      await new Promise((r) => setTimeout(r, 0));
+    }
+
+    expect(streams.length).toBeLessThanOrEqual(2);
+    const snap = store.getSnapshot("conv_stranded");
+    expect(snap.isStreaming).toBe(false);
+    // The user's message survives, and they're told why nothing followed it.
+    expect(snap.messages.map((m) => m.content)).toEqual(["loaded-q"]);
+    expect(snap.error).toBe("This response was interrupted and never finished.");
   });
 
   it("preserves a completed prior turn when a new turn goes active mid-resume (no transcript loss)", async () => {
