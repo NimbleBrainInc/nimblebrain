@@ -441,9 +441,9 @@ async function generateBriefing(
     conversations: {
       kind: "store",
       store: { list: (o, a) => runtime.listConversations(o, a) },
+      workspaceId: wsId,
     },
     access: { userId: identity.id },
-    workspaceId: wsId,
   });
   const activity = await collector.collect({ since });
   const registry = runtime.getRegistryForCurrentWorkspace();

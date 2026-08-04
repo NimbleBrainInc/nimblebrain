@@ -49,13 +49,13 @@ export function createHomeSource(runtime: Runtime, eventSink: EventSink): McpSou
             conversations: {
               kind: "store",
               store: { list: (o, a) => runtime.listConversations(o, a) },
+              // Conversations are workspace-owned; the two path-based sources
+              // here are already scoped to this workspace, so the conversation
+              // rows (which carry per-conversation previews) must be too.
+              workspaceId: wsId,
             },
             automationRunsDir,
             access: { userId: identity.id },
-            // Conversations are workspace-owned; the two path-based sources
-            // above are already scoped to this workspace, so the conversation
-            // rows (which carry per-conversation previews) must be too.
-            workspaceId: wsId,
           });
 
           const defaults = {
