@@ -176,6 +176,9 @@ export interface ChatSnapshot {
   canRetry: boolean;
 }
 
+/** Shown on a turn whose run ended without ever persisting a terminal event. */
+const ABANDONED_TAIL_NOTICE = "This response was interrupted and never finished.";
+
 const EMPTY_MESSAGES: ChatMessage[] = [];
 const EMPTY_SNAPSHOT: ChatSnapshot = {
   conversationId: null,
@@ -701,17 +704,17 @@ export function createChatStore(): ChatStore {
     if (last?.role === "assistant") {
       // Partial assistant content: keep it, but stop rendering it as still
       // arriving and say why it stops mid-thought.
-      updated[updated.length - 1] = {
-        ...last,
-        pending: false,
-        error: "This response was interrupted and never finished.",
-      };
-      slice.messages = updated;
+      updated[updated.length - 1] = { ...last, pending: false, error: ABANDONED_TAIL_NOTICE };
     } else {
-      // The turn died before any assistant content — the user's own message is
-      // the whole tail, so there is nothing to annotate in place.
-      slice.error = "This response was interrupted and never finished.";
+      // No assistant content at all. Carry the notice on an empty assistant
+      // message rather than `slice.error`, which renders as a banner pinned to
+      // the top of the panel — detached from the turn it explains, and cleared
+      // by the next send or load, so a follow-up would erase the only account
+      // of why the previous message was never answered. Same shape
+      // `simulateError` uses for the equivalent case.
+      updated.push({ role: "assistant", content: "", error: ABANDONED_TAIL_NOTICE });
     }
+    slice.messages = updated;
     commit(slice);
   }
 

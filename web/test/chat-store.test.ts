@@ -20,6 +20,9 @@ interface CapturedStream {
 }
 let streams: CapturedStream[] = [];
 let convCounter = 0;
+/** Per-conversation `conversations__get` call count, so a fixture can differ
+ *  between the first read and a later one. */
+let getCalls: Record<string, number> = {};
 
 const LOADED: ChatMessage[] = [
   { role: "user", content: "loaded-q" },
@@ -116,21 +119,26 @@ mock.module("../src/api/client", () => ({
     cancelCalls.push(id);
     return Promise.resolve();
   },
-  callTool: (_server: string, _action: string, args?: Record<string, unknown>) =>
-    Promise.resolve({
+  callTool: (_server: string, _action: string, args?: Record<string, unknown>) => {
+    const id = args?.id as string | undefined;
+    const nth = id ? (getCalls[id] = (getCalls[id] ?? 0) + 1) : 0;
+    // `conv_settling` models a turn that terminated AFTER our transcript
+    // snapshot was taken: the first read is partial, a later read is complete.
+    const messages =
+      id === "conv_pending"
+        ? PENDING_LOADED
+        : id === "conv_stranded"
+          ? STRANDED_LOADED
+          : id === "conv_settling"
+            ? (nth === 1 ? PENDING_LOADED : LOADED)
+            : id === "conv_skills"
+              ? LOADED_WITH_SKILLS
+              : LOADED;
+    return Promise.resolve({
       isError: false,
-      structuredContent: {
-        metadata: { id: args?.id },
-        messages:
-          args?.id === "conv_pending"
-            ? PENDING_LOADED
-            : args?.id === "conv_stranded"
-              ? STRANDED_LOADED
-              : args?.id === "conv_skills"
-                ? LOADED_WITH_SKILLS
-                : LOADED,
-      },
-    }),
+      structuredContent: { metadata: { id }, messages },
+    });
+  },
 }));
 
 import { createChatStore, freshDraftKey } from "../src/hooks/chat-store.ts";
@@ -151,6 +159,7 @@ describe("chat-store viewer", () => {
   beforeEach(() => {
     streams = [];
     convCounter = 0;
+    getCalls = {};
     startCalls = [];
     cancelCalls = [];
     deferStart = false;
@@ -323,9 +332,36 @@ describe("chat-store viewer", () => {
     expect(streams.length).toBeLessThanOrEqual(2);
     const snap = store.getSnapshot("conv_stranded");
     expect(snap.isStreaming).toBe(false);
-    // The user's message survives, and they're told why nothing followed it.
-    expect(snap.messages.map((m) => m.content)).toEqual(["loaded-q"]);
-    expect(snap.error).toBe("This response was interrupted and never finished.");
+    // The user's message survives, and the notice rides an empty assistant
+    // message at the tail — not `slice.error`, whose banner a follow-up clears.
+    expect(snap.messages.map((m) => m.role)).toEqual(["user", "assistant"]);
+    expect(snap.messages[0].content).toBe("loaded-q");
+    expect(lastAssistant(snap.messages)?.error).toBe(
+      "This response was interrupted and never finished.",
+    );
+    expect(snap.error).toBeNull();
+  });
+
+  it("recovers a turn that terminated between the transcript snapshot and the subscribe", async () => {
+    const store = createChatStore();
+    // Snapshot taken while the turn was still in flight → partial tail.
+    await store.loadConversation("conv_settling");
+
+    // The turn then finished AND its RunBus log aged out of the 30s grace
+    // window before this stream's first `subscribed` frame arrived — reachable
+    // because the SSE connect retries with backoff up to 30s, so the gap
+    // between the transcript read and the first subscribe is not bounded by a
+    // single round-trip. The server therefore reports no run at all, while disk
+    // now holds the completed turn. This is the refetch's winning position: it
+    // is the difference between rendering the finished answer and telling the
+    // user their completed turn was interrupted.
+    latestStream().onSubscribed?.({ isActive: false, activeSeq: 0 });
+    await new Promise((r) => setTimeout(r, 0));
+
+    const snap = store.getSnapshot("conv_settling");
+    expect(snap.messages).toEqual(LOADED);
+    expect(snap.error).toBeNull();
+    expect(lastAssistant(snap.messages)?.error).toBeUndefined();
   });
 
   it("reports canRetry false for a settled disk-loaded turn, true after a send", async () => {
@@ -339,8 +375,9 @@ describe("chat-store viewer", () => {
       s.onSubscribed?.({ isActive: false, activeSeq: 0 });
       await new Promise((r) => setTimeout(r, 0));
     }
-    expect(store.getSnapshot("conv_stranded").error).toBeTruthy();
-    expect(store.getSnapshot("conv_stranded").canRetry).toBe(false);
+    const settled = store.getSnapshot("conv_stranded");
+    expect(lastAssistant(settled.messages)?.error).toBeTruthy();
+    expect(settled.canRetry).toBe(false);
 
     // A turn sent in this session captures its params, so retry is replayable.
     await store.sendTurn("draft-retry", { text: "hello" });
