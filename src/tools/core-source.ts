@@ -442,7 +442,7 @@ async function generateBriefing(
       kind: "store",
       // Bound to this workspace here, at the boundary — the collector receives
       // an already-scoped lister and cannot widen it.
-      list: (o, a) => runtime.listConversations({ kind: "workspace", workspaceId: wsId }, o, a),
+      list: (o, a) => runtime.listConversations(wsId, o, a),
     },
     access: { userId: identity.id },
   });

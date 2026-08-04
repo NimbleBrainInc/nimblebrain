@@ -43,7 +43,6 @@ import type {
   Conversation,
   ConversationAccessContext,
   ConversationListResult,
-  ConversationListScope,
   CreateConversationOptions,
   ListOptions,
   StoredMessage,
@@ -4460,21 +4459,20 @@ export class Runtime {
   }
 
   /**
-   * List conversations via the locator. `scope` is REQUIRED: conversations are
-   * workspace-owned, so every read names the workspaces it covers and there is
-   * no omitted form that silently spans all of them. `{ kind: "workspace" }` is
-   * the only shape a user-facing surface may use; `{ kind: "all-workspaces" }`
-   * is an internal primitive (see `ConversationListScope`). Pass `access` to
-   * filter by ownership; without it the caller asserts trusted enumeration
-   * scope (CLI, admin tools). The scope is the path filter; ownership is the
-   * access gate — orthogonal axes.
+   * List one workspace's conversations via the locator. `workspaceId` is
+   * required: conversations are workspace-owned, so there is no cross-workspace
+   * listing to fall back to. Pass `access` to filter by ownership; without it
+   * the caller asserts trusted enumeration scope (CLI, admin tools). The
+   * workspace is the path filter; ownership is the access gate — orthogonal
+   * axes. For the tenant-wide raw-file read that usage aggregation needs, use
+   * `listAllConversationFiles`.
    */
   async listConversations(
-    scope: ConversationListScope,
+    workspaceId: string,
     options?: ListOptions,
     access?: ConversationAccessContext,
   ): Promise<ConversationListResult> {
-    return this.getConversationLocator().list(scope, options, access);
+    return this.getConversationLocator().list(workspaceId, options, access);
   }
 
   /**

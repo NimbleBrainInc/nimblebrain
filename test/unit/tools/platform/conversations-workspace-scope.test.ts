@@ -18,7 +18,10 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { NoopEventSink } from "../../../../src/adapters/noop-events.ts";
-import { ConversationLocator } from "../../../../src/conversation/locator.ts";
+import {
+  ConversationLocator,
+  listAllConversationFiles,
+} from "../../../../src/conversation/locator.ts";
 import type { ToolResult } from "../../../../src/engine/types.ts";
 import { runWithRequestContext } from "../../../../src/runtime/request-context.ts";
 import type { Runtime } from "../../../../src/runtime/runtime.ts";
@@ -242,60 +245,31 @@ describe("conversations__stats — ambient workspace scoping", () => {
   });
 });
 
-describe("the cross-workspace enumeration must be named out loud", () => {
+describe("there is no cross-workspace conversation listing", () => {
   // `ConversationLocator.list` used to take an OPTIONAL `workspaceId`, so
   // forgetting it widened the read to every workspace — silently, and looking
-  // identical to a scoped call. The scope is now a required discriminated
-  // union, which turns the omission into a compile error and leaves the
-  // owner-wide form greppable.
-  test("a workspace scope covers only that workspace", async () => {
+  // identical to a scoped call. The workspace is now a required positional
+  // argument, so the widening form does not exist to be reached.
+  test("a listing covers only the named workspace", async () => {
     const locator = new ConversationLocator(join(workDir, "workspaces"));
-    const result = await locator.list(
-      { kind: "workspace", workspaceId: WS_A },
-      { limit: 100 },
-      { userId: OWNER_ID },
-    );
+    const result = await locator.list(WS_A, { limit: 100 }, { userId: OWNER_ID });
     expect(result.conversations.map((c) => c.id).sort()).toEqual(["conv_a1", "conv_a2"]);
   });
 
-  test("all-workspaces is still available to internal callers, explicitly", async () => {
+  test("the owner's other workspaces are reachable only by naming them", async () => {
     const locator = new ConversationLocator(join(workDir, "workspaces"));
-    const result = await locator.list(
-      { kind: "all-workspaces" },
-      { limit: 100 },
-      { userId: OWNER_ID },
-    );
-    expect(result.conversations.map((c) => c.id).sort()).toEqual([
-      "conv_a1",
-      "conv_a2",
-      "conv_b1",
-      "conv_legacy",
-      "conv_p1",
-    ]);
+    const b = await locator.list(WS_B, { limit: 100 }, { userId: OWNER_ID });
+    expect(b.conversations.map((c) => c.id)).toEqual(["conv_b1"]);
   });
 
-  test("the owner-wide form is used in exactly one place in src/", async () => {
-    // If this count moves, a new cross-workspace enumeration was added and
-    // wants the same scrutiny `skills__loading_log` got (#879).
-    const proc = Bun.spawnSync([
-      "grep",
-      "-rn",
-      '{ kind: "all-workspaces" }',
-      "src/",
-    ]);
-    const hits = new TextDecoder()
-      .decode(proc.stdout)
-      .split("\n")
-      .filter((l) => l.trim())
-      // Drop the union's own declaration and prose about it — only real call
-      // sites count.
-      .filter((l) => !l.includes("conversation/types.ts"))
-      .filter((l) => {
-        const code = l.slice(l.indexOf(":", l.indexOf(":") + 1) + 1).trim();
-        return !code.startsWith("*") && !code.startsWith("//");
-      });
-    expect(hits).toHaveLength(1);
-    expect(hits[0]).toContain("skills.ts");
+  test("the tenant-wide raw-file read stays a separate, differently-named function", async () => {
+    // `listAllConversationFiles` is genuinely tenant-wide and usage aggregation
+    // needs it — but it returns raw paths with no owner filter and no
+    // summaries, so it can never be mistaken for a conversation VIEW. Keeping
+    // the two apart is what lets `list` have no cross-workspace form at all.
+    const files = listAllConversationFiles(join(workDir, "workspaces"));
+    expect(files.length).toBeGreaterThan(2);
+    expect(files.every((f) => f.endsWith(".jsonl"))).toBe(true);
   });
 });
 

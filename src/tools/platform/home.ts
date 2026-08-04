@@ -51,8 +51,7 @@ export function createHomeSource(runtime: Runtime, eventSink: EventSink): McpSou
               // Conversations are workspace-owned; the two path-based sources
               // here are already scoped to this workspace, so the conversation
               // rows (which carry per-conversation previews) must be too.
-              list: (o, a) =>
-                runtime.listConversations({ kind: "workspace", workspaceId: wsId }, o, a),
+              list: (o, a) => runtime.listConversations(wsId, o, a),
             },
             automationRunsDir,
             access: { userId: identity.id },

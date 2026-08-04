@@ -12,9 +12,9 @@
  *      (deep link, history fetch, `conversations__get`) can construct the right
  *      workspace store. The hot chat path already knows its workspace from the request and
  *      never consults the locator.
- *   2. **list:** the workspace-scoped view (one workspace) and the owner-wide
- *      internal enumeration, from one structure, chosen by a REQUIRED `scope`.
- *      The path is the wall (workspace filter); ownership is the access gate.
+ *   2. **list:** one workspace's view, keyed on the path the entry was found
+ *      at. The path is the wall (workspace filter); ownership is the access
+ *      gate. There is no cross-workspace listing.
  *
  * **Freshness without recursive watch.** `fs.watch({recursive:true})` is not
  * supported on Linux, so correctness must NOT depend on a watcher. Instead the
@@ -33,7 +33,6 @@ import { parseConversationPath } from "./paths.ts";
 import type {
   ConversationAccessContext,
   ConversationListResult,
-  ConversationListScope,
   ConversationSummary,
   ListOptions,
 } from "./types.ts";
@@ -97,22 +96,19 @@ export class ConversationLocator {
   }
 
   /**
-   * List conversations. `scope` is REQUIRED and names the workspaces covered —
-   * there is no omitted form that silently spans every workspace. `access` is
-   * the ownership gate, orthogonal to the scope.
+   * List one workspace's conversations. `workspaceId` is a REQUIRED positional
+   * argument, not an option — conversations are workspace-owned, so a listing
+   * without a workspace is not a thing that exists. `access` is the ownership
+   * gate, orthogonal to the workspace filter.
    */
   async list(
-    scope: ConversationListScope,
+    workspaceId: string,
     options?: ListOptions,
     access?: ConversationAccessContext,
   ): Promise<ConversationListResult> {
     await this.ensurePopulated();
 
-    let items = [...this.entries.values()];
-    if (scope.kind === "workspace") {
-      const { workspaceId } = scope;
-      items = items.filter((e) => e.wsId === workspaceId);
-    }
+    let items = [...this.entries.values()].filter((e) => e.wsId === workspaceId);
     if (access) {
       items = items.filter((e) => canAccess({ ownerId: e.accessOwnerId }, access));
     }
