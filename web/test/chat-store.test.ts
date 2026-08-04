@@ -342,6 +342,39 @@ describe("chat-store viewer", () => {
     expect(snap.error).toBeNull();
   });
 
+  it("settles an abandoned tail even when the slice is still flagged streaming from a probe", async () => {
+    const store = createChatStore();
+    // A reload restored this conversation's streaming dot, so it was probed
+    // rather than loaded: the probe subscribes with resume=true, its first
+    // frame reports an active turn, and `markActiveStreaming` pins isStreaming
+    // — all without hydrating any history.
+    store.probeConversation("conv_pending");
+    latestStream().onSubscribed?.({ isActive: true, activeSeq: 3 });
+    expect(store.getSnapshot("conv_pending").isStreaming).toBe(true);
+
+    // That turn then died without a terminal event and aged out of the grace
+    // window. Opening the conversation hydrates the partial tail and resumes.
+    await store.loadConversation("conv_pending");
+    // The server sends `subscribed` on every connect, including the one the
+    // refetch opens — bounded so a regression fails an assertion, not the suite.
+    for (let i = 0; i < 10; i++) {
+      const s = streams[streams.length - 1];
+      if (!s || s.closed) break;
+      s.onSubscribed?.({ isActive: false, activeSeq: 0 });
+      await new Promise((r) => setTimeout(r, 0));
+    }
+
+    // The stale streaming flag must not let `loadConversation`'s
+    // already-live early return swallow the refetch: that spends the one-shot
+    // allowance on a no-op and leaves a spinner with no connection and no
+    // settle — the very "permanently un-openable" state this PR exists to end.
+    const snap = store.getSnapshot("conv_pending");
+    expect(snap.isStreaming).toBe(false);
+    expect(lastAssistant(snap.messages)?.error).toBe(
+      "This response was interrupted and never finished.",
+    );
+  });
+
   it("recovers a turn that terminated between the transcript snapshot and the subscribe", async () => {
     const store = createChatStore();
     // Snapshot taken while the turn was still in flight → partial tail.

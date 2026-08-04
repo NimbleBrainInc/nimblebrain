@@ -678,6 +678,17 @@ export function createChatStore(): ChatStore {
    */
   function recoverAbandonedTail(slice: ConversationSlice, conversationId: string): ResumeOutcome {
     closeConnection(slice);
+    // The server just reported no run at all, so a slice still flagged
+    // streaming — pinned by an earlier probe that did catch a live turn — is
+    // holding a stale belief. Clear it here rather than only in
+    // `settleAbandonedTail`, because `loadConversation` early-returns for a
+    // hydrated slice it thinks is live: the refetch below would silently no-op
+    // while the allowance was spent, stranding a spinner with no connection.
+    // Same fact, same response as the server-authoritative check in
+    // `openConnection`'s `onSubscribed`.
+    slice.isStreaming = false;
+    slice.streamingState = null;
+    slice.preparingTool = null;
     if (!slice.resumeRefetched) {
       slice.resumeRefetched = true;
       void loadConversation(conversationId);
