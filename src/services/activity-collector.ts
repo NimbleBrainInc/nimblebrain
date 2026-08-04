@@ -59,6 +59,15 @@ export interface ActivityCollectorOptions {
    * isolation from the file layout it sees.
    */
   access?: ConversationAccessContext;
+  /**
+   * The workspace this activity view describes. Required for the `store`
+   * conversation source: conversations are workspace-owned, and every other
+   * input here (`logDir`, `automationRunsDir`) is already a workspace-scoped
+   * path — so without it the conversation rows are the one part of the output
+   * that spans workspaces. The `jsonl` source gets its scope from the directory
+   * it is handed and ignores this.
+   */
+  workspaceId?: string;
 }
 
 /**
@@ -74,6 +83,7 @@ export class ActivityCollector {
   private bundleEvents: BundleEventSource;
   private automationRunsDir?: string;
   private access?: ConversationAccessContext;
+  private workspaceId?: string;
 
   constructor(options: ActivityCollectorOptions) {
     this.logDir = options.logDir;
@@ -81,6 +91,7 @@ export class ActivityCollector {
     this.bundleEvents = options.bundleEvents ?? { kind: "none" };
     this.automationRunsDir = options.automationRunsDir;
     this.access = options.access;
+    this.workspaceId = options.workspaceId;
   }
 
   async collect(input: ActivityInput = {}): Promise<ActivityOutput> {
@@ -162,6 +173,12 @@ export class ActivityCollector {
       {
         sortBy: "updatedAt",
         limit,
+        // Conversations are workspace-owned, and activity is a WORKSPACE view —
+        // the log and automation-run sources feeding the same output are already
+        // scoped to `workspaceId`. Without this the conversation rows (and the
+        // totals derived from them) span every workspace the owner belongs to,
+        // so one workspace's briefing counts another's chats.
+        ...(this.workspaceId ? { workspaceId: this.workspaceId } : {}),
       },
       // Ownership filter — the top-level store holds every user's
       // conversations; without this every caller would see peer

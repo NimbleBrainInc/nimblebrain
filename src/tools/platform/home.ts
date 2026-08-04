@@ -40,6 +40,7 @@ export function createHomeSource(runtime: Runtime, eventSink: EventSink): McpSou
               isError: true,
             };
           }
+          const wsId = runtime.requireWorkspaceId();
           const wsDir = runtime.getWorkspaceScopedDir();
           const logDir = join(wsDir, "logs");
           const automationRunsDir = join(wsDir, "automations", "runs");
@@ -51,6 +52,10 @@ export function createHomeSource(runtime: Runtime, eventSink: EventSink): McpSou
             },
             automationRunsDir,
             access: { userId: identity.id },
+            // Conversations are workspace-owned; the two path-based sources
+            // above are already scoped to this workspace, so the conversation
+            // rows (which carry per-conversation previews) must be too.
+            workspaceId: wsId,
           });
 
           const defaults = {

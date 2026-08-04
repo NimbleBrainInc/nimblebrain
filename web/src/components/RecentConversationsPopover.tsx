@@ -66,14 +66,17 @@ export function RecentConversationsPopover({
   // point "View all" at that workspace's Conversations app.
   const allPath = activeWorkspace ? `/w/${toSlug(activeWorkspace.id)}/conversations` : "/";
 
+  // biome-ignore lint/correctness/useExhaustiveDependencies: activeWorkspace is a refetch trigger (the list is workspace-scoped server-side), not an input to the call
   const refresh = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
+      // No workspace argument: the list is walled to the workspace this request
+      // resolves to (`X-Workspace-Id`, which `callTool` sends), so it cannot be
+      // omitted into a cross-workspace read the way a conditional arg could.
       const res = await callTool("conversations", "list", {
         limit: RECENT_LIMIT,
         sortBy: "updated",
-        ...(activeWorkspace ? { workspaceId: activeWorkspace.id } : {}),
       });
       const data = parseToolResponse<RecentListResult>(res);
       setConversations(data.conversations);

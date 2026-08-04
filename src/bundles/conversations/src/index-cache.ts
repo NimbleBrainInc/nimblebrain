@@ -45,6 +45,26 @@ export interface IndexEntry {
   workspaceId: string | null;
 }
 
+/**
+ * The one workspace a read is walled to.
+ *
+ * Conversations are workspace-owned, so every user-facing read resolves inside
+ * exactly one workspace. This is a separate parameter from the caller's input
+ * on purpose: the workspace is ambient (the request's focused workspace), not a
+ * coordinate the caller supplies, so it cannot be omitted into a full-tenant
+ * read or pointed at a workspace the caller isn't in.
+ */
+export interface WorkspaceScope {
+  workspaceId: string;
+  /**
+   * Fold in entries with no stamped workspace. A legacy record predates the
+   * stamp and belongs to the owner's personal workspace, so this is true only
+   * when the scoped workspace IS that personal workspace. Derived from the
+   * ambient workspace, never passed in by a client.
+   */
+  includeUnstamped: boolean;
+}
+
 export interface ListOptions {
   limit?: number; // Default: 20
   cursor?: string;

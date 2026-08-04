@@ -22,19 +22,10 @@ export const ConversationsListInput = Type.Object({
       description: "Filter: only conversations created on or before this ISO 8601 date.",
     }),
   ),
-  workspaceId: Type.Optional(
-    Type.String({
-      description:
-        "Filter: only conversations that ran in this workspace (workspace). Applied before the limit, so the page reflects the workspace's set. Omit for all workspaces.",
-    }),
-  ),
-  includeUnstamped: Type.Optional(
-    Type.Boolean({
-      description:
-        "When workspaceId is set, also include conversations with no stamped workspace — legacy chats belong to the personal workspace. Default false.",
-    }),
-  ),
 });
+// No `workspaceId`: conversations are workspace-owned and the workspace is
+// AMBIENT (the request's focused workspace, via `RequestContext`), never a
+// caller-supplied coordinate. Same contract as `files__*`.
 export type ConversationsListInput = Static<typeof ConversationsListInput>;
 
 export const ConversationsGetInput = Type.Object(

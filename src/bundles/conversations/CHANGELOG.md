@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.6.0
+
+### Changed
+
+- **`list`, `search`, and `stats` are walled to one workspace, and it is not the
+  caller's to name.** Each takes a `scope` argument alongside `input`, supplied
+  by the platform source from the request's focused workspace. `list` no longer
+  accepts `workspaceId` / `includeUnstamped` on its input — an omitted workspace
+  used to mean "every workspace", and legacy records with no stamped workspace
+  now fold into the owner's personal workspace by derivation instead of a client
+  flag. `search` and `stats` were never scoped at all.
+- `get`, `update`, `fork`, and `export` are unchanged: they address one
+  conversation by id and stay owner-gated, so a direct link still resolves from
+  whichever workspace the conversation lives in.
+
 ## 0.5.0
 
 ### Added

@@ -6,7 +6,7 @@
  */
 
 import { readFile } from "node:fs/promises";
-import type { AccessContext, ConversationIndex } from "../index-cache.ts";
+import type { AccessContext, ConversationIndex, WorkspaceScope } from "../index-cache.ts";
 
 export interface SearchInput {
   query: string;
@@ -90,6 +90,7 @@ function collectSnippets(raw: string, query: string, queryLower: string): MatchS
 export async function handleSearch(
   input: SearchInput,
   index: ConversationIndex,
+  scope: WorkspaceScope,
   access?: AccessContext,
 ): Promise<object> {
   const query = input.query?.trim();
@@ -100,7 +101,17 @@ export async function handleSearch(
   const limit = input.limit ?? DEFAULT_LIMIT;
   const queryLower = query.toLowerCase();
 
-  const allConversations = index.list({ limit: index.size || 1 }, access);
+  // Walled to the focused workspace like every other read. Search returns
+  // verbatim snippets of message content, so an unscoped pass would put another
+  // workspace's transcript text on the wire, not just its ids.
+  const allConversations = index.list(
+    {
+      limit: index.size || 1,
+      workspaceId: scope.workspaceId,
+      includeUnstamped: scope.includeUnstamped,
+    },
+    access,
+  );
   const results: SearchResult[] = [];
 
   for (const entry of allConversations.conversations) {
