@@ -328,6 +328,25 @@ describe("chat-store viewer", () => {
     expect(snap.error).toBe("This response was interrupted and never finished.");
   });
 
+  it("reports canRetry false for a settled disk-loaded turn, true after a send", async () => {
+    const store = createChatStore();
+    // Loaded from disk: this session never saw the original send, so there are
+    // no params to replay and the UI must not offer a retry that can't act.
+    await store.loadConversation("conv_stranded");
+    for (let i = 0; i < 10; i++) {
+      const s = streams[streams.length - 1];
+      if (!s || s.closed) break;
+      s.onSubscribed?.({ isActive: false, activeSeq: 0 });
+      await new Promise((r) => setTimeout(r, 0));
+    }
+    expect(store.getSnapshot("conv_stranded").error).toBeTruthy();
+    expect(store.getSnapshot("conv_stranded").canRetry).toBe(false);
+
+    // A turn sent in this session captures its params, so retry is replayable.
+    await store.sendTurn("draft-retry", { text: "hello" });
+    expect(store.getSnapshot("draft-retry").canRetry).toBe(true);
+  });
+
   it("preserves a completed prior turn when a new turn goes active mid-resume (no transcript loss)", async () => {
     const store = createChatStore();
     // conv_X's disk tail is a COMPLETE prior turn (assistant, not pending).

@@ -168,6 +168,12 @@ export interface ChatSnapshot {
   preparingTool: PreparingTool | null;
   meta: LoadedConversationMeta | null;
   error: string | null;
+  /** Whether `retryLastMessage` can actually replay a turn. Retry needs the
+   *  original send params, which only exist for a turn sent in this session —
+   *  a conversation loaded from disk has none. Surfaces the store's own answer
+   *  so the UI offers the affordance only when it can act, instead of showing
+   *  a button that silently no-ops. */
+  canRetry: boolean;
 }
 
 const EMPTY_MESSAGES: ChatMessage[] = [];
@@ -180,6 +186,7 @@ const EMPTY_SNAPSHOT: ChatSnapshot = {
   preparingTool: null,
   meta: null,
   error: null,
+  canRetry: false,
 };
 
 // ===========================================================================
@@ -491,6 +498,7 @@ export function createChatStore(): ChatStore {
       preparingTool: slice.preparingTool,
       meta: slice.meta,
       error: slice.error,
+      canRetry: slice.lastSend !== undefined,
     };
   }
 
