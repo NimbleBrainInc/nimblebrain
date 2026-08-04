@@ -41,7 +41,7 @@ export interface FileEntry {
    * and this field is the convenience. Absent on legacy/identity-era records.
    *
    * ADVISORY ONLY — see `ownerId`. The workspace comes from the ambient request
-   * (`RequestContext.focusedWorkspaceId`), never from this field.
+   * (`RequestContext.boundWorkspaceId`), never from this field.
    */
   workspaceId?: string;
   /**

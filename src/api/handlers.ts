@@ -982,7 +982,7 @@ async function readIdentitySourceResource(
   const reqCtx: RequestContext = {
     identity: identity ?? null,
     scope: { kind: "identity" },
-    focusedWorkspaceId:
+    boundWorkspaceId:
       options?.workspaceId ?? personalWorkspaceIdFor(runtime.resolveRequestUserId(identity)),
   };
   const resource = await runWithRequestContext(reqCtx, () =>
@@ -1035,7 +1035,7 @@ export async function handleReadResource(
   // decision the orchestrator and `handleToolCall` make. But files are
   // workspace-owned, so a `files://<id>` read resolves in the request's focused
   // workspace (`options.workspaceId`, or the caller's personal workspace when
-  // unfocused), set via `focusedWorkspaceId` — which conversations and
+  // unfocused), set via `boundWorkspaceId` — which conversations and
   // automations read too: all three are workspace-owned.
   const { identity } = options ?? {};
   if (runtime.getIdentitySource(server)) {
@@ -1266,8 +1266,7 @@ function buildRestToolCallContext(
     // `files__*` / `automations__*` / `conversations__*` call lands in the
     // focused workspace (validated `X-Workspace-Id`), or the caller's personal
     // workspace when unfocused.
-    focusedWorkspaceId:
-      workspaceId ?? personalWorkspaceIdFor(runtime.resolveRequestUserId(identity)),
+    boundWorkspaceId: workspaceId ?? personalWorkspaceIdFor(runtime.resolveRequestUserId(identity)),
   };
 }
 

@@ -4,7 +4,7 @@
  * Conversations are workspace-owned, and `conversations__*` dispatches through
  * the IDENTITY door — so `scope.workspaceId` is the personal/session workspace,
  * not the workspace the user is looking at. The focused workspace therefore
- * rides `RequestContext.focusedWorkspaceId`, exactly as it does for `files__*` and
+ * rides `RequestContext.boundWorkspaceId`, exactly as it does for `files__*` and
  * `automations__*` (see `test/unit/bundles/files/source.test.ts`).
  *
  * These tests pin the property that matters: the workspace a read lands in is
@@ -96,7 +96,7 @@ function exec(
     {
       identity: { id: OWNER_ID } as never,
       scope: { kind: "identity" },
-      ...(wsId ? { focusedWorkspaceId: wsId } : {}),
+      ...(wsId ? { boundWorkspaceId: wsId } : {}),
     },
     () => source.execute(tool, args),
   );

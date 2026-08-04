@@ -3,7 +3,7 @@
  * workspace-owned file store (`workspaces/<wsId>/files/<ownerId>/`). `files` is a
  * kernel identity source, so its tools dispatch bare through the identity
  * door — but storage is workspace-owned, so the workspace comes from the request context
- * (`focusedWorkspaceId`; see `getStore`). Files are persisted via a per-owner JSONL
+ * (`boundWorkspaceId`; see `getStore`). Files are persisted via a per-owner JSONL
  * registry and on-disk binary storage.
  *
  * Both this tool source and the chat multipart ingest path
@@ -402,7 +402,7 @@ export function createFilesSource(runtime: Runtime, eventSink: EventSink): McpSo
    * `workspaces/<wsId>/files/<ownerId>/`, so this needs both the owner (the
    * authenticated identity) and the workspace. `files` dispatches through the
    * identity door, where `scope.workspaceId` is the personal/session workspace —
-   * so the FOCUSED workspace rides `RequestContext.focusedWorkspaceId` (set on both
+   * so the FOCUSED workspace rides `RequestContext.boundWorkspaceId` (set on both
    * doors). No workspace in scope (e.g. an external `/mcp` call with no header) ⇒
    * deny rather than guess a workspace.
    */
@@ -414,10 +414,10 @@ export function createFilesSource(runtime: Runtime, eventSink: EventSink): McpSo
     // request carries no identity); DEV_IDENTITY only in dev.
     const ownerId = runtime.resolveRequestUserId(runtime.getCurrentIdentity() ?? undefined);
     // Files are workspace-owned: the workspace comes from the request context's
-    // `focusedWorkspaceId` (set on both doors), NOT `scope.workspaceId` (which is
+    // `boundWorkspaceId` (set on both doors), NOT `scope.workspaceId` (which is
     // the personal/session workspace on the identity door). Deny when no workspace is
     // in scope — e.g. an external `/mcp` call with no `X-Workspace-Id`.
-    const wsId = getRequestContext()?.focusedWorkspaceId;
+    const wsId = getRequestContext()?.boundWorkspaceId;
     if (!wsId) {
       throw new Error("files: no workspace in scope (files are workspace-owned)");
     }

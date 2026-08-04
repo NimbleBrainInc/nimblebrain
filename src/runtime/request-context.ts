@@ -48,20 +48,26 @@ export interface RequestContext {
    */
   conversationId?: string;
   /**
-   * The focused workspace for this request — the workspace that owns the files,
-   * automations, and conversations created or read here. Orthogonal to `scope`,
-   * and set on BOTH doors: every kernel identity source (`files__*`,
-   * `automations__*`, `conversations__*`) needs it, because `scope.workspaceId`
-   * is the personal/session workspace, not the workspace the user is looking
-   * at. Absent ⇒ no workspace in scope (e.g. an external `/mcp` request with no
-   * `X-Workspace-Id`): the store denies rather than guessing a workspace.
+   * The workspace this request is BOUND to — the one whose data it may read and
+   * write. Distinct from `scope.workspaceId`, which is the door the request came
+   * through (the session/personal workspace on the identity door), and the two
+   * genuinely differ: a chat resumed in workspace A while the client is focused
+   * on B has `scope.workspaceId = B`'s session and `boundWorkspaceId = A`. That
+   * is the seal — the conversation's own workspace wins, so it is deliberately
+   * NOT "the focused workspace".
    *
-   * Optional on the type because plenty of contexts genuinely have no focus
-   * (background jobs, resource reads outside a workspace). Absence NARROWS —
-   * every consumer denies — so it is never the widening default that a missing
-   * list-filter would be.
+   * Set on every door: chat (the conversation's own workspace), automation runs
+   * (provenance), `/mcp` and REST (the validated `X-Workspace-Id`). Read by
+   * every kernel identity source — `files__*`, `automations__*`,
+   * `conversations__*` — because all three own workspace-partitioned data while
+   * dispatching through the identity door.
+   *
+   * Optional on the type because plenty of contexts genuinely have no bound
+   * workspace (background jobs, resource reads outside a workspace). Absence
+   * NARROWS — every consumer denies — so it is never the widening default that
+   * a missing list-filter would be.
    */
-  focusedWorkspaceId?: string;
+  boundWorkspaceId?: string;
   toolPromotion?: ToolPromotionControls;
   /**
    * True when this context belongs to an unattended run (`executeTask` — an

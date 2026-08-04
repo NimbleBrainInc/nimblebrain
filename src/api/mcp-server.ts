@@ -892,7 +892,7 @@ function createServer(
       scope: { kind: "identity" },
       // Files are workspace-owned: `files://` resolves in the request's
       // validated workspace; undefined ⇒ not found (the resources wall denies).
-      focusedWorkspaceId: mcpRequestWorkspace.getStore(),
+      boundWorkspaceId: mcpRequestWorkspace.getStore(),
     };
     const identityResult = await readResourceFromIdentitySources(runtime, uri, identityReqCtx);
     if (identityResult) return identityResult;
@@ -1053,7 +1053,7 @@ async function executeIdentityToolCall(
     // Files are workspace-owned: a `files__*` call resolves in the request's
     // validated workspace; undefined (no / non-member header) ⇒ the file tool
     // denies, consistent with the resources wall.
-    focusedWorkspaceId: mcpRequestWorkspace.getStore(),
+    boundWorkspaceId: mcpRequestWorkspace.getStore(),
   };
   const idResult = await runWithRequestContext(identityCtx, () =>
     routed.source.execute(bare, (args ?? {}) as Record<string, unknown>),

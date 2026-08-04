@@ -208,7 +208,7 @@ describe("handleReadResource", () => {
     });
     // Files are workspace-owned: the source is still reached through the identity
     // door (no workspace registry), but the read resolves in the focused workspace,
-    // threaded via focusedWorkspaceId.
+    // threaded via boundWorkspaceId.
     const res = await handleReadResource(
       req({ server: "files", uri: "files://fl_abc" }),
       runtime,

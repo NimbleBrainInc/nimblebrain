@@ -119,7 +119,7 @@ export async function createConversationsSource(
    * Conversations are workspace-owned, but `conversations__*` dispatches
    * through the IDENTITY door — so `scope.workspaceId` is the caller's
    * personal/session workspace, not the workspace they're looking at. The
-   * focused workspace rides `RequestContext.focusedWorkspaceId`, set on every door
+   * bound workspace rides `RequestContext.boundWorkspaceId`, set on every door
    * that can reach this source: chat (the conversation's OWN workspace, so a
    * resumed thread lists its own workspace's chats no matter where the user is
    * focused), automation runs (provenance), `/mcp` (validated `X-Workspace-Id`),
@@ -133,11 +133,11 @@ export async function createConversationsSource(
    * cross-workspace fallback.
    */
   function currentScope(access: AccessContext): WorkspaceScope {
-    const workspaceId = getRequestContext()?.focusedWorkspaceId;
+    const workspaceId = getRequestContext()?.boundWorkspaceId;
     if (!workspaceId) {
       throw new Error(
         "[conversations] no workspace in scope (conversations are workspace-owned) — " +
-          "the caller must carry a focused workspace, e.g. a validated X-Workspace-Id.",
+          "the caller must carry a bound workspace, e.g. a validated X-Workspace-Id.",
       );
     }
     // A legacy record with no stamped workspace belongs to the owner's personal
