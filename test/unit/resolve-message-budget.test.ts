@@ -63,19 +63,21 @@ describe("resolveMessageBudget — large-window drift", () => {
     expect(result.budget + 16_384 + OBSERVED_DRIFT).toBeLessThanOrEqual(262_144);
   });
 
-  it("keeps a small-context model's budget unchanged", () => {
-    // The floor binds under the crossover, so this change is inert for every
-    // model below ~164K — including the 64K lower bound the Nebius catalog
-    // sync reasons against.
+  it("keeps a sub-crossover model's budget unchanged", () => {
+    // Resolves the margin itself (no override) on a catalog model below the
+    // ~164K crossover, so the floor is what binds. This is the inertness
+    // claim end to end: every model under the crossover composes exactly the
+    // budget it did before.
     const result = resolveMessageBudget({
-      model: "nebius:moonshotai/Kimi-K2.6",
+      model: "nebius:openai/gpt-oss-120b", // 131_072 context
       configMaxInputTokens: 500_000,
       systemPrompt: "",
       tools: [],
       maxOutputTokens: 16_384,
-      safetyMarginTokens: MIN_BUDGET_SAFETY_MARGIN_TOKENS,
     });
-    expect(result.budget).toBe(262_144 - 16_384 - MIN_BUDGET_SAFETY_MARGIN_TOKENS);
+    expect(result.breakdown.modelContextWindow).toBe(131_072);
+    expect(result.breakdown.safetyMarginTokens).toBe(MIN_BUDGET_SAFETY_MARGIN_TOKENS);
+    expect(result.budget).toBe(131_072 - 16_384 - MIN_BUDGET_SAFETY_MARGIN_TOKENS);
   });
 });
 
