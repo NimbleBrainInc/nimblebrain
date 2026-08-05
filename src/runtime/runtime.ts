@@ -81,7 +81,7 @@ import { createIdentityProvider } from "../identity/provider.ts";
 import { DEV_IDENTITY } from "../identity/providers/dev.ts";
 import { UserStore } from "../identity/user.ts";
 import { InstructionsStore } from "../instructions/index.ts";
-import { getModelByString, getProviderFromModel } from "../model/catalog.ts";
+import { getModelByString, getProviderFromModel, isModelAllowed } from "../model/catalog.ts";
 import { buildModelResolver, resolveModelString } from "../model/registry.ts";
 import { type ModelSlot, parseModelSlotRef } from "../model/slots.ts";
 import { registerBuiltinCredentialProviders } from "../oauth/minted-credential-provider.ts";
@@ -148,6 +148,7 @@ import { personalWorkspaceIdFor, WorkspaceStore } from "../workspace/workspace-s
 import {
   ConversationAccessDeniedError,
   ConversationWorkspaceAccessDeniedError,
+  ModelNotAllowedError,
   RunInProgressError,
   WorkspaceMembershipRevokedError,
 } from "./errors.ts";
@@ -984,7 +985,11 @@ export class Runtime {
     // missing-workspace case hard-threw a raw 500 on chat-start; the default
     // keeps the embedded path working.)
     const wsId = request.workspaceId ?? personalWorkspaceIdFor(ownerId);
-    const createOpts: CreateConversationOptions = {
+    // Built on demand, not up front: `resolveRequestModelString` refuses a
+    // model outside the allowlist, and on a resume its result is discarded in
+    // favour of the pin. Evaluating eagerly would refuse a request over a value
+    // the turn never uses.
+    const makeCreateOpts = (): CreateConversationOptions => ({
       ownerId,
       workspaceId: wsId,
       // Bind here too: the detached-turn path creates the conversation before
@@ -992,7 +997,7 @@ export class Runtime {
       // reach `_chatInner` already existing and unpinned.
       model: this.resolveRequestModelString(request.model),
       ...(request.metadata ? { metadata: request.metadata } : {}),
-    };
+    });
 
     // Resolve the conversation's workspace store: the conversation's own workspace on
     // resume (authoritative, from the locator), or the workspace it's born in
@@ -1031,13 +1036,14 @@ export class Runtime {
       signal = this.runBus.begin(request.conversationId);
       try {
         conversationId =
-          existing?.id ?? (await store.create({ ...createOpts, id: request.conversationId })).id;
+          existing?.id ??
+          (await store.create({ ...makeCreateOpts(), id: request.conversationId })).id;
       } catch (err) {
         this.runBus.evict(request.conversationId, signal);
         throw err;
       }
     } else {
-      conversationId = (await store.create(createOpts)).id;
+      conversationId = (await store.create(makeCreateOpts())).id;
       signal = this.runBus.begin(conversationId);
     }
 
@@ -1200,20 +1206,21 @@ export class Runtime {
     // it regardless of who is chatting.
     const boundWorkspace = await this._workspaceStore.get(convWsId);
 
-    const createOpts: CreateConversationOptions = {
+    // A thunk, not a value: `resolveRequestModelString` refuses a model outside
+    // the allowlist, and a resume discards its result in favour of the pin.
+    // Evaluated eagerly it would refuse a resume over a model that turn never
+    // uses, so it runs only where a conversation is actually created.
+    const makeCreateOpts = (): CreateConversationOptions => ({
       ownerId,
       // The conversation's workspace binding — the workspace it's born in (focused,
       // or personal when unfocused). Authoritative: the conversation is stored
       // under `workspaces/<workspaceId>/conversations/<ownerId>/`, and this is
       // fixed for its whole life (no mid-chat workspace switching).
       workspaceId: convWsId,
-      // The conversation's model binding, fixed for its whole life. Resolved
-      // here rather than at the model-resolution point below because that is
-      // after the conversation exists — and resolution is pure, so its
-      // position in the turn is free.
+      // The conversation's model binding, fixed for its whole life.
       model: this.resolveRequestModelString(request.model),
       ...(request.metadata ? { metadata: request.metadata } : {}),
-    };
+    });
 
     // Resume an existing conversation only if the caller owns it (the ownerId
     // check is the ONLY barrier between users and each other's conversations —
@@ -1222,7 +1229,7 @@ export class Runtime {
     const conversation = await this.loadOrCreateConversation(
       request,
       store,
-      createOpts,
+      makeCreateOpts,
       ownerId,
       convWsId,
     );
@@ -1403,7 +1410,7 @@ export class Runtime {
 
     // The conversation's binding wins over both the request override and the
     // configured slot: a conversation runs on one model for its life, so a
-    // slot change retargets new conversations only. `createOpts` above carries
+    // slot change retargets new conversations only. `makeCreateOpts` above carries
     // the pin, so a conversation created on this path is already bound and
     // this reads back what it was born with. Absent only on legacy records
     // predating the binding, which resolve from current config as before.
@@ -2123,12 +2130,27 @@ export class Runtime {
    * is how the two drift.
    */
   private resolveRequestModelString(requestModel: string | undefined): string {
-    let modelString = requestModel ?? this.getDefaultModel();
-    const aliasSlot = parseModelSlotRef(modelString);
-    if (aliasSlot) {
-      modelString = this.getModelSlot(aliasSlot);
+    // Both of these resolve to operator config, already qualified by the slot
+    // reader, and are not the caller's to choose — so neither is gated.
+    if (requestModel === undefined) return this.getDefaultModel();
+    const slot = parseModelSlotRef(requestModel);
+    if (slot) return this.getModelSlot(slot);
+
+    // A concrete model named by the caller is the one untrusted value here,
+    // and since #892 it is written to the conversation's immutable pin. An
+    // unchecked value would not overspend for a turn; it would seal the
+    // conversation to a disallowed model for life, past any later policy change.
+    const qualified = resolveModelString(requestModel);
+    // Only a `providers` config expresses an allowlist. On the legacy
+    // single-provider config, or a custom adapter that serves every string,
+    // there is no policy here to enforce — and `getProviderConfigs()` reports
+    // a display default (`{anthropic:{}}`) in that case, not a reachability
+    // claim, so consulting it would refuse every non-Anthropic model on a
+    // deployment that can serve them. Absence of policy is not denial.
+    if (this.config.providers && !isModelAllowed(qualified, this.getProviderConfigs())) {
+      throw new ModelNotAllowedError(qualified, this.getConfiguredProviders());
     }
-    return resolveModelString(modelString);
+    return qualified;
   }
 
   /**
@@ -2161,7 +2183,7 @@ export class Runtime {
   private async loadOrCreateConversation(
     request: ChatRequest,
     store: EventSourcedConversationStore,
-    createOpts: CreateConversationOptions,
+    makeCreateOpts: () => CreateConversationOptions,
     ownerId: string,
     convWsId: string,
   ): Promise<Conversation> {
@@ -2179,9 +2201,9 @@ export class Runtime {
       if (existing) {
         await this.assertOwnerIsWorkspaceMember(request.conversationId, convWsId, ownerId);
       }
-      conversation = existing ?? (await store.create(createOpts));
+      conversation = existing ?? (await store.create(makeCreateOpts()));
     } else {
-      conversation = await store.create(createOpts);
+      conversation = await store.create(makeCreateOpts());
     }
 
     // Preserve metadata on resumed conversations (don't overwrite).

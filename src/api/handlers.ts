@@ -22,6 +22,7 @@ import { log } from "../observability/log.ts";
 import {
   ConversationAccessDeniedError,
   ConversationCorruptedError,
+  ModelNotAllowedError,
   RunInProgressError,
 } from "../runtime/errors.ts";
 import { type RequestContext, runWithRequestContext } from "../runtime/request-context.ts";
@@ -158,10 +159,22 @@ function mapChatTurnError(err: unknown): Response | null {
   if (err instanceof ConversationAccessDeniedError) {
     return conversationAccessDeniedResponse(err.conversationId);
   }
+  // Both chat doors can surface this: `store.load` throws it on a
+  // pre-migration (ownerless) conversation. 422 rather than a raw 500.
   if (err instanceof ConversationCorruptedError) {
     return conversationCorruptedResponse(err);
   }
+  if (err instanceof ModelNotAllowedError) {
+    return modelNotAllowedResponse(err);
+  }
   return null;
+}
+
+function modelNotAllowedResponse(err: ModelNotAllowedError): Response {
+  return apiError(400, err.code, err.message, {
+    model: err.model,
+    configuredProviders: err.configuredProviders,
+  });
 }
 
 function runInProgressResponse(conversationId: string): Response {
@@ -193,23 +206,11 @@ export async function handleChatStart(
     const { conversationId } = await runtime.startTurn(parsed);
     return Response.json({ conversationId });
   } catch (err) {
-    if (err instanceof RunInProgressError) {
-      return runInProgressResponse(parsed.conversationId ?? "");
-    }
-    if (err instanceof ConversationAccessDeniedError) {
-      return apiError(
-        403,
-        "conversation_access_denied",
-        "You do not have access to this conversation.",
-        { conversationId: parsed.conversationId },
-      );
-    }
-    // startTurn → store.load can throw on a pre-migration (ownerless)
-    // conversation. Map to 422 — parity with handleChat / handleChatCancel —
-    // instead of leaking a raw 500.
-    if (err instanceof ConversationCorruptedError) {
-      return conversationCorruptedResponse(err);
-    }
+    // Both chat doors answer through the same mapper. A private copy of its
+    // branches drifts out of step with it, and the two routes then disagree
+    // about the same error.
+    const mapped = mapChatTurnError(err);
+    if (mapped) return mapped;
     throw err;
   }
 }

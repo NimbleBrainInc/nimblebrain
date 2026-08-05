@@ -107,3 +107,33 @@ export class ConversationCorruptedError extends Error {
     this.name = "ConversationCorruptedError";
   }
 }
+
+/**
+ * Thrown when a chat request names a model the deployment does not permit.
+ *
+ * Only a caller-supplied concrete model reaches this. An omitted model and a
+ * slot name both resolve to operator config, which is governed where it is
+ * written (`set_model_config` validates, and the seed is the operator's own
+ * file) — checking it here would refuse to start a deployment whose config
+ * predates its allowlist.
+ *
+ * Rejecting rather than substituting a permitted model is deliberate: the
+ * resolved value is written to `Conversation.model` at create and is immutable
+ * for the conversation's life, so a silent substitution would pin the caller
+ * to a model they did not ask for, permanently and without a signal.
+ *
+ * The HTTP handler maps this to `400 model_not_allowed`.
+ */
+export class ModelNotAllowedError extends Error {
+  readonly code = "model_not_allowed";
+  constructor(
+    public readonly model: string,
+    public readonly configuredProviders: string[],
+  ) {
+    super(
+      `Model "${model}" is not permitted. Either its provider is not configured or it is not in the allowlist. ` +
+        `Configured providers: ${configuredProviders.join(", ") || "(none)"}`,
+    );
+    this.name = "ModelNotAllowedError";
+  }
+}
