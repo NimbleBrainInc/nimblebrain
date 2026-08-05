@@ -1,12 +1,16 @@
 /**
  * In-memory index of conversation metadata for fast listing, searching, and filtering.
  *
- * Built on startup by scanning all JSONL file headers. Kept fresh one of two
- * ways: `fs.watch` (`startWatching`, for a single flat directory) OR — when the
- * index spans the recursive workspace layout, where a root watcher can't see nested
- * writes — an external `invalidate()` signal followed by a `refresh()` full
- * rebuild on the next read. The runtime drives the latter from its
- * conversation-change hook (every write + workspace delete).
+ * Built on startup by scanning all JSONL file headers, and kept fresh by an
+ * external `invalidate()` signal followed by a `refresh()` full rebuild on the
+ * next read. The runtime drives that from its conversation-change hook (every
+ * write + workspace delete). A watcher cannot do the job: the index spans the
+ * recursive workspace layout and a root `fs.watch` can't see writes nested
+ * under each workspace's own `conversations/<ownerId>/` partition.
+ *
+ * `startWatching` / `flushPending` / `processPendingFiles` are the flat
+ * single-directory watch path. Nothing calls them — removing or scoping them is
+ * tracked in #899.
  *
  * Types are defined locally — no imports from the runtime codebase.
  */

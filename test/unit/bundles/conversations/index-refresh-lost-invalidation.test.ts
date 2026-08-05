@@ -47,6 +47,31 @@ afterEach(() => {
   rmSync(dir, { recursive: true, force: true });
 });
 
+test("a second joiner waits for the rebuild the first joiner started", async () => {
+  // Joining the in-flight rebuild has to be a loop, not a single await. Two
+  // readers join rebuild P1; a write lands mid-P1, so both find the index dirty
+  // when P1 resolves. The first starts P2 and clears the flag — and a second
+  // reader that awaited only P1 would then fall straight through the clean
+  // check and answer against the map P2 has already emptied.
+  for (let i = 0; i < 300; i++) writeConv(`conv_${String(i).padStart(3, "0")}`);
+  const index = new ConversationIndex();
+  await index.build(dir);
+
+  index.invalidate();
+  const p1 = index.refresh();
+
+  // Both joiners arrive while P1 is in flight.
+  const joinerA = index.refresh();
+  const joinerB = index.refresh().then(() => index.size);
+
+  // A write lands mid-P1, so P1's result is already stale when it resolves.
+  writeConv("conv_late");
+  index.invalidate();
+
+  const [, , observedByB] = await Promise.all([p1, joinerA, joinerB]);
+  expect(observedByB).toBeGreaterThan(0);
+});
+
 test("refresh() returns while writes are still arriving", async () => {
   // The invalidation hook fires on every appended event line, tenant-wide, so
   // "no write landed anywhere during a full rebuild" is not a condition a busy
