@@ -281,7 +281,7 @@ export function ChatChrome() {
           onFullscreen={handleFullscreen}
           onBack={isMobile ? handleBack : undefined}
           isFullscreen={isFullscreen}
-          onRetry={chat.retryLastMessage}
+          onRetry={chat.canRetry ? chat.retryLastMessage : undefined}
         />
       </div>
 

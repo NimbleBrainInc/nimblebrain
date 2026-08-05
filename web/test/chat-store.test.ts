@@ -20,6 +20,9 @@ interface CapturedStream {
 }
 let streams: CapturedStream[] = [];
 let convCounter = 0;
+/** Per-conversation `conversations__get` call count, so a fixture can differ
+ *  between the first read and a later one. */
+let getCalls: Record<string, number> = {};
 
 const LOADED: ChatMessage[] = [
   { role: "user", content: "loaded-q" },
@@ -31,6 +34,10 @@ const PENDING_LOADED: ChatMessage[] = [
   { role: "user", content: "loaded-q" },
   { role: "assistant", content: "part", blocks: [{ type: "text", text: "part" }], pending: true },
 ];
+
+// A turn that died before producing any assistant content: the trailing
+// message is the user's own. `hasPendingTail` catches this via `role === "user"`.
+const STRANDED_LOADED: ChatMessage[] = [{ role: "user", content: "loaded-q" }];
 
 // A completed conversation whose assistant turn carries ledger metadata — the
 // reopen path (server jsonl-reader attaches `skillsLoaded` to the turn).
@@ -112,19 +119,26 @@ mock.module("../src/api/client", () => ({
     cancelCalls.push(id);
     return Promise.resolve();
   },
-  callTool: (_server: string, _action: string, args?: Record<string, unknown>) =>
-    Promise.resolve({
-      isError: false,
-      structuredContent: {
-        metadata: { id: args?.id },
-        messages:
-          args?.id === "conv_pending"
-            ? PENDING_LOADED
-            : args?.id === "conv_skills"
+  callTool: (_server: string, _action: string, args?: Record<string, unknown>) => {
+    const id = args?.id as string | undefined;
+    const nth = id ? (getCalls[id] = (getCalls[id] ?? 0) + 1) : 0;
+    // `conv_settling` models a turn that terminated AFTER our transcript
+    // snapshot was taken: the first read is partial, a later read is complete.
+    const messages =
+      id === "conv_pending"
+        ? PENDING_LOADED
+        : id === "conv_stranded"
+          ? STRANDED_LOADED
+          : id === "conv_settling"
+            ? (nth === 1 ? PENDING_LOADED : LOADED)
+            : id === "conv_skills"
               ? LOADED_WITH_SKILLS
-              : LOADED,
-      },
-    }),
+              : LOADED;
+    return Promise.resolve({
+      isError: false,
+      structuredContent: { metadata: { id }, messages },
+    });
+  },
 }));
 
 import { createChatStore, freshDraftKey } from "../src/hooks/chat-store.ts";
@@ -145,6 +159,7 @@ describe("chat-store viewer", () => {
   beforeEach(() => {
     streams = [];
     convCounter = 0;
+    getCalls = {};
     startCalls = [];
     cancelCalls = [];
     deferStart = false;
@@ -273,6 +288,133 @@ describe("chat-store viewer", () => {
     expect(store.getSnapshot("conv_pending").messages.filter((m) => m.role === "user")).toHaveLength(
       1,
     );
+  });
+
+  it("refetches at most once when a pending tail outlives its run (no unbounded resume loop)", async () => {
+    const store = createChatStore();
+    // conv_pending's disk tail is permanently partial: its trailing assistant
+    // never gets a terminal event, so every refetch returns the same pending
+    // shape. This is the state a turn leaves when it dies without persisting
+    // a terminal frame.
+    await store.loadConversation("conv_pending");
+
+    // The server reports no live turn AND nothing in the grace buffer — the
+    // run is gone, so no replay can ever complete the tail. The server sends a
+    // `subscribed` frame on every connect, so drive one per opened stream.
+    // Bounded so a regression fails the assertion instead of hanging the suite.
+    for (let i = 0; i < 10; i++) {
+      const s = streams[streams.length - 1];
+      if (!s || s.closed) break;
+      s.onSubscribed?.({ isActive: false, activeSeq: 0 });
+      await new Promise((r) => setTimeout(r, 0));
+    }
+
+    // One initial connection + at most one refetch attempt. More means the
+    // refetch is re-entering itself with no termination condition.
+    expect(streams.length).toBeLessThanOrEqual(2);
+    // And the viewer must not be left spinning on a turn that will never land.
+    expect(store.getSnapshot("conv_pending").isStreaming).toBe(false);
+  });
+
+  it("settles a turn stranded before any assistant content instead of refetching forever", async () => {
+    const store = createChatStore();
+    // The turn died before persisting any assistant message, so the trailing
+    // message is the user's own — permanently "pending" by `hasPendingTail`.
+    await store.loadConversation("conv_stranded");
+
+    for (let i = 0; i < 10; i++) {
+      const s = streams[streams.length - 1];
+      if (!s || s.closed) break;
+      s.onSubscribed?.({ isActive: false, activeSeq: 0 });
+      await new Promise((r) => setTimeout(r, 0));
+    }
+
+    expect(streams.length).toBeLessThanOrEqual(2);
+    const snap = store.getSnapshot("conv_stranded");
+    expect(snap.isStreaming).toBe(false);
+    // The user's message survives, and the notice rides an empty assistant
+    // message at the tail — not `slice.error`, whose banner a follow-up clears.
+    expect(snap.messages.map((m) => m.role)).toEqual(["user", "assistant"]);
+    expect(snap.messages[0].content).toBe("loaded-q");
+    expect(lastAssistant(snap.messages)?.error).toBe(
+      "This response was interrupted and never finished.",
+    );
+    expect(snap.error).toBeNull();
+  });
+
+  it("settles an abandoned tail even when the slice is still flagged streaming from a probe", async () => {
+    const store = createChatStore();
+    // A reload restored this conversation's streaming dot, so it was probed
+    // rather than loaded: the probe subscribes with resume=true, its first
+    // frame reports an active turn, and `markActiveStreaming` pins isStreaming
+    // — all without hydrating any history.
+    store.probeConversation("conv_pending");
+    latestStream().onSubscribed?.({ isActive: true, activeSeq: 3 });
+    expect(store.getSnapshot("conv_pending").isStreaming).toBe(true);
+
+    // That turn then died without a terminal event and aged out of the grace
+    // window. Opening the conversation hydrates the partial tail and resumes.
+    await store.loadConversation("conv_pending");
+    // The server sends `subscribed` on every connect, including the one the
+    // refetch opens — bounded so a regression fails an assertion, not the suite.
+    for (let i = 0; i < 10; i++) {
+      const s = streams[streams.length - 1];
+      if (!s || s.closed) break;
+      s.onSubscribed?.({ isActive: false, activeSeq: 0 });
+      await new Promise((r) => setTimeout(r, 0));
+    }
+
+    // The stale streaming flag must not let `loadConversation`'s
+    // already-live early return swallow the refetch: that spends the one-shot
+    // allowance on a no-op and leaves a spinner with no connection and no
+    // settle — the very "permanently un-openable" state this PR exists to end.
+    const snap = store.getSnapshot("conv_pending");
+    expect(snap.isStreaming).toBe(false);
+    expect(lastAssistant(snap.messages)?.error).toBe(
+      "This response was interrupted and never finished.",
+    );
+  });
+
+  it("recovers a turn that terminated between the transcript snapshot and the subscribe", async () => {
+    const store = createChatStore();
+    // Snapshot taken while the turn was still in flight → partial tail.
+    await store.loadConversation("conv_settling");
+
+    // The turn then finished AND its RunBus log aged out of the 30s grace
+    // window before this stream's first `subscribed` frame arrived — reachable
+    // because the SSE connect retries with backoff up to 30s, so the gap
+    // between the transcript read and the first subscribe is not bounded by a
+    // single round-trip. The server therefore reports no run at all, while disk
+    // now holds the completed turn. This is the refetch's winning position: it
+    // is the difference between rendering the finished answer and telling the
+    // user their completed turn was interrupted.
+    latestStream().onSubscribed?.({ isActive: false, activeSeq: 0 });
+    await new Promise((r) => setTimeout(r, 0));
+
+    const snap = store.getSnapshot("conv_settling");
+    expect(snap.messages).toEqual(LOADED);
+    expect(snap.error).toBeNull();
+    expect(lastAssistant(snap.messages)?.error).toBeUndefined();
+  });
+
+  it("reports canRetry false for a settled disk-loaded turn, true after a send", async () => {
+    const store = createChatStore();
+    // Loaded from disk: this session never saw the original send, so there are
+    // no params to replay and the UI must not offer a retry that can't act.
+    await store.loadConversation("conv_stranded");
+    for (let i = 0; i < 10; i++) {
+      const s = streams[streams.length - 1];
+      if (!s || s.closed) break;
+      s.onSubscribed?.({ isActive: false, activeSeq: 0 });
+      await new Promise((r) => setTimeout(r, 0));
+    }
+    const settled = store.getSnapshot("conv_stranded");
+    expect(lastAssistant(settled.messages)?.error).toBeTruthy();
+    expect(settled.canRetry).toBe(false);
+
+    // A turn sent in this session captures its params, so retry is replayable.
+    await store.sendTurn("draft-retry", { text: "hello" });
+    expect(store.getSnapshot("draft-retry").canRetry).toBe(true);
   });
 
   it("preserves a completed prior turn when a new turn goes active mid-resume (no transcript loss)", async () => {
