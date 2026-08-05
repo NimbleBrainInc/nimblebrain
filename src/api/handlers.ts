@@ -206,10 +206,9 @@ export async function handleChatStart(
     const { conversationId } = await runtime.startTurn(parsed);
     return Response.json({ conversationId });
   } catch (err) {
-    // Share the mapper with `handleChat` rather than restating its branches.
-    // A private copy drifts: it silently missed a new error class and returned
-    // 500 on the route the web client actually sends on, while `/v1/chat`
-    // returned the right status for the identical body.
+    // Both chat doors answer through the same mapper. A private copy of its
+    // branches drifts out of step with it, and the two routes then disagree
+    // about the same error.
     const mapped = mapChatTurnError(err);
     if (mapped) return mapped;
     throw err;

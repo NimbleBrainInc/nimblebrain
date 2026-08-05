@@ -14,6 +14,8 @@ const testDir = join(tmpdir(), `nimblebrain-model-policy-http-${Date.now()}`);
 
 const ALLOWED = "anthropic:claude-sonnet-4-6";
 const REFUSED = "anthropic:claude-opus-4-6";
+// Dev mode (no identity provider) resolves every request to this owner.
+const DEV_OWNER = "usr_default";
 
 beforeAll(async () => {
   mkdirSync(testDir, { recursive: true });
@@ -67,3 +69,31 @@ describe.each([["/v1/chat"], ["/v1/chat/start"]])("%s refuses a disallowed model
     expect(res.status).not.toBe(400);
   });
 });
+
+// The gate skips a resume, because the pin wins and the request's model is
+// discarded. Both doors build their create options lazily to get that, and
+// both need holding: `/v1/chat` and `/v1/chat/start` reach it through
+// different methods, so a test on one leaves the other free to regress.
+describe.each([["/v1/chat"], ["/v1/chat/start"]])(
+  "%s resumes a pinned conversation without gating the request model",
+  (route) => {
+    it("does not answer model_not_allowed", async () => {
+      const store = runtime.workspaceConversationStore(TEST_WORKSPACE_ID, DEV_OWNER);
+      const { id } = await store.create({
+        ownerId: DEV_OWNER,
+        workspaceId: TEST_WORKSPACE_ID,
+        model: ALLOWED,
+      });
+
+      const res = await post(route, { message: "again", conversationId: id, model: REFUSED });
+      const body = (await res.json().catch(() => ({}))) as { error?: string };
+
+      expect(body.error).not.toBe("model_not_allowed");
+      // Not a vacuous pass: the resume has to actually reach the turn, so an
+      // ownership or lookup refusal would be a different bug wearing the same
+      // green.
+      expect(res.status).not.toBe(403);
+      expect(res.status).not.toBe(404);
+    });
+  },
+);
