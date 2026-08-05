@@ -92,6 +92,7 @@ export class JsonlConversationStore implements ConversationStore {
       title: null,
       lastModel: null,
       ownerId: options.ownerId,
+      ...(options.model ? { model: options.model } : {}),
       ...(options.workspaceId ? { workspaceId: options.workspaceId } : {}),
     };
     const path = this.path(id);
@@ -121,6 +122,7 @@ export class JsonlConversationStore implements ConversationStore {
       title: (raw.title as string | null) ?? null,
       lastModel: (raw.lastModel as string | null) ?? null,
       ownerId: raw.ownerId,
+      ...(raw.model ? { model: raw.model as string } : {}),
       ...(raw.workspaceId ? { workspaceId: raw.workspaceId as string } : {}),
       ...(raw.metadata ? { metadata: raw.metadata as Record<string, unknown> } : {}),
     };

@@ -26,6 +26,13 @@ export interface ConversationMeta {
   totalOutputTokens: number;
   totalCostUsd: number;
   lastModel: string | null;
+  /**
+   * The model the conversation is bound to — the runtime stamps this on the
+   * line-1 header at create time and never mutates it. Absent on legacy files
+   * written before the binding. Distinct from `lastModel`, which is derived
+   * from events and describes what the last turn ran on.
+   */
+  model?: string;
   ownerId?: string;
   /**
    * The workspace the conversation ran in — the breadcrumb the
@@ -341,6 +348,7 @@ function parseMeta(raw: Record<string, unknown>): ConversationMeta | null {
     totalOutputTokens: (raw.totalOutputTokens as number) ?? 0,
     totalCostUsd: (raw.totalCostUsd as number) ?? 0,
     lastModel: (raw.lastModel as string | null) ?? null,
+    ...(raw.model ? { model: raw.model as string } : {}),
     ...(raw.ownerId ? { ownerId: raw.ownerId as string } : {}),
     ...(raw.workspaceId ? { workspaceId: raw.workspaceId as string } : {}),
   };
