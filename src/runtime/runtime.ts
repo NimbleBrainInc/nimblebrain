@@ -82,7 +82,7 @@ import { DEV_IDENTITY } from "../identity/providers/dev.ts";
 import { UserStore } from "../identity/user.ts";
 import { InstructionsStore } from "../instructions/index.ts";
 import { getModelByString, getProviderFromModel } from "../model/catalog.ts";
-import { buildModelResolver, resolveModelString } from "../model/registry.ts";
+import { buildModelResolver, fallsBackToAnthropic, resolveModelString } from "../model/registry.ts";
 import { MODEL_SLOTS, type ModelSlot, parseModelSlotRef } from "../model/slots.ts";
 import { registerBuiltinCredentialProviders } from "../oauth/minted-credential-provider.ts";
 import { requestIdentityAttrs, withSpan } from "../observability/index.ts";
@@ -553,31 +553,30 @@ export class Runtime {
     };
     const resolveSlot = (s: string): string => {
       const slot = parseModelSlotRef(s);
-      if (!slot) {
-        // A bare string that is neither a slot nor a catalog id reaches
-        // `resolveModelString`, whose documented fallback stamps `anthropic:`
-        // on it for back-compat with pinned/bespoke ids served under their own
-        // name. That fallback is deliberate and stays — but it also swallows
-        // typos, and an agent profile is exactly where one lands. Warn rather
-        // than throw: we cannot distinguish a typo from a legitimately pinned
-        // id here, and refusing the latter would break working deployments.
-        if (!s.includes(":") && !getModelByString(s)) {
-          log.warn("[runtime] agent profile model is neither a slot nor a known model", {
-            model: s,
-            slots: MODEL_SLOTS.join(", "),
-            resolvesTo: resolveModelString(s),
-          });
-        }
-        return s;
+      if (slot) {
+        // Route to the same reader every other consumer uses. Resolving from
+        // `config.models` here instead would silently drop the per-request
+        // workspace override that `getModelSlots()` overlays — and this path
+        // now carries the *documented* bare spelling, so a second slot table
+        // would be the one most authors actually hit.
+        if (!rtHolder.rt) throw new Error("Runtime not initialized");
+        return rtHolder.rt.getModelSlot(slot);
       }
-      const models = config.models;
-      const fallback = config.defaultModel ?? DEFAULT_MODEL;
-      const slots: ModelSlots = {
-        default: models?.default ?? fallback,
-        fast: models?.fast ?? fallback,
-        reasoning: models?.reasoning ?? fallback,
-      };
-      return slots[slot];
+      // A bare string that no provider claims reaches `resolveModelString`,
+      // whose documented fallback stamps `anthropic:` on it for back-compat
+      // with pinned/bespoke ids served under their own name. That fallback is
+      // deliberate and stays — but it also swallows typos, and a delegate
+      // model is exactly where one lands. Warn rather than throw: a typo and a
+      // legitimately pinned id are indistinguishable here, and refusing the
+      // latter would break working deployments.
+      if (fallsBackToAnthropic(s)) {
+        log.warn("[runtime] delegate model is neither a slot nor a known model", {
+          model: s,
+          slots: MODEL_SLOTS.join(", "),
+          resolvesTo: resolveModelString(s),
+        });
+      }
+      return s;
     };
     const delegateCtx: DelegateContext = {
       resolveModel: resolveModelFn,
@@ -2139,9 +2138,10 @@ export class Runtime {
 
   /**
    * Resolve the request model string: resolve a slot name (bare or `alias:`-
-   * prefixed) to its configured model, then qualify the bare id. Qualification at the request-entry boundary lets the
-   * rest of the pipeline (cost aggregation, capability checks, resolvers, log
-   * lines) read `engineConfig.model` and depend on it being qualified.
+   * prefixed) to its configured model, then qualify the bare id. Qualifying at
+   * the request-entry boundary lets the rest of the pipeline (cost aggregation,
+   * capability checks, resolvers, log lines) read `engineConfig.model` and
+   * depend on it being qualified.
    */
   private resolveRequestModelString(requestModel: string | undefined): string {
     let modelString = requestModel ?? this.getDefaultModel();

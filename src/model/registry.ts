@@ -147,6 +147,24 @@ export function resolveModelString(model: string): string {
 }
 
 /**
+ * Whether {@link resolveModelString} would reach its last-resort `anthropic:`
+ * branch for this string — i.e. the id is bare and no provider in the catalog
+ * claims it.
+ *
+ * Lives next to the branch it describes so the two cannot drift: the same
+ * question asked with `getModelByString` instead answers differently, because
+ * that helper assumes `anthropic` for a bare id and so reports every bare
+ * OpenAI/Google/xAI/Nebius id as unknown.
+ *
+ * A true result is not an error — the fallback is deliberate back-compat for
+ * pinned ids served under their own name. It is the signal a caller can use to
+ * say so out loud.
+ */
+export function fallsBackToAnthropic(model: string): boolean {
+  return !model.includes(":") && findProviderForModelId(model) === null;
+}
+
+/**
  * Build a function that resolves model strings to LanguageModelV3 instances.
  * If no providers configured, defaults to anthropic with env var fallback.
  */

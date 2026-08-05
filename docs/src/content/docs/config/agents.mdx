@@ -50,7 +50,7 @@ Add an `agents` object to your [`workspace.json`](/config/workspace-json). Each 
 | `systemPrompt` | `string` | Yes | — | System prompt injected when this agent runs. Defines the agent's behavior and constraints. |
 | `tools` | `string[]` | Yes | — | Tool name glob patterns the agent can access. Only matching tools are available to the child agent. |
 | `maxIterations` | `integer` | No | — | Maximum iterations for this agent. Falls through to the `nb__delegate` call's default (5) when omitted. The effective value is capped at the **child ceiling of 10** and at the parent's remaining budget minus 1, so a profile value above 10 is clamped to 10. |
-| `model` | `string` | No | Workspace default | Model override. Accepts a slot name (`"default"`, `"fast"`, `"reasoning"`), the same slot written explicitly as `"alias:fast"`, or a `provider:model-id` string. A bare name that is neither a slot nor a known model is passed through to the provider as-is and logs a warning — see [models](/config/nimblebrain-json#models). |
+| `model` | `string` | No | Workspace default | Model override. Accepts a slot name (`"default"`, `"fast"`, `"reasoning"`), the same slot written explicitly as `"alias:fast"`, or a `provider:model-id` string. A bare name that is neither a slot nor a known model is routed to Anthropic and logs a warning — see [models](/config/nimblebrain-json#models). |
 
 ## Tool glob patterns
 
