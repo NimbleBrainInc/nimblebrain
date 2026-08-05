@@ -12,6 +12,7 @@ import { mkdirSync, rmSync } from "node:fs";
 import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { TransientAuthError } from "../../../src/identity/provider.ts";
 import { WorkosIdentityProvider } from "../../../src/identity/providers/workos.ts";
 import type { WorkosAuth } from "../../../src/identity/instance.ts";
 import { UserStore } from "../../../src/identity/user.ts";
@@ -211,7 +212,7 @@ describe("WorkOS provisioning security", () => {
     expect(workspacesAfter.length).toBe(workspacesBefore.length);
   });
 
-  it("resolveOrgRole fails closed on API error", async () => {
+  it("resolveOrgRole never resolves a role on API error", async () => {
     const provider = createMockProvider(new Map());
     const workos = (provider as unknown as { workos: Record<string, unknown> }).workos;
 
@@ -220,9 +221,17 @@ describe("WorkOS provisioning security", () => {
       throw new Error("API timeout");
     };
 
-    // resolveOrgRole should return null (fail closed), not "member"
+    // The invariant this guards: an API error must never resolve to a role —
+    // least of all "member", which would silently grant access we could not
+    // verify. Throwing satisfies it more strictly than the old `null` return
+    // (no value is produced at all) while letting the caller distinguish
+    // "could not check" from "definitively no membership": the former answers
+    // 503, the latter still denies. Nothing is granted on either path.
     const resolveOrgRole = (provider as unknown as { resolveOrgRole: (id: string) => Promise<string | null> }).resolveOrgRole.bind(provider);
-    const result = await resolveOrgRole("user_any");
-    expect(result).toBeNull();
+    const err = await resolveOrgRole("user_any").then(
+      (role: string | null) => role,
+      (e: unknown) => e,
+    );
+    expect(err).toBeInstanceOf(TransientAuthError);
   });
 });

@@ -270,6 +270,26 @@ describe("resolveUser stale cache fallback", () => {
     expect((err as TransientAuthError).reason).toBe("user_unresolvable");
   });
 
+  it("signals unavailable when the memberships endpoint fails and no cache exists", async () => {
+    const provider = createProvider();
+
+    // getUser succeeds; only listOrganizationMemberships is down — a partial
+    // outage (429, degraded endpoint). Returning null here reached
+    // resolveUser's definitive "no org membership" branch and 401'd a valid
+    // session while deleting the cache that would have saved the next request.
+    const workos = (provider as unknown as { workos: Record<string, unknown> }).workos;
+    (workos.userManagement as Record<string, unknown>).listOrganizationMemberships = async () => {
+      throw new Error("WorkOS memberships 429");
+    };
+
+    const token = await makeValidToken("user_memberships_down", Date.now());
+    const err = await provider.verifyRequest(makeRequest(token)).then(
+      () => null,
+      (e: unknown) => e,
+    );
+    expect(err).toBeInstanceOf(TransientAuthError);
+  });
+
   it("does not fall back to stale cache when user definitively lost org access", async () => {
     const provider = createProvider();
     const baseTime = Date.now();

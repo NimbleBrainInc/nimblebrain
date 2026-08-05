@@ -73,7 +73,11 @@ type WorkosRejectReason =
  * from {@link WorkosRejectReason}: these do not mean "not authenticated", and
  * routing one through `reject()` would 401 a valid session.
  */
-type WorkosTransientReason = "jwks_unavailable" | "authkit_jwks_unavailable" | "user_unresolvable";
+type WorkosTransientReason =
+  | "jwks_unavailable"
+  | "authkit_jwks_unavailable"
+  | "user_unresolvable"
+  | "org_role_unresolvable";
 
 function base64UrlDecode(input: string): Uint8Array {
   let b64 = input.replace(/-/g, "+").replace(/_/g, "/");
@@ -734,8 +738,14 @@ export class WorkosIdentityProvider implements IdentityProvider {
       log.error(`[workos] resolveOrgRole failed for user=${workosUserId}`, {
         error: err instanceof Error ? err.message : String(err),
       });
-      // Fail closed — deny access on API errors
-      return null;
+      // An API error is not a verdict about membership. `null` here is read by
+      // resolveUser as *definitively* lost access: it denies AND deletes the
+      // cached identity, so a memberships-endpoint hiccup becomes the
+      // involuntary logout — with the stale-identity fallback destroyed on the
+      // way out, taking the next request with it. Throw instead, so it
+      // classifies as unavailability like every other dependency failure and
+      // resolveUser's catch decides between stale cache and 503.
+      this.transient("org_role_unresolvable", { userId: workosUserId });
     }
   }
 
