@@ -13,6 +13,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { beforeAll, describe, expect, it } from "bun:test";
 import type { WorkosAuth } from "../../../src/identity/instance.ts";
+import { TransientAuthError } from "../../../src/identity/provider.ts";
 import { WorkosIdentityProvider } from "../../../src/identity/providers/workos.ts";
 import { WorkspaceStore } from "../../../src/workspace/workspace-store.ts";
 
@@ -197,14 +198,21 @@ describe("JWKS stale cache fallback", () => {
     expect(result!.id).toBe("user_jwks_2");
   });
 
-  it("rejects when JWKS fetch fails and no cache exists", async () => {
+  it("signals unavailable when JWKS fetch fails and no cache exists", async () => {
     const provider = createProvider();
     // JWKS endpoint down from the start — no cache to fall back on
     provider.fetcher = async () => new Response("Service Unavailable", { status: 503 });
 
     const token = await makeValidToken("user_no_cache", Date.now());
-    const result = await provider.verifyRequest(makeRequest(token));
-    expect(result).toBeNull();
+    // Not `null`: we never reached a verdict about this token, so the caller
+    // must answer 503 rather than 401. Returning null here logs out a valid
+    // user over our own key-fetch outage.
+    const err = await provider.verifyRequest(makeRequest(token)).then(
+      () => null,
+      (e: unknown) => e,
+    );
+    expect(err).toBeInstanceOf(TransientAuthError);
+    expect((err as TransientAuthError).reason).toBe("jwks_unavailable");
   });
 });
 
@@ -241,7 +249,7 @@ describe("resolveUser stale cache fallback", () => {
     expect(second!.email).toBe("user_resolve_1@test.com");
   });
 
-  it("rejects when WorkOS API fails and no user cache exists", async () => {
+  it("signals unavailable when WorkOS API fails and no user cache exists", async () => {
     const provider = createProvider();
 
     // WorkOS getUser throws from the start — no cache to fall back on
@@ -251,8 +259,15 @@ describe("resolveUser stale cache fallback", () => {
     };
 
     const token = await makeValidToken("user_never_seen", Date.now());
-    const result = await provider.verifyRequest(makeRequest(token));
-    expect(result).toBeNull();
+    // The stale-cache fallback above exists because a transient API error is
+    // not a verdict. With no cache there is nothing to fall back TO, so the
+    // same reasoning applies — surface unavailability instead of denial.
+    const err = await provider.verifyRequest(makeRequest(token)).then(
+      () => null,
+      (e: unknown) => e,
+    );
+    expect(err).toBeInstanceOf(TransientAuthError);
+    expect((err as TransientAuthError).reason).toBe("user_unresolvable");
   });
 
   it("does not fall back to stale cache when user definitively lost org access", async () => {
