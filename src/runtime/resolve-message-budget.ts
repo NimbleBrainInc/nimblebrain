@@ -4,17 +4,44 @@ import { getModelByString } from "../model/catalog.ts";
 import { log } from "../observability/log.ts";
 
 /**
- * Per-call safety margin reserved against the model's context window after
- * subtracting the system prompt, tool schemas, and `maxOutputTokens`. This
- * covers (a) drift between our pre-flight token estimates and the provider's
- * real tokenizer, (b) per-call overhead the provider charges that we don't
- * see (Anthropic cache framing, etc.), and (c) leaves room for reactive
+ * Floor for the per-call safety margin. Binding for any model whose context
+ * window is under ~164K, where the ratio below resolves smaller.
+ */
+export const MIN_BUDGET_SAFETY_MARGIN_TOKENS = 8_192;
+
+/**
+ * Fraction of the context window held back as the safety margin.
+ *
+ * The margin covers (a) drift between our pre-flight token estimates and the
+ * provider's real tokenizer, (b) per-call overhead the provider charges that
+ * we don't see (Anthropic cache framing, etc.), and (c) room for reactive
  * recovery to retry without immediately re-overflowing.
  *
- * Sized to be meaningful relative to typical conversation budgets without
- * eating substantial headroom on small-context models.
+ * It scales with the window because (a) does. The estimators are deliberately
+ * cheap — `chars/4` for text, and the same shape for JSON tool schemas, where
+ * it is weakest — so their ABSOLUTE error grows with the prompt while a fixed
+ * margin does not. Held flat, the margin shrinks as a fraction of exactly the
+ * quantity it has to absorb: 4% of a 200K window, 3.1% of a 262K one, less
+ * again on the million-token models. A prompt composed to fill a large window
+ * then overflows by the drift the margin was supposed to cover.
+ *
+ * This bounds the error rather than measuring it. Reading the provider's own
+ * `llm.response.usage` back to calibrate the estimate is the durable fix and
+ * is tracked separately; this floor is what that would fall back to on a
+ * conversation's first turn, where no measurement exists yet.
  */
-export const DEFAULT_BUDGET_SAFETY_MARGIN_TOKENS = 8_192;
+export const BUDGET_SAFETY_MARGIN_RATIO = 0.05;
+
+/**
+ * The safety margin for a model's context window — the ratio above, never
+ * below the floor. `modelContextWindow` of 0 (catalog miss) yields the floor.
+ */
+export function budgetSafetyMarginTokens(modelContextWindow: number): number {
+  return Math.max(
+    MIN_BUDGET_SAFETY_MARGIN_TOKENS,
+    Math.ceil(modelContextWindow * BUDGET_SAFETY_MARGIN_RATIO),
+  );
+}
 
 export interface ResolveMessageBudgetInput {
   /** Resolved provider-qualified model id (e.g. "anthropic:claude-opus-4-7"). */
@@ -27,7 +54,7 @@ export interface ResolveMessageBudgetInput {
   tools: ToolSchema[];
   /** Already-resolved `maxOutputTokens` for this call (catalog-clamped). */
   maxOutputTokens: number;
-  /** Override for the safety margin. Defaults to DEFAULT_BUDGET_SAFETY_MARGIN_TOKENS. */
+  /** Override for the safety margin. Defaults to `budgetSafetyMarginTokens(context)`. */
   safetyMarginTokens?: number;
 }
 
@@ -78,9 +105,11 @@ export interface ResolveMessageBudgetResult {
  * re-trim before a retry. The composition is pure; callers own the policy.
  */
 export function resolveMessageBudget(input: ResolveMessageBudgetInput): ResolveMessageBudgetResult {
-  const safety = input.safetyMarginTokens ?? DEFAULT_BUDGET_SAFETY_MARGIN_TOKENS;
   const catalogModel = getModelByString(input.model);
   const modelCtx = catalogModel?.limits.context ?? null;
+  // Scales with the window, so the margin tracks the estimator drift it exists
+  // to absorb. A catalog miss has no window to scale against and takes the floor.
+  const safety = input.safetyMarginTokens ?? budgetSafetyMarginTokens(modelCtx ?? 0);
 
   const systemTokens = Math.ceil(input.systemPrompt.length / 4);
   const toolTokens = input.tools.reduce((sum, t) => sum + estimateToolDescriptionTokens(t), 0);

@@ -55,8 +55,11 @@ export const DEFAULT_OUTPUT_LIMIT = 16384;
  * the arithmetic below sets a lower bound, and this sits well above it.
  *
  * `resolveMessageBudget` computes `modelCtx - system - tools - maxOutput -
- * safety` (`DEFAULT_OUTPUT_LIMIT` 16K + `DEFAULT_BUDGET_SAFETY_MARGIN_TOKENS`
- * 8K, plus a few K of system and tools). Two thresholds fall out of it:
+ * safety` (`DEFAULT_OUTPUT_LIMIT` 16K + the safety margin, plus a few K of
+ * system and tools). That margin scales with the window above ~164K — four
+ * curated models are there today — but holds an 8K floor below it, and both
+ * thresholds here sit far under the crossover, so 8K is the value they are
+ * derived against. Two thresholds fall out of it:
  *
  *   - **~30K** — below this the headroom is <= 0, the budget resolves to 0, and
  *     every turn fails. This is the hard floor.
