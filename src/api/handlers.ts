@@ -22,6 +22,7 @@ import { log } from "../observability/log.ts";
 import {
   ConversationAccessDeniedError,
   ConversationCorruptedError,
+  ModelNotAllowedError,
   RunInProgressError,
 } from "../runtime/errors.ts";
 import { type RequestContext, runWithRequestContext } from "../runtime/request-context.ts";
@@ -161,7 +162,17 @@ function mapChatTurnError(err: unknown): Response | null {
   if (err instanceof ConversationCorruptedError) {
     return conversationCorruptedResponse(err);
   }
+  if (err instanceof ModelNotAllowedError) {
+    return modelNotAllowedResponse(err);
+  }
   return null;
+}
+
+function modelNotAllowedResponse(err: ModelNotAllowedError): Response {
+  return apiError(400, err.code, err.message, {
+    model: err.model,
+    configuredProviders: err.configuredProviders,
+  });
 }
 
 function runInProgressResponse(conversationId: string): Response {

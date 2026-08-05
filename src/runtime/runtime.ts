@@ -81,7 +81,7 @@ import { createIdentityProvider } from "../identity/provider.ts";
 import { DEV_IDENTITY } from "../identity/providers/dev.ts";
 import { UserStore } from "../identity/user.ts";
 import { InstructionsStore } from "../instructions/index.ts";
-import { getModelByString, getProviderFromModel } from "../model/catalog.ts";
+import { getModelByString, getProviderFromModel, isModelAllowed } from "../model/catalog.ts";
 import { buildModelResolver, resolveModelString } from "../model/registry.ts";
 import { type ModelSlot, parseModelSlotRef } from "../model/slots.ts";
 import { registerBuiltinCredentialProviders } from "../oauth/minted-credential-provider.ts";
@@ -148,6 +148,7 @@ import { personalWorkspaceIdFor, WorkspaceStore } from "../workspace/workspace-s
 import {
   ConversationAccessDeniedError,
   ConversationWorkspaceAccessDeniedError,
+  ModelNotAllowedError,
   RunInProgressError,
   WorkspaceMembershipRevokedError,
 } from "./errors.ts";
@@ -2123,12 +2124,27 @@ export class Runtime {
    * is how the two drift.
    */
   private resolveRequestModelString(requestModel: string | undefined): string {
-    let modelString = requestModel ?? this.getDefaultModel();
-    const aliasSlot = parseModelSlotRef(modelString);
-    if (aliasSlot) {
-      modelString = this.getModelSlot(aliasSlot);
+    // Both of these resolve to operator config, already qualified by the slot
+    // reader, and are not the caller's to choose — so neither is gated.
+    if (requestModel === undefined) return this.getDefaultModel();
+    const slot = parseModelSlotRef(requestModel);
+    if (slot) return this.getModelSlot(slot);
+
+    // A concrete model named by the caller is the one untrusted value here,
+    // and since #892 it is written to the conversation's immutable pin. An
+    // unchecked value would not overspend for a turn; it would seal the
+    // conversation to a disallowed model for life, past any later policy change.
+    const qualified = resolveModelString(requestModel);
+    // Only a `providers` config expresses an allowlist. On the legacy
+    // single-provider config, or a custom adapter that serves every string,
+    // there is no policy here to enforce — and `getProviderConfigs()` reports
+    // a display default (`{anthropic:{}}`) in that case, not a reachability
+    // claim, so consulting it would refuse every non-Anthropic model on a
+    // deployment that can serve them. Absence of policy is not denial.
+    if (this.config.providers && !isModelAllowed(qualified, this.getProviderConfigs())) {
+      throw new ModelNotAllowedError(qualified, this.getConfiguredProviders());
     }
-    return resolveModelString(modelString);
+    return qualified;
   }
 
   /**
