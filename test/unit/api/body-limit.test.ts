@@ -166,6 +166,27 @@ describe("bodyLimit middleware", () => {
     expect(request.bodyUsed).toBe(true);
   });
 
+  // The other half of that trade: the read is work an unauthenticated caller
+  // can ask for, so past MAX_DRAIN_BYTES the refusal goes out immediately and
+  // the connection takes the consequences.
+  test("refuses a body past the drain ceiling without reading it", async () => {
+    const app = createTestApp(1024);
+    const oversized = "x".repeat(9 * 1024 * 1024);
+    const request = new Request("http://localhost/test", {
+      method: "POST",
+      headers: {
+        "Content-Length": String(oversized.length),
+        "Content-Type": "application/json",
+      },
+      body: oversized,
+    });
+
+    const res = await app.fetch(request);
+
+    expect(res.status).toBe(413);
+    expect(request.bodyUsed).toBe(false);
+  });
+
   // Regression guard: bodyLimit must stay scoped to the route it's attached
   // to. Mounting it via `.use("*")` on a sub-app that is itself mounted at
   // `/` makes it leak across sibling sub-apps — that's how the multipart

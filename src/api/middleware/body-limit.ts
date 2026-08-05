@@ -13,7 +13,24 @@ export interface BodyLimitOptions {
 }
 
 /**
- * Read and discard the body of a request we are about to refuse.
+ * Largest refused body worth reading before answering.
+ *
+ * Draining costs the read, and on the JSON routes that read is work an
+ * unauthenticated caller can ask for: `POST /v1/auth/refresh` carries neither
+ * auth nor a rate limiter, and the only ceiling underneath is Bun's
+ * `maxRequestBodySize` default of 128 MB — 128x the 1 MB those routes cap at.
+ * Past this bound the refusal goes out immediately and the connection takes
+ * the consequences, which is the better trade at that size.
+ *
+ * Sized to the bodies that actually overrun a configured limit rather than
+ * the largest one Bun would hand us: the multipart and JSON overruns that
+ * desynchronize the connection in practice are single-digit MB.
+ */
+const MAX_DRAIN_BYTES = 8 * 1024 * 1024;
+
+/**
+ * Read and discard the body of a request we are about to refuse, up to
+ * `MAX_DRAIN_BYTES`. A larger declared body is left unread.
  *
  * HTTP/1.1 has no way to say "I stopped reading mid-body", so answering
  * before the body has arrived leaves a keep-alive connection in a state the
@@ -29,11 +46,11 @@ export interface BodyLimitOptions {
  * the same exchange stays healthy either way — so treat the drain as the
  * measured fix, not as a description of the underlying bug.
  *
- * Discarding is streamed, so an oversized body still costs only the read and
- * never the buffer this middleware exists to avoid, and it is bounded by the
- * same server-level ceilings that bound an in-budget upload.
+ * Discarding is streamed, so a refused body costs the read but never the
+ * buffer this middleware exists to avoid.
  */
-async function discardBody(request: Request): Promise<void> {
+async function discardBody(request: Request, declaredLength: number): Promise<void> {
+  if (declaredLength > MAX_DRAIN_BYTES) return;
   const body = request.body;
   if (!body) return;
   try {
@@ -57,7 +74,9 @@ async function discardBody(request: Request): Promise<void> {
  * transfer encoding) or with malformed headers pass through untouched.
  * The ingest pipeline in `src/files/ingest.ts` enforces per-file,
  * total-size, and MIME rules authoritatively — middleware only stops
- * oversized uploads before we buffer them.
+ * oversized uploads before we buffer them. A refused body up to
+ * `MAX_DRAIN_BYTES` is still read and discarded, never buffered, so the
+ * connection survives the refusal.
  */
 export function bodyLimit(maxBytes: number, opts: BodyLimitOptions = {}) {
   return createMiddleware(async (c, next) => {
@@ -80,7 +99,7 @@ export function bodyLimit(maxBytes: number, opts: BodyLimitOptions = {}) {
     const isMultipart = contentType.toLowerCase().startsWith("multipart/");
     const limit = isMultipart && opts.multipart !== undefined ? opts.multipart : maxBytes;
     if (received > limit) {
-      await discardBody(c.req.raw);
+      await discardBody(c.req.raw, received);
       return apiError(413, "payload_too_large", "Payload too large", {
         limit,
         received,
