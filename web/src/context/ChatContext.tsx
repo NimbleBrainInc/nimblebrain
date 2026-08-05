@@ -22,8 +22,6 @@ import { useWorkspaceContext } from "./WorkspaceContext";
 // ---------------------------------------------------------------------------
 
 export interface ChatConfigContextValue {
-  selectedModel: string | null;
-  setSelectedModel: (model: string | null) => void;
   configuredProviders: string[];
   defaultModel: string;
   refreshConfig: () => void;
@@ -196,9 +194,6 @@ export function ChatProvider({
   }, [chat.simulateError]);
 
   // -- Config state (stable) --
-  const [selectedModel, setSelectedModelState] = useState<string | null>(() =>
-    localStorage.getItem("nb:selectedModel"),
-  );
   const [configuredProviders, setConfiguredProviders] = useState<string[]>(
     initialConfig?.configuredProviders ?? [],
   );
@@ -225,47 +220,32 @@ export function ChatProvider({
     if (!initialConfig) fetchConfig();
   }, [fetchConfig, initialConfig]);
 
-  const setSelectedModel = useCallback((model: string | null) => {
-    setSelectedModelState(model);
-    if (model) {
-      localStorage.setItem("nb:selectedModel", model);
-    } else {
-      localStorage.removeItem("nb:selectedModel");
-    }
-  }, []);
-
   // Cross-tab / refresh sync is now handled by the per-conversation turn
   // stream itself (server-authoritative): every viewer attaches to
   // GET /v1/conversations/:id/events, which replays the in-flight turn and
   // tails live. No separate remote-event bridge needed.
 
+  // No model argument: the model a turn runs on is resolved server-side and,
+  // for a conversation created since the model pin, fixed at create. A client
+  // that chose one per turn would be choosing per browser, which is what the
+  // profile-level preference replaces.
   const wrappedSendMessage = useCallback(
     (text: string, appContext?: AppContext, files?: File[]) => {
-      return chat.sendMessage(text, appContext, selectedModel ?? undefined, files);
+      return chat.sendMessage(text, appContext, undefined, files);
     },
-    [chat.sendMessage, selectedModel],
+    [chat.sendMessage],
   );
 
   // -- Config context value (changes rarely) --
   const configValue = useMemo<ChatConfigContextValue>(
     () => ({
-      selectedModel,
-      setSelectedModel,
       configuredProviders,
       defaultModel,
       refreshConfig: fetchConfig,
       preferences,
       currentUserId,
     }),
-    [
-      selectedModel,
-      setSelectedModel,
-      configuredProviders,
-      defaultModel,
-      fetchConfig,
-      preferences,
-      currentUserId,
-    ],
+    [configuredProviders, defaultModel, fetchConfig, preferences, currentUserId],
   );
 
   // -- Chat context value (changes per streaming tick) --

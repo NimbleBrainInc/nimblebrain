@@ -90,11 +90,21 @@ describe("ChatConfigContext", () => {
 	it("provides config values", () => {
 		const { result } = renderHook(() => useChatConfigContext(), { wrapper });
 
-		expect(result.current.selectedModel).toBeNull();
-		expect(typeof result.current.setSelectedModel).toBe("function");
 		expect(result.current.configuredProviders).toEqual([]);
 		expect(result.current.defaultModel).toBe("");
 		expect(typeof result.current.refreshConfig).toBe("function");
+	});
+
+	// The model a turn runs on is resolved server-side, and fixed at create for
+	// any conversation with a pin. A client-held selection would be per-browser
+	// and per-device — the thing the profile-level preference replaces — so the
+	// context must not carry one again.
+	it("exposes no client-side model selection", () => {
+		const { result } = renderHook(() => useChatConfigContext(), { wrapper });
+
+		expect(result.current).not.toHaveProperty("selectedModel");
+		expect(result.current).not.toHaveProperty("setSelectedModel");
+		expect(localStorage.getItem("nb:selectedModel")).toBeNull();
 	});
 
 	it("throws when used outside a ChatProvider", () => {
