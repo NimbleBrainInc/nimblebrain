@@ -1008,6 +1008,10 @@ export class Runtime {
     const createOpts: CreateConversationOptions = {
       ownerId,
       workspaceId: wsId,
+      // Bind here too: the detached-turn path creates the conversation before
+      // delegating to `chat()`, so without this a detached conversation would
+      // reach `_chatInner` already existing and unpinned.
+      model: this.resolveRequestModelString(request.model),
       ...(request.metadata ? { metadata: request.metadata } : {}),
     };
 
@@ -1229,6 +1233,11 @@ export class Runtime {
       // under `workspaces/<workspaceId>/conversations/<ownerId>/`, and this is
       // fixed for its whole life (no mid-chat workspace switching).
       workspaceId: convWsId,
+      // The conversation's model binding, fixed for its whole life. Resolved
+      // here rather than at the model-resolution point below because that is
+      // after the conversation exists — and resolution is pure, so its
+      // position in the turn is free.
+      model: this.resolveRequestModelString(request.model),
       ...(request.metadata ? { metadata: request.metadata } : {}),
     };
 
@@ -1418,23 +1427,13 @@ export class Runtime {
     // of the cached system block (the prepend happens after telemetry, below).
     const systemPrompt = foldVolatileHead(stableSystem, volatileHead);
 
-    // Workspace model overrides are in the RequestContext — read via getModelSlot()
-
-    // Resolve model: support alias references (e.g., "alias:fast", "alias:reasoning")
-    let resolvedModelString = request.model ?? this.getDefaultModel();
-    const aliasSlot = parseAliasRef(resolvedModelString);
-    if (aliasSlot) {
-      resolvedModelString = this.getModelSlot(aliasSlot);
-    }
-    // Qualify bare model ids at the request-entry boundary. Slot-read
-    // values are already qualified by `getModelSlots()`, but the per-
-    // request `request.model` override path bypasses that reader, so
-    // we normalize once here to cover both. Belt-and-suspenders with
-    // the slot reader: the rest of the pipeline (cost aggregation,
-    // capability checks, max-output and thinking resolvers, provider-
-    // options shape, log lines) reads `engineConfig.model` directly
-    // and depends on it being qualified.
-    resolvedModelString = resolveModelString(resolvedModelString);
+    // The conversation's binding wins over both the request override and the
+    // configured slot: a conversation runs on one model for its life, so a
+    // slot change retargets new conversations only. `createOpts` above carries
+    // the pin, so a conversation created on this path is already bound and
+    // this reads back what it was born with. Absent only on legacy records
+    // predating the binding, which resolve from current config as before.
+    const resolvedModelString = conversation.model ?? this.resolveRequestModelString(request.model);
 
     // Load history and rehydrate any supported `resource_link` blocks
     // (attached files persisted as URI references) into AI SDK V3 `file`

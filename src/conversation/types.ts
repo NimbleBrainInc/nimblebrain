@@ -82,6 +82,9 @@ export interface ConversationListResult {
 export interface CreateConversationOptions {
   workspaceId?: string;
   ownerId: string;
+  /** The model to bind the conversation to. Must already be resolved and
+   *  provider-qualified — see `Conversation.model`. */
+  model?: string;
   metadata?: Record<string, unknown>;
   /** Create with a specific id instead of a generated one. Used by the
    *  detached-turn path so the conversation id is known to the caller before
@@ -89,7 +92,13 @@ export interface CreateConversationOptions {
   id?: string;
 }
 
-/** Fields that can be updated on a conversation. */
+/**
+ * Fields that can be updated on a conversation.
+ *
+ * The narrowness is load-bearing, not incidental: `ownerId`, `workspaceId` and
+ * `model` are bindings fixed at create, and their absence here is what makes
+ * them immutable. Widening this type is how that guarantee gets lost.
+ */
 export interface ConversationPatch {
   title?: string;
 }
@@ -175,6 +184,31 @@ export interface Conversation {
   createdAt: string;
   updatedAt: string;
   title: string | null;
+  /**
+   * The model this conversation runs on — the binding. Set at create from the
+   * first turn's resolved model and never mutated (no mid-chat model
+   * switching); a model-slot change therefore retargets NEW conversations
+   * only. Same shape as `workspaceId` below.
+   *
+   * Two properties of the stored value are load-bearing:
+   *
+   *  - **Resolved, never an alias.** `alias:fast` is a legal model string; a
+   *    pin holding one would be retargeted by a slot change, which is exactly
+   *    what this binding prevents.
+   *  - **Provider-qualified** (`provider:model-id`), never bare. A bare id
+   *    falls back to `anthropic:<id>`, and the pin is immutable, so a bare
+   *    pin cannot be repaired.
+   *
+   * `resolveRequestModelString` satisfies both, and is the only writer.
+   *
+   * Distinct from `lastModel`, which is derived from `llm.response` events and
+   * describes what the last turn *did* run on. This field is the decision;
+   * that one is the observation.
+   *
+   * Optional only for legacy records predating the binding — absent means
+   * "unpinned", and those resolve from current config exactly as before.
+   */
+  model?: string;
   lastModel: string | null;
   /** User who owns this conversation. The single authorization principal. */
   ownerId: string;
