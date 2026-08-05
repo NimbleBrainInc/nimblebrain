@@ -3,11 +3,12 @@ import { existsSync, mkdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { UserIdentity } from "../../../src/identity/provider.ts";
+import { ModelNotAllowedError } from "../../../src/runtime/errors.ts";
 import { runWithRequestContext } from "../../../src/runtime/request-context.ts";
 import { Runtime } from "../../../src/runtime/runtime.ts";
 import { createEchoModel } from "../../helpers/echo-model.ts";
 import { createCoreToolDefs } from "../../../src/tools/core-source.ts";
-import { provisionTestWorkspace } from "../../helpers/test-workspace.ts";
+import { TEST_WORKSPACE_ID, provisionTestWorkspace } from "../../helpers/test-workspace.ts";
 
 const testDir = join(tmpdir(), `nimblebrain-user-model-pref-${Date.now()}`);
 
@@ -194,11 +195,22 @@ describe("an empty model id is not a choice", () => {
     }
   });
 
+  // Driven through chat, not through the predicate. Asserting
+  // `isModelPermitted("")` passes whether or not the request path reaches the
+  // floor before qualification — which is how the previous version of this
+  // test stayed green while `POST /v1/chat {"model":""}` still went through.
   it("is refused on the request path, where it is malformed rather than a clear", async () => {
     const runtime = await start("empty-request");
     try {
-      expect(runtime.isModelPermitted("")).toBe(false);
-      expect(runtime.isModelPermitted("   ")).toBe(false);
+      for (const model of ["", "   "]) {
+        const err = await runtime
+          .chat({ message: "hi", workspaceId: TEST_WORKSPACE_ID, model })
+          .then(
+            () => null,
+            (e) => e,
+          );
+        expect(err).toBeInstanceOf(ModelNotAllowedError);
+      }
     } finally {
       await runtime.shutdown();
     }
@@ -238,6 +250,51 @@ describe("a caller's own choice never becomes everyone's default", () => {
       // Read back as somebody with no preference of their own: they must see
       // the platform default, not the admin's personal pick.
       expect(slotsFor(runtime).default).not.toBe(CHOSEN);
+    } finally {
+      await runtime.shutdown();
+    }
+  });
+});
+
+describe("the settings view is the configured one", () => {
+  // get_config feeds the settings tab, which posts what it was given back on
+  // Save. A caller-tinted value there does not merely display wrong — an admin
+  // with a personal model persists it as everyone's default by clicking Save.
+  it("reports configured slots to an admin who has a personal choice", async () => {
+    const workDir = join(testDir, "settings-view");
+    mkdirSync(workDir, { recursive: true });
+    const runtime = await Runtime.start({
+      model: { provider: "custom", adapter: createEchoModel() },
+      models: { default: CONFIGURED_DEFAULT, fast: CONFIGURED_DEFAULT, reasoning: CONFIGURED_DEFAULT },
+      noDefaultBundles: true,
+      workDir,
+    });
+    await provisionTestWorkspace(runtime);
+    try {
+      const identity = {
+        id: "usr_admin",
+        email: "a@example.com",
+        displayName: "A",
+        orgRole: "owner",
+        preferences: { models: { default: CHOSEN } },
+      } as unknown as UserIdentity;
+
+      const tool = createCoreToolDefs(runtime).find((d) => d.name === "get_config");
+      if (!tool) throw new Error("get_config not found");
+      const { config, slots } = await runWithRequestContext(
+        { identity, workspaceId: null } as never,
+        async () => ({
+          config: (await tool.handler({})).structuredContent as {
+            models: { default: string };
+          },
+          slots: runtime.getModelSlots(),
+        }),
+      );
+
+      // The same caller, in the same context, sees both: their own choice on
+      // the turn, and the untinted configured value on the settings surface.
+      expect(slots.default).toBe(CHOSEN);
+      expect(config.models.default).toBe(CONFIGURED_DEFAULT);
     } finally {
       await runtime.shutdown();
     }

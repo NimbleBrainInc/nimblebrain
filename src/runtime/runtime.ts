@@ -2140,11 +2140,16 @@ export class Runtime {
     // and since #892 it is written to the conversation's immutable pin. An
     // unchecked value would not overspend for a turn; it would seal the
     // conversation to a disallowed model for life, past any later policy change.
-    const qualified = resolveModelString(requestModel);
-    if (!this.isModelPermitted(qualified)) {
-      throw new ModelNotAllowedError(qualified, this.getConfiguredProviders());
+    // Checked before qualification, not after: `resolveModelString("")` is
+    // `"anthropic:"`, so a floor applied to the qualified form never sees an
+    // empty id at all.
+    if (!this.isModelPermitted(requestModel)) {
+      throw new ModelNotAllowedError(
+        resolveModelString(requestModel),
+        this.getConfiguredProviders(),
+      );
     }
-    return qualified;
+    return resolveModelString(requestModel);
   }
 
   /**
@@ -3722,8 +3727,12 @@ export class Runtime {
    * asking. Anything writing back to process config has to start here: seeding
    * from the resolved view would promote one caller's workspace or profile
    * choice into the default everybody else gets.
+   *
+   * Public because `get_config` feeds the settings tab, which posts what it
+   * was given back to `set_model_config` — so a tinted value there does not
+   * just display wrong, it persists.
    */
-  private configuredModelSlots(): ModelSlots {
+  configuredModelSlots(): ModelSlots {
     const models = this.config.models;
     const fallback = this.config.defaultModel ?? DEFAULT_MODEL;
     return {

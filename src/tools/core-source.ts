@@ -599,8 +599,11 @@ export function createCoreToolDefs(runtime: Runtime): InProcessTool[] {
       },
       handler: async (): Promise<ToolResult> => {
         try {
-          const models = runtime.getModelSlots();
-          const defaultModel = runtime.getDefaultModel();
+          // Configured, not resolved. This feeds the settings tab, which posts
+          // these values back on Save — publishing the caller's own view would
+          // let an admin persist their personal model as everyone's default.
+          const models = runtime.configuredModelSlots();
+          const defaultModel = models.default;
           const configuredProviders = runtime.getConfiguredProviders();
           const availableModels = getAvailableModels(runtime.getProviderConfigs());
           const maxIterations = runtime.getMaxIterations();
