@@ -599,6 +599,7 @@ describe("chat-store viewer", () => {
     // Two starts: the original + the retry, both carrying the same params.
     expect(startCalls).toHaveLength(2);
     expect(startCalls[1].model).toBe("anthropic:claude-opus-4-6");
+    expect(startCalls[1]).toEqual(startCalls[0]);
     // The failed pair was dropped and re-added — exactly one user message.
     expect(store.getSnapshot("kA").messages.filter((m) => m.role === "user")).toHaveLength(1);
   });
