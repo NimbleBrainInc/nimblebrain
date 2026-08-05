@@ -82,8 +82,8 @@ import { DEV_IDENTITY } from "../identity/providers/dev.ts";
 import { UserStore } from "../identity/user.ts";
 import { InstructionsStore } from "../instructions/index.ts";
 import { getModelByString, getProviderFromModel } from "../model/catalog.ts";
-import { buildModelResolver, fallsBackToAnthropic, resolveModelString } from "../model/registry.ts";
-import { MODEL_SLOTS, type ModelSlot, parseModelSlotRef } from "../model/slots.ts";
+import { buildModelResolver, resolveModelString } from "../model/registry.ts";
+import { type ModelSlot, parseModelSlotRef } from "../model/slots.ts";
 import { registerBuiltinCredentialProviders } from "../oauth/minted-credential-provider.ts";
 import { requestIdentityAttrs, withSpan } from "../observability/index.ts";
 import { log } from "../observability/log.ts";
@@ -561,20 +561,6 @@ export class Runtime {
         // would be the one most authors actually hit.
         if (!rtHolder.rt) throw new Error("Runtime not initialized");
         return rtHolder.rt.getModelSlot(slot);
-      }
-      // A bare string that no provider claims reaches `resolveModelString`,
-      // whose documented fallback stamps `anthropic:` on it for back-compat
-      // with pinned/bespoke ids served under their own name. That fallback is
-      // deliberate and stays — but it also swallows typos, and a delegate
-      // model is exactly where one lands. Warn rather than throw: a typo and a
-      // legitimately pinned id are indistinguishable here, and refusing the
-      // latter would break working deployments.
-      if (fallsBackToAnthropic(s)) {
-        log.warn("[runtime] delegate model is neither a slot nor a known model", {
-          model: s,
-          slots: MODEL_SLOTS.join(", "),
-          resolvesTo: resolveModelString(s),
-        });
       }
       return s;
     };

@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { findProviderForModelId, listModels, listProviders } from "../../src/model/catalog.ts";
-import { fallsBackToAnthropic, resolveModelString } from "../../src/model/registry.ts";
+import { listModels, listProviders } from "../../src/model/catalog.ts";
+import { resolveModelString } from "../../src/model/registry.ts";
 import { MODEL_SLOTS, isModelSlot, parseModelSlotRef } from "../../src/model/slots.ts";
 
 describe("parseModelSlotRef", () => {
@@ -69,46 +69,5 @@ describe("slot names vs the model catalog", () => {
 
   test("resolveModelString leaves a qualified id alone", () => {
     expect(resolveModelString("nebius:openai/gpt-oss-120b")).toBe("nebius:openai/gpt-oss-120b");
-  });
-});
-
-describe("fallsBackToAnthropic — the warn predicate", () => {
-  // The bug this exists to prevent: asking the question with
-  // `getModelByString` instead answers differently, because that helper
-  // assumes `anthropic` for a bare id. Under that predicate 88 of the 102
-  // catalog ids report as unknown while resolving perfectly well, so every
-  // bare OpenAI/Google/xAI/Nebius id logs a warning that is simply wrong.
-  test("no catalog id is reported as falling back", () => {
-    const ids = [...new Set(listProviders().flatMap((p) => listModels(p).map((m) => m.id)))];
-    expect(ids.length).toBeGreaterThan(0); // guard against a vacuous pass
-    const flagged = ids.filter((id) => fallsBackToAnthropic(id));
-    expect(flagged).toEqual([]);
-  });
-
-  // Non-Anthropic ids are the ones the naive predicate got wrong, so pin a
-  // representative of each provider rather than trusting the sweep alone.
-  test.each(["gpt-3.5-turbo", "gpt-4o"])("bare OpenAI id %s does not flag", (id) => {
-    if (findProviderForModelId(id)) expect(fallsBackToAnthropic(id)).toBe(false);
-  });
-
-  test("a genuinely unknown bare id does flag", () => {
-    expect(fallsBackToAnthropic("reasoning")).toBe(true);
-    expect(fallsBackToAnthropic("typo-model-9000")).toBe(true);
-  });
-
-  // A qualified id is the caller's explicit choice — never second-guessed,
-  // even when the provider is one the catalog has never heard of.
-  test("a qualified id never flags", () => {
-    expect(fallsBackToAnthropic("anthropic:whatever")).toBe(false);
-    expect(fallsBackToAnthropic("some-proxy:pinned-build-42")).toBe(false);
-  });
-
-  // The predicate must agree with the branch it describes, not merely look
-  // similar to it.
-  test("agrees with resolveModelString's actual behaviour", () => {
-    for (const id of ["reasoning", "typo-model-9000", "gpt-4o", "claude-sonnet-4-6"]) {
-      const usedFallback = resolveModelString(id) === `anthropic:${id}` && !findProviderForModelId(id);
-      expect(fallsBackToAnthropic(id)).toBe(usedFallback);
-    }
   });
 });
