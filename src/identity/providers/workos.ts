@@ -603,6 +603,14 @@ export class WorkosIdentityProvider implements IdentityProvider {
       // Fall back to stale cache on transient API errors — the JWT was already
       // validated (signature + expiration), so the user is who they claim to be.
       // Denying access because of a transient WorkOS API hiccup causes spurious 401s.
+      //
+      // This fallback is NOT bounded by `USER_CACHE_TTL_MS`. That TTL decides
+      // only whether a refresh is *attempted*; reaching here means the attempt
+      // was made and failed, and nothing below re-checks the age or restamps
+      // `fetchedAt`. So a cached identity — including the org role it was built
+      // from — is served for as long as the upstream outage lasts, not for five
+      // minutes. The `age` on the line below is the one signal that says how
+      // far out of date the answer is; read it before assuming a bound.
       if (cached) {
         log.warn(
           `[workos] Using stale cached identity for ${workosUserId} (age: ${Math.round((nowMs - cached.fetchedAt) / 1000)}s)`,
