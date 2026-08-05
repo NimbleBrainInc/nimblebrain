@@ -1,12 +1,13 @@
 import { describe, expect, it } from "bun:test";
 import { validateHostMeta } from "../../src/bundles/manifest.ts";
 
-// Schema-level invariants for `_meta["ai.nimblebrain/host"]`. We added an
-// `if/then` so manifests declaring `host_capabilities` MUST set
-// `host_version: "1.1"` — otherwise a v1.0-labeled manifest could use a
-// v1.1-only field and lie about its schema version. The runtime gate
-// doesn't read `host_version` directly; this schema check is the only
-// place keeping that promise honest.
+// Schema-level invariants for `_meta["ai.nimblebrain/host"]`. The published
+// v1 contract is tolerant by design: `host_version` is an open string and the
+// root accepts unknown keys, so a newer host revision or a future field never
+// hard-fails install. The version↔capability pairing ("host_capabilities needs
+// >= 1.1") is advisory — documented, not schema-enforced. The one strict rule
+// is additionalProperties:false on HostCapabilityRequirement, where a typo
+// would silently downgrade a security gate. These tests pin that split.
 
 describe("host-manifest schema", () => {
   it("accepts a v1.0 manifest with no host_capabilities", () => {
