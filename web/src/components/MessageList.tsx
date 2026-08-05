@@ -72,6 +72,13 @@ function stopReasonMessage(stopReason: string): string {
       // thinking to leave headroom (see clampThinkingBudget), but breaking
       // the task up still helps when the response itself is large.
       return "I ran out of room mid-response (hit the output-token limit). Send another message to continue, or try splitting the task into smaller pieces.";
+    case "interrupted":
+      // A turn whose run ended without a terminal event — the process stopped
+      // mid-run (a deploy, a restart). The work is gone; the partial output
+      // above is all there is. Without this case it falls to the generic
+      // branch and reads "Run ended: interrupted", which is worse than the
+      // sentence the client used to stamp on this same state.
+      return "This response was interrupted before it finished. Send another message to continue.";
     case "content_filter":
       return "The response was blocked by content filtering. Try rephrasing your request.";
     case "error":
