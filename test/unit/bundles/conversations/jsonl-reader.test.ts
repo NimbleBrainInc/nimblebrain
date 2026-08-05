@@ -414,7 +414,7 @@ describe("readConversation (event format)", () => {
 				usage: { inputTokens: 5, outputTokens: 2 },
 				llmMs: 30,
 			}),
-			// No run.done — the run was still in flight when the file was read.
+			// No run.done. Whether that means "still in flight" is not in the file.
 		];
 		const path = writeTmpFile("conv_pending01.jsonl", lines);
 
@@ -558,7 +558,8 @@ describe("readConversation (event format)", () => {
 			JSON.stringify({ ts: "2025-06-01T00:00:00.000Z", type: "user.message", content: [{ type: "text", text: "q" }] }),
 			JSON.stringify({ ts: "2025-06-01T00:00:01.000Z", type: "run.start", runId: "run_live" }),
 			JSON.stringify({ ts: "2025-06-01T00:00:02.000Z", type: "llm.response", runId: "run_live", model: "m1", content: [{ type: "text", text: "streaming..." }], usage: { inputTokens: 5, outputTokens: 2 }, llmMs: 10 }),
-			// No run.done and no later turn — genuinely in flight.
+			// No run.done and no later turn. Identical on disk to a run whose
+			// writer died — `runActive` below is what makes it "in flight".
 		];
 		const path = writeTmpFile("conv_orphan02.jsonl", lines);
 
