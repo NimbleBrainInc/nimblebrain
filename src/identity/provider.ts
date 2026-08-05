@@ -37,6 +37,35 @@ export interface TokenResult {
 }
 
 /**
+ * Thrown by {@link IdentityProvider.verifyRequest} when verification could not
+ * reach a verdict — as opposed to reaching a negative one.
+ *
+ * `verifyRequest` returning `null` means "this caller is not authenticated":
+ * a definitive answer the client acts on by re-authenticating. But some
+ * failures are not about the caller at all — a JWKS fetch that failed against
+ * a cold cache, an identity-provider API error with nothing cached to fall
+ * back to. The token is probably fine; we could not check it this instant.
+ *
+ * Collapsing the two makes a backend hiccup indistinguishable from a revoked
+ * session, and the web client logs the user out on the second one. This is the
+ * same distinction {@link RefreshTokenError}'s `unavailable` kind already draws
+ * on the refresh hop; verification is the hop that was missing it.
+ *
+ * Providers own the classification — only they understand their SDK's failure
+ * shapes. `authenticateRequest` maps this to 503 + `Retry-After` and does not
+ * audit it; every terminal check keeps returning `null` and its 401.
+ */
+export class TransientAuthError extends Error {
+  /** Provider-specific reason for logging/triage (e.g. `jwks_unavailable`). */
+  readonly reason: string;
+  constructor(reason: string, message: string, options?: { cause?: unknown }) {
+    super(message, options?.cause !== undefined ? { cause: options.cause } : undefined);
+    this.name = "TransientAuthError";
+    this.reason = reason;
+  }
+}
+
+/**
  * Why a refresh failed — the distinction the refresh handler acts on.
  *
  * - `rejected`    — the IdP gave a definitive verdict that this end-user's

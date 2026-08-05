@@ -1,5 +1,6 @@
 import type { EventSink } from "../engine/types.ts";
 import type { IdentityProvider, UserIdentity } from "../identity/provider.ts";
+import { TransientAuthError } from "../identity/provider.ts";
 import { log } from "../observability/log.ts";
 import type { WorkspaceStore } from "../workspace/workspace-store.ts";
 import { constantTimeEqual, validateInternalToken } from "./auth-utils.ts";
@@ -74,7 +75,25 @@ export async function authenticateRequest(
 
   // 3. IdentityProvider mode
   if (mode.type === "adapter") {
-    const identity = await mode.provider.verifyRequest(req);
+    let identity: UserIdentity | null;
+    try {
+      identity = await mode.provider.verifyRequest(req);
+    } catch (err) {
+      if (err instanceof TransientAuthError) {
+        // Verification never reached a verdict — our dependency failed, not the
+        // caller's token. A 401 here is indistinguishable from a revoked
+        // session to the web client, whose post-refresh retry leg treats any
+        // 401 as terminal and logs the user out. 503 keeps the session: REST
+        // surfaces a transient error, streams reconnect with backoff.
+        //
+        // NOT audited. `audit.auth_failure` is a security signal about
+        // callers; our own JWKS outage is an availability event and would
+        // dilute it.
+        log.warn("[auth] verification unavailable", { reason: err.reason });
+        return new Response(null, { status: 503, headers: { "Retry-After": "1" } });
+      }
+      throw err;
+    }
     if (identity) {
       return { identity };
     }

@@ -12,7 +12,7 @@ import type {
   TokenResult,
   UserIdentity,
 } from "../provider.ts";
-import { RefreshTokenError } from "../provider.ts";
+import { RefreshTokenError, TransientAuthError } from "../provider.ts";
 import type { OrgRole } from "../types.ts";
 import type { User, UserPreferences, UserStore } from "../user.ts";
 
@@ -65,9 +65,19 @@ type WorkosRejectReason =
   | "missing_sub"
   | "org_mismatch"
   | "bad_signature"
+  | "authkit_bad_signature";
+
+/**
+ * Failures that are ours, not the caller's — a key set we could not fetch, or
+ * an identity API we could not reach with nothing cached. Deliberately separate
+ * from {@link WorkosRejectReason}: these do not mean "not authenticated", and
+ * routing one through `reject()` would 401 a valid session.
+ */
+type WorkosTransientReason =
   | "jwks_unavailable"
-  | "authkit_bad_signature"
-  | "authkit_jwks_unavailable";
+  | "authkit_jwks_unavailable"
+  | "user_unresolvable"
+  | "org_role_unresolvable";
 
 function base64UrlDecode(input: string): Uint8Array {
   let b64 = input.replace(/-/g, "+").replace(/_/g, "/");
@@ -300,7 +310,7 @@ export class WorkosIdentityProvider implements IdentityProvider {
     const { header, signatureInput, signature } = parsed;
     // getAuthkitJwks still logs its own stale-cache diagnostics independently.
     const keys = await this.getAuthkitJwks();
-    if (!keys) return this.reject("authkit_jwks_unavailable", { sub });
+    if (!keys) this.transient("authkit_jwks_unavailable", { sub });
 
     const verified = await this.verifySignature(header, signatureInput, signature, keys);
     if (!verified) return this.reject("authkit_bad_signature", { sub });
@@ -335,7 +345,7 @@ export class WorkosIdentityProvider implements IdentityProvider {
 
     // Verify signature against WorkOS JWKS
     const keys = await this.getJwks();
-    if (!keys) return this.reject("jwks_unavailable", { sub });
+    if (!keys) this.transient("jwks_unavailable", { sub });
 
     const verified = await this.verifySignature(header, signatureInput, signature, keys);
     // A signature failure is the most security-relevant rejection (forged or
@@ -505,6 +515,16 @@ export class WorkosIdentityProvider implements IdentityProvider {
     return null;
   }
 
+  /**
+   * Verification could not reach a verdict — our own dependency failed, not the
+   * caller's token. Throws rather than returning null so the middleware answers
+   * 503 instead of logging a valid user out. See {@link TransientAuthError}.
+   */
+  private transient(reason: WorkosTransientReason, fields?: Record<string, unknown>): never {
+    log.warn(`[workos] verify unavailable: ${reason}`, fields);
+    throw new TransientAuthError(reason, `WorkOS verification unavailable: ${reason}`);
+  }
+
   private buildAuthorizationUrl(): string {
     const params: Parameters<typeof this.workos.userManagement.getAuthorizationUrl>[0] = {
       provider: "authkit",
@@ -589,7 +609,10 @@ export class WorkosIdentityProvider implements IdentityProvider {
         );
         return cached.identity;
       }
-      return null;
+      // No cache to fall back on, so we never reached a verdict about this
+      // user. Returning null here is what produced the spurious 401 the stale
+      // fallback above exists to avoid — the caller gets 503 and retries.
+      this.transient("user_unresolvable", { userId: workosUserId });
     }
   }
 
@@ -672,7 +695,13 @@ export class WorkosIdentityProvider implements IdentityProvider {
    * WorkOS-derived role. A WorkOS owner-slug role therefore grants app `admin`.
    *
    * Returns null if the user has no org membership — a security signal that the
-   * user should be denied access.
+   * user should be denied access, and the only meaning null carries here.
+   *
+   * Throws {@link TransientAuthError} if the membership lookup itself failed.
+   * That is not a verdict about membership, and callers must not read it as
+   * one: `resolveUser` treats null as definitive and evicts the cached
+   * identity, so returning null on an API error denies a valid session and
+   * takes the fallback that would have covered the next request with it.
    */
   private async resolveOrgRole(workosUserId: string): Promise<OrgRole | null> {
     if (!this.organizationId) return "member";
@@ -715,8 +744,14 @@ export class WorkosIdentityProvider implements IdentityProvider {
       log.error(`[workos] resolveOrgRole failed for user=${workosUserId}`, {
         error: err instanceof Error ? err.message : String(err),
       });
-      // Fail closed — deny access on API errors
-      return null;
+      // An API error is not a verdict about membership. `null` here is read by
+      // resolveUser as *definitively* lost access: it denies AND deletes the
+      // cached identity, so a memberships-endpoint hiccup becomes the
+      // involuntary logout — with the stale-identity fallback destroyed on the
+      // way out, taking the next request with it. Throw instead, so it
+      // classifies as unavailability like every other dependency failure and
+      // resolveUser's catch decides between stale cache and 503.
+      this.transient("org_role_unresolvable", { userId: workosUserId });
     }
   }
 

@@ -9,6 +9,7 @@ import type {
   ProviderCapabilities,
   UserIdentity,
 } from "../provider.ts";
+import { TransientAuthError } from "../provider.ts";
 import type { User, UserStore } from "../user.ts";
 
 // ── Types ─────────────────────────────────────────────────────────
@@ -177,7 +178,14 @@ export class OidcIdentityProvider implements IdentityProvider {
     if (!this.validateDomain(payload.email)) return null;
 
     const keys = await this.getJwks();
-    if (!keys) return null;
+    // Key set unavailable (discovery or fetch failed, cold cache) — our
+    // dependency, not the caller's token. 503, not a logout.
+    if (!keys) {
+      throw new TransientAuthError(
+        "jwks_unavailable",
+        "OIDC verification unavailable: jwks_unavailable",
+      );
+    }
 
     const verified = await this.verifySignature(header, signatureInput, signature, keys);
     if (!verified) return null;
