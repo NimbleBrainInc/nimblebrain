@@ -207,6 +207,29 @@ The `models` object declares three role-based slots. Each value is a `provider:m
 
 A workspace can override individual slots via `workspace.json → models`. When a `nb__delegate` call or agent profile specifies a slot name (e.g. `"model": "fast"`), it's resolved against these slots.
 
+### Changing a slot affects new conversations only
+
+A conversation is bound to a model when it is created, and that binding does not
+move. Changing `models.default` — in this file, through the override file, or
+via the admin `set_model_config` tool — applies to conversations started **after**
+the change; conversations already under way keep running on the model they began
+on. Start a new conversation to pick up the new slot.
+
+The binding is the main chat model only. Auxiliary work always follows the
+current slots: title generation and history compaction take `fast`, and a
+`nb__delegate` call takes whatever slot it names.
+
+Precedence for a chat turn, highest first:
+
+| | Source |
+|---|---|
+| 1 | The conversation's binding, set when it was created |
+| 2 | A per-request model, on the turn that creates the conversation |
+| 3 | `models.default` from this file (or the override file) |
+
+Conversations created before this behavior existed carry no binding and resolve
+from the current slot on every turn, as they did before.
+
 <Aside type="caution">
   Don't put a **small-context** model in the `fast` slot. A `fast` request (via `nb__delegate` or a `"model": "fast"` override) carries the **same tool surface as a normal request** — it isn't slimmed down for being "fast" — so its message budget is capped by the model's headroom: `context − systemPrompt − toolSchemas − maxOutputTokens − safetyMargin` (a lower `maxInputTokens` caps it further). On a connector-heavy workspace, a model with a ~40k window can be left with almost no room for conversation history — in the worst case the window keeps only the anchor (the first turn) and the last atomic group, dropping the middle of the thread, so the agent loses mid-conversation context. Worse, a single large tool result (a file read or web fetch) can push even that minimal window past the model's context, so the provider rejects the request outright. Prefer a `fast` model with generous context (≥128k); for a `nb__delegate` call you can instead narrow the child's tool surface with `tools: [...]` globs.
 </Aside>

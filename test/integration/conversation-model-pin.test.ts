@@ -27,6 +27,8 @@ import { mkdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
+import type { EventSourcedConversationStore } from "../../src/conversation/event-sourced-store.ts";
+import type { ConversationEvent } from "../../src/conversation/types.ts";
 import type { UserIdentity } from "../../src/identity/provider.ts";
 import { Runtime } from "../../src/runtime/runtime.ts";
 import { createEchoModel } from "../helpers/echo-model.ts";
@@ -82,6 +84,40 @@ async function pinOf(conversationId: string): Promise<string | undefined> {
   const store = await runtime.resolveConversationStore(conversationId);
   const conversation = await store!.load(conversationId);
   return conversation?.model;
+}
+
+async function waitFor(pred: () => boolean, timeoutMs = 5000): Promise<void> {
+  const start = Date.now();
+  while (!pred()) {
+    if (Date.now() - start > timeoutMs) throw new Error("waitFor timed out");
+    await new Promise((r) => setTimeout(r, 5));
+  }
+}
+
+/**
+ * Wait for the `aux.usage` event a fast-slot call records, and return it.
+ * These calls run outside the agentic loop and are fire-and-forget, so the
+ * event lands after `chat()` resolves.
+ */
+async function waitForAuxUsage(
+  store: EventSourcedConversationStore,
+  conversationId: string,
+  source: string,
+  timeoutMs = 5000,
+): Promise<{ model?: string }> {
+  const start = Date.now();
+  for (;;) {
+    const events = await store.readEvents(conversationId);
+    const found = events.find(
+      (e): e is Extract<ConversationEvent, { type: "aux.usage" }> =>
+        e.type === "aux.usage" && (e as { source?: string }).source === source,
+    );
+    if (found) return found;
+    if (Date.now() - start > timeoutMs) {
+      throw new Error(`no aux.usage event with source="${source}" within ${timeoutMs}ms`);
+    }
+    await new Promise((r) => setTimeout(r, 10));
+  }
 }
 
 describe("conversation model binding", () => {
@@ -225,17 +261,22 @@ describe("the binding survives operations on the conversation", () => {
       identity: USER,
     });
 
-    // `conversations__update` rewrites line 1 in place; the pin lives there.
+    // On the event format a rename appends a `metadata.title` event and leaves
+    // line 1 alone, so this passes today by construction. It is a forward
+    // guard: the pin lives on line 1, and the legacy path (`appendLegacyFormat`)
+    // does rewrite that line, so a rename that ever moves to rewriting must not
+    // drop the field.
     const store = await runtime.resolveConversationStore(conv.conversationId);
     await store!.update(conv.conversationId, { title: "renamed" });
 
     expect(await pinOf(conv.conversationId)).toBe(MODEL_A);
   });
 
-  test("auxiliary calls do not run on the conversation's model", async () => {
-    // Title generation and compaction take the `fast` slot. A refactor that
-    // routes them through the pin would change cost silently and break title
-    // generation on a pinned model the fast slot never selected.
+  test("the title call runs on the fast slot, not the conversation's model", async () => {
+    // Title generation runs outside the agentic loop on the `fast` slot and
+    // records itself as an `aux.usage` event. A refactor that routed auxiliary
+    // calls through the pin would change cost silently and put title generation
+    // on a model the fast slot never selected.
     runtime.updateConfig({ models: { default: MODEL_A, fast: FAST_MODEL } });
     const conv = await runtime.chat({
       message: "one",
@@ -243,37 +284,70 @@ describe("the binding survives operations on the conversation", () => {
       identity: USER,
     });
 
+    // The title call is fire-and-forget; wait for its event to land.
+    const store = await runtime.resolveConversationStore(conv.conversationId);
+    const titleUsage = await waitForAuxUsage(store!, conv.conversationId, "title");
+
+    expect(titleUsage.model).toBe(FAST_MODEL);
     expect(await pinOf(conv.conversationId)).toBe(MODEL_A);
-    expect(runtime.getModelSlots().fast).toBe(FAST_MODEL);
   });
 });
 
 describe("conversations that predate the binding", () => {
   test("an unpinned conversation resolves from current config", async () => {
-    runtime.updateConfig({ models: { default: MODEL_A } });
-    const conv = await runtime.chat({
-      message: "one",
+    // A genuine pre-feature record: created through the store with no model,
+    // so line 1 on disk has no `model` field. Deleting the field off a loaded
+    // object would prove nothing — `load()` re-reads the file every call.
+    const seed = await runtime.chat({
+      message: "seed",
       workspaceId: TEST_WORKSPACE_ID,
       identity: USER,
     });
-
-    // Strip the pin the way a pre-feature conversation on disk has none.
-    const store = await runtime.resolveConversationStore(conv.conversationId);
-    const loaded = await store!.load(conv.conversationId);
-    expect(loaded?.model).toBeDefined();
-    delete (loaded as { model?: string }).model;
+    const store = await runtime.resolveConversationStore(seed.conversationId);
+    const legacy = await store!.create({
+      ownerId: USER.id,
+      workspaceId: TEST_WORKSPACE_ID,
+    });
+    expect(legacy.model).toBeUndefined();
 
     runtime.updateConfig({ models: { default: MODEL_B } });
     await runtime.chat({
-      message: "two",
-      conversationId: conv.conversationId,
+      message: "resumed",
+      conversationId: legacy.id,
       workspaceId: TEST_WORKSPACE_ID,
       identity: USER,
     });
 
     // No pin to honor, so the turn follows current config — today's behavior,
     // unchanged. The binding must not retroactively invent one.
-    const models = await modelsUsed(conv.conversationId);
-    expect(models).toContain(MODEL_A);
+    expect(await modelsUsed(legacy.id)).toEqual([MODEL_B]);
+    expect(await pinOf(legacy.id)).toBeUndefined();
+  });
+});
+
+describe("the detached-turn path", () => {
+  test("a conversation created by startTurn is bound like any other", async () => {
+    // `/v1/chat/start` → `startTurn` is the web client's chat path, and it
+    // creates the conversation before delegating to `chat()` — so its own
+    // `createOpts` is the only thing that binds a web-created conversation.
+    runtime.updateConfig({ models: { default: MODEL_A } });
+    const { conversationId } = await runtime.startTurn({
+      message: "one",
+      workspaceId: TEST_WORKSPACE_ID,
+      identity: USER,
+    });
+    await waitFor(() => !runtime.isTurnActive(conversationId));
+
+    expect(await pinOf(conversationId)).toBe(MODEL_A);
+
+    runtime.updateConfig({ models: { default: MODEL_B } });
+    await runtime.chat({
+      message: "two",
+      conversationId,
+      workspaceId: TEST_WORKSPACE_ID,
+      identity: USER,
+    });
+
+    expect(await modelsUsed(conversationId)).toEqual([MODEL_A]);
   });
 });
