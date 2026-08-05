@@ -293,14 +293,25 @@ function StopReasonNotice({ stopReason }: { stopReason: string }) {
   );
 }
 
-/** Inline error notice with an optional retry button and a collapsible detail. */
+/**
+ * Inline error notice with an optional retry button and a collapsible detail.
+ *
+ * Without `onRetry` the generic headline would tell the user to try again next
+ * to no button to do it with, and the message explaining the state would sit
+ * one click deep in `Details`, monospaced like a raw error string. So when
+ * there is no retry to offer, `error` IS the headline — it is a written
+ * explanation in that case, not a stack trace — and `Details` drops out rather
+ * than repeating it.
+ */
 function ErrorNotice({ error, onRetry }: { error: string; onRetry?: () => void }) {
   return (
     <div className="px-3 py-2.5 rounded-sm bg-destructive/10 border border-destructive/20 text-sm">
       <div className="flex items-center gap-2">
         <AlertCircle className="w-4 h-4 shrink-0 text-destructive" />
         <span className="flex-1 text-foreground">
-          Something went wrong. You can try again or continue the conversation.
+          {onRetry
+            ? "Something went wrong. You can try again or continue the conversation."
+            : error}
         </span>
         {onRetry && (
           <button
@@ -313,12 +324,14 @@ function ErrorNotice({ error, onRetry }: { error: string; onRetry?: () => void }
           </button>
         )}
       </div>
-      <details className="mt-1.5 ml-6">
-        <summary className="text-xs text-muted-foreground cursor-pointer select-none hover:text-foreground transition-colors">
-          Details
-        </summary>
-        <p className="text-xs text-muted-foreground mt-1 font-mono break-all">{error}</p>
-      </details>
+      {onRetry && (
+        <details className="mt-1.5 ml-6">
+          <summary className="text-xs text-muted-foreground cursor-pointer select-none hover:text-foreground transition-colors">
+            Details
+          </summary>
+          <p className="text-xs text-muted-foreground mt-1 font-mono break-all">{error}</p>
+        </details>
+      )}
     </div>
   );
 }
