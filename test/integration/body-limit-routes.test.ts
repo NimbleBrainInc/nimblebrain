@@ -84,7 +84,7 @@ describe("per-route body limits", () => {
     expect(body.details?.contentType).toContain("multipart/form-data");
   });
 
-  it("allows in-budget multipart on /v1/chat/stream past the 1MB JSON cap", { timeout: 15000 }, async () => {
+  it("allows in-budget multipart on /v1/chat/stream past the 1MB JSON cap", async () => {
     // 2 MB multipart — under the 4 MB multipart budget but well over the 1 MB
     // JSON cap. Middleware must let this through so the ingest layer (which
     // enforces per-file/MIME rules) sees it.

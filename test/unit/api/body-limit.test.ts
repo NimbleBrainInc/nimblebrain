@@ -147,6 +147,25 @@ describe("bodyLimit middleware", () => {
     expect(res.status).toBe(200);
   });
 
+  // Answering while the body is still arriving desynchronizes a keep-alive
+  // connection: HTTP/1.1 cannot say "I stopped reading", so the unread bytes
+  // are parsed as the next request. The observable contract of the refusal is
+  // therefore that the body was consumed, not merely that the status is 413.
+  test("consumes an over-limit body before answering", async () => {
+    const app = createTestApp(1024);
+    const request = new Request("http://localhost/test", {
+      method: "POST",
+      headers: { "Content-Length": "2048", "Content-Type": "application/json" },
+      body: "x".repeat(2048),
+    });
+
+    const res = await app.fetch(request);
+
+    expect(res.status).toBe(413);
+    // False here means the body was abandoned on the wire.
+    expect(request.bodyUsed).toBe(true);
+  });
+
   // Regression guard: bodyLimit must stay scoped to the route it's attached
   // to. Mounting it via `.use("*")` on a sub-app that is itself mounted at
   // `/` makes it leak across sibling sub-apps — that's how the multipart
