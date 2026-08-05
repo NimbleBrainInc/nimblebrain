@@ -162,10 +162,22 @@ const VOLATILE_KINDS: ReadonlySet<TracedLayerKind> = new Set([
 /**
  * Strip newlines and control characters from single-line fields.
  * Prevents structural injection via displayName, timezone, locale, app name.
+ *
+ * `String()` rather than trusting the parameter type: several callers pass
+ * fields that are typed `string` but originate in unvalidated JSON — persisted
+ * `BundleRef.ui`, registry `_meta`, `nimblebrain.json` — so a non-string
+ * reaches here at runtime. Coercing reproduces what the template literal at
+ * each call site did before this function guarded it, which keeps a malformed
+ * record inert instead of throwing out of `composeSystemPrompt` on every turn.
+ * Identity on strings, so the common path is unchanged.
  */
 function sanitizeLineField(value: string): string {
-  // biome-ignore lint/suspicious/noControlCharactersInRegex: intentional — stripping control chars is the security mitigation
-  return value.replace(/[\n\r\x00-\x1f\x7f]/g, " ").trim();
+  return (
+    String(value)
+      // biome-ignore lint/suspicious/noControlCharactersInRegex: intentional — stripping control chars is the security mitigation
+      .replace(/[\n\r\x00-\x1f\x7f]/g, " ")
+      .trim()
+  );
 }
 
 /** Skills with priority ≤ this threshold are core context (identity layer). */
@@ -798,9 +810,13 @@ export function deriveBundleFromSkillPath(sourcePath?: string): string | undefin
 function formatAppsSection(apps: PromptAppInfo[], hasProxiedTools?: boolean): string {
   const lines = ["## Installed Apps"];
   for (const app of apps) {
-    const uiLabel = app.ui ? `has UI: ${app.ui.name}` : "no UI";
+    // Both names land on one `- ` bullet, so an unescaped newline in either
+    // forges a sibling entry. `ui.name` is bundle-authored and is the one that
+    // can carry one; `app.name` is a slug unless an operator hand-sets
+    // `ref.serverName`. Sanitized together because the line is shared.
+    const uiLabel = app.ui ? `has UI: ${sanitizeLineField(app.ui.name)}` : "no UI";
     const trustLabel = app.trustScore != null ? ` — MTF Score: ${app.trustScore}` : "";
-    lines.push(`- ${app.name} (${uiLabel})${trustLabel}`);
+    lines.push(`- ${sanitizeLineField(app.name)} (${uiLabel})${trustLabel}`);
     if (app.description) {
       lines.push(wrapContained("app-description", app.description));
     }
