@@ -2141,13 +2141,7 @@ export class Runtime {
     // unchecked value would not overspend for a turn; it would seal the
     // conversation to a disallowed model for life, past any later policy change.
     const qualified = resolveModelString(requestModel);
-    // Only a `providers` config expresses an allowlist. On the legacy
-    // single-provider config, or a custom adapter that serves every string,
-    // there is no policy here to enforce — and `getProviderConfigs()` reports
-    // a display default (`{anthropic:{}}`) in that case, not a reachability
-    // claim, so consulting it would refuse every non-Anthropic model on a
-    // deployment that can serve them. Absence of policy is not denial.
-    if (this.config.providers && !isModelAllowed(qualified, this.getProviderConfigs())) {
+    if (!this.isModelPermitted(qualified)) {
       throw new ModelNotAllowedError(qualified, this.getConfiguredProviders());
     }
     return qualified;
@@ -3731,14 +3725,43 @@ export class Runtime {
     };
     // Merge workspace model overrides from request context (partial — only overrides specified slots)
     const wsModels = getRequestContext()?.workspaceModelOverride ?? null;
-    if (wsModels) {
-      return {
-        default: wsModels.default ? resolveModelString(wsModels.default) : base.default,
-        fast: wsModels.fast ? resolveModelString(wsModels.fast) : base.fast,
-        reasoning: wsModels.reasoning ? resolveModelString(wsModels.reasoning) : base.reasoning,
-      };
-    }
-    return base;
+    const withWorkspace: ModelSlots = wsModels
+      ? {
+          default: wsModels.default ? resolveModelString(wsModels.default) : base.default,
+          fast: wsModels.fast ? resolveModelString(wsModels.fast) : base.fast,
+          reasoning: wsModels.reasoning ? resolveModelString(wsModels.reasoning) : base.reasoning,
+        }
+      : base;
+
+    // The person's own choice wins over every configured default, and only
+    // over the `default` slot — the auxiliary slots stay operator-owned.
+    //
+    // Re-checked on read, not trusted from disk: an admin narrowing the
+    // allowlist must take effect for someone who saved a model that is no
+    // longer permitted, and the alternative is rewriting every stored
+    // preference at policy-change time. An ineligible choice falls through to
+    // the configured default rather than failing the turn.
+    const chosen = getRequestContext()?.identity?.preferences?.models?.default;
+    if (!chosen) return withWorkspace;
+    if (!this.isModelPermitted(chosen)) return withWorkspace;
+    return { ...withWorkspace, default: resolveModelString(chosen) };
+  }
+
+  /**
+   * Whether a model a *caller* named is permitted here.
+   *
+   * False only where a policy exists and excludes it. Absence of policy is not
+   * denial: on the legacy single-provider config, or behind a custom adapter
+   * that serves every string, `getProviderConfigs()` reports a display default
+   * (`{anthropic:{}}`) rather than a reachability claim, so consulting it would
+   * refuse every non-Anthropic model on a deployment that can serve them.
+   *
+   * Operator config is not a caller's choice and never passes through here —
+   * a configured slot value is governed where it is written.
+   */
+  isModelPermitted(modelString: string): boolean {
+    if (!this.config.providers) return true;
+    return isModelAllowed(resolveModelString(modelString), this.getProviderConfigs());
   }
 
   /** Get the model ID for a named slot. */

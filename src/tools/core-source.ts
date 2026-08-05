@@ -14,6 +14,7 @@ import {
 } from "../host-resources/artifacts/index.ts";
 import { ORG_ADMIN_ROLES } from "../identity/types.ts";
 import { getAvailableModels, isModelAllowed } from "../model/catalog.ts";
+import { resolveModelString } from "../model/registry.ts";
 import { isModelSlot, MODEL_SLOTS } from "../model/slots.ts";
 import { log } from "../observability/log.ts";
 import {
@@ -260,15 +261,41 @@ function buildModelConfigRuntimePatch(input: Record<string, unknown>): Record<st
 
 const PREFERENCE_FIELDS = ["displayName", "timezone", "locale", "theme"];
 
-/** Coerce the allowed preference inputs into a string patch, skipping unset fields. */
-function buildPreferencesPatch(input: Record<string, unknown>): Record<string, string> {
-  const patch: Record<string, string> = {};
+/**
+ * Coerce the allowed preference inputs into a patch, skipping unset fields.
+ *
+ * The scalar fields stringify; `model` does not travel with them. It is the
+ * one preference that has to be a structured value on the user record
+ * (`preferences.models.default`), and running it through the same `String()`
+ * path would store `[object Object]`.
+ */
+function buildPreferencesPatch(input: Record<string, unknown>): Record<string, unknown> {
+  const patch: Record<string, unknown> = {};
   for (const [key, value] of Object.entries(input)) {
     if (PREFERENCE_FIELDS.includes(key) && value !== undefined) {
       patch[key] = String(value);
     }
   }
+  if (typeof input.model === "string") {
+    patch.models = { default: resolveModelString(input.model) };
+  } else if (input.model === null) {
+    // Explicit clear — fall back to the configured default.
+    patch.models = {};
+  }
   return patch;
+}
+
+/**
+ * Reject a model choice the deployment does not permit, so a person is told at
+ * the point of choosing rather than finding their preference silently ignored
+ * on the next turn. `getModelSlots` re-checks on read for the case this cannot
+ * cover: an allowlist narrowed after the preference was saved.
+ */
+function preferredModelError(input: Record<string, unknown>, runtime: Runtime): string | null {
+  if (typeof input.model !== "string") return null;
+  if (runtime.isModelPermitted(input.model)) return null;
+  const qualified = resolveModelString(input.model);
+  return `Model "${qualified}" is not permitted. Either its provider is not configured or it is not in the allowlist. Configured providers: ${runtime.getConfiguredProviders().join(", ") || "(none)"}`;
 }
 
 // --- list_artifacts / read_artifact helpers -----------------------------------
@@ -594,6 +621,9 @@ export function createCoreToolDefs(runtime: Runtime): InProcessTool[] {
                 timezone: preferences.timezone ?? "",
                 locale: preferences.locale ?? "en-US",
                 theme: preferences.theme ?? "system",
+                // Empty when unset, so a client can tell "following the
+                // configured default" from "chose this model deliberately".
+                model: preferences.models?.default ?? "",
               },
             },
             isError: false,
@@ -800,7 +830,7 @@ export function createCoreToolDefs(runtime: Runtime): InProcessTool[] {
     {
       name: "set_preferences",
       description:
-        "Set user preferences: display name, timezone, locale, or theme. Use this when the user says their name, asks to change timezone/language/theme, or says 'call me X'.",
+        "Set user preferences: display name, timezone, locale, theme, or the model this user's new conversations run on. Use this when the user says their name, asks to change timezone/language/theme, or asks to use a particular model.",
       inputSchema: {
         type: "object",
         properties: {
@@ -808,6 +838,11 @@ export function createCoreToolDefs(runtime: Runtime): InProcessTool[] {
           timezone: { type: "string", description: "IANA timezone (e.g., 'Pacific/Honolulu')." },
           locale: { type: "string", description: "BCP 47 locale (e.g., 'en-US')." },
           theme: { type: "string", enum: ["system", "light", "dark"], description: "Color theme." },
+          model: {
+            type: ["string", "null"],
+            description:
+              "Model for this user's new conversations, as `provider:model-id`. Applies to conversations started after the change — an existing one keeps the model it was created with. Null clears the choice and follows the configured default. Auxiliary models (title generation, briefing, compaction) are operator-configured and not settable here.",
+          },
         },
       },
       handler: async (input): Promise<ToolResult> => {
@@ -816,6 +851,9 @@ export function createCoreToolDefs(runtime: Runtime): InProcessTool[] {
           if (!identity) {
             return { content: textContent("No authenticated user."), isError: true };
           }
+
+          const modelError = preferredModelError(input, runtime);
+          if (modelError) return { content: textContent(modelError), isError: true };
 
           const patch = buildPreferencesPatch(input);
           if (Object.keys(patch).length === 0) {
