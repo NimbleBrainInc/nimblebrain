@@ -42,7 +42,6 @@ import type { PermissionOwner } from "../permissions/permission-store.ts";
 import {
   getRequestContext,
   type RequestContext,
-  type RequestScope,
   runWithRequestContext,
 } from "./request-context.ts";
 
@@ -86,36 +85,31 @@ export interface IdentityToolRouterOptions {
   onWorkspaceDispatch?: WorkspaceDispatchHook;
 }
 
-/** Build the routed request scope, carrying workspace agent/model overrides from the ambient scope onto a workspace route. */
-function buildPerCallScope(
-  routed: RoutedToolCall,
-  outerScope: RequestScope | undefined,
-): RequestScope {
-  if (routed.kind !== "workspace") return { kind: "identity" };
-  const outerWorkspace = outerScope?.kind === "workspace" ? outerScope : null;
-  return {
-    kind: "workspace",
-    workspaceId: routed.context.workspaceId,
-    workspaceAgents: outerWorkspace?.workspaceAgents ?? null,
-    workspaceModelOverride: outerWorkspace?.workspaceModelOverride ?? null,
-  };
-}
-
-/** Rebuild the per-call context from the ambient one, swapping in the routed scope and carrying forward the orthogonal request fields. */
+/**
+ * Rebuild the per-call context from the ambient one.
+ *
+ * A workspace route restamps `workspaceId` from the ROUTED namespace rather
+ * than ambient state; the wall guarantees that is the same workspace the
+ * session is bound to, so this is a re-assertion, not a widening. An
+ * identity-routed call keeps the ambient workspace — every kernel identity
+ * source (`files__*`, `automations__*`, `conversations__*`) owns
+ * workspace-partitioned data and would otherwise have no workspace in scope
+ * even when the chat set one. Workspace agent / model overrides ride along
+ * unchanged so session-scoped reads keep working.
+ */
 function buildPerCallContext(
   outer: RequestContext | undefined,
-  scope: RequestScope,
+  routed: RoutedToolCall,
 ): RequestContext {
+  const workspaceId = routed.kind === "workspace" ? routed.context.workspaceId : outer?.workspaceId;
   return {
     identity: outer?.identity ?? null,
-    scope,
+    ...(workspaceId !== undefined ? { workspaceId } : {}),
+    ...(outer?.workspaceAgents !== undefined ? { workspaceAgents: outer.workspaceAgents } : {}),
+    ...(outer?.workspaceModelOverride !== undefined
+      ? { workspaceModelOverride: outer.workspaceModelOverride }
+      : {}),
     ...(outer?.conversationId !== undefined ? { conversationId: outer.conversationId } : {}),
-    // `boundWorkspaceId` is orthogonal to `scope` and rides through the restamp:
-    // identity-door `files__*` tools resolve their workspace-owned store from
-    // this field (NOT `scope.workspaceId`, which is the personal/session
-    // workspace on the identity door). Dropping it here would leave the file
-    // tools with no workspace in scope even when the chat set one.
-    ...(outer?.boundWorkspaceId !== undefined ? { boundWorkspaceId: outer.boundWorkspaceId } : {}),
     ...(outer?.toolPromotion !== undefined ? { toolPromotion: outer.toolPromotion } : {}),
     // `unattended` rides the restamp so a tool dispatched from an unattended run
     // — including a delegated sub-agent, which runs inside the parent call's
@@ -215,15 +209,10 @@ export class IdentityToolRouter implements ToolRouter {
     const denied = await this.connectorPermissionDenial(routed, sourcePrefix, bareToolName);
     if (denied) return denied;
 
-    // Restamp the per-call scope from the ROUTED namespace, not ambient
-    // state. Workspace agent / model overrides ride along on the workspace
-    // arm so session-scoped reads keep working unchanged. Identity-routed
-    // calls get an identity scope with no workspace fields — there is no
-    // nullable workspaceId to leak; `requireWorkspaceId()` hard-fails on
-    // an identity-scoped call by construction.
+    // Restamp the per-call workspace from the ROUTED namespace, not ambient
+    // state.
     const outer = getRequestContext();
-    const perCallScope = buildPerCallScope(routed, outer?.scope);
-    const perCallCtx = buildPerCallContext(outer, perCallScope);
+    const perCallCtx = buildPerCallContext(outer, routed);
     return runWithRequestContext(perCallCtx, () =>
       routed.source.execute(bareToolName, call.input, signal),
     );

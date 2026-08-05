@@ -10,7 +10,7 @@
  * Files are workspace-owned: a `FileStore` is built against one owner's partition in
  * one workspace (`workspaces/<wsId>/files/<ownerId>/`). The `files://fl_…` URI stays
  * bare — it does NOT encode the workspace or owner; the workspace comes from the ambient
- * request (`RequestContext.boundWorkspaceId`), and the owner from the request
+ * request (`RequestContext.workspaceId`), and the owner from the request
  * identity. File ids are globally unique, so the URI resolves once the workspace is
  * known.
  */

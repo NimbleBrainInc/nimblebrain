@@ -40,12 +40,7 @@ function identityCtx(): RequestContext {
   };
   return {
     identity,
-    scope: {
-      kind: "workspace",
-      workspaceId: "ws_abc123",
-      workspaceAgents: null,
-      workspaceModelOverride: null,
-    },
+    workspaceId: "ws_abc123",
     conversationId: "conv_9",
   };
 }

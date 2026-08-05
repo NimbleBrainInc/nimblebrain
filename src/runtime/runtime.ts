@@ -155,7 +155,6 @@ import { PlacementRegistry } from "./placement-registry.ts";
 import {
   getRequestContext,
   type RequestContext,
-  type RequestScope,
   runWithRequestContext,
 } from "./request-context.ts";
 import { type BufferedRunEvent, RunBus } from "./run-bus.ts";
@@ -685,8 +684,7 @@ export class Runtime {
       // Workspace agents merge over (not replace) instance agents.
       // Prefers AsyncLocalStorage context for concurrency safety.
       get agents() {
-        const scope = getRequestContext()?.scope;
-        const wsAgents = scope?.kind === "workspace" ? scope.workspaceAgents : null;
+        const wsAgents = getRequestContext()?.workspaceAgents ?? null;
         if (wsAgents) {
           return { ...(config.agents ?? {}), ...wsAgents };
         }
@@ -743,10 +741,7 @@ export class Runtime {
     // Request-scoped context — all identity/workspace reads go through AsyncLocalStorage.
     // Set via runWithRequestContext() in chat(), handleToolCall(), and MCP handler.
     const getIdentity = (): UserIdentity | null => getRequestContext()?.identity ?? null;
-    const getWorkspaceId = (): string | null => {
-      const scope = getRequestContext()?.scope;
-      return scope?.kind === "workspace" ? scope.workspaceId : null;
-    };
+    const getWorkspaceId = (): string | null => getRequestContext()?.workspaceId ?? null;
 
     // Build management tool contexts using the identity holder + stores from task 001
     // ManageUsersContext is always created. In dev mode (no identity provider),
@@ -1215,12 +1210,12 @@ export class Runtime {
     // the chat door requires a workspace, so it never reaches that branch.
     const narratedWsId = convWsId;
 
-    // Load the personal workspace config for agents / models override.
-    // Pre-Stage-2 this looked up the request's `workspaceId`; that field
-    // is gone, and "override on the user's own workspace" is the natural
-    // identity-bound semantic. Stage 6 may relocate this to a per-
-    // conversation pin if multi-workspace overrides become a need.
-    const sessionWorkspace = await this._workspaceStore.get(sessionWsId);
+    // Agent profiles + model overrides come from the workspace this session is
+    // BOUND to — the conversation's own. They used to be read off the caller's
+    // personal workspace, which made a personal workspace special for no reason
+    // and put a second workspace on every request; a workspace's agents belong
+    // to that workspace.
+    const boundWorkspace = await this._workspaceStore.get(convWsId);
 
     const createOpts: CreateConversationOptions = {
       ownerId,
@@ -1644,15 +1639,13 @@ export class Runtime {
     // instead. T008 (credential rebinding) tightens this further.
     const reqCtx: RequestContext = {
       identity: requestIdentity,
-      // The scope workspace is the session (personal) workspace — the same
-      // breadcrumb the conversation metadata records. Per-call scope comes from
-      // the routed namespace, not from `requireWorkspaceId()`.
-      scope: buildWorkspaceScope(sessionWsId, sessionWorkspace),
+      // The conversation's own workspace — the one this turn is sealed to, for
+      // its tools, its skills, its files, and its config. Not the client's
+      // currently-focused workspace and not the caller's personal one.
+      workspaceId: convWsId,
+      workspaceAgents: boundWorkspace?.agents ?? null,
+      workspaceModelOverride: boundWorkspace?.models ?? null,
       conversationId: conversation.id,
-      // Files created/read by identity-door `files__*` tools land in the
-      // conversation's authoritative workspace — the same partition the
-      // rehydration read and the upload write use.
-      boundWorkspaceId: convWsId,
     };
     engineConfig.toolPromotion = this.buildToolPromotionFactory();
 
@@ -2053,16 +2046,14 @@ export class Runtime {
 
     const reqCtx: RequestContext = {
       identity: requestIdentity,
-      // The scope workspace is the session (personal) workspace, carrying its
-      // agents + model overrides.
-      scope: buildWorkspaceScope(sessionWsId, sessionWorkspace),
+      // The run's provenance workspace — everything it reads, writes, and
+      // dispatches resolves here, including its agents + model overrides.
+      workspaceId: workWsId,
+      workspaceAgents: (activeWorkspace ?? sessionWorkspace)?.agents ?? null,
+      workspaceModelOverride: (activeWorkspace ?? sessionWorkspace)?.models ?? null,
       // The run's correlation id (no conversation exists) — stamps audit/file
       // records so a file the run creates is traceable back to it.
       conversationId: runId,
-      // Files created/read by identity-door `files__*` tools land in the run's
-      // provenance workspace (`workWsId`) — the same partition the rehydration
-      // read uses, not the personal `sessionWsId` scope.
-      boundWorkspaceId: workWsId,
       // Unattended run: bars the automation-authoring surface. Rides the ALS
       // context (preserved across the per-call restamp), so a delegated sub-agent
       // inherits it and the wall holds at any depth — enforced at the automations
@@ -3156,8 +3147,7 @@ export class Runtime {
    */
   async listDiscoverableTools(): Promise<readonly ToolSchema[]> {
     const ctx = getRequestContext();
-    const wsId =
-      ctx?.scope.kind === "workspace" ? ctx.scope.workspaceId : this._currentWorkspaceId?.();
+    const wsId = ctx?.workspaceId ?? this._currentWorkspaceId?.();
     if (!wsId) {
       return this.getRegistryForCurrentWorkspace().availableTools();
     }
@@ -3484,7 +3474,7 @@ export class Runtime {
 
   /**
    * The workspace a conversation lives in — for code outside the chat path (the
-   * upload handlers, the file-serve route, and the per-turn `boundWorkspaceId`
+   * upload handlers, the file-serve route, and the per-turn `workspaceId`
    * that scopes the agent's `files__*` tools) that must resolve the SAME
    * partition `chat()` reads from when it rehydrates. A conversation not yet on
    * disk (a new chat) is born in `fallbackWsId`.
@@ -3501,7 +3491,7 @@ export class Runtime {
    * The single probe-then-locate for "which workspace does this conversation live
    * in" — the one place the partition rule lives, so the read (`resolveChatStore`),
    * the write (`resolveConversationWorkspaceId` → upload handlers / file serve), and
-   * the file-tool scope (`RequestContext.boundWorkspaceId`) cannot drift apart.
+   * the file-tool scope (`RequestContext.workspaceId`) cannot drift apart.
    * Hot path: probe the focused/personal workspace directly (O(1) `existsSync`, no
    * tenant scan) — only a cross-workspace deep-link falls back to the locator walk.
    */
@@ -3731,8 +3721,7 @@ export class Runtime {
       reasoning: resolveModelString(models?.reasoning ?? fallback),
     };
     // Merge workspace model overrides from request context (partial — only overrides specified slots)
-    const scope = getRequestContext()?.scope;
-    const wsModels = scope?.kind === "workspace" ? scope.workspaceModelOverride : null;
+    const wsModels = getRequestContext()?.workspaceModelOverride ?? null;
     if (wsModels) {
       return {
         default: wsModels.default ? resolveModelString(wsModels.default) : base.default,
@@ -4890,18 +4879,6 @@ function buildWorkspaceContext(
  * The workspace-scoped RequestContext scope, carrying the session workspace's
  * agent profiles + model overrides (`null` when the record didn't load).
  */
-function buildWorkspaceScope(
-  workspaceId: string,
-  workspace: Workspace | null | undefined,
-): RequestScope {
-  return {
-    kind: "workspace",
-    workspaceId,
-    workspaceAgents: workspace?.agents ?? null,
-    workspaceModelOverride: workspace?.models ?? null,
-  };
-}
-
 /** Compose the present-only `surfaceTools` options (focused server + request-allowed tools). */
 function buildSurfaceOptions(
   focusedServerName: string | undefined,

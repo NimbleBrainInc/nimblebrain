@@ -5,14 +5,14 @@
  * read (the `files://` attachment the runtime inlines into the prompt). This one
  * pins the other half: the agent's identity-door `files__*` TOOLS. When the model
  * calls `files__list` during a cross-workspace resume, the tool resolves its
- * workspace-owned store from `RequestContext.boundWorkspaceId`, which `chat()` sets
+ * workspace-owned store from `RequestContext.workspaceId`, which `chat()` sets
  * to the conversation's authoritative workspace (`convWsId`) — NOT the request
  * header / personal workspace. So a tool call on an UNFOCUSED resume reads the
  * conversation's workspace (A), where the file lives, and finds it.
  *
  * The rehydration test never invokes a file tool, so it cannot catch a regression
- * in this path (e.g. `boundWorkspaceId` reverting to `request.workspaceId ??
- * sessionWsId`, or the identity-tool-router dropping `boundWorkspaceId` from its
+ * in this path (e.g. `workspaceId` reverting to `request.workspaceId ??
+ * sessionWsId`, or the identity-tool-router dropping `workspaceId` from its
  * per-call restamp). This test exercises the tool directly.
  */
 
@@ -129,7 +129,7 @@ describe("cross-workspace resume scopes the file TOOL to the conversation's work
 
     // 3) Spy on getWorkspaceFileStore to capture every partition the resume
     //    touches — including the one the `files__list` tool resolves via
-    //    RequestContext.boundWorkspaceId.
+    //    RequestContext.workspaceId.
     const calls: Array<{ wsId: string; store: FileStore }> = [];
     const origGetFileStore = runtime.getWorkspaceFileStore.bind(runtime);
     runtime.getWorkspaceFileStore = (wsId: string, ownerId: string): FileStore => {

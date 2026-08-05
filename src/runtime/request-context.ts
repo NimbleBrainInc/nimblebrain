@@ -4,40 +4,44 @@ import type { UserIdentity } from "../identity/provider.ts";
 import type { AgentProfile, ModelSlots } from "./types.ts";
 
 /**
- * The request's scope — the door it came through. A **discriminated union, not
- * a nullable workspaceId**: a workspace request structurally carries its
- * (non-null) `workspaceId`, and an identity request has no workspace fields at
- * all. This makes "a workspace request with no workspace" *unrepresentable*
- * rather than rejected at runtime — `requireWorkspaceId()` can't be defeated by
- * a stray `null`, because there is no null to pass.
- *
- * - `workspace` — owned by a workspace, authorized by membership. Carries the
- *   workspace's agent profiles + model overrides (loaded for the chat path;
- *   `null` for the leaner REST / MCP dispatch paths).
- * - `identity` — owned by the user (conversations, …), authorized by ownership.
- *   No workspace, so no workspace fields. See `tools/identity-sources.ts`.
- */
-export type RequestScope =
-  | {
-      kind: "workspace";
-      workspaceId: string;
-      workspaceAgents: Record<string, AgentProfile> | null;
-      workspaceModelOverride: Partial<ModelSlots> | null;
-    }
-  | { kind: "identity" };
-
-/**
  * Per-request context threaded through AsyncLocalStorage.
  * Eliminates mutable module-level state for identity/workspace,
  * making concurrent request handling safe.
- *
- * `identity` is orthogonal to `scope` (an authenticated principal is present on
- * both doors; some internal paths — e.g. a resource read — carry `null`). The
- * workspace-vs-identity decision lives entirely in `scope`.
  */
 export interface RequestContext {
   identity: UserIdentity | null;
-  scope: RequestScope;
+  /**
+   * The ONE workspace this request is bound to — the workspace whose data it
+   * may read and write, whose tools it may dispatch, and whose config applies.
+   *
+   * There is exactly one, because a session reaches exactly one workspace (the
+   * wall). This used to be two fields — a `scope.workspaceId` for "the door the
+   * request came through" and a separate one for "the workspace the data lives
+   * in" — which differed only because the chat door put the caller's PERSONAL
+   * workspace in the first one. A personal workspace is not special; it is the
+   * workspace created at first login. Treating it as the home for per-user
+   * config is what made a second workspace-shaped variable look necessary, and
+   * two near-identically-named workspace fields is the ambiguity that produced
+   * the cross-workspace conversation leak.
+   *
+   * Set on every door: chat (the conversation's own workspace — a chat resumed
+   * in A while the client is focused on B reads A), automation runs
+   * (provenance), `/mcp` and REST (the validated `X-Workspace-Id`), and each
+   * per-call restamp (the routed workspace, which the wall guarantees is the
+   * same one).
+   *
+   * Absent ⇒ no workspace in scope (an external `/mcp` request with no
+   * `X-Workspace-Id`, a background job). Absence NARROWS — every consumer
+   * denies — so it is never a widening default.
+   */
+  workspaceId?: string;
+  /**
+   * Agent profiles and model-slot overrides from `workspaceId`'s config,
+   * pre-loaded because the resolvers that read them (`agents` getter,
+   * `getModelSlots`) are synchronous and cannot await a workspace load.
+   */
+  workspaceAgents?: Record<string, AgentProfile> | null;
+  workspaceModelOverride?: Partial<ModelSlots> | null;
   /**
    * Active conversation id when this context was created inside `runtime.chat()`.
    * Tools that ask "what's happening in the current conversation" (e.g.
@@ -47,27 +51,6 @@ export interface RequestContext {
    * rather than silently falling back to the wrong conversation.
    */
   conversationId?: string;
-  /**
-   * The workspace this request is BOUND to — the one whose data it may read and
-   * write. Distinct from `scope.workspaceId`, which is the door the request came
-   * through (the session/personal workspace on the identity door), and the two
-   * genuinely differ: a chat resumed in workspace A while the client is focused
-   * on B has `scope.workspaceId = B`'s session and `boundWorkspaceId = A`. That
-   * is the seal — the conversation's own workspace wins, so it is deliberately
-   * NOT "the focused workspace".
-   *
-   * Set on every door: chat (the conversation's own workspace), automation runs
-   * (provenance), `/mcp` and REST (the validated `X-Workspace-Id`). Read by
-   * every kernel identity source — `files__*`, `automations__*`,
-   * `conversations__*` — because all three own workspace-partitioned data while
-   * dispatching through the identity door.
-   *
-   * Optional on the type because plenty of contexts genuinely have no bound
-   * workspace (background jobs, resource reads outside a workspace). Absence
-   * NARROWS — every consumer denies — so it is never the widening default that
-   * a missing list-filter would be.
-   */
-  boundWorkspaceId?: string;
   toolPromotion?: ToolPromotionControls;
   /**
    * True when this context belongs to an unattended run (`executeTask` — an

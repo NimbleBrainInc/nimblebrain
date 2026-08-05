@@ -507,12 +507,7 @@ function scheduleBriefingRefresh(
   if (!briefingCache.beginRefresh()) return;
   const bgCtx: RequestContext = {
     identity,
-    scope: {
-      kind: "workspace",
-      workspaceId: wsId,
-      workspaceAgents: null,
-      workspaceModelOverride: null,
-    },
+    workspaceId: wsId,
   };
   void runWithRequestContext(bgCtx, () => generateBriefing(runtime, wsId, identity, homeConfig))
     .then((b) => briefingCache.set(b))

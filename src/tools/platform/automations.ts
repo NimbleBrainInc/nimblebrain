@@ -63,10 +63,7 @@ export function resolveExecutorContext(
 ): ExecutorContext {
   if (trigger === "manual") {
     return {
-      workspaceId:
-        (reqCtx?.scope.kind === "workspace" ? reqCtx.scope.workspaceId : undefined) ??
-        automation?.workspaceId ??
-        undefined,
+      workspaceId: reqCtx?.workspaceId ?? automation?.workspaceId ?? undefined,
       identity: reqCtx?.identity ?? (automation?.ownerId ? { id: automation.ownerId } : undefined),
     };
   }
@@ -148,7 +145,7 @@ export async function createAutomationsSource(
    * Build a workspace-scoped ToolContext for per-request use. Automations are
    * workspace-owned: the store lives at `workspaces/<wsId>/automations/<ownerId>/`,
    * so this needs both the owner (the authenticated identity) and the FOCUSED
-   * workspace. The bound workspace rides `RequestContext.boundWorkspaceId` (set
+   * workspace. The bound workspace rides `RequestContext.workspaceId` (set
    * on both doors), the same mechanism `files` uses — `scope.workspaceId` on the
    * identity door is the personal/session workspace, not the focus. No workspace
    * in scope (e.g. an external `/mcp` call with no header) ⇒ deny rather than
@@ -156,7 +153,7 @@ export async function createAutomationsSource(
    */
   function getToolContext(): ToolContext {
     const owner = ownerId();
-    const wsId = getRequestContext()?.boundWorkspaceId;
+    const wsId = getRequestContext()?.workspaceId;
     if (!wsId) {
       throw new Error("automations: no workspace in scope (automations are workspace-owned)");
     }
