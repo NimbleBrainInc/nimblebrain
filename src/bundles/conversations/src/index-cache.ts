@@ -132,29 +132,34 @@ export class ConversationIndex {
    * gone (so deletes don't ghost). Unlike `flushPending`, this is not add-only.
    */
   async refresh(): Promise<void> {
-    while (this.dir !== null) {
-      // Never answer against an index mid-rebuild: `build()` clears the map and
-      // then repopulates it, so a reader arriving inside that window would see
-      // a partial one. Join the in-flight rebuild, then re-decide — this is the
-      // only place both the rebuild and `dirty` are visible, which is why the
-      // coalescing belongs here rather than at a caller.
-      if (this.rebuilding) {
-        await this.rebuilding;
-        continue;
-      }
-      if (!this.dirty) return;
-      // Clear BEFORE the rebuild. `build()` lists the directory up front, so a
-      // write landing mid-rebuild cannot be in this pass — but its
-      // `invalidate()` must survive it. Clearing afterwards lets the rebuild
-      // that never saw the write erase the flag raised for it; clearing first
-      // means the loop above sees `dirty` again and rebuilds for the joiner.
-      this.dirty = false;
-      const dir = this.dir;
-      this.rebuilding = this.build(dir).finally(() => {
-        this.rebuilding = null;
-      });
-      await this.rebuilding;
-    }
+    if (this.dir === null) return;
+
+    // Never answer against an index mid-rebuild: `build()` clears the map and
+    // then repopulates it, so a reader arriving inside that window would see a
+    // partial one. Join whatever is in flight first. This is the only place the
+    // rebuild and `dirty` are both visible, which is why the coalescing lives
+    // here rather than at a caller.
+    while (this.rebuilding) await this.rebuilding;
+    if (!this.dirty) return;
+
+    // Clear BEFORE the rebuild. `build()` lists the directory up front, so a
+    // write landing mid-rebuild cannot be in this pass — but its `invalidate()`
+    // must survive it. Clearing afterwards would let the rebuild that never saw
+    // the write erase the flag raised for it, and that conversation would stay
+    // missing until an unrelated later write re-dirtied the index.
+    this.dirty = false;
+    const dir = this.dir;
+    this.rebuilding = this.build(dir).finally(() => {
+      this.rebuilding = null;
+    });
+    await this.rebuilding;
+
+    // Deliberately does NOT re-check `dirty` and rebuild again. The contract is
+    // an index at least as fresh as this call's entry, not the newest possible
+    // one — `invalidate()` fires on every appended event line tenant-wide, so
+    // "clean after a rebuild" is a state a busy tenant never reaches and
+    // chasing it does not return. A write that lands during this rebuild leaves
+    // `dirty` set for the next reader.
   }
 
   /** Start fs.watch on dir. On change, debounce 500ms, then re-read affected file header. */

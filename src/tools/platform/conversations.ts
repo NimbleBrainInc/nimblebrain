@@ -83,8 +83,8 @@ export async function createConversationsSource(
     }
     const index = await indexBuild;
     // `refresh()` coalesces concurrent rebuilds itself — it is the only place
-    // the in-flight build and the dirty flag are both visible, so a joiner
-    // there re-decides after the rebuild instead of inheriting its result.
+    // the in-flight build and the dirty flag are both visible. It returns an
+    // index at least as fresh as this call, not the newest possible one.
     await index.refresh();
     return { index, dir };
   }

@@ -47,6 +47,29 @@ afterEach(() => {
   rmSync(dir, { recursive: true, force: true });
 });
 
+test("refresh() returns while writes are still arriving", async () => {
+  // The invalidation hook fires on every appended event line, tenant-wide, so
+  // "no write landed anywhere during a full rebuild" is not a condition a busy
+  // tenant reaches. A refresh that retries until it observes a clean index
+  // therefore does not return under sustained writes — it must settle for an
+  // index as fresh as its own entry, not the latest one.
+  for (let i = 0; i < 150; i++) writeConv(`conv_${String(i).padStart(3, "0")}`);
+  const index = new ConversationIndex();
+  await index.build(dir);
+
+  const ticker = setInterval(() => index.invalidate(), 1);
+  index.invalidate();
+  try {
+    const outcome = await Promise.race([
+      index.refresh().then(() => "returned"),
+      new Promise((resolve) => setTimeout(() => resolve("hung"), 2000)),
+    ]);
+    expect(outcome).toBe("returned");
+  } finally {
+    clearInterval(ticker);
+  }
+});
+
 test("a reader arriving mid-rebuild waits for it instead of reading the cleared map", async () => {
   // `build()` clears the map before repopulating it, so the dangerous reader is
   // the one that arrives when `dirty` is ALREADY false — cleared by the rebuild
