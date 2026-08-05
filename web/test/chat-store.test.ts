@@ -588,7 +588,7 @@ describe("chat-store viewer", () => {
     expect(store.getSnapshot("conv_done").messages).toEqual(LOADED);
   });
 
-  it("retry replays the original send (same model), not the workspace default", async () => {
+  it("retry replays the original send params verbatim, not rebuilt ones", async () => {
     const store = createChatStore();
     await store.sendTurn("kA", { text: "explain", model: "anthropic:claude-opus-4-6" });
     latestStream().onEvent("error", { error: "crash", message: "Engine crashed" }, 1);
@@ -596,7 +596,7 @@ describe("chat-store viewer", () => {
     store.retryLastMessage("kA");
     await Promise.resolve(); // let the retry's sendTurn run
 
-    // Two starts: the original + the retry, both carrying the selected model.
+    // Two starts: the original + the retry, both carrying the same params.
     expect(startCalls).toHaveLength(2);
     expect(startCalls[1].model).toBe("anthropic:claude-opus-4-6");
     // The failed pair was dropped and re-added — exactly one user message.

@@ -97,8 +97,7 @@ describe("ChatConfigContext", () => {
 
 	// The model a turn runs on is resolved server-side, and fixed at create for
 	// any conversation with a pin. A client-held selection would be per-browser
-	// and per-device — the thing the profile-level preference replaces — so the
-	// context must not carry one again.
+	// and per-device, so the context must not carry one again.
 	it("exposes no client-side model selection", () => {
 		const { result } = renderHook(() => useChatConfigContext(), { wrapper });
 

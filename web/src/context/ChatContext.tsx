@@ -227,8 +227,8 @@ export function ChatProvider({
 
   // No model argument: the model a turn runs on is resolved server-side and,
   // for a conversation created since the model pin, fixed at create. A client
-  // that chose one per turn would be choosing per browser, which is what the
-  // profile-level preference replaces.
+  // that chose one per turn would be choosing per browser — scoped to one
+  // device, invisible to the API and to scheduled runs.
   const wrappedSendMessage = useCallback(
     (text: string, appContext?: AppContext, files?: File[]) => {
       return chat.sendMessage(text, appContext, undefined, files);
@@ -268,7 +268,7 @@ export function ChatProvider({
 // Hooks
 // ---------------------------------------------------------------------------
 
-/** Consume stable config values (preferences, providers, model selection). */
+/** Consume stable config values (preferences, providers, instance default model). */
 export function useChatConfigContext(): ChatConfigContextValue {
   const ctx = useContext(ChatConfigContext);
   if (!ctx) {
