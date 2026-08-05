@@ -418,11 +418,70 @@ describe("readConversation (event format)", () => {
 		];
 		const path = writeTmpFile("conv_pending01.jsonl", lines);
 
-		const result = await readConversation(path);
+		// `runActive` is the RunBus saying a turn IS generating right now — the
+		// only evidence that distinguishes an in-flight trailing run from one
+		// whose writer died. Without it the same bytes settle to "interrupted".
+		const result = await readConversation(path, { runActive: true });
 		expect(result).not.toBeNull();
 		const asst = result!.messages.at(-1)!;
 		expect(asst.role).toBe("assistant");
 		expect(asst.pending).toBe(true);
+	});
+
+	test("a trailing run with no live turn settles as interrupted, not pending", async () => {
+		// The deploy case: SIGTERM cut the writer off between run.start and
+		// run.done, so the log ends mid-run. Byte-identical to a turn that is
+		// genuinely still generating — the RunBus is what tells them apart.
+		const runId = "run_orphaned";
+		const lines = [
+			JSON.stringify(eventMeta("conv_orphan01")),
+			JSON.stringify({ ts: "2025-06-01T00:00:00.000Z", type: "run.start", runId }),
+			JSON.stringify({
+				ts: "2025-06-01T00:00:01.000Z",
+				type: "llm.response",
+				runId,
+				model: "m1",
+				content: [{ type: "text", text: "partial" }],
+				usage: { inputTokens: 5, outputTokens: 2 },
+				llmMs: 30,
+			}),
+		];
+		const path = writeTmpFile("conv_orphan01.jsonl", lines);
+
+		const result = await readConversation(path, { runActive: false });
+		expect(result).not.toBeNull();
+		const asst = result!.messages.at(-1)!;
+		expect(asst.role).toBe("assistant");
+		// Not "still thinking" — the turn ended, the same way an interior
+		// unterminated run ends, and it carries the same stopReason.
+		expect(asst.pending).toBeUndefined();
+		expect(asst.stopReason).toBe("interrupted");
+		// The partial output survives; settling is not truncation.
+		expect(asst.content).toContain("partial");
+	});
+
+	test("defaults to settled when the caller supplies no liveness signal", async () => {
+		// A reader with no RunBus in hand (export, fork, stats) must not assert
+		// a turn is still coming. The dangerous default is the one that claims
+		// liveness it cannot know.
+		const runId = "run_nodefault";
+		const lines = [
+			JSON.stringify(eventMeta("conv_nodefault01")),
+			JSON.stringify({ ts: "2025-06-01T00:00:00.000Z", type: "run.start", runId }),
+			JSON.stringify({
+				ts: "2025-06-01T00:00:01.000Z",
+				type: "llm.response",
+				runId,
+				model: "m1",
+				content: [{ type: "text", text: "partial" }],
+				usage: { inputTokens: 5, outputTokens: 2 },
+				llmMs: 30,
+			}),
+		];
+		const path = writeTmpFile("conv_nodefault01.jsonl", lines);
+
+		const result = await readConversation(path);
+		expect(result!.messages.at(-1)!.pending).toBeUndefined();
 	});
 
 	test("a completed run (run.done) is not pending", async () => {
@@ -503,7 +562,7 @@ describe("readConversation (event format)", () => {
 		];
 		const path = writeTmpFile("conv_orphan02.jsonl", lines);
 
-		const result = await readConversation(path);
+		const result = await readConversation(path, { runActive: true });
 		const asst = result!.messages.at(-1)!;
 		expect(asst.pending).toBe(true);
 		expect(asst.stopReason).toBeUndefined();

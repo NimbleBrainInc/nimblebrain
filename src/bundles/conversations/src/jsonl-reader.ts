@@ -1076,7 +1076,44 @@ function buildLegacyUsageFromMetadata(metadata: Record<string, unknown>): Displa
 // ---------------------------------------------------------------------------
 
 /** Read and parse a single JSONL file. Returns null if missing or empty. */
-export async function readConversation(filePath: string): Promise<ConversationFile | null> {
+/**
+ * Settle a trailing run that never wrote a terminator.
+ *
+ * `collectRun` marks such a run `pending` — "still coming" — because from the
+ * event log alone it cannot tell an in-flight turn from one whose writer died.
+ * An INTERIOR unterminated run has a later turn to prove it stopped, and is
+ * already `abandoned` with `stopReason: "interrupted"`. A trailing one has no
+ * such successor, so the proof has to come from outside the file: whether a run
+ * is live for this conversation right now, which only the RunBus knows.
+ *
+ * Given that proof, the trailing case is the interior case — same outcome, same
+ * stopReason. `pending` is only ever set on the last message (anything followed
+ * by another turn is `abandoned` by construction), so correcting it here is
+ * equivalent to threading liveness through reconstruction, with one call site
+ * instead of three.
+ */
+function settleTrailingRun(messages: DisplayMessage[]): void {
+  const last = messages[messages.length - 1];
+  if (!last?.pending) return;
+  const { pending: _wasPending, ...rest } = last;
+  messages[messages.length - 1] = {
+    ...rest,
+    stopReason: last.stopReason ?? "interrupted",
+  };
+}
+
+export async function readConversation(
+  filePath: string,
+  opts?: {
+    /**
+     * Whether a run is generating for this conversation right now. Defaults to
+     * `false`: a caller with no liveness signal is not the live viewer, and
+     * assuming a turn is still coming is the failure this parameter exists to
+     * end — it renders a dead turn as a perpetual spinner.
+     */
+    runActive?: boolean;
+  },
+): Promise<ConversationFile | null> {
   let content: string;
   try {
     content = await readFile(filePath, "utf-8");
@@ -1106,6 +1143,8 @@ export async function readConversation(filePath: string): Promise<ConversationFi
 
   applyDerivedMetrics(meta, deriveMetricsFromLines(dataLines));
   deriveTitleFromEvents(meta, dataLines);
+
+  if (!opts?.runActive) settleTrailingRun(messages);
 
   return { meta, messages, messageCount, preview };
 }
