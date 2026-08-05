@@ -68,8 +68,8 @@ function makeMessages() {
 	];
 }
 
-function writeSourceConversation(): string {
-	const meta = makeMeta();
+function writeSourceConversation(metaOverrides: Record<string, unknown> = {}): string {
+	const meta = makeMeta(metaOverrides);
 	const messages = makeMessages();
 	const lines = [JSON.stringify(meta), ...messages.map((m) => JSON.stringify(m))];
 	return writeTmpFile(`${SOURCE_ID}.jsonl`, lines);
@@ -132,6 +132,35 @@ describe("handleFork", () => {
 		expect(newConv!.messageCount).toBe(5);
 		expect(newConv!.meta.totalInputTokens).toBe(300);
 		expect(newConv!.meta.totalOutputTokens).toBe(180);
+	});
+
+	test("fork inherits the source's model binding", async () => {
+		// A fork continues the source conversation, so it carries the source's
+		// history — re-resolving the model would replay that history to a
+		// different provider. `handleFork` builds its own line 1, independent of
+		// `EventSourcedConversationStore.fork`, so both need holding to this.
+		const model = "nebius:moonshotai/Kimi-K2.6";
+		writeSourceConversation({ model });
+		const index = await buildIndex();
+
+		const result = (await handleFork({ id: SOURCE_ID }, index)) as Record<string, unknown>;
+
+		const newFilePath = join(TMP_DIR, `${result.id}.jsonl`);
+		const newConv = await readConversation(newFilePath);
+		expect(newConv!.meta.model).toBe(model);
+	});
+
+	test("fork of an unpinned source stays unpinned", async () => {
+		// Absence is what marks a record as pre-binding; a fork must not invent
+		// a binding the source never had.
+		writeSourceConversation();
+		const index = await buildIndex();
+
+		const result = (await handleFork({ id: SOURCE_ID }, index)) as Record<string, unknown>;
+
+		const newFilePath = join(TMP_DIR, `${result.id}.jsonl`);
+		const newConv = await readConversation(newFilePath);
+		expect(newConv!.meta.model).toBeUndefined();
 	});
 
 	// ---------------------------------------------------------------------------

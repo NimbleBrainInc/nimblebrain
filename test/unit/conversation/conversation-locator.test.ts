@@ -76,20 +76,30 @@ test("locate resolves by path alone — it never reads/parses file content", asy
   expect(loc?.ownerId).toBe("usr_alice");
 });
 
-test("workspace-scoped list returns only the focused workspace; all-workspaces returns every workspace", async () => {
+test("a list covers exactly one workspace — the same owner's other workspace is not in it", async () => {
+  // There is no cross-workspace listing to test against: `list` takes a
+  // required workspace, so the owner's OTHER conversation is reachable only by
+  // asking for that workspace by name.
   const helix = convId();
   const acme = convId();
-  writeConversation(workspaceConversationsDir(workDir, "ws_helix", "usr_alice"), helix, "usr_alice", "ws_helix");
-  writeConversation(workspaceConversationsDir(workDir, "ws_acme", "usr_alice"), acme, "usr_alice", "ws_acme");
+  writeConversation(
+    workspaceConversationsDir(workDir, "ws_helix", "usr_alice"),
+    helix,
+    "usr_alice",
+    "ws_helix",
+  );
+  writeConversation(
+    workspaceConversationsDir(workDir, "ws_acme", "usr_alice"),
+    acme,
+    "usr_alice",
+    "ws_acme",
+  );
 
   const loc = locator();
   const access = { userId: "usr_alice" };
 
-  const workspaceScoped = await loc.list({ workspaceId: "ws_helix" }, access);
-  expect(workspaceScoped.conversations.map((c) => c.id)).toEqual([helix]);
-
-  const allWorkspaces = await loc.list({}, access);
-  expect(allWorkspaces.conversations.map((c) => c.id).sort()).toEqual([helix, acme].sort());
+  expect((await loc.list("ws_helix", {}, access)).conversations.map((c) => c.id)).toEqual([helix]);
+  expect((await loc.list("ws_acme", {}, access)).conversations.map((c) => c.id)).toEqual([acme]);
 });
 
 test("the access gate hides another owner's conversation in the same workspace", async () => {
@@ -101,7 +111,7 @@ test("the access gate hides another owner's conversation in the same workspace",
   writeConversation(dirBob, theirs, "usr_bob", "ws_helix");
 
   const loc = locator();
-  const aliceList = await loc.list({ workspaceId: "ws_helix" }, { userId: "usr_alice" });
+  const aliceList = await loc.list("ws_helix", {}, { userId: "usr_alice" });
   expect(aliceList.conversations.map((c) => c.id)).toEqual([mine]);
 
   // Alice cannot resolve-then-read Bob's conversation: locate finds the path,
@@ -116,16 +126,16 @@ test("invalidate + JIT rescan picks up a newly written conversation (no fs.watch
   writeConversation(workspaceConversationsDir(workDir, "ws_helix", "usr_alice"), first, "usr_alice", "ws_helix");
 
   // Cold read populates.
-  expect((await loc.list({}, { userId: "usr_alice" })).totalCount).toBe(1);
+  expect((await loc.list("ws_helix", {}, { userId: "usr_alice" })).totalCount).toBe(1);
 
   // Write a second file directly (simulating another store), then invalidate.
   const second = convId();
   writeConversation(workspaceConversationsDir(workDir, "ws_helix", "usr_alice"), second, "usr_alice", "ws_helix");
   // Without invalidate the cache is stale...
-  expect((await loc.list({}, { userId: "usr_alice" })).totalCount).toBe(1);
+  expect((await loc.list("ws_helix", {}, { userId: "usr_alice" })).totalCount).toBe(1);
   // ...invalidate forces a rescan on the next read.
   loc.invalidate();
-  expect((await loc.list({}, { userId: "usr_alice" })).totalCount).toBe(2);
+  expect((await loc.list("ws_helix", {}, { userId: "usr_alice" })).totalCount).toBe(2);
 });
 
 test("an ownerless file is excluded from list() but still resolves by path", async () => {
@@ -140,7 +150,7 @@ test("an ownerless file is excluded from list() but still resolves by path", asy
 
   const loc = locator();
   // list() parses headers and drops the ownerless entry (no owner to gate on)...
-  expect((await loc.list({})).totalCount).toBe(0);
+  expect((await loc.list("ws_helix")).totalCount).toBe(0);
   // ...but locate() resolves purely by PATH, so a context-free load reaches the
   // file and surfaces the missing owner as a corruption error, not a silent miss.
   expect((await loc.locate(id))?.wsId).toBe("ws_helix");

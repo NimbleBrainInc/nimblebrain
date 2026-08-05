@@ -907,10 +907,11 @@ interface LoadingLogInput {
 }
 
 /**
- * Replay `skills.loaded` events. When `conversation_id` is provided, scan
- * just that conversation; otherwise scan every conversation in the active
- * workspace's store. The cross-conv scan reads each jsonl in turn — this
- * is intentionally simple for Phase 2; a derived index lands in Phase 6.
+ * Replay `skills.loaded` events. When `conversation_id` is provided, scan just
+ * that conversation (owner-gated, and resolvable from any workspace — the same
+ * by-id read a deep link does); otherwise scan every conversation the caller
+ * owns in the active workspace. The cross-conv scan reads each jsonl in turn —
+ * intentionally simple for Phase 2; a derived index lands in Phase 6.
  */
 async function loadingLog(
   runtime: Runtime,
@@ -994,21 +995,29 @@ async function readConvEvents(
 }
 
 /**
- * List conversation ids owned by the caller. Goes through the store's
- * `list(opts, access)` which applies the same ownership filter the
- * platform conversation tools use. Walks paginated results so a tenant
- * with many owned conversations is covered.
+ * Conversation ids owned by the caller IN THE ACTIVE WORKSPACE. Goes through
+ * the locator's `list(workspaceId, opts, access)`, which applies the same
+ * workspace wall and ownership filter the platform conversation tools use.
+ * Walks paginated results so a workspace with many owned conversations is
+ * covered.
+ *
+ * Workspace-scoped because `skills` is a workspace source and skills are
+ * workspace-tiered: "which skills loaded" is a question about THIS workspace.
+ * The unscoped version answered it across every workspace the caller belonged
+ * to, contradicting this function's own contract.
  */
 async function listOwnedConversationIds(
   runtime: Runtime,
   access: { userId: string },
 ): Promise<string[]> {
+  const wsId = runtime.requireWorkspaceId();
   const ids: string[] = [];
   let cursor: string | undefined;
   // Fixed page size; enough that a normal tenant gets one page. The locator's
   // `list` is in-memory after populate, so paging is cheap. Loop until done.
   while (true) {
     const page = await runtime.listConversations(
+      wsId,
       { limit: 200, ...(cursor ? { cursor } : {}) },
       access,
     );

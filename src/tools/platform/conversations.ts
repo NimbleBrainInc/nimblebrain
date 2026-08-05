@@ -1,6 +1,7 @@
 import {
   type AccessContext,
   ConversationIndex,
+  type WorkspaceScope,
 } from "../../bundles/conversations/src/index-cache.ts";
 import { type ExportInput, handleExport } from "../../bundles/conversations/src/tools/export.ts";
 import { type ForkInput, handleFork } from "../../bundles/conversations/src/tools/fork.ts";
@@ -11,6 +12,7 @@ import { handleStats, type StatsInput } from "../../bundles/conversations/src/to
 import { handleUpdate, type UpdateInput } from "../../bundles/conversations/src/tools/update.ts";
 import { textContent } from "../../engine/content-helpers.ts";
 import type { EventSink } from "../../engine/types.ts";
+import { getRequestContext } from "../../runtime/request-context.ts";
 import type { Runtime } from "../../runtime/runtime.ts";
 import { defineInProcessApp, type InProcessTool } from "../in-process-app.ts";
 import type { McpSource } from "../mcp-source.ts";
@@ -50,24 +52,41 @@ export async function createConversationsSource(
   // its own `filePath`, so the handlers read the right workspace file. Access
   // filtering is the dispatcher's job (see `currentAccess()` below) — the index
   // tracks ownerId on every entry and each handler narrows to the caller's set.
-  let cachedIndex: ConversationIndex | null = null;
+  //
+  // Memoise the BUILD PROMISE, not the instance. `build()` publishes the index
+  // object and then awaits per-file reads, so caching the instance let a second
+  // concurrent caller find a non-null index, hit a no-op `refresh()` (a freshly
+  // constructed index is not dirty), and read a half-built map — a short answer
+  // that then races the first caller's full one. Awaiting the same promise makes
+  // every caller wait for the same completed build.
+  let indexBuild: Promise<ConversationIndex> | null = null;
 
   async function getIndex(): Promise<{ index: ConversationIndex; dir: string }> {
     const dir = runtime.getWorkspaceStore().getWorkspacesDir();
-    if (!cachedIndex) {
-      cachedIndex = new ConversationIndex();
-      await cachedIndex.build(dir);
-      // The recursive workspace layout defeats a root `fs.watch` (it can't see nested
-      // `ws_*/conversations/<owner>/*.jsonl` writes), so freshness rides the
-      // runtime's invalidation hook instead of the watcher: every conversation
-      // write (create/delete/append) and every workspace archive-delete flags
-      // the index stale, and `refresh()` does a full rebuild on the next read —
-      // re-reading headers (updates) and dropping vanished files (deletes).
-      const idx = cachedIndex;
-      runtime.onConversationsChanged(() => idx.invalidate());
+    if (!indexBuild) {
+      indexBuild = (async () => {
+        const idx = new ConversationIndex();
+        await idx.build(dir);
+        // The recursive workspace layout defeats a root `fs.watch` (it can't see nested
+        // `ws_*/conversations/<owner>/*.jsonl` writes), so freshness rides the
+        // runtime's invalidation hook instead of the watcher: every conversation
+        // write (create/delete/append) and every workspace archive-delete flags
+        // the index stale, and `refresh()` does a full rebuild on the next read —
+        // re-reading headers (updates) and dropping vanished files (deletes).
+        runtime.onConversationsChanged(() => idx.invalidate());
+        return idx;
+      })();
+      // A failed build must not be memoised as the permanent answer.
+      indexBuild.catch(() => {
+        indexBuild = null;
+      });
     }
-    await cachedIndex.refresh();
-    return { index: cachedIndex, dir };
+    const index = await indexBuild;
+    // `refresh()` coalesces concurrent rebuilds itself — it is the only place
+    // the in-flight build and the dirty flag are both visible. It returns an
+    // index at least as fresh as this call, not the newest possible one.
+    await index.refresh();
+    return { index, dir };
   }
 
   /**
@@ -85,6 +104,34 @@ export async function createConversationsSource(
       );
     }
     return { userId: identity.id };
+  }
+
+  /**
+   * The one workspace this request's reads are walled to.
+   *
+   * Conversations are workspace-owned, so every read resolves inside exactly
+   * one workspace: `RequestContext.workspaceId`, set on every door that can
+   * reach this source — chat (the conversation's OWN workspace, so a resumed
+   * thread lists its own workspace's chats no matter where the user is
+   * focused), automation runs (provenance), `/mcp` (validated
+   * `X-Workspace-Id`), and REST (validated header, else personal). Same seam
+   * `files__*` and `automations__*` use.
+   *
+   * Deliberately NOT a tool argument. A caller-supplied workspace can be
+   * omitted — which is exactly how the iframe's pre-handshake first call used
+   * to produce a full-tenant read — and it is a coordinate the caller names
+   * rather than one the request proves. No workspace in scope ⇒ deny, never a
+   * cross-workspace fallback.
+   */
+  function currentScope(): WorkspaceScope {
+    const workspaceId = getRequestContext()?.workspaceId;
+    if (!workspaceId) {
+      throw new Error(
+        "[conversations] no workspace in scope (conversations are workspace-owned) — " +
+          "the caller must carry a bound workspace, e.g. a validated X-Workspace-Id.",
+      );
+    }
+    return { workspaceId };
   }
 
   /** Shared error handler — catches, formats, returns isError result. */
@@ -114,11 +161,12 @@ export async function createConversationsSource(
     {
       name: "list",
       description:
-        "List conversations with pagination, sorting, and filtering. Returns conversation metadata (title, timestamps, token counts, preview).",
+        "List conversations in the current workspace, with pagination, sorting, and filtering. Returns conversation metadata (title, timestamps, token counts, preview). Scoped to the workspace you are in — there is no cross-workspace listing, and no workspace argument to pass.",
       inputSchema: ConversationsListInput,
       handler: withErrorHandling(async (input) => {
         const { index } = await getIndex();
-        return handleList(input as unknown as ListInput, index, currentAccess());
+        const access = currentAccess();
+        return handleList(input as unknown as ListInput, index, currentScope(), access);
       }),
     },
     {
@@ -134,11 +182,12 @@ export async function createConversationsSource(
     {
       name: "search",
       description:
-        "Full-text search across ALL message content in all conversations. Returns matching conversations with context snippets around each match.",
+        "Full-text search across message content in the current workspace's conversations. Returns matching conversations with context snippets around each match. Scoped to the workspace you are in — it does not reach other workspaces.",
       inputSchema: ConversationsSearchInput,
       handler: withErrorHandling(async (input) => {
         const { index } = await getIndex();
-        return handleSearch(input as unknown as SearchInput, index, currentAccess());
+        const access = currentAccess();
+        return handleSearch(input as unknown as SearchInput, index, currentScope(), access);
       }),
     },
     {
@@ -163,11 +212,12 @@ export async function createConversationsSource(
     {
       name: "stats",
       description:
-        "Token usage analytics. Returns total tokens, breakdown by model and skill, and top tools used.",
+        "Token usage analytics for the current workspace. Returns total tokens, breakdown by model and skill, and top tools used.",
       inputSchema: ConversationsStatsInput,
       handler: withErrorHandling(async (input) => {
         const { index } = await getIndex();
-        return handleStats(input as unknown as StatsInput, index, currentAccess());
+        const access = currentAccess();
+        return handleStats(input as unknown as StatsInput, index, currentScope(), access);
       }),
     },
     {

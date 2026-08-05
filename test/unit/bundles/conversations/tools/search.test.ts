@@ -5,6 +5,14 @@ import { tmpdir } from "node:os";
 import { ConversationIndex } from "../../../../../src/bundles/conversations/src/index-cache.ts";
 import { handleSearch } from "../../../../../src/bundles/conversations/src/tools/search.ts";
 
+/**
+ * Fixtures live under the real workspace layout, because the index takes an
+ * entry's workspace from its DIRECTORY. Cross-workspace scoping itself is
+ * covered in test/unit/tools/platform/conversations-workspace-scope.test.ts.
+ */
+const SCOPE = { workspaceId: "ws_user_usr_test" };
+
+
 function tempDir(): string {
 	const dir = join(tmpdir(), `nb-search-test-${crypto.randomUUID()}`);
 	mkdirSync(dir, { recursive: true });
@@ -43,7 +51,9 @@ function writeConversation(dir: string, id: string, opts: WriteOpts = {}): void 
 	];
 
 	const lines = [meta, ...messages.map((m) => JSON.stringify({ ...m, timestamp: m.timestamp ?? createdAt }))];
-	writeFileSync(join(dir, `${id}.jsonl`), lines.join("\n") + "\n");
+	const wsDir = join(dir, "ws_user_usr_test", "conversations", "usr_test");
+	mkdirSync(wsDir, { recursive: true });
+	writeFileSync(join(wsDir, `${id}.jsonl`), lines.join("\n") + "\n");
 }
 
 describe("conversations__search", () => {
@@ -70,7 +80,7 @@ describe("conversations__search", () => {
 		});
 		await index.build(dir);
 
-		const result = (await handleSearch({ query: "orchestration" }, index)) as {
+		const result = (await handleSearch({ query: "orchestration" }, index, SCOPE)) as {
 			results: Array<{ id: string; matches: Array<{ snippet: string }> }>;
 		};
 
@@ -88,7 +98,7 @@ describe("conversations__search", () => {
 		});
 		await index.build(dir);
 
-		const result = (await handleSearch({ query: "Auth" }, index)) as {
+		const result = (await handleSearch({ query: "Auth" }, index, SCOPE)) as {
 			results: Array<{ id: string; matches: Array<{ messageIndex: number }> }>;
 		};
 
@@ -109,7 +119,7 @@ describe("conversations__search", () => {
 		});
 		await index.build(dir);
 
-		const result = (await handleSearch({ query: "deploy" }, index)) as {
+		const result = (await handleSearch({ query: "deploy" }, index, SCOPE)) as {
 			results: Array<{ id: string; matches: Array<{ messageIndex: number }> }>;
 		};
 
@@ -126,7 +136,7 @@ describe("conversations__search", () => {
 		});
 		await index.build(dir);
 
-		const result = (await handleSearch({ query: "database", limit: 1 }, index)) as {
+		const result = (await handleSearch({ query: "database", limit: 1 }, index, SCOPE)) as {
 			results: Array<{ id: string }>;
 		};
 
@@ -136,7 +146,7 @@ describe("conversations__search", () => {
 	it("throws error for empty query", async () => {
 		await index.build(dir);
 
-		await expect(handleSearch({ query: "" }, index)).rejects.toThrow(
+		await expect(handleSearch({ query: "" }, index, SCOPE)).rejects.toThrow(
 			"query is required and cannot be empty",
 		);
 	});
@@ -144,7 +154,7 @@ describe("conversations__search", () => {
 	it("throws error for whitespace-only query", async () => {
 		await index.build(dir);
 
-		await expect(handleSearch({ query: "   " }, index)).rejects.toThrow(
+		await expect(handleSearch({ query: "   " }, index, SCOPE)).rejects.toThrow(
 			"query is required and cannot be empty",
 		);
 	});
@@ -158,7 +168,7 @@ describe("conversations__search", () => {
 		});
 		await index.build(dir);
 
-		const result = (await handleSearch({ query: "xyznonexistent" }, index)) as {
+		const result = (await handleSearch({ query: "xyznonexistent" }, index, SCOPE)) as {
 			results: Array<unknown>;
 		};
 
@@ -175,7 +185,7 @@ describe("conversations__search", () => {
 		});
 		await index.build(dir);
 
-		const result = (await handleSearch({ query: "target_word" }, index)) as {
+		const result = (await handleSearch({ query: "target_word" }, index, SCOPE)) as {
 			results: Array<{ matches: Array<{ snippet: string }> }>;
 		};
 
@@ -198,7 +208,7 @@ describe("conversations__search", () => {
 		});
 		await index.build(dir);
 
-		const result = (await handleSearch({ query: "special keyword" }, index)) as {
+		const result = (await handleSearch({ query: "special keyword" }, index, SCOPE)) as {
 			results: Array<{ id: string; title: string | null; matches: Array<{ snippet: string }> }>;
 		};
 
@@ -211,7 +221,7 @@ describe("conversations__search", () => {
 	it("returns empty results for empty directory", async () => {
 		await index.build(dir);
 
-		const result = (await handleSearch({ query: "anything" }, index)) as {
+		const result = (await handleSearch({ query: "anything" }, index, SCOPE)) as {
 			results: Array<unknown>;
 		};
 
@@ -233,7 +243,7 @@ describe("conversations__search", () => {
 		});
 		await index.build(dir);
 
-		const result = (await handleSearch({ query: "shared term" }, index)) as {
+		const result = (await handleSearch({ query: "shared term" }, index, SCOPE)) as {
 			results: Array<{ id: string }>;
 			totalMatches: number;
 		};

@@ -12,9 +12,9 @@
  *      (deep link, history fetch, `conversations__get`) can construct the right
  *      workspace store. The hot chat path already knows its workspace from the request and
  *      never consults the locator.
- *   2. **list:** the owner's "All workspaces" view (every workspace they belong to)
- *      and the workspace-scoped view (one `workspaceId`), from one structure. The
- *      path is the wall (workspace filter); ownership is the access gate.
+ *   2. **list:** one workspace's view, keyed on the path the entry was found
+ *      at. The path is the wall (workspace filter); ownership is the access
+ *      gate. There is no cross-workspace listing.
  *
  * **Freshness without recursive watch.** `fs.watch({recursive:true})` is not
  * supported on Linux, so correctness must NOT depend on a watcher. Instead the
@@ -96,20 +96,19 @@ export class ConversationLocator {
   }
 
   /**
-   * List conversations across workspaces. `options.workspaceId` restricts to one
-   * workspace (the workspace-scoped view); omit for the owner's All-workspaces view. `access`
-   * is the ownership gate — orthogonal to the workspace filter.
+   * List one workspace's conversations. `workspaceId` is a REQUIRED positional
+   * argument, not an option — conversations are workspace-owned, so a listing
+   * without a workspace is not a thing that exists. `access` is the ownership
+   * gate, orthogonal to the workspace filter.
    */
   async list(
+    workspaceId: string,
     options?: ListOptions,
     access?: ConversationAccessContext,
   ): Promise<ConversationListResult> {
     await this.ensurePopulated();
 
-    let items = [...this.entries.values()];
-    if (options?.workspaceId) {
-      items = items.filter((e) => e.wsId === options.workspaceId);
-    }
+    let items = [...this.entries.values()].filter((e) => e.wsId === workspaceId);
     if (access) {
       items = items.filter((e) => canAccess({ ownerId: e.accessOwnerId }, access));
     }

@@ -24,11 +24,7 @@ import {
   ConversationCorruptedError,
   RunInProgressError,
 } from "../runtime/errors.ts";
-import {
-  type RequestContext,
-  type RequestScope,
-  runWithRequestContext,
-} from "../runtime/request-context.ts";
+import { type RequestContext, runWithRequestContext } from "../runtime/request-context.ts";
 import type { Runtime } from "../runtime/runtime.ts";
 import type { ChatRequest } from "../runtime/types.ts";
 import { coerceInputForSchema } from "../tools/coerce-input.ts";
@@ -969,7 +965,8 @@ function mapArtifactReadError(err: unknown, uri: string, workspaceId: string): R
  * Read a resource from a kernel identity source (conversations, files,
  * automations) for POST /v1/resources/read. Files are workspace-owned, so a
  * `files://<id>` read resolves in the request's focused workspace (or the
- * caller's personal workspace when unfocused); conversations/automations ignore it.
+ * caller's personal workspace when unfocused). Every kernel identity source is
+ * workspace-owned now, so all three read the same focused workspace.
  */
 async function readIdentitySourceResource(
   runtime: Runtime,
@@ -980,8 +977,7 @@ async function readIdentitySourceResource(
   const identity = options?.identity;
   const reqCtx: RequestContext = {
     identity: identity ?? null,
-    scope: { kind: "identity" },
-    fileWorkspaceId:
+    workspaceId:
       options?.workspaceId ?? personalWorkspaceIdFor(runtime.resolveRequestUserId(identity)),
   };
   const resource = await runWithRequestContext(reqCtx, () =>
@@ -1034,7 +1030,8 @@ export async function handleReadResource(
   // decision the orchestrator and `handleToolCall` make. But files are
   // workspace-owned, so a `files://<id>` read resolves in the request's focused
   // workspace (`options.workspaceId`, or the caller's personal workspace when
-  // unfocused), set via `fileWorkspaceId`. conversations/automations ignore it.
+  // unfocused), set via `workspaceId` — which conversations and
+  // automations read too: all three are workspace-owned.
   const { identity } = options ?? {};
   if (runtime.getIdentitySource(server)) {
     return readIdentitySourceResource(runtime, server, uri, options);
@@ -1071,7 +1068,7 @@ export async function handleReadResource(
   // catches the exception, returning null → 404 to the caller.
   const reqCtx: RequestContext = {
     identity: null,
-    scope: { kind: "workspace", workspaceId, workspaceAgents: null, workspaceModelOverride: null },
+    workspaceId,
   };
   const resource = await runWithRequestContext(reqCtx, () =>
     runtime.readAppResource(sourceName, uri, workspaceId),
@@ -1108,7 +1105,8 @@ function parseToolCallEnvelope(
 
 interface ToolCallTarget {
   source: ToolSource | undefined;
-  scope: RequestScope;
+  /** The workspace the call resolves in; `undefined` for an unfocused identity call. */
+  workspaceId: string | undefined;
   workspaceRegistry: ToolRegistry | undefined;
   /**
    * The bare source name the registry is keyed on. For a qualified
@@ -1138,7 +1136,7 @@ async function resolveToolCallTarget(
       ok: true,
       target: {
         source: identitySource,
-        scope: { kind: "identity" },
+        workspaceId: undefined,
         workspaceRegistry: undefined,
         resolvedSourceName: server,
       },
@@ -1173,12 +1171,7 @@ async function resolveToolCallTarget(
     ok: true,
     target: {
       source,
-      scope: {
-        kind: "workspace",
-        workspaceId: resolved.workspaceId,
-        workspaceAgents: null,
-        workspaceModelOverride: null,
-      },
+      workspaceId: resolved.workspaceId,
       workspaceRegistry,
       resolvedSourceName: resolved.sourceName,
     },
@@ -1253,17 +1246,19 @@ async function validateRestToolInput(
 /** Build the per-request AsyncLocalStorage context for a REST tools/call. */
 function buildRestToolCallContext(
   identity: UserIdentity | undefined,
-  scope: RequestScope,
-  workspaceId: string | undefined,
+  targetWorkspaceId: string | undefined,
+  headerWorkspaceId: string | undefined,
   runtime: Runtime,
 ): RequestContext {
   return {
     identity: identity ?? null,
-    scope,
-    // Files are workspace-owned: an identity-door `files__*` call lands in the
-    // focused workspace (validated `X-Workspace-Id`) or the caller's personal
-    // workspace when unfocused. Ignored by the other identity tools.
-    fileWorkspaceId: workspaceId ?? personalWorkspaceIdFor(runtime.resolveRequestUserId(identity)),
+    // Every kernel source is workspace-owned, so the call lands in a workspace:
+    // the resolved target's when it named one (a qualified `ws_<id>-<source>`),
+    // else the validated `X-Workspace-Id`, else the caller's personal workspace.
+    workspaceId:
+      targetWorkspaceId ??
+      headerWorkspaceId ??
+      personalWorkspaceIdFor(runtime.resolveRequestUserId(identity)),
   };
 }
 
@@ -1296,7 +1291,7 @@ function emitBridgeToolCall(
   callId: string,
   server: string,
   identity: UserIdentity | undefined,
-  scope: RequestScope,
+  workspaceId: string | null,
 ): void {
   const event = {
     type: "bridge.tool.call" as const,
@@ -1305,7 +1300,7 @@ function emitBridgeToolCall(
       id: callId,
       server,
       userId: identity?.id ?? null,
-      workspaceId: scope.kind === "workspace" ? scope.workspaceId : null,
+      workspaceId,
     },
   };
   sseManager?.emit(event);
@@ -1321,7 +1316,7 @@ function emitBridgeToolDone(
   ok: boolean,
   ms: number,
   identity: UserIdentity | undefined,
-  scope: RequestScope,
+  workspaceId: string | null,
 ): void {
   const event = {
     type: "bridge.tool.done" as const,
@@ -1331,7 +1326,7 @@ function emitBridgeToolDone(
       ok,
       ms,
       userId: identity?.id ?? null,
-      workspaceId: scope.kind === "workspace" ? scope.workspaceId : null,
+      workspaceId,
     },
   };
   sseManager?.emit(event);
@@ -1403,7 +1398,12 @@ export async function handleToolCall(
     workspaceId,
   );
   if (!targetResult.ok) return targetResult.response;
-  const { source, scope, workspaceRegistry, resolvedSourceName } = targetResult.target;
+  const {
+    source,
+    workspaceId: targetWsId,
+    workspaceRegistry,
+    resolvedSourceName,
+  } = targetResult.target;
 
   const toolName = normalizeRestToolName(tool, server, resolvedSourceName);
 
@@ -1432,17 +1432,16 @@ export async function handleToolCall(
     });
   }
 
-  // Build per-request context for AsyncLocalStorage (concurrency-safe). The
-  // scope is the resolved door — identity for a kernel identity source,
-  // workspace otherwise — never a nullable workspace.
-  const reqCtx = buildRestToolCallContext(identity, scope, workspaceId, runtime);
+  // Build per-request context for AsyncLocalStorage (concurrency-safe).
+  const reqCtx = buildRestToolCallContext(identity, targetWsId, workspaceId, runtime);
+  const eventWorkspaceId = reqCtx.workspaceId ?? null;
 
   // Audit log
   log.info(`[api] tools/call server=${server} tool=${tool} identity=${identity?.id ?? "none"}`);
   const callId = `api_${crypto.randomUUID().slice(0, 8)}`;
 
   // Emit bridge.tool.call before execution (ephemeral SSE + durable event sink)
-  emitBridgeToolCall(sseManager, eventSink, toolName, callId, server, identity, scope);
+  emitBridgeToolCall(sseManager, eventSink, toolName, callId, server, identity, eventWorkspaceId);
 
   const t0 = performance.now();
   let result: Awaited<ReturnType<ToolRegistry["execute"]>> | undefined;
@@ -1460,7 +1459,16 @@ export async function handleToolCall(
     );
   } catch (err) {
     const ms = Math.round(performance.now() - t0);
-    emitBridgeToolDone(sseManager, eventSink, toolName, callId, false, ms, identity, scope);
+    emitBridgeToolDone(
+      sseManager,
+      eventSink,
+      toolName,
+      callId,
+      false,
+      ms,
+      identity,
+      eventWorkspaceId,
+    );
     // Typed invariant errors get mapped to clean HTTP status codes
     // (mirrors how /v1/chat handles ConversationCorruptedError). The
     // direct-throw path (in-process tool that bubbles up to here without
@@ -1482,7 +1490,16 @@ export async function handleToolCall(
 
   const ms = Math.round(performance.now() - t0);
   // Emit bridge.tool.done after execution (ephemeral SSE + durable event sink)
-  emitBridgeToolDone(sseManager, eventSink, toolName, callId, !result.isError, ms, identity, scope);
+  emitBridgeToolDone(
+    sseManager,
+    eventSink,
+    toolName,
+    callId,
+    !result.isError,
+    ms,
+    identity,
+    eventWorkspaceId,
+  );
 
   // NOTE: Do NOT emit data.changed here. This endpoint is the MCP App Bridge
   // proxy — tool calls initiated by iframes. The iframe already knows about

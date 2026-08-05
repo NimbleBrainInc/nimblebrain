@@ -26,6 +26,13 @@ export interface ConversationMeta {
   totalOutputTokens: number;
   totalCostUsd: number;
   lastModel: string | null;
+  /**
+   * The model the conversation is bound to — the runtime stamps this on the
+   * line-1 header at create time and never mutates it. Absent on legacy files
+   * written before the binding. Distinct from `lastModel`, which is derived
+   * from events and describes what the last turn ran on.
+   */
+  model?: string;
   ownerId?: string;
   /**
    * The workspace the conversation ran in — the breadcrumb the
@@ -341,6 +348,7 @@ function parseMeta(raw: Record<string, unknown>): ConversationMeta | null {
     totalOutputTokens: (raw.totalOutputTokens as number) ?? 0,
     totalCostUsd: (raw.totalCostUsd as number) ?? 0,
     lastModel: (raw.lastModel as string | null) ?? null,
+    ...(raw.model ? { model: raw.model as string } : {}),
     ...(raw.ownerId ? { ownerId: raw.ownerId as string } : {}),
     ...(raw.workspaceId ? { workspaceId: raw.workspaceId as string } : {}),
   };
@@ -1171,8 +1179,21 @@ function listWorkspaceConversationFiles(convRoot: string): string[] {
   return out;
 }
 
-export function listConversationFiles(dir: string): string[] {
-  const out: string[] = [];
+/**
+ * A conversation file plus the workspace it lives in.
+ *
+ * `wsId` comes from the directory the walk descended through, which is the
+ * authoritative binding — the `workspaceId` on line 1 is a denormalised
+ * convenience and can disagree. `null` only for the legacy flat layout, whose
+ * files are under no workspace at all and so match no workspace-scoped read.
+ */
+export interface ConversationFileRef {
+  filePath: string;
+  wsId: string | null;
+}
+
+export function listConversationFiles(dir: string): ConversationFileRef[] {
+  const out: ConversationFileRef[] = [];
   let top: Dirent[];
   try {
     top = readdirSync(dir, { withFileTypes: true });
@@ -1181,14 +1202,17 @@ export function listConversationFiles(dir: string): string[] {
   }
   for (const ent of top) {
     if (ent.isFile() && ent.name.endsWith(".jsonl")) {
-      out.push(join(dir, ent.name));
+      out.push({ filePath: join(dir, ent.name), wsId: null });
       continue;
     }
     if (!ent.isDirectory() || !ent.name.startsWith("ws_")) continue;
-    // Workspace-owned layout: each workspace's conversations subtree.
+    // Workspace-owned layout: each workspace's conversations subtree. The
+    // directory name IS the workspace, so no path re-parsing is needed.
     // lint-ok:conversation-path
     const convRoot = join(dir, ent.name, "conversations");
-    out.push(...listWorkspaceConversationFiles(convRoot));
+    for (const filePath of listWorkspaceConversationFiles(convRoot)) {
+      out.push({ filePath, wsId: ent.name });
+    }
   }
   return out;
 }

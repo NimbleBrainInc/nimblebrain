@@ -30,7 +30,11 @@ import {
 } from "../connectors/providers/registry.ts";
 import { registerSmitheryCredentialProvider } from "../connectors/providers/smithery/transport-credential.ts";
 import { generateTitle } from "../conversation/auto-title.ts";
-import { compactConversationMessages, planCompaction } from "../conversation/compaction.ts";
+import {
+  compactConversationMessages,
+  planCompaction,
+  summarizeMessages,
+} from "../conversation/compaction.ts";
 import { extractOperatorTurns } from "../conversation/event-reconstructor.ts";
 import { EventSourcedConversationStore } from "../conversation/event-sourced-store.ts";
 import { type ConversationLocation, ConversationLocator } from "../conversation/locator.ts";
@@ -79,6 +83,7 @@ import { UserStore } from "../identity/user.ts";
 import { InstructionsStore } from "../instructions/index.ts";
 import { getModelByString, getProviderFromModel } from "../model/catalog.ts";
 import { buildModelResolver, resolveModelString } from "../model/registry.ts";
+import { type ModelSlot, parseModelSlotRef } from "../model/slots.ts";
 import { registerBuiltinCredentialProviders } from "../oauth/minted-credential-provider.ts";
 import { requestIdentityAttrs, withSpan } from "../observability/index.ts";
 import { log } from "../observability/log.ts";
@@ -135,6 +140,7 @@ import { SharedSourceRef, type ToolRegistry } from "../tools/registry.ts";
 import { surfaceTools } from "../tools/surfacing.ts";
 import { createSystemTools } from "../tools/system-tools.ts";
 import type { ResourceData, Tool, ToolSource } from "../tools/types.ts";
+import type { TokenUsage } from "../usage/types.ts";
 import { WorkspaceContext } from "../workspace/context.ts";
 import { ensureUserWorkspace } from "../workspace/provisioning.ts";
 import type { Workspace } from "../workspace/types.ts";
@@ -150,7 +156,6 @@ import { PlacementRegistry } from "./placement-registry.ts";
 import {
   getRequestContext,
   type RequestContext,
-  type RequestScope,
   runWithRequestContext,
 } from "./request-context.ts";
 import { type BufferedRunEvent, RunBus } from "./run-bus.ts";
@@ -174,6 +179,7 @@ const DEFAULT_WORK_DIR = join(homedir(), ".nimblebrain");
 const DEFAULT_MODEL = "claude-sonnet-4-6";
 
 import { DEFAULT_MAX_INPUT_TOKENS, DEFAULT_MAX_ITERATIONS } from "../limits.ts";
+import { buildMidTurnCompaction } from "./mid-turn-compaction.ts";
 import { resolveMaxOutputTokens } from "./resolve-max-output-tokens.ts";
 import { resolveMessageBudget } from "./resolve-message-budget.ts";
 import { resolveThinking } from "./resolve-thinking.ts";
@@ -188,24 +194,6 @@ import { isToolEligibleForPromotion } from "./tool-eligibility.ts";
  */
 function applyClearable<T>(current: T | undefined, patched: T | null | undefined): T | undefined {
   return patched === undefined ? current : (patched ?? undefined);
-}
-
-/** Known model slot names. */
-const MODEL_SLOTS = ["default", "fast", "reasoning"] as const;
-type ModelSlot = (typeof MODEL_SLOTS)[number];
-
-const ALIAS_PREFIX = "alias:";
-
-/** Check if a string is an alias reference (e.g., "alias:fast"). */
-function isAliasRef(s: string): boolean {
-  return s.startsWith(ALIAS_PREFIX);
-}
-
-/** Extract the slot name from an alias reference. Returns null if not a valid slot. */
-function parseAliasRef(s: string): ModelSlot | null {
-  if (!isAliasRef(s)) return null;
-  const slot = s.slice(ALIAS_PREFIX.length);
-  return MODEL_SLOTS.includes(slot as ModelSlot) ? (slot as ModelSlot) : null;
 }
 
 function resolveWorkDir(config: RuntimeConfig): string {
@@ -563,16 +551,17 @@ export class Runtime {
       return models?.default ?? config.defaultModel ?? DEFAULT_MODEL;
     };
     const resolveSlot = (s: string): string => {
-      const slot = parseAliasRef(s);
-      if (!slot) return s;
-      const models = config.models;
-      const fallback = config.defaultModel ?? DEFAULT_MODEL;
-      const slots: ModelSlots = {
-        default: models?.default ?? fallback,
-        fast: models?.fast ?? fallback,
-        reasoning: models?.reasoning ?? fallback,
-      };
-      return slots[slot];
+      const slot = parseModelSlotRef(s);
+      if (slot) {
+        // Route to the same reader every other consumer uses. Resolving from
+        // `config.models` here instead would silently drop the per-request
+        // workspace override that `getModelSlots()` overlays — and this path
+        // now carries the *documented* bare spelling, so a second slot table
+        // would be the one most authors actually hit.
+        if (!rtHolder.rt) throw new Error("Runtime not initialized");
+        return rtHolder.rt.getModelSlot(slot);
+      }
+      return s;
     };
     const delegateCtx: DelegateContext = {
       resolveModel: resolveModelFn,
@@ -679,8 +668,7 @@ export class Runtime {
       // Workspace agents merge over (not replace) instance agents.
       // Prefers AsyncLocalStorage context for concurrency safety.
       get agents() {
-        const scope = getRequestContext()?.scope;
-        const wsAgents = scope?.kind === "workspace" ? scope.workspaceAgents : null;
+        const wsAgents = getRequestContext()?.workspaceAgents ?? null;
         if (wsAgents) {
           return { ...(config.agents ?? {}), ...wsAgents };
         }
@@ -737,10 +725,7 @@ export class Runtime {
     // Request-scoped context — all identity/workspace reads go through AsyncLocalStorage.
     // Set via runWithRequestContext() in chat(), handleToolCall(), and MCP handler.
     const getIdentity = (): UserIdentity | null => getRequestContext()?.identity ?? null;
-    const getWorkspaceId = (): string | null => {
-      const scope = getRequestContext()?.scope;
-      return scope?.kind === "workspace" ? scope.workspaceId : null;
-    };
+    const getWorkspaceId = (): string | null => getRequestContext()?.workspaceId ?? null;
 
     // Build management tool contexts using the identity holder + stores from task 001
     // ManageUsersContext is always created. In dev mode (no identity provider),
@@ -1002,6 +987,10 @@ export class Runtime {
     const createOpts: CreateConversationOptions = {
       ownerId,
       workspaceId: wsId,
+      // Bind here too: the detached-turn path creates the conversation before
+      // delegating to `chat()`, so without this a detached conversation would
+      // reach `_chatInner` already existing and unpinned.
+      model: this.resolveRequestModelString(request.model),
       ...(request.metadata ? { metadata: request.metadata } : {}),
     };
 
@@ -1146,9 +1135,9 @@ export class Runtime {
     // exactly that one workspace's tools plus the caller's identity tools —
     // never a cross-workspace union — and each tool call routes via the
     // orchestrator, which denies any other workspace. Single-workspace reads
-    // (focused app, overlays, skills) bind to the focused workspace; the file
-    // store and other session-bridge reads use the identity's personal
-    // workspace (`sessionWsId`).
+    // (focused app, overlays, skills) and the workspace-owned stores all bind
+    // to the conversation's own workspace — the one workspace the request is
+    // bound to.
     //
     // Identity resolution rules (strict, no `??` fallbacks anywhere):
     //   - When an identity provider is configured (production / `instance.json`):
@@ -1169,13 +1158,9 @@ export class Runtime {
     const ownerId = resolveRequestOwnerId(request.identity, this._identityProvider !== null);
     const requestIdentity = request.identity ?? DEV_IDENTITY;
 
-    // The personal workspace is the identity-bound chat's "session
-    // workspace" — used for overlays, file storage, app-skill reads, and
-    // the workspace-agents / workspace-models override lookup. Per-tool
-    // dispatch goes through the orchestrator's parsed-namespace path and
-    // does NOT read this value (acceptance criterion: every tool's
-    // WorkspaceContext is built from the parsed namespace, not from
-    // ChatRequest / conversation metadata).
+    // Provision the caller's personal workspace. It is where a chat with no
+    // focused workspace is born, and its registry has to exist before the
+    // session bridge runs — nothing else about the turn resolves against it.
     const sessionWsId = await this.prepareSessionWorkspace(requestIdentity);
 
     // The conversation's workspace — the binding, and the ONE workspace this
@@ -1209,12 +1194,11 @@ export class Runtime {
     // the chat door requires a workspace, so it never reaches that branch.
     const narratedWsId = convWsId;
 
-    // Load the personal workspace config for agents / models override.
-    // Pre-Stage-2 this looked up the request's `workspaceId`; that field
-    // is gone, and "override on the user's own workspace" is the natural
-    // identity-bound semantic. Stage 6 may relocate this to a per-
-    // conversation pin if multi-workspace overrides become a need.
-    const sessionWorkspace = await this._workspaceStore.get(sessionWsId);
+    // Agent profiles + model overrides come from the workspace this session is
+    // bound to — the conversation's own. A workspace's agents and model slots
+    // are that workspace's configuration, and apply to every turn that runs in
+    // it regardless of who is chatting.
+    const boundWorkspace = await this._workspaceStore.get(convWsId);
 
     const createOpts: CreateConversationOptions = {
       ownerId,
@@ -1223,6 +1207,11 @@ export class Runtime {
       // under `workspaces/<workspaceId>/conversations/<ownerId>/`, and this is
       // fixed for its whole life (no mid-chat workspace switching).
       workspaceId: convWsId,
+      // The conversation's model binding, fixed for its whole life. Resolved
+      // here rather than at the model-resolution point below because that is
+      // after the conversation exists — and resolution is pure, so its
+      // position in the turn is free.
+      model: this.resolveRequestModelString(request.model),
       ...(request.metadata ? { metadata: request.metadata } : {}),
     };
 
@@ -1412,23 +1401,13 @@ export class Runtime {
     // of the cached system block (the prepend happens after telemetry, below).
     const systemPrompt = foldVolatileHead(stableSystem, volatileHead);
 
-    // Workspace model overrides are in the RequestContext — read via getModelSlot()
-
-    // Resolve model: support alias references (e.g., "alias:fast", "alias:reasoning")
-    let resolvedModelString = request.model ?? this.getDefaultModel();
-    const aliasSlot = parseAliasRef(resolvedModelString);
-    if (aliasSlot) {
-      resolvedModelString = this.getModelSlot(aliasSlot);
-    }
-    // Qualify bare model ids at the request-entry boundary. Slot-read
-    // values are already qualified by `getModelSlots()`, but the per-
-    // request `request.model` override path bypasses that reader, so
-    // we normalize once here to cover both. Belt-and-suspenders with
-    // the slot reader: the rest of the pipeline (cost aggregation,
-    // capability checks, max-output and thinking resolvers, provider-
-    // options shape, log lines) reads `engineConfig.model` directly
-    // and depends on it being qualified.
-    resolvedModelString = resolveModelString(resolvedModelString);
+    // The conversation's binding wins over both the request override and the
+    // configured slot: a conversation runs on one model for its life, so a
+    // slot change retargets new conversations only. `createOpts` above carries
+    // the pin, so a conversation created on this path is already bound and
+    // this reads back what it was born with. Absent only on legacy records
+    // predating the binding, which resolve from current config as before.
+    const resolvedModelString = conversation.model ?? this.resolveRequestModelString(request.model);
 
     // Load history and rehydrate any supported `resource_link` blocks
     // (attached files persisted as URI references) into AI SDK V3 `file`
@@ -1505,12 +1484,28 @@ export class Runtime {
     // Per-request hooks: inherit `beforeToolCall` from the runtime-level hooks;
     // compose `transformContext` here so the windowing budget is the one we just
     // resolved for THIS call.
+    //
+    // `rewriteHistory` folds the history the loop itself grows, against the same
+    // budget the check above used — but in memory, for this turn only, because
+    // the region a turn grows carries no timestamps to key a persisted fold on.
+    // Installed only when compaction is on: `transformContext` below walks the
+    // history every iteration regardless, so what the gate saves is the second
+    // walk, not the estimate itself. See `runtime/mid-turn-compaction.ts`.
     const perRequestHooks: EngineHooks = {
       ...this.hooks,
       transformContext: buildTransformContext(
         messageBudget.budget,
         getProviderFromModel(resolvedModelString),
       ),
+      ...(this.config.features?.compaction
+        ? {
+            rewriteHistory: buildMidTurnCompaction({
+              budget: messageBudget.budget,
+              summarize: (folded, signal) =>
+                this.summarizeForMidTurnFold(store, conversation.id, folded, signal),
+            }),
+          }
+        : {}),
     };
 
     // Build pre-emit run telemetry tied to the engine's runId. The engine fires
@@ -1622,15 +1617,13 @@ export class Runtime {
     // instead. T008 (credential rebinding) tightens this further.
     const reqCtx: RequestContext = {
       identity: requestIdentity,
-      // The scope workspace is the session (personal) workspace — the same
-      // breadcrumb the conversation metadata records. Per-call scope comes from
-      // the routed namespace, not from `requireWorkspaceId()`.
-      scope: buildWorkspaceScope(sessionWsId, sessionWorkspace),
+      // The conversation's own workspace — the one this turn is sealed to, for
+      // its tools, its skills, its files, and its config. Not the client's
+      // currently-focused workspace and not the caller's personal one.
+      workspaceId: convWsId,
+      workspaceAgents: boundWorkspace?.agents ?? null,
+      workspaceModelOverride: boundWorkspace?.models ?? null,
       conversationId: conversation.id,
-      // Files created/read by identity-door `files__*` tools land in the
-      // conversation's authoritative workspace — the same partition the
-      // rehydration read and the upload write use.
-      fileWorkspaceId: convWsId,
     };
     engineConfig.toolPromotion = this.buildToolPromotionFactory();
 
@@ -1903,7 +1896,11 @@ export class Runtime {
       maxOutputTokens: resolvedMaxOutputTokens,
     });
 
-    // No compaction: a task has a single-message history, never near budget.
+    // No compaction. A task OPENS on a single message, but its loop grows one
+    // the same way a chat turn's does, so the reason is not size — it is that
+    // both folds bill their summarizer call to a conversation, and a task run
+    // isn't persisted as one. Extending mid-turn folding here needs somewhere
+    // to put that cost first.
     const messages = await rehydrateUserResources(taskMessages, fileStore, {
       model: resolvedModelString,
       maxExtractedTextSize: this.getFilesConfig().maxExtractedTextSize,
@@ -2027,16 +2024,14 @@ export class Runtime {
 
     const reqCtx: RequestContext = {
       identity: requestIdentity,
-      // The scope workspace is the session (personal) workspace, carrying its
-      // agents + model overrides.
-      scope: buildWorkspaceScope(sessionWsId, sessionWorkspace),
+      // The run's provenance workspace — everything it reads, writes, and
+      // dispatches resolves here, including its agents + model overrides.
+      workspaceId: workWsId,
+      workspaceAgents: (activeWorkspace ?? sessionWorkspace)?.agents ?? null,
+      workspaceModelOverride: (activeWorkspace ?? sessionWorkspace)?.models ?? null,
       // The run's correlation id (no conversation exists) — stamps audit/file
       // records so a file the run creates is traceable back to it.
       conversationId: runId,
-      // Files created/read by identity-door `files__*` tools land in the run's
-      // provenance workspace (`workWsId`) — the same partition the rehydration
-      // read uses, not the personal `sessionWsId` scope.
-      fileWorkspaceId: workWsId,
       // Unattended run: bars the automation-authoring surface. Rides the ALS
       // context (preserved across the per-call restamp), so a delegated sub-agent
       // inherits it and the wall holds at any depth — enforced at the automations
@@ -2113,14 +2108,23 @@ export class Runtime {
   }
 
   /**
-   * Resolve the request model string: apply an `alias:` slot indirection, then
-   * qualify the bare id. Qualification at the request-entry boundary lets the
-   * rest of the pipeline (cost aggregation, capability checks, resolvers, log
-   * lines) read `engineConfig.model` and depend on it being qualified.
+   * Resolve the request model string: resolve a slot name (bare or `alias:`-
+   * prefixed) to its configured model, then qualify the bare id.
+   *
+   * Slot reads go through `getModelSlot`, so a workspace's per-request model
+   * override (carried on the RequestContext) applies here too, and the value
+   * comes back already qualified. The `request.model` override bypasses that
+   * reader, so the qualify step covers both. Qualifying at the request-entry
+   * boundary lets the rest of the pipeline — cost aggregation, capability
+   * checks, the max-output and thinking resolvers, provider-options shape,
+   * log lines — read `engineConfig.model` and depend on it being qualified.
+   *
+   * Both request doors (chat and task) resolve through here; a second copy
+   * is how the two drift.
    */
   private resolveRequestModelString(requestModel: string | undefined): string {
     let modelString = requestModel ?? this.getDefaultModel();
-    const aliasSlot = parseAliasRef(modelString);
+    const aliasSlot = parseModelSlotRef(modelString);
     if (aliasSlot) {
       modelString = this.getModelSlot(aliasSlot);
     }
@@ -3130,8 +3134,7 @@ export class Runtime {
    */
   async listDiscoverableTools(): Promise<readonly ToolSchema[]> {
     const ctx = getRequestContext();
-    const wsId =
-      ctx?.scope.kind === "workspace" ? ctx.scope.workspaceId : this._currentWorkspaceId?.();
+    const wsId = ctx?.workspaceId ?? this._currentWorkspaceId?.();
     if (!wsId) {
       return this.getRegistryForCurrentWorkspace().availableTools();
     }
@@ -3458,7 +3461,7 @@ export class Runtime {
 
   /**
    * The workspace a conversation lives in — for code outside the chat path (the
-   * upload handlers, the file-serve route, and the per-turn `fileWorkspaceId`
+   * upload handlers, the file-serve route, and the per-turn `workspaceId`
    * that scopes the agent's `files__*` tools) that must resolve the SAME
    * partition `chat()` reads from when it rehydrates. A conversation not yet on
    * disk (a new chat) is born in `fallbackWsId`.
@@ -3475,7 +3478,7 @@ export class Runtime {
    * The single probe-then-locate for "which workspace does this conversation live
    * in" — the one place the partition rule lives, so the read (`resolveChatStore`),
    * the write (`resolveConversationWorkspaceId` → upload handlers / file serve), and
-   * the file-tool scope (`RequestContext.fileWorkspaceId`) cannot drift apart.
+   * the file-tool scope (`RequestContext.workspaceId`) cannot drift apart.
    * Hot path: probe the focused/personal workspace directly (O(1) `existsSync`, no
    * tenant scan) — only a cross-workspace deep-link falls back to the locator walk.
    */
@@ -3705,8 +3708,7 @@ export class Runtime {
       reasoning: resolveModelString(models?.reasoning ?? fallback),
     };
     // Merge workspace model overrides from request context (partial — only overrides specified slots)
-    const scope = getRequestContext()?.scope;
-    const wsModels = scope?.kind === "workspace" ? scope.workspaceModelOverride : null;
+    const wsModels = getRequestContext()?.workspaceModelOverride ?? null;
     if (wsModels) {
       return {
         default: wsModels.default ? resolveModelString(wsModels.default) : base.default,
@@ -3775,23 +3777,66 @@ export class Runtime {
       // The summarizer runs the `fast` slot outside the agentic loop, so it
       // emits no llm.response. Persist its usage as an aux.usage event so the
       // fold's cost isn't invisible to the usage aggregator.
-      onUsage: (usage, llmMs) => {
-        recordLlmUsage("compaction", fastSlot, usage);
-        appendEvent(conversationId, {
-          ts: new Date().toISOString(),
-          type: "aux.usage",
-          source: "compaction",
-          model: fastSlot,
-          usage,
-          llmMs,
-        });
-      },
+      onUsage: (usage, llmMs) =>
+        this.billCompactionUsage(store, conversationId, fastSlot, usage, llmMs),
     });
     // No-op contract: the helper returns the SAME array reference when nothing
     // was compacted (below threshold or best-effort failure). A future helper
     // that returns a copy would defeat this — the wiring integration test pins
     // that a below-threshold turn writes no history.compacted event.
     return compacted === history ? null : compacted;
+  }
+
+  /**
+   * Bill a summarizer call to the conversation. It runs the `fast` slot outside
+   * the agentic loop and emits no `llm.response`, so without this the fold's
+   * cost is invisible to the usage aggregator — true of both the fold between
+   * turns and the one inside a turn, hence one home for it.
+   */
+  private billCompactionUsage(
+    store: EventSourcedConversationStore,
+    conversationId: string,
+    model: string,
+    usage: TokenUsage,
+    llmMs: number,
+  ): void {
+    recordLlmUsage("compaction", model, usage);
+    store.appendEvent(conversationId, {
+      ts: new Date().toISOString(),
+      type: "aux.usage",
+      source: "compaction",
+      model,
+      usage,
+      llmMs,
+    });
+  }
+
+  /**
+   * Summarize the messages a mid-turn fold drops, billed like any other
+   * compaction call. Throws on failure — `buildMidTurnCompaction` treats a
+   * throw as "skip the fold and stop asking", so a summarizer outage costs the
+   * turn nothing but the full history it already had.
+   */
+  private async summarizeForMidTurnFold(
+    store: EventSourcedConversationStore,
+    conversationId: string,
+    messages: LanguageModelV3Message[],
+    signal?: AbortSignal,
+  ): Promise<string> {
+    const fastSlot = this.getModelSlot("fast");
+    try {
+      return await summarizeMessages(this.resolveModelFn(fastSlot), messages, {
+        summarizerContextTokens: getModelByString(fastSlot)?.limits.context,
+        onUsage: (usage, llmMs) =>
+          this.billCompactionUsage(store, conversationId, fastSlot, usage, llmMs),
+        ...(signal ? { signal } : {}),
+      });
+    } catch (err) {
+      log.error("[runtime] mid-turn history compaction failed", {
+        error: err instanceof Error ? err.message : String(err),
+      });
+      throw err;
+    }
   }
 
   /** Get the list of configured provider names (e.g., ["anthropic", "openai"]). */
@@ -4390,17 +4435,20 @@ export class Runtime {
   }
 
   /**
-   * List conversations across workspaces via the locator. Pass `access` to filter
-   * by ownership; without it the caller asserts trusted enumeration scope
-   * (CLI, admin tools). Pass `options.workspaceId` for the workspace-scoped view (a
-   * single workspace's chats); omit it for the owner's "All workspaces" view. The workspace
-   * filter is the path; ownership is the access gate — orthogonal axes.
+   * List one workspace's conversations via the locator. `workspaceId` is
+   * required: conversations are workspace-owned, so there is no cross-workspace
+   * listing to fall back to. Pass `access` to filter by ownership; without it
+   * the caller asserts trusted enumeration scope (CLI, admin tools). The
+   * workspace is the path filter; ownership is the access gate — orthogonal
+   * axes. For the tenant-wide raw-file read that usage aggregation needs, use
+   * `listAllConversationFiles`.
    */
   async listConversations(
+    workspaceId: string,
     options?: ListOptions,
     access?: ConversationAccessContext,
   ): Promise<ConversationListResult> {
-    return this.getConversationLocator().list(options, access);
+    return this.getConversationLocator().list(workspaceId, options, access);
   }
 
   /**
@@ -4812,22 +4860,6 @@ function buildWorkspaceContext(
 ): { id: string; name: string } | { id: string } | undefined {
   if (!wsId) return undefined;
   return workspace ? { id: workspace.id, name: workspace.name } : { id: wsId };
-}
-
-/**
- * The workspace-scoped RequestContext scope, carrying the session workspace's
- * agent profiles + model overrides (`null` when the record didn't load).
- */
-function buildWorkspaceScope(
-  workspaceId: string,
-  workspace: Workspace | null | undefined,
-): RequestScope {
-  return {
-    kind: "workspace",
-    workspaceId,
-    workspaceAgents: workspace?.agents ?? null,
-    workspaceModelOverride: workspace?.models ?? null,
-  };
 }
 
 /** Compose the present-only `surfaceTools` options (focused server + request-allowed tools). */

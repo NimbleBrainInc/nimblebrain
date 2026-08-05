@@ -1,5 +1,5 @@
 import { useAction, useDataSync, useHostContext, useSynapse } from "@nimblebrain/synapse/react";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ConversationList } from "./ConversationList";
 import { groupByDate } from "./dateUtils";
 import { Header } from "./Header";
@@ -7,16 +7,6 @@ import { SearchResults } from "./SearchResults";
 import type { FilterKey, ListResult, SearchResultData } from "./types";
 
 type View = "list" | "search";
-
-/** Build the `list` tool args for the focused workspace; personal focus also includes legacy unstamped chats. */
-function buildListArgs(
-  workspaceId?: string,
-  workspaceIsPersonal?: boolean,
-): { workspaceId?: string; includeUnstamped?: boolean } {
-  if (!workspaceId) return {};
-  if (workspaceIsPersonal) return { workspaceId, includeUnstamped: true };
-  return { workspaceId };
-}
 
 /** Normalize a thrown value to a message, falling back when it isn't an Error. */
 function errorMessage(err: unknown, fallback: string): string {
@@ -54,8 +44,10 @@ function patchConversationTitle(
 export function Dashboard() {
   const synapse = useSynapse();
   const action = useAction();
-  // Both pushed by the host via hostContext: `workspace` is the workspace the
-  // shell is focused on (the binding for the workspace-scoped list);
+  // Both pushed by the host via hostContext. `workspace` is the workspace the
+  // shell is focused on — used here ONLY as a change signal (refetch when the
+  // user switches workspace), never as a filter value: the server derives the
+  // workspace from the request itself, so this app sends no workspace argument.
   // `streamingConversationIds` are the chats with an in-flight assistant turn
   // in this tab (drive the live per-row indicator).
   const { streamingConversationIds, workspace } = useHostContext<{
@@ -66,10 +58,9 @@ export function Dashboard() {
     () => new Set(streamingConversationIds ?? []),
     [streamingConversationIds],
   );
-  // Primitives (not the workspace object, whose identity churns per push) so the
-  // workspace-scoped `loadList` only re-runs when the workspace actually changes.
+  // A primitive (not the workspace object, whose identity churns per push) so a
+  // refetch fires when the workspace actually changes and not on every push.
   const workspaceId = workspace?.id;
-  const workspaceIsPersonal = workspace?.isPersonal === true;
 
   const [view, setView] = useState<View>("list");
   const [conversations, setConversations] = useState<ListResult["conversations"]>([]);
@@ -78,6 +69,8 @@ export function Dashboard() {
   const [searchResults, setSearchResults] = useState<SearchResultData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  /** Previous focused workspace, to tell a real switch from the first render. */
+  const lastWorkspaceRef = useRef(workspaceId);
 
   // `background: true` refreshes data in place without flipping to the skeleton
   // state — used for live data-changed refreshes so the list doesn't flicker.
@@ -88,11 +81,12 @@ export function Dashboard() {
       if (!opts?.background) setLoading(true);
       setError(null);
       try {
-        // Scope to the focused workspace server-side (no cross-workspace view), so
-        // the limit applies to the workspace's set rather than slicing a global
-        // page; personal focus also pulls in legacy unstamped chats (buildListArgs).
-        const args = buildListArgs(workspaceId, workspaceIsPersonal);
-        const result = await synapse.callTool<typeof args, ListResult>("list", args);
+        // No workspace argument. The list is walled to the workspace the REQUEST
+        // resolves to (the host sends `X-Workspace-Id` on every call), so the
+        // scope can't be wrong here and can't be omitted into a cross-workspace
+        // read — which is what happened while the host-context handshake was
+        // still in flight and this app had no workspace to send.
+        const result = await synapse.callTool<Record<string, never>, ListResult>("list", {});
         if (result.isError) {
           setError("Failed to load conversations");
           return;
@@ -104,7 +98,7 @@ export function Dashboard() {
         if (!opts?.background) setLoading(false);
       }
     },
-    [synapse, workspaceId, workspaceIsPersonal],
+    [synapse],
   );
 
   const runSearch = useCallback(
@@ -134,11 +128,26 @@ export function Dashboard() {
     [synapse],
   );
 
-  // Initial load — and reloads whenever the focused workspace changes, since
-  // `loadList` now carries the workspace param (it's in its deps).
+  // Initial load, and a reload whenever the focused workspace changes — the
+  // iframe stays mounted across a workspace switch, so without `workspaceId`
+  // here the panel would keep showing the workspace the user just left.
+  // `workspaceId` is a CHANGE SIGNAL only; it is never sent to the server (see
+  // `loadList`), so the first load is correctly scoped even on the render
+  // before the host-context handshake resolves and this is still `undefined`.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: workspaceId is a refetch trigger, not an input to loadList; view/searchQuery are read at fire time
   useEffect(() => {
+    // A switch to a different workspace also drops any open search: results are
+    // snippets from the workspace we just left, and leaving them on screen is
+    // the same cross-workspace display this whole change exists to prevent.
+    const previous = lastWorkspaceRef.current;
+    lastWorkspaceRef.current = workspaceId;
+    if (previous !== undefined && previous !== workspaceId) {
+      setView("list");
+      setSearchQuery("");
+      setSearchResults(null);
+    }
     loadList();
-  }, [loadList]);
+  }, [loadList, workspaceId]);
 
   // Refresh on host data-changed broadcasts — but only for conversation
   // changes (ignore unrelated apps' data.changed), and in the background so

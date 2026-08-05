@@ -90,6 +90,7 @@ export class InMemoryConversationStore implements ConversationStore {
       title: null,
       lastModel: null,
       ownerId: options.ownerId,
+      ...(options.model ? { model: options.model } : {}),
       ...(options.workspaceId ? { workspaceId: options.workspaceId } : {}),
     };
     this.conversations.set(id, conversation);

@@ -4,40 +4,46 @@ import type { UserIdentity } from "../identity/provider.ts";
 import type { AgentProfile, ModelSlots } from "./types.ts";
 
 /**
- * The request's scope — the door it came through. A **discriminated union, not
- * a nullable workspaceId**: a workspace request structurally carries its
- * (non-null) `workspaceId`, and an identity request has no workspace fields at
- * all. This makes "a workspace request with no workspace" *unrepresentable*
- * rather than rejected at runtime — `requireWorkspaceId()` can't be defeated by
- * a stray `null`, because there is no null to pass.
- *
- * - `workspace` — owned by a workspace, authorized by membership. Carries the
- *   workspace's agent profiles + model overrides (loaded for the chat path;
- *   `null` for the leaner REST / MCP dispatch paths).
- * - `identity` — owned by the user (conversations, …), authorized by ownership.
- *   No workspace, so no workspace fields. See `tools/identity-sources.ts`.
- */
-export type RequestScope =
-  | {
-      kind: "workspace";
-      workspaceId: string;
-      workspaceAgents: Record<string, AgentProfile> | null;
-      workspaceModelOverride: Partial<ModelSlots> | null;
-    }
-  | { kind: "identity" };
-
-/**
  * Per-request context threaded through AsyncLocalStorage.
  * Eliminates mutable module-level state for identity/workspace,
  * making concurrent request handling safe.
- *
- * `identity` is orthogonal to `scope` (an authenticated principal is present on
- * both doors; some internal paths — e.g. a resource read — carry `null`). The
- * workspace-vs-identity decision lives entirely in `scope`.
  */
 export interface RequestContext {
   identity: UserIdentity | null;
-  scope: RequestScope;
+  /**
+   * The ONE workspace this request is bound to — the workspace whose data it
+   * may read and write, whose tools it may dispatch, and whose config applies.
+   *
+   * There is exactly one, because a session reaches exactly one workspace (the
+   * wall). A personal workspace is not special in this model — it is the
+   * workspace created at first login, and it reaches this field the same way
+   * any other does.
+   *
+   * Set on every door: chat (the conversation's own workspace — a chat resumed
+   * in A while the client is focused on B reads A), automation runs
+   * (provenance), `/mcp` and REST (the validated `X-Workspace-Id`), and each
+   * per-call restamp (the routed workspace, which the wall guarantees is the
+   * same one).
+   *
+   * Absent ⇒ no workspace in scope (an external `/mcp` request with no
+   * `X-Workspace-Id`, a background job), and every consumer denies rather than
+   * guessing.
+   *
+   * Note this is a property of the CONSUMERS, not a guarantee that absence
+   * survives to them: the REST door substitutes the caller's personal
+   * workspace when `X-Workspace-Id` is absent (`buildRestToolCallContext`), so
+   * a headerless REST call reads the caller's own personal workspace rather
+   * than being refused. `/mcp` has no such fallback and does refuse. Do not
+   * read this field's optionality as licence to add an unguarded consumer.
+   */
+  workspaceId?: string;
+  /**
+   * Agent profiles and model-slot overrides from `workspaceId`'s config,
+   * pre-loaded because the resolvers that read them (`agents` getter,
+   * `getModelSlots`) are synchronous and cannot await a workspace load.
+   */
+  workspaceAgents?: Record<string, AgentProfile> | null;
+  workspaceModelOverride?: Partial<ModelSlots> | null;
   /**
    * Active conversation id when this context was created inside `runtime.chat()`.
    * Tools that ask "what's happening in the current conversation" (e.g.
@@ -47,17 +53,6 @@ export interface RequestContext {
    * rather than silently falling back to the wrong conversation.
    */
   conversationId?: string;
-  /**
-   * The focused workspace for this request — the workspace that owns the files
-   * and automations created or read here. Orthogonal to `scope`, and set on BOTH
-   * doors: identity-door tools (`files__*`, `automations__*`) need it because
-   * `scope.workspaceId` is the personal/session workspace, not the focused
-   * workspace. Absent ⇒ no workspace in scope (e.g. an external `/mcp` request
-   * with no `X-Workspace-Id`): the store denies rather than guessing a workspace.
-   * (Named `fileWorkspaceId` for the original files consumer; a rename to
-   * `focusedWorkspaceId` now that automations share it is a pending cleanup.)
-   */
-  fileWorkspaceId?: string;
   toolPromotion?: ToolPromotionControls;
   /**
    * True when this context belongs to an unattended run (`executeTask` — an

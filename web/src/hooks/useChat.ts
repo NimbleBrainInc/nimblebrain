@@ -36,6 +36,9 @@ export interface UseChatReturn {
   title: string | null;
   conversationMeta: LoadedConversationMeta | null;
   error: string | null;
+  /** Whether `retryLastMessage` can replay a turn — false for a conversation
+   *  loaded from disk, whose original send params this session never saw. */
+  canRetry: boolean;
   sendMessage: (
     text: string,
     appContext?: AppContext,
@@ -130,8 +133,8 @@ export function useChat(initialConversationId?: string, currentUserId?: string):
   }, [activeKey]);
 
   const retryLastMessage = useCallback(() => {
-    // The store replays the original send (text + model + appContext) itself —
-    // no re-routing through sendMessage, which dropped the model selection.
+    // The store replays the original send itself rather than re-routing
+    // through sendMessage, which would rebuild the params from current state.
     chatStore.retryLastMessage(activeKey);
   }, [activeKey]);
 
@@ -154,6 +157,7 @@ export function useChat(initialConversationId?: string, currentUserId?: string):
       title: snap.title,
       conversationMeta: snap.meta,
       error: snap.error,
+      canRetry: snap.canRetry,
       sendMessage,
       newConversation,
       loadConversation,

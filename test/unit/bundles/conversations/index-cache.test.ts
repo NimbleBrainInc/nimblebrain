@@ -64,7 +64,14 @@ function writeConvFile(spec: ConvSpec): string {
 	}
 
 	const filename = `conv_${spec.id}.jsonl`;
-	const path = join(TMP_DIR, filename);
+	// The index takes an entry's workspace from its DIRECTORY, so a fixture that
+	// names a workspace has to live under it. A spec with no workspace stays flat
+	// (the legacy layout), which is under no workspace at all.
+	const dir = spec.workspaceId
+		? join(TMP_DIR, spec.workspaceId, "conversations", spec.ownerId ?? "unknown")
+		: TMP_DIR;
+	mkdirSync(dir, { recursive: true });
+	const path = join(dir, filename);
 	writeFileSync(path, lines.map((l) => `${l}\n`).join(""));
 	return path;
 }
@@ -347,16 +354,16 @@ describe("list workspace filtering", () => {
 		expect(r.totalCount).toBe(1);
 	});
 
-	test("includeUnstamped folds workspaceless (legacy) chats into the personal workspace", async () => {
+	test("a legacy flat-layout chat is under no workspace, so no workspace lists it", async () => {
+		// The directory is the binding, so a file that is not under a workspace is
+		// not in one — including from the owner's own personal workspace.
 		const index = await buildWorkspaceIndex();
-		const r = index.list({ workspaceId: "ws_user_u1", includeUnstamped: true }, { userId: "u1" });
-		expect(r.conversations.map((c) => c.id)).toEqual(["legacy1"]);
-	});
-
-	test("a non-personal workspace does not pick up workspaceless chats", async () => {
-		const index = await buildWorkspaceIndex();
-		const r = index.list({ workspaceId: "ws_helix", includeUnstamped: false }, { userId: "u1" });
-		expect(r.conversations.map((c) => c.id)).toEqual(["helix1"]);
+		expect(
+			index.list({ workspaceId: "ws_user_u1" }, { userId: "u1" }).conversations,
+		).toHaveLength(0);
+		expect(
+			index.list({ workspaceId: "ws_helix" }, { userId: "u1" }).conversations.map((c) => c.id),
+		).toEqual(["helix1"]);
 	});
 
 	test("no workspaceId returns all of the owner's workspaces", async () => {

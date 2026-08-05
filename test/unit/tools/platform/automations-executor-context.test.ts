@@ -17,12 +17,7 @@ const automation = {
 // in workspace B (AsyncLocalStorage propagates through the re-arm `setTimeout`).
 const otherWorkspaceCtx: RequestContext = {
   identity: { id: "usr_other_b", email: "b@example.com", displayName: "B", orgRole: "member" } as UserIdentity,
-  scope: {
-    kind: "workspace",
-    workspaceId: "ws_b_other",
-    workspaceAgents: null,
-    workspaceModelOverride: null,
-  },
+  workspaceId: "ws_b_other",
 };
 
 describe("resolveExecutorContext", () => {
@@ -59,7 +54,6 @@ describe("resolveExecutorContext", () => {
   test("manual run with an identity-scope context falls back to provenance workspace", () => {
     const identityCtx: RequestContext = {
       identity: { id: "usr_other_b", email: "b@example.com", displayName: "B", orgRole: "member" } as UserIdentity,
-      scope: { kind: "identity" },
     };
     const ctx = resolveExecutorContext(automation, "manual", identityCtx);
     expect(ctx.workspaceId).toBe("ws_a_shared");

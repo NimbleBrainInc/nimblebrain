@@ -1,7 +1,11 @@
 import { readdir, readFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { SseEventManager } from "../api/events.ts";
-import type { ConversationAccessContext, ConversationStore } from "../conversation/types.ts";
+import type {
+  ConversationAccessContext,
+  ConversationListResult,
+  ListOptions,
+} from "../conversation/types.ts";
 import type {
   ActivityBundleEvent,
   ActivityConversationSummary,
@@ -12,11 +16,54 @@ import type {
   ToolUsageSummary,
 } from "./home-types.ts";
 
+/**
+ * Where the conversation rows come from. Both arms arrive pre-scoped, so the
+ * collector has no way to widen the view it was handed:
+ *
+ * - `store` — an ALREADY-SCOPED lister. The caller binds the workspace when it
+ *   builds the closure; `runtime.listConversations` takes the workspace as a
+ *   required argument, so an unscoped one cannot be written at all.
+ * - `jsonl` — one directory, and that directory IS the scope.
+ *
+ * Activity is a workspace view: the log and automation-run inputs beside this
+ * are workspace-scoped paths, so conversation rows spanning workspaces would be
+ * the one part of the output that silently disagreed with the rest.
+ */
+type ScopedConversationLister = (
+  options: ListOptions,
+  access?: ConversationAccessContext,
+) => Promise<ConversationListResult>;
+
 type ConversationSource =
-  | { kind: "store"; store: Pick<ConversationStore, "list"> }
+  | { kind: "store"; list: ScopedConversationLister }
   | { kind: "jsonl"; conversationsDir: string };
 
 type BundleEventSource = { kind: "sse"; eventManager: SseEventManager } | { kind: "none" };
+
+/**
+ * Ceiling on `ActivityConversationSummary.preview`, in characters.
+ *
+ * The preview is a conversation's first user message, and activity output is a
+ * tool response — it lands in the agent's context window and token budget, not
+ * just a UI payload. Uncapped, one conversation opened by pasting a long
+ * document carries that whole document into every `home__activity` call. The
+ * preview is the row's only human-readable label (the summary has no title), so
+ * it is capped rather than dropped: enough to recognize the conversation by.
+ */
+const PREVIEW_MAX_CHARS = 200;
+
+/**
+ * Cap a preview at `PREVIEW_MAX_CHARS`, preferring the last word boundary in
+ * the final quarter so the label doesn't end mid-word. The ellipsis is counted
+ * against the cap, so the result is never longer than the cap.
+ */
+function capPreview(text: string): string {
+  if (text.length <= PREVIEW_MAX_CHARS) return text;
+  const head = text.slice(0, PREVIEW_MAX_CHARS - 1);
+  const lastSpace = head.lastIndexOf(" ");
+  const cut = lastSpace > PREVIEW_MAX_CHARS * 0.75 ? head.slice(0, lastSpace) : head;
+  return `${cut}…`;
+}
 
 export interface ActivityCollectorOptions {
   logDir: string;
@@ -124,16 +171,16 @@ export class ActivityCollector {
       return this.collectConversationsFromJsonl(source.conversationsDir, since, until, limit);
     }
 
-    return this.collectConversationsFromStore(source.store, since, until, limit);
+    return this.collectConversationsFromStore(source.list, since, until, limit);
   }
 
   private async collectConversationsFromStore(
-    store: Pick<ConversationStore, "list">,
+    list: ScopedConversationLister,
     since: string,
     until: string,
     limit: number,
   ): Promise<ActivityConversationSummary[]> {
-    const result = await store.list(
+    const result = await list(
       {
         sortBy: "updatedAt",
         limit,
@@ -156,7 +203,10 @@ export class ActivityCollector {
         tool_call_count: 0,
         input_tokens: c.totalInputTokens,
         output_tokens: c.totalOutputTokens,
-        preview: c.preview,
+        // The store's preview is materialized by the conversation index cache,
+        // which serves the conversation-list UIs and caps nothing. Cap here so
+        // both conversation sources put the same bounded field on the wire.
+        preview: capPreview(c.preview),
         had_errors: false,
       });
     }
@@ -405,7 +455,10 @@ function summarizeJsonlConversation(
     tool_call_count: 0,
     input_tokens: totals.inputTokens,
     output_tokens: totals.outputTokens,
-    preview: totals.preview,
+    // The single wire point for the JSONL source: both entry shapes that can
+    // set a preview funnel through `totals.preview`, so one cap here covers
+    // them and any later extraction path without needing its own.
+    preview: capPreview(totals.preview),
     had_errors: false,
   };
 }

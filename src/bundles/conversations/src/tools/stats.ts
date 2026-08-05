@@ -1,11 +1,12 @@
 /**
  * Handler for conversations__stats tool.
  *
- * Aggregates token usage analytics across conversations for a time period.
- * Reads full JSONL files to extract per-message model and tool data.
+ * Aggregates token usage analytics across the focused workspace's conversations
+ * for a time period. Reads full JSONL files to extract per-message model and
+ * tool data.
  */
 
-import type { AccessContext, ConversationIndex } from "../index-cache.ts";
+import type { AccessContext, ConversationIndex, WorkspaceScope } from "../index-cache.ts";
 import {
   type ConversationFile,
   type DisplayMessage,
@@ -118,6 +119,7 @@ function accumulateConversation(conv: ConversationFile, acc: StatsAccumulator): 
 export async function handleStats(
   input: StatsInput,
   index: ConversationIndex,
+  scope: WorkspaceScope,
   access?: AccessContext,
 ): Promise<StatsResult> {
   const period = input.period ?? "week";
@@ -127,15 +129,17 @@ export async function handleStats(
   const sinceIso = since?.toISOString() ?? "";
   const untilIso = now.toISOString();
 
-  // Get all conversations matching the date range using the index;
-  // `access` filters to the caller's owned set so stats reflect their
-  // usage, not the global tenant.
+  // Get all conversations matching the date range using the index; `scope`
+  // walls the total to the focused workspace and `access` filters to the
+  // caller's owned set, so stats reflect their usage in this workspace rather
+  // than the global tenant or a cross-workspace sum.
   const listResult = index.list(
     {
       limit: 999999,
       dateFrom: sinceIso || undefined,
       dateTo: untilIso,
       sortBy: "created",
+      workspaceId: scope.workspaceId,
     },
     access,
   );

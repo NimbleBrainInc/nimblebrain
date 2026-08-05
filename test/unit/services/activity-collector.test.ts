@@ -50,7 +50,7 @@ function makeCollector(
 ): ActivityCollector {
 	return new ActivityCollector({
 		logDir,
-		conversations: { kind: "store", store },
+		conversations: { kind: "store", list: (o, a) => store.list(o, a) },
 		bundleEvents: { kind: "sse", eventManager },
 	});
 }
@@ -156,6 +156,42 @@ describe("ActivityCollector", () => {
 		expect(result.totals.conversations).toBe(1);
 		expect(result.totals.input_tokens).toBe(1000);
 		expect(result.totals.output_tokens).toBe(200);
+	});
+
+	// Activity output is a tool response, so the preview lands in the agent's
+	// context window. The store hands over whatever the conversation index cache
+	// materialized (uncapped — it also serves the list UIs), so the collector
+	// caps on the way out. The assertion pins the bound, not the cut point.
+	it("caps a long preview supplied by the conversation store", async () => {
+		const PREVIEW_MAX_CHARS = 200;
+		const longMessage = `${"lorem ipsum dolor sit amet ".repeat(80)}TAIL`;
+		const store = makeMockStore([
+			{
+				id: "conv-long",
+				createdAt: "2025-01-01T10:00:00Z",
+				updatedAt: "2025-01-01T11:00:00Z",
+				title: "Pasted a document",
+				messageCount: 2,
+				preview: longMessage,
+				totalInputTokens: 10,
+				totalOutputTokens: 5,
+				totalCostUsd: 0.001,
+			},
+		]);
+
+		const collector = makeCollector(logDir, store);
+
+		const result = await collector.collect({
+			since: "2025-01-01T00:00:00Z",
+			until: "2025-01-02T00:00:00Z",
+		});
+
+		expect(result.conversations).toHaveLength(1);
+		const c = result.conversations[0];
+		expect(c.preview.length).toBeLessThanOrEqual(PREVIEW_MAX_CHARS);
+		expect(c.preview.length).toBeGreaterThan(0);
+		expect(c.preview).not.toContain("TAIL");
+		expect(c.preview.startsWith("lorem ipsum")).toBe(true);
 	});
 
 	it("filters conversations outside date range", async () => {
@@ -619,7 +655,7 @@ describe("ActivityCollector", () => {
 
 		const collector = new ActivityCollector({
 			logDir,
-			conversations: { kind: "store", store: makeMockStore() },
+			conversations: { kind: "store", list: (() => { const m = makeMockStore(); return (o, a) => m.list(o, a); })() },
 			automationRunsDir,
 		});
 
@@ -659,7 +695,7 @@ describe("ActivityCollector", () => {
 
 		const collector = new ActivityCollector({
 			logDir,
-			conversations: { kind: "store", store: makeMockStore() },
+			conversations: { kind: "store", list: (() => { const m = makeMockStore(); return (o, a) => m.list(o, a); })() },
 			automationRunsDir,
 		});
 

@@ -4,6 +4,14 @@ import { join } from "node:path";
 import { ConversationIndex } from "../../../../../src/bundles/conversations/src/index-cache.ts";
 import { handleStats } from "../../../../../src/bundles/conversations/src/tools/stats.ts";
 
+/**
+ * Fixtures live under the real workspace layout, because the index takes an
+ * entry's workspace from its DIRECTORY. Cross-workspace scoping itself is
+ * covered in test/unit/tools/platform/conversations-workspace-scope.test.ts.
+ */
+const SCOPE = { workspaceId: "ws_user_usr_test" };
+
+
 const TMP_DIR = join(import.meta.dir, ".tmp-stats-test");
 
 interface ConvOptions {
@@ -78,7 +86,9 @@ function writeConv(opts: ConvOptions): void {
 	for (const msg of messages) {
 		lines.push(JSON.stringify(msg));
 	}
-	writeFileSync(join(TMP_DIR, `${opts.id}.jsonl`), lines.join("\n") + "\n");
+	const wsDir = join(TMP_DIR, "ws_user_usr_test", "conversations", "usr_test");
+	mkdirSync(wsDir, { recursive: true });
+	writeFileSync(join(wsDir, `${opts.id}.jsonl`), lines.join("\n") + "\n");
 }
 
 beforeEach(() => {
@@ -94,7 +104,7 @@ describe("handleStats", () => {
 		const index = new ConversationIndex();
 		await index.build(TMP_DIR);
 
-		const result = await handleStats({ period: "all" }, index);
+		const result = await handleStats({ period: "all" }, index, SCOPE);
 
 		expect(result.totalConversations).toBe(0);
 		expect(result.totalInputTokens).toBe(0);
@@ -121,7 +131,7 @@ describe("handleStats", () => {
 		const index = new ConversationIndex();
 		await index.build(TMP_DIR);
 
-		const result = await handleStats({ period: "all" }, index);
+		const result = await handleStats({ period: "all" }, index, SCOPE);
 
 		expect(result.totalConversations).toBe(2);
 		expect(result.totalInputTokens).toBe(800);
@@ -155,7 +165,7 @@ describe("handleStats", () => {
 		const index = new ConversationIndex();
 		await index.build(TMP_DIR);
 
-		const result = await handleStats({ period: "all" }, index);
+		const result = await handleStats({ period: "all" }, index, SCOPE);
 
 		expect(result.byModel["claude-sonnet-4-5-20250929"]).toEqual({
 			inputTokens: 600,
@@ -207,7 +217,7 @@ describe("handleStats", () => {
 		const index = new ConversationIndex();
 		await index.build(TMP_DIR);
 
-		const result = await handleStats({ period: "all" }, index);
+		const result = await handleStats({ period: "all" }, index, SCOPE);
 
 		// Two conversations, not three messages
 		expect(result.byModel["model-a"]!.conversations).toBe(2);
@@ -244,7 +254,7 @@ describe("handleStats", () => {
 		const index = new ConversationIndex();
 		await index.build(TMP_DIR);
 
-		const result = await handleStats({ period: "all" }, index);
+		const result = await handleStats({ period: "all" }, index, SCOPE);
 
 		expect(result.topTools[0]).toEqual({ name: "read_file", callCount: 3 });
 		expect(result.topTools[1]).toEqual({ name: "search", callCount: 2 });
@@ -271,7 +281,7 @@ describe("handleStats", () => {
 		const index = new ConversationIndex();
 		await index.build(TMP_DIR);
 
-		const result = await handleStats({ period: "day" }, index);
+		const result = await handleStats({ period: "day" }, index, SCOPE);
 
 		expect(result.totalConversations).toBe(1);
 		expect(result.totalInputTokens).toBe(100);
@@ -298,7 +308,7 @@ describe("handleStats", () => {
 		const index = new ConversationIndex();
 		await index.build(TMP_DIR);
 
-		const result = await handleStats({ period: "week" }, index);
+		const result = await handleStats({ period: "week" }, index, SCOPE);
 
 		expect(result.totalConversations).toBe(2);
 		expect(result.totalInputTokens).toBe(300);
@@ -325,7 +335,7 @@ describe("handleStats", () => {
 		await index.build(TMP_DIR);
 
 		// No period specified — should default to "week"
-		const result = await handleStats({}, index);
+		const result = await handleStats({}, index, SCOPE);
 
 		expect(result.totalConversations).toBe(1);
 		expect(result.totalInputTokens).toBe(100);
@@ -335,7 +345,7 @@ describe("handleStats", () => {
 		const index = new ConversationIndex();
 		await index.build(TMP_DIR);
 
-		const result = await handleStats({ period: "week" }, index);
+		const result = await handleStats({ period: "week" }, index, SCOPE);
 
 		// since should be parseable and roughly 7 days before until
 		expect(result.period.since).toBeTruthy();
@@ -352,7 +362,7 @@ describe("handleStats", () => {
 		const index = new ConversationIndex();
 		await index.build(TMP_DIR);
 
-		const result = await handleStats({ period: "all" }, index);
+		const result = await handleStats({ period: "all" }, index, SCOPE);
 
 		expect(result.period.since).toBe("");
 		expect(result.period.until).toBeTruthy();
@@ -384,7 +394,7 @@ describe("handleStats", () => {
 		const index = new ConversationIndex();
 		await index.build(TMP_DIR);
 
-		const result = await handleStats({ period: "all" }, index);
+		const result = await handleStats({ period: "all" }, index, SCOPE);
 
 		expect(Object.keys(result.byModel)).toEqual(["model-x"]);
 	});
@@ -393,7 +403,7 @@ describe("handleStats", () => {
 		const index = new ConversationIndex();
 		await index.build(TMP_DIR);
 
-		const result = await handleStats({ period: "all" }, index);
+		const result = await handleStats({ period: "all" }, index, SCOPE);
 
 		const json = JSON.stringify(result);
 		expect(json).not.toContain("cost");
@@ -415,7 +425,7 @@ describe("handleStats", () => {
 		const index = new ConversationIndex();
 		await index.build(TMP_DIR);
 
-		const result = await handleStats({ period: "all" }, index);
+		const result = await handleStats({ period: "all" }, index, SCOPE);
 
 		// Conversation is counted; assistant messages without metadata
 		// contribute zero to derived totals (no crash, no spurious values).

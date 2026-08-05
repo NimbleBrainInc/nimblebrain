@@ -3,7 +3,7 @@
  * workspace-owned file store (`workspaces/<wsId>/files/<ownerId>/`). `files` is a
  * kernel identity source, so its tools dispatch bare through the identity
  * door — but storage is workspace-owned, so the workspace comes from the request context
- * (`fileWorkspaceId`; see `getStore`). Files are persisted via a per-owner JSONL
+ * (`workspaceId`; see `getStore`). Files are persisted via a per-owner JSONL
  * registry and on-disk binary storage.
  *
  * Both this tool source and the chat multipart ingest path
@@ -400,11 +400,10 @@ export function createFilesSource(runtime: Runtime, eventSink: EventSink): McpSo
   /**
    * Resolve the caller's workspace-owned file store. Files live at
    * `workspaces/<wsId>/files/<ownerId>/`, so this needs both the owner (the
-   * authenticated identity) and the workspace. `files` dispatches through the
-   * identity door, where `scope.workspaceId` is the personal/session workspace —
-   * so the FOCUSED workspace rides `RequestContext.fileWorkspaceId` (set on both
-   * doors). No workspace in scope (e.g. an external `/mcp` call with no header) ⇒
-   * deny rather than guess a workspace.
+   * authenticated identity) and the workspace, which rides
+   * `RequestContext.workspaceId` (set on both doors). No workspace in scope
+   * (e.g. an external `/mcp` call with no header) ⇒ deny rather than guess a
+   * workspace.
    */
   function getStore(): FileStore {
     // Resolve the owner through the one shared rule (`resolveRequestUserId`) —
@@ -413,11 +412,10 @@ export function createFilesSource(runtime: Runtime, eventSink: EventSink): McpSo
     // in production (throws when an identity provider is configured but the
     // request carries no identity); DEV_IDENTITY only in dev.
     const ownerId = runtime.resolveRequestUserId(runtime.getCurrentIdentity() ?? undefined);
-    // Files are workspace-owned: the workspace comes from the request context's
-    // `fileWorkspaceId` (set on both doors), NOT `scope.workspaceId` (which is
-    // the personal/session workspace on the identity door). Deny when no workspace is
-    // in scope — e.g. an external `/mcp` call with no `X-Workspace-Id`.
-    const wsId = getRequestContext()?.fileWorkspaceId;
+    // Files are workspace-owned: the workspace comes from the request context
+    // (set on both doors). Deny when none is in scope — e.g. an external
+    // `/mcp` call with no `X-Workspace-Id`.
+    const wsId = getRequestContext()?.workspaceId;
     if (!wsId) {
       throw new Error("files: no workspace in scope (files are workspace-owned)");
     }

@@ -889,10 +889,9 @@ function createServer(
     // `getCurrentIdentity()`, mirroring the identity-door tools/call path).
     const identityReqCtx: RequestContext = {
       identity: sessionCtx.identity ?? null,
-      scope: { kind: "identity" },
-      // Files are workspace-owned: `files://` resolves in the request's
-      // validated workspace; undefined ⇒ not found (the resources wall denies).
-      fileWorkspaceId: mcpRequestWorkspace.getStore(),
+      // Workspace-owned identity data (`files://` etc.) resolves in the
+      // request's validated workspace; undefined ⇒ not found (the wall denies).
+      workspaceId: mcpRequestWorkspace.getStore(),
     };
     const identityResult = await readResourceFromIdentitySources(runtime, uri, identityReqCtx);
     if (identityResult) return identityResult;
@@ -1049,11 +1048,10 @@ async function executeIdentityToolCall(
 
   const identityCtx: RequestContext = {
     identity: sessionCtx.identity ?? null,
-    scope: { kind: "identity" },
-    // Files are workspace-owned: a `files__*` call resolves in the request's
-    // validated workspace; undefined (no / non-member header) ⇒ the file tool
-    // denies, consistent with the resources wall.
-    fileWorkspaceId: mcpRequestWorkspace.getStore(),
+    // Workspace-owned identity data resolves in the request's validated
+    // workspace; undefined (no / non-member header) ⇒ the tool denies,
+    // consistent with the resources wall.
+    workspaceId: mcpRequestWorkspace.getStore(),
   };
   const idResult = await runWithRequestContext(identityCtx, () =>
     routed.source.execute(bare, (args ?? {}) as Record<string, unknown>),
@@ -1129,12 +1127,7 @@ async function executeWorkspaceToolCall(
   // to enforce.
   const reqCtx: RequestContext = {
     identity: sessionCtx.identity ?? null,
-    scope: {
-      kind: "workspace",
-      workspaceId: wsId,
-      workspaceAgents: null,
-      workspaceModelOverride: null,
-    },
+    workspaceId: wsId,
   };
 
   if (isTaskRequest && taskAwareSource && taskStore) {
