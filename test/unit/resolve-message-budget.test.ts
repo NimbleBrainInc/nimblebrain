@@ -1,7 +1,8 @@
 import { describe, expect, it } from "bun:test";
 import type { ToolSchema } from "../../src/engine/types.ts";
 import {
-  DEFAULT_BUDGET_SAFETY_MARGIN_TOKENS,
+  MIN_BUDGET_SAFETY_MARGIN_TOKENS,
+  budgetSafetyMarginTokens,
   resolveMessageBudget,
 } from "../../src/runtime/resolve-message-budget.ts";
 
@@ -15,6 +16,70 @@ function tool(name: string, description: string): ToolSchema {
     },
   };
 }
+
+describe("budgetSafetyMarginTokens", () => {
+  it("holds the floor for windows the ratio resolves below it", () => {
+    // 8192 / 0.05 = 163_840 is the crossover; at or under it the floor binds,
+    // so every small-context model keeps exactly its previous margin.
+    expect(budgetSafetyMarginTokens(0)).toBe(MIN_BUDGET_SAFETY_MARGIN_TOKENS);
+    expect(budgetSafetyMarginTokens(64_000)).toBe(MIN_BUDGET_SAFETY_MARGIN_TOKENS);
+    expect(budgetSafetyMarginTokens(163_840)).toBe(MIN_BUDGET_SAFETY_MARGIN_TOKENS);
+  });
+
+  it("scales with the window above the crossover", () => {
+    expect(budgetSafetyMarginTokens(200_000)).toBe(10_000);
+    expect(budgetSafetyMarginTokens(262_144)).toBe(13_108);
+    expect(budgetSafetyMarginTokens(1_000_000)).toBe(50_000);
+  });
+
+  it("never resolves below the floor for any window", () => {
+    for (const ctx of [1, 1_000, 32_768, 100_000, 163_839]) {
+      expect(budgetSafetyMarginTokens(ctx)).toBeGreaterThanOrEqual(
+        MIN_BUDGET_SAFETY_MARGIN_TOKENS,
+      );
+    }
+  });
+});
+
+describe("resolveMessageBudget — large-window drift", () => {
+  it("leaves headroom for the drift that overflowed a 262K model by one token", () => {
+    // Observed in production: a turn on a 262,144-context model whose prompt
+    // the provider counted at 245,761 input tokens against 16,384 reserved
+    // output — one token over. Our pre-flight estimate had been 8,193 lower,
+    // which is the flat 8,192 margin plus one. The margin has to exceed the
+    // drift, not merely exist.
+    const OBSERVED_DRIFT = 8_193;
+    const result = resolveMessageBudget({
+      model: "nebius:moonshotai/Kimi-K2.6",
+      configMaxInputTokens: 500_000,
+      systemPrompt: "",
+      tools: [],
+      maxOutputTokens: 16_384,
+    });
+
+    expect(result.breakdown.modelContextWindow).toBe(262_144);
+    expect(result.breakdown.safetyMarginTokens).toBeGreaterThan(OBSERVED_DRIFT);
+    // The whole composition still fits with the drift applied on top.
+    expect(result.budget + 16_384 + OBSERVED_DRIFT).toBeLessThanOrEqual(262_144);
+  });
+
+  it("keeps a sub-crossover model's budget unchanged", () => {
+    // Resolves the margin itself (no override) on a catalog model below the
+    // ~164K crossover, so the floor is what binds. This is the inertness
+    // claim end to end: every model under the crossover composes exactly the
+    // budget it did before.
+    const result = resolveMessageBudget({
+      model: "nebius:openai/gpt-oss-120b", // 131_072 context
+      configMaxInputTokens: 500_000,
+      systemPrompt: "",
+      tools: [],
+      maxOutputTokens: 16_384,
+    });
+    expect(result.breakdown.modelContextWindow).toBe(131_072);
+    expect(result.breakdown.safetyMarginTokens).toBe(MIN_BUDGET_SAFETY_MARGIN_TOKENS);
+    expect(result.budget).toBe(131_072 - 16_384 - MIN_BUDGET_SAFETY_MARGIN_TOKENS);
+  });
+});
 
 describe("resolveMessageBudget", () => {
   it("uses model context window minus overhead when headroom is the binding constraint", () => {
@@ -37,7 +102,7 @@ describe("resolveMessageBudget", () => {
       Math.ceil(systemPrompt.length / 4) -
       0 -
       16_384 -
-      DEFAULT_BUDGET_SAFETY_MARGIN_TOKENS;
+      budgetSafetyMarginTokens(1_000_000);
     expect(result.budget).toBe(expected);
   });
 
@@ -81,12 +146,12 @@ describe("resolveMessageBudget", () => {
     });
 
     expect(result.breakdown.toolTokens).toBeGreaterThan(0);
-    // headroom = 1M − 0 − toolTokens − 16384 − 8192
+    // headroom = 1M − 0 − toolTokens − 16384 − margin(1M)
     const expectedHeadroom =
       1_000_000 -
       result.breakdown.toolTokens -
       16_384 -
-      DEFAULT_BUDGET_SAFETY_MARGIN_TOKENS;
+      budgetSafetyMarginTokens(1_000_000);
     expect(result.budget).toBe(expectedHeadroom);
   });
 
@@ -140,7 +205,7 @@ describe("resolveMessageBudget", () => {
     });
 
     expect(default_.budget - tight.budget).toBe(
-      100_000 - DEFAULT_BUDGET_SAFETY_MARGIN_TOKENS,
+      100_000 - budgetSafetyMarginTokens(1_000_000),
     );
   });
 });

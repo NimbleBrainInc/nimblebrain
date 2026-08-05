@@ -1617,7 +1617,7 @@ export class AgentEngine {
           // operator logs without flipping a debug flag. Recovery
           // firing means the pre-flight budget composition disagreed
           // with the provider's tokenizer — actionable signal for
-          // tuning DEFAULT_BUDGET_SAFETY_MARGIN_TOKENS or the
+          // tuning BUDGET_SAFETY_MARGIN_RATIO or the
           // estimator. Per-conversation correlation via runId; the
           // aggregate is what drives action.
           log.warn(

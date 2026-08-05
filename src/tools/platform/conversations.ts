@@ -10,6 +10,7 @@ import { handleList, type ListInput } from "../../bundles/conversations/src/tool
 import { handleSearch, type SearchInput } from "../../bundles/conversations/src/tools/search.ts";
 import { handleStats, type StatsInput } from "../../bundles/conversations/src/tools/stats.ts";
 import { handleUpdate, type UpdateInput } from "../../bundles/conversations/src/tools/update.ts";
+import { capPreview } from "../../conversation/preview.ts";
 import { textContent } from "../../engine/content-helpers.ts";
 import type { EventSink } from "../../engine/types.ts";
 import { getRequestContext } from "../../runtime/request-context.ts";
@@ -134,6 +135,21 @@ export async function createConversationsSource(
     return { workspaceId };
   }
 
+  /**
+   * Cap a summary's `preview` on the way out.
+   *
+   * `preview` is the conversation's first user message and these are tool
+   * responses, so an uncapped one carries a whole pasted document into the
+   * agent's context — twenty of them on a default `list` page. Applied HERE,
+   * at the wire, and never at the index: the stored preview backs the
+   * substring match behind `list?search=`, so capping at production would
+   * silently narrow recall. See `src/conversation/preview.ts`.
+   */
+  function capSummary<T extends { preview?: unknown }>(summary: T): T {
+    if (typeof summary.preview !== "string") return summary;
+    return { ...summary, preview: capPreview(summary.preview) };
+  }
+
   /** Shared error handler — catches, formats, returns isError result. */
   function withErrorHandling(
     fn: (input: Record<string, unknown>) => Promise<object>,
@@ -166,7 +182,13 @@ export async function createConversationsSource(
       handler: withErrorHandling(async (input) => {
         const { index } = await getIndex();
         const access = currentAccess();
-        return handleList(input as unknown as ListInput, index, currentScope(), access);
+        const result = await handleList(
+          input as unknown as ListInput,
+          index,
+          currentScope(),
+          access,
+        );
+        return { ...result, conversations: result.conversations.map(capSummary) };
       }),
     },
     {
@@ -196,7 +218,9 @@ export async function createConversationsSource(
       inputSchema: ConversationsUpdateInput,
       handler: withErrorHandling(async (input) => {
         const { index } = await getIndex();
-        return handleUpdate(input as unknown as UpdateInput, index, currentAccess());
+        return capSummary(
+          await handleUpdate(input as unknown as UpdateInput, index, currentAccess()),
+        );
       }),
     },
     {
@@ -206,7 +230,7 @@ export async function createConversationsSource(
       inputSchema: ConversationsForkInput,
       handler: withErrorHandling(async (input) => {
         const { index } = await getIndex();
-        return handleFork(input as unknown as ForkInput, index, currentAccess());
+        return capSummary(await handleFork(input as unknown as ForkInput, index, currentAccess()));
       }),
     },
     {
