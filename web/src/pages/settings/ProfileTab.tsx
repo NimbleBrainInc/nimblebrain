@@ -25,6 +25,12 @@ const THEME_OPTIONS: { value: Theme; label: string; description: string; icon: t
     { value: "dark", label: "Dark", description: "Warm charcoal interface", icon: Moon },
   ];
 
+interface ProfileConfig {
+  preferences?: Record<string, unknown>;
+  availableModels?: Record<string, ModelEntry[]>;
+  models?: { default?: string };
+}
+
 export function ProfileTab() {
   const session = useSession();
   const user = session?.user;
@@ -40,33 +46,30 @@ export function ProfileTab() {
   const [feedback, setFeedback] = useState<Feedback | null>(null);
   const [loading, setLoading] = useState(true);
 
+  const applyConfig = useCallback((config: ProfileConfig) => {
+    const prefs = config.preferences ?? {};
+    setAvailableModels(config.availableModels ?? {});
+    // The configured default is what an unset preference resolves to, so it is
+    // what the empty option has to name.
+    setConfiguredDefault(config.models?.default ?? "");
+    if (typeof prefs.model === "string") setModel(prefs.model);
+    if (typeof prefs.timezone === "string") setTimezone(prefs.timezone);
+    if (prefs.theme === "light" || prefs.theme === "dark" || prefs.theme === "system") {
+      setTheme(prefs.theme);
+    }
+    if (typeof prefs.displayName === "string" && prefs.displayName) {
+      setDisplayName(prefs.displayName);
+    }
+  }, []);
+
   useEffect(() => {
     callTool("nb", "get_config")
-      .then((res) => {
-        const config = parseToolResult<{
-          preferences?: Record<string, unknown>;
-          availableModels?: Record<string, ModelEntry[]>;
-          models?: { default?: string };
-        }>(res);
-        const prefs = config.preferences ?? {};
-        setAvailableModels(config.availableModels ?? {});
-        // The configured default is what an unset preference resolves to, so
-        // it is what the empty option has to name.
-        setConfiguredDefault(config.models?.default ?? "");
-        if (typeof prefs.model === "string") setModel(prefs.model);
-        if (typeof prefs.timezone === "string") setTimezone(prefs.timezone);
-        if (prefs.theme === "light" || prefs.theme === "dark" || prefs.theme === "system") {
-          setTheme(prefs.theme);
-        }
-        if (typeof prefs.displayName === "string" && prefs.displayName) {
-          setDisplayName(prefs.displayName);
-        }
-      })
+      .then((res) => applyConfig(parseToolResult<ProfileConfig>(res)))
       .catch(() => {
         // Keep defaults from session
       })
       .finally(() => setLoading(false));
-  }, []);
+  }, [applyConfig]);
 
   const handleThemeChange = useCallback(
     (value: Theme) => {
