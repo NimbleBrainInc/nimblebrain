@@ -6,13 +6,11 @@ import { ConversationIndex } from "../../../../../src/bundles/conversations/src/
 import { handleSearch } from "../../../../../src/bundles/conversations/src/tools/search.ts";
 
 /**
- * These fixtures live in a flat temp dir, so the index reads them as legacy
- * records with no stamped workspace -- the shape the owner's PERSONAL workspace
- * folds in. Scoping every call that way keeps the fixtures visible while the
- * handler still goes through the workspace wall. Cross-workspace scoping itself
- * is covered in test/unit/tools/platform/conversations-workspace-scope.test.ts.
+ * Fixtures live under the real workspace layout, because the index takes an
+ * entry's workspace from its DIRECTORY. Cross-workspace scoping itself is
+ * covered in test/unit/tools/platform/conversations-workspace-scope.test.ts.
  */
-const SCOPE = { workspaceId: "ws_user_usr_test", includeUnstamped: true };
+const SCOPE = { workspaceId: "ws_user_usr_test" };
 
 
 function tempDir(): string {
@@ -53,7 +51,9 @@ function writeConversation(dir: string, id: string, opts: WriteOpts = {}): void 
 	];
 
 	const lines = [meta, ...messages.map((m) => JSON.stringify({ ...m, timestamp: m.timestamp ?? createdAt }))];
-	writeFileSync(join(dir, `${id}.jsonl`), lines.join("\n") + "\n");
+	const wsDir = join(dir, "ws_user_usr_test", "conversations", "usr_test");
+	mkdirSync(wsDir, { recursive: true });
+	writeFileSync(join(wsDir, `${id}.jsonl`), lines.join("\n") + "\n");
 }
 
 describe("conversations__search", () => {

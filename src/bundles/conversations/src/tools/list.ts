@@ -39,7 +39,6 @@ export async function handleList(
       dateFrom: input.dateFrom,
       dateTo: input.dateTo,
       workspaceId: scope.workspaceId,
-      includeUnstamped: scope.includeUnstamped,
     },
     access,
   );

@@ -5,13 +5,11 @@ import { ConversationIndex } from "../../../../../src/bundles/conversations/src/
 import { handleList } from "../../../../../src/bundles/conversations/src/tools/list.ts";
 
 /**
- * These fixtures live in a flat temp dir, so the index reads them as legacy
- * records with no stamped workspace -- the shape the owner's PERSONAL workspace
- * folds in. Scoping every call that way keeps the fixtures visible while the
- * handler still goes through the workspace wall. Cross-workspace scoping itself
- * is covered in test/unit/tools/platform/conversations-workspace-scope.test.ts.
+ * Fixtures live under the real workspace layout, because the index takes an
+ * entry's workspace from its DIRECTORY. Cross-workspace scoping itself is
+ * covered in test/unit/tools/platform/conversations-workspace-scope.test.ts.
  */
-const SCOPE = { workspaceId: "ws_user_usr_test", includeUnstamped: true };
+const SCOPE = { workspaceId: "ws_user_usr_test" };
 
 
 const TMP_DIR = join(import.meta.dir, ".tmp-list-tool");
@@ -49,7 +47,9 @@ function writeConvFile(spec: ConvSpec): string {
 	}
 
 	const filename = `conv_${spec.id}.jsonl`;
-	const path = join(TMP_DIR, filename);
+	const dir = join(TMP_DIR, "ws_user_usr_test", "conversations", "usr_test");
+	mkdirSync(dir, { recursive: true });
+	const path = join(dir, filename);
 	writeFileSync(path, lines.map((l) => `${l}\n`).join(""));
 	return path;
 }

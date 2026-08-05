@@ -6,11 +6,17 @@
 
 - **`list`, `search`, and `stats` are walled to one workspace, and it is not the
   caller's to name.** Each takes a `scope` argument alongside `input`, supplied
-  by the platform source from the request's focused workspace. `list` no longer
-  accepts `workspaceId` / `includeUnstamped` on its input — an omitted workspace
-  used to mean "every workspace", and legacy records with no stamped workspace
-  now fold into the owner's personal workspace by derivation instead of a client
-  flag. `search` and `stats` were never scoped at all.
+  by the platform source from the workspace the request is bound to. `list` no
+  longer accepts `workspaceId` on its input — an omitted workspace used to mean
+  "every workspace". `search` and `stats` were never scoped at all.
+- **An entry's workspace comes from its directory, not its line-1 field.** The
+  index scan already descends through `<wsId>/conversations/<ownerId>/`, so it
+  records that workspace directly. This matches `ConversationLocator`, which has
+  always parsed the path, and removes the second source of truth. It also
+  removes the `includeUnstamped` concept entirely: "unstamped" was a property of
+  the denormalised field, and a record under a workspace's directory is in that
+  workspace whatever line 1 says. A legacy flat-layout file is under no
+  workspace and is listed by none.
 - `get`, `update`, `fork`, and `export` are unchanged: they address one
   conversation by id and stay owner-gated, so a direct link still resolves from
   whichever workspace the conversation lives in.

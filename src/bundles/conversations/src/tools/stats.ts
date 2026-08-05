@@ -140,7 +140,6 @@ export async function handleStats(
       dateTo: untilIso,
       sortBy: "created",
       workspaceId: scope.workspaceId,
-      includeUnstamped: scope.includeUnstamped,
     },
     access,
   );

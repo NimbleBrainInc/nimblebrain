@@ -47,6 +47,45 @@ afterEach(() => {
   rmSync(dir, { recursive: true, force: true });
 });
 
+test("a reader arriving mid-rebuild waits for it instead of reading the cleared map", async () => {
+  // `build()` clears the map before repopulating it, so the dangerous reader is
+  // the one that arrives when `dirty` is ALREADY false — cleared by the rebuild
+  // now in flight. It must join that rebuild, not conclude "clean, nothing to
+  // do" and answer against a half-empty index. This is why the in-flight check
+  // has to precede the dirty check.
+  for (let i = 0; i < 300; i++) writeConv(`conv_${String(i).padStart(3, "0")}`);
+  const index = new ConversationIndex();
+  await index.build(dir);
+  expect(index.size).toBe(300);
+
+  index.invalidate();
+  const rebuild = index.refresh();
+  // `dirty` is false from here on — the rebuild owns it.
+  const midReader = index.refresh().then(() => index.size);
+
+  const [, observed] = await Promise.all([rebuild, midReader]);
+  expect(observed).toBe(300);
+});
+
+test("a reader that joins an in-flight rebuild does not inherit its stale result", async () => {
+  writeConv("conv_one");
+  const index = new ConversationIndex();
+  await index.build(dir);
+
+  index.invalidate();
+  const first = index.refresh();
+
+  // A write lands after `build()` listed the directory, so the in-flight
+  // rebuild cannot contain it. A second reader arriving now must NOT be handed
+  // that rebuild's result — it has to re-decide once the rebuild finishes.
+  writeConv("conv_two");
+  index.invalidate();
+  const joiner = index.refresh();
+
+  await Promise.all([first, joiner]);
+  expect(index.size).toBe(2);
+});
+
 test("an invalidate() during an in-flight rebuild is not swallowed by that rebuild", async () => {
   writeConv("conv_one");
   const index = new ConversationIndex();

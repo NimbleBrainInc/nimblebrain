@@ -1147,9 +1147,9 @@ export class Runtime {
     // exactly that one workspace's tools plus the caller's identity tools —
     // never a cross-workspace union — and each tool call routes via the
     // orchestrator, which denies any other workspace. Single-workspace reads
-    // (focused app, overlays, skills) bind to the focused workspace; the file
-    // store and other session-bridge reads use the identity's personal
-    // workspace (`sessionWsId`).
+    // (focused app, overlays, skills) and the workspace-owned stores all bind
+    // to the conversation's own workspace — the one workspace the request is
+    // bound to.
     //
     // Identity resolution rules (strict, no `??` fallbacks anywhere):
     //   - When an identity provider is configured (production / `instance.json`):
@@ -1170,13 +1170,9 @@ export class Runtime {
     const ownerId = resolveRequestOwnerId(request.identity, this._identityProvider !== null);
     const requestIdentity = request.identity ?? DEV_IDENTITY;
 
-    // The personal workspace is the identity-bound chat's "session
-    // workspace" — used for overlays, file storage, app-skill reads, and
-    // the workspace-agents / workspace-models override lookup. Per-tool
-    // dispatch goes through the orchestrator's parsed-namespace path and
-    // does NOT read this value (acceptance criterion: every tool's
-    // WorkspaceContext is built from the parsed namespace, not from
-    // ChatRequest / conversation metadata).
+    // Provision the caller's personal workspace. It is where a chat with no
+    // focused workspace is born, and its registry has to exist before the
+    // session bridge runs — nothing else about the turn resolves against it.
     const sessionWsId = await this.prepareSessionWorkspace(requestIdentity);
 
     // The conversation's workspace — the binding, and the ONE workspace this
@@ -4874,10 +4870,6 @@ function buildWorkspaceContext(
   return workspace ? { id: workspace.id, name: workspace.name } : { id: wsId };
 }
 
-/**
- * The workspace-scoped RequestContext scope, carrying the session workspace's
- * agent profiles + model overrides (`null` when the record didn't load).
- */
 /** Compose the present-only `surfaceTools` options (focused server + request-allowed tools). */
 function buildSurfaceOptions(
   focusedServerName: string | undefined,

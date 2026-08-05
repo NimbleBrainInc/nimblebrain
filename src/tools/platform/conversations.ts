@@ -14,7 +14,6 @@ import { textContent } from "../../engine/content-helpers.ts";
 import type { EventSink } from "../../engine/types.ts";
 import { getRequestContext } from "../../runtime/request-context.ts";
 import type { Runtime } from "../../runtime/runtime.ts";
-import { personalWorkspaceIdFor } from "../../workspace/workspace-store.ts";
 import { defineInProcessApp, type InProcessTool } from "../in-process-app.ts";
 import type { McpSource } from "../mcp-source.ts";
 import { loadConversationsUi } from "../platform-resources/conversations/browser.ts";
@@ -61,7 +60,6 @@ export async function createConversationsSource(
   // that then races the first caller's full one. Awaiting the same promise makes
   // every caller wait for the same completed build.
   let indexBuild: Promise<ConversationIndex> | null = null;
-  let refreshInFlight: Promise<void> | null = null;
 
   async function getIndex(): Promise<{ index: ConversationIndex; dir: string }> {
     const dir = runtime.getWorkspaceStore().getWorkspacesDir();
@@ -84,15 +82,10 @@ export async function createConversationsSource(
       });
     }
     const index = await indexBuild;
-    // Coalesce concurrent refreshes for the same reason: `refresh()` rebuilds
-    // by clearing the map and repopulating, so two overlapping rebuilds expose
-    // a partially cleared index to whichever read lands in between.
-    if (!refreshInFlight) {
-      refreshInFlight = index.refresh().finally(() => {
-        refreshInFlight = null;
-      });
-    }
-    await refreshInFlight;
+    // `refresh()` coalesces concurrent rebuilds itself — it is the only place
+    // the in-flight build and the dirty flag are both visible, so a joiner
+    // there re-decides after the rebuild instead of inheriting its result.
+    await index.refresh();
     return { index, dir };
   }
 
@@ -130,7 +123,7 @@ export async function createConversationsSource(
    * rather than one the request proves. No workspace in scope ⇒ deny, never a
    * cross-workspace fallback.
    */
-  function currentScope(access: AccessContext): WorkspaceScope {
+  function currentScope(): WorkspaceScope {
     const workspaceId = getRequestContext()?.workspaceId;
     if (!workspaceId) {
       throw new Error(
@@ -138,10 +131,7 @@ export async function createConversationsSource(
           "the caller must carry a bound workspace, e.g. a validated X-Workspace-Id.",
       );
     }
-    // A legacy record with no stamped workspace belongs to the owner's personal
-    // workspace, and no migration stamps them. Derived here from the ambient
-    // workspace so a client cannot ask for them from a shared workspace.
-    return { workspaceId, includeUnstamped: workspaceId === personalWorkspaceIdFor(access.userId) };
+    return { workspaceId };
   }
 
   /** Shared error handler — catches, formats, returns isError result. */
@@ -176,7 +166,7 @@ export async function createConversationsSource(
       handler: withErrorHandling(async (input) => {
         const { index } = await getIndex();
         const access = currentAccess();
-        return handleList(input as unknown as ListInput, index, currentScope(access), access);
+        return handleList(input as unknown as ListInput, index, currentScope(), access);
       }),
     },
     {
@@ -197,7 +187,7 @@ export async function createConversationsSource(
       handler: withErrorHandling(async (input) => {
         const { index } = await getIndex();
         const access = currentAccess();
-        return handleSearch(input as unknown as SearchInput, index, currentScope(access), access);
+        return handleSearch(input as unknown as SearchInput, index, currentScope(), access);
       }),
     },
     {
@@ -227,7 +217,7 @@ export async function createConversationsSource(
       handler: withErrorHandling(async (input) => {
         const { index } = await getIndex();
         const access = currentAccess();
-        return handleStats(input as unknown as StatsInput, index, currentScope(access), access);
+        return handleStats(input as unknown as StatsInput, index, currentScope(), access);
       }),
     },
     {

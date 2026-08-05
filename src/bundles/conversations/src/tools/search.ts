@@ -108,7 +108,6 @@ export async function handleSearch(
     {
       limit: index.size || 1,
       workspaceId: scope.workspaceId,
-      includeUnstamped: scope.includeUnstamped,
     },
     access,
   );

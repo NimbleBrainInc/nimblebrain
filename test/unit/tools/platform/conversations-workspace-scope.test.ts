@@ -141,10 +141,8 @@ describe("the door exposes no workspace coordinate", () => {
   // soon as `workspaceId` is back on the input schema, a client can omit it,
   // and "omitted" is what produced a full-tenant read. The workspace is not the
   // caller's to name — same contract as `files__*`.
-  test("ConversationsListInput has no workspaceId or includeUnstamped", () => {
-    const properties = Object.keys(ConversationsListInput.properties);
-    expect(properties).not.toContain("workspaceId");
-    expect(properties).not.toContain("includeUnstamped");
+  test("ConversationsListInput has no workspaceId", () => {
+    expect(Object.keys(ConversationsListInput.properties)).not.toContain("workspaceId");
   });
 
   test("ConversationsSearchInput has no workspaceId", () => {
@@ -192,20 +190,12 @@ describe("conversations__list — ambient workspace scoping", () => {
     expect(idsOf(await exec("list", {}, WS_A))).not.toContain("conv_peer");
   });
 
-  test("the personal workspace folds in legacy unstamped conversations", async () => {
-    // No migration stamps legacy records, and an unstamped conversation belongs
-    // to the owner's personal workspace. Derived from the ambient workspace —
-    // never a client flag.
+  test("a record with no line-1 workspace is listed by the directory it lives in", async () => {
+    // `conv_legacy` carries no `workspaceId` on line 1 but sits in the personal
+    // workspace's partition. The directory is the binding, so it lists there —
+    // no "unstamped" concept and no client flag to get wrong.
     expect(idsOf(await exec("list", {}, WS_PERSONAL))).toEqual(["conv_legacy", "conv_p1"]);
-  });
-
-  test("a shared workspace never folds in legacy unstamped conversations", async () => {
     expect(idsOf(await exec("list", {}, WS_A))).not.toContain("conv_legacy");
-  });
-
-  test("a caller-supplied includeUnstamped cannot pull legacy chats into a shared workspace", async () => {
-    const ids = idsOf(await exec("list", { includeUnstamped: true }, WS_A));
-    expect(ids).toEqual(["conv_a1", "conv_a2"]);
   });
 });
 
@@ -283,6 +273,9 @@ describe("conversations index — concurrent cold reads", () => {
     for (let i = 0; i < 200; i++) {
       writeConv({ id: `conv_bulk${String(i).padStart(3, "0")}`, wsId: WS_A });
     }
+    // Replace the primed source with one over the bigger fixture set. Stop the
+    // old one first — `afterEach` only sees the replacement.
+    await source.stop();
     source = await createConversationsSource(makeRuntime(), new NoopEventSink());
     await source.start();
 

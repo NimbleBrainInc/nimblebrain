@@ -38,9 +38,11 @@ export interface IndexEntry {
    */
   ownerId: string | null;
   /**
-   * The workspace (workspace) the conversation ran in. `null` for legacy files
-   * with no stamped workspace — a consumer reads that as the owner's
-   * personal workspace. The workspace-scoped conversation list keys off this.
+   * The workspace the conversation lives in, taken from its DIRECTORY — the
+   * authoritative binding. The `workspaceId` on line 1 is a denormalised
+   * convenience and is deliberately not read here, so this wall and the
+   * `ConversationLocator`'s agree by construction. `null` only for the legacy
+   * flat layout, which is under no workspace and matches no scoped read.
    */
   workspaceId: string | null;
 }
@@ -56,13 +58,6 @@ export interface IndexEntry {
  */
 export interface WorkspaceScope {
   workspaceId: string;
-  /**
-   * Fold in entries with no stamped workspace. A legacy record predates the
-   * stamp and belongs to the owner's personal workspace, so this is true only
-   * when the scoped workspace IS that personal workspace. Derived from the
-   * ambient workspace, never passed in by a client.
-   */
-  includeUnstamped: boolean;
 }
 
 export interface ListOptions {
@@ -74,8 +69,6 @@ export interface ListOptions {
   dateTo?: string; // ISO 8601
   /** Scope to one workspace. Applied before pagination so the limit applies to the workspace's set. */
   workspaceId?: string;
-  /** With `workspaceId`, include workspaceless (legacy) entries — they belong to the personal workspace. */
-  includeUnstamped?: boolean;
 }
 
 /**
@@ -102,6 +95,8 @@ export class ConversationIndex {
   /** Maps filename (e.g. "conv_abc.jsonl") to conversation ID for fast fs.watch lookups. */
   private fileToId: Map<string, string> = new Map();
   private dir: string | null = null;
+  /** The in-flight `build()`, so concurrent readers join it instead of racing it. */
+  private rebuilding: Promise<void> | null = null;
   private watcher: FSWatcher | null = null;
   private debounceTimer: ReturnType<typeof setTimeout> | null = null;
   private pendingFiles: Set<string> = new Set();
@@ -114,10 +109,8 @@ export class ConversationIndex {
     this.entries.clear();
     this.fileToId.clear();
 
-    const files = listConversationFiles(dir);
-
-    for (const filePath of files) {
-      await this.indexFile(filePath);
+    for (const { filePath, wsId } of listConversationFiles(dir)) {
+      await this.indexFile(filePath, wsId);
     }
   }
 
@@ -139,14 +132,28 @@ export class ConversationIndex {
    * gone (so deletes don't ghost). Unlike `flushPending`, this is not add-only.
    */
   async refresh(): Promise<void> {
-    if (this.dirty && this.dir !== null) {
-      // Clear BEFORE the rebuild, not after. `build()` lists the directory up
-      // front, so a write landing mid-rebuild cannot be in this pass — but its
+    while (this.dir !== null) {
+      // Never answer against an index mid-rebuild: `build()` clears the map and
+      // then repopulates it, so a reader arriving inside that window would see
+      // a partial one. Join the in-flight rebuild, then re-decide — this is the
+      // only place both the rebuild and `dirty` are visible, which is why the
+      // coalescing belongs here rather than at a caller.
+      if (this.rebuilding) {
+        await this.rebuilding;
+        continue;
+      }
+      if (!this.dirty) return;
+      // Clear BEFORE the rebuild. `build()` lists the directory up front, so a
+      // write landing mid-rebuild cannot be in this pass — but its
       // `invalidate()` must survive it. Clearing afterwards lets the rebuild
-      // that never saw the write erase the flag raised for it, and the write
-      // then stays missing until an unrelated later one re-dirties the index.
+      // that never saw the write erase the flag raised for it; clearing first
+      // means the loop above sees `dirty` again and rebuilds for the joiner.
       this.dirty = false;
-      await this.build(this.dir);
+      const dir = this.dir;
+      this.rebuilding = this.build(dir).finally(() => {
+        this.rebuilding = null;
+      });
+      await this.rebuilding;
     }
   }
 
@@ -186,9 +193,9 @@ export class ConversationIndex {
     }
     await this.processPendingFiles();
     if (!this.dir) return;
-    for (const filePath of listConversationFiles(this.dir)) {
+    for (const { filePath, wsId } of listConversationFiles(this.dir)) {
       if (!this.fileToId.has(basename(filePath))) {
-        await this.indexFile(filePath);
+        await this.indexFile(filePath, wsId);
       }
     }
   }
@@ -218,14 +225,13 @@ export class ConversationIndex {
 
     // Workspace filter — scope to one workspace BEFORE pagination, so the limit
     // applies to the workspace's set rather than slicing a global page and then
-    // dropping out-of-workspace entries (which under-counts a workspace whose chats
-    // aren't in the global most-recent page). A workspaceless (legacy) entry
-    // belongs to the personal workspace, so it's included only when the caller
-    // asks for it via `includeUnstamped` (set when the focused workspace is personal).
+    // dropping out-of-workspace entries (which under-counts a workspace whose
+    // chats aren't in the global most-recent page). `e.workspaceId` is the
+    // entry's DIRECTORY, so a record is in exactly the workspace it is stored
+    // under — there is no "unstamped" case to fold in.
     if (options?.workspaceId) {
       const wsId = options.workspaceId;
-      const includeUnstamped = options.includeUnstamped ?? false;
-      items = items.filter((e) => (e.workspaceId ? e.workspaceId === wsId : includeUnstamped));
+      items = items.filter((e) => e.workspaceId === wsId);
     }
 
     // Search filter: case-insensitive substring on title + preview
@@ -291,7 +297,7 @@ export class ConversationIndex {
   // Internal helpers
   // ---------------------------------------------------------------------------
 
-  private async indexFile(filePath: string): Promise<void> {
+  private async indexFile(filePath: string, wsId: string | null): Promise<void> {
     const header = await readConversationHeader(filePath);
     if (!header) return;
 
@@ -307,7 +313,7 @@ export class ConversationIndex {
       preview: header.preview,
       filePath,
       ownerId: header.meta.ownerId ?? null,
-      workspaceId: header.meta.workspaceId ?? null,
+      workspaceId: wsId,
     };
 
     this.entries.set(entry.id, entry);
@@ -340,7 +346,12 @@ export class ConversationIndex {
           preview: header.preview,
           filePath,
           ownerId: header.meta.ownerId ?? null,
-          workspaceId: header.meta.workspaceId ?? null,
+          // The fs.watch path resolves `join(this.dir, filename)`, so it only
+          // ever fires for the flat single-directory layout — which is under
+          // no workspace. The recursive workspace layout defeats the watcher
+          // and goes through `invalidate()` → `refresh()` → `build()`, where
+          // the walk supplies the directory's workspace.
+          workspaceId: null,
         };
         this.entries.set(entry.id, entry);
         this.fileToId.set(filename, entry.id);
