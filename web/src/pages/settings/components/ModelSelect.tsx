@@ -30,11 +30,21 @@ export function ModelSelect({
   /** Text for the empty option — the caller says what "no selection" means. */
   placeholder?: string;
 }) {
+  // A `<select>` cannot display a value with no matching option — it falls back
+  // to showing the first one. So a stored model the catalog no longer carries
+  // (deprecated, or permitted but uncatalogued) would render as the empty
+  // option while state still holds the real value, telling the reader they are
+  // on the default when they are not, and posting the hidden value on save.
+  const known = Object.entries(availableModels).some(([provider, models]) =>
+    models.some((m) => `${provider}:${m.id}` === value),
+  );
+
   return (
     <div className="space-y-1.5">
       <Label htmlFor={id}>{label}</Label>
       <Select id={id} value={value} onChange={(e) => onChange(e.target.value)}>
         <option value="">{placeholder}</option>
+        {value && !known && <option value={value}>{value} (not in the current catalog)</option>}
         {Object.entries(availableModels).map(([provider, models]) => (
           <optgroup key={provider} label={provider}>
             {models.map((m) => {

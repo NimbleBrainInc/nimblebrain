@@ -26,12 +26,15 @@ type CallToolArgs = { server: string; tool: string; args: Record<string, unknown
 const callToolCalls: CallToolArgs[] = [];
 
 let storedModel = "";
+let configFails = false;
+let saveRejects = false;
 
 mock.module("../src/api/client", () => ({
   ...realClient,
   callTool: async (server: string, tool: string, args: Record<string, unknown>) => {
     callToolCalls.push({ server, tool, args });
     if (tool === "get_config") {
+      if (configFails) throw new Error("network down");
       return {
         structuredContent: {
           models: { default: "anthropic:claude-sonnet-4-6" },
@@ -53,6 +56,10 @@ mock.module("../src/api/client", () => ({
         },
         isError: false,
       };
+    }
+    if (tool === "set_preferences" && saveRejects) {
+      // How an MCP tool refuses: a resolved result carrying isError, not a throw.
+      return { content: [{ type: "text", text: 'Model "x" is not permitted.' }], isError: true };
     }
     return { structuredContent: {}, isError: false };
   },
@@ -82,6 +89,8 @@ afterEach(() => {
   mounted = null;
   callToolCalls.length = 0;
   storedModel = "";
+  configFails = false;
+  saveRejects = false;
 });
 
 async function mount(): Promise<Mounted> {
@@ -122,6 +131,12 @@ async function save(container: HTMLElement) {
   }
   throw new Error("Save button not found");
 }
+
+const findByText = (c: HTMLElement, text: string) =>
+  Array.from(c.querySelectorAll("*")).some((el) => el.textContent === text);
+
+const saveButton = (c: HTMLElement) =>
+  Array.from(c.querySelectorAll("button")).find((b) => b.textContent?.includes("Save"));
 
 const lastSet = () => callToolCalls.filter((c) => c.tool === "set_preferences").at(-1);
 
@@ -177,5 +192,39 @@ describe("the Model control on /profile", () => {
     await choose(select(mounted.container)!, "");
     await save(mounted.container);
     expect(lastSet()?.args).toHaveProperty("model", "");
+  });
+});
+
+describe("the form does not claim more than it did", () => {
+  // `callTool` resolves on an MCP tool error — only the HTTP call throws. The
+  // model gate refuses before anything is written, so a swallowed isError
+  // reports "saved" over a save that discarded the name and timezone too.
+  test("reports a refused save as an error, not as success", async () => {
+    saveRejects = true;
+    mounted = await mount();
+    await save(mounted.container);
+    expect(findByText(mounted.container, "Preferences saved.")).toBe(false);
+    expect(mounted.container.textContent).toContain("not permitted");
+  });
+
+  // A failed read leaves the form holding empty defaults, and the server reads
+  // an empty model as a clear — so saving would wipe settings never touched.
+  test("refuses to save settings it could not read", async () => {
+    configFails = true;
+    mounted = await mount();
+    expect(saveButton(mounted.container)?.disabled).toBe(true);
+    expect(mounted.container.textContent).toContain("Couldn't load your settings");
+  });
+});
+
+describe("a stored model the catalog no longer carries", () => {
+  // Rendering it as the empty option would tell the reader they are on the
+  // default while state still holds the real value — and post it on save.
+  test("stays visible and selected rather than reading as the default", async () => {
+    storedModel = "google:gemini-3-pro-preview";
+    mounted = await mount();
+    const el = select(mounted.container)!;
+    expect(el.value).toBe("google:gemini-3-pro-preview");
+    expect(el.selectedOptions[0]?.textContent).toContain("google:gemini-3-pro-preview");
   });
 });
