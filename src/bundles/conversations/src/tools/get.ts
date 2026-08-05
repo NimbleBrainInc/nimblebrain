@@ -70,6 +70,12 @@ export async function handleGet(
   input: GetInput,
   index: ConversationIndex,
   access?: AccessContext,
+  /**
+   * Whether a turn is generating for this conversation right now. Supplied by
+   * the caller because liveness lives in the kernel's RunBus, not in the event
+   * log — without it a turn whose writer died reads as still in flight.
+   */
+  runActive?: boolean,
 ): Promise<object> {
   // `index.get` returns undefined for both not-found and exists-but-
   // not-yours when `access` is supplied — one error message, no leak.
@@ -78,7 +84,7 @@ export async function handleGet(
     throw new Error(`Conversation not found: ${input.id}`);
   }
 
-  const conversation = await readConversation(entry.filePath);
+  const conversation = await readConversation(entry.filePath, { runActive });
   if (!conversation) {
     throw new Error(`Conversation not found: ${input.id}`);
   }

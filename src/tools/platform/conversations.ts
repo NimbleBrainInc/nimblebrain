@@ -198,7 +198,8 @@ export async function createConversationsSource(
       inputSchema: ConversationsGetInput,
       handler: withErrorHandling(async (input) => {
         const { index } = await getIndex();
-        return handleGet(input as unknown as GetInput, index, currentAccess());
+        const get = input as unknown as GetInput;
+        return handleGet(get, index, currentAccess(), runtime.isTurnActive(get.id));
       }),
     },
     {
