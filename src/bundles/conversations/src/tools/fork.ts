@@ -165,6 +165,11 @@ export async function handleFork(
     totalOutputTokens,
     totalCostUsd,
     lastModel,
+    // A fork continues the source conversation, so it inherits the model
+    // binding along with the owner. Without this the copy would be unpinned
+    // and resolve from current config, replaying the source's history to a
+    // different provider.
+    ...(conversation.meta.model ? { model: conversation.meta.model } : {}),
     // The fork inherits the source's owner. Stage 1 requires ownerId
     // on every conversation file — without this stamp the new file
     // would be unloadable by `EventSourcedConversationStore.load`

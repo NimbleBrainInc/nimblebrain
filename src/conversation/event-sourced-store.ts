@@ -92,6 +92,7 @@ function parseConversationHeader(raw: Record<string, unknown>): Conversation {
     title: (raw.title as string | null) ?? null,
     lastModel: (raw.lastModel as string | null) ?? null,
     ownerId: raw.ownerId as string,
+    ...(raw.model ? { model: raw.model as string } : {}),
     ...(raw.format ? { format: raw.format as "events" } : {}),
     ...(raw.workspaceId ? { workspaceId: raw.workspaceId as string } : {}),
     ...(raw.visibility ? { visibility: raw.visibility as "private" | "shared" } : {}),
@@ -424,6 +425,7 @@ export class EventSourcedConversationStore implements ConversationStore, EventSi
       lastModel: null,
       ownerId: options.ownerId,
       format: "events",
+      ...(options.model ? { model: options.model } : {}),
       ...(options.workspaceId ? { workspaceId: options.workspaceId } : {}),
       ...(options.metadata ? { metadata: options.metadata } : {}),
     };
@@ -674,6 +676,10 @@ export class EventSourcedConversationStore implements ConversationStore, EventSi
 
     const newConv = await this.create({
       ownerId: source.ownerId,
+      // A fork continues the source conversation, so it inherits the binding.
+      // Re-resolving here would silently move the copy onto the current
+      // default and replay the source's history to a different provider.
+      ...(source.model ? { model: source.model } : {}),
       ...(source.workspaceId ? { workspaceId: source.workspaceId } : {}),
     });
 
