@@ -133,8 +133,8 @@ export function useChat(initialConversationId?: string, currentUserId?: string):
   }, [activeKey]);
 
   const retryLastMessage = useCallback(() => {
-    // The store replays the original send (text + model + appContext) itself —
-    // no re-routing through sendMessage, which dropped the model selection.
+    // The store replays the original send itself rather than re-routing
+    // through sendMessage, which would rebuild the params from current state.
     chatStore.retryLastMessage(activeKey);
   }, [activeKey]);
 
