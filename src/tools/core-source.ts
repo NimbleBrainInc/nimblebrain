@@ -14,6 +14,7 @@ import {
 } from "../host-resources/artifacts/index.ts";
 import { ORG_ADMIN_ROLES } from "../identity/types.ts";
 import { getAvailableModels, isModelAllowed } from "../model/catalog.ts";
+import { MODEL_SLOTS } from "../model/slots.ts";
 import { log } from "../observability/log.ts";
 import {
   getRequestContext,
@@ -46,8 +47,6 @@ import type { BriefingOutput } from "../services/home-types.ts";
 // stage is factored out so no single function carries the whole decision tree.
 // Validators return an error message (surfaced as an `isError` tool result) or
 // null when the field is absent or valid.
-
-const MODEL_SLOTS = ["default", "fast", "reasoning"];
 
 /** Valid `thinkingEffort` values, in ascending depth. Mirrors `ThinkingEffort`. */
 const THINKING_EFFORTS = [
@@ -132,7 +131,7 @@ function positiveIntFieldError(
 function validateModelSlots(input: Record<string, unknown>, runtime: Runtime): string | null {
   if (input.models !== undefined && typeof input.models === "object") {
     for (const [slot, value] of Object.entries(input.models as Record<string, unknown>)) {
-      if (!MODEL_SLOTS.includes(slot)) {
+      if (!(MODEL_SLOTS as readonly string[]).includes(slot)) {
         return `Unknown model slot "${slot}". Valid slots: default, fast, reasoning.`;
       }
       if (!isModelAllowed(String(value), runtime.getProviderConfigs())) {
