@@ -80,6 +80,20 @@ type CatalogData = Record<
 // GreenPT bills in EUR, so catalog-greenpt.json converts the July 2026 prices
 // to the USD units this catalog requires at the ECB reference rate from
 // 2026-07-24 (1 EUR = 1.1377 USD).
+//
+// Curated by hand on 2026-08-05, with no generator and no probe behind it —
+// unlike `sync-nebius`, which pulls the account's `/v1/models` and verifies
+// what it writes. Re-check the ids, prices, and capabilities against GreenPT's
+// published models before trusting this file far past that date.
+//
+// Every GreenPT entry carries `limits.output` at the platform default
+// (`DEFAULT_MAX_OUTPUT_TOKENS`) because GreenPT publishes no per-model output
+// cap. `resolveMaxOutputTokens` sends `limits.output` as `max_tokens`, so a
+// figure invented here is a real ceiling on every request — and one set to the
+// full context window leaves the prompt no room at all. `sync-models` collapses
+// exactly that shape to the same default, and every `catalog-nebius.json` entry
+// carries it for the same reason. Replace a figure only with one GreenPT
+// publishes.
 const data = { ...catalogData, ...greenptData, ...nebiusData } as CatalogData;
 
 /**
