@@ -695,7 +695,13 @@ export class WorkosIdentityProvider implements IdentityProvider {
    * WorkOS-derived role. A WorkOS owner-slug role therefore grants app `admin`.
    *
    * Returns null if the user has no org membership — a security signal that the
-   * user should be denied access.
+   * user should be denied access, and the only meaning null carries here.
+   *
+   * Throws {@link TransientAuthError} if the membership lookup itself failed.
+   * That is not a verdict about membership, and callers must not read it as
+   * one: `resolveUser` treats null as definitive and evicts the cached
+   * identity, so returning null on an API error denies a valid session and
+   * takes the fallback that would have covered the next request with it.
    */
   private async resolveOrgRole(workosUserId: string): Promise<OrgRole | null> {
     if (!this.organizationId) return "member";

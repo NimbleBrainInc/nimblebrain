@@ -270,6 +270,38 @@ describe("resolveUser stale cache fallback", () => {
     expect((err as TransientAuthError).reason).toBe("user_unresolvable");
   });
 
+  it("keeps the cached identity usable across a memberships outage", async () => {
+    const provider = createProvider();
+    const baseTime = Date.now();
+    provider.now = () => baseTime;
+
+    // Warm the cache on a healthy request.
+    const token = await makeValidToken("user_memberships_warm", baseTime);
+    expect(await provider.verifyRequest(makeRequest(token))).not.toBeNull();
+
+    // Memberships endpoint goes down. getUser still works.
+    const workos = (provider as unknown as { workos: Record<string, unknown> }).workos;
+    (workos.userManagement as Record<string, unknown>).listOrganizationMemberships = async () => {
+      throw new Error("WorkOS memberships 429");
+    };
+    provider.now = () => baseTime + 6 * 60 * 1000;
+    provider.fetcher = async () => new Response(jwksResponseBody(), { status: 200 });
+
+    // The other half of the fix: the outage must not evict the entry. Deleting
+    // it here would deny THIS request and every later one for the outage's
+    // duration — the cache is what carries the session through.
+    const token2 = await makeValidToken("user_memberships_warm", baseTime + 6 * 60 * 1000);
+    const second = await provider.verifyRequest(makeRequest(token2));
+    expect(second).not.toBeNull();
+    expect(second!.id).toBe("user_memberships_warm");
+
+    // Still cached on a third attempt — the entry survived, it was not just
+    // read once on the way out.
+    const token3 = await makeValidToken("user_memberships_warm", baseTime + 7 * 60 * 1000);
+    provider.now = () => baseTime + 7 * 60 * 1000;
+    expect(await provider.verifyRequest(makeRequest(token3))).not.toBeNull();
+  });
+
   it("signals unavailable when the memberships endpoint fails and no cache exists", async () => {
     const provider = createProvider();
 
