@@ -50,11 +50,17 @@ describe("formatAppsSection sanitizes bundle-authored names", () => {
     expect(bullets).toHaveLength(2);
   });
 
+  // Scoped to the bullet, not the whole prompt: another section may legitimately
+  // contain a tab, and a global assertion would fail for reasons unrelated to this.
   test("control characters are stripped from both names", () => {
-    const prompt = promptWith([{ name: "a\r\tb", ui: { name: "c\u0000d" }, trustScore: 0 }]);
-    expect(prompt).not.toContain("\r");
-    expect(prompt).not.toContain("\t");
-    expect(prompt).not.toContain("\u0000");
+    // One control character per name, so the expected fold is unambiguous —
+    // sanitizeLineField replaces each one with a space rather than deleting it.
+    const [bullet] = appBullets(
+      promptWith([{ name: "a\tb", ui: { name: "c\u0000d" }, trustScore: 0 }]),
+    );
+    expect(bullet).not.toContain("\t");
+    expect(bullet).not.toContain("\u0000");
+    expect(bullet).toBe("- a b (has UI: c d) \u2014 MTF Score: 0");
   });
 
   test("an ordinary name still renders intact", () => {
@@ -78,6 +84,24 @@ describe("hostMetaToUiMeta bounds bundle-authored display strings", () => {
 
   test("a missing icon stays an empty string, not undefined", () => {
     expect(hostMetaToUiMeta({ name: "People" })?.icon).toBe("");
+  });
+
+  // `hostMeta` is an unchecked cast over registry JSON, so a truthy non-string
+  // reaches here. Before the typeof guard these threw out of catalog projection
+  // (killing every entry, since `catalogEntries` has no per-entry try/catch), and
+  // an array — which has its own `.slice` — survived projection to throw later
+  // inside `sanitizeLineField` on the prompt path.
+  test.each([[123], [true], [{ a: 1 }], [["x"]]])(
+    "a truthy non-string name yields null rather than throwing: %p",
+    (name) => {
+      expect(() => hostMetaToUiMeta({ name } as never)).not.toThrow();
+      expect(hostMetaToUiMeta({ name } as never)).toBeNull();
+    },
+  );
+
+  test("a non-string icon degrades to empty rather than throwing", () => {
+    expect(() => hostMetaToUiMeta({ name: "People", icon: 7 } as never)).not.toThrow();
+    expect(hostMetaToUiMeta({ name: "People", icon: 7 } as never)?.icon).toBe("");
   });
 
   test("no name still yields null — the host needs a label to surface anything", () => {

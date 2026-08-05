@@ -798,21 +798,10 @@ export function deriveBundleFromSkillPath(sourcePath?: string): string | undefin
 function formatAppsSection(apps: PromptAppInfo[], hasProxiedTools?: boolean): string {
   const lines = ["## Installed Apps"];
   for (const app of apps) {
-    // Two names share this one `- ` line, and they have different provenance.
-    //
-    // `ui.name` is bundle-authored — the server's own
-    // `_meta["ai.nimblebrain/host"].name` — so an unescaped newline in it
-    // forges a sibling entry in this list. That is the one that needed fixing;
-    // `formatFocusedAppSection` already sanitizes the name it renders, and this
-    // is the same field on the other surface.
-    //
-    // `app.name` is NOT bundle-reachable: it is `instance.serverName`, which
-    // every derived path slugifies to `[a-z0-9-]` (`slugifyServerName`,
-    // `deriveServerName`). Only an operator hand-setting `ref.serverName` in
-    // `nimblebrain.json` can put a newline there — the same file where they
-    // already choose bundle paths and env. It is sanitized anyway because it is
-    // free on a slug and because leaving one half of a shared line unguarded is
-    // how the asymmetry above got written in the first place.
+    // Both names land on one `- ` bullet, so an unescaped newline in either
+    // forges a sibling entry. `ui.name` is bundle-authored and is the one that
+    // can carry one; `app.name` is a slug unless an operator hand-sets
+    // `ref.serverName`. Sanitized together because the line is shared.
     const uiLabel = app.ui ? `has UI: ${sanitizeLineField(app.ui.name)}` : "no UI";
     const trustLabel = app.trustScore != null ? ` — MTF Score: ${app.trustScore}` : "";
     lines.push(`- ${sanitizeLineField(app.name)} (${uiLabel})${trustLabel}`);

@@ -41,22 +41,15 @@ export function mergeBundles(userBundles: BundleRef[], noDefaults?: boolean): Bu
  * null unless a `name` is present (the host needs a label to surface anything).
  */
 export function hostMetaToUiMeta(hostMeta: HostManifestMeta | undefined): BundleUiMeta | null {
-  if (!hostMeta?.name) return null;
-  // Bounded for the same reason a placement's `label`/`icon` are: these come
-  // from the server's own `_meta` and are rendered as host chrome.
-  //
-  // NOT the same enforcement model as those, though. `sanitizePlacements` also
-  // runs at registration and again at boot, because placements persist RAW on
-  // the `BundleRef` and would otherwise re-register verbatim on restart. This
-  // bound runs at projection only — every producer of a `BundleUiMeta` funnels
-  // through here, so anything installed from now on persists the bounded value,
-  // but a record written before this bound keeps its `name` until reinstall.
-  // The boot read is persisted-record-first (`ref.ui ?? …`) and does not
-  // re-bound. That residual is bounded in turn by `formatAppsSection`
-  // sanitizing what it renders, so the exposure is length, not structure.
+  // `hostMeta` is an unchecked cast over registry JSON (`getNimbleBrainHostMeta`),
+  // so every field here is `unknown` in practice and only the schema-gated
+  // install path has validated it. Type-check before touching, exactly as
+  // `sanitizePlacementFields` does below — a truthy non-string `name` would
+  // otherwise throw out of catalog projection and take the whole catalog with it.
+  if (typeof hostMeta?.name !== "string" || hostMeta.name === "") return null;
   const ui: BundleUiMeta = {
     name: hostMeta.name.slice(0, PLACEMENT_STRING_MAX),
-    icon: (hostMeta.icon ?? "").slice(0, PLACEMENT_STRING_MAX),
+    icon: typeof hostMeta.icon === "string" ? hostMeta.icon.slice(0, PLACEMENT_STRING_MAX) : "",
   };
   if (hostMeta.placements && hostMeta.placements.length > 0) {
     ui.placements = hostMeta.placements;
