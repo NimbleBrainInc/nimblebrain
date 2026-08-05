@@ -33,12 +33,19 @@ export class HostManifestGateError extends Error {
  * Validate a bundle's `_meta["ai.nimblebrain/host"]` block at install
  * time. Two layered checks, both fatal:
  *
- * 1. **Schema validity.** Runs `validateHostMeta` against the JSON Schema
- *    (host_version enum, host_capabilities/host_version binding,
- *    additionalProperties:false on HostCapabilityRequirement). Catches
- *    typos like `requierd: true` that would silently let an "I require X"
- *    declaration degrade to "I prefer X" without anyone noticing — the
- *    exact failure mode the gate is supposed to prevent.
+ * 1. **Schema validity.** Runs `validateHostMeta` against the JSON Schema,
+ *    which is strict in exactly one place: additionalProperties:false on
+ *    HostCapabilityRequirement. That catches typos like `requierd: true`
+ *    that would silently let an "I require X" declaration degrade to "I
+ *    prefer X" without anyone noticing — the exact failure mode the gate
+ *    is supposed to prevent. Everything else is deliberately tolerant per
+ *    the contract's tolerance lock (see the `host_version` description in
+ *    host-manifest.schema.json): `host_version` is an open string, not an
+ *    enum, so a newer version installs rather than hard-failing; unknown
+ *    top-level keys validate and are ignored; and the "host_capabilities
+ *    needs >= 1.1" pairing is advisory, not gated here. Do not tighten
+ *    any of those into a schema rule — forward-compat across host and
+ *    bundle versions depends on them staying open.
  *
  * 2. **Capability availability.** Every entry in `host_capabilities` with
  *    `required: true` must match a key the platform advertises in

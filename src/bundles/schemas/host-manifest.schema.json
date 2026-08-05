@@ -9,7 +9,7 @@
   "properties": {
     "host_version": {
       "type": "string",
-      "description": "Host extension contract version. Known values: \"1.0\", \"1.1\" (1.1 adds host_capabilities). FORWARD-COMPATIBLE: an unknown version is NOT rejected — the host parses the fields it understands and ignores the rest (see the tolerance lock in the host-placement spec). host_capabilities requires version >= \"1.1\"."
+      "description": "Host extension contract version. Known values: \"1.0\", \"1.1\" (1.1 adds host_capabilities). FORWARD-COMPATIBLE, and this tolerance is part of the contract: an unknown version is NOT rejected — the host parses the fields it understands and ignores the rest; unknown top-level keys validate and are ignored; an unknown or malformed placement slot drops only that placement, never the whole declaration. By convention host_capabilities belongs to version \"1.1\" and up; this pairing is advisory and is not schema-enforced."
     },
     "host_capabilities": {
       "type": "object",
