@@ -798,9 +798,14 @@ export function deriveBundleFromSkillPath(sourcePath?: string): string | undefin
 function formatAppsSection(apps: PromptAppInfo[], hasProxiedTools?: boolean): string {
   const lines = ["## Installed Apps"];
   for (const app of apps) {
-    const uiLabel = app.ui ? `has UI: ${app.ui.name}` : "no UI";
+    // Both names are bundle-authored: `app.name` is the source name and
+    // `ui.name` comes from the server's own `_meta["ai.nimblebrain/host"]`.
+    // They share one `- ` line, so an unescaped newline in either forges a
+    // sibling entry in this list. `formatFocusedAppSection` already sanitizes
+    // the name it renders; this is the same field on the other surface.
+    const uiLabel = app.ui ? `has UI: ${sanitizeLineField(app.ui.name)}` : "no UI";
     const trustLabel = app.trustScore != null ? ` — MTF Score: ${app.trustScore}` : "";
-    lines.push(`- ${app.name} (${uiLabel})${trustLabel}`);
+    lines.push(`- ${sanitizeLineField(app.name)} (${uiLabel})${trustLabel}`);
     if (app.description) {
       lines.push(wrapContained("app-description", app.description));
     }

@@ -6,7 +6,7 @@ import type {
   PlacementDeclaration,
 } from "./types.ts";
 
-/** Max length for untrusted display strings on a placement (label/icon). */
+/** Max length for a bundle-authored display string (host `name`/`icon`, placement `label`/`icon`). */
 const PLACEMENT_STRING_MAX = 128;
 
 /**
@@ -42,7 +42,14 @@ export function mergeBundles(userBundles: BundleRef[], noDefaults?: boolean): Bu
  */
 export function hostMetaToUiMeta(hostMeta: HostManifestMeta | undefined): BundleUiMeta | null {
   if (!hostMeta?.name) return null;
-  const ui: BundleUiMeta = { name: hostMeta.name, icon: hostMeta.icon ?? "" };
+  // Bounded for the same reason a placement's `label`/`icon` are: these come
+  // from the server's own `_meta` and are rendered as host chrome. `name` also
+  // reaches the system prompt on every turn (`formatAppsSection`), so an
+  // unbounded one is per-turn context the operator never agreed to spend.
+  const ui: BundleUiMeta = {
+    name: hostMeta.name.slice(0, PLACEMENT_STRING_MAX),
+    icon: (hostMeta.icon ?? "").slice(0, PLACEMENT_STRING_MAX),
+  };
   if (hostMeta.placements && hostMeta.placements.length > 0) {
     ui.placements = hostMeta.placements;
   }
