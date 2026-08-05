@@ -157,3 +157,39 @@ describe("a deployment with no providers config has no policy to enforce", () =>
     }
   });
 });
+
+describe("the gate runs where the model is used, not on every turn", () => {
+  // A resume reads `conversation.model` and discards whatever the request
+  // carried, so refusing the request over that value refuses a turn on a model
+  // it never runs. Building the create options eagerly did exactly that.
+  //
+  // The conversation is seeded through the store rather than a first turn: the
+  // allowlist rides on `providers`, which displaces the echo adapter, so no
+  // turn can complete in this harness. Only the resume path is under test.
+  it("resumes a conversation pinned to an allowed model despite an off-list request model", async () => {
+    const runtime = await startWithAllowlist("resume-unaffected", ["claude-sonnet-4-6"]);
+    try {
+      const store = runtime.workspaceConversationStore(TEST_WORKSPACE_ID, "_dev");
+      const { id } = await store.create({
+        ownerId: "_dev",
+        workspaceId: TEST_WORKSPACE_ID,
+        model: "anthropic:claude-sonnet-4-6",
+      });
+
+      const err = await runtime
+        .chat({
+          message: "again",
+          workspaceId: TEST_WORKSPACE_ID,
+          conversationId: id,
+          model: "anthropic:claude-opus-4-6",
+        })
+        .then(
+          () => null,
+          (e) => e,
+        );
+      expect(err).not.toBeInstanceOf(ModelNotAllowedError);
+    } finally {
+      await runtime.shutdown();
+    }
+  });
+});

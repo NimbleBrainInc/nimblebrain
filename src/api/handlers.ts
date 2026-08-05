@@ -159,6 +159,8 @@ function mapChatTurnError(err: unknown): Response | null {
   if (err instanceof ConversationAccessDeniedError) {
     return conversationAccessDeniedResponse(err.conversationId);
   }
+  // Both chat doors can surface this: `store.load` throws it on a
+  // pre-migration (ownerless) conversation. 422 rather than a raw 500.
   if (err instanceof ConversationCorruptedError) {
     return conversationCorruptedResponse(err);
   }
@@ -204,23 +206,12 @@ export async function handleChatStart(
     const { conversationId } = await runtime.startTurn(parsed);
     return Response.json({ conversationId });
   } catch (err) {
-    if (err instanceof RunInProgressError) {
-      return runInProgressResponse(parsed.conversationId ?? "");
-    }
-    if (err instanceof ConversationAccessDeniedError) {
-      return apiError(
-        403,
-        "conversation_access_denied",
-        "You do not have access to this conversation.",
-        { conversationId: parsed.conversationId },
-      );
-    }
-    // startTurn → store.load can throw on a pre-migration (ownerless)
-    // conversation. Map to 422 — parity with handleChat / handleChatCancel —
-    // instead of leaking a raw 500.
-    if (err instanceof ConversationCorruptedError) {
-      return conversationCorruptedResponse(err);
-    }
+    // Share the mapper with `handleChat` rather than restating its branches.
+    // A private copy drifts: it silently missed a new error class and returned
+    // 500 on the route the web client actually sends on, while `/v1/chat`
+    // returned the right status for the identical body.
+    const mapped = mapChatTurnError(err);
+    if (mapped) return mapped;
     throw err;
   }
 }
