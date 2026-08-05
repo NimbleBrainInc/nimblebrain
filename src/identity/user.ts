@@ -9,6 +9,15 @@ export interface UserPreferences {
   timezone?: string;
   locale?: string;
   theme?: string;
+  /**
+   * The person's own model choice, applied to conversations they start.
+   *
+   * `default` only, and deliberately not `Partial<ModelSlots>`: `fast` carries
+   * the full tool surface and a small-context model there degrades compaction
+   * and briefing in a way the chooser never sees, so it stays operator-owned.
+   * Widening this is a decision, not a fill-in.
+   */
+  models?: { default?: string };
 }
 
 export interface User {

@@ -2140,17 +2140,16 @@ export class Runtime {
     // and since #892 it is written to the conversation's immutable pin. An
     // unchecked value would not overspend for a turn; it would seal the
     // conversation to a disallowed model for life, past any later policy change.
-    const qualified = resolveModelString(requestModel);
-    // Only a `providers` config expresses an allowlist. On the legacy
-    // single-provider config, or a custom adapter that serves every string,
-    // there is no policy here to enforce — and `getProviderConfigs()` reports
-    // a display default (`{anthropic:{}}`) in that case, not a reachability
-    // claim, so consulting it would refuse every non-Anthropic model on a
-    // deployment that can serve them. Absence of policy is not denial.
-    if (this.config.providers && !isModelAllowed(qualified, this.getProviderConfigs())) {
-      throw new ModelNotAllowedError(qualified, this.getConfiguredProviders());
+    // Checked before qualification, not after: `resolveModelString("")` is
+    // `"anthropic:"`, so a floor applied to the qualified form never sees an
+    // empty id at all.
+    if (!this.isModelPermitted(requestModel)) {
+      throw new ModelNotAllowedError(
+        resolveModelString(requestModel),
+        this.getConfiguredProviders(),
+      );
     }
-    return qualified;
+    return resolveModelString(requestModel);
   }
 
   /**
@@ -3721,24 +3720,74 @@ export class Runtime {
    *  without each having to remember to call `resolveModelString`. The
    *  per-request `request.model` override path (in `chat()`) qualifies
    *  separately because it bypasses this reader. */
-  getModelSlots(): ModelSlots {
+  /**
+   * The slots as *configured* — no request-scoped overlay.
+   *
+   * Distinct from `getModelSlots()` because that one is tinted by whoever is
+   * asking. Anything writing back to process config has to start here: seeding
+   * from the resolved view would promote one caller's workspace or profile
+   * choice into the default everybody else gets.
+   *
+   * Public because `get_config` feeds the settings tab, which posts what it
+   * was given back to `set_model_config` — so a tinted value there does not
+   * just display wrong, it persists.
+   */
+  configuredModelSlots(): ModelSlots {
     const models = this.config.models;
     const fallback = this.config.defaultModel ?? DEFAULT_MODEL;
-    const base: ModelSlots = {
+    return {
       default: resolveModelString(models?.default ?? fallback),
       fast: resolveModelString(models?.fast ?? fallback),
       reasoning: resolveModelString(models?.reasoning ?? fallback),
     };
+  }
+
+  getModelSlots(): ModelSlots {
+    const base = this.configuredModelSlots();
     // Merge workspace model overrides from request context (partial — only overrides specified slots)
     const wsModels = getRequestContext()?.workspaceModelOverride ?? null;
-    if (wsModels) {
-      return {
-        default: wsModels.default ? resolveModelString(wsModels.default) : base.default,
-        fast: wsModels.fast ? resolveModelString(wsModels.fast) : base.fast,
-        reasoning: wsModels.reasoning ? resolveModelString(wsModels.reasoning) : base.reasoning,
-      };
-    }
-    return base;
+    const withWorkspace: ModelSlots = wsModels
+      ? {
+          default: wsModels.default ? resolveModelString(wsModels.default) : base.default,
+          fast: wsModels.fast ? resolveModelString(wsModels.fast) : base.fast,
+          reasoning: wsModels.reasoning ? resolveModelString(wsModels.reasoning) : base.reasoning,
+        }
+      : base;
+
+    // The person's own choice wins over every configured default, and only
+    // over the `default` slot — the auxiliary slots stay operator-owned.
+    //
+    // Re-checked on read, not trusted from disk: an admin narrowing the
+    // allowlist must take effect for someone who saved a model that is no
+    // longer permitted, and the alternative is rewriting every stored
+    // preference at policy-change time. An ineligible choice falls through to
+    // the configured default rather than failing the turn.
+    const chosen = getRequestContext()?.identity?.preferences?.models?.default;
+    if (!chosen) return withWorkspace;
+    if (!this.isModelPermitted(chosen)) return withWorkspace;
+    return { ...withWorkspace, default: resolveModelString(chosen) };
+  }
+
+  /**
+   * Whether a model a *caller* named is permitted here.
+   *
+   * False only where a policy exists and excludes it. Absence of policy is not
+   * denial: on the legacy single-provider config, or behind a custom adapter
+   * that serves every string, `getProviderConfigs()` reports a display default
+   * (`{anthropic:{}}`) rather than a reachability claim, so consulting it would
+   * refuse every non-Anthropic model on a deployment that can serve them.
+   *
+   * Operator config is not a caller's choice and never passes through here —
+   * a configured slot value is governed where it is written.
+   */
+  isModelPermitted(modelString: string): boolean {
+    // An empty id is not a model. `resolveModelString("")` returns
+    // `"anthropic:"` — the bare-id fallback applied to nothing — which a
+    // provider-less deployment would otherwise accept and, on the preference
+    // path, pin every future conversation to.
+    if (modelString.trim() === "") return false;
+    if (!this.config.providers) return true;
+    return isModelAllowed(resolveModelString(modelString), this.getProviderConfigs());
   }
 
   /** Get the model ID for a named slot. */
@@ -3974,7 +4023,9 @@ export class Runtime {
     preferences?: Record<string, string>;
   }) {
     if (patch.models) {
-      this.config.models ??= this.getModelSlots(); // init from current
+      // Configured slots, not resolved: `getModelSlots()` is tinted by the
+      // caller's workspace and profile, and this value becomes everyone's default.
+      this.config.models ??= this.configuredModelSlots();
       Object.assign(this.config.models, patch.models);
     }
     if (patch.defaultModel !== undefined) {
