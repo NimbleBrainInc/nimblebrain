@@ -225,9 +225,8 @@ interface ConversationSlice {
    *  consume it instead of appending a duplicate. */
   pendingEcho: boolean;
   /** The params of the last `sendTurn` on this slice. Retry replays these
-   *  verbatim — same text, model, and appContext — so it reproduces the
-   *  original send instead of re-deriving model/context from current UI state
-   *  (which silently downgraded the model on retry). */
+   *  verbatim rather than re-deriving them from current UI state, so a retry
+   *  reproduces the original send even if the UI has moved on since. */
   lastSend?: StartTurnParams;
   /** Stop pressed before `/v1/chat/start` resolved (no conversationId yet).
    *  `sendTurn` fires the cancel as soon as it has the id. */
@@ -1285,9 +1284,9 @@ export function createChatStore(): ChatStore {
 
   function retryLastMessage(key: string): void {
     const slice = byKey.get(key);
-    // Replay the original send verbatim — same text, model, and appContext.
-    // Re-deriving from current UI state (the old path) silently retried on the
-    // workspace-default model, ignoring the user's selection.
+    // Replay the original send verbatim rather than re-deriving it from
+    // current UI state, which would retry a different turn than the one that
+    // failed.
     const params = slice?.lastSend;
     if (!slice || !params) return;
     // Drop the errored turn (trailing user message + after) so the replay
