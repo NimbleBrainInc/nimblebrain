@@ -118,4 +118,107 @@ describe("model qualification at runtime boundary", () => {
       await runtime.shutdown();
     }
   });
+
+  it("resolves a bare slot name on the request door and qualifies the slot's value", async () => {
+    // The two spellings of a slot reference must land on the same model,
+    // and the slot's stored value must arrive qualified. Without slot
+    // parsing, "fast" is not a catalog id, so `resolveModelString` stamps
+    // it `anthropic:fast` — a model that does not exist.
+    const workDir = join(testDir, "slot-ref-request-door");
+    mkdirSync(workDir, { recursive: true });
+
+    const runtime = await Runtime.start({
+      model: { provider: "custom", adapter: createEchoModel() },
+      noDefaultBundles: true,
+      workDir,
+      models: {
+        default: "anthropic:claude-sonnet-4-6",
+        fast: "gpt-4o", // bare on purpose — the slot read must qualify it
+        reasoning: "anthropic:claude-opus-4-6",
+      },
+    });
+    await provisionTestWorkspace(runtime);
+
+    try {
+      for (const spelling of ["fast", "alias:fast"]) {
+        const events: EngineEvent[] = [];
+        const sink: EventSink = { emit: (e) => events.push(e) };
+
+        await runtime.chat(
+          { message: "hello", workspaceId: TEST_WORKSPACE_ID, model: spelling },
+          sink,
+        );
+
+        const runStart = events.find((e) => e.type === "run.start");
+        expect(runStart).toBeDefined();
+        expect(runStart!.data.model).toBe("openai:gpt-4o");
+      }
+    } finally {
+      await runtime.shutdown();
+    }
+  });
+
+  it("resolves a bare slot name in an agent profile through the delegate door", async () => {
+    // `resolveSlot` is a distinct reader from the request door's, reached
+    // only through `nb__delegate`. It routes to `getModelSlot` so the two
+    // cannot disagree — this pins the child engine's model, which feeds
+    // `resolveMaxOutputTokens` and `resolveThinking` (both catalog lookups
+    // that treat a bare id as Anthropic's and silently miss).
+    const workDir = join(testDir, "slot-ref-delegate-door");
+    mkdirSync(workDir, { recursive: true });
+
+    // The child engine emits onto the RUNTIME-level sink (delegate builds its
+    // ChildEventSink from `delegateCtx.events`), not the per-chat sink.
+    const events: EngineEvent[] = [];
+    const sink: EventSink = { emit: (e) => events.push(e) };
+
+    const runtime = await Runtime.start({
+      events: [sink],
+      model: {
+        provider: "custom",
+        adapter: createEchoModel({
+          responses: [
+            {
+              text: "delegating",
+              toolCalls: [
+                {
+                  toolCallId: "call_1",
+                  toolName: "nb__delegate",
+                  input: JSON.stringify({ task: "summarize", agent: "analyst" }),
+                },
+              ],
+            },
+          ],
+        }),
+      },
+      noDefaultBundles: true,
+      workDir,
+      models: {
+        default: "anthropic:claude-sonnet-4-6",
+        fast: "gpt-4o",
+        reasoning: "gemini-3.1-pro-preview", // bare on purpose
+      },
+      agents: {
+        analyst: {
+          description: "Analyst",
+          systemPrompt: "You analyze.",
+          tools: [],
+          // The bare spelling `workspace.json` documents.
+          model: "reasoning",
+        },
+      },
+    });
+    await provisionTestWorkspace(runtime);
+
+    try {
+      await runtime.chat({ message: "hello", workspaceId: TEST_WORKSPACE_ID }, { emit: () => {} });
+
+      // The child engine's events carry parentRunId (see ChildEventSink).
+      const childStart = events.find((e) => e.type === "run.start" && e.data.parentRunId);
+      expect(childStart).toBeDefined();
+      expect(childStart!.data.model).toBe("google:gemini-3.1-pro-preview");
+    } finally {
+      await runtime.shutdown();
+    }
+  });
 });
