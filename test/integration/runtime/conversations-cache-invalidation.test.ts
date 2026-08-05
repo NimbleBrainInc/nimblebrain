@@ -43,7 +43,7 @@ test("an append refreshes the locator summary (list is not frozen)", async () =>
   const r = await runtime.chat({ message: "first", workspaceId: wsId, identity: ALICE });
   convId = r.conversationId;
 
-  let list = await runtime.listConversations({}, { userId: ALICE.id });
+  let list = await runtime.listConversations(wsId, {}, { userId: ALICE.id });
   expect(list.totalCount).toBe(1);
   const afterTurn1 = list.conversations[0]?.messageCount ?? 0;
 
@@ -55,7 +55,7 @@ test("an append refreshes the locator summary (list is not frozen)", async () =>
     identity: ALICE,
   });
 
-  list = await runtime.listConversations({}, { userId: ALICE.id });
+  list = await runtime.listConversations(wsId, {}, { userId: ALICE.id });
   expect(list.totalCount).toBe(1);
   // The summary advanced — the locator re-read the file rather than serving a
   // frozen entry. (Pre-fix it was create/delete-fresh only.)
@@ -70,7 +70,7 @@ test("workspace delete clears its conversations from the list (no ghost) and doe
 
   // The locator invalidated (via the membership-change hook), so a rebuild no
   // longer lists the archived workspace's conversation.
-  const list = await runtime.listConversations({}, { userId: ALICE.id });
+  const list = await runtime.listConversations(wsId, {}, { userId: ALICE.id });
   expect(list.conversations.find((c) => c.id === convId)).toBeUndefined();
 
   // resolveConversationStore returns null instead of constructing a store at the

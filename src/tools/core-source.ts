@@ -439,7 +439,9 @@ async function generateBriefing(
     logDir: join(runtime.getWorkspaceScopedDir(wsId), "logs"),
     conversations: {
       kind: "store",
-      store: { list: (o, a) => runtime.listConversations(o, a) },
+      // Bound to this workspace here, at the boundary — the collector receives
+      // an already-scoped lister and cannot widen it.
+      list: (o, a) => runtime.listConversations(wsId, o, a),
     },
     access: { userId: identity.id },
   });
@@ -504,12 +506,7 @@ function scheduleBriefingRefresh(
   if (!briefingCache.beginRefresh()) return;
   const bgCtx: RequestContext = {
     identity,
-    scope: {
-      kind: "workspace",
-      workspaceId: wsId,
-      workspaceAgents: null,
-      workspaceModelOverride: null,
-    },
+    workspaceId: wsId,
   };
   void runWithRequestContext(bgCtx, () => generateBriefing(runtime, wsId, identity, homeConfig))
     .then((b) => briefingCache.set(b))

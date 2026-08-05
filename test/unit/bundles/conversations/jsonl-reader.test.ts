@@ -748,8 +748,21 @@ describe("listConversationFiles", () => {
 
 		const files = listConversationFiles(TMP_DIR);
 		expect(files).toHaveLength(2);
-		expect(files.every((f) => f.endsWith(".jsonl"))).toBe(true);
-		expect(files.every((f) => f.startsWith(TMP_DIR))).toBe(true);
+		expect(files.every((f) => f.filePath.endsWith(".jsonl"))).toBe(true);
+		expect(files.every((f) => f.filePath.startsWith(TMP_DIR))).toBe(true);
+		// Flat layout — under no workspace.
+		expect(files.every((f) => f.wsId === null)).toBe(true);
+	});
+
+	test("reports the workspace a file was found under", () => {
+		const owner = join(TMP_DIR, "ws_abc1234567890000", "conversations", "usr_x");
+		mkdirSync(owner, { recursive: true });
+		writeFileSync(join(owner, "conv_c.jsonl"), "{}");
+
+		const files = listConversationFiles(TMP_DIR);
+		const scoped = files.filter((f) => f.wsId !== null);
+		expect(scoped).toHaveLength(1);
+		expect(scoped[0]?.wsId).toBe("ws_abc1234567890000");
 	});
 
 	test("returns empty array for non-existent directory", () => {

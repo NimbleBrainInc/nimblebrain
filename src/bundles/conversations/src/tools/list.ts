@@ -1,12 +1,19 @@
 /**
  * Handler for conversations__list tool.
  *
- * List conversations with pagination, sorting, and filtering.
- * Delegates to ConversationIndex.list() which handles pagination, sorting,
- * date filtering, and search.
+ * List conversations with pagination, sorting, and filtering, walled to one
+ * workspace. The workspace arrives as `scope` — a separate parameter from
+ * `input` — because it is the request's focused workspace, not something the
+ * caller names. Delegates to ConversationIndex.list() which handles pagination,
+ * sorting, date filtering, and search.
  */
 
-import type { AccessContext, ConversationIndex, ListResult } from "../index-cache.ts";
+import type {
+  AccessContext,
+  ConversationIndex,
+  ListResult,
+  WorkspaceScope,
+} from "../index-cache.ts";
 
 export interface ListInput {
   limit?: number;
@@ -15,15 +22,12 @@ export interface ListInput {
   sortBy?: "created" | "updated";
   dateFrom?: string;
   dateTo?: string;
-  /** Scope to one workspace. Applied before the limit so the page reflects the workspace's set. */
-  workspaceId?: string;
-  /** With `workspaceId`, also include workspaceless (legacy) chats — they belong to the personal workspace. */
-  includeUnstamped?: boolean;
 }
 
 export async function handleList(
   input: ListInput,
   index: ConversationIndex,
+  scope: WorkspaceScope,
   access?: AccessContext,
 ): Promise<ListResult> {
   return index.list(
@@ -34,8 +38,7 @@ export async function handleList(
       sortBy: input.sortBy,
       dateFrom: input.dateFrom,
       dateTo: input.dateTo,
-      workspaceId: input.workspaceId,
-      includeUnstamped: input.includeUnstamped,
+      workspaceId: scope.workspaceId,
     },
     access,
   );

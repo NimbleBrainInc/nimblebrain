@@ -45,12 +45,7 @@ async function getLatestRunId(runtime: Runtime, convId: string): Promise<string 
   return runWithRequestContext(
     {
       identity: DEV_IDENTITY,
-      scope: {
-        kind: "workspace",
-        workspaceId: TEST_WORKSPACE_ID,
-        workspaceAgents: null,
-        workspaceModelOverride: null,
-      },
+      workspaceId: TEST_WORKSPACE_ID,
     },
     async () => {
       const store = await runtime.resolveConversationStore(convId);
@@ -74,12 +69,7 @@ async function callAssembled(
   const result = await runWithRequestContext(
     {
       identity: DEV_IDENTITY,
-      scope: {
-        kind: "workspace",
-        workspaceId: TEST_WORKSPACE_ID,
-        workspaceAgents: null,
-        workspaceModelOverride: null,
-      },
+      workspaceId: TEST_WORKSPACE_ID,
       ...(ctxConvId ? { conversationId: ctxConvId } : {}),
     },
     () =>

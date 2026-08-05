@@ -78,6 +78,8 @@ Open **Conversations** from the sidebar to see your history. Each conversation s
 
 Click any conversation to load it in the chat panel and continue where you left off. The agent has the full context of everything discussed previously.
 
+The list and the search box both show **the workspace you are currently in**, and only that one. Switch workspaces to see another workspace's history. The same holds when you ask the agent — `conversations__list` and `conversations__search` resolve to your current workspace and take no workspace argument, so the agent cannot search across your workspaces in one pass. A conversation opened by a direct link still loads from whichever workspace it lives in.
+
 <Aside type="tip">
 You can link directly to a conversation by sharing its URL. When you open the link, the conversation loads automatically in your chat panel.
 </Aside>

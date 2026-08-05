@@ -59,8 +59,7 @@ function buildContextProbeSource(sourceName: string, toolName: string): ProbeSou
       // keyed on the ROUTED workspace — this observation must reflect
       // that.
       const ctx = getRequestContext();
-      const observedWorkspaceId =
-        ctx?.scope.kind === "workspace" ? ctx.scope.workspaceId : undefined;
+      const observedWorkspaceId = ctx?.workspaceId;
       observations.push({ workspaceId: observedWorkspaceId });
       return {
         content: textContent(

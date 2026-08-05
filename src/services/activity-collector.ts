@@ -1,7 +1,11 @@
 import { readdir, readFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { SseEventManager } from "../api/events.ts";
-import type { ConversationAccessContext, ConversationStore } from "../conversation/types.ts";
+import type {
+  ConversationAccessContext,
+  ConversationListResult,
+  ListOptions,
+} from "../conversation/types.ts";
 import type {
   ActivityBundleEvent,
   ActivityConversationSummary,
@@ -12,8 +16,26 @@ import type {
   ToolUsageSummary,
 } from "./home-types.ts";
 
+/**
+ * Where the conversation rows come from. Both arms arrive pre-scoped, so the
+ * collector has no way to widen the view it was handed:
+ *
+ * - `store` — an ALREADY-SCOPED lister. The caller binds the workspace when it
+ *   builds the closure; `runtime.listConversations` takes the workspace as a
+ *   required argument, so an unscoped one cannot be written at all.
+ * - `jsonl` — one directory, and that directory IS the scope.
+ *
+ * Activity is a workspace view: the log and automation-run inputs beside this
+ * are workspace-scoped paths, so conversation rows spanning workspaces would be
+ * the one part of the output that silently disagreed with the rest.
+ */
+type ScopedConversationLister = (
+  options: ListOptions,
+  access?: ConversationAccessContext,
+) => Promise<ConversationListResult>;
+
 type ConversationSource =
-  | { kind: "store"; store: Pick<ConversationStore, "list"> }
+  | { kind: "store"; list: ScopedConversationLister }
   | { kind: "jsonl"; conversationsDir: string };
 
 type BundleEventSource = { kind: "sse"; eventManager: SseEventManager } | { kind: "none" };
@@ -149,16 +171,16 @@ export class ActivityCollector {
       return this.collectConversationsFromJsonl(source.conversationsDir, since, until, limit);
     }
 
-    return this.collectConversationsFromStore(source.store, since, until, limit);
+    return this.collectConversationsFromStore(source.list, since, until, limit);
   }
 
   private async collectConversationsFromStore(
-    store: Pick<ConversationStore, "list">,
+    list: ScopedConversationLister,
     since: string,
     until: string,
     limit: number,
   ): Promise<ActivityConversationSummary[]> {
-    const result = await store.list(
+    const result = await list(
       {
         sortBy: "updatedAt",
         limit,

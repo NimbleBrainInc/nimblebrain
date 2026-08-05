@@ -63,12 +63,7 @@ async function callTool(
   const result = await runWithRequestContext(
     {
       identity: null,
-      scope: {
-        kind: "workspace",
-        workspaceId: TEST_WORKSPACE_ID,
-        workspaceAgents: null,
-        workspaceModelOverride: null,
-      },
+      workspaceId: TEST_WORKSPACE_ID,
     },
     () => registry.execute({ id: `t-${Date.now()}`, name: toolName, input }),
   );

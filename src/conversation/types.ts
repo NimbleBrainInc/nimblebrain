@@ -55,14 +55,14 @@ export interface ListOptions {
   cursor?: string;
   search?: string;
   sortBy?: "createdAt" | "updatedAt";
-  /**
-   * Restrict the listing to one workspace. The workspace-scoped conversation view (a
-   * single `workspaces/<wsId>/conversations/` subtree); omit for the owner's
-   * "All workspaces" view across every workspace they belong to. Orthogonal to
-   * `access` — `workspaceId` is the path filter, ownership is the access gate.
-   */
-  workspaceId?: string;
 }
+
+// A listing takes its workspace as a required argument — there is no
+// cross-workspace variant. Conversations are workspace-owned, so "every
+// workspace the owner belongs to" is not a view anything needs: the tenant-wide
+// file walk that usage aggregation genuinely does need is
+// `listAllConversationFiles`, which is a different read (raw files, no owner
+// scoping, no summaries) and stays where it is.
 
 /** Paginated conversation list result. */
 export interface ConversationListResult {

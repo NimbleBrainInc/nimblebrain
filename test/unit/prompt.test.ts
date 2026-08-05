@@ -1146,32 +1146,42 @@ describe("composeSystemPromptTraced", () => {
   });
 });
 
-describe("composeSystemPrompt — files are identity-scoped, not workspace-scoped", () => {
-  // Regression: an agent told a user "which workspace does <file> live in? I
-  // can check all three." Files are identity-owned; the workspace blocks must
-  // say so explicitly so the workspace TOOL-scoping model isn't generalised
-  // onto files.
+describe("composeSystemPrompt — files/conversations resolve to the current workspace", () => {
+  // Two regressions, pulling in opposite directions, and the note must satisfy
+  // both:
+  //  1. An agent told a user "which workspace does <file> live in? I can check
+  //     all three." The workspace TOOL-namespacing model must not be
+  //     generalised onto `files__*` / `conversations__*`, which take no
+  //     workspace argument.
+  //  2. The fix for (1) overshot and asserted these tools "search across all of
+  //     your files/conversations at once." That is false — both are
+  //     workspace-owned — and it instructed the agent to enumerate across the
+  //     wall the tools enforce.
   const wsCtx: WorkspaceContext = { id: "ws_test", name: "Test" };
 
-  it("focused-workspace block states files/conversations are not workspace-scoped", () => {
-    const result = composeSystemPrompt(
-      [],
-      null,
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      wsCtx,
-    );
-    expect(result).toContain("Files and conversations are NOT workspace-scoped");
+  const focused = () =>
+    composeSystemPrompt([], null, undefined, undefined, undefined, undefined, undefined, wsCtx);
+
+  it("focused-workspace block says the tools resolve to the current workspace", () => {
+    const result = focused();
+    expect(result).toContain("belong to the workspace you're in");
+    expect(result).toContain("automatically resolve to the current workspace");
     expect(result).toContain("Never ask the user which workspace a file lives in");
   });
 
-  it("identity-home block (no focused workspace) states the same", () => {
+  it("identity-home block (no focused workspace) says the same", () => {
     const result = composeSystemPrompt([]);
-    expect(result).toContain("Files and conversations are NOT workspace-scoped");
+    expect(result).toContain("belong to the workspace you're in");
+    expect(result).toContain("automatically resolve to the current workspace");
     expect(result).toContain("Never ask the user which workspace a file lives in");
+  });
+
+  it("never tells the agent these are cross-workspace", () => {
+    for (const result of [focused(), composeSystemPrompt([])]) {
+      expect(result).not.toContain("NOT workspace-scoped");
+      expect(result).not.toContain("the same in every workspace");
+      expect(result).not.toContain("across all of your files/conversations");
+    }
   });
 });
 

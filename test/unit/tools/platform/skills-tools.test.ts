@@ -104,10 +104,11 @@ class FakeRuntime {
     return store.load(id, access);
   }
   async listConversations(
+    workspaceId: string,
     options?: ListOptions,
     access?: ConversationAccessContext,
   ): Promise<ConversationListResult> {
-    return this._locator.list(options, access);
+    return this._locator.list(workspaceId, options, access);
   }
   getWorkspaceStore() {
     // Tests that exercise the cross-workspace path supply this directly
@@ -907,7 +908,6 @@ describe("skills__active_for", () => {
     const result = await runWithRequestContext(
       {
         identity: null,
-        scope: { kind: "identity" },
         conversationId: conv.id,
       },
       () => client.callTool({ name: "active_for", arguments: {} }),
@@ -953,7 +953,6 @@ describe("skills__active_for", () => {
     const result = await runWithRequestContext(
       {
         identity: null,
-        scope: { kind: "identity" },
         conversationId: ctxConv.id,
       },
       () =>
@@ -1092,7 +1091,7 @@ describe("skills__loading_log", () => {
     expect(aEvents.map((e) => e.run_id).sort()).toEqual(["r1", "r3"]);
   });
 
-  test("workspace-wide scan (no conversation_id) walks every conv jsonl in the store dir", async () => {
+  test("workspace-wide scan (no conversation_id) covers the active workspace's conversations", async () => {
     const conv1 = await runtime.store().create({ ownerId: "user_test" });
     const conv2 = await runtime.store().create({ ownerId: "user_test" });
     runtime.store().appendEvent(conv1.id, {
@@ -1110,6 +1109,25 @@ describe("skills__loading_log", () => {
       totalTokens: 0,
     } as never);
 
+    // A conversation the same owner has in a DIFFERENT workspace. The scan
+    // must not reach it: skills are workspace-tiered, so "which skills loaded"
+    // is a question about the active workspace.
+    const otherDir = workspaceConversationsDir(runtime.getWorkDir(), "ws_other", SEED_OWNER_ID);
+    mkdirSync(otherDir, { recursive: true });
+    const otherStore = new EventSourcedConversationStore({ dir: otherDir });
+    const convOther = await otherStore.create({ ownerId: SEED_OWNER_ID });
+    otherStore.appendEvent(convOther.id, {
+      type: "skills.loaded",
+      ts: "2026-03-01T00:00:00.000Z",
+      runId: "r-other",
+      skills: [],
+      totalTokens: 0,
+    } as never);
+
+    // The enumeration branch needs an active workspace — it is scoped, not
+    // owner-wide, so the caller must be in one.
+    runtime.wsId = SEED_WS_ID;
+
     const src = await buildSource();
     const client = src.getClient()!;
     const result = await client.callTool({ name: "loading_log", arguments: {} });
@@ -1118,5 +1136,6 @@ describe("skills__loading_log", () => {
     const convIds = new Set(events.map((e) => e.conv_id));
     expect(convIds.has(conv1.id)).toBe(true);
     expect(convIds.has(conv2.id)).toBe(true);
+    expect(convIds.has(convOther.id)).toBe(false);
   });
 });

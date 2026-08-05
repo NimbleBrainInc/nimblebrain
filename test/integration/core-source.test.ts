@@ -112,7 +112,7 @@ describe("Core Source", () => {
 			await provisionTestWorkspace(runtime);
 			const source = await makeInProcessSource("nb", createCoreToolDefs(runtime));
 			const result = await runWithRequestContext(
-				{ identity: null, scope: { kind: "workspace", workspaceId: TEST_WORKSPACE_ID, workspaceAgents: null, workspaceModelOverride: null } },
+				{ identity: null, workspaceId: TEST_WORKSPACE_ID },
 				() => source.execute("list_apps", {}),
 			);
 			expect(result.isError).toBe(false);
@@ -771,12 +771,7 @@ describe("Core Source", () => {
 			// context must match the seed's ownerId.
 			const ctx = {
 				identity: { id: "user_test", email: "test@example.com" } as never,
-				scope: {
-					kind: "workspace" as const,
-					workspaceId: TEST_WORKSPACE_ID,
-					workspaceAgents: null,
-					workspaceModelOverride: null,
-				},
+				workspaceId: TEST_WORKSPACE_ID,
 			};
 
 			// Seed a conversation so activity isn't empty — without this the
@@ -822,12 +817,7 @@ describe("Core Source", () => {
 	function identityCtx(identity: unknown) {
 		return {
 			identity: identity as never,
-			scope: {
-				kind: "workspace" as const,
-				workspaceId: TEST_WORKSPACE_ID,
-				workspaceAgents: null,
-				workspaceModelOverride: null,
-			},
+			workspaceId: TEST_WORKSPACE_ID,
 		};
 	}
 

@@ -16,7 +16,7 @@ export function requestIdentityAttrs(): SpanAttrs {
   if (!ctx) return {};
   const attrs: SpanAttrs = {};
   if (ctx.identity?.id) attrs.user_id = ctx.identity.id;
-  if (ctx.scope.kind === "workspace") attrs.workspace_id = ctx.scope.workspaceId;
+  if (ctx.workspaceId) attrs.workspace_id = ctx.workspaceId;
   if (ctx.conversationId) attrs.conversation_id = ctx.conversationId;
   return attrs;
 }

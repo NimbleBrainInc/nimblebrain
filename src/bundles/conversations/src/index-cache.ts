@@ -1,12 +1,16 @@
 /**
  * In-memory index of conversation metadata for fast listing, searching, and filtering.
  *
- * Built on startup by scanning all JSONL file headers. Kept fresh one of two
- * ways: `fs.watch` (`startWatching`, for a single flat directory) OR — when the
- * index spans the recursive workspace layout, where a root watcher can't see nested
- * writes — an external `invalidate()` signal followed by a `refresh()` full
- * rebuild on the next read. The runtime drives the latter from its
- * conversation-change hook (every write + workspace delete).
+ * Built on startup by scanning all JSONL file headers, and kept fresh by an
+ * external `invalidate()` signal followed by a `refresh()` full rebuild on the
+ * next read. The runtime drives that from its conversation-change hook (every
+ * write + workspace delete). A watcher cannot do the job: the index spans the
+ * recursive workspace layout and a root `fs.watch` can't see writes nested
+ * under each workspace's own `conversations/<ownerId>/` partition.
+ *
+ * `startWatching` / `flushPending` / `processPendingFiles` are the flat
+ * single-directory watch path. Nothing calls them — removing or scoping them is
+ * tracked in #899.
  *
  * Types are defined locally — no imports from the runtime codebase.
  */
@@ -38,11 +42,26 @@ export interface IndexEntry {
    */
   ownerId: string | null;
   /**
-   * The workspace (workspace) the conversation ran in. `null` for legacy files
-   * with no stamped workspace — a consumer reads that as the owner's
-   * personal workspace. The workspace-scoped conversation list keys off this.
+   * The workspace the conversation lives in, taken from its DIRECTORY — the
+   * authoritative binding. The `workspaceId` on line 1 is a denormalised
+   * convenience and is deliberately not read here, so this wall and the
+   * `ConversationLocator`'s agree by construction. `null` only for the legacy
+   * flat layout, which is under no workspace and matches no scoped read.
    */
   workspaceId: string | null;
+}
+
+/**
+ * The one workspace a read is walled to.
+ *
+ * Conversations are workspace-owned, so every user-facing read resolves inside
+ * exactly one workspace. This is a separate parameter from the caller's input
+ * on purpose: the workspace is ambient (the request's focused workspace), not a
+ * coordinate the caller supplies, so it cannot be omitted into a full-tenant
+ * read or pointed at a workspace the caller isn't in.
+ */
+export interface WorkspaceScope {
+  workspaceId: string;
 }
 
 export interface ListOptions {
@@ -54,8 +73,6 @@ export interface ListOptions {
   dateTo?: string; // ISO 8601
   /** Scope to one workspace. Applied before pagination so the limit applies to the workspace's set. */
   workspaceId?: string;
-  /** With `workspaceId`, include workspaceless (legacy) entries — they belong to the personal workspace. */
-  includeUnstamped?: boolean;
 }
 
 /**
@@ -82,6 +99,8 @@ export class ConversationIndex {
   /** Maps filename (e.g. "conv_abc.jsonl") to conversation ID for fast fs.watch lookups. */
   private fileToId: Map<string, string> = new Map();
   private dir: string | null = null;
+  /** The in-flight `build()`, so concurrent readers join it instead of racing it. */
+  private rebuilding: Promise<void> | null = null;
   private watcher: FSWatcher | null = null;
   private debounceTimer: ReturnType<typeof setTimeout> | null = null;
   private pendingFiles: Set<string> = new Set();
@@ -94,10 +113,8 @@ export class ConversationIndex {
     this.entries.clear();
     this.fileToId.clear();
 
-    const files = listConversationFiles(dir);
-
-    for (const filePath of files) {
-      await this.indexFile(filePath);
+    for (const { filePath, wsId } of listConversationFiles(dir)) {
+      await this.indexFile(filePath, wsId);
     }
   }
 
@@ -119,10 +136,34 @@ export class ConversationIndex {
    * gone (so deletes don't ghost). Unlike `flushPending`, this is not add-only.
    */
   async refresh(): Promise<void> {
-    if (this.dirty && this.dir !== null) {
-      await this.build(this.dir);
-      this.dirty = false;
-    }
+    if (this.dir === null) return;
+
+    // Never answer against an index mid-rebuild: `build()` clears the map and
+    // then repopulates it, so a reader arriving inside that window would see a
+    // partial one. Join whatever is in flight first. This is the only place the
+    // rebuild and `dirty` are both visible, which is why the coalescing lives
+    // here rather than at a caller.
+    while (this.rebuilding) await this.rebuilding;
+    if (!this.dirty) return;
+
+    // Clear BEFORE the rebuild. `build()` lists the directory up front, so a
+    // write landing mid-rebuild cannot be in this pass — but its `invalidate()`
+    // must survive it. Clearing afterwards would let the rebuild that never saw
+    // the write erase the flag raised for it, and that conversation would stay
+    // missing until an unrelated later write re-dirtied the index.
+    this.dirty = false;
+    const dir = this.dir;
+    this.rebuilding = this.build(dir).finally(() => {
+      this.rebuilding = null;
+    });
+    await this.rebuilding;
+
+    // Deliberately does NOT re-check `dirty` and rebuild again. The contract is
+    // an index at least as fresh as this call's entry, not the newest possible
+    // one — `invalidate()` fires on every appended event line tenant-wide, so
+    // "clean after a rebuild" is a state a busy tenant never reaches and
+    // chasing it does not return. A write that lands during this rebuild leaves
+    // `dirty` set for the next reader.
   }
 
   /** Start fs.watch on dir. On change, debounce 500ms, then re-read affected file header. */
@@ -161,9 +202,9 @@ export class ConversationIndex {
     }
     await this.processPendingFiles();
     if (!this.dir) return;
-    for (const filePath of listConversationFiles(this.dir)) {
+    for (const { filePath, wsId } of listConversationFiles(this.dir)) {
       if (!this.fileToId.has(basename(filePath))) {
-        await this.indexFile(filePath);
+        await this.indexFile(filePath, wsId);
       }
     }
   }
@@ -193,14 +234,13 @@ export class ConversationIndex {
 
     // Workspace filter — scope to one workspace BEFORE pagination, so the limit
     // applies to the workspace's set rather than slicing a global page and then
-    // dropping out-of-workspace entries (which under-counts a workspace whose chats
-    // aren't in the global most-recent page). A workspaceless (legacy) entry
-    // belongs to the personal workspace, so it's included only when the caller
-    // asks for it via `includeUnstamped` (set when the focused workspace is personal).
+    // dropping out-of-workspace entries (which under-counts a workspace whose
+    // chats aren't in the global most-recent page). `e.workspaceId` is the
+    // entry's DIRECTORY, so a record is in exactly the workspace it is stored
+    // under — there is no "unstamped" case to fold in.
     if (options?.workspaceId) {
       const wsId = options.workspaceId;
-      const includeUnstamped = options.includeUnstamped ?? false;
-      items = items.filter((e) => (e.workspaceId ? e.workspaceId === wsId : includeUnstamped));
+      items = items.filter((e) => e.workspaceId === wsId);
     }
 
     // Search filter: case-insensitive substring on title + preview
@@ -266,7 +306,7 @@ export class ConversationIndex {
   // Internal helpers
   // ---------------------------------------------------------------------------
 
-  private async indexFile(filePath: string): Promise<void> {
+  private async indexFile(filePath: string, wsId: string | null): Promise<void> {
     const header = await readConversationHeader(filePath);
     if (!header) return;
 
@@ -282,7 +322,7 @@ export class ConversationIndex {
       preview: header.preview,
       filePath,
       ownerId: header.meta.ownerId ?? null,
-      workspaceId: header.meta.workspaceId ?? null,
+      workspaceId: wsId,
     };
 
     this.entries.set(entry.id, entry);
@@ -315,7 +355,12 @@ export class ConversationIndex {
           preview: header.preview,
           filePath,
           ownerId: header.meta.ownerId ?? null,
-          workspaceId: header.meta.workspaceId ?? null,
+          // The fs.watch path resolves `join(this.dir, filename)`, so it only
+          // ever fires for the flat single-directory layout — which is under
+          // no workspace. The recursive workspace layout defeats the watcher
+          // and goes through `invalidate()` → `refresh()` → `build()`, where
+          // the walk supplies the directory's workspace.
+          workspaceId: null,
         };
         this.entries.set(entry.id, entry);
         this.fileToId.set(filename, entry.id);

@@ -1301,7 +1301,6 @@ describe("AgentEngine", () => {
     // factory to install controls into.
     const reqCtx: RequestContext = {
       identity: null,
-      scope: { kind: "identity" },
     };
     await runWithRequestContext(reqCtx, async () => {
       await outerEngine.run(

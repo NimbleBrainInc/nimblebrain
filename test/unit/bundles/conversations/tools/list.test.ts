@@ -4,6 +4,14 @@ import { join } from "node:path";
 import { ConversationIndex } from "../../../../../src/bundles/conversations/src/index-cache.ts";
 import { handleList } from "../../../../../src/bundles/conversations/src/tools/list.ts";
 
+/**
+ * Fixtures live under the real workspace layout, because the index takes an
+ * entry's workspace from its DIRECTORY. Cross-workspace scoping itself is
+ * covered in test/unit/tools/platform/conversations-workspace-scope.test.ts.
+ */
+const SCOPE = { workspaceId: "ws_user_usr_test" };
+
+
 const TMP_DIR = join(import.meta.dir, ".tmp-list-tool");
 
 // ---------------------------------------------------------------------------
@@ -39,7 +47,9 @@ function writeConvFile(spec: ConvSpec): string {
 	}
 
 	const filename = `conv_${spec.id}.jsonl`;
-	const path = join(TMP_DIR, filename);
+	const dir = join(TMP_DIR, "ws_user_usr_test", "conversations", "usr_test");
+	mkdirSync(dir, { recursive: true });
+	const path = join(dir, filename);
 	writeFileSync(path, lines.map((l) => `${l}\n`).join(""));
 	return path;
 }
@@ -140,7 +150,7 @@ afterEach(() => {
 describe("handleList", () => {
 	test("returns up to 20 sorted by updatedAt desc with no params", async () => {
 		const index = await buildIndex(CONVS);
-		const result = await handleList({}, index);
+		const result = await handleList({}, index, SCOPE);
 
 		expect(result.totalCount).toBe(5);
 		expect(result.nextCursor).toBeNull();
@@ -155,7 +165,7 @@ describe("handleList", () => {
 
 	test("each conversation entry has the expected fields", async () => {
 		const index = await buildIndex(CONVS);
-		const result = await handleList({}, index);
+		const result = await handleList({}, index, SCOPE);
 
 		const conv = result.conversations[0]!;
 		expect(conv).toHaveProperty("id");
@@ -171,7 +181,7 @@ describe("handleList", () => {
 
 	test("limit=2 returns 2 conversations and sets nextCursor", async () => {
 		const index = await buildIndex(CONVS);
-		const result = await handleList({ limit: 2 }, index);
+		const result = await handleList({ limit: 2 }, index, SCOPE);
 
 		expect(result.conversations).toHaveLength(2);
 		expect(result.nextCursor).not.toBeNull();
@@ -180,7 +190,7 @@ describe("handleList", () => {
 
 	test("search filters by title (case-insensitive)", async () => {
 		const index = await buildIndex(CONVS);
-		const result = await handleList({ search: "auth" }, index);
+		const result = await handleList({ search: "auth" }, index, SCOPE);
 
 		// "Auth system design" and "API authentication review" match
 		expect(result.conversations).toHaveLength(2);
@@ -195,7 +205,7 @@ describe("handleList", () => {
 
 	test("search filters by preview content", async () => {
 		const index = await buildIndex(CONVS);
-		const result = await handleList({ search: "weather" }, index);
+		const result = await handleList({ search: "weather" }, index, SCOPE);
 
 		expect(result.conversations).toHaveLength(1);
 		expect(result.conversations[0]!.id).toBe("conv-4");
@@ -203,7 +213,7 @@ describe("handleList", () => {
 
 	test("dateFrom filters conversations created on or after the date", async () => {
 		const index = await buildIndex(CONVS);
-		const result = await handleList({ dateFrom: "2025-01-12T00:00:00.000Z" }, index);
+		const result = await handleList({ dateFrom: "2025-01-12T00:00:00.000Z" }, index, SCOPE);
 
 		// conv-2 (Jan 12), conv-4 (Feb 1) match
 		expect(result.totalCount).toBe(2);
@@ -214,7 +224,7 @@ describe("handleList", () => {
 
 	test("dateTo filters conversations created on or before the date", async () => {
 		const index = await buildIndex(CONVS);
-		const result = await handleList({ dateTo: "2025-01-08T00:00:00.000Z" }, index);
+		const result = await handleList({ dateTo: "2025-01-08T00:00:00.000Z" }, index, SCOPE);
 
 		// conv-3 (Jan 8), conv-5 (Jan 5) match
 		expect(result.totalCount).toBe(2);
@@ -228,7 +238,7 @@ describe("handleList", () => {
 		const result = await handleList({
 			dateFrom: "2025-01-08T00:00:00.000Z",
 			dateTo: "2025-01-12T00:00:00.000Z",
-		}, index);
+		}, index, SCOPE);
 
 		// conv-1 (Jan 10), conv-2 (Jan 12), conv-3 (Jan 8) match
 		expect(result.totalCount).toBe(3);
@@ -241,7 +251,7 @@ describe("handleList", () => {
 	test("empty directory returns empty array and totalCount 0", async () => {
 		const index = new ConversationIndex();
 		await index.build(TMP_DIR);
-		const result = await handleList({}, index);
+		const result = await handleList({}, index, SCOPE);
 
 		expect(result.conversations).toEqual([]);
 		expect(result.nextCursor).toBeNull();
@@ -252,12 +262,12 @@ describe("handleList", () => {
 		const index = await buildIndex(CONVS);
 
 		// Page 1: limit=3
-		const page1 = await handleList({ limit: 3 }, index);
+		const page1 = await handleList({ limit: 3 }, index, SCOPE);
 		expect(page1.conversations).toHaveLength(3);
 		expect(page1.nextCursor).not.toBeNull();
 
 		// Page 2: use cursor from page 1
-		const page2 = await handleList({ limit: 3, cursor: page1.nextCursor! }, index);
+		const page2 = await handleList({ limit: 3, cursor: page1.nextCursor! }, index, SCOPE);
 		expect(page2.conversations).toHaveLength(2);
 		expect(page2.nextCursor).toBeNull();
 
@@ -271,7 +281,7 @@ describe("handleList", () => {
 
 	test("sortBy=created sorts by createdAt descending", async () => {
 		const index = await buildIndex(CONVS);
-		const result = await handleList({ sortBy: "created" }, index);
+		const result = await handleList({ sortBy: "created" }, index, SCOPE);
 
 		const dates = result.conversations.map((c) => c.createdAt);
 		for (let i = 1; i < dates.length; i++) {
@@ -289,7 +299,7 @@ describe("handleList", () => {
 			dateFrom: "2025-01-01T00:00:00.000Z",
 			dateTo: "2025-01-31T00:00:00.000Z",
 			limit: 1,
-		}, index);
+		}, index, SCOPE);
 
 		expect(result.conversations).toHaveLength(1);
 		expect(result.totalCount).toBe(2); // 2 match search+date, but limit=1

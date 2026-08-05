@@ -218,12 +218,7 @@ describe("IdentityToolRouter — availableTools", () => {
         // A different workspace sits in AsyncLocalStorage. The router must
         // ignore it and query SHARED_WS, the bound workspace.
         identity: { id: OTHER_USER, email: "other@x", emailVerified: true, orgRole: null },
-        scope: {
-          kind: "workspace",
-          workspaceId: OTHER_WS,
-          workspaceAgents: null,
-          workspaceModelOverride: null,
-        },
+        workspaceId: OTHER_WS,
       },
       async () => {
         await router.availableTools();
@@ -263,7 +258,7 @@ describe("IdentityToolRouter — execute (workspace door)", () => {
   // chat session's ambient scope is the personal workspace (the session
   // bridge); a call to the bound focused workspace must restamp to it so
   // `nb__*` handlers reading `requireWorkspaceId()` see the right workspace.
-  test("restamps RequestContext.scope.workspaceId to the bound workspace, even with a different ambient workspace", async () => {
+  test("restamps RequestContext.workspaceId to the routed workspace, even with a different ambient workspace", async () => {
     const crm = makeSpySource("crm");
     const runtime = makeStubRuntime({
       registries: new Map([[SHARED_WS, [crm]]]),
@@ -276,12 +271,7 @@ describe("IdentityToolRouter — execute (workspace door)", () => {
     await runWithRequestContext(
       {
         identity: { id: USER_ID, email: "u1@x", emailVerified: true, orgRole: null },
-        scope: {
-          kind: "workspace",
-          workspaceId: PERSONAL_WS,
-          workspaceAgents: null,
-          workspaceModelOverride: null,
-        },
+        workspaceId: PERSONAL_WS,
       },
       async () => {
         await router.execute({ id: "c1", name: "crm__search", input: {} });
@@ -291,8 +281,7 @@ describe("IdentityToolRouter — execute (workspace door)", () => {
     expect(crm.calls).toHaveLength(1);
     const ctx = crm.calls[0]?.context;
     expect(ctx).toBeDefined();
-    if (ctx?.scope.kind !== "workspace") throw new Error("scope kind mismatch");
-    expect(ctx.scope.workspaceId).toBe(SHARED_WS);
+    expect(ctx?.workspaceId).toBe(SHARED_WS);
   });
 
   test("fires onWorkspaceDispatch with the routed wsId BEFORE source.execute observes a context", async () => {
@@ -375,7 +364,7 @@ describe("IdentityToolRouter — the wall (cross-workspace reach is unexpressibl
 });
 
 describe("IdentityToolRouter — execute (identity door)", () => {
-  test("routes a bare <identity-source>__<tool> to the identity source with an identity-scoped RequestContext", async () => {
+  test("routes a bare <identity-source>__<tool> to the identity source, keeping the ambient workspace", async () => {
     const conversations = makeSpySource("conversations");
     const runtime = makeStubRuntime({
       registries: new Map(),
@@ -386,12 +375,18 @@ describe("IdentityToolRouter — execute (identity door)", () => {
     });
     const router = new IdentityToolRouter({ identityId: USER_ID, workspaceId: SHARED_WS, runtime });
 
-    await router.execute({ id: "c1", name: "conversations__list", input: {} });
+    // Run inside an ambient context, the way a chat turn does.
+    await runWithRequestContext({ identity: null, workspaceId: SHARED_WS }, async () => {
+      await router.execute({ id: "c1", name: "conversations__list", input: {} });
+    });
 
     expect(conversations.calls).toHaveLength(1);
     expect(conversations.calls[0]?.toolName).toBe("list");
     const ctx = conversations.calls[0]?.context;
-    expect(ctx?.scope.kind).toBe("identity");
+    // An identity-routed call KEEPS the ambient workspace: every kernel
+    // identity source owns workspace-partitioned data, so dropping it would
+    // leave `conversations__list` with no workspace in scope mid-chat.
+    expect(ctx?.workspaceId).toBe(SHARED_WS);
   });
 
   test("does NOT fire onWorkspaceDispatch for identity-routed calls (no workspace to stamp)", async () => {

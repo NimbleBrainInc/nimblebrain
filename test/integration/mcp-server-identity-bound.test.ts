@@ -294,10 +294,34 @@ describe("/mcp with no X-Workspace-Id (identity tools only)", () => {
   });
 
   it("a bare identity-source name dispatches through the identity door", async () => {
+    // Routing is the property under test, and the discriminator is WHICH error
+    // comes back. Conversations are workspace-owned, so with no
+    // `X-Workspace-Id` the read itself is refused — but that refusal is the
+    // SOURCE's own (a tool-level `isError` naming the missing workspace), which
+    // it can only produce if the call reached it. A routing failure would have
+    // raised a JSON-RPC error (`unknown_identity_source` /
+    // `workspace_access_denied`) and never entered the source at all.
     const client = await createMcpClient();
     try {
       const result = await client.callTool({ name: "conversations__list", arguments: {} });
-      expect(result.isError).toBeFalsy();
+      expect(result.isError).toBe(true);
+      expect(JSON.stringify(result.content)).toContain("no workspace in scope");
+    } finally {
+      await client.close();
+    }
+  });
+
+  it("an identity tool over workspace-owned data refuses rather than reading every workspace", async () => {
+    // The leak this replaces: an external MCP client with no workspace header
+    // used to get every conversation the identity owned, across every
+    // workspace. Same posture `files__*` already takes — deny, never guess.
+    const client = await createMcpClient();
+    try {
+      const result = await client.callTool({ name: "conversations__search", arguments: {
+        query: "anything",
+      } });
+      expect(result.isError).toBe(true);
+      expect(JSON.stringify(result.content)).toContain("no workspace in scope");
     } finally {
       await client.close();
     }
