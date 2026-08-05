@@ -198,7 +198,10 @@
       "properties": {
         "default": { "type": "string", "description": "Primary model for chat." },
         "fast": { "type": "string", "description": "Cheap/fast model for auxiliary tasks." },
-        "reasoning": { "type": "string", "description": "Most capable model for complex analysis." }
+        "reasoning": {
+          "type": "string",
+          "description": "IGNORED. The reasoning slot was removed — nothing reads this. Kept so a config written before the removal still validates; delete it. A `\"model\": \"reasoning\"` on an agent profile no longer resolves and will fail at the provider."
+        }
       },
       "additionalProperties": false
     },

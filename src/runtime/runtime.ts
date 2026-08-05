@@ -3738,7 +3738,6 @@ export class Runtime {
     return {
       default: resolveModelString(models?.default ?? fallback),
       fast: resolveModelString(models?.fast ?? fallback),
-      reasoning: resolveModelString(models?.reasoning ?? fallback),
     };
   }
 
@@ -3750,7 +3749,6 @@ export class Runtime {
       ? {
           default: wsModels.default ? resolveModelString(wsModels.default) : base.default,
           fast: wsModels.fast ? resolveModelString(wsModels.fast) : base.fast,
-          reasoning: wsModels.reasoning ? resolveModelString(wsModels.reasoning) : base.reasoning,
         }
       : base;
 

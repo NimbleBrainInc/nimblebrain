@@ -24,7 +24,7 @@ async function start(name: string, allowlist?: string[]) {
   mkdirSync(workDir, { recursive: true });
   const runtime = await Runtime.start({
     model: { provider: "custom", adapter: createEchoModel() },
-    models: { default: CONFIGURED_DEFAULT, fast: CONFIGURED_DEFAULT, reasoning: CONFIGURED_DEFAULT },
+    models: { default: CONFIGURED_DEFAULT, fast: CONFIGURED_DEFAULT },
     ...(allowlist ? { providers: { anthropic: { apiKey: "k", models: allowlist } } } : {}),
     noDefaultBundles: true,
     workDir,
@@ -68,13 +68,12 @@ describe("a person's model choice applies to their turns", () => {
 
   // `fast` carries the full tool surface and its window sizes both history
   // folds. A person choosing a chat model must not be choosing that.
-  it("moves only the default slot, never the auxiliary ones", async () => {
+  it("moves only the default slot, never the auxiliary one", async () => {
     const runtime = await start("default-only");
     try {
       const slots = slotsFor(runtime, CHOSEN);
       expect(slots.default).toBe(CHOSEN);
       expect(slots.fast).toBe(CONFIGURED_DEFAULT);
-      expect(slots.reasoning).toBe(CONFIGURED_DEFAULT);
     } finally {
       await runtime.shutdown();
     }
@@ -265,7 +264,7 @@ describe("the settings view is the configured one", () => {
     mkdirSync(workDir, { recursive: true });
     const runtime = await Runtime.start({
       model: { provider: "custom", adapter: createEchoModel() },
-      models: { default: CONFIGURED_DEFAULT, fast: CONFIGURED_DEFAULT, reasoning: CONFIGURED_DEFAULT },
+      models: { default: CONFIGURED_DEFAULT, fast: CONFIGURED_DEFAULT },
       noDefaultBundles: true,
       workDir,
     });
