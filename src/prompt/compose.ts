@@ -162,10 +162,22 @@ const VOLATILE_KINDS: ReadonlySet<TracedLayerKind> = new Set([
 /**
  * Strip newlines and control characters from single-line fields.
  * Prevents structural injection via displayName, timezone, locale, app name.
+ *
+ * `String()` rather than trusting the parameter type: several callers pass
+ * fields that are typed `string` but originate in unvalidated JSON — persisted
+ * `BundleRef.ui`, registry `_meta`, `nimblebrain.json` — so a non-string
+ * reaches here at runtime. Coercing reproduces what the template literal at
+ * each call site did before this function guarded it, which keeps a malformed
+ * record inert instead of throwing out of `composeSystemPrompt` on every turn.
+ * Identity on strings, so the common path is unchanged.
  */
 function sanitizeLineField(value: string): string {
-  // biome-ignore lint/suspicious/noControlCharactersInRegex: intentional — stripping control chars is the security mitigation
-  return value.replace(/[\n\r\x00-\x1f\x7f]/g, " ").trim();
+  return (
+    String(value)
+      // biome-ignore lint/suspicious/noControlCharactersInRegex: intentional — stripping control chars is the security mitigation
+      .replace(/[\n\r\x00-\x1f\x7f]/g, " ")
+      .trim()
+  );
 }
 
 /** Skills with priority ≤ this threshold are core context (identity layer). */

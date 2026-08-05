@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { hostMetaToUiMeta } from "../../src/bundles/defaults.ts";
+import { hostMetaToUiMeta, sanitizePlacements } from "../../src/bundles/defaults.ts";
 import { composeSystemPrompt, type PromptAppInfo } from "../../src/prompt/compose.ts";
 
 /**
@@ -107,5 +107,47 @@ describe("hostMetaToUiMeta bounds bundle-authored display strings", () => {
   test("no name still yields null — the host needs a label to surface anything", () => {
     expect(hostMetaToUiMeta({ icon: "users" } as never)).toBeNull();
     expect(hostMetaToUiMeta(undefined)).toBeNull();
+  });
+});
+
+describe("the prompt path tolerates a malformed persisted ui.name", () => {
+  // `hostMetaToUiMeta`'s type guard covers the projection path only.
+  // `PromptAppInfo.ui.name` also arrives via `ref.ui` — persisted config read
+  // raw (`lifecycle.ts`: `ref.ui ?? manifestMeta?.ui ?? null`) — which the
+  // guard never sees. Before `sanitizeLineField` coerced, these threw inside
+  // `composeSystemPrompt`, i.e. every turn in the affected workspace; on the
+  // pre-guard code they rendered inertly because the template stringified them.
+  test.each([[123], [true], [{ a: 1 }], [["x"]]])(
+    "a non-string ui.name renders instead of throwing: %p",
+    (name) => {
+      const run = () => promptWith([{ name: "app", ui: { name } as never, trustScore: 0 }]);
+      expect(run).not.toThrow();
+      expect(appBullets(run())).toHaveLength(1);
+    },
+  );
+
+  test("a non-string app.name renders instead of throwing", () => {
+    const run = () => promptWith([{ name: 123 as never, ui: null, trustScore: 0 }]);
+    expect(run).not.toThrow();
+    expect(appBullets(run())[0]).toBe("- 123 (no UI) \u2014 MTF Score: 0");
+  });
+});
+
+describe("hostMetaToUiMeta guards placements", () => {
+  // Not an array, but truthy with a numeric `length` — so the old
+  // `placements && placements.length > 0` admitted it, and `sanitizePlacements`
+  // then threw on `for...of` out of catalog projection.
+  test("a non-array with a length is not assigned", () => {
+    const ui = hostMetaToUiMeta({ name: "People", placements: { length: 1 } } as never);
+    expect(ui?.placements).toBeUndefined();
+    expect(() => sanitizePlacements(ui?.placements)).not.toThrow();
+  });
+
+  test("a real placements array still passes through", () => {
+    const ui = hostMetaToUiMeta({
+      name: "People",
+      placements: [{ slot: "sidebar.apps", resourceUri: "ui://people/main" }],
+    } as never);
+    expect(ui?.placements).toHaveLength(1);
   });
 });
