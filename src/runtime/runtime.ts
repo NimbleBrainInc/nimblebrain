@@ -1402,23 +1402,7 @@ export class Runtime {
     // of the cached system block (the prepend happens after telemetry, below).
     const systemPrompt = foldVolatileHead(stableSystem, volatileHead);
 
-    // Workspace model overrides are in the RequestContext — read via getModelSlot()
-
-    // Resolve model: a slot name, spelled bare ("fast") or explicit ("alias:fast")
-    let resolvedModelString = request.model ?? this.getDefaultModel();
-    const aliasSlot = parseModelSlotRef(resolvedModelString);
-    if (aliasSlot) {
-      resolvedModelString = this.getModelSlot(aliasSlot);
-    }
-    // Qualify bare model ids at the request-entry boundary. Slot-read
-    // values are already qualified by `getModelSlots()`, but the per-
-    // request `request.model` override path bypasses that reader, so
-    // we normalize once here to cover both. Belt-and-suspenders with
-    // the slot reader: the rest of the pipeline (cost aggregation,
-    // capability checks, max-output and thinking resolvers, provider-
-    // options shape, log lines) reads `engineConfig.model` directly
-    // and depends on it being qualified.
-    resolvedModelString = resolveModelString(resolvedModelString);
+    const resolvedModelString = this.resolveRequestModelString(request.model);
 
     // Load history and rehydrate any supported `resource_link` blocks
     // (attached files persisted as URI references) into AI SDK V3 `file`
@@ -2124,10 +2108,18 @@ export class Runtime {
 
   /**
    * Resolve the request model string: resolve a slot name (bare or `alias:`-
-   * prefixed) to its configured model, then qualify the bare id. Qualifying at
-   * the request-entry boundary lets the rest of the pipeline (cost aggregation,
-   * capability checks, resolvers, log lines) read `engineConfig.model` and
-   * depend on it being qualified.
+   * prefixed) to its configured model, then qualify the bare id.
+   *
+   * Slot reads go through `getModelSlot`, so a workspace's per-request model
+   * override (carried on the RequestContext) applies here too, and the value
+   * comes back already qualified. The `request.model` override bypasses that
+   * reader, so the qualify step covers both. Qualifying at the request-entry
+   * boundary lets the rest of the pipeline — cost aggregation, capability
+   * checks, the max-output and thinking resolvers, provider-options shape,
+   * log lines — read `engineConfig.model` and depend on it being qualified.
+   *
+   * Both request doors (chat and task) resolve through here; a second copy
+   * is how the two drift.
    */
   private resolveRequestModelString(requestModel: string | undefined): string {
     let modelString = requestModel ?? this.getDefaultModel();
