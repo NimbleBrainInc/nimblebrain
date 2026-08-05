@@ -168,7 +168,16 @@ export interface ChatSnapshot {
   preparingTool: PreparingTool | null;
   meta: LoadedConversationMeta | null;
   error: string | null;
+  /** Whether `retryLastMessage` can actually replay a turn. Retry needs the
+   *  original send params, which only exist for a turn sent in this session —
+   *  a conversation loaded from disk has none. Surfaces the store's own answer
+   *  so the UI offers the affordance only when it can act, instead of showing
+   *  a button that silently no-ops. */
+  canRetry: boolean;
 }
+
+/** Shown on a turn whose run ended without ever persisting a terminal event. */
+const ABANDONED_TAIL_NOTICE = "This response was interrupted and never finished.";
 
 const EMPTY_MESSAGES: ChatMessage[] = [];
 const EMPTY_SNAPSHOT: ChatSnapshot = {
@@ -180,6 +189,7 @@ const EMPTY_SNAPSHOT: ChatSnapshot = {
   preparingTool: null,
   meta: null,
   error: null,
+  canRetry: false,
 };
 
 // ===========================================================================
@@ -225,6 +235,12 @@ interface ConversationSlice {
   /** First `subscribed` frame of a resume should trim a stale in-flight turn
    *  from disk history (the replay rebuilds it). */
   resumeOnSubscribe: boolean;
+  /** A resume already refetched this transcript to try to complete a partial
+   *  tail. The refetch is a bet that the server has since persisted the
+   *  terminal event; if the tail comes back pending anyway, the bet lost and
+   *  refetching again would return the same bytes. Guards that one retry so
+   *  the reconcile can't re-enter itself indefinitely. */
+  resumeRefetched: boolean;
   /** True once full history is loaded (loadConversation) or the conversation
    *  was authored in this session (sendTurn / new draft). A dot-only probe
    *  leaves it false so opening the conversation still fetches full history. */
@@ -485,6 +501,7 @@ export function createChatStore(): ChatStore {
       preparingTool: slice.preparingTool,
       meta: slice.meta,
       error: slice.error,
+      canRetry: slice.lastSend !== undefined,
     };
   }
 
@@ -559,6 +576,7 @@ export function createChatStore(): ChatStore {
       pendingEcho: false,
       cancelRequested: false,
       resumeOnSubscribe: false,
+      resumeRefetched: false,
       // A fresh draft is fully "loaded" (empty IS its full history); a slice
       // keyed by a real conversation id starts unhydrated until fetched.
       hydrated: isDraftKey(key),
@@ -647,6 +665,71 @@ export function createChatStore(): ChatStore {
   }
 
   /**
+   * Recover a partial tail whose run is gone (no live turn, nothing in the
+   * grace buffer), so no replay can ever complete it.
+   *
+   * Refetch ONCE, on the bet that the terminal event was persisted between our
+   * snapshot and now. If the refetch already ran and the tail came back pending
+   * anyway, the bet lost: the turn was abandoned without a terminal event, so
+   * re-reading the same transcript cannot produce a different answer. Retrying
+   * there is futile rather than merely slow, and unguarded it re-enters itself
+   * (refetch → resume → reconcile → refetch) for as long as the conversation
+   * stays open.
+   */
+  function recoverAbandonedTail(slice: ConversationSlice, conversationId: string): ResumeOutcome {
+    closeConnection(slice);
+    // The server just reported no run at all, so a slice still flagged
+    // streaming — pinned by an earlier probe that did catch a live turn — is
+    // holding a stale belief. Clear it here rather than only in
+    // `settleAbandonedTail`, because `loadConversation` early-returns for a
+    // hydrated slice it thinks is live: the refetch below would silently no-op
+    // while the allowance was spent, stranding a spinner with no connection.
+    // Same fact, same response as the server-authoritative check in
+    // `openConnection`'s `onSubscribed`.
+    slice.isStreaming = false;
+    slice.streamingState = null;
+    slice.preparingTool = null;
+    if (!slice.resumeRefetched) {
+      slice.resumeRefetched = true;
+      void loadConversation(conversationId);
+      return "drop";
+    }
+    settleAbandonedTail(slice);
+    return "drop";
+  }
+
+  /**
+   * Settle a resume whose partial tail outlived its run. The refetch already
+   * ran and the tail came back pending, so the turn was abandoned without ever
+   * persisting a terminal event — nothing further will arrive from disk or from
+   * a replay. Stop presenting it as in-flight and keep whatever partial content
+   * exists, so the conversation renders instead of spinning.
+   */
+  function settleAbandonedTail(slice: ConversationSlice): void {
+    slice.isStreaming = false;
+    slice.streamingState = null;
+    slice.preparingTool = null;
+    slice.pendingEcho = false;
+    const updated = [...slice.messages];
+    const last = updated[updated.length - 1];
+    if (last?.role === "assistant") {
+      // Partial assistant content: keep it, but stop rendering it as still
+      // arriving and say why it stops mid-thought.
+      updated[updated.length - 1] = { ...last, pending: false, error: ABANDONED_TAIL_NOTICE };
+    } else {
+      // No assistant content at all. Carry the notice on an empty assistant
+      // message rather than `slice.error`, which renders as a banner pinned to
+      // the top of the panel — detached from the turn it explains, and cleared
+      // by the next send or load, so a follow-up would erase the only account
+      // of why the previous message was never answered. Same shape
+      // `simulateError` uses for the equivalent case.
+      updated.push({ role: "assistant", content: "", error: ABANDONED_TAIL_NOTICE });
+    }
+    slice.messages = updated;
+    commit(slice);
+  }
+
+  /**
    * Reconcile the first `subscribed` frame of a resume against the loaded disk
    * tail. Returns:
    *   - "handled": a live/grace turn was reconciled (state committed) — the
@@ -680,16 +763,11 @@ export function createChatStore(): ChatStore {
       if (pendingTail) trimTrailingTurn(slice);
       resetScratch(slice);
       if (info.isActive) markActiveStreaming(slice);
+      slice.resumeRefetched = false;
       commit(slice);
       return "handled";
     }
-    if (pendingTail) {
-      // Partial disk tail but the run is gone (grace GC'd) — no replay can
-      // complete it. Refetch the now-complete transcript.
-      closeConnection(slice);
-      void loadConversation(conversationId);
-      return "drop";
-    }
+    if (pendingTail) return recoverAbandonedTail(slice, conversationId);
     if (!slice.isStreaming) {
       // Complete disk tail (or idle) — ignore any stray grace-buffer replay;
       // it would duplicate (and flicker) a turn already fully on disk.
@@ -702,6 +780,9 @@ export function createChatStore(): ChatStore {
   function openConnection(slice: ConversationSlice, conversationId: string, resume: boolean): void {
     closeConnection(slice);
     slice.resumeOnSubscribe = resume;
+    // A fresh turn is a new bet: whatever stranded the previous tail says
+    // nothing about this one, so the one-refetch allowance resets with it.
+    if (!resume) slice.resumeRefetched = false;
     // When a resume finds no active turn, the server may still replay the most
     // recent (already-finished) turn from its grace buffer. Those events would
     // re-append a turn that's already in the loaded disk history → duplicate.
