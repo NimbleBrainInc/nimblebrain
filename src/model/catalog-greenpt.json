@@ -12,7 +12,7 @@
         },
         "limits": {
           "context": 1000000,
-          "output": 131072
+          "output": 16384
         },
         "capabilities": {
           "toolCall": true,
@@ -29,20 +29,20 @@
         "name": "Kimi K2.7 Code",
         "family": "kimi",
         "cost": {
-          "input": 0.9386,
+          "input": 0.8988,
           "output": 4.3801
         },
         "limits": {
           "context": 262144,
-          "output": 262144
+          "output": 16384
         },
         "capabilities": {
           "toolCall": true,
           "reasoning": true,
-          "attachment": false
+          "attachment": true
         },
         "modalities": {
-          "input": ["text"],
+          "input": ["text", "image"],
           "output": ["text"]
         }
       },
@@ -56,7 +56,7 @@
         },
         "limits": {
           "context": 1000000,
-          "output": 131072
+          "output": 16384
         },
         "capabilities": {
           "toolCall": true,
