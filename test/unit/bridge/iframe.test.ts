@@ -41,14 +41,14 @@ describe("injectThemeStyles", () => {
   test("light mode contains light token values", () => {
     const result = injectThemeStyles(FULL_HTML, "light");
     expect(result).toContain("--color-background-primary: #ffffff;");
-    expect(result).toContain("--color-text-accent: #0055FF;");
+    expect(result).toContain("--color-text-accent: #315EDB;");
     expect(result).toContain("--color-text-primary: #09090b;");
   });
 
   test("dark mode contains dark token values", () => {
     const result = injectThemeStyles(FULL_HTML, "dark");
     expect(result).toContain("--color-background-primary: #000000;");
-    expect(result).toContain("--color-text-accent: #4d90ff;");
+    expect(result).toContain("--color-text-accent: #6a8fe4;");
     expect(result).toContain("--color-text-primary: #fafafa;");
   });
 

@@ -30,9 +30,9 @@ body{font-family:'Hanken Grotesk',system-ui,-apple-system,BlinkMacSystemFont,san
 .wm svg{width:.65rem;height:.65rem;display:block}
 .fb{position:fixed;bottom:1.25rem;font-size:.75rem;color:#5c5c66;margin:0;font-weight:500}
 .fb a{color:#09090b;text-decoration:none;border-bottom:1px dotted #82828c}
-.fb a:hover{color:#0055FF;border-bottom-color:#0055FF}
+.fb a:hover{color:#315EDB;border-bottom-color:#315EDB}
 @keyframes rise{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:translateY(0)}}
-@media (prefers-color-scheme:dark){body{background:#000000;color:#fafafa}.wm{color:#9b9ba4}.fb{color:#9b9ba4}.fb a{color:#fafafa;border-bottom-color:#9b9ba4}.fb a:hover{color:#4d90ff;border-bottom-color:#4d90ff}}
+@media (prefers-color-scheme:dark){body{background:#000000;color:#fafafa}.wm{color:#9b9ba4}.fb{color:#9b9ba4}.fb a{color:#fafafa;border-bottom-color:#9b9ba4}.fb a:hover{color:#6a8fe4;border-bottom-color:#6a8fe4}}
 @media (prefers-reduced-motion:reduce){.h,.wm{animation:none}}`;
 
 const SUCCESS_PAGE_STYLE_SHA256 = createHash("sha256").update(SUCCESS_PAGE_STYLE).digest("base64");
@@ -76,7 +76,7 @@ export function successPageHtml(title: string, returnUrl: string): string {
 <style>${SUCCESS_PAGE_STYLE}</style></head>
 <body>
 <h1 class="h">You're in.</h1>
-<div class="wm"><svg viewBox="0 0 12 12" aria-hidden="true"><path d="M6 0L12 6L6 12L0 6Z" fill="#0055FF"/></svg>NimbleBrain</div>
+<div class="wm"><svg viewBox="0 0 12 12" aria-hidden="true"><path d="M6 0L12 6L6 12L0 6Z" fill="#315EDB"/></svg>NimbleBrain</div>
 <p class="fb">not redirecting? <a href="${safeUrl}">go back &rarr;</a></p>
 </body></html>`;
 }
