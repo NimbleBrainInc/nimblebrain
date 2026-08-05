@@ -6,8 +6,8 @@ import type {
   PlacementDeclaration,
 } from "./types.ts";
 
-/** Max length for untrusted display strings on a placement (label/icon). */
-const PLACEMENT_STRING_MAX = 128;
+/** Max length for a bundle-authored display string (host `name`/`icon`, placement `label`/`icon`). */
+const DISPLAY_STRING_MAX = 128;
 
 /**
  * Bundles included by default as MCP subprocesses.
@@ -41,9 +41,17 @@ export function mergeBundles(userBundles: BundleRef[], noDefaults?: boolean): Bu
  * null unless a `name` is present (the host needs a label to surface anything).
  */
 export function hostMetaToUiMeta(hostMeta: HostManifestMeta | undefined): BundleUiMeta | null {
-  if (!hostMeta?.name) return null;
-  const ui: BundleUiMeta = { name: hostMeta.name, icon: hostMeta.icon ?? "" };
-  if (hostMeta.placements && hostMeta.placements.length > 0) {
+  // `hostMeta` is an unchecked cast over registry JSON (`getNimbleBrainHostMeta`),
+  // so every field here is `unknown` in practice and only the schema-gated
+  // install path has validated it. Type-check before touching, exactly as
+  // `sanitizePlacementFields` does below — a truthy non-string `name` would
+  // otherwise throw out of catalog projection and take the whole catalog with it.
+  if (typeof hostMeta?.name !== "string" || hostMeta.name === "") return null;
+  const ui: BundleUiMeta = {
+    name: hostMeta.name.slice(0, DISPLAY_STRING_MAX),
+    icon: typeof hostMeta.icon === "string" ? hostMeta.icon.slice(0, DISPLAY_STRING_MAX) : "",
+  };
+  if (Array.isArray(hostMeta.placements) && hostMeta.placements.length > 0) {
     ui.placements = hostMeta.placements;
   }
   return ui;
@@ -64,8 +72,8 @@ function placementAuthority(p: PlacementDeclaration): string | null {
 function sanitizePlacementFields(p: PlacementDeclaration): PlacementDeclaration {
   const safe: PlacementDeclaration = { slot: p.slot, resourceUri: p.resourceUri };
   if (typeof p.priority === "number") safe.priority = p.priority;
-  if (typeof p.label === "string") safe.label = p.label.slice(0, PLACEMENT_STRING_MAX);
-  if (typeof p.icon === "string") safe.icon = p.icon.slice(0, PLACEMENT_STRING_MAX);
+  if (typeof p.label === "string") safe.label = p.label.slice(0, DISPLAY_STRING_MAX);
+  if (typeof p.icon === "string") safe.icon = p.icon.slice(0, DISPLAY_STRING_MAX);
   if (typeof p.route === "string") safe.route = p.route;
   if (p.size === "compact" || p.size === "full" || p.size === "auto") safe.size = p.size;
   return safe;

@@ -205,7 +205,9 @@ The `models` object declares three role-based slots. Each value is a `provider:m
 | `fast` | Title generation, briefing, skill matching — cheap/fast workloads (still needs a large context window, see below) |
 | `reasoning` | Complex analysis, planning, long-horizon tasks |
 
-A workspace can override individual slots via `workspace.json → models`. When a `nb__delegate` call or agent profile specifies a slot name (e.g. `"model": "fast"`), it's resolved against these slots.
+A workspace can override individual slots via `workspace.json → models`. When a `nb__delegate` call or agent profile specifies a slot name (e.g. `"model": "fast"`), it's resolved against these slots. `"alias:fast"` is the same reference written explicitly; both spellings resolve identically.
+
+A bare model string that is **neither** a slot name nor a model in the catalog is passed through to the provider unchanged, with `anthropic:` prepended — the deliberate fallback for pinned or bespoke ids served under their own name (for example through an OpenAI-compatible proxy). That means a typo here is not rejected at config load; it fails at the provider on the first call that uses the slot, reporting a model you did not configure.
 
 ### Changing a slot affects new conversations only
 
