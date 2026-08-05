@@ -21,8 +21,8 @@ import type {
  * collector has no way to widen the view it was handed:
  *
  * - `store` — an ALREADY-SCOPED lister. The caller binds the workspace when it
- *   builds the closure (`runtime.listConversations` requires a scope, so an
- *   unscoped one cannot be written without spelling out `all-workspaces`).
+ *   builds the closure; `runtime.listConversations` takes the workspace as a
+ *   required argument, so an unscoped one cannot be written at all.
  * - `jsonl` — one directory, and that directory IS the scope.
  *
  * Activity is a workspace view: the log and automation-run inputs beside this

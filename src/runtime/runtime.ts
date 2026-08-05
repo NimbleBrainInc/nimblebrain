@@ -1211,10 +1211,9 @@ export class Runtime {
     const narratedWsId = convWsId;
 
     // Agent profiles + model overrides come from the workspace this session is
-    // BOUND to — the conversation's own. They used to be read off the caller's
-    // personal workspace, which made a personal workspace special for no reason
-    // and put a second workspace on every request; a workspace's agents belong
-    // to that workspace.
+    // bound to — the conversation's own. A workspace's agents and model slots
+    // are that workspace's configuration, and apply to every turn that runs in
+    // it regardless of who is chatting.
     const boundWorkspace = await this._workspaceStore.get(convWsId);
 
     const createOpts: CreateConversationOptions = {

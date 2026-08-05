@@ -116,15 +116,13 @@ export async function createConversationsSource(
   /**
    * The one workspace this request's reads are walled to.
    *
-   * Conversations are workspace-owned, but `conversations__*` dispatches
-   * through the IDENTITY door — so `scope.workspaceId` is the caller's
-   * personal/session workspace, not the workspace they're looking at. The
-   * bound workspace rides `RequestContext.workspaceId`, set on every door
-   * that can reach this source: chat (the conversation's OWN workspace, so a
-   * resumed thread lists its own workspace's chats no matter where the user is
-   * focused), automation runs (provenance), `/mcp` (validated `X-Workspace-Id`),
-   * and REST (validated header, else personal). Same seam `files__*` and
-   * `automations__*` use.
+   * Conversations are workspace-owned, so every read resolves inside exactly
+   * one workspace: `RequestContext.workspaceId`, set on every door that can
+   * reach this source — chat (the conversation's OWN workspace, so a resumed
+   * thread lists its own workspace's chats no matter where the user is
+   * focused), automation runs (provenance), `/mcp` (validated
+   * `X-Workspace-Id`), and REST (validated header, else personal). Same seam
+   * `files__*` and `automations__*` use.
    *
    * Deliberately NOT a tool argument. A caller-supplied workspace can be
    * omitted — which is exactly how the iframe's pre-handshake first call used

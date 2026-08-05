@@ -15,14 +15,9 @@ export interface RequestContext {
    * may read and write, whose tools it may dispatch, and whose config applies.
    *
    * There is exactly one, because a session reaches exactly one workspace (the
-   * wall). This used to be two fields — a `scope.workspaceId` for "the door the
-   * request came through" and a separate one for "the workspace the data lives
-   * in" — which differed only because the chat door put the caller's PERSONAL
-   * workspace in the first one. A personal workspace is not special; it is the
-   * workspace created at first login. Treating it as the home for per-user
-   * config is what made a second workspace-shaped variable look necessary, and
-   * two near-identically-named workspace fields is the ambiguity that produced
-   * the cross-workspace conversation leak.
+   * wall). A personal workspace is not special in this model — it is the
+   * workspace created at first login, and it reaches this field the same way
+   * any other does.
    *
    * Set on every door: chat (the conversation's own workspace — a chat resumed
    * in A while the client is focused on B reads A), automation runs
@@ -31,8 +26,15 @@ export interface RequestContext {
    * same one).
    *
    * Absent ⇒ no workspace in scope (an external `/mcp` request with no
-   * `X-Workspace-Id`, a background job). Absence NARROWS — every consumer
-   * denies — so it is never a widening default.
+   * `X-Workspace-Id`, a background job), and every consumer denies rather than
+   * guessing.
+   *
+   * Note this is a property of the CONSUMERS, not a guarantee that absence
+   * survives to them: the REST door substitutes the caller's personal
+   * workspace when `X-Workspace-Id` is absent (`buildRestToolCallContext`), so
+   * a headerless REST call reads the caller's own personal workspace rather
+   * than being refused. `/mcp` has no such fallback and does refuse. Do not
+   * read this field's optionality as licence to add an unguarded consumer.
    */
   workspaceId?: string;
   /**

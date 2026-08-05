@@ -1,11 +1,10 @@
 /**
  * The conversations app door is walled to ONE workspace.
  *
- * Conversations are workspace-owned, and `conversations__*` dispatches through
- * the IDENTITY door — so `scope.workspaceId` is the personal/session workspace,
- * not the workspace the user is looking at. The focused workspace therefore
- * rides `RequestContext.workspaceId`, exactly as it does for `files__*` and
- * `automations__*` (see `test/unit/bundles/files/source.test.ts`).
+ * Conversations are workspace-owned, so every read resolves inside exactly one
+ * workspace — `RequestContext.workspaceId`, set by the door the request came
+ * through, exactly as it works for `files__*` and `automations__*` (see
+ * `test/unit/bundles/files/source.test.ts`).
  *
  * These tests pin the property that matters: the workspace a read lands in is
  * AMBIENT and validated, never a coordinate the caller supplies. A client that

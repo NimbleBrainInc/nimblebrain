@@ -144,12 +144,10 @@ export async function createAutomationsSource(
   /**
    * Build a workspace-scoped ToolContext for per-request use. Automations are
    * workspace-owned: the store lives at `workspaces/<wsId>/automations/<ownerId>/`,
-   * so this needs both the owner (the authenticated identity) and the FOCUSED
-   * workspace. The bound workspace rides `RequestContext.workspaceId` (set
-   * on both doors), the same mechanism `files` uses — `scope.workspaceId` on the
-   * identity door is the personal/session workspace, not the focus. No workspace
-   * in scope (e.g. an external `/mcp` call with no header) ⇒ deny rather than
-   * guess a workspace.
+   * so this needs both the owner (the authenticated identity) and the
+   * workspace, which rides `RequestContext.workspaceId` — the same mechanism
+   * `files` uses. No workspace in scope (e.g. an external `/mcp` call with no
+   * header) ⇒ deny rather than guess a workspace.
    */
   function getToolContext(): ToolContext {
     const owner = ownerId();

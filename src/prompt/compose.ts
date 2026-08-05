@@ -966,8 +966,8 @@ export function formatConnectorSkillBlock(name: string, scope: string, body: str
  * the *namespacing* rule onto files and asks the user "which workspace does
  * this file live in?" — a real failure observed in production. So the note says
  * both halves: the agent never names a workspace, AND what it sees is this
- * workspace's. Claiming these are cross-workspace (the earlier wording) told
- * the agent to enumerate across the wall the tools now enforce.
+ * workspace's. Claiming these are cross-workspace would tell the agent to
+ * enumerate across the wall the tools enforce.
  */
 const IDENTITY_SCOPE_NOTE =
   "Files and conversations belong to the workspace you're in, but you never name a workspace to reach them: the `files__*` and `conversations__*` tools are always loaded and automatically resolve to the current workspace. So they show you this workspace's files and conversations, not other workspaces'. Never ask the user which workspace a file lives in, and don't use `nb__search` to find files — just call `files__search`/`files__list`.";

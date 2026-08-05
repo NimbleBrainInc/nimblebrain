@@ -140,8 +140,13 @@ export class ConversationIndex {
    */
   async refresh(): Promise<void> {
     if (this.dirty && this.dir !== null) {
-      await this.build(this.dir);
+      // Clear BEFORE the rebuild, not after. `build()` lists the directory up
+      // front, so a write landing mid-rebuild cannot be in this pass — but its
+      // `invalidate()` must survive it. Clearing afterwards lets the rebuild
+      // that never saw the write erase the flag raised for it, and the write
+      // then stays missing until an unrelated later one re-dirties the index.
       this.dirty = false;
+      await this.build(this.dir);
     }
   }
 
