@@ -3715,14 +3715,26 @@ export class Runtime {
    *  without each having to remember to call `resolveModelString`. The
    *  per-request `request.model` override path (in `chat()`) qualifies
    *  separately because it bypasses this reader. */
-  getModelSlots(): ModelSlots {
+  /**
+   * The slots as *configured* — no request-scoped overlay.
+   *
+   * Distinct from `getModelSlots()` because that one is tinted by whoever is
+   * asking. Anything writing back to process config has to start here: seeding
+   * from the resolved view would promote one caller's workspace or profile
+   * choice into the default everybody else gets.
+   */
+  private configuredModelSlots(): ModelSlots {
     const models = this.config.models;
     const fallback = this.config.defaultModel ?? DEFAULT_MODEL;
-    const base: ModelSlots = {
+    return {
       default: resolveModelString(models?.default ?? fallback),
       fast: resolveModelString(models?.fast ?? fallback),
       reasoning: resolveModelString(models?.reasoning ?? fallback),
     };
+  }
+
+  getModelSlots(): ModelSlots {
+    const base = this.configuredModelSlots();
     // Merge workspace model overrides from request context (partial — only overrides specified slots)
     const wsModels = getRequestContext()?.workspaceModelOverride ?? null;
     const withWorkspace: ModelSlots = wsModels
@@ -3760,6 +3772,11 @@ export class Runtime {
    * a configured slot value is governed where it is written.
    */
   isModelPermitted(modelString: string): boolean {
+    // An empty id is not a model. `resolveModelString("")` returns
+    // `"anthropic:"` — the bare-id fallback applied to nothing — which a
+    // provider-less deployment would otherwise accept and, on the preference
+    // path, pin every future conversation to.
+    if (modelString.trim() === "") return false;
     if (!this.config.providers) return true;
     return isModelAllowed(resolveModelString(modelString), this.getProviderConfigs());
   }
@@ -3997,7 +4014,9 @@ export class Runtime {
     preferences?: Record<string, string>;
   }) {
     if (patch.models) {
-      this.config.models ??= this.getModelSlots(); // init from current
+      // Configured slots, not resolved: `getModelSlots()` is tinted by the
+      // caller's workspace and profile, and this value becomes everyone's default.
+      this.config.models ??= this.configuredModelSlots();
       Object.assign(this.config.models, patch.models);
     }
     if (patch.defaultModel !== undefined) {

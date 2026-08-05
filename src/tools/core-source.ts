@@ -276,11 +276,13 @@ function buildPreferencesPatch(input: Record<string, unknown>): Record<string, u
       patch[key] = String(value);
     }
   }
-  if (typeof input.model === "string") {
-    patch.models = { default: resolveModelString(input.model) };
-  } else if (input.model === null) {
-    // Explicit clear — fall back to the configured default.
-    patch.models = {};
+  if (input.model !== undefined) {
+    // Null and empty both clear. Empty matters because `get_config` reports an
+    // unset preference as `""`, so a client that reads preferences and writes
+    // them back sends exactly that — and storing it would pin the user to an
+    // empty model id they cannot correct without a working turn.
+    const chosen = typeof input.model === "string" ? input.model.trim() : "";
+    patch.models = chosen ? { default: resolveModelString(chosen) } : {};
   }
   return patch;
 }
@@ -293,8 +295,10 @@ function buildPreferencesPatch(input: Record<string, unknown>): Record<string, u
  */
 function preferredModelError(input: Record<string, unknown>, runtime: Runtime): string | null {
   if (typeof input.model !== "string") return null;
-  if (runtime.isModelPermitted(input.model)) return null;
-  const qualified = resolveModelString(input.model);
+  const chosen = input.model.trim();
+  if (chosen === "") return null; // clearing, nothing to validate
+  if (runtime.isModelPermitted(chosen)) return null;
+  const qualified = resolveModelString(chosen);
   return `Model "${qualified}" is not permitted. Either its provider is not configured or it is not in the allowlist. Configured providers: ${runtime.getConfiguredProviders().join(", ") || "(none)"}`;
 }
 

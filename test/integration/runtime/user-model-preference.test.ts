@@ -116,24 +116,22 @@ describe("a stored choice is re-checked, not trusted", () => {
   });
 });
 
-describe("saving a choice", () => {
-  /** Invoke `set_preferences` through the real core tool, as the given user. */
-  async function setPreference(runtime: Runtime, userId: string, model: string | null) {
+/** Invoke `set_preferences` through the real core tool, as the given user. */
+async function setPreference(runtime: Runtime, userId: string, model: string | null) {
     const identity = (await runtime.getUserStore().get(userId)) as unknown as UserIdentity;
     const tool = createCoreToolDefs(runtime).find((d) => d.name === "set_preferences");
     if (!tool) throw new Error("set_preferences tool not found");
-    return runWithRequestContext({ identity, workspaceId: null } as never, () =>
-      tool.handler({ model }),
-    );
-  }
+  return runWithRequestContext({ identity, workspaceId: null } as never, () =>
+    tool.handler({ model }),
+  );
+}
 
-  async function seedUser(runtime: Runtime) {
-    const user = await runtime
-      .getUserStore()
-      .create({ email: "p@example.com", displayName: "P" });
-    return user.id;
-  }
+async function seedUser(runtime: Runtime) {
+  const user = await runtime.getUserStore().create({ email: "p@example.com", displayName: "P" });
+  return user.id;
+}
 
+describe("saving a choice", () => {
   it("stores a permitted model and reads it back", async () => {
     const runtime = await start("save-ok", ["claude-sonnet-4-6", "claude-opus-4-6"]);
     try {
@@ -170,6 +168,76 @@ describe("saving a choice", () => {
       await setPreference(runtime, userId, null);
       const user = await runtime.getUserStore().get(userId);
       expect(user?.preferences.models?.default).toBeUndefined();
+    } finally {
+      await runtime.shutdown();
+    }
+  });
+});
+
+describe("an empty model id is not a choice", () => {
+  // `get_config` reports an unset preference as `""`, so a client that reads
+  // preferences and writes them back sends `""`. Storing it would resolve to
+  // `anthropic:` — the bare-id fallback applied to nothing — and pin every
+  // conversation that user starts to a model that cannot answer, which they
+  // could not correct from chat because correcting it needs a turn.
+  it("clears rather than storing, round-tripping the unset sentinel", async () => {
+    const runtime = await start("empty-clears");
+    try {
+      const userId = await seedUser(runtime);
+      await setPreference(runtime, userId, CHOSEN);
+      const res = await setPreference(runtime, userId, "");
+      expect(res.isError).toBeFalsy();
+      const user = await runtime.getUserStore().get(userId);
+      expect(user?.preferences.models?.default).toBeUndefined();
+    } finally {
+      await runtime.shutdown();
+    }
+  });
+
+  it("is refused on the request path, where it is malformed rather than a clear", async () => {
+    const runtime = await start("empty-request");
+    try {
+      expect(runtime.isModelPermitted("")).toBe(false);
+      expect(runtime.isModelPermitted("   ")).toBe(false);
+    } finally {
+      await runtime.shutdown();
+    }
+  });
+});
+
+describe("a caller's own choice never becomes everyone's default", () => {
+  // `updateConfig` seeds `config.models` from the slot reader when the key is
+  // absent. That reader is tinted by whoever is asking, so an admin with a
+  // personal model writing any unrelated slot would promote their own choice
+  // to the process-wide default — and silently diverge from the override file
+  // just written.
+  it("seeds process config from the configured slots, not the caller's view", async () => {
+    // No `models` key: that is the only shape where `updateConfig` seeds, and
+    // so the only shape where the caller's view could be what it seeds from.
+    const workDir = join(testDir, "no-leak");
+    mkdirSync(workDir, { recursive: true });
+    const runtime = await Runtime.start({
+      model: { provider: "custom", adapter: createEchoModel() },
+      noDefaultBundles: true,
+      workDir,
+    });
+    await provisionTestWorkspace(runtime);
+    try {
+      const identity = {
+        id: "usr_admin",
+        email: "a@example.com",
+        displayName: "A",
+        orgRole: "owner",
+        preferences: { models: { default: CHOSEN } },
+      } as unknown as UserIdentity;
+
+      runWithRequestContext({ identity, workspaceId: null } as never, () =>
+        runtime.updateConfig({ models: { fast: "anthropic:claude-haiku-4-5-20251001" } }),
+      );
+
+      // Read back as somebody with no preference of their own: they must see
+      // the platform default, not the admin's personal pick.
+      expect(slotsFor(runtime).default).not.toBe(CHOSEN);
     } finally {
       await runtime.shutdown();
     }
