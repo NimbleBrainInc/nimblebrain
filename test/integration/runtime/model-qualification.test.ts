@@ -217,4 +217,61 @@ describe("model qualification at runtime boundary", () => {
       await runtime.shutdown();
     }
   });
+
+  it("a profile with no model follows live config through the delegate door", async () => {
+    // `profile?.model ?? ctx.defaultModel` is the delegate's other door. The
+    // context object is built once, inside `Runtime.start()`, so a value read
+    // eagerly there would serve the boot snapshot until the process restarted
+    // — and would skip the qualification every other reader applies.
+    const workDir = join(testDir, "no-profile-model-delegate-door");
+    mkdirSync(workDir, { recursive: true });
+
+    const events: EngineEvent[] = [];
+    const sink: EventSink = { emit: (e) => events.push(e) };
+
+    const runtime = await Runtime.start({
+      events: [sink],
+      model: {
+        provider: "custom",
+        adapter: createEchoModel({
+          responses: [
+            {
+              text: "delegating",
+              toolCalls: [
+                {
+                  toolCallId: "call_1",
+                  toolName: "nb__delegate",
+                  input: JSON.stringify({ task: "summarize", agent: "analyst" }),
+                },
+              ],
+            },
+          ],
+        }),
+      },
+      noDefaultBundles: true,
+      workDir,
+      models: { default: "anthropic:claude-sonnet-4-6", fast: "anthropic:claude-sonnet-4-6" },
+      agents: {
+        // No `model`: the child takes the runtime default.
+        analyst: { description: "Analyst", systemPrompt: "You analyze.", tools: [] },
+      },
+    });
+    await provisionTestWorkspace(runtime);
+
+    // What `set_model_config` does after boot, minus the file write. Bare on
+    // purpose: the reader qualifies, a captured `config.models.default` does not.
+    runtime.updateConfig({ models: { default: "gemini-3.1-pro-preview" }, maxInputTokens: 12345 });
+
+    try {
+      await runtime.chat({ message: "hello", workspaceId: TEST_WORKSPACE_ID }, { emit: () => {} });
+
+      const childStart = events.find((e) => e.type === "run.start" && e.data.parentRunId);
+      expect(childStart).toBeDefined();
+      expect(childStart!.data.model).toBe("google:gemini-3.1-pro-preview");
+      // The other half of the change: the cap is read live too.
+      expect(childStart!.data.maxInputTokens).toBe(12345);
+    } finally {
+      await runtime.shutdown();
+    }
+  });
 });

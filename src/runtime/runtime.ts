@@ -546,11 +546,6 @@ export class Runtime {
     // what the model actually sees on each call.
 
     // Build delegate context for nb__delegate tool
-    // Use a late-bound getter for defaultModel so it reflects live config changes
-    const getDefaultModel = () => {
-      const models = config.models;
-      return models?.default ?? config.defaultModel ?? DEFAULT_MODEL;
-    };
     const resolveSlot = (s: string): string => {
       const slot = parseModelSlotRef(s);
       if (slot) {
@@ -677,8 +672,22 @@ export class Runtime {
       },
       getRemainingIterations: () => delegateTracker.getRemainingIterations(),
       getParentRunId: () => delegateTracker.getParentRunId(),
-      defaultModel: getDefaultModel(),
-      defaultMaxInputTokens: config.maxInputTokens ?? DEFAULT_MAX_INPUT_TOKENS,
+      // These two are accessors, not values: the object is built once at
+      // start(), and `set_model_config` patches live config afterwards, so an
+      // eager read serves the boot snapshot until the process restarts. Going
+      // through the runtime's own readers also puts the no-profile path on the
+      // same resolution as the named-slot path above — including `provider:`
+      // qualification and any per-request override, which a private copy of
+      // the fallback chain drops. The `config.*` fields below are still eager
+      // and carry the same hazard (#924).
+      get defaultModel() {
+        if (!rtHolder.rt) throw new Error("Runtime not initialized");
+        return rtHolder.rt.getDefaultModel();
+      },
+      get defaultMaxInputTokens() {
+        if (!rtHolder.rt) throw new Error("Runtime not initialized");
+        return rtHolder.rt.getMaxInputTokens();
+      },
       // Raw operator config (may be undefined). Delegate resolves against
       // the child's model at execution time so the resolved values fit
       // the child's model rather than the parent's.
