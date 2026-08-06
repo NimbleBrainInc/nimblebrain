@@ -672,13 +672,14 @@ export class Runtime {
       },
       getRemainingIterations: () => delegateTracker.getRemainingIterations(),
       getParentRunId: () => delegateTracker.getParentRunId(),
-      // Accessors, not values: this object is built once at start(), and
-      // `set_model_config` patches live config afterwards. Read eagerly, a
-      // delegate would keep serving the values captured at boot until the
-      // process restarted. Both route through the runtime's own readers, so
-      // the no-profile path resolves exactly like the named-slot path above
-      // — including the `provider:` qualification and any per-request
-      // override, which a private copy of the fallback chain would drop.
+      // These two are accessors, not values: the object is built once at
+      // start(), and `set_model_config` patches live config afterwards, so an
+      // eager read serves the boot snapshot until the process restarts. Going
+      // through the runtime's own readers also puts the no-profile path on the
+      // same resolution as the named-slot path above — including `provider:`
+      // qualification and any per-request override, which a private copy of
+      // the fallback chain drops. The `config.*` fields below are still eager
+      // and carry the same hazard (#924).
       get defaultModel() {
         if (!rtHolder.rt) throw new Error("Runtime not initialized");
         return rtHolder.rt.getDefaultModel();
