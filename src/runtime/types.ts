@@ -43,7 +43,14 @@ export interface RuntimeConfig {
   skillDirs?: string[];
 
   /** Role-based model slots. Takes precedence over `defaultModel`. */
-  models?: ModelSlots;
+  /**
+   * Slots the operator set. Partial because setting one slot is not setting
+   * the other — the resolved view where both are always present is
+   * `Runtime.configuredModelSlots()`. If this were the full `ModelSlots`,
+   * writing one slot would force a value into the other, and that invented
+   * value would read back as a deliberate choice.
+   */
+  models?: Partial<ModelSlots>;
 
   /** @deprecated Use models.default instead. Kept for backward compat. */
   defaultModel?: string;

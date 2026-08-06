@@ -325,13 +325,13 @@ export interface ChatStreamEventMap {
 /** Union of all chat stream event type strings. */
 export type ChatStreamEventType = keyof ChatStreamEventMap;
 
-/** Runtime configuration info from get_config tool. */
+/**
+ * The parts of `get_config` the chat surface consumes. The tool publishes more
+ * — the operator-set group and the resolved limits under `resolved` — and the
+ * settings tabs declare those where they use them.
+ */
 export interface ConfigInfo {
-  defaultModel: string;
   configuredProviders: string[];
-  maxIterations: number;
-  maxInputTokens: number;
-  maxOutputTokens: number;
   preferences?: {
     displayName?: string;
     timezone?: string;

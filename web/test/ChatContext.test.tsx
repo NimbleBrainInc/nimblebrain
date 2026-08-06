@@ -91,7 +91,6 @@ describe("ChatConfigContext", () => {
 		const { result } = renderHook(() => useChatConfigContext(), { wrapper });
 
 		expect(result.current.configuredProviders).toEqual([]);
-		expect(result.current.defaultModel).toBe("");
 		expect(typeof result.current.refreshConfig).toBe("function");
 	});
 
@@ -103,6 +102,9 @@ describe("ChatConfigContext", () => {
 
 		expect(result.current).not.toHaveProperty("selectedModel");
 		expect(result.current).not.toHaveProperty("setSelectedModel");
+		// Nor the resolved default it would be chosen against: no surface read
+		// it, and `get_config` publishes effective values under `resolved`.
+		expect(result.current).not.toHaveProperty("defaultModel");
 		expect(localStorage.getItem("nb:selectedModel")).toBeNull();
 	});
 
@@ -119,7 +121,6 @@ describe("ChatConfigContext", () => {
 					<ChatProvider
 						initialConfig={{
 							configuredProviders: ["anthropic", "openai"],
-							defaultModel: "claude-sonnet-4-5-20250929",
 							preferences: { theme: "dark" },
 						}}
 					>
@@ -134,7 +135,6 @@ describe("ChatConfigContext", () => {
 		});
 
 		expect(result.current.configuredProviders).toEqual(["anthropic", "openai"]);
-		expect(result.current.defaultModel).toBe("claude-sonnet-4-5-20250929");
 		expect(result.current.preferences).toEqual({ theme: "dark" });
 	});
 

@@ -15,13 +15,25 @@ import {
   tuningAppliesTo,
 } from "./thinking-patch";
 
+/**
+ * `get_config`'s two groups. The top level is what the operator set — every
+ * field optional, because absent means "not set" and is the only way to tell
+ * that from "set to today's default". `resolved` is the effective value, shown
+ * as placeholder text and never sent back.
+ */
 interface ModelConfig {
-  models: { default: string; fast: string };
+  models?: { default?: string; fast?: string };
+  maxIterations?: number;
+  maxInputTokens?: number;
+  maxOutputTokens?: number;
+  resolved: {
+    models: { default: string; fast: string };
+    maxIterations: number;
+    maxInputTokens: number;
+    maxOutputTokens: number;
+  };
   configuredProviders: string[];
   availableModels: Record<string, ModelEntry[]>;
-  maxIterations: number;
-  maxInputTokens: number;
-  maxOutputTokens: number;
   thinking?: ThinkingMode;
   thinkingEffort?: ThinkingEffort;
   thinkingBudgetTokens?: number;
@@ -53,9 +65,14 @@ function qualifyModelId(
 export function ModelTab() {
   const [defaultModel, setDefaultModel] = useState("");
   const [fastModel, setFastModel] = useState("");
-  const [maxIterations, setMaxIterations] = useState(10);
-  const [maxInputTokens, setMaxInputTokens] = useState(500000);
-  const [maxOutputTokens, setMaxOutputTokens] = useState(16384);
+  const [resolved, setResolved] = useState<ModelConfig["resolved"] | null>(null);
+  const [maxIterations, setMaxIterations] = useState<number | null>(null);
+  const [maxInputTokens, setMaxInputTokens] = useState<number | null>(null);
+  const [maxOutputTokens, setMaxOutputTokens] = useState<number | null>(null);
+  // A cleared numeric field means "unset" — `Number("")` is 0, which would pin a
+  // zero cap instead of leaving the field to the runtime default.
+  const numberOrNull = (raw: string) => (raw.trim() === "" ? null : Number(raw));
+
   // Empty string is the "no override — use platform default" sentinel
   // for the select. On save, that becomes a literal `null` to the tool,
   // which clears any persisted operator override.
@@ -80,11 +97,12 @@ export function ModelTab() {
         const config = parseToolResult<ModelConfig>(res);
         const qualify = (id: string | undefined) =>
           qualifyModelId(id, config.availableModels ?? {});
-        setDefaultModel(qualify(config.models.default));
-        setFastModel(qualify(config.models.fast));
-        setMaxIterations(config.maxIterations ?? 10);
-        setMaxInputTokens(config.maxInputTokens ?? 500000);
-        setMaxOutputTokens(config.maxOutputTokens ?? 16384);
+        setDefaultModel(qualify(config.models?.default));
+        setFastModel(qualify(config.models?.fast));
+        setMaxIterations(config.maxIterations ?? null);
+        setMaxInputTokens(config.maxInputTokens ?? null);
+        setMaxOutputTokens(config.maxOutputTokens ?? null);
+        setResolved(config.resolved);
         setThinking(config.thinking ?? THINKING_DEFAULT);
         setThinkingEffort(config.thinkingEffort ?? EFFORT_DEFAULT);
         setThinkingBudgetTokens(config.thinkingBudgetTokens ?? null);
@@ -102,14 +120,19 @@ export function ModelTab() {
     try {
       const thinkingPatch = thinkingPatchFor(thinking, thinkingEffort, thinkingBudgetTokens);
 
+      // An empty field means "follow the platform default", and it is sent as
+      // an explicit clear rather than by omitting the key — omission means
+      // "leave alone", so a cleared field would silently keep its old value.
+      // Posting the resolved default back instead would pin a value nobody
+      // chose and opt the deployment out of every future change to it.
+      const clearable = (value: number | null, key: string, clearFlag: string) =>
+        value !== null ? { [key]: value } : { [clearFlag]: true };
+
       await callTool("nb", "set_model_config", {
-        models: {
-          default: defaultModel,
-          fast: fastModel,
-        },
-        maxIterations,
-        maxInputTokens,
-        maxOutputTokens,
+        models: { default: defaultModel, fast: fastModel },
+        ...clearable(maxIterations, "maxIterations", "clearMaxIterations"),
+        ...clearable(maxInputTokens, "maxInputTokens", "clearMaxInputTokens"),
+        ...clearable(maxOutputTokens, "maxOutputTokens", "clearMaxOutputTokens"),
         ...thinkingPatch,
       });
       setFeedback({ type: "success", message: "Model configuration saved." });
@@ -148,6 +171,9 @@ export function ModelTab() {
             value={defaultModel}
             onChange={setDefaultModel}
             availableModels={availableModels}
+            placeholder={
+              resolved ? `Use the default (${resolved.models.default})` : "Use the default"
+            }
           />
 
           <ModelSelect
@@ -156,6 +182,11 @@ export function ModelTab() {
             value={fastModel}
             onChange={setFastModel}
             availableModels={availableModels}
+            placeholder={
+              resolved
+                ? `Follow the default model (${resolved.models.fast})`
+                : "Follow the default model"
+            }
           />
         </div>
       </Section>
@@ -169,8 +200,9 @@ export function ModelTab() {
               type="number"
               min={1}
               max={25}
-              value={maxIterations}
-              onChange={(e) => setMaxIterations(Number(e.target.value))}
+              value={maxIterations ?? ""}
+              placeholder={resolved ? String(resolved.maxIterations) : ""}
+              onChange={(e) => setMaxIterations(numberOrNull(e.target.value))}
             />
           </div>
 
@@ -180,8 +212,9 @@ export function ModelTab() {
               id="maxInputTokens"
               type="number"
               min={0}
-              value={maxInputTokens}
-              onChange={(e) => setMaxInputTokens(Number(e.target.value))}
+              value={maxInputTokens ?? ""}
+              placeholder={resolved ? String(resolved.maxInputTokens) : ""}
+              onChange={(e) => setMaxInputTokens(numberOrNull(e.target.value))}
             />
           </div>
 
@@ -191,8 +224,9 @@ export function ModelTab() {
               id="maxOutputTokens"
               type="number"
               min={0}
-              value={maxOutputTokens}
-              onChange={(e) => setMaxOutputTokens(Number(e.target.value))}
+              value={maxOutputTokens ?? ""}
+              placeholder={resolved ? String(resolved.maxOutputTokens) : ""}
+              onChange={(e) => setMaxOutputTokens(numberOrNull(e.target.value))}
             />
           </div>
         </div>

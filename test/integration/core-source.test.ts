@@ -11,6 +11,7 @@ import { makeInProcessSource } from "../helpers/in-process-source.ts";
 import { extractText } from "../../src/engine/content-helpers.ts";
 import { loadConfig } from "../../src/cli/config.ts";
 import { deriveOverridePath } from "../../src/config/overrides.ts";
+import { DEFAULT_MAX_ITERATIONS } from "../../src/limits.ts";
 import {
 	EFFORT_DEFAULT,
 	THINKING_DEFAULT,
@@ -278,8 +279,8 @@ describe("Core Source", () => {
 				thinking: "enabled",
 			});
 			expect(result.isError).toBe(false);
-			expect(runtime.getRuntimeConfig().thinking).toBe("enabled");
-			expect(runtime.getRuntimeConfig().thinkingBudgetTokens).toBeUndefined();
+			expect(runtime.getOperatorConfig().thinking).toBe("enabled");
+			expect(runtime.getOperatorConfig().thinkingBudgetTokens).toBeUndefined();
 		} finally {
 			await runtime.shutdown();
 		}
@@ -303,7 +304,7 @@ describe("Core Source", () => {
 			expect(
 				(await source.execute("set_model_config", { thinkingEffort: "xhigh" })).isError,
 			).toBe(false);
-			expect(runtime.getRuntimeConfig().thinkingEffort).toBe("xhigh");
+			expect(runtime.getOperatorConfig().thinkingEffort).toBe("xhigh");
 			const raw = JSON.parse(
 				require("node:fs").readFileSync(deriveOverridePath(configPath), "utf-8"),
 			);
@@ -314,7 +315,7 @@ describe("Core Source", () => {
 			expect(
 				(await source.execute("set_model_config", { clearThinkingEffort: true })).isError,
 			).toBe(false);
-			expect(runtime.getRuntimeConfig().thinkingEffort).toBeUndefined();
+			expect(runtime.getOperatorConfig().thinkingEffort).toBeUndefined();
 			const cleared = JSON.parse(
 				require("node:fs").readFileSync(deriveOverridePath(configPath), "utf-8"),
 			);
@@ -379,9 +380,9 @@ describe("Core Source", () => {
 				const label = `${JSON.stringify(c.mode)}/${c.effort}/${c.budget}`;
 				expect(`${label}: ${result.isError}`).toBe(`${label}: false`);
 				// The save landed in full, not just the thinking half.
-				expect(runtime.getRuntimeConfig().maxIterations).toBe(12);
+				expect(runtime.getOperatorConfig().maxIterations).toBe(12);
 
-				const cfg = runtime.getRuntimeConfig();
+				const cfg = runtime.getOperatorConfig();
 				expect(`${label}: ${cfg.thinkingEffort}`).toBe(`${label}: ${c.wantEffort}`);
 				expect(`${label}: ${cfg.thinkingBudgetTokens}`).toBe(`${label}: ${c.wantBudget}`);
 			}
@@ -410,7 +411,7 @@ describe("Core Source", () => {
 			// The schema enum rejects it at the tool boundary, before the
 			// hand-written validator runs — same belt-and-braces `thinking` has.
 			expect(extractText(result.content)).toContain("thinkingEffort");
-			expect(runtime.getRuntimeConfig().thinkingEffort).toBeUndefined();
+			expect(runtime.getOperatorConfig().thinkingEffort).toBeUndefined();
 		} finally {
 			await runtime.shutdown();
 		}
@@ -481,7 +482,7 @@ describe("Core Source", () => {
 			expect(raw.thinking).toBe("enabled");
 			expect(raw.thinkingBudgetTokens).toBeUndefined();
 			// And the live process agrees with disk, not just the file.
-			expect(runtime.getRuntimeConfig().thinkingBudgetTokens).toBeUndefined();
+			expect(runtime.getOperatorConfig().thinkingBudgetTokens).toBeUndefined();
 		} finally {
 			await runtime.shutdown();
 		}
@@ -594,7 +595,7 @@ describe("Core Source", () => {
 				thinkingBudgetTokens: 4096,
 			});
 			expect(result.isError).toBe(false);
-			expect(runtime.getRuntimeConfig().thinkingBudgetTokens).toBe(4096);
+			expect(runtime.getOperatorConfig().thinkingBudgetTokens).toBe(4096);
 			expect(extractText(result.content)).not.toContain(
 				"Cannot set `thinkingBudgetTokens` while clearing `thinking`",
 			);
@@ -631,6 +632,141 @@ describe("Core Source", () => {
 		} finally {
 			await runtime.shutdown();
 		}
+	});
+
+	describe("operator-set vs resolved (config round-trip)", () => {
+		/** A runtime whose config file sets nothing beyond `version`. */
+		async function startBare(tag: string) {
+			const workDir = join(testDir, `work-${tag}-${Date.now()}`);
+			mkdirSync(workDir, { recursive: true });
+			const configPath = join(workDir, "nimblebrain.json");
+			writeFileSync(configPath, JSON.stringify({ version: "1" }));
+			const runtime = await Runtime.start({
+				model: { provider: "custom", adapter: createEchoModel() },
+				noDefaultBundles: true,
+				workDir,
+				configPath,
+				logging: { disabled: true },
+			});
+			const source = await makeInProcessSource("nb", createCoreToolDefs(runtime));
+			return { runtime, source, overridePath: deriveOverridePath(configPath) };
+		}
+
+		function readOverride(overridePath: string): Record<string, unknown> {
+			if (!existsSync(overridePath)) return {};
+			return JSON.parse(require("node:fs").readFileSync(overridePath, "utf-8"));
+		}
+
+		it("publishes nothing the operator did not set, and the effective values separately", async () => {
+			const { runtime, source, overridePath } = await startBare("bare-publish");
+			try {
+				const cfg = (await source.execute("get_config", {}))
+					.structuredContent as Record<string, unknown>;
+
+				// Nothing is set, so every editable key is absent — that is the
+				// only way a client can tell "unset" from "set to the default".
+				for (const key of [
+					"models",
+					"maxIterations",
+					"maxInputTokens",
+					"maxOutputTokens",
+					"thinking",
+					"thinkingEffort",
+					"thinkingBudgetTokens",
+				]) {
+					expect(`${key}: ${key in cfg}`).toBe(`${key}: false`);
+				}
+
+				// The effective values are still published, for display.
+				const resolved = cfg.resolved as Record<string, unknown>;
+				expect(resolved.maxIterations).toBe(runtime.getMaxIterations());
+				expect(resolved.maxOutputTokens).toBe(runtime.getMaxOutputTokens());
+				expect((resolved.models as Record<string, string>).default).toBe(
+					runtime.getDefaultModel(),
+				);
+				expect(readOverride(overridePath)).toEqual({});
+			} finally {
+				await runtime.shutdown();
+			}
+		});
+
+		it("a save of exactly what get_config published pins nothing", async () => {
+			// The #761 shape: a client renders the config, the operator changes
+			// nothing, hits Save. Anything that lands on disk here is a default
+			// silently converted into an override that outlives future changes
+			// to that default.
+			const { runtime, source, overridePath } = await startBare("noop-save");
+			try {
+				const cfg = (await source.execute("get_config", {}))
+					.structuredContent as Record<string, unknown>;
+				const { resolved, configuredProviders, availableModels, preferences, ...operatorSet } =
+					cfg;
+
+				const result = await source.execute("set_model_config", operatorSet);
+				expect(result.isError).toBe(false);
+
+				expect(readOverride(overridePath)).toEqual({});
+				expect(runtime.getOperatorConfig()).toEqual({});
+			} finally {
+				await runtime.shutdown();
+			}
+		});
+
+		it("a cleared limit leaves disk, process, and the published config agreeing", async () => {
+			const { runtime, source, overridePath } = await startBare("clear-limit");
+			try {
+				const setResult = await source.execute("set_model_config", { maxIterations: 12 });
+				expect(setResult.isError).toBe(false);
+				expect(readOverride(overridePath).maxIterations).toBe(12);
+				expect(runtime.getMaxIterations()).toBe(12);
+
+				const clearResult = await source.execute("set_model_config", {
+					clearMaxIterations: true,
+				});
+				expect(clearResult.isError).toBe(false);
+
+				// Absent on disk, absent from the live process, and back to the
+				// platform default for readers. A stored `null` would satisfy
+				// none of these.
+				expect("maxIterations" in readOverride(overridePath)).toBe(false);
+				expect(runtime.getOperatorConfig().maxIterations).toBeUndefined();
+				expect(runtime.getMaxIterations()).toBe(DEFAULT_MAX_ITERATIONS);
+
+				const cfg = (await source.execute("get_config", {}))
+					.structuredContent as Record<string, unknown>;
+				expect("maxIterations" in cfg).toBe(false);
+				expect((cfg.resolved as Record<string, unknown>).maxIterations).toBe(
+					DEFAULT_MAX_ITERATIONS,
+				);
+			} finally {
+				await runtime.shutdown();
+			}
+		});
+
+		it("an empty string clears a model slot", async () => {
+			const { runtime, source, overridePath } = await startBare("clear-slot");
+			try {
+				const beforeAnySet = runtime.getDefaultModel();
+				await source.execute("set_model_config", {
+					models: { default: "anthropic:claude-haiku-4-5-20251001" },
+				});
+				expect(runtime.getDefaultModel()).toBe("anthropic:claude-haiku-4-5-20251001");
+
+				const clearResult = await source.execute("set_model_config", {
+					models: { default: "" },
+				});
+				expect(clearResult.isError).toBe(false);
+
+				// Not stored as `""`: the slot resolver falls back on nullish
+				// only, so an empty string would resolve to a bare provider
+				// prefix rather than the default model.
+				expect(readOverride(overridePath).models).toBeUndefined();
+				expect(runtime.getOperatorConfig().models).toBeUndefined();
+				expect(runtime.getDefaultModel()).toBe(beforeAnySet);
+			} finally {
+				await runtime.shutdown();
+			}
+		});
 	});
 
 	it("set_model_config writes survive a runtime restart (layered seed + override)", async () => {
@@ -689,15 +825,15 @@ describe("Core Source", () => {
 			logging: { disabled: true },
 		});
 		try {
-			const cfg = r2.getRuntimeConfig();
-			// `getRuntimeConfig` reads through `getModelSlots` which now
-			// qualifies bare ids in the catalog. The override on disk is
-			// bare (`claude-haiku-4-5-20251001`); the runtime returns the
-			// catalog-qualified form so downstream consumers (cost,
-			// capabilities, providerOptions shape, log lines) see a
-			// consistent shape.
-			expect(cfg.defaultModel).toBe("anthropic:claude-haiku-4-5-20251001");
-			expect(cfg.thinking).toBe("off");
+			// Two readers because they answer two questions. The resolved
+			// default qualifies bare ids in the catalog — the override on
+			// disk is bare (`claude-haiku-4-5-20251001`) and the runtime
+			// returns the catalog-qualified form, so downstream consumers
+			// (cost, capabilities, providerOptions shape, log lines) see a
+			// consistent shape. `thinking` is read back operator-set, exactly
+			// as written.
+			expect(r2.getDefaultModel()).toBe("anthropic:claude-haiku-4-5-20251001");
+			expect(r2.getOperatorConfig().thinking).toBe("off");
 		} finally {
 			await r2.shutdown();
 		}
