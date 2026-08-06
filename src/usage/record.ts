@@ -65,8 +65,14 @@ export function isDelegated(data: Record<string, unknown> | undefined): boolean 
  *
  * `event` is the emitting engine event's `data` payload, when there is one —
  * it supplies `parentRunId`. The forked fast-slot calls (title, compaction,
- * briefing) run outside the engine loop and emit no event, so they omit it and
- * are never delegated.
+ * briefing) emit no event, so they omit it and are never delegated.
+ *
+ * Note that omitting the event says nothing about `origin`, which comes from
+ * the ambient scope: compaction folds history in two places, and only the
+ * mid-turn one runs inside the scope `chat()` opens around `engine.run`. So
+ * `source="compaction"` legitimately splits across `origin="system"` (the
+ * between-turns fold) and `origin="chat"`/`"task"` (the mid-turn fold). Pinned
+ * in `test/unit/usage/record.test.ts`.
  */
 export function recordLlmCall(args: {
   source: LlmUsageSource;

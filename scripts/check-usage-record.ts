@@ -1,6 +1,6 @@
 #!/usr/bin/env bun
 /**
- * Lint: `recordLlmUsage` has exactly one caller — `src/usage/record.ts`.
+ * Lint: LLM spend is recorded through exactly one seam.
  *
  * Spend is recorded at one seam so that attribution is *derived* from the
  * ambient request context rather than asserted by whoever happens to be making
@@ -15,13 +15,25 @@
  * refresh, archived workspaces) spent real money that no in-product surface
  * showed. `src/usage/record.ts` is the fix; this lint is what keeps it true.
  *
- * What this flags: any call to `recordLlmUsage(...)` outside the sanctioned
- * module. Import statements are not calls and are not flagged — the check is on
- * the call expression, so re-exporting or type-importing the symbol is fine.
+ * What this flags, in two rules:
  *
- * Escape hatch: a `// lint-ok:usage-record` marker on a comment line above the
- * call. Use it only for a call that genuinely must bypass the seam; adding a
- * second recording path is a design change, not a lint exemption.
+ *   `recordLlmUsage(...)` — allowed only in `src/usage/record.ts`.
+ *   `llmCallsTotal.inc(...)` / `llmTokensTotal.inc(...)` — allowed only in
+ *   `src/api/metrics.ts`, which defines them.
+ *
+ * The second rule is what makes the first mean anything. Both counters are
+ * `export const`, so pinning the function alone would leave the seam bypassable
+ * by incrementing them directly — a path that skips derivation entirely and
+ * mints a series with no `origin` at all.
+ *
+ * Import statements are not calls and are not flagged; the check is on the call
+ * expression, so re-exporting, type-importing, or *reading* a counter
+ * (`.get()`, as tests do) is fine.
+ *
+ * Escape hatch: a `// lint-ok:usage-record` marker on a comment line within the
+ * five lines above the call. Use it only for a call that genuinely must bypass
+ * the seam; adding a second recording path is a design change, not a lint
+ * exemption.
  *
  * Scope: `src/**\/*.ts`. Tests are out of scope — a unit test that drives the
  * counters directly is asserting on the wire format, not spending money.
@@ -35,41 +47,51 @@ import * as ts from "typescript";
 const ROOT = join(import.meta.dirname ?? __dirname, "..");
 const SRC_ROOT = join(ROOT, "src");
 const ALLOW_MARKER = "lint-ok:usage-record";
-const GUARDED_FN = "recordLlmUsage";
 
 /**
- * The one module allowed to call it — and `api/metrics.ts` itself, which
- * *defines* the function. The definition is not a call, but the file also owns
- * the counters, so exempting it keeps the lint from fighting its own subject.
+ * Each guarded call, and the single file allowed to make it.
+ *
+ * The two owners are different on purpose: `api/metrics.ts` owns the Prometheus
+ * counters and is the only place that may increment them, while
+ * `usage/record.ts` owns "what a priced call is and who it was for" and is the
+ * only place that may reach `recordLlmUsage`. Neither is allowed to do the
+ * other's job.
  */
-const ALLOWED_FILES = new Set(
-  ["src/usage/record.ts", "src/api/metrics.ts"].map((f) => f.split("/").join(sep)),
-);
+const RULES: ReadonlyArray<{ call: string; owner: string }> = [
+  { call: "recordLlmUsage", owner: "src/usage/record.ts" },
+  { call: "llmCallsTotal.inc", owner: "src/api/metrics.ts" },
+  { call: "llmTokensTotal.inc", owner: "src/api/metrics.ts" },
+];
+
+/** `owner` paths as platform-native, for comparison against `relative()` output. */
+const OWNERS = new Map(RULES.map((r) => [r.call, r.owner.split("/").join(sep)]));
 
 interface Violation {
   file: string;
   line: number;
   column: number;
   snippet: string;
-}
-
-/** The callee's simple name for `f(...)` / `x.f(...)`, else `null`. */
-function calleeName(node: ts.CallExpression): string | null {
-  const callee = node.expression;
-  return ts.isIdentifier(callee)
-    ? callee.text
-    : ts.isPropertyAccessExpression(callee)
-      ? callee.name.text
-      : null;
+  call: string;
+  owner: string;
 }
 
 /**
- * True iff `node` is a call to the guarded function.
+ * The guarded call `node` makes, else `null`.
  *
- * Exported for the self-test under `test/unit/scripts/`.
+ * `f(...)` matches by identifier; `x.f(...)` matches on the dotted `x.f` so the
+ * counter rules can name a method on a specific object rather than every `.inc`
+ * in the tree.
  */
-export function isGuardedUsageCall(node: ts.CallExpression): boolean {
-  return calleeName(node) === GUARDED_FN;
+function guardedCall(node: ts.CallExpression): string | null {
+  const callee = node.expression;
+  if (ts.isIdentifier(callee)) {
+    return OWNERS.has(callee.text) ? callee.text : null;
+  }
+  if (ts.isPropertyAccessExpression(callee) && ts.isIdentifier(callee.expression)) {
+    const dotted = `${callee.expression.text}.${callee.name.text}`;
+    return OWNERS.has(dotted) ? dotted : null;
+  }
+  return null;
 }
 
 /** True iff a `lint-ok:usage-record` marker sits in the comment block above `node`. */
@@ -96,9 +118,8 @@ function hasAllowMarker(node: ts.Node, sourceFile: ts.SourceFile, src: string): 
 
 function scanFile(absPath: string, violations: Violation[]): void {
   const relPath = relative(ROOT, absPath);
-  if (ALLOWED_FILES.has(relPath)) return;
   const src = readFileSync(absPath, "utf-8");
-  if (!src.includes(GUARDED_FN)) return;
+  if (!RULES.some((r) => src.includes(r.call.split(".")[0] ?? r.call))) return;
 
   const sourceFile = ts.createSourceFile(
     absPath,
@@ -109,8 +130,10 @@ function scanFile(absPath: string, violations: Violation[]): void {
   );
 
   function visit(node: ts.Node): void {
-    if (ts.isCallExpression(node) && isGuardedUsageCall(node)) {
-      if (!hasAllowMarker(node, sourceFile, src)) {
+    if (ts.isCallExpression(node)) {
+      const call = guardedCall(node);
+      const owner = call === null ? undefined : OWNERS.get(call);
+      if (call !== null && owner !== relPath && !hasAllowMarker(node, sourceFile, src)) {
         const { line, character } = sourceFile.getLineAndCharacterOfPosition(
           node.getStart(sourceFile),
         );
@@ -119,6 +142,8 @@ function scanFile(absPath: string, violations: Violation[]): void {
           line: line + 1,
           column: character + 1,
           snippet: (src.split("\n")[line] ?? "").trim(),
+          call,
+          owner: owner ?? "?",
         });
       }
     }
@@ -142,11 +167,9 @@ async function main(): Promise<void> {
   }
 
   if (violations.length > 0) {
-    console.error(
-      `✗ Found ${violations.length} ${GUARDED_FN}() call(s) outside src/usage/record.ts:\n`,
-    );
+    console.error(`✗ Found ${violations.length} guarded usage call(s) outside their owner:\n`);
     for (const v of violations) {
-      console.error(`  ${v.file}:${v.line}:${v.column}`);
+      console.error(`  ${v.file}:${v.line}:${v.column} — ${v.call}() belongs to ${v.owner}`);
       console.error(`    ${v.snippet}\n`);
     }
     console.error(
@@ -154,16 +177,18 @@ async function main(): Promise<void> {
     );
     console.error("not asserted by the caller. Call `recordLlmCall()` from src/usage/record.ts.");
     console.error(
-      `A genuine exception requires a // ${ALLOW_MARKER} comment on the line above the call.`,
+      `A genuine exception requires a // ${ALLOW_MARKER} comment within the five lines above the call.`,
     );
     process.exit(1);
   }
 
-  console.log(`✓ ${GUARDED_FN}() has one caller across ${scanned} src/ files`);
+  console.log(
+    `✓ ${RULES.length} guarded usage call(s) each have one caller in ${scanned} src/ files`,
+  );
 }
 
-// Gate the side effect on direct invocation so the unit test can import the
-// AST predicate without triggering the full scan + process.exit.
+// Gate the scan on direct invocation, matching the sibling check scripts, so
+// importing this module never runs it or calls process.exit.
 if (import.meta.main) {
   main().catch((err: unknown) => {
     console.error(err);
