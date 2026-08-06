@@ -22,15 +22,33 @@ export interface BodyLimitOptions {
  * Past this bound the refusal goes out immediately and the connection takes
  * the consequences, which is the better trade at that size.
  *
- * Sized to the bodies that actually overrun a configured limit rather than
- * the largest one Bun would hand us: the multipart and JSON overruns that
- * desynchronize the connection in practice are single-digit MB.
+ * Sized to the overruns measured on the JSON routes, which cap at 1 MB.
+ * Multipart is not covered: those routes cap at `files.maxTotalSize`, 100 MB
+ * by default, so a refusal there sits far above this ceiling and is answered
+ * without draining. Covering it needs a ceiling derived from each route's own
+ * limit, which is tracked separately.
  */
 const MAX_DRAIN_BYTES = 8 * 1024 * 1024;
 
 /**
+ * How long the drain may run before the refusal goes out regardless.
+ *
+ * A sender can simply stop: without a deadline a body that stalls mid-transfer
+ * holds the 413 until Bun's `idleTimeout` (`server.ts`) closes the socket with
+ * nothing written, and on `POST /v1/auth/refresh` — no auth, no rate limiter —
+ * one byte is enough to arrange it.
+ *
+ * Expiry costs only the drain: the refusal is still sent, and the connection
+ * is left exactly as it would have been without any draining, so the worst
+ * case degrades to the fail-fast this middleware did before. Generous against
+ * the ~35ms an in-ceiling drain actually takes.
+ */
+const DRAIN_DEADLINE_MS = 2_000;
+
+/**
  * Read and discard the body of a request we are about to refuse, up to
- * `MAX_DRAIN_BYTES`. A larger declared body is left unread.
+ * `MAX_DRAIN_BYTES` and `DRAIN_DEADLINE_MS`. A larger declared body is left
+ * unread, and a stalled one is abandoned rather than waited on.
  *
  * HTTP/1.1 has no way to say "I stopped reading mid-body", so answering
  * before the body has arrived leaves a keep-alive connection in a state the
@@ -53,14 +71,20 @@ async function discardBody(request: Request, declaredLength: number): Promise<vo
   if (declaredLength > MAX_DRAIN_BYTES) return;
   const body = request.body;
   if (!body) return;
+  let expiry: ReturnType<typeof setTimeout> | undefined;
   try {
     const reader = body.getReader();
+    // Cancelling settles a read that is already pending, so a sender that
+    // stops sending cannot outlast the deadline.
+    expiry = setTimeout(() => void reader.cancel().catch(() => {}), DRAIN_DEADLINE_MS);
     while (!(await reader.read()).done) {
       // Only the socket needs draining; the bytes go nowhere.
     }
   } catch {
-    // Sender hung up or the stream errored — there is nothing left to drain
-    // and the connection is being torn down regardless.
+    // Sender hung up, or the body was already claimed — there is nothing left
+    // to drain, and refusing still has to happen either way.
+  } finally {
+    clearTimeout(expiry);
   }
 }
 

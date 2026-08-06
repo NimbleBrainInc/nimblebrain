@@ -187,6 +187,32 @@ describe("bodyLimit middleware", () => {
     expect(request.bodyUsed).toBe(false);
   });
 
+  // A sender can stop mid-body. Without a deadline the refusal waits on it,
+  // and the caller gets nothing until the server's idle timeout closes the
+  // socket — so the drain has to give up and answer.
+  test("answers a refusal whose body stalls mid-transfer", async () => {
+    const app = createTestApp(1024);
+    const request = new Request("http://localhost/test", {
+      method: "POST",
+      headers: { "Content-Length": "2000000", "Content-Type": "application/json" },
+      // One chunk, then the sender goes quiet and never closes the stream.
+      body: new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.enqueue(new Uint8Array(16));
+        },
+      }),
+      duplex: "half",
+    } as RequestInit);
+
+    const started = performance.now();
+    const res = await app.fetch(request);
+    const elapsed = performance.now() - started;
+
+    expect(res.status).toBe(413);
+    // Bounded by the drain deadline, not by the server's idle timeout.
+    expect(elapsed).toBeLessThan(4_000);
+  });
+
   // Regression guard: bodyLimit must stay scoped to the route it's attached
   // to. Mounting it via `.use("*")` on a sub-app that is itself mounted at
   // `/` makes it leak across sibling sub-apps — that's how the multipart
