@@ -71,8 +71,11 @@ export function isDelegated(data: Record<string, unknown> | undefined): boolean 
  * the ambient scope: compaction folds history in two places, and only the
  * mid-turn one runs inside the scope `chat()` opens around `engine.run`. So
  * `source="compaction"` legitimately splits across `origin="system"` (the
- * between-turns fold) and `origin="chat"`/`"task"` (the mid-turn fold). Pinned
- * in `test/unit/usage/record.test.ts`.
+ * between-turns fold) and `origin="chat"`/`"task"` (the mid-turn fold). Both
+ * ends are pinned end-to-end — `test/integration/compaction-wiring.test.ts`
+ * and `test/integration/mid-turn-compaction-wiring.test.ts` each drive a real
+ * fold and assert its `origin` off `/metrics`, so moving either fold across the
+ * scope boundary fails a test rather than quietly relabeling production.
  */
 export function recordLlmCall(args: {
   source: LlmUsageSource;
@@ -80,6 +83,5 @@ export function recordLlmCall(args: {
   usage: TokenUsage;
   event?: Record<string, unknown>;
 }): void {
-  // lint-ok:usage-record — this module IS the sanctioned caller.
   recordLlmUsage(args.source, args.model, args.usage, originOf(), isDelegated(args.event));
 }

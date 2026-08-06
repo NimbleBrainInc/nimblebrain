@@ -129,11 +129,19 @@ describe("recordLlmCall", () => {
  *     (or `task`, in an automation).
  *
  * Both attributions are individually honest, and the split is a real property
- * of where the two folds sit rather than a bug in the derivation. It is pinned
- * here so a change to either fold's placement shows up as a failing test rather
- * than as a quietly moved number. Making compaction uniform means opening a
- * scope around the between-turns fold, which is a change to request scoping in
- * `chat()` and belongs in its own PR.
+ * of where the two folds sit rather than a bug in the derivation.
+ *
+ * These tests pin the *derivation* — that `originOf()` answers by scope — by
+ * calling `recordLlmCall` inside a hand-built scope. They reach neither
+ * `runtime.ts` nor `engine.ts`, so they cannot detect a fold being moved across
+ * the scope boundary. That is pinned end-to-end instead, in
+ * `test/integration/compaction-wiring.test.ts` (`origin="system"`) and
+ * `test/integration/mid-turn-compaction-wiring.test.ts` (`origin="chat"`),
+ * which drive the real folds and read `/metrics`.
+ *
+ * Making compaction uniform means opening a scope around the between-turns
+ * fold, which is a change to request scoping in `chat()` and belongs in its
+ * own PR.
  */
 describe("compaction attribution follows the scope, not the source", () => {
   test("the between-turns fold, with no scope open, records system", async () => {

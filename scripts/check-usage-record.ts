@@ -15,16 +15,22 @@
  * refresh, archived workspaces) spent real money that no in-product surface
  * showed. `src/usage/record.ts` is the fix; this lint is what keeps it true.
  *
- * What this flags, in two rules:
+ * What this flags, as three rules with per-call owners:
  *
  *   `recordLlmUsage(...)` — allowed only in `src/usage/record.ts`.
  *   `llmCallsTotal.inc(...)` / `llmTokensTotal.inc(...)` — allowed only in
  *   `src/api/metrics.ts`, which defines them.
  *
- * The second rule is what makes the first mean anything. Both counters are
+ * The counter rules are what make the first one mean anything. Both counters are
  * `export const`, so pinning the function alone would leave the seam bypassable
  * by incrementing them directly — a path that skips derivation entirely and
- * mints a series with no `origin` at all.
+ * mints a series with no `origin` at all. Matching is rooted at the chain's base
+ * identifier, so prom-client's `counter.labels({...}).inc()` is caught alongside
+ * the direct `counter.inc(...)`.
+ *
+ * Known gap: matching is syntactic, so an import rename (`recordLlmUsage as r`)
+ * or a namespace import (`m.llmCallsTotal.inc`) slips past. Closing that needs a
+ * symbol resolver; see the follow-up issue linked from the PR.
  *
  * Import statements are not calls and are not flagged; the check is on the call
  * expression, so re-exporting, type-importing, or *reading* a counter
@@ -76,19 +82,41 @@ interface Violation {
 }
 
 /**
+ * The identifier a property/call chain is rooted at, else `null`.
+ *
+ * Walks back through both property accesses and calls, so `a.b().c` and `a.b.c`
+ * both resolve to `a`. That is what lets the counter rules catch prom-client's
+ * two idiomatic increments — `counter.inc(labels)` and
+ * `counter.labels({...}).inc()` — with one rule rather than enumerating chain
+ * shapes.
+ */
+function rootIdentifier(node: ts.Expression): string | null {
+  let current: ts.Expression = node;
+  for (;;) {
+    if (ts.isIdentifier(current)) return current.text;
+    if (ts.isPropertyAccessExpression(current)) current = current.expression;
+    else if (ts.isCallExpression(current)) current = current.expression;
+    else return null;
+  }
+}
+
+/**
  * The guarded call `node` makes, else `null`.
  *
- * `f(...)` matches by identifier; `x.f(...)` matches on the dotted `x.f` so the
- * counter rules can name a method on a specific object rather than every `.inc`
- * in the tree.
+ * `f(...)` matches by identifier. A chain ending in `.f(...)` matches on
+ * `<root>.f` — so a rule naming `llmCallsTotal.inc` covers the direct
+ * increment and the `.labels({...}).inc()` form alike, while leaving every
+ * other `.inc` in the tree alone.
  */
 function guardedCall(node: ts.CallExpression): string | null {
   const callee = node.expression;
   if (ts.isIdentifier(callee)) {
     return OWNERS.has(callee.text) ? callee.text : null;
   }
-  if (ts.isPropertyAccessExpression(callee) && ts.isIdentifier(callee.expression)) {
-    const dotted = `${callee.expression.text}.${callee.name.text}`;
+  if (ts.isPropertyAccessExpression(callee)) {
+    const root = rootIdentifier(callee.expression);
+    if (root === null) return null;
+    const dotted = `${root}.${callee.name.text}`;
     return OWNERS.has(dotted) ? dotted : null;
   }
   return null;
@@ -183,7 +211,7 @@ async function main(): Promise<void> {
   }
 
   console.log(
-    `✓ ${RULES.length} guarded usage call(s) each have one caller in ${scanned} src/ files`,
+    `✓ ${RULES.length} guarded call shapes, each confined to its owner, across ${scanned} src/ files`,
   );
 }
 
