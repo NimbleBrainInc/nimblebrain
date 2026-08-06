@@ -3,12 +3,12 @@ import {
   llmRequestDurationSeconds,
   llmTtftSeconds,
   recordBundleCrash,
-  recordLlmUsage,
   toolCallsTotal,
   toolPromotionsTotal,
 } from "../api/metrics.ts";
 import type { EngineEvent, EngineEventType, EventSink } from "../engine/types.ts";
 import { log } from "../observability/log.ts";
+import { recordLlmCall } from "../usage/record.ts";
 import type { TokenUsage } from "../usage/types.ts";
 
 /** Payload envelope carried by every engine event (`EngineEvent.data`). */
@@ -59,7 +59,10 @@ export class MetricsEventSink implements EventSink {
   private onLlmDone(data: EventData): void {
     const model = (data.model as string) ?? "unknown";
     const usage = data.usage as TokenUsage | undefined;
-    if (usage) recordLlmUsage("main", model, usage);
+    // `data` carries `parentRunId` on a delegated child's events; `recordLlmCall`
+    // reads it rather than being told, so a new spawn path cannot forget to say
+    // it delegated.
+    if (usage) recordLlmCall({ source: "main", model, usage, event: data });
     // Per-call latency for the p99 alert. `llmMs` is set on every llm.done
     // (engine measures it around the provider call); guard the type anyway.
     const llmMs = data.llmMs;
