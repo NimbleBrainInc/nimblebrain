@@ -205,8 +205,7 @@ A fully specified example:
   "version": "1",
   "models": {
     "default":   "anthropic:claude-sonnet-4-6",
-    "fast":      "anthropic:claude-haiku-4-5-20251001",
-    "reasoning": "anthropic:claude-opus-4-6"
+    "fast":      "anthropic:claude-haiku-4-5-20251001"
   },
   "providers": {
     "anthropic": { "apiKey": "sk-ant-..." },
@@ -225,7 +224,7 @@ A fully specified example:
 }
 ```
 
-**Model slots.** `models` takes three named slots — `default` (chat / general), `fast` (title generation, briefings, skill matching), and `reasoning` (complex analysis). Each is a `provider:model-id` string. `providers` supplies per-provider API keys when you want to mix providers across slots. The older single-`model` / `defaultModel` shape is still accepted for backward compatibility but is deprecated.
+**Model slots.** `models` takes two named slots — `default` (every chat turn) and `fast` (titles, the home briefing, and both history folds). Each is a `provider:model-id` string. `providers` supplies per-provider API keys when you want to mix providers across slots. The older single-`model` / `defaultModel` shape is still accepted for backward compatibility but is deprecated.
 
 **Feature flags.** All default to `true`. Disable a flag to remove the capability entirely — the tool is unregistered, not visible to the LLM, and `POST /v1/tools/call` returns 403. See [Feature Flags](#feature-flags) for the full set.
 
@@ -701,7 +700,6 @@ These are non-negotiable patterns. Violating them causes production bugs:
 |---------|-------|
 | `models.default` | `anthropic:claude-sonnet-4-6` |
 | `models.fast` | `anthropic:claude-haiku-4-5-20251001` |
-| `models.reasoning` | `anthropic:claude-opus-4-6` |
 | Max iterations | 25 (hard cap: 50) |
 | Max input tokens | 500,000 |
 | Max output tokens | 16,384 |

@@ -12,10 +12,8 @@ import type { TokenUsage } from "../usage/types.ts";
 export interface ModelSlots {
   /** Primary model for chat and general requests. */
   default: string;
-  /** Cheap/fast model for briefings, auto-title, skill matching. */
+  /** Cheap/fast model for briefings, auto-title, and both history folds. */
   fast: string;
-  /** Most capable model for complex analysis and planning. */
-  reasoning: string;
 }
 
 /** Named agent profile for multi-agent delegation via nb__delegate. */
@@ -200,8 +198,6 @@ export interface RuntimeConfig {
   home?: {
     /** Enable the Home dashboard. Default: true. */
     enabled?: boolean;
-    /** Model for briefing generation. Null uses "fast" model slot. */
-    model?: string | null;
     /** User's first name for the greeting. Default: "there". */
     userName?: string;
     /** IANA timezone (e.g., "Pacific/Honolulu"). Empty uses system timezone. */

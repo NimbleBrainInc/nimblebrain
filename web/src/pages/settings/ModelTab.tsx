@@ -16,7 +16,7 @@ import {
 } from "./thinking-patch";
 
 interface ModelConfig {
-  models: { default: string; fast: string; reasoning: string };
+  models: { default: string; fast: string };
   configuredProviders: string[];
   availableModels: Record<string, ModelEntry[]>;
   maxIterations: number;
@@ -53,7 +53,6 @@ function qualifyModelId(
 export function ModelTab() {
   const [defaultModel, setDefaultModel] = useState("");
   const [fastModel, setFastModel] = useState("");
-  const [reasoningModel, setReasoningModel] = useState("");
   const [maxIterations, setMaxIterations] = useState(10);
   const [maxInputTokens, setMaxInputTokens] = useState(500000);
   const [maxOutputTokens, setMaxOutputTokens] = useState(16384);
@@ -83,7 +82,6 @@ export function ModelTab() {
           qualifyModelId(id, config.availableModels ?? {});
         setDefaultModel(qualify(config.models.default));
         setFastModel(qualify(config.models.fast));
-        setReasoningModel(qualify(config.models.reasoning));
         setMaxIterations(config.maxIterations ?? 10);
         setMaxInputTokens(config.maxInputTokens ?? 500000);
         setMaxOutputTokens(config.maxOutputTokens ?? 16384);
@@ -108,7 +106,6 @@ export function ModelTab() {
         models: {
           default: defaultModel,
           fast: fastModel,
-          reasoning: reasoningModel,
         },
         maxIterations,
         maxInputTokens,
@@ -125,7 +122,6 @@ export function ModelTab() {
   }, [
     defaultModel,
     fastModel,
-    reasoningModel,
     maxIterations,
     maxInputTokens,
     maxOutputTokens,
@@ -159,14 +155,6 @@ export function ModelTab() {
             label="Fast Model"
             value={fastModel}
             onChange={setFastModel}
-            availableModels={availableModels}
-          />
-
-          <ModelSelect
-            id="reasoningModel"
-            label="Reasoning Model"
-            value={reasoningModel}
-            onChange={setReasoningModel}
             availableModels={availableModels}
           />
         </div>

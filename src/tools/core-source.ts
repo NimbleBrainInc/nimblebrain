@@ -688,10 +688,6 @@ export function createCoreToolDefs(runtime: Runtime): InProcessTool[] {
             properties: {
               default: { type: "string", description: "Primary model for chat." },
               fast: { type: "string", description: "Cheap/fast model for auxiliary tasks." },
-              reasoning: {
-                type: "string",
-                description: "Most capable model for complex analysis.",
-              },
             },
           },
           defaultModel: {

@@ -16,11 +16,16 @@ import {
  * `src/config/nimblebrain-config.schema.json` is the canonical source for
  * nimblebrain.json validation (the runtime compiles it with AJV at startup) and
  * is published to schemas.nimblebrain.ai by `.github/workflows/schema-deploy.yml`.
- * Every object guarded here uses `additionalProperties: false`, so a key added to
- * the runtime type but missing from the schema is rejected as an unknown key at
- * startup; a key in the schema with no backing code is a dead knob. Both are
- * silent until someone hits them — this test turns the drift into a build
- * failure in the repo where the key is authored.
+ * Every object guarded here uses `additionalProperties: false`, and neither
+ * direction of drift fails a boot. A key in the runtime type but missing from
+ * the schema still reaches `RuntimeConfig` and still works — Ajv is compiled
+ * without `removeAdditional`, `loadConfig` sorts unknown keys into warnings and
+ * throws only on structural errors, and the guarded parent is assigned whole.
+ * What it costs is a boot line calling the key "(ignored)" when it was not, and
+ * a published schema that flags a legitimate key in editors. A key in the
+ * schema with no backing code is the mirror image: a dead knob that reads as
+ * configurable. This test turns either drift into a build failure in the repo
+ * where the key is authored.
  */
 interface SchemaObject {
   properties: Record<string, unknown>;

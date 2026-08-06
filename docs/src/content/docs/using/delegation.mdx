@@ -51,7 +51,7 @@ Define named agent profiles in [`workspace.json`](/config/workspace-json) under 
       "systemPrompt": "You are a research agent. Gather comprehensive information on the given topic. Use search tools to find relevant data. Return a structured summary with sources.",
       "tools": ["rfpsearch__*", "bash__*"],
       "maxIterations": 8,
-      "model": "reasoning"
+      "model": "anthropic:claude-opus-4-6"
     },
     "writer": {
       "description": "Content writer for drafting documents",
@@ -78,7 +78,7 @@ Define named agent profiles in [`workspace.json`](/config/workspace-json) under 
 | `systemPrompt` | string | Yes | System prompt injected when this agent runs |
 | `tools` | string[] | Yes | Tool name globs the agent can access |
 | `maxIterations` | integer | No | Max iterations. Falls through to the `nb__delegate` call's default (5) when omitted. Also capped at the child-iteration ceiling of 10. |
-| `model` | string | No | Model override. Accepts a slot name (`"default"`, `"fast"`, `"reasoning"`) or `provider:model-id`. |
+| `model` | string | No | Model override. Accepts a slot name (`"default"` or `"fast"`) or `provider:model-id`. Name a model directly when the agent needs a more capable one than the workspace default. |
 
 ## Iteration budgets
 

@@ -8,7 +8,7 @@
  */
 
 /** Known model slot names. */
-export const MODEL_SLOTS = ["default", "fast", "reasoning"] as const;
+export const MODEL_SLOTS = ["default", "fast"] as const;
 
 export type ModelSlot = (typeof MODEL_SLOTS)[number];
 
@@ -22,10 +22,10 @@ export function isModelSlot(s: string): s is ModelSlot {
  * Resolve a model string to a slot name, or null when it names a concrete model.
  *
  * Two spellings, both slots: the explicit `alias:fast`, and the bare `fast`
- * that `workspace.json`'s agent profiles document (`"model": "reasoning"`).
+ * that `workspace.json`'s agent profiles document (`"model": "fast"`).
  * The bare form is the one authors actually write, and it used to fall through
  * to `resolveModelString`, which finds no catalog entry and applies its
- * pinned-id fallback — turning `"reasoning"` into `anthropic:reasoning`, a
+ * pinned-id fallback — turning `"fast"` into `anthropic:fast`, a
  * model that does not exist, and failing at the provider rather than here.
  *
  * A slot name cannot collide with a real model id — the catalog is keyed by
