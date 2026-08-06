@@ -52,6 +52,7 @@ import {
 import { getRequestContext } from "../../runtime/request-context.ts";
 import { makeIdentitySkill, type Runtime } from "../../runtime/runtime.ts";
 import { hashSkillBody } from "../../runtime/skills-loaded-payload.ts";
+import { collectActivatableSkills, toCatalogEntries } from "../../skills/catalog.ts";
 import { skillDisplayName } from "../../skills/display-name.ts";
 import { parseSkillContent } from "../../skills/loader.ts";
 import { partitionSkillsByRole, selectLayer3Skills } from "../../skills/select.ts";
@@ -319,6 +320,18 @@ async function composeLive(runtime: Runtime, convId: string): Promise<ComposeRes
     reason: s.reason,
   }));
 
+  // Skill catalog — same projection `runtime.chat()` composes. Bundle-skill
+  // discovery is async-registry work this trace doesn't perform (matching the
+  // Layer-3 selection above, which also runs over the filesystem pool only),
+  // so the catalog here carries the filesystem + connector-overlay entries.
+  const skillCatalog = toCatalogEntries(
+    collectActivatableSkills({
+      fsCapability: poolCapability,
+      bundleCapability: [],
+      connectorCandidates: runtime.loadConnectorSkillCandidates(wsId),
+    }),
+  );
+
   const composed: ComposedPrompt = composeSystemPromptTraced(
     requestContextSkills,
     null, // matched skill — request-scoped, skipped in live mode
@@ -336,6 +349,8 @@ async function composeLive(runtime: Runtime, convId: string): Promise<ComposeRes
     workspaceContext,
     overlays,
     layer3Entries,
+    "chat",
+    skillCatalog,
   );
 
   return {

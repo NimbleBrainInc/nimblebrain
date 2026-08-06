@@ -1,5 +1,6 @@
 // `ParticipantInfo` was the participants-section input; gone post Stage 1.
 // Stage 4 reintroduces a participants concept with policy gating.
+import type { SkillCatalogEntry } from "../skills/catalog.ts";
 import type { LoadedBy } from "../skills/select.ts";
 import { approxTokens } from "../skills/tokens.ts";
 import type { Skill } from "../skills/types.ts";
@@ -24,6 +25,7 @@ export type ContainmentTag =
   | "workspace-instructions"
   | "layer3-skill"
   | "connector-skill"
+  | "activated-skill"
   | "skill-instructions";
 
 /**
@@ -108,6 +110,7 @@ export type TracedLayerKind =
   | "org_overlay"
   | "workspace_overlay"
   | "layer3_skills"
+  | "skill_catalog"
   | "apps"
   | "app_state"
   | "focused_app"
@@ -316,6 +319,7 @@ export function composeSystemPrompt(
   overlays?: OverlayLayers,
   layer3Skills?: Layer3SkillEntry[],
   mode?: ComposeMode,
+  skillCatalog?: SkillCatalogEntry[],
 ): string {
   return composeSystemPromptTraced(
     contextSkills,
@@ -329,6 +333,7 @@ export function composeSystemPrompt(
     overlays,
     layer3Skills,
     mode,
+    skillCatalog,
   ).text;
 }
 
@@ -357,6 +362,7 @@ export function composeSystemPromptTraced(
   overlays?: OverlayLayers,
   layer3Skills?: Layer3SkillEntry[],
   mode: ComposeMode = "chat",
+  skillCatalog?: SkillCatalogEntry[],
 ): ComposedPrompt {
   const layers: PendingLayer[] = [];
 
@@ -387,6 +393,7 @@ export function composeSystemPromptTraced(
   layers.push(...workspaceContextLayers(workspaceContext));
   layers.push(...overlayLayers(overlays));
   layers.push(...layer3SkillsLayers(layer3Skills));
+  layers.push(...skillCatalogLayers(skillCatalog));
   layers.push(...appsLayers(apps, hasProxiedTools));
   layers.push(...appStateLayers(appState));
   layers.push(...focusedAppLayers(focusedApp));
@@ -651,6 +658,27 @@ function layer3SkillsLayers(layer3Skills?: Layer3SkillEntry[]): PendingLayer[] {
 }
 
 /**
+ * Layer 1.95: skill catalog — one line per dynamic skill the model can
+ * activate on demand. STABLE by design: entries are name + description only
+ * (never load/activation state), sorted upstream (`collectActivatableSkills`),
+ * so the section's bytes change only on install/authoring events and the
+ * 1h-cached prefix holds. Empty catalog emits no layer.
+ */
+function skillCatalogLayers(skillCatalog?: SkillCatalogEntry[]): PendingLayer[] {
+  if (!skillCatalog || !(skillCatalog.length > 0)) return [];
+  const text = formatSkillCatalogSection(skillCatalog);
+  return [
+    {
+      kind: "skill_catalog",
+      id: "nb:skill-catalog",
+      source: `skill catalog (${skillCatalog.length} available)`,
+      text,
+      tokens: approxTokens(text),
+    },
+  ];
+}
+
+/**
  * Layer 2: installed apps section. One TracedLayer for the section; per-app
  * detail in `subItems`. Each subItem carries the bundle name so a `bundle` filter
  * on the debug tool can pick out a single app's contribution from the section text.
@@ -755,6 +783,7 @@ export function composeSystemSegments(
   overlays?: OverlayLayers,
   layer3Skills?: Layer3SkillEntry[],
   mode: ComposeMode = "chat",
+  skillCatalog?: SkillCatalogEntry[],
 ): ComposedSegments {
   const composed = composeSystemPromptTraced(
     contextSkills,
@@ -768,6 +797,7 @@ export function composeSystemSegments(
     overlays,
     layer3Skills,
     mode,
+    skillCatalog,
   );
   const stableSystem = composed.layers
     .filter((l) => l.segment === "stable")
@@ -953,6 +983,43 @@ function formatLayer3SkillsSection(entries: Layer3SkillEntry[]): string | null {
 }
 
 /**
+ * Per-line cap on a catalog entry's description — the Agent Skills standard's
+ * `description` ceiling (`schemas/skill-manifest.ts` enforces it on authored
+ * skills; server-published skills are only parsed, so the render re-caps).
+ */
+const CATALOG_DESCRIPTION_MAX_CHARS = 1024;
+
+/**
+ * Render the skill catalog section. One `- name — description` line per
+ * skill; both fields are bundle-/tenant-authored strings entering the system
+ * prompt, so each line is `sanitizeLineField`-flattened (no newline can forge
+ * a sibling entry or a heading) and the description is capped at the
+ * standard's ceiling. The closing paragraph teaches the activation move —
+ * same progressive-disclosure register as the `nb__search` paragraph in
+ * `formatAppsSection`. Static text: nothing here may vary per turn.
+ */
+function formatSkillCatalogSection(entries: SkillCatalogEntry[]): string {
+  const lines = ["## Skill Catalog"];
+  lines.push("");
+  lines.push(
+    "These skills are available on demand — each is expert guidance for a specific kind of task, listed here by name so you know it exists without carrying its full text.",
+  );
+  lines.push("");
+  for (const entry of entries) {
+    const name = sanitizeLineField(entry.name);
+    const desc = entry.description
+      ? sanitizeLineField(entry.description).slice(0, CATALOG_DESCRIPTION_MAX_CHARS)
+      : "";
+    lines.push(desc ? `- ${name} — ${desc}` : `- ${name}`);
+  }
+  lines.push(
+    "",
+    'When a task matches a listed skill, load it with `skills__use` (pass the skill\'s `name` exactly as listed) — its full guidance comes back in the tool result. Load a skill **before** starting the task it covers, and don\'t re-load one already delivered in this conversation. If `skills__use` is not in your active tool list, activate it first with `nb__manage_tools` (`{ "add": ["skills__use"] }`).',
+  );
+  return lines.join("\n");
+}
+
+/**
  * Wrap a connector-skill overlay body for surfacing into the conversation
  * history. Unlike Layer-3 skills, a connector overlay NEVER enters the
  * cached system prefix — it becomes the body of a synthetic assistant message
@@ -971,6 +1038,22 @@ export function formatConnectorSkillBlock(name: string, scope: string, body: str
   const safeScope = sanitizeLineField(scope);
   const provenance = `_${safeName}_ — scope: ${safeScope}; surfaced on first matching connector tool call`;
   return `${provenance}\n\n${wrapContained("connector-skill", body)}`;
+}
+
+/**
+ * Wrap a catalog skill's body for delivery as the `skills__use` tool result.
+ * Sibling of {@link formatConnectorSkillBlock} with the same discipline —
+ * sanitized one-line provenance, then the body in `<activated-skill>`
+ * containment with its closing form escaped — differing only in the tag and
+ * the provenance verb (loaded on request, not surfaced by tool affinity).
+ * The result persists in history via the normal `tool.done` event, so this
+ * block IS the durable in-context copy of the skill.
+ */
+export function formatActivatedSkillBlock(name: string, scope: string, body: string): string {
+  const safeName = sanitizeLineField(name);
+  const safeScope = sanitizeLineField(scope);
+  const provenance = `_${safeName}_ — scope: ${safeScope}; loaded from the skill catalog`;
+  return `${provenance}\n\n${wrapContained("activated-skill", body)}`;
 }
 
 /**

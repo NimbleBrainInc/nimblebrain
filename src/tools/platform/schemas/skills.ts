@@ -185,6 +185,21 @@ export type SkillsActivateInput = Static<typeof SkillsActivateInput>;
 export const SkillsDeactivateInput = IdOnlyInput;
 export type SkillsDeactivateInput = Static<typeof SkillsDeactivateInput>;
 
+// Static schema by design: a per-request name enum would vary the tools block
+// with workspace state and bust the cached prefix. Validation against the
+// activatable set happens in the handler, which can also return a helpful
+// valid-name list on a miss.
+export const SkillsUseInput = Type.Object(
+  {
+    name: Type.String({
+      minLength: 1,
+      description: "Skill name exactly as listed in the Skill Catalog section (or `skills__list`).",
+    }),
+  },
+  { required: ["name"] },
+);
+export type SkillsUseInput = Static<typeof SkillsUseInput>;
+
 // ── Tool output types ────────────────────────────────────────────────────
 //
 // Same convention as `automations.ts` §2.1 in `tools/platform/AGENTS.md`:
@@ -296,3 +311,12 @@ export interface SkillsActiveForOutput {
   active: ActiveSkillEntry[];
   conversationId: string;
 }
+
+/**
+ * `skills__use` result. `loaded` delivers the skill (body rides the result's
+ * `content`, not this typed envelope); `already_loaded` is the dedupe note —
+ * the body is already in the conversation's context, so none is re-delivered.
+ */
+export type SkillsUseOutput =
+  | { status: "loaded"; name: string; scope: string; tokens: number }
+  | { status: "already_loaded"; name: string };
