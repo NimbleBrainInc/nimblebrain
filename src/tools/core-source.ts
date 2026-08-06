@@ -59,17 +59,28 @@ const THINKING_EFFORTS = [
 ] as const satisfies readonly ThinkingEffort[];
 
 /**
- * The three thinking fields, each with its `clear*` flag and on-disk coercion.
+ * Every scalar field an operator can set, each with its `clear*` flag and
+ * on-disk coercion.
  *
- * Driven from a table because all three move together through four stages —
+ * Driven from a table because they all move together through four stages —
  * normalize, validate, persist, patch the live runtime. Written out longhand,
  * a new field has to be remembered in each, and a clear that lands on some
  * stages but not others leaves disk and process disagreeing.
+ *
+ * Every settable field needs a clear, or "unset" becomes a state the operator
+ * can leave but never return to: the first save pins a value permanently and
+ * the deployment stops tracking the platform default. A separate boolean
+ * rather than a `null` value keeps each field's schema type single — which
+ * Gemini's function-calling subset requires. Model slots are absent from this
+ * table because they clear with `""`; see `mergeModelSlots`.
  */
-const THINKING_FIELDS = [
+const CLEARABLE_FIELDS = [
   { key: "thinking", clearFlag: "clearThinking", coerce: String },
   { key: "thinkingEffort", clearFlag: "clearThinkingEffort", coerce: String },
   { key: "thinkingBudgetTokens", clearFlag: "clearThinkingBudget", coerce: Number },
+  { key: "maxIterations", clearFlag: "clearMaxIterations", coerce: Number },
+  { key: "maxInputTokens", clearFlag: "clearMaxInputTokens", coerce: Number },
+  { key: "maxOutputTokens", clearFlag: "clearMaxOutputTokens", coerce: Number },
 ] as const;
 
 /** Org-admin gate. Dev mode (no identity provider) bypasses. */
@@ -102,7 +113,7 @@ function checkModelConfigAccess(runtime: Runtime): string | null {
  * mode.
  */
 function normalizeModelConfigClears(input: Record<string, unknown>): string | null {
-  for (const { key, clearFlag } of THINKING_FIELDS) {
+  for (const { key, clearFlag } of CLEARABLE_FIELDS) {
     if (input[clearFlag] !== true) continue;
     if (input[key] != null) {
       return `Cannot set both \`${key}\` and \`${clearFlag}\`. Use one or the other.`;
@@ -119,7 +130,9 @@ function positiveIntFieldError(
   min: number,
   max?: number,
 ): string | null {
-  if (value === undefined) return null;
+  // `null` is the normalized clear sentinel, not a value to range-check.
+  // `Number(null)` is 0, which would fail every one of these floors.
+  if (value == null) return null;
   const n = Number(value);
   if (!Number.isInteger(n) || n < min || (max !== undefined && n > max)) {
     return max !== undefined
@@ -129,24 +142,31 @@ function positiveIntFieldError(
   return null;
 }
 
+function unreachableModelError(model: string, runtime: Runtime, slot?: string): string | null {
+  if (isModelAllowed(model, runtime.getProviderConfigs())) return null;
+  const subject = slot ? `Invalid model "${model}" for slot "${slot}"` : `Invalid model "${model}"`;
+  return `${subject}. Either the provider is not configured or the model is not in the allowlist. Configured providers: ${runtime.getConfiguredProviders().join(", ")}`;
+}
+
 function validateModelSlots(input: Record<string, unknown>, runtime: Runtime): string | null {
-  if (input.models !== undefined && typeof input.models === "object") {
-    for (const [slot, value] of Object.entries(input.models as Record<string, unknown>)) {
-      if (!isModelSlot(slot)) {
-        return `Unknown model slot "${slot}". Valid slots: ${MODEL_SLOTS.join(", ")}.`;
-      }
-      if (!isModelAllowed(String(value), runtime.getProviderConfigs())) {
-        return `Invalid model "${String(value)}" for slot "${slot}". Either the provider is not configured or the model is not in the allowlist. Configured providers: ${runtime.getConfiguredProviders().join(", ")}`;
-      }
+  if (input.models === undefined || typeof input.models !== "object") return null;
+  for (const [slot, value] of Object.entries(input.models as Record<string, unknown>)) {
+    if (!isModelSlot(slot)) {
+      return `Unknown model slot "${slot}". Valid slots: ${MODEL_SLOTS.join(", ")}.`;
     }
-  }
-  if (input.defaultModel !== undefined) {
-    const model = String(input.defaultModel);
-    if (!isModelAllowed(model, runtime.getProviderConfigs())) {
-      return `Invalid model "${model}". Either the provider is not configured or the model is not in the allowlist. Configured providers: ${runtime.getConfiguredProviders().join(", ")}`;
-    }
+    // `""` clears the slot; there is no model to check the allowlist against.
+    const model = String(value);
+    if (model === "") continue;
+    const error = unreachableModelError(model, runtime, slot);
+    if (error) return error;
   }
   return null;
+}
+
+/** The deprecated top-level `defaultModel` input. `models.default` supersedes it. */
+function validateDefaultModel(input: Record<string, unknown>, runtime: Runtime): string | null {
+  if (input.defaultModel === undefined) return null;
+  return unreachableModelError(String(input.defaultModel), runtime);
 }
 
 function validateModelConfigLimits(input: Record<string, unknown>): string | null {
@@ -182,23 +202,10 @@ function validateModelConfigThinking(input: Record<string, unknown>): string | n
 function validateModelConfigPatch(input: Record<string, unknown>, runtime: Runtime): string | null {
   return (
     validateModelSlots(input, runtime) ??
+    validateDefaultModel(input, runtime) ??
     validateModelConfigLimits(input) ??
     validateModelConfigThinking(input)
   );
-}
-
-/**
- * The thinking fields the operator actually set, omitting the rest.
- *
- * Only operator-set values belong in the payload: a client that reads a
- * derived default and saves it back turns that default into a choice.
- */
-function operatorSetThinking(config: Record<string, unknown>): Record<string, unknown> {
-  const out: Record<string, unknown> = {};
-  for (const { key } of THINKING_FIELDS) {
-    if (config[key] !== undefined) out[key] = config[key];
-  }
-  return out;
 }
 
 /** Merge only the model slots, key-by-key so an override of one slot leaves the others. */
@@ -207,8 +214,13 @@ function mergeModelSlots(existing: Record<string, unknown>, input: Record<string
   if (!existing.models || typeof existing.models !== "object") existing.models = {};
   const existingModels = existing.models as Record<string, unknown>;
   for (const [slot, value] of Object.entries(input.models as Record<string, unknown>)) {
-    existingModels[slot] = String(value);
+    // `""` clears the slot, mirroring the live-config path in `updateConfig`.
+    if (String(value) === "") delete existingModels[slot];
+    else existingModels[slot] = String(value);
   }
+  // Leave no empty husk behind: `"models": {}` in the override file reads as a
+  // section the operator configured.
+  if (Object.keys(existingModels).length === 0) delete existing.models;
 }
 
 /** Merge the validated patch into the on-disk override object (mutates `existing`). */
@@ -218,12 +230,9 @@ function mergeModelConfigOverride(
 ): void {
   mergeModelSlots(existing, input);
   if (input.defaultModel !== undefined) existing.defaultModel = String(input.defaultModel);
-  if (input.maxIterations !== undefined) existing.maxIterations = Number(input.maxIterations);
-  if (input.maxInputTokens !== undefined) existing.maxInputTokens = Number(input.maxInputTokens);
-  if (input.maxOutputTokens !== undefined) existing.maxOutputTokens = Number(input.maxOutputTokens);
-  // null = clear the operator override; undefined = leave alone. The three are
-  // independent: clearing the mode does not clear the depth or the budget.
-  for (const { key, coerce } of THINKING_FIELDS) {
+  // null = clear the operator override; undefined = leave alone. Fields are
+  // independent: clearing the thinking mode does not clear the depth or budget.
+  for (const { key, coerce } of CLEARABLE_FIELDS) {
     if (input[key] === null) delete existing[key];
     else if (input[key] !== undefined) existing[key] = coerce(input[key]);
   }
@@ -240,20 +249,15 @@ function buildModelConfigRuntimePatch(input: Record<string, unknown>): Record<st
   // `null` reaches updateConfig verbatim: it gates on `!== undefined`, so a
   // clear expressed as `undefined` would write to disk and never reach the
   // live process.
-  const thinkingPatch: Record<string, unknown> = {};
-  for (const { key, coerce } of THINKING_FIELDS) {
-    if (input[key] === null) thinkingPatch[key] = null;
-    else if (input[key] !== undefined) thinkingPatch[key] = coerce(input[key]);
+  const scalarPatch: Record<string, unknown> = {};
+  for (const { key, coerce } of CLEARABLE_FIELDS) {
+    if (input[key] === null) scalarPatch[key] = null;
+    else if (input[key] !== undefined) scalarPatch[key] = coerce(input[key]);
   }
   return {
     ...(modelsPatch ? { models: modelsPatch } : {}),
     ...(input.defaultModel !== undefined ? { defaultModel: String(input.defaultModel) } : {}),
-    ...(input.maxIterations !== undefined ? { maxIterations: Number(input.maxIterations) } : {}),
-    ...(input.maxInputTokens !== undefined ? { maxInputTokens: Number(input.maxInputTokens) } : {}),
-    ...(input.maxOutputTokens !== undefined
-      ? { maxOutputTokens: Number(input.maxOutputTokens) }
-      : {}),
-    ...thinkingPatch,
+    ...scalarPatch,
   };
 }
 
@@ -599,30 +603,31 @@ export function createCoreToolDefs(runtime: Runtime): InProcessTool[] {
       },
       handler: async (): Promise<ToolResult> => {
         try {
-          // Configured, not resolved. This feeds the settings tab, which posts
-          // these values back on Save — publishing the caller's own view would
-          // let an admin persist their personal model as everyone's default.
-          const models = runtime.configuredModelSlots();
-          const defaultModel = models.default;
-          const configuredProviders = runtime.getConfiguredProviders();
-          const availableModels = getAvailableModels(runtime.getProviderConfigs());
-          const maxIterations = runtime.getMaxIterations();
-          const maxInputTokens = runtime.getMaxInputTokens();
-          const maxOutputTokens = runtime.getMaxOutputTokens();
-          const runtimeConfig = runtime.getRuntimeConfig();
           const identity = runtime.getCurrentIdentity();
           const preferences = identity?.preferences ?? {};
           return {
             content: textContent("Current runtime configuration."),
             structuredContent: {
-              models,
-              defaultModel,
-              configuredProviders,
-              availableModels,
-              maxIterations,
-              maxInputTokens,
-              maxOutputTokens,
-              ...operatorSetThinking(runtimeConfig),
+              // Two groups, and the split is the contract: everything at the
+              // top level is what the operator actually set and is safe to
+              // send back to `set_model_config`. Everything under `resolved`
+              // is the effective value after defaults — display only. Writing
+              // a resolved value back turns a default nobody chose into an
+              // override that outlives every future change to it.
+              ...runtime.getOperatorConfig(),
+              resolved: {
+                // Untinted by the caller's own profile and workspace. This
+                // feeds the settings tab, which posts back on Save, and it
+                // labels what "use the default" means — publishing the
+                // caller's own view would let an admin persist their personal
+                // model as everyone's default.
+                models: runtime.configuredModelSlots(),
+                maxIterations: runtime.getMaxIterations(),
+                maxInputTokens: runtime.getMaxInputTokens(),
+                maxOutputTokens: runtime.getMaxOutputTokens(),
+              },
+              configuredProviders: runtime.getConfiguredProviders(),
+              availableModels: getAvailableModels(runtime.getProviderConfigs()),
               preferences: {
                 displayName: identity?.displayName ?? "",
                 timezone: preferences.timezone ?? "",
@@ -686,8 +691,15 @@ export function createCoreToolDefs(runtime: Runtime): InProcessTool[] {
             type: "object",
             description: "Role-based model slots. Each slot maps to a provider:model-id string.",
             properties: {
-              default: { type: "string", description: "Primary model for chat." },
-              fast: { type: "string", description: "Cheap/fast model for auxiliary tasks." },
+              default: {
+                type: "string",
+                description: "Primary model for chat. Empty string clears the slot.",
+              },
+              fast: {
+                type: "string",
+                description:
+                  "Cheap/fast model for auxiliary tasks. Empty string clears the slot (falls back to the default model).",
+              },
             },
           },
           defaultModel: {
@@ -696,15 +708,33 @@ export function createCoreToolDefs(runtime: Runtime): InProcessTool[] {
           },
           maxIterations: {
             type: "number",
-            description: "Max agentic iterations per request (1-25).",
+            description:
+              "Max agentic iterations per request (1-25). Use clearMaxIterations=true to revert to the platform default.",
+          },
+          clearMaxIterations: {
+            type: "boolean",
+            description:
+              "If true, clears any persisted max-iterations override. Mutually exclusive with `maxIterations`.",
           },
           maxInputTokens: {
             type: "number",
-            description: "Max input tokens per request (must be > 0).",
+            description:
+              "Max input tokens per request (must be > 0). Use clearMaxInputTokens=true to revert to the platform default.",
+          },
+          clearMaxInputTokens: {
+            type: "boolean",
+            description:
+              "If true, clears any persisted max-input-tokens override. Mutually exclusive with `maxInputTokens`.",
           },
           maxOutputTokens: {
             type: "number",
-            description: "Max output tokens per LLM call (must be > 0).",
+            description:
+              "Max output tokens per LLM call (must be > 0). Use clearMaxOutputTokens=true to revert to the model-derived default.",
+          },
+          clearMaxOutputTokens: {
+            type: "boolean",
+            description:
+              "If true, clears any persisted max-output-tokens override. Mutually exclusive with `maxOutputTokens`.",
           },
           thinking: {
             type: "string",

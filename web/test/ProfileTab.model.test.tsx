@@ -37,7 +37,9 @@ mock.module("../src/api/client", () => ({
       if (configFails) throw new Error("network down");
       return {
         structuredContent: {
-          models: { default: "anthropic:claude-sonnet-4-6" },
+          // No operator-set `models` key: nothing is pinned, and the label
+          // still has to name what "use the default" resolves to.
+          resolved: { models: { default: "anthropic:claude-sonnet-4-6" } },
           availableModels: {
             anthropic: [
               {

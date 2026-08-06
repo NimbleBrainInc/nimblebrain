@@ -115,7 +115,6 @@ function AuthenticatedApp({
 
   const initialConfig = {
     configuredProviders: bootstrap.config.configuredProviders,
-    defaultModel: bootstrap.config.models.default ?? "",
     preferences: bootstrap.user.preferences,
   };
 
@@ -162,7 +161,6 @@ function BootstrappedShell({
   initialShell: ShellData;
   initialConfig: {
     configuredProviders: string[];
-    defaultModel: string;
     preferences?: { displayName?: string; timezone?: string; locale?: string; theme?: string };
   };
   currentUserId: string;
