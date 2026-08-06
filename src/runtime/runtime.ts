@@ -971,16 +971,6 @@ export class Runtime {
   }
 
   /**
-   * Start a chat turn that runs to completion server-side, decoupled from the
-   * caller's connection. Resolves (creating if new) the conversation id up
-   * front, reserves the run on the RunBus, then runs the engine in the
-   * background — publishing every event to the bus so viewers can replay via
-   * {@link getTurnReplay} and tail via the `onTurnEvent` fan-out. Returns once
-   * the id is known; the turn keeps
-   * running after the HTTP request that called this returns. Throws
-   * {@link RunInProgressError} if a turn is already active for the conversation.
-   */
-  /**
    * The turn's request context, before the conversation exists.
    *
    * Both chat doors resolve the conversation's model binding *before* the turn
@@ -1015,6 +1005,16 @@ export class Runtime {
     };
   }
 
+  /**
+   * Start a chat turn that runs to completion server-side, decoupled from the
+   * caller's connection. Resolves (creating if new) the conversation id up
+   * front, reserves the run on the RunBus, then runs the engine in the
+   * background — publishing every event to the bus so viewers can replay via
+   * {@link getTurnReplay} and tail via the `onTurnEvent` fan-out. Returns once
+   * the id is known; the turn keeps
+   * running after the HTTP request that called this returns. Throws
+   * {@link RunInProgressError} if a turn is already active for the conversation.
+   */
   async startTurn(request: ChatRequest): Promise<{ conversationId: string }> {
     // Same strict production-vs-dev owner rule as `chat()` and the REST
     // handlers — one shared resolver, no forked copy to drift out of sync.

@@ -45,6 +45,15 @@ const USER: UserIdentity = {
   orgRole: "member",
 };
 
+/** Someone who chose their own model. `MODEL_B` is never the org default here. */
+const PICKY: UserIdentity = {
+  id: "usr_picky",
+  email: "picky@example.com",
+  displayName: "Picky",
+  orgRole: "member",
+  preferences: { models: { default: MODEL_B } },
+};
+
 let runtime: Runtime;
 const workDir = join(tmpdir(), `nimblebrain-model-pin-${Date.now()}`);
 
@@ -60,6 +69,7 @@ beforeAll(async () => {
   await provisionTestWorkspace(runtime);
   // Resuming a conversation requires current membership of its workspace.
   await runtime.getWorkspaceStore().addMember(TEST_WORKSPACE_ID, USER.id, "member");
+  await runtime.getWorkspaceStore().addMember(TEST_WORKSPACE_ID, PICKY.id, "member");
 });
 
 afterAll(async () => {
@@ -326,6 +336,34 @@ describe("conversations that predate the binding", () => {
     expect(await modelsUsed(legacy.id)).toEqual([MODEL_B]);
     expect(await pinOf(legacy.id)).toBeUndefined();
   });
+
+  test("an unpinned conversation follows the resumer's preference", async () => {
+    // Resolving from current config is the third place the model is chosen,
+    // and it has to see the caller the same way the create path does. With no
+    // pin to defer to, an untinted resolution runs the org default here.
+    const seed = await runtime.chat({
+      message: "seed",
+      workspaceId: TEST_WORKSPACE_ID,
+      identity: PICKY,
+    });
+    const store = await runtime.resolveConversationStore(seed.conversationId);
+    const legacy = await store!.create({
+      ownerId: PICKY.id,
+      workspaceId: TEST_WORKSPACE_ID,
+    });
+    expect(legacy.model).toBeUndefined();
+
+    runtime.updateConfig({ models: { default: MODEL_A } });
+    await runtime.chat({
+      message: "resumed",
+      conversationId: legacy.id,
+      workspaceId: TEST_WORKSPACE_ID,
+      identity: PICKY,
+    });
+
+    expect(await modelsUsed(legacy.id)).toEqual([MODEL_B]);
+    expect(await pinOf(legacy.id)).toBeUndefined();
+  });
 });
 
 describe("the detached-turn path", () => {
@@ -361,17 +399,8 @@ describe("whose model the pin captures", () => {
   // the binding before that context existed, so the pin took the org default
   // and the preference only ever changed what tools reported — never the model
   // the turn ran on.
-  const PICKY: UserIdentity = {
-    id: "usr_picky",
-    email: "picky@example.com",
-    displayName: "Picky",
-    orgRole: "member",
-    preferences: { models: { default: MODEL_B } },
-  };
-
   test("a person's profile preference binds the conversation, not the org default", async () => {
     runtime.updateConfig({ models: { default: MODEL_A } });
-    await runtime.getWorkspaceStore().addMember(TEST_WORKSPACE_ID, PICKY.id, "member");
 
     const conv = await runtime.chat({
       message: "which model am I on",
