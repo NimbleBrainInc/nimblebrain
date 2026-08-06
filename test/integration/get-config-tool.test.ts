@@ -34,16 +34,22 @@ describe("get_config tool", () => {
 			const result = await source.execute("get_config", {});
 			expect(result.isError).toBe(false);
 			const config = result.structuredContent as Record<string, unknown>;
-			expect(typeof config.defaultModel).toBe("string");
-			expect((config.defaultModel as string).length).toBeGreaterThan(0);
 			expect(Array.isArray(config.configuredProviders)).toBe(true);
 			expect((config.configuredProviders as string[]).length).toBeGreaterThan(0);
-			expect(typeof config.maxIterations).toBe("number");
-			expect(config.maxIterations).toBeGreaterThan(0);
-			expect(typeof config.maxInputTokens).toBe("number");
-			expect((config.maxInputTokens as number)).toBeGreaterThan(0);
-			expect(typeof config.maxOutputTokens).toBe("number");
-			expect((config.maxOutputTokens as number)).toBeGreaterThan(0);
+
+			// The limits live under `resolved`: this runtime sets none of them,
+			// and an effective value published at the top level would read as
+			// an operator override the moment a client saved it back.
+			const resolved = config.resolved as Record<string, unknown>;
+			const models = resolved.models as Record<string, string>;
+			expect(typeof models.default).toBe("string");
+			expect(models.default.length).toBeGreaterThan(0);
+			expect(typeof resolved.maxIterations).toBe("number");
+			expect(resolved.maxIterations).toBeGreaterThan(0);
+			expect(typeof resolved.maxInputTokens).toBe("number");
+			expect(resolved.maxInputTokens as number).toBeGreaterThan(0);
+			expect(typeof resolved.maxOutputTokens).toBe("number");
+			expect(resolved.maxOutputTokens as number).toBeGreaterThan(0);
 		} finally {
 			await runtime.shutdown();
 		}
@@ -55,7 +61,8 @@ describe("get_config tool", () => {
 			const source = await makeInProcessSource("nb", createCoreToolDefs(runtime));
 			const result = await source.execute("get_config", {});
 			const config = result.structuredContent as Record<string, unknown>;
-			expect(config.defaultModel).toBe("anthropic:claude-sonnet-4-6");
+			const resolved = config.resolved as { models: Record<string, string> };
+			expect(resolved.models.default).toBe("anthropic:claude-sonnet-4-6");
 		} finally {
 			await runtime.shutdown();
 		}
@@ -114,7 +121,8 @@ describe("get_config tool", () => {
 
 			const getResult = await source.execute("get_config", {});
 			const config = getResult.structuredContent as Record<string, unknown>;
-			expect(config.defaultModel).toBe("openai:gpt-4o");
+			const resolved = config.resolved as { models: Record<string, string> };
+			expect(resolved.models.default).toBe("openai:gpt-4o");
 		} finally {
 			await runtime.shutdown();
 		}

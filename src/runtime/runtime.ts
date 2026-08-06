@@ -1459,7 +1459,7 @@ export class Runtime {
     // window minus the static per-call overhead. `configMaxInputTokens`
     // is treated as a CAP — never a target. See
     // `src/runtime/resolve-message-budget.ts`.
-    const configMaxInputTokens = this.config.maxInputTokens ?? DEFAULT_MAX_INPUT_TOKENS;
+    const configMaxInputTokens = this.getMaxInputTokens();
     const messageBudget = resolveMessageBudget({
       model: resolvedModelString,
       configMaxInputTokens,
@@ -1902,8 +1902,7 @@ export class Runtime {
     // on ChatRequest but currently ignores it in favor of config-only —
     // tracked as #335 (parallel scoped fix to bring chat into semantic
     // consistency with task).
-    const configMaxInputTokens =
-      request.maxInputTokens ?? this.config.maxInputTokens ?? DEFAULT_MAX_INPUT_TOKENS;
+    const configMaxInputTokens = request.maxInputTokens ?? this.getMaxInputTokens();
     const messageBudget = resolveMessageBudget({
       model: resolvedModelString,
       configMaxInputTokens,
@@ -2407,8 +2406,7 @@ export class Runtime {
   }): EngineConfig {
     return {
       model: opts.model,
-      maxIterations:
-        opts.requestMaxIterations ?? this.config.maxIterations ?? DEFAULT_MAX_ITERATIONS,
+      maxIterations: opts.requestMaxIterations ?? this.getMaxIterations(),
       // Surfaced on run.start telemetry; the actual budget enforcement happens
       // inside `hooks.transformContext`.
       maxInputTokens: opts.maxInputTokens,
@@ -3976,14 +3974,21 @@ export class Runtime {
     };
   }
 
-  /** Get max agentic iterations per request. */
+  /**
+   * Max agentic iterations per request.
+   *
+   * The engine resolves the same way, so what this reports — to the agent via
+   * system tools, to the API, and to the settings UI — is what a run actually
+   * gets. A reader with its own fallback drifts from the executor silently:
+   * everything downstream keeps working, it just describes a different system.
+   */
   getMaxIterations(): number {
-    return this.config.maxIterations ?? 10;
+    return this.config.maxIterations ?? DEFAULT_MAX_ITERATIONS;
   }
 
-  /** Get max input tokens per request. */
+  /** Max input tokens per request. Same reader-is-the-executor rule as above. */
   getMaxInputTokens(): number {
-    return this.config.maxInputTokens ?? 500_000;
+    return this.config.maxInputTokens ?? DEFAULT_MAX_INPUT_TOKENS;
   }
 
   /**
@@ -4020,9 +4025,9 @@ export class Runtime {
   updateConfig(patch: {
     defaultModel?: string;
     models?: Partial<ModelSlots>;
-    maxIterations?: number;
-    maxInputTokens?: number;
-    maxOutputTokens?: number;
+    maxIterations?: number | null;
+    maxInputTokens?: number | null;
+    maxOutputTokens?: number | null;
     maxToolResultSize?: number;
     thinking?: "off" | "adaptive" | "enabled" | null;
     thinkingEffort?: ThinkingEffort | null;
@@ -4030,10 +4035,19 @@ export class Runtime {
     preferences?: Record<string, string>;
   }) {
     if (patch.models) {
-      // Configured slots, not resolved: `getModelSlots()` is tinted by the
-      // caller's workspace and profile, and this value becomes everyone's default.
-      this.config.models ??= this.configuredModelSlots();
-      Object.assign(this.config.models, patch.models);
+      // Holds only what is assigned. Seeding this from a resolved view would
+      // write the caller's effective `fast` model in while they were setting
+      // `default`, and that value becomes everyone's — resolved slots are
+      // tinted by the caller's own workspace and profile.
+      this.config.models ??= {};
+      for (const [slot, model] of Object.entries(patch.models)) {
+        // `""` is the clear for a slot — it is the one string that is not a
+        // model id, so it needs no separate flag. Deleting rather than storing
+        // it matters: `configuredModelSlots` falls back on nullish only, so a
+        // stored `""` would resolve to the bare provider prefix.
+        if (model === "") delete this.config.models[slot as ModelSlot];
+        else this.config.models[slot as ModelSlot] = model;
+      }
     }
     if (patch.defaultModel !== undefined) {
       this.config.defaultModel = patch.defaultModel;
@@ -4042,16 +4056,20 @@ export class Runtime {
         this.config.models.default = patch.defaultModel;
       }
     }
-    if (patch.maxIterations !== undefined) this.config.maxIterations = patch.maxIterations;
-    if (patch.maxInputTokens !== undefined) this.config.maxInputTokens = patch.maxInputTokens;
-    if (patch.maxOutputTokens !== undefined) this.config.maxOutputTokens = patch.maxOutputTokens;
     if (patch.maxToolResultSize !== undefined)
       this.config.maxToolResultSize = patch.maxToolResultSize;
     // Every field typed `| null` treats `null` as the explicit "clear my
     // override" sentinel, distinct from `undefined` ("leave it alone"). The
     // distinction is load-bearing: this method gates on `!== undefined`, so a
     // clear expressed as `undefined` writes to disk but never reaches the
-    // live process.
+    // live process. Clearing must land as absent rather than a stored `null`,
+    // or the field reads back as an operator choice that was never made.
+    this.config.maxIterations = applyClearable(this.config.maxIterations, patch.maxIterations);
+    this.config.maxInputTokens = applyClearable(this.config.maxInputTokens, patch.maxInputTokens);
+    this.config.maxOutputTokens = applyClearable(
+      this.config.maxOutputTokens,
+      patch.maxOutputTokens,
+    );
     this.config.thinking = applyClearable(this.config.thinking, patch.thinking);
     this.config.thinkingEffort = applyClearable(this.config.thinkingEffort, patch.thinkingEffort);
     this.config.thinkingBudgetTokens = applyClearable(
@@ -4397,28 +4415,45 @@ export class Runtime {
     return this.config.configOverridePath;
   }
 
-  /** Get current runtime config values (safe subset — no secrets). */
-  getRuntimeConfig(): {
-    models: ModelSlots;
-    defaultModel: string;
-    maxIterations: number;
-    maxInputTokens: number;
-    maxOutputTokens: number;
-    /** Operator-pinned thinking mode if set; absent when relying on model-default policy. */
+  /**
+   * Exactly what the operator set — every field absent when it is not in the
+   * config file. Never a resolved value.
+   *
+   * The distinction is the whole point. A settings surface reads this, shows
+   * it, and writes it back; if a derived default appeared here, a no-op Save
+   * would persist it as a deliberate override and opt the deployment out of
+   * every future change to that default. The effective values a caller needs
+   * for display come from the readers (`configuredModelSlots`,
+   * `getMaxIterations`, …) and are published separately.
+   *
+   * Anything editable belongs here and must stay absent-when-unset. Anything
+   * resolved belongs with the readers.
+   */
+  getOperatorConfig(): {
+    models?: Partial<ModelSlots>;
+    maxIterations?: number;
+    maxInputTokens?: number;
+    maxOutputTokens?: number;
     thinking?: "off" | "adaptive" | "enabled";
-    /** Operator-pinned reasoning depth if set; absent when relying on DEFAULT_THINKING_EFFORT. */
     thinkingEffort?: ThinkingEffort;
     thinkingBudgetTokens?: number;
   } {
+    const slots = this.config.models;
+    const models: Partial<ModelSlots> = {};
+    if (slots?.default !== undefined) models.default = slots.default;
+    if (slots?.fast !== undefined) models.fast = slots.fast;
+
     return {
-      models: this.getModelSlots(),
-      defaultModel: this.getDefaultModel(),
-      maxIterations: this.config.maxIterations ?? DEFAULT_MAX_ITERATIONS,
-      maxInputTokens: this.config.maxInputTokens ?? DEFAULT_MAX_INPUT_TOKENS,
-      maxOutputTokens: resolveMaxOutputTokens({
-        configValue: this.config.maxOutputTokens,
-        model: this.getDefaultModel(),
-      }),
+      ...(Object.keys(models).length > 0 ? { models } : {}),
+      ...(this.config.maxIterations !== undefined
+        ? { maxIterations: this.config.maxIterations }
+        : {}),
+      ...(this.config.maxInputTokens !== undefined
+        ? { maxInputTokens: this.config.maxInputTokens }
+        : {}),
+      ...(this.config.maxOutputTokens !== undefined
+        ? { maxOutputTokens: this.config.maxOutputTokens }
+        : {}),
       ...(this.config.thinking !== undefined ? { thinking: this.config.thinking } : {}),
       ...(this.config.thinkingEffort !== undefined
         ? { thinkingEffort: this.config.thinkingEffort }

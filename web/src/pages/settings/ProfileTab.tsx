@@ -28,7 +28,12 @@ const THEME_OPTIONS: { value: Theme; label: string; description: string; icon: t
 interface ProfileConfig {
   preferences?: Record<string, unknown>;
   availableModels?: Record<string, ModelEntry[]>;
-  models?: { default?: string };
+  /**
+   * Effective values after defaults. The label here says what "use the default"
+   * resolves to, which is the operator's default whether or not they set one —
+   * so it reads `resolved`, not the operator-set group.
+   */
+  resolved?: { models?: { default?: string } };
 }
 
 export function ProfileTab() {
@@ -52,7 +57,7 @@ export function ProfileTab() {
     setAvailableModels(config.availableModels ?? {});
     // The configured default is what an unset preference resolves to, so it is
     // what the empty option has to name.
-    setConfiguredDefault(config.models?.default ?? "");
+    setConfiguredDefault(config.resolved?.models?.default ?? "");
     if (typeof prefs.model === "string") setModel(prefs.model);
     if (typeof prefs.timezone === "string") setTimezone(prefs.timezone);
     if (prefs.theme === "light" || prefs.theme === "dark" || prefs.theme === "system") {

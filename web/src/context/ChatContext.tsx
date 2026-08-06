@@ -23,7 +23,6 @@ import { useWorkspaceContext } from "./WorkspaceContext";
 
 export interface ChatConfigContextValue {
   configuredProviders: string[];
-  defaultModel: string;
   refreshConfig: () => void;
   preferences: ConfigInfo["preferences"];
   currentUserId?: string;
@@ -65,7 +64,6 @@ export interface ChatProviderProps {
   /** Pre-fetched config from bootstrap. Skips the tool call when provided. */
   initialConfig?: {
     configuredProviders: string[];
-    defaultModel: string;
     preferences?: ConfigInfo["preferences"];
   };
   /** Current user's ID (from bootstrap). */
@@ -197,7 +195,6 @@ export function ChatProvider({
   const [configuredProviders, setConfiguredProviders] = useState<string[]>(
     initialConfig?.configuredProviders ?? [],
   );
-  const [defaultModel, setDefaultModel] = useState<string>(initialConfig?.defaultModel ?? "");
   const [preferences, setPreferences] = useState<ConfigInfo["preferences"]>(
     initialConfig?.preferences,
   );
@@ -207,7 +204,6 @@ export function ChatProvider({
       .then((result) => {
         const data = extractConfigPayload(result) as ConfigInfo;
         setConfiguredProviders(data.configuredProviders);
-        setDefaultModel(data.defaultModel);
         if (data.preferences) setPreferences(data.preferences);
       })
       .catch(() => {
@@ -240,12 +236,11 @@ export function ChatProvider({
   const configValue = useMemo<ChatConfigContextValue>(
     () => ({
       configuredProviders,
-      defaultModel,
       refreshConfig: fetchConfig,
       preferences,
       currentUserId,
     }),
-    [configuredProviders, defaultModel, fetchConfig, preferences, currentUserId],
+    [configuredProviders, fetchConfig, preferences, currentUserId],
   );
 
   // -- Chat context value (changes per streaming tick) --

@@ -138,7 +138,6 @@ async function mountHarness(opts?: {
               // Provide config so the provider skips the get_config tool call.
               initialConfig: {
                 configuredProviders: [],
-                defaultModel: "anthropic:claude-sonnet-4-6",
               },
             },
             React.createElement(Probe),
