@@ -17,10 +17,12 @@ import {
  * nimblebrain.json validation (the runtime compiles it with AJV at startup) and
  * is published to schemas.nimblebrain.ai by `.github/workflows/schema-deploy.yml`.
  * Every object guarded here uses `additionalProperties: false`, so a key added to
- * the runtime type but missing from the schema is rejected as an unknown key at
- * startup; a key in the schema with no backing code is a dead knob. Both are
- * silent until someone hits them — this test turns the drift into a build
- * failure in the repo where the key is authored.
+ * the runtime type but missing from the schema is **warned about and ignored** at
+ * startup — `loadConfig` sorts `additionalProperties` violations into warnings
+ * and throws only on structural errors, so the setting silently does nothing.
+ * A key in the schema with no backing code is the mirror image, a dead knob.
+ * Both are quiet until someone hits them — this test turns the drift into a
+ * build failure in the repo where the key is authored.
  */
 interface SchemaObject {
   properties: Record<string, unknown>;
