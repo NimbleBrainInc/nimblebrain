@@ -260,7 +260,7 @@ describe("model qualification at runtime boundary", () => {
 
     // What `set_model_config` does after boot, minus the file write. Bare on
     // purpose: the reader qualifies, a captured `config.models.default` does not.
-    runtime.updateConfig({ models: { default: "gemini-3.1-pro-preview" } });
+    runtime.updateConfig({ models: { default: "gemini-3.1-pro-preview" }, maxInputTokens: 12345 });
 
     try {
       await runtime.chat({ message: "hello", workspaceId: TEST_WORKSPACE_ID }, { emit: () => {} });
@@ -268,6 +268,8 @@ describe("model qualification at runtime boundary", () => {
       const childStart = events.find((e) => e.type === "run.start" && e.data.parentRunId);
       expect(childStart).toBeDefined();
       expect(childStart!.data.model).toBe("google:gemini-3.1-pro-preview");
+      // The other half of the change: the cap is read live too.
+      expect(childStart!.data.maxInputTokens).toBe(12345);
     } finally {
       await runtime.shutdown();
     }
