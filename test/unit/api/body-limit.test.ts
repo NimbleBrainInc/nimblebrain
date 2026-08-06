@@ -147,6 +147,72 @@ describe("bodyLimit middleware", () => {
     expect(res.status).toBe(200);
   });
 
+  // Answering while the body is still arriving desynchronizes a keep-alive
+  // connection: HTTP/1.1 cannot say "I stopped reading", so the unread bytes
+  // are parsed as the next request. The observable contract of the refusal is
+  // therefore that the body was consumed, not merely that the status is 413.
+  test("consumes an over-limit body before answering", async () => {
+    const app = createTestApp(1024);
+    const request = new Request("http://localhost/test", {
+      method: "POST",
+      headers: { "Content-Length": "2048", "Content-Type": "application/json" },
+      body: "x".repeat(2048),
+    });
+
+    const res = await app.fetch(request);
+
+    expect(res.status).toBe(413);
+    // False here means the body was abandoned on the wire.
+    expect(request.bodyUsed).toBe(true);
+  });
+
+  // The other half of that trade: the read is work an unauthenticated caller
+  // can ask for, so past MAX_DRAIN_BYTES the refusal goes out immediately and
+  // the connection takes the consequences.
+  test("refuses a body past the drain ceiling without reading it", async () => {
+    const app = createTestApp(1024);
+    const oversized = "x".repeat(9 * 1024 * 1024);
+    const request = new Request("http://localhost/test", {
+      method: "POST",
+      headers: {
+        "Content-Length": String(oversized.length),
+        "Content-Type": "application/json",
+      },
+      body: oversized,
+    });
+
+    const res = await app.fetch(request);
+
+    expect(res.status).toBe(413);
+    expect(request.bodyUsed).toBe(false);
+  });
+
+  // A sender can stop mid-body. Without a deadline the refusal waits on it,
+  // and the caller gets nothing until the server's idle timeout closes the
+  // socket — so the drain has to give up and answer.
+  test("answers a refusal whose body stalls mid-transfer", async () => {
+    const app = createTestApp(1024);
+    const request = new Request("http://localhost/test", {
+      method: "POST",
+      headers: { "Content-Length": "2000000", "Content-Type": "application/json" },
+      // One chunk, then the sender goes quiet and never closes the stream.
+      body: new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.enqueue(new Uint8Array(16));
+        },
+      }),
+      duplex: "half",
+    } as RequestInit);
+
+    const started = performance.now();
+    const res = await app.fetch(request);
+    const elapsed = performance.now() - started;
+
+    expect(res.status).toBe(413);
+    // Bounded by the drain deadline, not by the server's idle timeout.
+    expect(elapsed).toBeLessThan(4_000);
+  });
+
   // Regression guard: bodyLimit must stay scoped to the route it's attached
   // to. Mounting it via `.use("*")` on a sub-app that is itself mounted at
   // `/` makes it leak across sibling sub-apps — that's how the multipart
