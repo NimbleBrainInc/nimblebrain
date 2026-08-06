@@ -980,6 +980,41 @@ export class Runtime {
    * running after the HTTP request that called this returns. Throws
    * {@link RunInProgressError} if a turn is already active for the conversation.
    */
+  /**
+   * The turn's request context, before the conversation exists.
+   *
+   * Both chat doors resolve the conversation's model binding *before* the turn
+   * has a context, and the tint that lets a person's model preference outrank
+   * the org default reads identity from that context. Resolved outside one, a
+   * pin silently takes the untinted org default, and the preference changes
+   * only what tools report — never the model the turn runs on.
+   *
+   * One builder because the binding must not depend on which door created the
+   * conversation: the detached-start path and the chat path have to agree on
+   * the workspace's overrides as well as the caller's preference.
+   *
+   * `conversationId` is the caller's to add once there is one.
+   */
+  private async buildTurnContext(
+    identity: UserIdentity,
+    convWsId: string,
+  ): Promise<RequestContext> {
+    // Agent profiles + model overrides come from the workspace this session is
+    // bound to — the conversation's own. A workspace's agents and model slots
+    // are that workspace's configuration, and apply to every turn that runs in
+    // it regardless of who is chatting.
+    const boundWorkspace = await this._workspaceStore.get(convWsId);
+    return {
+      identity,
+      // The conversation's own workspace — the one this turn is sealed to, for
+      // its tools, its skills, its files, and its config. Not the client's
+      // currently-focused workspace and not the caller's personal one.
+      workspaceId: convWsId,
+      workspaceAgents: boundWorkspace?.agents ?? null,
+      workspaceModelOverride: boundWorkspace?.models ?? null,
+    };
+  }
+
   async startTurn(request: ChatRequest): Promise<{ conversationId: string }> {
     // Same strict production-vs-dev owner rule as `chat()` and the REST
     // handlers — one shared resolver, no forked copy to drift out of sync.
@@ -1012,6 +1047,10 @@ export class Runtime {
     // resume (authoritative, from the locator), or the workspace it's born in
     // (`wsId`) for a new conversation. The workspace owns the directory.
     const { store, convWsId } = await this.resolveChatStore(request.conversationId, wsId, ownerId);
+
+    // This door creates conversations too, so its binding resolves under the
+    // same context as the chat door's — see `buildTurnContext`.
+    const turnCtx = await this.buildTurnContext(request.identity ?? DEV_IDENTITY, convWsId);
 
     // Reserve the run (throws RunInProgressError if one is already active). The
     // returned signal is the RunBus's — NOT the HTTP request's — so a client
@@ -1046,13 +1085,18 @@ export class Runtime {
       try {
         conversationId =
           existing?.id ??
-          (await store.create({ ...makeCreateOpts(), id: request.conversationId })).id;
+          (
+            await runWithRequestContext(turnCtx, () =>
+              store.create({ ...makeCreateOpts(), id: request.conversationId }),
+            )
+          ).id;
       } catch (err) {
         this.runBus.evict(request.conversationId, signal);
         throw err;
       }
     } else {
-      conversationId = (await store.create(makeCreateOpts())).id;
+      conversationId = (await runWithRequestContext(turnCtx, () => store.create(makeCreateOpts())))
+        .id;
       signal = this.runBus.begin(conversationId);
     }
 
@@ -1209,11 +1253,7 @@ export class Runtime {
     // the chat door requires a workspace, so it never reaches that branch.
     const narratedWsId = convWsId;
 
-    // Agent profiles + model overrides come from the workspace this session is
-    // bound to — the conversation's own. A workspace's agents and model slots
-    // are that workspace's configuration, and apply to every turn that runs in
-    // it regardless of who is chatting.
-    const boundWorkspace = await this._workspaceStore.get(convWsId);
+    const turnCtx = await this.buildTurnContext(requestIdentity, convWsId);
 
     // A thunk, not a value: `resolveRequestModelString` refuses a model outside
     // the allowlist, and a resume discards its result in favour of the pin.
@@ -1235,12 +1275,11 @@ export class Runtime {
     // check is the ONLY barrier between users and each other's conversations —
     // it runs in the load-bearing chat path, not just at a higher layer), and
     // requires CURRENT membership of the conversation's workspace on resume.
-    const conversation = await this.loadOrCreateConversation(
-      request,
-      store,
-      makeCreateOpts,
-      ownerId,
-      convWsId,
+    // Inside the turn's context, because `makeCreateOpts` resolves the model
+    // binding and the tint that lets a person's preference outrank the org
+    // default reads identity from there. See `buildTurnContext`.
+    const conversation = await runWithRequestContext(turnCtx, () =>
+      this.loadOrCreateConversation(request, store, makeCreateOpts, ownerId, convWsId),
     );
 
     // Build the user message (text + `resource_link` attachment blocks) and
@@ -1423,7 +1462,9 @@ export class Runtime {
     // the pin, so a conversation created on this path is already bound and
     // this reads back what it was born with. Absent only on legacy records
     // predating the binding, which resolve from current config as before.
-    const resolvedModelString = conversation.model ?? this.resolveRequestModelString(request.model);
+    const resolvedModelString =
+      conversation.model ??
+      runWithRequestContext(turnCtx, () => this.resolveRequestModelString(request.model));
 
     // Load history and rehydrate any supported `resource_link` blocks
     // (attached files persisted as URI references) into AI SDK V3 `file`
@@ -1631,16 +1672,7 @@ export class Runtime {
     // the wrong answer for per-call data. Per-call handlers should
     // accept a `WorkspaceContext` argument from the dispatch path
     // instead. T008 (credential rebinding) tightens this further.
-    const reqCtx: RequestContext = {
-      identity: requestIdentity,
-      // The conversation's own workspace — the one this turn is sealed to, for
-      // its tools, its skills, its files, and its config. Not the client's
-      // currently-focused workspace and not the caller's personal one.
-      workspaceId: convWsId,
-      workspaceAgents: boundWorkspace?.agents ?? null,
-      workspaceModelOverride: boundWorkspace?.models ?? null,
-      conversationId: conversation.id,
-    };
+    const reqCtx: RequestContext = { ...turnCtx, conversationId: conversation.id };
     engineConfig.toolPromotion = this.buildToolPromotionFactory();
 
     // Emit chat.start so the client knows the conversation ID immediately and

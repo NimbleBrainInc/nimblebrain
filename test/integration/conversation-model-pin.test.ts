@@ -354,3 +354,58 @@ describe("the detached-turn path", () => {
     expect(await modelsUsed(conversationId)).toEqual([MODEL_A]);
   });
 });
+
+describe("whose model the pin captures", () => {
+  // The tint that lets a person's model preference outrank the org default
+  // reads identity from the turn's request context. Both chat doors resolve
+  // the binding before that context existed, so the pin took the org default
+  // and the preference only ever changed what tools reported — never the model
+  // the turn ran on.
+  const PICKY: UserIdentity = {
+    id: "usr_picky",
+    email: "picky@example.com",
+    displayName: "Picky",
+    orgRole: "member",
+    preferences: { models: { default: MODEL_B } },
+  };
+
+  test("a person's profile preference binds the conversation, not the org default", async () => {
+    runtime.updateConfig({ models: { default: MODEL_A } });
+    await runtime.getWorkspaceStore().addMember(TEST_WORKSPACE_ID, PICKY.id, "member");
+
+    const conv = await runtime.chat({
+      message: "which model am I on",
+      workspaceId: TEST_WORKSPACE_ID,
+      identity: PICKY,
+    });
+
+    expect(await pinOf(conv.conversationId)).toBe(MODEL_B);
+    // And the turn actually ran on it — a pin the engine ignores is no better
+    // than no pin.
+    expect(await modelsUsed(conv.conversationId)).toEqual([MODEL_B]);
+  });
+
+  test("someone without a preference still gets the org default", async () => {
+    runtime.updateConfig({ models: { default: MODEL_A } });
+
+    const conv = await runtime.chat({
+      message: "no preference here",
+      workspaceId: TEST_WORKSPACE_ID,
+      identity: USER,
+    });
+
+    expect(await pinOf(conv.conversationId)).toBe(MODEL_A);
+  });
+
+  test("the detached-start door binds the same way", async () => {
+    runtime.updateConfig({ models: { default: MODEL_A } });
+
+    const { conversationId } = await runtime.startTurn({
+      message: "started detached",
+      workspaceId: TEST_WORKSPACE_ID,
+      identity: PICKY,
+    });
+
+    expect(await pinOf(conversationId)).toBe(MODEL_B);
+  });
+});
