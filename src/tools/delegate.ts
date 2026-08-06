@@ -382,7 +382,7 @@ export function createDelegateTool(ctx: DelegateContext): InProcessTool {
         // contain injected instructions from tool results).
         const systemPrompt = profile?.systemPrompt ?? DELEGATE_PREAMBLE;
 
-        // Determine model (resolve slot names like "fast" or "reasoning")
+        // Determine model (resolve a slot name like "fast", bare or `alias:`-prefixed)
         const rawModel = profile?.model ?? ctx.defaultModel;
         const modelString = ctx.resolveSlot(rawModel);
         const model = ctx.resolveModel(modelString);

@@ -40,8 +40,7 @@ A sibling `nimblebrain.overrides.json` next to the resolved config file is **dee
 
   "models": {
     "default":   "anthropic:claude-sonnet-4-6",
-    "fast":      "anthropic:claude-haiku-4-5-20251001",
-    "reasoning": "anthropic:claude-opus-4-6"
+    "fast":      "anthropic:claude-haiku-4-5-20251001"
   },
 
   "providers": {
@@ -187,14 +186,13 @@ rather than a flag that would be rejected or ignored:
 
 ## models
 
-The `models` object declares three role-based slots. Each value is a `provider:model-id` string (e.g. `"anthropic:claude-sonnet-4-6"`).
+The `models` object declares two role-based slots. Each value is a `provider:model-id` string (e.g. `"anthropic:claude-sonnet-4-6"`).
 
 ```json
 {
   "models": {
     "default":   "anthropic:claude-sonnet-4-6",
-    "fast":      "anthropic:claude-haiku-4-5-20251001",
-    "reasoning": "anthropic:claude-opus-4-6"
+    "fast":      "anthropic:claude-haiku-4-5-20251001"
   }
 }
 ```
@@ -203,7 +201,6 @@ The `models` object declares three role-based slots. Each value is a `provider:m
 |------|----------|
 | `default` | Chat, general requests, most tool-using turns |
 | `fast` | Conversation titles, the home briefing, and both history folds — end-of-turn compaction and the mid-turn fold. Cheap/fast workloads, but still needs a large context window: see below |
-| `reasoning` | Complex analysis, planning, long-horizon tasks |
 
 A workspace can override individual slots via `workspace.json → models`. When a `nb__delegate` call or agent profile specifies a slot name (e.g. `"model": "fast"`), it's resolved against these slots. `"alias:fast"` is the same reference written explicitly; both spellings resolve identically.
 
@@ -270,8 +267,7 @@ Each provider key is optional. If a provider's `apiKey` is omitted, the runtime 
   },
   "models": {
     "default":   "anthropic:claude-sonnet-4-6",
-    "fast":      "nebius:openai/gpt-oss-120b",
-    "reasoning": "nebius:Qwen/Qwen3-Next-80B-A3B-Thinking"
+    "fast":      "nebius:openai/gpt-oss-120b"
   }
 }
 ```

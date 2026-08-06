@@ -9,7 +9,7 @@ import { TimezoneSelect } from "../../components/ui/timezone-select";
 import { useSession } from "../../context/SessionContext";
 import { useTheme } from "../../context/ThemeContext";
 import { cn } from "../../lib/utils";
-import { Section, SettingsFormPage } from "./components";
+import { type ModelEntry, ModelSelect, Section, SettingsFormPage } from "./components";
 
 type Theme = "system" | "light" | "dark";
 
@@ -25,6 +25,12 @@ const THEME_OPTIONS: { value: Theme; label: string; description: string; icon: t
     { value: "dark", label: "Dark", description: "Warm charcoal interface", icon: Moon },
   ];
 
+interface ProfileConfig {
+  preferences?: Record<string, unknown>;
+  availableModels?: Record<string, ModelEntry[]>;
+  models?: { default?: string };
+}
+
 export function ProfileTab() {
   const session = useSession();
   const user = session?.user;
@@ -33,28 +39,45 @@ export function ProfileTab() {
   const [displayName, setDisplayName] = useState(user?.displayName ?? "");
   const [timezone, setTimezone] = useState("");
   const [theme, setTheme] = useState<Theme>("system");
+  const [model, setModel] = useState("");
+  const [availableModels, setAvailableModels] = useState<Record<string, ModelEntry[]>>({});
+  const [configuredDefault, setConfiguredDefault] = useState("");
   const [saving, setSaving] = useState(false);
   const [feedback, setFeedback] = useState<Feedback | null>(null);
   const [loading, setLoading] = useState(true);
+  const [loadFailed, setLoadFailed] = useState(false);
+
+  const applyConfig = useCallback((config: ProfileConfig) => {
+    const prefs = config.preferences ?? {};
+    setAvailableModels(config.availableModels ?? {});
+    // The configured default is what an unset preference resolves to, so it is
+    // what the empty option has to name.
+    setConfiguredDefault(config.models?.default ?? "");
+    if (typeof prefs.model === "string") setModel(prefs.model);
+    if (typeof prefs.timezone === "string") setTimezone(prefs.timezone);
+    if (prefs.theme === "light" || prefs.theme === "dark" || prefs.theme === "system") {
+      setTheme(prefs.theme);
+    }
+    if (typeof prefs.displayName === "string" && prefs.displayName) {
+      setDisplayName(prefs.displayName);
+    }
+  }, []);
 
   useEffect(() => {
     callTool("nb", "get_config")
-      .then((res) => {
-        const config = parseToolResult<{ preferences?: Record<string, unknown> }>(res);
-        const prefs = config.preferences ?? {};
-        if (typeof prefs.timezone === "string") setTimezone(prefs.timezone);
-        if (prefs.theme === "light" || prefs.theme === "dark" || prefs.theme === "system") {
-          setTheme(prefs.theme);
-        }
-        if (typeof prefs.displayName === "string" && prefs.displayName) {
-          setDisplayName(prefs.displayName);
-        }
-      })
+      .then((res) => applyConfig(parseToolResult<ProfileConfig>(res)))
       .catch(() => {
-        // Keep defaults from session
+        // Saving now would post the empty defaults this form fell back to, and
+        // the server reads an empty model as a clear — so a failed read would
+        // quietly wipe settings the person never touched.
+        setLoadFailed(true);
+        setFeedback({
+          type: "error",
+          message: "Couldn't load your settings. Reload to try again.",
+        });
       })
       .finally(() => setLoading(false));
-  }, []);
+  }, [applyConfig]);
 
   const handleThemeChange = useCallback(
     (value: Theme) => {
@@ -68,7 +91,19 @@ export function ProfileTab() {
     setSaving(true);
     setFeedback(null);
     try {
-      await callTool("nb", "set_preferences", { displayName, timezone, theme });
+      // Empty clears the choice — `set_preferences` reads it as "follow the
+      // configured default", which is what the empty option offers.
+      const res = await callTool("nb", "set_preferences", {
+        displayName,
+        timezone,
+        theme,
+        model,
+      });
+      // `callTool` resolves on an MCP tool error — only the HTTP call throws.
+      // `set_preferences` refuses an impermissible model before writing
+      // anything, so without this the whole save is dropped under a success
+      // message.
+      if (res.isError) throw new Error(res.content?.[0]?.text ?? "Failed to save preferences.");
       setFeedback({ type: "success", message: "Preferences saved." });
     } catch (err) {
       const msg = err instanceof Error ? err.message : "Failed to save preferences.";
@@ -76,7 +111,7 @@ export function ProfileTab() {
     } finally {
       setSaving(false);
     }
-  }, [displayName, timezone, theme]);
+  }, [displayName, timezone, theme, model]);
 
   return (
     <SettingsFormPage
@@ -90,7 +125,7 @@ export function ProfileTab() {
         saving,
         // Profile doesn't track dirty: a user reading their own settings
         // expects Save to be available without first re-typing a value.
-        disabled: saving,
+        disabled: saving || loadFailed,
       }}
     >
       <Section flush>
@@ -122,6 +157,22 @@ export function ProfileTab() {
             <TimezoneSelect value={timezone} onChange={setTimezone} />
           </div>
         </div>
+      </Section>
+
+      <Section
+        title="Model"
+        description="Applies to conversations you start from now on. A conversation you are already in keeps the model it began with."
+      >
+        <ModelSelect
+          id="preferred-model"
+          label="Your model"
+          value={model}
+          onChange={setModel}
+          availableModels={availableModels}
+          placeholder={
+            configuredDefault ? `Use the default (${configuredDefault})` : "Use the default"
+          }
+        />
       </Section>
 
       <Section title="Theme">

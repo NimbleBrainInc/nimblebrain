@@ -4,7 +4,7 @@ import { parseToolResult } from "../../api/tool-result";
 import { Input } from "../../components/ui/input";
 import { Label } from "../../components/ui/label";
 import { Select } from "../../components/ui/select";
-import { Section, SettingsFormPage } from "./components";
+import { type ModelEntry, ModelSelect, Section, SettingsFormPage } from "./components";
 import {
   EFFORT_DEFAULT,
   THINKING_DEFAULT,
@@ -15,14 +15,8 @@ import {
   tuningAppliesTo,
 } from "./thinking-patch";
 
-interface ModelEntry {
-  id: string;
-  cost: { input: string; output: string };
-  limits: { context: number };
-}
-
 interface ModelConfig {
-  models: { default: string; fast: string; reasoning: string };
+  models: { default: string; fast: string };
   configuredProviders: string[];
   availableModels: Record<string, ModelEntry[]>;
   maxIterations: number;
@@ -56,49 +50,9 @@ function qualifyModelId(
   return id; // unknown — leave as-is so the field still shows the value
 }
 
-function ModelSelect({
-  id,
-  label,
-  value,
-  onChange,
-  availableModels,
-}: {
-  id: string;
-  label: string;
-  value: string;
-  onChange: (v: string) => void;
-  availableModels: Record<string, ModelEntry[]>;
-}) {
-  return (
-    <div className="space-y-1.5">
-      <Label htmlFor={id}>{label}</Label>
-      <Select id={id} value={value} onChange={(e) => onChange(e.target.value)}>
-        <option value="">Select a model</option>
-        {Object.entries(availableModels).map(([provider, models]) => (
-          <optgroup key={provider} label={provider}>
-            {models.map((m) => {
-              // Persisted model ids are fully-qualified `provider:id` strings;
-              // the resolver routes bare ids to anthropic by default, so a
-              // selected `gemini-3.1-pro-preview` would 404 against the
-              // Anthropic API. Encode the provider into the option value.
-              const qualified = `${provider}:${m.id}`;
-              return (
-                <option key={qualified} value={qualified}>
-                  {m.id} (in: {m.cost.input}, out: {m.cost.output})
-                </option>
-              );
-            })}
-          </optgroup>
-        ))}
-      </Select>
-    </div>
-  );
-}
-
 export function ModelTab() {
   const [defaultModel, setDefaultModel] = useState("");
   const [fastModel, setFastModel] = useState("");
-  const [reasoningModel, setReasoningModel] = useState("");
   const [maxIterations, setMaxIterations] = useState(10);
   const [maxInputTokens, setMaxInputTokens] = useState(500000);
   const [maxOutputTokens, setMaxOutputTokens] = useState(16384);
@@ -128,7 +82,6 @@ export function ModelTab() {
           qualifyModelId(id, config.availableModels ?? {});
         setDefaultModel(qualify(config.models.default));
         setFastModel(qualify(config.models.fast));
-        setReasoningModel(qualify(config.models.reasoning));
         setMaxIterations(config.maxIterations ?? 10);
         setMaxInputTokens(config.maxInputTokens ?? 500000);
         setMaxOutputTokens(config.maxOutputTokens ?? 16384);
@@ -153,7 +106,6 @@ export function ModelTab() {
         models: {
           default: defaultModel,
           fast: fastModel,
-          reasoning: reasoningModel,
         },
         maxIterations,
         maxInputTokens,
@@ -170,7 +122,6 @@ export function ModelTab() {
   }, [
     defaultModel,
     fastModel,
-    reasoningModel,
     maxIterations,
     maxInputTokens,
     maxOutputTokens,
@@ -204,14 +155,6 @@ export function ModelTab() {
             label="Fast Model"
             value={fastModel}
             onChange={setFastModel}
-            availableModels={availableModels}
-          />
-
-          <ModelSelect
-            id="reasoningModel"
-            label="Reasoning Model"
-            value={reasoningModel}
-            onChange={setReasoningModel}
             availableModels={availableModels}
           />
         </div>

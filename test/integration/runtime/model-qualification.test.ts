@@ -106,14 +106,12 @@ describe("model qualification at runtime boundary", () => {
       models: {
         default: "claude-sonnet-4-6",
         fast: "gpt-4o",
-        reasoning: "gemini-3.1-pro-preview",
       },
     });
     try {
       const slots = runtime.getModelSlots();
       expect(slots.default).toBe("anthropic:claude-sonnet-4-6");
       expect(slots.fast).toBe("openai:gpt-4o");
-      expect(slots.reasoning).toBe("google:gemini-3.1-pro-preview");
     } finally {
       await runtime.shutdown();
     }
@@ -134,7 +132,6 @@ describe("model qualification at runtime boundary", () => {
       models: {
         default: "anthropic:claude-sonnet-4-6",
         fast: "gpt-4o", // bare on purpose — the slot read must qualify it
-        reasoning: "anthropic:claude-opus-4-6",
       },
     });
     await provisionTestWorkspace(runtime);
@@ -195,8 +192,7 @@ describe("model qualification at runtime boundary", () => {
       workDir,
       models: {
         default: "anthropic:claude-sonnet-4-6",
-        fast: "gpt-4o",
-        reasoning: "gemini-3.1-pro-preview", // bare on purpose
+        fast: "gemini-3.1-pro-preview", // bare on purpose
       },
       agents: {
         analyst: {
@@ -204,7 +200,7 @@ describe("model qualification at runtime boundary", () => {
           systemPrompt: "You analyze.",
           tools: [],
           // The bare spelling `workspace.json` documents.
-          model: "reasoning",
+          model: "fast",
         },
       },
     });

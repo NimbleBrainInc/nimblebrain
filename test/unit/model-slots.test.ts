@@ -71,3 +71,20 @@ describe("slot names vs the model catalog", () => {
     expect(resolveModelString("nebius:openai/gpt-oss-120b")).toBe("nebius:openai/gpt-oss-120b");
   });
 });
+
+describe("the reasoning slot is gone", () => {
+  // It never had a runtime consumer — `default` serves every chat turn, `fast`
+  // serves titles, the briefing and both folds — so it was a configurable field
+  // implying routing the engine never did.
+  test("is not a slot name", () => {
+    expect(isModelSlot("reasoning")).toBe(false);
+    expect(MODEL_SLOTS).toEqual(["default", "fast"]);
+  });
+
+  // The documented break: an agent profile naming it stops resolving and falls
+  // through to the bare-id fallback, which fails at the provider rather than
+  // silently running on some other model.
+  test.each([["reasoning"], ["alias:reasoning"]])("%s no longer parses as a slot", (s) => {
+    expect(parseModelSlotRef(s)).toBeNull();
+  });
+});

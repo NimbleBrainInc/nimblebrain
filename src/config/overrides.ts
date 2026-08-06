@@ -28,7 +28,7 @@ export function deriveOverridePath(configPath: string): string {
  *
  * Top-level scalars are replaced; top-level objects (e.g., `models`) get
  * key-by-key merged so an override of `models.fast` doesn't blow away the
- * seed's `models.default` and `models.reasoning`. Arrays are replaced
+ * seed's `models.default`. Arrays are replaced
  * wholesale — same as `Object.assign`.
  *
  * Deeper nesting falls back to replacement; we don't recurse arbitrarily.
