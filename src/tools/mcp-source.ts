@@ -18,6 +18,7 @@ import {
   type ContentBlock,
   type EventSink,
   INFRA_ERROR_META_KEY,
+  SKILL_ACTIVATED_META_KEY,
   type ToolResult,
 } from "../engine/types.ts";
 import {
@@ -1935,7 +1936,9 @@ export class McpSource implements ToolSource {
       // Surface result-level `_meta` (loose object on the wire) so out-of-band
       // hints from the bundle — e.g. the supervisor's non-advancing marker —
       // reach the engine instead of being dropped at this projection.
-      _meta: hostOwnedMetaStripped((result as { _meta?: Record<string, unknown> })._meta),
+      _meta: hostOwnedMetaStripped((result as { _meta?: Record<string, unknown> })._meta, {
+        inProcess: this.mode.type === "inProcess",
+      }),
     };
     const promoted = promoteHiddenErrors(toolResult);
     if (promoted !== toolResult) {
@@ -1988,7 +1991,9 @@ export class McpSource implements ToolSource {
       isError: Boolean(callToolResult.isError),
       // Surface result-level `_meta` (loose object on the wire) so out-of-band
       // hints from the bundle reach the engine — same as the inline path.
-      _meta: hostOwnedMetaStripped((callToolResult as { _meta?: Record<string, unknown> })._meta),
+      _meta: hostOwnedMetaStripped((callToolResult as { _meta?: Record<string, unknown> })._meta, {
+        inProcess: this.mode.type === "inProcess",
+      }),
     };
     const promoted = promoteHiddenErrors(toolResult);
     if (promoted !== toolResult) {
@@ -2905,13 +2910,29 @@ function infraErrorMeta(): { _meta: Record<string, unknown> } {
  * the wire: a bundle setting that one makes the guard STRICTER. This one makes
  * it weaker, so it is host-owned and stripped here rather than documented as a
  * convention callers are trusted to honour.
+ *
+ * `SKILL_ACTIVATED_META_KEY` is host-owned for the same reason — the engine
+ * trusts it to mark a skill as already-delivered (suppressing future overlay
+ * guidance), so a bundle setting it could mute a curated overlay by name. It
+ * is stripped from every source that crosses a real transport; only in-process
+ * platform sources (`inProcess: true` — the `skills` source that legitimately
+ * emits it) carry it through.
  */
 function hostOwnedMetaStripped(
   meta: Record<string, unknown> | undefined,
+  opts: { inProcess: boolean },
 ): Record<string, unknown> | undefined {
-  if (!meta || !(INFRA_ERROR_META_KEY in meta)) return meta;
-  const { [INFRA_ERROR_META_KEY]: _dropped, ...rest } = meta;
-  return rest;
+  if (!meta) return meta;
+  let out = meta;
+  if (INFRA_ERROR_META_KEY in out) {
+    const { [INFRA_ERROR_META_KEY]: _droppedInfra, ...rest } = out;
+    out = rest;
+  }
+  if (!opts.inProcess && SKILL_ACTIVATED_META_KEY in out) {
+    const { [SKILL_ACTIVATED_META_KEY]: _droppedActivation, ...rest } = out;
+    out = rest;
+  }
+  return out;
 }
 
 /** Extract a human-readable message from an unknown throw. */

@@ -1,5 +1,6 @@
 import { describe, expect, it } from "bun:test";
 import {
+  collectDeliveredSkillNames,
   deriveUsageMetrics,
   reconstructMessages,
 } from "../../src/conversation/event-reconstructor.ts";
@@ -1231,5 +1232,124 @@ describe("reconstructMessages — connector.skill.injected (P4)", () => {
     const lastUserIdx = messages.map((m) => m.role).lastIndexOf("user");
     expect(syntheticIdx).toBeGreaterThanOrEqual(0);
     expect(syntheticIdx).toBeLessThan(lastUserIdx);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// skill.activated — activation marker stamping + delivered-name ledger
+// ---------------------------------------------------------------------------
+
+function skillActivated(
+  runId: string,
+  toolCallId: string,
+  skillName: string,
+  opts?: { scope?: string; tokens?: number; ts?: string },
+): ConversationEvent {
+  return {
+    ts: opts?.ts ?? ts(4),
+    type: "skill.activated",
+    runId,
+    toolCallId,
+    skillName,
+    scope: opts?.scope ?? "workspace",
+    tokens: opts?.tokens ?? 10,
+  };
+}
+
+describe("reconstructMessages — skill.activated", () => {
+  it("stamps the activation marker on the activating tool-result message (no extra message)", () => {
+    const events: ConversationEvent[] = [
+      userMessage("load the runbook skill"),
+      runStart("run-1"),
+      llmToolCall("run-1", "tc-1", "skills__use", { name: "runbook" }),
+      toolStart("run-1", "tc-1", "skills__use"),
+      toolDone("run-1", "tc-1", "skills__use", "<activated-skill>...</activated-skill>"),
+      skillActivated("run-1", "tc-1", "runbook"),
+      llmText("run-1", "Loaded."),
+      runDone("run-1"),
+    ];
+
+    const messages = reconstructMessages(events);
+    const marked = messages.filter((m) => m.metadata?.synthetic === "skill_activated");
+    // Exactly the tool-result message carries the marker; the event itself
+    // synthesizes no message of its own (the body already rides the result).
+    expect(marked).toHaveLength(1);
+    expect(marked[0]!.role).toBe("tool");
+    expect(marked[0]!.metadata?.skill).toBe("runbook");
+    const withoutActivation = reconstructMessages(events.filter((e) => e.type !== "skill.activated"));
+    expect(messages).toHaveLength(withoutActivation.length);
+  });
+
+  it("leaves other tool-result messages unmarked", () => {
+    const events: ConversationEvent[] = [
+      userMessage("do two things"),
+      runStart("run-1"),
+      llmParallelToolCalls("run-1", [
+        { toolCallId: "tc-1", toolName: "skills__use" },
+        { toolCallId: "tc-2", toolName: "gmail__send" },
+      ]),
+      toolDone("run-1", "tc-1", "skills__use", "body"),
+      toolDone("run-1", "tc-2", "gmail__send", "sent"),
+      skillActivated("run-1", "tc-1", "runbook"),
+      runDone("run-1"),
+    ];
+
+    const messages = reconstructMessages(events);
+    const toolMessages = messages.filter((m) => m.role === "tool");
+    expect(toolMessages).toHaveLength(2);
+    const marked = toolMessages.filter((m) => m.metadata?.synthetic === "skill_activated");
+    expect(marked).toHaveLength(1);
+  });
+
+  it("ignores a skill.activated from a foreign run", () => {
+    const events: ConversationEvent[] = [
+      userMessage("hi"),
+      runStart("run-1"),
+      llmToolCall("run-1", "tc-1", "skills__use", {}),
+      toolDone("run-1", "tc-1", "skills__use", "body"),
+      skillActivated("run-OTHER", "tc-1", "runbook"),
+      runDone("run-1"),
+    ];
+
+    const messages = reconstructMessages(events);
+    expect(messages.some((m) => m.metadata?.synthetic === "skill_activated")).toBe(false);
+  });
+});
+
+describe("collectDeliveredSkillNames", () => {
+  it("collects names from both activation and surface-once injection events", () => {
+    const events: ConversationEvent[] = [
+      userMessage("hi"),
+      runStart("run-1"),
+      connectorSkillInjected("gmail", "Guidance."),
+      skillActivated("run-1", "tc-1", "runbook"),
+      runDone("run-1"),
+    ];
+    expect(collectDeliveredSkillNames(events)).toEqual(new Set(["gmail", "runbook"]));
+  });
+
+  it("returns an empty set when nothing was delivered", () => {
+    const events: ConversationEvent[] = [userMessage("hi"), runStart("run-1"), runDone("run-1")];
+    expect(collectDeliveredSkillNames(events)).toEqual(new Set());
+  });
+
+  it("drops deliveries folded away by the most recent compaction (one re-delivery allowed)", () => {
+    const events: ConversationEvent[] = [
+      userMessage("hi"),
+      runStart("run-1"),
+      skillActivated("run-1", "tc-1", "old-skill", { ts: "2026-01-01T00:00:00.000Z" }),
+      runDone("run-1"),
+      {
+        ts: "2026-02-01T00:00:00.000Z",
+        type: "history.compacted",
+        summary: "Earlier turns summarized.",
+        compactedThroughTs: "2026-01-15T00:00:00.000Z",
+        summarizedMessageCount: 3,
+      },
+      runStart("run-2"),
+      skillActivated("run-2", "tc-2", "fresh-skill", { ts: "2026-03-01T00:00:00.000Z" }),
+      runDone("run-2"),
+    ];
+    expect(collectDeliveredSkillNames(events)).toEqual(new Set(["fresh-skill"]));
   });
 });

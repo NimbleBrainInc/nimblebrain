@@ -8,7 +8,7 @@
 
 import type { LanguageModelV3Content, LanguageModelV3ReasoningPart } from "@ai-sdk/provider";
 import { boundToolResultForModel } from "../engine/content-helpers.ts";
-import { CONNECTOR_SKILL_SYNTHETIC } from "../engine/types.ts";
+import { CONNECTOR_SKILL_SYNTHETIC, SKILL_ACTIVATED_SYNTHETIC } from "../engine/types.ts";
 import { normalizeForReplay } from "../model/inbound-fit.ts";
 import { formatConnectorSkillBlock } from "../prompt/compose.ts";
 import { estimateCost } from "../usage/cost.ts";
@@ -23,6 +23,7 @@ import type {
   HistoryCompactedEvent,
   LlmResponseEvent,
   RunStartEvent,
+  SkillActivatedEvent,
   StoredMessage,
   ToolDoneEvent,
   UserContentPart,
@@ -192,6 +193,8 @@ interface RunCollections {
   toolDones: Map<string, ToolDoneEvent>;
   toolInputs: Map<string, unknown>;
   connectorSkills: ConnectorSkillInjectedEvent[];
+  /** `skill.activated` events keyed by the activating tool call's id. */
+  skillActivations: Map<string, SkillActivatedEvent>;
 }
 
 /** A collected run span plus the index of the first event past it. */
@@ -257,6 +260,33 @@ export function extractOperatorTurns(
   return turns;
 }
 
+/**
+ * Names of skills whose full body has already been delivered into this
+ * conversation — via surface-once overlay injection (`connector.skill.injected`)
+ * or explicit activation (`skill.activated`). The `skills__use` tool's
+ * already-delivered check reads this so it answers "already loaded" instead of
+ * delivering a second copy.
+ *
+ * Compaction consistency: deliveries whose record sits BEFORE the most recent
+ * `history.compacted` boundary are excluded — their verbatim block was folded
+ * into the summary, so one re-delivery is acceptable. This matches the
+ * reconstruction semantics the message-metadata dedup markers get for free
+ * (their carrier messages disappear from the compacted projection).
+ */
+export function collectDeliveredSkillNames(events: readonly ConversationEvent[]): Set<string> {
+  let boundary: string | undefined;
+  for (const e of events) {
+    if (e.type === "history.compacted") boundary = e.compactedThroughTs;
+  }
+  const names = new Set<string>();
+  for (const e of events) {
+    if (e.type !== "connector.skill.injected" && e.type !== "skill.activated") continue;
+    if (boundary !== undefined && e.ts < boundary) continue;
+    names.add(e.skillName);
+  }
+  return names;
+}
+
 /** Build a user-role StoredMessage from a `user.message` event. */
 function buildUserMessage(event: UserMessageEvent): StoredMessage {
   return {
@@ -289,6 +319,8 @@ function accumulateRunEvent(inner: ConversationEvent, runId: string, acc: RunCol
     }
   } else if (inner.type === "connector.skill.injected") {
     acc.connectorSkills.push(inner);
+  } else if (inner.type === "skill.activated" && inner.runId === runId) {
+    acc.skillActivations.set(inner.toolCallId, inner);
   }
   // tool.progress and other events are skipped for reconstruction
 }
@@ -312,6 +344,7 @@ function collectRunEvents(
     toolDones: new Map(),
     toolInputs: new Map(),
     connectorSkills: [],
+    skillActivations: new Map(),
   };
 
   let i = startIndex;
@@ -373,6 +406,7 @@ function appendRunMessages(
       run.toolDones,
       run.toolInputs,
       run.llmResponses.length,
+      run.skillActivations,
     )) {
       messages.push(msg);
     }
@@ -443,8 +477,14 @@ function buildToolResultMessage(
   tc: ToolCallPart,
   toolDones: Map<string, ToolDoneEvent>,
   fallbackTs: string,
+  skillActivations?: Map<string, SkillActivatedEvent>,
 ): StoredMessage {
   const done = toolDones.get(tc.toolCallId)!;
+  // A `skills__use` activation delivered a skill body in THIS tool result.
+  // Stamp the dedup marker the engine and runtime scan for — the activation
+  // counterpart of the `<connector-skill>` synthetic message's marker. It
+  // rides the tool message, so compaction folds it with the body it marks.
+  const activation = skillActivations?.get(tc.toolCallId);
   return {
     role: "tool",
     content: [
@@ -459,6 +499,9 @@ function buildToolResultMessage(
       },
     ],
     timestamp: done.ts ?? fallbackTs,
+    ...(activation
+      ? { metadata: { synthetic: SKILL_ACTIVATED_SYNTHETIC, skill: activation.skillName } }
+      : {}),
   };
 }
 
@@ -537,6 +580,7 @@ function messagesForLlmResponse(
   toolDones: Map<string, ToolDoneEvent>,
   toolInputs: Map<string, unknown>,
   iterations: number,
+  skillActivations?: Map<string, SkillActivatedEvent>,
 ): StoredMessage[] {
   const executedToolCalls = llmResp.content.filter(
     (c): c is ToolCallPart => c.type === "tool-call" && toolDones.has(c.toolCallId),
@@ -583,7 +627,7 @@ function messagesForLlmResponse(
   ];
 
   for (const tc of executedToolCalls) {
-    messages.push(buildToolResultMessage(tc, toolDones, llmResp.ts));
+    messages.push(buildToolResultMessage(tc, toolDones, llmResp.ts, skillActivations));
   }
 
   return messages;
