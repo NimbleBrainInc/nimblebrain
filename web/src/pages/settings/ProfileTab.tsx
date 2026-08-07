@@ -174,8 +174,14 @@ export function ProfileTab() {
           value={model}
           onChange={setModel}
           availableModels={availableModels}
+          // Names the option as *following* the default rather than picking a
+          // model. Labelled with the model alone, choosing it to get that model
+          // instead clears the preference — the same outcome today, and a
+          // different one the moment an admin moves the default.
           placeholder={
-            configuredDefault ? `Use the default (${configuredDefault})` : "Use the default"
+            configuredDefault
+              ? `Follow the organization default (now ${configuredDefault})`
+              : "Follow the organization default"
           }
         />
       </Section>

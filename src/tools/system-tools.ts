@@ -8,6 +8,7 @@ import { textContent } from "../engine/content-helpers.ts";
 import type { EventSink, ToolPromotionControls, ToolResult, ToolSchema } from "../engine/types.ts";
 import { isInternalTool, NON_ADVANCING_META_KEY } from "../engine/types.ts";
 import { log } from "../observability/log.ts";
+import { getRequestContext } from "../runtime/request-context.ts";
 import type { Runtime } from "../runtime/runtime.ts";
 import type { SelectedSkill } from "../skills/select.ts";
 import type { Skill } from "../skills/types.ts";
@@ -546,8 +547,23 @@ function handleConfigStatus(runtime?: Runtime): ToolResult {
   const maxInputTokens = runtime.getMaxInputTokens();
   const maxOutputTokens = runtime.getMaxOutputTokens();
 
+  // What this turn runs on is a different question from what the config
+  // defaults to, and they diverge exactly when someone changes their model and
+  // asks: a conversation keeps the model it was born with. Reported first and
+  // named separately so the configured default cannot be read as the answer.
+  const running = getRequestContext()?.model;
+
   const lines = [
+    ...(running
+      ? [
+          "## This turn",
+          `Running on: ${running}`,
+          "Bound when the conversation was created and fixed for its life. Changing anything below retargets new conversations, not this one.",
+          "",
+        ]
+      : []),
     "## Configuration",
+    "These are the defaults a NEW conversation is created with.",
     `Default model: ${defaultModel}`,
     `Model slots: ${Object.entries(models)
       .map(([k, v]) => `${k}=${v}`)
@@ -569,7 +585,8 @@ async function handleOverviewStatus(
 
   // Version
   if (runtime) {
-    lines.push(`Model: ${runtime.getDefaultModel()}`);
+    const running = getRequestContext()?.model;
+    lines.push(running ? `Model: ${running}` : `Default model: ${runtime.getDefaultModel()}`);
     lines.push(`Max iterations: ${runtime.getMaxIterations()}`);
   }
 
