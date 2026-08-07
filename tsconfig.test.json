@@ -1,5 +1,5 @@
 {
-  "_comment": "Typecheck project for test/ only. The base config excludes test/, so a signature change cannot break its tests \u2014 see scripts/check-test-signatures.ts. web/src/__tests__ and the bundle UI suites are excluded by their own configs and keep the same hole; closing them is tracked with the full-strictness migration. Strictness the fixtures do not meet is relaxed here so the compiler still resolves every signature and reports arity. Widening what the gate reads means fixing that diagnostic's existing instances first.",
+  "_comment": "Typecheck project for test/ only. The base config excludes test/, so a signature change cannot break its tests \u2014 see scripts/check-test-signatures.ts. The test/ entries in `include` must list the same suffixes as TEST_EXTENSIONS in that script: a suffix missing from both is invisible to the gate rather than reported by it. web/src/__tests__ and the bundle UI suites are excluded by their own configs and keep the same hole; closing them is tracked with the full-strictness migration. Strictness the fixtures do not meet is relaxed here so the compiler still resolves every signature and reports arity. Widening what the gate reads means fixing that diagnostic's existing instances first.",
   "extends": "./tsconfig.json",
   "compilerOptions": {
     "strictNullChecks": false,
@@ -14,6 +14,7 @@
     "src/**/*.tsx",
     "instrument/**/*.ts",
     "scripts/**/*.ts",
-    "test/**/*.ts"
+    "test/**/*.ts",
+    "test/**/*.tsx"
   ]
 }
