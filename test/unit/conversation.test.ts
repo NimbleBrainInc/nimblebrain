@@ -6,7 +6,7 @@ import { InMemoryConversationStore } from "../../src/conversation/memory-store.t
 import { JsonlConversationStore } from "../../src/conversation/jsonl-store.ts";
 import { windowMessages } from "../../src/conversation/window.ts";
 import type { ConversationStore, StoredMessage } from "../../src/conversation/types.ts";
-import type { Message } from "../../src/engine/types.ts";
+import type { LanguageModelV3Message } from "@ai-sdk/provider";
 
 function msg(role: "user" | "assistant", content: string): StoredMessage {
   return { role, content, timestamp: new Date().toISOString() };
@@ -121,12 +121,12 @@ describe("JsonlConversationStore (persistence)", () => {
 });
 
 describe("windowMessages", () => {
-  function wmsg(role: "user" | "assistant", text: string): Message {
+  function wmsg(role: "user" | "assistant", text: string): LanguageModelV3Message {
     // V3 shape: user/assistant content is an array of typed parts. Some
     // older tests passed strings here, which fell through the legacy
     // `chars/4` reducer; the part-aware `estimateMessageTokens` is strict
     // about the V3 shape so all helpers below use the correct one.
-    return { role, content: [{ type: "text", text }] } as Message;
+    return { role, content: [{ type: "text", text }] };
   }
 
   it("returns all messages when under budget", () => {
@@ -143,7 +143,7 @@ describe("windowMessages", () => {
 
   it("keeps first message and most recent messages within budget", () => {
     // Create 10 messages, each ~25 tokens (100 chars / 4)
-    const messages: Message[] = [];
+    const messages: LanguageModelV3Message[] = [];
     for (let i = 0; i < 10; i++) {
       messages.push(
         wmsg(
@@ -216,7 +216,7 @@ describe("windowMessages", () => {
   });
 
   it("handles messages with complex content (tool results)", () => {
-    const messages: Message[] = [
+    const messages: LanguageModelV3Message[] = [
       { role: "user", content: "Hello" },
       {
         role: "assistant",
