@@ -35,6 +35,7 @@ import {
   type RunDoneEvent,
   type RunErrorEvent,
   type RunStartEvent,
+  type SkillActivatedEvent,
   type SkillsLoadedEntry,
   type SkillsLoadedEvent,
   type StoredMessage,
@@ -77,6 +78,7 @@ const CONVERSATION_EVENT_TYPES = new Set([
   "skills.loaded",
   "context.assembled",
   "connector.skill.injected",
+  "skill.activated",
 ]);
 
 // ---------------------------------------------------------------------------
@@ -348,6 +350,24 @@ function mapConnectorSkillInjected({ ts, d }: EngineEventContext): ConversationE
     skillName: (d.skillName as string) ?? "",
     skillBody,
     scope: (d.scope as string) ?? "connector",
+  };
+  return e;
+}
+
+/** Map an engine `skill.activated` to a persisted event, or null when the name is missing. */
+function mapSkillActivated({ ts, d, runId }: EngineEventContext): ConversationEvent | null {
+  // A nameless activation can neither dedup nor stamp a reconstruction
+  // marker, so drop it rather than persist a useless record.
+  const skillName = typeof d.skillName === "string" ? d.skillName : "";
+  if (!skillName) return null;
+  const e: SkillActivatedEvent = {
+    ts,
+    type: "skill.activated",
+    runId,
+    toolCallId: (d.toolCallId as string) ?? "",
+    skillName,
+    scope: (d.scope as string) ?? "org",
+    tokens: (d.tokens as number) ?? 0,
   };
   return e;
 }
@@ -761,6 +781,8 @@ export class EventSourcedConversationStore implements ConversationStore, EventSi
         return mapContextAssembled(ctx);
       case "connector.skill.injected":
         return mapConnectorSkillInjected(ctx);
+      case "skill.activated":
+        return mapSkillActivated(ctx);
       default:
         return null;
     }

@@ -64,7 +64,7 @@ import type {
   ToolRouter,
   ToolSchema,
 } from "../engine/types.ts";
-import { CONNECTOR_SKILL_SYNTHETIC } from "../engine/types.ts";
+import { CONNECTOR_SKILL_SYNTHETIC, SKILL_ACTIVATED_SYNTHETIC } from "../engine/types.ts";
 import { FileLocator } from "../files/locator.ts";
 import { workspaceFilesDir } from "../files/paths.ts";
 import { rehydrateUserResources } from "../files/rehydrate.ts";
@@ -107,6 +107,11 @@ import {
   parseSkillMarkdown,
   synthesizeBundleSkill,
 } from "../skills/bundle-skills.ts";
+import {
+  type ActivatableSkill,
+  collectActivatableSkills,
+  toCatalogEntries,
+} from "../skills/catalog.ts";
 import {
   CONNECTOR_SKILLS_SUBDIR,
   type ConnectorOverlayInfo,
@@ -1439,6 +1444,20 @@ export class Runtime {
       reason: s.reason,
     }));
 
+    // Skill catalog + surface-once candidates share one read of the
+    // workspace's connector-overlay store — the pools are all computed above
+    // on this request path already; no second discovery pass. The catalog is
+    // name+description only (never load state), so the stable segment's bytes
+    // move only on install/authoring events.
+    const connectorOverlayCandidates = this.loadConnectorSkillCandidates(convWsId);
+    const skillCatalog = toCatalogEntries(
+      collectActivatableSkills({
+        fsCapability: poolCapability,
+        bundleCapability,
+        connectorCandidates: connectorOverlayCandidates,
+      }),
+    );
+
     const { stableSystem, volatileHead } = composeSystemSegments(
       requestContextSkills,
       skill,
@@ -1450,6 +1469,8 @@ export class Runtime {
       workspaceContext,
       liveOverlays,
       layer3Entries,
+      "chat",
+      skillCatalog,
     );
     // Budget + telemetry size counts every segment: the volatile head still
     // consumes context even though it now rides the latest user message instead
@@ -1604,12 +1625,13 @@ export class Runtime {
       contextAssembled,
       // Connector-skill overlays for the conversation's own workspace — surfaced
       // once into history by the engine on a matching connector tool call, never
-      // into the system prefix. Same workspace scoping as the layer-3 pool.
+      // into the system prefix. Same workspace scoping as the layer-3 pool
+      // (`connectorOverlayCandidates` is the read the skill catalog shared).
       // Merge SEP-2640 bundle skills as candidates too, so a server's skill is
       // delivered mid-turn when its tools are progressively disclosed (promotion),
       // not only at turn-start via <layer3-skill> (which misses mid-turn promotion).
       connectorSkillCandidates: [
-        ...this.loadConnectorSkillCandidates(convWsId),
+        ...connectorOverlayCandidates,
         ...this.toBundleSkillCandidates(bundleCapability),
       ],
       // From the UN-rehydrated history — this is what makes surface-ONCE hold
@@ -1884,6 +1906,19 @@ export class Runtime {
       reason: s.reason,
     }));
 
+    // Skill catalog + surface-once candidates share one read of the
+    // workspace's connector-overlay store — mirrors `_chatInner`. Task runs
+    // get the same catalog: an unattended run benefits from on-demand
+    // guidance at least as much as a chat.
+    const connectorOverlayCandidates = this.loadConnectorSkillCandidates(workWsId);
+    const skillCatalog = toCatalogEntries(
+      collectActivatableSkills({
+        fsCapability: poolCapability,
+        bundleCapability,
+        connectorCandidates: connectorOverlayCandidates,
+      }),
+    );
+
     // Compose with mode: "task" — prepends TASK_IDENTITY before core skills.
     const { stableSystem, volatileHead } = composeSystemSegments(
       requestContextSkills,
@@ -1897,6 +1932,7 @@ export class Runtime {
       liveOverlays,
       layer3Entries,
       "task",
+      skillCatalog,
     );
     const systemPrompt = foldVolatileHead(stableSystem, volatileHead);
 
@@ -1999,7 +2035,7 @@ export class Runtime {
       // Bundle skills (SEP-2640) join as candidates so a promoted server's skill
       // surfaces mid-turn, not only at turn-start.
       connectorSkillCandidates: [
-        ...this.loadConnectorSkillCandidates(workWsId),
+        ...connectorOverlayCandidates,
         ...this.toBundleSkillCandidates(bundleCapability),
       ],
       // A fresh task has a single user message and no prior history, so no
@@ -4243,29 +4279,60 @@ export class Runtime {
   }
 
   /**
-   * Names of connector overlays already surfaced in this conversation,
-   * read from the reconstructed history's synthetic-message markers. MUST be
-   * called on the UN-rehydrated history (`compactedHistory ?? history`):
-   * `rehydrateUserResources` strips message `metadata`, so the marker is gone
-   * from the rehydrated `messages` the engine receives. Passed to the engine as
-   * `alreadyInjectedConnectorSkills` so a bound overlay is surfaced once across
-   * the whole conversation, not re-injected every turn its tools are used.
+   * Names of skills already DELIVERED into this conversation — connector
+   * overlays surfaced by the engine (synthetic-message marker) and catalog
+   * skills loaded via `skills__use` (marker stamped on the activating tool
+   * result). MUST be called on the UN-rehydrated history (`compactedHistory ??
+   * history`): `rehydrateUserResources` strips message `metadata`, so the
+   * markers are gone from the rehydrated `messages` the engine receives.
+   * Passed to the engine as `alreadyInjectedConnectorSkills` so a delivered
+   * skill — whichever channel delivered it — is never delivered again by the
+   * surface-once path.
    *
    * Compaction interaction (intended): reading from `compactedHistory ?? history`
-   * means that once compaction folds the synthetic marker into a summary, the
-   * overlay is no longer "already injected" and re-surfaces once on the next
-   * matching tool call — re-establishing the guidance after the verbatim block
-   * was summarized away. The cost is bounded (one re-injection per compaction).
+   * means that once compaction folds a marker-bearing message into a summary,
+   * the skill is no longer "already delivered" and can be delivered once more —
+   * re-establishing the guidance after the verbatim block was summarized away.
+   * The cost is bounded (one re-delivery per compaction).
    */
   private collectInjectedConnectorSkills(messages: StoredMessage[]): string[] {
     const names = new Set<string>();
     for (const m of messages) {
       const meta = m.metadata;
-      if (meta?.synthetic === CONNECTOR_SKILL_SYNTHETIC && typeof meta.skill === "string") {
+      const delivered =
+        meta?.synthetic === CONNECTOR_SKILL_SYNTHETIC ||
+        meta?.synthetic === SKILL_ACTIVATED_SYNTHETIC;
+      if (delivered && typeof meta?.skill === "string") {
         names.add(meta.skill);
       }
     }
     return [...names];
+  }
+
+  /**
+   * Every skill the given workspace's conversations can activate on demand —
+   * the union the skill catalog is projected from: the conversation tiers'
+   * `dynamic` skills, the workspace's `dynamic` bundle skills, and its curated
+   * connector overlays. Backs the `skills__use` tool's name validation and
+   * body lookup, resolving through the same workspace-walled loaders the
+   * request path composes with — a skill in another workspace can neither
+   * appear nor be activated here.
+   *
+   * No `appContextServerName` exclusion: the tool validates against the
+   * ACTIVATABLE union, which is a superset of any one turn's rendered catalog
+   * (an entered app's skill is omitted from that turn's catalog because its
+   * body already rides `<app-guide>`, but activating it by name is harmless).
+   */
+  async listActivatableSkills(wsId: string, userId: string | null): Promise<ActivatableSkill[]> {
+    const fsCapability = partitionSkillsByRole(
+      this.loadConversationSkills(wsId, userId),
+    ).capability;
+    const bundleCapability = partitionSkillsByRole(await this.loadBundleSkills(wsId)).capability;
+    return collectActivatableSkills({
+      fsCapability,
+      bundleCapability,
+      connectorCandidates: this.loadConnectorSkillCandidates(wsId),
+    });
   }
 
   /**
