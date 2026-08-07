@@ -147,12 +147,17 @@ async function main(): Promise<void> {
   }
 
   // Anchored to `test/` like the coverage check above. The project also compiles
-  // `src/`, `instrument/` and `scripts/` so that signatures resolve, but those
-  // are already strict under `bun run check` — reporting them here would only
-  // duplicate that, under a message telling you to update a test.
-  // tsc runs with cwd at ROOT, so it reports diagnostics at repo-relative paths.
+  // `src/`, `instrument/` and `scripts/` so that signatures resolve, plus the
+  // `web/src` files those import — already covered by `bun run check` and
+  // `check:web` respectively, so reporting them here would only duplicate that,
+  // under a message telling you to update a test.
+  //
+  // Both path forms count. `--listFiles` is absolute, diagnostics are relative to
+  // tsc's cwd, and matching only one would make an empty `violations` mean either
+  // "clean" or "the format moved" — the silent green this gate refuses. A path
+  // under TEST_ROOT is unambiguously a test file, so accepting both costs nothing.
   const violations = lines
-    .filter((l) => l.startsWith(`test${sep}`) && GATED.test(l))
+    .filter((l) => (l.startsWith(`test${sep}`) || l.startsWith(TEST_ROOT)) && GATED.test(l))
     .map((l) => l.trim());
 
   if (violations.length > 0) {
