@@ -54,6 +54,8 @@ import {
   type FinishReason,
   isInternalTool,
   type ResolvedThinking,
+  SKILL_ACTIVATED_META_KEY,
+  SKILL_ACTIVATED_SYNTHETIC,
   type StopReason,
   type ThinkingEffort,
   type ToolCall,
@@ -624,7 +626,13 @@ function seedInjectedConnectorSkills(
   if (connectorSkillCandidates.length === 0) return;
   for (const m of history) {
     const meta = (m as { metadata?: { synthetic?: string; skill?: string | null } }).metadata;
-    if (meta?.synthetic === CONNECTOR_SKILL_SYNTHETIC && typeof meta.skill === "string") {
+    // Both delivery channels count: a surface-once overlay message and a
+    // `skills__use` activation result each put the full body in history, so
+    // either marker means "already delivered — don't inject again".
+    const delivered =
+      meta?.synthetic === CONNECTOR_SKILL_SYNTHETIC ||
+      meta?.synthetic === SKILL_ACTIVATED_SYNTHETIC;
+    if (delivered && typeof meta?.skill === "string") {
       injectedConnectorSkills.add(meta.skill);
     }
   }
@@ -1718,6 +1726,40 @@ export class AgentEngine {
   }
 
   /**
+   * Record a skill activation a tool result declares via the
+   * {@link SKILL_ACTIVATED_META_KEY} `_meta` marker (the `skills__use` tool):
+   * emit `skill.activated` through the run's sinks (persisting it into the
+   * conversation log for telemetry + the cross-turn already-delivered check)
+   * and add the name to the run's injected set so the surface-once overlay
+   * path never delivers the same guidance a second time within this run.
+   * Sync between the has-check and the add, same as the overlay injector, so
+   * parallel activations of one skill can't double-emit. Ignores results that
+   * don't carry a well-formed marker.
+   */
+  private recordSkillActivation(
+    ctx: ToolExecContext,
+    gatedCall: ToolCall,
+    result: ToolResult,
+  ): void {
+    const raw = result._meta?.[SKILL_ACTIVATED_META_KEY];
+    if (!raw || typeof raw !== "object") return;
+    const marker = raw as { skillName?: unknown; scope?: unknown; tokens?: unknown };
+    if (typeof marker.skillName !== "string" || marker.skillName.length === 0) return;
+    if (ctx.injectedConnectorSkills.has(marker.skillName)) return;
+    ctx.injectedConnectorSkills.add(marker.skillName);
+    this.events.emit({
+      type: "skill.activated",
+      data: {
+        runId: ctx.runId,
+        toolCallId: gatedCall.id,
+        skillName: marker.skillName,
+        scope: typeof marker.scope === "string" ? marker.scope : "org",
+        tokens: typeof marker.tokens === "number" ? marker.tokens : 0,
+      },
+    });
+  }
+
+  /**
    * Emit `tool.progress` when a tool result was bounded for model context.
    * `outputText` (full) is persisted for the UI and the record; `modelOutput`
    * (bounded) is what enters the prompt. The message differs for inline-UI
@@ -1961,6 +2003,8 @@ export class AgentEngine {
     // static `resourceUri` tool annotation used for inline UI binding —
     // resource_link points at a file/resource the client should fetch.
     const resourceLinks = extractResourceLinks(finalResult.content);
+
+    this.recordSkillActivation(ctx, gatedCall, finalResult);
 
     this.events.emit({
       type: "tool.done",

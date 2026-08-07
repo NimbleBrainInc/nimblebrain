@@ -14,7 +14,7 @@ import type {
   ToolResult,
   ToolSchema,
 } from "../../src/engine/types.ts";
-import { DEFAULT_THINKING_EFFORT } from "../../src/engine/types.ts";
+import { DEFAULT_THINKING_EFFORT, SKILL_ACTIVATED_META_KEY } from "../../src/engine/types.ts";
 import { log } from "../../src/observability/log.ts";
 import { textContent } from "../../src/engine/content-helpers.ts";
 import {
@@ -4166,5 +4166,217 @@ describe("AgentEngine — connector-skill surface-once (P4)", () => {
     );
 
     expect(injected).toHaveLength(0);
+  });
+});
+
+describe("AgentEngine — skill activation (skills__use `_meta` marker)", () => {
+  const GMAIL_CANDIDATE = {
+    name: "gmail",
+    body: "Confirm the recipient before calling gmail__send.",
+    scope: "connector",
+    toolAffinity: ["gmail__*"],
+  };
+
+  const useTool: ToolSchema = {
+    name: "skills__use",
+    description: "Load a catalog skill",
+    inputSchema: {},
+  };
+  const sendTool: ToolSchema = {
+    name: "gmail__send",
+    description: "Send an email",
+    inputSchema: {},
+  };
+
+  /** Capture `skill.activated` + `connector.skill.injected` events. */
+  function activationSink(): {
+    sink: EventSink;
+    activated: EngineEvent[];
+    injected: EngineEvent[];
+  } {
+    const activated: EngineEvent[] = [];
+    const injected: EngineEvent[] = [];
+    const sink: EventSink = {
+      emit(event) {
+        if (event.type === "skill.activated") activated.push(event);
+        if (event.type === "connector.skill.injected") injected.push(event);
+      },
+    };
+    return { sink, activated, injected };
+  }
+
+  /** A tool router where `skills__use` returns an activation-marked result. */
+  function activationTools(marker: Record<string, unknown> = {}) {
+    return {
+      schemas: [useTool, sendTool],
+      handler: (call: ToolCall): ToolResult => {
+        if (call.name === "skills__use") {
+          return {
+            content: textContent("_gmail_ — scope: connector\n\n<activated-skill>...</activated-skill>"),
+            isError: false,
+            _meta: {
+              [SKILL_ACTIVATED_META_KEY]: {
+                skillName: "gmail",
+                scope: "connector",
+                tokens: 12,
+                ...marker,
+              },
+            },
+          };
+        }
+        return { content: textContent("ok"), isError: false };
+      },
+    };
+  }
+
+  /** A model that emits one batch of tool calls per iteration, then stops. */
+  function batchedCalls(
+    batches: Array<Array<{ id: string; name: string }>>,
+  ): ReturnType<typeof createMockModel> {
+    let n = 0;
+    return createMockModel(() => {
+      const batch = batches[n];
+      n++;
+      if (batch) {
+        return {
+          content: batch.map((c) => ({
+            type: "tool-call" as const,
+            toolCallId: c.id,
+            toolName: c.name,
+            input: "{}",
+          })),
+        };
+      }
+      return { content: [{ type: "text", text: "done" }] };
+    });
+  }
+
+  it("emits skill.activated with runId/toolCallId/name/scope/tokens on a marked result", async () => {
+    const { sink, activated } = activationSink();
+    const engine = makeEngine(
+      batchedCalls([[{ id: "u1", name: "skills__use" }]]),
+      activationTools(),
+      sink,
+    );
+
+    await engine.run(
+      defaultConfig,
+      "",
+      [{ role: "user", content: [{ type: "text", text: "load the gmail skill" }] }],
+      [useTool, sendTool],
+    );
+
+    expect(activated).toHaveLength(1);
+    expect(activated[0]!.data["skillName"]).toBe("gmail");
+    expect(activated[0]!.data["toolCallId"]).toBe("u1");
+    expect(activated[0]!.data["scope"]).toBe("connector");
+    expect(activated[0]!.data["tokens"]).toBe(12);
+    expect(typeof activated[0]!.data["runId"]).toBe("string");
+  });
+
+  it("suppresses surface-once overlay injection for a skill activated earlier in the run", async () => {
+    const { sink, activated, injected } = activationSink();
+    const engine = makeEngine(
+      batchedCalls([[{ id: "u1", name: "skills__use" }], [{ id: "c1", name: "gmail__send" }]]),
+      activationTools(),
+      sink,
+    );
+
+    await engine.run(
+      { ...defaultConfig, connectorSkillCandidates: [GMAIL_CANDIDATE] },
+      "",
+      [{ role: "user", content: [{ type: "text", text: "load then send" }] }],
+      [useTool, sendTool],
+    );
+
+    // The activation delivered the body; the matching tool call afterwards
+    // must NOT deliver a second copy through the overlay channel.
+    expect(activated).toHaveLength(1);
+    expect(injected).toHaveLength(0);
+  });
+
+  it("emits skill.activated once when the same skill is activated twice in one run", async () => {
+    const { sink, activated } = activationSink();
+    const engine = makeEngine(
+      batchedCalls([
+        [{ id: "u1", name: "skills__use" }],
+        [{ id: "u2", name: "skills__use" }],
+      ]),
+      activationTools(),
+      sink,
+    );
+
+    await engine.run(
+      defaultConfig,
+      "",
+      [{ role: "user", content: [{ type: "text", text: "load it twice" }] }],
+      [useTool, sendTool],
+    );
+
+    expect(activated).toHaveLength(1);
+    expect(activated[0]!.data["toolCallId"]).toBe("u1");
+  });
+
+  it("seeds the dedup set from a history activation marker (fallback scan)", async () => {
+    const { sink, injected } = activationSink();
+    const engine = makeEngine(
+      batchedCalls([[{ id: "c1", name: "gmail__send" }]]),
+      activationTools(),
+      sink,
+    );
+
+    // A prior turn's reconstructed activation tool-result carries the marker
+    // in message metadata (the runtime normally lifts it into
+    // `alreadyInjectedConnectorSkills`; the engine's own scan is the fallback).
+    const priorActivation = {
+      role: "tool",
+      content: [
+        {
+          type: "tool-result",
+          toolCallId: "u0",
+          toolName: "skills__use",
+          output: { type: "text", value: "<activated-skill>...</activated-skill>" },
+        },
+      ],
+      metadata: { synthetic: "skill_activated", skill: "gmail" },
+    } as unknown as LanguageModelV3Message;
+
+    await engine.run(
+      { ...defaultConfig, connectorSkillCandidates: [GMAIL_CANDIDATE] },
+      "",
+      [
+        { role: "user", content: [{ type: "text", text: "load the skill" }] },
+        priorActivation,
+        { role: "user", content: [{ type: "text", text: "now send" }] },
+      ],
+      [useTool, sendTool],
+    );
+
+    expect(injected).toHaveLength(0);
+  });
+
+  it("ignores a malformed marker (no skillName) without emitting", async () => {
+    const { sink, activated } = activationSink();
+    const engine = makeEngine(
+      batchedCalls([[{ id: "u1", name: "skills__use" }]]),
+      {
+        schemas: [useTool],
+        handler: (): ToolResult => ({
+          content: textContent("body"),
+          isError: false,
+          _meta: { [SKILL_ACTIVATED_META_KEY]: { scope: "connector" } },
+        }),
+      },
+      sink,
+    );
+
+    await engine.run(
+      defaultConfig,
+      "",
+      [{ role: "user", content: [{ type: "text", text: "load" }] }],
+      [useTool],
+    );
+
+    expect(activated).toHaveLength(0);
   });
 });

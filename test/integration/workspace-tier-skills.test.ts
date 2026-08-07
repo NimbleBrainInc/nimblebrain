@@ -171,4 +171,27 @@ describe("Layer 3 — workspace-tier `loading_strategy: always` skills", () => {
     const entry = payload.skills.find((s) => s.id === expectedPath);
     expect(entry).toBeUndefined();
   });
+
+  it("walls listActivatableSkills to the named workspace (real loader, no stubs)", async () => {
+    // The activatable set backs both the rendered catalog and skills__use
+    // name validation, so the wall must hold on the REAL loader composition,
+    // not a FakeRuntime. Plant a dynamic skill in the personal workspace and
+    // assert each workspace's set sees only its own tier.
+    const personalWsId = personalWorkspaceIdFor(DEV_IDENTITY.id);
+    const personalName = "personal-only-playbook";
+    const personalSkillsDir = join(testDir, "workspaces", personalWsId, "skills");
+    mkdirSync(personalSkillsDir, { recursive: true });
+    writeFileSync(
+      join(personalSkillsDir, `${personalName}.md`),
+      `---\nname: ${personalName}\ndescription: Personal drafting playbook\nmetadata:\n  nimblebrain:\n    loading-strategy: dynamic\n---\n\nDraft like me.\n`,
+    );
+
+    const sharedSet = await runtime.listActivatableSkills(TEST_WORKSPACE_ID, DEV_IDENTITY.id);
+    expect(sharedSet.some((s) => s.name === SHARED_SKILL_NAME)).toBe(true);
+    expect(sharedSet.some((s) => s.name === personalName)).toBe(false);
+
+    const personalSet = await runtime.listActivatableSkills(personalWsId, DEV_IDENTITY.id);
+    expect(personalSet.some((s) => s.name === personalName)).toBe(true);
+    expect(personalSet.some((s) => s.name === SHARED_SKILL_NAME)).toBe(false);
+  });
 });

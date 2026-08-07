@@ -8,6 +8,7 @@ import {
   type UserPrefs,
   type WorkspaceContext,
 } from "../../src/prompt/compose.ts";
+import type { SkillCatalogEntry } from "../../src/skills/catalog.ts";
 import type { Skill } from "../../src/skills/types.ts";
 
 function ctx(name: string, priority: number, body: string): Skill {
@@ -43,6 +44,10 @@ const ws: WorkspaceContext = { id: "ws_test", name: "Test" };
 const layer3: Layer3SkillEntry[] = [
   { name: "guide", body: "L3 body.", scope: "workspace", loadedBy: "always", reason: "always" },
 ];
+const skillCatalog: SkillCatalogEntry[] = [
+  { name: "deep-research", description: "Multi-step research workflow" },
+  { name: "invoice-runbook" },
+];
 
 /** Full-fat invocation exercising every layer kind. */
 function full() {
@@ -57,6 +62,8 @@ function full() {
     ws,
     { workspace: "Be concise." },
     layer3,
+    "chat",
+    skillCatalog,
   );
 }
 
@@ -71,6 +78,7 @@ describe("composeSystemSegments", () => {
     expect(seg("workspace_context")).toBe("stable");
     expect(seg("workspace_overlay")).toBe("stable");
     expect(seg("layer3_skills")).toBe("stable");
+    expect(seg("skill_catalog")).toBe("stable");
     expect(seg("apps")).toBe("stable");
     // Volatile head — evicted onto the latest user message.
     expect(seg("current_date")).toBe("volatile");
@@ -165,5 +173,79 @@ describe("composeSystemSegments", () => {
     );
     expect(volatileHead).toContain("## Current Date");
     expect(volatileHead.startsWith("<runtime-context>")).toBe(true);
+  });
+});
+
+describe("composeSystemSegments — skill catalog layer", () => {
+  /** Compose with only what the catalog needs — isolates the section's text. */
+  function withCatalog(entries: SkillCatalogEntry[] | undefined) {
+    return composeSystemSegments(
+      [ctx("soul", 0, "I am Nira.")],
+      null,
+      undefined,
+      undefined,
+      undefined,
+      prefs,
+      false,
+      ws,
+      undefined,
+      layer3,
+      "chat",
+      entries,
+    );
+  }
+
+  it("renders in the stable segment, never the volatile head", () => {
+    const segs = withCatalog(skillCatalog);
+    expect(segs.stableSystem).toContain("## Skill Catalog");
+    expect(segs.volatileHead).not.toContain("## Skill Catalog");
+    const layer = segs.layers.find((l) => l.kind === "skill_catalog");
+    expect(layer?.segment).toBe("stable");
+    expect(layer?.id).toBe("nb:skill-catalog");
+  });
+
+  it("renders one line per skill, in the given (sorted) order, with the activation move", () => {
+    const { stableSystem } = withCatalog(skillCatalog);
+    expect(stableSystem).toContain("- deep-research — Multi-step research workflow");
+    expect(stableSystem).toContain("- invoice-runbook");
+    expect(stableSystem.indexOf("- deep-research")).toBeLessThan(
+      stableSystem.indexOf("- invoice-runbook"),
+    );
+    // The closing paragraph teaches the activation tool by name.
+    expect(stableSystem).toContain("`skills__use`");
+  });
+
+  it("sits after the Skills section and before Installed Apps", () => {
+    const { stableSystem } = full();
+    expect(stableSystem.indexOf("## Skills")).toBeLessThan(stableSystem.indexOf("## Skill Catalog"));
+    expect(stableSystem.indexOf("## Skill Catalog")).toBeLessThan(
+      stableSystem.indexOf("## Installed Apps"),
+    );
+  });
+
+  it("emits no section (and no layer) when the catalog is empty or absent", () => {
+    for (const entries of [undefined, [] as SkillCatalogEntry[]]) {
+      const segs = withCatalog(entries);
+      expect(segs.stableSystem).not.toContain("## Skill Catalog");
+      expect(segs.layers.some((l) => l.kind === "skill_catalog")).toBe(false);
+    }
+  });
+
+  it("byte-stable: identical entries compose to identical section text", () => {
+    const a = withCatalog(skillCatalog).layers.find((l) => l.kind === "skill_catalog")?.text;
+    const b = withCatalog(skillCatalog.map((e) => ({ ...e }))).layers.find(
+      (l) => l.kind === "skill_catalog",
+    )?.text;
+    expect(a).toBeDefined();
+    expect(a).toBe(b as string);
+  });
+
+  it("caps an over-long description at the standard's 1024-char ceiling", () => {
+    const long = "x".repeat(3000);
+    const segs = withCatalog([{ name: "huge", description: long }]);
+    const line = segs.stableSystem.split("\n").find((l) => l.startsWith("- huge"))!;
+    expect(line.length).toBeLessThanOrEqual("- huge — ".length + 1024);
+    expect(line).toContain("x".repeat(1024));
+    expect(line).not.toContain("x".repeat(1025));
   });
 });
