@@ -1694,7 +1694,11 @@ export class Runtime {
     // the wrong answer for per-call data. Per-call handlers should
     // accept a `WorkspaceContext` argument from the dispatch path
     // instead. T008 (credential rebinding) tightens this further.
-    const reqCtx: RequestContext = { ...turnCtx, conversationId: conversation.id };
+    const reqCtx: RequestContext = {
+      ...turnCtx,
+      conversationId: conversation.id,
+      model: resolvedModelString,
+    };
     engineConfig.toolPromotion = this.buildToolPromotionFactory();
 
     // Emit chat.start so the client knows the conversation ID immediately and
@@ -2115,6 +2119,7 @@ export class Runtime {
       // The run's correlation id (no conversation exists) — stamps audit/file
       // records so a file the run creates is traceable back to it.
       conversationId: runId,
+      model: resolvedModelString,
       // Unattended run: bars the automation-authoring surface. Rides the ALS
       // context (preserved across the per-call restamp), so a delegated sub-agent
       // inherits it and the wall holds at any depth — enforced at the automations
