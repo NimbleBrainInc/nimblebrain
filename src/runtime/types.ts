@@ -166,6 +166,19 @@ export interface RuntimeConfig {
    * multi-replica deploys; the registry shares session metadata across
    * processes. See `src/api/session-store/`.
    */
+  /**
+   * Durable usage ledger — one JSONL line per priced LLM call, under
+   * `{workDir}/usage/`. See `src/usage/ledger.ts`.
+   */
+  usage?: {
+    ledger?: {
+      /** Default true. False disables the write path; the reader still reads. */
+      enabled?: boolean;
+      /** Months of history to keep. Default 24; 0 keeps everything. */
+      retentionMonths?: number;
+    };
+  };
+
   sessionStore?: {
     type?: "memory" | "redis";
     /** Idle TTL in seconds. Default: 28800 (8 h). */

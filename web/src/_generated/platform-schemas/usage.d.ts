@@ -6,16 +6,16 @@ import { type Static } from "@sinclair/typebox";
 /**
  * Canonical list of usage breakdown dimensions. Single source of truth —
  * the TypeBox enum, the `UsageGroupBy` type, and the aggregator's runtime
- * guard (`src/conversation/usage-aggregator.ts`) all derive from this array
+ * guard (`src/usage/aggregate.ts`) all derive from this array
  * so a new dimension is added in exactly one place.
  */
-export declare const USAGE_GROUP_BYS: readonly ["day", "conversation", "model", "user"];
+export declare const USAGE_GROUP_BYS: readonly ["day", "conversation", "model", "user", "origin", "provider"];
 export declare const UsageReportInput: import("@sinclair/typebox").TObject<{
     scope: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"user" | "org">>;
     period: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"day" | "week" | "month" | "all">>;
     from: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
     to: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
-    groupBy: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnion<[import("@sinclair/typebox").TUnsafe<"model" | "user" | "day" | "conversation">, import("@sinclair/typebox").TArray<import("@sinclair/typebox").TUnsafe<"model" | "user" | "day" | "conversation">>]>>;
+    groupBy: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnion<[import("@sinclair/typebox").TUnsafe<"model" | "user" | "day" | "conversation" | "origin" | "provider">, import("@sinclair/typebox").TArray<import("@sinclair/typebox").TUnsafe<"model" | "user" | "day" | "conversation" | "origin" | "provider">>]>>;
 }>;
 export type UsageReportInput = Static<typeof UsageReportInput>;
 export type UsageGroupBy = (typeof USAGE_GROUP_BYS)[number];
@@ -61,7 +61,18 @@ export interface UsageReportOutput {
         cost: UsageCostBreakdown;
         llmCalls: number;
         llmMs: number;
+        /** Distinct chat conversations. Task runs are counted by `runs`. */
         conversations: number;
+        /** Distinct task runs — automations, which have no conversation to count. */
+        runs?: number;
+        /**
+         * Calls no price could be found for. Present only when non-zero.
+         *
+         * Their tokens are in the totals and their cost is not, so this says the
+         * dollar figure is incomplete — as distinct from a spend of zero, which a
+         * bare `$0.00` beside a large token count would otherwise imply.
+         */
+        unpricedCalls?: number;
         /** Input-side cache-hit rate (0–1). See `computeCacheHitRate` in the aggregator. */
         cacheHitRate?: number;
     };

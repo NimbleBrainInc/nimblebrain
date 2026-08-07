@@ -25,7 +25,25 @@
  */
 import { type LlmUsageSource, recordLlmUsage } from "../api/metrics.ts";
 import { getRequestContext } from "../runtime/request-context.ts";
-import type { LlmCallOrigin, TokenUsage } from "./types.ts";
+import { resolveRates } from "./cost.ts";
+import type { UsageLedger } from "./ledger.ts";
+import type { LlmCallOrigin, TokenUsage, UsageLedgerEntry } from "./types.ts";
+
+/**
+ * The process's durable ledger, installed by the runtime at startup.
+ *
+ * Module-level rather than a parameter because the four call sites are spread
+ * across the runtime, the adapters and the tools, and threading a handle to
+ * each of them would put the ledger back in the callers' hands — the thing this
+ * module exists to take away. Absent in unit tests and in any embedding that
+ * never starts a runtime, where the Prometheus half still records.
+ */
+let ledger: UsageLedger | undefined;
+
+/** Install the process ledger. Called once, by `Runtime.start`. */
+export function setUsageLedger(next: UsageLedger | undefined): void {
+  ledger = next;
+}
 
 /**
  * Who this call was for, from the ambient request context alone.
@@ -78,12 +96,41 @@ export function isDelegated(data: Record<string, unknown> | undefined): boolean 
  * `mid-turn-compaction-wiring.test.ts` drive real folds and assert this off
  * `/metrics`, so a turn's call escaping its scope fails a test rather than
  * quietly recording its spend as unattributed.
+ *
+ * Fans out to both halves of the chokepoint: the process-local Prometheus
+ * counters, and the durable ledger that survives the process.
  */
 export function recordLlmCall(args: {
   source: LlmUsageSource;
   model: string;
   usage: TokenUsage;
+  llmMs?: number;
   event?: Record<string, unknown>;
 }): void {
-  recordLlmUsage(args.source, args.model, args.usage, originOf(), isDelegated(args.event));
+  const origin = originOf();
+  const delegated = isDelegated(args.event);
+  recordLlmUsage(args.source, args.model, args.usage, origin, delegated);
+  if (!ledger) return;
+
+  const ctx = getRequestContext();
+  const parentRunId = args.event?.parentRunId;
+  // Rates are resolved at write time so a past call keeps costing what it cost.
+  // Absent when the catalog does not know the model, which the reader reports
+  // as unpriced rather than as zero.
+  const rates = resolveRates(args.model);
+  const entry: UsageLedgerEntry = {
+    ts: new Date().toISOString(),
+    source: args.source,
+    origin,
+    delegated,
+    model: args.model,
+    usage: args.usage,
+    llmMs: args.llmMs ?? 0,
+    ...(delegated && typeof parentRunId === "string" ? { parentRunId } : {}),
+    ...(ctx?.identity?.id ? { userId: ctx.identity.id } : {}),
+    ...(ctx?.workspaceId ? { workspaceId: ctx.workspaceId } : {}),
+    ...(ctx?.conversationId ? { sessionId: ctx.conversationId } : {}),
+    ...(rates ? { rates } : {}),
+  };
+  ledger.append(entry);
 }

@@ -144,7 +144,8 @@ import { SharedSourceRef, type ToolRegistry } from "../tools/registry.ts";
 import { surfaceTools } from "../tools/surfacing.ts";
 import { createSystemTools } from "../tools/system-tools.ts";
 import type { ResourceData, Tool, ToolSource } from "../tools/types.ts";
-import { recordLlmCall } from "../usage/record.ts";
+import { createProcessLedger } from "../usage/ledger.ts";
+import { recordLlmCall, setUsageLedger } from "../usage/record.ts";
 import type { TokenUsage } from "../usage/types.ts";
 import { WorkspaceContext } from "../workspace/context.ts";
 import { ensureUserWorkspace } from "../workspace/provisioning.ts";
@@ -443,6 +444,12 @@ export class Runtime {
     }
 
     const resolveModelFn = resolveModel(config);
+
+    // Install the durable half of the spend chokepoint. Module-level in
+    // `usage/record.ts` rather than threaded to each call site, because the four
+    // sites span the runtime, the adapters and the tools — handing each one a
+    // ledger would put recording back in the callers' hands.
+    setUsageLedger(createProcessLedger(resolveWorkDir(config), config.usage?.ledger));
 
     const telemetryManager = TelemetryManager.create({
       workDir: resolveWorkDir(config),
@@ -2467,7 +2474,7 @@ export class Runtime {
     // usage as an aux.usage event so it isn't invisible to cost accounting.
     const appendTitleUsage = store.appendEvent?.bind(store);
     void generateTitle(titleModel, titleInput, output, (usage, llmMs) => {
-      recordLlmCall({ source: "title", model: titleSlot, usage });
+      recordLlmCall({ source: "title", model: titleSlot, usage, llmMs });
       appendTitleUsage?.(conversation.id, {
         ts: new Date().toISOString(),
         type: "aux.usage",
@@ -3993,7 +4000,7 @@ export class Runtime {
     usage: TokenUsage,
     llmMs: number,
   ): void {
-    recordLlmCall({ source: "compaction", model, usage });
+    recordLlmCall({ source: "compaction", model, usage, llmMs });
     store.appendEvent(conversationId, {
       ts: new Date().toISOString(),
       type: "aux.usage",

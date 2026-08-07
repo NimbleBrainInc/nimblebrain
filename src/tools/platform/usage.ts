@@ -20,12 +20,11 @@
  *     so local development sees all conversations.
  */
 
-import { listAllConversationFiles } from "../../conversation/locator.ts";
-import { aggregateUsage } from "../../conversation/usage-aggregator.ts";
 import { textContent } from "../../engine/content-helpers.ts";
 import type { EventSink, ToolResult } from "../../engine/types.ts";
 import { ORG_ADMIN_ROLES } from "../../identity/types.ts";
 import type { Runtime } from "../../runtime/runtime.ts";
+import { aggregateUsage } from "../../usage/aggregate.ts";
 import { defineInProcessApp, type InProcessTool } from "../in-process-app.ts";
 import type { McpSource } from "../mcp-source.ts";
 import { loadUsageUi } from "../platform-resources/usage/dashboard.ts";
@@ -102,10 +101,10 @@ export function createUsageSource(runtime: Runtime, eventSink: EventSink): McpSo
           const period = args.period ?? "month";
           const groupBy = args.groupBy ?? "day";
 
-          // Conversations are workspace-owned; usage spans every workspace a user
-          // touched, so aggregate over the conversation files across all workspaces.
-          const files = listAllConversationFiles(runtime.getWorkspaceStore().getWorkspacesDir());
-          const report = await aggregateUsage(files, period, groupBy, {
+          // The ledger is tenant-wide and workspace-agnostic: a line carries the
+          // workspace it was bound to, so there is nothing to enumerate. The
+          // owner filter below is what scopes the read, and it fails closed.
+          const report = await aggregateUsage(runtime.getWorkDir(), period, groupBy, {
             from: args.from,
             to: args.to,
             ownerFilter: resolved.ownerFilter,

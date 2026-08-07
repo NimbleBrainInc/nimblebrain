@@ -13,13 +13,14 @@
  *   - The response echoes the resolved `scope`.
  */
 
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { appendFile, mkdir, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { NoopEventSink } from "../../../../src/adapters/noop-events.ts";
-import { workspaceConversationsDir } from "../../../../src/conversation/paths.ts";
 import type { McpSource } from "../../../../src/tools/mcp-source.ts";
+import { usageMonthDir, usageMonthOf } from "../../../../src/usage/paths.ts";
+import type { UsageLedgerEntry } from "../../../../src/usage/types.ts";
 import type { UsageReportOutput } from "../../../../src/tools/platform/schemas/usage.ts";
 import { createUsageSource } from "../../../../src/tools/platform/usage.ts";
 
@@ -36,9 +37,9 @@ class FakeRuntime {
 
   constructor(private workDir: string) {}
 
-  getWorkspaceStore() {
-    // The usage source walks `getWorkspacesDir()` via `listAllConversationFiles`.
-    return { getWorkspacesDir: () => join(this.workDir, "workspaces") };
+  /** The usage source reads the ledger under the work dir. */
+  getWorkDir() {
+    return this.workDir;
   }
   getCurrentIdentity() {
     return this.identity;
@@ -48,33 +49,41 @@ class FakeRuntime {
   }
 }
 
-function llmEvent(input: number, output: number): Record<string, unknown> {
-  return {
-    type: "llm.response",
-    ts: "2026-04-10T12:00:00Z",
-    model: "claude-sonnet-4-5-20250929",
-    usage: { inputTokens: input, outputTokens: output, cacheReadTokens: 0, cacheWriteTokens: 0 },
-    llmMs: 100,
-  };
-}
+const AT = "2026-04-10T12:00:00Z";
 
-function convJsonl(id: string, ownerId: string, input: number, output: number): string {
-  const meta = JSON.stringify({ id, ownerId, updatedAt: "2026-04-10T14:00:00Z" });
-  return `${meta}\n${JSON.stringify(llmEvent(input, output))}\n`;
-}
-
-/** Seed a conversation into its workspace+owner partition under `{workDir}/workspaces`. */
-async function seedWorkspaceConversation(
+/**
+ * Seed one user's spend into the ledger.
+ *
+ * The tool used to walk every workspace's conversation files to find a user's
+ * usage across workspaces; the ledger carries `userId` and `workspaceId` on the
+ * line, so there is nothing to walk and the owner scoping is a field predicate.
+ * The `workspaceId` is kept on the fixture because the calls really did happen
+ * in different workspaces — that a cross-workspace read still aggregates by
+ * owner is the property these tests exist for.
+ */
+async function seedSpend(
   workDir: string,
   wsId: string,
   ownerId: string,
-  id: string,
+  sessionId: string,
   input: number,
   output: number,
 ): Promise<void> {
-  const dir = workspaceConversationsDir(workDir, wsId, ownerId);
+  const dir = usageMonthDir(workDir, usageMonthOf(AT));
   await mkdir(dir, { recursive: true });
-  await writeFile(join(dir, `${id}.jsonl`), convJsonl(id, ownerId, input, output));
+  const entry: UsageLedgerEntry = {
+    ts: AT,
+    source: "main",
+    origin: "chat",
+    delegated: false,
+    model: "claude-sonnet-4-5-20250929",
+    usage: { inputTokens: input, outputTokens: output, cacheReadTokens: 0, cacheWriteTokens: 0 },
+    llmMs: 100,
+    userId: ownerId,
+    workspaceId: wsId,
+    sessionId,
+  };
+  await appendFile(join(dir, "test.jsonl"), `${JSON.stringify(entry)}\n`);
 }
 
 // ── Setup ───────────────────────────────────────────────────────────────
@@ -88,8 +97,8 @@ beforeEach(async () => {
   runtime = new FakeRuntime(workDir);
   // Two owners in two different workspaces — usage must aggregate by owner ACROSS
   // workspaces via the cross-workspace walk. alice has 100/50, bob has 400/200.
-  await seedWorkspaceConversation(workDir, "ws_alice", "usr_alice", "conv_0000000000000a1c", 100, 50);
-  await seedWorkspaceConversation(workDir, "ws_bob", "usr_bob", "conv_0000000000000b0b", 400, 200);
+  await seedSpend(workDir, "ws_alice", "usr_alice", "conv_0000000000000a1c", 100, 50);
+  await seedSpend(workDir, "ws_bob", "usr_bob", "conv_0000000000000b0b", 400, 200);
 });
 
 afterEach(async () => {
