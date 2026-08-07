@@ -1,6 +1,7 @@
 #!/usr/bin/env bun
 /**
- * Lint: no test under `test/` calls a function with the wrong number of arguments.
+ * Lint: no test under `test/` is written against a shape that moved — a call with
+ * the wrong number of arguments, or an import naming something no longer exported.
  *
  * `tsconfig.json`'s `include` is `src` / `instrument` / `scripts`, so `bun run
  * check` never sees `test/`. A signature change therefore does not break its
@@ -17,13 +18,33 @@
  * doing and is tracked separately; it is not a precondition for closing the one
  * failure mode above.
  *
- * So this gates the single diagnostic that catches it: **TS2554**, "Expected N
- * arguments, but got M". It is the code TypeScript emits when a call site falls
- * behind its callee, it has no false-positive story (an arity mismatch is always
- * wrong), and it needs none of the strictness the rest of the suite would fail.
- * `tsconfig.test.json` is the base config with that strictness relaxed, so the
- * compiler still resolves every signature. Widening this script to more codes
- * means fixing that code's existing instances first — check before adding one.
+ * So this gates the diagnostics that catch it without importing that migration.
+ * Each one has no false-positive story — the code is either wrong or it is not,
+ * with no fixture-ergonomics judgment in between — and none needs the strictness
+ * the rest of the suite would fail. `tsconfig.test.json` is the base config with
+ * that strictness relaxed, so the compiler still resolves every signature.
+ *
+ * - **TS2554** "Expected N arguments, but got M" — a call site that fell behind
+ *   its callee. An arity mismatch is always wrong.
+ * - **TS2305 / TS2724 / TS2459 / TS2614** "no exported member" — an import naming
+ *   something the module does not export. Worse than an arity mismatch: an
+ *   unresolved type import degrades to the error type, which behaves as `any`, so
+ *   every annotation written in terms of it silently stops constraining anything.
+ *   One dead import voids a whole file's type coverage while the suite stays
+ *   green.
+ *
+ *   All four are the same defect; which one TypeScript picks turns on properties
+ *   of the *importee*, not of the mistake. TS2614 rather than TS2305 whenever the
+ *   module happens to have a default export, TS2724 when the name is a near-miss,
+ *   TS2459 when the name is declared but its `export` was dropped — the way a
+ *   named export most often rots. Gating a subset would make coverage depend on
+ *   whether an unrelated module carries a default.
+ *
+ * `TS2304` "Cannot find name" is the same degradation one step further along — no
+ * import at all — and is deliberately still out: its 29 instances today are
+ * mostly missing DOM lib types, not drift. Widening to another code means fixing
+ * that code's existing instances first, and expecting the fix to expose what the
+ * dead type was hiding.
  *
  * ## What this does NOT cover
  *
@@ -79,10 +100,13 @@ const TEST_ROOT = join(ROOT, "test") + sep;
 const TEST_EXTENSIONS = ["ts", "tsx"];
 
 /**
- * "Expected N arguments, but got M" — a call site that fell behind its callee.
- * The one diagnostic this gate covers; see the header before adding another.
+ * The diagnostics this gate covers — a call site that fell behind its callee
+ * (TS2554), and an import naming something its module does not export (the
+ * other four, which are one defect TypeScript reports four ways). See the
+ * header before adding another.
  */
-const ARITY_ERROR = /error TS2554:/;
+const GATED_CODES = [2554, 2305, 2724, 2459, 2614];
+const GATED = new RegExp(`error TS(${GATED_CODES.join("|")}):`);
 
 async function main(): Promise<void> {
   // tsc exits non-zero whenever it reports anything, and under the relaxed
@@ -111,7 +135,7 @@ async function main(): Promise<void> {
     console.error(
       `✗ ${PROJECT} left ${unanalyzed.length} of ${onDisk.length} files under test/ unanalyzed — this gate did not check them.\n`,
     );
-    console.error("A real arity error in an unanalyzed file would go unreported, so the gate must");
+    console.error("A real violation in an unanalyzed file would go unreported, so the gate must");
     console.error("fail rather than report a pass it cannot back. Usual causes: the project file");
     console.error("is missing or unreadable, or its `include` no longer covers the whole tree.\n");
     for (const f of unanalyzed.slice(0, 5)) console.error(`  ${relative(ROOT, f)}`);
@@ -122,22 +146,32 @@ async function main(): Promise<void> {
     process.exit(1);
   }
 
-  const violations = lines.filter((l) => ARITY_ERROR.test(l)).map((l) => l.trim());
+  // Anchored to `test/` like the coverage check above. The project also compiles
+  // `src/`, `instrument/` and `scripts/` so that signatures resolve, plus the
+  // `web/src` files those import — already covered by `bun run check` and
+  // `check:web` respectively, so reporting them here would only duplicate that,
+  // under a message telling you to update a test.
+  //
+  // Both path forms count. `--listFiles` is absolute, diagnostics are relative to
+  // tsc's cwd, and matching only one would make an empty `violations` mean either
+  // "clean" or "the format moved" — the silent green this gate refuses. A path
+  // under TEST_ROOT is unambiguously a test file, so accepting both costs nothing.
+  const violations = lines
+    .filter((l) => (l.startsWith(`test${sep}`) || l.startsWith(TEST_ROOT)) && GATED.test(l))
+    .map((l) => l.trim());
 
   if (violations.length > 0) {
-    console.error(`✗ Found ${violations.length} test call(s) with the wrong argument count:\n`);
+    console.error(`✗ Found ${violations.length} test(s) written against a shape that moved:\n`);
     for (const v of violations) console.error(`  ${v}`);
-    console.error(
-      "\nA test that calls a function with the wrong arity still runs — JavaScript ignores",
-    );
-    console.error(
-      "the extra arguments and fills the missing ones with undefined — so it goes on passing",
-    );
-    console.error("while asserting something the runtime can no longer do. Update the call site.");
+    console.error("\nNeither kind stops a test from running, which is why they survive. A wrong");
+    console.error("arity still executes — JavaScript drops the extras and fills the missing with");
+    console.error("undefined. A dead type import degrades to the error type, so every annotation");
+    console.error("written in terms of it stops constraining anything. Both go on passing while");
+    console.error("asserting something the runtime can no longer do. Update the test.");
     process.exit(1);
   }
 
-  console.log(`✓ No call-site arity mismatches across ${onDisk.length} files under test/`);
+  console.log(`✓ No call-site or import drift across ${onDisk.length} files under test/`);
 }
 
 main().catch((err: unknown) => {
