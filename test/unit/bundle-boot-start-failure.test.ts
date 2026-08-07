@@ -40,7 +40,7 @@ function fleetRef(): BundleRef {
       auth: { type: "provider", provider: "minted", config: { audience: "mcp-fleet" } },
     },
     oauthScope: "workspace",
-  } as BundleRef;
+  };
 }
 
 function connectionOf(lifecycle: BundleLifecycleManager) {

@@ -126,7 +126,7 @@ describe("windowMessages", () => {
     // older tests passed strings here, which fell through the legacy
     // `chars/4` reducer; the part-aware `estimateMessageTokens` is strict
     // about the V3 shape so all helpers below use the correct one.
-    return { role, content: [{ type: "text", text }] } as LanguageModelV3Message;
+    return { role, content: [{ type: "text", text }] };
   }
 
   it("returns all messages when under budget", () => {
