@@ -3,14 +3,21 @@ import { Link, useNavigate, useParams } from "react-router-dom";
 // Canonical shapes from `src/tools/platform/schemas/compose.ts`; mirrored
 // here via codegen so server + web can't drift.
 import type {
+  AssembledContextSkill,
   AssembledContextSource,
   ComposeAssembledContextOutput,
   ComposeEffectiveContextOutput,
   TracedLayerView,
 } from "../_generated/platform-schemas/compose";
 import { callTool } from "../api/client";
-import { orderedSources, SOURCE_LABEL, sourceDetail } from "../lib/context-sources";
-import { formatTokenCount, nameFromSkillId } from "../lib/skill-display";
+import { SOURCE_LABEL, skillsSlice, sourceDetail, windowSources } from "../lib/context-sources";
+import {
+  formatTokenCount,
+  groupByMechanism,
+  nameFromSkillId,
+  SCOPE_CLASS,
+  skillProvenanceLabel,
+} from "../lib/skill-display";
 import { parseToolResponse } from "../lib/tool-response";
 
 /**
@@ -192,11 +199,22 @@ export function ContextInspectorPage() {
             active={bucket}
             onSelect={selectBucket}
           />
+          {/* The Skills card counts a recorded turn, so its drill-down reads the
+              same recording. The composition below can't answer for it: it
+              recomposes CURRENT state, which holds no trigger match (that needs
+              the user's message) and no record of what loaded then. */}
+          {bucket === "skills" && <RecordedSkills skills={digest.skills} />}
           <LayerAccordion
             layers={visibleLayers}
             open={open}
             onToggle={toggle}
-            bucket={bucket}
+            emptyMessage={
+              bucket === "skills"
+                ? // Answered above, from the recording. A second "nothing here"
+                  // under it would read as a contradiction of the card's number.
+                  null
+                : "Nothing composes for this conversation right now."
+            }
             loading={loading && !composition}
             error={compositionError}
             warnings={composition?.warnings ?? []}
@@ -212,6 +230,33 @@ export function ContextInspectorPage() {
 /** Budget buckets that map onto composed layers (the drill is meaningful). */
 const DRILLABLE = new Set(["system_prompt", "skills"]);
 
+/**
+ * What occupies the context window this turn.
+ *
+ * ONE bar, because the window is one quantity and these are its parts. Each
+ * region is a segment sized by its share; the `skills` annotation is a band
+ * inside the system-prompt segment, since that is literally where those tokens
+ * are. Which rows are regions is the server's call, read off the `annotation`
+ * stamp via `windowSources` / `skillsSlice`, never a second copy of that list
+ * here.
+ *
+ * This replaced a row of cards, and each thing it fixes was a symptom of that
+ * idiom:
+ *
+ *   - A card is an actionable object, so three identical cards promised three
+ *     drill-downs and honoured one. Interactivity is now carried by the element
+ *     itself — a legend entry that drills is a `button`, one that can't is
+ *     text — so the affordance can't over-promise.
+ *   - The card holding the nested annotation was taller than its neighbours.
+ *     One bar has one height.
+ *   - Three boxes of border, padding, and their own bars cost most of a phone
+ *     screen before the composition started. A bar and a wrapping legend cost a
+ *     fraction of it, and reflow instead of squeezing three columns.
+ *
+ * A segment's share is of the WINDOW, not the recorded `totalTokens` — that sum
+ * counts the skill bodies twice (they are composed into the system prompt), so
+ * scaling to it shrinks every segment by the size of the overlap.
+ */
 function BudgetBar({
   sources,
   windowTokens,
@@ -223,90 +268,196 @@ function BudgetBar({
   active: string | null;
   onSelect: (bucket: string | null) => void;
 }) {
-  const ordered = orderedSources(sources);
-  // Bars are proportional to the window, not to the recorded `totalTokens` —
-  // that sum counts the skill bodies twice (they are composed into the system
-  // prompt), so scaling to it shrank every bar by the size of the overlap.
+  const regions = windowSources(sources);
+  const skills = skillsSlice(sources);
   const max = Math.max(windowTokens, 1);
+  const share = (tokens: number, of = max) => `${Math.min((tokens / Math.max(of, 1)) * 100, 100)}%`;
+  const select = (kind: string) => () => onSelect(active === kind ? null : kind);
   return (
     <div
-      className="sticky top-0 z-10 bg-background px-6 py-4 border-b border-border"
+      className="sticky top-0 z-10 bg-background px-6 py-3.5 border-b border-border"
       data-testid="context-budget"
     >
-      {/* Equal-width cards: the token size drives the inner bar, never the card
-          width, so a small bucket (history) stays readable next to a large one
-          (tools) at any container width. */}
-      <div className="grid grid-cols-4 gap-2">
-        {ordered.map((s) => {
-          const selectable = DRILLABLE.has(s.kind);
-          const isActive = active === s.kind;
-          const pct = Math.round((s.tokens / max) * 100);
-          const content = (
-            <>
-              <div className="flex items-baseline justify-between gap-1.5">
-                <span className="text-2xs font-medium text-foreground truncate">
-                  {SOURCE_LABEL[s.kind] ?? s.kind}
-                </span>
-                {sourceDetail(s) && (
-                  <span className="text-3xs text-muted-foreground tabular-nums shrink-0">
-                    {sourceDetail(s)}
+      <div className="flex h-2 w-full gap-px rounded-full overflow-hidden bg-muted">
+        {regions.map((s) => (
+          <div
+            key={s.kind}
+            // `min-w-px` so a region that rounds to nothing (a one-message
+            // history against a full window) still reads as present.
+            className={`relative min-w-px ${SEGMENT_TONE[s.kind] ?? "bg-muted-foreground/30"} ${
+              active === s.kind ? "bg-primary" : ""
+            }`}
+            style={{ width: share(s.tokens) }}
+          >
+            {s.kind === "system_prompt" && skills && (
+              // Drawn INSIDE its region: the annotation is a part of that
+              // segment, not a fourth one competing with it for the bar.
+              <span
+                className={`absolute left-0 bottom-0 h-1/2 ${
+                  active === "skills" ? "bg-primary" : "bg-background/55"
+                }`}
+                style={{ width: share(skills.tokens, s.tokens) }}
+              />
+            )}
+          </div>
+        ))}
+      </div>
+      {/* Wraps rather than columns, so a narrow column reflows the legend
+          instead of crushing every entry. */}
+      <div className="mt-2.5 flex flex-wrap items-baseline gap-x-5 gap-y-1">
+        {regions.map((s) => (
+          // The region and its annotation travel as one flex item, so a wrap
+          // never strands "of which skills" under a different region.
+          <div key={s.kind} className="flex items-baseline gap-x-2 min-w-0">
+            <LegendEntry
+              source={s}
+              tone={SEGMENT_TONE[s.kind] ?? "bg-muted-foreground/30"}
+              active={active === s.kind}
+              onSelect={DRILLABLE.has(s.kind) ? select(s.kind) : null}
+            />
+            {s.kind === "system_prompt" && skills && (
+              <LegendEntry
+                source={skills}
+                label="of which skills"
+                tone="bg-muted-foreground/25"
+                active={active === "skills"}
+                onSelect={select("skills")}
+              />
+            )}
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+/**
+ * Segment shading, so adjacent parts of one bar stay tellable apart. Local to
+ * this bar: it is the only surface that draws the regions as a single stacked
+ * quantity — the popover lists them as separate rows and needs no such scale.
+ * Keyed with a fallback, so a region kind added server-side still renders.
+ */
+const SEGMENT_TONE: Record<string, string> = {
+  system_prompt: "bg-muted-foreground/70",
+  tool_descriptions: "bg-muted-foreground/45",
+  history: "bg-muted-foreground/30",
+};
+
+/**
+ * One legend entry: swatch, label, tokens, and any count detail.
+ *
+ * A `null` onSelect renders plain text, NOT a disabled-looking control — the
+ * region is real and its number is real, there is simply nothing composed to
+ * drill into (the page shows no tool descriptions and no history). Rendering it
+ * as a button that does nothing, or as a card identical to one that works, is
+ * the promise this shape exists to stop making.
+ */
+function LegendEntry({
+  source,
+  label,
+  tone,
+  active,
+  onSelect,
+}: {
+  source: AssembledContextSource;
+  label?: string;
+  tone: string;
+  active: boolean;
+  onSelect: (() => void) | null;
+}) {
+  const detail = sourceDetail(source);
+  // Name (with its count) then value, in that order and with the count bound to
+  // the name by a separator. Trailing it after the tokens read as a second,
+  // unlabelled quantity — "Tools 4.8k 32" doesn't say which number is tokens.
+  const body = (
+    <>
+      <span className={`h-1.5 w-1.5 rounded-full shrink-0 ${active ? "bg-primary" : tone}`} />
+      <span className={`text-2xs truncate ${active ? "text-primary" : "text-muted-foreground"}`}>
+        {label ?? SOURCE_LABEL[source.kind] ?? source.kind}
+        {detail && <span className="text-muted-foreground"> · {detail}</span>}
+      </span>
+      <span className="ml-0.5 text-2xs font-medium text-foreground tabular-nums shrink-0">
+        {formatTokenCount(source.tokens)}
+      </span>
+    </>
+  );
+  if (!onSelect) {
+    return (
+      <span
+        className="flex items-baseline gap-1.5 min-w-0"
+        title="Not composed into the prompt — token cost only"
+      >
+        {body}
+      </span>
+    );
+  }
+  return (
+    <button
+      type="button"
+      onClick={onSelect}
+      title="Show what this is made of"
+      className={`flex items-baseline gap-1.5 min-w-0 -mx-1 px-1 rounded cursor-pointer transition-colors ${
+        active ? "bg-primary/10" : "hover:bg-muted"
+      }`}
+    >
+      {body}
+    </button>
+  );
+}
+
+// ── recorded skills (the Skills card's drill-down) ──────────────────────────
+
+/**
+ * The skills the recorded turn loaded, grouped by why — the drill-down for the
+ * Skills budget card, projected from the same `skills.loaded` event that
+ * produced its token count. So the list can never disagree with the number
+ * above it.
+ *
+ * This is deliberately NOT the composition below. That is a live recomposition
+ * of current state: it holds only what tool-affinity selects right now, never
+ * the turn's trigger match (which needs the user's message) and never the
+ * always-on skills, which compose into their own layers rather than the
+ * layer-3 section. Filtering it by the layer-3 section left every other
+ * mechanism — most of what a turn typically loads — with nowhere to appear.
+ *
+ * Grouping, scope colors, and provenance come from the shared helpers, so this
+ * reads identically to the In-context popover the page opens from. Bodies live
+ * on the composition's layers, not here: the recording carries token counts and
+ * provenance, not text.
+ */
+function RecordedSkills({ skills }: { skills: AssembledContextSkill[] }) {
+  return (
+    <div className="border-b border-border" data-testid="recorded-skills">
+      <div className="px-6 pt-3 pb-2 text-3xs font-semibold uppercase tracking-wider text-muted-foreground">
+        Loaded
+        <span className="font-normal normal-case tracking-normal text-2xs">
+          {" "}
+          · what the recorded turn composed
+        </span>
+      </div>
+      {skills.length === 0 ? (
+        <div className="px-6 py-3 text-xs text-muted-foreground">
+          No skills loaded for this turn.
+        </div>
+      ) : (
+        groupByMechanism(skills).map((group) => (
+          <div key={group.mechanism} className="px-6 pb-1.5">
+            <p className="pt-1.5 pb-0.5 m-0 text-2xs text-muted-foreground">{group.label}</p>
+            <ul className="m-0 p-0 list-none">
+              {group.skills.map((s) => (
+                <li key={s.id} className="ledger-line__row" title={s.reason}>
+                  <span className="disclosure__dot" aria-hidden />
+                  <span className="ledger-line__row-name">{s.name}</span>
+                  <span className={`ledger-line__scope ${SCOPE_CLASS[s.scope]}`}>
+                    {skillProvenanceLabel(s)}
                   </span>
-                )}
-              </div>
-              <div className="mt-1 text-sm font-semibold text-foreground tabular-nums">
-                {formatTokenCount(s.tokens)}
-              </div>
-              <div className="mt-2 h-1.5 rounded-full bg-muted overflow-hidden">
-                <div
-                  className={`h-full rounded-full ${isActive ? "bg-primary" : "bg-muted-foreground/80"}`}
-                  style={{ width: `${pct}%` }}
-                />
-              </div>
-            </>
-          );
-          const base = "block rounded-md border px-3 py-2.5 text-left min-w-0";
-          if (!selectable) {
-            return (
-              <div
-                key={s.kind}
-                className={`${base} border-border bg-card`}
-                title="Not composed into the prompt — token cost only"
-              >
-                {content}
-              </div>
-            );
-          }
-          return (
-            <button
-              key={s.kind}
-              type="button"
-              onClick={() => onSelect(isActive ? null : s.kind)}
-              title="Filter the layers below"
-              className={`${base} cursor-pointer transition-colors ${
-                isActive
-                  ? "border-primary bg-primary/10"
-                  : "border-border bg-card hover:bg-muted/60"
-              }`}
-            >
-              {content}
-            </button>
-          );
-        })}
-      </div>
-      {/* No total here — the header states it once, and states the window (the
-          disjoint sum) rather than the recorded `totalTokens`. The skills
-          caveat is spelled out because these four cards still read as peers;
-          the nesting becomes structural when the bar and the layer list merge
-          into one tree. */}
-      {/* The caveat holds whatever is filtered — it explains the cards, and
-          selecting one doesn't stop them reading as four peers. Only the
-          filter hint swaps. */}
-      <div className="mt-1.5 text-3xs text-muted-foreground">
-        Skills are composed into the system prompt, not a region beside it ·{" "}
-        {active
-          ? `filtered to ${SOURCE_LABEL[active] ?? active}, click again to clear`
-          : "click System prompt or Skills to filter the layers"}
-      </div>
+                  <span className="ledger-line__row-tok">{formatTokenCount(s.tokens)}</span>
+                </li>
+              ))}
+            </ul>
+          </div>
+        ))
+      )}
     </div>
   );
 }
@@ -355,6 +506,11 @@ function layerDescriptor(l: TracedLayerView): string {
  * A budget bucket selects the layers composed under it. Only `system_prompt`
  * and `skills` are drillable (tools/history aren't composed into the prompt —
  * their segments are disabled), so `bucket` is only ever null or one of those.
+ *
+ * Under `skills` this narrows the live composition to the layer-3 section,
+ * which sits below `RecordedSkills` as the composed *text* of the skills that
+ * still load. The recorded list above it is what answers for the card's number;
+ * this can legitimately be empty while that one isn't.
  */
 function filterLayers(layers: TracedLayerView[], bucket: string | null): TracedLayerView[] {
   if (bucket === "skills") return layers.filter((l) => l.kind === "layer3_skills");
@@ -366,7 +522,7 @@ function LayerAccordion({
   layers,
   open,
   onToggle,
-  bucket,
+  emptyMessage,
   loading,
   error,
   warnings,
@@ -374,7 +530,8 @@ function LayerAccordion({
   layers: TracedLayerView[];
   open: Set<string>;
   onToggle: (key: string) => void;
-  bucket: string | null;
+  /** Shown when nothing composes; `null` when the caller answers that itself. */
+  emptyMessage: string | null;
   loading: boolean;
   error: string | null;
   warnings: string[];
@@ -391,12 +548,8 @@ function LayerAccordion({
       </div>
       {loading && <div className="px-6 py-3 text-xs text-muted-foreground">Composing…</div>}
       {error && <div className="px-6 py-3 text-xs text-destructive">{error}</div>}
-      {!loading && !error && layers.length === 0 && (
-        <div className="px-6 py-3 text-xs text-muted-foreground">
-          {bucket === "skills"
-            ? "No matched skills entered this turn's prompt. The budget above still counts everything that loaded."
-            : "Nothing composes for this conversation right now."}
-        </div>
+      {!loading && !error && layers.length === 0 && emptyMessage !== null && (
+        <div className="px-6 py-3 text-xs text-muted-foreground">{emptyMessage}</div>
       )}
       {layers.map((l) => (
         <AccordionRow

@@ -95,7 +95,11 @@ Skills appear indented under the system prompt rather than beside it, because th
 
 For the full picture, click **Open full view** in that panel. The context inspector opens in the main window beside the chat: the budget across the top, then the composition broken out layer by layer (identity, always-on skills, workspace and overlays, apps, and the skills matched for the turn). Click any layer to expand its exact composed text in place — the verbatim bytes that entered the window, including each skill's provenance line and containment wrapper. Click a budget segment to filter the layers to just that part of the window, or **Manage skills** to jump to your skill settings.
 
-The inspector's budget shows skills as a card of their own rather than nested, so its four cards add up to more than the figure in the header. The header is the one to read: skills are counted inside the system prompt, so adding the cards counts them twice.
+The budget is one bar — the window — split into the three regions that make it up, with a legend naming each and its cost. Skills appear as an **of which** inside the system prompt, both in the legend and as a band within that segment, for the same reason as in the panel: a skill body is part of the system prompt, so it is a share of that region rather than a fourth one. The three regions add up to the figure in the header.
+
+The parts you can open are buttons; system prompt and skills are the two, because they are what the page can show you. Tools and history are named and costed but not clickable — their contents aren't on this page.
+
+Opening skills lists what the recorded turn loaded, grouped by why — always on, matched your tools, matched what you said — with each skill's publisher and token cost. That list comes from the turn's own record, so it always accounts for the number beside it. The composition below is a different thing: a fresh trace of what would compose *now*, so it can hold fewer skills than the turn did (nothing there can reproduce a match against a message you already sent).
 
 The ledger reflects what actually loaded, and it persists — reopening a past conversation shows the same lines.
 
