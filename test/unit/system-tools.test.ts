@@ -637,7 +637,7 @@ describe("System Tools", () => {
 describe("ConfirmationGate", () => {
 	it("NoopConfirmationGate always approves", async () => {
 		const gate = new NoopConfirmationGate();
-		expect(await gate.confirm("test?", {})).toBe(true);
+		expect(await gate.confirm()).toBe(true);
 		expect(gate.supportsInteraction).toBe(false);
 	});
 

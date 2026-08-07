@@ -20,7 +20,11 @@ import { UnknownNamespacedToolName } from "../../../src/tools/namespace.ts";
 
 describe("mapOrchestratorErrorToToolResult", () => {
   test("UnknownNamespacedToolName → reason: invalid_tool_name", () => {
-    const err = new UnknownNamespacedToolName("bad-name", "missing_double_underscore");
+    const err = new UnknownNamespacedToolName(
+      "bad-name",
+      "missing_double_underscore",
+      "bad-name is not a namespaced tool name",
+    );
     const result = mapOrchestratorErrorToToolResult(err, "bad-name");
     expect(result.isError).toBe(true);
     expect(result.structuredContent).toMatchObject({
