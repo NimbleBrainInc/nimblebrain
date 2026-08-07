@@ -210,19 +210,32 @@ function validateModelPolicy(input: Record<string, unknown>, runtime: Runtime): 
     }
   }
 
-  // `configuredModelSlots`, not `getDefaultModel`: the latter is tinted by the
-  // calling admin's own preference, so an admin whose personal model happens to
-  // be in the list would pass a guard that every other member fails. Both slots
-  // are checked, because a configured slot is never re-tested at read time —
-  // this write is the only thing standing between a policy and a turn that
-  // resolves to a model the org forbids.
+  return strandedSlotError(input, runtime, allowed as string[]);
+}
+
+/**
+ * Would this allowed-list leave a configured slot pointing outside it?
+ *
+ * Read from `configuredModelSlots`, not `getDefaultModel`: the latter is tinted
+ * by the calling admin's own preference, so an admin whose personal model
+ * happens to be in the list would pass a guard that every other member fails.
+ *
+ * Both slots, because a configured slot is never re-tested at read time — this
+ * write is the only thing standing between a policy and a turn that resolves to
+ * a model the org forbids.
+ */
+function strandedSlotError(
+  input: Record<string, unknown>,
+  runtime: Runtime,
+  allowed: string[],
+): string | null {
   const slots = runtime.configuredModelSlots();
   const pending = (input.models ?? {}) as Partial<Record<string, string>>;
   for (const slot of MODEL_SLOTS) {
     // A slot this same call is repointing is judged on its new value.
     const raw = pending[slot];
     const value = raw !== undefined ? resolveModelString(raw) : slots[slot];
-    if (!(allowed as string[]).includes(value)) {
+    if (!allowed.includes(value)) {
       return `Cannot exclude "${value}", which the ${slot} slot uses. Point that slot at an allowed model first, in this call or before it.`;
     }
   }
