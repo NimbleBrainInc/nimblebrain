@@ -657,9 +657,7 @@ describe("Core Source", () => {
 		}
 
 		it("refuses a request for a model outside the list", async () => {
-			const { runtime, source } = await startWithPolicy("gate", [
-				"anthropic:claude-sonnet-5",
-			]);
+			const { runtime } = await startWithPolicy("gate", ["anthropic:claude-sonnet-5"]);
 			try {
 				expect(runtime.isModelPermitted("anthropic:claude-sonnet-5")).toBe(true);
 				expect(runtime.isModelPermitted("anthropic:claude-opus-5")).toBe(false);
@@ -704,7 +702,101 @@ describe("Core Source", () => {
 					modelPolicy: { allowed: ["anthropic:claude-haiku-4-5-20251001"] },
 				});
 				expect(res.isError).toBe(true);
-				expect(extractText(res.content)).toContain("Cannot exclude the default model");
+				expect(extractText(res.content)).toContain("which the default slot uses");
+			} finally {
+				await runtime.shutdown();
+			}
+		});
+
+		it("survives a restart — the loader carries it", async () => {
+			// The gap the suite missed: `set_model_config` enforced until the
+			// process restarted, then failed open silently, because `loadConfig`
+			// builds its config by an explicit field map.
+			const workDir = join(testDir, `work-policy-restart-${Date.now()}`);
+			mkdirSync(workDir, { recursive: true });
+			const configPath = join(workDir, "nimblebrain.json");
+			writeFileSync(
+				configPath,
+				JSON.stringify({
+					version: "1",
+					models: { default: "anthropic:claude-sonnet-5" },
+					modelPolicy: { allowed: ["anthropic:claude-sonnet-5"] },
+				}),
+			);
+
+			const loaded = loadConfig({ config: configPath });
+			expect(loaded.modelPolicy?.allowed).toEqual(["anthropic:claude-sonnet-5"]);
+
+			const runtime = await Runtime.start({
+				...loaded,
+				model: { provider: "custom", adapter: createEchoModel() },
+				noDefaultBundles: true,
+				workDir,
+				logging: { disabled: true },
+			});
+			try {
+				expect(runtime.isModelPermitted("anthropic:claude-opus-5")).toBe(false);
+			} finally {
+				await runtime.shutdown();
+			}
+		});
+
+		it("judges the default slot as configured, not as the admin sees it", async () => {
+			// The admin's own preference must not decide whether a policy strands
+			// everyone else: tinted, an admin who prefers the one allowed model
+			// passes a guard every other member fails.
+			const { runtime, source } = await startWithPolicy("tinted-admin");
+			try {
+				const res = await runWithRequestContext(
+					{
+						identity: {
+							id: "usr_admin",
+							email: "a@example.com",
+							displayName: "A",
+							orgRole: "admin",
+							preferences: { models: { default: "anthropic:claude-haiku-4-5-20251001" } },
+						},
+					},
+					() =>
+						source.execute("set_model_config", {
+							modelPolicy: { allowed: ["anthropic:claude-haiku-4-5-20251001"] },
+						}),
+				);
+				expect(res.isError).toBe(true);
+				expect(extractText(res.content)).toContain("which the default slot uses");
+			} finally {
+				await runtime.shutdown();
+			}
+		});
+
+		it("checks the fast slot too", async () => {
+			const { runtime, source } = await startWithPolicy("fast-slot");
+			try {
+				const res = await source.execute("set_model_config", {
+					models: { default: "anthropic:claude-sonnet-5", fast: "anthropic:claude-opus-5" },
+					modelPolicy: { allowed: ["anthropic:claude-sonnet-5"] },
+				});
+				expect(res.isError).toBe(true);
+				expect(extractText(res.content)).toContain("which the fast slot uses");
+			} finally {
+				await runtime.shutdown();
+			}
+		});
+
+		it("accepts a bare model id that policy allows in qualified form", async () => {
+			// Bare ids are legal input; the policy check is an exact match, so it
+			// has to compare resolved forms.
+			const { runtime, source } = await startWithPolicy("bare-id", [
+				"anthropic:claude-sonnet-5",
+				"anthropic:claude-haiku-4-5-20251001",
+			]);
+			try {
+				const res = await source.execute("set_model_config", {
+					models: { fast: "claude-haiku-4-5-20251001" },
+				});
+				expect(`isError: ${res.isError} — ${extractText(res.content)}`).toBe(
+					"isError: false — Configuration updated: models.",
+				);
 			} finally {
 				await runtime.shutdown();
 			}

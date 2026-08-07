@@ -145,7 +145,10 @@ function positiveIntFieldError(
 
 function unreachableModelError(model: string, runtime: Runtime, slot?: string): string | null {
   const subject = slot ? `Invalid model "${model}" for slot "${slot}"` : `Invalid model "${model}"`;
-  if (!isModelInPolicy(model, runtime.getModelPolicy())) {
+  // Qualified before the policy check: `isModelInPolicy` is an exact match on
+  // `provider:id`, and a bare id is legal input here — legacy saved values and
+  // the settings tab both pass one through.
+  if (!isModelInPolicy(resolveModelString(model), runtime.getModelPolicy())) {
     return `${subject}. It is not in this organization's allowed models.`;
   }
   if (isModelAllowed(model, runtime.getProviderConfigs())) return null;
@@ -190,6 +193,12 @@ function validateModelPolicy(input: Record<string, unknown>, runtime: Runtime): 
 
   // Offerable = reachable provider, chat-capable, not deprecated — the same
   // set the picker draws from, so policy cannot admit what the menu excludes.
+  //
+  // Known limit: `getProviderConfigs()` reports `{anthropic:{}}` as a display
+  // default when no providers are configured, so a deployment running a custom
+  // adapter cannot name its real model here. Such a deployment has no menu to
+  // govern either, which is why this is a limit rather than a hole — but it
+  // means policy is only useful once providers are configured.
   const offerable = new Set(
     Object.entries(getAvailableModels(runtime.getProviderConfigs())).flatMap(([provider, models]) =>
       models.map((m) => `${provider}:${m.id}`),
@@ -201,9 +210,21 @@ function validateModelPolicy(input: Record<string, unknown>, runtime: Runtime): 
     }
   }
 
-  const current = runtime.getDefaultModel();
-  if (!(allowed as string[]).includes(current)) {
-    return `Cannot exclude the default model "${current}". Point the default slot at an allowed model first, in the same call or before this one.`;
+  // `configuredModelSlots`, not `getDefaultModel`: the latter is tinted by the
+  // calling admin's own preference, so an admin whose personal model happens to
+  // be in the list would pass a guard that every other member fails. Both slots
+  // are checked, because a configured slot is never re-tested at read time —
+  // this write is the only thing standing between a policy and a turn that
+  // resolves to a model the org forbids.
+  const slots = runtime.configuredModelSlots();
+  const pending = (input.models ?? {}) as Partial<Record<string, string>>;
+  for (const slot of MODEL_SLOTS) {
+    // A slot this same call is repointing is judged on its new value.
+    const raw = pending[slot];
+    const value = raw !== undefined ? resolveModelString(raw) : slots[slot];
+    if (!(allowed as string[]).includes(value)) {
+      return `Cannot exclude "${value}", which the ${slot} slot uses. Point that slot at an allowed model first, in this call or before it.`;
+    }
   }
   return null;
 }
