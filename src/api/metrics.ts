@@ -17,6 +17,7 @@
  */
 import { Counter, collectDefaultMetrics, Gauge, Histogram, Registry } from "prom-client";
 import type { BundleHealth } from "../tools/health-monitor.ts";
+import type { LlmCallOrigin } from "../usage/types.ts";
 
 export const metricsRegistry = new Registry();
 
@@ -86,16 +87,24 @@ export const httpRequestDurationSeconds = new Histogram({
  */
 export const llmTokensTotal = new Counter({
   name: "nb_llm_tokens_total",
-  help: "LLM tokens processed, by direction, cache kind, cache-write TTL tier, call source, and model.",
-  labelNames: ["direction", "kind", "ttl", "source", "model"] as const,
+  help: "LLM tokens processed, by direction, cache kind, cache-write TTL tier, call source, origin, delegation, and model.",
+  labelNames: ["direction", "kind", "ttl", "source", "origin", "delegated", "model"] as const,
   registers: [metricsRegistry],
 });
 
-/** LLM calls, by source (main loop vs forked fast-slot) and model. */
+/**
+ * LLM calls, by source (main loop vs forked fast-slot), origin (who the call
+ * was for), delegation, and model.
+ *
+ * `source` and `origin` answer different questions and neither substitutes for
+ * the other: `source="main"` covers interactive chat AND automation runs alike,
+ * which is precisely how automation spend stayed invisible — it sat in
+ * `source="main"` beside human turns with nothing to separate them.
+ */
 export const llmCallsTotal = new Counter({
   name: "nb_llm_calls_total",
-  help: "LLM calls, by source and model.",
-  labelNames: ["source", "model"] as const,
+  help: "LLM calls, by source, origin, delegation, and model.",
+  labelNames: ["source", "origin", "delegated", "model"] as const,
   registers: [metricsRegistry],
 });
 
@@ -357,7 +366,10 @@ export function recordLlmUsage(
   source: LlmUsageSource,
   model: string,
   usage: UsageForMetrics,
+  origin: LlmCallOrigin,
+  delegated: boolean,
 ): void {
+  const delegatedLabel = delegated ? "true" : "false";
   const cacheRead = usage.cacheReadTokens ?? 0;
   const cacheWrite = usage.cacheWriteTokens ?? 0;
   const fresh = Math.max(usage.inputTokens - cacheRead - cacheWrite, 0);
@@ -367,27 +379,29 @@ export function recordLlmUsage(
   const cacheWrite1h = Math.min(usage.cacheWrite1hTokens ?? cacheWrite, cacheWrite);
   const cacheWrite5m = Math.max(cacheWrite - cacheWrite1h, 0);
 
-  llmCallsTotal.inc({ source, model });
+  // The attribution labels every series below shares. Built once so a new
+  // bucket cannot be added with a partial label set — prom-client would mint it
+  // as a separate series rather than error.
+  const base = { source, origin, delegated: delegatedLabel, model };
+
+  llmCallsTotal.inc(base);
   if (fresh > 0)
-    llmTokensTotal.inc({ direction: "input", kind: "fresh", ttl: "none", source, model }, fresh);
+    llmTokensTotal.inc({ direction: "input", kind: "fresh", ttl: "none", ...base }, fresh);
   if (cacheRead > 0)
-    llmTokensTotal.inc(
-      { direction: "input", kind: "cache_read", ttl: "none", source, model },
-      cacheRead,
-    );
+    llmTokensTotal.inc({ direction: "input", kind: "cache_read", ttl: "none", ...base }, cacheRead);
   if (cacheWrite1h > 0)
     llmTokensTotal.inc(
-      { direction: "input", kind: "cache_write", ttl: "1h", source, model },
+      { direction: "input", kind: "cache_write", ttl: "1h", ...base },
       cacheWrite1h,
     );
   if (cacheWrite5m > 0)
     llmTokensTotal.inc(
-      { direction: "input", kind: "cache_write", ttl: "5m", source, model },
+      { direction: "input", kind: "cache_write", ttl: "5m", ...base },
       cacheWrite5m,
     );
   if (usage.outputTokens > 0)
     llmTokensTotal.inc(
-      { direction: "output", kind: "text", ttl: "none", source, model },
+      { direction: "output", kind: "text", ttl: "none", ...base },
       usage.outputTokens,
     );
 }

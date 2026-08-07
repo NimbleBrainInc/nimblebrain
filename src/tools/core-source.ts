@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { readFile, rename, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
-import { artifactResolutionsTotal, recordLlmUsage } from "../api/metrics.ts";
+import { artifactResolutionsTotal } from "../api/metrics.ts";
 import { textContent } from "../engine/content-helpers.ts";
 import { INTERNAL_TOOL_ANNOTATION, type ThinkingEffort, type ToolResult } from "../engine/types.ts";
 import {
@@ -23,6 +23,7 @@ import {
   runWithRequestContext,
 } from "../runtime/request-context.ts";
 import type { Runtime } from "../runtime/runtime.ts";
+import { recordLlmCall } from "../usage/record.ts";
 import type { TokenUsage } from "../usage/types.ts";
 import { canWriteWorkspaceScoped } from "../workspace/authz.ts";
 import type { InProcessTool } from "./in-process-app.ts";
@@ -435,7 +436,7 @@ function recordBriefingUsage(
   usage: TokenUsage,
   llmMs: number,
 ): void {
-  recordLlmUsage("briefing", modelString ?? "unknown", usage);
+  recordLlmCall({ source: "briefing", model: modelString ?? "unknown", usage });
   const convId = getRequestContext()?.conversationId;
   if (!convId) return;
   // The foreground briefing runs inside the caller's conversation, whose
