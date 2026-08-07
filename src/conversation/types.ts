@@ -337,6 +337,7 @@ export type ConversationEventType =
   | "skills.loaded"
   | "context.assembled"
   | "connector.skill.injected"
+  | "skill.activated"
   | "metadata.title"
   | "history.compacted"
   | "aux.usage";
@@ -531,6 +532,29 @@ export interface ConnectorSkillInjectedEvent {
 }
 
 /**
+ * A catalog skill's full body was delivered via the `skills__use` activation
+ * tool. The body itself rides the tool result (`tool.done`), so the
+ * reconstructor synthesizes no message for this event — it stamps the
+ * `metadata.synthetic = "skill_activated"` dedup marker onto the reconstructed
+ * tool-result message identified by `toolCallId`. Also the cross-turn ledger
+ * the activation tool's own already-delivered check reads. Emitted at most
+ * once per (conversation, skill).
+ */
+export interface SkillActivatedEvent {
+  ts: string;
+  type: "skill.activated";
+  runId: string;
+  /** The `skills__use` tool call whose result carried the body. */
+  toolCallId: string;
+  /** The activated skill's catalog name. */
+  skillName: string;
+  /** Scope label for provenance / telemetry (`org` / `workspace` / `user` / `bundle` / `connector`). */
+  scope: string;
+  /** Approximate tokens of the delivered (capped) body. */
+  tokens: number;
+}
+
+/**
  * Token usage for a forked model call that is NOT a conversation turn — the
  * compaction summarizer and the auto-title generator. These run the `fast`
  * slot outside the agentic loop and so emit no `llm.response`; without this
@@ -561,6 +585,7 @@ export type ConversationEvent =
   | SkillsLoadedEvent
   | ContextAssembledEvent
   | ConnectorSkillInjectedEvent
+  | SkillActivatedEvent
   | TitleChangeEvent
   | HistoryCompactedEvent
   | AuxUsageEvent;

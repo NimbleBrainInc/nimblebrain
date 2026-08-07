@@ -80,7 +80,7 @@ describe("skills source — factory", () => {
 // ── Tools list ──────────────────────────────────────────────────────────
 
 describe("skills source — tools list", () => {
-  test("exposes the four read tools plus the six mutation tools", async () => {
+  test("exposes the read tools, the mutation tools, and the catalog activation tool", async () => {
     const src = await buildSource();
     const client = src.getClient()!;
     const tools = await client.listTools();
@@ -95,6 +95,7 @@ describe("skills source — tools list", () => {
       "loading_log",
       "read",
       "update",
+      "use",
     ]);
   });
 

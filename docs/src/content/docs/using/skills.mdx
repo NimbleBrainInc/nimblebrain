@@ -27,6 +27,12 @@ A `dynamic` skill activates through any of:
 
 A dynamic skill with no `tool-affinity` and no `triggers` loads only when the model activates it on its description.
 
+### The skill catalog
+
+Every conversation's system prompt carries a **Skill Catalog** — one line (name + description) per dynamic skill available in that workspace: authored org/workspace/user skills, skills published by installed apps, and curated connector overlays. Always-on skills don't appear (their full text is already in the prompt), and neither do disabled ones.
+
+When a task matches a listed skill, the model loads it with the `skills__use` tool, which returns the skill's full body in the tool result. A skill is delivered at most once per conversation — loading one that's already in context (via `skills__use` or a connector overlay) returns a short "already loaded" note instead of a second copy.
+
 ## Skill file format
 
 A skill is a markdown file (`.md`) with YAML frontmatter. Standard fields are top-level; NimbleBrain configuration nests under `metadata.nimblebrain`:

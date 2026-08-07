@@ -15,6 +15,34 @@ export type { ContentBlock, TextContent };
  */
 export const CONNECTOR_SKILL_SYNTHETIC = "connector_skill_injected";
 
+/**
+ * Metadata marker stamped on the reconstructed tool-result message of a
+ * `skills__use` activation (from its `skill.activated` event). Same dedup
+ * contract as {@link CONNECTOR_SKILL_SYNTHETIC}: the runtime and the engine's
+ * history-scan fallback treat a skill delivered this way as already-delivered,
+ * so the surface-once overlay path never re-injects a body the model already
+ * holds via activation. Compaction folds the tool message like any other, so
+ * one re-delivery after a fold is possible — matching overlay semantics.
+ */
+export const SKILL_ACTIVATED_SYNTHETIC = "skill_activated";
+
+/**
+ * Reverse-DNS `_meta` key a skill-activation tool result carries to tell the
+ * engine "this result delivered skill X's full body". Value shape:
+ * `{ skillName: string; scope: string; tokens: number }`.
+ *
+ * On seeing it, the engine emits `skill.activated` (persisted into the
+ * conversation log for telemetry + cross-turn dedup) and adds the name to the
+ * run's injected-skill set so the surface-once overlay path won't deliver the
+ * same guidance twice in one run.
+ *
+ * Host-owned: the engine trusts it to suppress future guidance delivery, so a
+ * bundle able to set it could mute a curated overlay by name. `McpSource`
+ * strips it from results arriving over a real wire; only in-process platform
+ * sources (the `skills` source) may carry it through.
+ */
+export const SKILL_ACTIVATED_META_KEY = "ai.nimblebrain/skill-activated";
+
 /** Port 2: Tool routing abstraction. */
 export interface ToolRouter {
   availableTools(): Promise<ToolSchema[]>;
@@ -192,6 +220,16 @@ export type EngineEventType =
    * skillName, skillBody, scope }.
    */
   | "connector.skill.injected"
+  /**
+   * A catalog skill's full body was delivered to the model via the
+   * `skills__use` activation tool. The body itself persists as the tool
+   * result (`tool.done`), so — unlike `connector.skill.injected` — the
+   * reconstructor synthesizes NO extra message for this event; it only stamps
+   * the dedup marker on the reconstructed tool result. Emitted at most once
+   * per (conversation, skill). Payload: { runId, toolCallId, skillName,
+   * scope, tokens }.
+   */
+  | "skill.activated"
   | "context.assembled"
   /**
    * Emitted when a model call is rejected for exceeding the context window
@@ -454,6 +492,8 @@ export interface EngineConfig {
 export interface ConnectorSkillCandidate {
   /** Skill name — matches the materialized overlay's manifest `name`. */
   name: string;
+  /** Manifest `description` — the skill-catalog line for this overlay. */
+  description?: string;
   /** The overlay body (markdown) to surface into history, verbatim. */
   body: string;
   /** Scope label for containment / telemetry. Always `"connector"` in v1. */

@@ -21,11 +21,13 @@
 
 import { copyFileSync, existsSync, mkdirSync, readFileSync, realpathSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
+import { collectDeliveredSkillNames } from "../../conversation/event-reconstructor.ts";
 import type { ConversationEvent, SkillsLoadedEvent } from "../../conversation/types.ts";
 import { textContent } from "../../engine/content-helpers.ts";
-import type { EventSink, ToolResult } from "../../engine/types.ts";
+import { type EventSink, SKILL_ACTIVATED_META_KEY, type ToolResult } from "../../engine/types.ts";
 import { ORG_ADMIN_ROLES } from "../../identity/types.ts";
 import { log } from "../../observability/log.ts";
+import { formatActivatedSkillBlock } from "../../prompt/compose.ts";
 import { getRequestContext } from "../../runtime/request-context.ts";
 import type { Runtime } from "../../runtime/runtime.ts";
 import { parseSkillFile, readSkillMtime } from "../../skills/loader.ts";
@@ -33,6 +35,7 @@ import { resolveLoadingMechanism } from "../../skills/loading.ts";
 import { SKILL_NAME_PATTERN } from "../../skills/schemas/skill-manifest.ts";
 import { toolMatches } from "../../skills/select.ts";
 import { approxTokens } from "../../skills/tokens.ts";
+import { MAX_SKILL_BODY_CHARS, truncateMarkdownToBudget } from "../../skills/truncate.ts";
 import type { Skill, SkillManifest } from "../../skills/types.ts";
 import { validateSkill } from "../../skills/validator.ts";
 import { deleteSkill, updateSkill, writeSkill } from "../../skills/writer.ts";
@@ -46,6 +49,7 @@ import type {
   SkillsActiveForOutput,
   SkillsListOutput,
   SkillsReadOutput,
+  SkillsUseOutput,
 } from "./schemas/skills.ts";
 import {
   SkillsActivateInput,
@@ -57,6 +61,7 @@ import {
   SkillsLoadingLogInput,
   SkillsReadInput,
   SkillsUpdateInput,
+  SkillsUseInput,
 } from "./schemas/skills.ts";
 
 // ── Source name ──────────────────────────────────────────────────────────
@@ -132,6 +137,15 @@ const SKILLS_DELETE_DESCRIPTION =
 const SKILLS_ACTIVATE_DESCRIPTION =
   "Activate a skill (set status=active). Sugar over `update`; cleaner permission/audit shape. " +
   "Active skills are eligible for Layer 3 selection on subsequent turns.";
+
+const SKILLS_USE_DESCRIPTION =
+  "Load a skill from the Skill Catalog into this conversation. Pass `name` exactly as listed " +
+  "in the Skill Catalog section of your instructions — the catalog is the authoritative name " +
+  "list (`skills__list` covers only authored skills, not bundle-published ones or connector " +
+  "overlays); on a miss the error lists every valid name. The skill's full guidance comes " +
+  "back in the tool result — apply it to the task at hand. A skill already delivered in this " +
+  "conversation returns a short 'already loaded' note instead of a second copy. Read-only: " +
+  "does NOT change the skill's stored status (that is `activate`/`deactivate`).";
 
 const SKILLS_DEACTIVATE_DESCRIPTION =
   "Deactivate a skill (set status=disabled). The skill stays on disk but is skipped during Layer 3 " +
@@ -309,6 +323,18 @@ export function createSkillsSource(runtime: Runtime, eventSink: EventSink): McpS
       handler: async (input: Record<string, unknown>): Promise<ToolResult> => {
         try {
           return await setStatusHandler(runtime, input, "disabled", eventSink, authoringGuidePath);
+        } catch (err) {
+          return errorResult(err);
+        }
+      },
+    },
+    {
+      name: "use",
+      description: SKILLS_USE_DESCRIPTION,
+      inputSchema: SkillsUseInput,
+      handler: async (input: Record<string, unknown>): Promise<ToolResult> => {
+        try {
+          return await handleUseSkill(runtime, input);
         } catch (err) {
           return errorResult(err);
         }
@@ -793,6 +819,90 @@ async function readSkillHandler(
     content: textContent(renderRead(result)),
     structuredContent: out as unknown as Record<string, unknown>,
     isError: false,
+  };
+}
+
+/**
+ * `skills__use` core: deliver a catalog skill's full body into the
+ * conversation, exactly once.
+ *
+ * Resolution goes through {@link Runtime.listActivatableSkills} — the same
+ * workspace-walled union the catalog is projected from — so a skill in
+ * another workspace can neither be named nor delivered here. The
+ * already-delivered check reads the conversation's own event log (the
+ * request-context conversation, not a caller-supplied id): a prior
+ * `skill.activated` OR surface-once `connector.skill.injected` for the same
+ * name answers "already loaded" instead of a second copy, with the same
+ * compaction-resurface allowance the overlay path has.
+ *
+ * On delivery, the result carries the `SKILL_ACTIVATED_META_KEY` marker; the
+ * ENGINE (not this handler) emits the persisted `skill.activated` event from
+ * it, because only the engine knows the runId/toolCallId and holds the run's
+ * surface-once dedup set. The body itself persists via the normal `tool.done`
+ * event — no synthetic history message, no `connector.skill.injected`.
+ */
+async function handleUseSkill(
+  runtime: Runtime,
+  input: Record<string, unknown>,
+): Promise<ToolResult> {
+  const { name } = input as unknown as SkillsUseInput;
+  const { wsId, userId } = resolveCallContext(runtime);
+  if (!wsId) {
+    return {
+      content: textContent(
+        "skills__use requires a workspace in scope — call it from a chat or task session.",
+      ),
+      isError: true,
+    };
+  }
+
+  const activatable = await runtime.listActivatableSkills(wsId, userId);
+  const skill = activatable.find((s) => s.name === name);
+  if (!skill) {
+    // Names, not bodies: the miss message must stay small however large the
+    // catalog is. `activatable` is already sorted.
+    const hint =
+      activatable.length > 0
+        ? ` Available skills: ${activatable.map((s) => s.name).join(", ")}.`
+        : " No skills are available to load in this workspace.";
+    return {
+      content: textContent(`Unknown skill "${name}".${hint}`),
+      isError: true,
+    };
+  }
+
+  // Already-delivered check against the CURRENT conversation (from request
+  // context — never a caller-named id, so no ownership gate is needed).
+  // Task runs persist no conversation, so they skip the check and always
+  // deliver — a task is a single fresh run.
+  const convId = getRequestContext()?.conversationId;
+  if (convId) {
+    const events = await readConvEvents(runtime, convId);
+    if (events && collectDeliveredSkillNames(events).has(name)) {
+      const out: SkillsUseOutput = { status: "already_loaded", name };
+      return {
+        content: textContent(
+          `Skill "${name}" is already loaded in this conversation — its guidance is in context above; no need to load it again.`,
+        ),
+        structuredContent: out as unknown as Record<string, unknown>,
+        isError: false,
+      };
+    }
+  }
+
+  // Cap the delivered body with the same budget every other prompt-bound
+  // skill body gets (bundle `skill://` discovery caps at read; filesystem
+  // bodies are capped here).
+  const capped = truncateMarkdownToBudget(skill.body, MAX_SKILL_BODY_CHARS);
+  const tokens = approxTokens(capped.body);
+  const out: SkillsUseOutput = { status: "loaded", name: skill.name, scope: skill.scope, tokens };
+  return {
+    content: textContent(formatActivatedSkillBlock(skill.name, skill.scope, capped.body)),
+    structuredContent: out as unknown as Record<string, unknown>,
+    isError: false,
+    _meta: {
+      [SKILL_ACTIVATED_META_KEY]: { skillName: skill.name, scope: skill.scope, tokens },
+    },
   };
 }
 

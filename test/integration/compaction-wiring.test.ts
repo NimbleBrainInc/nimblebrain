@@ -147,10 +147,20 @@ describe("history compaction — wired path", () => {
       ).toBe(true);
 
       // (a.3) The summarizer's usage is ALSO recorded to Prometheus — proves
-      // the forked-call metric wiring (recordLlmUsage("compaction", ...) at the
-      // onUsage site) fires end-to-end, not just the aux.usage append.
+      // the forked-call metric wiring (the `onUsage` site) fires end-to-end,
+      // not just the aux.usage append.
+      //
+      // `origin="system"` is load-bearing, not incidental. This fold runs in
+      // `chat()` BEFORE the `runWithRequestContext` that wraps `engine.run`, so
+      // there is no scope for `originOf()` to read. Moving it inside that scope
+      // would silently relabel it `chat` — a production label change with no
+      // other signal — so the assertion pins where the fold sits, not just that
+      // it billed. Its mirror is in `mid-turn-compaction-wiring.test.ts`, where
+      // the same `source` legitimately reports `origin="chat"`.
       const metricsBody = await (await fetch(`${baseUrl}/metrics`)).text();
-      expect(metricsBody).toMatch(/nb_llm_tokens_total\{[^}]*source="compaction"[^}]*\}\s+[1-9]/);
+      expect(metricsBody).toMatch(
+        /nb_llm_tokens_total\{(?=[^}]*source="compaction")(?=[^}]*origin="system")[^}]*\}\s+[1-9]/,
+      );
 
       // (b) The model-facing projection is compacted: it carries the summary
       //     seed. And it RETAINS the oldest operator turn verbatim in the

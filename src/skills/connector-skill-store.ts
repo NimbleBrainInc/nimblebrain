@@ -115,6 +115,7 @@ export function readConnectorSkillCandidates(
       : [`${serverName}__*`];
     out.push({
       name: skill.manifest.name,
+      ...(skill.manifest.description ? { description: skill.manifest.description } : {}),
       body: skill.body,
       scope: CONNECTOR_SKILL_SCOPE,
       toolAffinity: affinity,
