@@ -189,12 +189,53 @@ export function isModelAllowed(
  * fix a slot already pointing at a deprecated model — that override must be
  * repointed in workspace/tenant config separately.
  */
+/**
+ * Can this model serve a chat turn?
+ *
+ * Derived from the catalog rather than listed by hand, because the catalog is
+ * synced and a hand-maintained set goes stale on the next sync — two others in
+ * this area already have.
+ *
+ * The two halves answer different questions, and only one of them currently
+ * excludes anything.
+ *
+ * **Text in and out** is the product requirement: this platform is text-only.
+ * On its own it does not remove embeddings — the catalog records those as text
+ * in, text out, because a vector is not a modality it distinguishes.
+ *
+ * **Tool calling** is what actually separates an embedding or an image model
+ * from a chat model: every turn here hands the model a tool surface, so one
+ * that cannot call a tool cannot serve a slot, and no chat model lacks it.
+ *
+ * Tool calling alone would exclude the same set today, so the modality check is
+ * kept for the case it is the only guard against — a tool-calling model that
+ * emits audio or images rather than text, which is the direction omni models
+ * are heading. It states the requirement rather than relying on a proxy that
+ * happens to coincide with it.
+ */
+function isChatCapable(model: CatalogModel): boolean {
+  return (
+    model.modalities.input.includes("text") &&
+    model.modalities.output.includes("text") &&
+    model.capabilities.toolCall
+  );
+}
+
+/**
+ * The models a deployment will offer for selection.
+ *
+ * Filtered, not flagged — and only here. `listModels` and `getModelByString`
+ * still return everything, so a past turn on a since-excluded model still
+ * resolves for cost reconstruction. Same split `deprecated` already uses.
+ */
 export function getAvailableModels(
   configuredProviders: Record<string, { models?: string[] }>,
 ): Record<string, CatalogModel[]> {
   const result: Record<string, CatalogModel[]> = {};
   for (const [provider, config] of Object.entries(configuredProviders)) {
-    result[provider] = listModels(provider, config.models).filter((m) => !m.deprecated);
+    result[provider] = listModels(provider, config.models).filter(
+      (m) => !m.deprecated && isChatCapable(m),
+    );
   }
   return result;
 }

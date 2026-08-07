@@ -161,6 +161,61 @@ describe("getAvailableModels", () => {
 		expect(result.openai.length).toBeGreaterThan(1);
 	});
 
+	it("excludes models that cannot produce text", () => {
+		// Speech, image and video models are selectable options that cannot hold
+		// a conversation — picking one breaks the slot rather than erroring.
+		const result = getAvailableModels({ google: {}, openai: {} });
+		expect(result.google.some((m) => m.id === "gemini-2.5-flash-preview-tts")).toBe(false);
+		expect(result.google.some((m) => m.id === "gemini-omni-flash-preview")).toBe(false);
+		expect(result.openai.some((m) => m.id === "gpt-image-2")).toBe(false);
+	});
+
+	it("excludes embedding models, which the text check alone lets through", () => {
+		// The reason the predicate is not modality-only. The catalog records an
+		// embedding as text in, text out — a vector is not a modality it
+		// distinguishes — so these pass a text-in/text-out test and would still
+		// be offered. Tool calling is what separates them from a chat model.
+		const embedding = getModelByString("openai:text-embedding-3-large");
+		expect(embedding?.modalities.output).toContain("text");
+		expect(embedding?.capabilities.toolCall).toBe(false);
+
+		const result = getAvailableModels({ openai: {}, google: {} });
+		expect(result.openai.some((m) => m.id === "text-embedding-3-large")).toBe(false);
+		expect(result.openai.some((m) => m.id === "text-embedding-3-small")).toBe(false);
+		expect(result.google.some((m) => m.id === "gemini-embedding-001")).toBe(false);
+		// An image model that also emits text is the same shape.
+		expect(result.google.some((m) => m.id === "gemini-3-pro-image")).toBe(false);
+	});
+
+	it("every offered model is text-in, text-out", () => {
+		// The product requirement, asserted over the whole catalog rather than a
+		// fixture. Tool calling happens to exclude the same set today, so this
+		// does not discriminate on current data — it is the guard for a
+		// tool-calling model that emits audio or images, where the modality
+		// check would be the only thing keeping it out.
+		const result = getAvailableModels({ anthropic: {}, openai: {}, google: {}, xai: {} });
+		for (const [provider, models] of Object.entries(result)) {
+			for (const m of models) {
+				expect(`${provider}:${m.id} in`).toBe(
+					`${provider}:${m.id} ${m.modalities.input.includes("text") ? "in" : "NOT-text"}`,
+				);
+				expect(`${provider}:${m.id} out`).toBe(
+					`${provider}:${m.id} ${m.modalities.output.includes("text") ? "out" : "NOT-text"}`,
+				);
+			}
+		}
+	});
+
+	it("still offers every chat model", () => {
+		const result = getAvailableModels({ anthropic: {}, openai: {}, google: {} });
+		expect(result.anthropic.some((m) => m.id === "claude-sonnet-5")).toBe(true);
+		expect(result.openai.some((m) => m.id === "gpt-5")).toBe(true);
+		expect(result.google.some((m) => m.id === "gemini-2.5-flash")).toBe(true);
+		// Filtered, not dropped: everything excluded above still resolves, so a
+		// past turn on one is still costed and displayed.
+		expect(getModelByString("google:gemini-2.5-flash-preview-tts")).toBeDefined();
+	});
+
 	it("excludes deprecated models from the picker", () => {
 		// gemini-3-pro-preview was retired by Google 2026-03-09. It stays in the
 		// catalog (so existing references still resolve for cost/display) but
