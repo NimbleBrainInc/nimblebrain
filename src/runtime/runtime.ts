@@ -80,7 +80,12 @@ import { createIdentityProvider } from "../identity/provider.ts";
 import { DEV_IDENTITY } from "../identity/providers/dev.ts";
 import { UserStore } from "../identity/user.ts";
 import { InstructionsStore } from "../instructions/index.ts";
-import { getModelByString, getProviderFromModel, isModelAllowed } from "../model/catalog.ts";
+import {
+  getModelByString,
+  getProviderFromModel,
+  isModelAllowed,
+  isModelInPolicy,
+} from "../model/catalog.ts";
 import { buildModelResolver, resolveModelString } from "../model/registry.ts";
 import { type ModelSlot, parseModelSlotRef } from "../model/slots.ts";
 import { registerBuiltinCredentialProviders } from "../oauth/minted-credential-provider.ts";
@@ -3864,8 +3869,20 @@ export class Runtime {
     // provider-less deployment would otherwise accept and, on the preference
     // path, pin every future conversation to.
     if (modelString.trim() === "") return false;
+    const qualified = resolveModelString(modelString);
+    // Policy is checked before the provider guard and independently of it. The
+    // guard below tolerates absent provider config because `getProviderConfigs`
+    // reports a display default rather than a reachability claim — but an
+    // allowlist is an explicit operator statement, so when one exists it binds
+    // whether or not providers are configured.
+    if (!isModelInPolicy(qualified, this.config.modelPolicy?.allowed)) return false;
     if (!this.config.providers) return true;
-    return isModelAllowed(resolveModelString(modelString), this.getProviderConfigs());
+    return isModelAllowed(qualified, this.getProviderConfigs());
+  }
+
+  /** Which models this organization permits. Absent ⇒ permissive. */
+  getModelPolicy(): string[] | undefined {
+    return this.config.modelPolicy?.allowed;
   }
 
   /** Get the model ID for a named slot. */
@@ -4098,6 +4115,7 @@ export class Runtime {
   updateConfig(patch: {
     defaultModel?: string;
     models?: Partial<ModelSlots>;
+    modelPolicy?: { allowed?: string[] };
     maxIterations?: number | null;
     maxInputTokens?: number | null;
     maxOutputTokens?: number | null;
@@ -4122,6 +4140,7 @@ export class Runtime {
         else this.config.models[slot as ModelSlot] = model;
       }
     }
+    if (patch.modelPolicy !== undefined) this.config.modelPolicy = patch.modelPolicy;
     if (patch.defaultModel !== undefined) {
       this.config.defaultModel = patch.defaultModel;
       // Also update models.default for consistency

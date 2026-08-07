@@ -634,6 +634,106 @@ describe("Core Source", () => {
 		}
 	});
 
+	describe("org model policy", () => {
+		async function startWithPolicy(tag: string, allowed?: string[]) {
+			const workDir = join(testDir, `work-${tag}-${Date.now()}`);
+			mkdirSync(workDir, { recursive: true });
+			// `configPath` is only where `set_model_config` writes its override
+			// file; `Runtime.start` does not parse it — the CLI's `loadConfig`
+			// does that and hands the result in. So the seed config goes here.
+			const configPath = join(workDir, "nimblebrain.json");
+			writeFileSync(configPath, JSON.stringify({ version: "1" }));
+			const runtime = await Runtime.start({
+				model: { provider: "custom", adapter: createEchoModel() },
+				noDefaultBundles: true,
+				workDir,
+				configPath,
+				logging: { disabled: true },
+				models: { default: "anthropic:claude-sonnet-5", fast: "anthropic:claude-sonnet-5" },
+				...(allowed ? { modelPolicy: { allowed } } : {}),
+			});
+			const source = await makeInProcessSource("nb", createCoreToolDefs(runtime));
+			return { runtime, source };
+		}
+
+		it("refuses a request for a model outside the list", async () => {
+			const { runtime, source } = await startWithPolicy("gate", [
+				"anthropic:claude-sonnet-5",
+			]);
+			try {
+				expect(runtime.isModelPermitted("anthropic:claude-sonnet-5")).toBe(true);
+				expect(runtime.isModelPermitted("anthropic:claude-opus-5")).toBe(false);
+			} finally {
+				await runtime.shutdown();
+			}
+		});
+
+		it("publishes only the allowed models to the picker", async () => {
+			const { runtime, source } = await startWithPolicy("menu", [
+				"anthropic:claude-sonnet-5",
+			]);
+			try {
+				const cfg = (await source.execute("get_config", {}))
+					.structuredContent as Record<string, unknown>;
+				const models = cfg.availableModels as Record<string, { id: string }[]>;
+				expect(models.anthropic.map((m) => m.id)).toEqual(["claude-sonnet-5"]);
+			} finally {
+				await runtime.shutdown();
+			}
+		});
+
+		it("rejects a list naming a model the deployment cannot offer", async () => {
+			const { runtime, source } = await startWithPolicy("bad-entry");
+			try {
+				const res = await source.execute("set_model_config", {
+					modelPolicy: { allowed: ["anthropic:claude-sonnet-5", "openai:text-embedding-3-large"] },
+				});
+				expect(res.isError).toBe(true);
+				expect(extractText(res.content)).toContain("not a model this deployment can offer");
+			} finally {
+				await runtime.shutdown();
+			}
+		});
+
+		it("rejects a list that excludes the default model", async () => {
+			// Otherwise every new conversation resolves to something the org has
+			// just forbidden, and nothing says so until a turn fails.
+			const { runtime, source } = await startWithPolicy("strands-default");
+			try {
+				const res = await source.execute("set_model_config", {
+					modelPolicy: { allowed: ["anthropic:claude-haiku-4-5-20251001"] },
+				});
+				expect(res.isError).toBe(true);
+				expect(extractText(res.content)).toContain("Cannot exclude the default model");
+			} finally {
+				await runtime.shutdown();
+			}
+		});
+
+		it("a saved preference outside the list falls back without a migration", async () => {
+			// Narrowing policy must not strand a user. `getModelSlots` re-tests the
+			// stored choice on read, so it heals itself on the next turn.
+			const { runtime } = await startWithPolicy("stale-pref", ["anthropic:claude-sonnet-5"]);
+			try {
+				const slots = await runWithRequestContext(
+					{
+						identity: {
+							id: "usr_stale",
+							email: "s@example.com",
+							displayName: "S",
+							orgRole: "member",
+							preferences: { models: { default: "anthropic:claude-opus-5" } },
+						},
+					},
+					() => runtime.getModelSlots(),
+				);
+				expect(slots.default).toBe("anthropic:claude-sonnet-5");
+			} finally {
+				await runtime.shutdown();
+			}
+		});
+	});
+
 	describe("operator-set vs resolved (config round-trip)", () => {
 		/** A runtime whose config file sets nothing beyond `version`. */
 		async function startBare(tag: string) {
