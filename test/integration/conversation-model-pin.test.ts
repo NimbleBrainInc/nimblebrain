@@ -45,6 +45,15 @@ const USER: UserIdentity = {
   orgRole: "member",
 };
 
+/** Someone who chose their own model. `MODEL_B` is never the org default here. */
+const PICKY: UserIdentity = {
+  id: "usr_picky",
+  email: "picky@example.com",
+  displayName: "Picky",
+  orgRole: "member",
+  preferences: { models: { default: MODEL_B } },
+};
+
 let runtime: Runtime;
 const workDir = join(tmpdir(), `nimblebrain-model-pin-${Date.now()}`);
 
@@ -60,6 +69,7 @@ beforeAll(async () => {
   await provisionTestWorkspace(runtime);
   // Resuming a conversation requires current membership of its workspace.
   await runtime.getWorkspaceStore().addMember(TEST_WORKSPACE_ID, USER.id, "member");
+  await runtime.getWorkspaceStore().addMember(TEST_WORKSPACE_ID, PICKY.id, "member");
 });
 
 afterAll(async () => {
@@ -326,6 +336,34 @@ describe("conversations that predate the binding", () => {
     expect(await modelsUsed(legacy.id)).toEqual([MODEL_B]);
     expect(await pinOf(legacy.id)).toBeUndefined();
   });
+
+  test("an unpinned conversation follows the resumer's preference", async () => {
+    // Resolving from current config is the third place the model is chosen,
+    // and it has to see the caller the same way the create path does. With no
+    // pin to defer to, an untinted resolution runs the org default here.
+    const seed = await runtime.chat({
+      message: "seed",
+      workspaceId: TEST_WORKSPACE_ID,
+      identity: PICKY,
+    });
+    const store = await runtime.resolveConversationStore(seed.conversationId);
+    const legacy = await store!.create({
+      ownerId: PICKY.id,
+      workspaceId: TEST_WORKSPACE_ID,
+    });
+    expect(legacy.model).toBeUndefined();
+
+    runtime.updateConfig({ models: { default: MODEL_A } });
+    await runtime.chat({
+      message: "resumed",
+      conversationId: legacy.id,
+      workspaceId: TEST_WORKSPACE_ID,
+      identity: PICKY,
+    });
+
+    expect(await modelsUsed(legacy.id)).toEqual([MODEL_B]);
+    expect(await pinOf(legacy.id)).toBeUndefined();
+  });
 });
 
 describe("the detached-turn path", () => {
@@ -352,5 +390,51 @@ describe("the detached-turn path", () => {
     });
 
     expect(await modelsUsed(conversationId)).toEqual([MODEL_A]);
+  });
+});
+
+describe("whose model the pin captures", () => {
+  // The tint that lets a person's model preference outrank the org default
+  // reads identity from the turn's request context. Both chat doors resolve
+  // the binding before that context existed, so the pin took the org default
+  // and the preference only ever changed what tools reported — never the model
+  // the turn ran on.
+  test("a person's profile preference binds the conversation, not the org default", async () => {
+    runtime.updateConfig({ models: { default: MODEL_A } });
+
+    const conv = await runtime.chat({
+      message: "which model am I on",
+      workspaceId: TEST_WORKSPACE_ID,
+      identity: PICKY,
+    });
+
+    expect(await pinOf(conv.conversationId)).toBe(MODEL_B);
+    // And the turn actually ran on it — a pin the engine ignores is no better
+    // than no pin.
+    expect(await modelsUsed(conv.conversationId)).toEqual([MODEL_B]);
+  });
+
+  test("someone without a preference still gets the org default", async () => {
+    runtime.updateConfig({ models: { default: MODEL_A } });
+
+    const conv = await runtime.chat({
+      message: "no preference here",
+      workspaceId: TEST_WORKSPACE_ID,
+      identity: USER,
+    });
+
+    expect(await pinOf(conv.conversationId)).toBe(MODEL_A);
+  });
+
+  test("the detached-start door binds the same way", async () => {
+    runtime.updateConfig({ models: { default: MODEL_A } });
+
+    const { conversationId } = await runtime.startTurn({
+      message: "started detached",
+      workspaceId: TEST_WORKSPACE_ID,
+      identity: PICKY,
+    });
+
+    expect(await pinOf(conversationId)).toBe(MODEL_B);
   });
 });
