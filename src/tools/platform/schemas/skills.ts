@@ -193,7 +193,8 @@ export const SkillsUseInput = Type.Object(
   {
     name: Type.String({
       minLength: 1,
-      description: "Skill name exactly as listed in the Skill Catalog section (or `skills__list`).",
+      description:
+        "Skill name exactly as listed in the Skill Catalog section of your instructions.",
     }),
   },
   { required: ["name"] },

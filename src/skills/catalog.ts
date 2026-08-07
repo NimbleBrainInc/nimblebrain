@@ -47,6 +47,12 @@ export interface SkillCatalogEntry {
  * matching the tier-override direction of `mergeScopedSkills`) — then sorted
  * by name via codepoint comparison (never locale-sensitive collation), so the
  * output is byte-stable for identical inputs.
+ *
+ * Collision semantics: the losing pool's skill is shadowed out of BOTH the
+ * catalog and `skills__use` resolution, and delivery dedup keys on the bare
+ * name — so activating the winner marks the name delivered for every channel,
+ * including the shadowed overlay's surface-once path. One name, one skill,
+ * one delivery.
  */
 export function collectActivatableSkills(pools: {
   fsCapability: Skill[];

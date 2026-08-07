@@ -140,11 +140,12 @@ const SKILLS_ACTIVATE_DESCRIPTION =
 
 const SKILLS_USE_DESCRIPTION =
   "Load a skill from the Skill Catalog into this conversation. Pass `name` exactly as listed " +
-  "in the Skill Catalog section of your instructions (or from `skills__list`); the skill's " +
-  "full guidance comes back in the tool result — apply it to the task at hand. A skill " +
-  "already delivered in this conversation returns a short 'already loaded' note instead of " +
-  "a second copy. Read-only: does NOT change the skill's stored status (that is `activate`/" +
-  "`deactivate`).";
+  "in the Skill Catalog section of your instructions — the catalog is the authoritative name " +
+  "list (`skills__list` covers only authored skills, not bundle-published ones or connector " +
+  "overlays); on a miss the error lists every valid name. The skill's full guidance comes " +
+  "back in the tool result — apply it to the task at hand. A skill already delivered in this " +
+  "conversation returns a short 'already loaded' note instead of a second copy. Read-only: " +
+  "does NOT change the skill's stored status (that is `activate`/`deactivate`).";
 
 const SKILLS_DEACTIVATE_DESCRIPTION =
   "Deactivate a skill (set status=disabled). The skill stays on disk but is skipped during Layer 3 " +
