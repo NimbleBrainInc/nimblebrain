@@ -18,6 +18,23 @@
  */
 import type { LanguageModelV3Usage } from "@ai-sdk/provider";
 
+/**
+ * Who a priced LLM call was made on behalf of, as distinct from *which slot*
+ * made it (`LlmUsageSource` — main / title / compaction / briefing).
+ *
+ * Derived from the request context, never asserted by a caller: `task` when the
+ * context is unattended, `chat` when it carries a conversation, `system` for a
+ * call with no request scope at all (a detached fast-slot call or a background
+ * job). Lives here rather than beside the counters so `api/metrics.ts` can name
+ * the label type without importing the module that derives it.
+ *
+ * Deliberately does NOT carry a `delegate` member. Delegation is orthogonal —
+ * a sub-agent spawned inside an automation is both delegated and unattended,
+ * and folding the two into one enum files that call under `delegate` and drops
+ * it from the automation total. It rides as its own boolean.
+ */
+export type LlmCallOrigin = "chat" | "task" | "system";
+
 export interface TokenUsage {
   inputTokens: number;
   outputTokens: number;

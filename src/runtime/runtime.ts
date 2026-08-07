@@ -10,7 +10,6 @@ import type {
 import { MetricsEventSink } from "../adapters/metrics-events.ts";
 import { NoopEventSink } from "../adapters/noop-events.ts";
 import { WorkspaceLogSink } from "../adapters/workspace-log-sink.ts";
-import { recordLlmUsage } from "../api/metrics.ts";
 import type { AutomationDomainContext } from "../bundles/automations/src/domain.ts";
 import { bootReconcileConnectorSkills } from "../bundles/connector-skill-reconcile.ts";
 import { sanitizePlacements } from "../bundles/defaults.ts";
@@ -145,6 +144,7 @@ import { SharedSourceRef, type ToolRegistry } from "../tools/registry.ts";
 import { surfaceTools } from "../tools/surfacing.ts";
 import { createSystemTools } from "../tools/system-tools.ts";
 import type { ResourceData, Tool, ToolSource } from "../tools/types.ts";
+import { recordLlmCall } from "../usage/record.ts";
 import type { TokenUsage } from "../usage/types.ts";
 import { WorkspaceContext } from "../workspace/context.ts";
 import { ensureUserWorkspace } from "../workspace/provisioning.ts";
@@ -2432,7 +2432,7 @@ export class Runtime {
     // usage as an aux.usage event so it isn't invisible to cost accounting.
     const appendTitleUsage = store.appendEvent?.bind(store);
     void generateTitle(titleModel, titleInput, output, (usage, llmMs) => {
-      recordLlmUsage("title", titleSlot, usage);
+      recordLlmCall({ source: "title", model: titleSlot, usage });
       appendTitleUsage?.(conversation.id, {
         ts: new Date().toISOString(),
         type: "aux.usage",
@@ -3944,7 +3944,7 @@ export class Runtime {
     usage: TokenUsage,
     llmMs: number,
   ): void {
-    recordLlmUsage("compaction", model, usage);
+    recordLlmCall({ source: "compaction", model, usage });
     store.appendEvent(conversationId, {
       ts: new Date().toISOString(),
       type: "aux.usage",

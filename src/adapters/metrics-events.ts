@@ -3,12 +3,12 @@ import {
   llmRequestDurationSeconds,
   llmTtftSeconds,
   recordBundleCrash,
-  recordLlmUsage,
   toolCallsTotal,
   toolPromotionsTotal,
 } from "../api/metrics.ts";
 import type { EngineEvent, EngineEventType, EventSink } from "../engine/types.ts";
 import { log } from "../observability/log.ts";
+import { recordLlmCall } from "../usage/record.ts";
 import type { TokenUsage } from "../usage/types.ts";
 
 /** Payload envelope carried by every engine event (`EngineEvent.data`). */
@@ -30,9 +30,10 @@ export const MAX_TRACKED_RUNS = 1000;
  * Prometheus or k8s required.
  *
  * Covers the main agentic loop. The forked fast-slot calls (compaction
- * summarizer, auto-title, briefing) run outside the engine and emit no
- * `llm.done`, so their usage is recorded at their own call sites via
- * `recordLlmUsage(source, ...)`.
+ * summarizer, auto-title, briefing) emit no `llm.done`, so their usage is
+ * recorded at their own call sites via `recordLlmCall(...)` — which is also
+ * where their `origin` is derived, since not all of them run inside a request
+ * scope (see `src/usage/record.ts`).
  *
  * Promotions are counted at run end, not at promote time, so each is labeled by
  * whether the model actually called the promoted tool — the wasted-promotion
@@ -59,7 +60,10 @@ export class MetricsEventSink implements EventSink {
   private onLlmDone(data: EventData): void {
     const model = (data.model as string) ?? "unknown";
     const usage = data.usage as TokenUsage | undefined;
-    if (usage) recordLlmUsage("main", model, usage);
+    // `data` carries `parentRunId` on a delegated child's events; `recordLlmCall`
+    // reads it rather than being told, so a new spawn path cannot forget to say
+    // it delegated.
+    if (usage) recordLlmCall({ source: "main", model, usage, event: data });
     // Per-call latency for the p99 alert. `llmMs` is set on every llm.done
     // (engine measures it around the provider call); guard the type anyway.
     const llmMs = data.llmMs;
