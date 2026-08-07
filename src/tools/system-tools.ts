@@ -571,11 +571,12 @@ function handleConfigStatus(runtime?: Runtime): ToolResult {
     "## Configuration",
     // No per-turn claim on this block. Two attempts at one were both wrong in
     // different directions — the limits are not create-scoped, and they are
-    // not what the turn got either: a run can be handed lower ones, and the
-    // input figure is a ceiling the message budget shrinks against the model's
-    // context window. Each line says what it is instead, and the only
-    // turn-scoped statement in the tool is the one above.
-    "Configured values. A run can be given lower limits than these, and the input",
+    // not what the turn got either: a run can be handed its own, bounded by the
+    // engine's hard cap rather than by these, and the input figure is a ceiling
+    // the message budget shrinks against the model's context window. Each line
+    // says what it is instead, and the only turn-scoped statement in the tool
+    // is the one above.
+    "Configured values. A run can be given different limits than these, and the input",
     "figure is a cap — the budget is bounded further by the model's context window.",
     `Default model (what a new conversation starts on): ${defaultModel}`,
     `Fast model (titles, compaction, briefings): ${models.fast}`,
