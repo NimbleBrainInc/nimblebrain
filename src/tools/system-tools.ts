@@ -569,20 +569,20 @@ function handleConfigStatus(runtime?: Runtime): ToolResult {
         ]
       : []),
     "## Configuration",
-    // Split because the two halves behave differently: a slot change reaches
-    // only conversations created after it, while the limits are read on every
-    // turn — including this one.
-    "New conversations are created with:",
-    `Default model: ${defaultModel}`,
-    "",
-    "Applied to every turn, including this one:",
-    // The fast slot is not create-scoped: auto-title, both compaction folds and
-    // the briefing read it live, inside conversations already under way.
+    // No per-turn claim on this block. Two attempts at one were both wrong in
+    // different directions — the limits are not create-scoped, and they are
+    // not what the turn got either: a run can be handed lower ones, and the
+    // input figure is a ceiling the message budget shrinks against the model's
+    // context window. Each line says what it is instead, and the only
+    // turn-scoped statement in the tool is the one above.
+    "Configured values. A run can be given lower limits than these, and the input",
+    "figure is a cap — the budget is bounded further by the model's context window.",
+    `Default model (what a new conversation starts on): ${defaultModel}`,
     `Fast model (titles, compaction, briefings): ${models.fast}`,
     `Providers: ${configuredProviders.join(", ")}`,
     `Max iterations: ${maxIterations}`,
     `Max input tokens: ${maxInputTokens.toLocaleString()}`,
-    `Max output tokens: ${maxOutputTokens.toLocaleString()}`,
+    `Max output tokens (ceiling for the running model): ${maxOutputTokens.toLocaleString()}`,
   ];
   return { content: textContent(lines.join("\n")), isError: false };
 }

@@ -139,8 +139,8 @@ describe("what nb__status reports about the running model", () => {
       expect(second).toContain(`Running on: ${PINNED}`);
       // The new default is still reported — as configuration, under a heading
       // that says what it applies to, so it cannot be read as the answer.
-      expect(second).toContain(`Default model: ${RETARGETED}`);
-      expect(second).toContain("New conversations are created with");
+      expect(second).toContain(`Default model (what a new conversation starts on): ${RETARGETED}`);
+      expect(second).toContain("what a new conversation starts on");
     } finally {
       await runtime.shutdown();
     }
@@ -255,7 +255,11 @@ describe("what nb__status reports about the running model", () => {
       // The output ceiling is derived from the model's own limits, so it has to
       // follow the running model too — reported against the default slot it
       // would name a cap the engine never applied.
-      expect(out).toContain(`Max output tokens: ${runtime.getMaxOutputTokens(RETARGETED).toLocaleString()}`);
+      expect(out).toContain(
+        `Max output tokens (ceiling for the running model): ${runtime
+          .getMaxOutputTokens(RETARGETED)
+          .toLocaleString()}`,
+      );
       expect(runtime.getMaxOutputTokens(RETARGETED)).not.toBe(runtime.getMaxOutputTokens(PINNED));
       // The binding sentence must hold here too: an automation has no
       // conversation, so it cannot claim one.
