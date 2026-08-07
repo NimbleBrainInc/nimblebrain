@@ -20,18 +20,21 @@ import { UnknownNamespacedToolName } from "../../../src/tools/namespace.ts";
 
 describe("mapOrchestratorErrorToToolResult", () => {
   test("UnknownNamespacedToolName → reason: invalid_tool_name", () => {
+    // The triple is one `parseNamespacedToolName` actually raises: a separator
+    // with nothing after it. `parseReason` is a cross-module contract, so a
+    // value invented for the test asserts a shape production cannot emit.
     const err = new UnknownNamespacedToolName(
-      "bad-name",
-      "missing_double_underscore",
-      "bad-name is not a namespaced tool name",
+      "ws_abc__",
+      "empty_tool_name",
+      '[tools/namespace] parseNamespacedToolName: empty tool name in "ws_abc__"',
     );
-    const result = mapOrchestratorErrorToToolResult(err, "bad-name");
+    const result = mapOrchestratorErrorToToolResult(err, "ws_abc__");
     expect(result.isError).toBe(true);
     expect(result.structuredContent).toMatchObject({
       error: "orchestrator_error",
       reason: "invalid_tool_name",
-      name: "bad-name",
-      parseReason: "missing_double_underscore",
+      name: "ws_abc__",
+      parseReason: "empty_tool_name",
     });
   });
 

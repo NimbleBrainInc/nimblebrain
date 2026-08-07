@@ -636,8 +636,10 @@ describe("System Tools", () => {
 
 describe("ConfirmationGate", () => {
 	it("NoopConfirmationGate always approves", async () => {
-		const gate = new NoopConfirmationGate();
-		expect(await gate.confirm()).toBe(true);
+		// Typed through the interface so the call matches what `createPrivilegeHook`
+		// actually makes — the concrete class narrows `confirm()` to zero parameters.
+		const gate: ConfirmationGate = new NoopConfirmationGate();
+		expect(await gate.confirm("test?", {})).toBe(true);
 		expect(gate.supportsInteraction).toBe(false);
 	});
 
