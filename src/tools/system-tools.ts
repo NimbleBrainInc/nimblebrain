@@ -545,14 +545,16 @@ function handleConfigStatus(runtime?: Runtime): ToolResult {
   const configuredProviders = runtime.getConfiguredProviders();
   const maxIterations = runtime.getMaxIterations();
   const maxInputTokens = runtime.getMaxInputTokens();
-  const maxOutputTokens = runtime.getMaxOutputTokens();
+  const running = getRequestContext()?.model;
+  // Against the running model, not the default slot: the ceiling is derived
+  // from the model's own limits, so a turn on a pinned model that differs from
+  // the default would otherwise be told a cap the engine never applied.
+  const maxOutputTokens = runtime.getMaxOutputTokens(running);
 
   // What this turn runs on is a different question from what the config
   // defaults to, and they diverge exactly when someone changes their model and
   // asks: a conversation keeps the model it was born with. Reported first and
   // named separately so the configured default cannot be read as the answer.
-  const running = getRequestContext()?.model;
-
   const lines = [
     ...(running
       ? [
@@ -572,11 +574,11 @@ function handleConfigStatus(runtime?: Runtime): ToolResult {
     // turn — including this one.
     "New conversations are created with:",
     `Default model: ${defaultModel}`,
-    `Model slots: ${Object.entries(models)
-      .map(([k, v]) => `${k}=${v}`)
-      .join(", ")}`,
     "",
     "Applied to every turn, including this one:",
+    // The fast slot is not create-scoped: auto-title, both compaction folds and
+    // the briefing read it live, inside conversations already under way.
+    `Fast model (titles, compaction, briefings): ${models.fast}`,
     `Providers: ${configuredProviders.join(", ")}`,
     `Max iterations: ${maxIterations}`,
     `Max input tokens: ${maxInputTokens.toLocaleString()}`,

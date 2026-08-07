@@ -234,7 +234,9 @@ describe("what nb__status reports about the running model", () => {
       noDefaultBundles: true,
       logging: { disabled: true },
       workDir,
-      models: { default: RETARGETED, fast: RETARGETED },
+      // Default deliberately differs from what the run is told to use, or the
+      // assertion cannot tell a turn-derived answer from a config-derived one.
+      models: { default: PINNED, fast: PINNED },
     });
     await provisionTestWorkspace(runtime);
     await runtime.getWorkspaceStore().addMember(TEST_WORKSPACE_ID, USER.id, "member");
@@ -244,10 +246,17 @@ describe("what nb__status reports about the running model", () => {
         prompt: "what model are you?",
         workspaceId: TEST_WORKSPACE_ID,
         identity: USER,
+        model: RETARGETED,
       });
 
       const out = statusOutput(events, "t_1");
       expect(out).toContain(`Running on: ${RETARGETED}`);
+      expect(out).not.toContain(`Running on: ${PINNED}`);
+      // The output ceiling is derived from the model's own limits, so it has to
+      // follow the running model too — reported against the default slot it
+      // would name a cap the engine never applied.
+      expect(out).toContain(`Max output tokens: ${runtime.getMaxOutputTokens(RETARGETED).toLocaleString()}`);
+      expect(runtime.getMaxOutputTokens(RETARGETED)).not.toBe(runtime.getMaxOutputTokens(PINNED));
       // The binding sentence must hold here too: an automation has no
       // conversation, so it cannot claim one.
       expect(out).toContain("Fixed for this turn");
