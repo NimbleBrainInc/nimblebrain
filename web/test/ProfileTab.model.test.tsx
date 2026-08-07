@@ -165,12 +165,15 @@ describe("the Model control on /profile", () => {
   });
 
   // The empty option has to say what happens, not just be blank — otherwise a
-  // person cannot tell it from "nothing loaded".
-  test("names the configured default in the empty option", async () => {
+  // person cannot tell it from "nothing loaded". It also has to read as
+  // *following* the default: labelled with the model name alone, someone who
+  // wants that model picks it and clears their preference instead, which is
+  // the same outcome only until the default moves.
+  test("the empty option names the default and reads as following it", async () => {
     mounted = await mount();
-    expect(select(mounted.container)!.options[0].textContent).toContain(
-      "anthropic:claude-sonnet-4-6",
-    );
+    const empty = select(mounted.container)!.options[0].textContent ?? "";
+    expect(empty).toContain("anthropic:claude-sonnet-4-6");
+    expect(empty.toLowerCase()).toContain("follow");
   });
 
   test("shows a stored choice as the current value", async () => {

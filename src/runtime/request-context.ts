@@ -53,6 +53,21 @@ export interface RequestContext {
    * rather than silently falling back to the wrong conversation.
    */
   conversationId?: string;
+  /**
+   * The model this turn is actually running on, already resolved and
+   * provider-qualified.
+   *
+   * A conversation is bound to one model for its life, so this is not the same
+   * question as "what is the default model" — after a slot change or a profile
+   * edit the configured default moves and this does not. A tool asked what it
+   * is running on must answer from here; deriving it from config describes a
+   * setting rather than the turn, and the two disagree exactly when someone
+   * changes their model and asks.
+   *
+   * Undefined outside a run (REST tool calls, MCP requests, background jobs) —
+   * there is no turn to describe.
+   */
+  model?: string;
   toolPromotion?: ToolPromotionControls;
   /**
    * True when this context belongs to an unattended run (`executeTask` — an

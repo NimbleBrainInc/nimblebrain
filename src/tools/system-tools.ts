@@ -8,6 +8,7 @@ import { textContent } from "../engine/content-helpers.ts";
 import type { EventSink, ToolPromotionControls, ToolResult, ToolSchema } from "../engine/types.ts";
 import { isInternalTool, NON_ADVANCING_META_KEY } from "../engine/types.ts";
 import { log } from "../observability/log.ts";
+import { getRequestContext } from "../runtime/request-context.ts";
 import type { Runtime } from "../runtime/runtime.ts";
 import type { SelectedSkill } from "../skills/select.ts";
 import type { Skill } from "../skills/types.ts";
@@ -544,18 +545,45 @@ function handleConfigStatus(runtime?: Runtime): ToolResult {
   const configuredProviders = runtime.getConfiguredProviders();
   const maxIterations = runtime.getMaxIterations();
   const maxInputTokens = runtime.getMaxInputTokens();
-  const maxOutputTokens = runtime.getMaxOutputTokens();
+  const running = getRequestContext()?.model;
+  // Against the running model, not the default slot: the ceiling is derived
+  // from the model's own limits, so a turn on a pinned model that differs from
+  // the default would otherwise be told a cap the engine never applied.
+  const maxOutputTokens = runtime.getMaxOutputTokens(running);
 
+  // What this turn runs on is a different question from what the config
+  // defaults to, and they diverge exactly when someone changes their model and
+  // asks: a conversation keeps the model it was born with. Reported first and
+  // named separately so the configured default cannot be read as the answer.
   const lines = [
+    ...(running
+      ? [
+          "## This turn",
+          `Running on: ${running}`,
+          // True of every run, not just a chat: a conversation's model is
+          // pinned at create, a sub-agent's comes from its profile, and an
+          // automation's is resolved at start. In all three the model is
+          // settled before the turn begins and the config below cannot move it.
+          "Fixed for this turn — changing the configuration below does not affect it.",
+          "",
+        ]
+      : []),
     "## Configuration",
-    `Default model: ${defaultModel}`,
-    `Model slots: ${Object.entries(models)
-      .map(([k, v]) => `${k}=${v}`)
-      .join(", ")}`,
+    // No per-turn claim on this block. Two attempts at one were both wrong in
+    // different directions — the limits are not create-scoped, and they are
+    // not what the turn got either: a run can be handed its own, bounded by the
+    // engine's hard cap rather than by these, and the input figure is a ceiling
+    // the message budget shrinks against the model's context window. Each line
+    // says what it is instead, and the only turn-scoped statement in the tool
+    // is the one above.
+    "Configured values. A run can be given different limits than these, and the input",
+    "figure is a cap — the budget is bounded further by the model's context window.",
+    `Default model (what a new conversation starts on): ${defaultModel}`,
+    `Fast model (titles, compaction, briefings): ${models.fast}`,
     `Providers: ${configuredProviders.join(", ")}`,
     `Max iterations: ${maxIterations}`,
     `Max input tokens: ${maxInputTokens.toLocaleString()}`,
-    `Max output tokens: ${maxOutputTokens.toLocaleString()}`,
+    `Max output tokens (ceiling for the running model): ${maxOutputTokens.toLocaleString()}`,
   ];
   return { content: textContent(lines.join("\n")), isError: false };
 }
@@ -569,7 +597,8 @@ async function handleOverviewStatus(
 
   // Version
   if (runtime) {
-    lines.push(`Model: ${runtime.getDefaultModel()}`);
+    const running = getRequestContext()?.model;
+    lines.push(running ? `Model: ${running}` : `Default model: ${runtime.getDefaultModel()}`);
     lines.push(`Max iterations: ${runtime.getMaxIterations()}`);
   }
 
