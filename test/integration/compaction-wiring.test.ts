@@ -29,6 +29,10 @@ import { createMockModel } from "../helpers/mock-model.ts";
 import { createTestAuthAdapter, TEST_IDENTITY } from "../helpers/test-auth-adapter.ts";
 import { TEST_WORKSPACE_ID, provisionTestWorkspace } from "../helpers/test-workspace.ts";
 
+/** The instance-configured fast slot, and the workspace override that must win. */
+const CONFIGURED_FAST_MODEL = "anthropic:configured-fast-model";
+const WORKSPACE_FAST_MODEL = "anthropic:workspace-fast-model";
+
 const API_KEY = "compaction-wiring-test-key-1234";
 const OLDEST_NEEDLE = "OLDEST_TURN_NEEDLE_a1b2c3";
 const SUMMARY_NEEDLE = "COMPACTION_SUMMARY_NEEDLE_d4e5f6";
@@ -58,6 +62,7 @@ beforeAll(async () => {
 
   runtime = await Runtime.start({
     model: { provider: "custom", adapter: model },
+    models: { fast: CONFIGURED_FAST_MODEL },
     noDefaultBundles: true,
     logging: { disabled: true },
     workDir,
@@ -68,6 +73,11 @@ beforeAll(async () => {
   });
 
   await provisionTestWorkspace(runtime);
+  // The bound workspace overrides `models.fast`, distinct from the configured
+  // slot, so which one the forked summarizer resolves is observable below.
+  await runtime
+    .getWorkspaceStore()
+    .update(TEST_WORKSPACE_ID, { models: { fast: WORKSPACE_FAST_MODEL } });
 
   handle = startServer({
     runtime,
@@ -150,17 +160,35 @@ describe("history compaction — wired path", () => {
       // the forked-call metric wiring (the `onUsage` site) fires end-to-end,
       // not just the aux.usage append.
       //
-      // `origin="system"` is load-bearing, not incidental. This fold runs in
-      // `chat()` BEFORE the `runWithRequestContext` that wraps `engine.run`, so
-      // there is no scope for `originOf()` to read. Moving it inside that scope
-      // would silently relabel it `chat` — a production label change with no
-      // other signal — so the assertion pins where the fold sits, not just that
-      // it billed. Its mirror is in `mid-turn-compaction-wiring.test.ts`, where
-      // the same `source` legitimately reports `origin="chat"`.
+      // `origin="chat"` is the load-bearing half. This fold is forked from
+      // `chat()` outside the wrap around `engine.run`, so it only carries the
+      // conversation because `chat()` opens the turn's own scope around it. A
+      // fold that escaped that scope would still bill, still pass every other
+      // assertion here, and silently record its spend as unattributed `system`
+      // — so this pins attribution, not just that the summarizer ran.
       const metricsBody = await (await fetch(`${baseUrl}/metrics`)).text();
       expect(metricsBody).toMatch(
-        /nb_llm_tokens_total\{(?=[^}]*source="compaction")(?=[^}]*origin="system")[^}]*\}\s+[1-9]/,
+        /nb_llm_tokens_total\{(?=[^}]*source="compaction")(?=[^}]*origin="chat")[^}]*\}\s+[1-9]/,
       );
+
+      // The auto-title call is forked the same way, after the turn returns, and
+      // is the other spend that used to fall out as `system`.
+      expect(metricsBody).toMatch(
+        /nb_llm_tokens_total\{(?=[^}]*source="title")(?=[^}]*origin="chat")[^}]*\}\s+[1-9]/,
+      );
+
+      // (a.4) Running inside the turn's scope decides more than attribution:
+      // `getModelSlot("fast")` reads `workspaceModelOverride` off that context,
+      // so the fold resolves the BOUND WORKSPACE's fast slot rather than the
+      // instance-configured one. Unscoped, every line here would name
+      // CONFIGURED_FAST_MODEL — which is what it did before the wrap, and is a
+      // production behavior change worth failing on rather than discovering.
+      const foldModels = events
+        .filter((e) => e.type === "aux.usage" && (e as { source?: string }).source === "compaction")
+        .map((e) => (e as { model?: string }).model);
+      expect(foldModels.length).toBeGreaterThan(0);
+      for (const m of foldModels) expect(m).toBe(WORKSPACE_FAST_MODEL);
+      expect(foldModels).not.toContain(CONFIGURED_FAST_MODEL);
 
       // (b) The model-facing projection is compacted: it carries the summary
       //     seed. And it RETAINS the oldest operator turn verbatim in the
