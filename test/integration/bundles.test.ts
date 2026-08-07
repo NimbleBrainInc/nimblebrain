@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { resolveLocalBundle } from "../../src/bundles/resolve.ts";
 import { McpSource } from "../../src/tools/mcp-source.ts";
+import { NoopEventSink } from "../../src/adapters/noop-events.ts";
 import { ToolRegistry } from "../../src/tools/registry.ts";
 import type { BundleManifest } from "../../src/bundles/types.ts";
 import { extractText } from "../../src/engine/content-helpers.ts";
@@ -129,7 +130,7 @@ describe("McpSource (integration)", () => {
         args: [join(bundleDir, "server.cjs")],
         env: process.env as Record<string, string>,
       },
-    });
+    }, new NoopEventSink());
 
     await source.start();
 
@@ -161,7 +162,7 @@ describe("McpSource (integration)", () => {
         args: [join(bundleDir, "server.cjs")],
         env: process.env as Record<string, string>,
       },
-    });
+    }, new NoopEventSink());
     await source.start();
 
     const registry = new ToolRegistry();
