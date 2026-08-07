@@ -41,11 +41,16 @@
  * all yield zero matching lines, which reads identically to "no violations".
  *
  * So the pass condition is positive, not an absence: `--listFiles` reports the
- * program tsc actually built, and this compares it against the `.ts` files
+ * program tsc actually built, and this compares it against the source files
  * actually on disk under `test/`. Every file must be accounted for, which
  * catches total failure (a renamed project, a glob pointing elsewhere) and
  * partial drift (`test/unit/**` silently dropping the integration suite) alike
  * — neither of which enumerating known config-error codes would reach.
+ *
+ * The two sides must enumerate the same extensions or they cancel: a suffix the
+ * project does not compile and this scan does not list is absent from both sets,
+ * so it is never "unanalyzed" and the count still reconciles. `.tsx` was exactly
+ * that until it was added to both.
  * `--pretty false` is belt-and-braces: it keeps ANSI escapes from landing
  * between `error` and `TS2554:` even when the project sets `pretty`.
  */
@@ -65,6 +70,13 @@ const PROJECT = "tsconfig.test.json";
  * testing.
  */
 const TEST_ROOT = join(ROOT, "test") + sep;
+/**
+ * Source suffixes under `test/`, and the half of the reconciliation this file
+ * owns. The other half is `include` in `tsconfig.test.json` — the two must list
+ * the same set. A suffix in neither is invisible to the check rather than
+ * reported, because it lands in neither the analyzed set nor the on-disk one.
+ */
+const TEST_EXTENSIONS = ["ts", "tsx"];
 
 /**
  * "Expected N arguments, but got M" — a call site that fell behind its callee.
@@ -88,7 +100,9 @@ async function main(): Promise<void> {
   // program rather than inferring coverage from an absence of complaints.
   const analyzed = new Set(lines.filter((l) => l.startsWith(TEST_ROOT)).map((l) => l.trim()));
   const onDisk: string[] = [];
-  for await (const rel of new Glob("**/*.ts").scan({ cwd: join(ROOT, "test") })) {
+  for await (const rel of new Glob(`**/*.{${TEST_EXTENSIONS.join(",")}}`).scan({
+    cwd: join(ROOT, "test"),
+  })) {
     onDisk.push(join(ROOT, "test", rel));
   }
   const unanalyzed = onDisk.filter((f) => !analyzed.has(f));
