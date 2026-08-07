@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, test } from "bun:test";
 import { BundleLifecycleManager } from "../../src/bundles/lifecycle.ts";
-import type { UrlBundleRef } from "../../src/bundles/types.ts";
+import type { BundleRef } from "../../src/bundles/types.ts";
 import type { EngineEvent, EventSink } from "../../src/engine/types.ts";
 
 /**
@@ -31,7 +31,7 @@ const SERVER = "ai-nimblebrain-memory-mcp";
  * auth-derived branch would call it `running` and only `startError` can say
  * otherwise.
  */
-function fleetRef(): UrlBundleRef {
+function fleetRef(): BundleRef {
   return {
     url: "http://mcp-memory.mcp-shared.svc.cluster.local/mcp",
     serverName: SERVER,
@@ -40,7 +40,7 @@ function fleetRef(): UrlBundleRef {
       auth: { type: "provider", provider: "minted", config: { audience: "mcp-fleet" } },
     },
     oauthScope: "workspace",
-  } as UrlBundleRef;
+  } as BundleRef;
 }
 
 function connectionOf(lifecycle: BundleLifecycleManager) {
