@@ -110,6 +110,12 @@ function buildPerCallContext(
       ? { workspaceModelOverride: outer.workspaceModelOverride }
       : {}),
     ...(outer?.conversationId !== undefined ? { conversationId: outer.conversationId } : {}),
+    // The model the turn runs on rides the restamp so a tool asked what it is
+    // running on answers from the run rather than from config. A delegated
+    // sub-agent runs on its own model and overwrites this before its tools
+    // dispatch (see `delegate.ts`), so inheriting the parent's value here is
+    // the correct default rather than a leak.
+    ...(outer?.model !== undefined ? { model: outer.model } : {}),
     ...(outer?.toolPromotion !== undefined ? { toolPromotion: outer.toolPromotion } : {}),
     // `unattended` rides the restamp so a tool dispatched from an unattended run
     // — including a delegated sub-agent, which runs inside the parent call's

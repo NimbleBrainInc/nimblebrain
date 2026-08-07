@@ -1299,7 +1299,25 @@ export class Runtime {
     // workspace's slots and a call outside resolves the instance-configured
     // ones. Adding a forked call below means wrapping it too — the surrounding
     // code is NOT in this context by default.
-    const reqCtx: RequestContext = { ...turnCtx, conversationId: conversation.id };
+    // The conversation's binding wins over both the request override and the
+    // configured slot: a conversation runs on one model for its life, so a
+    // slot change retargets new conversations only. `makeCreateOpts` above carries
+    // the pin, so a conversation created on this path is already bound and
+    // this reads back what it was born with. Absent only on legacy records
+    // predating the binding, which resolve from current config as before.
+    //
+    // Resolved here rather than at first use because `reqCtx` below carries it:
+    // `nb__status` answers "what model is this" from the context, so the turn's
+    // model has to be known before the context that reports it is built.
+    const resolvedModelString =
+      conversation.model ??
+      runWithRequestContext(turnCtx, () => this.resolveRequestModelString(request.model));
+
+    const reqCtx: RequestContext = {
+      ...turnCtx,
+      conversationId: conversation.id,
+      model: resolvedModelString,
+    };
 
     // Build the user message (text + `resource_link` attachment blocks) and
     // append it to the conversation log.
@@ -1490,16 +1508,6 @@ export class Runtime {
     // consumes context even though it now rides the latest user message instead
     // of the cached system block (the prepend happens after telemetry, below).
     const systemPrompt = foldVolatileHead(stableSystem, volatileHead);
-
-    // The conversation's binding wins over both the request override and the
-    // configured slot: a conversation runs on one model for its life, so a
-    // slot change retargets new conversations only. `makeCreateOpts` above carries
-    // the pin, so a conversation created on this path is already bound and
-    // this reads back what it was born with. Absent only on legacy records
-    // predating the binding, which resolve from current config as before.
-    const resolvedModelString =
-      conversation.model ??
-      runWithRequestContext(turnCtx, () => this.resolveRequestModelString(request.model));
 
     // Load history and rehydrate any supported `resource_link` blocks
     // (attached files persisted as URI references) into AI SDK V3 `file`
@@ -2127,6 +2135,7 @@ export class Runtime {
       // The run's correlation id (no conversation exists) — stamps audit/file
       // records so a file the run creates is traceable back to it.
       conversationId: runId,
+      model: resolvedModelString,
       // Unattended run: bars the automation-authoring surface. Rides the ALS
       // context (preserved across the per-call restamp), so a delegated sub-agent
       // inherits it and the wall holds at any depth — enforced at the automations

@@ -12,6 +12,7 @@ import type {
   ToolSchema,
 } from "../engine/types.ts";
 import { DEFAULT_CHILD_ITERATIONS, MAX_CHILD_ITERATIONS } from "../limits.ts";
+import { getRequestContext, runWithRequestContext } from "../runtime/request-context.ts";
 import { resolveMaxOutputTokens } from "../runtime/resolve-max-output-tokens.ts";
 import { resolveThinking } from "../runtime/resolve-thinking.ts";
 import type { AgentProfile } from "../runtime/types.ts";
@@ -412,13 +413,27 @@ export function createDelegateTool(ctx: DelegateContext): InProcessTool {
         const childRouter =
           globs && globs.length > 0 ? new FilteredToolRouter(ctx.tools, childTools) : ctx.tools;
 
-        // Spawn child engine with fresh context (no conversation history)
+        // Spawn child engine with fresh context (no conversation history).
+        //
+        // Restamped with the CHILD's model: the sub-agent runs on its own
+        // model, and its tools inherit the parent's context otherwise — a tool
+        // asked what it is running on would name the parent's model.
         const childEngine = new AgentEngine(model, childRouter, childEvents);
-        const result = await childEngine.run(
-          childConfig,
-          systemPrompt,
-          [{ role: "user", content: [{ type: "text", text: task }] } as LanguageModelV3Message],
-          childTools,
+        const parentCtx = getRequestContext();
+        const result = await runWithRequestContext(
+          { ...(parentCtx ?? { identity: null }), model: modelString },
+          () =>
+            childEngine.run(
+              childConfig,
+              systemPrompt,
+              [
+                {
+                  role: "user",
+                  content: [{ type: "text", text: task }],
+                } as LanguageModelV3Message,
+              ],
+              childTools,
+            ),
         );
 
         const output = result.output || "(sub-agent produced no output)";
