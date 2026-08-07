@@ -68,14 +68,13 @@ export function isDelegated(data: Record<string, unknown> | undefined): boolean 
  * briefing) emit no event, so they omit it and are never delegated.
  *
  * Note that omitting the event says nothing about `origin`, which comes from
- * the ambient scope: compaction folds history in two places, and only the
- * mid-turn one runs inside the scope `chat()` opens around `engine.run`. So
- * `source="compaction"` legitimately splits across `origin="system"` (the
- * between-turns fold) and `origin="chat"`/`"task"` (the mid-turn fold). Both
- * ends are pinned end-to-end — `test/integration/compaction-wiring.test.ts`
- * and `test/integration/mid-turn-compaction-wiring.test.ts` each drive a real
- * fold and assert its `origin` off `/metrics`, so moving either fold across the
- * scope boundary fails a test rather than quietly relabeling production.
+ * the ambient scope. Every fast-slot call forked from a turn runs inside that
+ * turn's scope, so all of them attribute to the conversation whose work they
+ * are doing — a compaction summary and an auto-title are chat spend, and bill
+ * as `chat`. `test/integration/compaction-wiring.test.ts` and
+ * `mid-turn-compaction-wiring.test.ts` drive real folds and assert it off
+ * `/metrics`, so a call escaping the turn scope fails a test rather than
+ * quietly recording its spend as unattributed.
  */
 export function recordLlmCall(args: {
   source: LlmUsageSource;

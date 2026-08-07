@@ -150,16 +150,21 @@ describe("history compaction — wired path", () => {
       // the forked-call metric wiring (the `onUsage` site) fires end-to-end,
       // not just the aux.usage append.
       //
-      // `origin="system"` is load-bearing, not incidental. This fold runs in
-      // `chat()` BEFORE the `runWithRequestContext` that wraps `engine.run`, so
-      // there is no scope for `originOf()` to read. Moving it inside that scope
-      // would silently relabel it `chat` — a production label change with no
-      // other signal — so the assertion pins where the fold sits, not just that
-      // it billed. Its mirror is in `mid-turn-compaction-wiring.test.ts`, where
-      // the same `source` legitimately reports `origin="chat"`.
+      // `origin="chat"` is the load-bearing half. This fold is forked from
+      // `chat()` outside the wrap around `engine.run`, so it only carries the
+      // conversation because `chat()` opens the turn's own scope around it. A
+      // fold that escaped that scope would still bill, still pass every other
+      // assertion here, and silently record its spend as unattributed `system`
+      // — so this pins attribution, not just that the summarizer ran.
       const metricsBody = await (await fetch(`${baseUrl}/metrics`)).text();
       expect(metricsBody).toMatch(
-        /nb_llm_tokens_total\{(?=[^}]*source="compaction")(?=[^}]*origin="system")[^}]*\}\s+[1-9]/,
+        /nb_llm_tokens_total\{(?=[^}]*source="compaction")(?=[^}]*origin="chat")[^}]*\}\s+[1-9]/,
+      );
+
+      // The auto-title call is forked the same way, after the turn returns, and
+      // is the other spend that used to fall out as `system`.
+      expect(metricsBody).toMatch(
+        /nb_llm_tokens_total\{(?=[^}]*source="title")(?=[^}]*origin="chat")[^}]*\}\s+[1-9]/,
       );
 
       // (b) The model-facing projection is compacted: it carries the summary

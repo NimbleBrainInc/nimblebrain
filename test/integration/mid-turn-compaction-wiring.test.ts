@@ -155,13 +155,13 @@ describe("mid-turn compaction — wired path", () => {
       // in-memory for the turn, so nothing rewrites the stored projection.
       expect(events.some((e) => e.type === "history.compacted")).toBe(false);
 
-      // The mirror of `compaction-wiring.test.ts`'s `origin="system"` assertion.
-      // This fold is reached through the `rewriteHistory` hook, which
-      // `engine.applyHistoryRewrite` awaits INSIDE `engine.run` — inside the
-      // request scope — so the same `source="compaction"` legitimately reports
-      // `origin="chat"` here. The split is a property of where the two folds
-      // sit; pinning both ends is what makes moving either one fail a test
-      // rather than quietly move a production label.
+      // Both folds attribute to the conversation, so `source="compaction"` has
+      // one origin rather than depending on which one fired. This fold gets it
+      // from `engine.run`'s own wrap (`engine.applyHistoryRewrite` awaits the
+      // `rewriteHistory` hook inside it); the between-turns fold gets it from
+      // the turn scope `chat()` opens, asserted in `compaction-wiring.test.ts`.
+      // Pinning both is what keeps a future move of either one from quietly
+      // reverting half the attribution.
       const metricsBody = await (await fetch(`${on.baseUrl}/metrics`)).text();
       expect(metricsBody).toMatch(
         /nb_llm_tokens_total\{(?=[^}]*source="compaction")(?=[^}]*origin="chat")[^}]*\}\s+[1-9]/,

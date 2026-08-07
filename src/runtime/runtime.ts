@@ -1287,6 +1287,15 @@ export class Runtime {
       this.loadOrCreateConversation(request, store, makeCreateOpts, ownerId, convWsId),
     );
 
+    // The turn's context, now that the conversation it belongs to is known.
+    // Everything below runs inside it, including the two forked fast-slot calls
+    // that sit outside the engine's own wrap — the history fold before it and
+    // the title after it. Both spend tokens on this conversation's behalf, so
+    // both must be attributable to it; a call that records spend with no
+    // conversation in scope is spend no per-conversation surface can account
+    // for, which is the defect `src/usage/record.ts` exists to prevent.
+    const reqCtx: RequestContext = { ...turnCtx, conversationId: conversation.id };
+
     // Build the user message (text + `resource_link` attachment blocks) and
     // append it to the conversation log.
     const userContent = buildUserMessageContent(request);
@@ -1543,11 +1552,8 @@ export class Runtime {
     // file extractions aren't counted toward the threshold, so compaction can
     // under-fire relative to true prompt size; the overflow windowing path
     // below still bounds the hard context limit.
-    const compactedHistory = await this.maybeCompactHistory(
-      store,
-      conversation.id,
-      history,
-      messageBudget.budget,
+    const compactedHistory = await runWithRequestContext(reqCtx, () =>
+      this.maybeCompactHistory(store, conversation.id, history, messageBudget.budget),
     );
     // The RAW (un-rehydrated) history the engine reasons about: the compacted
     // form when compaction fired, else the full history. Rehydration inlines
@@ -1694,7 +1700,6 @@ export class Runtime {
     // the wrong answer for per-call data. Per-call handlers should
     // accept a `WorkspaceContext` argument from the dispatch path
     // instead. T008 (credential rebinding) tightens this further.
-    const reqCtx: RequestContext = { ...turnCtx, conversationId: conversation.id };
     engineConfig.toolPromotion = this.buildToolPromotionFactory();
 
     // Emit chat.start so the client knows the conversation ID immediately and
@@ -1725,7 +1730,13 @@ export class Runtime {
     // turn lifecycle; best-effort). Broadcasts `conversation.title` on the global
     // SSE — routed to the right conversation by `conversationId` — so delivery is
     // reliable after the turn ends and across tabs.
-    this.maybeGenerateTitle(conversation, request, store, result.output, sessionWsId);
+    // Inside the turn's context even though it outlives the turn: the summarizer
+    // call it forks bills this conversation, and the context is what carries that
+    // attribution. AsyncLocalStorage propagates into the detached promise, so the
+    // scope holds after this function returns.
+    runWithRequestContext(reqCtx, () =>
+      this.maybeGenerateTitle(conversation, request, store, result.output, sessionWsId),
+    );
 
     return {
       response: result.output,
