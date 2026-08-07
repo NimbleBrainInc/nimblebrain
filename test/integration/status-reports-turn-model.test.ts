@@ -24,9 +24,10 @@ import { TEST_WORKSPACE_ID, provisionTestWorkspace } from "../helpers/test-works
 /** Auto-title generation is async and shares the model queue; wait it out. */
 async function waitForTitle(runtime: Runtime, conversationId: string, timeoutMs = 5000) {
   const store = await runtime.resolveConversationStore(conversationId);
+  if (!store) throw new Error(`no conversation store for ${conversationId}`);
   const start = Date.now();
   for (;;) {
-    const events = await store!.readEvents(conversationId);
+    const events = await store.readEvents(conversationId);
     if (events.some((e) => e.type === "aux.usage" || e.type === "metadata.title")) return;
     if (Date.now() - start > timeoutMs) throw new Error("no title generated in time");
     await new Promise((r) => setTimeout(r, 10));
@@ -62,11 +63,19 @@ function statusThenReply(id: string) {
   ];
 }
 
-/** Every `nb__status` result the run produced, in order. */
-function statusOutputs(events: EngineEvent[]): string[] {
-  return events
-    .filter((e) => e.type === "tool.done" && e.data.name === "nb__status")
-    .map((e) => String((e.data as { output?: unknown }).output ?? ""));
+/**
+ * The `nb__status` result for one tool call, by its id.
+ *
+ * By id rather than by position: the auto-title generation draws from the same
+ * model queue, so anything that changes how many slots it takes would silently
+ * shift array indices and re-point every assertion at the wrong turn.
+ */
+function statusOutput(events: EngineEvent[], callId: string): string {
+  const done = events.find(
+    (e) => e.type === "tool.done" && e.data.name === "nb__status" && e.data.id === callId,
+  );
+  if (!done) throw new Error(`no nb__status result for call "${callId}"`);
+  return String((done.data as { output?: unknown }).output ?? "");
 }
 
 describe("what nb__status reports about the running model", () => {
@@ -107,7 +116,7 @@ describe("what nb__status reports about the running model", () => {
         identity: USER,
       });
 
-      const first = statusOutputs(events)[0];
+      const first = statusOutput(events, "call_1");
       expect(first).toContain(`Running on: ${PINNED}`);
 
       // Let the title generation take its queue slot before turn 2, so the
@@ -125,13 +134,13 @@ describe("what nb__status reports about the running model", () => {
         identity: USER,
       });
 
-      const second = statusOutputs(events)[1];
+      const second = statusOutput(events, "call_2");
       // Still the pin: the turn did not change, so the answer must not either.
       expect(second).toContain(`Running on: ${PINNED}`);
       // The new default is still reported — as configuration, under a heading
       // that says what it applies to, so it cannot be read as the answer.
       expect(second).toContain(`Default model: ${RETARGETED}`);
-      expect(second).toContain("NEW conversation");
+      expect(second).toContain("New conversations are created with");
     } finally {
       await runtime.shutdown();
     }
@@ -200,9 +209,117 @@ describe("what nb__status reports about the running model", () => {
         identity: USER,
       });
 
-      const output = statusOutputs(events)[0];
+      const output = statusOutput(events, "c_1");
       expect(output).toContain(`Running on: ${RETARGETED}`);
       expect(output).not.toContain(`Running on: ${PINNED}`);
+    } finally {
+      await runtime.shutdown();
+    }
+  });
+  it("an automation run names its own model, and there is no conversation to bind it to", async () => {
+    // `executeTask` stamps the context too. Nothing is pinned — there is no
+    // conversation — so the report has to be true without appealing to one.
+    const workDir = join(testDir, "status-task-model");
+    mkdirSync(workDir, { recursive: true });
+
+    const events: EngineEvent[] = [];
+    const sink: EventSink = { emit: (e) => events.push(e) };
+
+    const runtime = await Runtime.start({
+      events: [sink],
+      model: {
+        provider: "custom",
+        adapter: createEchoModel({ responses: statusThenReply("t_1") }),
+      },
+      noDefaultBundles: true,
+      logging: { disabled: true },
+      workDir,
+      models: { default: RETARGETED, fast: RETARGETED },
+    });
+    await provisionTestWorkspace(runtime);
+    await runtime.getWorkspaceStore().addMember(TEST_WORKSPACE_ID, USER.id, "member");
+
+    try {
+      await runtime.executeTask({
+        prompt: "what model are you?",
+        workspaceId: TEST_WORKSPACE_ID,
+        identity: USER,
+      });
+
+      const out = statusOutput(events, "t_1");
+      expect(out).toContain(`Running on: ${RETARGETED}`);
+      // The binding sentence must hold here too: an automation has no
+      // conversation, so it cannot claim one.
+      expect(out).toContain("Fixed for this turn");
+      expect(out).not.toContain("conversation was created");
+    } finally {
+      await runtime.shutdown();
+    }
+  });
+
+  it("the overview scope names the running model rather than the default", async () => {
+    const workDir = join(testDir, "status-overview-model");
+    mkdirSync(workDir, { recursive: true });
+
+    const events: EngineEvent[] = [];
+    const sink: EventSink = { emit: (e) => events.push(e) };
+
+    const runtime = await Runtime.start({
+      events: [sink],
+      model: {
+        provider: "custom",
+        adapter: createEchoModel({
+          responses: [
+            // Turn 1 binds the conversation, before the default moves.
+            { text: "hello" },
+            // Auto-title takes the next slot.
+            { text: "A title" },
+            // Turn 2 asks, after the default has moved away from the pin.
+            {
+              text: "checking",
+              toolCalls: [
+                {
+                  toolCallId: "o_1",
+                  toolName: "nb__status",
+                  input: JSON.stringify({ scope: "overview" }),
+                },
+              ],
+            },
+            { text: "answered" },
+          ],
+        }),
+      },
+      noDefaultBundles: true,
+      logging: { disabled: true },
+      workDir,
+      models: { default: PINNED, fast: PINNED },
+    });
+    await provisionTestWorkspace(runtime);
+    await runtime.getWorkspaceStore().addMember(TEST_WORKSPACE_ID, USER.id, "member");
+
+    try {
+      const conv = await runtime.chat({
+        message: "hello",
+        workspaceId: TEST_WORKSPACE_ID,
+        identity: USER,
+      });
+      await waitForTitle(runtime, conv.conversationId);
+
+      // The default must differ from the pin, or the assertion passes whether
+      // the line reports the turn or the configuration.
+      runtime.updateConfig({ models: { default: RETARGETED } });
+
+      await runtime.chat({
+        message: "status please",
+        conversationId: conv.conversationId,
+        workspaceId: TEST_WORKSPACE_ID,
+        identity: USER,
+      });
+
+      const out = statusOutput(events, "o_1");
+      // Inside a run the overview line is the turn's model, not the config's.
+      expect(out).toContain(`Model: ${PINNED}`);
+      expect(out).not.toContain(`Model: ${RETARGETED}`);
     } finally {
       await runtime.shutdown();
     }

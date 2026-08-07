@@ -177,11 +177,15 @@ export function ProfileTab() {
           // Names the option as *following* the default rather than picking a
           // model. Labelled with the model alone, choosing it to get that model
           // instead clears the preference — the same outcome today, and a
-          // different one the moment an admin moves the default.
+          // different one the moment the default moves.
+          //
+          // Deliberately does not say *whose* default: `resolved.models` is the
+          // instance's, and a workspace that overrides the slot resolves to a
+          // different model than this names.
           placeholder={
             configuredDefault
-              ? `Follow the organization default (now ${configuredDefault})`
-              : "Follow the organization default"
+              ? `Follow the default (now ${configuredDefault})`
+              : "Follow the default"
           }
         />
       </Section>
