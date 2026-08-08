@@ -196,6 +196,7 @@ export function loadConfig(flags: CliFlags = {}): RuntimeConfig {
     providers: fileConfig.providers as RuntimeConfig["providers"],
     allowInsecureRemotes: fileConfig.allowInsecureRemotes as boolean | undefined,
     models: fileConfig.models as RuntimeConfig["models"],
+    modelPolicy: fileConfig.modelPolicy as RuntimeConfig["modelPolicy"],
     defaultModel: flags.model ?? fileConfig.defaultModel,
     maxIterations: fileConfig.maxIterations,
     maxInputTokens: fileConfig.maxInputTokens,

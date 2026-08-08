@@ -13,7 +13,7 @@ import {
   InvalidArtifactUriError,
 } from "../host-resources/artifacts/index.ts";
 import { ORG_ADMIN_ROLES } from "../identity/types.ts";
-import { getAvailableModels, isModelAllowed } from "../model/catalog.ts";
+import { getAvailableModels, isModelAllowed, isModelInPolicy } from "../model/catalog.ts";
 import { resolveModelString } from "../model/registry.ts";
 import { isModelSlot, MODEL_SLOTS } from "../model/slots.ts";
 import { log } from "../observability/log.ts";
@@ -144,8 +144,14 @@ function positiveIntFieldError(
 }
 
 function unreachableModelError(model: string, runtime: Runtime, slot?: string): string | null {
-  if (isModelAllowed(model, runtime.getProviderConfigs())) return null;
   const subject = slot ? `Invalid model "${model}" for slot "${slot}"` : `Invalid model "${model}"`;
+  // Qualified before the policy check: `isModelInPolicy` is an exact match on
+  // `provider:id`, and a bare id is legal input here — legacy saved values and
+  // the settings tab both pass one through.
+  if (!isModelInPolicy(resolveModelString(model), runtime.getModelPolicy())) {
+    return `${subject}. It is not in this organization's allowed models.`;
+  }
+  if (isModelAllowed(model, runtime.getProviderConfigs())) return null;
   return `${subject}. Either the provider is not configured or the model is not in the allowlist. Configured providers: ${runtime.getConfiguredProviders().join(", ")}`;
 }
 
@@ -160,6 +166,111 @@ function validateModelSlots(input: Record<string, unknown>, runtime: Runtime): s
     if (model === "") continue;
     const error = unreachableModelError(model, runtime, slot);
     if (error) return error;
+  }
+  return null;
+}
+
+/**
+ * The org's allowed-model list, if this call sets one.
+ *
+ * Two ways it can be wrong, both rejected here rather than at the next turn:
+ * naming a model the deployment cannot offer, and excluding the default slot,
+ * which would leave every new conversation resolving to something the org has
+ * just forbidden. A saved *user preference* outside the list needs no such
+ * check — `getModelSlots` re-tests it on read and falls back, so narrowing the
+ * list heals those without a migration.
+ */
+function validateModelPolicy(input: Record<string, unknown>, runtime: Runtime): string | null {
+  const policy = input.modelPolicy as { allowed?: unknown } | undefined;
+  if (policy === undefined) return null;
+  if (typeof policy !== "object" || policy === null) return "`modelPolicy` must be an object.";
+  const allowed = policy.allowed;
+  if (allowed === undefined) return null;
+  if (!Array.isArray(allowed) || allowed.some((m) => typeof m !== "string")) {
+    return "`modelPolicy.allowed` must be an array of `provider:model-id` strings.";
+  }
+  if (allowed.length === 0) return null;
+
+  // Offerable = reachable provider, chat-capable, not deprecated — the same
+  // set the picker draws from, so policy cannot admit what the menu excludes.
+  //
+  // Known limit: `getProviderConfigs()` reports `{anthropic:{}}` as a display
+  // default when no providers are configured, so a deployment running a custom
+  // adapter cannot name its real model here. Such a deployment has no menu to
+  // govern either, which is why this is a limit rather than a hole — but it
+  // means policy is only useful once providers are configured.
+  const offerable = new Set(
+    Object.entries(getAvailableModels(runtime.getProviderConfigs())).flatMap(([provider, models]) =>
+      models.map((m) => `${provider}:${m.id}`),
+    ),
+  );
+  for (const model of allowed as string[]) {
+    if (!offerable.has(model)) {
+      return `Cannot allow "${model}": it is not a model this deployment can offer. Check the provider is configured and the model supports chat.`;
+    }
+  }
+
+  return null;
+}
+
+/**
+ * After this write, does every slot still point inside the policy in force?
+ *
+ * Runs on every call, not only one that sets a policy: with a policy already in
+ * place, moving or clearing a slot can strand it just as easily as narrowing
+ * the list can. The effective list is the incoming one if this call sets one,
+ * otherwise the one already in force.
+ */
+function policyStrandingError(input: Record<string, unknown>, runtime: Runtime): string | null {
+  const incoming = (input.modelPolicy as { allowed?: unknown } | undefined)?.allowed;
+  const effective = Array.isArray(incoming) ? (incoming as string[]) : runtime.getModelPolicy();
+  if (!effective || effective.length === 0) return null;
+  return strandedSlotError(input, runtime, effective);
+}
+
+/**
+ * Would this allowed-list leave a slot pointing outside it once the call lands?
+ *
+ * Judged on the **post-write** slots, which the runtime computes — an earlier
+ * version derived them here from `input.models` alone and missed the deprecated
+ * `defaultModel` input, which also repoints the default slot, while rejecting
+ * the `""` clear because it read the sentinel as a model name.
+ *
+ * Read from `configuredModelSlots`, not `getDefaultModel`: the latter is tinted
+ * by the calling admin's own preference, so an admin whose personal model
+ * happens to be in the list would pass a guard every other member fails.
+ *
+ * Every slot, because a configured slot is never re-tested at read time — this
+ * write is the only thing standing between a policy and a turn that resolves to
+ * a model the org forbids.
+ */
+function strandedSlotError(
+  input: Record<string, unknown>,
+  runtime: Runtime,
+  allowed: string[],
+): string | null {
+  const pendingDefault = typeof input.defaultModel === "string" ? input.defaultModel : undefined;
+  const slots = runtime.configuredModelSlots({
+    models: (input.models ?? {}) as Partial<Record<string, string>>,
+    ...(pendingDefault !== undefined ? { defaultModel: pendingDefault } : {}),
+  });
+
+  for (const slot of MODEL_SLOTS) {
+    if (!allowed.includes(slots[slot])) {
+      return `Cannot exclude "${slots[slot]}", which the ${slot} slot uses. Point that slot at an allowed model first, in this call or before it.`;
+    }
+  }
+
+  // The deprecated `defaultModel` input is checked on its own as well as
+  // through the chain above: the live patch pushes it into `models.default`
+  // while the override merge leaves that slot alone, so the two writers can
+  // disagree about which value the default slot ends up with. Requiring both to
+  // be allowed is correct under either.
+  if (pendingDefault !== undefined) {
+    const qualified = resolveModelString(pendingDefault);
+    if (!allowed.includes(qualified)) {
+      return `Cannot exclude "${qualified}", which this call points the default model at.`;
+    }
   }
   return null;
 }
@@ -204,6 +315,8 @@ function validateModelConfigPatch(input: Record<string, unknown>, runtime: Runti
   return (
     validateModelSlots(input, runtime) ??
     validateDefaultModel(input, runtime) ??
+    validateModelPolicy(input, runtime) ??
+    policyStrandingError(input, runtime) ??
     validateModelConfigLimits(input) ??
     validateModelConfigThinking(input)
   );
@@ -231,6 +344,9 @@ function mergeModelConfigOverride(
 ): void {
   mergeModelSlots(existing, input);
   if (input.defaultModel !== undefined) existing.defaultModel = String(input.defaultModel);
+  // An empty list is how an org goes back to permissive, so it is stored
+  // rather than treated as absent — `isModelInPolicy` reads both the same way.
+  if (input.modelPolicy !== undefined) existing.modelPolicy = input.modelPolicy;
   // null = clear the operator override; undefined = leave alone. Fields are
   // independent: clearing the thinking mode does not clear the depth or budget.
   for (const { key, coerce } of CLEARABLE_FIELDS) {
@@ -258,6 +374,9 @@ function buildModelConfigRuntimePatch(input: Record<string, unknown>): Record<st
   return {
     ...(modelsPatch ? { models: modelsPatch } : {}),
     ...(input.defaultModel !== undefined ? { defaultModel: String(input.defaultModel) } : {}),
+    ...(input.modelPolicy !== undefined
+      ? { modelPolicy: input.modelPolicy as { allowed?: string[] } }
+      : {}),
     ...scalarPatch,
   };
 }
@@ -628,7 +747,10 @@ export function createCoreToolDefs(runtime: Runtime): InProcessTool[] {
                 maxOutputTokens: runtime.getMaxOutputTokens(),
               },
               configuredProviders: runtime.getConfiguredProviders(),
-              availableModels: getAvailableModels(runtime.getProviderConfigs()),
+              availableModels: getAvailableModels(
+                runtime.getProviderConfigs(),
+                runtime.getModelPolicy(),
+              ),
               preferences: {
                 displayName: identity?.displayName ?? "",
                 timezone: preferences.timezone ?? "",
@@ -706,6 +828,19 @@ export function createCoreToolDefs(runtime: Runtime): InProcessTool[] {
           defaultModel: {
             type: "string",
             description: "Default model ID. Deprecated — use models.default instead.",
+          },
+          modelPolicy: {
+            type: "object",
+            description:
+              "Which models this organization permits. Omit to leave unchanged; set allowed to an empty array to go back to permitting every model the deployment can offer.",
+            properties: {
+              allowed: {
+                type: "array",
+                items: { type: "string" },
+                description:
+                  "Qualified provider:model-id strings. Every entry must be one the deployment can offer, and the list must include the default model.",
+              },
+            },
           },
           maxIterations: {
             type: "number",

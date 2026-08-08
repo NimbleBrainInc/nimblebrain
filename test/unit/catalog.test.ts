@@ -3,6 +3,7 @@ import {
 	GOOGLE_THINKING_LEVELS,
 	findProviderForModelId,
 	getAvailableModels,
+	isModelInPolicy,
 	getModel,
 	getModelByString,
 	getProviderName,
@@ -138,6 +139,46 @@ describe("isModelAllowed", () => {
 	it("bare string defaults to anthropic", () => {
 		expect(isModelAllowed("claude-sonnet-4-6", { anthropic: {} })).toBe(true);
 		expect(isModelAllowed("claude-sonnet-4-6", { openai: {} })).toBe(false);
+	});
+});
+
+describe("org model policy", () => {
+	it("is permissive when unset or empty", () => {
+		// An org that has selected nothing has not forbidden everything. Treating
+		// an empty list as a total ban would take a deployment offline on a
+		// mis-click.
+		expect(isModelInPolicy("anthropic:claude-sonnet-5", undefined)).toBe(true);
+		expect(isModelInPolicy("anthropic:claude-sonnet-5", [])).toBe(true);
+
+		const unset = getAvailableModels({ anthropic: {} });
+		const empty = getAvailableModels({ anthropic: {} }, []);
+		expect(empty.anthropic.length).toBe(unset.anthropic.length);
+		expect(unset.anthropic.length).toBeGreaterThan(1);
+	});
+
+	it("narrows the offered set to the list", () => {
+		const allowed = ["anthropic:claude-sonnet-5"];
+		const result = getAvailableModels({ anthropic: {}, openai: {} }, allowed);
+		expect(result.anthropic.map((m) => m.id)).toEqual(["claude-sonnet-5"]);
+		// A provider with nothing allowed contributes nothing, rather than
+		// falling back to everything.
+		expect(result.openai).toEqual([]);
+	});
+
+	it("can only subtract — naming an unreachable model does not add it", () => {
+		// Policy is permission over what the deployment can reach, not a way to
+		// reach further. openai is not configured here.
+		const result = getAvailableModels({ anthropic: {} }, [
+			"anthropic:claude-sonnet-5",
+			"openai:gpt-5",
+		]);
+		expect(Object.keys(result)).toEqual(["anthropic"]);
+		expect(result.anthropic.map((m) => m.id)).toEqual(["claude-sonnet-5"]);
+	});
+
+	it("cannot readmit a model the capability filter excludes", () => {
+		const result = getAvailableModels({ openai: {} }, ["openai:text-embedding-3-large"]);
+		expect(result.openai).toEqual([]);
 	});
 });
 
