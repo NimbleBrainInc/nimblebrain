@@ -7,7 +7,8 @@
  *   - `skills__read` dispatches by id (filesystem path or `skill://` URI),
  *     rejects path-traversal attempts, and returns full content + metadata.
  *   - `skills__active_for` reads the most-recent `skills.loaded` event.
- *   - `skills__loading_log` filters by `since`/`until`/`skill_id`.
+ *   - `skills__loading_log` projects every load channel and filters by
+ *     `since`/`until`/`skill`/`loaded_by`.
  *
  * The Runtime fixture wraps a real `EventSourcedConversationStore` rooted
  * in a tmpdir so the conversation-event paths are exercised end-to-end.
@@ -1052,43 +1053,91 @@ describe("skills__loading_log", () => {
     const src = await buildSource();
     const client = src.getClient()!;
 
-    // No filters → all three runs.
+    // Rows are per-skill, so a run that composed two skills yields two rows.
+    const runsIn = async (args: Record<string, unknown>): Promise<string[]> => {
+      const res = await client.callTool({ name: "loading_log", arguments: args });
+      const loads = (res as { structuredContent?: { loads?: unknown[] } }).structuredContent
+        ?.loads as Array<{ run_id: string }>;
+      return [...new Set(loads.map((r) => r.run_id))].sort();
+    };
+
+    // No filters → all three runs, four rows (r3 composed two skills).
     const all = await client.callTool({
       name: "loading_log",
       arguments: { conversation_id: conv.id },
     });
-    const allEvents = (all as { structuredContent?: { events?: unknown[] } }).structuredContent
-      ?.events as Array<{ run_id: string }>;
-    expect(allEvents.map((e) => e.run_id).sort()).toEqual(["r1", "r2", "r3"]);
+    const allLoads = (all as { structuredContent?: { loads?: unknown[] } }).structuredContent
+      ?.loads as Array<{ run_id: string }>;
+    expect(allLoads).toHaveLength(4);
+    expect([...new Set(allLoads.map((r) => r.run_id))].sort()).toEqual(["r1", "r2", "r3"]);
 
-    // since cuts r1.
-    const sinceFeb = await client.callTool({
-      name: "loading_log",
-      arguments: { conversation_id: conv.id, since: "2026-02-01T00:00:00.000Z" },
-    });
-    const sinceEvents = (
-      sinceFeb as { structuredContent?: { events?: unknown[] } }
-    ).structuredContent?.events as Array<{ run_id: string }>;
-    expect(sinceEvents.map((e) => e.run_id).sort()).toEqual(["r2", "r3"]);
+    expect(await runsIn({ conversation_id: conv.id, since: "2026-02-01T00:00:00.000Z" })).toEqual([
+      "r2",
+      "r3",
+    ]);
+    expect(await runsIn({ conversation_id: conv.id, until: "2026-02-15T00:00:00.000Z" })).toEqual([
+      "r1",
+      "r2",
+    ]);
 
-    // until cuts r3.
-    const untilJan = await client.callTool({
-      name: "loading_log",
-      arguments: { conversation_id: conv.id, until: "2026-02-15T00:00:00.000Z" },
-    });
-    const untilEvents = (
-      untilJan as { structuredContent?: { events?: unknown[] } }
-    ).structuredContent?.events as Array<{ run_id: string }>;
-    expect(untilEvents.map((e) => e.run_id).sort()).toEqual(["r1", "r2"]);
+    // `skill` matches on the id when the record carries no name.
+    expect(await runsIn({ conversation_id: conv.id, skill: "/skills/a.md" })).toEqual(["r1", "r3"]);
 
-    // skill_id matches r1 + r3 (both reference /skills/a.md).
-    const onlyA = await client.callTool({
+    // `loaded_by` narrows to one channel: only r3's second skill is tool_affinity.
+    const affinity = await client.callTool({
       name: "loading_log",
-      arguments: { conversation_id: conv.id, skill_id: "/skills/a.md" },
+      arguments: { conversation_id: conv.id, loaded_by: "tool_affinity" },
     });
-    const aEvents = (onlyA as { structuredContent?: { events?: unknown[] } }).structuredContent
-      ?.events as Array<{ run_id: string }>;
-    expect(aEvents.map((e) => e.run_id).sort()).toEqual(["r1", "r3"]);
+    const affinityLoads = (affinity as { structuredContent?: { loads?: unknown[] } })
+      .structuredContent?.loads as Array<{ skill: string }>;
+    expect(affinityLoads.map((r) => r.skill)).toEqual(["/skills/c.md"]);
+  });
+
+  test("surfaces overlay and activation loads, which the skills.loaded-only read could not see", async () => {
+    const conv = await runtime.store().create({ ownerId: "user_test" });
+    runtime.store().setActiveConversation(conv.id);
+
+    runtime.store().appendEvent(conv.id, {
+      type: "connector.skill.injected",
+      ts: "2026-01-01T00:00:00.000Z",
+      toolName: "gmail__send",
+      skillName: "gmail-usage",
+      skillBody: "Use the send tool carefully.",
+      scope: "connector",
+    } as never);
+    runtime.store().appendEvent(conv.id, {
+      type: "skill.activated",
+      ts: "2026-01-01T00:01:00.000Z",
+      runId: "r1",
+      toolCallId: "tc-1",
+      skillName: "invoice-runbook",
+      scope: "workspace",
+      tokens: 300,
+    } as never);
+
+    const src = await buildSource();
+    const client = src.getClient()!;
+
+    const res = await client.callTool({
+      name: "loading_log",
+      arguments: { conversation_id: conv.id },
+    });
+    const loads = (res as { structuredContent?: { loads?: unknown[] } }).structuredContent
+      ?.loads as Array<{ skill: string; loaded_by: string; tool_name?: string }>;
+
+    expect(loads.map((r) => [r.skill, r.loaded_by])).toEqual([
+      ["gmail-usage", "tool_use"],
+      ["invoice-runbook", "activation"],
+    ]);
+    expect(loads[0]?.tool_name).toBe("gmail__send");
+
+    // The channel breakdown is in the human summary, so a zero is legible.
+    const text = (res.content as Array<{ type: string; text: string }>)
+      .filter((c) => c.type === "text")
+      .map((c) => c.text)
+      .join("");
+    expect(text).toContain("tool_use 1");
+    expect(text).toContain("activation 1");
   });
 
   test("workspace-wide scan (no conversation_id) covers the active workspace's conversations", async () => {
@@ -1098,15 +1147,37 @@ describe("skills__loading_log", () => {
       type: "skills.loaded",
       ts: "2026-01-01T00:00:00.000Z",
       runId: "r1",
-      skills: [],
-      totalTokens: 0,
+      skills: [
+        {
+          id: "/skills/a.md",
+          layer: 3,
+          scope: "org",
+          version: "",
+          tokens: 10,
+          contentHash: TEST_HASH,
+          loadedBy: "always",
+          reason: "r",
+        },
+      ],
+      totalTokens: 10,
     } as never);
     runtime.store().appendEvent(conv2.id, {
       type: "skills.loaded",
       ts: "2026-02-01T00:00:00.000Z",
       runId: "r2",
-      skills: [],
-      totalTokens: 0,
+      skills: [
+        {
+          id: "/skills/a.md",
+          layer: 3,
+          scope: "org",
+          version: "",
+          tokens: 10,
+          contentHash: TEST_HASH,
+          loadedBy: "always",
+          reason: "r",
+        },
+      ],
+      totalTokens: 10,
     } as never);
 
     // A conversation the same owner has in a DIFFERENT workspace. The scan
@@ -1120,8 +1191,19 @@ describe("skills__loading_log", () => {
       type: "skills.loaded",
       ts: "2026-03-01T00:00:00.000Z",
       runId: "r-other",
-      skills: [],
-      totalTokens: 0,
+      skills: [
+        {
+          id: "/skills/a.md",
+          layer: 3,
+          scope: "org",
+          version: "",
+          tokens: 10,
+          contentHash: TEST_HASH,
+          loadedBy: "always",
+          reason: "r",
+        },
+      ],
+      totalTokens: 10,
     } as never);
 
     // The enumeration branch needs an active workspace — it is scoped, not
@@ -1131,9 +1213,9 @@ describe("skills__loading_log", () => {
     const src = await buildSource();
     const client = src.getClient()!;
     const result = await client.callTool({ name: "loading_log", arguments: {} });
-    const events = (result as { structuredContent?: { events?: unknown[] } }).structuredContent
-      ?.events as Array<{ conv_id: string; run_id: string }>;
-    const convIds = new Set(events.map((e) => e.conv_id));
+    const loads = (result as { structuredContent?: { loads?: unknown[] } }).structuredContent
+      ?.loads as Array<{ conv_id: string; run_id: string }>;
+    const convIds = new Set(loads.map((r) => r.conv_id));
     expect(convIds.has(conv1.id)).toBe(true);
     expect(convIds.has(conv2.id)).toBe(true);
     expect(convIds.has(convOther.id)).toBe(false);
