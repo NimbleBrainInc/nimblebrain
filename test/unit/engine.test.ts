@@ -4169,7 +4169,7 @@ describe("AgentEngine — connector-skill surface-once (P4)", () => {
   });
 });
 
-describe("AgentEngine — skill activation (skills__use `_meta` marker)", () => {
+describe("AgentEngine — skill activation (nb__use_skill `_meta` marker)", () => {
   const GMAIL_CANDIDATE = {
     name: "gmail",
     body: "Confirm the recipient before calling gmail__send.",
@@ -4178,7 +4178,7 @@ describe("AgentEngine — skill activation (skills__use `_meta` marker)", () => 
   };
 
   const useTool: ToolSchema = {
-    name: "skills__use",
+    name: "nb__use_skill",
     description: "Load a catalog skill",
     inputSchema: {},
   };
@@ -4205,12 +4205,12 @@ describe("AgentEngine — skill activation (skills__use `_meta` marker)", () => 
     return { sink, activated, injected };
   }
 
-  /** A tool router where `skills__use` returns an activation-marked result. */
+  /** A tool router where `nb__use_skill` returns an activation-marked result. */
   function activationTools(marker: Record<string, unknown> = {}) {
     return {
       schemas: [useTool, sendTool],
       handler: (call: ToolCall): ToolResult => {
-        if (call.name === "skills__use") {
+        if (call.name === "nb__use_skill") {
           return {
             content: textContent("_gmail_ — scope: connector\n\n<activated-skill>...</activated-skill>"),
             isError: false,
@@ -4254,7 +4254,7 @@ describe("AgentEngine — skill activation (skills__use `_meta` marker)", () => 
   it("emits skill.activated with runId/toolCallId/name/scope/tokens on a marked result", async () => {
     const { sink, activated } = activationSink();
     const engine = makeEngine(
-      batchedCalls([[{ id: "u1", name: "skills__use" }]]),
+      batchedCalls([[{ id: "u1", name: "nb__use_skill" }]]),
       activationTools(),
       sink,
     );
@@ -4277,7 +4277,7 @@ describe("AgentEngine — skill activation (skills__use `_meta` marker)", () => 
   it("suppresses surface-once overlay injection for a skill activated earlier in the run", async () => {
     const { sink, activated, injected } = activationSink();
     const engine = makeEngine(
-      batchedCalls([[{ id: "u1", name: "skills__use" }], [{ id: "c1", name: "gmail__send" }]]),
+      batchedCalls([[{ id: "u1", name: "nb__use_skill" }], [{ id: "c1", name: "gmail__send" }]]),
       activationTools(),
       sink,
     );
@@ -4299,8 +4299,8 @@ describe("AgentEngine — skill activation (skills__use `_meta` marker)", () => 
     const { sink, activated } = activationSink();
     const engine = makeEngine(
       batchedCalls([
-        [{ id: "u1", name: "skills__use" }],
-        [{ id: "u2", name: "skills__use" }],
+        [{ id: "u1", name: "nb__use_skill" }],
+        [{ id: "u2", name: "nb__use_skill" }],
       ]),
       activationTools(),
       sink,
@@ -4334,7 +4334,7 @@ describe("AgentEngine — skill activation (skills__use `_meta` marker)", () => 
         {
           type: "tool-result",
           toolCallId: "u0",
-          toolName: "skills__use",
+          toolName: "nb__use_skill",
           output: { type: "text", value: "<activated-skill>...</activated-skill>" },
         },
       ],
@@ -4358,7 +4358,7 @@ describe("AgentEngine — skill activation (skills__use `_meta` marker)", () => 
   it("ignores a malformed marker (no skillName) without emitting", async () => {
     const { sink, activated } = activationSink();
     const engine = makeEngine(
-      batchedCalls([[{ id: "u1", name: "skills__use" }]]),
+      batchedCalls([[{ id: "u1", name: "nb__use_skill" }]]),
       {
         schemas: [useTool],
         handler: (): ToolResult => ({

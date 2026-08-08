@@ -17,7 +17,7 @@ export const CONNECTOR_SKILL_SYNTHETIC = "connector_skill_injected";
 
 /**
  * Metadata marker stamped on the reconstructed tool-result message of a
- * `skills__use` activation (from its `skill.activated` event). Same dedup
+ * `nb__use_skill` activation (from its `skill.activated` event). Same dedup
  * contract as {@link CONNECTOR_SKILL_SYNTHETIC}: the runtime and the engine's
  * history-scan fallback treat a skill delivered this way as already-delivered,
  * so the surface-once overlay path never re-injects a body the model already
@@ -222,7 +222,7 @@ export type EngineEventType =
   | "connector.skill.injected"
   /**
    * A catalog skill's full body was delivered to the model via the
-   * `skills__use` activation tool. The body itself persists as the tool
+   * `nb__use_skill` activation tool. The body itself persists as the tool
    * result (`tool.done`), so — unlike `connector.skill.injected` — the
    * reconstructor synthesizes NO extra message for this event; it only stamps
    * the dedup marker on the reconstructed tool result. Emitted at most once

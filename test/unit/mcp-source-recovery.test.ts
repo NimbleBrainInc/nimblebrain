@@ -313,7 +313,7 @@ describe("execute (tools/call) — unified recovery", () => {
     // The engine trusts this marker to mark a skill as already-delivered
     // (suppressing future guidance delivery), so it is host-owned on real
     // transports. Only in-process platform sources may carry it — covered by
-    // the `skills__use` tool tests, which read it through a real in-process
+    // the `nb__use_skill` tool tests, which read it through a real in-process
     // source round-trip.
     const source = remoteSource({
       callTool: async () => ({

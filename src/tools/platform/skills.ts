@@ -11,6 +11,10 @@
  *   skills__active_for     — show which skills loaded for a conversation
  *   skills__loading_log    — replay skills.loaded events for analysis
  *
+ * Catalog activation (`nb__use_skill`) is defined here too — it shares this
+ * file's resolution and delivery machinery — but registers on the system-tools
+ * source so it is kernel-direct. See {@link createUseSkillToolDef}.
+ *
  * Resource surfaced:
  *   skill://skills/authoring-guide — Layer 1 vendored markdown
  *
@@ -61,7 +65,7 @@ import {
   SkillsLoadingLogInput,
   SkillsReadInput,
   SkillsUpdateInput,
-  SkillsUseInput,
+  UseSkillInput,
 } from "./schemas/skills.ts";
 
 // ── Source name ──────────────────────────────────────────────────────────
@@ -138,7 +142,7 @@ const SKILLS_ACTIVATE_DESCRIPTION =
   "Activate a skill (set status=active). Sugar over `update`; cleaner permission/audit shape. " +
   "Active skills are eligible for Layer 3 selection on subsequent turns.";
 
-const SKILLS_USE_DESCRIPTION =
+const USE_SKILL_DESCRIPTION =
   "Load a skill from the Skill Catalog into this conversation. Pass `name` exactly as listed " +
   "in the Skill Catalog section of your instructions — the catalog is the authoritative name " +
   "list (`skills__list` covers only authored skills, not bundle-published ones or connector " +
@@ -323,18 +327,6 @@ export function createSkillsSource(runtime: Runtime, eventSink: EventSink): McpS
       handler: async (input: Record<string, unknown>): Promise<ToolResult> => {
         try {
           return await setStatusHandler(runtime, input, "disabled", eventSink, authoringGuidePath);
-        } catch (err) {
-          return errorResult(err);
-        }
-      },
-    },
-    {
-      name: "use",
-      description: SKILLS_USE_DESCRIPTION,
-      inputSchema: SkillsUseInput,
-      handler: async (input: Record<string, unknown>): Promise<ToolResult> => {
-        try {
-          return await handleUseSkill(runtime, input);
         } catch (err) {
           return errorResult(err);
         }
@@ -823,7 +815,42 @@ async function readSkillHandler(
 }
 
 /**
- * `skills__use` core: deliver a catalog skill's full body into the
+ * `nb__use_skill` tool definition, registered by the system-tools factory
+ * rather than on this source.
+ *
+ * The catalog it reads from is rendered into the stable system prefix on
+ * every turn, so the move to activate against it must be reachable on every
+ * turn too. Kernel tools are the only ones that are: every real workspace
+ * exceeds the Tier-1 direct-tool budget (the always-direct kernel set alone
+ * does), so a non-kernel tool is proxied and costs an `nb__manage_tools`
+ * promote before first use — a tools-block rewrite, the most expensive cache
+ * bust in the request, paid in exactly the conversations where the catalog is
+ * doing its job. `nb__` makes it kernel-direct by construction
+ * (`isKernelTool` in `tools/surfacing.ts`).
+ *
+ * Its siblings stay on the `skills` source, and the split is the DRIVER axis
+ * that file documents, not an exception to it: `skills__list`/`read`/`create`
+ * are authoring tools the agent reaches for while *editing* skills, which is
+ * occasional and worth a promote. This one is how the agent *uses* a skill
+ * mid-task. Different audience, different resting place.
+ */
+export function createUseSkillToolDef(runtime: Runtime): InProcessTool {
+  return {
+    name: "use_skill",
+    description: USE_SKILL_DESCRIPTION,
+    inputSchema: UseSkillInput,
+    handler: async (input: Record<string, unknown>): Promise<ToolResult> => {
+      try {
+        return await handleUseSkill(runtime, input);
+      } catch (err) {
+        return errorResult(err);
+      }
+    },
+  };
+}
+
+/**
+ * `nb__use_skill` core: deliver a catalog skill's full body into the
  * conversation, exactly once.
  *
  * Resolution goes through {@link Runtime.listActivatableSkills} — the same
@@ -845,12 +872,12 @@ async function handleUseSkill(
   runtime: Runtime,
   input: Record<string, unknown>,
 ): Promise<ToolResult> {
-  const { name } = input as unknown as SkillsUseInput;
+  const { name } = input as unknown as UseSkillInput;
   const { wsId, userId } = resolveCallContext(runtime);
   if (!wsId) {
     return {
       content: textContent(
-        "skills__use requires a workspace in scope — call it from a chat or task session.",
+        "nb__use_skill requires a workspace in scope — call it from a chat or task session.",
       ),
       isError: true,
     };

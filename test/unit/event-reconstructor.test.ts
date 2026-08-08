@@ -1261,9 +1261,9 @@ describe("reconstructMessages — skill.activated", () => {
     const events: ConversationEvent[] = [
       userMessage("load the runbook skill"),
       runStart("run-1"),
-      llmToolCall("run-1", "tc-1", "skills__use", { name: "runbook" }),
-      toolStart("run-1", "tc-1", "skills__use"),
-      toolDone("run-1", "tc-1", "skills__use", "<activated-skill>...</activated-skill>"),
+      llmToolCall("run-1", "tc-1", "nb__use_skill", { name: "runbook" }),
+      toolStart("run-1", "tc-1", "nb__use_skill"),
+      toolDone("run-1", "tc-1", "nb__use_skill", "<activated-skill>...</activated-skill>"),
       skillActivated("run-1", "tc-1", "runbook"),
       llmText("run-1", "Loaded."),
       runDone("run-1"),
@@ -1285,10 +1285,10 @@ describe("reconstructMessages — skill.activated", () => {
       userMessage("do two things"),
       runStart("run-1"),
       llmParallelToolCalls("run-1", [
-        { toolCallId: "tc-1", toolName: "skills__use" },
+        { toolCallId: "tc-1", toolName: "nb__use_skill" },
         { toolCallId: "tc-2", toolName: "gmail__send" },
       ]),
-      toolDone("run-1", "tc-1", "skills__use", "body"),
+      toolDone("run-1", "tc-1", "nb__use_skill", "body"),
       toolDone("run-1", "tc-2", "gmail__send", "sent"),
       skillActivated("run-1", "tc-1", "runbook"),
       runDone("run-1"),
@@ -1305,8 +1305,8 @@ describe("reconstructMessages — skill.activated", () => {
     const events: ConversationEvent[] = [
       userMessage("hi"),
       runStart("run-1"),
-      llmToolCall("run-1", "tc-1", "skills__use", {}),
-      toolDone("run-1", "tc-1", "skills__use", "body"),
+      llmToolCall("run-1", "tc-1", "nb__use_skill", {}),
+      toolDone("run-1", "tc-1", "nb__use_skill", "body"),
       skillActivated("run-OTHER", "tc-1", "runbook"),
       runDone("run-1"),
     ];

@@ -263,7 +263,7 @@ export function extractOperatorTurns(
 /**
  * Names of skills whose full body has already been delivered into this
  * conversation — via surface-once overlay injection (`connector.skill.injected`)
- * or explicit activation (`skill.activated`). The `skills__use` tool's
+ * or explicit activation (`skill.activated`). The `nb__use_skill` tool's
  * already-delivered check reads this so it answers "already loaded" instead of
  * delivering a second copy.
  *
@@ -480,7 +480,7 @@ function buildToolResultMessage(
   skillActivations?: Map<string, SkillActivatedEvent>,
 ): StoredMessage {
   const done = toolDones.get(tc.toolCallId)!;
-  // A `skills__use` activation delivered a skill body in THIS tool result.
+  // A `nb__use_skill` activation delivered a skill body in THIS tool result.
   // Stamp the dedup marker the engine and runtime scan for — the activation
   // counterpart of the `<connector-skill>` synthetic message's marker. It
   // rides the tool message, so compaction folds it with the body it marks.

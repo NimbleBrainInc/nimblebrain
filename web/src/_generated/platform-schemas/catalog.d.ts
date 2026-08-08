@@ -11,6 +11,11 @@ export declare const PlatformToolCatalog: {
                 remove: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TArray<import("@sinclair/typebox").TString>>;
             }>;
         };
+        readonly use_skill: {
+            readonly input: import("@sinclair/typebox").TObject<{
+                name: import("@sinclair/typebox").TString;
+            }>;
+        };
     };
     readonly skills: {
         readonly list: {
@@ -85,11 +90,6 @@ export declare const PlatformToolCatalog: {
         readonly deactivate: {
             readonly input: import("@sinclair/typebox").TObject<{
                 id: import("@sinclair/typebox").TString;
-            }>;
-        };
-        readonly use: {
-            readonly input: import("@sinclair/typebox").TObject<{
-                name: import("@sinclair/typebox").TString;
             }>;
         };
     };

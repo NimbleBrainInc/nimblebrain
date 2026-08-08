@@ -845,7 +845,7 @@ describe("Tier 1: Composition Integrity — prompt injection via untrusted field
   });
 
   // -----------------------------------------------------------------------
-  // 1.16b — activated-skill block (skills__use delivery) containment
+  // 1.16b — activated-skill block (nb__use_skill delivery) containment
   // -----------------------------------------------------------------------
   describe("1.16b — activated-skill block with containment-tag escape", () => {
     it("wraps the body in <activated-skill> and escapes a forged closing tag", () => {
