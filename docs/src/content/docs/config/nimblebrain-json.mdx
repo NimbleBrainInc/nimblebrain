@@ -249,11 +249,32 @@ Per-provider API keys. Takes precedence over the legacy `model` object when both
 }
 ```
 
-Each provider key is optional. If a provider's `apiKey` is omitted, the runtime falls back to that provider's standard env var (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `GOOGLE_GENERATIVE_AI_API_KEY`, `NEBIUS_API_KEY`, `XAI_API_KEY`).
+Each provider key is optional. If a provider's `apiKey` is omitted, the runtime falls back to that provider's standard env var (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `GOOGLE_GENERATIVE_AI_API_KEY`, `GREENPT_API_KEY`, `NEBIUS_API_KEY`, `XAI_API_KEY`).
 
 <Aside type="caution">
   Prefer environment variables for API keys in production. Config files end up in version control and backup snapshots by accident.
 </Aside>
+
+### GreenPT
+
+GreenPT is a European AI provider with an OpenAI-compatible API, optimized infrastructure, and data centers powered by 100% renewable energy. Configure it with the `greenpt:` prefix:
+
+```json
+{
+  "providers": {
+    "greenpt": { "apiKey": "..." }
+  },
+  "models": {
+    "default": "greenpt:glm-5.2",
+    "fast": "greenpt:kimi-k2.7-code",
+    "reasoning": "greenpt:kimi-k3"
+  }
+}
+```
+
+The key falls back to `GREENPT_API_KEY`. Like `nebius` below, this key is **required when `greenpt` is configured** — the runtime fails to start if neither `providers.greenpt.apiKey` nor `GREENPT_API_KEY` is set, because the GreenPT adapter reads no environment variable of its own and a keyless provider has nothing to authenticate with. Override the endpoint with `baseURL` (default `https://api.greenpt.ai/v1`). The catalog includes the flagship `glm-5.2`, coding-focused `kimi-k2.7-code`, and long-context `kimi-k3`; other chat model IDs still route as free text. Use `GET https://api.greenpt.ai/v1/models` with your API key for the current model list.
+
+GreenPT turns are sent without a reasoning-effort tier, so each model reasons at its own default and `thinkingEffort` has no effect here. GreenPT documents an effort ladder for `kimi-k3` only and publishes no reasoning parameter for the other catalog models, so there is no tier known to be accepted across them — sending an unaccepted value would fail the call outright, which is the worse trade.
 
 ### Nebius Token Factory
 
