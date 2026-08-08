@@ -196,13 +196,16 @@ describe("skills read tools — end-to-end", () => {
         personalWsId,
       );
       expect(log.isError).toBe(false);
-      const events = (log.structured as { events?: unknown[] }).events as Array<{
-        run_id: string;
-        loaded: Array<{ id: string }>;
+      const loads = (log.structured as { loads?: unknown[] }).loads as Array<{
+        run_id?: string;
+        skill: string;
+        skill_id?: string;
+        loaded_by: string;
       }>;
-      expect(events.length).toBeGreaterThanOrEqual(1);
-      const lastLoaded = events[events.length - 1]!;
-      expect(lastLoaded.loaded.some((s) => s.id.endsWith("voice.md"))).toBe(true);
+      expect(loads.length).toBeGreaterThanOrEqual(1);
+      const voiceRow = loads.find((r) => r.skill_id?.endsWith("voice.md"));
+      expect(voiceRow).toBeDefined();
+      expect(voiceRow?.loaded_by).toBe("tool_affinity");
     } finally {
       await runtime.shutdown();
     }

@@ -201,9 +201,13 @@ import { isToolEligibleForPromotion } from "./tool-eligibility.ts";
  * Apply one clearable config field: `undefined` leaves it alone, `null` clears
  * it back to the platform default, anything else sets it.
  *
- * Shared by the three thinking fields so a clear can't be honored on one and
- * dropped on another.
+ * Shared by every clearable config field so a clear can't be honored on one
+ * and dropped on another.
  */
+function applyClearable<T>(current: T | undefined, patched: T | null | undefined): T | undefined {
+  return patched === undefined ? current : (patched ?? undefined);
+}
+
 /**
  * Warn about a configured slot the org's own policy forbids.
  *
@@ -226,10 +230,6 @@ function reportStrandedSlots(rt: Runtime, allowed: string[] | undefined): void {
       effect: "turns resolve to this model while the picker excludes it",
     });
   }
-}
-
-function applyClearable<T>(current: T | undefined, patched: T | null | undefined): T | undefined {
-  return patched === undefined ? current : (patched ?? undefined);
 }
 
 function resolveWorkDir(config: RuntimeConfig): string {
@@ -4193,17 +4193,16 @@ export class Runtime {
    * Update live runtime config (in-memory). Called by set_config tool
    * after disk write.
    *
-   * Every field typed `| null` (`thinking`, `thinkingEffort`,
-   * `thinkingBudgetTokens`) treats `null` as the explicit "clear my
+   * Every field typed `| null` treats `null` as the explicit "clear my
    * override" sentinel, distinct from `undefined` ("leave it alone").
    * The distinction is load-bearing: this method gates on `!== undefined`,
    * so a clear expressed as `undefined` writes to disk but never reaches
    * the live process.
    *
-   * The three are independent — clearing one does not clear the others.
-   * After a clear the resolver applies its own default; see
-   * `resolveThinking`, which owns that policy rather than restating it
-   * here.
+   * They are independent — clearing one does not clear the others. After a
+   * clear the resolver applies its own default; the resolver owns that
+   * policy rather than restating it here (`resolveThinking` for the
+   * thinking fields, `resolveMaxOutputTokens` and friends for the limits).
    */
   updateConfig(patch: {
     defaultModel?: string;

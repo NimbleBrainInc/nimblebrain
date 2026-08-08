@@ -933,29 +933,55 @@ describe("Core Source", () => {
 			}
 		});
 
-		it("reports a config file whose policy strands its own slot", async () => {
-			// The hand-written door. `set_model_config` rejects this; a config file
-			// has nothing validating it against its own policy, so it booted
-			// silently and every turn then resolved outside the published menu.
+		/**
+		 * Boot and collect the stranded-slot errors, so the report and its
+		 * silence are assertable the same way.
+		 */
+		async function strandedErrorsFrom(
+			tag: string,
+			allowed: string[],
+			models: Record<string, string>,
+		) {
 			const errors: { msg: string; data?: unknown }[] = [];
 			const original = log.error;
 			(log as { error: typeof log.error }).error = (msg: string, data?: unknown) => {
 				errors.push({ msg, data });
 			};
-			try {
-				const { runtime } = await startWithPolicy("file-strands", ["anthropic:claude-sonnet-5"], {
-					models: { default: "anthropic:claude-opus-5", fast: "anthropic:claude-opus-5" },
-				});
+			const { runtime } = await (async () => {
 				try {
-					const stranded = errors.filter((e) => e.msg.includes("outside this org's model policy"));
-					expect(stranded.length).toBeGreaterThan(0);
-					expect(JSON.stringify(stranded[0]?.data)).toContain("anthropic:claude-opus-5");
+					return await startWithPolicy(tag, allowed, { models });
 				} finally {
-					await runtime.shutdown();
+					(log as { error: typeof log.error }).error = original;
 				}
+			})();
+			try {
+				return errors.filter((e) => e.msg.includes("outside this org's model policy"));
 			} finally {
-				(log as { error: typeof log.error }).error = original;
+				await runtime.shutdown();
 			}
+		}
+
+		it("reports a config file whose policy strands its own slot", async () => {
+			// The hand-written door. `set_model_config` rejects this; a config file
+			// has nothing validating it against its own policy, so it booted
+			// silently and every turn then resolved outside the published menu.
+			const stranded = await strandedErrorsFrom("file-strands", ["anthropic:claude-sonnet-5"], {
+				default: "anthropic:claude-opus-5",
+				fast: "anthropic:claude-opus-5",
+			});
+			expect(stranded.length).toBeGreaterThan(0);
+			expect(JSON.stringify(stranded[0]?.data)).toContain("anthropic:claude-opus-5");
+		});
+
+		it("says nothing when every configured slot is in policy", async () => {
+			// Pins the silence. A report that fired regardless of the slots would
+			// satisfy the case above while logging an error on every compliant
+			// deployment, and nothing else in the suite reads this channel.
+			const stranded = await strandedErrorsFrom("file-ok", ["anthropic:claude-sonnet-5"], {
+				default: "anthropic:claude-sonnet-5",
+				fast: "anthropic:claude-sonnet-5",
+			});
+			expect(stranded).toEqual([]);
 		});
 
 		it("accepts a bare model id that policy allows in qualified form", async () => {

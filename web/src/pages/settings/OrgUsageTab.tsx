@@ -117,7 +117,14 @@ export function OrgUsageTab() {
   );
 }
 
-function OrgUsageBody({ report, users }: { report: UsageReport; users: Map<string, UserRow> }) {
+/** Exported for the render test in web/src/__tests__/usage-totals-cards.test.tsx. */
+export function OrgUsageBody({
+  report,
+  users,
+}: {
+  report: UsageReport;
+  users: Map<string, UserRow>;
+}) {
   const hasActivity = report.totals.llmCalls > 0;
   const userBreakdown = report.breakdowns.user ?? [];
   const dayBreakdown = report.breakdowns.day ?? [];
@@ -147,7 +154,9 @@ function OrgUsageBody({ report, users }: { report: UsageReport; users: Map<strin
                 <TableHead className="text-right">Tokens</TableHead>
                 <TableHead className="text-right">Cost</TableHead>
                 <TableHead className="text-right">LLM Calls</TableHead>
-                <TableHead className="text-right">Conversations</TableHead>
+                <TableHead className="text-right">
+                  {(report.totals.runs ?? 0) > 0 ? "Sessions" : "Conversations"}
+                </TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -162,9 +171,30 @@ function OrgUsageBody({ report, users }: { report: UsageReport; users: Map<strin
                     <TableCell className="text-right">
                       {formatTokens(totalTokenCount(row.tokens))}
                     </TableCell>
-                    <TableCell className="text-right">{formatUsd(row.cost.total)}</TableCell>
+                    {/*
+                      Marked, not silently zeroed: an all-unpriced user reads
+                      $0.00 otherwise, which is the same "spend looks free"
+                      failure the totals card exists to prevent, one row down.
+                    */}
+                    <TableCell className="text-right">
+                      {formatUsd(row.cost.total)}
+                      {(row.unpricedCalls ?? 0) > 0 ? (
+                        <span className="ml-1 text-xs text-muted-foreground">
+                          +{formatNumber(row.unpricedCalls ?? 0)} unpriced
+                        </span>
+                      ) : null}
+                    </TableCell>
                     <TableCell className="text-right">{formatNumber(row.llmCalls)}</TableCell>
-                    <TableCell className="text-right">{formatNumber(row.conversations)}</TableCell>
+                    {/*
+                      Chats plus automation runs. The aggregator keeps them
+                      apart on the row for the same reason the totals do — a run
+                      is not a conversation — and the column sums them so it
+                      stops under-reporting a user whose spend is mostly
+                      automations.
+                    */}
+                    <TableCell className="text-right">
+                      {formatNumber(row.conversations + (row.runs ?? 0))}
+                    </TableCell>
                   </TableRow>
                 );
               })}
