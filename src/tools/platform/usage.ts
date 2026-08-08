@@ -28,7 +28,6 @@ import type { Runtime } from "../../runtime/runtime.ts";
 import { aggregateUsage } from "../../usage/aggregate.ts";
 import { defineInProcessApp, type InProcessTool } from "../in-process-app.ts";
 import type { McpSource } from "../mcp-source.ts";
-import { loadUsageUi } from "../platform-resources/usage/dashboard.ts";
 import { type UsageGroupBy, UsageReportInput, type UsageReportOutput } from "./schemas/usage.ts";
 
 interface UsageReportArgs {
@@ -130,16 +129,15 @@ export function createUsageSource(runtime: Runtime, eventSink: EventSink): McpSo
     },
   ];
 
-  const resources = new Map([
-    ["ui://usage/dashboard", { text: loadUsageUi, mimeType: "text/html" }],
-  ]);
-
+  // No UI resource. Usage has one rendering — the `/org/usage` settings page —
+  // for the same reason it has one reader: a second surface over the same
+  // numbers drifts from the first, and this one did, silently, on the first
+  // change either received. See the ledger's one-reader merge bar.
   return defineInProcessApp(
     {
       name: "usage",
       version: "1.0.0",
       tools,
-      resources,
     },
     eventSink,
   );
