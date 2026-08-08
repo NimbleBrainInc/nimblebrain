@@ -101,9 +101,7 @@ export class UsageLedger {
   private sweepExpired(retentionMonths: number): void {
     if (retentionMonths <= 0) return;
     try {
-      const cutoff = new Date();
-      cutoff.setUTCMonth(cutoff.getUTCMonth() - retentionMonths);
-      const oldest = usageMonthOf(cutoff);
+      const oldest = oldestRetainedMonth(new Date(), retentionMonths);
       for (const name of readdirSync(usageRoot(this.workDir))) {
         // Lexical comparison is chronological for `YYYY-MM`, and non-conforming
         // names sort clear of it rather than being deleted on a parse failure.
@@ -115,6 +113,23 @@ export class UsageLedger {
       // No ledger root yet on first boot, which is the common case.
     }
   }
+}
+
+/**
+ * The oldest month the window keeps — anything strictly before it is expired.
+ *
+ * Pure, and takes `now`, because the bug this replaced could not be tested
+ * otherwise: `setUTCMonth` preserves the day-of-month, so stepping back from a
+ * 31st into a 30-day month rolls *forward* into the next one and moves the
+ * cutoff a month later — deleting a directory still inside the window. It only
+ * bites on days that do not exist in the target month, so a test run on the 8th
+ * of anything would never see it. Anchoring to the 1st first is the fix.
+ */
+export function oldestRetainedMonth(now: Date, retentionMonths: number): string {
+  const cutoff = new Date(now);
+  cutoff.setUTCDate(1);
+  cutoff.setUTCMonth(cutoff.getUTCMonth() - retentionMonths);
+  return usageMonthOf(cutoff);
 }
 
 /**

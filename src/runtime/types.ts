@@ -166,6 +166,16 @@ export interface RuntimeConfig {
    * multi-replica deploys; the registry shares session metadata across
    * processes. See `src/api/session-store/`.
    */
+  sessionStore?: {
+    type?: "memory" | "redis";
+    /** Idle TTL in seconds. Default: 28800 (8 h). */
+    ttlSeconds?: number;
+    redis?: {
+      url?: string;
+      keyPrefix?: string;
+    };
+  };
+
   /**
    * Durable usage ledger — one JSONL line per priced LLM call, under
    * `{workDir}/usage/`. See `src/usage/ledger.ts`.
@@ -176,16 +186,6 @@ export interface RuntimeConfig {
       enabled?: boolean;
       /** Months of history to keep. Default 24; 0 keeps everything. */
       retentionMonths?: number;
-    };
-  };
-
-  sessionStore?: {
-    type?: "memory" | "redis";
-    /** Idle TTL in seconds. Default: 28800 (8 h). */
-    ttlSeconds?: number;
-    redis?: {
-      url?: string;
-      keyPrefix?: string;
     };
   };
 

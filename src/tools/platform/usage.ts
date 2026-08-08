@@ -2,7 +2,7 @@
  * Usage platform source — provides usage analytics via the `usage__report`
  * tool.
  *
- * Delegates to the shared usage aggregator which reads conversation files
+ * Delegates to the shared usage aggregator, which reads the durable ledger
  * directly. No indexes, no separate log files — conversations are the
  * source of truth.
  *
@@ -39,7 +39,7 @@ interface UsageReportArgs {
 }
 
 const USAGE_REPORT_DESCRIPTION =
-  "Get aggregated usage (tokens, cost, LLM calls) from conversation files. " +
+  "Get aggregated usage (tokens, cost, LLM calls) recorded at the point of spend. " +
   'Defaults to `scope: "user"` — only your own conversations. ' +
   '`scope: "org"` reports every user\'s usage and requires org admin/owner; ' +
   'pair it with `groupBy: "user"` for a per-user breakdown.';

@@ -142,7 +142,10 @@ interface BreakdownAccumulator {
   tokens: TokenBreakdown;
   cost: CostBreakdown;
   llmCalls: number;
+  /** Chat session ids. Task runs go in `runIds` — the same split `totals` makes. */
   sids: Set<string>;
+  runIds: Set<string>;
+  unpricedCalls: number;
 }
 
 // ---------------------------------------------------------------------------
@@ -278,6 +281,8 @@ function getBreakdownAccumulator(
       cost: createCostBreakdown(),
       llmCalls: 0,
       sids: new Set(),
+      runIds: new Set(),
+      unpricedCalls: 0,
     };
     map.set(key, accumulator);
   }
@@ -307,6 +312,8 @@ function finalizeBreakdown(
       cost: data.cost,
       llmCalls: data.llmCalls,
       conversations: data.sids.size,
+      ...(data.runIds.size > 0 ? { runs: data.runIds.size } : {}),
+      ...(data.unpricedCalls > 0 ? { unpricedCalls: data.unpricedCalls } : {}),
       cacheHitRate: computeCacheHitRate(data.tokens),
     }))
     .sort((a, b) => a.key.localeCompare(b.key));
@@ -363,12 +370,11 @@ export function resolveDateRange(
 /**
  * Optional filters/dimensions layered on top of the date range.
  *
- * `ownerFilter` is the authorization boundary for the self-view: when set,
- * only conversations whose line-1 `ownerId` matches are aggregated. The
- * caller (the usage tool handler) sets it to the requester's own id so a
- * non-admin physically cannot aggregate another user's conversations —
- * the filter runs in the aggregator, below the tool surface, so it can't
- * be bypassed by a malformed call.
+ * `ownerFilter` is the authorization boundary for the self-view: when set, only
+ * lines whose `userId` matches are aggregated. The caller (the usage tool
+ * handler) sets it to the requester's own id, so a non-admin physically cannot
+ * aggregate another user's spend — the filter runs here, below the tool
+ * surface, and cannot be bypassed by a malformed call.
  */
 export interface AggregateUsageOptions {
   from?: string;
@@ -384,18 +390,6 @@ export interface AggregateUsageOptions {
   ownerFilter?: string;
 }
 
-/**
- * Read the ledger lines in range, oldest month first.
- *
- * A month's directory holds one shard per writer plus, after a migration,
- * `backfill.jsonl`. All of them are read: the backfill shard covers the period
- * before the live writer existed, and its cutoff is what keeps the two from
- * overlapping (see `scripts/backfill-usage-ledger.ts`).
- *
- * A malformed line is skipped rather than failing the report — a ledger that
- * cannot be read at all is worse than one missing a line, and the line count is
- * itself the signal if it ever becomes common.
- */
 /** Parse one shard's lines into the records in range the caller may see. */
 function parseShard(
   text: string,
@@ -505,7 +499,8 @@ function accumulateRecord(record: LlmCallRecord, sink: AggregationSink): void {
   // Unpriced is not free. A line the catalog cannot price contributes tokens
   // and zero dollars, and this is the count that says the dollar figure is
   // incomplete rather than the spend being zero.
-  if (!isPriced(record)) sink.unpricedCalls++;
+  const priced = isPriced(record);
+  if (!priced) sink.unpricedCalls++;
 
   // Per-model (normalized to strip date suffix and provider prefix)
   const modelKey = normalizeModel(record.model);
@@ -521,19 +516,25 @@ function accumulateRecord(record: LlmCallRecord, sink: AggregationSink): void {
     addTokens(bucket.tokens, tokens);
     addCost(bucket.cost, cost);
     bucket.llmCalls++;
-    if (record.sessionId) bucket.sids.add(record.sessionId);
+    // Same split as `totals`, for the same reason: a task run stamps its run id
+    // into `sessionId`, so folding the two here would report an automation as a
+    // conversation in every breakdown row while the totals said otherwise.
+    if (record.sessionId) {
+      if (record.origin === "task") bucket.runIds.add(record.sessionId);
+      else bucket.sids.add(record.sessionId);
+    }
+    if (!priced) bucket.unpricedCalls++;
   }
 }
 
 /**
  * Aggregate tenant spend from the durable usage ledger under `workDir`.
  *
- * 1. List all .jsonl files in conversationsDir
- * 2. Read line 1 (metadata) for conversation id / owner attribution
- *    (and filter by `ownerId` when `ownerFilter` is set)
- * 3. Scan for llm.response events whose own `ts` date is in range
- * 4. Derive totals, per-model, and breakdowns for the requested groupBy
- *    dimensions (`groupBy: "user"` buckets by the conversation owner)
+ * 1. Read the shards for every month the range spans, dropping out-of-range
+ *    lines and — when `ownerFilter` is set — anyone else's
+ * 2. Derive totals, splitting chat conversations from task runs and counting
+ *    the calls no price could be found for
+ * 3. Derive per-model and per-dimension breakdowns, which make the same split
  */
 export async function aggregateUsage(
   workDir: string,

@@ -92,7 +92,12 @@ export interface UsageBreakdownEntry {
   tokens: UsageTokenBreakdown;
   cost: UsageCostBreakdown;
   llmCalls: number;
+  /** Distinct chat conversations. Task runs are counted by `runs`, as in `totals`. */
   conversations: number;
+  /** Distinct task runs in this bucket. Present only when non-zero. */
+  runs?: number;
+  /** Calls with no resolvable price. Present only when non-zero. See `totals`. */
+  unpricedCalls?: number;
   /** Input-side cache-hit rate (0–1). See `computeCacheHitRate` in the aggregator. */
   cacheHitRate?: number;
 }

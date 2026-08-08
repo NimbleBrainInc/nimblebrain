@@ -4789,6 +4789,11 @@ export class Runtime {
   }
 
   async shutdown(): Promise<void> {
+    // Release the process ledger. It is module-level, so a second runtime in the
+    // same process would otherwise inherit this one's shard path and append a
+    // dead work dir's spend to it — which is what a test suite starting several
+    // runtimes actually does.
+    setUsageLedger(undefined);
     await this.telemetryManager.shutdown();
     // Abort every in-flight detached turn BEFORE removing the sources they
     // depend on. A detached turn's lifecycle is decoupled from any HTTP

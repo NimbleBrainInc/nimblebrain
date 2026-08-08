@@ -556,3 +556,46 @@ describe("resolveDateRange", () => {
     expect(range.to).toBe("2026-04-30");
   });
 });
+
+describe("breakdown rows make the same split as totals", () => {
+  it("counts a task run under runs, not conversations, in every row", async () => {
+    const dir = makeTmpDir();
+    writeCalls(dir, { id: "conv_1", ownerId: "usr_a" }, [llmEvent({ inputTokens: 10 })]);
+    writeCalls(dir, { id: "run_1", ownerId: "usr_a", origin: "task" }, [
+      llmEvent({ inputTokens: 20 }),
+    ]);
+
+    const report = await aggregateUsage(dir, "all", "day");
+
+    // The defect this pins: totals split the two and the rows did not, so one
+    // payload disagreed with itself and the UI's conversations column read 2.
+    expect(report.totals.conversations).toBe(1);
+    expect(report.totals.runs).toBe(1);
+    const row = report.breakdown[0];
+    expect(row?.conversations).toBe(1);
+    expect(row?.runs).toBe(1);
+  });
+
+  it("reports unpriced calls per row, not only in totals", async () => {
+    const dir = makeTmpDir();
+    writeCalls(dir, { id: "run_1", origin: "task" }, [
+      llmEvent({ model: "unknown-model-xyz", inputTokens: 100 }),
+    ]);
+
+    const report = await aggregateUsage(dir, "all", "day");
+    expect(report.totals.unpricedCalls).toBe(1);
+    expect(report.breakdown[0]?.unpricedCalls).toBe(1);
+  });
+
+  it("groups by origin and by provider", async () => {
+    const dir = makeTmpDir();
+    writeCalls(dir, { id: "conv_1" }, [llmEvent({ model: "nebius:zai-org/GLM-5.1" })]);
+    writeCalls(dir, { id: "run_1", origin: "task" }, [llmEvent({ model: "anthropic:claude-x" })]);
+
+    const byOrigin = await aggregateUsage(dir, "all", "origin");
+    expect(byOrigin.breakdown.map((b) => b.key).sort()).toEqual(["chat", "task"]);
+
+    const byProvider = await aggregateUsage(dir, "all", "provider");
+    expect(byProvider.breakdown.map((b) => b.key).sort()).toEqual(["anthropic", "nebius"]);
+  });
+});

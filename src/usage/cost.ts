@@ -3,7 +3,7 @@
  *
  * `costBreakdown(model, usage)` is the single source of truth for the
  * arithmetic. `estimateCost(...)` is sugar for `.total`. The
- * usage-aggregator's per-bucket dashboard math reads the same struct,
+ * The usage aggregator's per-bucket dashboard math reads the same struct,
  * so the dashboard total can never silently diverge from the live
  * per-turn cost.
  *
