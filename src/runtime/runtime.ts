@@ -4208,7 +4208,6 @@ export class Runtime {
   updateConfig(patch: {
     defaultModel?: string;
     models?: Partial<ModelSlots>;
-    modelPolicy?: { allowed?: string[] };
     maxIterations?: number | null;
     maxInputTokens?: number | null;
     maxOutputTokens?: number | null;
@@ -4233,7 +4232,6 @@ export class Runtime {
         else this.config.models[slot as ModelSlot] = model;
       }
     }
-    if (patch.modelPolicy !== undefined) this.config.modelPolicy = patch.modelPolicy;
     if (patch.defaultModel !== undefined) {
       this.config.defaultModel = patch.defaultModel;
       // Also update models.default for consistency
@@ -4662,7 +4660,6 @@ export class Runtime {
 
     return {
       ...(Object.keys(models).length > 0 ? { models } : {}),
-      ...(this.config.modelPolicy !== undefined ? { modelPolicy: this.config.modelPolicy } : {}),
       ...(this.config.maxIterations !== undefined
         ? { maxIterations: this.config.maxIterations }
         : {}),

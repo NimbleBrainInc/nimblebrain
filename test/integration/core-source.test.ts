@@ -686,33 +686,7 @@ describe("Core Source", () => {
 			}
 		});
 
-		it("rejects a list naming a model the deployment cannot offer", async () => {
-			const { runtime, source } = await startWithPolicy("bad-entry");
-			try {
-				const res = await source.execute("set_model_config", {
-					modelPolicy: { allowed: ["anthropic:claude-sonnet-5", "openai:text-embedding-3-large"] },
-				});
-				expect(res.isError).toBe(true);
-				expect(extractText(res.content)).toContain("not a model this deployment can offer");
-			} finally {
-				await runtime.shutdown();
-			}
-		});
 
-		it("rejects a list that excludes the default model", async () => {
-			// Otherwise every new conversation resolves to something the org has
-			// just forbidden, and nothing says so until a turn fails.
-			const { runtime, source } = await startWithPolicy("strands-default");
-			try {
-				const res = await source.execute("set_model_config", {
-					modelPolicy: { allowed: ["anthropic:claude-haiku-4-5-20251001"] },
-				});
-				expect(res.isError).toBe(true);
-				expect(extractText(res.content)).toContain("which the default slot uses");
-			} finally {
-				await runtime.shutdown();
-			}
-		});
 
 		it("survives a restart — the loader carries it", async () => {
 			// The gap the suite missed: `set_model_config` enforced until the
@@ -751,8 +725,13 @@ describe("Core Source", () => {
 			// The admin's own preference must not decide whether a policy strands
 			// everyone else: tinted, an admin who prefers the one allowed model
 			// passes a guard every other member fails.
-			const { runtime, source } = await startWithPolicy("tinted-admin");
+			const { runtime, source } = await startWithPolicy("tinted-admin", [
+				"anthropic:claude-haiku-4-5-20251001",
+			]);
 			try {
+				// The configured default is sonnet-5, which the policy forbids, so
+				// clearing the fast slot has to be judged against that — not against
+				// the haiku this admin happens to prefer.
 				const res = await runWithRequestContext(
 					{
 						identity: {
@@ -763,10 +742,7 @@ describe("Core Source", () => {
 							preferences: { models: { default: "anthropic:claude-haiku-4-5-20251001" } },
 						},
 					},
-					() =>
-						source.execute("set_model_config", {
-							modelPolicy: { allowed: ["anthropic:claude-haiku-4-5-20251001"] },
-						}),
+					() => source.execute("set_model_config", { models: { fast: "" } }),
 				);
 				expect(res.isError).toBe(true);
 				expect(extractText(res.content)).toContain("which the default slot uses");
@@ -776,14 +752,15 @@ describe("Core Source", () => {
 		});
 
 		it("checks the fast slot too", async () => {
-			const { runtime, source } = await startWithPolicy("fast-slot");
+			const { runtime, source } = await startWithPolicy("fast-slot", [
+				"anthropic:claude-sonnet-5",
+			]);
 			try {
 				const res = await source.execute("set_model_config", {
-					models: { default: "anthropic:claude-sonnet-5", fast: "anthropic:claude-opus-5" },
-					modelPolicy: { allowed: ["anthropic:claude-sonnet-5"] },
+					models: { fast: "anthropic:claude-opus-5" },
 				});
 				expect(res.isError).toBe(true);
-				expect(extractText(res.content)).toContain("which the fast slot uses");
+				expect(extractText(res.content)).toContain("not in this organization's allowed models");
 			} finally {
 				await runtime.shutdown();
 			}
@@ -793,11 +770,12 @@ describe("Core Source", () => {
 			// `models` is not the only field that moves a slot. Judged on
 			// `input.models` alone, this call was accepted and every member
 			// without a preference then ran on a model the org had just forbidden.
-			const { runtime, source } = await startWithPolicy("strand-via-default");
+			const { runtime, source } = await startWithPolicy("strand-via-default", [
+				"anthropic:claude-sonnet-5",
+			]);
 			try {
 				const res = await source.execute("set_model_config", {
 					defaultModel: "anthropic:claude-opus-5",
-					modelPolicy: { allowed: ["anthropic:claude-sonnet-5"] },
 				});
 				expect(res.isError).toBe(true);
 				expect(runtime.isModelPermitted(runtime.configuredModelSlots().default)).toBe(true);
@@ -810,14 +788,15 @@ describe("Core Source", () => {
 			// The mirror of the above: the guard must judge the post-write state,
 			// not the prior one, or its own advice — "point that slot at an
 			// allowed model in this call" — is impossible to follow.
-			const { runtime, source } = await startWithPolicy("repoint-and-narrow");
+			const { runtime, source } = await startWithPolicy("repoint-and-narrow", [
+				"anthropic:claude-haiku-4-5-20251001",
+			]);
 			try {
 				const res = await source.execute("set_model_config", {
 					models: {
 						default: "anthropic:claude-haiku-4-5-20251001",
 						fast: "anthropic:claude-haiku-4-5-20251001",
 					},
-					modelPolicy: { allowed: ["anthropic:claude-haiku-4-5-20251001"] },
 				});
 				expect(`isError: ${res.isError} — ${extractText(res.content)}`).toContain(
 					"isError: false",
@@ -889,18 +868,6 @@ describe("Core Source", () => {
 			}
 		});
 
-		it("publishes the policy it filters by", async () => {
-			const { runtime, source } = await startWithPolicy("publish", [
-				"anthropic:claude-sonnet-5",
-			]);
-			try {
-				const cfg = (await source.execute("get_config", {}))
-					.structuredContent as Record<string, unknown>;
-				expect(cfg.modelPolicy).toEqual({ allowed: ["anthropic:claude-sonnet-5"] });
-			} finally {
-				await runtime.shutdown();
-			}
-		});
 
 		it("accepts a bare model id that policy allows in qualified form", async () => {
 			// Bare ids are legal input; the policy check is an exact match, so it
