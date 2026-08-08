@@ -19,12 +19,14 @@ import {
   reconstructMessages,
 } from "./event-reconstructor.ts";
 import { ConversationIndex, canAccess } from "./index-cache.ts";
+import { parseConversationPath } from "./paths.ts";
 import {
   type ConnectorSkillInjectedEvent,
   type ContextAssembledEvent,
   type ContextAssembledSource,
   type Conversation,
   type ConversationAccessContext,
+  type ConversationChange,
   type ConversationEvent,
   type ConversationListResult,
   type ConversationPatch,
@@ -387,14 +389,26 @@ export interface EventSourcedStoreConfig {
    * this to its conversation-cache invalidation so cross-workspace lists/loads
    * (the locator and the conversations-tool index) stay fresh. The per-dir
    * `ConversationIndex` is invalidated independently in-store.
+   *
+   * The change names the ONE conversation that moved, so a cache can re-read a
+   * single file instead of the whole tenant. This is the SSE/event-sink hot
+   * path — one call per appended event line — so it must stay O(1): the store
+   * passes coordinates it already computed and never stats or reads here.
    */
-  onMutate?: () => void;
+  onMutate?: (change: ConversationChange) => void;
 }
 
 export class EventSourcedConversationStore implements ConversationStore, EventSink {
   private dir: string;
   private logLevel: "normal" | "debug";
-  private onMutate?: () => void;
+  private onMutate?: (change: ConversationChange) => void;
+  /**
+   * The workspace this store's dir belongs to, resolved once at construction —
+   * the store is per-`workspaces/<wsId>/conversations/<ownerId>/`, so it is
+   * fixed for the store's whole life. Resolving it here keeps every mutation
+   * notification O(1). `null` for a flat non-workspace dir (legacy, fixtures).
+   */
+  private readonly wsId: string | null;
   private index = new ConversationIndex();
   private activeConversationId: string | null = null;
   private pendingWrites = new Set<Promise<unknown>>();
@@ -405,9 +419,19 @@ export class EventSourcedConversationStore implements ConversationStore, EventSi
     this.dir = config.dir;
     this.logLevel = config.logLevel ?? "normal";
     this.onMutate = config.onMutate;
+    this.wsId = parseConversationPath(this.dir)?.wsId ?? null;
     if (!existsSync(this.dir)) {
       mkdirSync(this.dir, { recursive: true });
     }
+  }
+
+  /**
+   * Report one conversation's write or removal to the cache-invalidation hook.
+   * Callers pass the path they already resolved, so this adds no filesystem work
+   * to the append path.
+   */
+  private notifyMutation(id: string, filePath: string, kind: ConversationChange["kind"]): void {
+    this.onMutate?.({ id, filePath, wsId: this.wsId, kind });
   }
 
   // =========================================================================
@@ -452,7 +476,7 @@ export class EventSourcedConversationStore implements ConversationStore, EventSi
     const path = this.path(id);
     await writeFile(path, `${JSON.stringify(conversation)}\n`);
     this.index.invalidate();
-    this.onMutate?.();
+    this.notifyMutation(id, path, "written");
     return conversation;
   }
 
@@ -578,6 +602,7 @@ export class EventSourcedConversationStore implements ConversationStore, EventSi
     await writeFile(tmpPath, lines.map((l) => `${l}\n`).join(""));
     await rename(tmpPath, path);
     this.index.invalidate();
+    this.notifyMutation(conversation.id, path, "written");
   }
 
   /**
@@ -653,7 +678,7 @@ export class EventSourcedConversationStore implements ConversationStore, EventSi
     if (!existsSync(path)) return false;
     await unlink(path);
     this.index.remove(id);
-    this.onMutate?.();
+    this.notifyMutation(id, path, "removed");
     return true;
   }
 
@@ -741,6 +766,10 @@ export class EventSourcedConversationStore implements ConversationStore, EventSi
     await writeFile(tmpPath, lines.map((l) => `${l}\n`).join(""));
     await rename(tmpPath, path);
     this.index.invalidate();
+    // The `create()` that preceded this reported an empty file. A reader landing
+    // in between indexes it as empty, and without this second report nothing
+    // would ever re-read the populated one.
+    this.notifyMutation(newConv.id, path, "written");
   }
 
   async flush(): Promise<void> {
@@ -826,9 +855,10 @@ export class EventSourcedConversationStore implements ConversationStore, EventSi
     const path = this.path(id);
     appendFileSync(path, `${JSON.stringify(event)}\n`);
     // An append changes a conversation's summary (title/updatedAt/tokens), so
-    // the cross-workspace caches must refresh — not just on create/delete. The hook
-    // is a cheap invalidation flag; the rescan it triggers is lazy (next read).
-    this.onMutate?.();
+    // the cross-workspace caches must refresh — not just on create/delete. The
+    // hook is a cheap mark naming this one conversation; the re-read it triggers
+    // is lazy (next read) and covers only this file.
+    this.notifyMutation(id, path, "written");
   }
 
   /** Detect whether a conversation file uses event format or legacy message format. */

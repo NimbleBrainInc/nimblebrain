@@ -41,6 +41,7 @@ import { workspaceConversationsDir } from "../conversation/paths.ts";
 import type {
   Conversation,
   ConversationAccessContext,
+  ConversationChange,
   ConversationListResult,
   CreateConversationOptions,
   ListOptions,
@@ -306,7 +307,7 @@ export class Runtime {
   private _conversationLocator?: ConversationLocator;
   private _fileLocator?: FileLocator;
   /** Subscribers (e.g. the conversations-tool index) notified on any conversation change. */
-  private _conversationsChangedListeners = new Set<() => void>();
+  private _conversationsChangedListeners = new Set<(change?: ConversationChange) => void>();
   private hooks: EngineHooks;
   private defaultEvents: EventSink;
   private lifecycle: BundleLifecycleManager;
@@ -3515,8 +3516,13 @@ export class Runtime {
    * archive-delete). The conversations-tool index registers here so it refreshes
    * off the same invalidation signal the locator uses — one hook, both caches,
    * no divergent freshness. Returns an unsubscribe function.
+   *
+   * The listener receives WHICH conversation changed when the notifier knows, so
+   * a cache can re-read one file rather than rescan the tenant. `undefined` means
+   * the changed set is unknown (workspace membership change, workspace
+   * archive-delete) and the cache must fall back to a full rescan.
    */
-  onConversationsChanged(listener: () => void): () => void {
+  onConversationsChanged(listener: (change?: ConversationChange) => void): () => void {
     this._conversationsChangedListeners.add(listener);
     return () => this._conversationsChangedListeners.delete(listener);
   }
@@ -3528,21 +3534,23 @@ export class Runtime {
    * locator and the conversations-tool index never serve a frozen summary or a
    * ghost of a deleted workspace.
    *
-   * Scaling note: invalidation is tenant-wide and per-append, so under
-   * concurrent chat the *list* index (summaries) rarely stays warm — the next
-   * `listConversations` rebuilds by re-reading headers across workspaces. The hot
-   * per-message resume path does NOT pay this (locate is a readdir-only walk,
-   * see `ConversationLocator.locate`); only list views do. The recursive workspace
-   * layout rules out the old `fs.watch` debounce-coalescing, so before a
-   * high-conversation tenant feels it, the move is a per-workspace / incremental
-   * index (update one entry on the changed conv's workspace) rather than a full
-   * tenant-wide rebuild. Out of scope here; correctness over the dead watcher.
+   * `change` names the one conversation that moved. Passing it is what keeps the
+   * conversations-tool index cheap to refresh: it marks that conversation and
+   * re-reads its single file on the next read, instead of re-reading every
+   * conversation on the volume. Omit it only when the changed set genuinely
+   * isn't known — a workspace membership change or archive-delete moves an
+   * unbounded set, and those take the full-rescan path by design.
+   *
+   * The locator takes the full-rescan path either way: its `list` rebuild is a
+   * readdir-walk plus header parse, and its hot `locate` never touches the
+   * summary index at all (see `ConversationLocator.locate`), so it has no
+   * per-append rebuild to avoid.
    */
-  notifyConversationsChanged(): void {
+  notifyConversationsChanged(change?: ConversationChange): void {
     this._conversationLocator?.invalidate();
     for (const listener of this._conversationsChangedListeners) {
       try {
-        listener();
+        listener(change);
       } catch (err) {
         log.warn(`[runtime] conversations-changed listener threw: ${(err as Error).message}`);
       }
@@ -3560,7 +3568,7 @@ export class Runtime {
     return new EventSourcedConversationStore({
       dir: workspaceConversationsDir(resolveWorkDir(this.config), wsId, ownerId),
       logLevel: this.config.logging?.level ?? "normal",
-      onMutate: () => this.notifyConversationsChanged(),
+      onMutate: (change) => this.notifyConversationsChanged(change),
     });
   }
 

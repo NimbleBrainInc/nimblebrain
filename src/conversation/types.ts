@@ -123,6 +123,34 @@ export interface ConversationSummary {
   workspaceId?: string;
 }
 
+/**
+ * One conversation whose file changed — the payload of the conversation-cache
+ * invalidation signal.
+ *
+ * Carrying WHICH conversation changed is what lets a cache re-read one file
+ * instead of every file: a writer holds the id and the path already, so
+ * discarding them costs the next reader a full rescan of the tenant. The
+ * workspace comes from the writer's own directory (the authoritative binding),
+ * so a cache can index the file without re-parsing the path or reading line 1.
+ *
+ * A signal with NO change is also legitimate — a caller that genuinely doesn't
+ * know the changed set (workspace membership change, workspace archive-delete)
+ * omits it and every cache falls back to a full rescan.
+ */
+export interface ConversationChange {
+  /** The conversation whose file was written or removed. */
+  id: string;
+  /** Absolute path to its JSONL file. */
+  filePath: string;
+  /**
+   * The workspace the file lives under, taken from its DIRECTORY. `null` for
+   * the legacy flat layout, which is under no workspace.
+   */
+  wsId: string | null;
+  /** Whether the file now exists (`written`) or is gone (`removed`). */
+  kind: "written" | "removed";
+}
+
 export interface ConversationStore {
   create(options: CreateConversationOptions): Promise<Conversation>;
   load(id: string, access?: ConversationAccessContext): Promise<Conversation | null>;

@@ -1,7 +1,10 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { appendFileSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { ConversationIndex } from "../../../../src/bundles/conversations/src/index-cache.ts";
+import {
+	type ConversationChange,
+	ConversationIndex,
+} from "../../../../src/bundles/conversations/src/index-cache.ts";
 
 const TMP_DIR = join(import.meta.dir, ".tmp-index-cache");
 
@@ -74,6 +77,36 @@ function writeConvFile(spec: ConvSpec): string {
 	const path = join(dir, filename);
 	writeFileSync(path, lines.map((l) => `${l}\n`).join(""));
 	return path;
+}
+
+/** Append one event line to a conversation file, the way a live turn does. */
+function appendEventLine(filePath: string, event: Record<string, unknown>): void {
+	appendFileSync(filePath, `${JSON.stringify(event)}\n`);
+}
+
+/**
+ * Count `build()` calls on an index — the check that a targeted refresh re-read
+ * one file instead of rebuilding. A full rebuild is the 10s+ stall this exists to
+ * avoid, so "the entry is fresh" is not on its own evidence the fix works.
+ */
+function countBuilds(index: ConversationIndex): () => number {
+	let builds = 0;
+	const original = index.build.bind(index);
+	(index as unknown as { build: (dir: string) => Promise<void> }).build = async (dir) => {
+		builds += 1;
+		await original(dir);
+	};
+	return () => builds;
+}
+
+/** A write signal for a conversation, as the store reports one. */
+function written(id: string, filePath: string, wsId: string | null = null): ConversationChange {
+	return { id, filePath, wsId, kind: "written" };
+}
+
+/** A removal signal for a conversation, as the store reports one. */
+function removed(id: string, filePath: string, wsId: string | null = null): ConversationChange {
+	return { id, filePath, wsId, kind: "removed" };
 }
 
 // ---------------------------------------------------------------------------
@@ -552,6 +585,241 @@ describe("get", () => {
 		expect(index.get("get1")).toBeDefined();
 		expect(index.get("get1")!.title).toBe("Get test");
 		expect(index.get("nonexistent")).toBeUndefined();
+	});
+});
+
+// ---------------------------------------------------------------------------
+// invalidateConversation() / refresh() — per-conversation freshness
+// ---------------------------------------------------------------------------
+
+describe("targeted invalidation", () => {
+	/** Two flat-layout conversations, indexed. Returns their file paths. */
+	async function twoConversations(
+		index: ConversationIndex,
+	): Promise<{ pathA: string; pathB: string }> {
+		const pathA = writeConvFile({
+			id: "a",
+			createdAt: "2025-01-01T00:00:00.000Z",
+			updatedAt: "2025-01-01T00:00:00.000Z",
+			title: "A",
+			messages: [{ role: "user", content: "hi from a", timestamp: "2025-01-01T00:01:00.000Z" }],
+		});
+		const pathB = writeConvFile({
+			id: "b",
+			createdAt: "2025-01-02T00:00:00.000Z",
+			updatedAt: "2025-01-02T00:00:00.000Z",
+			title: "B",
+			messages: [{ role: "user", content: "hi from b", timestamp: "2025-01-02T00:01:00.000Z" }],
+		});
+		await index.build(TMP_DIR);
+		return { pathA, pathB };
+	}
+
+	test("an append to one conversation re-reads only that file", async () => {
+		const index = new ConversationIndex();
+		const { pathA, pathB } = await twoConversations(index);
+		const builds = countBuilds(index);
+
+		appendEventLine(pathA, {
+			ts: "2025-01-05T00:00:00.000Z",
+			type: "metadata.title",
+			title: "A renamed",
+		});
+		// Remove B's file WITHOUT signalling it. A full rebuild lists the directory
+		// and would drop B; a targeted pass never looks at it. So B surviving is
+		// direct evidence that only A was read.
+		rmSync(pathB);
+
+		index.invalidateConversation(written("a", pathA));
+		await index.refresh();
+
+		expect(builds()).toBe(0);
+		expect(index.get("a")!.title).toBe("A renamed");
+		expect(index.get("b")).toBeDefined();
+		expect(index.get("b")!.title).toBe("B");
+	});
+
+	test("repeated appends to one conversation land as a single re-read", async () => {
+		const index = new ConversationIndex();
+		const { pathA } = await twoConversations(index);
+		const builds = countBuilds(index);
+
+		// A turn writes many event lines; each one signals. The last title wins and
+		// no rebuild happens however many arrive.
+		for (const title of ["one", "two", "three"]) {
+			appendEventLine(pathA, { ts: "2025-01-05T00:00:00.000Z", type: "metadata.title", title });
+			index.invalidateConversation(written("a", pathA));
+		}
+		await index.refresh();
+
+		expect(builds()).toBe(0);
+		expect(index.get("a")!.title).toBe("three");
+	});
+
+	test("a newly created conversation appears — no prior entry needed", async () => {
+		// The index has never seen this file, so it has no filename→id mapping for
+		// it. The signal carries the path, which is what makes a create indexable
+		// without a directory scan.
+		const index = new ConversationIndex();
+		await index.build(TMP_DIR);
+		expect(index.size).toBe(0);
+		const builds = countBuilds(index);
+
+		const path = writeConvFile({
+			id: "fresh",
+			createdAt: "2025-02-01T00:00:00.000Z",
+			updatedAt: "2025-02-01T00:00:00.000Z",
+			title: "Brand new",
+			messages: [{ role: "user", content: "first", timestamp: "2025-02-01T00:01:00.000Z" }],
+		});
+		index.invalidateConversation(written("fresh", path));
+		await index.refresh();
+
+		expect(builds()).toBe(0);
+		expect(index.size).toBe(1);
+		expect(index.get("fresh")!.title).toBe("Brand new");
+		expect(index.get("fresh")!.preview).toBe("first");
+	});
+
+	test("a deleted conversation disappears", async () => {
+		const index = new ConversationIndex();
+		const { pathA, pathB } = await twoConversations(index);
+		const builds = countBuilds(index);
+
+		rmSync(pathA);
+		index.invalidateConversation(removed("a", pathA));
+		await index.refresh();
+
+		expect(builds()).toBe(0);
+		expect(index.get("a")).toBeUndefined();
+		// The surviving conversation is untouched — a removal is not a rebuild.
+		expect(index.get("b")).toBeDefined();
+		expect(index.list().totalCount).toBe(1);
+		expect(pathB).toContain("conv_b.jsonl");
+	});
+
+	test("a write signal for a file that has since vanished drops the entry", async () => {
+		// A delete racing an append, or a removal whose signal never arrived. A full
+		// rebuild would drop the entry implicitly; the targeted path has to do it
+		// explicitly or the index keeps serving a conversation that no longer exists.
+		const index = new ConversationIndex();
+		const { pathA } = await twoConversations(index);
+		rmSync(pathA);
+
+		index.invalidateConversation(written("a", pathA));
+		await index.refresh();
+
+		expect(index.get("a")).toBeUndefined();
+		expect(index.get("b")).toBeDefined();
+	});
+
+	test("a targeted re-read keeps the conversation's workspace binding", async () => {
+		// The workspace comes from the signal, not from a re-walk of the directory,
+		// so a wrong or dropped `wsId` would silently fall the conversation out of
+		// every workspace-scoped list.
+		const path = writeConvFile({
+			id: "wsconv",
+			createdAt: "2025-01-01T00:00:00.000Z",
+			updatedAt: "2025-01-01T00:00:00.000Z",
+			title: "Workspace chat",
+			ownerId: "u1",
+			workspaceId: "ws_helix",
+			messages: [{ role: "user", content: "hi", timestamp: "2025-01-01T00:01:00.000Z" }],
+		});
+		const index = new ConversationIndex();
+		await index.build(TMP_DIR);
+		expect(index.list({ workspaceId: "ws_helix" }, { userId: "u1" }).totalCount).toBe(1);
+
+		appendEventLine(path, {
+			ts: "2025-01-06T00:00:00.000Z",
+			type: "metadata.title",
+			title: "Renamed in workspace",
+		});
+		index.invalidateConversation(written("wsconv", path, "ws_helix"));
+		await index.refresh();
+
+		const scoped = index.list({ workspaceId: "ws_helix" }, { userId: "u1" });
+		expect(scoped.conversations.map((c) => c.id)).toEqual(["wsconv"]);
+		expect(scoped.conversations[0]!.title).toBe("Renamed in workspace");
+	});
+
+	test("no-arg invalidate() still forces a full rebuild", async () => {
+		// The fallback for a caller that cannot name what changed — workspace
+		// membership changes and workspace archive-delete both arrive this way.
+		const index = new ConversationIndex();
+		const { pathB } = await twoConversations(index);
+		const builds = countBuilds(index);
+
+		// Removed with no signal at all: only a full rebuild's directory listing
+		// can notice it.
+		rmSync(pathB);
+		index.invalidate();
+		await index.refresh();
+
+		expect(builds()).toBe(1);
+		expect(index.get("b")).toBeUndefined();
+		expect(index.get("a")).toBeDefined();
+	});
+
+	test("invalidate() subsumes pending per-conversation marks", async () => {
+		const index = new ConversationIndex();
+		await twoConversations(index);
+		const builds = countBuilds(index);
+
+		const path = writeConvFile({
+			id: "late",
+			createdAt: "2025-03-01T00:00:00.000Z",
+			updatedAt: "2025-03-01T00:00:00.000Z",
+			title: "Late arrival",
+			messages: [{ role: "user", content: "late", timestamp: "2025-03-01T00:01:00.000Z" }],
+		});
+		index.invalidateConversation(written("late", path));
+		index.invalidate();
+		await index.refresh();
+
+		// One rebuild, which covers the marked conversation too.
+		expect(builds()).toBe(1);
+		expect(index.get("late")).toBeDefined();
+
+		// Nothing left over: a second refresh does no work.
+		await index.refresh();
+		expect(builds()).toBe(1);
+	});
+
+	test("refresh() is a no-op when nothing was marked", async () => {
+		const index = new ConversationIndex();
+		await twoConversations(index);
+		const builds = countBuilds(index);
+
+		await index.refresh();
+
+		expect(builds()).toBe(0);
+		expect(index.size).toBe(2);
+	});
+
+	test("concurrent readers join one targeted pass", async () => {
+		const index = new ConversationIndex();
+		const { pathA } = await twoConversations(index);
+		const builds = countBuilds(index);
+
+		appendEventLine(pathA, {
+			ts: "2025-01-07T00:00:00.000Z",
+			type: "metadata.title",
+			title: "Raced",
+		});
+		index.invalidateConversation(written("a", pathA));
+
+		// The first call drains the marks and publishes its in-flight pass; the
+		// second finds an empty mark set and must join that pass rather than
+		// answer immediately. Awaiting only the SECOND is the whole point — if it
+		// returned early, the re-read would still be in flight and the entry stale.
+		const first = index.refresh();
+		const second = index.refresh();
+		await second;
+		expect(index.get("a")!.title).toBe("Raced");
+
+		await first;
+		expect(builds()).toBe(0);
 	});
 });
 
