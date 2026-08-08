@@ -143,6 +143,12 @@ export interface ChatMessage {
 export interface LoadedConversationMeta {
   ownerId?: string;
   /**
+   * The model this conversation is bound to, from `conversations__get`. Fixed
+   * at create and never changes, so the composer states it rather than
+   * offering it. Absent on conversations that predate the binding.
+   */
+  model?: string;
+  /**
    * The workspace this conversation is sealed to (from the server's
    * `conversations__get` metadata). The panel uses it to avoid resuming a
    * conversation that belongs to a workspace other than the one currently
@@ -387,7 +393,13 @@ function buildChatRequest(slice: ConversationSlice, params: StartTurnParams): Ch
 
 /** A loaded conversation: server metadata plus its reconstructed messages. */
 interface LoadedConversation {
-  metadata: { id: string; ownerId?: string; workspaceId?: string; title?: string | null };
+  metadata: {
+    id: string;
+    ownerId?: string;
+    workspaceId?: string;
+    title?: string | null;
+    model?: string;
+  };
   messages: ChatMessage[];
 }
 
@@ -1234,6 +1246,7 @@ export function createChatStore(): ChatStore {
       current.meta = {
         ownerId: parsed.metadata.ownerId,
         workspaceId: parsed.metadata.workspaceId,
+        model: parsed.metadata.model,
       };
       current.title = parsed.metadata.title ?? null;
       current.messages = parsed.messages ?? [];

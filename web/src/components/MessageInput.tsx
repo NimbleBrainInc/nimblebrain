@@ -1,11 +1,91 @@
 import { ArrowUp, Paperclip, Square } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { FileAttachmentChips } from "./FileAttachmentChips";
+import { ModelPicker, type PickerModel } from "./ModelPicker";
 
 const MAX_TEXTAREA_HEIGHT = 200;
 
+/**
+ * The right-hand cluster of the composer's action row: which model, and go.
+ * They sit together because they answer one question between them — what is
+ * about to happen when you press send.
+ */
+function ComposerActions({
+  models,
+  boundModel,
+  defaultModel,
+  pendingModel,
+  onPendingModelChange,
+  onNewConversationWithModel,
+  disabled,
+  canSend,
+  onSend,
+  onStop,
+}: {
+  models?: PickerModel[];
+  boundModel?: string;
+  defaultModel?: string;
+  pendingModel?: string;
+  onPendingModelChange?: (model: string) => void;
+  onNewConversationWithModel?: (model: string) => void;
+  disabled: boolean;
+  canSend: boolean;
+  onSend: () => void;
+  onStop?: () => void;
+}) {
+  return (
+    <div className="flex items-center gap-1">
+      {models && models.length > 0 && (
+        <ModelPicker
+          models={models}
+          selected={pendingModel ?? defaultModel}
+          bound={boundModel}
+          onSelect={(id) => onPendingModelChange?.(id)}
+          onNewConversation={onNewConversationWithModel}
+          disabled={disabled}
+        />
+      )}
+      {disabled && onStop ? (
+        <button
+          onClick={onStop}
+          type="button"
+          aria-label="Stop generating"
+          className="shrink-0 flex items-center justify-center w-8 h-8 rounded-sm transition-all duration-200 bg-primary hover:bg-primary/90 text-primary-foreground"
+        >
+          <Square style={{ width: 14, height: 14 }} fill="currentColor" />
+        </button>
+      ) : (
+        <button
+          onClick={onSend}
+          disabled={!canSend}
+          type="button"
+          aria-label="Send message"
+          className={`shrink-0 flex items-center justify-center w-8 h-8 rounded-sm transition-all duration-200 ${
+            canSend
+              ? "bg-primary hover:bg-primary/90 text-primary-foreground"
+              : "bg-muted text-muted-foreground cursor-not-allowed"
+          }`}
+        >
+          <ArrowUp style={{ width: 18, height: 18 }} />
+        </button>
+      )}
+    </div>
+  );
+}
+
 interface MessageInputProps {
-  onSend: (text: string, files?: File[]) => void;
+  onSend: (text: string, files?: File[], model?: string) => void;
+  /** Models this deployment offers. Empty hides the control entirely. */
+  models?: PickerModel[];
+  /** The binding, once the conversation exists. Absent before the first send. */
+  boundModel?: string;
+  /** What a message sent now would use, when nothing is bound yet. */
+  defaultModel?: string;
+  /** The pre-send choice. Owned above, so it can be reset per conversation. */
+  pendingModel?: string;
+  onPendingModelChange?: (model: string) => void;
+  /** Start a fresh conversation on a chosen model, from the bound-state menu. */
+  onNewConversationWithModel?: (model: string) => void;
   disabled: boolean;
   onNewConversation?: () => void;
   /** Open the keyboard-shortcuts dialog — the footer "?" affordance. */
@@ -17,6 +97,12 @@ interface MessageInputProps {
 
 export function MessageInput({
   onSend,
+  models,
+  boundModel,
+  defaultModel,
+  pendingModel,
+  onPendingModelChange,
+  onNewConversationWithModel,
   disabled,
   onNewConversation,
   onShowShortcuts,
@@ -80,10 +166,10 @@ export function MessageInput({
       return;
     }
 
-    onSend(trimmed, attachedFiles.length > 0 ? attachedFiles : undefined);
+    onSend(trimmed, attachedFiles.length > 0 ? attachedFiles : undefined, pendingModel);
     setText("");
     setAttachedFiles([]);
-  }, [text, attachedFiles, disabled, onSend, onNewConversation]);
+  }, [text, attachedFiles, pendingModel, disabled, onSend, onNewConversation]);
 
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
@@ -151,7 +237,7 @@ export function MessageInput({
     [addFiles],
   );
 
-  const canSend = (text.trim() || attachedFiles.length > 0) && !disabled;
+  const canSend = (text.trim().length > 0 || attachedFiles.length > 0) && !disabled;
 
   return (
     <div className="py-3 shrink-0">
@@ -220,30 +306,18 @@ export function MessageInput({
               <Paperclip style={{ width: 16, height: 16 }} />
             </button>
           </div>
-          {disabled && onStop ? (
-            <button
-              onClick={onStop}
-              type="button"
-              aria-label="Stop generating"
-              className="shrink-0 flex items-center justify-center w-8 h-8 rounded-sm transition-all duration-200 bg-primary hover:bg-primary/90 text-primary-foreground"
-            >
-              <Square style={{ width: 14, height: 14 }} fill="currentColor" />
-            </button>
-          ) : (
-            <button
-              onClick={handleSend}
-              disabled={!canSend}
-              type="button"
-              aria-label="Send message"
-              className={`shrink-0 flex items-center justify-center w-8 h-8 rounded-sm transition-all duration-200 ${
-                canSend
-                  ? "bg-primary hover:bg-primary/90 text-primary-foreground"
-                  : "bg-muted text-muted-foreground cursor-not-allowed"
-              }`}
-            >
-              <ArrowUp style={{ width: 18, height: 18 }} />
-            </button>
-          )}
+          <ComposerActions
+            models={models}
+            boundModel={boundModel}
+            defaultModel={defaultModel}
+            pendingModel={pendingModel}
+            onPendingModelChange={onPendingModelChange}
+            onNewConversationWithModel={onNewConversationWithModel}
+            disabled={disabled}
+            canSend={canSend}
+            onSend={handleSend}
+            onStop={onStop}
+          />
         </div>
       </div>
 

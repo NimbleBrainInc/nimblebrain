@@ -23,6 +23,8 @@ import { useWorkspaceContext } from "./WorkspaceContext";
 
 export interface ChatConfigContextValue {
   configuredProviders: string[];
+  newConversationModel?: string;
+  availableModels?: ConfigInfo["availableModels"];
   refreshConfig: () => void;
   preferences: ConfigInfo["preferences"];
   currentUserId?: string;
@@ -35,7 +37,12 @@ const ChatConfigContext = createContext<ChatConfigContextValue | null>(null);
 // ---------------------------------------------------------------------------
 
 export interface ChatContextValue extends Omit<UseChatReturn, "sendMessage"> {
-  sendMessage: (text: string, appContext?: AppContext, files?: File[]) => Promise<void>;
+  sendMessage: (
+    text: string,
+    appContext?: AppContext,
+    files?: File[],
+    model?: string,
+  ) => Promise<void>;
 }
 
 const ChatContext = createContext<ChatContextValue | null>(null);
@@ -195,6 +202,8 @@ export function ChatProvider({
   const [configuredProviders, setConfiguredProviders] = useState<string[]>(
     initialConfig?.configuredProviders ?? [],
   );
+  const [newConversationModel, setNewConversationModel] = useState<string | undefined>(undefined);
+  const [availableModels, setAvailableModels] = useState<ConfigInfo["availableModels"]>(undefined);
   const [preferences, setPreferences] = useState<ConfigInfo["preferences"]>(
     initialConfig?.preferences,
   );
@@ -204,6 +213,8 @@ export function ChatProvider({
       .then((result) => {
         const data = extractConfigPayload(result) as ConfigInfo;
         setConfiguredProviders(data.configuredProviders);
+        setNewConversationModel(data.newConversationModel);
+        setAvailableModels(data.availableModels);
         if (data.preferences) setPreferences(data.preferences);
       })
       .catch(() => {
@@ -221,13 +232,15 @@ export function ChatProvider({
   // GET /v1/conversations/:id/events, which replays the in-flight turn and
   // tails live. No separate remote-event bridge needed.
 
-  // No model argument: the model a turn runs on is resolved server-side and,
-  // for a conversation created since the model pin, fixed at create. A client
-  // that chose one per turn would be choosing per browser — scoped to one
-  // device, invisible to the API and to scheduled runs.
+  // A model may be passed only where it can still mean something: at create,
+  // where it becomes the conversation's binding. The pin outranks it on an
+  // existing thread, so there is no per-turn override — the composer offers
+  // the choice before the first message and states it after. Nothing about a
+  // model is stored in the browser; the choice goes to the server and comes
+  // back as the pin.
   const wrappedSendMessage = useCallback(
-    (text: string, appContext?: AppContext, files?: File[]) => {
-      return chat.sendMessage(text, appContext, undefined, files);
+    (text: string, appContext?: AppContext, files?: File[], model?: string) => {
+      return chat.sendMessage(text, appContext, model, files);
     },
     [chat.sendMessage],
   );
@@ -236,11 +249,20 @@ export function ChatProvider({
   const configValue = useMemo<ChatConfigContextValue>(
     () => ({
       configuredProviders,
+      newConversationModel,
+      availableModels,
       refreshConfig: fetchConfig,
       preferences,
       currentUserId,
     }),
-    [configuredProviders, fetchConfig, preferences, currentUserId],
+    [
+      configuredProviders,
+      newConversationModel,
+      availableModels,
+      fetchConfig,
+      preferences,
+      currentUserId,
+    ],
   );
 
   // -- Chat context value (changes per streaming tick) --
