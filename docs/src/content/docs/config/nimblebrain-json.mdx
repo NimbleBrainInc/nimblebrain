@@ -94,6 +94,7 @@ A sibling `nimblebrain.overrides.json` next to the resolved config file is **dee
 | `$schema` | `string` | — | JSON Schema URI. Set to `"https://schemas.nimblebrain.ai/v1/nimblebrain-config.schema.json"` for editor autocompletion. |
 | `version` | `string` | — | Config file version. Must be `"1"`. |
 | `models` | `object` | — | Role-based model slots. See [models](#models). |
+| `modelPolicy` | `object` | — | Which models this organization permits. See [modelPolicy](#modelpolicy). |
 | `providers` | `object` | — | Per-provider API keys. See [providers](#providers). |
 | `model` | `object` | `{ "provider": "anthropic" }` | **Legacy** single-provider config. Use `providers` instead. |
 | `defaultModel` | `string` | — | **Deprecated.** Use `models.default` instead. |
@@ -234,6 +235,38 @@ from the current slot on every turn, as they did before.
 
   The history folds want the same headroom for a different reason. A fold summarizes a conversation grown against the **main** model's window, so a `fast` model with a smaller one has less room to read what it is summarizing — the call is bounded to the summarizer's own context to keep it from overflowing, and a small window buys a worse summary or none at all.
 </Aside>
+
+## modelPolicy
+
+Which models this organization permits. Absent — or present with an empty
+`allowed` — allows every chat-capable model from every configured provider, so
+an existing deployment changes nothing and an org opts *into* restriction.
+
+```json
+{
+  "modelPolicy": {
+    "allowed": ["anthropic:claude-sonnet-5", "anthropic:claude-haiku-4-5-20251001"]
+  }
+}
+```
+
+| Field | Type | Description |
+|---|---|---|
+| `allowed` | `string[]` | Qualified `provider:model-id` strings. |
+
+Policy can only **subtract**. It narrows what the configured providers can
+already reach — naming a model whose provider has no key does not make it
+reachable, and naming a non-chat model does not make it selectable.
+
+Every slot in [`models`](#models) should name an allowed model. Setting a policy
+that excludes one **through the settings surface is rejected**; written here by
+hand it is not — the runtime logs an error naming the slot at startup and then
+runs, because a deployment that boots with a warning it can act on beats one
+that will not start. The effect until you fix it: turns resolve to that model
+while the picker excludes it.
+
+A *user's* saved model preference needs no such care: one outside the list
+falls back to the configured default on their next turn.
 
 ## providers
 

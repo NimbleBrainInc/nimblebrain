@@ -222,6 +222,22 @@ function isChatCapable(model: CatalogModel): boolean {
 }
 
 /**
+ * Does org policy permit this model?
+ *
+ * Takes an already-qualified `provider:id` — this module cannot normalize one
+ * itself, because the resolver that does lives downstream of it.
+ *
+ * Unset and empty both mean permissive. An empty array is the same statement
+ * as no array: an org that has selected nothing has not thereby forbidden
+ * everything, and treating it as a total ban would take a deployment offline
+ * on a mis-click.
+ */
+export function isModelInPolicy(qualifiedModel: string, allowed?: string[]): boolean {
+  if (!allowed || allowed.length === 0) return true;
+  return allowed.includes(qualifiedModel);
+}
+
+/**
  * The models a deployment will offer for selection.
  *
  * Filtered, not flagged — and only here. `listModels` and `getModelByString`
@@ -230,11 +246,12 @@ function isChatCapable(model: CatalogModel): boolean {
  */
 export function getAvailableModels(
   configuredProviders: Record<string, { models?: string[] }>,
+  allowed?: string[],
 ): Record<string, CatalogModel[]> {
   const result: Record<string, CatalogModel[]> = {};
   for (const [provider, config] of Object.entries(configuredProviders)) {
     result[provider] = listModels(provider, config.models).filter(
-      (m) => !m.deprecated && isChatCapable(m),
+      (m) => !m.deprecated && isChatCapable(m) && isModelInPolicy(`${provider}:${m.id}`, allowed),
     );
   }
   return result;

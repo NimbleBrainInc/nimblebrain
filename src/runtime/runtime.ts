@@ -80,7 +80,12 @@ import { createIdentityProvider } from "../identity/provider.ts";
 import { DEV_IDENTITY } from "../identity/providers/dev.ts";
 import { UserStore } from "../identity/user.ts";
 import { InstructionsStore } from "../instructions/index.ts";
-import { getModelByString, getProviderFromModel, isModelAllowed } from "../model/catalog.ts";
+import {
+  getModelByString,
+  getProviderFromModel,
+  isModelAllowed,
+  isModelInPolicy,
+} from "../model/catalog.ts";
 import { buildModelResolver, resolveModelString } from "../model/registry.ts";
 import { type ModelSlot, parseModelSlotRef } from "../model/slots.ts";
 import { registerBuiltinCredentialProviders } from "../oauth/minted-credential-provider.ts";
@@ -196,11 +201,35 @@ import { isToolEligibleForPromotion } from "./tool-eligibility.ts";
  * Apply one clearable config field: `undefined` leaves it alone, `null` clears
  * it back to the platform default, anything else sets it.
  *
- * Shared by the three thinking fields so a clear can't be honored on one and
- * dropped on another.
+ * Shared by every clearable config field so a clear can't be honored on one
+ * and dropped on another.
  */
 function applyClearable<T>(current: T | undefined, patched: T | null | undefined): T | undefined {
   return patched === undefined ? current : (patched ?? undefined);
+}
+
+/**
+ * Warn about a configured slot the org's own policy forbids.
+ *
+ * A config file can strand a slot the way `set_model_config` no longer can: it
+ * is written by hand, so nothing validates it against the policy beside it.
+ *
+ * Reported rather than refused — a deployment that boots with an error it can
+ * act on beats one that will not start, and the resolution stays deterministic
+ * either way. Read through the runtime's own slot reader so this cannot
+ * disagree with the model a turn actually uses.
+ */
+function reportStrandedSlots(rt: Runtime, allowed: string[] | undefined): void {
+  if (!allowed || allowed.length === 0) return;
+  for (const [slot, model] of Object.entries(rt.configuredModelSlots())) {
+    if (isModelInPolicy(model, allowed)) continue;
+    log.error("[runtime] configured model slot is outside this org's model policy", {
+      slot,
+      model,
+      allowed,
+      effect: "turns resolve to this model while the picker excludes it",
+    });
+  }
 }
 
 function resolveWorkDir(config: RuntimeConfig): string {
@@ -804,6 +833,8 @@ export class Runtime {
     rt._getIdentity = getIdentity;
     rt._getWorkspaceId = getWorkspaceId;
     rt.usageLedger = usageLedger;
+
+    reportStrandedSlots(rt, config.modelPolicy?.allowed);
 
     // Register the `nb` system source. Built as an in-process MCP server
     // — `createSystemTools` returns it already-started so it's ready to
@@ -3853,12 +3884,24 @@ export class Runtime {
    * was given back to `set_model_config` — so a tinted value there does not
    * just display wrong, it persists.
    */
-  configuredModelSlots(): ModelSlots {
-    const models = this.config.models;
-    const fallback = this.config.defaultModel ?? DEFAULT_MODEL;
+  configuredModelSlots(pending?: {
+    models?: Partial<Record<string, string>>;
+    defaultModel?: string;
+  }): ModelSlots {
+    // `pending` asks what the slots WOULD be if that patch were applied, so a
+    // caller validating a write does not have to re-derive the merge rules. It
+    // is the same chain either way — one implementation, not two that drift.
+    const models: Partial<Record<string, string>> = { ...this.config.models };
+    for (const [slot, value] of Object.entries(pending?.models ?? {})) {
+      // `""` clears, matching `updateConfig` and the override merge: the slot
+      // falls back rather than holding an empty string.
+      if (value === "") delete models[slot];
+      else models[slot] = value;
+    }
+    const fallback = pending?.defaultModel ?? this.config.defaultModel ?? DEFAULT_MODEL;
     return {
-      default: resolveModelString(models?.default ?? fallback),
-      fast: resolveModelString(models?.fast ?? fallback),
+      default: resolveModelString(models.default ?? fallback),
+      fast: resolveModelString(models.fast ?? fallback),
     };
   }
 
@@ -3905,8 +3948,20 @@ export class Runtime {
     // provider-less deployment would otherwise accept and, on the preference
     // path, pin every future conversation to.
     if (modelString.trim() === "") return false;
+    const qualified = resolveModelString(modelString);
+    // Policy is checked before the provider guard and independently of it. The
+    // guard below tolerates absent provider config because `getProviderConfigs`
+    // reports a display default rather than a reachability claim — but an
+    // allowlist is an explicit operator statement, so when one exists it binds
+    // whether or not providers are configured.
+    if (!isModelInPolicy(qualified, this.config.modelPolicy?.allowed)) return false;
     if (!this.config.providers) return true;
-    return isModelAllowed(resolveModelString(modelString), this.getProviderConfigs());
+    return isModelAllowed(qualified, this.getProviderConfigs());
+  }
+
+  /** Which models this organization permits. Absent ⇒ permissive. */
+  getModelPolicy(): string[] | undefined {
+    return this.config.modelPolicy?.allowed;
   }
 
   /** Get the model ID for a named slot. */
@@ -4138,21 +4193,21 @@ export class Runtime {
    * Update live runtime config (in-memory). Called by set_config tool
    * after disk write.
    *
-   * Every field typed `| null` (`thinking`, `thinkingEffort`,
-   * `thinkingBudgetTokens`) treats `null` as the explicit "clear my
+   * Every field typed `| null` treats `null` as the explicit "clear my
    * override" sentinel, distinct from `undefined` ("leave it alone").
    * The distinction is load-bearing: this method gates on `!== undefined`,
    * so a clear expressed as `undefined` writes to disk but never reaches
    * the live process.
    *
-   * The three are independent — clearing one does not clear the others.
-   * After a clear the resolver applies its own default; see
-   * `resolveThinking`, which owns that policy rather than restating it
-   * here.
+   * They are independent — clearing one does not clear the others. After a
+   * clear the resolver applies its own default; the resolver owns that
+   * policy rather than restating it here (`resolveThinking` for the
+   * thinking fields, `resolveMaxOutputTokens` and friends for the limits).
    */
   updateConfig(patch: {
     defaultModel?: string;
     models?: Partial<ModelSlots>;
+    modelPolicy?: { allowed?: string[] };
     maxIterations?: number | null;
     maxInputTokens?: number | null;
     maxOutputTokens?: number | null;
@@ -4177,6 +4232,7 @@ export class Runtime {
         else this.config.models[slot as ModelSlot] = model;
       }
     }
+    if (patch.modelPolicy !== undefined) this.config.modelPolicy = patch.modelPolicy;
     if (patch.defaultModel !== undefined) {
       this.config.defaultModel = patch.defaultModel;
       // Also update models.default for consistency
@@ -4590,6 +4646,7 @@ export class Runtime {
    */
   getOperatorConfig(): {
     models?: Partial<ModelSlots>;
+    modelPolicy?: { allowed?: string[] };
     maxIterations?: number;
     maxInputTokens?: number;
     maxOutputTokens?: number;
@@ -4604,6 +4661,7 @@ export class Runtime {
 
     return {
       ...(Object.keys(models).length > 0 ? { models } : {}),
+      ...(this.config.modelPolicy !== undefined ? { modelPolicy: this.config.modelPolicy } : {}),
       ...(this.config.maxIterations !== undefined
         ? { maxIterations: this.config.maxIterations }
         : {}),

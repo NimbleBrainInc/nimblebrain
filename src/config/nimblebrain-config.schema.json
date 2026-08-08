@@ -201,6 +201,18 @@
       },
       "additionalProperties": false
     },
+    "modelPolicy": {
+      "type": "object",
+      "description": "Which models this organization permits. Absent or empty allows every chat-capable model from every configured provider.",
+      "properties": {
+        "allowed": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Qualified provider:model-id strings. Can only subtract from what the configured providers can reach."
+        }
+      },
+      "additionalProperties": false
+    },
     "defaultModel": {
       "description": "Default model ID (e.g., \"claude-sonnet-4-5-20250929\"). Deprecated — use models.default instead.",
       "type": "string"
