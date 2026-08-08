@@ -72,6 +72,54 @@ describe("toPickerModels", () => {
   it("is empty when the deployment offers nothing", () => {
     expect(toPickerModels(undefined)).toEqual([]);
   });
+
+  it("shows a model once when the catalog carries both its ids", () => {
+    const models = toPickerModels({
+      anthropic: [
+        { id: "claude-opus-4-5", name: "Claude Opus 4.5 (latest)" },
+        { id: "claude-opus-4-5-20251101", name: "Claude Opus 4.5" },
+      ],
+    });
+    // One model, one row — and the row is the undated id, which is the form
+    // the operator config writes and the only form every model has.
+    expect(models).toEqual([
+      { id: "anthropic:claude-opus-4-5", name: "Claude Opus 4.5", provider: "anthropic" },
+    ]);
+  });
+
+  it("drops the (latest) suffix with the duplicate that gave it meaning", () => {
+    const [opus] = toPickerModels({
+      anthropic: [
+        { id: "claude-opus-4-5-20251101", name: "Claude Opus 4.5" },
+        { id: "claude-opus-4-5", name: "Claude Opus 4.5 (latest)" },
+      ],
+    });
+    // "(latest)" means newest 4.5 snapshot, but reads as newest Opus — false
+    // as soon as Opus 5 ships, and distinguishing nothing once the pair is one.
+    expect(opus?.name).toBe("Claude Opus 4.5");
+  });
+
+  it("keeps a snapshot that is the only way to name its model", () => {
+    const ids = toPickerModels({
+      anthropic: [{ id: "claude-opus-4-9-20260401", name: "Claude Opus 4.9" }],
+    }).map((m) => m.id);
+    // No undated sibling on offer: dropping this would remove the model.
+    expect(ids).toEqual(["anthropic:claude-opus-4-9-20260401"]);
+  });
+
+  it("keeps a moving pointer that is a model in its own right", () => {
+    const ids = toPickerModels({
+      // `gpt-5.3-chat` is deliberately present: it is what a rule that
+      // collapsed on a `-latest` suffix would fold this into. The two are
+      // different models — one is a pointer that moves, one does not — so the
+      // rule has to key on the dated-snapshot id shape, not on the suffix.
+      openai: [
+        { id: "gpt-5.3-chat-latest", name: "GPT-5.3 Chat (latest)" },
+        { id: "gpt-5.3-chat", name: "GPT-5.3 Chat" },
+      ],
+    }).map((m) => m.id);
+    expect(ids.sort()).toEqual(["openai:gpt-5.3-chat", "openai:gpt-5.3-chat-latest"]);
+  });
 });
 
 /** Render the unbound picker and open its menu. */

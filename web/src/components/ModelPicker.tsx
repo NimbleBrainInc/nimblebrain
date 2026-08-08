@@ -34,15 +34,55 @@ export function shortModelName(name: string): string {
   return name.replace(/^Claude\s+/, "");
 }
 
-/** Everything the deployment offers, flattened and sorted for one list. */
+/** A dated snapshot id, e.g. `claude-opus-4-5-20251101`. */
+const DATED_SNAPSHOT = /-\d{8}$/;
+
+/**
+ * One row per model a person would name.
+ *
+ * The catalog lists some models twice — an undated id and a dated snapshot of
+ * it (`claude-opus-4-5` and `claude-opus-4-5-20251101`), identical in cost,
+ * limits and capabilities. Operator surfaces offer both on purpose, because
+ * pinning a fixed snapshot is a real deployment choice. Someone picking a model
+ * for one chat is answering a different question, and to them the pair reads as
+ * the list being broken.
+ *
+ * Of the pair, the undated id is kept: it exists for every model (dated
+ * variants only exist for some) and it is the form the operator config already
+ * writes, so a pin made here looks like a slot set there. The dated sibling's
+ * *name* is kept instead of the alias's, because the alias is named
+ * "Claude Opus 4.5 (latest)" — a suffix that means "newest 4.5 snapshot" but
+ * reads as "newest Opus", which is false the moment Opus 5 ships. With the pair
+ * collapsed the suffix distinguishes nothing anyway.
+ *
+ * A "(latest)" model with no dated sibling — `gpt-5.3-chat-latest` — is left
+ * alone: there the moving pointer is the whole model, not one name for two.
+ */
 export function toPickerModels(
   available: Record<string, { id: string; name?: string }[]> | undefined,
 ): PickerModel[] {
   if (!available) return [];
   return Object.entries(available)
-    .flatMap(([provider, models]) =>
-      models.map((m) => ({ id: `${provider}:${m.id}`, name: m.name ?? m.id, provider })),
-    )
+    .flatMap(([provider, models]) => {
+      const offered = new Set(models.map((m) => m.id));
+      // A snapshot is a duplicate only when its own undated id is also on
+      // offer; alone, it is the only way to name that model.
+      const duplicates = (m: { id: string }) =>
+        DATED_SNAPSHOT.test(m.id) && offered.has(m.id.replace(DATED_SNAPSHOT, ""));
+
+      const nameFromSnapshot = new Map<string, string>();
+      for (const m of models) {
+        if (duplicates(m) && m.name) nameFromSnapshot.set(m.id.replace(DATED_SNAPSHOT, ""), m.name);
+      }
+
+      return models
+        .filter((m) => !duplicates(m))
+        .map((m) => ({
+          id: `${provider}:${m.id}`,
+          name: nameFromSnapshot.get(m.id) ?? m.name ?? m.id,
+          provider,
+        }));
+    })
     .sort((a, b) => a.name.localeCompare(b.name));
 }
 
@@ -149,7 +189,7 @@ export function ModelPicker({
         aria-expanded={open}
         aria-haspopup="listbox"
         title={current}
-        className="flex items-center gap-1 max-w-[11rem] px-1.5 py-1 rounded-sm text-xs text-foreground hover:bg-muted disabled:opacity-50 transition-colors"
+        className="flex items-center gap-1 max-w-[11rem] px-1.5 py-1 rounded-sm text-xs text-foreground cursor-pointer hover:bg-muted disabled:cursor-default disabled:opacity-50 transition-colors"
       >
         <span className="truncate">{label}</span>
         <span aria-hidden className="text-[0.5rem] opacity-60">
@@ -212,7 +252,7 @@ export function ModelPicker({
                     aria-selected={isCurrent}
                     onMouseEnter={() => setActive(i)}
                     onClick={() => choose(m)}
-                    className={`w-full text-left px-2 py-1.5 rounded-sm flex items-baseline justify-between gap-2 ${
+                    className={`w-full text-left px-2 py-1.5 rounded-sm cursor-pointer flex items-baseline justify-between gap-2 ${
                       i === active ? "bg-muted" : ""
                     }`}
                   >
