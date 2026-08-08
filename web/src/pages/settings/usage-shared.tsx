@@ -1,4 +1,4 @@
-// Shared rendering for the org usage view: the totals cards and the cost chart.
+// The org usage view's totals cards.
 //
 // Separate from OrgUsageTab because the pieces are about presenting a usage
 // report rather than about that page, and because two of the cards carry

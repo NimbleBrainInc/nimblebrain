@@ -153,8 +153,9 @@ describe("the per-user breakdown row carries the same two signals", () => {
     const el = render(
       React.createElement(OrgUsageBody, { report: report({ unpricedCalls: 3 }), users: new Map() }),
     );
-    expect(el.textContent).toContain("unpriced");
-    expect(el.textContent).toContain("3");
+    // The count and the word together — `toContain("3")` alone passes off the
+    // LLM Calls cell, which the same fixture sets to 3, so it could not fail.
+    expect(el.textContent).toContain("+3 unpriced");
   });
 
   test("a fully priced row carries no marker", () => {
