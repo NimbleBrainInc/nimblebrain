@@ -27,6 +27,7 @@ const React = await import("react");
 const ReactDOMClient = await import("react-dom/client");
 const { act } = await import("react");
 const { UsageTotalsCards } = await import("../pages/settings/usage-shared");
+const { OrgUsageBody } = await import("../pages/settings/OrgUsageTab");
 interface Mounted {
   container: HTMLDivElement;
   unmount(): void;
@@ -111,5 +112,53 @@ describe("the session card counts automation runs", () => {
     );
     expect(el.textContent).toContain("Conversations");
     expect(el.textContent).not.toContain("Automation runs");
+  });
+});
+
+describe("the per-user breakdown row carries the same two signals", () => {
+  /** A report with one user row, shaped as the aggregator emits it. */
+  function report(row: Record<string, unknown>) {
+    return {
+      scope: "org",
+      period: { from: "2026-08-01", to: "2026-08-08" },
+      totals: totals({ runs: 178 }),
+      models: [],
+      // The body reads `breakdowns.user`, not `breakdown` — the per-dimension
+      // map is what the org view groups by.
+      breakdowns: {
+        user: [
+          {
+            key: "usr_a",
+            tokens: { ...ZERO_TOKENS, input: 10 },
+            cost: { ...ZERO_COST },
+            llmCalls: 3,
+            conversations: 2,
+            ...row,
+          },
+        ],
+      },
+      breakdown: [],
+    } as Parameters<typeof OrgUsageBody>[0]["report"];
+  }
+
+  test("the session cell sums chats and runs", () => {
+    const el = render(
+      React.createElement(OrgUsageBody, { report: report({ runs: 9 }), users: new Map() }),
+    );
+    // 11, not 2 — the row-level half of the same undercount.
+    expect(el.textContent).toContain("11");
+  });
+
+  test("an all-unpriced user's cost is marked rather than left reading $0.00", () => {
+    const el = render(
+      React.createElement(OrgUsageBody, { report: report({ unpricedCalls: 3 }), users: new Map() }),
+    );
+    expect(el.textContent).toContain("unpriced");
+    expect(el.textContent).toContain("3");
+  });
+
+  test("a fully priced row carries no marker", () => {
+    const el = render(React.createElement(OrgUsageBody, { report: report({}), users: new Map() }));
+    expect(el.textContent).not.toContain("unpriced");
   });
 });
