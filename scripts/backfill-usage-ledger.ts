@@ -241,6 +241,25 @@ function fromAutomationRuns(path: string): UsageLedgerEntry[] {
   return entries;
 }
 
+/**
+ * A run index: `automations/<ownerId>/runs/<automationId>/index.jsonl`.
+ *
+ * The automation id between `runs/` and the file is the part that matters. An
+ * earlier version matched `runs/index.jsonl` — no id segment — which matches
+ * nothing on a real tree, so the automation half of the migration found zero
+ * files and reported success. On the tenant this was built for that silently
+ * skipped 1,820 runs and 799M tokens: the exact spend the ledger exists to
+ * surface, missing from a migration that looked clean.
+ */
+export function isRunIndex(path: string): boolean {
+  const parts = path.split(sep);
+  return (
+    parts.length >= 3 &&
+    parts[parts.length - 1] === "index.jsonl" &&
+    parts[parts.length - 3] === "runs"
+  );
+}
+
 /** Every replayable line under the given roots. */
 function collectEntries(roots: string[], skipAutomations: boolean): UsageLedgerEntry[] {
   const entries: UsageLedgerEntry[] = [];
@@ -249,8 +268,23 @@ function collectEntries(roots: string[], skipAutomations: boolean): UsageLedgerE
       p.includes(`${sep}conversations${sep}`) && p.endsWith(".jsonl");
     for (const path of walk(root, isConversation)) entries.push(...fromConversation(path));
     if (skipAutomations) continue;
-    const isRunIndex = (p: string) => p.endsWith(join("runs", "index.jsonl"));
-    for (const path of walk(root, isRunIndex)) entries.push(...fromAutomationRuns(path));
+
+    // Refuse to look clean. A tree with automations but no matching run index
+    // means the layout moved out from under this predicate again, and the
+    // failure mode is silence — the run replays nothing and the summary reads
+    // like a success. Better to stop than to under-report and be believed.
+    const runIndexes = walk(root, isRunIndex);
+    const hasAutomations = walk(root, (p) => p.includes(`${sep}automations${sep}`)).length > 0;
+    if (hasAutomations && runIndexes.length === 0) {
+      console.error(
+        `✗ ${root} has automations but no run index matched ` +
+          `automations/<owner>/runs/<automation>/index.jsonl.\n` +
+          `  The layout has moved. Replaying now would silently omit every ` +
+          `automation run, which is the spend this ledger exists to show.`,
+      );
+      process.exit(1);
+    }
+    for (const path of runIndexes) entries.push(...fromAutomationRuns(path));
   }
   return entries;
 }
@@ -288,6 +322,21 @@ async function main(): Promise<void> {
   const archivedRoot = join(args.workDir, "archived");
 
   const entries = collectEntries([workspacesRoot, archivedRoot], args.skipAutomations);
+  // What was scanned, not only what will be written. A count of zero for either
+  // source is the signal that a predicate stopped matching, and it is invisible
+  // in a summary that reports written lines alone.
+  const bySource = entries.reduce(
+    (acc, e) => {
+      if (e.origin === "task") acc.automation++;
+      else acc.conversation++;
+      return acc;
+    },
+    { conversation: 0, automation: 0 },
+  );
+  console.log(
+    `  scanned: ${bySource.conversation} conversation call(s), ` +
+      `${bySource.automation} automation run(s)`,
+  );
   const liveStarts = liveStartsByMonth(args.workDir);
   const { byMonth, skipped } = partitionByMonth(entries, args.before, liveStarts);
 
@@ -313,7 +362,13 @@ async function main(): Promise<void> {
   );
 }
 
-main().catch((err: unknown) => {
-  console.error(err);
-  process.exit(1);
-});
+// Gate the run on direct invocation, matching the check scripts. Without it,
+// importing anything from this file executes the migration's arg parsing and
+// exits the importer — which is what made the predicate untestable, and so
+// untested.
+if (import.meta.main) {
+  main().catch((err: unknown) => {
+    console.error(err);
+    process.exit(1);
+  });
+}
