@@ -22,7 +22,8 @@ export declare const SkillsActiveForInput: import("@sinclair/typebox").TObject<{
 export type SkillsActiveForInput = Static<typeof SkillsActiveForInput>;
 export declare const SkillsLoadingLogInput: import("@sinclair/typebox").TObject<{
     conversation_id: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
-    skill_id: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
+    skill: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
+    loaded_by: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"always" | "tool_affinity" | "trigger" | "tool_use" | "activation">>;
     since: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
     until: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
 }>;
