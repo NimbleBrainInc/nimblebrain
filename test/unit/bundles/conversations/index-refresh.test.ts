@@ -1,9 +1,17 @@
 /**
- * The conversations-tool index must stay fresh in the workspace layout, where a root
- * `fs.watch` can't see nested writes. Freshness comes from `invalidate()` +
- * `refresh()` (a full rebuild), NOT the watcher. This pins the two failure modes
- * the watcher/add-only-rescan left open: frozen summaries on update, ghosts on
- * delete.
+ * The conversations-tool index must stay fresh in the workspace layout, where a
+ * root `fs.watch` can't see nested writes. Freshness comes from `invalidate()` +
+ * `refresh()`: a change that names its conversation costs one header re-read,
+ * and only an unattributed change rebuilds the whole index.
+ *
+ * Two groups of failure mode are pinned here. The first is staleness the read
+ * path must not serve — frozen summaries on update, ghosts on delete. The
+ * second is what the named signal costs: a write that does not announce itself
+ * is never repaired, because no unrelated traffic will name that conversation
+ * again. `conversations__update` and `conversations__fork` write their files
+ * outside the store, so they are the cases that group exists for, and those
+ * tests use targeted refreshes only — a bare `invalidate()` would rebuild
+ * everything and mask exactly the defect under test.
  */
 
 import { afterEach, beforeEach, expect, test } from "bun:test";
@@ -122,6 +130,9 @@ test("handleUpdate's write is announced, so the rename lands on a targeted refre
   await index.refresh();
 
   expect(index.get(CONV)!.title).toBe("Renamed by the tool");
+  // The handler supplies the wsId, so the announcement is also what keeps the
+  // entry inside its workspace wall.
+  expect(index.get(CONV)!.workspaceId).toBe(WS);
 });
 
 test("handleFork's new conversation is announced, so it appears on a targeted refresh", async () => {
@@ -143,6 +154,8 @@ test("handleFork's new conversation is announced, so it appears on a targeted re
   // nothing but its own announcement can introduce it.
   expect(index.get(forked.id)).toBeDefined();
   expect(index.list().totalCount).toBe(2);
+  // The fork inherits the source's workspace, and only the announcement carries it.
+  expect(index.list({ workspaceId: WS }).totalCount).toBe(2);
 });
 
 test("a targeted refresh keeps the entry's workspace binding", async () => {
