@@ -556,89 +556,156 @@ describe("get", () => {
 });
 
 // ---------------------------------------------------------------------------
-// fs.watch integration
+// Incremental invalidation
 // ---------------------------------------------------------------------------
 
-describe("fs.watch integration", () => {
-	test("indexes a new file when processPendingFiles runs", async () => {
-		// Tests the deterministic post-debounce path. We do NOT exercise
-		// fs.watch here because macOS FSEvents is unreliable for new-file
-		// creation under parallel-test load — it occasionally drops the
-		// event entirely, producing a flake. The sibling deletion test
-		// uses the same private-method pattern. The actual fs.watch →
-		// debounce → processPendingFiles wiring is exercised end-to-end
-		// in the integration suite where retries / longer timeouts apply.
+describe("incremental invalidation", () => {
+	function conv(id: string, title: string, updatedAt = "2025-01-01T00:00:00.000Z"): string {
+		return writeConvFile({
+			id,
+			createdAt: "2025-01-01T00:00:00.000Z",
+			updatedAt,
+			title,
+			messages: [{ role: "user", content: "hi", timestamp: "2025-01-01T00:01:00.000Z" }],
+		});
+	}
+
+	test("a named change re-reads only that conversation", async () => {
+		const aPath = conv("inc_a", "A");
+		const bPath = conv("inc_b", "B");
+
 		const index = new ConversationIndex();
 		await index.build(TMP_DIR);
-		expect(index.size).toBe(0);
+		expect(index.size).toBe(2);
 
+		// Rewrite A's title, and delete B behind the index's back. A targeted
+		// refresh must pick up A and must NOT notice B — if it walked the
+		// directory, B would vanish and this assertion would fail. That is the
+		// whole point of the change, so it is asserted rather than assumed.
 		writeConvFile({
-			id: "watch1",
+			id: "inc_a",
 			createdAt: "2025-01-01T00:00:00.000Z",
-			updatedAt: "2025-01-01T00:00:00.000Z",
-			title: "Watched file",
-			messages: [{ role: "user", content: "new message", timestamp: "2025-01-01T00:01:00.000Z" }],
+			updatedAt: "2025-06-01T00:00:00.000Z",
+			title: "A renamed",
+			messages: [{ role: "user", content: "hi", timestamp: "2025-01-01T00:01:00.000Z" }],
 		});
+		rmSync(bPath);
 
-		// Drive the debounce-flush path directly. Mirrors what fs.watch's
-		// 500ms timer eventually invokes.
-		const priv = index as any;
-		priv.dir = TMP_DIR;
-		priv.pendingFiles.add("conv_watch1.jsonl");
-		await priv.processPendingFiles();
+		index.invalidate({ id: "inc_a", filePath: aPath, wsId: null });
+		await index.refresh();
 
-		expect(index.size).toBe(1);
-		expect(index.get("watch1")).toBeDefined();
-		expect(index.get("watch1")!.title).toBe("Watched file");
+		expect(index.get("inc_a")!.title).toBe("A renamed");
+		expect(index.get("inc_b")).toBeDefined();
+		expect(index.size).toBe(2);
 	});
 
-	test("removes deleted file from index when processPendingFiles runs", async () => {
-		const filePath = writeConvFile({
-			id: "watch_del",
-			createdAt: "2025-01-01T00:00:00.000Z",
-			updatedAt: "2025-01-01T00:00:00.000Z",
-			title: "Will be deleted",
-			messages: [{ role: "user", content: "bye", timestamp: "2025-01-01T00:01:00.000Z" }],
-		});
-
+	test("a named change indexes a conversation the index has never seen", async () => {
 		const index = new ConversationIndex();
 		await index.build(TMP_DIR);
-		expect(index.size).toBe(1);
-		expect(index.get("watch_del")).toBeDefined();
-
-		// Delete the file, then simulate a watch event by directly invoking
-		// processPendingFiles. This tests the cleanup logic without depending
-		// on fs.watch event delivery timing, which is unreliable under CI load.
-		rmSync(filePath);
-
-		// Access private pendingFiles + processPendingFiles via the instance
-		const priv = index as any;
-		priv.dir = TMP_DIR;
-		priv.pendingFiles.add("conv_watch_del.jsonl");
-		await priv.processPendingFiles();
-
 		expect(index.size).toBe(0);
-		expect(index.get("watch_del")).toBeUndefined();
+
+		const path = conv("inc_new", "Brand new");
+		index.invalidate({ id: "inc_new", filePath: path, wsId: null });
+		await index.refresh();
+
+		expect(index.size).toBe(1);
+		expect(index.get("inc_new")!.title).toBe("Brand new");
 	});
 
-	test("stopWatching cleans up", async () => {
+	test("a named change whose file is gone drops the entry", async () => {
+		const path = conv("inc_del", "Will be deleted");
+
+		const index = new ConversationIndex();
+		await index.build(TMP_DIR);
+		expect(index.get("inc_del")).toBeDefined();
+
+		rmSync(path);
+		index.invalidate({ id: "inc_del", filePath: path, wsId: null });
+		await index.refresh();
+
+		expect(index.size).toBe(0);
+		expect(index.get("inc_del")).toBeUndefined();
+	});
+
+	test("repeated changes to one conversation collapse to a single entry", async () => {
+		const path = conv("inc_burst", "v1");
+
 		const index = new ConversationIndex();
 		await index.build(TMP_DIR);
 
-		index.startWatching(TMP_DIR);
-		index.stopWatching();
+		for (const title of ["v2", "v3", "v4"]) {
+			writeConvFile({
+				id: "inc_burst",
+				createdAt: "2025-01-01T00:00:00.000Z",
+				updatedAt: "2025-01-01T00:00:00.000Z",
+				title,
+				messages: [{ role: "user", content: "hi", timestamp: "2025-01-01T00:01:00.000Z" }],
+			});
+			index.invalidate({ id: "inc_burst", filePath: path, wsId: null });
+		}
 
-		// Write a file after stopping — should NOT be indexed
+		await index.refresh();
+
+		expect(index.size).toBe(1);
+		expect(index.get("inc_burst")!.title).toBe("v4");
+	});
+
+	test("an unattributed change still rebuilds the whole index", async () => {
+		const bPath = conv("inc_x", "X");
+		conv("inc_y", "Y");
+
+		const index = new ConversationIndex();
+		await index.build(TMP_DIR);
+		expect(index.size).toBe(2);
+
+		// No change argument — the caller cannot say what moved (a workspace
+		// archive-delete), so the vanished file must be noticed.
+		rmSync(bPath);
+		index.invalidate();
+		await index.refresh();
+
+		expect(index.size).toBe(1);
+		expect(index.get("inc_x")).toBeUndefined();
+		expect(index.get("inc_y")).toBeDefined();
+	});
+
+	test("a full rebuild subsumes pending targeted changes", async () => {
+		const aPath = conv("inc_p", "P");
+
+		const index = new ConversationIndex();
+		await index.build(TMP_DIR);
+
 		writeConvFile({
-			id: "after_stop",
+			id: "inc_p",
 			createdAt: "2025-01-01T00:00:00.000Z",
 			updatedAt: "2025-01-01T00:00:00.000Z",
-			title: "Should not appear",
-			messages: [{ role: "user", content: "ignored", timestamp: "2025-01-01T00:01:00.000Z" }],
+			title: "P renamed",
+			messages: [{ role: "user", content: "hi", timestamp: "2025-01-01T00:01:00.000Z" }],
 		});
+		index.invalidate({ id: "inc_p", filePath: aPath, wsId: null });
+		index.invalidate();
+		await index.refresh();
 
-		await new Promise((resolve) => setTimeout(resolve, 800));
+		expect(index.get("inc_p")!.title).toBe("P renamed");
 
-		expect(index.size).toBe(0);
+		// The rebuild consumed the pending change; a second refresh has nothing
+		// left to do and must not resurrect it.
+		rmSync(aPath);
+		await index.refresh();
+		expect(index.get("inc_p")!.title).toBe("P renamed");
+	});
+
+	test("refresh is a no-op when nothing was invalidated", async () => {
+		const path = conv("inc_clean", "Clean");
+
+		const index = new ConversationIndex();
+		await index.build(TMP_DIR);
+
+		// Nothing signalled a change, so a stale index is the correct answer —
+		// refresh must not walk the directory looking for one.
+		rmSync(path);
+		await index.refresh();
+
+		expect(index.size).toBe(1);
 	});
 });

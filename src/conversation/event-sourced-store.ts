@@ -376,6 +376,20 @@ function mapSkillActivated({ ts, d, runId }: EngineEventContext): ConversationEv
 // Store
 // ---------------------------------------------------------------------------
 
+/**
+ * The conversation a write touched.
+ *
+ * Carried on `onMutate` so a listening cache can refresh one entry instead of
+ * rebuilding its whole corpus. `filePath` is the store's own resolved path,
+ * passed rather than reconstructed downstream: a cache that rebuilt the path
+ * from the id would be a second construction of the same fact, free to
+ * disagree with this one.
+ */
+export interface ConversationMutation {
+  id: string;
+  filePath: string;
+}
+
 export interface EventSourcedStoreConfig {
   /** Directory for conversation JSONL files. */
   dir: string;
@@ -387,14 +401,21 @@ export interface EventSourcedStoreConfig {
    * this to its conversation-cache invalidation so cross-workspace lists/loads
    * (the locator and the conversations-tool index) stay fresh. The per-dir
    * `ConversationIndex` is invalidated independently in-store.
+   *
+   * **Invariant: every write to a conversation file fires this, naming that
+   * conversation.** Listeners refresh only what is named, so a write that stays
+   * silent leaves a permanently stale entry — unrelated traffic will not repair
+   * it, because no other change names this conversation. The rule is per
+   * *write*, not per public method: `fork()` announces twice because it writes
+   * twice, and the second write is the one carrying the messages.
    */
-  onMutate?: () => void;
+  onMutate?: (change: ConversationMutation) => void;
 }
 
 export class EventSourcedConversationStore implements ConversationStore, EventSink {
   private dir: string;
   private logLevel: "normal" | "debug";
-  private onMutate?: () => void;
+  private onMutate?: (change: ConversationMutation) => void;
   private index = new ConversationIndex();
   private activeConversationId: string | null = null;
   private pendingWrites = new Set<Promise<unknown>>();
@@ -452,7 +473,7 @@ export class EventSourcedConversationStore implements ConversationStore, EventSi
     const path = this.path(id);
     await writeFile(path, `${JSON.stringify(conversation)}\n`);
     this.index.invalidate();
-    this.onMutate?.();
+    this.onMutate?.({ id, filePath: path });
     return conversation;
   }
 
@@ -578,6 +599,7 @@ export class EventSourcedConversationStore implements ConversationStore, EventSi
     await writeFile(tmpPath, lines.map((l) => `${l}\n`).join(""));
     await rename(tmpPath, path);
     this.index.invalidate();
+    this.onMutate?.({ id: conversation.id, filePath: path });
   }
 
   /**
@@ -653,7 +675,7 @@ export class EventSourcedConversationStore implements ConversationStore, EventSi
     if (!existsSync(path)) return false;
     await unlink(path);
     this.index.remove(id);
-    this.onMutate?.();
+    this.onMutate?.({ id, filePath: path });
     return true;
   }
 
@@ -741,6 +763,11 @@ export class EventSourcedConversationStore implements ConversationStore, EventSi
     await writeFile(tmpPath, lines.map((l) => `${l}\n`).join(""));
     await rename(tmpPath, path);
     this.index.invalidate();
+    // `create()` already announced this conversation, but it announced an empty
+    // one — this rewrite is what gives it its messages, and a listener that
+    // consumed the create in between would otherwise hold a 0-message fork with
+    // nothing left to correct it.
+    this.onMutate?.({ id: newConv.id, filePath: path });
   }
 
   async flush(): Promise<void> {
@@ -826,9 +853,10 @@ export class EventSourcedConversationStore implements ConversationStore, EventSi
     const path = this.path(id);
     appendFileSync(path, `${JSON.stringify(event)}\n`);
     // An append changes a conversation's summary (title/updatedAt/tokens), so
-    // the cross-workspace caches must refresh — not just on create/delete. The hook
-    // is a cheap invalidation flag; the rescan it triggers is lazy (next read).
-    this.onMutate?.();
+    // the cross-workspace caches must refresh — not just on create/delete. The
+    // hook names the one conversation that moved; the re-read it triggers is
+    // lazy (next read) and scoped to that conversation's header.
+    this.onMutate?.({ id, filePath: path });
   }
 
   /** Detect whether a conversation file uses event format or legacy message format. */

@@ -70,11 +70,11 @@ export async function createConversationsSource(
         await idx.build(dir);
         // The recursive workspace layout defeats a root `fs.watch` (it can't see nested
         // `ws_*/conversations/<owner>/*.jsonl` writes), so freshness rides the
-        // runtime's invalidation hook instead of the watcher: every conversation
-        // write (create/delete/append) and every workspace archive-delete flags
-        // the index stale, and `refresh()` does a full rebuild on the next read —
-        // re-reading headers (updates) and dropping vanished files (deletes).
-        runtime.onConversationsChanged(() => idx.invalidate());
+        // runtime's invalidation hook instead of the watcher. The change is passed
+        // through rather than dropped: a create/delete/append names its conversation
+        // and costs one header re-read on the next read, while a workspace
+        // archive-delete names none and falls back to the full rebuild.
+        runtime.onConversationsChanged((change) => idx.invalidate(change));
         return idx;
       })();
       // A failed build must not be memoised as the permanent answer.

@@ -66,7 +66,6 @@ describe("conversations__search", () => {
 	});
 
 	afterEach(() => {
-		index.stopWatching();
 		rmSync(dir, { recursive: true, force: true });
 	});
 
