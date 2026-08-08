@@ -9,7 +9,7 @@
  *   skills__list           — enumerate skills with scope/layer/status filters
  *   skills__read           — fetch one skill's body + manifest by id
  *   skills__active_for     — show which skills loaded for a conversation
- *   skills__loading_log    — replay skills.loaded events for analysis
+ *   skills__loading_log    — replay the skill-load ledger (every channel)
  *
  * Catalog activation (`nb__use_skill`) is defined here too — it shares this
  * file's resolution and delivery machinery — but registers on the system-tools

@@ -34,6 +34,7 @@ import type {
   SkillActivatedEvent,
   SkillsLoadedEvent,
 } from "../conversation/types.ts";
+import { skillDisplayName } from "./display-name.ts";
 import { approxTokens } from "./tokens.ts";
 
 /**
@@ -61,9 +62,15 @@ export interface SkillLoadRow {
    */
   run_id?: string;
   /**
-   * The skill's name where the record has one. `skills.loaded` entries
-   * predating the `name` field fall back to their id, so this is always
-   * populated and always the thing a human would filter on.
+   * The skill's display name — the thing a human filters on.
+   *
+   * Resolved through {@link skillDisplayName} for `skills.loaded`, which is
+   * what makes one skill read as one identity across channels: entries
+   * predating the `name` field carry only an id, while the overlay and
+   * activation records carry a `skillName` that is already display-shaped.
+   * Deriving it here instead would split a legacy `/skills/billing.md` from
+   * the `billing` its overlay records, in the very comparison this ledger
+   * exists to make.
    */
   skill: string;
   /** Stable id, when the record carries one (`skills.loaded` only). */
@@ -99,7 +106,7 @@ export function projectSkillLoads(convId: string, events: ConversationEvent[]): 
             ts: e.ts,
             conv_id: convId,
             run_id: e.runId,
-            skill: s.name ?? s.id,
+            skill: skillDisplayName(s),
             skill_id: s.id,
             loaded_by: s.loadedBy,
             tokens: s.tokens,

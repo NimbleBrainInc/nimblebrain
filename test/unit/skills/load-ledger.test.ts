@@ -131,12 +131,42 @@ describe("projectSkillLoads — shape", () => {
     for (const r of rows) expect(r.run_id).toBe("run-1");
   });
 
-  test("a skills.loaded entry predating the name field falls back to its id", () => {
+  test("a skills.loaded entry predating the name field resolves a display name", () => {
     const rows = projectSkillLoads(CONV, [
       skillsLoaded("2026-08-01T00:00:00Z", "run-1", [entry({ name: undefined })]),
     ]);
-    expect(rows[0]?.skill).toBe("/skills/voice.md");
+    expect(rows[0]?.skill).toBe("voice");
     expect(rows[0]?.skill_id).toBe("/skills/voice.md");
+  });
+
+  test("a connector id resolves past the SKILL.md entrypoint, not to 'SKILL'", () => {
+    const rows = projectSkillLoads(CONV, [
+      skillsLoaded("2026-08-01T00:00:00Z", "run-1", [
+        entry({ id: "skill://acme/billing/SKILL.md", name: undefined }),
+      ]),
+    ]);
+    expect(rows[0]?.skill).toBe("billing");
+  });
+
+  test("an empty recorded name derives rather than emitting a blank identity", () => {
+    const rows = projectSkillLoads(CONV, [
+      skillsLoaded("2026-08-01T00:00:00Z", "run-1", [entry({ name: "" })]),
+    ]);
+    expect(rows[0]?.skill).toBe("voice");
+  });
+
+  test("a legacy prompt row and an overlay row for one skill read as one identity", () => {
+    // The reason the display rule can't be reimplemented here: overlay and
+    // activation records carry an already-display-shaped `skillName`, so a
+    // raw id on the prompt side would split one skill into two rows that no
+    // single `skill` filter matches.
+    const rows = projectSkillLoads(CONV, [
+      skillsLoaded("2026-08-01T00:00:00Z", "run-1", [
+        entry({ id: "/skills/billing.md", name: undefined }),
+      ]),
+      connectorInjected("2026-08-01T00:01:00Z", { skillName: "billing" }),
+    ]);
+    expect(new Set(rows.map((r) => r.skill))).toEqual(new Set(["billing"]));
   });
 
   test("only prompt-composed rows carry a skill_id", () => {

@@ -133,7 +133,9 @@ Ask the agent which skills are loaded — it uses the built-in `skills__list` to
 
 ## Auditing how skills loaded
 
-`skills__list` says which skills *exist*. To see which ones actually reached the model, and how, ask the agent to replay the skill-load ledger (`skills__loading_log`). It returns one row per load — skill, timestamp, conversation, tokens, and a `loaded_by` channel:
+`skills__list` says which skills *exist*. To see which ones actually reached the model, and how, replay the skill-load ledger with `skills__loading_log`.
+
+Ask the agent and it reports the summary — how many loads, across how many conversations, broken down by channel. The per-load rows come back in the tool's structured output, so calling it directly (over the API or from an MCP client) is the path for analysis. Each row carries the skill, timestamp, conversation, tokens, and a `loaded_by` channel:
 
 | `loaded_by` | Meaning |
 |---|---|

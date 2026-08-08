@@ -979,7 +979,7 @@ describe("skills__active_for", () => {
 // ── skills__loading_log ──────────────────────────────────────────────────
 
 describe("skills__loading_log", () => {
-  test("filters by conversation_id, since, until, skill_id", async () => {
+  test("filters by conversation_id, since, until, skill, loaded_by", async () => {
     const conv = await runtime.store().create({ ownerId: "user_test" });
     runtime.store().setActiveConversation(conv.id);
 
@@ -1090,7 +1090,8 @@ describe("skills__loading_log", () => {
     });
     const affinityLoads = (affinity as { structuredContent?: { loads?: unknown[] } })
       .structuredContent?.loads as Array<{ skill: string }>;
-    expect(affinityLoads.map((r) => r.skill)).toEqual(["/skills/c.md"]);
+    // Display name, not the raw id — these fixtures predate the `name` field.
+    expect(affinityLoads.map((r) => r.skill)).toEqual(["c"]);
   });
 
   test("surfaces overlay and activation loads, which the skills.loaded-only read could not see", async () => {
