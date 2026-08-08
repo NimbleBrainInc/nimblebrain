@@ -427,6 +427,16 @@ function appendRunMessages(
   // The message is `user`-role because mid-run it is the last thing the next
   // model call sees, and a trailing assistant message is a prefill the model
   // continues instead of answering. See `buildConnectorSkillMessage`.
+  //
+  // Provider note: this places a user message directly after the iteration's
+  // tool message, and two overlays from one iteration land adjacent.
+  // Anthropic — the default, tested provider, and the only one overlays ship
+  // enabled-for — coalesces consecutive user and tool messages into a single
+  // block preserving part order, so both shapes collapse to one canonical user
+  // turn. A provider whose SDK conversion does NOT merge (`@ai-sdk/google`
+  // emits one entry per user message) would see the pair verbatim; verify
+  // provider-side coalescing before enabling overlays on a non-Anthropic
+  // default.
   let responsesEmitted = 0;
   for (const llmResp of run.llmResponses) {
     for (const msg of messagesForLlmResponse(
@@ -657,7 +667,7 @@ function messagesForLlmResponse(
 }
 
 /**
- * Synthesize the assistant message for a connector-skill overlay: the overlay
+ * Synthesize the message carrying a connector-skill overlay: the overlay
  * body wrapped in `<connector-skill>` containment, tagged with
  * `metadata.synthetic`/`skill` so the engine detects an already-surfaced
  * overlay and never re-injects it.
@@ -680,9 +690,11 @@ function buildConnectorSkillMessage(cs: ConnectorSkillInjectedEvent): StoredMess
 
 /**
  * Defense-in-depth invariant pass: ensure the reconstructed message list
- * never has two adjacent `user` messages. Anthropic rejects such a
- * sequence on the next append with
- * `"This model does not support assistant message prefill."`.
+ * never has two adjacent `user` messages. Not a provider requirement —
+ * `@ai-sdk/anthropic` coalesces consecutive user/tool messages into one block.
+ * It is a fidelity one: two user turns in a row means a run produced no
+ * response, and replaying that as though the user spoke twice hides the gap
+ * from both the model and the reader. The marker names it instead.
  *
  * The per-run step-4a handler covers the cases we've seen in production
  * (orphaned tool-calls, length-truncated empty turns). This pass catches

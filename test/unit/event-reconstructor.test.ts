@@ -1260,8 +1260,9 @@ describe("reconstructMessages — connector.skill.injected (P4)", () => {
   });
 
   it("keeps alternation valid when a new user turn follows the injection", () => {
-    // Turn 1 injects; turn 2 is a fresh user message → the synthetic assistant
-    // message sits between them, so there is no user→user adjacency.
+    // Turn 1 injects; turn 2 is a fresh user message. The overlay is user-role
+    // but is NOT exempt from the alternation pass here (only overlay→overlay
+    // is), so the repair marker still separates them.
     const events: ConversationEvent[] = [
       userMessage("send an email"),
       runStart("run-1"),
