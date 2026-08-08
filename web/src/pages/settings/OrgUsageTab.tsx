@@ -147,7 +147,7 @@ function OrgUsageBody({ report, users }: { report: UsageReport; users: Map<strin
                 <TableHead className="text-right">Tokens</TableHead>
                 <TableHead className="text-right">Cost</TableHead>
                 <TableHead className="text-right">LLM Calls</TableHead>
-                <TableHead className="text-right">Conversations</TableHead>
+                <TableHead className="text-right">Sessions</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -164,7 +164,16 @@ function OrgUsageBody({ report, users }: { report: UsageReport; users: Map<strin
                     </TableCell>
                     <TableCell className="text-right">{formatUsd(row.cost.total)}</TableCell>
                     <TableCell className="text-right">{formatNumber(row.llmCalls)}</TableCell>
-                    <TableCell className="text-right">{formatNumber(row.conversations)}</TableCell>
+                    {/*
+                      Chats plus automation runs. The aggregator keeps them
+                      apart on the row for the same reason the totals do — a run
+                      is not a conversation — and the column sums them so it
+                      stops under-reporting a user whose spend is mostly
+                      automations.
+                    */}
+                    <TableCell className="text-right">
+                      {formatNumber(row.conversations + (row.runs ?? 0))}
+                    </TableCell>
                   </TableRow>
                 );
               })}

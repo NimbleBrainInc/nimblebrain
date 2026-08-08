@@ -47,10 +47,20 @@ function CostRow({ label, value }: { label: string; value: string }) {
   );
 }
 
-/** The four headline cards: total cost, tokens, LLM calls, conversations. */
+/**
+ * The four headline cards: cost, tokens, LLM calls, and sessions.
+ *
+ * Two of them qualify themselves rather than presenting a bare number: the cost
+ * card says when calls are excluded for want of a price, and the session card
+ * splits chats from automation runs once any exist. Both were numbers that read
+ * as complete while omitting exactly the spend this reporting was rebuilt to
+ * surface.
+ */
 export function UsageTotalsCards({ totals }: { totals: UsageReport["totals"] }) {
   const { tokens, cost } = totals;
   const totalTokens = totalTokenCount(tokens);
+  const unpricedCalls = totals.unpricedCalls ?? 0;
+  const runs = totals.runs ?? 0;
 
   return (
     <div className="grid grid-cols-2 gap-4 md:grid-cols-4">
@@ -66,6 +76,21 @@ export function UsageTotalsCards({ totals }: { totals: UsageReport["totals"] }) 
             <CostRow label="Cache read" value={formatUsd(cost.cacheRead)} />
             <CostRow label="Cache write" value={formatUsd(cost.cacheWrite)} />
           </div>
+          {/*
+            Says the figure above is incomplete, not that the spend was zero.
+            Some calls carry tokens with no resolvable price — a model the
+            catalog never knew, or history replayed from automation runs that
+            recorded no model — so their tokens are in the count beside this and
+            their cost is in nothing. Without this line the difference is
+            invisible, and a large token count next to a small dollar figure
+            reads as cheap rather than as partly unknown.
+          */}
+          {unpricedCalls > 0 && (
+            <p className="mt-2 text-xs text-muted-foreground">
+              Excludes {formatNumber(unpricedCalls)} {unpricedCalls === 1 ? "call" : "calls"} with
+              no known price.
+            </p>
+          )}
         </CardContent>
       </Card>
 
@@ -101,10 +126,24 @@ export function UsageTotalsCards({ totals }: { totals: UsageReport["totals"] }) 
 
       <Card>
         <CardHeader className="pb-2">
-          <CardTitle className="text-sm font-medium text-muted-foreground">Conversations</CardTitle>
+          <CardTitle className="text-sm font-medium text-muted-foreground">
+            {runs > 0 ? "Sessions" : "Conversations"}
+          </CardTitle>
         </CardHeader>
         <CardContent>
-          <p className="text-2xl font-semibold">{formatNumber(totals.conversations)}</p>
+          <p className="text-2xl font-semibold">{formatNumber(totals.conversations + runs)}</p>
+          {/*
+            Split rather than summed silently: an automation run is not someone
+            chatting, and folding the two is how automation spend stayed
+            invisible in the first place. The rows appear only once runs exist,
+            so a tenant with no automations sees the card it always saw.
+          */}
+          {runs > 0 && (
+            <div className="mt-2 space-y-0.5 text-xs text-muted-foreground">
+              <CostRow label="Chats" value={formatNumber(totals.conversations)} />
+              <CostRow label="Automation runs" value={formatNumber(runs)} />
+            </div>
+          )}
         </CardContent>
       </Card>
     </div>
