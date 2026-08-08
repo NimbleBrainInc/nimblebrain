@@ -12,6 +12,29 @@
 
 import { dirname, join } from "node:path";
 
+/**
+ * The only keys the override file may carry.
+ *
+ * The header above has always claimed this; nothing enforced it, and the claim
+ * went false the moment a field stopped being writable — an override written
+ * before that layers over the seed on every boot with no writer left to clear
+ * it, which is precisely the git-cannot-reclaim-it failure the split exists to
+ * prevent.
+ *
+ * Enforced in two places, from this one list: the tool refuses a field it does
+ * not write, and the loader drops one that is already on disk.
+ */
+export const OVERRIDE_WRITABLE_KEYS = [
+  "models",
+  "defaultModel",
+  "maxIterations",
+  "maxInputTokens",
+  "maxOutputTokens",
+  "thinking",
+  "thinkingEffort",
+  "thinkingBudgetTokens",
+] as const;
+
 const DEFAULT_OVERRIDE_FILE = "nimblebrain.overrides.json";
 
 /**
@@ -42,7 +65,12 @@ export function mergeConfigs(
   override: Record<string, unknown>,
 ): Record<string, unknown> {
   const out: Record<string, unknown> = { ...seed };
+  const writable = new Set<string>(OVERRIDE_WRITABLE_KEYS);
   for (const [key, value] of Object.entries(override)) {
+    // A key with no writer cannot be cleared, so it would outrank the seed
+    // forever. Dropping it here restores the file to what its one writer can
+    // actually produce, and a deploy reclaims the field.
+    if (!writable.has(key)) continue;
     const seedValue = seed[key];
     const bothObjects =
       value !== null &&

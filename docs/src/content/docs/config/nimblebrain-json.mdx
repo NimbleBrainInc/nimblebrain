@@ -258,15 +258,20 @@ Policy can only **subtract**. It narrows what the configured providers can
 already reach — naming a model whose provider has no key does not make it
 reachable, and naming a non-chat model does not make it selectable.
 
-Every slot in [`models`](#models) should name an allowed model. Setting a policy
-that excludes one **through the settings surface is rejected**; written here by
-hand it is not — the runtime logs an error naming the slot at startup and then
-runs, because a deployment that boots with a warning it can act on beats one
-that will not start. The effect until you fix it: turns resolve to that model
-while the picker excludes it.
+**This file is the only place it is set.** There is no runtime surface for it —
+the allowlist is deployment configuration, so it lives in version control with
+the rest of the tenant's setup and a redeploy always restores it.
 
-A *user's* saved model preference needs no such care: one outside the list
-falls back to the configured default on their next turn.
+Every slot in [`models`](#models) should name an allowed model. Nothing stops
+you writing a file where one does not: the runtime logs an error naming the
+slot at startup and then runs, because a deployment that boots with an error
+you can act on beats one that will not start. Until you fix it, turns resolve
+to that model while the picker excludes it.
+
+Once the file is loaded the runtime does hold the line — repointing a slot at a
+forbidden model, or clearing one so it falls back to a forbidden model, is
+refused. A *user's* saved model preference needs no such care: one outside the
+list falls back to the configured default on their next turn.
 
 ## providers
 
