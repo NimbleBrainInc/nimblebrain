@@ -80,7 +80,10 @@ describe("skills source — factory", () => {
 // ── Tools list ──────────────────────────────────────────────────────────
 
 describe("skills source — tools list", () => {
-  test("exposes the read tools, the mutation tools, and the catalog activation tool", async () => {
+  // Catalog activation is deliberately NOT here — it registers on the
+  // system-tools source as `nb__use_skill` so it is kernel-direct. See
+  // `createUseSkillToolDef` and `test/unit/tools/surfacing.test.ts`.
+  test("exposes the read tools and the mutation tools", async () => {
     const src = await buildSource();
     const client = src.getClient()!;
     const tools = await client.listTools();
@@ -95,7 +98,6 @@ describe("skills source — tools list", () => {
       "loading_log",
       "read",
       "update",
-      "use",
     ]);
   });
 

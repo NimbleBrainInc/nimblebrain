@@ -21,6 +21,7 @@ import { createDelegateTool } from "./delegate.ts";
 import { defineInProcessApp, type InProcessTool } from "./in-process-app.ts";
 import { McpSource } from "./mcp-source.ts";
 import { createManageToolsToolDefs } from "./platform/manage-tools.ts";
+import { createUseSkillToolDef } from "./platform/skills.ts";
 import type { ToolRegistry } from "./registry.ts";
 import { createManageRegistriesTool } from "./registry-tools.ts";
 import { rankToolSearchResults } from "./search-ranking.ts";
@@ -131,6 +132,14 @@ export async function createSystemTools(
     createReadResourceTool(getRegistry),
     createStatusTool(getRegistry, getSkills, runtime),
   ];
+
+  // Catalog activation. Defined on the skills source's file (it shares that
+  // module's resolution/delivery machinery) but registered HERE so it is
+  // kernel-direct — the catalog it reads reaches every turn, so the move to
+  // act on it has to as well. See `createUseSkillToolDef`.
+  if (runtime) {
+    systemToolDefs.push(createUseSkillToolDef(runtime));
+  }
 
   if (delegateCtx) {
     systemToolDefs.push(createDelegateTool(delegateCtx));

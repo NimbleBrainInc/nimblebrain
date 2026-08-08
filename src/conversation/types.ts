@@ -532,7 +532,7 @@ export interface ConnectorSkillInjectedEvent {
 }
 
 /**
- * A catalog skill's full body was delivered via the `skills__use` activation
+ * A catalog skill's full body was delivered via the `nb__use_skill` activation
  * tool. The body itself rides the tool result (`tool.done`), so the
  * reconstructor synthesizes no message for this event — it stamps the
  * `metadata.synthetic = "skill_activated"` dedup marker onto the reconstructed
@@ -544,7 +544,7 @@ export interface SkillActivatedEvent {
   ts: string;
   type: "skill.activated";
   runId: string;
-  /** The `skills__use` tool call whose result carried the body. */
+  /** The `nb__use_skill` tool call whose result carried the body. */
   toolCallId: string;
   /** The activated skill's catalog name. */
   skillName: string;

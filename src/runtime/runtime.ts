@@ -4341,7 +4341,7 @@ export class Runtime {
   /**
    * Names of skills already DELIVERED into this conversation — connector
    * overlays surfaced by the engine (synthetic-message marker) and catalog
-   * skills loaded via `skills__use` (marker stamped on the activating tool
+   * skills loaded via `nb__use_skill` (marker stamped on the activating tool
    * result). MUST be called on the UN-rehydrated history (`compactedHistory ??
    * history`): `rehydrateUserResources` strips message `metadata`, so the
    * markers are gone from the rehydrated `messages` the engine receives.
@@ -4373,7 +4373,7 @@ export class Runtime {
    * Every skill the given workspace's conversations can activate on demand —
    * the union the skill catalog is projected from: the conversation tiers'
    * `dynamic` skills, the workspace's `dynamic` bundle skills, and its curated
-   * connector overlays. Backs the `skills__use` tool's name validation and
+   * connector overlays. Backs the `nb__use_skill` tool's name validation and
    * body lookup, resolving through the same workspace-walled loaders the
    * request path composes with — a skill in another workspace can neither
    * appear nor be activated here.

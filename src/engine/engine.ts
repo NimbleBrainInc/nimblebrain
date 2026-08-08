@@ -627,7 +627,7 @@ function seedInjectedConnectorSkills(
   for (const m of history) {
     const meta = (m as { metadata?: { synthetic?: string; skill?: string | null } }).metadata;
     // Both delivery channels count: a surface-once overlay message and a
-    // `skills__use` activation result each put the full body in history, so
+    // `nb__use_skill` activation result each put the full body in history, so
     // either marker means "already delivered — don't inject again".
     const delivered =
       meta?.synthetic === CONNECTOR_SKILL_SYNTHETIC ||
@@ -1727,7 +1727,7 @@ export class AgentEngine {
 
   /**
    * Record a skill activation a tool result declares via the
-   * {@link SKILL_ACTIVATED_META_KEY} `_meta` marker (the `skills__use` tool):
+   * {@link SKILL_ACTIVATED_META_KEY} `_meta` marker (the `nb__use_skill` tool):
    * emit `skill.activated` through the run's sinks (persisting it into the
    * conversation log for telemetry + the cross-turn already-delivered check)
    * and add the name to the run's injected set so the surface-once overlay

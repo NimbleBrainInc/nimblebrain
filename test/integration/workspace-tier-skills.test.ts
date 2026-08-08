@@ -173,7 +173,7 @@ describe("Layer 3 — workspace-tier `loading_strategy: always` skills", () => {
   });
 
   it("walls listActivatableSkills to the named workspace (real loader, no stubs)", async () => {
-    // The activatable set backs both the rendered catalog and skills__use
+    // The activatable set backs both the rendered catalog and nb__use_skill
     // name validation, so the wall must hold on the REAL loader composition,
     // not a FakeRuntime. Plant a dynamic skill in the personal workspace and
     // assert each workspace's set sees only its own tier.

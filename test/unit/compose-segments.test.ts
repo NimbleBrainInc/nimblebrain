@@ -212,7 +212,7 @@ describe("composeSystemSegments — skill catalog layer", () => {
       stableSystem.indexOf("- invoice-runbook"),
     );
     // The closing paragraph teaches the activation tool by name.
-    expect(stableSystem).toContain("`skills__use`");
+    expect(stableSystem).toContain("`nb__use_skill`");
   });
 
   it("sits after the Skills section and before Installed Apps", () => {
