@@ -131,8 +131,9 @@ export function createUsageSource(runtime: Runtime, eventSink: EventSink): McpSo
 
   // No UI resource. Usage has one rendering — the `/org/usage` settings page —
   // for the same reason it has one reader: a second surface over the same
-  // numbers drifts from the first, and this one did, silently, on the first
-  // change either received. See the ledger's one-reader merge bar.
+  // numbers drifts from the first, and both of the ones deleted here had,
+  // silently, on the first change the page received. See the ledger's
+  // one-reader merge bar.
   return defineInProcessApp(
     {
       name: "usage",

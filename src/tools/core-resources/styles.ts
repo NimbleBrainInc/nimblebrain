@@ -49,30 +49,6 @@ export const SETTINGS_LINK_STYLES = `
     .link:hover { background: var(--color-background-tertiary); color: var(--color-text-primary); }
     `;
 
-export const USAGE_BAR_STYLES = `
-    .bar { display: flex; align-items: center; gap: 12px; padding: 6px 12px; font-size: 12px; color: var(--color-text-secondary); }
-    .metric { display: flex; align-items: center; gap: 4px; }
-    .label { color: var(--color-text-secondary); }
-    .value { font-weight: 600; color: var(--color-text-primary); }
-    `;
-
-export const USAGE_DASHBOARD_STYLES = `
-    .page { padding: 32px; max-width: 960px; margin: 0 auto; }
-    .header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 24px; }
-    h1 { font-family: var(--nb-font-heading); font-size: 20px; font-weight: 600; color: var(--color-text-primary); }
-    #period { padding: 7px 12px; border: 1px solid var(--color-border-primary); border-radius: var(--border-radius-sm); font-size: 13px; background: var(--color-background-secondary); color: var(--color-text-primary); cursor: pointer; }
-    #period:focus { outline: none; border-color: var(--color-ring-primary); box-shadow: 0 0 0 2px rgba(0,85,255,.15); }
-    .totals { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; margin-bottom: 32px; }
-    .stat { background: var(--color-background-secondary); border: 1px solid var(--color-border-primary); border-radius: var(--border-radius-sm); padding: 20px; text-align: center; }
-    .stat-value { font-size: 28px; font-weight: 700; color: var(--color-text-primary); letter-spacing: -0.5px; }
-    .stat-label { font-size: 12px; color: var(--color-text-secondary); margin-top: 4px; text-transform: uppercase; letter-spacing: 0.5px; }
-    table { width: 100%; border-collapse: collapse; background: var(--color-background-secondary); border: 1px solid var(--color-border-primary); border-radius: var(--border-radius-sm); overflow: hidden; }
-    th { text-align: left; padding: 12px 16px; font-size: 12px; font-weight: 600; color: var(--color-text-secondary); text-transform: uppercase; letter-spacing: 0.5px; background: var(--color-background-tertiary); border-bottom: 1px solid var(--color-border-primary); }
-    td { padding: 12px 16px; font-size: 13px; color: var(--color-text-primary); border-bottom: 1px solid var(--color-background-tertiary); }
-    tr:last-child td { border-bottom: none; }
-    .empty { color: var(--color-text-secondary); text-align: center; padding: 32px; }
-    `;
-
 export const SETTINGS_STYLES = `
     .settings-shell { display: flex; flex-direction: column; height: 100%; }
     .tab-bar { display: flex; gap: 0; border-bottom: 1px solid var(--color-border-primary); background: var(--color-background-secondary); padding: 0 24px; flex-shrink: 0; }

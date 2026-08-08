@@ -6,8 +6,6 @@ import {
 	MODEL_SELECTOR_STYLES,
 	SETTINGS_LINK_STYLES,
 	SETTINGS_STYLES,
-	USAGE_BAR_STYLES,
-	USAGE_DASHBOARD_STYLES,
 } from "../../../src/tools/core-resources/styles.ts";
 
 describe("core-resources styles use CSS variables", () => {
@@ -32,9 +30,7 @@ describe("core-resources styles use CSS variables", () => {
 			CONVERSATIONS_STYLES,
 			APP_NAV_STYLES,
 			SETTINGS_LINK_STYLES,
-			USAGE_BAR_STYLES,
-			USAGE_DASHBOARD_STYLES,
-			SETTINGS_STYLES,
+							SETTINGS_STYLES,
 			MODEL_SELECTOR_STYLES,
 		];
 		for (const css of styles) {
@@ -52,9 +48,7 @@ describe("core-resources styles use CSS variables", () => {
 			CONVERSATIONS_STYLES,
 			APP_NAV_STYLES,
 			SETTINGS_LINK_STYLES,
-			USAGE_BAR_STYLES,
-			USAGE_DASHBOARD_STYLES,
-			MODEL_SELECTOR_STYLES,
+							MODEL_SELECTOR_STYLES,
 		];
 		for (const css of styles) {
 			// Remove var(...) expressions (including nested parens for rgba fallbacks)
