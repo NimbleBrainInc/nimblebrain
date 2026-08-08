@@ -1,7 +1,7 @@
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { getValidator } from "../config/index.ts";
-import { OVERRIDE_WRITABLE_KEYS, deriveOverridePath, mergeConfigs } from "../config/overrides.ts";
+import { deriveOverridePath, mergeConfigs, OVERRIDE_WRITABLE_KEYS } from "../config/overrides.ts";
 import { log } from "../observability/log.ts";
 import type { RuntimeConfig } from "../runtime/types.ts";
 
