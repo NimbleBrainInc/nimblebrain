@@ -71,7 +71,7 @@ import { WorkspacesTab } from "./pages/settings/WorkspacesTab";
 import { WorkspaceOverviewPage } from "./pages/WorkspaceOverviewPage";
 import { clearSentryContext, setSentryUser } from "./sentry";
 import { initTelemetry } from "./telemetry";
-import type { BootstrapResponse, PlacementEntry } from "./types";
+import type { BootstrapResponse, ConfigInfo, PlacementEntry } from "./types";
 import "./index.css";
 
 function AuthenticatedApp({
@@ -115,6 +115,8 @@ function AuthenticatedApp({
 
   const initialConfig = {
     configuredProviders: bootstrap.config.configuredProviders,
+    newConversationModel: bootstrap.config.newConversationModel,
+    availableModels: bootstrap.config.availableModels,
     preferences: bootstrap.user.preferences,
   };
 
@@ -161,6 +163,8 @@ function BootstrappedShell({
   initialShell: ShellData;
   initialConfig: {
     configuredProviders: string[];
+    newConversationModel?: string;
+    availableModels?: ConfigInfo["availableModels"];
     preferences?: { displayName?: string; timezone?: string; locale?: string; theme?: string };
   };
   currentUserId: string;
