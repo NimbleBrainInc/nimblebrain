@@ -213,9 +213,10 @@ export type EngineEventType =
   /**
    * A curated connector-skill overlay was surfaced into the conversation for
    * the first time, triggered by a matching connector tool call. The
-   * reconstructor turns this into a synthetic assistant message carrying the
-   * skill body, so the guidance rides the cached, append-only history from the
-   * next turn on instead of re-entering the system prefix every turn. Emitted
+   * reconstructor turns this into a synthetic message carrying the skill
+   * body, placed after the tool results of the iteration that triggered it, so
+   * the guidance rides the cached, append-only history and is in context for
+   * the model's next action instead of re-entering the system prefix. Emitted
    * at most once per (conversation, skill). Payload: { runId, toolName,
    * skillName, skillBody, scope }.
    */
@@ -452,9 +453,9 @@ export interface EngineConfig {
    * first matching tool call — never into the cached system prefix. The engine
    * matches each candidate's `toolAffinity` globs against the called tool name;
    * on the first match (per conversation, deduped via history inspection) it
-   * emits `connector.skill.injected`, which the reconstructor turns into a
-   * synthetic assistant message that rides the cached history from the next
-   * turn on. Empty / absent = the feature is off for this run.
+   * emits `connector.skill.injected` and appends the body to the live history
+   * after that iteration's tool results; the reconstructor rebuilds it in the
+   * same position. Empty / absent = the feature is off for this run.
    */
   connectorSkillCandidates?: ConnectorSkillCandidate[];
   /**

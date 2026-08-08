@@ -511,10 +511,10 @@ export interface HistoryCompactedEvent {
 /**
  * A curated connector-skill overlay surfaced into the conversation for the
  * first time, triggered by a matching connector tool call during a run.
- * The reconstructor turns this event into a synthetic assistant message whose
+ * The reconstructor turns this event into a synthetic message whose
  * body is the overlay wrapped in `<connector-skill>` containment, carrying
  * `metadata.synthetic = "connector_skill_injected"` + `metadata.skill` so the
- * guidance rides the append-only history from the next turn on AND so the
+ * guidance rides the append-only history AND so the
  * engine can detect it on replay to never re-inject. Emitted at most once per
  * (conversation, skill).
  */

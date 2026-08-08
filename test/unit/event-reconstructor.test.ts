@@ -1161,7 +1161,7 @@ function assertNoAdjacentUserMessages(messages: StoredMessage[]): void {
 }
 
 describe("reconstructMessages — connector.skill.injected (P4)", () => {
-  it("reconstructs a synthetic assistant message carrying the overlay in <connector-skill>", () => {
+  it("reconstructs a synthetic user message carrying the overlay in <connector-skill>", () => {
     const events: ConversationEvent[] = [
       userMessage("send an email"),
       runStart("run-1"),
@@ -1177,7 +1177,10 @@ describe("reconstructMessages — connector.skill.injected (P4)", () => {
     const synthetic = findConnectorSkillMessage(messages);
 
     expect(synthetic).toBeDefined();
-    expect(synthetic!.role).toBe("assistant");
+    // `user`, not `assistant`: mid-run this is the last message the next model
+    // call sees, and a trailing assistant message is a prefill the model
+    // continues rather than answers.
+    expect(synthetic!.role).toBe("user");
     expect(synthetic!.metadata?.skill).toBe("gmail");
     const text =
       synthetic!.content[0]?.type === "text" ? synthetic!.content[0].text : "";
@@ -1186,6 +1189,53 @@ describe("reconstructMessages — connector.skill.injected (P4)", () => {
     expect(text).toContain("Confirm the recipient before sending.");
     // Surfaced into history, not as a user turn — role alternation stays valid.
     assertNoAdjacentUserMessages(messages);
+  });
+
+  it("places the overlay after the triggering iteration, not at the end of the run", () => {
+    // The live run appends the overlay right after the tool results of the
+    // iteration that fired it, so replay has to land it there too — otherwise
+    // the rebuilt history is not the history the run executed against. A
+    // two-iteration run is what distinguishes the two placements.
+    const events: ConversationEvent[] = [
+      userMessage("send an email"),
+      runStart("run-1"),
+      llmToolCall("run-1", "tc-1", "gmail__send", { to: "a@b.com" }),
+      toolStart("run-1", "tc-1", "gmail__send"),
+      toolDone("run-1", "tc-1", "gmail__send", "sent"),
+      connectorSkillInjected("gmail", "Confirm the recipient before sending."),
+      llmToolCall("run-1", "tc-2", "gmail__send", { to: "c@d.com" }),
+      toolStart("run-1", "tc-2", "gmail__send"),
+      toolDone("run-1", "tc-2", "gmail__send", "sent"),
+      llmText("run-1", "Both emails sent."),
+      runDone("run-1"),
+    ];
+
+    const messages = reconstructMessages(events);
+    const overlayIdx = messages.findIndex(
+      (m) => m.metadata?.synthetic === "connector_skill_injected",
+    );
+    const lastToolIdx = messages.map((m) => m.role).lastIndexOf("tool");
+
+    expect(overlayIdx).toBeGreaterThanOrEqual(0);
+    // Before the SECOND tool call's result — i.e. before the calls it governs,
+    // which is the whole point. End-of-run placement would put it after.
+    expect(overlayIdx).toBeLessThan(lastToolIdx);
+    expect(overlayIdx).toBeLessThan(messages.length - 1);
+    assertNoAdjacentUserMessages(messages);
+  });
+
+  it("still delivers an overlay that cannot be placed against an iteration", () => {
+    // No llm.response in the run at all (a run cut short). The guidance was
+    // recorded, so it must still reach the model rather than be dropped.
+    const events: ConversationEvent[] = [
+      userMessage("send an email"),
+      runStart("run-1"),
+      connectorSkillInjected("gmail", "Confirm the recipient before sending."),
+      runDone("run-1"),
+    ];
+
+    const messages = reconstructMessages(events);
+    expect(findConnectorSkillMessage(messages)).toBeDefined();
   });
 
   it("escapes a forged closing tag in the overlay body on reconstruction", () => {
@@ -1210,8 +1260,9 @@ describe("reconstructMessages — connector.skill.injected (P4)", () => {
   });
 
   it("keeps alternation valid when a new user turn follows the injection", () => {
-    // Turn 1 injects; turn 2 is a fresh user message → the synthetic assistant
-    // message sits between them, so there is no user→user adjacency.
+    // Turn 1 injects; turn 2 is a fresh user message. The overlay is user-role
+    // but is NOT exempt from the alternation pass here (only overlay→overlay
+    // is), so the repair marker still separates them.
     const events: ConversationEvent[] = [
       userMessage("send an email"),
       runStart("run-1"),

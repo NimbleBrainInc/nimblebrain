@@ -1022,7 +1022,7 @@ function formatSkillCatalogSection(entries: SkillCatalogEntry[]): string {
 /**
  * Wrap a connector-skill overlay body for surfacing into the conversation
  * history. Unlike Layer-3 skills, a connector overlay NEVER enters the
- * cached system prefix — it becomes the body of a synthetic assistant message
+ * cached system prefix — it becomes the body of a synthetic message
  * the reconstructor emits on the first matching connector tool call, so the
  * guidance rides the append-only history rather than re-varying the prompt
  * prefix every turn.

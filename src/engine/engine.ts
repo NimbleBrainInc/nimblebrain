@@ -25,6 +25,7 @@ import {
 import { normalizeForReplay } from "../model/inbound-fit.ts";
 import { callModel, type StreamResult } from "../model/stream.ts";
 import { log } from "../observability/log.ts";
+import { formatConnectorSkillBlock } from "../prompt/compose.ts";
 import { toolMatches } from "../skills/select.ts";
 import { coerceInputForSchema } from "../tools/coerce-input.ts";
 import { bareToolName, splitInnerToolName } from "../tools/namespace.ts";
@@ -42,6 +43,7 @@ import {
 } from "./content-helpers.ts";
 import { isContextOverflowError } from "./context-overflow.ts";
 import { withRetry } from "./retry.ts";
+import type { ConnectorSkillInjectedPayload } from "./schemas/events.ts";
 import { createRunSupervisor, type RunSupervisor, type SupervisorVerdict } from "./supervisor.ts";
 import { toolSchemaForLlm } from "./tool-schema-for-llm.ts";
 import {
@@ -914,6 +916,8 @@ interface ToolExecContext {
   toolAnnotations: Map<string, Record<string, unknown>>;
   connectorSkillCandidates: ConnectorSkillCandidate[];
   injectedConnectorSkills: Set<string>;
+  /** Drained into history after this iteration's tool results. */
+  pendingOverlayDeliveries: ConnectorSkillInjectedPayload[];
   toolSchemaMap: Map<string, ToolSchema>;
   promotedLastUsed: Map<string, number>;
   bumpUseCounter: () => number;
@@ -961,6 +965,15 @@ export class AgentEngine {
     const connectorSkillCandidates = config.connectorSkillCandidates ?? [];
     const injectedConnectorSkills = new Set<string>(config.alreadyInjectedConnectorSkills ?? []);
     seedInjectedConnectorSkills(history, connectorSkillCandidates, injectedConnectorSkills);
+
+    // Overlays surfaced during the iteration currently executing. The injector
+    // fires mid-tool-execution (at `tool.start`, or when a promote makes a
+    // server's tools live), which is too late to reach the model through the
+    // event alone: the reconstructor only materializes that event on a LATER
+    // rehydration. Buffering here and draining after the iteration's tool
+    // results lets the guidance land in THIS run, before the model's next
+    // action — which is the point of surfacing it on first use at all.
+    const pendingOverlayDeliveries: ConnectorSkillInjectedPayload[] = [];
 
     let iteration = 0;
     const cumulativeUsage: TokenUsage = emptyUsage();
@@ -1038,14 +1051,15 @@ export class AgentEngine {
         // A promoted tool makes its server's capability live mid-turn — surface that
         // server's skill guidance once, now, so the model has the workflow before it
         // starts using the tools (not only when the first one is called at tool.start).
-        // Delivery rides the history tail (cache-safe — never the frozen prefix), so the
-        // guidance reaches the model on the NEXT turn — matching how progressive disclosure
-        // unfolds (promote in turn N, call in N+1), not same-iteration.
+        // Delivery rides the history tail (cache-safe — never the frozen prefix) and
+        // lands after this iteration's tool results, so the guidance is in context for
+        // the model's next action in THIS run.
         this.injectConnectorSkillOverlays(
           runId,
           toolName,
           connectorSkillCandidates,
           injectedConnectorSkills,
+          pendingOverlayDeliveries,
         );
 
         // Backstop: cap active tools by evicting LRU agent-promoted entries.
@@ -1375,6 +1389,7 @@ export class AgentEngine {
           toolAnnotations,
           connectorSkillCandidates,
           injectedConnectorSkills,
+          pendingOverlayDeliveries,
           toolSchemaMap,
           promotedLastUsed,
           bumpUseCounter,
@@ -1391,6 +1406,38 @@ export class AgentEngine {
 
         // 6. Feed results back as tool message
         history.push({ role: "tool", content: toolResultParts });
+
+        // 7. Deliver any overlay surfaced while those tools ran, in the same
+        // position the reconstructor will replay it into — after this
+        // iteration's tool results. The model reads the guidance before its
+        // next action, which is what "surface on first use" was supposed to
+        // mean; previously the event was recorded here and the body only
+        // appeared on a later rehydration, so the calls it governs had already
+        // happened and a single-run conversation never saw it at all.
+        //
+        // The role is `user`, not `assistant`, and that is load-bearing: this
+        // message ENDS the history for the next model call of this same run,
+        // and a trailing assistant message is an Anthropic prefill — the model
+        // continues the guidance block instead of starting its own turn, and
+        // that continuation is its real, user-visible output. `user` is the
+        // role the codebase already injects synthetic non-user guidance under
+        // (see `appendFinalStepReminder`), and it is trailing-safe.
+        for (const overlay of pendingOverlayDeliveries) {
+          history.push({
+            role: "user",
+            content: [
+              {
+                type: "text",
+                text: formatConnectorSkillBlock(
+                  overlay.skillName,
+                  overlay.scope,
+                  overlay.skillBody,
+                ),
+              },
+            ],
+          });
+        }
+        pendingOverlayDeliveries.length = 0;
 
         iteration++;
       }
@@ -1707,21 +1754,24 @@ export class AgentEngine {
     toolName: string,
     candidates: ConnectorSkillCandidate[],
     injected: Set<string>,
+    pending: ConnectorSkillInjectedPayload[],
   ): void {
     for (const candidate of candidates) {
       if (injected.has(candidate.name)) continue;
       if (!candidate.toolAffinity.some((p) => toolMatches(toolName, p))) continue;
       injected.add(candidate.name);
-      this.events.emit({
-        type: "connector.skill.injected",
-        data: {
-          runId,
-          toolName,
-          skillName: candidate.name,
-          skillBody: candidate.body,
-          scope: candidate.scope,
-        },
-      });
+      const data = {
+        runId,
+        toolName,
+        skillName: candidate.name,
+        skillBody: candidate.body,
+        scope: candidate.scope,
+      };
+      this.events.emit({ type: "connector.skill.injected", data });
+      // The event is the durable record; this is the same body's path into the
+      // live history so it reaches the model in this run. Both sides build the
+      // message from the same fields, so live and replay agree.
+      pending.push(data);
     }
   }
 
@@ -1926,6 +1976,7 @@ export class AgentEngine {
       gatedCall.name,
       ctx.connectorSkillCandidates,
       ctx.injectedConnectorSkills,
+      ctx.pendingOverlayDeliveries,
     );
 
     const start = performance.now();
