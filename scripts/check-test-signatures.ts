@@ -46,6 +46,11 @@
  * that code's existing instances first, and expecting the fix to expose what the
  * dead type was hiding.
  *
+ * Recount to confirm you cleared them; do not grep. A fix can trade one code for
+ * another and leave the total unchanged — repointing a dead import at the right
+ * type resolves the TS2305 and raises a TS2304 on every use site the dead name
+ * still has. The grep for the old code comes back empty either way.
+ *
  * ## What this does NOT cover
  *
  * Only the `test/` tree. `web/`'s suite (`web/tsconfig.json` excludes

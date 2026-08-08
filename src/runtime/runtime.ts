@@ -1292,6 +1292,38 @@ export class Runtime {
       this.loadOrCreateConversation(request, store, makeCreateOpts, ownerId, convWsId),
     );
 
+    // The turn's context, built here because the conversation it belongs to is
+    // now known. Three sites run inside it: the history fold, `engine.run`, and
+    // the auto-title. The first and last are forked outside the engine's own
+    // wrap, and both spend tokens on this conversation's behalf — a call that
+    // records spend with no conversation in scope is spend no per-conversation
+    // surface can account for, the defect `src/usage/record.ts` prevents.
+    //
+    // The scope decides more than attribution: `getModelSlot` reads
+    // `workspaceModelOverride` off it, so a call inside resolves the bound
+    // workspace's slots and a call outside resolves the instance-configured
+    // ones. Adding a forked call below means wrapping it too — the surrounding
+    // code is NOT in this context by default.
+    // The conversation's binding wins over both the request override and the
+    // configured slot: a conversation runs on one model for its life, so a
+    // slot change retargets new conversations only. `makeCreateOpts` above carries
+    // the pin, so a conversation created on this path is already bound and
+    // this reads back what it was born with. Absent only on legacy records
+    // predating the binding, which resolve from current config as before.
+    //
+    // Resolved here rather than at first use because `reqCtx` below carries it:
+    // `nb__status` answers "what model is this" from the context, so the turn's
+    // model has to be known before the context that reports it is built.
+    const resolvedModelString =
+      conversation.model ??
+      runWithRequestContext(turnCtx, () => this.resolveRequestModelString(request.model));
+
+    const reqCtx: RequestContext = {
+      ...turnCtx,
+      conversationId: conversation.id,
+      model: resolvedModelString,
+    };
+
     // Build the user message (text + `resource_link` attachment blocks) and
     // append it to the conversation log.
     const userContent = buildUserMessageContent(request);
@@ -1482,16 +1514,6 @@ export class Runtime {
     // of the cached system block (the prepend happens after telemetry, below).
     const systemPrompt = foldVolatileHead(stableSystem, volatileHead);
 
-    // The conversation's binding wins over both the request override and the
-    // configured slot: a conversation runs on one model for its life, so a
-    // slot change retargets new conversations only. `makeCreateOpts` above carries
-    // the pin, so a conversation created on this path is already bound and
-    // this reads back what it was born with. Absent only on legacy records
-    // predating the binding, which resolve from current config as before.
-    const resolvedModelString =
-      conversation.model ??
-      runWithRequestContext(turnCtx, () => this.resolveRequestModelString(request.model));
-
     // Load history and rehydrate any supported `resource_link` blocks
     // (attached files persisted as URI references) into AI SDK V3 `file`
     // parts with bytes loaded from the workspace FileStore. This is the seam
@@ -1548,11 +1570,8 @@ export class Runtime {
     // file extractions aren't counted toward the threshold, so compaction can
     // under-fire relative to true prompt size; the overflow windowing path
     // below still bounds the hard context limit.
-    const compactedHistory = await this.maybeCompactHistory(
-      store,
-      conversation.id,
-      history,
-      messageBudget.budget,
+    const compactedHistory = await runWithRequestContext(reqCtx, () =>
+      this.maybeCompactHistory(store, conversation.id, history, messageBudget.budget),
     );
     // The RAW (un-rehydrated) history the engine reasons about: the compacted
     // form when compaction fired, else the full history. Rehydration inlines
@@ -1688,22 +1707,13 @@ export class Runtime {
     });
     const engine = new AgentEngine(resolvedModel, identityToolRouter, engineSink);
 
-    // Build the request context for AsyncLocalStorage. `workspaceId` on
-    // the RequestContext is the session (personal) workspace — the same
-    // breadcrumb the conversation metadata records. Tool handlers that
-    // need the per-call workspace must come through a WorkspaceContext
-    // constructed by the orchestrator, NOT via
-    // `runtime.requireWorkspaceId()`. Reading `requireWorkspaceId()` in
-    // a tool handler now returns the session workspace, which is the
-    // correct answer for session-scoped reads (overlays, file store) and
-    // the wrong answer for per-call data. Per-call handlers should
-    // accept a `WorkspaceContext` argument from the dispatch path
-    // instead. T008 (credential rebinding) tightens this further.
-    const reqCtx: RequestContext = {
-      ...turnCtx,
-      conversationId: conversation.id,
-      model: resolvedModelString,
-    };
+    // Tool handlers that need the per-call workspace must come through a
+    // `WorkspaceContext` constructed by the orchestrator, NOT via
+    // `runtime.requireWorkspaceId()` — that reads the ambient context's
+    // `workspaceId`, which is the right answer for session-scoped reads
+    // (overlays, file store) and the wrong one for per-call data. Per-call
+    // handlers should take a `WorkspaceContext` argument from the dispatch
+    // path instead. T008 (credential rebinding) tightens this further.
     engineConfig.toolPromotion = this.buildToolPromotionFactory();
 
     // Emit chat.start so the client knows the conversation ID immediately and
@@ -1734,7 +1744,13 @@ export class Runtime {
     // turn lifecycle; best-effort). Broadcasts `conversation.title` on the global
     // SSE — routed to the right conversation by `conversationId` — so delivery is
     // reliable after the turn ends and across tabs.
-    this.maybeGenerateTitle(conversation, request, store, result.output, sessionWsId);
+    // Inside the turn's context even though it outlives the turn: the summarizer
+    // call it forks bills this conversation, and the context is what carries that
+    // attribution. AsyncLocalStorage propagates into the detached promise, so the
+    // scope holds after this function returns.
+    runWithRequestContext(reqCtx, () =>
+      this.maybeGenerateTitle(conversation, request, store, result.output, sessionWsId),
+    );
 
     return {
       response: result.output,
@@ -2434,7 +2450,21 @@ export class Runtime {
   ): void {
     if (conversation.title !== null) return;
     const titleSlot = this.getModelSlot("fast");
-    const titleModel = this.resolveModelFn(titleSlot);
+    // Resolved under the conversation workspace's `models.fast` override, since
+    // this runs inside the turn's request context. A workspace naming an
+    // unconfigured provider throws here — synchronously, ahead of the promise
+    // chain whose `.catch` handles every other failure — and would surface as a
+    // 500 on a turn that already completed. Titling is best-effort; skip it.
+    let titleModel: LanguageModelV3;
+    try {
+      titleModel = this.resolveModelFn(titleSlot);
+    } catch (err) {
+      log.error("[runtime] title generation skipped — fast slot did not resolve", {
+        titleSlot,
+        error: err instanceof Error ? err.message : String(err),
+      });
+      return;
+    }
     const titleInput =
       request.message ||
       `[Uploaded: ${request.fileRefs?.map((f) => f.filename).join(", ") || "files"}]`;
@@ -3931,7 +3961,21 @@ export class Runtime {
     if (!planCompaction(history, { budget }).shouldCompact) return null;
     const appendEvent = store.appendEvent.bind(store);
     const fastSlot = this.getModelSlot("fast");
-    const model = this.resolveModelFn(fastSlot);
+    // The slot resolves under the conversation workspace's `models.fast`
+    // override, because this runs inside the turn's request context. That means
+    // a workspace can name a model whose provider is not configured, and
+    // resolution throws — which must not reject the turn. Skipping the fold
+    // leaves the full history, exactly as the best-effort contract above says.
+    let model: LanguageModelV3;
+    try {
+      model = this.resolveModelFn(fastSlot);
+    } catch (err) {
+      log.error("[runtime] history compaction skipped — fast slot did not resolve", {
+        fastSlot,
+        error: err instanceof Error ? err.message : String(err),
+      });
+      return null;
+    }
     // Operator (user-authored) turns, verbatim from the append-only event log —
     // NOT `history` (the compacted projection, which has already folded older
     // ones into the summary). Re-deriving from the immutable log on every

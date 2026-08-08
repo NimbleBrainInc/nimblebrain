@@ -117,43 +117,22 @@ describe("recordLlmCall", () => {
 });
 
 /**
- * `origin` follows the request scope, not the `source`. Compaction is the case
- * where that distinction is observable: the runtime folds history in two
- * places, and only one of them runs inside a scope.
+ * `origin` follows the request scope, not the `source`. The forked fast-slot
+ * calls are where that distinction bites: a compaction summary and an auto-title
+ * are chat spend, but they run outside the wrap around `engine.run` — the fold
+ * before it opens, the title after the turn returns — so they carry the
+ * conversation only because `chat()` opens the turn's own scope around them.
  *
- *   between-turns — `maybeCompactHistory` runs in `chat()` BEFORE the
- *     `runWithRequestContext` that wraps `engine.run`, so there is no scope and
- *     the fold records `system`.
- *   mid-turn — the `rewriteHistory` hook is awaited by `engine.applyHistoryRewrite`
- *     INSIDE `engine.run`, so the scope is live and the fold records `chat`
- *     (or `task`, in an automation).
- *
- * Both attributions are individually honest, and the split is a real property
- * of where the two folds sit rather than a bug in the derivation.
- *
- * These tests pin the *derivation* — that `originOf()` answers by scope — by
- * calling `recordLlmCall` inside a hand-built scope. They reach neither
- * `runtime.ts` nor `engine.ts`, so they cannot detect a fold being moved across
- * the scope boundary. That is pinned end-to-end instead, in
- * `test/integration/compaction-wiring.test.ts` (`origin="system"`) and
- * `test/integration/mid-turn-compaction-wiring.test.ts` (`origin="chat"`),
- * which drive the real folds and read `/metrics`.
- *
- * Making compaction uniform means opening a scope around the between-turns
- * fold, which is a change to request scoping in `chat()` and belongs in its
- * own PR.
+ * These tests pin the *derivation*: that `originOf()` answers by scope, whatever
+ * the `source`. They call `recordLlmCall` inside a hand-built scope and reach
+ * neither `runtime.ts` nor `engine.ts`, so they cannot detect a call escaping
+ * the real scope. That is pinned end-to-end instead, by
+ * `test/integration/compaction-wiring.test.ts` (both folds and the title) and
+ * `mid-turn-compaction-wiring.test.ts`, which drive real turns and read
+ * `/metrics`.
  */
-describe("compaction attribution follows the scope, not the source", () => {
-  test("the between-turns fold, with no scope open, records system", async () => {
-    recordLlmCall({ source: "compaction", model: "test-model-c", usage: USAGE });
-
-    const sample = await callSample({ model: "test-model-c" });
-    expect(sample?.labels.source).toBe("compaction");
-    expect(sample?.labels.origin).toBe("system");
-    expect(sample?.labels.delegated).toBe("false");
-  });
-
-  test("the mid-turn fold, inside the engine's scope, records chat", async () => {
+describe("origin follows the scope, whatever the source", () => {
+  test("a fast-slot call inside a conversation's scope records chat", async () => {
     runWithRequestContext({ identity: null, conversationId: "conv-mid" }, () => {
       recordLlmCall({ source: "compaction", model: "test-model-e", usage: USAGE });
     });
@@ -163,12 +142,22 @@ describe("compaction attribution follows the scope, not the source", () => {
     expect(sample?.labels.origin).toBe("chat");
   });
 
-  test("the same fold inside an automation records task", async () => {
+  test("the same call inside an automation records task", async () => {
     runWithRequestContext({ identity: null, conversationId: "run-mid", unattended: true }, () => {
       recordLlmCall({ source: "compaction", model: "test-model-f", usage: USAGE });
     });
 
     const sample = await callSample({ model: "test-model-f" });
     expect(sample?.labels.origin).toBe("task");
+  });
+
+  test("with no scope at all it records system — still reachable, via the background briefing", async () => {
+    // `scheduleBriefingRefresh` runs its own context of `{identity, workspaceId}`
+    // with no `conversationId`, so `system` is a live value, not dead code.
+    recordLlmCall({ source: "briefing", model: "test-model-c", usage: USAGE });
+
+    const sample = await callSample({ model: "test-model-c" });
+    expect(sample?.labels.origin).toBe("system");
+    expect(sample?.labels.delegated).toBe("false");
   });
 });
