@@ -4645,7 +4645,6 @@ export class Runtime {
    */
   getOperatorConfig(): {
     models?: Partial<ModelSlots>;
-    modelPolicy?: { allowed?: string[] };
     maxIterations?: number;
     maxInputTokens?: number;
     maxOutputTokens?: number;

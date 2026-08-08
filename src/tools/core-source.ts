@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import { readFile, rename, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { artifactResolutionsTotal } from "../api/metrics.ts";
+import { OVERRIDE_WRITABLE_KEYS } from "../config/overrides.ts";
 import { textContent } from "../engine/content-helpers.ts";
 import { INTERNAL_TOOL_ANNOTATION, type ThinkingEffort, type ToolResult } from "../engine/types.ts";
 import {
@@ -173,10 +174,10 @@ function validateModelSlots(input: Record<string, unknown>, runtime: Runtime): s
 /**
  * After this write, does every slot still point inside the policy in force?
  *
- * The policy itself is tenant configuration and cannot be written here, but
- * the slots can — and moving or clearing one can land it outside the list just
- * as narrowing the list once could. A cleared slot falls back, and the fallback
- * is not guaranteed to be allowed.
+ * Narrower than it looks: a slot pointed *at* a forbidden model is already
+ * refused upstream by `validateModelSlots`, which checks each named value. What
+ * reaches here is the case no named value covers — a slot **cleared** with
+ * `""`, which falls back to a default the list may not contain.
  */
 function policyStrandingError(input: Record<string, unknown>, runtime: Runtime): string | null {
   const effective = runtime.getModelPolicy();
@@ -217,16 +218,29 @@ function strandedSlotError(
     }
   }
 
-  // The deprecated `defaultModel` input is checked on its own as well as
-  // through the chain above: the live patch pushes it into `models.default`
-  // while the override merge leaves that slot alone, so the two writers can
-  // disagree about which value the default slot ends up with. Requiring both to
-  // be allowed is correct under either.
-  if (pendingDefault !== undefined) {
-    const qualified = resolveModelString(pendingDefault);
-    if (!allowed.includes(qualified)) {
-      return `Cannot exclude "${qualified}", which this call points the default model at.`;
+  return null;
+}
+
+/**
+ * A field this tool does not write.
+ *
+ * The success line is built from the caller's own keys, so an unwritten field
+ * was reported as applied — an admin narrowing the allowlist was told it
+ * worked while nothing changed. Rejecting is better than filtering the
+ * summary: the caller asked for something, and silence about it is the same
+ * lie one layer quieter.
+ */
+function unwritableFieldError(input: Record<string, unknown>): string | null {
+  const writable = new Set<string>([
+    ...OVERRIDE_WRITABLE_KEYS,
+    ...CLEARABLE_FIELDS.map((f) => f.clearFlag),
+  ]);
+  for (const key of Object.keys(input)) {
+    if (input[key] === undefined || writable.has(key)) continue;
+    if (key === "modelPolicy") {
+      return "`modelPolicy` is not set here. It is deployment configuration — set `modelPolicy.allowed` in nimblebrain.json.";
     }
+    return `\`${key}\` is not a field this tool writes.`;
   }
   return null;
 }
@@ -269,6 +283,7 @@ function validateModelConfigThinking(input: Record<string, unknown>): string | n
 /** All of set_model_config's input validation, in order. */
 function validateModelConfigPatch(input: Record<string, unknown>, runtime: Runtime): string | null {
   return (
+    unwritableFieldError(input) ??
     validateModelSlots(input, runtime) ??
     validateDefaultModel(input, runtime) ??
     policyStrandingError(input, runtime) ??

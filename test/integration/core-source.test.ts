@@ -662,6 +662,22 @@ describe("Core Source", () => {
 			return { runtime, source };
 		}
 
+		it("refuses to pretend it set a policy it does not write", async () => {
+			// The summary line is built from the caller's keys, so an unwritten
+			// field was reported as applied: an admin narrowing the allowlist was
+			// told it worked while nothing changed.
+			const { runtime, source } = await startWithPolicy("unwritable");
+			try {
+				const res = await source.execute("set_model_config", {
+					modelPolicy: { allowed: ["anthropic:claude-sonnet-5"] },
+				});
+				expect(res.isError).toBe(true);
+				expect(extractText(res.content)).toContain("nimblebrain.json");
+			} finally {
+				await runtime.shutdown();
+			}
+		});
+
 		it("refuses a request for a model outside the list", async () => {
 			const { runtime } = await startWithPolicy("gate", ["anthropic:claude-sonnet-5"]);
 			try {
@@ -685,8 +701,6 @@ describe("Core Source", () => {
 				await runtime.shutdown();
 			}
 		});
-
-
 
 		it("survives a restart — the loader carries it", async () => {
 			// The gap the suite missed: `set_model_config` enforced until the
@@ -721,7 +735,7 @@ describe("Core Source", () => {
 			}
 		});
 
-		it("judges the default slot as configured, not as the admin sees it", async () => {
+		it("judges a cleared slot by the configured default, not the admin's own", async () => {
 			// The admin's own preference must not decide whether a policy strands
 			// everyone else: tinted, an admin who prefers the one allowed model
 			// passes a guard every other member fails.
@@ -751,7 +765,7 @@ describe("Core Source", () => {
 			}
 		});
 
-		it("checks the fast slot too", async () => {
+		it("refuses a slot pointed at a model outside the list", async () => {
 			const { runtime, source } = await startWithPolicy("fast-slot", [
 				"anthropic:claude-sonnet-5",
 			]);
@@ -766,10 +780,9 @@ describe("Core Source", () => {
 			}
 		});
 
-		it("catches a slot stranded through the deprecated defaultModel input", async () => {
-			// `models` is not the only field that moves a slot. Judged on
-			// `input.models` alone, this call was accepted and every member
-			// without a preference then ran on a model the org had just forbidden.
+		it("refuses the deprecated defaultModel input pointed outside the list", async () => {
+			// `models` is not the only field that moves a slot — this one is
+			// checked by its own validator, on the same policy.
 			const { runtime, source } = await startWithPolicy("strand-via-default", [
 				"anthropic:claude-sonnet-5",
 			]);
@@ -867,7 +880,6 @@ describe("Core Source", () => {
 				(log as { error: typeof log.error }).error = original;
 			}
 		});
-
 
 		it("accepts a bare model id that policy allows in qualified form", async () => {
 			// Bare ids are legal input; the policy check is an exact match, so it
