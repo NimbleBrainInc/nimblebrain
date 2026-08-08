@@ -424,17 +424,9 @@ function appendRunMessages(
   // `metadata.synthetic`/`skill` let the engine detect an already-surfaced
   // overlay and never re-inject it.
   //
-  // An overlay never ends up a trailing prefill: placed mid-run the next
-  // iteration's assistant message follows it, and placed after the final
-  // iteration a user turn always follows on replay.
-  //
-  // Provider note: this produces two consecutive assistant messages (the
-  // iteration's assistant text, then this one). Anthropic — the default, tested
-  // provider, and the only one overlays ship enabled-for — merges consecutive
-  // same-role messages, so the pair coalesces cleanly. A non-Anthropic provider
-  // whose SDK conversion does NOT merge could reject the pair; verify
-  // provider-side coalescing before enabling overlays on a non-Anthropic
-  // default.
+  // The message is `user`-role because mid-run it is the last thing the next
+  // model call sees, and a trailing assistant message is a prefill the model
+  // continues instead of answering. See `buildConnectorSkillMessage`.
   let responsesEmitted = 0;
   for (const llmResp of run.llmResponses) {
     for (const msg of messagesForLlmResponse(
@@ -453,14 +445,13 @@ function appendRunMessages(
     }
   }
 
-  // Anything that could not be placed against an iteration — an overlay
-  // recorded before any `llm.response`, or a run whose responses are missing —
-  // still reaches the model, at the end of the run as before. Dropping it
-  // would lose guidance the run actually delivered.
+  // An overlay recorded before this run produced any `llm.response` has no
+  // iteration to sit after, so it lands at the end of the run rather than
+  // being dropped — it was delivered, so it should still reach the model.
+  // (`afterResponses` is captured as a count that only grows, so it can never
+  // exceed the final total; zero is the only unplaceable case.)
   for (const cs of run.connectorSkills) {
-    if (cs.afterResponses > responsesEmitted || cs.afterResponses === 0) {
-      messages.push(buildConnectorSkillMessage(cs.event));
-    }
+    if (cs.afterResponses === 0) messages.push(buildConnectorSkillMessage(cs.event));
   }
 
   return run.nextIndex;
@@ -673,7 +664,12 @@ function messagesForLlmResponse(
  */
 function buildConnectorSkillMessage(cs: ConnectorSkillInjectedEvent): StoredMessage {
   return {
-    role: "assistant",
+    // `user`, matching the live delivery in the engine. The role is not
+    // cosmetic: mid-run this message is the LAST one the next model call sees,
+    // and a trailing assistant message is an Anthropic prefill the model
+    // continues rather than answers. Live and replay must agree, so the role
+    // moves on both sides together.
+    role: "user",
     content: [
       { type: "text", text: formatConnectorSkillBlock(cs.skillName, cs.scope, cs.skillBody) },
     ],
@@ -693,14 +689,28 @@ function buildConnectorSkillMessage(cs: ConnectorSkillInjectedEvent): StoredMess
  * anything we haven't enumerated — e.g. a run scope that emitted zero
  * `llm.response` events because the process died before the model
  * returned. Cheap O(n) scan; never fires on healthy data.
+ *
+ * Two surfaced connector overlays in a row are exempt. They are user-role
+ * messages but not user TURNS — when one iteration matches two candidates both
+ * bodies land together, and no response is missing between them, so the marker
+ * would assert a failure that did not happen. The live run appends exactly that
+ * pair, and this pass does not run there, so inserting anything between them
+ * here would also break the live/replay agreement the placement depends on.
+ *
+ * An overlay followed by a REAL user turn is not exempt: that only happens when
+ * a run ended without its closing response, which is precisely what the marker
+ * is for, and the live run has no next-turn user message to disagree about.
  */
 function ensureRoleAlternation(messages: StoredMessage[]): StoredMessage[] {
   if (messages.length < 2) return messages;
 
+  const isOverlay = (m: StoredMessage): boolean =>
+    m.metadata?.synthetic === CONNECTOR_SKILL_SYNTHETIC;
+
   const result: StoredMessage[] = [];
   for (const msg of messages) {
     const prev = result[result.length - 1];
-    if (prev?.role === "user" && msg.role === "user") {
+    if (prev?.role === "user" && msg.role === "user" && !(isOverlay(prev) && isOverlay(msg))) {
       // Place the synthetic turn 1ms after the previous user message so it
       // sorts between the two user turns instead of collapsing onto the
       // next user's timestamp (the UI sorts strictly by `timestamp`, and a

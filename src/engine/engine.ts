@@ -1051,9 +1051,9 @@ export class AgentEngine {
         // A promoted tool makes its server's capability live mid-turn — surface that
         // server's skill guidance once, now, so the model has the workflow before it
         // starts using the tools (not only when the first one is called at tool.start).
-        // Delivery rides the history tail (cache-safe — never the frozen prefix), so the
-        // guidance reaches the model on the NEXT turn — matching how progressive disclosure
-        // unfolds (promote in turn N, call in N+1), not same-iteration.
+        // Delivery rides the history tail (cache-safe — never the frozen prefix) and
+        // lands after this iteration's tool results, so the guidance is in context for
+        // the model's next action in THIS run.
         this.injectConnectorSkillOverlays(
           runId,
           toolName,
@@ -1414,9 +1414,17 @@ export class AgentEngine {
         // mean; previously the event was recorded here and the body only
         // appeared on a later rehydration, so the calls it governs had already
         // happened and a single-run conversation never saw it at all.
+        //
+        // The role is `user`, not `assistant`, and that is load-bearing: this
+        // message ENDS the history for the next model call of this same run,
+        // and a trailing assistant message is an Anthropic prefill — the model
+        // continues the guidance block instead of starting its own turn, and
+        // that continuation is its real, user-visible output. `user` is the
+        // role the codebase already injects synthetic non-user guidance under
+        // (see `appendFinalStepReminder`), and it is trailing-safe.
         for (const overlay of pendingOverlayDeliveries) {
           history.push({
-            role: "assistant",
+            role: "user",
             content: [
               {
                 type: "text",

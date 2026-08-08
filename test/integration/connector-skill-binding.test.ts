@@ -38,6 +38,7 @@ function freshStore(): EventSourcedConversationStore {
 
 const SYSTEM = "You are a test assistant.";
 const OVERLAY_BODY = "Always confirm the recipient before calling gmail__send.";
+const SECOND_BODY = "Keep the subject line under ten words.";
 const SEND_TOOL: ToolSchema = { name: "gmail__send", description: "Send an email", inputSchema: {} };
 
 function config(): EngineConfig {
@@ -160,6 +161,73 @@ describe("connector-skill surface-once (engine + event store)", () => {
     expect(replayShape.length).toBe(liveShape.length + 1);
   });
 
+  it("never ends a model call on an assistant message it would be asked to continue", async () => {
+    // A trailing assistant message is an Anthropic prefill: the model continues
+    // the block instead of starting its turn, and that continuation is its real
+    // user-visible output. The overlay lands last in the run that triggers it,
+    // so its role decides whether that happens.
+    const store = freshStore();
+    const conv = await store.create({ ownerId: "u1" });
+    store.setActiveConversation(conv.id);
+
+    await appendUser(store, conv, "send an email to a@b.com");
+    const rec = recordingModel(sendThenAnswer());
+    await new AgentEngine(rec.model, router(), store).run(
+      config(),
+      SYSTEM,
+      await store.history(conv),
+      [SEND_TOOL],
+    );
+
+    for (const call of rec.calls) {
+      const last = call.prompt[call.prompt.length - 1]!;
+      expect(last.role).not.toBe("assistant");
+    }
+  });
+
+  it("agrees live-vs-replay when two overlays fire in one iteration", async () => {
+    // Two candidates match the same tool, so both surface in one iteration and
+    // land adjacent. Replay runs a role-alternation repair pass that the live
+    // path does not, so this is where the two could silently drift apart.
+    const store = freshStore();
+    const conv = await store.create({ ownerId: "u1" });
+    store.setActiveConversation(conv.id);
+
+    const twoCandidates: EngineConfig = {
+      ...config(),
+      connectorSkillCandidates: [
+        { name: "gmail", body: OVERLAY_BODY, scope: "connector", toolAffinity: ["gmail__*"] },
+        { name: "gmail-etiquette", body: SECOND_BODY, scope: "connector", toolAffinity: ["gmail__*"] },
+      ],
+    };
+
+    await appendUser(store, conv, "send an email to a@b.com");
+    const rec = recordingModel(sendThenAnswer());
+    await new AgentEngine(rec.model, router(), store).run(
+      twoCandidates,
+      SYSTEM,
+      await store.history(conv),
+      [SEND_TOOL],
+    );
+
+    const liveShape = rec.calls[rec.calls.length - 1]!.prompt
+      .filter((m) => m.role !== "system")
+      .map((m) => m.role);
+    const replayShape = (await store.history(conv)).map((m) => m.role);
+
+    expect(replayShape.slice(0, liveShape.length)).toEqual(liveShape);
+    // Both bodies actually reached the model.
+    const lastPrompt = rec.calls[rec.calls.length - 1]!.prompt;
+    expect(messagesContainOverlay(lastPrompt)).toBe(true);
+    expect(
+      lastPrompt.some(
+        (m) =>
+          Array.isArray(m.content) &&
+          m.content.some((p) => p.type === "text" && p.text.includes(SECOND_BODY)),
+      ),
+    ).toBe(true);
+  });
+
   it("surfaces the overlay into history once, never into the system prefix, and holds across turns", async () => {
     const store = freshStore();
     const conv = await store.create({ ownerId: "u1" });
@@ -176,7 +244,7 @@ describe("connector-skill surface-once (engine + event store)", () => {
     const afterTurn1 = await store.history(conv);
     const synthetic = afterTurn1.find((m) => m.metadata?.synthetic === "connector_skill_injected");
     expect(synthetic).toBeDefined();
-    expect(synthetic!.role).toBe("assistant");
+    expect(synthetic!.role).toBe("user");
     expect(synthetic!.metadata?.skill).toBe("gmail");
 
     // It NEVER entered the cached system prefix on any turn-1 model call.

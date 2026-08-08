@@ -1161,7 +1161,7 @@ function assertNoAdjacentUserMessages(messages: StoredMessage[]): void {
 }
 
 describe("reconstructMessages — connector.skill.injected (P4)", () => {
-  it("reconstructs a synthetic assistant message carrying the overlay in <connector-skill>", () => {
+  it("reconstructs a synthetic user message carrying the overlay in <connector-skill>", () => {
     const events: ConversationEvent[] = [
       userMessage("send an email"),
       runStart("run-1"),
@@ -1177,7 +1177,10 @@ describe("reconstructMessages — connector.skill.injected (P4)", () => {
     const synthetic = findConnectorSkillMessage(messages);
 
     expect(synthetic).toBeDefined();
-    expect(synthetic!.role).toBe("assistant");
+    // `user`, not `assistant`: mid-run this is the last message the next model
+    // call sees, and a trailing assistant message is a prefill the model
+    // continues rather than answers.
+    expect(synthetic!.role).toBe("user");
     expect(synthetic!.metadata?.skill).toBe("gmail");
     const text =
       synthetic!.content[0]?.type === "text" ? synthetic!.content[0].text : "";
