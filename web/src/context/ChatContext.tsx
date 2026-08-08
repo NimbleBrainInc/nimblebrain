@@ -71,6 +71,8 @@ export interface ChatProviderProps {
   /** Pre-fetched config from bootstrap. Skips the tool call when provided. */
   initialConfig?: {
     configuredProviders: string[];
+    newConversationModel?: string;
+    availableModels?: ConfigInfo["availableModels"];
     preferences?: ConfigInfo["preferences"];
   };
   /** Current user's ID (from bootstrap). */
@@ -202,8 +204,14 @@ export function ChatProvider({
   const [configuredProviders, setConfiguredProviders] = useState<string[]>(
     initialConfig?.configuredProviders ?? [],
   );
-  const [newConversationModel, setNewConversationModel] = useState<string | undefined>(undefined);
-  const [availableModels, setAvailableModels] = useState<ConfigInfo["availableModels"]>(undefined);
+  // Seeded from the bootstrap: `fetchConfig` only runs when there is none,
+  // so a field this provider reads has to arrive by both routes.
+  const [newConversationModel, setNewConversationModel] = useState<string | undefined>(
+    initialConfig?.newConversationModel,
+  );
+  const [availableModels, setAvailableModels] = useState<ConfigInfo["availableModels"]>(
+    initialConfig?.availableModels,
+  );
   const [preferences, setPreferences] = useState<ConfigInfo["preferences"]>(
     initialConfig?.preferences,
   );

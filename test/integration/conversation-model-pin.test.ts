@@ -28,6 +28,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import type { EventSourcedConversationStore } from "../../src/conversation/event-sourced-store.ts";
+import type { EngineEvent, EventSink } from "../../src/engine/types.ts";
 import type { ConversationEvent } from "../../src/conversation/types.ts";
 import type { UserIdentity } from "../../src/identity/provider.ts";
 import { Runtime } from "../../src/runtime/runtime.ts";
@@ -390,6 +391,55 @@ describe("the detached-turn path", () => {
     });
 
     expect(await modelsUsed(conversationId)).toEqual([MODEL_A]);
+  });
+});
+
+describe("how a client learns the binding", () => {
+  /** Collect every event the turn emits on the per-request sink. */
+  function recorder(): { sink: EventSink; events: EngineEvent[] } {
+    const events: EngineEvent[] = [];
+    return { sink: { emit: (e: EngineEvent) => void events.push(e) }, events };
+  }
+
+  test("chat.start announces the model, not just the id", async () => {
+    // A conversation the client just created is never loaded, so this event is
+    // the only place it can learn the pin. Without the model here the composer
+    // falls back to the configured default and names the wrong model on a
+    // conversation that is already bound to something else.
+    runtime.updateConfig({ models: { default: MODEL_A } });
+    const { sink, events } = recorder();
+    const { conversationId } = await runtime.chat(
+      { message: "one", workspaceId: TEST_WORKSPACE_ID, identity: PICKY },
+      sink,
+    );
+
+    const start = events.find((e) => e.type === "chat.start");
+    const data = start?.data as { conversationId: string; model: string } | undefined;
+    expect(data?.conversationId).toBe(conversationId);
+    // PICKY's own choice, which is what the pin took — announcing the org
+    // default here would contradict the conversation on its first paint.
+    expect(data?.model).toBe(MODEL_B);
+    expect(data?.model).toBe(await pinOf(conversationId));
+  });
+
+  test("a later turn announces the pin, not the current default", async () => {
+    runtime.updateConfig({ models: { default: MODEL_A } });
+    const { conversationId } = await runtime.chat({
+      message: "one",
+      workspaceId: TEST_WORKSPACE_ID,
+      identity: USER,
+    });
+
+    // The slot moves under the conversation; the binding does not.
+    runtime.updateConfig({ models: { default: MODEL_B } });
+    const { sink, events } = recorder();
+    await runtime.chat(
+      { message: "two", conversationId, workspaceId: TEST_WORKSPACE_ID, identity: USER },
+      sink,
+    );
+
+    const data = events.find((e) => e.type === "chat.start")?.data as { model: string };
+    expect(data.model).toBe(MODEL_A);
   });
 });
 

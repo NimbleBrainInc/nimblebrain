@@ -902,10 +902,17 @@ export function createChatStore(): ChatStore {
   }
 
   function handleChatStart(slice: ConversationSlice, data: unknown): void {
-    const evt = data as { conversationId: string };
+    const evt = data as { conversationId: string; model?: string };
+    // The binding arrives with the id because a just-created conversation is
+    // never loaded, so `loadConversation` would never supply it — and the
+    // composer has to state the model the server pinned, not the one asked for.
+    const learnedModel = evt.model && slice.meta?.model !== evt.model;
+    if (learnedModel) slice.meta = { ...slice.meta, model: evt.model };
     if (evt.conversationId && slice.conversationId !== evt.conversationId) {
       slice.conversationId = evt.conversationId;
       aliasSlice(slice, evt.conversationId);
+      commit(slice);
+    } else if (learnedModel) {
       commit(slice);
     }
   }

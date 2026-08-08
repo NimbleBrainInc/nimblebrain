@@ -386,6 +386,9 @@ export interface BootstrapResponse {
   config: {
     models: Record<string, string>;
     configuredProviders: string[];
+    /** Same two fields `get_config` publishes — see `ConfigInfo`. */
+    newConversationModel?: string;
+    availableModels?: ConfigInfo["availableModels"];
     maxIterations: number;
     maxInputTokens: number;
     maxOutputTokens: number;

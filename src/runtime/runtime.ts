@@ -1755,7 +1755,7 @@ export class Runtime {
 
     // Emit chat.start so the client knows the conversation ID immediately and
     // conversation list UIs can refresh.
-    this.emitChatStart(requestSink, conversation.id, !request.conversationId);
+    this.emitChatStart(requestSink, conversation.id, !request.conversationId, model);
 
     // Root span for the agent turn — the common chokepoint for both the HTTP
     // and CLI entry points. Opened inside runWithRequestContext so the verified
@@ -2450,16 +2450,22 @@ export class Runtime {
 
   /**
    * Emit the initial `chat.start` (so the client knows the conversation id
-   * immediately) and, for a new conversation, a conversations-list `data.changed`
-   * — both on the per-request sink only.
+   * and the model it is bound to immediately) and, for a new conversation, a
+   * conversations-list `data.changed` — both on the per-request sink only.
+   *
+   * The model rides along because this is the only point at which a client
+   * that just created a conversation can learn its binding: the pin is server
+   * state, and a client that instead remembered what it asked for would be
+   * reporting its own request rather than the answer.
    */
   private emitChatStart(
     requestSink: EventSink | undefined,
     conversationId: string,
     isNewConversation: boolean,
+    model: string,
   ): void {
     if (!requestSink) return;
-    requestSink.emit({ type: "chat.start", data: { conversationId } });
+    requestSink.emit({ type: "chat.start", data: { conversationId, model } });
     // Notify conversation browser UIs that a new conversation exists.
     if (isNewConversation) {
       requestSink.emit({ type: "data.changed", data: { server: "conversations", tool: "list" } });

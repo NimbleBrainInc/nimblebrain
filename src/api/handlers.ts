@@ -18,6 +18,7 @@ import {
 import type { IdentityProvider, UserIdentity } from "../identity/provider.ts";
 import { RefreshTokenError } from "../identity/provider.ts";
 import { DEV_IDENTITY } from "../identity/providers/dev.ts";
+import { getAvailableModels } from "../model/catalog.ts";
 import { log } from "../observability/log.ts";
 import {
   ConversationAccessDeniedError,
@@ -1603,6 +1604,15 @@ export async function handleBootstrap(
 
   // 5. Config
   const models = runtime.getModelSlots();
+  // Read inside a request context because the slot readers resolve the
+  // caller's own model preference from it, and this handler has none of its
+  // own. Untinted, this reports the org default to everyone who chose
+  // otherwise — and the composer would name a model the first turn then
+  // contradicts.
+  const newConversationModel = runWithRequestContext(
+    { identity, workspaceId: activeWorkspace } as RequestContext,
+    () => runtime.getDefaultModel(),
+  );
   const configuredProviders = runtime.getConfiguredProviders();
   const maxIterations = runtime.getMaxIterations();
   const maxInputTokens = runtime.getMaxInputTokens();
@@ -1635,6 +1645,12 @@ export async function handleBootstrap(
     config: {
       models,
       configuredProviders,
+      // The composer needs both of these before its first paint, and the
+      // bootstrap exists so the shell renders without a second round-trip.
+      // Named the same as in `get_config` so the client reads one field
+      // whichever path delivered it.
+      newConversationModel,
+      availableModels: getAvailableModels(runtime.getProviderConfigs(), runtime.getModelPolicy()),
       maxIterations,
       maxInputTokens,
       maxOutputTokens,
