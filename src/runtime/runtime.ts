@@ -203,6 +203,30 @@ import { isToolEligibleForPromotion } from "./tool-eligibility.ts";
  * Shared by the three thinking fields so a clear can't be honored on one and
  * dropped on another.
  */
+/**
+ * Warn about a configured slot the org's own policy forbids.
+ *
+ * A config file can strand a slot the way `set_model_config` no longer can: it
+ * is written by hand, so nothing validates it against the policy beside it.
+ *
+ * Reported rather than refused — a deployment that boots with an error it can
+ * act on beats one that will not start, and the resolution stays deterministic
+ * either way. Read through the runtime's own slot reader so this cannot
+ * disagree with the model a turn actually uses.
+ */
+function reportStrandedSlots(rt: Runtime, allowed: string[] | undefined): void {
+  if (!allowed || allowed.length === 0) return;
+  for (const [slot, model] of Object.entries(rt.configuredModelSlots())) {
+    if (isModelInPolicy(model, allowed)) continue;
+    log.error("[runtime] configured model slot is outside this org's model policy", {
+      slot,
+      model,
+      allowed,
+      effect: "turns resolve to this model while the picker excludes it",
+    });
+  }
+}
+
 function applyClearable<T>(current: T | undefined, patched: T | null | undefined): T | undefined {
   return patched === undefined ? current : (patched ?? undefined);
 }
@@ -798,6 +822,8 @@ export class Runtime {
     rtHolder.rt = rt;
     rt._getIdentity = getIdentity;
     rt._getWorkspaceId = getWorkspaceId;
+
+    reportStrandedSlots(rt, config.modelPolicy?.allowed);
 
     // Register the `nb` system source. Built as an in-process MCP server
     // — `createSystemTools` returns it already-started so it's ready to

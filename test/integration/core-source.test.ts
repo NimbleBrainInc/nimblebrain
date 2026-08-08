@@ -10,6 +10,7 @@ import { createCoreToolDefs } from "../../src/tools/core-source.ts";
 import { makeInProcessSource } from "../helpers/in-process-source.ts";
 import { extractText } from "../../src/engine/content-helpers.ts";
 import { loadConfig } from "../../src/cli/config.ts";
+import { log } from "../../src/observability/log.ts";
 import { deriveOverridePath } from "../../src/config/overrides.ts";
 import { DEFAULT_MAX_ITERATIONS } from "../../src/limits.ts";
 import {
@@ -860,6 +861,31 @@ describe("Core Source", () => {
 				expect(extractText(res.content)).toContain("which the fast slot uses");
 			} finally {
 				await runtime.shutdown();
+			}
+		});
+
+		it("reports a config file whose policy strands its own slot", async () => {
+			// The hand-written door. `set_model_config` rejects this; a config file
+			// has nothing validating it against its own policy, so it booted
+			// silently and every turn then resolved outside the published menu.
+			const errors: { msg: string; data?: unknown }[] = [];
+			const original = log.error;
+			(log as { error: typeof log.error }).error = (msg: string, data?: unknown) => {
+				errors.push({ msg, data });
+			};
+			try {
+				const { runtime } = await startWithPolicy("file-strands", ["anthropic:claude-sonnet-5"], {
+					models: { default: "anthropic:claude-opus-5", fast: "anthropic:claude-opus-5" },
+				});
+				try {
+					const stranded = errors.filter((e) => e.msg.includes("outside this org's model policy"));
+					expect(stranded.length).toBeGreaterThan(0);
+					expect(JSON.stringify(stranded[0]?.data)).toContain("anthropic:claude-opus-5");
+				} finally {
+					await runtime.shutdown();
+				}
+			} finally {
+				(log as { error: typeof log.error }).error = original;
 			}
 		});
 
