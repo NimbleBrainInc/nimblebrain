@@ -171,7 +171,7 @@ export type FileDeletedPayload = Static<typeof FileDeletedPayload>;
 /**
  * `connector.skill.injected` — a curated connector overlay surfaced into
  * the conversation history for the first time, triggered by a matching
- * connector tool call. The reconstructor turns this into a synthetic assistant
+ * connector tool call. The reconstructor turns this into a synthetic
  * message; the body is wrapped in `<connector-skill>` containment at that point.
  */
 export const ConnectorSkillInjectedPayload = Type.Object({

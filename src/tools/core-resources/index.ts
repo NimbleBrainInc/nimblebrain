@@ -12,24 +12,18 @@ import { CONVERSATIONS_SCRIPT } from "./scripts/conversations.ts";
 import { MODEL_SELECTOR_SCRIPT } from "./scripts/model-selector.ts";
 import { SETTINGS_SCRIPT } from "./scripts/settings.ts";
 import { SETTINGS_LINK_SCRIPT } from "./scripts/settings-link.ts";
-import { USAGE_BAR_SCRIPT } from "./scripts/usage-bar.ts";
-import { USAGE_DASHBOARD_SCRIPT } from "./scripts/usage-dashboard.ts";
 import {
   APP_NAV_STYLES,
   CONVERSATIONS_STYLES,
   MODEL_SELECTOR_STYLES,
   SETTINGS_LINK_STYLES,
   SETTINGS_STYLES,
-  USAGE_BAR_STYLES,
-  USAGE_DASHBOARD_STYLES,
 } from "./styles.ts";
 
 const resources: Record<string, () => string> = {
   conversations: () => renderResource(CONVERSATIONS_STYLES, CONVERSATIONS_SCRIPT),
   "app-nav": () => renderResource(APP_NAV_STYLES, APP_NAV_SCRIPT),
   "settings-link": () => renderResource(SETTINGS_LINK_STYLES, SETTINGS_LINK_SCRIPT),
-  "usage-bar": () => renderResource(USAGE_BAR_STYLES, USAGE_BAR_SCRIPT),
-  "usage-dashboard": () => renderResource(USAGE_DASHBOARD_STYLES, USAGE_DASHBOARD_SCRIPT),
   settings: () => renderResource(SETTINGS_STYLES, SETTINGS_SCRIPT),
   "model-selector": () => renderResource(MODEL_SELECTOR_STYLES, MODEL_SELECTOR_SCRIPT),
 };
