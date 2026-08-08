@@ -186,6 +186,24 @@ describe("before the first message", () => {
     );
   });
 
+  it("moves the highlight when the pointer moves, not when a row slides under it", () => {
+    const view = openPicker();
+    const search = view.getByLabelText("Search models");
+    const gpt = view.getByRole("option", { name: /GPT-5/ });
+
+    fireEvent.keyDown(search, { key: "ArrowDown" });
+    const afterKey = search.getAttribute("aria-activedescendant");
+
+    // Filtering slides rows under a cursor that never moved; the resulting
+    // `mouseenter` must not take the highlight off the keyboard.
+    fireEvent.mouseEnter(gpt);
+    expect(search.getAttribute("aria-activedescendant")).toBe(afterKey);
+
+    // Actual movement does.
+    fireEvent.mouseMove(gpt);
+    expect(search.getAttribute("aria-activedescendant")).toBe(gpt.id);
+  });
+
   it("says so when nothing matches, rather than showing an empty box", () => {
     const view = openPicker();
     fireEvent.change(view.getByLabelText("Search models"), { target: { value: "zzz" } });

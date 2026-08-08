@@ -189,7 +189,14 @@ export function ModelPicker({
         aria-expanded={open}
         aria-haspopup="listbox"
         title={current}
-        className="flex items-center gap-1 max-w-[11rem] px-1.5 py-1 rounded-sm text-xs text-foreground cursor-pointer hover:bg-muted disabled:cursor-default disabled:opacity-50 transition-colors"
+        // Rests muted and comes up to full contrast on hover, which is the
+        // idiom of the two buttons beside it. `bg-muted` on this ground is a
+        // few percent of luminance; the text step is what actually reads as
+        // "this responds". Staying lit while open keeps the menu anchored to
+        // the thing that opened it.
+        className={`flex items-center gap-1 max-w-[11rem] px-1.5 py-1 rounded-sm text-xs cursor-pointer hover:bg-muted hover:text-foreground disabled:cursor-default disabled:opacity-50 transition-colors ${
+          open ? "bg-muted text-foreground" : "text-muted-foreground"
+        }`}
       >
         <span className="truncate">{label}</span>
         <span aria-hidden className="text-[0.5rem] opacity-60">
@@ -250,7 +257,10 @@ export function ModelPicker({
                     type="button"
                     role="option"
                     aria-selected={isCurrent}
-                    onMouseEnter={() => setActive(i)}
+                    // Movement, not entry: filtering the list slides rows under
+                    // a cursor that never moved, and `mouseenter` would let
+                    // that steal the highlight from the keyboard.
+                    onMouseMove={() => setActive(i)}
                     onClick={() => choose(m)}
                     className={`w-full text-left px-2 py-1.5 rounded-sm cursor-pointer flex items-baseline justify-between gap-2 ${
                       i === active ? "bg-muted" : ""
