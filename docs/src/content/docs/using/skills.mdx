@@ -131,6 +131,20 @@ Uninstalling the connector removes its materialized overlays.
 
 Ask the agent which skills are loaded — it uses the built-in `skills__list` tool to report each skill's name, loading strategy, priority, and source file. To see one skill's full definition, ask the agent for its details.
 
+## Auditing how skills loaded
+
+`skills__list` says which skills *exist*. To see which ones actually reached the model, and how, ask the agent to replay the skill-load ledger (`skills__loading_log`). It returns one row per load — skill, timestamp, conversation, tokens, and a `loaded_by` channel:
+
+| `loaded_by` | Meaning |
+|---|---|
+| `always` | Composed into the system prompt because the skill declares `loading-strategy: always`. |
+| `tool_affinity` | Composed in because a tool matching its globs was in the active set. |
+| `trigger` | Composed in because an exact trigger phrase appeared. |
+| `tool_use` | A connector overlay delivered on the first matching tool call. |
+| `activation` | The model loaded a Skill Catalog entry by name with `nb__use_skill`. |
+
+Filter by `conversation_id`, `skill` (name or id), `loaded_by`, or a `since`/`until` window. This is the way to answer questions the catalog alone can't — whether a skill is reaching the model at all, and whether it gets there because the model chose it or because a tool call forced it.
+
 ## Creating a custom skill
 
 <Steps>
