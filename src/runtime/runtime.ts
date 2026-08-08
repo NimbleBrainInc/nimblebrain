@@ -201,8 +201,8 @@ import { isToolEligibleForPromotion } from "./tool-eligibility.ts";
  * Apply one clearable config field: `undefined` leaves it alone, `null` clears
  * it back to the platform default, anything else sets it.
  *
- * Shared by the three thinking fields so a clear can't be honored on one and
- * dropped on another.
+ * Shared by every clearable config field so a clear can't be honored on one
+ * and dropped on another.
  */
 function applyClearable<T>(current: T | undefined, patched: T | null | undefined): T | undefined {
   return patched === undefined ? current : (patched ?? undefined);
