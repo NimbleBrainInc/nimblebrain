@@ -204,6 +204,10 @@ import { isToolEligibleForPromotion } from "./tool-eligibility.ts";
  * Shared by the three thinking fields so a clear can't be honored on one and
  * dropped on another.
  */
+function applyClearable<T>(current: T | undefined, patched: T | null | undefined): T | undefined {
+  return patched === undefined ? current : (patched ?? undefined);
+}
+
 /**
  * Warn about a configured slot the org's own policy forbids.
  *
@@ -226,10 +230,6 @@ function reportStrandedSlots(rt: Runtime, allowed: string[] | undefined): void {
       effect: "turns resolve to this model while the picker excludes it",
     });
   }
-}
-
-function applyClearable<T>(current: T | undefined, patched: T | null | undefined): T | undefined {
-  return patched === undefined ? current : (patched ?? undefined);
 }
 
 function resolveWorkDir(config: RuntimeConfig): string {
