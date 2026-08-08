@@ -259,7 +259,7 @@ describe("nb-core placements via PlacementRegistry", () => {
 		const pr = new PlacementRegistry();
 
 		const NB_CORE_PLACEMENTS: PlacementDeclaration[] = [
-			{ slot: "main", resourceUri: "ui://core/conversations", route: "conversations", label: "Chats", icon: "💬" },
+			{ slot: "main", resourceUri: "ui://core/usage-dashboard", route: "usage", label: "Usage", icon: "📊" },
 			{ slot: "sidebar", resourceUri: "ui://core/home-nav", route: "home", label: "Home", icon: "🏠" },
 		];
 		pr.register("nb", NB_CORE_PLACEMENTS);

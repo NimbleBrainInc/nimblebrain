@@ -99,7 +99,7 @@ describe("GET /v1/apps/nb/resources/:path", () => {
 		expect(html).toContain("postMessage");
 	});
 
-	it("returns HTML for all 7 core resources", async () => {
+	it("returns HTML for all 5 core resources", async () => {
 		const resources = [
 			"conversations",
 			"app-nav",

@@ -30,7 +30,7 @@ describe("core-resources styles use CSS variables", () => {
 			CONVERSATIONS_STYLES,
 			APP_NAV_STYLES,
 			SETTINGS_LINK_STYLES,
-							SETTINGS_STYLES,
+			SETTINGS_STYLES,
 			MODEL_SELECTOR_STYLES,
 		];
 		for (const css of styles) {
@@ -48,7 +48,7 @@ describe("core-resources styles use CSS variables", () => {
 			CONVERSATIONS_STYLES,
 			APP_NAV_STYLES,
 			SETTINGS_LINK_STYLES,
-							MODEL_SELECTOR_STYLES,
+			MODEL_SELECTOR_STYLES,
 		];
 		for (const css of styles) {
 			// Remove var(...) expressions (including nested parens for rgba fallbacks)

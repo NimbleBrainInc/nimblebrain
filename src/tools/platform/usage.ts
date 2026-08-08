@@ -129,10 +129,11 @@ export function createUsageSource(runtime: Runtime, eventSink: EventSink): McpSo
     },
   ];
 
-  // No UI resource. Usage has one rendering — the `/org/usage` settings page —
+  // No UI resource. Usage has one rendering, the `/org/usage` settings page,
   // for the same reason it has one reader: a second surface over the same
-  // numbers drifts from the first, and both of the ones deleted here had,
-  // silently, on the first change the page received. See the ledger's
+  // numbers has nothing keeping it in step, and the two deleted here proved it
+  // — neither carried the unpriced caveat or the sessions split the page
+  // gained, and nothing failed when they fell behind. See the ledger's
   // one-reader merge bar.
   return defineInProcessApp(
     {
