@@ -3817,12 +3817,24 @@ export class Runtime {
    * was given back to `set_model_config` — so a tinted value there does not
    * just display wrong, it persists.
    */
-  configuredModelSlots(): ModelSlots {
-    const models = this.config.models;
-    const fallback = this.config.defaultModel ?? DEFAULT_MODEL;
+  configuredModelSlots(pending?: {
+    models?: Partial<Record<string, string>>;
+    defaultModel?: string;
+  }): ModelSlots {
+    // `pending` asks what the slots WOULD be if that patch were applied, so a
+    // caller validating a write does not have to re-derive the merge rules. It
+    // is the same chain either way — one implementation, not two that drift.
+    const models: Partial<Record<string, string>> = { ...this.config.models };
+    for (const [slot, value] of Object.entries(pending?.models ?? {})) {
+      // `""` clears, matching `updateConfig` and the override merge: the slot
+      // falls back rather than holding an empty string.
+      if (value === "") delete models[slot];
+      else models[slot] = value;
+    }
+    const fallback = pending?.defaultModel ?? this.config.defaultModel ?? DEFAULT_MODEL;
     return {
-      default: resolveModelString(models?.default ?? fallback),
-      fast: resolveModelString(models?.fast ?? fallback),
+      default: resolveModelString(models.default ?? fallback),
+      fast: resolveModelString(models.fast ?? fallback),
     };
   }
 

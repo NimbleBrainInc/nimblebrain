@@ -236,7 +236,6 @@ from the current slot on every turn, as they did before.
   The history folds want the same headroom for a different reason. A fold summarizes a conversation grown against the **main** model's window, so a `fast` model with a smaller one has less room to read what it is summarizing — the call is bounded to the summarizer's own context to keep it from overflowing, and a small window buys a worse summary or none at all.
 </Aside>
 
-
 ## modelPolicy
 
 Which models this organization permits. Absent — or present with an empty

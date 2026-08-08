@@ -210,17 +210,37 @@ function validateModelPolicy(input: Record<string, unknown>, runtime: Runtime): 
     }
   }
 
-  return strandedSlotError(input, runtime, allowed as string[]);
+  return null;
 }
 
 /**
- * Would this allowed-list leave a configured slot pointing outside it?
+ * After this write, does every slot still point inside the policy in force?
+ *
+ * Runs on every call, not only one that sets a policy: with a policy already in
+ * place, moving or clearing a slot can strand it just as easily as narrowing
+ * the list can. The effective list is the incoming one if this call sets one,
+ * otherwise the one already in force.
+ */
+function policyStrandingError(input: Record<string, unknown>, runtime: Runtime): string | null {
+  const incoming = (input.modelPolicy as { allowed?: unknown } | undefined)?.allowed;
+  const effective = Array.isArray(incoming) ? (incoming as string[]) : runtime.getModelPolicy();
+  if (!effective || effective.length === 0) return null;
+  return strandedSlotError(input, runtime, effective);
+}
+
+/**
+ * Would this allowed-list leave a slot pointing outside it once the call lands?
+ *
+ * Judged on the **post-write** slots, which the runtime computes — an earlier
+ * version derived them here from `input.models` alone and missed the deprecated
+ * `defaultModel` input, which also repoints the default slot, while rejecting
+ * the `""` clear because it read the sentinel as a model name.
  *
  * Read from `configuredModelSlots`, not `getDefaultModel`: the latter is tinted
  * by the calling admin's own preference, so an admin whose personal model
- * happens to be in the list would pass a guard that every other member fails.
+ * happens to be in the list would pass a guard every other member fails.
  *
- * Both slots, because a configured slot is never re-tested at read time — this
+ * Every slot, because a configured slot is never re-tested at read time — this
  * write is the only thing standing between a policy and a turn that resolves to
  * a model the org forbids.
  */
@@ -229,14 +249,27 @@ function strandedSlotError(
   runtime: Runtime,
   allowed: string[],
 ): string | null {
-  const slots = runtime.configuredModelSlots();
-  const pending = (input.models ?? {}) as Partial<Record<string, string>>;
+  const pendingDefault = typeof input.defaultModel === "string" ? input.defaultModel : undefined;
+  const slots = runtime.configuredModelSlots({
+    models: (input.models ?? {}) as Partial<Record<string, string>>,
+    ...(pendingDefault !== undefined ? { defaultModel: pendingDefault } : {}),
+  });
+
   for (const slot of MODEL_SLOTS) {
-    // A slot this same call is repointing is judged on its new value.
-    const raw = pending[slot];
-    const value = raw !== undefined ? resolveModelString(raw) : slots[slot];
-    if (!allowed.includes(value)) {
-      return `Cannot exclude "${value}", which the ${slot} slot uses. Point that slot at an allowed model first, in this call or before it.`;
+    if (!allowed.includes(slots[slot])) {
+      return `Cannot exclude "${slots[slot]}", which the ${slot} slot uses. Point that slot at an allowed model first, in this call or before it.`;
+    }
+  }
+
+  // The deprecated `defaultModel` input is checked on its own as well as
+  // through the chain above: the live patch pushes it into `models.default`
+  // while the override merge leaves that slot alone, so the two writers can
+  // disagree about which value the default slot ends up with. Requiring both to
+  // be allowed is correct under either.
+  if (pendingDefault !== undefined) {
+    const qualified = resolveModelString(pendingDefault);
+    if (!allowed.includes(qualified)) {
+      return `Cannot exclude "${qualified}", which this call points the default model at.`;
     }
   }
   return null;
@@ -283,6 +316,7 @@ function validateModelConfigPatch(input: Record<string, unknown>, runtime: Runti
     validateModelSlots(input, runtime) ??
     validateDefaultModel(input, runtime) ??
     validateModelPolicy(input, runtime) ??
+    policyStrandingError(input, runtime) ??
     validateModelConfigLimits(input) ??
     validateModelConfigThinking(input)
   );

@@ -635,7 +635,11 @@ describe("Core Source", () => {
 	});
 
 	describe("org model policy", () => {
-		async function startWithPolicy(tag: string, allowed?: string[]) {
+		async function startWithPolicy(
+			tag: string,
+			allowed?: string[],
+			extra?: Record<string, unknown>,
+		) {
 			const workDir = join(testDir, `work-${tag}-${Date.now()}`);
 			mkdirSync(workDir, { recursive: true });
 			// `configPath` is only where `set_model_config` writes its override
@@ -651,6 +655,7 @@ describe("Core Source", () => {
 				logging: { disabled: true },
 				models: { default: "anthropic:claude-sonnet-5", fast: "anthropic:claude-sonnet-5" },
 				...(allowed ? { modelPolicy: { allowed } } : {}),
+				...extra,
 			});
 			const source = await makeInProcessSource("nb", createCoreToolDefs(runtime));
 			return { runtime, source };
@@ -778,6 +783,94 @@ describe("Core Source", () => {
 				});
 				expect(res.isError).toBe(true);
 				expect(extractText(res.content)).toContain("which the fast slot uses");
+			} finally {
+				await runtime.shutdown();
+			}
+		});
+
+		it("catches a slot stranded through the deprecated defaultModel input", async () => {
+			// `models` is not the only field that moves a slot. Judged on
+			// `input.models` alone, this call was accepted and every member
+			// without a preference then ran on a model the org had just forbidden.
+			const { runtime, source } = await startWithPolicy("strand-via-default");
+			try {
+				const res = await source.execute("set_model_config", {
+					defaultModel: "anthropic:claude-opus-5",
+					modelPolicy: { allowed: ["anthropic:claude-sonnet-5"] },
+				});
+				expect(res.isError).toBe(true);
+				expect(runtime.isModelPermitted(runtime.configuredModelSlots().default)).toBe(true);
+			} finally {
+				await runtime.shutdown();
+			}
+		});
+
+		it("accepts repointing the default and narrowing to it in one call", async () => {
+			// The mirror of the above: the guard must judge the post-write state,
+			// not the prior one, or its own advice — "point that slot at an
+			// allowed model in this call" — is impossible to follow.
+			const { runtime, source } = await startWithPolicy("repoint-and-narrow");
+			try {
+				const res = await source.execute("set_model_config", {
+					models: {
+						default: "anthropic:claude-haiku-4-5-20251001",
+						fast: "anthropic:claude-haiku-4-5-20251001",
+					},
+					modelPolicy: { allowed: ["anthropic:claude-haiku-4-5-20251001"] },
+				});
+				expect(`isError: ${res.isError} — ${extractText(res.content)}`).toContain(
+					"isError: false",
+				);
+			} finally {
+				await runtime.shutdown();
+			}
+		});
+
+		it("reads the empty-string clear as a clear, not as a model", async () => {
+			// `""` is the documented way to clear a slot; read as a model name it
+			// resolved to a bare provider prefix and rejected itself.
+			const { runtime, source } = await startWithPolicy(
+				"clear-sentinel",
+				["anthropic:claude-sonnet-5"],
+				// A cleared slot falls back to `defaultModel`, not to `models.default`.
+				{ defaultModel: "anthropic:claude-sonnet-5" },
+			);
+			try {
+				const res = await source.execute("set_model_config", { models: { fast: "" } });
+				expect(`isError: ${res.isError} — ${extractText(res.content)}`).toContain(
+					"isError: false",
+				);
+				// Cleared, so it falls back to the default — which policy allows.
+				expect(runtime.configuredModelSlots().fast).toBe("anthropic:claude-sonnet-5");
+			} finally {
+				await runtime.shutdown();
+			}
+		});
+
+		it("catches a clear that strands a slot under a policy already in force", async () => {
+			// The check runs on every write, not only one that sets a policy: with
+			// a list already in place, clearing a slot drops it to a fallback that
+			// the list may not contain.
+			const { runtime, source } = await startWithPolicy("clear-strands", [
+				"anthropic:claude-sonnet-5",
+			]);
+			try {
+				const res = await source.execute("set_model_config", { models: { fast: "" } });
+				expect(res.isError).toBe(true);
+				expect(extractText(res.content)).toContain("which the fast slot uses");
+			} finally {
+				await runtime.shutdown();
+			}
+		});
+
+		it("publishes the policy it filters by", async () => {
+			const { runtime, source } = await startWithPolicy("publish", [
+				"anthropic:claude-sonnet-5",
+			]);
+			try {
+				const cfg = (await source.execute("get_config", {}))
+					.structuredContent as Record<string, unknown>;
+				expect(cfg.modelPolicy).toEqual({ allowed: ["anthropic:claude-sonnet-5"] });
 			} finally {
 				await runtime.shutdown();
 			}
