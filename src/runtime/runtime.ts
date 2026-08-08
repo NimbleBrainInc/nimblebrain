@@ -4193,17 +4193,16 @@ export class Runtime {
    * Update live runtime config (in-memory). Called by set_config tool
    * after disk write.
    *
-   * Every field typed `| null` (`thinking`, `thinkingEffort`,
-   * `thinkingBudgetTokens`) treats `null` as the explicit "clear my
+   * Every field typed `| null` treats `null` as the explicit "clear my
    * override" sentinel, distinct from `undefined` ("leave it alone").
    * The distinction is load-bearing: this method gates on `!== undefined`,
    * so a clear expressed as `undefined` writes to disk but never reaches
    * the live process.
    *
-   * The three are independent — clearing one does not clear the others.
-   * After a clear the resolver applies its own default; see
-   * `resolveThinking`, which owns that policy rather than restating it
-   * here.
+   * They are independent — clearing one does not clear the others. After a
+   * clear the resolver applies its own default; the resolver owns that
+   * policy rather than restating it here (`resolveThinking` for the
+   * thinking fields, `resolveMaxOutputTokens` and friends for the limits).
    */
   updateConfig(patch: {
     defaultModel?: string;
