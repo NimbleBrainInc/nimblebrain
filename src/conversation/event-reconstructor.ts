@@ -192,7 +192,24 @@ interface RunCollections {
   llmResponses: LlmResponseEvent[];
   toolDones: Map<string, ToolDoneEvent>;
   toolInputs: Map<string, unknown>;
-  connectorSkills: ConnectorSkillInjectedEvent[];
+  /**
+   * Overlays surfaced during this run, each tagged with how many `llm.response`
+   * events preceded it. An overlay fires at `tool.start`, so that count
+   * identifies the iteration whose tool calls triggered it.
+   *
+   * The tag is derived from event order at read time, not stored on the event,
+   * so conversations recorded before this placement existed reposition
+   * correctly with no migration.
+   *
+   * It is what lets replay put the overlay back where the live run put it:
+   * immediately after that iteration's tool results, before the model's next
+   * action. Without it replay could only append at end-of-run, and the
+   * reconstructed history would disagree with the history the run actually
+   * executed against — the model would have acted on guidance that replay
+   * shows arriving later, and the next turn's prefix would not match the one
+   * this turn built.
+   */
+  connectorSkills: Array<{ event: ConnectorSkillInjectedEvent; afterResponses: number }>;
   /** `skill.activated` events keyed by the activating tool call's id. */
   skillActivations: Map<string, SkillActivatedEvent>;
 }
@@ -318,7 +335,7 @@ function accumulateRunEvent(inner: ConversationEvent, runId: string, acc: RunCol
       acc.toolInputs.set(inner.id, inner.input);
     }
   } else if (inner.type === "connector.skill.injected") {
-    acc.connectorSkills.push(inner);
+    acc.connectorSkills.push({ event: inner, afterResponses: acc.llmResponses.length });
   } else if (inner.type === "skill.activated" && inner.runId === runId) {
     acc.skillActivations.set(inner.toolCallId, inner);
   }
@@ -400,6 +417,27 @@ function appendRunMessages(
   // thinking enabled. The chat UI consumes its own projection from
   // src/bundles/conversations/src/jsonl-reader.ts; this function is the
   // LLM-replay projection.
+  // Overlays are emitted where the live run put them: directly after the tool
+  // results of the iteration that triggered them, so the model reads the
+  // guidance before its next action rather than after the whole run. The
+  // `<connector-skill>` containment is the per-prompt injection defense;
+  // `metadata.synthetic`/`skill` let the engine detect an already-surfaced
+  // overlay and never re-inject it.
+  //
+  // The message is `user`-role because mid-run it is the last thing the next
+  // model call sees, and a trailing assistant message is a prefill the model
+  // continues instead of answering. See `buildConnectorSkillMessage`.
+  //
+  // Provider note: this places a user message directly after the iteration's
+  // tool message, and two overlays from one iteration land adjacent.
+  // Anthropic — the default, tested provider, and the only one overlays ship
+  // enabled-for — coalesces consecutive user and tool messages into a single
+  // block preserving part order, so both shapes collapse to one canonical user
+  // turn. A provider whose SDK conversion does NOT merge (`@ai-sdk/google`
+  // emits one entry per user message) would see the pair verbatim; verify
+  // provider-side coalescing before enabling overlays on a non-Anthropic
+  // default.
+  let responsesEmitted = 0;
   for (const llmResp of run.llmResponses) {
     for (const msg of messagesForLlmResponse(
       llmResp,
@@ -410,25 +448,20 @@ function appendRunMessages(
     )) {
       messages.push(msg);
     }
+    responsesEmitted++;
+    for (const cs of run.connectorSkills) {
+      if (cs.afterResponses === responsesEmitted)
+        messages.push(buildConnectorSkillMessage(cs.event));
+    }
   }
 
-  // Connector overlays surfaced during this run. Append after the run's real
-  // turns as synthetic assistant messages — the Anthropic provider merges them
-  // into the preceding assistant block, and a user turn always follows on
-  // replay, so they never become a trailing prefill. The `<connector-skill>`
-  // containment is the per-prompt injection defense; `metadata.synthetic`/
-  // `skill` let the engine detect an already-surfaced overlay and never
-  // re-inject it.
-  //
-  // Provider note: this produces two consecutive assistant messages (the run's
-  // final assistant text, then this one). Anthropic — the default, tested
-  // provider, and the only one overlays ship enabled-for — merges consecutive
-  // same-role messages, so the pair coalesces cleanly. A non-Anthropic provider
-  // whose SDK conversion does NOT merge could reject the pair; verify
-  // provider-side coalescing before enabling overlays on a non-Anthropic
-  // default.
+  // An overlay recorded before this run produced any `llm.response` has no
+  // iteration to sit after, so it lands at the end of the run rather than
+  // being dropped — it was delivered, so it should still reach the model.
+  // (`afterResponses` is captured as a count that only grows, so it can never
+  // exceed the final total; zero is the only unplaceable case.)
   for (const cs of run.connectorSkills) {
-    messages.push(buildConnectorSkillMessage(cs));
+    if (cs.afterResponses === 0) messages.push(buildConnectorSkillMessage(cs.event));
   }
 
   return run.nextIndex;
@@ -634,14 +667,19 @@ function messagesForLlmResponse(
 }
 
 /**
- * Synthesize the assistant message for a connector-skill overlay: the overlay
+ * Synthesize the message carrying a connector-skill overlay: the overlay
  * body wrapped in `<connector-skill>` containment, tagged with
  * `metadata.synthetic`/`skill` so the engine detects an already-surfaced
  * overlay and never re-injects it.
  */
 function buildConnectorSkillMessage(cs: ConnectorSkillInjectedEvent): StoredMessage {
   return {
-    role: "assistant",
+    // `user`, matching the live delivery in the engine. The role is not
+    // cosmetic: mid-run this message is the LAST one the next model call sees,
+    // and a trailing assistant message is an Anthropic prefill the model
+    // continues rather than answers. Live and replay must agree, so the role
+    // moves on both sides together.
+    role: "user",
     content: [
       { type: "text", text: formatConnectorSkillBlock(cs.skillName, cs.scope, cs.skillBody) },
     ],
@@ -652,23 +690,39 @@ function buildConnectorSkillMessage(cs: ConnectorSkillInjectedEvent): StoredMess
 
 /**
  * Defense-in-depth invariant pass: ensure the reconstructed message list
- * never has two adjacent `user` messages. Anthropic rejects such a
- * sequence on the next append with
- * `"This model does not support assistant message prefill."`.
+ * never has two adjacent `user` messages. Not a provider requirement —
+ * `@ai-sdk/anthropic` coalesces consecutive user/tool messages into one block.
+ * It is a fidelity one: two user turns in a row means a run produced no
+ * response, and replaying that as though the user spoke twice hides the gap
+ * from both the model and the reader. The marker names it instead.
  *
  * The per-run step-4a handler covers the cases we've seen in production
  * (orphaned tool-calls, length-truncated empty turns). This pass catches
  * anything we haven't enumerated — e.g. a run scope that emitted zero
  * `llm.response` events because the process died before the model
  * returned. Cheap O(n) scan; never fires on healthy data.
+ *
+ * Two surfaced connector overlays in a row are exempt. They are user-role
+ * messages but not user TURNS — when one iteration matches two candidates both
+ * bodies land together, and no response is missing between them, so the marker
+ * would assert a failure that did not happen. The live run appends exactly that
+ * pair, and this pass does not run there, so inserting anything between them
+ * here would also break the live/replay agreement the placement depends on.
+ *
+ * An overlay followed by a REAL user turn is not exempt: that only happens when
+ * a run ended without its closing response, which is precisely what the marker
+ * is for, and the live run has no next-turn user message to disagree about.
  */
 function ensureRoleAlternation(messages: StoredMessage[]): StoredMessage[] {
   if (messages.length < 2) return messages;
 
+  const isOverlay = (m: StoredMessage): boolean =>
+    m.metadata?.synthetic === CONNECTOR_SKILL_SYNTHETIC;
+
   const result: StoredMessage[] = [];
   for (const msg of messages) {
     const prev = result[result.length - 1];
-    if (prev?.role === "user" && msg.role === "user") {
+    if (prev?.role === "user" && msg.role === "user" && !(isOverlay(prev) && isOverlay(msg))) {
       // Place the synthetic turn 1ms after the previous user message so it
       // sorts between the two user turns instead of collapsing onto the
       // next user's timestamp (the UI sorts strictly by `timestamp`, and a
