@@ -2,8 +2,8 @@
  * Cost estimation and usage formatting.
  *
  * `costBreakdown(model, usage)` is the single source of truth for the
- * arithmetic. `estimateCost(...)` is sugar for `.total`. The
- * usage-aggregator's per-bucket dashboard math reads the same struct,
+ * arithmetic. `estimateCost(...)` is sugar for `.total`. The usage
+ * aggregator's per-bucket dashboard math reads the same struct,
  * so the dashboard total can never silently diverge from the live
  * per-turn cost.
  *
@@ -12,7 +12,7 @@
  */
 
 import { getModelByString } from "../model/catalog.ts";
-import type { TokenUsage } from "./types.ts";
+import type { TokenUsage, UsageRates } from "./types.ts";
 
 /**
  * Per-bucket cost in USD plus the total. The four buckets always sum to
@@ -53,6 +53,32 @@ const ONE_HOUR_CACHE_WRITE_MULTIPLIER = 2;
 const FIVE_MIN_CACHE_WRITE_MULTIPLIER = 1.25;
 
 /**
+ * The unit prices a model bills at, flattened so they can be stored on a ledger
+ * line and replayed later.
+ *
+ * The two cache-write tiers are derived here rather than read from the catalog:
+ * the catalog carries one `cacheWrite` (the 5-minute rate) and the 1-hour rate
+ * is a multiple of base input. A caller storing rates needs both, so this is
+ * where the derivation lives — one place, shared with `costBreakdown` below.
+ *
+ * Returns `null` for a model the catalog does not know, which the ledger writes
+ * as an absent `rates` and the reader treats as *unpriced* rather than free.
+ */
+export function resolveRates(modelString: string): UsageRates | null {
+  const model = getModelByString(modelString);
+  if (!model) return null;
+  const c = model.cost;
+  return {
+    input: c.input,
+    output: c.output,
+    cacheRead: c.cacheRead ?? c.input,
+    cacheWrite5m: c.cacheWrite ?? c.input * FIVE_MIN_CACHE_WRITE_MULTIPLIER,
+    cacheWrite1h: c.input * ONE_HOUR_CACHE_WRITE_MULTIPLIER,
+    ...(c.reasoning != null ? { reasoning: c.reasoning } : {}),
+  };
+}
+
+/**
  * Decompose token usage into per-bucket cost in USD. Returns all-zeros
  * for unknown models.
  *
@@ -74,11 +100,19 @@ const FIVE_MIN_CACHE_WRITE_MULTIPLIER = 1.25;
  * — splitting rather than adding. When the model lacks `cost.reasoning`,
  * all output tokens bill at `cost.output`, including any reasoning
  * subtotal.
+ *
+ * @param rates Stored unit prices from a ledger line. When supplied they win
+ *   over the catalog, so a past call costs what it cost rather than what the
+ *   model costs today. Optional, and the catalog path is unchanged, so every
+ *   existing caller is unaffected.
  */
-export function costBreakdown(modelString: string, usage: TokenUsage): CostBreakdownUsd {
-  const model = getModelByString(modelString);
-  if (!model) return { ...ZERO_BREAKDOWN };
-  const c = model.cost;
+export function costBreakdown(
+  modelString: string,
+  usage: TokenUsage,
+  rates?: UsageRates | null,
+): CostBreakdownUsd {
+  const c = rates ?? resolveRates(modelString);
+  if (!c) return { ...ZERO_BREAKDOWN };
 
   const cacheRead = usage.cacheReadTokens ?? 0;
   const cacheWrite = usage.cacheWriteTokens ?? 0;
@@ -91,12 +125,15 @@ export function costBreakdown(modelString: string, usage: TokenUsage): CostBreak
 
   const input = (inputNonCached * c.input) / 1_000_000;
   const output = (outputNonReasoning * c.output + reasoningCost) / 1_000_000;
-  const cacheReadCost = (cacheRead * (c.cacheRead ?? c.input)) / 1_000_000;
+  const cacheReadCost = (cacheRead * c.cacheRead) / 1_000_000;
   // Cache writes are TTL-tiered. `cacheWrite1hTokens` is the 1-hour portion
   // (2x base input); the remainder is the 5-minute portion (the catalog's
   // `cacheWrite` rate, ~1.25x). When the split is absent — legacy events from
   // before TTL tiering, when every write was 1-hour — treat the whole write as
   // 1-hour so historical figures stay accurate. Reads are TTL-independent.
+  //
+  // Both tier rates come from `resolveRates` (or the stored line), so the
+  // derivation has one home rather than two.
   //
   // The "absent → 2x" default is Anthropic-specific (the only provider the
   // platform caches with, and the only one that reports cache-write tokens —
@@ -106,9 +143,8 @@ export function costBreakdown(modelString: string, usage: TokenUsage): CostBreak
   // than assuming 2x.
   const cacheWrite1h = usage.cacheWrite1hTokens ?? cacheWrite;
   const cacheWrite5m = Math.max(cacheWrite - cacheWrite1h, 0);
-  const rate1h = c.input * ONE_HOUR_CACHE_WRITE_MULTIPLIER;
-  const rate5m = c.cacheWrite ?? c.input * FIVE_MIN_CACHE_WRITE_MULTIPLIER;
-  const cacheWriteCost = (cacheWrite1h * rate1h + cacheWrite5m * rate5m) / 1_000_000;
+  const cacheWriteCost =
+    (cacheWrite1h * c.cacheWrite1h + cacheWrite5m * c.cacheWrite5m) / 1_000_000;
 
   return {
     input,

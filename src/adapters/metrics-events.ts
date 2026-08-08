@@ -63,7 +63,14 @@ export class MetricsEventSink implements EventSink {
     // `data` carries `parentRunId` on a delegated child's events; `recordLlmCall`
     // reads it rather than being told, so a new spawn path cannot forget to say
     // it delegated.
-    if (usage) recordLlmCall({ source: "main", model, usage, event: data });
+    if (usage)
+      recordLlmCall({
+        source: "main",
+        model,
+        usage,
+        ...(typeof data.llmMs === "number" ? { llmMs: data.llmMs } : {}),
+        event: data,
+      });
     // Per-call latency for the p99 alert. `llmMs` is set on every llm.done
     // (engine measures it around the provider call); guard the type anyway.
     const llmMs = data.llmMs;

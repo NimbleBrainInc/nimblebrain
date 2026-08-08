@@ -1,7 +1,7 @@
 import { SynapseProvider, useCallTool } from "@nimblebrain/synapse/react";
 import { useEffect, useState } from "react";
 
-/* ---------- types (mirror the wire shape from src/conversation/usage-aggregator.ts) ---------- */
+/* ---------- types (mirror the wire shape from src/usage/aggregate.ts) ---------- */
 
 interface TokenBreakdown {
   input: number;

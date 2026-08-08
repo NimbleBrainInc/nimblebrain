@@ -288,6 +288,30 @@
       "description": "Working directory for all runtime state. Defaults to ~/.nimblebrain.",
       "type": "string"
     },
+    "usage": {
+      "description": "Durable usage ledger: one JSONL line per priced LLM call, under {workDir}/usage/<YYYY-MM>/. The single source for tenant-level spend reporting.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "ledger": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "enabled": {
+              "description": "Write the ledger. Default true. False stops new lines; the reader still reads what is already there.",
+              "type": "boolean",
+              "default": true
+            },
+            "retentionMonths": {
+              "description": "Months of history to keep. 0 keeps everything. Month directories older than the window are deleted when the writer is constructed, so a process that outlives the window sweeps on its next restart.",
+              "type": "integer",
+              "minimum": 0,
+              "default": 24
+            }
+          }
+        }
+      }
+    },
     "sessionStore": {
       "description": "MCP session metadata store for /mcp. Tracks each Mcp-Session-Id and its idle TTL. Default: in-memory (process-local). Use 'redis' for multi-replica deploys; the same provider also gives single-replica deploys cluster-wide visibility for ops/admin tooling.",
       "type": "object",

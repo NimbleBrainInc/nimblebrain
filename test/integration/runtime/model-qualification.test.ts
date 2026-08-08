@@ -22,7 +22,7 @@ describe("model qualification at runtime boundary", () => {
     // provider-options shape, log lines. Without qualification at the
     // request-entry boundary, the resolver-side rescue inside
     // `buildModelResolver` only fixes routing; everything else still
-    // sees the bare string and misbehaves (e.g., usage-aggregator
+    // sees the bare string and misbehaves (e.g., the usage aggregator
     // looking up the bare id under anthropic, finding nothing, and
     // reporting $0 cost).
     const workDir = join(testDir, "qualify-bare-gemini");

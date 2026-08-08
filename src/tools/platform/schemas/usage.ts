@@ -4,13 +4,23 @@ import { StringEnum } from "./_shared.ts";
 /**
  * Canonical list of usage breakdown dimensions. Single source of truth —
  * the TypeBox enum, the `UsageGroupBy` type, and the aggregator's runtime
- * guard (`src/conversation/usage-aggregator.ts`) all derive from this array
+ * guard (`src/usage/aggregate.ts`) all derive from this array
  * so a new dimension is added in exactly one place.
  */
-export const USAGE_GROUP_BYS = ["day", "conversation", "model", "user"] as const;
+export const USAGE_GROUP_BYS = [
+  "day",
+  "conversation",
+  "model",
+  "user",
+  "origin",
+  "provider",
+] as const;
 
 const UsageGroupBy = StringEnum(USAGE_GROUP_BYS, {
-  description: "Group breakdown. Default: day. `user` buckets by conversation owner (org scope).",
+  description:
+    "Group breakdown. Default: day. `user` buckets by the caller (org scope); " +
+    "`origin` splits interactive chat from automation runs; `provider` buckets by " +
+    "the model string's provider prefix.",
 });
 
 export const UsageReportInput = Type.Object({
@@ -47,7 +57,7 @@ export type UsageGroupBy = (typeof USAGE_GROUP_BYS)[number];
 // ── Output types (§2.1) ────────────────────────────────────────────────
 //
 // The handler's structuredContent IS the contract. These mirror the
-// `UsageReport` shape produced by `src/conversation/usage-aggregator.ts`;
+// `UsageReport` shape produced by `src/usage/aggregate.ts`;
 // keep them in lockstep with that module. Type-only (we don't wire-validate
 // outputs) — the named export is what every consumer (web shell, CLI,
 // tests) imports so a rename surfaces as a compile error rather than a
@@ -82,7 +92,12 @@ export interface UsageBreakdownEntry {
   tokens: UsageTokenBreakdown;
   cost: UsageCostBreakdown;
   llmCalls: number;
+  /** Distinct chat conversations. Task runs are counted by `runs`, as in `totals`. */
   conversations: number;
+  /** Distinct task runs in this bucket. Present only when non-zero. */
+  runs?: number;
+  /** Calls with no resolvable price. Present only when non-zero. See `totals`. */
+  unpricedCalls?: number;
   /** Input-side cache-hit rate (0–1). See `computeCacheHitRate` in the aggregator. */
   cacheHitRate?: number;
 }
@@ -96,7 +111,18 @@ export interface UsageReportOutput {
     cost: UsageCostBreakdown;
     llmCalls: number;
     llmMs: number;
+    /** Distinct chat conversations. Task runs are counted by `runs`. */
     conversations: number;
+    /** Distinct task runs — automations, which have no conversation to count. */
+    runs?: number;
+    /**
+     * Calls no price could be found for. Present only when non-zero.
+     *
+     * Their tokens are in the totals and their cost is not, so this says the
+     * dollar figure is incomplete — as distinct from a spend of zero, which a
+     * bare `$0.00` beside a large token count would otherwise imply.
+     */
+    unpricedCalls?: number;
     /** Input-side cache-hit rate (0–1). See `computeCacheHitRate` in the aggregator. */
     cacheHitRate?: number;
   };

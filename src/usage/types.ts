@@ -35,6 +35,67 @@ import type { LanguageModelV3Usage } from "@ai-sdk/provider";
  */
 export type LlmCallOrigin = "chat" | "task" | "system";
 
+/**
+ * Unit prices in USD per 1M tokens, resolved at write time and stored on the
+ * ledger line.
+ *
+ * Not an accounting feature — this ledger is a display surface, not a system of
+ * record. It is stored for durability across the retention window: cost is
+ * otherwise computed from the live catalog at read time, and over 24 months
+ * that means a price change silently restates a number already shown, while a
+ * model dropped from the catalog takes its own history to `$0.00`, since
+ * `costBreakdown` returns all-zeros for a model it cannot find.
+ *
+ * `cacheWrite5m` / `cacheWrite1h` are the two TTL tiers billed at different
+ * multiples of base input; see `cost.ts`. Absent on a line whose model the
+ * catalog did not know at write time, which the reader treats as unpriced —
+ * distinct from priced at zero.
+ */
+export interface UsageRates {
+  input: number;
+  output: number;
+  cacheRead: number;
+  cacheWrite5m: number;
+  cacheWrite1h: number;
+  reasoning?: number;
+}
+
+/**
+ * One priced LLM call, as written to the durable usage ledger.
+ *
+ * Usage used to be derived from a storage side effect — a conversation JSONL
+ * happening to exist, in a workspace still on disk — so any call path that did
+ * not write one was invisible by default, and four such paths existed. A line
+ * here is a *fact recorded at the point of spend*, which is what makes the next
+ * non-conversation call path visible without anyone remembering to wire it.
+ *
+ * Written only by `src/usage/record.ts`; read only by `src/usage/aggregate.ts`.
+ */
+export interface UsageLedgerEntry {
+  /** ISO-8601, the call's completion time. */
+  ts: string;
+  /** Which slot made the call: main loop, or a forked fast slot. */
+  source: string;
+  /** Who the call was for, derived from the request scope. */
+  origin: LlmCallOrigin;
+  /** Orthogonal to `origin` — a sub-agent inside an automation is both. */
+  delegated: boolean;
+  /** The originating top-level run, when delegated. Best-effort under concurrency. */
+  parentRunId?: string;
+  /** Qualified, e.g. `nebius:zai-org/GLM-5.1`. The prefix is the provider. */
+  model: string;
+  usage: TokenUsage;
+  llmMs: number;
+  /** `identity.id` from the request context. */
+  userId?: string;
+  /** The one workspace the call was bound to. */
+  workspaceId?: string;
+  /** `conversationId` for chat, `runId` for a task run. */
+  sessionId?: string;
+  /** Resolved unit prices. Absent when the catalog did not know the model. */
+  rates?: UsageRates;
+}
+
 export interface TokenUsage {
   inputTokens: number;
   outputTokens: number;

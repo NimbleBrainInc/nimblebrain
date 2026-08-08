@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { normalizeModel } from "../../src/conversation/usage-aggregator.ts";
+import { normalizeModel } from "../../../src/usage/aggregate.ts";
 
 describe("normalizeModel", () => {
   it("strips any provider prefix, including nebius, for grouping/display", () => {
