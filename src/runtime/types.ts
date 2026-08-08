@@ -51,6 +51,18 @@ export interface RuntimeConfig {
    * value would read back as a deliberate choice.
    */
   models?: Partial<ModelSlots>;
+  /**
+   * Which models this organization permits, as qualified `provider:id`
+   * strings. Absent or empty means permissive — every chat-capable model from
+   * every configured provider — so an existing deployment changes nothing and
+   * an org opts *into* restriction.
+   *
+   * Distinct from the provider allowlist, which says what this deployment can
+   * *reach*. This says what it permits of what it can reach, and can only
+   * subtract: naming a model whose provider has no key does not make it
+   * reachable.
+   */
+  modelPolicy?: { allowed?: string[] };
 
   /** @deprecated Use models.default instead. Kept for backward compat. */
   defaultModel?: string;
