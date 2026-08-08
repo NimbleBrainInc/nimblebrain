@@ -1,7 +1,7 @@
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { getValidator } from "../config/index.ts";
-import { deriveOverridePath, mergeConfigs } from "../config/overrides.ts";
+import { OVERRIDE_WRITABLE_KEYS, deriveOverridePath, mergeConfigs } from "../config/overrides.ts";
 import { log } from "../observability/log.ts";
 import type { RuntimeConfig } from "../runtime/types.ts";
 
@@ -105,7 +105,11 @@ function loadSeedConfig(configPath: string, flags: CliFlags): Record<string, unk
   return {};
 }
 
-/** Layer the user-managed override file over the operator seed; override keys win. */
+/**
+ * Layer the user-managed override file over the operator seed. An override wins
+ * on every key its one writer can produce; a key it cannot is dropped, because
+ * nothing could ever clear it and it would outrank the seed forever.
+ */
 function applyOverride(
   seedConfig: Record<string, unknown>,
   configOverridePath: string,
@@ -123,12 +127,25 @@ function applyOverride(
     // image changes under it, so it can legitimately carry a key this build's
     // schema predates. Structural errors still throw.
     validateConfig(override, configOverridePath, { warnUnknownKeys: false });
-    const overrideKeys = Object.keys(override);
-    if (overrideKeys.length === 0) return fileConfig;
-    log.error(
-      `[config] Applied ${overrideKeys.length} runtime override${overrideKeys.length === 1 ? "" : "s"} from ${configOverridePath}: ${overrideKeys.join(", ")}`,
-    );
-    return mergeConfigs(seedConfig, override) as FileConfig;
+    const merged = mergeConfigs(seedConfig, override) as FileConfig;
+
+    // Report what was applied, not what was present. `mergeConfigs` drops keys
+    // with no writer, and naming those as applied would put the wrong answer in
+    // the one line someone reads when a setting is not taking effect.
+    const writable = new Set<string>(OVERRIDE_WRITABLE_KEYS);
+    const applied = Object.keys(override).filter((k) => writable.has(k));
+    const ignored = Object.keys(override).filter((k) => !writable.has(k));
+    if (applied.length > 0) {
+      log.error(
+        `[config] Applied ${applied.length} runtime override${applied.length === 1 ? "" : "s"} from ${configOverridePath}: ${applied.join(", ")}`,
+      );
+    }
+    if (ignored.length > 0) {
+      log.error(
+        `[config] Ignored ${ignored.length} override key${ignored.length === 1 ? "" : "s"} with no writer in ${configOverridePath}: ${ignored.join(", ")}. Set these in the seed config instead.`,
+      );
+    }
+    return merged;
   } catch (err) {
     log.error(
       `[config] Failed to load override file ${configOverridePath}: ${err instanceof Error ? err.message : String(err)}. Using seed config only.`,

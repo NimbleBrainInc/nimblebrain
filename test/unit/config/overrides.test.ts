@@ -47,19 +47,4 @@ describe("mergeConfigs", () => {
     const seed = { maxIterations: 10, models: { default: "a" } };
     expect(mergeConfigs(seed, {})).toEqual(seed);
   });
-
-  it("names every field the one writer can write", () => {
-    // A field added to the tool without being added here would be written and
-    // then silently dropped on the next boot — the mirror of the bug above.
-    expect([...OVERRIDE_WRITABLE_KEYS]).toEqual([
-      "models",
-      "defaultModel",
-      "maxIterations",
-      "maxInputTokens",
-      "maxOutputTokens",
-      "thinking",
-      "thinkingEffort",
-      "thinkingBudgetTokens",
-    ]);
-  });
 });

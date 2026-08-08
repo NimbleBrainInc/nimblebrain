@@ -10,6 +10,7 @@ import { createCoreToolDefs } from "../../src/tools/core-source.ts";
 import { makeInProcessSource } from "../helpers/in-process-source.ts";
 import { extractText } from "../../src/engine/content-helpers.ts";
 import { loadConfig } from "../../src/cli/config.ts";
+import { OVERRIDE_WRITABLE_KEYS } from "../../src/config/overrides.ts";
 import { log } from "../../src/observability/log.ts";
 import { deriveOverridePath } from "../../src/config/overrides.ts";
 import { DEFAULT_MAX_ITERATIONS } from "../../src/limits.ts";
@@ -661,6 +662,82 @@ describe("Core Source", () => {
 			const source = await makeInProcessSource("nb", createCoreToolDefs(runtime));
 			return { runtime, source };
 		}
+
+		it("drops a stale override key and says so, rather than reporting it applied", async () => {
+			// Both halves matter: the seed reclaims the field, and the startup line
+			// names it as ignored. That line is what someone reads when a setting
+			// is not taking effect, so reporting it as applied sends them the wrong
+			// way.
+			const workDir = join(testDir, `work-stale-override-${Date.now()}`);
+			mkdirSync(workDir, { recursive: true });
+			const configPath = join(workDir, "nimblebrain.json");
+			writeFileSync(
+				configPath,
+				JSON.stringify({
+					version: "1",
+					modelPolicy: { allowed: ["anthropic:claude-sonnet-5"] },
+					maxIterations: 10,
+				}),
+			);
+			// A policy written while the tool could still write one.
+			writeFileSync(
+				deriveOverridePath(configPath),
+				JSON.stringify({ modelPolicy: { allowed: ["anthropic:claude-opus-5"] }, maxIterations: 25 }),
+			);
+
+			const lines: string[] = [];
+			const original = log.error;
+			(log as { error: typeof log.error }).error = (msg: string) => {
+				lines.push(msg);
+			};
+			let loaded: ReturnType<typeof loadConfig>;
+			try {
+				loaded = loadConfig({ config: configPath });
+			} finally {
+				(log as { error: typeof log.error }).error = original;
+			}
+
+			// The seed reclaims the key with no writer; the writable one still wins.
+			expect(loaded.modelPolicy?.allowed).toEqual(["anthropic:claude-sonnet-5"]);
+			expect(loaded.maxIterations).toBe(25);
+
+			expect(lines.some((l) => l.includes("Ignored 1 override key") && l.includes("modelPolicy"))).toBe(
+				true,
+			);
+			expect(lines.some((l) => l.includes("Applied 1 runtime override") && l.includes("maxIterations"))).toBe(
+				true,
+			);
+		});
+
+		it("writes no override key the loader would drop", async () => {
+			// The drift this guards: a field added to the tool but not to the
+			// loader's writable set is written, then silently dropped on the next
+			// boot. Asserted against what the writer actually puts on disk — a
+			// list compared to a copy of itself cannot detect drift from the tool.
+			const { runtime, source } = await startWithPolicy("no-dropped-keys");
+			try {
+				const res = await source.execute("set_model_config", {
+					models: { default: "anthropic:claude-sonnet-5", fast: "anthropic:claude-sonnet-5" },
+					maxIterations: 12,
+					maxInputTokens: 400000,
+					maxOutputTokens: 8192,
+					thinking: "enabled",
+					thinkingEffort: "high",
+					thinkingBudgetTokens: 4096,
+				});
+				expect(res.isError).toBe(false);
+
+				const written = JSON.parse(
+					require("node:fs").readFileSync(runtime.getConfigOverridePath() as string, "utf-8"),
+				) as Record<string, unknown>;
+				const droppable = Object.keys(written).filter(
+					(k) => !(OVERRIDE_WRITABLE_KEYS as readonly string[]).includes(k),
+				);
+				expect(`dropped-on-next-boot: ${droppable.join(", ")}`).toBe("dropped-on-next-boot: ");
+			} finally {
+				await runtime.shutdown();
+			}
+		});
 
 		it("refuses to pretend it set a policy it does not write", async () => {
 			// The summary line is built from the caller's keys, so an unwritten
