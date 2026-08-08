@@ -1,7 +1,9 @@
-// Shared pieces for usage views. Usage is per-user post-Stage-1, surfaced
-// org-wide on the org/audit settings page (per-user breakdown) and as a
-// self-view on the profile. Both render the same totals cards + cost chart;
-// only the breakdown dimension differs, so the rendering lives here.
+// Shared rendering for the org usage view: the totals cards and the cost chart.
+//
+// Separate from OrgUsageTab because the pieces are about presenting a usage
+// report rather than about that page, and because two of the cards carry
+// judgments worth keeping in one place — what the cost figure omits, and that
+// an automation run is not a conversation.
 
 import type {
   UsageReportOutput,
