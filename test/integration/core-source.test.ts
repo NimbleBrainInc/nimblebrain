@@ -10,6 +10,7 @@ import { createCoreToolDefs } from "../../src/tools/core-source.ts";
 import { makeInProcessSource } from "../helpers/in-process-source.ts";
 import { extractText } from "../../src/engine/content-helpers.ts";
 import { loadConfig } from "../../src/cli/config.ts";
+import { OVERRIDE_WRITABLE_KEYS } from "../../src/config/overrides.ts";
 import { log } from "../../src/observability/log.ts";
 import { deriveOverridePath } from "../../src/config/overrides.ts";
 import { DEFAULT_MAX_ITERATIONS } from "../../src/limits.ts";
@@ -662,6 +663,98 @@ describe("Core Source", () => {
 			return { runtime, source };
 		}
 
+		it("drops a stale override key and says so, rather than reporting it applied", async () => {
+			// Both halves matter: the seed reclaims the field, and the startup line
+			// names it as ignored. That line is what someone reads when a setting
+			// is not taking effect, so reporting it as applied sends them the wrong
+			// way.
+			const workDir = join(testDir, `work-stale-override-${Date.now()}`);
+			mkdirSync(workDir, { recursive: true });
+			const configPath = join(workDir, "nimblebrain.json");
+			writeFileSync(
+				configPath,
+				JSON.stringify({
+					version: "1",
+					modelPolicy: { allowed: ["anthropic:claude-sonnet-5"] },
+					maxIterations: 10,
+				}),
+			);
+			// A policy written while the tool could still write one.
+			writeFileSync(
+				deriveOverridePath(configPath),
+				JSON.stringify({ modelPolicy: { allowed: ["anthropic:claude-opus-5"] }, maxIterations: 25 }),
+			);
+
+			const lines: string[] = [];
+			const original = log.error;
+			(log as { error: typeof log.error }).error = (msg: string) => {
+				lines.push(msg);
+			};
+			let loaded: ReturnType<typeof loadConfig>;
+			try {
+				loaded = loadConfig({ config: configPath });
+			} finally {
+				(log as { error: typeof log.error }).error = original;
+			}
+
+			// The seed reclaims the key with no writer; the writable one still wins.
+			expect(loaded.modelPolicy?.allowed).toEqual(["anthropic:claude-sonnet-5"]);
+			expect(loaded.maxIterations).toBe(25);
+
+			expect(lines.some((l) => l.includes("Ignored 1 override key") && l.includes("modelPolicy"))).toBe(
+				true,
+			);
+			expect(lines.some((l) => l.includes("Applied 1 runtime override") && l.includes("maxIterations"))).toBe(
+				true,
+			);
+		});
+
+		it("writes no override key the loader would drop", async () => {
+			// The drift this guards: a field added to the tool but not to the
+			// loader's writable set is written, then silently dropped on the next
+			// boot. Asserted against what the writer actually puts on disk — a
+			// list compared to a copy of itself cannot detect drift from the tool.
+			const { runtime, source } = await startWithPolicy("no-dropped-keys");
+			try {
+				const res = await source.execute("set_model_config", {
+					models: { default: "anthropic:claude-sonnet-5", fast: "anthropic:claude-sonnet-5" },
+					maxIterations: 12,
+					maxInputTokens: 400000,
+					maxOutputTokens: 8192,
+					thinking: "enabled",
+					thinkingEffort: "high",
+					thinkingBudgetTokens: 4096,
+				});
+				expect(res.isError).toBe(false);
+
+				const written = JSON.parse(
+					require("node:fs").readFileSync(runtime.getConfigOverridePath() as string, "utf-8"),
+				) as Record<string, unknown>;
+				const droppable = Object.keys(written).filter(
+					(k) => !(OVERRIDE_WRITABLE_KEYS as readonly string[]).includes(k),
+				);
+				expect(`dropped-on-next-boot: ${droppable.join(", ")}`).toBe("dropped-on-next-boot: ");
+			} finally {
+				await runtime.shutdown();
+			}
+		});
+
+		it("refuses to pretend it set a policy it does not write", async () => {
+			// The summary line is built from the caller's keys, so an unwritten
+			// field was reported as applied: an admin narrowing the allowlist was
+			// told it worked while nothing changed.
+			const { runtime, source } = await startWithPolicy("unwritable");
+			try {
+				const res = await source.execute("set_model_config", {
+					modelPolicy: { allowed: ["anthropic:claude-sonnet-5"] },
+				});
+				expect(res.isError).toBe(true);
+				expect(extractText(res.content)).toContain("nimblebrain.json");
+			} finally {
+				await runtime.shutdown();
+			}
+		});
+
 		it("refuses a request for a model outside the list", async () => {
 			const { runtime } = await startWithPolicy("gate", ["anthropic:claude-sonnet-5"]);
 			try {
@@ -681,34 +774,6 @@ describe("Core Source", () => {
 					.structuredContent as Record<string, unknown>;
 				const models = cfg.availableModels as Record<string, { id: string }[]>;
 				expect(models.anthropic.map((m) => m.id)).toEqual(["claude-sonnet-5"]);
-			} finally {
-				await runtime.shutdown();
-			}
-		});
-
-		it("rejects a list naming a model the deployment cannot offer", async () => {
-			const { runtime, source } = await startWithPolicy("bad-entry");
-			try {
-				const res = await source.execute("set_model_config", {
-					modelPolicy: { allowed: ["anthropic:claude-sonnet-5", "openai:text-embedding-3-large"] },
-				});
-				expect(res.isError).toBe(true);
-				expect(extractText(res.content)).toContain("not a model this deployment can offer");
-			} finally {
-				await runtime.shutdown();
-			}
-		});
-
-		it("rejects a list that excludes the default model", async () => {
-			// Otherwise every new conversation resolves to something the org has
-			// just forbidden, and nothing says so until a turn fails.
-			const { runtime, source } = await startWithPolicy("strands-default");
-			try {
-				const res = await source.execute("set_model_config", {
-					modelPolicy: { allowed: ["anthropic:claude-haiku-4-5-20251001"] },
-				});
-				expect(res.isError).toBe(true);
-				expect(extractText(res.content)).toContain("which the default slot uses");
 			} finally {
 				await runtime.shutdown();
 			}
@@ -747,12 +812,17 @@ describe("Core Source", () => {
 			}
 		});
 
-		it("judges the default slot as configured, not as the admin sees it", async () => {
+		it("judges a cleared slot by the configured default, not the admin's own", async () => {
 			// The admin's own preference must not decide whether a policy strands
 			// everyone else: tinted, an admin who prefers the one allowed model
 			// passes a guard every other member fails.
-			const { runtime, source } = await startWithPolicy("tinted-admin");
+			const { runtime, source } = await startWithPolicy("tinted-admin", [
+				"anthropic:claude-haiku-4-5-20251001",
+			]);
 			try {
+				// The configured default is sonnet-5, which the policy forbids, so
+				// clearing the fast slot has to be judged against that — not against
+				// the haiku this admin happens to prefer.
 				const res = await runWithRequestContext(
 					{
 						identity: {
@@ -763,10 +833,7 @@ describe("Core Source", () => {
 							preferences: { models: { default: "anthropic:claude-haiku-4-5-20251001" } },
 						},
 					},
-					() =>
-						source.execute("set_model_config", {
-							modelPolicy: { allowed: ["anthropic:claude-haiku-4-5-20251001"] },
-						}),
+					() => source.execute("set_model_config", { models: { fast: "" } }),
 				);
 				expect(res.isError).toBe(true);
 				expect(extractText(res.content)).toContain("which the default slot uses");
@@ -775,29 +842,30 @@ describe("Core Source", () => {
 			}
 		});
 
-		it("checks the fast slot too", async () => {
-			const { runtime, source } = await startWithPolicy("fast-slot");
+		it("refuses a slot pointed at a model outside the list", async () => {
+			const { runtime, source } = await startWithPolicy("fast-slot", [
+				"anthropic:claude-sonnet-5",
+			]);
 			try {
 				const res = await source.execute("set_model_config", {
-					models: { default: "anthropic:claude-sonnet-5", fast: "anthropic:claude-opus-5" },
-					modelPolicy: { allowed: ["anthropic:claude-sonnet-5"] },
+					models: { fast: "anthropic:claude-opus-5" },
 				});
 				expect(res.isError).toBe(true);
-				expect(extractText(res.content)).toContain("which the fast slot uses");
+				expect(extractText(res.content)).toContain("not in this organization's allowed models");
 			} finally {
 				await runtime.shutdown();
 			}
 		});
 
-		it("catches a slot stranded through the deprecated defaultModel input", async () => {
-			// `models` is not the only field that moves a slot. Judged on
-			// `input.models` alone, this call was accepted and every member
-			// without a preference then ran on a model the org had just forbidden.
-			const { runtime, source } = await startWithPolicy("strand-via-default");
+		it("refuses the deprecated defaultModel input pointed outside the list", async () => {
+			// `models` is not the only field that moves a slot — this one is
+			// checked by its own validator, on the same policy.
+			const { runtime, source } = await startWithPolicy("strand-via-default", [
+				"anthropic:claude-sonnet-5",
+			]);
 			try {
 				const res = await source.execute("set_model_config", {
 					defaultModel: "anthropic:claude-opus-5",
-					modelPolicy: { allowed: ["anthropic:claude-sonnet-5"] },
 				});
 				expect(res.isError).toBe(true);
 				expect(runtime.isModelPermitted(runtime.configuredModelSlots().default)).toBe(true);
@@ -810,14 +878,15 @@ describe("Core Source", () => {
 			// The mirror of the above: the guard must judge the post-write state,
 			// not the prior one, or its own advice — "point that slot at an
 			// allowed model in this call" — is impossible to follow.
-			const { runtime, source } = await startWithPolicy("repoint-and-narrow");
+			const { runtime, source } = await startWithPolicy("repoint-and-narrow", [
+				"anthropic:claude-haiku-4-5-20251001",
+			]);
 			try {
 				const res = await source.execute("set_model_config", {
 					models: {
 						default: "anthropic:claude-haiku-4-5-20251001",
 						fast: "anthropic:claude-haiku-4-5-20251001",
 					},
-					modelPolicy: { allowed: ["anthropic:claude-haiku-4-5-20251001"] },
 				});
 				expect(`isError: ${res.isError} — ${extractText(res.content)}`).toContain(
 					"isError: false",
@@ -913,19 +982,6 @@ describe("Core Source", () => {
 				fast: "anthropic:claude-sonnet-5",
 			});
 			expect(stranded).toEqual([]);
-		});
-
-		it("publishes the policy it filters by", async () => {
-			const { runtime, source } = await startWithPolicy("publish", [
-				"anthropic:claude-sonnet-5",
-			]);
-			try {
-				const cfg = (await source.execute("get_config", {}))
-					.structuredContent as Record<string, unknown>;
-				expect(cfg.modelPolicy).toEqual({ allowed: ["anthropic:claude-sonnet-5"] });
-			} finally {
-				await runtime.shutdown();
-			}
 		});
 
 		it("accepts a bare model id that policy allows in qualified form", async () => {
