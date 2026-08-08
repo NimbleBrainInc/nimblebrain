@@ -12,10 +12,21 @@
  * nothing here resets the process-global registry that the rest of the suite
  * shares (the convention documented in `test/unit/metrics.test.ts`).
  */
+import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, expect, test } from "bun:test";
 import { llmCallsTotal, llmTokensTotal } from "../../../src/api/metrics.ts";
 import { runWithRequestContext } from "../../../src/runtime/request-context.ts";
-import { isDelegated, originOf, recordLlmCall } from "../../../src/usage/record.ts";
+import { UsageLedger } from "../../../src/usage/ledger.ts";
+import { usageMonthOf, usageShardPath } from "../../../src/usage/paths.ts";
+import {
+  clearUsageLedger,
+  isDelegated,
+  originOf,
+  recordLlmCall,
+  setUsageLedger,
+} from "../../../src/usage/record.ts";
 import type { TokenUsage } from "../../../src/usage/types.ts";
 
 const USAGE: TokenUsage = { inputTokens: 10, outputTokens: 5 };
@@ -159,5 +170,41 @@ describe("origin follows the scope, whatever the source", () => {
     const sample = await callSample({ model: "test-model-c" });
     expect(sample?.labels.origin).toBe("system");
     expect(sample?.labels.delegated).toBe("false");
+  });
+});
+
+/**
+ * The process ledger is one module-level handle and a process can hold two
+ * runtimes, so releasing it has to be ownership-checked. An unconditional
+ * release is how the runtime that shuts down first silently disables the other
+ * one's writes: `recordLlmCall` falls through to the Prometheus half and leaves
+ * no durable line — an undercount of exactly the kind the ledger exists to
+ * remove, and one nothing would report.
+ */
+describe("ledger ownership", () => {
+  test("releasing a replaced ledger leaves the installed one recording", () => {
+    const dirA = mkdtempSync(join(tmpdir(), "nb-own-a-"));
+    const dirB = mkdtempSync(join(tmpdir(), "nb-own-b-"));
+    const month = usageMonthOf(new Date().toISOString());
+    const a = new UsageLedger(dirA, "inst-a", { retentionMonths: 0 });
+    const b = new UsageLedger(dirB, "inst-b", { retentionMonths: 0 });
+
+    setUsageLedger(a);
+    setUsageLedger(b); // a second runtime starts and takes the global
+    clearUsageLedger(a); // the first one shuts down
+
+    recordLlmCall({ source: "main", model: "test-model-own-1", usage: USAGE });
+    expect(existsSync(usageShardPath(dirB, month, "inst-b"))).toBe(true);
+    expect(existsSync(usageShardPath(dirA, month, "inst-a"))).toBe(false);
+
+    clearUsageLedger(b); // now the owner releases it
+    recordLlmCall({ source: "main", model: "test-model-own-2", usage: USAGE });
+    const lines = readFileSync(usageShardPath(dirB, month, "inst-b"), "utf-8")
+      .split("\n")
+      .filter(Boolean);
+    expect(lines).toHaveLength(1);
+
+    rmSync(dirA, { recursive: true, force: true });
+    rmSync(dirB, { recursive: true, force: true });
   });
 });

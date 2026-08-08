@@ -436,7 +436,7 @@ function recordBriefingUsage(
   usage: TokenUsage,
   llmMs: number,
 ): void {
-  recordLlmCall({ source: "briefing", model: modelString ?? "unknown", usage });
+  recordLlmCall({ source: "briefing", model: modelString ?? "unknown", usage, llmMs });
   const convId = getRequestContext()?.conversationId;
   if (!convId) return;
   // The foreground briefing runs inside the caller's conversation, whose

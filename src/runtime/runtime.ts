@@ -144,7 +144,8 @@ import { SharedSourceRef, type ToolRegistry } from "../tools/registry.ts";
 import { surfaceTools } from "../tools/surfacing.ts";
 import { createSystemTools } from "../tools/system-tools.ts";
 import type { ResourceData, Tool, ToolSource } from "../tools/types.ts";
-import { recordLlmCall } from "../usage/record.ts";
+import { createProcessLedger, type UsageLedger } from "../usage/ledger.ts";
+import { clearUsageLedger, recordLlmCall, setUsageLedger } from "../usage/record.ts";
 import type { TokenUsage } from "../usage/types.ts";
 import { WorkspaceContext } from "../workspace/context.ts";
 import { ensureUserWorkspace } from "../workspace/provisioning.ts";
@@ -282,6 +283,8 @@ export class Runtime {
   private lifecycle: BundleLifecycleManager;
   private placementRegistry: PlacementRegistry;
   private telemetryManager: TelemetryManager;
+  /** This runtime's own ledger handle, so `shutdown` releases only its own. */
+  private usageLedger?: UsageLedger;
   private _features: ResolvedFeatures;
   private _internalToken: string;
   private _instanceConfig: InstanceConfig | null;
@@ -443,6 +446,13 @@ export class Runtime {
     }
 
     const resolveModelFn = resolveModel(config);
+
+    // Install the durable half of the spend chokepoint. Module-level in
+    // `usage/record.ts` rather than threaded to each call site, because the four
+    // sites span the runtime, the adapters and the tools — handing each one a
+    // ledger would put recording back in the callers' hands.
+    const usageLedger = createProcessLedger(resolveWorkDir(config), config.usage?.ledger);
+    setUsageLedger(usageLedger);
 
     const telemetryManager = TelemetryManager.create({
       workDir: resolveWorkDir(config),
@@ -793,6 +803,7 @@ export class Runtime {
     rtHolder.rt = rt;
     rt._getIdentity = getIdentity;
     rt._getWorkspaceId = getWorkspaceId;
+    rt.usageLedger = usageLedger;
 
     // Register the `nb` system source. Built as an in-process MCP server
     // — `createSystemTools` returns it already-started so it's ready to
@@ -2467,7 +2478,7 @@ export class Runtime {
     // usage as an aux.usage event so it isn't invisible to cost accounting.
     const appendTitleUsage = store.appendEvent?.bind(store);
     void generateTitle(titleModel, titleInput, output, (usage, llmMs) => {
-      recordLlmCall({ source: "title", model: titleSlot, usage });
+      recordLlmCall({ source: "title", model: titleSlot, usage, llmMs });
       appendTitleUsage?.(conversation.id, {
         ts: new Date().toISOString(),
         type: "aux.usage",
@@ -3993,7 +4004,7 @@ export class Runtime {
     usage: TokenUsage,
     llmMs: number,
   ): void {
-    recordLlmCall({ source: "compaction", model, usage });
+    recordLlmCall({ source: "compaction", model, usage, llmMs });
     store.appendEvent(conversationId, {
       ts: new Date().toISOString(),
       type: "aux.usage",
@@ -4798,6 +4809,11 @@ export class Runtime {
         await reg.removeSource(name);
       }
     }
+    // Release the ledger last: a turn aborted just above can still be inside a
+    // `doStream()` that has already spent, and that call is recordable until it
+    // returns. Ownership-checked, so a sibling runtime that installed its own
+    // keeps it — see `clearUsageLedger`.
+    if (this.usageLedger) clearUsageLedger(this.usageLedger);
   }
 }
 
