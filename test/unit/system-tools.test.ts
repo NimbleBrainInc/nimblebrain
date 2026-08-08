@@ -440,6 +440,35 @@ describe("System Tools", () => {
 		expect(names).not.toContain("nb__manage_app");
 	});
 
+	// Catalog activation is kernel-direct because it registers HERE, under the
+	// `nb` prefix — the Skill Catalog reaches the model on every turn, so the
+	// tool that acts on it has to as well, or using the catalog costs an
+	// `nb__manage_tools` promote (a tools-block rewrite) first. `surfaceTools`
+	// pins the rule that an `nb__*` name is direct; this pins the wiring that
+	// puts the tool behind that name. Both are needed — the rule holds for any
+	// `nb__*` schema, including one this factory never registers.
+	it("registers nb__use_skill when a runtime is present", async () => {
+		const registry = await makeRegistry();
+		// runtime is the 11th positional arg (9 reserved/unused slots after
+		// getRegistry). The handler resolves its workspace per call, so a bare
+		// stand-in is enough to assert registration.
+		const systemTools = await createSystemTools(
+			() => registry,
+			undefined,
+			undefined,
+			undefined,
+			undefined,
+			undefined,
+			undefined,
+			undefined,
+			undefined,
+			undefined,
+			{} as unknown as Runtime,
+		);
+		const names = (await systemTools.tools()).map((t) => t.name);
+		expect(names).toContain("nb__use_skill");
+	});
+
 	it("manage_tools requires at least one of add or remove to be non-empty", async () => {
 		const registry = await makeRegistry();
 		const systemTools = await createSystemTools(() => registry);

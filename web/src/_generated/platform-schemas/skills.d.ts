@@ -68,10 +68,10 @@ export declare const SkillsDeactivateInput: import("@sinclair/typebox").TObject<
     id: import("@sinclair/typebox").TString;
 }>;
 export type SkillsDeactivateInput = Static<typeof SkillsDeactivateInput>;
-export declare const SkillsUseInput: import("@sinclair/typebox").TObject<{
+export declare const UseSkillInput: import("@sinclair/typebox").TObject<{
     name: import("@sinclair/typebox").TString;
 }>;
-export type SkillsUseInput = Static<typeof SkillsUseInput>;
+export type UseSkillInput = Static<typeof UseSkillInput>;
 /** Tier a skill lives in. */
 export type SkillScope = "org" | "workspace" | "user" | "bundle";
 /** Skill layer per the loading-strategy spec. */
@@ -167,7 +167,7 @@ export interface SkillsActiveForOutput {
     conversationId: string;
 }
 /**
- * `skills__use` result. `loaded` delivers the skill (body rides the result's
+ * `nb__use_skill` result. `loaded` delivers the skill (body rides the result's
  * `content`, not this typed envelope); `already_loaded` is the dedupe note —
  * the body is already in the conversation's context, so none is re-delivered.
  */

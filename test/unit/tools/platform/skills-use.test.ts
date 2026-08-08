@@ -1,8 +1,9 @@
 /**
- * `skills__use` — catalog skill activation tool.
+ * `nb__use_skill` — catalog skill activation tool.
  *
  * Exercises the real handler through a real in-process MCP round-trip
- * (`createSkillsSource` → `McpSource.execute`), against a stand-in Runtime:
+ * (`createUseSkillToolDef` on an in-process source → `McpSource.execute`),
+ * against a stand-in Runtime:
  *   - delivery: provenance line + `<activated-skill>` containment with
  *     close-tag escaping, `_meta` activation marker intact through the
  *     in-process boundary (the wire-strip counterpart lives in
@@ -23,8 +24,9 @@ import { SKILL_ACTIVATED_META_KEY } from "../../../../src/engine/types.ts";
 import { runWithRequestContext } from "../../../../src/runtime/request-context.ts";
 import type { ActivatableSkill } from "../../../../src/skills/catalog.ts";
 import { MAX_SKILL_BODY_CHARS } from "../../../../src/skills/truncate.ts";
+import { defineInProcessApp } from "../../../../src/tools/in-process-app.ts";
 import type { McpSource } from "../../../../src/tools/mcp-source.ts";
-import { createSkillsSource } from "../../../../src/tools/platform/skills.ts";
+import { createUseSkillToolDef } from "../../../../src/tools/platform/skills.ts";
 
 // ── Fake Runtime ─────────────────────────────────────────────────────────
 
@@ -68,8 +70,19 @@ afterEach(async () => {
   source = undefined;
 });
 
+// Mirrors how the system-tools factory registers the def: the tool lives on an
+// in-process source under the `nb` name, so the round-trip here is the real
+// one — in particular the `_meta` marker crossing the in-process boundary
+// without being stripped (`hostOwnedMetaStripped` keys on `inProcess`).
 async function buildSource(): Promise<McpSource> {
-  source = createSkillsSource(runtime as unknown as never, new NoopEventSink());
+  source = defineInProcessApp(
+    {
+      name: "nb",
+      version: "1.0.0",
+      tools: [createUseSkillToolDef(runtime as unknown as never)],
+    },
+    new NoopEventSink(),
+  );
   await source.start();
   return source;
 }
@@ -90,12 +103,12 @@ const RUNBOOK: ActivatableSkill = {
 
 // ── Tests ────────────────────────────────────────────────────────────────
 
-describe("skills__use — delivery", () => {
+describe("nb__use_skill — delivery", () => {
   test("returns provenance + contained body, marked with the activation _meta", async () => {
     runtime.activatable = [RUNBOOK];
     const src = await buildSource();
 
-    const result = await src.execute("use", { name: "invoice-runbook" });
+    const result = await src.execute("use_skill", { name: "invoice-runbook" });
     expect(result.isError).toBe(false);
     const text = resultText(result);
     // One-line provenance header, then containment.
@@ -123,7 +136,7 @@ describe("skills__use — delivery", () => {
     ];
     const src = await buildSource();
 
-    const text = resultText(await src.execute("use", { name: "invoice-runbook" }));
+    const text = resultText(await src.execute("use_skill", { name: "invoice-runbook" }));
     expect(text).toContain("&lt;/activated-skill>");
     // Only the wrapper's own closing tag survives.
     expect(text.split("</activated-skill>").length - 1).toBe(1);
@@ -135,7 +148,7 @@ describe("skills__use — delivery", () => {
     ];
     const src = await buildSource();
 
-    const result = await src.execute("use", { name: "invoice-runbook" });
+    const result = await src.execute("use_skill", { name: "invoice-runbook" });
     const text = resultText(result);
     expect(text).toContain("[truncated");
     // Bounded: body + provenance + containment overhead stays near the cap.
@@ -147,7 +160,7 @@ describe("skills__use — delivery", () => {
     runtime.activatable = [RUNBOOK];
     const src = await buildSource();
 
-    await src.execute("use", { name: "invoice-runbook" });
+    await src.execute("use_skill", { name: "invoice-runbook" });
     expect(runtime.listCalls).toEqual([{ wsId: "ws_bound", userId: "user_test" }]);
   });
 
@@ -155,13 +168,13 @@ describe("skills__use — delivery", () => {
     runtime.wsId = null;
     const src = await buildSource();
 
-    const result = await src.execute("use", { name: "invoice-runbook" });
+    const result = await src.execute("use_skill", { name: "invoice-runbook" });
     expect(result.isError).toBe(true);
     expect(resultText(result)).toContain("workspace");
   });
 });
 
-describe("skills__use — unknown name", () => {
+describe("nb__use_skill — unknown name", () => {
   test("errors with the sorted valid names on a miss", async () => {
     runtime.activatable = [
       RUNBOOK,
@@ -169,7 +182,7 @@ describe("skills__use — unknown name", () => {
     ];
     const src = await buildSource();
 
-    const result = await src.execute("use", { name: "nope" });
+    const result = await src.execute("use_skill", { name: "nope" });
     expect(result.isError).toBe(true);
     const text = resultText(result);
     expect(text).toContain('Unknown skill "nope"');
@@ -181,13 +194,13 @@ describe("skills__use — unknown name", () => {
     runtime.activatable = [];
     const src = await buildSource();
 
-    const result = await src.execute("use", { name: "anything" });
+    const result = await src.execute("use_skill", { name: "anything" });
     expect(result.isError).toBe(true);
     expect(resultText(result)).toContain("No skills are available");
   });
 });
 
-describe("skills__use — already-delivered dedupe", () => {
+describe("nb__use_skill — already-delivered dedupe", () => {
   const CONV_CTX = { identity: null, conversationId: "conv_1" };
 
   function activatedEvent(skillName: string): ConversationEvent {
@@ -219,7 +232,7 @@ describe("skills__use — already-delivered dedupe", () => {
     const src = await buildSource();
 
     const result = await runWithRequestContext(CONV_CTX, () =>
-      src.execute("use", { name: "invoice-runbook" }),
+      src.execute("use_skill", { name: "invoice-runbook" }),
     );
     expect(result.isError).toBe(false);
     const text = resultText(result);
@@ -235,7 +248,7 @@ describe("skills__use — already-delivered dedupe", () => {
     const src = await buildSource();
 
     const result = await runWithRequestContext(CONV_CTX, () =>
-      src.execute("use", { name: "gmail" }),
+      src.execute("use_skill", { name: "gmail" }),
     );
     expect(resultText(result)).toContain("already loaded");
     expect(result._meta?.[SKILL_ACTIVATED_META_KEY]).toBeUndefined();
@@ -247,7 +260,7 @@ describe("skills__use — already-delivered dedupe", () => {
     const src = await buildSource();
 
     const result = await runWithRequestContext(CONV_CTX, () =>
-      src.execute("use", { name: "invoice-runbook" }),
+      src.execute("use_skill", { name: "invoice-runbook" }),
     );
     expect(resultText(result)).toContain("<activated-skill>");
     expect(result._meta?.[SKILL_ACTIVATED_META_KEY]).toBeDefined();
@@ -259,7 +272,7 @@ describe("skills__use — already-delivered dedupe", () => {
     const src = await buildSource();
 
     // No request context → no conversationId → no event scan.
-    const result = await src.execute("use", { name: "invoice-runbook" });
+    const result = await src.execute("use_skill", { name: "invoice-runbook" });
     expect(resultText(result)).toContain("<activated-skill>");
   });
 });

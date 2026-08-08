@@ -1,13 +1,15 @@
 import { afterAll, describe, expect, it } from "bun:test";
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { appendFileSync, mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   aggregateUsage,
   computeCacheHitRate,
   resolveDateRange,
-} from "../../../src/conversation/usage-aggregator.ts";
-import { estimateCost } from "../../../src/usage/cost.ts";
+} from "../../../src/usage/aggregate.ts";
+import { estimateCost, resolveRates } from "../../../src/usage/cost.ts";
+import { usageMonthDir, usageMonthOf } from "../../../src/usage/paths.ts";
+import type { UsageLedgerEntry } from "../../../src/usage/types.ts";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -26,30 +28,47 @@ afterAll(() => {
 });
 
 /**
- * Build a conversation JSONL string.
+ * Write calls to the ledger under `dir`, attributed to one session.
  *
- * Line 1: metadata (id, updatedAt, totalInputTokens, totalOutputTokens).
- * Lines 2+: event objects (llm.response or anything else).
+ * These tests are about the aggregation — date filtering, cache-hit rate,
+ * owner scoping, breakdown shape — and that is unchanged. What changed beneath
+ * them is the source: spend is read from `{workDir}/usage/<YYYY-MM>/*.jsonl`
+ * rather than scanned out of conversation logs, so the fixture writes the
+ * former. `session` and `ownerId` stand in for what a conversation file used
+ * to supply from its metadata line and its path.
  */
-function buildJsonl(
-  meta: {
-    id: string;
-    updatedAt: string;
-    ownerId?: string;
-    totalInputTokens?: number;
-    totalOutputTokens?: number;
-  },
+function writeCalls(
+  dir: string,
+  meta: { id: string; ownerId?: string; origin?: "chat" | "task" },
   events: Record<string, unknown>[] = [],
-): string {
-  const metaLine = JSON.stringify({
-    id: meta.id,
-    updatedAt: meta.updatedAt,
-    ...(meta.ownerId !== undefined ? { ownerId: meta.ownerId } : {}),
-    totalInputTokens: meta.totalInputTokens ?? 0,
-    totalOutputTokens: meta.totalOutputTokens ?? 0,
-  });
-  const lines = [metaLine, ...events.map((e) => JSON.stringify(e))];
-  return lines.join("\n") + "\n";
+): void {
+  const byMonth = new Map<string, string[]>();
+  for (const e of events) {
+    const ev = e as { ts: string; model: string; usage: Record<string, number>; llmMs?: number };
+    const rates = resolveRates(ev.model);
+    const entry: UsageLedgerEntry = {
+      ts: ev.ts,
+      source: "main",
+      origin: meta.origin ?? "chat",
+      delegated: false,
+      model: ev.model,
+      usage: ev.usage as UsageLedgerEntry["usage"],
+      llmMs: ev.llmMs ?? 0,
+      sessionId: meta.id,
+      ...(meta.ownerId !== undefined ? { userId: meta.ownerId } : {}),
+      ...(rates ? { rates } : {}),
+    };
+    const month = usageMonthOf(entry.ts);
+    const lines = byMonth.get(month) ?? [];
+    lines.push(JSON.stringify(entry));
+    byMonth.set(month, lines);
+  }
+  for (const [month, lines] of byMonth) {
+    const monthDir = usageMonthDir(dir, month);
+    mkdirSync(monthDir, { recursive: true });
+    // Appended, so several fixtures in one test share the month's shard.
+    appendFileSync(join(monthDir, "test.jsonl"), `${lines.join("\n")}\n`);
+  }
 }
 
 function llmEvent(overrides: Partial<{
@@ -79,18 +98,17 @@ function llmEvent(overrides: Partial<{
 // Tests
 // ---------------------------------------------------------------------------
 
-describe("usage-aggregator", () => {
+describe("aggregateUsage", () => {
   it("aggregates tokens from llm.response events even when metadata has zero tokens", async () => {
     const dir = makeTmpDir();
     // Metadata has zero tokens (the old bug: event-sourced store never rewrites line 1)
-    const content = buildJsonl(
+    writeCalls(dir, 
       { id: "conv-1", updatedAt: "2026-04-10T14:00:00Z", totalInputTokens: 0, totalOutputTokens: 0 },
       [
         llmEvent({ inputTokens: 500, outputTokens: 200 }),
         llmEvent({ inputTokens: 300, outputTokens: 100 }),
       ],
     );
-    writeFileSync(join(dir, "conv-1.jsonl"), content);
 
     const report = await aggregateUsage(dir, "all", "day");
 
@@ -102,7 +120,7 @@ describe("usage-aggregator", () => {
 
   it("counts aux.usage events (forked compaction/title calls) toward totals", async () => {
     const dir = makeTmpDir();
-    const content = buildJsonl({ id: "conv-aux", updatedAt: "2026-04-10T14:00:00Z" }, [
+    writeCalls(dir, { id: "conv-aux", updatedAt: "2026-04-10T14:00:00Z" }, [
       llmEvent({ inputTokens: 1000, outputTokens: 500 }),
       {
         type: "aux.usage",
@@ -113,7 +131,6 @@ describe("usage-aggregator", () => {
         llmMs: 120,
       },
     ]);
-    writeFileSync(join(dir, "conv-aux.jsonl"), content);
 
     const report = await aggregateUsage(dir, "all", "day");
 
@@ -128,12 +145,9 @@ describe("usage-aggregator", () => {
 
     // Conversation updated inside range, but its only LLM usage happened before
     // the report window. It should not make today's usage non-zero.
-    writeFileSync(
-      join(dir, "updated-today.jsonl"),
-      buildJsonl({ id: "updated-today", updatedAt: "2026-04-12T10:00:00Z" }, [
+    writeCalls(dir, { id: "updated-today", updatedAt: "2026-04-12T10:00:00Z" }, [
         llmEvent({ ts: "2026-04-11T23:00:00Z", inputTokens: 9999, outputTokens: 9999 }),
-      ]),
-    );
+      ]);
 
     const report = await aggregateUsage(dir, "day", "day", {
       from: "2026-04-12",
@@ -153,12 +167,9 @@ describe("usage-aggregator", () => {
   it("counts in-range llm.response events even when conversation updatedAt is outside range", async () => {
     const dir = makeTmpDir();
 
-    writeFileSync(
-      join(dir, "updated-later.jsonl"),
-      buildJsonl({ id: "updated-later", updatedAt: "2026-05-01T10:00:00Z" }, [
+    writeCalls(dir, { id: "updated-later", updatedAt: "2026-05-01T10:00:00Z" }, [
         llmEvent({ ts: "2026-04-10T12:00:00Z", inputTokens: 100, outputTokens: 50 }),
-      ]),
-    );
+      ]);
 
     const report = await aggregateUsage(dir, "month", "day", {
       from: "2026-04-01",
@@ -177,9 +188,7 @@ describe("usage-aggregator", () => {
     // Cache writes bill at the 1-hour TTL rate the engine uses: 2x input = $6/M.
     // AI SDK V3 contract: inputTokens is grand total = noCache + cacheRead + cacheWrite.
     // So 2_000_000 total = 500K noCache + 500K cacheRead + 1M cacheWrite.
-    writeFileSync(
-      join(dir, "cost.jsonl"),
-      buildJsonl({ id: "cost-conv", updatedAt: "2026-04-10T10:00:00Z" }, [
+    writeCalls(dir, { id: "cost-conv", updatedAt: "2026-04-10T10:00:00Z" }, [
         llmEvent({
           model: "claude-sonnet-4-5-20250929",
           inputTokens: 2_000_000,
@@ -187,8 +196,7 @@ describe("usage-aggregator", () => {
           cacheReadTokens: 500_000,
           cacheWriteTokens: 1_000_000,
         }),
-      ]),
-    );
+      ]);
 
     const report = await aggregateUsage(dir, "all", "day");
 
@@ -210,14 +218,11 @@ describe("usage-aggregator", () => {
   it("groups by day correctly using event timestamp", async () => {
     const dir = makeTmpDir();
 
-    writeFileSync(
-      join(dir, "multi-day.jsonl"),
-      buildJsonl({ id: "md", updatedAt: "2026-04-12T10:00:00Z" }, [
+    writeCalls(dir, { id: "md", updatedAt: "2026-04-12T10:00:00Z" }, [
         llmEvent({ ts: "2026-04-10T08:00:00Z", inputTokens: 100, outputTokens: 50 }),
         llmEvent({ ts: "2026-04-10T09:00:00Z", inputTokens: 200, outputTokens: 100 }),
         llmEvent({ ts: "2026-04-11T10:00:00Z", inputTokens: 400, outputTokens: 200 }),
-      ]),
-    );
+      ]);
 
     const report = await aggregateUsage(dir, "all", "day");
 
@@ -259,13 +264,10 @@ describe("usage-aggregator", () => {
 
   it("zero-fills missing days in bounded period", async () => {
     const dir = makeTmpDir();
-    writeFileSync(
-      join(dir, "sparse.jsonl"),
-      buildJsonl({ id: "sp", updatedAt: "2026-04-12T10:00:00Z" }, [
+    writeCalls(dir, { id: "sp", updatedAt: "2026-04-12T10:00:00Z" }, [
         llmEvent({ ts: "2026-04-10T08:00:00Z", inputTokens: 100, outputTokens: 50 }),
         llmEvent({ ts: "2026-04-12T10:00:00Z", inputTokens: 200, outputTokens: 100 }),
-      ]),
-    );
+      ]);
 
     const report = await aggregateUsage(dir, "week", "day", { from: "2026-04-10", to: "2026-04-12" });
 
@@ -278,19 +280,13 @@ describe("usage-aggregator", () => {
 
   it("returns multiple breakdown dimensions from one aggregation", async () => {
     const dir = makeTmpDir();
-    writeFileSync(
-      join(dir, "alice.jsonl"),
-      buildJsonl({ id: "alice", updatedAt: "2026-04-12T10:00:00Z", ownerId: "usr_alice" }, [
+    writeCalls(dir, { id: "alice", updatedAt: "2026-04-12T10:00:00Z", ownerId: "usr_alice" }, [
         llmEvent({ ts: "2026-04-10T08:00:00Z", inputTokens: 100, outputTokens: 50 }),
         llmEvent({ ts: "2026-04-12T10:00:00Z", inputTokens: 200, outputTokens: 100 }),
-      ]),
-    );
-    writeFileSync(
-      join(dir, "bob.jsonl"),
-      buildJsonl({ id: "bob", updatedAt: "2026-04-11T10:00:00Z", ownerId: "usr_bob" }, [
+      ]);
+    writeCalls(dir, { id: "bob", updatedAt: "2026-04-11T10:00:00Z", ownerId: "usr_bob" }, [
         llmEvent({ ts: "2026-04-11T10:00:00Z", inputTokens: 400, outputTokens: 200 }),
-      ]),
-    );
+      ]);
 
     const report = await aggregateUsage(dir, "week", ["user", "day"], {
       from: "2026-04-10",
@@ -325,15 +321,12 @@ describe("usage-aggregator", () => {
       cacheWriteTokens: 1_000_000,
       reasoningTokens: 200_000,
     };
-    writeFileSync(
-      join(dir, "drift.jsonl"),
-      buildJsonl({ id: "drift", updatedAt: "2026-04-10T10:00:00Z" }, [
+    writeCalls(dir, { id: "drift", updatedAt: "2026-04-10T10:00:00Z" }, [
         llmEvent({
           model: "claude-sonnet-4-5-20250929",
           ...usage,
         }),
-      ]),
-    );
+      ]);
     const report = await aggregateUsage(dir, "all", "day");
     const expectedTotal = estimateCost("claude-sonnet-4-5-20250929", usage);
     expect(report.totals.cost.total).toBeCloseTo(expectedTotal, 8);
@@ -347,9 +340,7 @@ describe("usage-aggregator", () => {
     // set so any future rename fails this test instead of going
     // unnoticed until a UI panel throws on render.
     const dir = makeTmpDir();
-    writeFileSync(
-      join(dir, "shape.jsonl"),
-      buildJsonl({ id: "shape", updatedAt: "2026-04-10T10:00:00Z" }, [
+    writeCalls(dir, { id: "shape", updatedAt: "2026-04-10T10:00:00Z" }, [
         llmEvent({
           model: "claude-sonnet-4-5-20250929",
           inputTokens: 1000,
@@ -357,8 +348,7 @@ describe("usage-aggregator", () => {
           cacheReadTokens: 100,
           cacheWriteTokens: 200,
         }),
-      ]),
-    );
+      ]);
     const report = await aggregateUsage(dir, "all", "day");
 
     // Top-level
@@ -418,9 +408,7 @@ describe("usage-aggregator", () => {
     const dir = makeTmpDir();
     // One call: 1000 input total = 700 cacheRead + 200 cacheWrite + 100 non-cached.
     // hit rate = 700 / (100 + 700 + 200) = 0.7
-    writeFileSync(
-      join(dir, "hit.jsonl"),
-      buildJsonl({ id: "hit", updatedAt: "2026-04-10T10:00:00Z" }, [
+    writeCalls(dir, { id: "hit", updatedAt: "2026-04-10T10:00:00Z" }, [
         llmEvent({
           model: "claude-sonnet-4-5-20250929",
           inputTokens: 1000,
@@ -428,8 +416,7 @@ describe("usage-aggregator", () => {
           cacheReadTokens: 700,
           cacheWriteTokens: 200,
         }),
-      ]),
-    );
+      ]);
     const report = await aggregateUsage(dir, "all", "day");
     expect(report.totals.cacheHitRate).toBeCloseTo(0.7, 6);
     expect(report.models[0]!.cacheHitRate).toBeCloseTo(0.7, 6);
@@ -445,27 +432,18 @@ describe("usage-aggregator", () => {
 // By-user aggregation + owner filter (org/audit surface)
 // ---------------------------------------------------------------------------
 
-describe("usage-aggregator — by user", () => {
+describe("aggregateUsage — by user", () => {
   /** Two owners, three conversations: alice has two, bob has one. */
   function seedTwoOwners(dir: string): void {
-    writeFileSync(
-      join(dir, "alice-1.jsonl"),
-      buildJsonl({ id: "alice-1", updatedAt: "2026-04-10T10:00:00Z", ownerId: "usr_alice" }, [
+    writeCalls(dir, { id: "alice-1", updatedAt: "2026-04-10T10:00:00Z", ownerId: "usr_alice" }, [
         llmEvent({ ts: "2026-04-10T10:00:00Z", inputTokens: 100, outputTokens: 50 }),
-      ]),
-    );
-    writeFileSync(
-      join(dir, "alice-2.jsonl"),
-      buildJsonl({ id: "alice-2", updatedAt: "2026-04-11T10:00:00Z", ownerId: "usr_alice" }, [
+      ]);
+    writeCalls(dir, { id: "alice-2", updatedAt: "2026-04-11T10:00:00Z", ownerId: "usr_alice" }, [
         llmEvent({ ts: "2026-04-11T10:00:00Z", inputTokens: 200, outputTokens: 100 }),
-      ]),
-    );
-    writeFileSync(
-      join(dir, "bob-1.jsonl"),
-      buildJsonl({ id: "bob-1", updatedAt: "2026-04-10T11:00:00Z", ownerId: "usr_bob" }, [
+      ]);
+    writeCalls(dir, { id: "bob-1", updatedAt: "2026-04-10T11:00:00Z", ownerId: "usr_bob" }, [
         llmEvent({ ts: "2026-04-10T11:00:00Z", inputTokens: 400, outputTokens: 200 }),
-      ]),
-    );
+      ]);
   }
 
   it("groupBy:user buckets the breakdown by conversation owner", async () => {
@@ -522,12 +500,9 @@ describe("usage-aggregator — by user", () => {
   it("conversations missing ownerId bucket under 'unknown' for groupBy:user", async () => {
     const dir = makeTmpDir();
     // No ownerId on line 1 (legacy/corrupt) — still counted, bucketed as unknown.
-    writeFileSync(
-      join(dir, "legacy.jsonl"),
-      buildJsonl({ id: "legacy", updatedAt: "2026-04-10T10:00:00Z" }, [
+    writeCalls(dir, { id: "legacy", updatedAt: "2026-04-10T10:00:00Z" }, [
         llmEvent({ ts: "2026-04-10T10:00:00Z", inputTokens: 100, outputTokens: 50 }),
-      ]),
-    );
+      ]);
 
     const report = await aggregateUsage(dir, "all", "user");
 
@@ -579,5 +554,48 @@ describe("resolveDateRange", () => {
     const range = resolveDateRange("month", "2026-03-01", "2026-04-30");
     expect(range.from).toBe("2026-03-01");
     expect(range.to).toBe("2026-04-30");
+  });
+});
+
+describe("breakdown rows make the same split as totals", () => {
+  it("counts a task run under runs, not conversations, in every row", async () => {
+    const dir = makeTmpDir();
+    writeCalls(dir, { id: "conv_1", ownerId: "usr_a" }, [llmEvent({ inputTokens: 10 })]);
+    writeCalls(dir, { id: "run_1", ownerId: "usr_a", origin: "task" }, [
+      llmEvent({ inputTokens: 20 }),
+    ]);
+
+    const report = await aggregateUsage(dir, "all", "day");
+
+    // The defect this pins: totals split the two and the rows did not, so one
+    // payload disagreed with itself and the UI's conversations column read 2.
+    expect(report.totals.conversations).toBe(1);
+    expect(report.totals.runs).toBe(1);
+    const row = report.breakdown[0];
+    expect(row?.conversations).toBe(1);
+    expect(row?.runs).toBe(1);
+  });
+
+  it("reports unpriced calls per row, not only in totals", async () => {
+    const dir = makeTmpDir();
+    writeCalls(dir, { id: "run_1", origin: "task" }, [
+      llmEvent({ model: "unknown-model-xyz", inputTokens: 100 }),
+    ]);
+
+    const report = await aggregateUsage(dir, "all", "day");
+    expect(report.totals.unpricedCalls).toBe(1);
+    expect(report.breakdown[0]?.unpricedCalls).toBe(1);
+  });
+
+  it("groups by origin and by provider", async () => {
+    const dir = makeTmpDir();
+    writeCalls(dir, { id: "conv_1" }, [llmEvent({ model: "nebius:zai-org/GLM-5.1" })]);
+    writeCalls(dir, { id: "run_1", origin: "task" }, [llmEvent({ model: "anthropic:claude-x" })]);
+
+    const byOrigin = await aggregateUsage(dir, "all", "origin");
+    expect(byOrigin.breakdown.map((b) => b.key).sort()).toEqual(["chat", "task"]);
+
+    const byProvider = await aggregateUsage(dir, "all", "provider");
+    expect(byProvider.breakdown.map((b) => b.key).sort()).toEqual(["anthropic", "nebius"]);
   });
 });

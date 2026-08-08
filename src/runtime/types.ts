@@ -188,6 +188,19 @@ export interface RuntimeConfig {
     };
   };
 
+  /**
+   * Durable usage ledger — one JSONL line per priced LLM call, under
+   * `{workDir}/usage/`. See `src/usage/ledger.ts`.
+   */
+  usage?: {
+    ledger?: {
+      /** Default true. False disables the write path; the reader still reads. */
+      enabled?: boolean;
+      /** Months of history to keep. Default 24; 0 keeps everything. */
+      retentionMonths?: number;
+    };
+  };
+
   /** Path to nimblebrain.json. The Helm-managed seed file. Overwritten on every deploy. */
   configPath?: string;
 

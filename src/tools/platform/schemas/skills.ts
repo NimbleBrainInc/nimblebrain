@@ -189,7 +189,7 @@ export type SkillsDeactivateInput = Static<typeof SkillsDeactivateInput>;
 // with workspace state and bust the cached prefix. Validation against the
 // activatable set happens in the handler, which can also return a helpful
 // valid-name list on a miss.
-export const SkillsUseInput = Type.Object(
+export const UseSkillInput = Type.Object(
   {
     name: Type.String({
       minLength: 1,
@@ -199,7 +199,7 @@ export const SkillsUseInput = Type.Object(
   },
   { required: ["name"] },
 );
-export type SkillsUseInput = Static<typeof SkillsUseInput>;
+export type UseSkillInput = Static<typeof UseSkillInput>;
 
 // ── Tool output types ────────────────────────────────────────────────────
 //
@@ -314,7 +314,7 @@ export interface SkillsActiveForOutput {
 }
 
 /**
- * `skills__use` result. `loaded` delivers the skill (body rides the result's
+ * `nb__use_skill` result. `loaded` delivers the skill (body rides the result's
  * `content`, not this typed envelope); `already_loaded` is the dedupe note —
  * the body is already in the conversation's context, so none is re-delivered.
  */

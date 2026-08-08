@@ -1014,7 +1014,7 @@ function formatSkillCatalogSection(entries: SkillCatalogEntry[]): string {
   }
   lines.push(
     "",
-    'When a task matches a listed skill, load it with `skills__use` (pass the skill\'s `name` exactly as listed) — its full guidance comes back in the tool result. Load a skill **before** starting the task it covers, and don\'t re-load one already delivered in this conversation. If `skills__use` is not in your active tool list, activate it first with `nb__manage_tools` (`{ "add": ["skills__use"] }`).',
+    "When a task matches a listed skill, load it with `nb__use_skill` (pass the skill's `name` exactly as listed) — its full guidance comes back in the tool result. Load a skill **before** starting the task it covers, and don't re-load one already delivered in this conversation.",
   );
   return lines.join("\n");
 }
@@ -1041,7 +1041,7 @@ export function formatConnectorSkillBlock(name: string, scope: string, body: str
 }
 
 /**
- * Wrap a catalog skill's body for delivery as the `skills__use` tool result.
+ * Wrap a catalog skill's body for delivery as the `nb__use_skill` tool result.
  * Sibling of {@link formatConnectorSkillBlock} with the same discipline —
  * sanitized one-line provenance, then the body in `<activated-skill>`
  * containment with its closing form escaped — differing only in the tag and

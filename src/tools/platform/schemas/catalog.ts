@@ -16,6 +16,7 @@ import * as Usage from "./usage.ts";
 export const PlatformToolCatalog = {
   nb: {
     manage_tools: { input: ManageTools.ManageToolsInput },
+    use_skill: { input: Skills.UseSkillInput },
   },
   skills: {
     list: { input: Skills.SkillsListInput },
@@ -27,7 +28,6 @@ export const PlatformToolCatalog = {
     delete: { input: Skills.SkillsDeleteInput },
     activate: { input: Skills.SkillsActivateInput },
     deactivate: { input: Skills.SkillsDeactivateInput },
-    use: { input: Skills.SkillsUseInput },
   },
   home: {
     activity: { input: Home.HomeActivityInput },

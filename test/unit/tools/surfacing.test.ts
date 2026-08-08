@@ -489,6 +489,59 @@ describe("surfaceTools — kernel identity tools always direct", () => {
 	});
 });
 
+describe("surfaceTools — catalog activation is reachable without a promote", () => {
+	// The Skill Catalog renders into the STABLE system prefix, so it reaches the
+	// model on every turn. The tool that acts on it has to be reachable on every
+	// turn too, or using the catalog costs an `nb__manage_tools` promote first —
+	// a tools-block rewrite, which is the most expensive cache bust in the
+	// request and precisely what a stable catalog exists to avoid. Worse, a
+	// promoted tool is LRU-evictable (`evictPromotedToolsToCap`), and this one is
+	// touched rarely enough to sit at the old end of that LRU, so the bust
+	// recurs. `nb__use_skill` carries the kernel prefix to make this structural.
+	it("Tier 2: nb__use_skill is direct in a workspace far past the direct-tool budget", () => {
+		const system = [...makeSystemTools(4), makeTool("nb__use_skill")];
+		const app = makeAppTools("crm", DEFAULT_MAX_DIRECT_TOOLS * 2);
+		const all = [...system, ...app];
+
+		const result = surfaceTools(all, null);
+
+		const directNames = new Set(result.direct.map((t) => t.name));
+		expect(directNames.has("nb__use_skill")).toBe(true);
+		expect(result.proxied.some((t) => t.name === "nb__use_skill")).toBe(false);
+	});
+
+	it("Tier 3: nb__use_skill stays direct when a skill glob doesn't name it", () => {
+		const system = [...makeSystemTools(4), makeTool("nb__use_skill")];
+		const all = [...system, ...makeAppTools("crm", 40)];
+		const skill = makeSkill({ allowedTools: ["crm__*"] });
+
+		const result = surfaceTools(all, skill);
+
+		expect(new Set(result.direct.map((t) => t.name)).has("nb__use_skill")).toBe(true);
+	});
+
+	it("the authoring siblings on the skills source stay proxied", () => {
+		// The split is deliberate: `skills__*` are authoring tools, reached for
+		// while EDITING skills (occasional, a promote is fine). Pulling the whole
+		// source kernel-direct to fix the activation tool would put six more tool
+		// schemas in every cached prefix to solve a one-tool problem.
+		const system = [...makeSystemTools(4), makeTool("nb__use_skill")];
+		const authoring = [
+			makeTool("skills__list"),
+			makeTool("skills__read"),
+			makeTool("skills__create"),
+		];
+		const all = [...system, ...authoring, ...makeAppTools("crm", 40)];
+
+		const result = surfaceTools(all, null);
+
+		const directNames = new Set(result.direct.map((t) => t.name));
+		for (const t of authoring) {
+			expect(directNames.has(t.name)).toBe(false);
+		}
+	});
+});
+
 describe("surfaceTools — internal annotation filtering", () => {
 	it("excludes tools with ai.nimblebrain/internal annotation from direct tools", () => {
 		const internalTool: ToolSchema = {

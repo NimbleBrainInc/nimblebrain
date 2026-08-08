@@ -18,7 +18,7 @@ import type { Skill } from "./types.ts";
 /**
  * One activatable skill, with the body the activation tool delivers. The
  * catalog renders only `name` + `description` (see {@link toCatalogEntries});
- * the full shape backs `skills__use`'s name validation and body lookup.
+ * the full shape backs `nb__use_skill`'s name validation and body lookup.
  */
 export interface ActivatableSkill {
   name: string;
@@ -49,7 +49,7 @@ export interface SkillCatalogEntry {
  * output is byte-stable for identical inputs.
  *
  * Collision semantics: the losing pool's skill is shadowed out of BOTH the
- * catalog and `skills__use` resolution, and delivery dedup keys on the bare
+ * catalog and `nb__use_skill` resolution, and delivery dedup keys on the bare
  * name — so activating the winner marks the name delivered for every channel,
  * including the shadowed overlay's surface-once path. One name, one skill,
  * one delivery.

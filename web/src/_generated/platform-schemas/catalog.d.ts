@@ -11,6 +11,11 @@ export declare const PlatformToolCatalog: {
                 remove: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TArray<import("@sinclair/typebox").TString>>;
             }>;
         };
+        readonly use_skill: {
+            readonly input: import("@sinclair/typebox").TObject<{
+                name: import("@sinclair/typebox").TString;
+            }>;
+        };
     };
     readonly skills: {
         readonly list: {
@@ -87,11 +92,6 @@ export declare const PlatformToolCatalog: {
                 id: import("@sinclair/typebox").TString;
             }>;
         };
-        readonly use: {
-            readonly input: import("@sinclair/typebox").TObject<{
-                name: import("@sinclair/typebox").TString;
-            }>;
-        };
     };
     readonly home: {
         readonly activity: {
@@ -110,7 +110,7 @@ export declare const PlatformToolCatalog: {
                 period: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"day" | "week" | "month" | "all">>;
                 from: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
                 to: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
-                groupBy: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnion<[import("@sinclair/typebox").TUnsafe<"model" | "user" | "day" | "conversation">, import("@sinclair/typebox").TArray<import("@sinclair/typebox").TUnsafe<"model" | "user" | "day" | "conversation">>]>>;
+                groupBy: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnion<[import("@sinclair/typebox").TUnsafe<"model" | "user" | "day" | "conversation" | "origin" | "provider">, import("@sinclair/typebox").TArray<import("@sinclair/typebox").TUnsafe<"model" | "user" | "day" | "conversation" | "origin" | "provider">>]>>;
             }>;
         };
     };
