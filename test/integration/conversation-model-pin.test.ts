@@ -422,6 +422,40 @@ describe("how a client learns the binding", () => {
     expect(data?.model).toBe(await pinOf(conversationId));
   });
 
+  test("announces no model on a conversation that has no binding", async () => {
+    // The turn still resolves a model from current config — but that is not a
+    // binding, and announcing it would let the client assert one that nothing
+    // holds, then quietly go stale the next time a slot moved.
+    runtime.updateConfig({ models: { default: MODEL_A } });
+    const seed = await runtime.chat({
+      message: "seed",
+      workspaceId: TEST_WORKSPACE_ID,
+      identity: USER,
+    });
+    const store = await runtime.resolveConversationStore(seed.conversationId);
+    const legacy = await store!.create({
+      ownerId: USER.id,
+      workspaceId: TEST_WORKSPACE_ID,
+    });
+    expect(legacy.model).toBeUndefined();
+
+    const { sink, events } = recorder();
+    await runtime.chat(
+      { message: "resumed", conversationId: legacy.id, workspaceId: TEST_WORKSPACE_ID, identity: USER },
+      sink,
+    );
+
+    const data = events.find((e) => e.type === "chat.start")?.data as {
+      conversationId: string;
+      model?: string;
+    };
+    expect(data.conversationId).toBe(legacy.id);
+    expect(data.model).toBeUndefined();
+    // The turn did run on something; that something just is not a pin.
+    expect(await modelsUsed(legacy.id)).toEqual([MODEL_A]);
+    expect(await pinOf(legacy.id)).toBeUndefined();
+  });
+
   test("a later turn announces the pin, not the current default", async () => {
     runtime.updateConfig({ models: { default: MODEL_A } });
     const { conversationId } = await runtime.chat({

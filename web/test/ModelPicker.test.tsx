@@ -99,6 +99,20 @@ describe("toPickerModels", () => {
     expect(opus?.name).toBe("Claude Opus 4.5");
   });
 
+  it("collapses the other vendor's date format too", () => {
+    const ids = toPickerModels({
+      openai: [
+        { id: "gpt-4o", name: "GPT-4o" },
+        { id: "gpt-4o-2024-08-06", name: "GPT-4o" },
+        { id: "gpt-4o-2024-11-20", name: "GPT-4o" },
+      ],
+    }).map((m) => m.id);
+    // Two snapshots, not one — a rule that carried a snapshot's name across
+    // would have to pick between them; stripping the suffix from the survivor
+    // does not.
+    expect(ids).toEqual(["openai:gpt-4o"]);
+  });
+
   it("keeps a snapshot that is the only way to name its model", () => {
     const ids = toPickerModels({
       anthropic: [{ id: "claude-opus-4-9-20260401", name: "Claude Opus 4.9" }],
@@ -108,7 +122,7 @@ describe("toPickerModels", () => {
   });
 
   it("keeps a moving pointer that is a model in its own right", () => {
-    const ids = toPickerModels({
+    const models = toPickerModels({
       // `gpt-5.3-chat` is deliberately present: it is what a rule that
       // collapsed on a `-latest` suffix would fold this into. The two are
       // different models — one is a pointer that moves, one does not — so the
@@ -117,8 +131,16 @@ describe("toPickerModels", () => {
         { id: "gpt-5.3-chat-latest", name: "GPT-5.3 Chat (latest)" },
         { id: "gpt-5.3-chat", name: "GPT-5.3 Chat" },
       ],
-    }).map((m) => m.id);
-    expect(ids.sort()).toEqual(["openai:gpt-5.3-chat", "openai:gpt-5.3-chat-latest"]);
+    });
+    expect(models.map((m) => m.id).sort()).toEqual([
+      "openai:gpt-5.3-chat",
+      "openai:gpt-5.3-chat-latest",
+    ]);
+    // It absorbed nothing, so it keeps its suffix — that is the only thing
+    // telling the two of them apart.
+    expect(models.find((m) => m.id === "openai:gpt-5.3-chat-latest")?.name).toBe(
+      "GPT-5.3 Chat (latest)",
+    );
   });
 });
 

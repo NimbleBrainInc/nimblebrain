@@ -1755,7 +1755,7 @@ export class Runtime {
 
     // Emit chat.start so the client knows the conversation ID immediately and
     // conversation list UIs can refresh.
-    this.emitChatStart(requestSink, conversation.id, !request.conversationId, model);
+    this.emitChatStart(requestSink, conversation.id, !request.conversationId, conversation.model);
 
     // Root span for the agent turn — the common chokepoint for both the HTTP
     // and CLI entry points. Opened inside runWithRequestContext so the verified
@@ -2450,22 +2450,32 @@ export class Runtime {
 
   /**
    * Emit the initial `chat.start` (so the client knows the conversation id
-   * and the model it is bound to immediately) and, for a new conversation, a
-   * conversations-list `data.changed` — both on the per-request sink only.
+   * and, when there is one, the model it is bound to) and, for a new
+   * conversation, a conversations-list `data.changed` — both on the
+   * per-request sink only.
    *
-   * The model rides along because this is the only point at which a client
-   * that just created a conversation can learn its binding: the pin is server
-   * state, and a client that instead remembered what it asked for would be
-   * reporting its own request rather than the answer.
+   * The binding rides along because this is the only point at which a client
+   * that just created a conversation can learn it: the pin is server state,
+   * and a client that instead remembered what it asked for would be reporting
+   * its own request rather than the answer.
+   *
+   * It is the conversation's own `model`, not the model this turn resolved to.
+   * They differ on a record that predates the binding, where the turn falls
+   * back to current config — announcing that would hand the client a binding
+   * the conversation does not have, and it would go stale the next time a slot
+   * or a preference moved. Absent means absent.
    */
   private emitChatStart(
     requestSink: EventSink | undefined,
     conversationId: string,
     isNewConversation: boolean,
-    model: string,
+    model: string | undefined,
   ): void {
     if (!requestSink) return;
-    requestSink.emit({ type: "chat.start", data: { conversationId, model } });
+    requestSink.emit({
+      type: "chat.start",
+      data: { conversationId, ...(model ? { model } : {}) },
+    });
     // Notify conversation browser UIs that a new conversation exists.
     if (isNewConversation) {
       requestSink.emit({ type: "data.changed", data: { server: "conversations", tool: "list" } });

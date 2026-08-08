@@ -1610,7 +1610,7 @@ export async function handleBootstrap(
   // otherwise — and the composer would name a model the first turn then
   // contradicts.
   const newConversationModel = runWithRequestContext(
-    { identity, workspaceId: activeWorkspace } as RequestContext,
+    { identity, workspaceId: activeWorkspace },
     () => runtime.getDefaultModel(),
   );
   const configuredProviders = runtime.getConfiguredProviders();

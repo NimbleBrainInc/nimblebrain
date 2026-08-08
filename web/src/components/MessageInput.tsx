@@ -327,7 +327,7 @@ export function MessageInput({
           <button
             type="button"
             onClick={onNewConversation}
-            className="hover:text-foreground transition-colors"
+            className="cursor-pointer hover:text-foreground transition-colors"
           >
             <kbd className="px-1 py-0.5 font-mono bg-muted rounded border border-border text-3xs">
               /clear
@@ -345,7 +345,7 @@ export function MessageInput({
           <button
             type="button"
             onClick={onShowShortcuts}
-            className="hover:text-foreground transition-colors"
+            className="cursor-pointer hover:text-foreground transition-colors"
           >
             <kbd className="px-1 py-0.5 font-mono bg-muted rounded border border-border text-3xs">
               ?

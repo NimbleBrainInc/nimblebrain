@@ -309,7 +309,8 @@ export interface SkillsLoadedEvent {
 
 /** Chat stream SSE event type to payload mapping. */
 export interface ChatStreamEventMap {
-  "chat.start": { conversationId: string };
+  /** `model` is the conversation's binding, absent on records that have none. */
+  "chat.start": { conversationId: string; model?: string };
   "text.delta": TextDeltaEvent;
   "reasoning.delta": ReasoningDeltaEvent;
   "tool.preparing": ToolPreparingEvent;

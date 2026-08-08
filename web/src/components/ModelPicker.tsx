@@ -34,29 +34,42 @@ export function shortModelName(name: string): string {
   return name.replace(/^Claude\s+/, "");
 }
 
-/** A dated snapshot id, e.g. `claude-opus-4-5-20251101`. */
-const DATED_SNAPSHOT = /-\d{8}$/;
+/**
+ * A dated snapshot id: `claude-opus-4-5-20251101` or `gpt-4o-2024-08-06`.
+ * Both vendors date their snapshots; only the separator differs.
+ */
+const DATED_SNAPSHOT = /-(?:\d{8}|\d{4}-\d{2}-\d{2})$/;
+
+/** The suffix the catalog puts on an alias to distinguish it from its snapshot. */
+const LATEST_SUFFIX = / \(latest\)$/;
 
 /**
  * One row per model a person would name.
  *
- * The catalog lists some models twice — an undated id and a dated snapshot of
- * it (`claude-opus-4-5` and `claude-opus-4-5-20251101`), identical in cost,
- * limits and capabilities. Operator surfaces offer both on purpose, because
- * pinning a fixed snapshot is a real deployment choice. Someone picking a model
- * for one chat is answering a different question, and to them the pair reads as
- * the list being broken.
+ * The catalog lists some models twice — an undated id and one or more dated
+ * snapshots of it (`claude-opus-4-5` beside `claude-opus-4-5-20251101`,
+ * `gpt-4o` beside two 2024 snapshots), identical in cost, limits and
+ * capabilities. Operator surfaces offer all of them on purpose, because pinning
+ * a fixed snapshot is a real deployment choice. Someone picking a model for one
+ * chat is answering a different question, and to them the repeats read as the
+ * list being broken.
  *
- * Of the pair, the undated id is kept: it exists for every model (dated
- * variants only exist for some) and it is the form the operator config already
- * writes, so a pin made here looks like a slot set there. The dated sibling's
- * *name* is kept instead of the alias's, because the alias is named
- * "Claude Opus 4.5 (latest)" — a suffix that means "newest 4.5 snapshot" but
- * reads as "newest Opus", which is false the moment Opus 5 ships. With the pair
- * collapsed the suffix distinguishes nothing anyway.
+ * Two independent rules, kept apart because they answer to different things:
  *
- * A "(latest)" model with no dated sibling — `gpt-5.3-chat-latest` — is left
- * alone: there the moving pointer is the whole model, not one name for two.
+ *  - **Collapse** drops a dated snapshot when its undated id is also offered.
+ *    Keyed on the id, because that is where the relationship actually lives.
+ *    The undated id survives: it exists for every model where dated variants
+ *    exist only for some, and it is the form the operator config already
+ *    writes, so a pin made here looks like a slot set there.
+ *  - **Rename** strips " (latest)" from a survivor that absorbed a snapshot.
+ *    The suffix means "newest 4.5 snapshot" but reads as "newest Opus", false
+ *    the moment Opus 5 ships — and once its sibling is gone it distinguishes
+ *    nothing. Carrying a snapshot's name across instead would be ambiguous the
+ *    moment there are two of them.
+ *
+ * A "(latest)" model that absorbed nothing — `gpt-5.3-chat-latest`, which is
+ * its own model beside `gpt-5.3-chat` — keeps its name: there the moving
+ * pointer is the whole model, not one name for two.
  */
 export function toPickerModels(
   available: Record<string, { id: string; name?: string }[]> | undefined,
@@ -65,23 +78,24 @@ export function toPickerModels(
   return Object.entries(available)
     .flatMap(([provider, models]) => {
       const offered = new Set(models.map((m) => m.id));
+      const baseOf = (id: string) => id.replace(DATED_SNAPSHOT, "");
       // A snapshot is a duplicate only when its own undated id is also on
       // offer; alone, it is the only way to name that model.
       const duplicates = (m: { id: string }) =>
-        DATED_SNAPSHOT.test(m.id) && offered.has(m.id.replace(DATED_SNAPSHOT, ""));
+        DATED_SNAPSHOT.test(m.id) && offered.has(baseOf(m.id));
 
-      const nameFromSnapshot = new Map<string, string>();
-      for (const m of models) {
-        if (duplicates(m) && m.name) nameFromSnapshot.set(m.id.replace(DATED_SNAPSHOT, ""), m.name);
-      }
+      const absorbedASnapshot = new Set(models.filter(duplicates).map((m) => baseOf(m.id)));
 
       return models
         .filter((m) => !duplicates(m))
-        .map((m) => ({
-          id: `${provider}:${m.id}`,
-          name: nameFromSnapshot.get(m.id) ?? m.name ?? m.id,
-          provider,
-        }));
+        .map((m) => {
+          const name = m.name ?? m.id;
+          return {
+            id: `${provider}:${m.id}`,
+            name: absorbedASnapshot.has(m.id) ? name.replace(LATEST_SUFFIX, "") : name,
+            provider,
+          };
+        });
     })
     .sort((a, b) => a.name.localeCompare(b.name));
 }
