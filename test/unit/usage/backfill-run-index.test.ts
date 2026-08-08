@@ -6,19 +6,23 @@
  * `runs/index.jsonl`; the tree stores `automations/<owner>/runs/<automation>/index.jsonl`.
  * Matching nothing is indistinguishable from having nothing to match, so the
  * migration replayed conversations, reported success, and omitted every
- * automation run. On the tenant this was built for that was 1,820 runs and
- * 799M tokens: the exact spend the ledger exists to surface.
+ * automation run — on a deployment that leans on automations, most of the
+ * spend this ledger exists to surface.
  *
- * So the fixtures here are built from the real shape rather than the spec's
- * description of it, and the suite covers the silence as well as the match —
- * a tree with automations and no matching index must fail loudly rather than
- * report a clean run.
+ * So the fixtures are built from `automations/src/paths.ts` — the writer's own
+ * path builder — rather than from a hand-joined literal. A fixture that spells
+ * the layout out checks the predicate against a copy of itself and stays green
+ * when the layout moves, which is this bug reproduced one level up.
  */
 
 import { describe, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import {
+  automationRunIndexPath,
+  automationRunsDir,
+} from "../../../src/bundles/automations/src/paths.ts";
 import { isRunIndex } from "../../../scripts/backfill-usage-ledger.ts";
 
 const OWNER = "user_01ABC";
@@ -28,20 +32,26 @@ function tmp(): string {
   return mkdtempSync(join(tmpdir(), "nb-backfill-"));
 }
 
-/** The real layout: automations/<owner>/runs/<automation>/index.jsonl. */
+/**
+ * Seed a run index at the path the runtime itself writes.
+ *
+ * Built from `automationRunIndexPath`, not from a hand-joined literal. A
+ * fixture that spells the layout out only checks the predicate against a copy
+ * of itself and stays green when the layout moves — which is the failure this
+ * whole change exists to prevent, reproduced one level up in its own tests.
+ */
 function seedRuns(root: string, automation: string, runs: Record<string, unknown>[]): string {
-  const dir = join(root, "workspaces", WS, "automations", OWNER, "runs", automation);
-  mkdirSync(dir, { recursive: true });
-  const path = join(dir, "index.jsonl");
+  mkdirSync(automationRunsDir(root, WS, OWNER, automation), { recursive: true });
+  const path = automationRunIndexPath(root, WS, OWNER, automation);
   writeFileSync(path, runs.map((r) => `${JSON.stringify(r)}\n`).join(""));
   return path;
 }
 
 describe("isRunIndex", () => {
   test("matches the real layout, with an automation id between runs/ and the file", () => {
-    expect(isRunIndex(join("a", "automations", OWNER, "runs", "ce-inbox-triage", "index.jsonl"))).toBe(
-      true,
-    );
+    const root = tmp();
+    expect(isRunIndex(automationRunIndexPath(root, WS, OWNER, "ce-inbox-triage"))).toBe(true);
+    rmSync(root, { recursive: true, force: true });
   });
 
   test("does NOT match runs/index.jsonl — the shape that matched nothing on disk", () => {

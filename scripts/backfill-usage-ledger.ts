@@ -244,12 +244,12 @@ function fromAutomationRuns(path: string): UsageLedgerEntry[] {
 /**
  * A run index: `automations/<ownerId>/runs/<automationId>/index.jsonl`.
  *
- * The automation id between `runs/` and the file is the part that matters. An
- * earlier version matched `runs/index.jsonl` — no id segment — which matches
- * nothing on a real tree, so the automation half of the migration found zero
- * files and reported success. On the tenant this was built for that silently
- * skipped 1,820 runs and 799M tokens: the exact spend the ledger exists to
- * surface, missing from a migration that looked clean.
+ * The automation id between `runs/` and the file is the part that matters.
+ * Matching `runs/index.jsonl` — no id segment — matches nothing on a real tree,
+ * and finding nothing is indistinguishable from having nothing to find: the
+ * migration reports success having omitted every automation run, which on a
+ * deployment that leans on automations is most of the spend this ledger exists
+ * to show.
  */
 export function isRunIndex(path: string): boolean {
   const parts = path.split(sep);
@@ -269,18 +269,30 @@ function collectEntries(roots: string[], skipAutomations: boolean): UsageLedgerE
     for (const path of walk(root, isConversation)) entries.push(...fromConversation(path));
     if (skipAutomations) continue;
 
-    // Refuse to look clean. A tree with automations but no matching run index
-    // means the layout moved out from under this predicate again, and the
-    // failure mode is silence — the run replays nothing and the summary reads
-    // like a success. Better to stop than to under-report and be believed.
+    // Refuse to look clean — but only on evidence the layout actually moved.
+    //
+    // The discriminator is an `index.jsonl` under an automations tree that this
+    // predicate did NOT match. That is a run history written somewhere else,
+    // which is the failure being guarded. A definition with no `runs/` subtree
+    // is not evidence of anything: the directory is created lazily on first
+    // execution, so an automation created and never run looks exactly like one
+    // whose runs moved. A guard keyed on definitions cannot tell them apart and
+    // takes down a healthy tree, and the conversation half with it.
     const runIndexes = walk(root, isRunIndex);
-    const hasAutomations = walk(root, (p) => p.includes(`${sep}automations${sep}`)).length > 0;
-    if (hasAutomations && runIndexes.length === 0) {
+    const strayIndexes = walk(
+      root,
+      (p) => p.includes(`${sep}automations${sep}`) && p.endsWith("index.jsonl") && !isRunIndex(p),
+    );
+    if (strayIndexes.length > 0) {
       console.error(
-        `✗ ${root} has automations but no run index matched ` +
-          `automations/<owner>/runs/<automation>/index.jsonl.\n` +
-          `  The layout has moved. Replaying now would silently omit every ` +
-          `automation run, which is the spend this ledger exists to show.`,
+        `✗ ${strayIndexes.length} run index/indexes under ${root} are not at ` +
+          `automations/<owner>/runs/<automation>/index.jsonl:\n` +
+          strayIndexes
+            .slice(0, 3)
+            .map((p) => `    ${p}`)
+            .join("\n") +
+          `\n  The layout has moved. Replaying now would silently omit those runs, ` +
+          `which is the spend this ledger exists to show.`,
       );
       process.exit(1);
     }
