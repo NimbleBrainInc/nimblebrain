@@ -1188,6 +1188,53 @@ describe("reconstructMessages — connector.skill.injected (P4)", () => {
     assertNoAdjacentUserMessages(messages);
   });
 
+  it("places the overlay after the triggering iteration, not at the end of the run", () => {
+    // The live run appends the overlay right after the tool results of the
+    // iteration that fired it, so replay has to land it there too — otherwise
+    // the rebuilt history is not the history the run executed against. A
+    // two-iteration run is what distinguishes the two placements.
+    const events: ConversationEvent[] = [
+      userMessage("send an email"),
+      runStart("run-1"),
+      llmToolCall("run-1", "tc-1", "gmail__send", { to: "a@b.com" }),
+      toolStart("run-1", "tc-1", "gmail__send"),
+      toolDone("run-1", "tc-1", "gmail__send", "sent"),
+      connectorSkillInjected("gmail", "Confirm the recipient before sending."),
+      llmToolCall("run-1", "tc-2", "gmail__send", { to: "c@d.com" }),
+      toolStart("run-1", "tc-2", "gmail__send"),
+      toolDone("run-1", "tc-2", "gmail__send", "sent"),
+      llmText("run-1", "Both emails sent."),
+      runDone("run-1"),
+    ];
+
+    const messages = reconstructMessages(events);
+    const overlayIdx = messages.findIndex(
+      (m) => m.metadata?.synthetic === "connector_skill_injected",
+    );
+    const lastToolIdx = messages.map((m) => m.role).lastIndexOf("tool");
+
+    expect(overlayIdx).toBeGreaterThanOrEqual(0);
+    // Before the SECOND tool call's result — i.e. before the calls it governs,
+    // which is the whole point. End-of-run placement would put it after.
+    expect(overlayIdx).toBeLessThan(lastToolIdx);
+    expect(overlayIdx).toBeLessThan(messages.length - 1);
+    assertNoAdjacentUserMessages(messages);
+  });
+
+  it("still delivers an overlay that cannot be placed against an iteration", () => {
+    // No llm.response in the run at all (a run cut short). The guidance was
+    // recorded, so it must still reach the model rather than be dropped.
+    const events: ConversationEvent[] = [
+      userMessage("send an email"),
+      runStart("run-1"),
+      connectorSkillInjected("gmail", "Confirm the recipient before sending."),
+      runDone("run-1"),
+    ];
+
+    const messages = reconstructMessages(events);
+    expect(findConnectorSkillMessage(messages)).toBeDefined();
+  });
+
   it("escapes a forged closing tag in the overlay body on reconstruction", () => {
     const events: ConversationEvent[] = [
       userMessage("do it"),

@@ -87,17 +87,80 @@ function systemContent(prompt: LanguageModelV3Message[]): string {
   return sys && typeof sys.content === "string" ? sys.content : "";
 }
 
-function messagesContainOverlay(prompt: LanguageModelV3Message[]): boolean {
-  return prompt.some(
-    (m) =>
-      m.role !== "system" &&
-      Array.isArray(m.content) &&
-      m.content.some((p) => p.type === "text" && p.text.includes(OVERLAY_BODY)),
+function containsOverlay(m: LanguageModelV3Message): boolean {
+  return (
+    m.role !== "system" &&
+    Array.isArray(m.content) &&
+    m.content.some((p) => p.type === "text" && p.text.includes(OVERLAY_BODY))
   );
 }
 
+function messagesContainOverlay(prompt: LanguageModelV3Message[]): boolean {
+  return prompt.some(containsOverlay);
+}
+
 describe("connector-skill surface-once (engine + event store)", () => {
-  it("surfaces the overlay into history once, never into the system prefix, and rides the next turn", async () => {
+  it("delivers the overlay in the SAME run, before the model's next action", async () => {
+    // The point of surfacing on first use: the guidance has to arrive before
+    // the calls it governs. It used to be emitted as an event only, so the
+    // body first appeared on the NEXT turn's rehydration — after the writes it
+    // was meant to govern, and never at all for a conversation that ends in
+    // one run.
+    const store = freshStore();
+    const conv = await store.create({ ownerId: "u1" });
+    store.setActiveConversation(conv.id);
+
+    await appendUser(store, conv, "send an email to a@b.com");
+    const rec = recordingModel(sendThenAnswer());
+    const engine = new AgentEngine(rec.model, router(), store);
+    await engine.run(config(), SYSTEM, await store.history(conv), [SEND_TOOL]);
+
+    // Two model calls: the one that emitted the tool call, then the one after
+    // the tool ran. The overlay fired during the first, so the second must
+    // already carry it.
+    expect(rec.calls.length).toBeGreaterThanOrEqual(2);
+    expect(messagesContainOverlay(rec.calls[0]!.prompt)).toBe(false);
+    expect(messagesContainOverlay(rec.calls[1]!.prompt)).toBe(true);
+    // Still never the cached system prefix, on any call.
+    for (const call of rec.calls) {
+      expect(systemContent(call.prompt)).not.toContain(OVERLAY_BODY);
+    }
+  });
+
+  it("puts the overlay in the same position live and on replay", async () => {
+    // The invariant the same-run delivery rests on. The live run appends the
+    // overlay after the triggering iteration's tool results; reconstruction
+    // derives that position from event order. If the two disagreed, the next
+    // turn would rebuild a history the model never actually ran against — a
+    // silent prefix divergence, not a visible failure.
+    const store = freshStore();
+    const conv = await store.create({ ownerId: "u1" });
+    store.setActiveConversation(conv.id);
+
+    await appendUser(store, conv, "send an email to a@b.com");
+    const rec = recordingModel(sendThenAnswer());
+    const engine = new AgentEngine(rec.model, router(), store);
+    await engine.run(config(), SYSTEM, await store.history(conv), [SEND_TOOL]);
+
+    // What the model actually saw on its final call, minus the system message.
+    const liveShape = rec.calls[rec.calls.length - 1]!.prompt.filter((m) => m.role !== "system").map(
+      (m) => (containsOverlay(m) ? "OVERLAY" : m.role),
+    );
+    // What replay reconstructs from the recorded events. It runs one message
+    // longer — it includes the final assistant response, which had not been
+    // produced yet when that last call was sent — so the live shape is a
+    // PREFIX of it. Prefix equality is also the property that matters: it is
+    // the cached span the next turn reuses.
+    const replayShape = (await store.history(conv)).map((m) =>
+      containsOverlay(m as unknown as LanguageModelV3Message) ? "OVERLAY" : m.role,
+    );
+
+    expect(liveShape).toContain("OVERLAY");
+    expect(replayShape.slice(0, liveShape.length)).toEqual(liveShape);
+    expect(replayShape.length).toBe(liveShape.length + 1);
+  });
+
+  it("surfaces the overlay into history once, never into the system prefix, and holds across turns", async () => {
     const store = freshStore();
     const conv = await store.create({ ownerId: "u1" });
     store.setActiveConversation(conv.id);
