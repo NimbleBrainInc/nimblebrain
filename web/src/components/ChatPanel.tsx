@@ -264,6 +264,16 @@ export const ChatPanel = forwardRef<ChatPanelRef, ChatPanelProps>(function ChatP
     [handleNewChat],
   );
 
+  const boundModel = conversationId ? conversationMeta?.model : undefined;
+  /**
+   * A conversation created before the binding existed carries no model, and
+   * the runtime resolves its turns from current config instead — which means a
+   * model named here would actually take effect on it, mid-conversation. There
+   * is nothing true for the control to state and nothing safe for it to offer,
+   * so it shows nothing.
+   */
+  const bindingUnknown = Boolean(conversationId) && !boundModel;
+
   // ? key opens shortcuts modal (only when not typing in textarea)
   useEffect(() => {
     function handleKeyDown(e: KeyboardEvent) {
@@ -319,11 +329,8 @@ export const ChatPanel = forwardRef<ChatPanelRef, ChatPanelProps>(function ChatP
           onNewConversation={handleNewChat}
           onShowShortcuts={() => setShowShortcuts(true)}
           onStop={stop}
-          models={models}
-          // Bound only once the conversation exists. `meta.model` is absent on
-          // conversations that predate the binding, which correctly leaves the
-          // control stating the model rather than claiming a pin there is none.
-          boundModel={conversationId ? conversationMeta?.model : undefined}
+          models={bindingUnknown ? [] : models}
+          boundModel={boundModel}
           defaultModel={newConversationModel}
           pendingModel={pendingModel}
           onPendingModelChange={setPendingModel}

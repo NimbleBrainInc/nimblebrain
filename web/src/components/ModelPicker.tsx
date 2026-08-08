@@ -256,7 +256,9 @@ export function ModelPicker({
                     id={optionId(m.id)}
                     type="button"
                     role="option"
-                    aria-selected={isCurrent}
+                    // Nothing is selected in the bound list: every row there
+                    // starts a new conversation rather than marking this one.
+                    aria-selected={isCurrent && !bound}
                     // Movement, not entry: filtering the list slides rows under
                     // a cursor that never moved, and `mouseenter` would let
                     // that steal the highlight from the keyboard.

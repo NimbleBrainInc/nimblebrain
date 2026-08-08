@@ -516,6 +516,30 @@ describe("chat-store viewer", () => {
     expect(store.getSnapshot("A").title).toBe("Library Paranoia Joke");
   });
 
+  it("learns the conversation's model from chat.start", async () => {
+    // A conversation created in this tab is never re-read through
+    // `loadConversation`, so this event is the only place its binding arrives.
+    // Without it the composer states the configured default over a
+    // conversation running something else.
+    const store = createChatStore();
+    await store.sendTurn("kA", { text: "a", model: "openai:gpt-5" });
+    latestStream().onEvent("chat.start", { conversationId: "A", model: "openai:gpt-5" }, 1);
+    expect(store.getSnapshot("A").meta?.model).toBe("openai:gpt-5");
+  });
+
+  it("takes the model the server pinned, not the one that was asked for", async () => {
+    // The pin outranks a request override on an existing conversation, so the
+    // event is authoritative and the client's own ask is not.
+    const store = createChatStore();
+    await store.sendTurn("kA", { text: "a", model: "openai:gpt-5" });
+    latestStream().onEvent(
+      "chat.start",
+      { conversationId: "A", model: "anthropic:claude-haiku-4-5" },
+      1,
+    );
+    expect(store.getSnapshot("A").meta?.model).toBe("anthropic:claude-haiku-4-5");
+  });
+
   it("setTitle is a no-op for a conversation with no slice in this tab", () => {
     const store = createChatStore();
     store.setTitle("conv_absent", "Whatever");
