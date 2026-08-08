@@ -116,8 +116,20 @@ export const SkillsLoadingLogInput = Type.Object({
   conversation_id: Type.Optional(
     Type.String({ description: "Filter to a single conversation id." }),
   ),
-  skill_id: Type.Optional(
-    Type.String({ description: "Filter to runs that loaded this specific skill id." }),
+  skill: Type.Optional(
+    Type.String({
+      description:
+        "Filter to one skill, by name or by stable id. Only prompt-composed " +
+        "skills carry an id, so name is the form that works across channels.",
+    }),
+  ),
+  loaded_by: Type.Optional(
+    StringEnum(["always", "tool_affinity", "trigger", "tool_use", "activation"] as const, {
+      description:
+        "Filter to one loading channel. `always`/`tool_affinity`/`trigger` composed into " +
+        "the system prompt; `tool_use` is a surface-once overlay firing on a matching tool " +
+        "call; `activation` is the model loading a Skill Catalog entry by name.",
+    }),
   ),
   since: Type.Optional(Type.String({ description: "ISO 8601 lower bound (inclusive)." })),
   until: Type.Optional(Type.String({ description: "ISO 8601 upper bound (inclusive)." })),

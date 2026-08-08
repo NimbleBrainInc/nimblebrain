@@ -9,7 +9,7 @@
  *   skills__list           — enumerate skills with scope/layer/status filters
  *   skills__read           — fetch one skill's body + manifest by id
  *   skills__active_for     — show which skills loaded for a conversation
- *   skills__loading_log    — replay skills.loaded events for analysis
+ *   skills__loading_log    — replay the skill-load ledger (every channel)
  *
  * Catalog activation (`nb__use_skill`) is defined here too — it shares this
  * file's resolution and delivery machinery — but registers on the system-tools
@@ -34,6 +34,11 @@ import { log } from "../../observability/log.ts";
 import { formatActivatedSkillBlock } from "../../prompt/compose.ts";
 import { getRequestContext } from "../../runtime/request-context.ts";
 import type { Runtime } from "../../runtime/runtime.ts";
+import {
+  projectSkillLoads,
+  type SkillLoadedBy,
+  type SkillLoadRow,
+} from "../../skills/load-ledger.ts";
 import { parseSkillFile, readSkillMtime } from "../../skills/loader.ts";
 import { resolveLoadingMechanism } from "../../skills/loading.ts";
 import { SKILL_NAME_PATTERN } from "../../skills/schemas/skill-manifest.ts";
@@ -105,10 +110,12 @@ const SKILLS_ACTIVE_FOR_DESCRIPTION =
   "enumerates the catalog regardless of load state.";
 
 const SKILLS_LOADING_LOG_DESCRIPTION =
-  "Replay `skills.loaded` events from conversation logs. Filter by `conversation_id`, `skill_id`, " +
-  "and a `since`/`until` ISO 8601 window. Returns one entry per run with timestamp, conversation id, " +
-  "run id, the skills loaded for that run, total tokens, and the active tool set at the time. " +
-  "Use to audit which skills fired across a window of activity, or to debug why a particular skill " +
+  "Replay the skill-load ledger from conversation logs — every channel a skill can reach the " +
+  "model through, not just the ones composed into the system prompt. Returns one row per skill " +
+  "load: timestamp, conversation id, run id, skill, `loaded_by` channel, tokens, and scope. " +
+  "Filter by `conversation_id`, `skill` (name or id), `loaded_by`, and a `since`/`until` ISO 8601 " +
+  "window. Use to audit which skills fired across a window of activity, to compare how often a " +
+  "skill is loaded by model activation versus by tool use, or to debug why a particular skill " +
   "did or did not load.";
 
 const SKILLS_CREATE_DESCRIPTION =
@@ -260,10 +267,10 @@ export function createSkillsSource(runtime: Runtime, eventSink: EventSink): McpS
       inputSchema: SkillsLoadingLogInput,
       handler: async (input: Record<string, unknown>): Promise<ToolResult> => {
         try {
-          const events = await loadingLog(runtime, input);
+          const loads = await loadingLog(runtime, input);
           return {
-            content: textContent(summarizeLog(events)),
-            structuredContent: { events },
+            content: textContent(summarizeLog(loads)),
+            structuredContent: { loads },
             isError: false,
           };
         } catch (err) {
@@ -1028,32 +1035,29 @@ async function activeForConversation(
   return [];
 }
 
-interface LoadingLogEntry {
-  ts: string;
-  conv_id: string;
-  run_id: string;
-  loaded: SkillsLoadedEvent["skills"];
-  total_tokens: number;
-}
-
 interface LoadingLogInput {
   conversation_id?: string;
-  skill_id?: string;
+  skill?: string;
+  loaded_by?: SkillLoadedBy;
   since?: string;
   until?: string;
 }
 
 /**
- * Replay `skills.loaded` events. When `conversation_id` is provided, scan just
- * that conversation (owner-gated, and resolvable from any workspace — the same
- * by-id read a deep link does); otherwise scan every conversation the caller
- * owns in the active workspace. The cross-conv scan reads each jsonl in turn —
- * intentionally simple for Phase 2; a derived index lands in Phase 6.
+ * Replay the skill-load ledger — every channel, not just `skills.loaded`.
+ *
+ * The projection lives in `skills/load-ledger.ts`; this function owns the
+ * access gate, the conversation set, and the filters. When `conversation_id`
+ * is provided, scan just that conversation (owner-gated, and resolvable from
+ * any workspace — the same by-id read a deep link does); otherwise scan every
+ * conversation the caller owns in the active workspace. The cross-conv scan
+ * reads each jsonl in turn — intentionally simple for Phase 2; a derived index
+ * lands in Phase 6.
  */
 async function loadingLog(
   runtime: Runtime,
   input: Record<string, unknown>,
-): Promise<LoadingLogEntry[]> {
+): Promise<SkillLoadRow[]> {
   const filter = input as LoadingLogInput;
 
   // Stage 1 single-owner: every conversation read here must belong to
@@ -1068,21 +1072,12 @@ async function loadingLog(
 
   const convIds = await resolveLoadingLogConvIds(runtime, filter, access);
 
-  const out: LoadingLogEntry[] = [];
+  const out: SkillLoadRow[] = [];
   for (const convId of convIds) {
     const events = await readConvEvents(runtime, convId);
     if (!events) continue;
-    for (const ev of events) {
-      if (ev.type !== "skills.loaded") continue;
-      const sl = ev as SkillsLoadedEvent;
-      if (!matchesLoadingLogFilter(sl, filter)) continue;
-      out.push({
-        ts: sl.ts,
-        conv_id: convId,
-        run_id: sl.runId,
-        loaded: sl.skills,
-        total_tokens: sl.totalTokens,
-      });
+    for (const row of projectSkillLoads(convId, events)) {
+      if (matchesLoadingLogFilter(row, filter)) out.push(row);
     }
   }
   // Sort by timestamp for stable ordering across conversations.
@@ -1107,11 +1102,19 @@ async function resolveLoadingLogConvIds(
   return listOwnedConversationIds(runtime, access);
 }
 
-/** True when a `skills.loaded` event passes the loading-log time/skill filters. */
-function matchesLoadingLogFilter(sl: SkillsLoadedEvent, filter: LoadingLogInput): boolean {
-  if (filter.since && sl.ts < filter.since) return false;
-  if (filter.until && sl.ts > filter.until) return false;
-  if (filter.skill_id && !sl.skills.some((s) => s.id === filter.skill_id)) return false;
+/**
+ * True when a ledger row passes the loading-log filters.
+ *
+ * `skill` matches either the stable id or the name: only `skills.loaded`
+ * records an id, so an id-only match would silently drop every `tool_use` and
+ * `activation` row — the two channels this tool exists to surface — and make a
+ * per-skill query look like the skill never loaded.
+ */
+function matchesLoadingLogFilter(row: SkillLoadRow, filter: LoadingLogInput): boolean {
+  if (filter.since && row.ts < filter.since) return false;
+  if (filter.until && row.ts > filter.until) return false;
+  if (filter.loaded_by && row.loaded_by !== filter.loaded_by) return false;
+  if (filter.skill && row.skill !== filter.skill && row.skill_id !== filter.skill) return false;
   return true;
 }
 
@@ -1263,10 +1266,20 @@ function summarizeActive(active: ActiveForEntry[]): string {
   return `${active.length} skill${active.length === 1 ? "" : "s"} loaded · ${totalTokens} tokens`;
 }
 
-function summarizeLog(events: LoadingLogEntry[]): string {
-  if (events.length === 0) return "No skills.loaded events match the filters.";
-  const conversations = new Set(events.map((e) => e.conv_id)).size;
-  return `${events.length} run${events.length === 1 ? "" : "s"} across ${conversations} conversation${conversations === 1 ? "" : "s"}`;
+function summarizeLog(rows: SkillLoadRow[]): string {
+  if (rows.length === 0) return "No skill loads match the filters.";
+  const conversations = new Set(rows.map((r) => r.conv_id)).size;
+  // Channel breakdown is the point of the ledger — a channel that never fires
+  // should be legible as a missing key, not inferred from a total.
+  const byChannel = new Map<SkillLoadedBy, number>();
+  for (const r of rows) byChannel.set(r.loaded_by, (byChannel.get(r.loaded_by) ?? 0) + 1);
+  const breakdown = [...byChannel.entries()]
+    .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+    .map(([channel, n]) => `${channel} ${n}`)
+    .join(", ");
+  const plural = rows.length === 1 ? "" : "s";
+  const convPlural = conversations === 1 ? "" : "s";
+  return `${rows.length} skill load${plural} across ${conversations} conversation${convPlural} (${breakdown})`;
 }
 
 // ── Mutation handlers ────────────────────────────────────────────────────
