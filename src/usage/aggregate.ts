@@ -569,7 +569,9 @@ export async function aggregateUsage(
   for (const record of records) accumulateRecord(record, sink);
 
   totals.conversations = sink.conversationIds.size;
-  totals.runs = sink.runIds.size;
+  // Both optional counts are omitted at zero rather than emitted as `0`, the
+  // same rule the breakdown rows follow — one convention for one payload.
+  if (sink.runIds.size > 0) totals.runs = sink.runIds.size;
   if (sink.unpricedCalls > 0) totals.unpricedCalls = sink.unpricedCalls;
   totals.cacheHitRate = computeCacheHitRate(totals.tokens);
 

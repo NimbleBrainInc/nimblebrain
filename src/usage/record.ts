@@ -40,9 +40,25 @@ import type { LlmCallOrigin, TokenUsage, UsageLedgerEntry } from "./types.ts";
  */
 let ledger: UsageLedger | undefined;
 
-/** Install the process ledger. Called once, by `Runtime.start`. */
+/** Install the process ledger. Called by `Runtime.start`. */
 export function setUsageLedger(next: UsageLedger | undefined): void {
   ledger = next;
+}
+
+/**
+ * Release `owned`, if it is still the installed ledger.
+ *
+ * A shutting-down runtime has to let go of its ledger — nothing should append
+ * into the work dir of a runtime that is gone. But the global holds one
+ * ledger and a process may hold two runtimes, so an unconditional release is
+ * how the earlier one silently disables the later one's writes: `recordLlmCall`
+ * would fall through to the Prometheus half and leave no durable line, an
+ * undercount of exactly the kind the ledger exists to remove. Ownership is the
+ * whole check — release when nobody has taken over, never take it from whoever
+ * has.
+ */
+export function clearUsageLedger(owned: UsageLedger): void {
+  if (ledger === owned) ledger = undefined;
 }
 
 /**

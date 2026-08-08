@@ -144,8 +144,8 @@ import { SharedSourceRef, type ToolRegistry } from "../tools/registry.ts";
 import { surfaceTools } from "../tools/surfacing.ts";
 import { createSystemTools } from "../tools/system-tools.ts";
 import type { ResourceData, Tool, ToolSource } from "../tools/types.ts";
-import { createProcessLedger } from "../usage/ledger.ts";
-import { recordLlmCall, setUsageLedger } from "../usage/record.ts";
+import { createProcessLedger, type UsageLedger } from "../usage/ledger.ts";
+import { clearUsageLedger, recordLlmCall, setUsageLedger } from "../usage/record.ts";
 import type { TokenUsage } from "../usage/types.ts";
 import { WorkspaceContext } from "../workspace/context.ts";
 import { ensureUserWorkspace } from "../workspace/provisioning.ts";
@@ -283,6 +283,8 @@ export class Runtime {
   private lifecycle: BundleLifecycleManager;
   private placementRegistry: PlacementRegistry;
   private telemetryManager: TelemetryManager;
+  /** This runtime's own ledger handle, so `shutdown` releases only its own. */
+  private usageLedger?: UsageLedger;
   private _features: ResolvedFeatures;
   private _internalToken: string;
   private _instanceConfig: InstanceConfig | null;
@@ -449,7 +451,8 @@ export class Runtime {
     // `usage/record.ts` rather than threaded to each call site, because the four
     // sites span the runtime, the adapters and the tools — handing each one a
     // ledger would put recording back in the callers' hands.
-    setUsageLedger(createProcessLedger(resolveWorkDir(config), config.usage?.ledger));
+    const usageLedger = createProcessLedger(resolveWorkDir(config), config.usage?.ledger);
+    setUsageLedger(usageLedger);
 
     const telemetryManager = TelemetryManager.create({
       workDir: resolveWorkDir(config),
@@ -800,6 +803,7 @@ export class Runtime {
     rtHolder.rt = rt;
     rt._getIdentity = getIdentity;
     rt._getWorkspaceId = getWorkspaceId;
+    rt.usageLedger = usageLedger;
 
     // Register the `nb` system source. Built as an in-process MCP server
     // — `createSystemTools` returns it already-started so it's ready to
@@ -4789,11 +4793,6 @@ export class Runtime {
   }
 
   async shutdown(): Promise<void> {
-    // Release the process ledger. It is module-level, so a second runtime in the
-    // same process would otherwise inherit this one's shard path and append a
-    // dead work dir's spend to it — which is what a test suite starting several
-    // runtimes actually does.
-    setUsageLedger(undefined);
     await this.telemetryManager.shutdown();
     // Abort every in-flight detached turn BEFORE removing the sources they
     // depend on. A detached turn's lifecycle is decoupled from any HTTP
@@ -4810,6 +4809,11 @@ export class Runtime {
         await reg.removeSource(name);
       }
     }
+    // Release the ledger last: a turn aborted just above can still be inside a
+    // `doStream()` that has already spent, and that call is recordable until it
+    // returns. Ownership-checked, so a sibling runtime that installed its own
+    // keeps it — see `clearUsageLedger`.
+    if (this.usageLedger) clearUsageLedger(this.usageLedger);
   }
 }
 

@@ -3,11 +3,10 @@
  *
  * Verifies the per-user / per-org scope model after usage moved off
  * workspace settings to the org/audit surface:
- *   - The tool walks every workspace's conversation files (across workspaces /
- *     owner partitions), so it sees a user's usage regardless of which workspace
- *     a conversation lived in.
- *   - `scope: "user"` (default) is gated to the caller's own conversations
- *     via the aggregator's ownerFilter — a member can't see peers' usage.
+ *   - The ledger is tenant-wide and carries `userId` on the line, so a user's
+ *     usage aggregates regardless of which workspace the spend happened in.
+ *   - `scope: "user"` (default) is gated to the caller's own spend via the
+ *     aggregator's ownerFilter — a member can't see peers' usage.
  *   - `scope: "org"` requires org admin/owner; a member is denied.
  *   - Dev mode (no identity provider) bypasses the gate and sees everything.
  *   - The response echoes the resolved `scope`.

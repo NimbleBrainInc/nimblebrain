@@ -98,7 +98,7 @@ function llmEvent(overrides: Partial<{
 // Tests
 // ---------------------------------------------------------------------------
 
-describe("usage-aggregator", () => {
+describe("aggregateUsage", () => {
   it("aggregates tokens from llm.response events even when metadata has zero tokens", async () => {
     const dir = makeTmpDir();
     // Metadata has zero tokens (the old bug: event-sourced store never rewrites line 1)
@@ -432,7 +432,7 @@ describe("usage-aggregator", () => {
 // By-user aggregation + owner filter (org/audit surface)
 // ---------------------------------------------------------------------------
 
-describe("usage-aggregator — by user", () => {
+describe("aggregateUsage — by user", () => {
   /** Two owners, three conversations: alice has two, bob has one. */
   function seedTwoOwners(dir: string): void {
     writeCalls(dir, { id: "alice-1", updatedAt: "2026-04-10T10:00:00Z", ownerId: "usr_alice" }, [

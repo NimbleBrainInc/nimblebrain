@@ -2,22 +2,23 @@
  * Usage platform source — provides usage analytics via the `usage__report`
  * tool.
  *
- * Delegates to the shared usage aggregator, which reads the durable ledger
- * directly. No indexes, no separate log files — conversations are the
- * source of truth.
+ * Delegates to the shared aggregator, which reads the durable ledger under
+ * `{workDir}/usage/` — the sole source for tenant-level spend. Nothing here
+ * scans storage: a line carries the identity, workspace and session it was
+ * spent under, so attribution is a field on the record rather than something
+ * derived from where a file happens to sit.
  *
- * Post-Stage-1, conversations are user-owned and live top-level
- * (`{workDir}/conversations/{convId}.jsonl`), each carrying `ownerId` on
- * line 1. Usage is therefore inherently per-user. Two scopes:
+ * Two scopes:
  *
- *   - `scope: "user"` (default) — only the caller's own conversations,
- *     enforced by an `ownerFilter` in the aggregator (below this tool's
- *     surface, so a malformed call can't widen it).
- *   - `scope: "org"` — every user's conversations, attributed by owner.
- *     Gated to org admin/owner via `ORG_ADMIN_ROLES`, matching the
- *     `instructions__write_instructions` / `manage_users` precedent. Dev
- *     mode (no identity provider) bypasses the gate and the owner filter,
- *     so local development sees all conversations.
+ *   - `scope: "user"` (default) — only the caller's own spend, enforced by an
+ *     `ownerFilter` in the aggregator (below this tool's surface, so a
+ *     malformed call can't widen it) that fails closed on a line with no
+ *     `userId`.
+ *   - `scope: "org"` — every user's spend, attributed by owner. Gated to org
+ *     admin/owner via `ORG_ADMIN_ROLES`, matching the
+ *     `instructions__write_instructions` / `manage_users` precedent. Dev mode
+ *     (no identity provider) bypasses the gate and the owner filter, so local
+ *     development sees everything.
  */
 
 import { textContent } from "../../engine/content-helpers.ts";
@@ -40,7 +41,7 @@ interface UsageReportArgs {
 
 const USAGE_REPORT_DESCRIPTION =
   "Get aggregated usage (tokens, cost, LLM calls) recorded at the point of spend. " +
-  'Defaults to `scope: "user"` — only your own conversations. ' +
+  'Defaults to `scope: "user"` — only your own spend. ' +
   '`scope: "org"` reports every user\'s usage and requires org admin/owner; ' +
   'pair it with `groupBy: "user"` for a per-user breakdown.';
 
