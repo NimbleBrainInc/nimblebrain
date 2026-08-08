@@ -2915,8 +2915,8 @@ function infraErrorMeta(): { _meta: Record<string, unknown> } {
  * trusts it to mark a skill as already-delivered (suppressing future overlay
  * guidance), so a bundle setting it could mute a curated overlay by name. It
  * is stripped from every source that crosses a real transport; only in-process
- * platform sources (`inProcess: true` — the `skills` source that legitimately
- * emits it) carry it through.
+ * sources (`inProcess: true` — the `nb` system source, whose `use_skill` tool
+ * legitimately emits it) carry it through.
  */
 function hostOwnedMetaStripped(
   meta: Record<string, unknown> | undefined,
