@@ -362,7 +362,12 @@ export function ModelPicker({
               id={listId}
               role="listbox"
               aria-label="Models"
-              className="max-h-64 overflow-y-auto p-1"
+              // No padding on the top edge: a sticky child pins to the
+              // scrollport, and rows scroll through any padding strip above it
+              // — which showed the previous group's last row as a sliver over
+              // the header. The grouped list gets its top spacing from the
+              // header's own padding instead.
+              className={`max-h-64 overflow-y-auto px-1 pb-1 ${grouped ? "" : "pt-1"}`}
             >
               {(grouped
                 ? groups
