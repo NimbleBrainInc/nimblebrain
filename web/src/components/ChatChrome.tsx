@@ -233,7 +233,8 @@ export function ChatChrome() {
     // backend resolves it and injects its visible state. `null` on
     // non-app routes → no appContext, same as before. useChat enriches
     // appContext with the app's latest visible state from the bridge.
-    (text: string, files?: File[]) => chat.sendMessage(text, focusedApp ?? undefined, files),
+    (text: string, files?: File[], model?: string) =>
+      chat.sendMessage(text, focusedApp ?? undefined, files, model),
     [chat, focusedApp],
   );
 

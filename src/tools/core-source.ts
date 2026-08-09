@@ -699,6 +699,12 @@ export function createCoreToolDefs(runtime: Runtime): InProcessTool[] {
               // a resolved value back turns a default nobody chose into an
               // override that outlives every future change to it.
               ...runtime.getOperatorConfig(),
+              // What THIS caller's next conversation will be created with —
+              // their preference when they have a permitted one, the
+              // configured default otherwise. Published because the precedence
+              // is the runtime's to decide: a client deriving it from the two
+              // fields below would be keeping a second copy of the rule.
+              newConversationModel: runtime.getDefaultModel(),
               resolved: {
                 // Untinted by the caller's own profile and workspace. This
                 // feeds the settings tab, which posts back on Save, and it

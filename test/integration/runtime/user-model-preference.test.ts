@@ -285,6 +285,7 @@ describe("the settings view is the configured one", () => {
         async () => ({
           config: (await tool.handler({})).structuredContent as {
             models: { default: string };
+            newConversationModel: string;
           },
           slots: runtime.getModelSlots(),
         }),
@@ -294,6 +295,11 @@ describe("the settings view is the configured one", () => {
       // the turn, and the untinted configured value on the settings surface.
       expect(slots.default).toBe(CHOSEN);
       expect(config.models.default).toBe(CONFIGURED_DEFAULT);
+      // And a third value in the same payload, deliberately unlike the second:
+      // the composer names what the next conversation will be pinned to, which
+      // is the caller's choice. Deriving it from `models.default` would name
+      // the wrong model to everyone who has a preference.
+      expect(config.newConversationModel).toBe(CHOSEN);
     } finally {
       await runtime.shutdown();
     }

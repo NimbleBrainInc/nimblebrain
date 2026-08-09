@@ -35,7 +35,10 @@ import {
   summarizeMessages,
 } from "../conversation/compaction.ts";
 import { extractOperatorTurns } from "../conversation/event-reconstructor.ts";
-import { EventSourcedConversationStore } from "../conversation/event-sourced-store.ts";
+import {
+  type ConversationMutation,
+  EventSourcedConversationStore,
+} from "../conversation/event-sourced-store.ts";
 import { type ConversationLocation, ConversationLocator } from "../conversation/locator.ts";
 import { workspaceConversationsDir } from "../conversation/paths.ts";
 import type {
@@ -297,6 +300,20 @@ class DelegateTracker implements EventSink {
   }
 }
 
+/**
+ * A single conversation that changed, as broadcast to conversation-cache
+ * subscribers.
+ *
+ * The store supplies id and path; the runtime adds the workspace, which it
+ * holds in the store factory's closure and the store itself never sees. A
+ * cache keys its entries on the workspace *directory*, so handing it the
+ * binding the store was built from keeps that derivation identical to the one
+ * a full directory walk would produce.
+ */
+export interface ConversationChange extends ConversationMutation {
+  wsId: string;
+}
+
 export class Runtime {
   private resolveModelFn: (modelString: string) => LanguageModelV3;
   private skillMatcher: SkillMatcher;
@@ -306,7 +323,7 @@ export class Runtime {
   private _conversationLocator?: ConversationLocator;
   private _fileLocator?: FileLocator;
   /** Subscribers (e.g. the conversations-tool index) notified on any conversation change. */
-  private _conversationsChangedListeners = new Set<() => void>();
+  private _conversationsChangedListeners = new Set<(change?: ConversationChange) => void>();
   private hooks: EngineHooks;
   private defaultEvents: EventSink;
   private lifecycle: BundleLifecycleManager;
@@ -1755,7 +1772,7 @@ export class Runtime {
 
     // Emit chat.start so the client knows the conversation ID immediately and
     // conversation list UIs can refresh.
-    this.emitChatStart(requestSink, conversation.id, !request.conversationId);
+    this.emitChatStart(requestSink, conversation.id, !request.conversationId, conversation.model);
 
     // Root span for the agent turn — the common chokepoint for both the HTTP
     // and CLI entry points. Opened inside runWithRequestContext so the verified
@@ -2450,16 +2467,32 @@ export class Runtime {
 
   /**
    * Emit the initial `chat.start` (so the client knows the conversation id
-   * immediately) and, for a new conversation, a conversations-list `data.changed`
-   * — both on the per-request sink only.
+   * and, when there is one, the model it is bound to) and, for a new
+   * conversation, a conversations-list `data.changed` — both on the
+   * per-request sink only.
+   *
+   * The binding rides along because this is the only point at which a client
+   * that just created a conversation can learn it: the pin is server state,
+   * and a client that instead remembered what it asked for would be reporting
+   * its own request rather than the answer.
+   *
+   * It is the conversation's own `model`, not the model this turn resolved to.
+   * They differ on a record that predates the binding, where the turn falls
+   * back to current config — announcing that would hand the client a binding
+   * the conversation does not have, and it would go stale the next time a slot
+   * or a preference moved. Absent means absent.
    */
   private emitChatStart(
     requestSink: EventSink | undefined,
     conversationId: string,
     isNewConversation: boolean,
+    model: string | undefined,
   ): void {
     if (!requestSink) return;
-    requestSink.emit({ type: "chat.start", data: { conversationId } });
+    requestSink.emit({
+      type: "chat.start",
+      data: { conversationId, ...(model ? { model } : {}) },
+    });
     // Notify conversation browser UIs that a new conversation exists.
     if (isNewConversation) {
       requestSink.emit({ type: "data.changed", data: { server: "conversations", tool: "list" } });
@@ -3515,34 +3548,38 @@ export class Runtime {
    * archive-delete). The conversations-tool index registers here so it refreshes
    * off the same invalidation signal the locator uses — one hook, both caches,
    * no divergent freshness. Returns an unsubscribe function.
+   *
+   * The listener receives the conversation that moved, or `undefined` when the
+   * change is not attributable to one — see `notifyConversationsChanged`.
    */
-  onConversationsChanged(listener: () => void): () => void {
+  onConversationsChanged(listener: (change?: ConversationChange) => void): () => void {
     this._conversationsChangedListeners.add(listener);
     return () => this._conversationsChangedListeners.delete(listener);
   }
 
   /**
-   * Invalidate every conversation cache. The single freshness chokepoint:
-   * workspace stores call this on create/delete/append (via `onMutate`), and a
-   * workspace archive-delete calls it (via the membership-change hook), so the
-   * locator and the conversations-tool index never serve a frozen summary or a
-   * ghost of a deleted workspace.
+   * Invalidate conversation caches. The single freshness chokepoint: workspace
+   * stores call this on create/delete/append (via `onMutate`), and a workspace
+   * archive-delete calls it (via the membership-change hook), so the locator and
+   * the conversations-tool index never serve a frozen summary or a ghost of a
+   * deleted workspace.
    *
-   * Scaling note: invalidation is tenant-wide and per-append, so under
-   * concurrent chat the *list* index (summaries) rarely stays warm — the next
-   * `listConversations` rebuilds by re-reading headers across workspaces. The hot
-   * per-message resume path does NOT pay this (locate is a readdir-only walk,
-   * see `ConversationLocator.locate`); only list views do. The recursive workspace
-   * layout rules out the old `fs.watch` debounce-coalescing, so before a
-   * high-conversation tenant feels it, the move is a per-workspace / incremental
-   * index (update one entry on the changed conv's workspace) rather than a full
-   * tenant-wide rebuild. Out of scope here; correctness over the dead watcher.
+   * `change` names the one conversation that moved, letting a listening cache
+   * re-read that entry instead of its whole corpus. **Omitting it means "assume
+   * anything may have changed"** and costs a full rebuild — correct for a
+   * workspace archive-delete, which retires an unbounded set of conversations
+   * at once and so cannot name one.
+   *
+   * The locator is invalidated wholesale either way: it memoises id → workspace
+   * bindings that a targeted re-read cannot repair, and its rebuild is a
+   * readdir-only walk that never opens a file, so it is not what made list
+   * views expensive.
    */
-  notifyConversationsChanged(): void {
+  notifyConversationsChanged(change?: ConversationChange): void {
     this._conversationLocator?.invalidate();
     for (const listener of this._conversationsChangedListeners) {
       try {
-        listener();
+        listener(change);
       } catch (err) {
         log.warn(`[runtime] conversations-changed listener threw: ${(err as Error).message}`);
       }
@@ -3560,7 +3597,7 @@ export class Runtime {
     return new EventSourcedConversationStore({
       dir: workspaceConversationsDir(resolveWorkDir(this.config), wsId, ownerId),
       logLevel: this.config.logging?.level ?? "normal",
-      onMutate: () => this.notifyConversationsChanged(),
+      onMutate: (change) => this.notifyConversationsChanged({ ...change, wsId }),
     });
   }
 
