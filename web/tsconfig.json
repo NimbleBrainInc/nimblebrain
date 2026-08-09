@@ -1,10 +1,10 @@
 {
   "compilerOptions": {
-    // The floor Vite already builds to. Its default `baseline-widely-available`
-    // target is Chrome 107 / Firefox 104 / Safari 16, so a lib older than the
-    // syntax and library surface those ship makes the type-checker refuse code
-    // the bundle would have run — `Object.hasOwn` (Safari 15.4) being the one
-    // that bites, since the linter rewrites to it.
+    // The browser floor `build.target` pins in `web/vite.config.ts`, restated
+    // here because the type-checker cannot read it. A lib below that target
+    // makes the type-checker refuse library calls the bundle ships
+    // untransformed — `Object.hasOwn` (Safari 15.4) being the one that bites,
+    // since the linter rewrites the own-key guards to it.
     "target": "ES2022",
     "useDefineForClassFields": true,
     "lib": ["ES2022", "DOM", "DOM.Iterable"],
