@@ -44,7 +44,7 @@
  */
 
 import { mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
-import { join, sep } from "node:path";
+import { basename, dirname, join, sep } from "node:path";
 import { parseConversationPath } from "../src/conversation/paths.ts";
 import { resolveRates } from "../src/usage/cost.ts";
 import {
@@ -55,6 +55,21 @@ import {
   usageRoot,
 } from "../src/usage/paths.ts";
 import type { TokenUsage, UsageLedgerEntry } from "../src/usage/types.ts";
+
+/**
+ * The layout moved out from under `isRunIndex`.
+ *
+ * Thrown rather than exited so the check is reachable from a test.
+ * `collectEntries` is exported, and a `process.exit` inside it kills the test
+ * runner mid-file — hiding this direction, and silently stopping later test
+ * files from executing at all. The library function reports; `main` exits.
+ */
+export class LayoutMovedError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "LayoutMovedError";
+  }
+}
 
 interface Args {
   workDir: string;
@@ -256,12 +271,9 @@ function fromAutomationRuns(path: string): UsageLedgerEntry[] {
  * to show.
  */
 export function isRunIndex(path: string): boolean {
-  const parts = path.split(sep);
-  return (
-    parts.length >= 3 &&
-    parts[parts.length - 1] === "index.jsonl" &&
-    parts[parts.length - 3] === "runs"
-  );
+  if (basename(path) !== "index.jsonl") return false;
+  // The grandparent, because the automation id sits between `runs/` and the file.
+  return basename(dirname(dirname(path))) === "runs";
 }
 
 /** Every replayable line under the given roots. */
@@ -288,8 +300,8 @@ export function collectEntries(roots: string[], skipAutomations: boolean): Usage
       (p) => p.includes(`${sep}automations${sep}`) && p.endsWith("index.jsonl") && !isRunIndex(p),
     );
     if (strayIndexes.length > 0) {
-      console.error(
-        `✗ ${strayIndexes.length} run index/indexes under ${root} are not at ` +
+      throw new LayoutMovedError(
+        `${strayIndexes.length} run index/indexes under ${root} are not at ` +
           `automations/<owner>/runs/<automation>/index.jsonl:\n` +
           strayIndexes
             .slice(0, 3)
@@ -298,7 +310,6 @@ export function collectEntries(roots: string[], skipAutomations: boolean): Usage
           `\n  The layout has moved. Replaying now would silently omit those runs, ` +
           `which is the spend this ledger exists to show.`,
       );
-      process.exit(1);
     }
     for (const path of runIndexes) entries.push(...fromAutomationRuns(path));
   }
@@ -384,7 +395,8 @@ async function main(): Promise<void> {
 // untested.
 if (import.meta.main) {
   main().catch((err: unknown) => {
-    console.error(err);
+    // A moved layout is an operator-facing condition, not a stack trace.
+    console.error(err instanceof LayoutMovedError ? `✗ ${err.message}` : err);
     process.exit(1);
   });
 }

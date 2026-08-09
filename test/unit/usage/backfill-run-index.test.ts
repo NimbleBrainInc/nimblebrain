@@ -23,7 +23,12 @@ import {
   automationRunIndexPath,
   automationRunsDir,
 } from "../../../src/bundles/automations/src/paths.ts";
-import { collectEntries, isRunIndex, walk } from "../../../scripts/backfill-usage-ledger.ts";
+import {
+  collectEntries,
+  isRunIndex,
+  LayoutMovedError,
+  walk,
+} from "../../../scripts/backfill-usage-ledger.ts";
 
 const OWNER = "user_01ABC";
 const WS = "ws_test0001";
@@ -114,6 +119,32 @@ describe("the guard fires only on evidence the layout moved", () => {
     expect(entries[0]?.origin).toBe("task");
     // No model on a run record, so the line is unpriced rather than free.
     expect(entries[0]?.rates).toBeUndefined();
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  test("a run index at a moved path stops the run", () => {
+    // The direction that was never pinned. Every other guard test asserts the
+    // quiet case, so deleting the guard outright left them all green — the
+    // check has to be reachable in-process, which is why it throws rather than
+    // exiting.
+    const root = tmp();
+    const moved = join(root, "workspaces", WS, "automations", OWNER, "executions", "a");
+    mkdirSync(moved, { recursive: true });
+    writeFileSync(join(moved, "index.jsonl"), '{"id":"r","ts":"2026-06-01T10:00:00Z"}\n');
+
+    expect(() => collectEntries([join(root, "workspaces")], false)).toThrow(LayoutMovedError);
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  test("the original wrong shape also stops the run", () => {
+    // runs/index.jsonl with no automation id — the bug this PR fixes. If the
+    // predicate ever regresses to it, the guard is the second line of defence.
+    const root = tmp();
+    const dir = join(root, "workspaces", WS, "automations", OWNER, "runs");
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, "index.jsonl"), '{"id":"r","ts":"2026-06-01T10:00:00Z"}\n');
+
+    expect(() => collectEntries([join(root, "workspaces")], false)).toThrow(LayoutMovedError);
     rmSync(root, { recursive: true, force: true });
   });
 
