@@ -54,6 +54,12 @@ export async function handleUpdate(
   await writeFile(tmpPath, lines.map((l) => `${l}\n`).join(""));
   await rename(tmpPath, filePath);
 
+  // This handler writes the file itself rather than going through the store, so
+  // the store's `onMutate` never fires for it. The index refreshes only what is
+  // named, so without this the renamed title is stale until something else
+  // names this conversation.
+  index.invalidate({ id: entry.id, filePath, wsId: entry.workspaceId });
+
   // Count messages (lines 2+)
   const messageCount = lines.length - 1;
 

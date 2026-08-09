@@ -7,8 +7,6 @@ const ALL_NAMES = [
 	"conversations",
 	"app-nav",
 	"settings-link",
-	"usage-bar",
-	"usage-dashboard",
 	"settings",
 	"model-selector",
 ] as const;
@@ -49,13 +47,6 @@ describe("buildCoreResourceMap", () => {
 		const html = get("conversations")!;
 		expect(html).toContain('id="search"');
 		expect(html).toContain("Search conversations");
-	});
-
-	it("usage-dashboard includes period selector", () => {
-		const html = get("usage-dashboard")!;
-		expect(html).toContain('id="period"');
-		expect(html).toContain("Last 7 days");
-		expect(html).toContain("This month");
 	});
 
 	it("all resources are self-contained (no external script/link tags)", () => {

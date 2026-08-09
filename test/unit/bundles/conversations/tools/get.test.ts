@@ -81,7 +81,6 @@ describe("conversations__get", () => {
 	});
 
 	afterEach(() => {
-		index.stopWatching();
 		rmSync(dir, { recursive: true, force: true });
 	});
 

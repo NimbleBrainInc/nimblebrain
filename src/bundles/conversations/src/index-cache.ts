@@ -1,22 +1,25 @@
 /**
  * In-memory index of conversation metadata for fast listing, searching, and filtering.
  *
- * Built on startup by scanning all JSONL file headers, and kept fresh by an
- * external `invalidate()` signal followed by a `refresh()` full rebuild on the
- * next read. The runtime drives that from its conversation-change hook (every
- * write + workspace delete). A watcher cannot do the job: the index spans the
- * recursive workspace layout and a root `fs.watch` can't see writes nested
- * under each workspace's own `conversations/<ownerId>/` partition.
+ * Built on startup by scanning all JSONL file headers, then kept fresh by the
+ * runtime's conversation-change hook: `invalidate()` records what moved and
+ * `refresh()` applies it on the next read. All IO stays on the read path, so a
+ * write never pays for a cache it may not be the one to use.
  *
- * `startWatching` / `flushPending` / `processPendingFiles` are the flat
- * single-directory watch path. Nothing calls them — removing or scoping them is
- * tracked in #899.
+ * **Two grades of staleness, because the signal has two grades of precision.** A
+ * change that names its conversation costs one header re-read. A change that
+ * cannot name one — a workspace archive-delete retires an unbounded set at once
+ * — falls back to the full rebuild. Appends are the hot case and they always
+ * name one, which is the difference between re-reading a file and re-reading
+ * the corpus on every message.
+ *
+ * A watcher cannot supply either signal: the index spans the recursive
+ * workspace layout and a root `fs.watch` can't see writes nested under each
+ * workspace's own `conversations/<ownerId>/` partition.
  *
  * Types are defined locally — no imports from the runtime codebase.
  */
 
-import { type FSWatcher, watch } from "node:fs";
-import { basename, join } from "node:path";
 import { listConversationFiles, readConversationHeader } from "./jsonl-reader.ts";
 
 // ---------------------------------------------------------------------------
@@ -49,6 +52,23 @@ export interface IndexEntry {
    * flat layout, which is under no workspace and matches no scoped read.
    */
   workspaceId: string | null;
+}
+
+/**
+ * One conversation the runtime reports as changed.
+ *
+ * `filePath` and `wsId` come from the store that wrote it rather than being
+ * rebuilt from `id` here — this index has no way to resolve an id to a path
+ * without the directory walk the whole mechanism exists to avoid, and a second
+ * derivation could disagree with the first.
+ *
+ * Structurally compatible with the runtime's `ConversationChange` and declared
+ * separately on purpose: this bundle imports no runtime types.
+ */
+export interface ConversationChange {
+  id: string;
+  filePath: string;
+  wsId: string | null;
 }
 
 /**
@@ -96,22 +116,28 @@ export interface ListResult {
 
 export class ConversationIndex {
   private entries: Map<string, IndexEntry> = new Map();
-  /** Maps filename (e.g. "conv_abc.jsonl") to conversation ID for fast fs.watch lookups. */
-  private fileToId: Map<string, string> = new Map();
   private dir: string | null = null;
-  /** The in-flight `build()`, so concurrent readers join it instead of racing it. */
-  private rebuilding: Promise<void> | null = null;
-  private watcher: FSWatcher | null = null;
-  private debounceTimer: ReturnType<typeof setTimeout> | null = null;
-  private pendingFiles: Set<string> = new Set();
-  /** Set when the index may be stale; the next read does a full rebuild. */
+  /**
+   * The in-flight mutation — a full `build()` or an incremental apply — so
+   * concurrent readers join it instead of racing it. Both kinds go through this
+   * field: an incremental apply awaits a header read, and a rebuild landing
+   * inside that window would clear the map the apply is about to write into.
+   */
+  private updating: Promise<void> | null = null;
+  /**
+   * Conversations whose header must be re-read, keyed by id so a burst of
+   * appends to one conversation collapses to a single re-read. This is the
+   * coalescing the old watch debounce was reaching for, on a signal that
+   * actually fires under the workspace layout.
+   */
+  private pending: Map<string, ConversationChange> = new Map();
+  /** Set when the change could not name a conversation; the next read rebuilds in full. */
   private dirty = false;
 
   /** Build index by scanning all .jsonl files in dir. Reads only headers (line 1 + preview). */
   async build(dir: string): Promise<void> {
     this.dir = dir;
     this.entries.clear();
-    this.fileToId.clear();
 
     for (const { filePath, wsId } of listConversationFiles(dir)) {
       await this.indexFile(filePath, wsId);
@@ -119,107 +145,70 @@ export class ConversationIndex {
   }
 
   /**
-   * Mark the index stale. The next `refresh()` rebuilds from disk. Used when an
-   * external signal (the runtime's conversation-change hook) reports a write or
-   * a workspace delete the index can't observe itself — the recursive workspace
-   * layout defeats `fs.watch`, so the index cannot rely on the watcher for
-   * updates or deletions.
+   * Record that the index may be stale. Does no IO — the work happens on the
+   * next `refresh()`, so a write is never billed for a read it may not make.
+   *
+   * With a `change`, only that conversation is re-read. Without one, the whole
+   * index is: the caller is saying it cannot attribute the change, which is
+   * true of a workspace archive-delete and would be a correctness bug to treat
+   * as "nothing moved".
    */
-  invalidate(): void {
-    this.dirty = true;
+  invalidate(change?: ConversationChange): void {
+    if (!change) {
+      this.dirty = true;
+      return;
+    }
+    this.pending.set(change.id, change);
   }
 
   /**
    * Bring the index up to date on the read path. A no-op when clean (O(1)); a
-   * full rebuild when `invalidate()` flagged it stale — re-reading every header
-   * (so summary changes from appends land) and dropping entries whose file is
-   * gone (so deletes don't ghost). Unlike `flushPending`, this is not add-only.
+   * re-read of the named conversations when appends/creates/deletes are
+   * pending; a full rebuild when something could not name what it changed.
+   *
+   * A full rebuild subsumes any pending targeted changes, so it discards them
+   * rather than doing the same reads twice.
    */
   async refresh(): Promise<void> {
     if (this.dir === null) return;
 
-    // Never answer against an index mid-rebuild: `build()` clears the map and
-    // then repopulates it, so a reader arriving inside that window would see a
-    // partial one. Join whatever is in flight first. This is the only place the
-    // rebuild and `dirty` are both visible, which is why the coalescing lives
-    // here rather than at a caller.
-    while (this.rebuilding) await this.rebuilding;
-    if (!this.dirty) return;
+    // Never answer against an index mid-update: `build()` clears the map and
+    // then repopulates it, and an incremental apply writes into it across an
+    // await. A reader arriving inside either window would see a partial map.
+    // Join whatever is in flight first. This is the only place the in-flight
+    // update and the staleness state are both visible, which is why the
+    // coalescing lives here rather than at a caller.
+    while (this.updating) await this.updating;
 
-    // Clear BEFORE the rebuild. `build()` lists the directory up front, so a
-    // write landing mid-rebuild cannot be in this pass — but its `invalidate()`
-    // must survive it. Clearing afterwards would let the rebuild that never saw
-    // the write erase the flag raised for it, and that conversation would stay
-    // missing until an unrelated later write re-dirtied the index.
-    this.dirty = false;
-    const dir = this.dir;
-    this.rebuilding = this.build(dir).finally(() => {
-      this.rebuilding = null;
+    // Clear BEFORE the work, in both branches. `build()` lists the directory up
+    // front and an apply snapshots its changes, so a write landing mid-update
+    // cannot be in this pass — but its `invalidate()` must survive it. Clearing
+    // afterwards would let an update that never saw the write erase the signal
+    // raised for it, and that conversation would stay stale until an unrelated
+    // later write re-flagged the index.
+    if (this.dirty) {
+      this.dirty = false;
+      this.pending.clear();
+      const dir = this.dir;
+      this.updating = this.build(dir).finally(() => {
+        this.updating = null;
+      });
+      await this.updating;
+      return;
+    }
+
+    if (this.pending.size === 0) return;
+    const changes = [...this.pending.values()];
+    this.pending.clear();
+    this.updating = this.applyChanges(changes).finally(() => {
+      this.updating = null;
     });
-    await this.rebuilding;
+    await this.updating;
 
-    // Deliberately does NOT re-check `dirty` and rebuild again. The contract is
-    // an index at least as fresh as this call's entry, not the newest possible
-    // one — `invalidate()` fires on every appended event line tenant-wide, so
-    // "clean after a rebuild" is a state a busy tenant never reaches and
-    // chasing it does not return. A write that lands during this rebuild leaves
-    // `dirty` set for the next reader.
-  }
-
-  /** Start fs.watch on dir. On change, debounce 500ms, then re-read affected file header. */
-  startWatching(dir: string): void {
-    this.stopWatching();
-    this.dir = dir;
-
-    this.watcher = watch(dir, (_eventType, filename) => {
-      if (!filename?.endsWith(".jsonl")) return;
-
-      this.pendingFiles.add(filename);
-
-      if (this.debounceTimer) {
-        clearTimeout(this.debounceTimer);
-      }
-
-      this.debounceTimer = setTimeout(() => {
-        this.processPendingFiles();
-      }, 500);
-    });
-  }
-
-  /**
-   * Bring the index up to date NOW, bypassing the fs.watch debounce.
-   *
-   * Processes any queued watch events immediately, then scans the directory
-   * for files not yet indexed (a just-created conversation whose watch event
-   * hasn't fired or debounced yet). Called on the read path so a
-   * `data.changed`-driven list refresh reflects a brand-new conversation
-   * deterministically, instead of racing the 500ms watch debounce.
-   */
-  async flushPending(): Promise<void> {
-    if (this.debounceTimer) {
-      clearTimeout(this.debounceTimer);
-      this.debounceTimer = null;
-    }
-    await this.processPendingFiles();
-    if (!this.dir) return;
-    for (const { filePath, wsId } of listConversationFiles(this.dir)) {
-      if (!this.fileToId.has(basename(filePath))) {
-        await this.indexFile(filePath, wsId);
-      }
-    }
-  }
-
-  /** Stop watching. */
-  stopWatching(): void {
-    if (this.watcher) {
-      this.watcher.close();
-      this.watcher = null;
-    }
-    if (this.debounceTimer) {
-      clearTimeout(this.debounceTimer);
-      this.debounceTimer = null;
-    }
-    this.pendingFiles.clear();
+    // Deliberately does NOT loop until clean. The contract is an index at least
+    // as fresh as this call's entry, not the newest possible one — on a busy
+    // tenant a write can always land during the update, and chasing it does not
+    // return. Whatever arrives leaves its signal set for the next reader.
   }
 
   /** List conversations with pagination, sorting, date filtering, search. */
@@ -306,9 +295,17 @@ export class ConversationIndex {
   // Internal helpers
   // ---------------------------------------------------------------------------
 
-  private async indexFile(filePath: string, wsId: string | null): Promise<void> {
+  /**
+   * Read one conversation's header into the index.
+   *
+   * Returns false when the header does not read — the file is gone, or was
+   * caught mid-write. `build()` ignores that (it cleared the map first, so an
+   * unreadable file is simply absent); an incremental apply acts on it, because
+   * nothing else will drop the entry.
+   */
+  private async indexFile(filePath: string, wsId: string | null): Promise<boolean> {
     const header = await readConversationHeader(filePath);
-    if (!header) return;
+    if (!header) return false;
 
     const entry: IndexEntry = {
       id: header.meta.id,
@@ -326,52 +323,20 @@ export class ConversationIndex {
     };
 
     this.entries.set(entry.id, entry);
-    this.fileToId.set(basename(filePath), entry.id);
+    return true;
   }
 
-  private async processPendingFiles(): Promise<void> {
-    if (!this.dir) return;
-
-    const files = [...this.pendingFiles];
-    this.pendingFiles.clear();
-
-    for (const filename of files) {
-      const filePath = join(this.dir, filename);
-
-      // Try to read the header. If the file was deleted, readConversationHeader returns null.
-      const header = await readConversationHeader(filePath);
-
-      if (header) {
-        // File exists — update/add entry
-        const entry: IndexEntry = {
-          id: header.meta.id,
-          title: header.meta.title,
-          createdAt: header.meta.createdAt,
-          updatedAt: header.meta.updatedAt,
-          messageCount: header.messageCount,
-          totalInputTokens: header.meta.totalInputTokens,
-          totalOutputTokens: header.meta.totalOutputTokens,
-          lastModel: header.meta.lastModel,
-          preview: header.preview,
-          filePath,
-          ownerId: header.meta.ownerId ?? null,
-          // The fs.watch path resolves `join(this.dir, filename)`, so it only
-          // ever fires for the flat single-directory layout — which is under
-          // no workspace. The recursive workspace layout defeats the watcher
-          // and goes through `invalidate()` → `refresh()` → `build()`, where
-          // the walk supplies the directory's workspace.
-          workspaceId: null,
-        };
-        this.entries.set(entry.id, entry);
-        this.fileToId.set(filename, entry.id);
-      } else {
-        // File was deleted or became unreadable — remove from index
-        const id = this.fileToId.get(filename);
-        if (id) {
-          this.entries.delete(id);
-          this.fileToId.delete(filename);
-        }
-      }
+  /**
+   * Re-read the named conversations. One header read each, no directory walk.
+   *
+   * A change whose header no longer reads is a delete, so the entry goes. The
+   * id is the store's, not the header's — a deleted file has no header to read
+   * one from, which is exactly why the change carries it.
+   */
+  private async applyChanges(changes: ConversationChange[]): Promise<void> {
+    for (const { id, filePath, wsId } of changes) {
+      const indexed = await this.indexFile(filePath, wsId);
+      if (!indexed) this.entries.delete(id);
     }
   }
 }

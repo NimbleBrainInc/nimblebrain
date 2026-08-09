@@ -187,6 +187,12 @@ export async function handleFork(
   await writeFile(tmpPath, lines.map((l) => `${l}\n`).join(""));
   await rename(tmpPath, newPath);
 
+  // As in `handleUpdate`: this handler writes the file itself, so the store's
+  // `onMutate` never fires. The fork is a conversation the index has never seen,
+  // so unannounced it is not stale — it is absent, and stays absent. The
+  // workspace comes from the source, which the copy is written alongside.
+  index.invalidate({ id: newId, filePath: newPath, wsId: entry.workspaceId });
+
   const preview = derivePreview(messagesToCopy);
 
   return {

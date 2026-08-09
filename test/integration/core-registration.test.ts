@@ -99,26 +99,11 @@ describe("GET /v1/apps/nb/resources/:path", () => {
 		expect(html).toContain("postMessage");
 	});
 
-	it("returns HTML for usage-dashboard", async () => {
-		const res = await fetch(
-			`${baseUrl}/v1/apps/nb/resources/usage-dashboard`,
-			{ headers: { "X-Workspace-Id": TEST_WORKSPACE_ID } },
-		);
-		expect(res.status).toBe(200);
-		expect(res.headers.get("Content-Type")).toMatch(/application\/json/);
-		const envelope = await res.json();
-		const html = extractHtml(envelope);
-		expect(html).toContain("<!DOCTYPE html>");
-		expect(html).toContain("Usage");
-	});
-
-	it("returns HTML for all 7 core resources", async () => {
+	it("returns HTML for all 5 core resources", async () => {
 		const resources = [
 			"conversations",
 			"app-nav",
 			"settings-link",
-			"usage-bar",
-			"usage-dashboard",
 			"settings",
 			"model-selector",
 		];

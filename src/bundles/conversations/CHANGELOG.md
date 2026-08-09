@@ -1,5 +1,29 @@
 # Changelog
 
+## 0.7.0
+
+### Changed
+
+- **`ConversationIndex.invalidate()` takes the conversation that changed.**
+  `invalidate({ id, filePath, wsId })` re-reads that one header on the next
+  `refresh()`; the no-argument call still marks the whole index stale and
+  rebuilds, which is what a workspace archive-delete needs since it retires an
+  unbounded set at once. Repeat changes to one conversation coalesce, and all IO
+  stays on the read path.
+- **Every write to a conversation file must announce it.** The index refreshes
+  only what a change names, so a write that stays silent leaves an entry no
+  unrelated traffic will repair. `update` and `fork` write their files directly
+  rather than through the store, so they now invalidate for themselves.
+
+### Removed
+
+- **`startWatching`, `stopWatching`, `flushPending`, and the `fs.watch` path
+  behind them.** They resolved a filename against a single flat directory, so
+  they could not see writes nested under `<wsId>/conversations/<ownerId>/` —
+  which is why the invalidate/refresh mechanism exists. Nothing outside tests
+  called them, and a dead incremental path beside a live one leaves the next
+  reader guessing which is which.
+
 ## 0.6.0
 
 ### Changed

@@ -49,7 +49,6 @@ beforeEach(async () => {
 });
 
 afterEach(() => {
-	index.stopWatching();
 	rmSync(TMP_DIR, { recursive: true, force: true });
 });
 
