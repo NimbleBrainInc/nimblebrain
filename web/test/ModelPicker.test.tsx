@@ -268,6 +268,21 @@ describe("once the conversation is bound", () => {
     expect(onSelect).not.toHaveBeenCalled();
   });
 
+  it("names a pin that points at a snapshot the list collapsed", () => {
+    // Operator config can set a dated snapshot, and this control produced them
+    // itself before the list started collapsing them — so a real pin can name
+    // an id no row carries. Its undated row is the same model.
+    const view = mount(
+      <ModelPicker
+        models={MODELS}
+        selected={undefined}
+        bound="anthropic:claude-haiku-4-5-20251001"
+        onSelect={() => {}}
+      />,
+    );
+    expect(view.getByRole("button", { name: /Haiku 4\.5/ })).toBeDefined();
+  });
+
   it("names a model the deployment no longer offers, rather than mislabelling it", () => {
     // A narrowed policy or a retired model leaves a pin with no catalog entry.
     const view = mount(

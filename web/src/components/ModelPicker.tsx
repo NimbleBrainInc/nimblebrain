@@ -135,13 +135,25 @@ export function ModelPicker({
   const optionId = (modelId: string) => `${listId}-${modelId.replace(/[^\w-]/g, "_")}`;
 
   const current = bound ?? selected;
-  const label = useMemo(() => {
-    const hit = models.find((m) => m.id === current);
-    // A conversation can be bound to something the deployment no longer
-    // offers — a narrowed policy, a retired model. Show what it is rather
-    // than falling back to a name that would be wrong.
-    return hit ? shortModelName(hit.name) : (current ?? "Model");
+  /**
+   * The row that stands for `current`.
+   *
+   * A pin can name a dated snapshot, because operator config can set one and
+   * because this control produced them itself before the list collapsed them.
+   * That snapshot's row is its undated one — the same model — so the lookup
+   * follows the collapse rather than reporting a model it has no name for.
+   */
+  const currentRow = useMemo(() => {
+    if (!current) return undefined;
+    return (
+      models.find((m) => m.id === current) ??
+      models.find((m) => m.id === current.replace(DATED_SNAPSHOT, ""))
+    );
   }, [models, current]);
+  // Still nothing when the deployment genuinely no longer offers it — a
+  // narrowed policy, a retired model. Show what it is rather than a name that
+  // would be wrong.
+  const label = currentRow ? shortModelName(currentRow.name) : (current ?? "Model");
 
   const hits = useMemo(() => models.filter((m) => matches(m, query)), [models, query]);
 
@@ -263,7 +275,7 @@ export function ModelPicker({
               className="max-h-64 overflow-y-auto p-1"
             >
               {hits.map((m, i) => {
-                const isCurrent = m.id === current;
+                const isCurrent = m.id === currentRow?.id;
                 return (
                   <button
                     key={m.id}
