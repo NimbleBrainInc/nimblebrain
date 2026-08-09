@@ -1,8 +1,13 @@
 {
   "compilerOptions": {
-    "target": "ES2020",
+    // The floor Vite already builds to. Its default `baseline-widely-available`
+    // target is Chrome 107 / Firefox 104 / Safari 16, so a lib older than the
+    // syntax and library surface those ship makes the type-checker refuse code
+    // the bundle would have run — `Object.hasOwn` (Safari 15.4) being the one
+    // that bites, since the linter rewrites to it.
+    "target": "ES2022",
     "useDefineForClassFields": true,
-    "lib": ["ES2020", "DOM", "DOM.Iterable"],
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
     "module": "ESNext",
     "skipLibCheck": true,
 
