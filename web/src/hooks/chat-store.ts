@@ -16,6 +16,7 @@ import type {
   AppContext,
   ChatRequest,
   ChatResult,
+  ChatStreamEventMap,
   LedgerSkill,
   LlmDoneEvent,
   ReasoningDeltaEvent,
@@ -142,6 +143,12 @@ export interface ChatMessage {
 /** Conversation-level metadata (Stage 1: single-owner only). */
 export interface LoadedConversationMeta {
   ownerId?: string;
+  /**
+   * The model this conversation is bound to, from `conversations__get`. Fixed
+   * at create and never changes, so the composer states it rather than
+   * offering it. Absent on conversations that predate the binding.
+   */
+  model?: string;
   /**
    * The workspace this conversation is sealed to (from the server's
    * `conversations__get` metadata). The panel uses it to avoid resuming a
@@ -387,7 +394,13 @@ function buildChatRequest(slice: ConversationSlice, params: StartTurnParams): Ch
 
 /** A loaded conversation: server metadata plus its reconstructed messages. */
 interface LoadedConversation {
-  metadata: { id: string; ownerId?: string; workspaceId?: string; title?: string | null };
+  metadata: {
+    id: string;
+    ownerId?: string;
+    workspaceId?: string;
+    title?: string | null;
+    model?: string;
+  };
   messages: ChatMessage[];
 }
 
@@ -890,10 +903,17 @@ export function createChatStore(): ChatStore {
   }
 
   function handleChatStart(slice: ConversationSlice, data: unknown): void {
-    const evt = data as { conversationId: string };
+    const evt = data as ChatStreamEventMap["chat.start"];
+    // The binding arrives with the id because a just-created conversation is
+    // never loaded, so `loadConversation` would never supply it — and the
+    // composer has to state the model the server pinned, not the one asked for.
+    const learnedModel = evt.model && slice.meta?.model !== evt.model;
+    if (learnedModel) slice.meta = { ...slice.meta, model: evt.model };
     if (evt.conversationId && slice.conversationId !== evt.conversationId) {
       slice.conversationId = evt.conversationId;
       aliasSlice(slice, evt.conversationId);
+      commit(slice);
+    } else if (learnedModel) {
       commit(slice);
     }
   }
@@ -1234,6 +1254,7 @@ export function createChatStore(): ChatStore {
       current.meta = {
         ownerId: parsed.metadata.ownerId,
         workspaceId: parsed.metadata.workspaceId,
+        model: parsed.metadata.model,
       };
       current.title = parsed.metadata.title ?? null;
       current.messages = parsed.messages ?? [];

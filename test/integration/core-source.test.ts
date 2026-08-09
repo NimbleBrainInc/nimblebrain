@@ -1088,14 +1088,26 @@ describe("Core Source", () => {
 			// nothing, hits Save. Anything that lands on disk here is a default
 			// silently converted into an override that outlives future changes
 			// to that default.
+			//
+			// The writable subset is derived from the writer's own key list
+			// rather than by subtracting the display-only fields by name: that
+			// subtraction goes stale every time the payload gains a field to
+			// render, and a stale one silently stops posting anything at all.
 			const { runtime, source, overridePath } = await startBare("noop-save");
 			try {
 				const cfg = (await source.execute("get_config", {}))
 					.structuredContent as Record<string, unknown>;
-				const { resolved, configuredProviders, availableModels, preferences, ...operatorSet } =
-					cfg;
+				const writable = (OVERRIDE_WRITABLE_KEYS as readonly string[]).filter((k) => k in cfg);
 
-				const result = await source.execute("set_model_config", operatorSet);
+				// The guarantee is structural, which is why the round-trip is
+				// safe: a setting nobody chose is absent from the payload, so
+				// there is nothing for a naive client to hand back.
+				expect(writable).toEqual([]);
+
+				const result = await source.execute(
+					"set_model_config",
+					Object.fromEntries(writable.map((k) => [k, cfg[k]])),
+				);
 				expect(result.isError).toBe(false);
 
 				expect(readOverride(overridePath)).toEqual({});

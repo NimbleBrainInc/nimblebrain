@@ -31,6 +31,39 @@ function wrapperWithId(id: string) {
 // Tests
 // --------------------------------------------------------------------------
 
+/**
+ * The bootstrap is the route that runs: `fetchConfig` fires only when there is
+ * no `initialConfig`, and `App` always supplies one. A field the chat surface
+ * reads therefore has to survive this seam, or it is `undefined` forever —
+ * which is how the composer's model control shipped rendering nothing while
+ * every test that mounted the control directly stayed green.
+ */
+describe("config seeded from the bootstrap", () => {
+	/** Exactly the shape `App` builds from `/v1/bootstrap`. */
+	const BOOTSTRAP = {
+		configuredProviders: ["anthropic"],
+		newConversationModel: "anthropic:claude-opus-4-6",
+		availableModels: {
+			anthropic: [{ id: "claude-opus-4-6", name: "Claude Opus 4.6" }],
+		},
+		preferences: { displayName: "Dev" },
+	};
+
+	function bootstrapWrapper({ children }: { children: ReactNode }) {
+		return (
+			<MemoryRouter>
+				<ChatProvider initialConfig={BOOTSTRAP}>{children}</ChatProvider>
+			</MemoryRouter>
+		);
+	}
+
+	it("carries the fields the composer needs, without a config round-trip", () => {
+		const { result } = renderHook(() => useChatConfigContext(), { wrapper: bootstrapWrapper });
+		expect(result.current.newConversationModel).toBe("anthropic:claude-opus-4-6");
+		expect(result.current.availableModels?.anthropic?.[0]?.id).toBe("claude-opus-4-6");
+	});
+});
+
 describe("ChatContext", () => {
 	it("provides all useChat return values", () => {
 		const { result } = renderHook(() => useChatContext(), { wrapper });
