@@ -391,6 +391,13 @@ export class Runtime {
    * resources, parsed + truncated). An empty array is the common "this server
    * publishes no skills" case — without caching it, `loadBundleSkills` would
    * re-list + re-read every non-skill source on every chat.
+   *
+   * Keyed by **workspace AND server name**, because a server name identifies a
+   * source only within one workspace: a bundle installed in N workspaces is N
+   * distinct instances under one name. A name-only key lets one workspace's
+   * instance answer for all of them, so a transiently unreachable copy blanks
+   * the skill everywhere — and blanking it removes the skill from the catalog
+   * and the surface-once candidates together, since both read this.
    */
   private skillResourceCache = new Map<string, { skills: DiscoveredSkill[]; fetchedAt: number }>();
   private static readonly SKILL_CACHE_TTL = 5 * 60 * 1000; // 5 minutes
@@ -2399,7 +2406,7 @@ export class Runtime {
       // multi-skill server, only this primary reaches the focused-app briefing:
       // loadBundleSkills skips the entered source (dedup), so its other skills don't
       // surface via Layer-3 while entered. (No server publishes 2+ skills today.)
-      const [primarySkill] = await this.discoverServerSkills(appContext.serverName);
+      const [primarySkill] = await this.discoverServerSkills(appWsId, appContext.serverName);
       const skillResource = primarySkill?.body ?? null;
       // Companion reference lives beside the skill (SEP-2640 supporting files share
       // the skill's path), derived from the DISCOVERED URI — never from the source
@@ -2852,7 +2859,8 @@ export class Runtime {
 
   /**
    * Discover the skills an MCP server exposes, parsed and truncated, with
-   * caching. Per SEP-2640 (`io.modelcontextprotocol/skills`) a skill is a
+   * caching, for ONE workspace's instance of that server. Per SEP-2640
+   * (`io.modelcontextprotocol/skills`) a skill is a
    * `skill://<name>/SKILL.md` markdown resource; the runtime lists the source's
    * resources (`resources/list`) and reads the ones whose URI is a skill
    * entrypoint — it never guesses the URI from the source name (that guess,
@@ -2868,21 +2876,24 @@ export class Runtime {
    * check; shared sources arrive wrapped and would otherwise be silently
    * invisible to this path.
    */
-  private async discoverServerSkills(serverName: string): Promise<DiscoveredSkill[]> {
-    const cached = this.skillResourceCache.get(serverName);
+  private async discoverServerSkills(wsId: string, serverName: string): Promise<DiscoveredSkill[]> {
+    const cacheKey = skillCacheKey(wsId, serverName);
+    const cached = this.skillResourceCache.get(cacheKey);
     if (cached && Date.now() - cached.fetchedAt < Runtime.SKILL_CACHE_TTL) {
       return cached.skills;
     }
 
-    // Search across all workspace registries for the source.
-    let source: ToolSource | undefined;
-    for (const reg of this._workspaceRegistries.values()) {
-      source = reg.getSources().find((s) => s.name === serverName);
-      if (source) break;
-    }
+    // The asking workspace's own instance, not the first one that answers to
+    // this name. Resolving across registries makes the result depend on map
+    // iteration order rather than on who asked, so an unhealthy copy in another
+    // workspace silently empties this one's skills.
+    const source = this._workspaceRegistries
+      .get(wsId)
+      ?.getSources()
+      .find((s) => s.name === serverName);
     const unwrapped = source instanceof SharedSourceRef ? source.unwrap() : source;
     if (!(unwrapped instanceof McpSource)) {
-      this.skillResourceCache.set(serverName, { skills: [], fetchedAt: Date.now() });
+      this.skillResourceCache.set(cacheKey, { skills: [], fetchedAt: Date.now() });
       return [];
     }
 
@@ -2896,7 +2907,7 @@ export class Runtime {
     // (`ok: false`) leaves a partial result, and pinning it empty for the 5-minute
     // TTL would keep the skill dark after the transport recovers. Retry next turn.
     if (ok) {
-      this.skillResourceCache.set(serverName, { skills, fetchedAt: Date.now() });
+      this.skillResourceCache.set(cacheKey, { skills, fetchedAt: Date.now() });
     }
     return skills;
   }
@@ -3008,7 +3019,7 @@ export class Runtime {
     const synthesized = await Promise.all(
       candidates.map(async (name) => {
         try {
-          const skills = await this.discoverServerSkills(name);
+          const skills = await this.discoverServerSkills(wsId, name);
           return skills.map((s) =>
             synthesizeBundleSkill({
               serverName: name,
@@ -5188,6 +5199,18 @@ function buildUserMessageContent(request: ChatRequest): Array<UserTextPart | Use
     userContent.push({ type: "text", text: `[Uploaded: ${filenames}]` });
   }
   return userContent;
+}
+
+/**
+ * Cache key for one workspace's instance of a named server's skills.
+ *
+ * The halves are joined on a space, which neither can contain -- workspace ids
+ * are `[a-z0-9_]` and server names are slugs -- so two different pairs can
+ * never produce the same key. A `-` or `:` separator would not have that
+ * property, since both appear inside server names.
+ */
+function skillCacheKey(wsId: string, serverName: string): string {
+  return `${wsId} ${serverName}`;
 }
 
 /** Per-user prompt preferences resolved from the authenticated identity. */
