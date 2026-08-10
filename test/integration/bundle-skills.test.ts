@@ -30,6 +30,9 @@ import { McpSource } from "../../src/tools/mcp-source.ts";
 import { createEchoModel } from "../helpers/echo-model.ts";
 import { TEST_WORKSPACE_ID, provisionTestWorkspace } from "../helpers/test-workspace.ts";
 
+/** The synthesized name for the fixture bundle's skill. */
+const BUNDLE_SKILL_NAME = "bundle:ai-nimblebrain-test-mcp:test";
+
 const SKILL_BODY = `---
 name: test
 description: How to use the test server.
@@ -356,12 +359,12 @@ describe("bundle-skill adapter — end-to-end", () => {
     try {
       // Warm from the workspace whose instance does publish a skill.
       const owning = await runtime.listActivatableSkills(TEST_WORKSPACE_ID, null);
-      expect(owning.some((s) => s.name.includes("test"))).toBe(true);
+      expect(owning.some((s) => s.name === BUNDLE_SKILL_NAME)).toBe(true);
 
       // The other workspace's own instance publishes none, so it must see
       // none — not its neighbour's cached answer under the same name.
       const other = await runtime.listActivatableSkills(otherWsId, null);
-      expect(other.some((s) => s.name.includes("test"))).toBe(false);
+      expect(other.some((s) => s.name === BUNDLE_SKILL_NAME)).toBe(false);
     } finally {
       await barrenSource.stop();
     }

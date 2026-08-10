@@ -2727,7 +2727,8 @@ export class Runtime {
    * Generally: **a source name identifies a bundle, not an instance.** Any
    * name-keyed collection over sources has to justify itself, because collapsing
    * on the name silently drops every workspace but one. This de-dup was that bug;
-   * `discoverServerSkills` has the same shape and is tracked separately.
+   * `discoverServerSkills` was another, and now resolves and caches per
+   * workspace.
    *
    * The N returned instances are real work, not amplification: each owns its own
    * connection and has to be reconnected on its own. How that lands in metrics is
@@ -5204,13 +5205,13 @@ function buildUserMessageContent(request: ChatRequest): Array<UserTextPart | Use
 /**
  * Cache key for one workspace's instance of a named server's skills.
  *
- * The halves are joined on a space, which neither can contain -- workspace ids
- * are `[a-z0-9_]` and server names are slugs -- so two different pairs can
- * never produce the same key. A `-` or `:` separator would not have that
- * property, since both appear inside server names.
+ * `WORKSPACE_ID_RE` (`^ws_[a-z0-9_]{1,64}$`) excludes `:`, so the first half
+ * can never contain the separator and no two pairs can collide — the server
+ * name's alphabet does not enter into it. Same construction as the
+ * `${wsId}:${userId}` file-store key above.
  */
 function skillCacheKey(wsId: string, serverName: string): string {
-  return `${wsId} ${serverName}`;
+  return `${wsId}:${serverName}`;
 }
 
 /** Per-user prompt preferences resolved from the authenticated identity. */
