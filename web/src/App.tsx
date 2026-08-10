@@ -600,7 +600,7 @@ function ActionBridge({
       // Own-key guard so an inherited name (constructor/__proto__) on the event
       // detail can't resolve to an Object.prototype member; unknown actions no-op.
       const action = detail.action as string;
-      if (Object.prototype.hasOwnProperty.call(actions, action)) {
+      if (Object.hasOwn(actions, action)) {
         actions[action]?.(detail as Record<string, unknown>);
       }
     };

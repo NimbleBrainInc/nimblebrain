@@ -1,8 +1,13 @@
 {
   "compilerOptions": {
-    "target": "ES2020",
+    // The browser floor `build.target` pins in `web/vite.config.ts`, restated
+    // here because the type-checker cannot read it. A lib below that target
+    // makes the type-checker refuse library calls the bundle ships
+    // untransformed — `Object.hasOwn` (Safari 15.4) being the one that bites,
+    // since the linter rewrites the own-key guards to it.
+    "target": "ES2022",
     "useDefineForClassFields": true,
-    "lib": ["ES2020", "DOM", "DOM.Iterable"],
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
     "module": "ESNext",
     "skipLibCheck": true,
 
