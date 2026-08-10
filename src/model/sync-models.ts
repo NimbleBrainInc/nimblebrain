@@ -28,6 +28,15 @@ const MANUAL_EXCLUSIONS = new Set<string>([
   // to xAI, so this model is unreachable rather than merely limited — upstream's
   // `tool_call: false` understates it.
   "xai:grok-4.20-multi-agent-0309",
+  // An 8192-token context window cannot host this runtime's own floor:
+  // `budgetSafetyMarginTokens` never returns less than
+  // `MIN_BUDGET_SAFETY_MARGIN_TOKENS` (8192), so `context - system - tools -
+  // output - safety` is negative before a single message is packed. Unlike the
+  // `output >= context` case below, no output cap rescues it — the window is
+  // the constraint, and this is the one chat-capable model in the catalog small
+  // enough to hit it. Offering a model whose every turn resolves a zero budget
+  // is worse than not offering it.
+  "openai:gpt-4",
 ]);
 
 // Upstream reports each model's maximum limits, but some maxima are only
@@ -185,6 +194,12 @@ export function buildProviderModels(
     // Skip models the platform deliberately does not surface.
     if (MANUAL_EXCLUSIONS.has(`${providerId}:${modelId}`)) continue;
     const model = toCatalogModel(providerId, modelId, raw);
+    // Skip a model upstream reports no context window for. Every budget the
+    // runtime computes is `context - …`, so a zero window has no arithmetic
+    // that yields a usable answer and the output cap below cannot supply one.
+    // Dropping it is not a policy choice like `MANUAL_EXCLUSIONS` — it is the
+    // same kind of data-completeness skip as the missing-pricing one above.
+    if (model.limits.context <= 0) continue;
     // xAI's own API publishes no per-model max-output cap — neither
     // `/v1/models` nor `/v1/language-models` carries the field, and the endpoint
     // accepts `max_completion_tokens` (what the adapter sends) up to
@@ -196,18 +211,29 @@ export function buildProviderModels(
     // `context - system - tools - maxOutput - safety` — negative, so the budget
     // resolves to 0 and every turn fails.
     //
-    // Capped by rule rather than by model id, because "no published cap" is a
-    // property of the provider: any model it adds arrives the same way, and a
-    // list would land the next one at a zero budget until someone noticed.
-    // A model models.dev does carry a distinct figure for is untouched — the
-    // grok-4.20 line reports 30000 against a 1M window and keeps it.
-    // `sync-nebius.ts` applies the same platform default for the same reason.
+    // Capped by rule rather than by model id, and by rule across every provider
+    // rather than xAI alone: `output >= context` is a property of the *data*,
+    // not of who published it. xAI is simply the provider that produces it
+    // systematically. A model models.dev carries a distinct figure for is
+    // untouched — the grok-4.20 line reports 30000 against a 1M window and keeps
+    // it. `sync-nebius.ts` applies the same platform default for the same reason.
+    //
+    // The cap is relative to the window, not a flat constant. A flat
+    // `DEFAULT_MAX_OUTPUT_TOKENS` is only a cap for models with a window well
+    // above it: at 8192 context it *raises* the declared output to 16384, and at
+    // 16384 it leaves no headroom at all. Half the window keeps the meaning
+    // ("leave at least as much room for input as for output") at every size,
+    // and above 32768 it is the flat default anyway — so every currently-capped
+    // xAI model keeps exactly the ceiling it has today.
     //
     // This also caps an operator override, since `resolveMaxOutputTokens`
     // clamps `configValue` down to the ceiling. That matches every Nebius model
     // today and is the accepted posture.
-    if (providerId === "xai" && model.limits.output >= model.limits.context) {
-      model.limits = { ...model.limits, output: DEFAULT_MAX_OUTPUT_TOKENS };
+    if (model.limits.output >= model.limits.context) {
+      model.limits = {
+        ...model.limits,
+        output: Math.min(DEFAULT_MAX_OUTPUT_TOKENS, Math.floor(model.limits.context / 2)),
+      };
     }
     const limitOverride = MANUAL_LIMIT_OVERRIDES[`${providerId}:${modelId}`];
     if (limitOverride) model.limits = { ...model.limits, ...limitOverride };
