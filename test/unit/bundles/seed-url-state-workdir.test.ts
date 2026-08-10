@@ -86,7 +86,7 @@ function seededState(mgr: BundleLifecycleManager): string | undefined {
 }
 
 test("seeds from the configured workDir, not NB_WORK_DIR", () => {
-  const mgr = new BundleLifecycleManager(new NoopEventSink());
+  const mgr = new BundleLifecycleManager(new NoopEventSink(), undefined);
   mgr.setWorkDir(configuredWorkDir);
 
   // Connected: the tokens exist under the workDir the runtime resolved.
@@ -96,7 +96,7 @@ test("seeds from the configured workDir, not NB_WORK_DIR", () => {
 });
 
 test("still seeds not_authenticated when no tokens exist anywhere", () => {
-  const mgr = new BundleLifecycleManager(new NoopEventSink());
+  const mgr = new BundleLifecycleManager(new NoopEventSink(), undefined);
   mgr.setWorkDir(configuredWorkDir);
 
   expect(seededState(mgr)).toBe("not_authenticated");
@@ -106,7 +106,7 @@ test("tokens under NB_WORK_DIR alone do not count as connected", () => {
   // The inverse of the first case, and the one that pins the direction: a
   // probe reading `defaultWorkDir()` would call this connected. It is not —
   // nothing the runtime writes lives there under this config.
-  const mgr = new BundleLifecycleManager(new NoopEventSink());
+  const mgr = new BundleLifecycleManager(new NoopEventSink(), undefined);
   mgr.setWorkDir(configuredWorkDir);
 
   writeTokens(defaultishWorkDir);
