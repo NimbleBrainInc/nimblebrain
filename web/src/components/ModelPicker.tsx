@@ -75,35 +75,97 @@ export function toPickerModels(
   available: Record<string, { id: string; name?: string }[]> | undefined,
 ): PickerModel[] {
   if (!available) return [];
-  return Object.entries(available)
-    .flatMap(([provider, models]) => {
-      const offered = new Set(models.map((m) => m.id));
-      const baseOf = (id: string) => id.replace(DATED_SNAPSHOT, "");
-      // A snapshot is a duplicate only when its own undated id is also on
-      // offer; alone, it is the only way to name that model.
-      const duplicates = (m: { id: string }) =>
-        DATED_SNAPSHOT.test(m.id) && offered.has(baseOf(m.id));
+  return (
+    Object.entries(available)
+      .flatMap(([provider, models]) => {
+        const offered = new Set(models.map((m) => m.id));
+        const baseOf = (id: string) => id.replace(DATED_SNAPSHOT, "");
+        // A snapshot is a duplicate only when its own undated id is also on
+        // offer; alone, it is the only way to name that model.
+        const duplicates = (m: { id: string }) =>
+          DATED_SNAPSHOT.test(m.id) && offered.has(baseOf(m.id));
 
-      const absorbedASnapshot = new Set(models.filter(duplicates).map((m) => baseOf(m.id)));
+        const absorbedASnapshot = new Set(models.filter(duplicates).map((m) => baseOf(m.id)));
 
-      return models
-        .filter((m) => !duplicates(m))
-        .map((m) => {
-          const name = m.name ?? m.id;
-          return {
-            id: `${provider}:${m.id}`,
-            name: absorbedASnapshot.has(m.id) ? name.replace(LATEST_SUFFIX, "") : name,
-            provider,
-          };
-        });
-    })
-    .sort((a, b) => a.name.localeCompare(b.name));
+        return models
+          .filter((m) => !duplicates(m))
+          .map((m) => {
+            const name = m.name ?? m.id;
+            return {
+              id: `${provider}:${m.id}`,
+              name: absorbedASnapshot.has(m.id) ? name.replace(LATEST_SUFFIX, "") : name,
+              provider,
+            };
+          });
+      })
+      // Provider first so each vendor's models form one contiguous run the list
+      // can head; name within it.
+      .sort(
+        (a, b) =>
+          providerLabel(a.provider).localeCompare(providerLabel(b.provider)) ||
+          a.name.localeCompare(b.name),
+      )
+  );
+}
+
+/** What the catalog's provider keys are called in public. */
+const PROVIDER_LABELS: Record<string, string> = {
+  anthropic: "Anthropic",
+  openai: "OpenAI",
+  google: "Google",
+  xai: "xAI",
+  nebius: "Nebius",
+};
+
+/** Capitalised fallback, so a provider nobody listed still reads as a name. */
+function providerLabel(provider: string): string {
+  return PROVIDER_LABELS[provider] ?? provider.charAt(0).toUpperCase() + provider.slice(1);
 }
 
 function matches(m: PickerModel, query: string): boolean {
   if (!query) return true;
   const q = query.toLowerCase();
   return m.name.toLowerCase().includes(q) || m.provider.toLowerCase().includes(q);
+}
+
+function Option({
+  id,
+  model,
+  isCurrent,
+  bound,
+  active,
+  onHover,
+  onChoose,
+}: {
+  id: string;
+  model: PickerModel;
+  isCurrent: boolean;
+  bound: boolean;
+  active: boolean;
+  onHover: () => void;
+  onChoose: () => void;
+}) {
+  return (
+    <button
+      id={id}
+      type="button"
+      role="option"
+      // Nothing is selected in the bound list: every row there starts a new
+      // conversation rather than marking this one.
+      aria-selected={isCurrent && !bound}
+      // Movement, not entry: filtering the list slides rows under a cursor that
+      // never moved, and `mouseenter` would let that steal the highlight from
+      // the keyboard.
+      onMouseMove={onHover}
+      onClick={onChoose}
+      className={`w-full text-left px-2 py-1.5 rounded-sm cursor-pointer flex items-baseline justify-between gap-2 ${
+        active ? "bg-muted" : ""
+      }`}
+    >
+      <span className="text-xs truncate">{shortModelName(model.name)}</span>
+      {isCurrent && !bound && <span className="text-3xs text-primary">✓</span>}
+    </button>
+  );
 }
 
 export function ModelPicker({
@@ -133,6 +195,7 @@ export function ModelPicker({
   // A model id carries `:` and `.`, neither of which is legal unescaped in the
   // id an aria-activedescendant lookup resolves.
   const optionId = (modelId: string) => `${listId}-${modelId.replace(/[^\w-]/g, "_")}`;
+  const groupId = (provider: string) => `${listId}-group-${provider.replace(/[^\w-]/g, "_")}`;
 
   const current = bound ?? selected;
   /**
@@ -156,6 +219,33 @@ export function ModelPicker({
   const label = currentRow ? shortModelName(currentRow.name) : (current ?? "Model");
 
   const hits = useMemo(() => models.filter((m) => matches(m, query)), [models, query]);
+
+  /**
+   * The rows in provider runs, each carrying its index in `hits` so the
+   * keyboard keeps walking one flat list regardless of how it is drawn.
+   *
+   * `toPickerModels` already orders by provider then name, so a run is just a
+   * stretch where the provider does not change.
+   */
+  const groups = useMemo(() => {
+    const out: { provider: string; rows: { model: PickerModel; index: number }[] }[] = [];
+    hits.forEach((model, index) => {
+      const run = out[out.length - 1];
+      if (run?.provider === model.provider) run.rows.push({ model, index });
+      else out.push({ provider: model.provider, rows: [{ model, index }] });
+    });
+    return out;
+  }, [hits]);
+  /**
+   * Whether to head the runs at all — a question about the deployment, not
+   * about the query.
+   *
+   * One provider is the common deployment, and a single header labelling
+   * everything names nothing the list does not already imply. Reading this off
+   * the filtered rows instead would also make headers appear and disappear as
+   * you type, and drop the vendor exactly when a search has narrowed to one.
+   */
+  const grouped = useMemo(() => new Set(models.map((m) => m.provider)).size > 1, [models]);
 
   useEffect(() => {
     if (!open) return;
@@ -272,31 +362,49 @@ export function ModelPicker({
               id={listId}
               role="listbox"
               aria-label="Models"
-              className="max-h-64 overflow-y-auto p-1"
+              // No padding on the top edge: a sticky child pins to the
+              // scrollport, and rows scroll through any padding strip above it
+              // — which showed the previous group's last row as a sliver over
+              // the header. The grouped list gets its top spacing from the
+              // header's own padding instead.
+              className={`max-h-64 overflow-y-auto px-1 pb-1 ${grouped ? "" : "pt-1"}`}
             >
-              {hits.map((m, i) => {
-                const isCurrent = m.id === currentRow?.id;
+              {(grouped
+                ? groups
+                : [{ provider: "", rows: hits.map((model, index) => ({ model, index })) }]
+              ).map((group) => {
+                const rows = group.rows.map(({ model, index }) => (
+                  <Option
+                    key={model.id}
+                    id={optionId(model.id)}
+                    model={model}
+                    isCurrent={model.id === currentRow?.id}
+                    bound={Boolean(bound)}
+                    active={index === active}
+                    onHover={() => setActive(index)}
+                    onChoose={() => choose(model)}
+                  />
+                ));
+                // Ungrouped stays exactly the shape it was: options as direct
+                // children of the listbox, no wrapper to reason about.
+                if (!grouped) return rows;
                 return (
-                  <button
-                    key={m.id}
-                    id={optionId(m.id)}
-                    type="button"
-                    role="option"
-                    // Nothing is selected in the bound list: every row there
-                    // starts a new conversation rather than marking this one.
-                    aria-selected={isCurrent && !bound}
-                    // Movement, not entry: filtering the list slides rows under
-                    // a cursor that never moved, and `mouseenter` would let
-                    // that steal the highlight from the keyboard.
-                    onMouseMove={() => setActive(i)}
-                    onClick={() => choose(m)}
-                    className={`w-full text-left px-2 py-1.5 rounded-sm cursor-pointer flex items-baseline justify-between gap-2 ${
-                      i === active ? "bg-muted" : ""
-                    }`}
-                  >
-                    <span className="text-xs truncate">{shortModelName(m.name)}</span>
-                    {isCurrent && !bound && <span className="text-3xs text-primary">✓</span>}
-                  </button>
+                  // The rule's suggested <fieldset> is for form controls.
+                  // Grouped options inside a listbox are `role="group"` per the
+                  // ARIA listbox pattern; a fieldset would break that structure.
+                  // biome-ignore lint/a11y/useSemanticElements: see above
+                  <div key={group.provider} role="group" aria-labelledby={groupId(group.provider)}>
+                    {/* Sticky because the list is far taller than its window;
+                          without it the group you are reading goes unnamed
+                          three rows in. */}
+                    <div
+                      id={groupId(group.provider)}
+                      className="sticky top-0 z-10 bg-popover px-2 pt-2 pb-1 text-3xs uppercase tracking-wide text-muted-foreground"
+                    >
+                      {providerLabel(group.provider)}
+                    </div>
+                    {rows}
+                  </div>
                 );
               })}
             </div>
