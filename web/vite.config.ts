@@ -45,6 +45,15 @@ function attachFontCors(middlewares: Connect.Server): void {
 
 export default defineConfig({
   plugins: [react(), tailwindcss(), fontCors],
+  // The one home for this app's browser floor: ES2022, which is Chrome 94 /
+  // Firefox 93 / Safari 15.4. `web/tsconfig.json` states the same floor as its
+  // `lib`, and the two have to be set in agreement rather than either deriving
+  // from the other — esbuild lowers *syntax* to the target but never polyfills
+  // *library* builtins, so a `lib` above this target type-checks calls that
+  // reach the browser untransformed. Set here rather than left to the default
+  // because the default is a moving value: Vite 6 resolves it to `es2020` +
+  // `safari14`, Vite 7 to `baseline-widely-available`.
+  build: { target: "es2022" },
   resolve: {
     alias: {
       "@": path.resolve(__dirname, "./src"),
