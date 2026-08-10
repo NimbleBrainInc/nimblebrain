@@ -1,19 +1,28 @@
 import { ArrowLeft, Check, Maximize2, Minimize2, SquarePen, X } from "lucide-react";
-import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useState } from "react";
-import { useChatContext } from "../context/ChatContext";
+import {
+  forwardRef,
+  useCallback,
+  useEffect,
+  useImperativeHandle,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
+import { useChatConfigContext, useChatContext } from "../context/ChatContext";
 import type { ChatMessage } from "../hooks/useChat";
 import type { DisplayDetail } from "../lib/tool-display";
 import { InContextPopover } from "./InContextPopover";
 import { KeyboardShortcutsModal } from "./KeyboardShortcutsModal";
 import { MessageInput } from "./MessageInput";
 import { MessageList } from "./MessageList";
+import { toPickerModels } from "./ModelPicker";
 import { RecentConversationsPopover } from "./RecentConversationsPopover";
 
 export interface ChatPanelProps {
   messages: ChatMessage[];
   isStreaming: boolean;
   error: string | null;
-  sendMessage: (text: string, files?: File[]) => Promise<void>;
+  sendMessage: (text: string, files?: File[], model?: string) => Promise<void>;
   newConversation: () => void;
   compact?: boolean;
   onClose?: () => void;
@@ -192,8 +201,17 @@ export const ChatPanel = forwardRef<ChatPanelRef, ChatPanelProps>(function ChatP
   const inputWrapperRef = useRef<HTMLDivElement>(null);
   const [showShortcuts, setShowShortcuts] = useState(false);
   const [copiedId, setCopiedId] = useState(false);
-  const { conversationId, title, streamingState, preparingTool, stop, loadConversation } =
-    useChatContext();
+  const {
+    conversationId,
+    title,
+    streamingState,
+    preparingTool,
+    stop,
+    loadConversation,
+    conversationMeta,
+  } = useChatContext();
+  const { availableModels, newConversationModel } = useChatConfigContext();
+  const models = useMemo(() => toPickerModels(availableModels), [availableModels]);
 
   const displayTitle = deriveDisplayTitle(title, messages);
   const displayDetail = resolveDisplayDetail(displayDetailProp);
@@ -227,6 +245,34 @@ export const ChatPanel = forwardRef<ChatPanelRef, ChatPanelProps>(function ChatP
       }, 100);
     }
   }, [newConversation]);
+
+  const [pendingModel, setPendingModel] = useState<string | undefined>(undefined);
+
+  // Cleared once a conversation exists, because the binding is then what the
+  // control states and a leftover choice would contradict it. Deliberately not
+  // cleared when the id goes null: that is a fresh conversation, and the
+  // bound-state menu starts one precisely so a chosen model can carry into it.
+  useEffect(() => {
+    if (conversationId) setPendingModel(undefined);
+  }, [conversationId]);
+
+  const handleNewChatWithModel = useCallback(
+    (model: string) => {
+      handleNewChat();
+      setPendingModel(model);
+    },
+    [handleNewChat],
+  );
+
+  const boundModel = conversationId ? conversationMeta?.model : undefined;
+  /**
+   * A conversation created before the binding existed carries no model, and
+   * the runtime resolves its turns from current config instead — which means a
+   * model named here would actually take effect on it, mid-conversation. There
+   * is nothing true for the control to state and nothing safe for it to offer,
+   * so it shows nothing.
+   */
+  const bindingUnknown = Boolean(conversationId) && !boundModel;
 
   // ? key opens shortcuts modal (only when not typing in textarea)
   useEffect(() => {
@@ -283,6 +329,12 @@ export const ChatPanel = forwardRef<ChatPanelRef, ChatPanelProps>(function ChatP
           onNewConversation={handleNewChat}
           onShowShortcuts={() => setShowShortcuts(true)}
           onStop={stop}
+          models={bindingUnknown ? [] : models}
+          boundModel={boundModel}
+          defaultModel={newConversationModel}
+          pendingModel={pendingModel}
+          onPendingModelChange={setPendingModel}
+          onNewConversationWithModel={handleNewChatWithModel}
         />
       </div>
 

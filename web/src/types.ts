@@ -309,7 +309,8 @@ export interface SkillsLoadedEvent {
 
 /** Chat stream SSE event type to payload mapping. */
 export interface ChatStreamEventMap {
-  "chat.start": { conversationId: string };
+  /** `model` is the conversation's binding, absent on records that have none. */
+  "chat.start": { conversationId: string; model?: string };
   "text.delta": TextDeltaEvent;
   "reasoning.delta": ReasoningDeltaEvent;
   "tool.preparing": ToolPreparingEvent;
@@ -332,6 +333,14 @@ export type ChatStreamEventType = keyof ChatStreamEventMap;
  */
 export interface ConfigInfo {
   configuredProviders: string[];
+  /**
+   * What this caller's next conversation will be created with. The runtime
+   * resolves it — preference over configured default, re-checked against
+   * policy — so the client states it rather than recomputing the precedence.
+   */
+  newConversationModel?: string;
+  /** The models this deployment offers, already filtered by policy. */
+  availableModels?: Record<string, { id: string; name?: string }[]>;
   preferences?: {
     displayName?: string;
     timezone?: string;
@@ -378,6 +387,9 @@ export interface BootstrapResponse {
   config: {
     models: Record<string, string>;
     configuredProviders: string[];
+    /** Same two fields `get_config` publishes — see `ConfigInfo`. */
+    newConversationModel?: string;
+    availableModels?: ConfigInfo["availableModels"];
     maxIterations: number;
     maxInputTokens: number;
     maxOutputTokens: number;
