@@ -195,7 +195,7 @@ export function ModelPicker({
   // A model id carries `:` and `.`, neither of which is legal unescaped in the
   // id an aria-activedescendant lookup resolves.
   const optionId = (modelId: string) => `${listId}-${modelId.replace(/[^\w-]/g, "_")}`;
-  const groupId = (provider: string) => `${listId}-group-${provider}`;
+  const groupId = (provider: string) => `${listId}-group-${provider.replace(/[^\w-]/g, "_")}`;
 
   const current = bound ?? selected;
   /**

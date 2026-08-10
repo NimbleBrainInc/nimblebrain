@@ -27,7 +27,7 @@ import {
  * conversation. A control that simply stopped responding would read as broken.
  */
 
-/** Two providers, given in the order `toPickerModels` would emit them. */
+/** Three providers, given in the order `toPickerModels` would emit them. */
 const MULTI: PickerModel[] = [
   { id: "anthropic:claude-sonnet-5", name: "Claude Sonnet 5", provider: "anthropic" },
   { id: "openai:gpt-5", name: "GPT-5", provider: "openai" },
