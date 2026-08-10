@@ -124,13 +124,18 @@ describe("actionsSource", () => {
     expect(ids).toContain("action:workspace-settings");
   });
 
-  test("hides org settings for non-admins, shows for org_admin", () => {
-    expect(actionsSource.getItems("org", baseCtx).map((i) => i.id)).not.toContain(
-      "action:org-settings",
-    );
-    expect(
-      actionsSource.getItems("org", { ...baseCtx, orgRole: "org_admin" }).map((i) => i.id),
-    ).toContain("action:org-settings");
+  test("hides org settings for members, shows for organization owners and admins", () => {
+    for (const orgRole of [undefined, "member"]) {
+      expect(actionsSource.getItems("org", { ...baseCtx, orgRole }).map((i) => i.id)).not.toContain(
+        "action:org-settings",
+      );
+    }
+
+    for (const orgRole of ["owner", "admin"]) {
+      expect(actionsSource.getItems("org", { ...baseCtx, orgRole }).map((i) => i.id)).toContain(
+        "action:org-settings",
+      );
+    }
   });
 
   test("workspace-settings run builds the scoped route", () => {

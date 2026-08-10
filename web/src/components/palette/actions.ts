@@ -26,7 +26,8 @@ export interface ActionDef {
 }
 
 const hasWorkspace = (ctx: CommandSourceContext): boolean => Boolean(ctx.activeWorkspaceSlug);
-const isOrgAdmin = (ctx: CommandSourceContext): boolean => ctx.orgRole === "org_admin";
+const isOrgAdmin = (ctx: CommandSourceContext): boolean =>
+  ctx.orgRole === "owner" || ctx.orgRole === "admin";
 
 export const ACTIONS: ActionDef[] = [
   {
