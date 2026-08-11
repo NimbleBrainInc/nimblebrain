@@ -2,5 +2,7 @@
   "$schema": "https://context7.com/schema/context7.json",
   "projectTitle": "NimbleBrain",
   "description": "Self-hosted platform for MCP Apps and agent automations — aggregates MCP servers into one tool namespace and hosts their UIs.",
-  "folders": ["docs"]
+  "folders": ["docs"],
+  "url": "https://context7.com/nimblebraininc/nimblebrain",
+  "public_key": "pk_rB8UQ62WY2X9wZLJNBqTz"
 }
