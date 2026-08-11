@@ -18,6 +18,8 @@ export default defineConfig({
     '/api/tools': '/connect/mcp-endpoint/',
     '/api/events': '/connect/mcp-endpoint/',
     '/api/health': '/deploy/observability/',
+    '/deploy/composio': '/gateways/composio/',
+    '/deploy/smithery': '/gateways/smithery/',
     '/guide/chat': '/using/chat/',
     '/guide/conversations': '/using/conversations/',
     '/guide/apps': '/using/installing-apps/',
@@ -178,6 +180,15 @@ export default defineConfig({
             ],
           },
           {
+            label: 'MCP Gateways',
+            link: '/config/connector-providers',
+            icon: 'puzzle',
+            items: [
+              { label: 'Composio', slug: 'gateways/composio' },
+              { label: 'Smithery', slug: 'gateways/smithery' },
+            ],
+          },
+          {
             label: 'Deployment',
             link: '/deploy/docker',
             icon: 'cloud-download',
@@ -185,8 +196,6 @@ export default defineConfig({
               { label: 'Docker Compose', slug: 'deploy/docker' },
               { label: 'Security', slug: 'deploy/security' },
               { label: 'Observability', slug: 'deploy/observability' },
-              { label: 'Composio Aggregator', slug: 'deploy/composio' },
-              { label: 'Smithery Gateway', slug: 'deploy/smithery' },
             ],
           },
         ]),

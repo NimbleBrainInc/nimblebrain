@@ -22,7 +22,7 @@ They are different layers. A connector *declares which auth kind it uses*, and t
 </Aside>
 
 <Aside type="note">
-**The auth kind is a deployment choice, not a property of the server.** Gmail is typically catalogued as `auth: composio` because Google requires app verification (`gmail.*`) most operators don't hold on day one — but the same server becomes `auth: static` or `auth: dcr` once you have your own verified OAuth app — see [migrating off the broker](/deploy/composio/#migrating-off-composio-per-toolkit). Nothing about Gmail forces the broker; your verification status does.
+**The auth kind is a deployment choice, not a property of the server.** Gmail is typically catalogued as `auth: composio` because Google requires app verification (`gmail.*`) most operators don't hold on day one — but the same server becomes `auth: static` or `auth: dcr` once you have your own verified OAuth app — see [migrating off the broker](/gateways/composio/#migrating-off-composio-per-toolkit). Nothing about Gmail forces the broker; your verification status does.
 </Aside>
 
 ## Why a provider at all
@@ -41,8 +41,8 @@ Composio, Smithery, MCP360, and Glama all describe themselves with overlapping w
 
 | Vendor | Brokers auth | Hosts the session | Configure it as |
 |---|---|---|---|
-| [Composio](https://composio.dev) | OAuth, API key | Per connection | A provider — [Composio guide](/deploy/composio/) |
-| [Smithery](https://smithery.ai) | OAuth, config, completed on Smithery's own hosted setup page rather than a callback to us | Per connection | A provider — [Smithery guide](/deploy/smithery/) |
+| [Composio](https://composio.dev) | OAuth, API key | Per connection | A provider — [Composio guide](/gateways/composio/) |
+| [Smithery](https://smithery.ai) | OAuth, config, completed on Smithery's own hosted setup page rather than a callback to us | Per connection | A provider — [Smithery guide](/gateways/smithery/) |
 | [MCP360](https://mcp360.ai) | No, one account key | Fixed endpoints | A catalog entry — [gateway endpoints](/config/connectors-catalog/#auth-provider-for-a-gateway-endpoint) |
 | [Glama](https://glama.ai) | No, one account key | Fixed endpoints | A catalog entry — [gateway endpoints](/config/connectors-catalog/#auth-provider-for-a-gateway-endpoint) |
 
@@ -59,5 +59,5 @@ The bottom two publish a fixed endpoint and one account-wide API key. They hold 
 - [Connectors](/using/connectors/) — the auth kinds, from a user's point of view
 - [Connectors Catalog](/config/connectors-catalog/) — authoring catalog entries
 - [`nimblebrain.json`](/config/nimblebrain-json/#connectors) — the full `connectors` reference
-- [Composio operator guide](/deploy/composio/) — a shipped provider, end to end
+- [Composio operator guide](/gateways/composio/) — a shipped provider, end to end
 - `src/connectors/providers/managed-provider.ts` — the interface a new provider implements, for contributors

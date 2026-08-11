@@ -16,7 +16,7 @@ Smithery holds two roles the platform would otherwise hold itself:
 - It stores the upstream credential for each connection, write-only, on its side.
 - It hosts an MCP endpoint per connection, so the platform connects to Smithery rather than to the upstream server.
 
-It does not send users back to NimbleBrain after a sign-in. A Smithery connection that needs authorization exposes a Smithery-hosted setup page, and the round trip finishes there. The platform mounts no callback routes for Smithery as a result, which is the visible difference from [Composio](/deploy/composio/).
+It does not send users back to NimbleBrain after a sign-in. A Smithery connection that needs authorization exposes a Smithery-hosted setup page, and the round trip finishes there. The platform mounts no callback routes for Smithery as a result, which is the visible difference from [Composio](/gateways/composio/).
 
 ## One-time setup
 
@@ -128,4 +128,4 @@ The namespace and host recorded when the connector was installed drive that dele
 
 - [Connector Providers](/config/connector-providers/) — provider versus connector
 - [Connectors Catalog](/config/connectors-catalog/) — authoring catalog entries
-- [Composio Aggregator](/deploy/composio/) — the other shipped provider
+- [Composio Aggregator](/gateways/composio/) — the other shipped provider

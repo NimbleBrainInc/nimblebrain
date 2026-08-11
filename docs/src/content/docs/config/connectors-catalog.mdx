@@ -189,7 +189,7 @@ NimbleBrain-specific fields under `_meta["ai.nimblebrain/connector"]`:
 | `requiredScopes` | no | List of OAuth scope strings. |
 | `additionalAuthorizationParams` | no | Extra authorize-URL params (e.g. Google's `access_type: offline`). Reserved keys (`client_id`, `state`, `redirect_uri`, `response_type`, `code_challenge`, `code_challenge_method`, `scope`, etc.) are rejected. |
 | `operatorSetup` | required when `auth: static` | `{ portalUrl, hint, clientSecretKey }`. |
-| `composio` | required when `auth: composio` | `{ toolkit, tools?, authScheme?, fields? }`. `toolkit` is Composio's slug for the upstream, and doubles as the key your deployment's [`connectors.providers.composio.authConfigs`](/deploy/composio/#3-create-one-auth-config-per-toolkit-in-composio) is looked up under — the catalog itself carries no deployment-specific ids. `tools` is an optional allowlist of upstream tool names — strongly recommended to keep agent context bounded. `authScheme` defaults to `OAUTH2` (the redirect flow); set it to `API_KEY` for toolkits that authenticate by key (see below). `fields` is required for `API_KEY` — the inputs collected from the user at connect. |
+| `composio` | required when `auth: composio` | `{ toolkit, tools?, authScheme?, fields? }`. `toolkit` is Composio's slug for the upstream, and doubles as the key your deployment's [`connectors.providers.composio.authConfigs`](/gateways/composio/#3-create-one-auth-config-per-toolkit-in-composio) is looked up under — the catalog itself carries no deployment-specific ids. `tools` is an optional allowlist of upstream tool names — strongly recommended to keep agent context bounded. `authScheme` defaults to `OAUTH2` (the redirect flow); set it to `API_KEY` for toolkits that authenticate by key (see below). `fields` is required for `API_KEY` — the inputs collected from the user at connect. |
 | `tags` | no | Strings used for filter / search in the Browse page. |
 | `interactive` | no | Sets the "Interactive" badge. |
 | `docsUrl` | no | Connector-specific docs link surfaced on the Configure page. Must be http(s). |
@@ -252,7 +252,7 @@ Set `authScheme: API_KEY` and declare the `fields` to collect:
             # ...curated allowlist
 ```
 
-Each `fields[].key` is sent to Composio verbatim, so it **must** match the toolkit's connection-initiation field name — which is often **not** what the REST tool catalog suggests (e.g. PostHog's key field is `generic_api_key`, not `api_key`). The same namespace caveat applies to `tools` slugs. The operator runbook for creating the `API_KEY` auth config and verifying field keys + tool slugs is in [Composio Aggregator Setup → API-key toolkits](/deploy/composio/#api-key-toolkits-no-oauth).
+Each `fields[].key` is sent to Composio verbatim, so it **must** match the toolkit's connection-initiation field name — which is often **not** what the REST tool catalog suggests (e.g. PostHog's key field is `generic_api_key`, not `api_key`). The same namespace caveat applies to `tools` slugs. The operator runbook for creating the `API_KEY` auth config and verifying field keys + tool slugs is in [Composio Aggregator Setup → API-key toolkits](/gateways/composio/#api-key-toolkits-no-oauth).
 
 ### Offline access & refresh tokens
 
