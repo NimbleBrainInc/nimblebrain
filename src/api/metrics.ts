@@ -93,6 +93,38 @@ export const llmTokensTotal = new Counter({
 });
 
 /**
+ * The engine's PRE-FLIGHT estimate of input tokens, counted the same way and
+ * over the same calls as `nb_llm_tokens_total{direction="input"}` — so the two
+ * divide into the estimator's error:
+ *
+ *   sum(rate(nb_llm_tokens_total{direction="input",source="main"}[1h]))
+ *     / sum(rate(nb_llm_input_tokens_estimated_total{source="main"}[1h]))
+ *
+ * A ratio of 1.0 means the estimate matches what the provider billed. Above
+ * 1.0 the engine is under-counting, which matters because this estimate — not
+ * the provider's count — is what `windowMessages` compares the message budget
+ * against. An under-count is therefore a prompt larger than `maxInputTokens`
+ * was meant to permit, with nothing in the system aware of it.
+ *
+ * A counter rather than a per-call ratio histogram: ratios do not aggregate
+ * (averaging per-call ratios weights a 2k-token call like a 500k one), whereas
+ * summing both sides and dividing is token-weighted and correct over any
+ * window.
+ *
+ * Labels mirror the latency histograms (`source`, `origin`, `model`) rather
+ * than the token counter's full set — `direction`/`kind`/`ttl` describe how the
+ * provider billed a prompt, which a pre-flight estimate has no view of, and
+ * `delegated` splits a sub-agent from its parent without changing how anything
+ * tokenizes. Sum those away on the numerator before dividing.
+ */
+export const llmInputTokensEstimatedTotal = new Counter({
+  name: "nb_llm_input_tokens_estimated_total",
+  help: "Engine pre-flight estimate of LLM input tokens, by call source, origin, and model. Divide the actual input-token counter by this to get estimator drift.",
+  labelNames: ["source", "origin", "model"] as const,
+  registers: [metricsRegistry],
+});
+
+/**
  * LLM calls, by source (main loop vs forked fast-slot), origin (who the call
  * was for), delegation, and model.
  *

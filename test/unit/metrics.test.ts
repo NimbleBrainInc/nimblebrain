@@ -7,6 +7,7 @@ import {
   bundleUnhealthy,
   llmCallsTotal,
   llmErrorsTotal,
+  llmInputTokensEstimatedTotal,
   llmRequestDurationSeconds,
   llmTokensTotal,
   llmTtftSeconds,
@@ -446,5 +447,62 @@ describe("LLM latency + error metrics", () => {
     const before = await readTotal(llmErrorsTotal);
     sink.emit({ type: "llm.done", data: { runId: "r1", model: "tm-err", llmMs: 100 } });
     expect((await readTotal(llmErrorsTotal)) - before).toBe(0);
+  });
+});
+
+describe("estimate-vs-actual instrumentation", () => {
+  it("test_llm_done_records_estimated_input_tokens", async () => {
+    const sink = new MetricsEventSink();
+    const labels = { source: "main", model: "tm-est" };
+    const before = await read(llmInputTokensEstimatedTotal, labels);
+
+    sink.emit({
+      type: "llm.done",
+      data: { runId: "r-est", model: "tm-est", estimatedInputTokens: 512_000 },
+    });
+
+    expect((await read(llmInputTokensEstimatedTotal, labels)) - before).toBe(512_000);
+  });
+
+  // The whole point of the counter is to be divided by the actual input-token
+  // counter. Both must move on the same call, or the ratio silently compares
+  // different populations.
+  it("test_llm_done_records_estimate_and_actual_on_the_same_call", async () => {
+    const sink = new MetricsEventSink();
+    const model = "tm-ratio";
+    const actualLabels = { direction: "input", kind: "fresh", source: "main", model };
+    const estLabels = { source: "main", model };
+    const beforeActual = await read(llmTokensTotal, actualLabels);
+    const beforeEst = await read(llmInputTokensEstimatedTotal, estLabels);
+
+    sink.emit({
+      type: "llm.done",
+      data: {
+        runId: "r-ratio",
+        model,
+        usage: { inputTokens: 800_000, outputTokens: 10, cacheReadTokens: 0, cacheWriteTokens: 0 },
+        estimatedInputTokens: 500_000,
+      },
+    });
+
+    const actual = (await read(llmTokensTotal, actualLabels)) - beforeActual;
+    const estimated = (await read(llmInputTokensEstimatedTotal, estLabels)) - beforeEst;
+    expect(actual).toBe(800_000);
+    expect(estimated).toBe(500_000);
+    // 1.6x — the estimator drift this instrumentation exists to make visible.
+    expect(actual / estimated).toBeCloseTo(1.6, 5);
+  });
+
+  it("test_llm_done_without_estimate_records_nothing", async () => {
+    const sink = new MetricsEventSink();
+    const before = await readTotal(llmInputTokensEstimatedTotal);
+    // A zero estimate is not a real measurement — recording it would drag the
+    // ratio toward infinity rather than leaving the series untouched.
+    sink.emit({ type: "llm.done", data: { runId: "r-none", model: "tm-none" } });
+    sink.emit({
+      type: "llm.done",
+      data: { runId: "r-zero", model: "tm-zero", estimatedInputTokens: 0 },
+    });
+    expect(await readTotal(llmInputTokensEstimatedTotal)).toBe(before);
   });
 });

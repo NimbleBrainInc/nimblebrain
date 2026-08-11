@@ -33,7 +33,6 @@ import type {
   LanguageModelV3ToolCallPart,
   LanguageModelV3ToolResultPart,
 } from "@ai-sdk/provider";
-import type { ToolSchema } from "./types.ts";
 
 /** Anthropic vision tokens-per-pixel divisor and clamp bounds. */
 const IMAGE_TOKENS_PER_PIXEL_DIVISOR = 750;
@@ -341,13 +340,30 @@ export function estimateMessageTokens(message: LanguageModelV3Message): number {
 }
 
 /**
+ * The structural minimum `estimateToolDescriptionTokens` reads. Satisfied by
+ * both the internal `ToolSchema` and the provider-facing
+ * `LanguageModelV3FunctionTool`.
+ */
+export interface EstimatableTool {
+  name?: string;
+  description?: string;
+  inputSchema?: unknown;
+}
+
+/**
  * Pre-flight estimate of the tokens a tool description will cost when
  * surfaced to the model. Mirrors the legacy formula (name + description +
  * input schema as text) but keeps `JSON.stringify` confined to the schema
  * object — which today is plain JSON but is shape-coupled to objects that
  * may eventually carry binary defaults, so we centralize the call site.
+ *
+ * Takes the structural minimum rather than `ToolSchema` so it also accepts the
+ * provider-facing `LanguageModelV3FunctionTool`, whose `description` is
+ * optional. The body already treats every field as absent-able; the parameter
+ * type now says so, which is what lets the same estimate be taken over the
+ * tools actually sent rather than only over the internal schema.
  */
-export function estimateToolDescriptionTokens(tool: ToolSchema): number {
+export function estimateToolDescriptionTokens(tool: EstimatableTool): number {
   const schemaText = JSON.stringify(tool.inputSchema ?? {});
   return tokensForChars(
     (tool.name?.length ?? 0) + 1 + (tool.description?.length ?? 0) + 1 + schemaText.length,

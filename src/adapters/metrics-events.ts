@@ -1,5 +1,6 @@
 import {
   llmErrorsTotal,
+  llmInputTokensEstimatedTotal,
   llmRequestDurationSeconds,
   llmTtftSeconds,
   recordBundleCrash,
@@ -91,6 +92,13 @@ export class MetricsEventSink implements EventSink {
     const ttftMs = data.ttftMs;
     if (typeof ttftMs === "number") {
       llmTtftSeconds.observe({ source: "main", model, origin }, ttftMs / 1000);
+    }
+    // Pre-flight estimate for this call. Its counterpart is the input side of
+    // `nb_llm_tokens_total`; dividing actual by estimated gives the estimator's
+    // drift, which is what the windowing budget is silently subject to.
+    const estimated = data.estimatedInputTokens;
+    if (typeof estimated === "number" && estimated > 0) {
+      llmInputTokensEstimatedTotal.inc({ source: "main", model, origin }, estimated);
     }
   }
 
