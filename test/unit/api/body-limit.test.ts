@@ -166,9 +166,54 @@ describe("bodyLimit middleware", () => {
     expect(request.bodyUsed).toBe(true);
   });
 
+  // The ceiling scales with the route's own limit, so a multipart route whose
+  // limit sits above any flat constant still gets its refusals drained. Before
+  // this, `chat.ts` and `resources.ts` passed a 100 MB multipart limit into a
+  // fixed 8 MB ceiling and no multipart refusal was ever drained on a default
+  // deployment — the connection-desync fix reached only the JSON routes.
+  test("drains a multipart refusal whose limit is above any flat ceiling", async () => {
+    const app = createTestApp(1024, { multipart: 16 * 1024 * 1024 });
+    const oversized = "x".repeat(20 * 1024 * 1024);
+    const request = new Request("http://localhost/test", {
+      method: "POST",
+      headers: {
+        "Content-Length": String(oversized.length),
+        "Content-Type": "multipart/form-data; boundary=abc",
+      },
+      body: oversized,
+    });
+
+    const res = await app.fetch(request);
+
+    expect(res.status).toBe(413);
+    // 20 MB is over the 16 MB limit but inside the 8 MB overrun allowance.
+    expect(request.bodyUsed).toBe(true);
+  });
+
   // The other half of that trade: the read is work an unauthenticated caller
-  // can ask for, so past MAX_DRAIN_BYTES the refusal goes out immediately and
-  // the connection takes the consequences.
+  // can ask for, so past the overrun allowance the refusal goes out immediately
+  // and the connection takes the consequences. Bounding the OVERRUN rather than
+  // the total is what makes that safe — a caller in budget can already cost the
+  // route `limit` bytes, so only the excess is new work.
+  test("refuses a multipart body past the overrun allowance without reading it", async () => {
+    const app = createTestApp(1024, { multipart: 16 * 1024 * 1024 });
+    const oversized = "x".repeat(25 * 1024 * 1024);
+    const request = new Request("http://localhost/test", {
+      method: "POST",
+      headers: {
+        "Content-Length": String(oversized.length),
+        "Content-Type": "multipart/form-data; boundary=abc",
+      },
+      body: oversized,
+    });
+
+    const res = await app.fetch(request);
+
+    expect(res.status).toBe(413);
+    // 25 MB is more than 8 MB past the 16 MB limit.
+    expect(request.bodyUsed).toBe(false);
+  });
+
   test("refuses a body past the drain ceiling without reading it", async () => {
     const app = createTestApp(1024);
     const oversized = "x".repeat(9 * 1024 * 1024);
@@ -211,6 +256,82 @@ describe("bodyLimit middleware", () => {
     expect(res.status).toBe(413);
     // Bounded by the drain deadline, not by the server's idle timeout.
     expect(elapsed).toBeLessThan(4_000);
+  });
+
+  // The deadline asks whether the sender has stopped, not how long the drain
+  // has run. A total budget would answer both with one number and cut off the
+  // drains that need it most: a multipart limit runs to 100 MB, which no budget
+  // worth granting a *stalled* sender is long enough to cover. This body takes
+  // 2.7s to arrive — past any such budget — while never pausing longer than the
+  // stall window, so it must be drained in full.
+  test("drains a slow body that never stalls", async () => {
+    const app = createTestApp(1024);
+    // 3s total, so it outlives a 2s total budget by a clear margin, in 500ms
+    // steps that leave 1.5s of slack against the stall window — a CI runner
+    // that hitches must not be able to read as a stall.
+    const chunks = 6;
+    const gapMs = 500;
+    let delivered = 0;
+    const request = new Request("http://localhost/test", {
+      method: "POST",
+      headers: { "Content-Length": "2000000", "Content-Type": "application/json" },
+      body: new ReadableStream<Uint8Array>({
+        async pull(controller) {
+          await Bun.sleep(gapMs);
+          if (delivered === chunks) {
+            controller.close();
+            return;
+          }
+          delivered++;
+          controller.enqueue(new Uint8Array(16));
+        },
+      }),
+      duplex: "half",
+    } as RequestInit);
+
+    const res = await app.fetch(request);
+
+    expect(res.status).toBe(413);
+    // Every chunk read: the drain outlived a 2s total budget without stalling.
+    expect(delivered).toBe(chunks);
+  });
+
+  // The stall window asks whether the sender stopped, which one byte answers.
+  // A sender pacing itself just inside it therefore never stalls and, with no
+  // second bound, picks how long the refusal is withheld — the middleware
+  // awaits the drain before answering. So the total budget has to hold where
+  // the stall window cannot: bytes keep arriving, and the drain ends anyway.
+  test("abandons a refusal whose body crawls without ever stalling", async () => {
+    const app = createTestApp(1024);
+    let delivered = 0;
+    const request = new Request("http://localhost/test", {
+      method: "POST",
+      // Small enough that the budget floors at the stall window, so only the
+      // total bound can end this read.
+      headers: { "Content-Length": "2048", "Content-Type": "application/json" },
+      body: new ReadableStream<Uint8Array>({
+        async pull(controller) {
+          // Well inside the stall window, so the stall timer never fires.
+          await Bun.sleep(200);
+          if (delivered === 100) {
+            controller.close();
+            return;
+          }
+          delivered++;
+          controller.enqueue(new Uint8Array(1));
+        },
+      }),
+      duplex: "half",
+    } as RequestInit);
+
+    const started = performance.now();
+    const res = await app.fetch(request);
+    const elapsed = performance.now() - started;
+
+    expect(res.status).toBe(413);
+    // Unbounded, this sender dictates 20s. Bounded, it gets the 2s budget.
+    expect(elapsed).toBeLessThan(4_000);
+    expect(delivered).toBeLessThan(100);
   });
 
   // Regression guard: bodyLimit must stay scoped to the route it's attached
