@@ -20,6 +20,7 @@ import type { AppInfo, BundleInstance, PlacementDeclaration } from "../bundles/t
 import { isToolVisibleToRole, type ResolvedFeatures, resolveFeatures } from "../config/features.ts";
 import { deriveOverridePath } from "../config/overrides.ts";
 import { createPrivilegeHook, NoopConfirmationGate } from "../config/privilege.ts";
+import { registerGatewayCredentialProviders } from "../connectors/gateways/transport-credential.ts";
 import { bootAuditComposioAuthConfigs } from "../connectors/providers/composio/auth-config-audit.ts";
 import { registerComposioCredentialProvider } from "../connectors/providers/composio/transport-credential.ts";
 import { setConnectorsConfig } from "../connectors/providers/config.ts";
@@ -489,6 +490,12 @@ export class Runtime {
     // regardless of entry point. Must precede any provider wiring — the
     // registry, the mounted routes, and the revalidator probe all read it.
     setConnectorsConfig(config.connectors);
+
+    // Gateways are declared rather than named in code, so their credential
+    // providers can only be registered once the block above is installed. Last
+    // in the sequence deliberately: registration overwrites by name, so a
+    // gateway can never displace a built-in or a broker registered above it.
+    registerGatewayCredentialProviders();
 
     // Derive the override-file path when the caller supplied a configPath
     // but not an explicit override path. The CLI's loadConfig already
