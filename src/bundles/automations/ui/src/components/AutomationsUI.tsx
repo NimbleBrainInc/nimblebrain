@@ -45,9 +45,23 @@ export function AutomationsUI() {
     setLoading(true);
     setError(null);
     try {
-      const result = await listTool.call({});
-      const data = asDict(result.data);
-      setAutomations((data.automations as AutomationSummary[]) || []);
+      // The list tool caps a page to protect a model's context window. This
+      // panel is a browser consumer with no such limit and a count badge, so a
+      // capped page would render a silently short list under a badge that
+      // agrees with it — page to the end instead. Bounded by nextCursor going
+      // null; the iteration cap is a backstop against a server that keeps
+      // handing back a cursor, not an expected exit.
+      const all: AutomationSummary[] = [];
+      let cursor: string | undefined;
+      for (let i = 0; i < 50; i++) {
+        const result = await listTool.call(cursor ? { cursor } : {});
+        const data = asDict(result.data);
+        all.push(...((data.automations as AutomationSummary[]) || []));
+        const next = data.nextCursor as string | null | undefined;
+        if (!next) break;
+        cursor = next;
+      }
+      setAutomations(all);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load automations");
     } finally {

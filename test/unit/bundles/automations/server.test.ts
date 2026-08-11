@@ -351,7 +351,7 @@ describe("handleList paging", () => {
 		automations: Array<{ id: string; name: string }>;
 		total: number;
 		returned: number;
-		offset: number;
+		nextCursor: string | null;
 		hasMore: boolean;
 		truncated?: string;
 	};
@@ -385,28 +385,95 @@ describe("handleList paging", () => {
 		expect(r.hasMore).toBe(true);
 	});
 
-	test("says so in prose when the page hid matches", () => {
+	test("orders pages deterministically", () => {
+		// Definitions are built from a directory read with no ordering, so
+		// without an explicit sort the page boundary is undefined and a record
+		// can land on both pages or neither.
+		const ctx = makeCtx();
+		seed(ctx, 12);
+
+		const ids = (handleList({ limit: 12 }, ctx) as ListResult).automations.map((a) => a.id);
+		expect(ids).toEqual([...ids].sort());
+		// Stable across calls, not merely sorted once.
+		const again = (handleList({ limit: 12 }, ctx) as ListResult).automations.map((a) => a.id);
+		expect(again).toEqual(ids);
+	});
+
+	test("says so in prose when the page hid matches, and names what remains", () => {
 		const ctx = makeCtx();
 		seed(ctx, 105);
 
 		const r = handleList({}, ctx) as ListResult;
 		// A silent cap is worse than an error here: the caller concludes "not
-		// found" from a set it never saw. The count must be in the payload text.
+		// found" from a set it never saw. The remainder must be in the text.
 		expect(r.truncated).toBeDefined();
 		expect(r.truncated).toContain("105");
-		expect(r.truncated).toContain("offset=100");
+		expect(r.truncated).toContain("5 more remain");
+		expect(r.truncated).toContain(r.nextCursor as string);
 	});
 
-	test("offset walks the remainder and clears the flag on the last page", () => {
+	test("the remainder count is exact at a mid-sequence cursor", () => {
 		const ctx = makeCtx();
 		seed(ctx, 105);
 
-		const r = handleList({ offset: 100 }, ctx) as ListResult;
+		const first = handleList({ limit: 50 }, ctx) as ListResult;
+		const second = handleList({ limit: 25, cursor: first.nextCursor as string }, ctx) as ListResult;
+		// 105 total, 50 + 25 read, so 30 are genuinely left — not a figure
+		// derived from a caller history the handler cannot see.
+		expect(second.truncated).toContain("30 more remain");
+	});
+
+	test("cursor walks the remainder and clears the flag on the last page", () => {
+		const ctx = makeCtx();
+		seed(ctx, 105);
+
+		const first = handleList({}, ctx) as ListResult;
+		const last = handleList({ cursor: first.nextCursor as string }, ctx) as ListResult;
+		expect(last.returned).toBe(5);
+		expect(last.total).toBe(105);
+		expect(last.hasMore).toBe(false);
+		expect(last.nextCursor).toBeNull();
+		expect(last.truncated).toBeUndefined();
+	});
+
+	test("a delete behind the cursor does not skip the records ahead of it", () => {
+		// The failure a numeric offset has: removing an entry from an earlier
+		// page shifts everything back, and the next slice steps over whatever
+		// crossed the boundary.
+		const ctx = makeCtx();
+		seed(ctx, 30);
+
+		const first = handleList({ limit: 10 }, ctx) as ListResult;
+		handleDelete({ name: first.automations[0]!.name }, ctx);
+		const second = handleList({ limit: 10, cursor: first.nextCursor as string }, ctx) as ListResult;
+
+		const seen = new Set([...first.automations, ...second.automations].map((a) => a.id));
+		const wanted = (handleList({ limit: 500 }, ctx) as ListResult).automations
+			.map((a) => a.id)
+			.slice(0, 19);
+		for (const id of wanted) expect(seen.has(id)).toBe(true);
+	});
+
+	test("an unknown cursor re-serves the first page rather than skipping", () => {
+		const ctx = makeCtx();
+		seed(ctx, 5);
+
+		const r = handleList({ cursor: "no-such-automation" }, ctx) as ListResult;
 		expect(r.returned).toBe(5);
-		expect(r.total).toBe(105);
-		expect(r.offset).toBe(100);
-		expect(r.hasMore).toBe(false);
-		expect(r.truncated).toBeUndefined();
+		expect(r.total).toBe(5);
+	});
+
+	test("honors an explicit limit, its floor, and its ceiling", () => {
+		const ctx = makeCtx();
+		seed(ctx, 12);
+
+		expect((handleList({ limit: 3 }, ctx) as ListResult).returned).toBe(3);
+		// Below the floor clamps up rather than returning an empty page.
+		expect((handleList({ limit: 0 }, ctx) as ListResult).returned).toBe(1);
+		// Above the ceiling clamps down; 12 < 500 so everything still fits.
+		const big = handleList({ limit: 10_000 }, ctx) as ListResult;
+		expect(big.returned).toBe(12);
+		expect(big.hasMore).toBe(false);
 	});
 
 	test("no truncation notice when everything fits", () => {
@@ -417,6 +484,7 @@ describe("handleList paging", () => {
 		expect(r.total).toBe(3);
 		expect(r.returned).toBe(3);
 		expect(r.hasMore).toBe(false);
+		expect(r.nextCursor).toBeNull();
 		expect(r.truncated).toBeUndefined();
 	});
 

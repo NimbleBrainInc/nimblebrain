@@ -142,15 +142,18 @@ export const AutomationsListInput = Type.Object({
     // in src/limits.ts. Literals for the same reason as maxIterations above: this
     // schema is codegen'd under a strict rootDir that forbids importing from
     // outside src/tools/platform/schemas/. server.ts imports the real constants.
-    Type.Number({
+    Type.Integer({
       minimum: 1,
       maximum: 500,
       description:
         "Max automations to return. Default 100, max 500. The response always reports the unpaged total and whether more remain.",
     }),
   ),
-  offset: Type.Optional(
-    Type.Number({ minimum: 0, description: "Number of matches to skip. Default 0." }),
+  cursor: Type.Optional(
+    Type.String({
+      description:
+        "Opaque pagination cursor from a previous response's `nextCursor`. Omit for the first page.",
+    }),
   ),
 });
 export type AutomationsListInput = Static<typeof AutomationsListInput>;
@@ -267,7 +270,16 @@ export interface AutomationsListOutput {
   total: number;
   /** How many are in this response. */
   returned: number;
-  offset: number;
+  /**
+   * Pass as `cursor` to get the next page; `null` when this is the last one.
+   *
+   * A cursor rather than a numeric offset because the page must stay correct
+   * across a mutation between calls: an offset re-slices a list whose earlier
+   * entries may have been deleted, which silently skips the records that
+   * shifted past the boundary. Anchoring to the last id read means a deletion
+   * behind the cursor cannot move the records ahead of it.
+   */
+  nextCursor: string | null;
   hasMore: boolean;
   /**
    * Present only when the page cap hid matches. Prose rather than a flag alone

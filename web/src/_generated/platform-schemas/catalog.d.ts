@@ -200,8 +200,8 @@ export declare const PlatformToolCatalog: {
             readonly input: import("@sinclair/typebox").TObject<{
                 enabled: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TBoolean>;
                 source: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"user" | "agent" | "bundle">>;
-                limit: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TNumber>;
-                offset: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TNumber>;
+                limit: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TInteger>;
+                cursor: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
             }>;
         };
         readonly status: {
