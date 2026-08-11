@@ -12,7 +12,7 @@ metadata:
 ## System Tools
 
 - **nb__search** — Unified search tool. Use `scope: "tools"` to search installed tools by keyword (empty query lists everything). Use `scope: "registry"` to search the mpak registry for installable bundles.
-- **nb__manage_tools** — Patch your active tool list in one call. Input: `{ add?: ["source__tool", ...], remove?: ["source__tool", ...] }`. Use `add` to promote discovered tools so they become callable on the next turn. Use `remove` to release tools you no longer need (system tools `nb__*` cannot be released). Combine `add` and `remove` in one call when switching domains.
+- **nb__manage_tools** — Patch your active tool list in one call. Input: `{ add?: ["source__tool", ...], remove?: ["source__tool", ...] }`. System tools `nb__*` cannot be released. When to promote and when to release: see Tool Discovery Workflow below.
 - **nb__status** — Platform status. Default gives an overview (model, app count, skill count). Use `scope: "bundles"` for per-app health/version, `scope: "skills"` for loaded skills, `scope: "config"` for model and limit details.
 
 ## Tool Discovery Workflow
