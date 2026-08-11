@@ -1749,9 +1749,11 @@ export class Runtime {
       // Merge SEP-2640 bundle skills as candidates too, so a server's skill is
       // delivered mid-turn when its tools are progressively disclosed (promotion),
       // not only at turn-start via <layer3-skill> (which misses mid-turn promotion).
+      // `selectedLayer3` subtracts the ones this turn already composed — they are
+      // in the prompt, so delivering them again would pay for the body twice.
       connectorSkillCandidates: [
         ...connectorOverlayCandidates,
-        ...this.toBundleSkillCandidates(bundleCapability),
+        ...this.toBundleSkillCandidates(bundleCapability, selectedLayer3),
       ],
       // From the UN-rehydrated history — this is what makes surface-ONCE hold
       // across turns on the real chat path.
@@ -2153,10 +2155,11 @@ export class Runtime {
       // Connector-skill overlays — same focused-workspace scoping as the
       // layer-3 pool; surfaced once into history, never the system prefix.
       // Bundle skills (SEP-2640) join as candidates so a promoted server's skill
-      // surfaces mid-turn, not only at turn-start.
+      // surfaces mid-turn, not only at turn-start. `selectedLayer3` subtracts the
+      // ones this run already composed — a task pays the same double otherwise.
       connectorSkillCandidates: [
         ...connectorOverlayCandidates,
-        ...this.toBundleSkillCandidates(bundleCapability),
+        ...this.toBundleSkillCandidates(bundleCapability, selectedLayer3),
       ],
       // A fresh task has a single user message and no prior history, so no
       // connector skill has been injected yet — the set is empty.
@@ -4466,17 +4469,38 @@ export class Runtime {
    *  instead of being a second `appContextServerName` argument that has to agree
    *  with the first.
    *
-   *  Only `dynamic` (tool-affined) skills ride this channel, which is what the
-   *  `capability` half is: an `always` bundle skill is already composed into the
-   *  context channel every turn, so surfacing it again on tool promotion would
-   *  double-inject the same guidance. */
-  private toBundleSkillCandidates(capability: Skill[]): ConnectorSkillCandidate[] {
-    return capability.map((s) => ({
-      name: s.manifest.name,
-      body: s.body,
-      scope: s.manifest.scope ?? BUNDLE_SKILL_SCOPE,
-      toolAffinity: s.manifest.toolAffinity ?? [],
-    }));
+   *  Only skills this turn has NOT already composed ride this channel. Two
+   *  exclusions, one rule — a body already in the prompt must not be delivered
+   *  again:
+   *   - `always` bundle skills, by taking the `capability` half: an `always`
+   *     skill is in the context channel every turn.
+   *   - `alreadyComposed`, the turn's Layer-3 selection: a `dynamic` skill whose
+   *     tools were active at turn start is already in `<layer3-skill>`.
+   *
+   *  The second is not a corner case. `selectLayer3Skills` matches the very
+   *  `<server>__*` glob synthesis stamps on every published skill, so Layer 3
+   *  and this candidate list select on identical criteria — leaving a selected
+   *  skill in the pool re-delivered its body as a synthetic message on the first
+   *  call to any of its server's tools, where it then rode the rest of the
+   *  conversation. Because the glob is per-SERVER, one such call re-delivered
+   *  every skill that server published, not just the called tool's own.
+   *
+   *  What remains is what the channel is for: a skill whose tools were proxied
+   *  out of the active set at turn start, so Layer 3 could not select it, and
+   *  which becomes relevant when a tool is promoted mid-turn. */
+  private toBundleSkillCandidates(
+    capability: Skill[],
+    alreadyComposed: SelectedSkill[],
+  ): ConnectorSkillCandidate[] {
+    const composed = new Set(alreadyComposed.map((s) => s.skill.manifest.name));
+    return capability
+      .filter((s) => !composed.has(s.manifest.name))
+      .map((s) => ({
+        name: s.manifest.name,
+        body: s.body,
+        scope: s.manifest.scope ?? BUNDLE_SKILL_SCOPE,
+        toolAffinity: s.manifest.toolAffinity ?? [],
+      }));
   }
 
   /**
