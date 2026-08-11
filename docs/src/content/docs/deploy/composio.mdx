@@ -77,9 +77,15 @@ The key must match the catalog entry's `composio.toolkit` exactly. At boot the r
 
 A toolkit you leave out is **not** reported. The catalog is a menu, and wiring the toolkits you want is the normal case; installing a connector whose toolkit has no id fails at that moment, naming the toolkit and the config key to set.
 
-### 4. White-label the Composio consent screen (optional)
+### 4. Brand the Composio consent screen
 
-In **Project Settings → Auth Screen** in the Composio dashboard, upload your platform's logo and set the app title. For OAuth2 toolkits (Gmail, Outlook, most everything in the directory) the consent screen redirects through Composio briefly and the user-visible vendor consent uses *your* OAuth client's branding — the Composio screen only flashes for non-OAuth2 flows.
+In **Project Settings → Auth Screen** in the Composio dashboard, upload your platform's logo and set the app title. Do this before you let users connect anything.
+
+Every redirect-based connect runs through Composio's hosted Connect Link, so this screen is a real stop in the flow, not a flash: the user lands on `connect.composio.dev`, sees the page you brand here, and continues to the vendor's own consent (which uses *your* OAuth client's branding for a BYO auth config).
+
+The hosted page is also what makes toolkits with a required connection field work at all. Zoho asks for a region, Jira a subdomain, WhatsApp a WhatsApp Business Account ID — Composio's page collects those from the connecting user and validates them against the auth config. Nothing in the catalog declares them, and nothing needs to.
+
+Which toolkits ask, and for what, is a property of the auth config rather than of the catalog, so read it from Composio rather than from this list: `GET /api/v3/auth_configs/<ac_id>` returns `expected_input_fields`.
 
 ## Wire env vars into the pod
 
@@ -138,7 +144,7 @@ If the platform refuses to start with `NB_TENANT_ID is required when running in 
 If running behind strict egress filters, allow:
 
 - `backend.composio.dev` (HTTPS, all paths) — SDK calls and the MCP endpoint
-- `connect.composio.dev` (HTTPS, all paths) — hosted Connect Link redirect
+- `connect.composio.dev` and `dashboard.composio.dev` (HTTPS, all paths) — the hosted Connect Link every redirect-based connect passes through; `connect` 307s to `dashboard`, so allowing only the first breaks the flow mid-consent
 - Google / Microsoft OAuth endpoints (most fleets already allow these for native integrations)
 
 ## Adding a new Composio toolkit
