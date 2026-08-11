@@ -13,12 +13,15 @@ path would be attack surface with no consumer.
 
 ## Decision
 
-Every primitive carries `(owner, workspace, visibility)`. `owner` and
-`workspace` are **path-authoritative** (ADR-0003). `visibility` is a **mutable
-field**, defaulting to `private`; an absent value reads as `private`
-(fail-closed). v1 is **private-only**: the field is written and never read —
-groundwork with no attack surface. Sharing *within* a workspace (`visibility:
-shared`) is deferred.
+Every primitive is `(owner, workspace)`, both **path-authoritative**
+(ADR-0003), and is private to its owner by that partition alone — no field
+required. `visibility` is the **mutable field** that will later widen a
+primitive *within* its workspace: defaulting to `private`, an absent value
+reading as `private` (fail-closed). v1 is **private-only** — the field is
+written and never read, groundwork with no attack surface — and only `File`
+carries it (`src/files/types.ts`). Conversations and automations stay private
+structurally, and gain the field if and when they need to widen. `visibility:
+shared` itself is deferred.
 
 ## Consequences
 

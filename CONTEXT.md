@@ -61,6 +61,12 @@ addressed. **Personal connectors** carry a reserved `my_` marker
 automations) are bare too, owned by the user, outside any workspace. The source
 segment alone decides which door a call takes.
 
+**Two senses of "owned" meet here.** A kernel source is *identity*-owned — the
+tool is the user's and takes the identity door in every workspace. The data it
+reaches is *workspace*-owned — each conversation, file, and automation sits in
+one workspace's partition (ADR-0003). Identity-owned door, workspace-owned
+data; both are true at once, and the wall is the second one.
+
 ### Primitive (conversation / file / automation)
 Workspace-owned, stored at `workspaces/<wsId>/<primitive>/<ownerId>/`
 (ADR-0003). The path is authoritative; `workspaceId`/`ownerId` on the record are
@@ -96,4 +102,5 @@ The decision log is `adr/`. Foundational (secure RBAC):
 - [0003](adr/0003-primitives-are-workspace-owned-and-path-authoritative.md) — primitives are workspace-owned and path-authoritative
 - [0004](adr/0004-private-by-default-visibility-is-a-field.md) — private by default; visibility is a mutable field
 - [0005](adr/0005-no-cross-workspace-reach-tool-shape-is-scope.md) — no cross-workspace reach; a tool name's shape is its scope
-- [0006](adr/0006-personal-connector-use-requires-a-grant.md) — personal-connector use in a shared workspace requires a grant *(proposed)*
+- [0006](adr/0006-personal-connector-use-requires-a-grant.md) — personal-connector use in a shared workspace requires a grant
+- [0007](adr/0007-offboarding-revokes-active-use.md) — offboarding revokes active use; ownership is necessary, not sufficient

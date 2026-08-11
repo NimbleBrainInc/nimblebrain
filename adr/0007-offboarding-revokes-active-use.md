@@ -52,10 +52,13 @@ sole-member by construction, so they never gate.
 - The read carve-out is a deliberate residual: a departed member retains read of
   their own authored bytes. Revoking read too (plus an audited export/transfer
   flow) is a separate data-governance decision, not a security fix — deferred.
-- Files need no independent gate: the only way to reach a workspace's files is
-  through a session whose workspace is already membership-checked (chat resume,
-  or a validated `X-Workspace-Id` on REST/`/mcp`), so the conversation and
-  automation gates cover them.
+- Files need no independent gate, but not because every door is
+  membership-checked. `GET /v1/files/:fileId` is a third door with no workspace
+  middleware — it resolves the workspace from the id and searches **only the
+  caller's own owner partitions** (ADR-0002). So a departed member reaches their
+  own bytes there and no one else's, which is the same read carve-out above,
+  reached a different way. The session doors are covered by the conversation and
+  automation gates; this one is covered by the owner partition.
 
 ## Alternatives considered
 

@@ -20,7 +20,8 @@ specific shared workspace. It is enforced as a **single new gate on the
 identity-door branch** of `routeToolCall` (ADR-0005's chokepoint); the
 workspace-wall equality check stays absolute. The grant is owned by the
 **granting user** (revocation is theirs; it dies when they leave the workspace)
-and mirrored under the target workspace for enforcement and admin visibility.
+and is addressed on that user's record naming the target workspace — there is
+no workspace-scope grant record.
 This is the **only** sanctioned cross-scope crossing.
 
 ## Consequences
