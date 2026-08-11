@@ -124,6 +124,7 @@ async function withTimeout<T>(label: string, fn: () => Promise<T>): Promise<T> {
 interface ComposioClient {
   connectedAccounts: {
     list(query: unknown): Promise<unknown>;
+    link(userId: string, authConfigId: string, opts: unknown): Promise<unknown>;
     initiate(userId: string, authConfigId: string, opts: unknown): Promise<unknown>;
     delete(connectedAccountId: string): Promise<unknown>;
   };
@@ -211,10 +212,32 @@ async function composioClient(apiKey: string): Promise<ComposioClient> {
 }
 
 /**
- * Initiate a Composio connection request. Returns the URL the
- * browser should navigate to and the `connectedAccountId` the
- * platform persists on callback. Errors surface verbatim — the
- * caller decides how to map them to API responses.
+ * Begin a redirect-based Composio connection. Returns the URL the browser
+ * should navigate to and the `connectedAccountId` the platform persists on
+ * callback. Errors surface verbatim — the caller decides how to map them to
+ * API responses.
+ *
+ * `link()` — Composio's hosted authentication — is the call for every
+ * redirectable scheme, and the reason is two-fold:
+ *
+ *   1. `initiate()` is retired for Composio-managed OAuth auth configs (the
+ *      vendor answers 400 once enforced). `link()` works for managed and
+ *      custom configs alike and returns the same shape.
+ *   2. Composio's hosted page collects the auth config's required
+ *      connection-initiation fields — a Jira subdomain, a Zoho region, a
+ *      WhatsApp WABA id — directly from the connecting user, and it needs no
+ *      help from us: the SDK's `link()` exposes no channel for supplying
+ *      them. (The underlying endpoint does carry a `connection_data`
+ *      pre-fill, but it is absent from `CreateConnectedAccountLinkOptions`
+ *      and the options schema strips unknown keys, so it is unreachable
+ *      through this method.) A toolkit that declares a required field is
+ *      unconnectable any other way, since `initiate()` — the only call that
+ *      accepts them — is the one being retired.
+ *
+ * The trade-off is the address bar: the consent dance now visibly runs on
+ * Composio's domain rather than behind the white-label `/proxy` forwarder.
+ * The hosted page is co-branded, and an unconnectable toolkit is the
+ * alternative.
  *
  * `allowMultiple: true` is belt-and-suspenders — we only reach here
  * after `findActiveComposioConnection` returned null, but a race
@@ -230,12 +253,28 @@ export async function initiateComposioConnection(opts: {
   callbackUrl: string;
 }): Promise<{ redirectUrl: string; connectedAccountId: string }> {
   const composio = await composioClient(opts.apiKey);
-  const connRequest = (await withTimeout("connectedAccounts.initiate", () =>
-    composio.connectedAccounts.initiate(opts.userId, opts.authConfigId, {
-      callbackUrl: opts.callbackUrl,
-      allowMultiple: true,
-    }),
-  )) as unknown as {
+  let raw: unknown;
+  try {
+    raw = await withTimeout("connectedAccounts.link", () =>
+      composio.connectedAccounts.link(opts.userId, opts.authConfigId, {
+        callbackUrl: opts.callbackUrl,
+        allowMultiple: true,
+      }),
+    );
+  } catch (err) {
+    // `link()` reports every failure as one constant message and hangs the
+    // vendor's response body off `.cause`; `initiate()` rethrew the vendor
+    // error directly. Callers log `err.message`, so without this fold a 400
+    // naming the auth config's missing field reads only as "Failed to create
+    // connected account link" — the detail that made that class of bug
+    // findable at all. Fold it back in and keep the original on `cause`.
+    const cause = err instanceof Error ? err.cause : undefined;
+    if (err instanceof Error && cause instanceof Error && cause.message) {
+      throw new Error(`${err.message}: ${cause.message}`, { cause: err });
+    }
+    throw err;
+  }
+  const connRequest = raw as {
     redirectUrl?: unknown;
     redirectUri?: unknown;
     id?: unknown;
@@ -245,10 +284,10 @@ export async function initiateComposioConnection(opts: {
   const redirectUrl = (connRequest.redirectUrl ?? connRequest.redirectUri) as unknown;
   const connectedAccountId = (connRequest.connectedAccountId ?? connRequest.id) as unknown;
   if (typeof redirectUrl !== "string" || redirectUrl.length === 0) {
-    throw new Error("Composio initiate: missing redirect URL on connection request");
+    throw new Error("Composio link: missing redirect URL on connection request");
   }
   if (typeof connectedAccountId !== "string" || connectedAccountId.length === 0) {
-    throw new Error("Composio initiate: missing connected_account_id on connection request");
+    throw new Error("Composio link: missing connected_account_id on connection request");
   }
   return { redirectUrl, connectedAccountId };
 }
@@ -261,9 +300,10 @@ export async function initiateComposioConnection(opts: {
  * it. The platform persists only the opaque `connectedAccountId`, exactly the
  * trust posture of the OAuth path's `connection.json` (we never hold the key).
  *
- * `initiate` is the correct AND non-deprecated call here: the 2026-07-03 sunset
- * that pushes Composio-managed OAuth to `link()` explicitly excludes non-OAuth
- * schemes (API key / bearer / basic). For an API-key auth config Composio
+ * `initiate` is the correct AND non-deprecated call here, and the one place it
+ * survives: the retirement that moved Composio-managed OAuth to `link()` (see
+ * {@link initiateComposioConnection}) explicitly excludes non-OAuth schemes
+ * (API key / bearer / basic). For an API-key auth config Composio
  * returns a connected account with no `redirectUrl`; `waitForConnection` then
  * polls it to ACTIVE (or throws on a terminal FAILED/EXPIRED) — that poll is
  * our verification that the credential is usable. (Composio marks some API-key
