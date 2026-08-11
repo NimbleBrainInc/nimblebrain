@@ -357,10 +357,12 @@ export async function connectComposioApiKey(opts: {
     }
     // `waitForConnection` resolves only at ACTIVE (it throws on
     // FAILED/EXPIRED/timeout), but assert it explicitly so this helper's
-    // postcondition — and the caller's subsequent "running" flip — can't drift
-    // from the boot-state gate (which keys on status === "ACTIVE") if the SDK's
-    // resolve contract ever changes. A non-ACTIVE resolve falls into the catch
-    // below and deletes the half-created account.
+    // postcondition can't drift if the SDK's resolve contract ever changes.
+    // On success the caller writes `connection.json` and flips the connector to
+    // "running", and the boot-state gate keys on that file's EXISTENCE alone —
+    // nothing re-reads the account afterward. So this is the last point at
+    // which a non-ACTIVE account can still be refused. A non-ACTIVE resolve
+    // falls into the catch below and deletes the half-created account.
     const status = typeof account.status === "string" ? account.status : "";
     if (status !== "ACTIVE") {
       throw new Error(
