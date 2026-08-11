@@ -54,11 +54,53 @@ import {
  * adaptive retry behaviour (a tool that fails once with error A, then
  * once with error B, then succeeds, never trips).
  *
+ * RECOVERY — a trip is a verdict on the evidence so far, not a life
+ * sentence. A tripped tool that returns an ADVANCING SUCCESS (not an
+ * error, not infra-flagged, not `_meta`-flagged non-advancing) whose
+ * CONTENT differs from the content it tripped on has falsified the
+ * premise: it demonstrably works. The trip clears and the real result
+ * flows through untouched.
+ *
+ * This matters because the trip evidence is often about the CALLER, not
+ * the tool. The ERROR fingerprint ignores input by design, so N calls
+ * that fail the same schema validation collapse to one fingerprint and
+ * trip — even though each carried different (differently wrong)
+ * arguments. When the model then fixes its arguments and the call
+ * succeeds, holding the trip would report a landed write as a failure
+ * and send the model looking for a workaround. Suppressing a real
+ * result is worse than a late trip: it makes the model act on a false
+ * picture of what the world now contains.
+ *
+ * Recovery compares CONTENT, not the fingerprint, and the difference is
+ * load-bearing. The SUCCESS fingerprint folds in the canonicalized
+ * input, so a fingerprint comparison would let the empty-success mode
+ * walk straight out of its own trip: `page(cursor=1)` trips on three
+ * identical empty pages, then `page(cursor=2)` returns that same empty
+ * page under a different input, and a fingerprint check calls it
+ * progress. The dead-end loop then resumes with the guard disarmed and
+ * never re-trips, because every subsequent cursor is a fresh
+ * fingerprint too. Content is what "the tool is still stuck" means
+ * without reference to how the call was phrased.
+ *
+ * The cost is that a tool whose results carry no model-facing text —
+ * `structuredContent` only, or content annotated for the user audience —
+ * hashes to the empty string on every call, so once tripped it cannot
+ * recover. That fails closed and matches the behavior before recovery
+ * existed. Folding `structuredContent` in would fix it and reopen the
+ * hole above, since one timestamp field would make every call look like
+ * progress; a text-free tool wanting recovery should emit a varying
+ * field the model can see.
+ *
  * The supervisor itself never aborts the run; the engine reads the
- * verdict and decides what to surface. On a trip the engine also
- * filters the tripped tool out of the model's toolset for the rest of
- * the run, so the model can't call the broken tool again regardless of
- * how it reads the synth directive.
+ * verdict and decides what to surface. While a tool is tripped the
+ * engine drops it from `modelTools`, rebuilding that set from
+ * `snapshot()` every iteration — so a recovery restores it on the next
+ * turn with no further coordination. Note the drop makes the tool
+ * UNADVERTISED, not unreachable: dispatch reads `toolSchemaMap` only to
+ * validate input, and a miss skips validation and still executes. A
+ * model that names a dropped tool anyway therefore still runs it, which
+ * is the path by which a tripped tool can reach this code at all. The
+ * directive below deliberately does not advertise that path.
  */
 
 export interface SupervisorConfig {
@@ -105,6 +147,10 @@ interface ToolState {
   consecutiveRepeats: number;
   totalCalls: number;
   tripped: boolean;
+  /** Content hash of the result that tripped this tool. A later success must
+   *  differ from THIS to count as progress — see RECOVERY in the file header.
+   *  Null whenever `tripped` is false. */
+  trippedContent: string | null;
 }
 
 const DEFAULT_MAX_REPEATS = 3;
@@ -131,6 +177,22 @@ function canonicalJson(value: unknown): string {
   return `{${keys.map((k) => `${JSON.stringify(k)}:${canonicalJson(obj[k])}`).join(",")}}`;
 }
 
+/**
+ * Whether a result is evidence that the tool is doing real work: a plain
+ * success, with neither of the two `_meta` flags that mean "this tells you
+ * nothing about the tool" (an infrastructure failure that never reached the
+ * tool's logic) or "this made no progress" (the tool's own admission).
+ *
+ * Only this shape can clear a trip. Content is not inspected — a tool that
+ * returns success is taken at its word, exactly as the SUCCESS fingerprint does.
+ */
+function isAdvancingSuccess(result: ToolResult): boolean {
+  if (result.isError) return false;
+  if (result._meta?.[INFRA_ERROR_META_KEY] === true) return false;
+  if (result._meta?.[NON_ADVANCING_META_KEY] === true) return false;
+  return true;
+}
+
 export function createRunSupervisor(config: SupervisorConfig = {}): RunSupervisor {
   const maxRepeats = config.maxConsecutiveRepeats ?? DEFAULT_MAX_REPEATS;
   const textCap = config.fingerprintTextCap ?? DEFAULT_FINGERPRINT_CAP;
@@ -140,10 +202,25 @@ export function createRunSupervisor(config: SupervisorConfig = {}): RunSuperviso
   function getState(toolName: string): ToolState {
     let s = states.get(toolName);
     if (!s) {
-      s = { lastFingerprint: null, consecutiveRepeats: 0, totalCalls: 0, tripped: false };
+      s = {
+        lastFingerprint: null,
+        consecutiveRepeats: 0,
+        totalCalls: 0,
+        tripped: false,
+        trippedContent: null,
+      };
       states.set(toolName, s);
     }
     return s;
+  }
+
+  /** Hash of just the result text the model would see, capped like the
+   *  fingerprint's. Input-free on purpose: this is what "the tool returned the
+   *  same thing again" means independently of how the call was phrased. */
+  function contentHash(result: ToolResult): string {
+    return createHash("sha1")
+      .update(extractTextForModel(result.content).trim().slice(0, textCap))
+      .digest("hex");
   }
 
   function fingerprint(call: ToolCall, result: ToolResult): string {
@@ -196,13 +273,20 @@ export function createRunSupervisor(config: SupervisorConfig = {}): RunSuperviso
     // record of what happened. No universal directives ("stop using tools",
     // "end the run") — those rot when reread in a later turn where other
     // tools are still callable.
+    //
+    // It also does NOT mention that a corrected call can clear the trip, even
+    // though one can. The tool has just been dropped from the model's toolset,
+    // so an invitation to retry is an invitation to go hunting for a way to
+    // call something it can no longer see — which is the exact loop this guard
+    // exists to end, and which cost a real run half its budget. Recovery is a
+    // property of the mechanism, not advice to the model.
     const directive =
       // "made no progress" rather than "returned the same result": accurate
       // across all three trip modes — identical errors, identical empty
       // success, AND the non-advancing case where the results vary textually
       // (different "no match" strings) but represent the same dead end.
-      `[NB supervisor] Tool \`${toolName}\` made no progress ${repeats} times in a row; ` +
-      `this tool has been disabled for the rest of this run.\n\n` +
+      `[NB supervisor] Tool \`${toolName}\` made no progress ${repeats} times in a row ` +
+      `and has been disabled.\n\n` +
       `Underlying output (last call):\n${originalText}\n\n` +
       `Other tools remain available. Consider an alternative approach or summarize current findings ` +
       `if no path forward exists.`;
@@ -217,13 +301,28 @@ export function createRunSupervisor(config: SupervisorConfig = {}): RunSuperviso
     state.totalCalls += 1;
 
     if (state.tripped) {
-      // Once tripped, every subsequent call to the same tool keeps getting
-      // the synthetic directive. In practice the engine drops tripped tools
-      // from modelTools so the model can't call again — this branch is a
-      // belt-and-suspenders fallback if a caller invokes the tool anyway.
-      // Checked BEFORE the infrastructure skip below: a tool that already
-      // tripped stays disabled for the run, and must not be quietly re-enabled
-      // by a later call that happens to fail on the transport.
+      // A tripped tool that ADVANCES has disproved the trip — clear it and let
+      // the real result through (see RECOVERY in the file header). The bar is
+      // deliberately narrow: an error, an infrastructure failure, or a result
+      // the tool itself flagged non-advancing is not evidence the tool works,
+      // and neither is returning the very content it tripped on.
+      //
+      // Checked BEFORE the infrastructure skip below, and that skip still
+      // cannot quietly re-enable a tool: `isAdvancingSuccess` rejects an
+      // infra-flagged result on the flag itself, not merely on `isError`, so
+      // the guarantee does not rest on transport failures happening to be
+      // marked as errors.
+      if (isAdvancingSuccess(result) && contentHash(result) !== state.trippedContent) {
+        state.tripped = false;
+        state.trippedContent = null;
+        state.consecutiveRepeats = 1;
+        state.lastFingerprint = fingerprint(call, result);
+        return { type: "pass" };
+      }
+      // Still stuck: every subsequent call keeps getting the synthetic
+      // directive. The engine drops tripped tools from modelTools, so the model
+      // is no longer offered this one — but dispatch does not check that list,
+      // so a model that names it anyway still reaches here.
       const originalText = extractTextForModel(result.content).trim();
       return {
         type: "synth",
@@ -260,6 +359,7 @@ export function createRunSupervisor(config: SupervisorConfig = {}): RunSuperviso
 
     if (state.consecutiveRepeats >= maxRepeats) {
       state.tripped = true;
+      state.trippedContent = contentHash(result);
       const originalText = extractTextForModel(result.content).trim();
       return {
         type: "synth",
