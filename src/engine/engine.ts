@@ -1573,10 +1573,11 @@ export class AgentEngine {
 
   /**
    * Build the per-iteration model toolset and name→schema lookup. Filters out
-   * any tool the supervisor has tripped this run: removing the tool from the
-   * model's toolset is more reliable than telling the model "do not call this
-   * tool" via prose — the model literally can't call a tool that isn't in its
-   * list. Other tools remain available so the run can recover.
+   * any tool the supervisor currently has tripped: withholding the tool from
+   * the model's toolset is more reliable than telling the model "do not call
+   * this tool" via prose, because it isn't there to pick. Other tools remain
+   * available so the run can recover. Rebuilt every iteration from a fresh
+   * `snapshot()`, so a tool the supervisor un-trips comes back on its own.
    */
   private buildIterationTools(
     directTools: ToolSchema[],
@@ -2021,9 +2022,9 @@ export class AgentEngine {
 
     // Supervisor sees the post-hook, post-A.3-normalization result.
     // On a trip, the replacement directive flows downstream in place
-    // of the original tool result. The tripped tool is filtered out
-    // of `modelTools` on subsequent iterations (see buildIterationTools),
-    // so the model can't call it again regardless of what the directive says.
+    // of the original tool result. While it stays tripped the tool is
+    // withheld from `modelTools` on subsequent iterations (see
+    // buildIterationTools), so the model is not offered it again.
     const verdict = ctx.supervisor.observe(gatedCall, hookedResult);
     const finalResult = verdict.type === "synth" ? verdict.replacement : hookedResult;
 

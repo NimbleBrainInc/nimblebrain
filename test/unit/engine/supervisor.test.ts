@@ -67,16 +67,18 @@ describe("supervisor — trips on repeated identical results", () => {
       expect(synthText).toContain(sameError);
       expect(synthText).toContain("foo");
       // Scoped to this tool, no universal directives that would rot in
-      // conversation history across future runs. The disable is stated as
-      // conditional because it is: an advancing call clears it (see
-      // "recovery from a trip"), and promising otherwise teaches the model to
-      // stop trying a tool that would work.
-      expect(synthText).toContain("disabled while that holds");
-      expect(synthText).toContain("re-enables it");
-      expect(synthText).not.toContain("for the rest of this run");
+      // conversation history across future runs.
+      expect(synthText).toContain("has been disabled");
       expect(synthText).not.toContain("Do not call any tools");
       expect(synthText).not.toContain("End the run");
-      expect(synthText).toContain("other tools remain available");
+      expect(synthText).toContain("Other tools remain available");
+      // And it must NOT advertise recovery. A tripped tool has just been
+      // withheld from the model's toolset, so inviting a retry sends the model
+      // hunting for a way to call something it can no longer see — the loop
+      // this guard exists to end. Recovery is a property of the mechanism, not
+      // advice to the model.
+      expect(synthText).not.toContain("re-enable");
+      expect(synthText).not.toContain("corrected call");
     }
   });
 
@@ -173,7 +175,7 @@ describe("supervisor — recovery from a trip", () => {
     expect(sup.observe(call("foo"), stalled).type).toBe("synth");
   });
 
-  it("does not recover on a success repeating the fingerprint it tripped on", () => {
+  it("does not recover on a success repeating the content it tripped on", () => {
     // The pagination dead-end: identical empty-success payloads trip, and
     // returning that same payload again is not progress however often it comes.
     const sup = createRunSupervisor();
@@ -183,6 +185,28 @@ describe("supervisor — recovery from a trip", () => {
     expect(sup.observe(call("page", { cursor: 1 }), empty).type).toBe("synth");
 
     expect(sup.observe(call("page", { cursor: 1 }), empty).type).toBe("synth");
+  });
+
+  it("does not let a varied input walk the empty-success trip open", () => {
+    // The SUCCESS fingerprint folds in the canonicalized input, so comparing
+    // fingerprints instead of CONTENT would call the next cursor "progress":
+    // the trip would clear on the very same empty page, and every subsequent
+    // cursor would be a fresh fingerprint that never re-trips — the dead-end
+    // loop resuming with the guard disarmed, which is the failure mode the
+    // guard exists for.
+    const sup = createRunSupervisor();
+    const empty = textResult("[]");
+    for (const _ of [1, 2, 3]) sup.observe(call("page", { cursor: 1 }), empty);
+    expect(sup.snapshot().trippedTools).toEqual(["page"]);
+
+    for (const cursor of [2, 3, 4, 5, 6, 7, 8]) {
+      expect(sup.observe(call("page", { cursor }), empty).type).toBe("synth");
+    }
+    expect(sup.snapshot().trippedTools).toEqual(["page"]);
+
+    // A page that actually has rows on it is progress, and does recover.
+    expect(sup.observe(call("page", { cursor: 9 }), textResult('["a"]')).type).toBe("pass");
+    expect(sup.snapshot().trippedTools).toEqual([]);
   });
 
   it("stays armed after recovering — a fresh streak trips again", () => {
