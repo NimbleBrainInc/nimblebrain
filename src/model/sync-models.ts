@@ -28,15 +28,6 @@ const MANUAL_EXCLUSIONS = new Set<string>([
   // to xAI, so this model is unreachable rather than merely limited — upstream's
   // `tool_call: false` understates it.
   "xai:grok-4.20-multi-agent-0309",
-  // An 8192-token context window cannot host this runtime's own floor:
-  // `budgetSafetyMarginTokens` never returns less than
-  // `MIN_BUDGET_SAFETY_MARGIN_TOKENS` (8192), so `context - system - tools -
-  // output - safety` is negative before a single message is packed. Unlike the
-  // `output >= context` case below, no output cap rescues it — the window is
-  // the constraint, and this is the one chat-capable model in the catalog small
-  // enough to hit it. Offering a model whose every turn resolves a zero budget
-  // is worse than not offering it.
-  "openai:gpt-4",
 ]);
 
 // Upstream reports each model's maximum limits, but some maxima are only

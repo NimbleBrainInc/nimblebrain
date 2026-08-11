@@ -399,6 +399,31 @@
         "releaseDate": "2023-03-01",
         "deprecated": true
       },
+      "gpt-4": {
+        "id": "gpt-4",
+        "name": "GPT-4",
+        "family": "gpt",
+        "cost": {
+          "input": 30,
+          "output": 60
+        },
+        "limits": {
+          "context": 8192,
+          "output": 4096
+        },
+        "capabilities": {
+          "toolCall": true,
+          "reasoning": false,
+          "attachment": true
+        },
+        "modalities": {
+          "input": ["text"],
+          "output": ["text"]
+        },
+        "knowledgeCutoff": "2023-11",
+        "releaseDate": "2023-11-06",
+        "deprecated": true
+      },
       "gpt-4-turbo": {
         "id": "gpt-4-turbo",
         "name": "GPT-4 Turbo",
