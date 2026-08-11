@@ -430,14 +430,22 @@ describe("GET /v1/composio-auth/callback", () => {
       const nonce = "beefbeefbeefbeefbeefbeefbeefbeef";
       registerConnectFlow(nonce, { type: "workspace", wsId }, cid);
 
-      const res = await app.request(
-        `http://nb.test/v1/composio-auth/callback?n=${nonce}` +
-          "&connected_account_id=ca_denied&status=failed",
-        { headers: { cookie: `nb_composio_state=${sha256Hex(nonce)}` } },
-      );
+      // Case and surrounding space both have to be absorbed: the same outcome is
+      // spelled `failed` on the redirect and `FAILED` on the connected-account
+      // record, so a comparison against the raw param would catch one and miss
+      // the other. The guard returns before the flow record is consumed, so one
+      // registration serves every variant.
+      for (const status of ["failed", "FAILED", "%20Failed%20"]) {
+        const res = await app.request(
+          `http://nb.test/v1/composio-auth/callback?n=${nonce}` +
+            `&connected_account_id=ca_denied&status=${status}`,
+          { headers: { cookie: `nb_composio_state=${sha256Hex(nonce)}` } },
+        );
 
-      expect(res.status).toBe(400);
-      expect(await res.text()).toContain("Connection failed");
+        expect(res.status).toBe(400);
+        expect(await res.text()).toContain("Connection failed");
+      }
+
       expect(await readComposioConnection(dir, { type: "workspace", wsId }, cid)).toBeNull();
       expect(ctx.__lifecycleCalls.recordConnectionStateChange.callCount).toBe(0);
     } finally {
