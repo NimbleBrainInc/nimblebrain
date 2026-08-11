@@ -266,8 +266,11 @@ describe("bodyLimit middleware", () => {
   // stall window, so it must be drained in full.
   test("drains a slow body that never stalls", async () => {
     const app = createTestApp(1024);
-    const chunks = 3;
-    const gapMs = 900;
+    // 3s total, so it outlives a 2s total budget by a clear margin, in 500ms
+    // steps that leave 1.5s of slack against the stall window — a CI runner
+    // that hitches must not be able to read as a stall.
+    const chunks = 6;
+    const gapMs = 500;
     let delivered = 0;
     const request = new Request("http://localhost/test", {
       method: "POST",
@@ -291,6 +294,44 @@ describe("bodyLimit middleware", () => {
     expect(res.status).toBe(413);
     // Every chunk read: the drain outlived a 2s total budget without stalling.
     expect(delivered).toBe(chunks);
+  });
+
+  // The stall window asks whether the sender stopped, which one byte answers.
+  // A sender pacing itself just inside it therefore never stalls and, with no
+  // second bound, picks how long the refusal is withheld — the middleware
+  // awaits the drain before answering. So the total budget has to hold where
+  // the stall window cannot: bytes keep arriving, and the drain ends anyway.
+  test("abandons a refusal whose body crawls without ever stalling", async () => {
+    const app = createTestApp(1024);
+    let delivered = 0;
+    const request = new Request("http://localhost/test", {
+      method: "POST",
+      // Small enough that the budget floors at the stall window, so only the
+      // total bound can end this read.
+      headers: { "Content-Length": "2048", "Content-Type": "application/json" },
+      body: new ReadableStream<Uint8Array>({
+        async pull(controller) {
+          // Well inside the stall window, so the stall timer never fires.
+          await Bun.sleep(200);
+          if (delivered === 100) {
+            controller.close();
+            return;
+          }
+          delivered++;
+          controller.enqueue(new Uint8Array(1));
+        },
+      }),
+      duplex: "half",
+    } as RequestInit);
+
+    const started = performance.now();
+    const res = await app.fetch(request);
+    const elapsed = performance.now() - started;
+
+    expect(res.status).toBe(413);
+    // Unbounded, this sender dictates 20s. Bounded, it gets the 2s budget.
+    expect(elapsed).toBeLessThan(4_000);
+    expect(delivered).toBeLessThan(100);
   });
 
   // Regression guard: bodyLimit must stay scoped to the route it's attached
