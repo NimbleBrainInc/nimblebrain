@@ -29,8 +29,13 @@ function logLlmDone(event: EngineEvent): void {
   // timestamp, and `Math.round(undefined)` would print `NaNms ttft`.
   const ttftMs = event.data.ttftMs;
   const ttft = typeof ttftMs === "number" ? `, ${Math.round(ttftMs)}ms ttft` : "";
+  // The pre-flight estimate for this call, next to the provider's actual `in`.
+  // Reading the two together is how estimator drift is diagnosed on a specific
+  // slow call; the aggregate lives in `nb_llm_input_tokens_estimated_total`.
+  const estimated = event.data.estimatedInputTokens;
+  const est = typeof estimated === "number" ? `, ${estimated} est` : "";
   console.error(
-    `[engine] llm.done: ${event.data.model} (${usage.inputTokens ?? 0} in, ${usage.outputTokens ?? 0} out, ${Math.round(event.data.llmMs as number)}ms${ttft})`,
+    `[engine] llm.done: ${event.data.model} (${usage.inputTokens ?? 0} in, ${usage.outputTokens ?? 0} out, ${Math.round(event.data.llmMs as number)}ms${ttft}${est})`,
   );
 }
 

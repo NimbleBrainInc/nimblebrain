@@ -1,5 +1,6 @@
 import {
   llmErrorsTotal,
+  llmInputTokensEstimatedTotal,
   llmRequestDurationSeconds,
   llmTtftSeconds,
   recordBundleCrash,
@@ -91,6 +92,22 @@ export class MetricsEventSink implements EventSink {
     const ttftMs = data.ttftMs;
     if (typeof ttftMs === "number") {
       llmTtftSeconds.observe({ source: "main", model, origin }, ttftMs / 1000);
+    }
+    // Pre-flight estimate for this call. Its counterpart is the input side of
+    // `nb_llm_tokens_total`; dividing actual by estimated gives the estimator's
+    // drift, which is what the windowing budget is silently subject to.
+    //
+    // Both sides of that ratio must move together or not at all. The actual
+    // side records nothing for a zero input — `recordLlmUsage` gates every
+    // per-kind increment on `> 0`, and the adapter skips it entirely without
+    // usage — so recording an estimate there would advance the denominator
+    // alone. That biases the ratio toward 1.0 or below, which reads as "no
+    // drift": the one direction this metric exists to rule out. A stream that
+    // ends without a finish part reaches exactly that state, leaving the usage
+    // totals at their zero initializers.
+    const estimated = data.estimatedInputTokens;
+    if (typeof estimated === "number" && estimated > 0 && (usage?.inputTokens ?? 0) > 0) {
+      llmInputTokensEstimatedTotal.inc({ source: "main", model, origin }, estimated);
     }
   }
 

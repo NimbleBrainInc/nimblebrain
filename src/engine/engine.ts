@@ -45,6 +45,7 @@ import { isContextOverflowError } from "./context-overflow.ts";
 import { withRetry } from "./retry.ts";
 import type { ConnectorSkillInjectedPayload } from "./schemas/events.ts";
 import { createRunSupervisor, type RunSupervisor, type SupervisorVerdict } from "./supervisor.ts";
+import { estimateMessageTokens, estimateToolDescriptionTokens } from "./token-estimate.ts";
 import { toolSchemaForLlm } from "./tool-schema-for-llm.ts";
 import {
   CONNECTOR_SKILL_SYNTHETIC,
@@ -1216,6 +1217,12 @@ export class AgentEngine {
         );
 
         const callProvider = getProviderFromModel(config.model);
+        // Pre-flight estimate of the prompt the provider is actually sent, in
+        // the same units the windowing budget is enforced in. Set inside
+        // `callOnce` so an overflow re-window updates it, and read at
+        // `llm.done` alongside the provider's reported usage — the pair is
+        // what makes estimator drift measurable instead of inferred.
+        let estimatedInputTokens = 0;
         const callOnce = (msgs: LanguageModelV3Message[]) => {
           // Provider-scoped prompt-cache policy: places the rolling step-anchor
           // + tail breakpoints (Anthropic) so the growing prefix is read back,
@@ -1234,6 +1241,12 @@ export class AgentEngine {
             messages: msgs,
             tools: modelTools,
           });
+          // `cachedPrompt` is the full prompt array (system message +
+          // messages), so this covers everything billed as input except the
+          // provider's own per-request overhead.
+          estimatedInputTokens =
+            cachedPrompt.reduce((sum, m) => sum + estimateMessageTokens(m), 0) +
+            cachedTools.reduce((sum, t) => sum + estimateToolDescriptionTokens(t), 0);
           return withRetry(
             () =>
               callModel(
@@ -1314,6 +1327,12 @@ export class AgentEngine {
             // prefill), distinct from `llmMs` (whole round-trip incl. decode).
             // Absent when the call emitted no output part.
             ttftMs: response.ttftMs,
+            // The pre-flight estimate for this same call. Paired with
+            // `usage.inputTokens`, it is the estimator's error on real
+            // traffic — the signal a calibrated budget would learn from, and
+            // the one that separates an under-counting estimator from
+            // windowing that returned over budget.
+            estimatedInputTokens,
             finishReason: lastFinishReason,
           },
         });

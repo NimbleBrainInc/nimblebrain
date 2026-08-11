@@ -2280,6 +2280,39 @@ describe("AgentEngine", () => {
       expect(llmDone).toBeDefined();
       expect((llmDone!.data as Record<string, unknown>).finishReason).toBe("length");
     });
+
+    // The estimate is computed in `callOnce`, over the prompt the cache policy
+    // actually produced. Asserting it here rather than on a hand-built event
+    // is the only thing that binds that computation — the adapter and console
+    // suites accept whatever they are handed.
+    it("emits a non-zero estimatedInputTokens on the llm.done event", async () => {
+      const events: EngineEvent[] = [];
+      const sink: EventSink = {
+        emit(event: EngineEvent) {
+          events.push(event);
+        },
+      };
+
+      const model = createEchoModel({ responses: [{ text: "ok" }] });
+      await new AgentEngine(
+        model,
+        new StaticToolRouter([], () => ({ content: textContent(""), isError: false })),
+        sink,
+      ).run(
+        defaultConfig,
+        "You are a helpful assistant with a system prompt long enough to count.",
+        [{ role: "user", content: [{ type: "text", text: "hello" }] }],
+        [],
+      );
+
+      const llmDone = events.find((e) => e.type === "llm.done");
+      expect(llmDone).toBeDefined();
+      const estimated = (llmDone!.data as Record<string, unknown>).estimatedInputTokens;
+      expect(typeof estimated).toBe("number");
+      // The system prompt alone exceeds this; a parts-array-only estimator
+      // would have skipped the system message and returned 0.
+      expect(estimated as number).toBeGreaterThan(10);
+    });
   });
 
   it("respects absolute MAX_ITERATIONS ceiling of 25", async () => {
