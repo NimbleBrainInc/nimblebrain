@@ -414,6 +414,37 @@ describe("GET /v1/composio-auth/callback", () => {
     }
   });
 
+  // A consent denied at the vendor comes back as `status=failed` with NO `error`
+  // param — verified against a real denial through Composio's hosted flow. The
+  // cookie and flow record are both valid here (the user really did start this
+  // connect), so nothing else in the chain would stop it: the connection would
+  // be persisted and the connector reported connected, against an account
+  // Composio has already marked FAILED.
+  test("a denied consent does not persist a connection or flip the connector on", async () => {
+    const { dir, cleanup } = freshDir();
+    try {
+      const cid = "com.google/gmail";
+      const wsId = "ws_test";
+      const ctx = stubCtx(dir, composioEntry(cid));
+      const app = composioAuthRoutes(ctx);
+      const nonce = "beefbeefbeefbeefbeefbeefbeefbeef";
+      registerConnectFlow(nonce, { type: "workspace", wsId }, cid);
+
+      const res = await app.request(
+        `http://nb.test/v1/composio-auth/callback?n=${nonce}` +
+          "&connected_account_id=ca_denied&status=failed",
+        { headers: { cookie: `nb_composio_state=${sha256Hex(nonce)}` } },
+      );
+
+      expect(res.status).toBe(400);
+      expect(await res.text()).toContain("Connection failed");
+      expect(await readComposioConnection(dir, { type: "workspace", wsId }, cid)).toBeNull();
+      expect(ctx.__lifecycleCalls.recordConnectionStateChange.callCount).toBe(0);
+    } finally {
+      cleanup();
+    }
+  });
+
   test("forged cookie without a server-side flow is rejected — no cross-owner write", async () => {
     // The reported vulnerability: the callback is unauthenticated and the
     // `nb_composio_state` cookie was a bare sha256 of values the caller already

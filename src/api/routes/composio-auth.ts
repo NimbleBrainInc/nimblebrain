@@ -74,6 +74,14 @@ import { SUCCESS_PAGE_CSP, successPageHtml } from "./oauth-success-page.ts";
 const ERROR_PAGE_CSP = `default-src 'none'; frame-ancestors 'none'; base-uri 'none'`;
 
 /**
+ * `status` values on the callback that mean the connection did NOT establish.
+ * Compared lower-cased, since the redirect param and Composio's own record
+ * disagree on case for the same outcome (`failed` on the wire, `FAILED` on the
+ * connected account).
+ */
+const FAILED_CALLBACK_STATUSES = new Set(["failed", "expired", "deleted", "inactive", "revoked"]);
+
+/**
  * Slug allowed in the `cid` query param. Matches our catalog id form
  * (`<reverse-dns>/<name>`, e.g. `com.google/gmail`). Filesystem
  * traversal is already defeated downstream by `connectorSlug`'s
@@ -547,6 +555,26 @@ async function validateCallbackParams(c: Context<AppEnv>): Promise<
     c.header("Content-Security-Policy", ERROR_PAGE_CSP);
     return c.html(
       `<html><body><h3>Connection failed</h3><pre>${escapeHtml(error)}</pre></body></html>`,
+      400,
+    );
+  }
+  // A denied consent is reported by the hosted flow as `status=failed` with no
+  // `error` param at all — verified against a real denial, which Composio
+  // records as `FAILED / "Authorization was denied at the provider"`. Nothing
+  // downstream re-checks this: the caller persists whatever status arrives, and
+  // the gate that decides a connector is connected (`hasPersistedComposioConnection`)
+  // tests only that the file exists. So without this the user would deny at the
+  // vendor and still land on "Connection complete", with a connector wired to an
+  // account that can never serve a tool call.
+  //
+  // Deny-listed rather than allow-listed on purpose: an unrecognised status
+  // keeps today's behaviour, where an allow-list would turn one unseen success
+  // spelling into "nobody can connect anything".
+  if (FAILED_CALLBACK_STATUSES.has(status.trim().toLowerCase())) {
+    c.header("Content-Security-Policy", ERROR_PAGE_CSP);
+    return c.html(
+      `<html><body><h3>Connection failed</h3><pre>${escapeHtml(status)}</pre>` +
+        "<p>Re-initiate the connection from NimbleBrain.</p></body></html>",
       400,
     );
   }
