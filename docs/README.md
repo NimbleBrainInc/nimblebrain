@@ -1,6 +1,6 @@
 # NimbleBrain Docs
 
-[![Deploy to GitHub Pages](https://github.com/NimbleBrainInc/nimblebrain-docs/actions/workflows/deploy.yml/badge.svg)](https://github.com/NimbleBrainInc/nimblebrain-docs/actions/workflows/deploy.yml)
+[![Deploy Docs](https://github.com/NimbleBrainInc/nimblebrain/actions/workflows/docs-pages.yml/badge.svg)](https://github.com/NimbleBrainInc/nimblebrain/actions/workflows/docs-pages.yml)
 [![License: CC BY 4.0](https://img.shields.io/badge/License-CC%20BY%204.0-lightgrey.svg)](https://creativecommons.org/licenses/by/4.0/)
 [![Built with Starlight](https://astro.badg.es/v2/built-with-starlight/tiny.svg)](https://starlight.astro.build)
 
