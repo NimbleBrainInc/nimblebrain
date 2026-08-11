@@ -409,7 +409,7 @@
         },
         "limits": {
           "context": 8192,
-          "output": 8192
+          "output": 4096
         },
         "capabilities": {
           "toolCall": true,
@@ -1177,30 +1177,6 @@
         "knowledgeCutoff": "2026-02-16",
         "releaseDate": "2026-07-09"
       },
-      "gpt-image-2": {
-        "id": "gpt-image-2",
-        "name": "gpt-image-2",
-        "family": "gpt-image",
-        "cost": {
-          "input": 5,
-          "output": 30,
-          "cacheRead": 1.25
-        },
-        "limits": {
-          "context": 0,
-          "output": 0
-        },
-        "capabilities": {
-          "toolCall": false,
-          "reasoning": false,
-          "attachment": true
-        },
-        "modalities": {
-          "input": ["text", "image"],
-          "output": ["image"]
-        },
-        "releaseDate": "2026-04-21"
-      },
       "gpt-realtime-2.1": {
         "id": "gpt-realtime-2.1",
         "name": "GPT-Realtime-2.1",
@@ -1616,7 +1592,7 @@
         },
         "limits": {
           "context": 32768,
-          "output": 32768
+          "output": 16384
         },
         "capabilities": {
           "toolCall": false,
@@ -1665,7 +1641,7 @@
         },
         "limits": {
           "context": 8192,
-          "output": 16384
+          "output": 4096
         },
         "capabilities": {
           "toolCall": false,
@@ -1714,7 +1690,7 @@
         },
         "limits": {
           "context": 8192,
-          "output": 16384
+          "output": 4096
         },
         "capabilities": {
           "toolCall": false,
@@ -1837,7 +1813,7 @@
         },
         "limits": {
           "context": 65536,
-          "output": 65536
+          "output": 16384
         },
         "capabilities": {
           "toolCall": false,
@@ -1861,7 +1837,7 @@
         },
         "limits": {
           "context": 65536,
-          "output": 65536
+          "output": 16384
         },
         "capabilities": {
           "toolCall": false,
@@ -1910,7 +1886,7 @@
         },
         "limits": {
           "context": 65536,
-          "output": 65536
+          "output": 16384
         },
         "capabilities": {
           "toolCall": true,
@@ -1984,7 +1960,7 @@
         },
         "limits": {
           "context": 8192,
-          "output": 16384
+          "output": 4096
         },
         "capabilities": {
           "toolCall": false,
@@ -2108,7 +2084,7 @@
         },
         "limits": {
           "context": 16384,
-          "output": 32768
+          "output": 8192
         },
         "capabilities": {
           "toolCall": false,
