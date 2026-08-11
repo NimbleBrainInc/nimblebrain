@@ -33,6 +33,24 @@ export function isRetryable(err: unknown): boolean {
 }
 
 /**
+ * Why an error was retried, for the log line: the HTTP status when membership of
+ * `RETRYABLE_STATUSES` is what made it retryable, and the error's name
+ * otherwise — `isRetryable` also admits anything flagged `retryable` (the
+ * model-stream stall watchdog throws one), and that path carries no status.
+ *
+ * Membership, not presence. `getStatus` is an unchecked cast over a foreign
+ * object, so `status` can hold a value of any shape, and the `retryable` branch
+ * never constrains it. Interpolating on presence alone would put an unexamined
+ * value into a log message — the one part the field redactor does not scan,
+ * which is the same reason the provider's error text is left out entirely.
+ */
+function retryReason(err: unknown): string | number {
+  const status = getStatus(err);
+  if (status !== undefined && RETRYABLE_STATUSES.has(status)) return status;
+  return err instanceof Error ? err.name : "unknown";
+}
+
+/**
  * Sleep that resolves after `ms` or rejects when `signal` aborts —
  * whichever fires first. Used by `withRetry` so a cancel during the
  * backoff window doesn't have to wait the full delay (up to ~8.5s on
@@ -104,19 +122,11 @@ export async function withRetry<T>(
       // succeeds, so it stays clean; and only the caller's elapsed-time
       // measurement carries any trace of it. Without this line the condition can
       // only be *inferred* — from elapsed time that output-token generation does
-      // not account for — and never attributed to a cause.
-      //
-      // `reason` is the HTTP status when there is one, else the error's name:
-      // `isRetryable` also admits anything flagged `retryable` (the model-stream
-      // stall watchdog is one), which carries no status.
-      //
-      // The error's message is deliberately not logged. It is provider-supplied
-      // free text, and the logger's redactor only inspects structured fields —
-      // status and name are enough to say what happened.
+      // not account for — and never attributed to a cause. `retryReason` above
+      // explains what goes in the line and what deliberately does not.
       log.warn(
         `[engine] retry attempt=${attempt + 1}/${maxRetries} ` +
-          `reason=${status ?? (err instanceof Error ? err.name : "unknown")} ` +
-          `delayMs=${Math.round(delay)}`,
+          `reason=${retryReason(err)} delayMs=${Math.round(delay)}`,
       );
       await abortableSleep(delay, signal);
     }
