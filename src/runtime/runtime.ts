@@ -1395,13 +1395,13 @@ export class Runtime {
     // above), so a resumed chat stays sealed to its workspace regardless of the
     // `/w/:slug` currently being viewed.
 
-    // Per-request trigger/keyword match. The boot-time `this.skillMatcher`
-    // only ever scans org-tier dirs (`config.skillDirs` + `globalSkillDir`),
-    // never `workspaces/<id>/skills/` or `users/<id>/skills/`, so those tiers
-    // could never trigger-match. Build the matcher from the merged
-    // conversation pool instead — org + workspace + user, which already folds
-    // in the boot matchable + builtin skills (see `loadConversationSkills`) —
-    // so the match is a superset of today's plus the workspace/user tiers fire.
+    // Per-request skill pool. The boot-time `this.skillMatcher` only ever scans
+    // org-tier dirs (`config.skillDirs` + `globalSkillDir`), never
+    // `workspaces/<id>/skills/` or `users/<id>/skills/`, so those tiers could
+    // never trigger-match. The merged conversation pool — org + workspace +
+    // user, which already folds in the boot matchable + builtin skills (see
+    // `loadConversationSkills`) — is a superset of the boot set, so the
+    // workspace/user tiers fire too.
     //
     // The pool is computed ONCE here and threaded into `selectRequestLayer3`
     // below so the disk read happens a single time per turn. `userId` is
@@ -1415,12 +1415,6 @@ export class Runtime {
     const conversationPool = this.loadConversationSkills(convWsId, userId);
     const { context: poolContext, capability: poolCapability } =
       partitionSkillsByRole(conversationPool);
-    const requestMatcher = new SkillMatcher();
-    requestMatcher.load(poolCapability);
-    // The trigger match drives both prompt composition (`skill`, the matched
-    // Skill) and load telemetry (`skillMatch`, which also carries the phrase).
-    const skillMatch = requestMatcher.match(request.message);
-    const skill = skillMatch?.skill ?? null;
 
     // The workspace BRIEFING (apps + workspace overlay + "## Workspace" block
     // + workspace persona) reflects the conversation's own workspace
@@ -1478,8 +1472,46 @@ export class Runtime {
           ...(t.annotations !== undefined ? { annotations: t.annotations } : {}),
         })),
     ];
+
+    // Server-published skills, discovered and routed by declared strategy. This
+    // runs HERE — after the workspace registry exists (`ensureWorkspaceRegistry`
+    // above; discovery reads it and silently yields nothing without it), and
+    // before the matcher — because the turn is a cycle otherwise: the matched
+    // skill feeds `surfaceTools`, whose output is the active toolset that
+    // tool-affinity selection needs. Splitting discovery (registry only) from
+    // selection (needs the toolset) breaks it. The partition is threaded into
+    // `selectRequestLayer3` below, so discovery still happens once per turn.
+    const bundlePool = await this.discoverBundleSkillsByRole(convWsId, {
+      ...(request.appContext?.serverName
+        ? { appContextServerName: request.appContext.serverName }
+        : {}),
+    });
+
+    // Per-request trigger match, over the conversation pool AND the workspace's
+    // server-published skills. A connector's skill declares `triggers` in the
+    // same frontmatter field a filesystem skill does, so it gets the same
+    // deterministic (must-fire) channel — which is the point: a phrase fires
+    // whether or not the publishing server's tools survived progressive
+    // disclosure into the active set, where tool-affinity alone would not.
+    //
+    // Pool order is load-bearing: `match()` returns the FIRST hit and at most one
+    // skill per message, so a workspace-authored skill wins a phrase a connector
+    // also claims. The tenant's own authoring beats a vendor's.
+    const requestMatcher = new SkillMatcher();
+    requestMatcher.load([...poolCapability, ...bundlePool.capability]);
+    // The trigger match drives both prompt composition (`skill`, the matched
+    // Skill) and load telemetry (`skillMatch`, which also carries the phrase).
+    const skillMatch = requestMatcher.match(request.message);
+    const skill = skillMatch?.skill ?? null;
+
     // `focusedServerName` (the BARE source name that
     // `surfaceTools.focusedServerName` matches) is computed in `resolveFocusedApp`.
+    // A fired phrase reaches here, but only bites when the matched skill declares
+    // `allowed-tools` — that is the one input `surfaceTools` reads off it, and it
+    // moves the tools block, which precedes the messages and is the request's most
+    // expensive cache bust. `synthesizeBundleSkill` stamps no `allowedTools`, so a
+    // server-published skill firing does not move the block; a workspace-authored
+    // one that declares the field always could, before and after this.
     const { direct: tools, proxied } = surfaceTools(
       allTools,
       skill,
@@ -1498,19 +1530,19 @@ export class Runtime {
     const activeWorkspace = await this._workspaceStore.get(narratedWsId);
     const workspaceContext = buildWorkspaceContext(narratedWsId, activeWorkspace);
 
-    // Skill selection. Server-exposed `skill://<name>/SKILL.md` resources are
-    // discovered here and routed by the strategy they DECLARE: `dynamic` ones
-    // join tool-affinity Layer 3 (loading when the bundle's tools are surfaced,
-    // no `appContext` scoping required); `always` ones (`bundleContext`) compose
-    // into the always-on context channel below, the same reliable every-turn
-    // path filesystem `always` skills use.
+    // Skill selection over the pools gathered above. Server-published skills
+    // route by the strategy they DECLARE: `dynamic` ones join tool-affinity
+    // Layer 3 (loading when the bundle's tools are surfaced, no `appContext`
+    // scoping required); `always` ones (`bundleContext`) compose into the
+    // always-on context channel below, the same reliable every-turn path
+    // filesystem `always` skills use.
     //
     // Workspace-tier skills follow the conversation's own workspace (`convWsId`),
     // matching the briefing / apps / overlay surfaces. A conversation in the
     // personal workspace reads the identity's personal scope, consistent with
-    // the rest of personal-workspace reads. Reuse the capability pool computed
-    // for the per-request matcher above — same `wsId` and `userId` — so the
-    // conversation-skill disk read happens once per turn, not twice.
+    // the rest of personal-workspace reads. Both precomputed pools are threaded
+    // in — the conversation-skill disk read and the bundle discovery each happen
+    // once per turn, not twice.
     const {
       context: bundleContext,
       capability: bundleCapability,
@@ -1520,6 +1552,7 @@ export class Runtime {
       userId,
       activeToolNames: tools.map((t) => t.name),
       capabilityPool: poolCapability,
+      bundlePool,
       ...(request.appContext?.serverName
         ? { appContextServerName: request.appContext.serverName }
         : {}),
@@ -2957,10 +2990,13 @@ export class Runtime {
       name: parsed.name,
       description: parsed.description,
       body: capped.body,
-      // Preserve the strategy the server declared (undefined = opted out;
-      // synthesis defaults it to `dynamic`).
+      // Preserve the loading config the server declared (undefined = opted out;
+      // synthesis defaults strategy to `dynamic`). Triggers ride along so a
+      // server-published skill is reachable by the phrase matcher, not only by
+      // tool-affinity — the same field, read the same way, as on disk.
       ...(parsed.loadingStrategy ? { loadingStrategy: parsed.loadingStrategy } : {}),
       ...(parsed.priority !== undefined ? { priority: parsed.priority } : {}),
+      ...(parsed.triggers?.length ? { triggers: parsed.triggers } : {}),
     };
   }
 
@@ -3046,6 +3082,7 @@ export class Runtime {
               uri: s.uri,
               ...(s.loadingStrategy ? { loadingStrategy: s.loadingStrategy } : {}),
               ...(s.priority !== undefined ? { priority: s.priority } : {}),
+              ...(s.triggers?.length ? { triggers: s.triggers } : {}),
             }),
           );
         } catch {
@@ -4510,6 +4547,31 @@ export class Runtime {
   }
 
   /**
+   * Discover the FOCUSED workspace's server-published skills and route them by
+   * the strategy each DECLARES — the discovery half of {@link selectRequestLayer3},
+   * split out because it is the half that has no dependency on the active
+   * toolset.
+   *
+   * That split is what makes a server-published skill reachable by the phrase
+   * matcher. The chat path runs: match → `surfaceTools(allTools, matched, …)` →
+   * active tool names → tool-affinity selection. So a pool built by the
+   * selection step cannot also be an input to the matcher that runs before it.
+   * Discovery needs only the workspace registry, so it can run ahead of the
+   * matcher and feed both: the matcher gets `capability` as extra candidates,
+   * and the selection step gets the same partition back instead of re-walking
+   * the registry and re-synthesizing every skill a second time for one turn.
+   *
+   * `context` (`always` skills) composes into the always-on channel; `capability`
+   * (`dynamic` skills) is both the tool-affinity pool and the matchable pool.
+   */
+  private async discoverBundleSkillsByRole(
+    wsId: string,
+    options: { appContextServerName?: string } = {},
+  ): Promise<{ context: Skill[]; capability: Skill[] }> {
+    return partitionSkillsByRole(await this.loadBundleSkills(wsId, options));
+  }
+
+  /**
    * Build the Layer-3 skill pool for a request and run the selection.
    *
    * Single source of truth for both prompt composition (`chat`) and the
@@ -4561,20 +4623,30 @@ export class Runtime {
      * NOT in this set — they compose into Layer 0/1 by role, never Layer 3.
      */
     capabilityPool?: Skill[];
+    /**
+     * Precomputed bundle partition from {@link discoverBundleSkillsByRole}. Pass
+     * it when the caller already ran discovery — the chat path must, because the
+     * `dynamic` half feeds the phrase matcher that runs before the active
+     * toolset exists. Omitted callers discover here. Either way discovery
+     * happens exactly once per turn.
+     */
+    bundlePool?: { context: Skill[]; capability: Skill[] };
   }): Promise<{ context: Skill[]; capability: Skill[]; layer3: SelectedSkill[] }> {
     const capabilityPool =
       params.capabilityPool ??
       partitionSkillsByRole(this.loadConversationSkills(params.wsId, params.userId)).capability;
     // Bundle skills come from the FOCUSED workspace only — a connector installed
     // in another workspace must not inject its usage skill here (the wall).
-    const bundleSkills = await this.loadBundleSkills(params.wsId, {
-      ...(params.appContextServerName ? { appContextServerName: params.appContextServerName } : {}),
-    });
-    // Route the discovered bundle skills by their DECLARED strategy: `always`
-    // skills go to the context channel (composed every turn), `dynamic` skills
-    // join the tool-affinity capability pool that `selectLayer3Skills` filters.
+    // Routed by their DECLARED strategy: `always` skills go to the context
+    // channel (composed every turn), `dynamic` skills join the tool-affinity
+    // capability pool that `selectLayer3Skills` filters.
     const { context: bundleContext, capability: bundleCapability } =
-      partitionSkillsByRole(bundleSkills);
+      params.bundlePool ??
+      (await this.discoverBundleSkillsByRole(params.wsId, {
+        ...(params.appContextServerName
+          ? { appContextServerName: params.appContextServerName }
+          : {}),
+      }));
     const layer3 = selectLayer3Skills({
       skills: [...capabilityPool, ...bundleCapability],
       activeTools: params.activeToolNames,

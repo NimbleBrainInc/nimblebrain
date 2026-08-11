@@ -397,7 +397,7 @@ export function composeSystemPromptTraced(
   layers.push(...appsLayers(apps, hasProxiedTools));
   layers.push(...appStateLayers(appState));
   layers.push(...focusedAppLayers(focusedApp));
-  layers.push(...matchedSkillLayers(matchedSkill));
+  layers.push(...matchedSkillLayers(matchedSkill, layer3Skills));
 
   // Stamp the volatility tier from the layer kind (single source of truth for
   // the stable/volatile classification — see `composeSystemSegments`).
@@ -747,9 +747,39 @@ function focusedAppLayers(focusedApp?: FocusedAppInfo): PendingLayer[] {
   ];
 }
 
-/** Layer 4: matched skill (legacy SkillMatcher path), wrapped in <skill-instructions> containment. */
-function matchedSkillLayers(matchedSkill?: Skill | null): PendingLayer[] {
+/**
+ * Stable identity for a skill across composition channels — the same key
+ * `collectLoadedSkills` de-duplicates the load ledger on, so the prompt and the
+ * ledger agree on what "the same skill" means.
+ */
+function skillKey(sourcePath: string | undefined, name: string): string {
+  return sourcePath || `name:${name}`;
+}
+
+/**
+ * Layer 4: matched skill (the `SkillMatcher` trigger path), wrapped in
+ * <skill-instructions> containment.
+ *
+ * Skipped when Layer 3 already composed the same skill. One `dynamic` skill can
+ * reach a turn through both channels — a tool-affinity glob matched an active
+ * tool AND a trigger phrase matched the message — and injecting it twice spends
+ * the tokens twice while handing the model one body under two framings. Layer 3
+ * wins, which is the precedence `collectLoadedSkills` already reports the load
+ * under. The trigger's must-fire guarantee is untouched: the body is in the
+ * prompt either way, and the match still narrows the direct tool set via the
+ * skill's `allowed-tools`.
+ *
+ * This overlap has always been reachable for a filesystem skill declaring both
+ * fields. For a server-published skill it is the ordinary case, because
+ * synthesis stamps `toolAffinity: ["<server>__*"]` on every one.
+ */
+function matchedSkillLayers(
+  matchedSkill?: Skill | null,
+  layer3Skills?: Layer3SkillEntry[],
+): PendingLayer[] {
   if (!matchedSkill?.body) return [];
+  const matchedKey = skillKey(matchedSkill.sourcePath, matchedSkill.manifest.name);
+  if ((layer3Skills ?? []).some((e) => skillKey(e.sourcePath, e.name) === matchedKey)) return [];
   const text = wrapContained("skill-instructions", matchedSkill.body);
   return [
     {
