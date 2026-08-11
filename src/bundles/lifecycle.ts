@@ -2667,7 +2667,14 @@ export class BundleLifecycleManager {
       return;
     }
 
-    const workDir = defaultWorkDir();
+    // The runtime's resolved workDir, not `defaultWorkDir()` — this probe reads
+    // credential state that install and the OAuth callback wrote under
+    // `runtime.getWorkDir()`, and the two diverge exactly when an operator sets
+    // `workDir` in `nimblebrain.json` without `NB_WORK_DIR`. Probing the wrong
+    // root finds no tokens and seeds `not_authenticated` for every remote
+    // connector at boot, however many are actually connected. See
+    // `resolvedWorkDir`.
+    const workDir = this.resolvedWorkDir ?? defaultWorkDir();
     // Composio-backed connectors live in a parallel credential namespace — the
     // user-presence signal is `credentials/composio/<connectorId>/connection.json`,
     // not the mcp-oauth tokens.json. Bundles carry the catalog id forward on
