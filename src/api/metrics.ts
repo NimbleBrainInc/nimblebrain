@@ -127,8 +127,8 @@ export const llmCallsTotal = new Counter({
  */
 export const llmRequestDurationSeconds = new Histogram({
   name: "nb_llm_request_duration_seconds",
-  help: "LLM request latency in seconds, by call source and model.",
-  labelNames: ["source", "model"] as const,
+  help: "LLM request latency in seconds, by call source, origin, and model.",
+  labelNames: ["source", "model", "origin"] as const,
   buckets: [0.25, 0.5, 1, 2, 5, 10, 20, 30, 45, 60, 90, 120],
   registers: [metricsRegistry],
 });
@@ -152,8 +152,8 @@ export const llmRequestDurationSeconds = new Histogram({
  */
 export const llmTtftSeconds = new Histogram({
   name: "nb_llm_ttft_seconds",
-  help: "LLM time-to-first-token in seconds (connect + prefill), by call source and model.",
-  labelNames: ["source", "model"] as const,
+  help: "LLM time-to-first-token in seconds (connect + prefill), by call source, origin, and model.",
+  labelNames: ["source", "model", "origin"] as const,
   buckets: [0.25, 0.5, 1, 2, 5, 10, 20, 30, 45, 60],
   registers: [metricsRegistry],
 });
