@@ -22,13 +22,32 @@ export const DAYS = [
   { value: "0", label: "Sunday" },
 ];
 
+/**
+ * A cron field the daily/weekly time input can hold: a plain number.
+ *
+ * `*`, a list (`12,17`), a range (`9-17`) and a step (`*` with `/15`) each name
+ * more than one moment, and those modes render exactly one `HH:MM`. There is
+ * nowhere to put the second value.
+ */
+function namesOneMoment(field: string | undefined): boolean {
+  return field !== undefined && /^\d{1,2}$/.test(field);
+}
+
 export function detectMode(spec: ScheduleSpec | null): ScheduleMode {
   if (!spec) return "interval";
   if (spec.type === "interval") return "interval";
   if (!spec.expression) return "cron";
   const parts = spec.expression.trim().split(/\s+/);
   if (parts.length !== 5) return "cron";
-  const [, , dom, mon, dow] = parts;
+  const [min, hour, dom, mon, dow] = parts;
+  // Classify on what the mode can *represent*, not just on the day fields.
+  // Reading the day fields alone routed `0 12,17 * * 1-5` to weekly, where the
+  // single time input collapsed the hour list — `emit` parsed "12,17" with
+  // `Number` and wrote `0 NaN * * 1-5`, which the server then rejected. The
+  // quieter half is worse: `* * * * *` came back as `0 8 * * *`, turning every
+  // minute into once a day with nothing to reject. Anything these modes cannot
+  // hold stays in `cron`, whose raw field round-trips verbatim.
+  if (!namesOneMoment(min) || !namesOneMoment(hour)) return "cron";
   if (dom === "*" && mon === "*" && dow === "*") return "daily";
   if (dom === "*" && mon === "*" && dow !== "*") return "weekly";
   return "cron";
