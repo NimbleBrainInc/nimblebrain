@@ -446,6 +446,29 @@ These cause production bugs if violated:
 - **Lay these views out single-column, or with `@container` queries — never viewport `md:`/`lg:` breakpoints.** A viewport breakpoint lies about the slot's real width; a two-pane master/detail collapses into nested, unreadable scroll regions once the chat is docked. Reference: `web/src/pages/ContextInspectorPage.tsx` (one scrolling column; each layer's body expands in place).
 - **A routed element is reused across a param-only change.** The `/w/` prefix keeps `ChatChrome` mounted, so React Router keeps the same component instance alive when only the param changes (`context/:convId` A→B) — refs and state persist across the switch. On the param change you MUST (1) reset per-entity view state (selection/expansion and any `useRef` latch) and (2) cancel the previous entity's in-flight reads via an effect-cleanup flag. An unconditional `setState` in a stale `.then` lands entity A's data (its budget, its body) under entity B. See the load effect in `ContextInspectorPage.tsx`.
 
+## Chat Chrome Is Ambient Until It Has Something To Say
+
+Any new chat-surface component in `web/` starts recessive and earns its presence.
+Chrome follows cognitive weight: an element not conveying live information reads
+as muted text beside the content, not as a box.
+
+- **At rest:** `background: none`, `border: 0`, `opacity: 0.7`,
+  `color: var(--muted-foreground)`, small font. Chevrons, counts, and durations
+  sit near 60% opacity. An L1 head should read as one calm line next to the
+  message text.
+- **Box treatment** — `background: var(--card)`, `border: 1px solid var(--border)`
+  — returns only on an active state: `data-tone="running"`, `data-expanded="true"`,
+  or equivalent. Icons follow the same rule: `currentColor` dot at rest, brand
+  colour when running or expanded.
+- **Resist keeping chrome visible "so the user knows it's there."** They can hover
+  or click to surface it.
+
+The bar is higher than it sounds. Consolidating six status surfaces into a single
+`TurnActivityPill` was still too loud — one well-designed status element, at rest,
+was too visually present. Reference implementation: `web/src/index.css`,
+`.turn-pill__head` with the `[data-tone="running"]` / `[data-expanded="true"]`
+overrides.
+
 ## Auto-Generated Files
 
 Do not edit these manually:
