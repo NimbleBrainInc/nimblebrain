@@ -343,6 +343,96 @@ describe("create → list", () => {
 });
 
 // ---------------------------------------------------------------------------
+// list paging
+// ---------------------------------------------------------------------------
+
+describe("handleList paging", () => {
+	type ListResult = {
+		automations: Array<{ id: string; name: string }>;
+		total: number;
+		returned: number;
+		offset: number;
+		hasMore: boolean;
+		truncated?: string;
+	};
+
+	/** Seed n automations through the real create path. */
+	function seed(ctx: ToolContext, n: number): void {
+		for (let i = 0; i < n; i++) {
+			handleCreate(
+				{
+					manifest: {
+						name: `Seeded ${String(i).padStart(3, "0")}`,
+						schedule: { type: "interval", intervalMs: 1_800_000 },
+					},
+					body: "noop",
+				},
+				ctx,
+			);
+		}
+	}
+
+	test("caps at the default limit and reports the unpaged total", () => {
+		const ctx = makeCtx();
+		seed(ctx, 105);
+
+		const r = handleList({}, ctx) as ListResult;
+		// `total` must describe every match, not the page — a caller that reads
+		// `total` as "what I received" is exactly the bug this guards.
+		expect(r.total).toBe(105);
+		expect(r.returned).toBe(100);
+		expect(r.automations).toHaveLength(100);
+		expect(r.hasMore).toBe(true);
+	});
+
+	test("says so in prose when the page hid matches", () => {
+		const ctx = makeCtx();
+		seed(ctx, 105);
+
+		const r = handleList({}, ctx) as ListResult;
+		// A silent cap is worse than an error here: the caller concludes "not
+		// found" from a set it never saw. The count must be in the payload text.
+		expect(r.truncated).toBeDefined();
+		expect(r.truncated).toContain("105");
+		expect(r.truncated).toContain("offset=100");
+	});
+
+	test("offset walks the remainder and clears the flag on the last page", () => {
+		const ctx = makeCtx();
+		seed(ctx, 105);
+
+		const r = handleList({ offset: 100 }, ctx) as ListResult;
+		expect(r.returned).toBe(5);
+		expect(r.total).toBe(105);
+		expect(r.offset).toBe(100);
+		expect(r.hasMore).toBe(false);
+		expect(r.truncated).toBeUndefined();
+	});
+
+	test("no truncation notice when everything fits", () => {
+		const ctx = makeCtx();
+		seed(ctx, 3);
+
+		const r = handleList({}, ctx) as ListResult;
+		expect(r.total).toBe(3);
+		expect(r.returned).toBe(3);
+		expect(r.hasMore).toBe(false);
+		expect(r.truncated).toBeUndefined();
+	});
+
+	test("total counts filter matches, not the whole store", () => {
+		const ctx = makeCtx();
+		seed(ctx, 4);
+		handleUpdate({ name: "Seeded 000", manifest: { enabled: false } }, ctx);
+
+		const r = handleList({ enabled: false }, ctx) as ListResult;
+		expect(r.total).toBe(1);
+		expect(r.returned).toBe(1);
+		expect(r.hasMore).toBe(false);
+	});
+});
+
+// ---------------------------------------------------------------------------
 // update tool
 // ---------------------------------------------------------------------------
 

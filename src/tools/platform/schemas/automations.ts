@@ -137,6 +137,21 @@ export const AutomationsListInput = Type.Object({
   source: Type.Optional(
     StringEnum(["user", "agent", "bundle"] as const, { description: "Filter by source." }),
   ),
+  limit: Type.Optional(
+    // Default/cap mirror AUTOMATIONS_LIST_DEFAULT_LIMIT / AUTOMATIONS_LIST_MAX_LIMIT
+    // in src/limits.ts. Literals for the same reason as maxIterations above: this
+    // schema is codegen'd under a strict rootDir that forbids importing from
+    // outside src/tools/platform/schemas/. server.ts imports the real constants.
+    Type.Number({
+      minimum: 1,
+      maximum: 500,
+      description:
+        "Max automations to return. Default 100, max 500. The response always reports the unpaged total and whether more remain.",
+    }),
+  ),
+  offset: Type.Optional(
+    Type.Number({ minimum: 0, description: "Number of matches to skip. Default 0." }),
+  ),
 });
 export type AutomationsListInput = Static<typeof AutomationsListInput>;
 
@@ -248,7 +263,20 @@ export interface AutomationSummary {
 
 export interface AutomationsListOutput {
   automations: AutomationSummary[];
+  /** Matches for the given filters BEFORE the page cap — not `automations.length`. */
   total: number;
+  /** How many are in this response. */
+  returned: number;
+  offset: number;
+  hasMore: boolean;
+  /**
+   * Present only when the page cap hid matches. Prose rather than a flag alone
+   * because the consumer is a model reading the payload: a bare `hasMore: true`
+   * has been read as incidental, whereas a sentence naming the missing count is
+   * not. Coverage that silently shrinks is worse than an error — the caller
+   * concludes "no match found" from a set it never saw.
+   */
+  truncated?: string;
 }
 
 /**

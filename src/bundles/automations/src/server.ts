@@ -8,7 +8,11 @@
  */
 
 import { Cron } from "croner";
-import { MAX_ITERATIONS } from "../../../limits.ts";
+import {
+  AUTOMATIONS_LIST_DEFAULT_LIMIT,
+  AUTOMATIONS_LIST_MAX_LIMIT,
+  MAX_ITERATIONS,
+} from "../../../limits.ts";
 import type {
   AutomationSummary,
   AutomationsCancelOutput,
@@ -432,6 +436,16 @@ export function handleList(args: Record<string, unknown>, ctx: ToolContext): Aut
     automations = automations.filter((a) => a.source === args.source);
   }
 
+  // Page AFTER filtering so `total` describes the filter's real match count,
+  // which is what a caller deciding whether it has seen everything needs.
+  const total = automations.length;
+  const offset = Math.max(0, (args.offset as number) ?? 0);
+  const limit = Math.min(
+    Math.max(1, (args.limit as number) ?? AUTOMATIONS_LIST_DEFAULT_LIMIT),
+    AUTOMATIONS_LIST_MAX_LIMIT,
+  );
+  automations = automations.slice(offset, offset + limit);
+
   const summaries: AutomationSummary[] = automations.map((a) => ({
     id: a.id,
     name: a.name,
@@ -448,9 +462,22 @@ export function handleList(args: Record<string, unknown>, ctx: ToolContext): Aut
     estimatedCostPerDay: estimateCost(a, ctx.defaultModel).perDayUsd,
   }));
 
+  const hasMore = offset + summaries.length < total;
   return {
     automations: summaries,
-    total: summaries.length,
+    total,
+    returned: summaries.length,
+    offset,
+    hasMore,
+    ...(hasMore
+      ? {
+          truncated:
+            `Showing ${summaries.length} of ${total} matching automations (offset ${offset}). ` +
+            `${total - offset - summaries.length} were not returned — this is a partial view. ` +
+            `Re-call with offset=${offset + summaries.length} to continue before concluding anything ` +
+            `about the full set.`,
+        }
+      : {}),
   };
 }
 
