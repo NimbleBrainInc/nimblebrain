@@ -17,6 +17,7 @@ import {
   toolPromotionsTotal,
 } from "../../src/api/metrics.ts";
 import type { BundleHealth } from "../../src/tools/health-monitor.ts";
+import { runWithRequestContext } from "../../src/runtime/request-context.ts";
 
 // Read one label-series value off a counter. Tests use deltas (read → act →
 // read) rather than reset(), so they're robust to the shared process-global
@@ -390,6 +391,46 @@ describe("LLM latency + error metrics", () => {
     // a 0s (or NaN) TTFT sample. The round-trip latency still observes.
     sink.emit({ type: "llm.done", data: { runId: "r1", model: "tm-no-ttft", llmMs: 5000 } });
     expect((await readTtft("count", labels)) - before).toBe(0);
+  });
+
+  // The point of the `origin` label is that a p99 can separate a person waiting
+  // from an automation nobody is watching. A label that is present but always
+  // the same value would satisfy a shape assertion and still answer nothing, so
+  // these drive the two origins through the real derivation (the request
+  // context) rather than asserting the label exists.
+  it("test_latency_histograms_carry_origin_task_for_unattended_runs", async () => {
+    const sink = new MetricsEventSink();
+    const labels = { source: "main", model: "tm-origin-task", origin: "task" };
+    const beforeLatency = await readHistogram("count", labels);
+    const beforeTtft = await readTtft("count", labels);
+    runWithRequestContext({ unattended: true }, () => {
+      sink.emit({
+        type: "llm.done",
+        data: { runId: "r1", model: "tm-origin-task", llmMs: 90000, ttftMs: 1200 },
+      });
+    });
+    expect((await readHistogram("count", labels)) - beforeLatency).toBe(1);
+    expect((await readTtft("count", labels)) - beforeTtft).toBe(1);
+  });
+
+  it("test_latency_histograms_carry_origin_chat_for_interactive_runs", async () => {
+    const sink = new MetricsEventSink();
+    const labels = { source: "main", model: "tm-origin-chat", origin: "chat" };
+    const beforeLatency = await readHistogram("count", labels);
+    const beforeTtft = await readTtft("count", labels);
+    runWithRequestContext({ conversationId: "conv-1" }, () => {
+      sink.emit({
+        type: "llm.done",
+        data: { runId: "r1", model: "tm-origin-chat", llmMs: 3000, ttftMs: 800 },
+      });
+    });
+    expect((await readHistogram("count", labels)) - beforeLatency).toBe(1);
+    expect((await readTtft("count", labels)) - beforeTtft).toBe(1);
+    // And the same model under the other origin stayed empty — the two are
+    // genuinely separable, which is the whole reason for the label.
+    expect(
+      await readHistogram("count", { source: "main", model: "tm-origin-chat", origin: "task" }),
+    ).toBe(0);
   });
 
   it("test_llm_error_increments_errors_counter_with_model", async () => {
