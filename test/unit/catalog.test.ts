@@ -208,10 +208,6 @@ describe("getAvailableModels", () => {
 		const result = getAvailableModels({ google: {}, openai: {} });
 		expect(result.google.some((m) => m.id === "gemini-2.5-flash-preview-tts")).toBe(false);
 		expect(result.google.some((m) => m.id === "gemini-omni-flash-preview")).toBe(false);
-		// An openai model that produces text but is not chat-capable, so the
-		// assertion still bites: `gpt-image-2` left the catalog with the
-		// zero-window skip, which would make an assertion on it vacuous.
-		expect(result.openai.some((m) => m.id === "text-embedding-3-large")).toBe(false);
 	});
 
 	it("excludes embedding models, which the text check alone lets through", () => {
@@ -584,7 +580,7 @@ describe("catalog artifact invariants", () => {
 		// xAI publishes no max-output cap and accepts max_tokens up to the full
 		// window, which upstream reports as output == context. Any such model
 		// resolves a zero message budget and fails every turn, so sync-models
-		// caps the whole provider by rule.
+		// caps any model whose output meets or exceeds its context, whoever ships it.
 		//
 		// Asserted over the catalog rather than a list of ids: enumerating the
 		// models that need it today would pass unchanged on the next one that

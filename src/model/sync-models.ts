@@ -187,9 +187,18 @@ export function buildProviderModels(
     const model = toCatalogModel(providerId, modelId, raw);
     // Skip a model upstream reports no context window for. Every budget the
     // runtime computes is `context - …`, so a zero window has no arithmetic
-    // that yields a usable answer and the output cap below cannot supply one.
-    // Dropping it is not a policy choice like `MANUAL_EXCLUSIONS` — it is the
-    // same kind of data-completeness skip as the missing-pricing one above.
+    // that yields a usable answer, and the cap below cannot supply one either:
+    // `output < context` is unsatisfiable at `context: 0`, so the row could
+    // never hold the invariant this build is here to enforce.
+    //
+    // Note this drops a **priced** row, which the missing-pricing skip above
+    // does not — so it is the row-deletion shape #739 is open about, and the
+    // reason `gpt-4` is capped rather than excluded a few lines up. It is
+    // acceptable only because there is no history to misprice: a model that
+    // cannot accept a single input token was never called, and today's only
+    // instance emits images and cannot tool-call, so it was never selectable
+    // either. A priced model with a zero window that *is* chat-capable would
+    // be a different question, and there is none upstream.
     if (model.limits.context <= 0) continue;
     // xAI's own API publishes no per-model max-output cap — neither
     // `/v1/models` nor `/v1/language-models` carries the field, and the endpoint
