@@ -60,6 +60,20 @@ export default defineConfig({
             href: 'https://fonts.googleapis.com/css2?family=Literata:ital,opsz,wght@0,7..72,400;0,7..72,500;0,7..72,600;0,7..72,700;1,7..72,400;1,7..72,500;1,7..72,600&family=IBM+Plex+Sans:ital,wght@0,400;0,500;0,600;1,400;1,500&family=DM+Mono:wght@300;400;500&family=JetBrains+Mono:wght@400;500&display=swap',
           },
         },
+        {
+          // Context7 chat assistant, answering from this site's indexed content
+          // (the library `context7.json` claims). `defer` is required, not
+          // cosmetic: the script body runs synchronously and ends in
+          // `document.body.appendChild(...)`, which throws against the null
+          // body it would see executing here in the head.
+          tag: 'script',
+          attrs: {
+            src: 'https://context7.com/widget.js',
+            'data-library': '/nimblebraininc/nimblebrain',
+            'data-color': '#0055FF',
+            defer: true,
+          },
+        },
       ],
       plugins: [
         starlightLinksValidator({ errorOnLocalLinks: false }),
