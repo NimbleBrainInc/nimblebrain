@@ -45,3 +45,19 @@ export const DEFAULT_MAX_DIRECT_TOOLS = 30;
 
 export const DEFAULT_CHILD_ITERATIONS = 5;
 export const MAX_CHILD_ITERATIONS = 10;
+
+// --- Automations ---
+
+/**
+ * Page size for `automations__list`. A tenant's automation count grows without
+ * bound (one record per scheduled send), and an unpaged list is re-serialized
+ * into the model's context on every call — at a few hundred records that is the
+ * whole response budget, which is how a caller ends up silently working from a
+ * partial view it believes is complete.
+ *
+ * Lives here rather than beside the schema because the bundle handler needs the
+ * value at runtime and the schema needs it at module load; importing it from
+ * the schema module closes a cycle (TDZ at first call).
+ */
+export const AUTOMATIONS_LIST_DEFAULT_LIMIT = 100;
+export const AUTOMATIONS_LIST_MAX_LIMIT = 500;

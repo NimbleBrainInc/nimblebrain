@@ -8,7 +8,11 @@
  */
 
 import { Cron } from "croner";
-import { MAX_ITERATIONS } from "../../../limits.ts";
+import {
+  AUTOMATIONS_LIST_DEFAULT_LIMIT,
+  AUTOMATIONS_LIST_MAX_LIMIT,
+  MAX_ITERATIONS,
+} from "../../../limits.ts";
 import type {
   AutomationSummary,
   AutomationsCancelOutput,
@@ -432,6 +436,40 @@ export function handleList(args: Record<string, unknown>, ctx: ToolContext): Aut
     automations = automations.filter((a) => a.source === args.source);
   }
 
+  // Page AFTER filtering so `total` describes the filter's real match count,
+  // which is what a caller deciding whether it has seen everything needs.
+  const total = automations.length;
+
+  // Definitions come off readdirSync with no ordering anywhere on the path, so
+  // without this the sequence a page slices is undefined — two calls could
+  // interleave differently and a record could appear on both pages or neither.
+  // Sort by id: unique by construction, so the order is total rather than
+  // merely deterministic, which is what makes the cursor below unambiguous.
+  automations.sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+
+  // Cursor, not offset: the caller may delete an automation between pages, and
+  // a numeric offset would re-slice the shortened list and skip whatever moved
+  // across the boundary — the same "concluded it wasn't there" failure this
+  // tool's paging exists to prevent. Anchoring to the last id read is the
+  // pattern conversation listing already uses. An unknown cursor (its record
+  // was deleted) leaves the slice untouched and re-serves the first page,
+  // which repeats work rather than skipping any.
+  const cursor = args.cursor as string | undefined;
+  if (cursor) {
+    const idx = automations.findIndex((a) => a.id === cursor);
+    if (idx >= 0) automations = automations.slice(idx + 1);
+  }
+
+  const limit = Math.min(
+    Math.max(1, Math.floor((args.limit as number) ?? AUTOMATIONS_LIST_DEFAULT_LIMIT)),
+    AUTOMATIONS_LIST_MAX_LIMIT,
+  );
+  // Remaining after this page, computed from what is actually left rather than
+  // from `total` minus a running count — the caller's history is not knowable
+  // here, and guessing at it is how the withheld figure goes wrong.
+  const remaining = Math.max(0, automations.length - limit);
+  automations = automations.slice(0, limit);
+
   const summaries: AutomationSummary[] = automations.map((a) => ({
     id: a.id,
     name: a.name,
@@ -448,9 +486,23 @@ export function handleList(args: Record<string, unknown>, ctx: ToolContext): Aut
     estimatedCostPerDay: estimateCost(a, ctx.defaultModel).perDayUsd,
   }));
 
+  const hasMore = remaining > 0;
+  const nextCursor = hasMore ? (summaries[summaries.length - 1]?.id ?? null) : null;
   return {
     automations: summaries,
-    total: summaries.length,
+    total,
+    returned: summaries.length,
+    nextCursor,
+    hasMore,
+    ...(hasMore && nextCursor
+      ? {
+          truncated:
+            `Showing ${summaries.length} of ${total} matching automations. ` +
+            `${remaining} more remain after this page — this is a partial view. ` +
+            `Re-call with cursor="${nextCursor}" to continue before concluding anything ` +
+            `about the full set.`,
+        }
+      : {}),
   };
 }
 

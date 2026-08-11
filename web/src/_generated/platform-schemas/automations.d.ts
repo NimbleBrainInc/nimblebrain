@@ -77,6 +77,8 @@ export type AutomationsDeleteInput = Static<typeof AutomationsDeleteInput>;
 export declare const AutomationsListInput: import("@sinclair/typebox").TObject<{
     enabled: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TBoolean>;
     source: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"user" | "agent" | "bundle">>;
+    limit: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TInteger>;
+    cursor: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
 }>;
 export type AutomationsListInput = Static<typeof AutomationsListInput>;
 export declare const AutomationsStatusInput: import("@sinclair/typebox").TObject<{
@@ -135,7 +137,29 @@ export interface AutomationSummary {
 }
 export interface AutomationsListOutput {
     automations: AutomationSummary[];
+    /** Matches for the given filters BEFORE the page cap — not `automations.length`. */
     total: number;
+    /** How many are in this response. */
+    returned: number;
+    /**
+     * Pass as `cursor` to get the next page; `null` when this is the last one.
+     *
+     * A cursor rather than a numeric offset because the page must stay correct
+     * across a mutation between calls: an offset re-slices a list whose earlier
+     * entries may have been deleted, which silently skips the records that
+     * shifted past the boundary. Anchoring to the last id read means a deletion
+     * behind the cursor cannot move the records ahead of it.
+     */
+    nextCursor: string | null;
+    hasMore: boolean;
+    /**
+     * Present only when the page cap hid matches. Prose rather than a flag alone
+     * because the consumer is a model reading the payload: a bare `hasMore: true`
+     * has been read as incidental, whereas a sentence naming the missing count is
+     * not. Coverage that silently shrinks is worse than an error — the caller
+     * concludes "no match found" from a set it never saw.
+     */
+    truncated?: string;
 }
 /**
  * Structural mirror of a single AutomationRun record as returned by
