@@ -170,7 +170,6 @@ export default defineConfig({
               { label: 'Bundle Configuration', slug: 'config/bundles' },
               { label: 'Credentials', slug: 'config/credentials' },
               { label: 'Connector Providers', slug: 'config/connector-providers' },
-              { label: 'MCP Gateways', slug: 'config/mcp-gateways' },
               { label: 'Connectors Catalog', slug: 'config/connectors-catalog' },
               { label: 'Agent Profiles', slug: 'config/agents' },
               { label: 'Logging', slug: 'config/logging' },
