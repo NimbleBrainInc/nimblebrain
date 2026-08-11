@@ -463,17 +463,45 @@ describe("handleList paging", () => {
 		expect(r.total).toBe(5);
 	});
 
-	test("honors an explicit limit, its floor, and its ceiling", () => {
+	test("honors an explicit limit and its floor", () => {
 		const ctx = makeCtx();
 		seed(ctx, 12);
 
 		expect((handleList({ limit: 3 }, ctx) as ListResult).returned).toBe(3);
 		// Below the floor clamps up rather than returning an empty page.
 		expect((handleList({ limit: 0 }, ctx) as ListResult).returned).toBe(1);
-		// Above the ceiling clamps down; 12 < 500 so everything still fits.
-		const big = handleList({ limit: 10_000 }, ctx) as ListResult;
-		expect(big.returned).toBe(12);
-		expect(big.hasMore).toBe(false);
+	});
+
+	test("clamps a limit above the ceiling to 500", () => {
+		// Needs more than 500 records or the assertion holds with or without the
+		// clamp. Built as one map through a single save: seeding 501 through
+		// handleCreate re-saves the whole store per create and takes ~30s.
+		const ctx = makeCtx();
+		const now = new Date().toISOString();
+		const map = new Map<string, Automation>();
+		for (let i = 0; i < 501; i++) {
+			const id = `bulk-${String(i).padStart(4, "0")}`;
+			map.set(id, {
+				id,
+				name: id,
+				prompt: "noop",
+				schedule: { type: "interval", intervalMs: 1_800_000 },
+				enabled: true,
+				source: "agent",
+				createdAt: now,
+				updatedAt: now,
+				runCount: 0,
+				ownerId: OWNER,
+				workspaceId: WS,
+			});
+		}
+		ctx.save(map);
+
+		const r = handleList({ limit: 10_000 }, ctx) as ListResult;
+		expect(r.total).toBe(501);
+		expect(r.returned).toBe(500);
+		expect(r.hasMore).toBe(true);
+		expect(r.nextCursor).not.toBeNull();
 	});
 
 	test("no truncation notice when everything fits", () => {

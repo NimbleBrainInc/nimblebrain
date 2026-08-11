@@ -10,6 +10,38 @@ import { RailAutomationItem, RailRunItem } from "./RailItem.tsx";
 import { ReaderPane } from "./ReaderPane.tsx";
 import { SkeletonCards, SkeletonRows } from "./Skeleton.tsx";
 
+/**
+ * Read every automation by following `nextCursor` to the end.
+ *
+ * Accumulated into a Map keyed by id rather than appended: the handler
+ * re-serves the first page when a cursor names a record that no longer exists
+ * (deleted between fetches). That is the right server behaviour — repeat work
+ * rather than skip it — but a walk that pushes unconditionally would duplicate
+ * rows, inflate the count badge that reads off them, and collide React keys.
+ *
+ * `exhausted` is false when the walk stopped on the page budget with a cursor
+ * still in hand, so the caller can say so instead of rendering a short list.
+ */
+async function fetchAllAutomations(
+  call: (args: Record<string, unknown>) => Promise<{ data?: unknown }>,
+): Promise<{ items: AutomationSummary[]; exhausted: boolean }> {
+  // 500 is AUTOMATIONS_LIST_MAX_LIMIT; a literal because this bundle's Vite
+  // tsconfig scopes to its own src and cannot import src/limits.ts.
+  const PAGE = 500;
+  const MAX_PAGES = 50;
+  const byId = new Map<string, AutomationSummary>();
+  let cursor: string | undefined;
+  for (let i = 0; i < MAX_PAGES; i++) {
+    const result = await call(cursor ? { cursor, limit: PAGE } : { limit: PAGE });
+    const data = asDict(result.data);
+    for (const a of (data.automations as AutomationSummary[]) || []) byId.set(a.id, a);
+    const next = data.nextCursor as string | null | undefined;
+    if (!next) return { items: [...byId.values()], exhausted: true };
+    cursor = next;
+  }
+  return { items: [...byId.values()], exhausted: false };
+}
+
 export function AutomationsUI() {
   // Tool hooks
   const listTool = useCallTool<string>("list");
@@ -45,23 +77,17 @@ export function AutomationsUI() {
     setLoading(true);
     setError(null);
     try {
-      // The list tool caps a page to protect a model's context window. This
-      // panel is a browser consumer with no such limit and a count badge, so a
-      // capped page would render a silently short list under a badge that
-      // agrees with it — page to the end instead. Bounded by nextCursor going
-      // null; the iteration cap is a backstop against a server that keeps
-      // handing back a cursor, not an expected exit.
-      const all: AutomationSummary[] = [];
-      let cursor: string | undefined;
-      for (let i = 0; i < 50; i++) {
-        const result = await listTool.call(cursor ? { cursor } : {});
-        const data = asDict(result.data);
-        all.push(...((data.automations as AutomationSummary[]) || []));
-        const next = data.nextCursor as string | null | undefined;
-        if (!next) break;
-        cursor = next;
+      // The list tool caps a page to protect a model's context window; this
+      // panel is a browser consumer with no such limit, so it reads to the end.
+      const { items, exhausted } = await fetchAllAutomations(listTool.call);
+      setAutomations(items);
+      // Rendering a short list under a count badge that agrees with it is the
+      // failure this panel's paging exists to avoid — so say so instead.
+      if (!exhausted) {
+        setError(
+          `Showing the first ${items.length} automations; more exist than this panel loads in one pass.`,
+        );
       }
-      setAutomations(all);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load automations");
     } finally {
