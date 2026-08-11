@@ -57,8 +57,10 @@ sole-member by construction, so they never gate.
   middleware — it resolves the workspace from the id and searches **only the
   caller's own owner partitions** (ADR-0002). So a departed member reaches their
   own bytes there and no one else's, which is the same read carve-out above,
-  reached a different way. The session doors are covered by the conversation and
-  automation gates; this one is covered by the owner partition.
+  reached a different way. Every session door is membership-checked — chat by
+  the resume gate, automations per run, REST and `/mcp` by the validated
+  `X-Workspace-Id`. The bare files door is not, and does not need to be: the
+  owner partition is its gate.
 
 ## Alternatives considered
 

@@ -14,14 +14,20 @@ path would be attack surface with no consumer.
 ## Decision
 
 Every primitive is `(owner, workspace)`, both **path-authoritative**
-(ADR-0003), and is private to its owner by that partition alone — no field
-required. `visibility` is the **mutable field** that will later widen a
-primitive *within* its workspace: defaulting to `private`, an absent value
-reading as `private` (fail-closed). v1 is **private-only** — the field is
-written and never read, groundwork with no attack surface — and only `File`
-carries it (`src/files/types.ts`). Conversations and automations stay private
-structurally, and gain the field if and when they need to widen. `visibility:
-shared` itself is deferred.
+(ADR-0003), and is private to its owner by that partition alone. The
+`<ownerId>` partition is the live boundary in v1 — no field participates in it.
+
+`visibility` is the **reserved forward-compat field** for later widening a
+primitive *within* its workspace: `private` (default) | `shared`, with an
+absent value reading as `private` (fail-closed). It is declared on `File`
+(`src/files/types.ts`) and `Conversation` (`src/conversation/types.ts`), and
+**neither written nor read in v1** — the only site touching it deserializes it
+on parse. That is groundwork with no attack surface: a field nothing depends on
+cannot widen anything by accident.
+
+`Automation` does not declare it. It is private structurally like the others,
+and gains the field if and when it needs to widen. `visibility: shared` is
+deferred for all three.
 
 ## Consequences
 
