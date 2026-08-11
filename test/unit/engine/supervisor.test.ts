@@ -66,12 +66,17 @@ describe("supervisor — trips on repeated identical results", () => {
       const synthText = (v3.replacement.content[0] as { text: string }).text;
       expect(synthText).toContain(sameError);
       expect(synthText).toContain("foo");
-      // Scoped to this tool, past-tense, no universal directives that would
-      // rot in conversation history across future runs.
-      expect(synthText).toContain("disabled for the rest of this run");
+      // Scoped to this tool, no universal directives that would rot in
+      // conversation history across future runs. The disable is stated as
+      // conditional because it is: an advancing call clears it (see
+      // "recovery from a trip"), and promising otherwise teaches the model to
+      // stop trying a tool that would work.
+      expect(synthText).toContain("disabled while that holds");
+      expect(synthText).toContain("re-enables it");
+      expect(synthText).not.toContain("for the rest of this run");
       expect(synthText).not.toContain("Do not call any tools");
       expect(synthText).not.toContain("End the run");
-      expect(synthText).toContain("Other tools remain available");
+      expect(synthText).toContain("other tools remain available");
     }
   });
 
@@ -95,15 +100,15 @@ describe("supervisor — trips on repeated identical results", () => {
 });
 
 describe("supervisor — stickiness once tripped", () => {
-  it("keeps emitting synth even after a successful different call", () => {
+  it("keeps emitting synth while the tool keeps failing", () => {
     const sup = createRunSupervisor();
     const e = textResult("err", true);
     sup.observe(call("foo"), e);
     sup.observe(call("foo"), e);
     sup.observe(call("foo"), e); // trips
 
-    const recovery = sup.observe(call("foo"), textResult("success now", false));
-    expect(recovery.type).toBe("synth");
+    expect(sup.observe(call("foo"), e).type).toBe("synth");
+    expect(sup.observe(call("foo"), textResult("a different error", true)).type).toBe("synth");
   });
 
   it("keeps the tool in trippedTools across subsequent calls", () => {
@@ -115,6 +120,112 @@ describe("supervisor — stickiness once tripped", () => {
 
     sup.observe(call("foo"), e);
     expect(sup.snapshot().trippedTools).toEqual(["foo"]);
+  });
+});
+
+describe("supervisor — recovery from a trip", () => {
+  /** Trip `name` on three identical errors and assert it landed. */
+  function trip(sup: ReturnType<typeof createRunSupervisor>, name = "foo") {
+    const e = textResult("err", true);
+    sup.observe(call(name), e);
+    sup.observe(call(name), e);
+    expect(sup.observe(call(name), e).type).toBe("synth");
+  }
+
+  it("recovers on an advancing success and passes the real result through", () => {
+    const sup = createRunSupervisor();
+    trip(sup);
+    expect(sup.observe(call("foo"), textResult("success now")).type).toBe("pass");
+  });
+
+  it("drops the tool from trippedTools so the engine re-offers it", () => {
+    const sup = createRunSupervisor();
+    trip(sup);
+    sup.observe(call("foo"), textResult("success now"));
+    expect(sup.snapshot().trippedTools).toEqual([]);
+  });
+
+  it("does not recover on an error", () => {
+    const sup = createRunSupervisor();
+    trip(sup);
+    expect(sup.observe(call("foo"), textResult("still broken", true)).type).toBe("synth");
+  });
+
+  it("does not recover on an infrastructure failure", () => {
+    const sup = createRunSupervisor();
+    trip(sup);
+    const infra: ToolResult = {
+      content: [{ type: "text", text: "connection reset" }],
+      isError: true,
+      _meta: { [INFRA_ERROR_META_KEY]: true },
+    };
+    expect(sup.observe(call("foo"), infra).type).toBe("synth");
+    expect(sup.snapshot().trippedTools).toEqual(["foo"]);
+  });
+
+  it("does not recover on a result the tool flagged non-advancing", () => {
+    const sup = createRunSupervisor();
+    trip(sup);
+    const stalled: ToolResult = {
+      content: [{ type: "text", text: "no matches" }],
+      _meta: { [NON_ADVANCING_META_KEY]: true },
+    };
+    expect(sup.observe(call("foo"), stalled).type).toBe("synth");
+  });
+
+  it("does not recover on a success repeating the fingerprint it tripped on", () => {
+    // The pagination dead-end: identical empty-success payloads trip, and
+    // returning that same payload again is not progress however often it comes.
+    const sup = createRunSupervisor();
+    const empty = textResult("[]");
+    sup.observe(call("page", { cursor: 1 }), empty);
+    sup.observe(call("page", { cursor: 1 }), empty);
+    expect(sup.observe(call("page", { cursor: 1 }), empty).type).toBe("synth");
+
+    expect(sup.observe(call("page", { cursor: 1 }), empty).type).toBe("synth");
+  });
+
+  it("stays armed after recovering — a fresh streak trips again", () => {
+    const sup = createRunSupervisor();
+    trip(sup);
+    expect(sup.observe(call("foo"), textResult("success now")).type).toBe("pass");
+
+    const e2 = textResult("broken again", true);
+    sup.observe(call("foo"), e2);
+    sup.observe(call("foo"), e2);
+    expect(sup.observe(call("foo"), e2).type).toBe("synth");
+    expect(sup.snapshot().trippedTools).toEqual(["foo"]);
+  });
+
+  it("lets a model that corrected its arguments finish the work", () => {
+    // The motivating production run. The ERROR fingerprint ignores input, so
+    // three calls carrying three DIFFERENT (differently wrong) argument shapes
+    // collapse to one fingerprint and trip. The model then reads the validation
+    // error, sends the right shape, and the call succeeds — that result must
+    // reach the model, because the write really landed.
+    const sup = createRunSupervisor();
+    const validationError = textResult("Missing required argument: kind, summary", true);
+    sup.observe(call("log", { contact: "a", type: "meeting" }), validationError);
+    sup.observe(call("log", { contact: "b", type: "meeting" }), validationError);
+    expect(sup.observe(call("log", { contact: "c", type: "meeting" }), validationError).type).toBe(
+      "synth",
+    );
+
+    const corrected = sup.observe(
+      call("log", { contact: "a", kind: "meeting", summary: "…" }),
+      textResult('{"interaction":{"id":"ix_1"}}'),
+    );
+    expect(corrected.type).toBe("pass");
+
+    // …and the remaining contacts go through as ordinary calls.
+    for (const contact of ["b", "c", "d"]) {
+      const v = sup.observe(
+        call("log", { contact, kind: "meeting", summary: "…" }),
+        textResult(`{"interaction":{"id":"ix_${contact}"}}`),
+      );
+      expect(v.type).toBe("pass");
+    }
+    expect(sup.snapshot().trippedTools).toEqual([]);
   });
 });
 
