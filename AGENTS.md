@@ -441,9 +441,8 @@ These cause production bugs if violated:
 
 ## Web Shell — Main-Area Views Beside the Docked Chat
 
-`ShellLayout` renders left-nav | routed main area | docked chat (`ChatChrome`). Routed views under `/w/:slug/...` (e.g. `context/:convId`) render in the main-area slot **left of the chat** — their width is that chat-adjacent column, which shrinks as the chat docks or the window narrows. It is **not** the viewport width.
+`ShellLayout` renders left-nav | routed main area | docked chat (`ChatChrome`). Routed views under `/w/:slug/...` (e.g. `context/:convId`) render in the main-area slot **left of the chat** — their width is that chat-adjacent column, which shrinks as the chat docks or the window narrows. It is **not** the viewport width. How to lay that out (container queries, never viewport breakpoints) is in **`web/DESIGN.md`**, along with type, the opacity ramp, and the ambient-chrome default.
 
-- **Lay these views out single-column, or with `@container` queries — never viewport `md:`/`lg:` breakpoints.** A viewport breakpoint lies about the slot's real width; a two-pane master/detail collapses into nested, unreadable scroll regions once the chat is docked. Reference: `web/src/pages/ContextInspectorPage.tsx` (one scrolling column; each layer's body expands in place).
 - **A routed element is reused across a param-only change.** The `/w/` prefix keeps `ChatChrome` mounted, so React Router keeps the same component instance alive when only the param changes (`context/:convId` A→B) — refs and state persist across the switch. On the param change you MUST (1) reset per-entity view state (selection/expansion and any `useRef` latch) and (2) cancel the previous entity's in-flight reads via an effect-cleanup flag. An unconditional `setState` in a stale `.then` lands entity A's data (its budget, its body) under entity B. See the load effect in `ContextInspectorPage.tsx`.
 
 ## Auto-Generated Files
