@@ -353,6 +353,105 @@ describe("createDirectExecutor — connector-unreachable de-masking", () => {
 // own cancellation flags.
 // ---------------------------------------------------------------------------
 
+describe("createDirectExecutor — abandoned-tool de-masking", () => {
+	/** One tool call; `ok` decides success. Carries no errorReason, so the
+	 *  connector-unreachable path never fires and this exercises the general one. */
+	function tc(name: string, ok: boolean, id = `t${Math.random()}`) {
+		return { id, name, input: {}, output: ok ? "{}" : "validation error", ok, ms: 10 };
+	}
+
+	async function runWith(toolCalls: Array<Record<string, unknown>>): Promise<AutomationRun> {
+		const taskFn: TaskFn = async (): Promise<TaskFnResult> => ({
+			output: "Here is the summary. Some items could not be recorded.",
+			runId: "run_test000000",
+			toolCalls,
+			stopReason: "complete",
+			usage: { inputTokens: 10, outputTokens: 5, iterations: 1 },
+		});
+		const executor = createDirectExecutor(taskFn, () => ({}));
+		const { run } = await executor(makeAutomation());
+		return run;
+	}
+
+	test("a tool that failed every one of its many calls → failure naming it", async () => {
+		const run = await runWith([
+			tc("nb__search", true),
+			...Array.from({ length: 14 }, () => tc("people__log_interaction", false)),
+		]);
+		expect(run.status).toBe("failure");
+		expect(run.error).toMatch(/never succeeded/);
+		expect(run.error).toMatch(/people__log_interaction/);
+	});
+
+	test("a tool that failed then recovered stays success", async () => {
+		// The healthy shape this must not flag: three rejected argument shapes,
+		// then a correct one. The work happened.
+		const run = await runWith([
+			tc("granola__list_meetings", false),
+			tc("granola__list_meetings", false),
+			tc("granola__list_meetings", false),
+			tc("granola__list_meetings", true),
+		]);
+		expect(run.status).toBe("success");
+		expect(run.error).toBeUndefined();
+	});
+
+	test("a couple of failures below the threshold stay success", async () => {
+		// Ordinary probing. Two all-failing calls is not yet evidence of abandonment.
+		const run = await runWith([tc("people__search", false), tc("people__search", false)]);
+		expect(run.status).toBe("success");
+	});
+
+	test("all-succeeding calls stay success", async () => {
+		const run = await runWith([tc("a", true), tc("a", true), tc("a", true), tc("b", true)]);
+		expect(run.status).toBe("success");
+		expect(run.error).toBeUndefined();
+	});
+
+	test("names every abandoned tool, and only those", async () => {
+		const run = await runWith([
+			...Array.from({ length: 3 }, () => tc("alpha", false)),
+			...Array.from({ length: 3 }, () => tc("beta", false)),
+			...Array.from({ length: 3 }, () => tc("gamma", true)),
+		]);
+		expect(run.error).toMatch(/alpha/);
+		expect(run.error).toMatch(/beta/);
+		expect(run.error).not.toMatch(/gamma/);
+	});
+
+	test("connector-unreachable wins the message when both hold", async () => {
+		// The routing diagnosis is the more specific one, so it must not be
+		// displaced by the general "never succeeded" wording.
+		const run = await runWith([
+			{
+				id: "t1",
+				name: "ws_x-teams__send_message",
+				input: {},
+				output: "[orchestrator] no source …",
+				ok: false,
+				ms: 15,
+				errorReason: "unknown_tool_source",
+			},
+			...Array.from({ length: 3 }, () => tc("people__log_interaction", false)),
+		]);
+		expect(run.status).toBe("failure");
+		expect(run.error).toMatch(/Connector unavailable/);
+	});
+
+	test("does not override an already-failing status", async () => {
+		const taskFn: TaskFn = async (): Promise<TaskFnResult> => ({
+			output: "",
+			runId: "run_test000000",
+			toolCalls: Array.from({ length: 3 }, () => tc("people__log_interaction", false)),
+			stopReason: "max_iterations",
+			usage: { inputTokens: 10, outputTokens: 5, iterations: 25 },
+		});
+		const executor = createDirectExecutor(taskFn, () => ({}));
+		const { run } = await executor(makeAutomation());
+		expect(run.status).toBe("timeout");
+	});
+});
+
 describe("createDirectExecutor — aborted run preserves partial usage", () => {
 	// Mirrors runtime.executeTask under signal-driven abort: wait for the
 	// abort, then RETURN the work done so far tagged "aborted" instead of
