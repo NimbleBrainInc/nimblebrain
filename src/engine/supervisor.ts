@@ -79,8 +79,17 @@ import {
  * page under a different input, and a fingerprint check calls it
  * progress. The dead-end loop then resumes with the guard disarmed and
  * never re-trips, because every subsequent cursor is a fresh
- * fingerprint too. Content is what "the tool is still stuck" actually
- * means in all three modes.
+ * fingerprint too. Content is what "the tool is still stuck" means
+ * without reference to how the call was phrased.
+ *
+ * The cost is that a tool whose results carry no model-facing text —
+ * `structuredContent` only, or content annotated for the user audience —
+ * hashes to the empty string on every call, so once tripped it cannot
+ * recover. That fails closed and matches the behavior before recovery
+ * existed. Folding `structuredContent` in would fix it and reopen the
+ * hole above, since one timestamp field would make every call look like
+ * progress; a text-free tool wanting recovery should emit a varying
+ * field the model can see.
  *
  * The supervisor itself never aborts the run; the engine reads the
  * verdict and decides what to surface. While a tool is tripped the
@@ -296,7 +305,7 @@ export function createRunSupervisor(config: SupervisorConfig = {}): RunSuperviso
       // the real result through (see RECOVERY in the file header). The bar is
       // deliberately narrow: an error, an infrastructure failure, or a result
       // the tool itself flagged non-advancing is not evidence the tool works,
-      // and neither is repeating the very fingerprint it tripped on.
+      // and neither is returning the very content it tripped on.
       //
       // Checked BEFORE the infrastructure skip below, and that skip still
       // cannot quietly re-enable a tool: `isAdvancingSuccess` rejects an

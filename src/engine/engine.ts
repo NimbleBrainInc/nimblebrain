@@ -1190,7 +1190,7 @@ export class AgentEngine {
         // over-budget history into a summary — see `runtime/mid-turn-compaction`).
         await this.applyHistoryRewrite(history, iteration, config);
 
-        // Drop any tool the supervisor has tripped this run and build the
+        // Drop any tool the supervisor currently has tripped and build the
         // per-iteration model toolset + schema lookup.
         const { modelTools, toolSchemaMap } = this.buildIterationTools(directTools, supervisor);
 
