@@ -8,7 +8,7 @@ import {
 } from "../api/metrics.ts";
 import type { EngineEvent, EngineEventType, EventSink } from "../engine/types.ts";
 import { log } from "../observability/log.ts";
-import { recordLlmCall } from "../usage/record.ts";
+import { originOf, recordLlmCall } from "../usage/record.ts";
 import type { TokenUsage } from "../usage/types.ts";
 
 /** Payload envelope carried by every engine event (`EngineEvent.data`). */
@@ -71,18 +71,26 @@ export class MetricsEventSink implements EventSink {
         ...(typeof data.llmMs === "number" ? { llmMs: data.llmMs } : {}),
         event: data,
       });
+    // Both latency histograms carry `origin` because latency means different
+    // things depending on who is waiting: `chat` is a person watching a spinner,
+    // `task` is an automation nobody is watching. Blended, a p99 says neither —
+    // an alert on it fires the same for a slow overnight run as for a stalled
+    // user turn. `delegated` is deliberately not a label here: it splits a
+    // sub-agent from its parent, which does not change whether anyone is
+    // waiting, and it would double the series of a 12-bucket histogram.
+    const origin = originOf();
     // Per-call latency for the p99 alert. `llmMs` is set on every llm.done
     // (engine measures it around the provider call); guard the type anyway.
     const llmMs = data.llmMs;
     if (typeof llmMs === "number") {
-      llmRequestDurationSeconds.observe({ source: "main", model }, llmMs / 1000);
+      llmRequestDurationSeconds.observe({ source: "main", model, origin }, llmMs / 1000);
     }
     // Time-to-first-token (connect + prefill), the prefill-vs-decode
     // discriminator. Absent when the call emitted no output part — skip rather
     // than record a misleading 0.
     const ttftMs = data.ttftMs;
     if (typeof ttftMs === "number") {
-      llmTtftSeconds.observe({ source: "main", model }, ttftMs / 1000);
+      llmTtftSeconds.observe({ source: "main", model, origin }, ttftMs / 1000);
     }
   }
 

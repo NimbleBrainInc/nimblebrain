@@ -1,3 +1,5 @@
+import { log } from "../observability/log.ts";
+
 /** Retryable HTTP status codes: rate limit (429) and overload (529). */
 const RETRYABLE_STATUSES = new Set([429, 529]);
 
@@ -28,6 +30,24 @@ export function isRetryable(err: unknown): boolean {
   }
   const status = getStatus(err);
   return status !== undefined && RETRYABLE_STATUSES.has(status);
+}
+
+/**
+ * Why an error was retried, for the log line: the HTTP status when membership of
+ * `RETRYABLE_STATUSES` is what made it retryable, and the error's name
+ * otherwise — `isRetryable` also admits anything flagged `retryable` (the
+ * model-stream stall watchdog throws one), and that path carries no status.
+ *
+ * Membership, not presence. `getStatus` is an unchecked cast over a foreign
+ * object, so `status` can hold a value of any shape, and the `retryable` branch
+ * never constrains it. Interpolating on presence alone would put an unexamined
+ * value into a log message — the one part the field redactor does not scan,
+ * which is the same reason the provider's error text is left out entirely.
+ */
+function retryReason(err: unknown): string | number {
+  const status = getStatus(err);
+  if (status !== undefined && RETRYABLE_STATUSES.has(status)) return status;
+  return err instanceof Error ? err.name : "unknown";
 }
 
 /**
@@ -67,6 +87,9 @@ function abortableSleep(ms: number, signal?: AbortSignal): Promise<void> {
  * - Fails immediately on 401 (auth) with a clear message.
  * - Fails immediately on all other errors.
  * - Backoff: baseDelay * 2^attempt + random(0, 500ms).
+ * - Logs one `warn` per retried attempt (attempt, reason, backoff). A retry
+ *   that eventually succeeds is not an error and moves no counter, so this
+ *   line is the only record that it happened.
  * - Optional `signal` interrupts the backoff sleep so a cancel during
  *   backoff bites within the abort tick instead of after the full
  *   delay. The signal also propagates into `fn()` calls if those
@@ -94,6 +117,17 @@ export async function withRetry<T>(
       }
 
       const delay = baseDelayMs * 2 ** attempt + Math.random() * 500;
+      // A retried attempt is otherwise invisible. It is not a terminal failure,
+      // so no error counter moves; TTFT is measured on whichever attempt
+      // succeeds, so it stays clean; and only the caller's elapsed-time
+      // measurement carries any trace of it. Without this line the condition can
+      // only be *inferred* — from elapsed time that output-token generation does
+      // not account for — and never attributed to a cause. `retryReason` above
+      // explains what goes in the line and what deliberately does not.
+      log.warn(
+        `[engine] retry attempt=${attempt + 1}/${maxRetries} ` +
+          `reason=${retryReason(err)} delayMs=${Math.round(delay)}`,
+      );
       await abortableSleep(delay, signal);
     }
   }

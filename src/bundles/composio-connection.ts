@@ -10,11 +10,20 @@
  * Storage layout (mirrors `oauth-tokens.ts` workspaceOAuthDir):
  *   <workDir>/workspaces/<wsId>/credentials/composio/<connectorId>/connection.json
  *
- * The file is the gating signal for a Composio-backed connector: if
- * present and `status === "ACTIVE"`, the platform may resolve its
- * remote-MCP URL with `user_id={NB_USER_ID}` and start the source. If
- * absent, the connector stays in `not_authenticated` until
+ * The file's EXISTENCE is the gating signal for a Composio-backed
+ * connector: present, and the platform may resolve its remote-MCP URL
+ * with `user_id={NB_USER_ID}` and start the source. Absent, the
+ * connector stays in `not_authenticated` until
  * `/v1/composio-auth/callback` writes it.
+ *
+ * `status` is recorded, never consulted — `hasPersistedComposioConnection`
+ * tests the path and nothing else. Do not add a `status === "ACTIVE"`
+ * gate here on the assumption that the field carries that vocabulary:
+ * the value is whatever the vendor put on the callback, and the hosted
+ * connect flow reports a success as `success`, where the retired
+ * non-hosted call reported `ACTIVE`. A gate keyed on one spelling
+ * silently rejects every connection made through the other. The
+ * callback rejects a failed connect before it ever writes this file.
  *
  * Security posture mirrors workspace-credentials.ts: 0o700 directory,
  * 0o600 file, atomic temp+rename writes, wsId validated against

@@ -23,6 +23,26 @@ You only need this if your catalog has any `auth: composio` entries. A productio
 - One Composio account per environment is fine; staging and production can share the account during development, but production should get its own once you're under volume.
 - Issue an API key under **Project Settings → API keys**. Save it — you'll wire it into the pod as `COMPOSIO_API_KEY`.
 
+**Composio freezes a key's permissions at creation.** An under-granted key cannot be repaired, only replaced, so set these deliberately:
+
+| Permission | Grant | Why the platform needs it |
+|---|---|---|
+| Connected accounts | **Write** | Beginning a connection, completing an API-key connection, and disconnecting. Write covers the reads (listing an existing account, polling one to active). |
+| Sessions | **Write** | Installing a connector mints a session and its MCP server. |
+| Tool execution | **Enable** | See below — this is the one that is easy to miss. |
+| Tools | Read | Listing the toolkit's tools over that session. |
+| Toolkits | Read | Session creation resolves toolkit slugs. |
+| Auth configs | Read | Not called at runtime, but it is how you read an auth config's `expected_input_fields` when diagnosing a failed connect. |
+| Proxy execute, Triggers, Webhooks | — | Not used. |
+
+**Tool execution is not optional, and its absence is invisible until it isn't.** The MCP endpoint the runtime talks to for a Composio connector authenticates with this same key, so it is not merely the credential that sets connections up — it is what every agent tool call runs under. A key without it connects cleanly, lists tools, and then fails the first time an agent tries to do work.
+
+Before pointing production at a new key, exercise it end to end — a `tools/call` against a session's MCP endpoint, not just a read. Reads and connects can pass while execution is refused, and that combination looks healthy.
+
+If your key is IP-restricted, allowlist **every** egress address the platform can leave from, not the one you observed. On Kubernetes behind per-zone NAT gateways that means one entry per gateway; a partial list fails only for pods in the missing zone, which presents as intermittent `401 Auth_Unauthorized` rather than as misconfiguration. The allowlist, unlike permissions, stays editable after creation.
+
+Rotating the key later: the runtime reads it once at startup, so update the secret, restart the pods, confirm they hold the new value, and only then revoke the old key. Revoking first takes out connects and tool calls together.
+
 ### 2. Register a per-toolkit OAuth client (BYO credentials)
 
 For each toolkit you expose, register an OAuth client at the vendor's developer console using **your own** credentials. Composio also offers a "managed" mode where they supply the OAuth app, but it ships with shared quota and Composio branding on the consent screen — bring your own client.
