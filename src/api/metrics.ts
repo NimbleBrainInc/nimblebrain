@@ -101,10 +101,18 @@ export const llmTokensTotal = new Counter({
  *     / sum(rate(nb_llm_input_tokens_estimated_total{source="main"}[1h]))
  *
  * A ratio of 1.0 means the estimate matches what the provider billed. Above
- * 1.0 the engine is under-counting, which matters because this estimate — not
- * the provider's count — is what `windowMessages` compares the message budget
- * against. An under-count is therefore a prompt larger than `maxInputTokens`
- * was meant to permit, with nothing in the system aware of it.
+ * 1.0 the engine is under-counting, which matters because an estimate of this
+ * kind — not the provider's count — is what `windowMessages` compares the
+ * message budget against. An under-count is therefore a prompt larger than
+ * `maxInputTokens` was meant to permit, with nothing in the system aware of it.
+ *
+ * The two are counted over different spans, and comparing them directly is a
+ * mistake: this counter covers the WHOLE prompt (system + tools + messages),
+ * because that is what `usage.inputTokens` bills and therefore the only basis
+ * on which the ratio above is meaningful. `resolveMessageBudget` yields tokens
+ * available for MESSAGE HISTORY alone, and that is what `windowMessages`
+ * enforces. Subtract the system+tools prefix before reading this figure
+ * against a configured `maxInputTokens`.
  *
  * A counter rather than a per-call ratio histogram: ratios do not aggregate
  * (averaging per-call ratios weights a 2k-token call like a 500k one), whereas

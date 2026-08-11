@@ -458,7 +458,14 @@ describe("estimate-vs-actual instrumentation", () => {
 
     sink.emit({
       type: "llm.done",
-      data: { runId: "r-est", model: "tm-est", estimatedInputTokens: 512_000 },
+      data: {
+        runId: "r-est",
+        model: "tm-est",
+        // A real llm.done always carries usage; the estimate is only recorded
+        // when its counterpart on the actual side is too.
+        usage: { inputTokens: 800_000, outputTokens: 10, cacheReadTokens: 0, cacheWriteTokens: 0 },
+        estimatedInputTokens: 512_000,
+      },
     });
 
     expect((await read(llmInputTokensEstimatedTotal, labels)) - before).toBe(512_000);
@@ -491,6 +498,40 @@ describe("estimate-vs-actual instrumentation", () => {
     expect(estimated).toBe(500_000);
     // 1.6x — the estimator drift this instrumentation exists to make visible.
     expect(actual / estimated).toBeCloseTo(1.6, 5);
+  });
+
+  // The actual side records nothing for a zero input, so recording an estimate
+  // there would advance the denominator alone and pull actual/estimated toward
+  // zero — indistinguishable from "the estimator is fine", which is the one
+  // conclusion this metric must never manufacture.
+  it("test_llm_done_with_zero_actual_records_no_estimate", async () => {
+    const sink = new MetricsEventSink();
+    const before = await readTotal(llmInputTokensEstimatedTotal);
+
+    sink.emit({
+      type: "llm.done",
+      data: {
+        runId: "r-zero-actual",
+        model: "tm-zero-actual",
+        // A stream that ends without a finish part leaves the usage totals at
+        // their zero initializers.
+        usage: { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0 },
+        estimatedInputTokens: 400_000,
+      },
+    });
+
+    expect(await readTotal(llmInputTokensEstimatedTotal)).toBe(before);
+  });
+
+  it("test_llm_done_without_usage_records_no_estimate", async () => {
+    const sink = new MetricsEventSink();
+    const before = await readTotal(llmInputTokensEstimatedTotal);
+    // No usage at all: the actual counter is skipped wholesale upstream.
+    sink.emit({
+      type: "llm.done",
+      data: { runId: "r-no-usage", model: "tm-no-usage", estimatedInputTokens: 400_000 },
+    });
+    expect(await readTotal(llmInputTokensEstimatedTotal)).toBe(before);
   });
 
   it("test_llm_done_without_estimate_records_nothing", async () => {
