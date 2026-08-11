@@ -1552,10 +1552,11 @@ export class Runtime {
       userId,
       activeToolNames: tools.map((t) => t.name),
       capabilityPool: poolCapability,
+      // No `appContextServerName` here: it only steers discovery, and discovery
+      // already ran with it above. The entered app's exclusion is inherited from
+      // `bundlePool` rather than restated as a second argument that has to agree
+      // with the first — the same reason `toBundleSkillCandidates` takes a pool.
       bundlePool,
-      ...(request.appContext?.serverName
-        ? { appContextServerName: request.appContext.serverName }
-        : {}),
     });
 
     // Always-on context channel: the `always` skills across every tier

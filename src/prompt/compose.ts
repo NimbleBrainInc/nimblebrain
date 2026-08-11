@@ -748,12 +748,20 @@ function focusedAppLayers(focusedApp?: FocusedAppInfo): PendingLayer[] {
 }
 
 /**
- * Stable identity for a skill across composition channels — the same key
- * `collectLoadedSkills` de-duplicates the load ledger on, so the prompt and the
- * ledger agree on what "the same skill" means.
+ * Identity for a skill across composition channels: BOTH its source and its
+ * manifest name, because neither alone identifies one.
+ *
+ * A server-published skill's `sourcePath` is the publishing server's own
+ * `skill://<segment>/SKILL.md` URI, which carries no server qualifier — two
+ * connectors that each publish a skill named `usage` produce two distinct skills
+ * at one identical path. On a source-only key they collapse, and suppressing a
+ * channel on that key drops a body the other channel never carried. The manifest
+ * name disambiguates them: `connectorSkillManifestName` embeds the server. For a
+ * filesystem skill the pair adds nothing (path→name is 1:1), so the key only ever
+ * splits identities that were wrongly merged.
  */
 function skillKey(sourcePath: string | undefined, name: string): string {
-  return sourcePath || `name:${name}`;
+  return `${sourcePath ?? ""}|${name}`;
 }
 
 /**
@@ -764,10 +772,17 @@ function skillKey(sourcePath: string | undefined, name: string): string {
  * reach a turn through both channels — a tool-affinity glob matched an active
  * tool AND a trigger phrase matched the message — and injecting it twice spends
  * the tokens twice while handing the model one body under two framings. Layer 3
- * wins, which is the precedence `collectLoadedSkills` already reports the load
- * under. The trigger's must-fire guarantee is untouched: the body is in the
- * prompt either way, and the match still narrows the direct tool set via the
- * skill's `allowed-tools`.
+ * wins, the precedence `collectLoadedSkills` reports the load under. The
+ * trigger's must-fire guarantee holds: the body is in the prompt either way, and
+ * the match still narrows the direct tool set via the skill's `allowed-tools`.
+ * That guarantee rests entirely on {@link skillKey} being an identity — a key
+ * that merges two skills converts this suppression into a silent drop.
+ *
+ * The de-dup preserves presence, not POSITION. `matched_skill` is volatile and
+ * rides the latest user message; `layer3_skills` is stable and sits in the cached
+ * system prefix. A both-channel skill therefore moves out of the recency slot
+ * into the prefix. Paying for the body twice to buy recency is the worse trade,
+ * and the ledger already calls such a load `tool_affinity`.
  *
  * This overlap has always been reachable for a filesystem skill declaring both
  * fields. For a server-published skill it is the ordinary case, because

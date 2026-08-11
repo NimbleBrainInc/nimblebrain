@@ -921,6 +921,127 @@ describe("composeSystemPrompt — Layer 3 skills (Phase 2)", () => {
   });
 });
 
+/**
+ * A skill can reach one turn through both channels — tool-affinity into Layer 3
+ * and a trigger phrase into Layer 4 — so the matched-skill layer suppresses a
+ * body Layer 3 already carries. That suppression is only safe if the key is a
+ * true identity, and a server-published skill's `sourcePath` is not one: it is
+ * the publishing server's own `skill://<segment>/SKILL.md`, with no server in it.
+ *
+ * Reachable in production, and invisible when it fires — `ChatResult.skillName`
+ * still names the matched skill and the load ledger reports it. The integration
+ * fixture cannot reach it: it runs one MCP source, and the collision needs two.
+ */
+describe("composeSystemPrompt — matched-skill de-dup identity", () => {
+  /** A skill as `synthesizeBundleSkill` builds one: server-qualified NAME, bare URI. */
+  function publishedSkill(server: string, skillName: string, body: string): Skill {
+    return {
+      manifest: {
+        name: `bundle:${server}:${skillName}`,
+        description: "",
+        loadingStrategy: "dynamic",
+        priority: 60,
+        status: "active",
+        scope: "bundle",
+        toolAffinity: [`${server}__*`],
+      },
+      body,
+      sourcePath: `skill://${skillName}/SKILL.md`,
+    };
+  }
+
+  function layer3For(skill: Skill): Layer3SkillEntry {
+    return {
+      name: skill.manifest.name,
+      body: skill.body,
+      scope: "bundle",
+      sourcePath: skill.sourcePath as string,
+      loadedBy: "tool_affinity",
+      reason: "tool-affinity matched",
+    };
+  }
+
+  it("keeps the matched body when a DIFFERENT server publishes the same skill path", () => {
+    // `usage` is the canonical published skill name, so two vendors colliding on
+    // `skill://usage/SKILL.md` is ordinary, not adversarial.
+    const fromA = publishedSkill("vendor-a-mcp", "usage", "VENDOR-A-GUIDANCE");
+    const fromB = publishedSkill("vendor-b-mcp", "usage", "VENDOR-B-GUIDANCE");
+    expect(fromA.sourcePath).toBe(fromB.sourcePath);
+
+    const result = composeSystemPrompt(
+      [],
+      fromB, // trigger-matched
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      [layer3For(fromA)], // tool-affinity selected — a DIFFERENT skill
+    );
+    expect(result).toContain("VENDOR-A-GUIDANCE");
+    expect(result).toContain("VENDOR-B-GUIDANCE");
+    expect(result).toContain("<skill-instructions>");
+  });
+
+  it("still suppresses the duplicate when Layer 3 carries the SAME skill", () => {
+    const skill = publishedSkill("vendor-a-mcp", "usage", "ONE-BODY-ONLY");
+    const result = composeSystemPrompt(
+      [],
+      skill,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      [layer3For(skill)],
+    );
+    expect(result.split("ONE-BODY-ONLY").length - 1).toBe(1);
+    expect(result).not.toContain("<skill-instructions>");
+  });
+
+  // Two tiers can hold same-named skills at different paths; the pair keys them
+  // apart exactly as the bare path did.
+  it("does not merge two filesystem skills that share a name across tiers", () => {
+    const orgSkill: Skill = {
+      manifest: { name: "voice", description: "", type: "skill", priority: 50 },
+      body: "ORG-VOICE",
+      sourcePath: "/work/skills/voice.md",
+    };
+    const wsSkill: Skill = {
+      manifest: { name: "voice", description: "", type: "skill", priority: 50 },
+      body: "WORKSPACE-VOICE",
+      sourcePath: "/work/workspaces/ws_a/skills/voice.md",
+    };
+    const result = composeSystemPrompt(
+      [],
+      wsSkill,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      [
+        {
+          name: orgSkill.manifest.name,
+          body: orgSkill.body,
+          scope: "org",
+          sourcePath: orgSkill.sourcePath as string,
+          loadedBy: "tool_affinity",
+          reason: "tool-affinity matched",
+        },
+      ],
+    );
+    expect(result).toContain("ORG-VOICE");
+    expect(result).toContain("WORKSPACE-VOICE");
+  });
+});
+
 describe("composeSystemPromptTraced", () => {
   it("every emitted layer carries non-empty id / source / text and a known kind", () => {
     // Structural integrity check. Replaced an earlier test that asserted
