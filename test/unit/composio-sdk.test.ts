@@ -315,6 +315,43 @@ describe("initiateComposioConnection", () => {
     expect(sdkCalls.calls).toEqual(["link"]);
   });
 
+  // `link()` reports every failure as one constant message and hangs the vendor's
+  // response body off `.cause`. Callers log `err.message`, so an unfolded cause
+  // turns a 400 naming the auth config's missing field into "Failed to create
+  // connected account link" — the detail this bug was found through in the first
+  // place.
+  test("folds the vendor's error detail into the thrown message", async () => {
+    sdkCalls.linkImpl = async () => {
+      throw new Error("Failed to create connected account link", {
+        cause: new Error(
+          'Request failed 400: {"error":{"slug":"ConnectedAccount_MissingRequiredFields"}}',
+        ),
+      });
+    };
+    await expect(
+      initiateComposioConnection({
+        apiKey: "k_test",
+        userId: "ws_x",
+        authConfigId: "ac_x",
+        callbackUrl: "https://nb.test/cb",
+      }),
+    ).rejects.toThrow(/ConnectedAccount_MissingRequiredFields/);
+  });
+
+  test("passes through an error carrying no cause (the timeout path)", async () => {
+    sdkCalls.linkImpl = async () => {
+      throw new Error("[composio] connectedAccounts.link timed out after 10s");
+    };
+    await expect(
+      initiateComposioConnection({
+        apiKey: "k_test",
+        userId: "ws_x",
+        authConfigId: "ac_x",
+        callbackUrl: "https://nb.test/cb",
+      }),
+    ).rejects.toThrow(/timed out after 10s$/);
+  });
+
   test("API-key arm stays on initiate — the retirement excludes non-OAuth schemes", async () => {
     sdkCalls.initiateImpl = async () => ({
       id: "ca_key",

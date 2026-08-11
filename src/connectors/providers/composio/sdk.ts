@@ -224,13 +224,15 @@ async function composioClient(apiKey: string): Promise<ComposioClient> {
  *      vendor answers 400 once enforced). `link()` works for managed and
  *      custom configs alike and returns the same shape.
  *   2. Composio's hosted page collects the auth config's required
- *      connection-initiation fields — a Zendesk subdomain, a Zoho region, a
- *      WhatsApp WABA id — directly from the connecting user. `link()` has no
- *      channel for supplying them (its body is auth config + user + callback
- *      + alias), and it needs none: the fields are the hosted page's job.
- *      A toolkit that declares a required field is unconnectable any other
- *      way, since `initiate()` — the only call that accepts them — is the one
- *      being retired.
+ *      connection-initiation fields — a Jira subdomain, a Zoho region, a
+ *      WhatsApp WABA id — directly from the connecting user, and it needs no
+ *      help from us: the SDK's `link()` exposes no channel for supplying
+ *      them. (The underlying endpoint does carry a `connection_data`
+ *      pre-fill, but it is absent from `CreateConnectedAccountLinkOptions`
+ *      and the options schema strips unknown keys, so it is unreachable
+ *      through this method.) A toolkit that declares a required field is
+ *      unconnectable any other way, since `initiate()` — the only call that
+ *      accepts them — is the one being retired.
  *
  * The trade-off is the address bar: the consent dance now visibly runs on
  * Composio's domain rather than behind the white-label `/proxy` forwarder.
@@ -251,12 +253,28 @@ export async function initiateComposioConnection(opts: {
   callbackUrl: string;
 }): Promise<{ redirectUrl: string; connectedAccountId: string }> {
   const composio = await composioClient(opts.apiKey);
-  const connRequest = (await withTimeout("connectedAccounts.link", () =>
-    composio.connectedAccounts.link(opts.userId, opts.authConfigId, {
-      callbackUrl: opts.callbackUrl,
-      allowMultiple: true,
-    }),
-  )) as unknown as {
+  let raw: unknown;
+  try {
+    raw = await withTimeout("connectedAccounts.link", () =>
+      composio.connectedAccounts.link(opts.userId, opts.authConfigId, {
+        callbackUrl: opts.callbackUrl,
+        allowMultiple: true,
+      }),
+    );
+  } catch (err) {
+    // `link()` reports every failure as one constant message and hangs the
+    // vendor's response body off `.cause`; `initiate()` rethrew the vendor
+    // error directly. Callers log `err.message`, so without this fold a 400
+    // naming the auth config's missing field reads only as "Failed to create
+    // connected account link" — the detail that made that class of bug
+    // findable at all. Fold it back in and keep the original on `cause`.
+    const cause = err instanceof Error ? err.cause : undefined;
+    if (err instanceof Error && cause instanceof Error && cause.message) {
+      throw new Error(`${err.message}: ${cause.message}`, { cause: err });
+    }
+    throw err;
+  }
+  const connRequest = raw as {
     redirectUrl?: unknown;
     redirectUri?: unknown;
     id?: unknown;
