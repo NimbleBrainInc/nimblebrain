@@ -27,21 +27,42 @@ The difference is not a quality judgment. A broker earns the extra machinery whe
 |---|---|---|---|
 | [Composio](https://composio.dev) | Brokered provider | Yes | Supported. See the [Composio guide](/deploy/composio/). |
 | [Smithery](https://smithery.ai) | Brokered provider | Yes | Supported. See the [Smithery guide](/deploy/smithery/). |
-| [MCP360](https://mcp360.ai) | Hosted remote server, one account key | No | Not yet connectable. See below. |
-| [Glama](https://glama.ai) | Hosted remote server, one account key | No | Not yet connectable. See below. |
+| [MCP360](https://mcp360.ai) | Hosted remote server, one account key | No | Needs a credential provider. See below. |
+| [Glama](https://glama.ai) | Hosted remote server, one account key | No | Needs a credential provider. See below. |
 
-## Why the account-key gateways do not connect yet
+## Adding an account-key gateway
 
-A connector installs from the catalog, and the catalog supports these auth kinds: `dcr`, `static`, `composio`, `smithery`, and `provider`. None of them describes "reach this URL with a fixed API key in a header." The install path accepts `dcr` and `composio` entries. Personal connectors accept `dcr` and Composio. The workspace management tool accepts a bundle by name or by path and drops a URL.
+An account-key gateway installs as a normal catalog entry using `auth: provider`. That kind names a **credential provider** which supplies the transport credential server-side, so the endpoint comes from the catalog and the key never touches workspace state.
 
-So a gateway whose whole interface is a URL plus a bearer token has no door. The runtime transport underneath supports it, and a hand-edited `workspace.json` will run it, but nothing an operator or workspace admin can reach through a supported surface will.
+A catalog entry looks like this:
 
-Closing the gap needs two pieces:
+```yaml
+servers:
+  - name: ai.example-gateway/search
+    title: Example Gateway — Search
+    description: What this endpoint gives the agent
+    version: "1.0.0"
+    remotes:
+      - type: streamable-http
+        url: https://gateway.example.com/v1/search/mcp
+    _meta:
+      ai.nimblebrain/connector:
+        auth: provider
+        providerAuth:
+          provider: example-gateway
+          config: {}
+        tags: [search]
+```
 
-1. **An API-key auth kind for catalog entries**, so an operator can publish a gateway's endpoints as installable connectors.
-2. **A credential provider per gateway**, so the account key resolves at the instance layer rather than being written into each workspace's state. This follows the rule the platform already holds for brokered connectors: persisted state names which credential it needs, never where the value lives.
+The `providerAuth` block is operator-authored and copied verbatim into the connector's transport at install. The install path also re-reads the entry from the operator-published catalog and refuses a `provider`-auth install from any entry it cannot verify, so a workspace admin cannot forge one that spends the platform's credential against an endpoint of their choosing.
 
-Until both land, treat MCP360 and Glama as evaluated and pending rather than supported.
+What that entry needs from the platform is a credential provider registered under the name it references. The provider resolves the account key and attaches it as a header. Registering one is a small addition beside the built-in credential providers, and `src/connectors/providers/smithery/transport-credential.ts` is the closest model.
+
+<Aside type="caution" title="A gateway is not the fleet rail">
+`auth: provider` also carries the platform's own `minted` connectors, which may reach in-cluster `http://` endpoints. A gateway does not inherit that exception. Its URL takes the full SSRF check, so the endpoint must be a public `https` host.
+</Aside>
+
+MCP360 and Glama both fit this shape and neither ships a credential provider today, so add one before publishing catalog entries for them.
 
 ## Choosing between them
 
