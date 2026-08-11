@@ -57,7 +57,7 @@ export const TOOL_SCHEMAS: ToolSchema[] = [
   {
     name: "list",
     description:
-      "List automations with optional filters. Returns summary with human-readable schedule strings and relative times.",
+      "List automations with optional filters. Returns summary with human-readable schedule strings and relative times. Paged: returns at most 100 per call by default, with `total` reporting every match — follow `nextCursor` before concluding an automation is absent.",
     inputSchema: AutomationsListInput,
   },
   {
