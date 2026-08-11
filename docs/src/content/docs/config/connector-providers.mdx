@@ -40,7 +40,9 @@ If none of those apply, prefer a runtime-native kind. `auth: dcr` needs zero ope
 | Provider | Brokers auth | Hosts the session | Setup |
 |---|---|---|---|
 | [Composio](https://composio.dev) | OAuth, API key | Yes | [Composio operator guide](/deploy/composio/) |
-| [Smithery](https://smithery.ai) | OAuth, config — completed on Smithery's own hosted setup page rather than a callback to us | Yes | [`connectors.providers.smithery`](/config/nimblebrain-json/#connectorsproviderssmithery) — no end-to-end guide yet |
+| [Smithery](https://smithery.ai) | OAuth, config — completed on Smithery's own hosted setup page rather than a callback to us | Yes | [Smithery gateway guide](/deploy/smithery/) |
+
+Not every third party that hosts MCP servers is a provider. A gateway that publishes a fixed endpoint and one account-wide API key brokers nothing, so it is a connector question rather than a provider one. [MCP Gateways](/config/mcp-gateways/) sorts the vendors by mechanism and records which ones connect today.
 
 Configuration — the block, its fields, the broker credential's environment fallback, and why it names a credential provider rather than an env var — is documented once, under [`connectors.providers`](/config/nimblebrain-json/#connectors).
 
@@ -50,6 +52,7 @@ Don't confuse this with **`auth: provider`**, which is a different mechanism des
 
 ## Related
 
+- [MCP Gateways](/config/mcp-gateways/) — every hosted-MCP vendor, sorted by mechanism
 - [Connectors](/using/connectors/) — the auth kinds, from a user's point of view
 - [Connectors Catalog](/config/connectors-catalog/) — authoring catalog entries
 - [`nimblebrain.json`](/config/nimblebrain-json/#connectors) — the full `connectors` reference

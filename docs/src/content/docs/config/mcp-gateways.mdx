@@ -1,0 +1,57 @@
+---
+title: MCP Gateways
+description: How third-party services that host MCP servers connect to NimbleBrain, which mechanism each one uses, and what works today.
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+An **MCP gateway** is a third party that runs MCP servers so you do not have to. Composio, Smithery, MCP360, and Glama all fit that description, and they market themselves with overlapping words: gateway, aggregator, registry, hub. The words do not tell you how to connect one. The mechanism does.
+
+Gateways divide into two kinds, and the kind decides who configures what.
+
+<Aside type="note" title="This page is about outbound connections">
+Here you are pointing NimbleBrain **at** someone else's MCP servers. Pointing an external client such as Claude Desktop **at** NimbleBrain runs the other direction and lives under [Connect via MCP](/connect/external-clients/).
+</Aside>
+
+## The two mechanisms
+
+**A brokered provider** holds credentials and mints a session per connection. The platform calls the vendor's API, receives an MCP endpoint scoped to one workspace, and connects to it. Each workspace gets its own connection at the vendor, so the vendor can tell them apart, and revoking one leaves the others alone. You configure the broker once, platform-wide, and workspace admins install connectors that reference it. Composio and Smithery work this way.
+
+**A hosted remote server** publishes an MCP endpoint and one account-wide API key. Every workspace on your instance reaches the same endpoint with the same key. There is no per-workspace connection at the vendor, so the vendor sees one caller no matter how many teams you have. MCP360 and Glama work this way.
+
+The difference is not a quality judgment. A broker earns the extra machinery when the vendor holds a relationship the platform cannot hold itself, such as an OAuth app you lack verification for. A hosted server with a single key is simpler and fine when the tools it exposes need no per-user identity.
+
+## Where each vendor lands
+
+| Gateway | Mechanism | Per-workspace identity | Status |
+|---|---|---|---|
+| [Composio](https://composio.dev) | Brokered provider | Yes | Supported. See the [Composio guide](/deploy/composio/). |
+| [Smithery](https://smithery.ai) | Brokered provider | Yes | Supported. See the [Smithery guide](/deploy/smithery/). |
+| [MCP360](https://mcp360.ai) | Hosted remote server, one account key | No | Not yet connectable. See below. |
+| [Glama](https://glama.ai) | Hosted remote server, one account key | No | Not yet connectable. See below. |
+
+## Why the account-key gateways do not connect yet
+
+A connector installs from the catalog, and the catalog supports these auth kinds: `dcr`, `static`, `composio`, `smithery`, and `provider`. None of them describes "reach this URL with a fixed API key in a header." The install path accepts `dcr` and `composio` entries. Personal connectors accept `dcr` and Composio. The workspace management tool accepts a bundle by name or by path and drops a URL.
+
+So a gateway whose whole interface is a URL plus a bearer token has no door. The runtime transport underneath supports it, and a hand-edited `workspace.json` will run it, but nothing an operator or workspace admin can reach through a supported surface will.
+
+Closing the gap needs two pieces:
+
+1. **An API-key auth kind for catalog entries**, so an operator can publish a gateway's endpoints as installable connectors.
+2. **A credential provider per gateway**, so the account key resolves at the instance layer rather than being written into each workspace's state. This follows the rule the platform already holds for brokered connectors: persisted state names which credential it needs, never where the value lives.
+
+Until both land, treat MCP360 and Glama as evaluated and pending rather than supported.
+
+## Choosing between them
+
+If a vendor offers both a brokered path and a bare endpoint, prefer the broker. Per-workspace connections give you attribution, independent revocation, and a rate limit that one noisy workspace cannot exhaust for everyone. A single account key gives you none of those: the vendor sees one caller, and you cannot tell from their side which team spent the quota.
+
+If no gateway is involved at all, prefer `auth: dcr`. It needs no operator setup and puts no third party in the credential path.
+
+## Related
+
+- [Connector Providers](/config/connector-providers/) — the provider and connector layers in detail
+- [Connectors](/using/connectors/) — the auth kinds from a user's point of view
+- [Connectors Catalog](/config/connectors-catalog/) — authoring catalog entries
+- [Smithery Gateway Setup](/deploy/smithery/) — a brokered gateway end to end
