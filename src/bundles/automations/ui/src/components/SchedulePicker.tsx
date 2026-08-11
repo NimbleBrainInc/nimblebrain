@@ -65,7 +65,11 @@ export function cronFor(mode: "daily" | "weekly", time: string, dow: string): st
 export function parseTime(spec: ScheduleSpec | null): string {
   if (!spec?.expression) return "08:00";
   const parts = spec.expression.trim().split(/\s+/);
-  if (parts.length < 2) return "08:00";
+  // Five fields, matching `detectMode`. These read minute and hour by position,
+  // so the six-field seconds form — which the server's cron library accepts —
+  // shifts every field one place and yields an in-range time the expression
+  // does not name.
+  if (parts.length !== 5) return "08:00";
   // Seeded for every spec, including one shown in `cron` mode — the user can
   // switch to Daily/Weekly at any time and `emit` reads this state directly.
   // A field the input cannot hold therefore falls back to the default rather
@@ -78,7 +82,10 @@ export function parseTime(spec: ScheduleSpec | null): string {
 export function parseDow(spec: ScheduleSpec | null): string {
   if (!spec?.expression) return "1";
   const parts = spec.expression.trim().split(/\s+/);
-  return parts.length >= 5 && parts[4] !== "*" ? parts[4]! : "1";
+  // Same arity gate as `parseTime`, for the same reason: on a six-field
+  // expression position 4 is the month, so a June schedule would read as
+  // Saturday.
+  return parts.length === 5 && parts[4] !== "*" ? parts[4]! : "1";
 }
 
 export function specEqual(a: ScheduleSpec | null, b: ScheduleSpec | null): boolean {

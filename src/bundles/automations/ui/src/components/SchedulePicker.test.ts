@@ -113,6 +113,16 @@ describe("switching a cron-mode schedule to a structured mode", () => {
     }
   });
 
+  test("a six-field expression seeds the default, not a shifted time", () => {
+    // The server's cron library accepts the seconds form, and these helpers read
+    // by position — `0 0 8 * * *` is 08:00:00, but position 1 is the minute of
+    // the five-field shape, so an ungated read shows 00:00 and a mode switch
+    // would emit midnight. Position 4 is the month, so the day would shift too.
+    expect(detectMode(cron("0 0 8 * * *"))).toBe("cron");
+    expect(parseTime(cron("0 0 8 * * *"))).toBe("08:00");
+    expect(parseDow(cron("0 0 8 * 6 *"))).toBe("1");
+  });
+
   test("an out-of-range field is not a moment either", () => {
     // `namesOneMoment` bounds the value, so `25` cannot seed an hour the input
     // would reject; the seed falls back to the default instead.
