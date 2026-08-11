@@ -9,7 +9,7 @@ export const ManageToolsInput = Type.Object({
   add: Type.Optional(
     Type.Array(ToolNameField, {
       description:
-        "Tool names to promote into the active tool list. Each becomes callable on the next turn.",
+        "Tool names to promote into the active tool list. Each becomes callable on the next turn and stays until released. List only tools you intend to call — a promoted tool you never use costs its schema on every remaining turn.",
     }),
   ),
   remove: Type.Optional(
