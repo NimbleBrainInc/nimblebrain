@@ -204,17 +204,54 @@ describe("published skills and the surface-once channel", () => {
     // `allowedTools` excludes the server's tool, so it is not in the active set at
     // turn start and Layer 3 selects neither skill — the exact case the channel
     // exists for. The model promotes and calls it mid-turn.
-    await runtime.chat({
+    const chat = await runtime.chat({
       workspaceId: TEST_WORKSPACE_ID,
       message: "promote and call it",
       allowedTools: ["nb__*"],
     });
 
     expect(modelCalls).toBeGreaterThan(1);
+
+    // The delivery must come from a call that RAN, not merely one that was
+    // attempted. `injectConnectorSkillOverlays` fires just after the `tool.start`
+    // emit and before input coercion/validation, so a call that fails validation
+    // injects the body too — and this case would then pass while proving nothing
+    // about the promotion path. Read the persisted `tool.done` instead of
+    // inferring execution from the injection it precedes.
+    const store = await runtime.resolveConversationStore(chat.conversationId);
+    const events = await store!.readEvents(chat.conversationId);
+    const done = events.find(
+      (e) => e.type === "tool.done" && (e as { name?: string }).name === CALLED_TOOL,
+    ) as { ok?: boolean } | undefined;
+    expect(done?.ok).toBe(true);
+
     // Not composed at turn start...
     expect(promptText(prompts[0] ?? [])).not.toContain(MARKER_A);
-    // ...but delivered once the tool was actually called. Subtracting the Layer-3
-    // selection must not empty the channel it is narrowing.
+    // ...but delivered once the tool ran. Subtracting the Layer-3 selection must
+    // not empty the channel it is narrowing.
     expect(peakOccurrences(MARKER_A)).toBe(1);
+    // The per-server glob reaches the neighbour here too: `beta` has no tool of
+    // its own, and one call to `doit` delivers it. Exactly once, same as `alpha`.
+    expect(peakOccurrences(MARKER_B)).toBe(1);
+  });
+
+  // `executeTask` composes its own prompt and builds its own engine config, so it
+  // carries a second copy of the candidate wiring rather than sharing chat's. The
+  // duplication is a known deferred follow-up in runtime.ts; while it stands, an
+  // exclusion applied to one call site and not the other is a live way for the two
+  // to diverge, and a task run is where nobody is watching the token bill.
+  it("holds on the task path too, which wires the channel separately", async () => {
+    prompts = [];
+    modelCalls = 0;
+    await runtime.executeTask({
+      workspaceId: TEST_WORKSPACE_ID,
+      prompt: "do the thing",
+      allowedTools: [CALLED_TOOL],
+    });
+
+    expect(modelCalls).toBeGreaterThan(1);
+    expect(promptText(prompts[0] ?? [])).toContain("<layer3-skill>");
+    expect(peakOccurrences(MARKER_A)).toBe(1);
+    expect(peakOccurrences(MARKER_B)).toBe(1);
   });
 });
