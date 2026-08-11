@@ -22,31 +22,70 @@ export const DAYS = [
   { value: "0", label: "Sunday" },
 ];
 
+/**
+ * A cron minute or hour the `HH:MM` input can hold: one in-range number.
+ *
+ * `*`, a list (`12,17`), a range (`9-17`) and a step (`*` with `/15`) each name
+ * more than one moment, and the daily/weekly modes render exactly one time.
+ * Out-of-range digits (`25` as an hour) are no more holdable than those, so the
+ * bound is part of the question rather than a separate validation.
+ */
+function namesOneMoment(field: string | undefined, max: number): boolean {
+  if (field === undefined || !/^\d{1,2}$/.test(field)) return false;
+  return Number(field) <= max;
+}
+
 export function detectMode(spec: ScheduleSpec | null): ScheduleMode {
   if (!spec) return "interval";
   if (spec.type === "interval") return "interval";
   if (!spec.expression) return "cron";
   const parts = spec.expression.trim().split(/\s+/);
   if (parts.length !== 5) return "cron";
-  const [, , dom, mon, dow] = parts;
+  const [min, hour, dom, mon, dow] = parts;
+  // A mode is only offered for an expression it can represent. Daily and weekly
+  // render one `HH:MM`, so they require a minute and hour that name a single
+  // moment; the day fields alone do not decide that. Anything else belongs to
+  // `cron`, whose raw text field round-trips verbatim.
+  if (!namesOneMoment(min, 59) || !namesOneMoment(hour, 23)) return "cron";
   if (dom === "*" && mon === "*" && dow === "*") return "daily";
   if (dom === "*" && mon === "*" && dow !== "*") return "weekly";
   return "cron";
 }
 
+/**
+ * The expression a structured mode produces. Exported so the round-trip is
+ * testable against the real builder — a copy in the test would pass while this
+ * one changed underneath it.
+ */
+export function cronFor(mode: "daily" | "weekly", time: string, dow: string): string {
+  const [h, min] = time.split(":").map(Number);
+  return mode === "daily" ? `${min} ${h} * * *` : `${min} ${h} * * ${dow}`;
+}
+
 export function parseTime(spec: ScheduleSpec | null): string {
   if (!spec?.expression) return "08:00";
   const parts = spec.expression.trim().split(/\s+/);
-  if (parts.length < 2) return "08:00";
-  const h = parts[1] === "*" ? "8" : parts[1]!;
-  const m = parts[0] === "*" ? "0" : parts[0]!;
+  // Five fields, matching `detectMode`. These read minute and hour by position,
+  // so the six-field seconds form — which the server's cron library accepts —
+  // shifts every field one place and yields an in-range time the expression
+  // does not name.
+  if (parts.length !== 5) return "08:00";
+  // Seeded for every spec, including one shown in `cron` mode — the user can
+  // switch to Daily/Weekly at any time and `emit` reads this state directly.
+  // A field the input cannot hold therefore falls back to the default rather
+  // than riding through as a string `Number` turns into NaN.
+  const h = namesOneMoment(parts[1], 23) ? parts[1]! : "8";
+  const m = namesOneMoment(parts[0], 59) ? parts[0]! : "0";
   return `${h.padStart(2, "0")}:${m.padStart(2, "0")}`;
 }
 
 export function parseDow(spec: ScheduleSpec | null): string {
   if (!spec?.expression) return "1";
   const parts = spec.expression.trim().split(/\s+/);
-  return parts.length >= 5 && parts[4] !== "*" ? parts[4]! : "1";
+  // Same arity gate as `parseTime`, for the same reason: on a six-field
+  // expression position 4 is the month, so a June schedule would read as
+  // Saturday.
+  return parts.length === 5 && parts[4] !== "*" ? parts[4]! : "1";
 }
 
 export function specEqual(a: ScheduleSpec | null, b: ScheduleSpec | null): boolean {
@@ -107,12 +146,8 @@ export function SchedulePicker({
     let spec: ScheduleSpec;
     if (m === "interval") {
       spec = { type: "interval", intervalMs: Math.max(1, mins) * 60_000 };
-    } else if (m === "daily") {
-      const [h, min] = t.split(":").map(Number);
-      spec = { type: "cron", expression: `${min} ${h} * * *`, timezone };
-    } else if (m === "weekly") {
-      const [h, min] = t.split(":").map(Number);
-      spec = { type: "cron", expression: `${min} ${h} * * ${d}`, timezone };
+    } else if (m === "daily" || m === "weekly") {
+      spec = { type: "cron", expression: cronFor(m, t, d), timezone };
     } else {
       spec = { type: "cron", expression: cron, timezone };
     }
