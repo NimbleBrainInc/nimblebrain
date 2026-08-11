@@ -1,3 +1,5 @@
+import { log } from "../observability/log.ts";
+
 /** Retryable HTTP status codes: rate limit (429) and overload (529). */
 const RETRYABLE_STATUSES = new Set([429, 529]);
 
@@ -67,6 +69,9 @@ function abortableSleep(ms: number, signal?: AbortSignal): Promise<void> {
  * - Fails immediately on 401 (auth) with a clear message.
  * - Fails immediately on all other errors.
  * - Backoff: baseDelay * 2^attempt + random(0, 500ms).
+ * - Logs one `warn` per retried attempt (attempt, reason, backoff). A retry
+ *   that eventually succeeds is not an error and moves no counter, so this
+ *   line is the only record that it happened.
  * - Optional `signal` interrupts the backoff sleep so a cancel during
  *   backoff bites within the abort tick instead of after the full
  *   delay. The signal also propagates into `fn()` calls if those
@@ -94,6 +99,25 @@ export async function withRetry<T>(
       }
 
       const delay = baseDelayMs * 2 ** attempt + Math.random() * 500;
+      // A retried attempt is otherwise invisible. It is not a terminal failure,
+      // so no error counter moves; TTFT is measured on whichever attempt
+      // succeeds, so it stays clean; and only the caller's elapsed-time
+      // measurement carries any trace of it. Without this line the condition can
+      // only be *inferred* — from elapsed time that output-token generation does
+      // not account for — and never attributed to a cause.
+      //
+      // `reason` is the HTTP status when there is one, else the error's name:
+      // `isRetryable` also admits anything flagged `retryable` (the model-stream
+      // stall watchdog is one), which carries no status.
+      //
+      // The error's message is deliberately not logged. It is provider-supplied
+      // free text, and the logger's redactor only inspects structured fields —
+      // status and name are enough to say what happened.
+      log.warn(
+        `[engine] retry attempt=${attempt + 1}/${maxRetries} ` +
+          `reason=${status ?? (err instanceof Error ? err.name : "unknown")} ` +
+          `delayMs=${Math.round(delay)}`,
+      );
       await abortableSleep(delay, signal);
     }
   }
