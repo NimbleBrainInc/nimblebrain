@@ -403,7 +403,7 @@ describe("LLM latency + error metrics", () => {
     const labels = { source: "main", model: "tm-origin-task", origin: "task" };
     const beforeLatency = await readHistogram("count", labels);
     const beforeTtft = await readTtft("count", labels);
-    runWithRequestContext({ unattended: true }, () => {
+    runWithRequestContext({ identity: null, unattended: true }, () => {
       sink.emit({
         type: "llm.done",
         data: { runId: "r1", model: "tm-origin-task", llmMs: 90000, ttftMs: 1200 },
@@ -418,7 +418,7 @@ describe("LLM latency + error metrics", () => {
     const labels = { source: "main", model: "tm-origin-chat", origin: "chat" };
     const beforeLatency = await readHistogram("count", labels);
     const beforeTtft = await readTtft("count", labels);
-    runWithRequestContext({ conversationId: "conv-1" }, () => {
+    runWithRequestContext({ identity: null, conversationId: "conv-1" }, () => {
       sink.emit({
         type: "llm.done",
         data: { runId: "r1", model: "tm-origin-chat", llmMs: 3000, ttftMs: 800 },
