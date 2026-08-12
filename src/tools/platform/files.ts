@@ -306,9 +306,9 @@ async function handleReadPdfPages(
 
 /**
  * Strict input shape for `files__create`. Mirrors the JSON Schema:
- * `manifest` holds the file metadata; `body` is the base64-encoded
- * content. Field names match `FileEntry` (camelCase) — no kebab/snake
- * acceptance.
+ * `manifest` holds the file metadata; `body` is the content, read
+ * according to `encoding`. Field names match `FileEntry` (camelCase) —
+ * no kebab/snake acceptance.
  */
 interface CreateInput {
   manifest: {
@@ -318,6 +318,38 @@ interface CreateInput {
     description?: string;
   };
   body: string;
+  encoding?: "base64" | "text";
+}
+
+/**
+ * Canonical base64, allowing the whitespace a wrapped encoder emits.
+ * Padding is required, because the check's whole job is to separate real
+ * base64 from a caller that never encoded at all.
+ */
+const BASE64_BODY = /^[A-Za-z0-9+/]*={0,2}$/;
+
+/**
+ * Decode a `files__create` body under its declared encoding.
+ *
+ * `Buffer.from(s, "base64")` silently discards every character outside the
+ * base64 alphabet, so an un-encoded body does not fail — it decodes to
+ * garbage, and the caller learns nothing until someone opens the file. The
+ * validation exists to turn that into an error at the call, and the `text`
+ * encoding exists so a caller composing prose has somewhere to go: encoding
+ * a document by hand is not something a language model can do reliably, so
+ * "base64 or nothing" is not a contract it can hold to.
+ */
+function decodeCreateBody(body: string, encoding: "base64" | "text"): Buffer {
+  if (encoding === "text") return Buffer.from(body, "utf8");
+  const compact = body.replace(/\s+/g, "");
+  if (!BASE64_BODY.test(compact) || compact.length % 4 !== 0) {
+    throw new Error(
+      '`body` is not valid base64, and `encoding` defaults to "base64". ' +
+        'To store text as written — markdown, code, CSV, JSON — pass encoding: "text" and put the ' +
+        "raw content in `body`. To store binary, base64-encode it first.",
+    );
+  }
+  return Buffer.from(compact, "base64");
 }
 
 async function handleCreate(store: FileStore, args: CreateInput): Promise<object> {
@@ -326,8 +358,8 @@ async function handleCreate(store: FileStore, args: CreateInput): Promise<object
   // any `mimeType` the LLM supplies; the chat path rejects anything
   // outside the allowlist. Changing the tool contract is fenced out of the
   // store-unification PR that introduced this comment — track separately.
-  const { manifest, body } = args;
-  const decoded = Buffer.from(body, "base64");
+  const { manifest, body, encoding } = args;
+  const decoded = decodeCreateBody(body, encoding ?? "base64");
   // Recover a text type from the filename when the agent supplies a generic
   // `application/octet-stream` (or empty) for a known text/source extension;
   // a specific type is trusted as-is. Same recovery as the upload handlers,
@@ -496,7 +528,8 @@ export function createFilesSource(runtime: Runtime, eventSink: EventSink): McpSo
     {
       name: "create",
       description:
-        "Create a new file in your file store. `manifest` is the file metadata; `body` is the base64-encoded content.",
+        "Create a new file in your file store. `manifest` is the file metadata; `body` is the content — " +
+        'base64 by default, or written verbatim when you pass encoding: "text" (use that for markdown, code, or anything else you are composing yourself).',
       inputSchema: FilesCreateInput,
       handler: async (input: Record<string, unknown>): Promise<ToolResult> => {
         try {

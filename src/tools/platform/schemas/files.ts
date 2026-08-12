@@ -83,7 +83,16 @@ export const FilesCreateInput = Type.Object(
       },
       { required: ["filename", "mimeType"] },
     ),
-    body: Type.String({ description: "File content as a base64-encoded string." }),
+    body: Type.String({
+      description:
+        'File content. Base64-encoded by default; pass encoding: "text" to write `body` verbatim.',
+    }),
+    encoding: Type.Optional(
+      StringEnum(["base64", "text"] as const, {
+        description:
+          'How to read `body`. "base64" (the default) decodes it as base64 and rejects anything that is not. "text" writes `body` verbatim as UTF-8 — use it for markdown, code, CSV, or any content you are composing yourself.',
+      }),
+    ),
   },
   { required: ["manifest", "body"] },
 );
