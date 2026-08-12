@@ -56,6 +56,33 @@ export class StaticSource implements ConnectorSource {
 const CATALOG_EXTENSIONS = new Set([".yaml", ".yml", ".json"]);
 
 /**
+ * One thing the catalog got wrong: a file that could not be read or
+ * parsed, a body with no `servers` list, or a single entry that failed
+ * validation and was therefore dropped.
+ *
+ * `message` is the operator-facing sentence, formatted identically to
+ * what `readStaticServers` logs (minus the `[static-source] ` prefix).
+ * The structured fields let a reporter group by file without re-parsing
+ * that sentence.
+ */
+export interface CatalogDiagnostic {
+  /** Catalog file the problem is in — or the path itself, when the path is the problem. */
+  source: string;
+  /** Entry index within its file. Absent for file-level problems. */
+  index?: number;
+  /** The entry's `name`, when the candidate carried a usable one. */
+  name?: string;
+  /** Operator-facing description, already formatted. */
+  message: string;
+}
+
+/** A catalog read: the entries that survived, and everything that did not. */
+interface CatalogRead {
+  servers: ServerDetail[];
+  diagnostics: CatalogDiagnostic[];
+}
+
+/**
  * Load a `ServerDetail[]` from a YAML/JSON file OR a directory of
  * them. For a directory, every `*.yaml`/`*.yml`/`*.json` is read in
  * sorted filename order — splitting curation across files (e.g.
@@ -67,19 +94,55 @@ const CATALOG_EXTENSIONS = new Set([".yaml", ".yml", ".json"]);
  * file is skipped with a logged warning while the rest still load.
  */
 export function readStaticServers(path: string): ServerDetail[] {
+  const { servers, diagnostics } = readCatalog(path);
+  for (const d of diagnostics) log.warn(`[static-source] ${d.message}`);
+  return servers;
+}
+
+/**
+ * Report everything wrong with a catalog path, without loading it into
+ * a registry and without logging. Same read, same schema, same drop
+ * rules as `readStaticServers` — an empty result means every entry at
+ * `path` would survive the runtime's validation.
+ *
+ * This exists so a pre-merge gate can decide the catalog is good using
+ * the code that actually runs in production, rather than a second
+ * validator that drifts from it. `scripts/check-catalog-schema.ts` is
+ * the CLI over it. A path that does not exist is itself a diagnostic:
+ * a gate pointed at the wrong directory must fail, not pass empty.
+ */
+export function validateStaticCatalog(path: string): CatalogDiagnostic[] {
+  return readCatalog(path).diagnostics;
+}
+
+/**
+ * The single read both entry points share. Collects rather than logs,
+ * so the caller decides whether a problem is a warning to carry on
+ * past (the runtime) or a failure (the gate).
+ */
+function readCatalog(path: string): CatalogRead {
   if (!existsSync(path)) {
-    log.warn(`[static-source] ${path}: not found — returning empty`);
-    return [];
+    return {
+      servers: [],
+      diagnostics: [{ source: path, message: `${path}: not found — returning empty` }],
+    };
   }
   const files = statSync(path).isDirectory() ? catalogFilesInDir(path) : [path];
-  const out: ServerDetail[] = [];
+  const servers: ServerDetail[] = [];
+  const diagnostics: CatalogDiagnostic[] = [];
   const seenNames = new Set<string>();
   for (const file of files) {
-    const parsed = parseCatalogFile(file);
-    if (parsed === undefined) continue; // unreadable / unparseable — already warned
-    appendValidatedServers(extractServerCandidates(parsed, file), file, seenNames, out);
+    const parsed = parseCatalogFile(file, diagnostics);
+    if (parsed === undefined) continue; // unreadable / unparseable — already reported
+    appendValidatedServers(
+      extractServerCandidates(parsed, file, diagnostics),
+      file,
+      seenNames,
+      servers,
+      diagnostics,
+    );
   }
-  return out;
+  return { servers, diagnostics };
 }
 
 /**
@@ -97,26 +160,28 @@ function catalogFilesInDir(dir: string): string[] {
 
 /**
  * Read + parse one catalog file. Returns the parsed body, or
- * `undefined` when the file is unreadable or unparseable (logged) so
+ * `undefined` when the file is unreadable or unparseable (reported) so
  * the caller can skip it without sinking sibling files.
  */
-function parseCatalogFile(file: string): unknown {
+function parseCatalogFile(file: string, diagnostics: CatalogDiagnostic[]): unknown {
   let text: string;
   try {
     text = readFileSync(file, "utf-8");
   } catch (err) {
-    log.warn(
-      `[static-source] failed to read ${file}: ${err instanceof Error ? err.message : String(err)}`,
-    );
+    diagnostics.push({
+      source: file,
+      message: `failed to read ${file}: ${err instanceof Error ? err.message : String(err)}`,
+    });
     return undefined;
   }
   try {
     const ext = extname(file).toLowerCase();
     return ext === ".yaml" || ext === ".yml" ? Bun.YAML.parse(text) : JSON.parse(text);
   } catch (err) {
-    log.warn(
-      `[static-source] failed to parse ${file}: ${err instanceof Error ? err.message : String(err)}`,
-    );
+    diagnostics.push({
+      source: file,
+      message: `failed to parse ${file}: ${err instanceof Error ? err.message : String(err)}`,
+    });
     return undefined;
   }
 }
@@ -126,7 +191,11 @@ function parseCatalogFile(file: string): unknown {
  * Accepts `{ servers: [ ... ] }` (canonical) or a bare `[ ... ]`
  * array. Anything else logs and yields nothing.
  */
-function extractServerCandidates(parsed: unknown, source: string): unknown[] {
+function extractServerCandidates(
+  parsed: unknown,
+  source: string,
+  diagnostics: CatalogDiagnostic[],
+): unknown[] {
   if (Array.isArray(parsed)) return parsed;
   if (
     parsed &&
@@ -135,7 +204,10 @@ function extractServerCandidates(parsed: unknown, source: string): unknown[] {
   ) {
     return (parsed as { servers: unknown[] }).servers;
   }
-  log.warn(`[static-source] ${source} did not yield a top-level 'servers' list or bare array`);
+  diagnostics.push({
+    source,
+    message: `${source} did not yield a top-level 'servers' list or bare array`,
+  });
   return [];
 }
 
@@ -145,7 +217,7 @@ function extractServerCandidates(parsed: unknown, source: string): unknown[] {
  * multiple files gets first-wins dedup across them. Keeps only entries
  * that pass the upstream `ServerDetail` ajv schema (the platform's
  * defense-in-depth safety checks run later, uniformly, at the directory
- * boundary). Each drop is logged with a `source[index:name]` tag naming
+ * boundary). Each drop is reported with a `source[index:name]` tag naming
  * where it came from — for the directory path, `source` is the
  * individual file, not the dir.
  */
@@ -154,6 +226,7 @@ function appendValidatedServers(
   source: string,
   seenNames: Set<string>,
   out: ServerDetail[],
+  diagnostics: CatalogDiagnostic[],
 ): void {
   for (let i = 0; i < raw.length; i++) {
     const candidate = raw[i];
@@ -161,14 +234,22 @@ function appendValidatedServers(
     const tag = `${source}[${i}${name ? `:${name}` : ""}]`;
     const result = validateServerDetail(candidate);
     if (!result.valid) {
-      log.warn(
-        `[static-source] ${tag} dropped — invalid ServerDetail: ${result.errors.join("; ")}`,
-      );
+      diagnostics.push({
+        source,
+        index: i,
+        name,
+        message: `${tag} dropped — invalid ServerDetail: ${result.errors.join("; ")}`,
+      });
       continue;
     }
     const detail = candidate as ServerDetail;
     if (seenNames.has(detail.name)) {
-      log.warn(`[static-source] ${tag} dropped — duplicate name "${detail.name}"`);
+      diagnostics.push({
+        source,
+        index: i,
+        name,
+        message: `${tag} dropped — duplicate name "${detail.name}"`,
+      });
       continue;
     }
     // Defense-in-depth (URL scheme allowlist + reserved OAuth params)
