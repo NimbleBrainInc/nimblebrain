@@ -489,6 +489,67 @@ describe("surfaceTools — kernel identity tools always direct", () => {
 	});
 });
 
+// --- The persistence verb is reachable without a promote ---
+//
+// `instructions__write_instructions` is the runtime's durable "remember this"
+// verb. A user asks for it on a first turn in a workspace with nothing
+// installed, so it has to be in the tool list already — proxied, it is
+// reachable only by guessing that a search would find it, and the ask reads as
+// unsupported.
+
+describe("surfaceTools — instructions is kernel-direct", () => {
+	it("Tier 2: write_instructions surfaces direct while bundle tools proxy", () => {
+		const system = makeSystemTools(4);
+		const instructions = makeTool("instructions__write_instructions");
+		const app = makeAppTools("tasks", 40);
+
+		const result = surfaceTools([...system, instructions, ...app], null);
+
+		const directNames = new Set(result.direct.map((t) => t.name));
+		expect(directNames.has("instructions__write_instructions")).toBe(true);
+		expect(result.direct).toHaveLength(system.length + 1);
+	});
+
+	it("Tier 3: write_instructions stays direct under a skill glob that omits it", () => {
+		const system = makeSystemTools(4);
+		const instructions = makeTool("instructions__write_instructions");
+		const tasks = makeAppTools("tasks", 10);
+		const skill = makeSkill({ allowedTools: ["tasks__*"] });
+
+		const result = surfaceTools([...system, instructions, ...tasks], skill);
+
+		const directNames = new Set(result.direct.map((t) => t.name));
+		expect(directNames.has("instructions__write_instructions")).toBe(true);
+	});
+
+	it("a source that only resembles `instructions` is still proxied", () => {
+		const system = makeSystemTools(4);
+		const lookalike = makeTool("instructions_archive__read");
+		const app = makeAppTools("tasks", 40);
+
+		const result = surfaceTools([...system, lookalike, ...app], null);
+
+		const directNames = new Set(result.direct.map((t) => t.name));
+		expect(directNames.has("instructions_archive__read")).toBe(false);
+		expect(result.direct).toHaveLength(4); // only nb__*
+	});
+
+	it("the skills authoring surface stays proxied", () => {
+		// Ten tools for a surface reached deliberately, not reflexively — it is
+		// named in the bootstrap briefing instead of spent from the direct tier.
+		const system = makeSystemTools(4);
+		const skills = makeAppTools("skills", 10);
+		const app = makeAppTools("tasks", 40);
+
+		const result = surfaceTools([...system, ...skills, ...app], null);
+
+		const directNames = new Set(result.direct.map((t) => t.name));
+		for (const t of skills) {
+			expect(directNames.has(t.name)).toBe(false);
+		}
+	});
+});
+
 describe("surfaceTools — catalog activation is reachable without a promote", () => {
 	// The Skill Catalog renders into the STABLE system prefix, so it reaches the
 	// model on every turn. The tool that acts on it has to be reachable on every
