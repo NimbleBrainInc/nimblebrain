@@ -31,6 +31,7 @@ import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { extname, join } from "node:path";
 import { type ServerDetail, validateServerDetail } from "../connectors/server-detail.ts";
 import { log } from "../observability/log.ts";
+import { validateServerDetailSafety } from "./projection.ts";
 import type { ConnectorSource } from "./types.ts";
 
 export class StaticSource implements ConnectorSource {
@@ -76,9 +77,16 @@ export interface CatalogDiagnostic {
   message: string;
 }
 
+/** A surviving entry, kept with where it came from so a later stage can name it. */
+interface CatalogEntry {
+  detail: ServerDetail;
+  source: string;
+  index: number;
+}
+
 /** A catalog read: the entries that survived, and everything that did not. */
 interface CatalogRead {
-  servers: ServerDetail[];
+  entries: CatalogEntry[];
   diagnostics: CatalogDiagnostic[];
 }
 
@@ -94,25 +102,49 @@ interface CatalogRead {
  * file is skipped with a logged warning while the rest still load.
  */
 export function readStaticServers(path: string): ServerDetail[] {
-  const { servers, diagnostics } = readCatalog(path);
+  const { entries, diagnostics } = readCatalog(path);
   for (const d of diagnostics) log.warn(`[static-source] ${d.message}`);
-  return servers;
+  return entries.map((e) => e.detail);
 }
 
 /**
  * Report everything wrong with a catalog path, without loading it into
- * a registry and without logging. Same read, same schema, same drop
- * rules as `readStaticServers` — an empty result means every entry at
- * `path` would survive the runtime's validation.
+ * a registry and without logging. An empty result means every entry at
+ * `path` reaches the catalog: it survives this source's schema and
+ * dedup checks, and then the safety scrub at the directory boundary.
  *
- * This exists so a pre-merge gate can decide the catalog is good using
- * the code that actually runs in production, rather than a second
- * validator that drifts from it. `scripts/check-catalog-schema.ts` is
- * the CLI over it. A path that does not exist is itself a diagnostic:
- * a gate pointed at the wrong directory must fail, not pass empty.
+ * Covering both stages is the point. An entry can pass `ServerDetail`
+ * and still be dropped later by `validateServerDetailSafety` — a
+ * `javascript:` icon src, a reserved OAuth param — with the same
+ * symptom either way: the connector never appears, and nothing fails.
+ * A gate that reported only this file's own drops would certify a
+ * catalog the runtime still guts, which is worse than no gate, because
+ * a green run reads as proof.
+ *
+ * Safety runs over survivors only, and reports without dropping them:
+ * `readStaticServers` returns what it always did, and the directory
+ * boundary stays the one place that actually removes an unsafe entry.
+ * This function is the *report* of that decision, never a second copy
+ * of it.
+ *
+ * `scripts/check-catalog-schema.ts` is the CLI over this. A path that
+ * does not exist is itself a diagnostic: a gate pointed at the wrong
+ * directory must fail, not pass empty.
  */
 export function validateStaticCatalog(path: string): CatalogDiagnostic[] {
-  return readCatalog(path).diagnostics;
+  const { entries, diagnostics } = readCatalog(path);
+  for (const { detail, source, index } of entries) {
+    const safetyError = validateServerDetailSafety(detail);
+    if (safetyError) {
+      diagnostics.push({
+        source,
+        index,
+        name: detail.name,
+        message: `${source}[${index}:${detail.name}] dropped at the directory boundary — ${safetyError}`,
+      });
+    }
+  }
+  return diagnostics;
 }
 
 /**
@@ -123,12 +155,12 @@ export function validateStaticCatalog(path: string): CatalogDiagnostic[] {
 function readCatalog(path: string): CatalogRead {
   if (!existsSync(path)) {
     return {
-      servers: [],
+      entries: [],
       diagnostics: [{ source: path, message: `${path}: not found — returning empty` }],
     };
   }
   const files = statSync(path).isDirectory() ? catalogFilesInDir(path) : [path];
-  const servers: ServerDetail[] = [];
+  const entries: CatalogEntry[] = [];
   const diagnostics: CatalogDiagnostic[] = [];
   const seenNames = new Set<string>();
   for (const file of files) {
@@ -138,11 +170,11 @@ function readCatalog(path: string): CatalogRead {
       extractServerCandidates(parsed, file, diagnostics),
       file,
       seenNames,
-      servers,
+      entries,
       diagnostics,
     );
   }
-  return { servers, diagnostics };
+  return { entries, diagnostics };
 }
 
 /**
@@ -225,7 +257,7 @@ function appendValidatedServers(
   raw: unknown[],
   source: string,
   seenNames: Set<string>,
-  out: ServerDetail[],
+  out: CatalogEntry[],
   diagnostics: CatalogDiagnostic[],
 ): void {
   for (let i = 0; i < raw.length; i++) {
@@ -258,7 +290,7 @@ function appendValidatedServers(
     // regardless of provenance, so non-curated mpak entries get the
     // same protection static does.
     seenNames.add(detail.name);
-    out.push(detail);
+    out.push({ detail, source, index: i });
   }
 }
 

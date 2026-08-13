@@ -415,6 +415,24 @@ Every `ServerDetail` is validated at the source boundary (mpak fetch, static-sou
 
 When the top-level shape is bad (not a list or `{servers: [...]}`, malformed YAML), the whole override is rejected and the bundled catalog is used. The startup logs name the file path and the parse error.
 
+### Checking a catalog before you ship it
+
+A rejected entry is dropped, not fatal — its siblings load normally, so the only symptom is a connector that never appears in Browse. To find that before it reaches a running deployment, point the checker at any `ServerDetail` file or directory:
+
+```bash
+bun run scripts/check-catalog-schema.ts <catalog-file-or-dir>
+```
+
+It reports every entry that would be dropped — at either stage, source or directory boundary — and exits non-zero if there are any. Output is the same wording the runtime logs, so it doubles as the string to grep for when confirming a fix landed:
+
+```
+✗ connectors/: 1 problem(s) — these entries would be dropped
+
+  connectors/platform.yaml[4:io.example/mcp] dropped — invalid ServerDetail: /description must NOT have more than 100 characters
+```
+
+Offline and deterministic, unlike the DCR probe below, so it is cheap enough to gate every catalog change. `bun run check:catalog-schema` runs it over the catalog bundled with the image as part of `bun run verify`; a deployment whose catalog lives in `NB_CURATED_CATALOG_DIR` should run it against that directory in the repo that owns it.
+
 ## Catalog rot detection
 
 The platform ships a network-dependent probe that verifies every `auth: dcr` entry in a catalog actually serves the OAuth discovery chain it claims. Point it at any `ServerDetail` file or directory:

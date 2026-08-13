@@ -5,9 +5,10 @@
  * Takes a catalog path (a `ServerDetail` file or a directory of them)
  * and reports every entry the runtime would silently drop: one that
  * fails the upstream `ServerDetail` schema, duplicates a name already
- * claimed by an earlier file, or sits in a file that cannot be read or
- * parsed. Exit 1 if anything would be dropped, 0 if the whole catalog
- * survives.
+ * claimed by an earlier file, sits in a file that cannot be read or
+ * parsed, or is scrubbed at the directory boundary for an unsafe URL or
+ * a reserved OAuth param. Exit 1 if anything would be dropped, 0 if the
+ * whole catalog reaches the catalog intact.
  *
  * **Why this exists.** A catalog entry is validated at load, and an
  * invalid one is dropped with a warn log while its siblings load fine
@@ -41,7 +42,7 @@ function main(): void {
 
   const diagnostics = validateStaticCatalog(path);
   if (diagnostics.length === 0) {
-    console.log(`✓ ${path}: every entry validates as ServerDetail`);
+    console.log(`✓ ${path}: every entry reaches the catalog (schema + safety)`);
     return;
   }
 
@@ -51,16 +52,22 @@ function main(): void {
   // output is the string to grep for when confirming the fix landed in
   // a running tenant.
   for (const d of diagnostics) console.error(`  ${d.message}`);
-  console.error(
-    "\nA dropped entry does not fail at runtime — the connector just never appears.\n" +
-      "Fix the entry above; `description` is capped at 100 characters by the upstream\n" +
-      "MCP registry schema (src/connectors/schemas/server.schema.json).",
-  );
+  // Only entry-level problems have an entry to go fix. A missing path or
+  // an unparseable file has no `index`, and telling that operator about
+  // field rules would point them at the wrong thing entirely.
+  if (diagnostics.some((d) => d.index !== undefined)) {
+    console.error(
+      "\nA dropped entry does not fail at runtime — the connector just never appears.\n" +
+        "Field rules: `description` is capped at 100 characters by the upstream MCP\n" +
+        "registry schema (src/connectors/schemas/server.schema.json); icon, docs, and\n" +
+        "portal URLs must be http(s), and OAuth params may not use reserved keys.",
+    );
+  }
   process.exit(1);
 }
 
-// Only run when invoked directly — importing the module (e.g. from the
-// unit test) must not trigger the argv/exit handling.
+// Only run when invoked directly, so the module can be imported without
+// tripping the argv reads and the process.exit calls.
 if (import.meta.main) {
   main();
 }

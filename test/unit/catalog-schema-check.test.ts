@@ -7,15 +7,16 @@ import { readStaticServers, validateStaticCatalog } from "../../src/registries/s
 
 /**
  * `validateStaticCatalog` is what a pre-merge gate runs over a catalog
- * before it ships (`scripts/check-catalog-schema.ts`). It reports what
- * `readStaticServers` would silently drop, so the two must never
- * disagree — a gate that passes a catalog the runtime then guts is
- * worse than no gate, because it reads as proof.
+ * before it ships (`scripts/check-catalog-schema.ts`). It has to account
+ * for **both** stages that silently remove an entry — this source's own
+ * schema/dedup drops, and the safety scrub at the directory boundary —
+ * because a gate that passes a catalog the runtime then guts is worse
+ * than no gate: a green run reads as proof.
  *
  * The over-long-description case is the regression: a `description`
  * past the upstream 100-character cap has taken a connector out of
  * Browse four times, always merging green because nothing checked the
- * catalog before it reached a running tenant.
+ * catalog before it reached a running deployment.
  */
 
 let dir: string;
@@ -105,6 +106,56 @@ describe("validateStaticCatalog", () => {
 
     expect(readStaticServers(dir)).toHaveLength(2);
     expect(validateStaticCatalog(dir)).toHaveLength(1);
+  });
+
+  test("an unsafe icon src is reported even though it passes ServerDetail", () => {
+    // The entry is schema-valid, so this source keeps it — and the
+    // directory boundary then drops it. Same symptom as a schema
+    // failure (connector never appears, nothing fails), so the gate has
+    // to cover it or a green run certifies a catalog the runtime guts.
+    writeCatalog("catalog.json", [
+      { ...VALID_ENTRY, icons: [{ src: "javascript:alert(1)", sizes: ["any"] }] },
+    ]);
+
+    expect(readStaticServers(dir)).toHaveLength(1);
+
+    const diagnostics = validateStaticCatalog(dir);
+    expect(diagnostics).toHaveLength(1);
+    expect(diagnostics[0]?.name).toBe("com.example/mcp");
+    expect(diagnostics[0]?.message).toContain("directory boundary");
+    expect(diagnostics[0]?.message).toContain("icon src must be http(s)");
+  });
+
+  test("a reserved OAuth param is reported as a directory-boundary drop", () => {
+    writeCatalog("catalog.json", [
+      {
+        ...VALID_ENTRY,
+        _meta: {
+          "ai.nimblebrain/connector": {
+            auth: "dcr",
+            additionalAuthorizationParams: { client_id: "attacker" },
+          },
+        },
+      },
+    ]);
+
+    const diagnostics = validateStaticCatalog(dir);
+    expect(diagnostics).toHaveLength(1);
+    expect(diagnostics[0]?.message).toContain("directory boundary");
+  });
+
+  test("safety runs over survivors only — a schema failure is not double-reported", () => {
+    writeCatalog("catalog.json", [
+      {
+        ...VALID_ENTRY,
+        description: "x".repeat(101),
+        icons: [{ src: "javascript:alert(1)", sizes: ["any"] }],
+      },
+    ]);
+
+    const diagnostics = validateStaticCatalog(dir);
+    expect(diagnostics).toHaveLength(1);
+    expect(diagnostics[0]?.message).toContain("must NOT have more than 100 characters");
   });
 
   test("the shipped example catalog and the test fixtures both pass the gate", () => {
