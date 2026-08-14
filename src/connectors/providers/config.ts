@@ -81,9 +81,44 @@ export interface ManagedProviderConfigs {
   smithery?: SmitheryProviderConfig;
 }
 
+/**
+ * The declared `connectors.gateways.<name>` block — one hosted-MCP vendor that
+ * issues a single account-wide API key and brokers nothing.
+ *
+ * A **gateway** sits on the other side of the line from a managed-connector
+ * provider. A provider mints a session per connection and therefore owns an
+ * `auth-kind`, routes, and a liveness probe; the registry in `registry.ts` is
+ * exactly that set. A gateway publishes fixed endpoints, so the only thing to
+ * configure is the credential its catalog entries authenticate with. Declaring
+ * one registers a credential provider under its name and nothing else.
+ *
+ * The name is the operator's own, matched verbatim against the
+ * `providerAuth.provider` an `auth: provider` catalog entry declares. Keys are
+ * free-form for the same reason Composio's `authConfigs` are keyed by toolkit
+ * slug: the entry already carries the identifier, so reusing it beats inventing
+ * a second name to carry the value.
+ */
+export interface GatewayConfig {
+  /**
+   * The account-wide API key, attached as `Authorization: Bearer`. Falls back to
+   * `<NAME>_API_KEY` (the gateway name upper-cased, non-alphanumerics to `_`),
+   * so `mcp360` reads `MCP360_API_KEY`.
+   *
+   * Declarable for the same reason the broker credentials are: a connector's
+   * persisted transport names the credential provider rather than an env var, so
+   * where the value lives stays this module's business and never reaches tenant
+   * state.
+   */
+  apiKey?: string;
+}
+
+/** Declared gateway blocks, keyed by the operator-chosen gateway name. */
+export type GatewayConfigs = Record<string, GatewayConfig>;
+
 /** The `connectors` block of `nimblebrain.json`. */
 export interface ConnectorsConfig {
   providers?: ManagedProviderConfigs;
+  gateways?: GatewayConfigs;
 }
 
 // ── Schema drift guard ───────────────────────────────────────────────
@@ -96,7 +131,15 @@ export interface ConnectorsConfig {
 
 const CONNECTORS_FIELDS: Record<keyof Required<ConnectorsConfig>, true> = {
   providers: true,
+  gateways: true,
 };
+
+const GATEWAY_FIELDS: Record<keyof Required<GatewayConfig>, true> = {
+  apiKey: true,
+};
+
+/** Every key a `connectors.gateways.<name>` block accepts. */
+export const GATEWAY_CONFIG_KEYS: string[] = Object.keys(GATEWAY_FIELDS);
 
 const MANAGED_PROVIDER_FIELDS: Record<keyof Required<ManagedProviderConfigs>, true> = {
   composio: true,
@@ -146,6 +189,11 @@ export function declaredProviderConfig<K extends keyof ManagedProviderConfigs>(
   id: K,
 ): ManagedProviderConfigs[K] | undefined {
   return _declared?.providers?.[id];
+}
+
+/** The declared gateways, or undefined when the operator declared none. */
+export function declaredGatewayConfigs(): GatewayConfigs | undefined {
+  return _declared?.gateways;
 }
 
 /** Test-only. Drop the installed block so a suite starts from no declared config. */

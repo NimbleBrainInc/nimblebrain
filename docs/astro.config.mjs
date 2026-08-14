@@ -186,6 +186,7 @@ export default defineConfig({
             items: [
               { label: 'Composio', slug: 'gateways/composio' },
               { label: 'Smithery', slug: 'gateways/smithery' },
+              { label: 'MCP360', slug: 'gateways/mcp360' },
             ],
           },
           {
