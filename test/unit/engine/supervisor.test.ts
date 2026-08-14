@@ -530,9 +530,9 @@ describe("supervisor — non-advancing results", () => {
   });
 
   it("a tripped tool keeps reporting the count that tripped it", () => {
-    // The live counters keep moving after a trip, so reading them on a later
-    // call reported "made no progress 1 times in a row" for a tool disabled
-    // at 6 — a number the model's own history contradicts. The count lands in
+    // A later call cannot tell which counter fired: the streak stands at 1
+    // when the budget is what tripped, so reading it reported "made no
+    // progress 1 times in a row" for a tool disabled at 6. The count lands in
     // the directive text and in the recorded verdict.
     const sup = createRunSupervisor();
     for (const q of ["a", "b", "c", "d", "e"]) expect(miss(sup, q).type).toBe("pass");

@@ -170,7 +170,9 @@ interface ToolState {
   lastFingerprint: string | null;
   consecutiveRepeats: number;
   totalCalls: number;
-  /** Consecutive results flagged non-advancing, however the input varied. */
+  /** Non-advancing results since the last advancing success, however the input
+   *  varied. An error neither increments nor clears this — see
+   *  `recordObservation`. */
   nonAdvancingCalls: number;
   tripped: boolean;
   /** Content hash of the result that tripped this tool. A later success must
@@ -178,9 +180,10 @@ interface ToolState {
    *  Null whenever `tripped` is false. */
   trippedContent: string | null;
   /** The count that fired the trip — a repeat streak or a spent budget. Held
-   *  because the live counters keep moving after the trip, so reading them
-   *  later reports a number the model's own history contradicts. Null
-   *  whenever `tripped` is false. */
+   *  because a later call cannot tell which of the two fired: the streak
+   *  stands at 1 when the budget is what tripped, so reporting it would give
+   *  the model a number its own history contradicts. Null whenever `tripped`
+   *  is false. */
   trippedRepeats: number | null;
 }
 
