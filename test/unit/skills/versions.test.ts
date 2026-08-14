@@ -210,12 +210,25 @@ describe("version history", () => {
 
   test("a traversing version cannot reach a real skill outside _versions/", () => {
     writeSkill(dir, "rules", manifest(), ORIGINAL);
-    // A genuine, readable skill file one level up — the shape the escape found.
+    // A genuine, readable skill file outside the snapshot dir — the shape the
+    // escape found.
     const outsideDir = mkdtempSync(join(tmpdir(), "skill-versions-outside-"));
+    const victim = join(outsideDir, "secret.md");
     writeSkill(outsideDir, "secret", manifest({ name: "secret" }), "CLASSIFIED-MARKER");
     try {
-      const rel = relative(versionsDirFor(livePath()), join(outsideDir, "secret.md"));
-      const traversal = rel.replace(/^rules\./, "").replace(/\.md$/, "");
+      const versionsDir = versionsDirFor(livePath());
+      // The leading `./` matters: the filename is built as `<base>.<version>.md`,
+      // so a version starting with `..` glues into the literal dirname `rules..`
+      // and escapes nothing. The extra `../` spends itself popping that glued
+      // segment, leaving the relative path free to pop `_versions/` and the
+      // skill dir with its own.
+      const traversal = `./../${relative(versionsDir, victim).replace(/\.md$/, "")}`;
+
+      // Self-check: this string really does resolve onto the victim file, so the
+      // test exercises a live escape rather than a construction that never left
+      // the directory. Without it, a typo here reports a false green forever.
+      expect(join(versionsDir, `rules.${traversal}.md`)).toBe(victim);
+
       expect(readSkillVersionRaw(livePath(), traversal)).toBeNull();
     } finally {
       rmSync(outsideDir, { recursive: true, force: true });
