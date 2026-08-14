@@ -449,9 +449,9 @@ async function composeHistorical(
  * A pure read of already-emitted events — the same telemetry the engine
  * records at the start of every turn. Owner-gated via `readConvEvents`.
  * When the conversation exists but no run has recorded assembled context
- * yet, returns an empty digest (`runId: null`) rather than throwing —
- * mirrors `skills__active_for`'s "conversation exists, nothing loaded yet"
- * shape so the UI shows an empty state, not an error.
+ * yet, returns an empty digest (`runId: null`) rather than throwing, so the
+ * UI shows an empty state for a conversation that exists but has recorded
+ * nothing yet, not an error.
  */
 async function readAssembledContext(
   runtime: Runtime,
