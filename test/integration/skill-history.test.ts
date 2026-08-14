@@ -12,7 +12,7 @@
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { existsSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import { extractText } from "../../src/engine/content-helpers.ts";
 import { runWithRequestContext } from "../../src/runtime/request-context.ts";
 import { Runtime } from "../../src/runtime/runtime.ts";
@@ -205,5 +205,55 @@ describe("snapshot paths are not live skills", () => {
       expect(res.isError).toBe(true);
       expect(res.content).toContain("stored snapshot");
     }
+  });
+});
+
+describe("version ids cannot address a file the gates did not check", () => {
+  it("a traversing version reads nothing, even with a legitimate id", async () => {
+    const victimId = await createSkill("traversal-victim");
+    const attackerId = await createSkill("traversal-attacker");
+    await callTool("skills__update", { id: attackerId, body: "x", body_mode: "append" });
+
+    // Every gate the handler runs validates `id` — legitimately the caller's
+    // own skill. Only the version id constrains which file is opened.
+    //
+    // The leading `./` matters: the filename is built as `<base>.<version>.md`,
+    // so a version starting with `..` glues into the literal dirname
+    // `<base>..` and escapes nothing. Two real `..` segments after that pop
+    // `<base>..` and then `_versions/`, landing in the skills dir.
+    const versionsDir = join(dirname(attackerId), "_versions");
+    const traversal = `./../../${basename(victimId).replace(/\.md$/, "")}`;
+
+    // Self-check: this string really does resolve onto the victim file, so the
+    // test exercises a live escape rather than a construction that never left
+    // the directory. Without it, a typo here reports a false green forever.
+    const attackerBase = basename(attackerId).replace(/\.md$/, "");
+    expect(join(versionsDir, `${attackerBase}.${traversal}.md`)).toBe(victimId);
+
+    const read = await callTool("skills__read", { id: attackerId, version: traversal });
+    expect(read.isError).toBe(true);
+    expect(read.content).not.toContain("Always cite a source.");
+
+    const restore = await callTool("skills__restore", { id: attackerId, version: traversal });
+    expect(restore.isError).toBe(true);
+  });
+
+  it("skills__delete refuses a snapshot path like every other destructive tool", async () => {
+    const id = await createSkill("delete-snapshot");
+    await callTool("skills__update", { id, body: ADDITION, body_mode: "append" });
+    const hist = await callTool("skills__history", { id });
+    const version = (hist.structured.versions as Array<{ version: string }>)[0]?.version;
+    const snapshotPath = join(
+      id.slice(0, id.lastIndexOf("/")),
+      "_versions",
+      `delete-snapshot.${version}.md`,
+    );
+
+    const res = await callTool("skills__delete", { id: snapshotPath });
+    expect(res.isError).toBe(true);
+    expect(res.content).toContain("stored snapshot");
+    // The snapshot survives, and no nested _versions/ was created.
+    const after = await callTool("skills__history", { id });
+    expect((after.structured.versions as unknown[]).length).toBe(1);
   });
 });

@@ -10,9 +10,9 @@
  */
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { existsSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, relative } from "node:path";
 import {
   joinSkillBody,
   readSkill,
@@ -188,7 +188,38 @@ describe("version history", () => {
   test("reading an unknown version returns null rather than throwing", () => {
     writeSkill(dir, "rules", manifest(), ORIGINAL);
     expect(readSkillVersionRaw(livePath(), "2026-01-01T00-00-00-000Z")).toBeNull();
-    expect(existsSync(versionFilePath(livePath(), "nope"))).toBe(false);
+    expect(versionFilePath(livePath(), "nope")).toBeNull();
+  });
+
+  test("a version id that is not a stamp resolves to no path at all", () => {
+    // `version` is caller-supplied and is interpolated into a path, so anything
+    // that isn't a stamp this module wrote must not produce one. The handlers'
+    // scope/permission/symlink gates all validate the skill `id`, never the
+    // file a version resolves to — this is the only thing holding that line.
+    for (const bad of [
+      "../".repeat(6) + "etc/passwd",
+      "..",
+      "2026-01-01T00-00-00-000Z/../../../secret",
+      "",
+      "nope",
+    ]) {
+      expect(versionFilePath(livePath(), bad)).toBeNull();
+      expect(readSkillVersionRaw(livePath(), bad)).toBeNull();
+    }
+  });
+
+  test("a traversing version cannot reach a real skill outside _versions/", () => {
+    writeSkill(dir, "rules", manifest(), ORIGINAL);
+    // A genuine, readable skill file one level up — the shape the escape found.
+    const outsideDir = mkdtempSync(join(tmpdir(), "skill-versions-outside-"));
+    writeSkill(outsideDir, "secret", manifest({ name: "secret" }), "CLASSIFIED-MARKER");
+    try {
+      const rel = relative(versionsDirFor(livePath()), join(outsideDir, "secret.md"));
+      const traversal = rel.replace(/^rules\./, "").replace(/\.md$/, "");
+      expect(readSkillVersionRaw(livePath(), traversal)).toBeNull();
+    } finally {
+      rmSync(outsideDir, { recursive: true, force: true });
+    }
   });
 });
 

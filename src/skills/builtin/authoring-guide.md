@@ -2,7 +2,7 @@
 name: authoring-guide
 description: Guide for authoring NimbleBrain platform skills (voice, workflow, personal, tool routing). Use when creating, modifying, customizing, deleting, or managing a skill — its behavior, triggers, priority, scope, or allowed-tools. Vendored content shipped with the nb__skills bundle.
 metadata:
-  version: "1.1.0"
+  version: "1.2.0"
   nimblebrain:
     loading-strategy: dynamic
     priority: 25

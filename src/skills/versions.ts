@@ -8,10 +8,14 @@
  * update destroyed content with a backup no tool could reach. That is the same
  * as no backup while costing the disk.
  *
- * The convention lives here now: one place formats the filename, one place
- * parses it back. `stamp` is an ISO 8601 instant with `:` and `.` replaced by
- * `-`, so the filename is filesystem-safe AND lexicographically ordered — a
- * plain string sort is newest-last, which is why listing sorts descending.
+ * This module is the home for the write and read-back sides. It is not yet the
+ * only reader: `tools/platform/compose.ts::findMatchingSnapshot` still derives
+ * the directory, base name, suffix and sort itself for its hash-matching walk,
+ * so that convention exists in two places until it is folded in here.
+ *
+ * `stamp` is an ISO 8601 instant with `:` and `.` replaced by `-`, so the
+ * filename is filesystem-safe AND lexicographically ordered — a plain string
+ * sort is newest-last, which is why listing sorts descending.
  *
  * The loader skips `_versions/` (see `src/skills/loader.ts`), so a snapshot
  * never re-loads as a live skill.
@@ -70,8 +74,20 @@ function baseNameFor(livePath: string): string {
   return basename(livePath).replace(/\.md$/, "");
 }
 
-/** Absolute path of one snapshot. Does not check existence. */
-export function versionFilePath(livePath: string, version: string): string {
+/**
+ * Absolute path of one snapshot, or null when `version` is not a stamp this
+ * module wrote. Does not check existence.
+ *
+ * The null case is a SECURITY boundary, not tidiness. `version` arrives from
+ * the caller and is interpolated into a path, so `../`-bearing input escapes
+ * `_versions/` entirely — and the handlers' scope, permission, and symlink
+ * gates all validate the skill `id`, never the file this resolves to. Anchoring
+ * on `fromStamp` is what keeps the resolved path inside the directory the
+ * caller was actually authorized for. Both readers go through here, so neither
+ * can be given a path the other would refuse.
+ */
+export function versionFilePath(livePath: string, version: string): string | null {
+  if (!fromStamp(version)) return null;
   return join(versionsDirFor(livePath), `${baseNameFor(livePath)}.${version}.md`);
 }
 
@@ -79,9 +95,12 @@ export function versionFilePath(livePath: string, version: string): string {
  * Copy the live file (if any) into `_versions/` before a destructive write.
  * Returns the new version id, or null when there was nothing to snapshot.
  *
- * A same-millisecond second snapshot would collide on filename; the copy
- * overwrites, which is correct — two snapshots of the same instant hold the
- * same bytes.
+ * Two snapshots of the same skill within one millisecond collide on filename
+ * and the second overwrites the first — losing an intermediate version, since
+ * the live file changed between them. Millisecond resolution makes that narrow
+ * (it needs two mutations of one skill inside the same tick) and it costs the
+ * middle state, never the caller's own prior content. Disambiguating the name
+ * is the fix if it ever stops being narrow.
  */
 export function snapshotSkillVersion(livePath: string): string | null {
   if (!existsSync(livePath)) return null;
@@ -131,10 +150,10 @@ export function listSkillVersions(livePath: string): SkillVersion[] {
   return out.sort((a, b) => b.version.localeCompare(a.version));
 }
 
-/** Raw file content of one snapshot, or null when it doesn't exist. */
+/** Raw file content of one snapshot, or null when the id is invalid or absent. */
 export function readSkillVersionRaw(livePath: string, version: string): string | null {
   const path = versionFilePath(livePath, version);
-  if (!existsSync(path)) return null;
+  if (!path || !existsSync(path)) return null;
   try {
     return readFileSync(path, "utf-8");
   } catch {

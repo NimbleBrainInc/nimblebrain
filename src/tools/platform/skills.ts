@@ -2059,44 +2059,20 @@ async function deleteSkillHandler(
   authoringGuidePath: string,
 ): Promise<ToolResult> {
   const { id } = input as { id?: string };
-  if (!id) return errorResult(new Error("`id` is required"));
 
-  if (id.startsWith(SKILL_URI_PREFIX)) return bundleNotMutable();
-  const scope = scopeOfPath(runtime, id, authoringGuidePath);
-  if (scope === "bundle") return bundleNotMutable();
-  if (!scope) return errorResult(new Error(unrecognizedIdMessage(id)));
+  // The same gate update / history / restore run. Delete is the last
+  // destructive path that carried its own copy, which is why it was also the
+  // last one that would accept a `_versions/` path — deleting a snapshot and
+  // leaving a nested `_versions/_versions/` no reader can see.
+  const gate = await gateSkillPath(runtime, id ?? "", authoringGuidePath, "write");
+  if ("error" in gate) return gate.error;
+  const scope = gate.scope;
 
-  // Existence before permission — see updateSkillHandler for rationale.
-  if (!existsSync(id)) {
-    return errorResult(
-      new Error(
-        `Skill not found at "${id}". The file may have been moved or deleted — ` +
-          `call skills__list to get current paths.`,
-      ),
-    );
-  }
-
-  const permission = await checkPathAccess(runtime, id, scope, "write");
-  if (!permission.allowed) {
-    return permissionDenied(permission.reason ?? "Permission denied", {
-      path: id,
-      scope,
-      role: currentRoleHint(runtime, scope),
-    });
-  }
-
-  // Symlink-boundary defense — see updateSkillHandler for rationale.
-  try {
-    assertSymlinkBoundaryOrThrow(runtime, id, scope);
-  } catch (err) {
-    return errorResult(err);
-  }
-
-  const dir = dirname(id);
-  const name = (id.split("/").pop() ?? "").replace(/\.md$/, "");
+  const dir = dirname(id as string);
+  const name = ((id as string).split("/").pop() ?? "").replace(/\.md$/, "");
   if (!name) return errorResult(new Error(`Cannot derive skill name from path "${id}"`));
 
-  snapshotSkillVersion(id);
+  snapshotSkillVersion(id as string);
   deleteSkill(dir, name);
   await reloadBootSkills(runtime);
 
