@@ -76,8 +76,14 @@ describe("handleUpdate", () => {
 		expect(result.id).toBe("conv_test001");
 		expect(result.title).toBe("New title");
 		expect(result.messageCount).toBe(5);
-		expect(result.totalInputTokens).toBe(500);
-		expect(result.totalOutputTokens).toBe(300);
+		// Derived from the messages (100+200 / 60+120), not line 1's stored
+		// 500/300. `applyDerivedMetrics` always overwrites the stored totals —
+		// they are a field the platform stopped maintaining — so this is what
+		// `conversations__get` and the index already report for this file. The
+		// response is built from a reader now, so `update` agrees with them
+		// instead of being the one surface still quoting line 1.
+		expect(result.totalInputTokens).toBe(300);
+		expect(result.totalOutputTokens).toBe(180);
 		expect(result.lastModel).toBe("claude-sonnet-4-5-20250929");
 		expect(result.preview).toBe("Hello there");
 		// updatedAt should be refreshed (not the original)
