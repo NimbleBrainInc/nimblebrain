@@ -134,7 +134,11 @@ describe("skills source — schema rejection", () => {
     const result = await client.callTool({ name: "read", arguments: {} });
     expect(result.isError).toBe(true);
   });
+});
 
+// ── Resources ───────────────────────────────────────────────────────────
+
+describe("skills source — resources", () => {
   test("resources/list includes skill://skills/authoring-guide", async () => {
     const src = await buildSource();
     const client = src.getClient()!;

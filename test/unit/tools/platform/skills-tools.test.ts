@@ -28,7 +28,6 @@ import type {
 } from "../../../../src/conversation/types.ts";
 import { parseSkillFile } from "../../../../src/skills/loader.ts";
 import type { Skill } from "../../../../src/skills/types.ts";
-import { runWithRequestContext } from "../../../../src/runtime/request-context.ts";
 import { McpSource } from "../../../../src/tools/mcp-source.ts";
 import { createSkillsSource } from "../../../../src/tools/platform/skills.ts";
 
