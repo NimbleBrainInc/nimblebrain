@@ -76,8 +76,14 @@ describe("handleUpdate", () => {
 		expect(result.id).toBe("conv_test001");
 		expect(result.title).toBe("New title");
 		expect(result.messageCount).toBe(5);
-		expect(result.totalInputTokens).toBe(500);
-		expect(result.totalOutputTokens).toBe(300);
+		// Derived from the messages (100+200 / 60+120), not line 1's stored
+		// 500/300. `applyDerivedMetrics` always overwrites the stored totals —
+		// they are a field the platform stopped maintaining — so this is what
+		// `conversations__get` and the index already report for this file. The
+		// response is built from a reader now, so `update` agrees with them
+		// instead of being the one surface still quoting line 1.
+		expect(result.totalInputTokens).toBe(300);
+		expect(result.totalOutputTokens).toBe(180);
 		expect(result.lastModel).toBe("claude-sonnet-4-5-20250929");
 		expect(result.preview).toBe("Hello there");
 		// updatedAt should be refreshed (not the original)
@@ -182,5 +188,44 @@ describe("handleUpdate", () => {
 		expect(result.title).toBe("Empty conv");
 		expect(result.messageCount).toBe(0);
 		expect(result.preview).toBe("");
+	});
+
+	// ---------------------------------------------------------------------------
+	// Edge case: a file whose last write was cut short (no trailing newline)
+	// ---------------------------------------------------------------------------
+
+	test("appending to a file with no trailing newline does not splice onto the last line", async () => {
+		// A truncated write leaves the last event without its newline. Appending
+		// straight onto that would join the two into one unparseable line and lose
+		// both the last event and the rename.
+		const meta = makeMeta({ id: "conv_trunc", title: null, format: "events" });
+		const events = [
+			{
+				ts: "2025-01-01T00:01:00.000Z",
+				type: "user.message",
+				content: [{ type: "text", text: "Hello there" }],
+			},
+			{ ts: "2025-01-01T00:01:30.000Z", type: "metadata.title", title: "Auto Generated Title" },
+		];
+		const path = join(TMP_DIR, "conv_trunc.jsonl");
+		writeFileSync(path, [JSON.stringify(meta), ...events.map((e) => JSON.stringify(e))].join("\n"));
+		expect(readFileSync(path, "utf-8").endsWith("\n")).toBe(false);
+
+		await index.build(TMP_DIR);
+
+		await handleUpdate({ id: "conv_trunc", title: "Agent Set This" }, index);
+
+		const fileLines = readFileSync(path, "utf-8").split("\n").filter(Boolean);
+		expect(fileLines).toHaveLength(4);
+		for (const line of fileLines) {
+			expect(() => JSON.parse(line)).not.toThrow();
+		}
+
+		// The event that had been left unterminated is still its own record...
+		expect(JSON.parse(fileLines[2]!)).toMatchObject({ type: "metadata.title", title: "Auto Generated Title" });
+		// ...and the rename is the one every reader now projects.
+		const conv = await readConversation(path);
+		expect(conv!.meta.title).toBe("Agent Set This");
+		expect(conv!.messages).toHaveLength(1);
 	});
 });
